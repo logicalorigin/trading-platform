@@ -1,6 +1,29 @@
-import { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext, useDeferredValue } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ComposedChart } from "recharts";
 import * as d3 from "d3";
+import {
+  getBars as getBarsRequest,
+  getOptionChain as getOptionChainRequest,
+  listFlowEvents as listFlowEventsRequest,
+  useGetNews,
+  useGetQuoteSnapshots,
+  useGetResearchEarningsCalendar,
+  useSearchUniverseTickers,
+  useGetSession,
+  useListAccounts,
+  useListPositions,
+  useListWatchlists,
+  usePlaceOrder,
+} from "@workspace/api-client-react";
+import PhotonicsObservatory from "./features/research/PhotonicsObservatory";
+import {
+  ResearchChartSurface,
+  buildResearchChartModel,
+} from "./features/charting";
+import {
+  LightweightMiniChart,
+} from "./components/trading/LightweightCharts";
 
 // ═══════════════════════════════════════════════════════════════════
 // FONTS
@@ -193,6 +216,8 @@ const usePositions = () => useContext(PositionsContext);
 // ═══════════════════════════════════════════════════════════════════
 
 const rng = (seed) => { let x = seed; return () => { x = (x * 16807 + 7) % 2147483647; return (x - 1) / 2147483646; }; };
+const hashSymbol = (symbol = "") =>
+  symbol.split("").reduce((acc, char) => acc * 31 + char.charCodeAt(0), 7);
 
 const genSparkline = (seed, points = 48, base = 100, vol = 1) => {
   const r = rng(seed);
@@ -207,16 +232,19 @@ const WATCHLIST = [
   { sym: "SPY", name: "SPDR S&P 500", price: 582.41, chg: +1.87, pct: +0.32, spark: genSparkline(1, 48, 582, 0.8) },
   { sym: "QQQ", name: "Invesco QQQ", price: 498.23, chg: -2.14, pct: -0.43, spark: genSparkline(2, 48, 498, 1.1) },
   { sym: "IWM", name: "iShares Russ 2000", price: 221.05, chg: +0.62, pct: +0.28, spark: genSparkline(3, 48, 221, 0.5) },
-  { sym: "VIX", name: "CBOE VIX Index", price: 16.82, chg: -0.34, pct: -1.98, spark: genSparkline(4, 48, 17, 0.15) },
+  { sym: "VIXY", name: "ProShares VIX Short-Term Futures ETF", price: 28.68, chg: +0.28, pct: +0.99, spark: genSparkline(4, 48, 29, 0.35) },
   { sym: "AAPL", name: "Apple Inc", price: 228.34, chg: +3.12, pct: +1.38, spark: genSparkline(5, 48, 228, 1.5) },
   { sym: "MSFT", name: "Microsoft Corp", price: 441.67, chg: -1.23, pct: -0.28, spark: genSparkline(6, 48, 441, 2.0) },
   { sym: "NVDA", name: "NVIDIA Corp", price: 135.89, chg: +4.56, pct: +3.47, spark: genSparkline(7, 48, 136, 3.0) },
   { sym: "AMZN", name: "Amazon.com", price: 198.45, chg: +0.89, pct: +0.45, spark: genSparkline(8, 48, 198, 1.2) },
   { sym: "META", name: "Meta Platforms", price: 612.30, chg: -5.67, pct: -0.92, spark: genSparkline(9, 48, 612, 3.5) },
   { sym: "TSLA", name: "Tesla Inc", price: 248.91, chg: +7.23, pct: +2.99, spark: genSparkline(10, 48, 249, 4.0) },
-  { sym: "DXY", name: "US Dollar Index", price: 103.47, chg: +0.12, pct: +0.12, spark: genSparkline(11, 48, 103, 0.2) },
-  { sym: "TNX", name: "10Y Treasury", price: 4.287, chg: +0.031, pct: +0.73, spark: genSparkline(12, 48, 4.3, 0.02) },
+  { sym: "UUP", name: "Invesco DB US Dollar Index Bullish Fund", price: 27.385, chg: +0.065, pct: +0.24, spark: genSparkline(11, 48, 27.4, 0.08) },
+  { sym: "IEF", name: "iShares 7-10 Year Treasury Bond ETF", price: 95.54, chg: -0.28, pct: -0.29, spark: genSparkline(12, 48, 95.5, 0.18) },
 ];
+const DEFAULT_WATCHLIST_BY_SYMBOL = Object.fromEntries(
+  WATCHLIST.map(item => [item.sym, { ...item, spark: [...item.spark] }])
+);
 
 const genBars = (seed, count = 78, base = 582) => {
   const r = rng(seed);
@@ -430,13 +458,82 @@ const DTE_BUCKETS = [
 // Tradable ticker info (price + IV + seeds for mock data)
 const TRADE_TICKER_INFO = {
   SPY:  { name: "SPDR S&P 500",       price: 582.41, chg: +1.87, pct: +0.32, iv: 0.178, barSeed: 100, chainSeed: 200, optSeed: 300 },
-  QQQ:  { name: "Invesco QQQ",        price: 498.23, chg: -2.15, pct: -0.43, iv: 0.192, barSeed: 101, chainSeed: 201, optSeed: 301 },
+  QQQ:  { name: "Invesco QQQ",        price: 498.23, chg: -2.14, pct: -0.43, iv: 0.192, barSeed: 101, chainSeed: 201, optSeed: 301 },
   NVDA: { name: "NVIDIA Corp",        price: 135.89, chg: +4.56, pct: +3.47, iv: 0.412, barSeed: 102, chainSeed: 202, optSeed: 302 },
   TSLA: { name: "Tesla Inc",          price: 248.91, chg: +7.23, pct: +2.99, iv: 0.488, barSeed: 103, chainSeed: 203, optSeed: 303 },
   AAPL: { name: "Apple Inc",          price: 228.34, chg: +3.12, pct: +1.38, iv: 0.221, barSeed: 104, chainSeed: 204, optSeed: 304 },
   META: { name: "Meta Platforms",     price: 612.30, chg: -5.67, pct: -0.92, iv: 0.285, barSeed: 105, chainSeed: 205, optSeed: 305 },
   AMZN: { name: "Amazon.com",         price: 198.45, chg: +0.89, pct: +0.45, iv: 0.248, barSeed: 106, chainSeed: 206, optSeed: 306 },
-  MSFT: { name: "Microsoft Corp",     price: 441.67, chg: -1.24, pct: -0.28, iv: 0.204, barSeed: 107, chainSeed: 207, optSeed: 307 },
+  MSFT: { name: "Microsoft Corp",     price: 441.67, chg: -1.23, pct: -0.28, iv: 0.204, barSeed: 107, chainSeed: 207, optSeed: 307 },
+};
+
+const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
+  const normalized = symbol.toUpperCase();
+  if (!TRADE_TICKER_INFO[normalized]) {
+    const hash = hashSymbol(normalized);
+    const basePrice = 40 + (hash % 360);
+    TRADE_TICKER_INFO[normalized] = {
+      name: fallbackName,
+      price: basePrice,
+      chg: 0,
+      pct: 0,
+      iv: 0.18 + ((hash % 18) / 100),
+      barSeed: 400 + (hash % 200),
+      chainSeed: 700 + (hash % 200),
+      optSeed: 1000 + (hash % 200),
+      open: null,
+      high: null,
+      low: null,
+      prevClose: null,
+      volume: null,
+      updatedAt: null,
+    };
+  } else if (fallbackName && (!TRADE_TICKER_INFO[normalized].name || TRADE_TICKER_INFO[normalized].name === normalized)) {
+    TRADE_TICKER_INFO[normalized].name = fallbackName;
+  }
+
+  return TRADE_TICKER_INFO[normalized];
+};
+
+const buildFallbackWatchlistItem = (symbol, index, name) => {
+  const existing = DEFAULT_WATCHLIST_BY_SYMBOL[symbol];
+  if (existing) return { ...existing, name: existing.name || name || symbol };
+
+  const hash = hashSymbol(symbol);
+  const basePrice = 40 + (hash % 360);
+  return {
+    sym: symbol,
+    name: name || symbol,
+    price: basePrice,
+    chg: 0,
+    pct: 0,
+    spark: genSparkline(2000 + hash + index, 48, basePrice, Math.max(0.5, basePrice * 0.01)),
+  };
+};
+
+const buildSparklineFromHistoricalBars = (bars, fallback) => {
+  if (!Array.isArray(bars) || bars.length < 2) {
+    return fallback;
+  }
+
+  return bars.map((bar, index) => ({
+    i: index,
+    v: bar.close,
+  }));
+};
+
+const computeTrailingReturnPercent = (currentPrice, baselinePrice) => {
+  if (
+    typeof currentPrice !== "number" ||
+    Number.isNaN(currentPrice) ||
+    typeof baselinePrice !== "number" ||
+    Number.isNaN(baselinePrice) ||
+    baselinePrice === 0
+  ) {
+    return null;
+  }
+
+  return ((currentPrice - baselinePrice) / baselinePrice) * 100;
 };
 
 // Open positions across all trades
@@ -531,6 +628,703 @@ const TRADE_FLOW_MARKERS = Object.fromEntries(
   Object.entries(TRADE_TICKER_INFO).map(([sym, info]) => [sym, genTradeFlowMarkers(info.barSeed + 555)])
 );
 
+const syncRuntimeMarketData = (
+  symbols,
+  watchlistItems,
+  quotes,
+  {
+    sparklineBarsBySymbol = {},
+    performanceBaselineBySymbol = {},
+  } = {},
+) => {
+  const quoteBySymbol = Object.fromEntries((quotes || []).map(quote => [quote.symbol.toUpperCase(), quote]));
+  const watchlistNameBySymbol = Object.fromEntries(
+    (watchlistItems || []).map(item => {
+      const symbol = item.symbol.toUpperCase();
+      const fallbackName =
+        DEFAULT_WATCHLIST_BY_SYMBOL[symbol]?.name ||
+        TRADE_TICKER_INFO[symbol]?.name ||
+        symbol;
+      return [symbol, fallbackName];
+    }),
+  );
+
+  const nextItems = symbols.map((symbol, index) => {
+    const normalized = symbol.toUpperCase();
+    const base = buildFallbackWatchlistItem(
+      normalized,
+      index,
+      watchlistNameBySymbol[normalized],
+    );
+    const quote = quoteBySymbol[normalized];
+    const price = quote?.price ?? base.price;
+    const chg = quote?.change ?? base.chg;
+    const pct = quote?.changePercent ?? base.pct;
+    const spark = buildSparklineFromHistoricalBars(
+      sparklineBarsBySymbol[normalized],
+      base.spark,
+    );
+    const tradeInfo = ensureTradeTickerInfo(normalized, base.name);
+    const open = quote?.open ?? tradeInfo.open ?? null;
+    const high = quote?.high ?? tradeInfo.high ?? null;
+    const low = quote?.low ?? tradeInfo.low ?? null;
+    const prevClose = quote?.prevClose ?? tradeInfo.prevClose ?? null;
+    const volume = quote?.volume ?? tradeInfo.volume ?? null;
+    const updatedAt = quote?.updatedAt ?? tradeInfo.updatedAt ?? null;
+
+    tradeInfo.name = base.name;
+    tradeInfo.price = price;
+    tradeInfo.chg = chg;
+    tradeInfo.pct = pct;
+    tradeInfo.open = open;
+    tradeInfo.high = high;
+    tradeInfo.low = low;
+    tradeInfo.prevClose = prevClose;
+    tradeInfo.volume = volume;
+    tradeInfo.updatedAt = updatedAt;
+
+    if (!TRADE_FLOW_MARKERS[normalized]) {
+      TRADE_FLOW_MARKERS[normalized] = genTradeFlowMarkers(tradeInfo.barSeed + 555);
+    }
+
+    return {
+      ...base,
+      sym: normalized,
+      price,
+      chg,
+      pct,
+      spark,
+      open,
+      high,
+      low,
+      prevClose,
+      volume,
+      updatedAt,
+    };
+  });
+
+  WATCHLIST.splice(0, WATCHLIST.length, ...nextItems);
+
+  Object.entries(quoteBySymbol).forEach(([symbol, quote]) => {
+    const fallbackName =
+      watchlistNameBySymbol[symbol] ||
+      INDICES.find(item => item.sym === symbol)?.name ||
+      TRADE_TICKER_INFO[symbol]?.name ||
+      symbol;
+    const tradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
+
+    tradeInfo.name = fallbackName;
+    tradeInfo.price = quote.price ?? tradeInfo.price;
+    tradeInfo.chg = quote.change ?? tradeInfo.chg;
+    tradeInfo.pct = quote.changePercent ?? tradeInfo.pct;
+    tradeInfo.open = quote.open ?? tradeInfo.open ?? null;
+    tradeInfo.high = quote.high ?? tradeInfo.high ?? null;
+    tradeInfo.low = quote.low ?? tradeInfo.low ?? null;
+    tradeInfo.prevClose = quote.prevClose ?? tradeInfo.prevClose ?? null;
+    tradeInfo.volume = quote.volume ?? tradeInfo.volume ?? null;
+    tradeInfo.updatedAt = quote.updatedAt ?? tradeInfo.updatedAt ?? null;
+  });
+
+  INDICES.forEach((item) => {
+    const quote = quoteBySymbol[item.sym.toUpperCase()];
+    if (!quote) return;
+
+    item.price = quote.price;
+    item.chg = quote.change;
+    item.pct = quote.changePercent;
+    item.spark = buildSparklineFromHistoricalBars(
+      sparklineBarsBySymbol[item.sym.toUpperCase()],
+      item.spark,
+    );
+  });
+
+  MACRO_TICKERS.forEach((item) => {
+    const quote = quoteBySymbol[item.sym.toUpperCase()];
+    if (!quote) return;
+
+    item.price = quote.price;
+    item.chg = quote.change;
+    item.pct = quote.changePercent;
+  });
+
+  RATES_PROXIES.forEach((item) => {
+    const normalized = item.sym.toUpperCase();
+    const quote = quoteBySymbol[normalized];
+    const currentPrice = quote?.price ?? item.price;
+    const baseline = performanceBaselineBySymbol[normalized] ?? null;
+    const d5 = computeTrailingReturnPercent(currentPrice, baseline);
+    if (!quote && d5 == null) return;
+
+    if (quote) {
+      item.price = quote.price;
+      item.chg = quote.change;
+      item.pct = quote.changePercent;
+    }
+    if (d5 != null) {
+      item.d5 = d5;
+    }
+  });
+
+  SECTORS.forEach((item) => {
+    const normalized = item.sym.toUpperCase();
+    const quote = quoteBySymbol[normalized];
+    const currentPrice = quote?.price ?? TRADE_TICKER_INFO[normalized]?.price ?? null;
+    const baseline = performanceBaselineBySymbol[normalized] ?? null;
+    const d5 = computeTrailingReturnPercent(currentPrice, baseline);
+
+    if (quote) {
+      item.chg = quote.changePercent;
+    }
+    if (d5 != null) {
+      item.d5 = d5;
+    }
+  });
+
+  TREEMAP_DATA.forEach((sector) => {
+    sector.stocks.forEach((stock) => {
+      const normalized = stock.sym.toUpperCase();
+      const quote = quoteBySymbol[normalized];
+      const currentPrice = quote?.price ?? TRADE_TICKER_INFO[normalized]?.price ?? null;
+      const baseline = performanceBaselineBySymbol[normalized] ?? null;
+      const d5 = computeTrailingReturnPercent(currentPrice, baseline);
+
+      if (quote) {
+        stock.d1 = quote.changePercent;
+      }
+      if (d5 != null) {
+        stock.d5 = d5;
+      }
+    });
+  });
+
+  TICKER_FLOW.forEach((item) => {
+    const info = TRADE_TICKER_INFO[item.sym];
+    if (!info) return;
+
+    item.px = info.price;
+    item.chg = info.pct;
+  });
+};
+
+const getRuntimeQuoteDetail = (symbol) => {
+  const info = TRADE_TICKER_INFO[symbol] || ensureTradeTickerInfo(symbol, symbol);
+  const prevClose = info.prevClose ?? (
+    typeof info.price === "number" && typeof info.chg === "number"
+      ? info.price - info.chg
+      : null
+  );
+
+  return {
+    open: info.open,
+    prevClose,
+    high: info.high,
+    low: info.low,
+    volume: info.volume,
+    iv: info.iv,
+    updatedAt: info.updatedAt,
+  };
+};
+
+const getRuntimeTickerSnapshot = (symbol, fallback = null) => {
+  const info = TRADE_TICKER_INFO[symbol];
+  if (info) return info;
+
+  return fallback;
+};
+
+const buildTrackedBreadthSummary = () => {
+  const stocks = TREEMAP_DATA.flatMap(sector => sector.stocks);
+  const total = stocks.length || 1;
+  const advancers = stocks.filter(stock => stock.d1 > 0).length;
+  const decliners = stocks.filter(stock => stock.d1 < 0).length;
+  const unchanged = total - advancers - decliners;
+  const positive5d = stocks.filter(stock => stock.d5 > 0).length;
+  const positiveSectors = SECTORS.filter(sector => sector.chg > 0).length;
+  const sortedSectors = [...SECTORS].sort((left, right) => right.chg - left.chg);
+  const leader = sortedSectors[0] || null;
+  const laggard = sortedSectors[sortedSectors.length - 1] || null;
+
+  return {
+    total,
+    advancers,
+    decliners,
+    unchanged,
+    advancePct: (advancers / total) * 100,
+    positive5dPct: (positive5d / total) * 100,
+    positiveSectors,
+    leader,
+    laggard,
+  };
+};
+
+const buildRatesProxySummary = () => {
+  const sorted = [...RATES_PROXIES].sort((left, right) => right.pct - left.pct);
+  return {
+    leader: sorted[0] || null,
+    laggard: sorted[sorted.length - 1] || null,
+  };
+};
+
+const buildOptionChainRowsFromApi = (contracts, spotPrice, fallbackIv) => {
+  const rowsByStrike = new Map();
+
+  (contracts || []).forEach((quote) => {
+    const strike = quote?.contract?.strike;
+    const right = quote?.contract?.right;
+    if (typeof strike !== "number" || !right) return;
+
+    const defaultCallGreeks = deriveApproxGreeksFromDelta(0.5);
+    const defaultPutGreeks = deriveApproxGreeksFromDelta(-0.5);
+    const row = rowsByStrike.get(strike) || {
+      k: strike,
+      cContract: null,
+      cPrem: 0,
+      cBid: 0,
+      cAsk: 0,
+      cVol: 0,
+      cOi: 0,
+      cIv: fallbackIv,
+      cDelta: 0.5,
+      cGamma: defaultCallGreeks.gamma,
+      cTheta: defaultCallGreeks.theta,
+      cVega: defaultCallGreeks.vega,
+      pContract: null,
+      pPrem: 0,
+      pBid: 0,
+      pAsk: 0,
+      pVol: 0,
+      pOi: 0,
+      pIv: fallbackIv,
+      pDelta: -0.5,
+      pGamma: defaultPutGreeks.gamma,
+      pTheta: defaultPutGreeks.theta,
+      pVega: defaultPutGreeks.vega,
+      isAtm: false,
+    };
+    const mark = quote.mark > 0 ? quote.mark : ((quote.bid > 0 && quote.ask > 0) ? (quote.bid + quote.ask) / 2 : quote.last);
+
+    if (right === "call") {
+      row.cContract = quote.contract || null;
+      row.cPrem = +(mark || 0).toFixed(2);
+      row.cBid = +(quote.bid || 0).toFixed(2);
+      row.cAsk = +(quote.ask || 0).toFixed(2);
+      row.cVol = quote.volume || 0;
+      row.cOi = quote.openInterest || 0;
+      row.cIv = quote.impliedVolatility ?? fallbackIv;
+      row.cDelta = quote.delta ?? row.cDelta;
+      {
+        const fallbackGreeks = deriveApproxGreeksFromDelta(row.cDelta);
+        row.cGamma = quote.gamma ?? fallbackGreeks.gamma;
+        row.cTheta = quote.theta ?? fallbackGreeks.theta;
+        row.cVega = quote.vega ?? fallbackGreeks.vega;
+      }
+    } else {
+      row.pContract = quote.contract || null;
+      row.pPrem = +(mark || 0).toFixed(2);
+      row.pBid = +(quote.bid || 0).toFixed(2);
+      row.pAsk = +(quote.ask || 0).toFixed(2);
+      row.pVol = quote.volume || 0;
+      row.pOi = quote.openInterest || 0;
+      row.pIv = quote.impliedVolatility ?? fallbackIv;
+      row.pDelta = quote.delta ?? row.pDelta;
+      {
+        const fallbackGreeks = deriveApproxGreeksFromDelta(row.pDelta);
+        row.pGamma = quote.gamma ?? fallbackGreeks.gamma;
+        row.pTheta = quote.theta ?? fallbackGreeks.theta;
+        row.pVega = quote.vega ?? fallbackGreeks.vega;
+      }
+    }
+
+    rowsByStrike.set(strike, row);
+  });
+
+  const rows = Array.from(rowsByStrike.values()).sort((left, right) => left.k - right.k);
+  if (!rows.length) return [];
+
+  const atmStrike = rows.reduce((closest, row) => (
+    Math.abs(row.k - spotPrice) < Math.abs(closest - spotPrice) ? row.k : closest
+  ), rows[0].k);
+
+  return rows.map((row) => ({ ...row, isAtm: row.k === atmStrike }));
+};
+
+const buildMarketOrderFlowFromEvents = (events) => {
+  const totals = {
+    buyXL: 0, buyL: 0, buyM: 0, buyS: 0,
+    sellXL: 0, sellL: 0, sellM: 0, sellS: 0,
+  };
+
+  (events || []).forEach((evt) => {
+    const bucket = evt.premium >= 500000 ? "XL"
+      : evt.premium >= 250000 ? "L"
+      : evt.premium >= 100000 ? "M"
+      : "S";
+    const amount = evt.premium / 1e6;
+
+    if (evt.side === "BUY") {
+      totals[`buy${bucket}`] += amount;
+      return;
+    }
+    if (evt.side === "SELL") {
+      totals[`sell${bucket}`] += amount;
+      return;
+    }
+
+    totals[`buy${bucket}`] += amount / 2;
+    totals[`sell${bucket}`] += amount / 2;
+  });
+
+  return Object.fromEntries(
+    Object.entries(totals).map(([key, value]) => [key, +value.toFixed(1)]),
+  );
+};
+
+const buildFlowTideFromEvents = (events) => {
+  const startMinutes = 9 * 60 + 30;
+  const bucketMinutes = 30;
+  const bucketCount = 14;
+  const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+    time: formatSessionBucketLabel(startMinutes + index * bucketMinutes),
+    calls: 0,
+    puts: 0,
+  }));
+
+  (events || []).forEach((evt) => {
+    const minutes = toSessionMinutes(evt.occurredAt);
+    if (minutes == null) return;
+    const clamped = Math.max(startMinutes, Math.min(startMinutes + bucketMinutes * (bucketCount - 1), minutes));
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor((clamped - startMinutes) / bucketMinutes));
+    if (evt.cp === "C") buckets[bucketIndex].calls += evt.premium;
+    else buckets[bucketIndex].puts += evt.premium;
+  });
+
+  let cumNet = 0;
+  return buckets.map((bucket) => {
+    const net = bucket.calls - bucket.puts;
+    cumNet += net;
+    return { ...bucket, net, cumNet };
+  });
+};
+
+const buildTickerFlowFromEvents = (events) => {
+  const grouped = new Map();
+
+  (events || []).forEach((evt) => {
+    const entry = grouped.get(evt.ticker) || {
+      sym: evt.ticker,
+      calls: 0,
+      puts: 0,
+      contracts: 0,
+      scoreTotal: 0,
+    };
+
+    if (evt.cp === "C") entry.calls += evt.premium;
+    else entry.puts += evt.premium;
+    entry.contracts += 1;
+    entry.scoreTotal += evt.score;
+    grouped.set(evt.ticker, entry);
+  });
+
+  return Array.from(grouped.values())
+    .map((entry) => {
+      const info = TRADE_TICKER_INFO[entry.sym] || TRADE_TICKER_INFO.SPY;
+      return {
+        sym: entry.sym,
+        calls: entry.calls,
+        puts: entry.puts,
+        contracts: entry.contracts,
+        score: entry.contracts ? Math.round(entry.scoreTotal / entry.contracts) : 0,
+        px: info.price,
+        chg: info.pct,
+      };
+    })
+    .sort((left, right) => (right.calls + right.puts) - (left.calls + left.puts));
+};
+
+const buildFlowClockFromEvents = (events) => {
+  const startMinutes = 9 * 60 + 30;
+  const bucketMinutes = 30;
+  const bucketCount = 14;
+  const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+    time: formatSessionBucketLabel(startMinutes + index * bucketMinutes),
+    count: 0,
+    prem: 0,
+  }));
+
+  (events || []).forEach((evt) => {
+    const minutes = toSessionMinutes(evt.occurredAt);
+    if (minutes == null) return;
+    const clamped = Math.max(startMinutes, Math.min(startMinutes + bucketMinutes * (bucketCount - 1), minutes));
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor((clamped - startMinutes) / bucketMinutes));
+    buckets[bucketIndex].count += 1;
+    buckets[bucketIndex].prem += evt.premium;
+  });
+
+  return buckets;
+};
+
+const FLOW_SECTOR_BY_SYMBOL = {
+  AAPL: "Technology",
+  AMZN: "Cons Disc",
+  META: "Comm Svcs",
+  MSFT: "Technology",
+  NVDA: "Technology",
+  QQQ: "Index",
+  SPY: "Index",
+  TSLA: "Cons Disc",
+  IWM: "Index",
+};
+
+const buildSectorFlowFromEvents = (events) => {
+  const grouped = new Map();
+
+  (events || []).forEach((evt) => {
+    const sector = FLOW_SECTOR_BY_SYMBOL[evt.ticker] || "Other";
+    const entry = grouped.get(sector) || { sector, calls: 0, puts: 0 };
+    if (evt.cp === "C") entry.calls += evt.premium;
+    else entry.puts += evt.premium;
+    grouped.set(sector, entry);
+  });
+
+  return Array.from(grouped.values()).sort(
+    (left, right) => Math.abs((right.calls - right.puts)) - Math.abs((left.calls - left.puts)),
+  );
+};
+
+const buildDteBucketsFromEvents = (events) => {
+  const buckets = [
+    { bucket: "0DTE", calls: 0, puts: 0, count: 0, match: (dte) => dte <= 0 },
+    { bucket: "1-7d", calls: 0, puts: 0, count: 0, match: (dte) => dte >= 1 && dte <= 7 },
+    { bucket: "8-30d", calls: 0, puts: 0, count: 0, match: (dte) => dte >= 8 && dte <= 30 },
+    { bucket: "31-90d", calls: 0, puts: 0, count: 0, match: (dte) => dte >= 31 && dte <= 90 },
+    { bucket: "90d+", calls: 0, puts: 0, count: 0, match: (dte) => dte > 90 },
+  ];
+
+  (events || []).forEach((evt) => {
+    const bucket = buckets.find((entry) => entry.match(evt.dte)) || buckets[buckets.length - 1];
+    if (evt.cp === "C") bucket.calls += evt.premium;
+    else bucket.puts += evt.premium;
+    bucket.count += 1;
+  });
+
+  return buckets.map(({ match, ...bucket }) => bucket);
+};
+
+const FLOW_INDEX_SYMBOLS = new Set(["SPY", "QQQ", "IWM", "DIA"]);
+
+const buildPutCallSummaryFromEvents = (events) => {
+  const totals = {
+    equities: { calls: 0, puts: 0 },
+    indices: { calls: 0, puts: 0 },
+  };
+
+  (events || []).forEach((evt) => {
+    const bucket = FLOW_INDEX_SYMBOLS.has(evt.ticker) ? totals.indices : totals.equities;
+    if (evt.cp === "C") bucket.calls += evt.premium;
+    else bucket.puts += evt.premium;
+  });
+
+  const toRatio = ({ calls, puts }) => (calls > 0 ? puts / calls : 0);
+  const equities = toRatio(totals.equities);
+  const indices = toRatio(totals.indices);
+  const calls = totals.equities.calls + totals.indices.calls;
+  const puts = totals.equities.puts + totals.indices.puts;
+  const total = calls > 0 ? puts / calls : 0;
+
+  return {
+    total,
+    equities,
+    indices,
+    calls,
+    puts,
+  };
+};
+
+const buildTradeOptionFlowByDte = (events) => {
+  const buckets = [
+    { label: "0DTE", match: (dte) => dte <= 0, callPrem: 0, putPrem: 0, total: 0 },
+    { label: "1-7d", match: (dte) => dte >= 1 && dte <= 7, callPrem: 0, putPrem: 0, total: 0 },
+    { label: "8-30d", match: (dte) => dte >= 8 && dte <= 30, callPrem: 0, putPrem: 0, total: 0 },
+    { label: "30d+", match: (dte) => dte > 30, callPrem: 0, putPrem: 0, total: 0 },
+  ];
+
+  (events || []).forEach((evt) => {
+    const bucket = buckets.find((entry) => entry.match(evt.dte)) || buckets[buckets.length - 1];
+    const amount = evt.premium / 1000;
+    if (evt.cp === "C") bucket.callPrem += amount;
+    else bucket.putPrem += amount;
+    bucket.total += amount;
+  });
+
+  return buckets.map(({ match, ...bucket }) => ({
+    ...bucket,
+    callPrem: +bucket.callPrem.toFixed(1),
+    putPrem: +bucket.putPrem.toFixed(1),
+    total: +bucket.total.toFixed(1),
+  }));
+};
+
+const buildTradeOptionFlowByStrike = (events, spotPrice) => {
+  const grouped = new Map();
+
+  (events || []).forEach((evt) => {
+    const entry = grouped.get(evt.strike) || {
+      strike: evt.strike,
+      callPrem: 0,
+      putPrem: 0,
+      total: 0,
+      isATM: false,
+    };
+    const amount = evt.premium / 1000;
+    if (evt.cp === "C") entry.callPrem += amount;
+    else entry.putPrem += amount;
+    entry.total += amount;
+    grouped.set(evt.strike, entry);
+  });
+
+  const rows = Array.from(grouped.values()).sort((left, right) => left.strike - right.strike);
+  if (!rows.length) return [];
+
+  const sortedByDistance = rows
+    .slice()
+    .sort((left, right) => Math.abs(left.strike - spotPrice) - Math.abs(right.strike - spotPrice))
+    .slice(0, 15);
+  const visible = sortedByDistance.sort((left, right) => left.strike - right.strike);
+  const atmStrike = visible.reduce((closest, row) => (
+    Math.abs(row.strike - spotPrice) < Math.abs(closest - spotPrice) ? row.strike : closest
+  ), visible[0].strike);
+
+  return visible.map((row) => ({
+    ...row,
+    callPrem: +row.callPrem.toFixed(0),
+    putPrem: +row.putPrem.toFixed(0),
+    total: +row.total.toFixed(0),
+    isATM: row.strike === atmStrike,
+  }));
+};
+
+const buildTradeOptionFlowTimeline = (events) => {
+  const startMinutes = 9 * 60 + 30;
+  const bucketMinutes = 15;
+  const bucketCount = 26;
+  const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+    time: formatSessionBucketLabel(startMinutes + index * bucketMinutes),
+    t: index,
+    callPrem: 0,
+    putPrem: 0,
+    net: 0,
+    cumCall: 0,
+    cumPut: 0,
+    cumNet: 0,
+  }));
+
+  (events || []).forEach((evt) => {
+    const minutes = toSessionMinutes(evt.occurredAt);
+    if (minutes == null) return;
+    const clamped = Math.max(startMinutes, Math.min(startMinutes + bucketMinutes * (bucketCount - 1), minutes));
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor((clamped - startMinutes) / bucketMinutes));
+    const amount = evt.premium / 1000;
+    if (evt.cp === "C") buckets[bucketIndex].callPrem += amount;
+    else buckets[bucketIndex].putPrem += amount;
+  });
+
+  let cumCall = 0;
+  let cumPut = 0;
+  return buckets.map((bucket) => {
+    cumCall += bucket.callPrem;
+    cumPut += bucket.putPrem;
+    const net = bucket.callPrem - bucket.putPrem;
+    return {
+      ...bucket,
+      callPrem: +bucket.callPrem.toFixed(1),
+      putPrem: +bucket.putPrem.toFixed(1),
+      net: +net.toFixed(1),
+      cumCall: +cumCall.toFixed(1),
+      cumPut: +cumPut.toFixed(1),
+      cumNet: +(cumCall - cumPut).toFixed(1),
+    };
+  });
+};
+
+const buildTradeFlowMarkersFromEvents = (events, barsLength) => {
+  if (!barsLength) return [];
+
+  return (events || [])
+    .slice()
+    .sort((left, right) => right.premium - left.premium)
+    .slice(0, 8)
+    .map((evt) => {
+      const minutes = toSessionMinutes(evt.occurredAt);
+      const normalizedMinutes = minutes == null ? (9 * 60 + 30) : Math.max(9 * 60 + 30, Math.min(16 * 60, minutes));
+      const ratio = (normalizedMinutes - (9 * 60 + 30)) / ((16 * 60) - (9 * 60 + 30));
+      return {
+        barIdx: Math.max(0, Math.min(barsLength - 1, Math.round(ratio * (barsLength - 1)))),
+        cp: evt.cp,
+        size: evt.premium >= 500000 ? "lg" : evt.premium >= 150000 ? "md" : "sm",
+        golden: evt.golden,
+      };
+    });
+};
+
+const resolveApiBarTimestampMs = (value) => {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
+  }
+
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  return null;
+};
+
+const buildChartBarsFromApi = (bars) => (
+  (bars || []).reduce((result, bar, index) => {
+    const timeMs = resolveApiBarTimestampMs(bar?.timestamp ?? bar?.ts ?? bar?.time);
+    if (timeMs == null) {
+      return result;
+    }
+
+    result.push({
+      time: timeMs,
+      timestamp: timeMs,
+      ts: typeof bar?.timestamp === "string"
+        ? bar.timestamp
+        : typeof bar?.ts === "string"
+          ? bar.ts
+          : new Date(timeMs).toISOString(),
+      o: bar.open,
+      h: bar.high,
+      l: bar.low,
+      c: bar.close,
+      v: bar.volume,
+      i: index,
+      uoa: 0,
+    });
+    return result;
+  }, [])
+);
+
+const buildMiniChartBarsFromApi = (bars) => buildChartBarsFromApi(bars);
+
+const buildTradeBarsFromApi = (bars) => buildChartBarsFromApi(bars);
+
+const timeframeStepSeconds = (timeframe) => (
+  ({
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "1D": 86400,
+    "1d": 86400,
+  }[timeframe] || 300)
+);
+
 // Options chain generator — strike ladder with greeks approximation
 const genOptionsChain = (basePrice, baseIv, seed) => {
   const r = rng(seed);
@@ -546,6 +1340,9 @@ const genOptionsChain = (basePrice, baseIv, seed) => {
       : moneyness > 0 ? 0.52 + moneyness * 5
       : moneyness > -0.04 ? 0.48 + moneyness * 5
       : Math.max(0.02, 0.28 + moneyness * 3);
+    const putDelta = -(1 - callDelta);
+    const callGreeks = deriveApproxGreeksFromDelta(callDelta);
+    const putGreeks = deriveApproxGreeksFromDelta(putDelta);
     const cPrem = callIntrinsic + extrinsic;
     const pPrem = putIntrinsic + extrinsic * 1.05;
     // Bid/Ask spread — tight ATM, wider OTM
@@ -560,13 +1357,19 @@ const genOptionsChain = (basePrice, baseIv, seed) => {
       cOi: Math.round(500 + r() * 12000),
       cIv: +(baseIv + Math.abs(moneyness) * 0.12 + r() * 0.02).toFixed(3),
       cDelta: +callDelta.toFixed(2),
+      cGamma: callGreeks.gamma,
+      cTheta: callGreeks.theta,
+      cVega: callGreeks.vega,
       pPrem: +pPrem.toFixed(2),
       pBid: +(pPrem - pSpread / 2).toFixed(2),
       pAsk: +(pPrem + pSpread / 2).toFixed(2),
       pVol: Math.round(r() * 2500),
       pOi: Math.round(500 + r() * 12000),
       pIv: +(baseIv + Math.abs(moneyness) * 0.15 + r() * 0.02).toFixed(3),
-      pDelta: +(-(1 - callDelta)).toFixed(2),
+      pDelta: +putDelta.toFixed(2),
+      pGamma: putGreeks.gamma,
+      pTheta: putGreeks.theta,
+      pVega: putGreeks.vega,
       isAtm: Math.abs(k - basePrice) < 2.5,
     });
   }
@@ -577,10 +1380,26 @@ const genOptionsChain = (basePrice, baseIv, seed) => {
 const genOptionPriceBars = (basePremium, seed) => {
   const r = rng(seed);
   let p = basePremium;
+  const stepMs = 5 * 60 * 1000;
+  const startTime = Date.now() - (78 * stepMs);
   return Array.from({ length: 78 }, (_, i) => {
-    const chg = (r() - 0.48) * p * 0.02;
-    p = Math.max(0.05, p + chg);
-    return { t: i, p: +p.toFixed(2) };
+    const o = p;
+    const chg = (r() - 0.48) * Math.max(o, 0.05) * 0.025;
+    const c = Math.max(0.05, o + chg);
+    const wiggle = Math.max(o, c) * (0.008 + r() * 0.01);
+    const h = Math.max(o, c) + wiggle;
+    const l = Math.max(0.01, Math.min(o, c) - wiggle);
+    const v = Math.round(40 + r() * 900);
+    p = c;
+    return {
+      time: startTime + i * stepMs,
+      o: +o.toFixed(2),
+      h: +h.toFixed(2),
+      l: +l.toFixed(2),
+      c: +c.toFixed(2),
+      v,
+      p: +c.toFixed(2),
+    };
   });
 };
 
@@ -604,13 +1423,6 @@ const genTradeBars = (seed, basePrice) => {
     p = c;
     return { t: i, o: +o.toFixed(2), h: +hi.toFixed(2), l: +lo.toFixed(2), c: +c.toFixed(2), v, uoa };
   });
-};
-
-// Quote detail data
-const QUOTE = {
-  open: 580.54, prevClose: 580.54, high: 583.92, low: 579.81,
-  volume: "29.8M", avgVolume: "42.1M", wk52High: 613.23, wk52Low: 498.67,
-  iv: "18.4%", openInt: "3.18M", pcRatio: 0.79,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -642,6 +1454,300 @@ const Pill = ({ children, active, onClick, color }) => (
 
 // Format dollar amount in millions (or thousands if smaller). Module-level so any screen can use it.
 const fmtM = (v) => v >= 1e6 ? `$${(v/1e6).toFixed(1)}M` : `$${(v/1e3).toFixed(0)}K`;
+const fmtCompactCurrency = (value) => {
+  if (value == null || Number.isNaN(value)) return "—";
+  if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+  if (Math.abs(value) >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
+};
+const fmtCompactNumber = (value) => {
+  if (value == null || Number.isNaN(value)) return "—";
+  if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
+  if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return value.toFixed(0);
+};
+const fmtQuoteVolume = (value) => (value == null || Number.isNaN(value) ? "—" : fmtCompactNumber(value));
+
+const QUERY_DEFAULTS = {
+  staleTime: 15_000,
+  refetchInterval: 15_000,
+  retry: 2,
+  retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
+  refetchOnMount: true,
+};
+
+const toDateValue = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getEtClockParts = (value) => {
+  const date = toDateValue(value);
+  if (!date) return null;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "America/New_York",
+  }).formatToParts(date);
+  const hour = Number(parts.find(part => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find(part => part.type === "minute")?.value ?? "0");
+
+  return { hour, minute };
+};
+
+const formatEtTime = (value, { seconds = false } = {}) => {
+  const date = toDateValue(value);
+  if (!date) return "—";
+
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(seconds ? { second: "2-digit" } : {}),
+    hour12: false,
+    timeZone: "America/New_York",
+  });
+};
+
+const formatExpirationLabel = (value) => {
+  if (typeof value === "string" && /^\d{2}\/\d{2}$/.test(value)) return value;
+
+  const date = toDateValue(value);
+  if (!date) return value || "—";
+
+  return `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
+};
+
+const parseExpirationValue = (value) => {
+  const parsed = toDateValue(value);
+  if (parsed) return parsed;
+  if (typeof value !== "string") return null;
+
+  const match = value.match(/^(\d{2})\/(\d{2})$/);
+  if (!match) return null;
+
+  const now = new Date();
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  let candidate = new Date(Date.UTC(now.getUTCFullYear(), month - 1, day));
+
+  if (candidate.getTime() < now.getTime() - 7 * 24 * 60 * 60 * 1000) {
+    candidate = new Date(Date.UTC(now.getUTCFullYear() + 1, month - 1, day));
+  }
+
+  return candidate;
+};
+
+const formatIsoDate = (value) => {
+  const date = toDateValue(value);
+  if (!date) return null;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "America/New_York",
+  }).formatToParts(date);
+  const year = parts.find(part => part.type === "year")?.value;
+  const month = parts.find(part => part.type === "month")?.value;
+  const day = parts.find(part => part.type === "day")?.value;
+
+  return year && month && day ? `${year}-${month}-${day}` : null;
+};
+
+const formatShortDate = (value) => {
+  const date = toDateValue(value);
+  if (!date) return "—";
+
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "America/New_York",
+  });
+};
+
+const formatRelativeTimeShort = (value) => {
+  const date = toDateValue(value);
+  if (!date) return "—";
+
+  const deltaMs = Date.now() - date.getTime();
+  if (deltaMs < 0) return formatShortDate(date);
+
+  const deltaMinutes = Math.floor(deltaMs / 60_000);
+  if (deltaMinutes < 1) return "now";
+  if (deltaMinutes < 60) return `${deltaMinutes}m`;
+
+  const deltaHours = Math.floor(deltaMinutes / 60);
+  if (deltaHours < 24) return `${deltaHours}h`;
+
+  const deltaDays = Math.floor(deltaHours / 24);
+  if (deltaDays < 7) return `${deltaDays}d`;
+
+  return formatShortDate(date);
+};
+
+const formatCalendarMeta = (dateValue, timeValue) => {
+  const dateLabel = formatShortDate(dateValue);
+  if (!timeValue) return dateLabel;
+
+  const normalized = String(timeValue).trim().toUpperCase();
+  if (!normalized) return dateLabel;
+
+  return `${dateLabel} · ${normalized}`;
+};
+
+const mapNewsSentimentToScore = (sentiment) => {
+  const normalized = String(sentiment || "").trim().toLowerCase();
+  if (!normalized) return 0;
+  if (normalized.includes("bull") || normalized.includes("positive")) return 1;
+  if (normalized.includes("bear") || normalized.includes("negative")) return -1;
+  return 0;
+};
+
+const deriveApproxGreeksFromDelta = (deltaValue) => {
+  const absDelta = Math.abs(deltaValue ?? 0.5);
+  const gamma = Math.max(0.005, 0.08 - Math.abs(absDelta - 0.5) * 0.12);
+  const theta = Math.max(0.01, 0.06 + Math.abs(absDelta - 0.5) * 0.05);
+  const vega = Math.max(0.02, 0.15 - Math.abs(absDelta - 0.5) * 0.08);
+
+  return {
+    gamma: +gamma.toFixed(3),
+    theta: -+theta.toFixed(3),
+    vega: +vega.toFixed(3),
+  };
+};
+
+const daysToExpiration = (value) => {
+  const date = parseExpirationValue(value);
+  if (!date) return 0;
+
+  const now = new Date();
+  const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const end = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+
+  return Math.max(0, Math.round((end - start) / (24 * 60 * 60 * 1000)));
+};
+
+const toSessionMinutes = (value) => {
+  const parts = getEtClockParts(value);
+  if (!parts) return null;
+  return parts.hour * 60 + parts.minute;
+};
+
+const formatSessionBucketLabel = (minutes) => {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return `${hour}:${String(minute).padStart(2, "0")}`;
+};
+
+const deriveFlowType = (event) => {
+  const conditions = (event.tradeConditions || []).map(condition => String(condition).toLowerCase());
+
+  if (event.premium >= 500000 || conditions.some(condition => condition.includes("block"))) {
+    return "BLOCK";
+  }
+  if (event.side === "buy" && event.premium >= 100000) {
+    return "SWEEP";
+  }
+  if (conditions.length > 1) {
+    return "MULTI";
+  }
+
+  return "SPLIT";
+};
+
+const deriveFlowScore = (event, dte) => {
+  let score = 35;
+  score += Math.min(35, event.premium / 20000);
+  score += event.side === "buy" ? 12 : event.side === "sell" ? 5 : 0;
+  score += event.sentiment === "neutral" ? 0 : 10;
+  score -= Math.min(10, dte / 7);
+  return Math.max(10, Math.min(99, Math.round(score)));
+};
+
+const mapFlowEventToUi = (event) => {
+  const dte = daysToExpiration(event.expirationDate);
+  const cp = event.right === "call" ? "C" : "P";
+  const side = (event.side || "mid").toUpperCase();
+
+  return {
+    id: event.id,
+    time: formatEtTime(event.occurredAt),
+    ticker: event.underlying,
+    side,
+    contract: `${event.underlying} ${event.strike}${cp} ${formatExpirationLabel(event.expirationDate)}`,
+    strike: event.strike,
+    cp,
+    premium: event.premium,
+    vol: event.size,
+    oi: event.openInterest ?? 0,
+    iv: event.impliedVolatility ?? 0,
+    dte,
+    type: deriveFlowType(event),
+    golden: side === "BUY" && event.premium >= 150000 && event.sentiment === "bullish",
+    score: deriveFlowScore(event, dte),
+    optionTicker: event.optionTicker,
+    expirationDate: event.expirationDate,
+    occurredAt: event.occurredAt,
+    sentiment: event.sentiment,
+    tradeConditions: event.tradeConditions || [],
+  };
+};
+
+const useLiveMarketFlow = (symbols = [], { limit = 16 } = {}) => {
+  const liveSymbols = useMemo(
+    () => [...new Set((symbols || []).map(symbol => symbol?.toUpperCase()).filter(Boolean))].slice(0, 8),
+    [symbols],
+  );
+  const flowQuery = useQuery({
+    queryKey: ["market-flow", liveSymbols, limit],
+    enabled: liveSymbols.length > 0,
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        liveSymbols.map((symbol) => listFlowEventsRequest({ underlying: symbol, limit })),
+      );
+
+      return results.flatMap((result) => (
+        result.status === "fulfilled" ? (result.value.events || []) : []
+      ));
+    },
+    staleTime: 10_000,
+    refetchInterval: 10_000,
+    retry: false,
+  });
+
+  const hasLiveFlow = (flowQuery.data?.length || 0) > 0;
+  const flowEvents = useMemo(() => {
+    if (!hasLiveFlow) return [];
+    return (flowQuery.data || [])
+      .map(mapFlowEventToUi)
+      .sort((left, right) => right.premium - left.premium);
+  }, [hasLiveFlow, flowQuery.data]);
+  const flowStatus = hasLiveFlow
+    ? "live"
+    : flowQuery.isPending
+      ? "loading"
+      : flowQuery.isError
+        ? "offline"
+        : "empty";
+
+  return {
+    hasLiveFlow,
+    flowStatus,
+    flowEvents,
+    flowTide: buildFlowTideFromEvents(flowEvents),
+    tickerFlow: buildTickerFlowFromEvents(flowEvents),
+    flowClock: buildFlowClockFromEvents(flowEvents),
+    sectorFlow: buildSectorFlowFromEvents(flowEvents),
+    dteBuckets: buildDteBucketsFromEvents(flowEvents),
+    marketOrderFlow: buildMarketOrderFlowFromEvents(flowEvents),
+    putCall: buildPutCallSummaryFromEvents(flowEvents),
+  };
+};
 
 const Badge = ({ children, color = T.textDim }) => (
   <span style={{
@@ -649,6 +1755,21 @@ const Badge = ({ children, color = T.textDim }) => (
     fontSize: fs(9), fontWeight: 700, fontFamily: T.mono, letterSpacing: "0.04em",
     background: `${color}18`, color, border: `1px solid ${color}30`,
   }}>{children}</span>
+);
+
+const DataUnavailableState = ({ title = "No live data", detail = "This panel is waiting on a live provider response." }) => (
+  <div style={{
+    width: "100%", height: "100%", minHeight: dim(96),
+    display: "flex", alignItems: "center", justifyContent: "center",
+    padding: sp(12), textAlign: "center",
+    background: T.bg0, border: `1px dashed ${T.border}`, borderRadius: dim(4),
+    color: T.textDim, fontFamily: T.sans,
+  }}>
+    <div style={{ maxWidth: dim(260) }}>
+      <div style={{ fontSize: fs(10), fontWeight: 700, color: T.textSec, letterSpacing: "0.04em" }}>{title}</div>
+      <div style={{ marginTop: sp(4), fontSize: fs(9), lineHeight: 1.45, fontFamily: T.mono }}>{detail}</div>
+    </div>
+  </div>
 );
 
 const MiniSparkline = ({ data, color, width = 60, height = 20 }) => {
@@ -772,6 +1893,8 @@ const ContextPanel = ({ screen, sym, watchlist }) => {
   const positions = usePositions();
   const w = watchlist.find(x => x.sym === sym) || watchlist[0];
   const pos = w.chg >= 0;
+  const quoteDetail = getRuntimeQuoteDetail(w.sym);
+  const marketFlow = useLiveMarketFlow(screen === "market" ? watchlist.map(item => item.sym) : []);
   const [orderSide, setOrderSide] = useState("buy");
   const [orderType, setOrderType] = useState("limit");
   const [qty, setQty] = useState(100);
@@ -786,6 +1909,15 @@ const ContextPanel = ({ screen, sym, watchlist }) => {
   const filteredAlerts = alerts.filter(a => alertFilter === "all" || a.type === alertFilter);
   const unreadCount = alerts.filter(a => !a.read).length;
   const markAllRead = () => setAlerts(prev => prev.map(a => ({ ...a, read: true })));
+  const quoteStats = [
+    ["Open", quoteDetail.open != null ? quoteDetail.open.toFixed(w.price < 10 ? 3 : 2) : "—"],
+    ["Prev Close", quoteDetail.prevClose != null ? quoteDetail.prevClose.toFixed(w.price < 10 ? 3 : 2) : "—"],
+    ["High", quoteDetail.high != null ? quoteDetail.high.toFixed(w.price < 10 ? 3 : 2) : "—"],
+    ["Low", quoteDetail.low != null ? quoteDetail.low.toFixed(w.price < 10 ? 3 : 2) : "—"],
+    ["Volume", fmtQuoteVolume(quoteDetail.volume)],
+    ["Impl. Vol", `${(quoteDetail.iv * 100).toFixed(1)}%`],
+    ["Updated", quoteDetail.updatedAt ? formatEtTime(quoteDetail.updatedAt, { seconds: true }) : "—"],
+  ];
 
   // ── MARKET SCREEN: Should I Trade strip + Alert Center as primary content ──
   if (screen === "market") return (
@@ -846,12 +1978,15 @@ const ContextPanel = ({ screen, sym, watchlist }) => {
       <div style={{ padding: sp("6px 10px"), borderTop: `1px solid ${T.border}`, background: T.bg0 }}>
         <div style={{ fontSize: fs(7), fontWeight: 700, color: T.textMuted, letterSpacing: "0.1em", marginBottom: 3 }}>NET PREMIUM FLOW</div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: fs(9), fontFamily: T.mono }}>
-          <span style={{ color: T.green }}>Calls $4.2M</span>
-          <span style={{ color: T.red }}>Puts $2.8M</span>
-          <span style={{ color: T.accent, fontWeight: 700 }}>+$1.4M</span>
+          <span style={{ color: T.green }}>Calls {fmtM(marketFlow.putCall.calls)}</span>
+          <span style={{ color: T.red }}>Puts {fmtM(marketFlow.putCall.puts)}</span>
+          <span style={{ color: marketFlow.putCall.calls >= marketFlow.putCall.puts ? T.green : T.red, fontWeight: 700 }}>
+            {marketFlow.putCall.calls >= marketFlow.putCall.puts ? "+" : "-"}{fmtM(Math.abs(marketFlow.putCall.calls - marketFlow.putCall.puts))}
+          </span>
         </div>
         <div style={{ display: "flex", height: dim(4), borderRadius: dim(2), marginTop: sp(3), overflow: "hidden" }}>
-          <div style={{ width: "60%", background: T.green }} /><div style={{ width: "40%", background: T.red }} />
+          <div style={{ width: `${(marketFlow.putCall.calls / Math.max(1, marketFlow.putCall.calls + marketFlow.putCall.puts)) * 100}%`, background: T.green }} />
+          <div style={{ width: `${(marketFlow.putCall.puts / Math.max(1, marketFlow.putCall.calls + marketFlow.putCall.puts)) * 100}%`, background: T.red }} />
         </div>
       </div>
 
@@ -976,7 +2111,7 @@ const ContextPanel = ({ screen, sym, watchlist }) => {
       {/* Quote Stats */}
       <div style={{ padding: sp("10px 14px"), borderBottom: `1px solid ${T.border}` }}>
         <div style={{ fontSize: fs(9), fontWeight: 700, color: T.textMuted, letterSpacing: "0.1em", marginBottom: 6 }}>QUOTE DETAIL</div>
-        {[["Open",QUOTE.open],["Prev Close",QUOTE.prevClose],["High",QUOTE.high],["Low",QUOTE.low],["Volume",QUOTE.volume],["52W High",QUOTE.wk52High],["52W Low",QUOTE.wk52Low],["Impl. Vol",QUOTE.iv],["P/C Ratio",QUOTE.pcRatio]].map(([l,v]) => (
+        {quoteStats.map(([l,v]) => (
           <QuoteStat key={l} label={l} value={v} />
         ))}
       </div>
@@ -1126,17 +2261,19 @@ const genOptionsFlowTimeline = (seed, bullish = 0.55) => {
 };
 
 const MACRO_TICKERS = [
-  { sym: "VIX", price: 16.82, chg: -0.34, pct: -1.98 },
-  { sym: "TNX", price: 4.287, chg: +0.031, pct: +0.73, label: "10Y Yield" },
-  { sym: "DXY", price: 103.47, chg: +0.12, pct: +0.12, label: "Dollar" },
-  { sym: "GC=F", price: 3284.50, chg: +18.40, pct: +0.56, label: "Gold" },
-  { sym: "CL=F", price: 63.12, chg: -0.88, pct: -1.37, label: "Crude" },
+  { sym: "VIXY", price: 28.68, chg: +0.28, pct: +0.99, label: "Volatility" },
+  { sym: "IEF", price: 95.54, chg: -0.28, pct: -0.29, label: "Treasuries" },
+  { sym: "UUP", price: 27.385, chg: +0.065, pct: +0.24, label: "Dollar" },
+  { sym: "GLD", price: 434.83, chg: -6.79, pct: -1.54, label: "Gold" },
+  { sym: "USO", price: 123.9488, chg: +2.455, pct: +2.02, label: "Crude" },
 ];
 
-const YIELD_CURVE = [
-  { term: "1M", rate: 5.33 }, { term: "3M", rate: 5.22 }, { term: "6M", rate: 5.08 },
-  { term: "1Y", rate: 4.78 }, { term: "2Y", rate: 4.62 }, { term: "5Y", rate: 4.21 },
-  { term: "10Y", rate: 4.29 }, { term: "20Y", rate: 4.50 }, { term: "30Y", rate: 4.51 },
+const RATES_PROXIES = [
+  { term: "1-3M", sym: "BIL", price: 91.565, chg: +0.0096, pct: +0.01, d5: 0 },
+  { term: "1-3Y", sym: "SHY", price: 82.530838, chg: -0.065, pct: -0.08, d5: 0 },
+  { term: "3-7Y", sym: "IEI", price: 118.675, chg: -0.235, pct: -0.20, d5: 0 },
+  { term: "7-10Y", sym: "IEF", price: 95.5401, chg: -0.28, pct: -0.29, d5: 0 },
+  { term: "20Y+", sym: "TLT", price: 86.67, chg: -0.35, pct: -0.40, d5: 0 },
 ];
 
 const SECTORS = [
@@ -1173,7 +2310,7 @@ const TREEMAP_DATA = [
     { sym: "NKE", cap: 120, d1: -1.45, d5: -3.2 }, { sym: "SBUX", cap: 110, d1: -0.89, d5: -1.7 },
   ]},
   { sector: "FINANCIAL", stocks: [
-    { sym: "BRK-B", cap: 880, d1: +0.75, d5: +1.2 }, { sym: "JPM", cap: 620, d1: +1.34, d5: +2.8 },
+    { sym: "BRK.B", cap: 880, d1: +0.75, d5: +1.2 }, { sym: "JPM", cap: 620, d1: +1.34, d5: +2.8 },
     { sym: "V", cap: 580, d1: +0.92, d5: +1.9 }, { sym: "MA", cap: 440, d1: +0.67, d5: +1.5 },
     { sym: "BAC", cap: 310, d1: +1.12, d5: +2.3 }, { sym: "GS", cap: 160, d1: +0.56, d5: +1.1 },
   ]},
@@ -1195,6 +2332,25 @@ const TREEMAP_DATA = [
     { sym: "WMT", cap: 580, d1: +0.29, d5: +0.6 }, { sym: "PG", cap: 380, d1: +0.45, d5: +0.9 },
     { sym: "COST", cap: 340, d1: +0.67, d5: +1.4 }, { sym: "KO", cap: 260, d1: +0.12, d5: +0.3 },
   ]},
+];
+
+const TREEMAP_SYMBOLS = [...new Set(TREEMAP_DATA.flatMap(sector => sector.stocks.map(stock => stock.sym)))];
+const MARKET_SNAPSHOT_SYMBOLS = [
+  ...new Set([
+    ...INDICES.map(item => item.sym),
+    ...MACRO_TICKERS.map(item => item.sym),
+    ...RATES_PROXIES.map(item => item.sym),
+    ...SECTORS.map(item => item.sym),
+    ...TREEMAP_SYMBOLS,
+  ]),
+];
+const MARKET_PERFORMANCE_SYMBOLS = [
+  ...new Set([
+    ...MACRO_TICKERS.map(item => item.sym),
+    ...RATES_PROXIES.map(item => item.sym),
+    ...SECTORS.map(item => item.sym),
+    ...TREEMAP_SYMBOLS,
+  ]),
 ];
 
 // TreemapHeatmap — SVG-rendered, D3-powered, Finviz-quality
@@ -1574,8 +2730,12 @@ const OrderFlowDistribution = ({ flow, donutSize = 96 }) => {
 const ShouldITradeStrip = ({ sym = "SPY" }) => {
   // Per-ticker score computation.
   // Base scores from COND, then shifted based on the active ticker's character.
-  const tickerScores = useMemo(() => {
+  const tickerScores = (() => {
     const info = TRADE_TICKER_INFO[sym] || TRADE_TICKER_INFO.SPY;
+    const breadth = buildTrackedBreadthSummary();
+    const volProxy = MACRO_TICKERS.find(item => item.sym === "VIXY") || MACRO_TICKERS[0];
+    const goldProxy = MACRO_TICKERS.find(item => item.sym === "GLD") || MACRO_TICKERS[3];
+    const crudeProxy = MACRO_TICKERS.find(item => item.sym === "USO") || MACRO_TICKERS[4];
     // Ticker "character" map — hand-tuned to reflect typical regime personality of each name
     const tilt = {
       SPY:  { vol:  0, trend:  0, breadth:  0, mom:  0 },
@@ -1589,10 +2749,39 @@ const ShouldITradeStrip = ({ sym = "SPY" }) => {
       IWM:  { vol: +12, trend: -10, breadth: -14, mom: -6 },
       DIA:  { vol: -6, trend: +3, breadth: +5, mom: +1 },
       VIX:  { vol: +35, trend: -20, breadth: -25, mom: -10 },
+      VIXY: { vol: +24, trend: -12, breadth: -18, mom: -8 },
+      IEF:  { vol: -10, trend: -4, breadth: +6, mom: -3 },
+      UUP:  { vol: +6, trend: +2, breadth: -2, mom: +1 },
     };
     const t = tilt[sym] || { vol: 0, trend: 0, breadth: 0, mom: 0 };
     // Also nudge based on the ticker's day performance (green day lifts trend/mom)
     const dayNudge = Math.round(info.pct * 2); // e.g. +3% day adds 6 points
+    const dynamicItems = {
+      vol: [
+        [volProxy?.sym || "VIXY", typeof volProxy?.price === "number" ? volProxy.price.toFixed(2) : "—", volProxy?.pct >= 0 ? "↑" : "↓"],
+        ["Vol 1D", typeof volProxy?.pct === "number" ? `${volProxy.pct >= 0 ? "+" : ""}${volProxy.pct.toFixed(2)}%` : "—", volProxy?.pct >= 0 ? "↑" : "↓"],
+        [goldProxy?.sym || "GLD", typeof goldProxy?.pct === "number" ? `${goldProxy.pct >= 0 ? "+" : ""}${goldProxy.pct.toFixed(2)}%` : "—", goldProxy?.pct >= 0 ? "↑" : "↓"],
+        [crudeProxy?.sym || "USO", typeof crudeProxy?.pct === "number" ? `${crudeProxy.pct >= 0 ? "+" : ""}${crudeProxy.pct.toFixed(2)}%` : "—", crudeProxy?.pct >= 0 ? "↑" : "↓"],
+      ],
+      trend: [
+        ["vs Open", info.open != null ? (info.price >= info.open ? "Above" : "Below") : "—", info.open != null ? (info.price >= info.open ? "↑" : "↓") : "→"],
+        ["vs Prev", info.prevClose != null ? (info.price >= info.prevClose ? "Above" : "Below") : "—", info.prevClose != null ? (info.price >= info.prevClose ? "↑" : "↓") : "→"],
+        ["Day High", info.high != null ? info.high.toFixed(2) : "—", "→"],
+        ["Day Low", info.low != null ? info.low.toFixed(2) : "—", "→"],
+      ],
+      breadth: [
+        ["A/D", `${breadth.advancers}:${breadth.decliners}`, breadth.advancers >= breadth.decliners ? "↑" : "↓"],
+        ["5D+", `${breadth.positive5dPct.toFixed(0)}%`, breadth.positive5dPct >= 50 ? "↑" : "↓"],
+        ["Sectors+", `${breadth.positiveSectors}/${SECTORS.length}`, breadth.positiveSectors >= Math.ceil(SECTORS.length / 2) ? "↑" : "↓"],
+        ["Lead", breadth.leader?.sym || "—", breadth.leader?.chg >= 0 ? "↑" : "↓"],
+      ],
+      mom: [
+        ["Lead", breadth.leader?.sym || "—", breadth.leader?.chg >= 0 ? "↑" : "↓"],
+        ["Lag", breadth.laggard?.sym || "—", breadth.laggard?.chg >= 0 ? "↑" : "↓"],
+        ["Gold", typeof goldProxy?.pct === "number" ? `${goldProxy.pct >= 0 ? "+" : ""}${goldProxy.pct.toFixed(2)}%` : "—", goldProxy?.pct >= 0 ? "↑" : "↓"],
+        ["Crude", typeof crudeProxy?.pct === "number" ? `${crudeProxy.pct >= 0 ? "+" : ""}${crudeProxy.pct.toFixed(2)}%` : "—", crudeProxy?.pct >= 0 ? "↑" : "↓"],
+      ],
+    };
     // Build condition cards with recomputed scores
     return COND.map(c => {
       const key = c.key === "trend" ? "trend" : c.key === "breadth" ? "breadth" : c.key === "mom" ? "mom" : "vol";
@@ -1601,9 +2790,9 @@ const ShouldITradeStrip = ({ sym = "SPY" }) => {
       const score = Math.max(10, Math.min(95, c.score + delta + perfAdjust));
       // Dynamically recolor based on the score rather than carrying the static color
       const color = score >= 75 ? T.green : score >= 55 ? T.amber : T.red;
-      return { ...c, score, color };
+      return { ...c, score, color, items: dynamicItems[key] || c.items };
     });
-  }, [sym]);
+  })();
 
   const mqScore = Math.round(tickerScores.reduce((a, c) => a + c.score, 0) / tickerScores.length);
   const mqColor = mqScore >= 70 ? T.green : mqScore >= 50 ? T.amber : T.red;
@@ -1686,10 +2875,26 @@ const MiniChartCell = ({ ticker, onFocus, isActive }) => {
   const [tf, setTf] = useState("5m");
   // Different bar counts for different timeframes (more bars on shorter TFs feels more "live")
   const tfBars = { "1m": 120, "5m": 78, "15m": 52, "1h": 39, "1D": 60 }[tf] || 78;
-  const bars = useMemo(() => {
-    const seed = ticker.charCodeAt(0) * 7 + (ticker.charCodeAt(1) || 0) + tfBars;
-    return genBars(seed, tfBars, w.price);
-  }, [ticker, tf]);
+  const barsQuery = useQuery({
+    queryKey: ["market-mini-bars", ticker, tf, tfBars],
+    queryFn: () => getBarsRequest({
+      symbol: ticker,
+      timeframe: tf === "1D" ? "1d" : tf,
+      limit: tfBars,
+    }),
+    ...QUERY_DEFAULTS,
+  });
+  const bars = useMemo(
+    () => buildMiniChartBarsFromApi(barsQuery.data?.bars),
+    [barsQuery.data],
+  );
+  const barsStatus = bars.length
+    ? "live"
+    : barsQuery.isPending
+      ? "loading"
+      : barsQuery.isError
+        ? "offline"
+        : "empty";
 
   return (
     <div
@@ -1713,6 +2918,9 @@ const MiniChartCell = ({ ticker, onFocus, isActive }) => {
           {pos ? "+" : ""}{w.pct.toFixed(2)}%
         </span>
         <span style={{ flex: 1 }} />
+        <span style={{ fontSize: fs(7), fontFamily: T.mono, color: barsStatus === "live" ? T.accent : T.textMuted }}>
+          {barsStatus === "live" ? `Massive ${tf}` : barsStatus}
+        </span>
         {/* Timeframe pills */}
         <div style={{ display: "flex", gap: 1 }}>
           {["1m", "5m", "15m", "1h", "1D"].map(t => (
@@ -1731,32 +2939,23 @@ const MiniChartCell = ({ ticker, onFocus, isActive }) => {
       </div>
       {/* Chart body */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={bars} margin={{ top: 4, right: 4, bottom: 0, left: -28 }}>
-            <XAxis dataKey="time" tick={false} axisLine={false} />
-            <YAxis domain={["auto", "auto"]} tick={{ fontSize: fs(7), fill: T.textMuted }} axisLine={false} width={28} />
-            <Area dataKey="c" fill={pos ? `${T.green}10` : `${T.red}10`} stroke={pos ? T.green : T.red} strokeWidth={1.2} dot={false} isAnimationActive={false} />
-            <ReferenceLine y={bars[0]?.o} stroke={T.textMuted} strokeDasharray="2 2" strokeWidth={0.5} />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-      {/* Volume strip with UOA overlay */}
-      <div style={{ height: dim(20), flexShrink: 0 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart
-            data={bars.map(b => ({ ...b, vNormal: b.v * (1 - (b.uoa || 0)), vUoa: b.v * (b.uoa || 0) }))}
-            margin={{ top: 0, right: 4, bottom: 0, left: -28 }}
-          >
-            <XAxis dataKey="time" hide />
-            <YAxis tick={false} axisLine={false} width={28} />
-            <Bar dataKey="vNormal" stackId="vol" isAnimationActive={false}>
-              {bars.map((b, i) => (
-                <Cell key={i} fill={b.c >= b.o ? `${T.green}40` : `${T.red}40`} />
-              ))}
-            </Bar>
-            <Bar dataKey="vUoa" stackId="vol" radius={[1, 1, 0, 0]} fill={T.amber} isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
+        {bars.length ? (
+          <LightweightMiniChart
+            theme={T}
+            bars={bars}
+            bullish={pos}
+            openPrice={bars[0]?.o}
+            stepSeconds={timeframeStepSeconds(tf)}
+            volumeHeight={dim(20)}
+          />
+        ) : (
+          <DataUnavailableState
+            title="No live chart bars"
+            detail={barsStatus === "loading"
+              ? `Loading ${ticker} ${tf} bars from Massive.`
+              : `No ${tf} chart bars are available for ${ticker} right now.`}
+          />
+        )}
       </div>
     </div>
   );
@@ -1831,8 +3030,108 @@ const MultiChartGrid = ({ activeSym, onSymClick }) => {
 };
 
 
-const MarketScreen = ({ sym, onSymClick }) => {
+const MarketScreen = ({ sym, onSymClick, symbols = [], researchConfigured = false }) => {
   const [sectorTf, setSectorTf] = useState("1d");
+  const { putCall, sectorFlow, tickerFlow, flowStatus } = useLiveMarketFlow(symbols);
+  const calendarWindow = useMemo(() => {
+    const from = new Date();
+    const to = new Date(from);
+    to.setUTCDate(to.getUTCDate() + 14);
+
+    return {
+      from: formatIsoDate(from),
+      to: formatIsoDate(to),
+    };
+  }, []);
+  const newsQuery = useGetNews(
+    { limit: 6 },
+    {
+      query: {
+        staleTime: 60_000,
+        refetchInterval: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const earningsQuery = useGetResearchEarningsCalendar(
+    calendarWindow,
+    {
+      query: {
+        enabled: Boolean(researchConfigured && calendarWindow.from && calendarWindow.to),
+        staleTime: 300_000,
+        refetchInterval: 300_000,
+        retry: false,
+      },
+    },
+  );
+  const breadth = buildTrackedBreadthSummary();
+  const ratesSummary = buildRatesProxySummary();
+  const volatilityProxy = MACRO_TICKERS.find(item => item.sym === "VIXY") || MACRO_TICKERS[0];
+  const putCallBullish = putCall.total <= 1;
+  const putCallMarkerPct = Math.max(8, Math.min(92, (putCall.total / 2) * 100));
+  const upPct = breadth.advancePct;
+  const downPct = 100 - upPct;
+  const analysisLeader = breadth.leader;
+  const analysisLaggard = breadth.laggard;
+  const newsItems = useMemo(() => {
+    const articles = newsQuery.data?.articles || [];
+    return articles.map((article) => ({
+      id: article.id,
+      text: article.title,
+      time: formatRelativeTimeShort(article.publishedAt),
+      tag: article.tickers?.[0] || article.publisher?.name?.slice(0, 8)?.toUpperCase() || "NEWS",
+      s: mapNewsSentimentToScore(article.sentiment),
+      articleUrl: article.articleUrl,
+      publisher: article.publisher?.name || null,
+    }));
+  }, [newsQuery.data]);
+  const calendarItems = useMemo(() => {
+    const entries = earningsQuery.data?.entries || [];
+
+    if (!researchConfigured || !entries.length) {
+      return [];
+    }
+
+    const deduped = [];
+    const seen = new Set();
+
+    entries
+      .filter((entry) => entry?.symbol && entry?.date)
+      .sort((left, right) => {
+        const leftValue = left.date ? Date.parse(left.date) : Number.POSITIVE_INFINITY;
+        const rightValue = right.date ? Date.parse(right.date) : Number.POSITIVE_INFINITY;
+        return leftValue - rightValue;
+      })
+      .forEach((entry) => {
+        const key = `${entry.symbol}_${entry.date}_${entry.time || ""}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        deduped.push({
+          id: key,
+          label: `${entry.symbol} earnings`,
+          date: formatCalendarMeta(entry.date, entry.time),
+          type: "earnings",
+        });
+      });
+
+    return deduped.slice(0, 7);
+  }, [earningsQuery.data, researchConfigured]);
+  const newsStatusLabel = newsQuery.data?.articles?.length
+    ? "live · Massive"
+    : newsQuery.isError
+      ? "offline"
+      : newsQuery.isPending
+        ? "loading"
+        : "empty";
+  const calendarStatusLabel = researchConfigured
+    ? (earningsQuery.data?.entries?.length
+      ? "earnings · live"
+      : earningsQuery.isError
+        ? "offline"
+        : earningsQuery.isPending
+          ? "loading"
+          : "empty")
+    : "research off";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1842,7 +3141,7 @@ const MarketScreen = ({ sym, onSymClick }) => {
           const pos = m.chg >= 0;
           return (<div key={m.sym} style={{ display: "flex", alignItems: "center", gap: sp(4), flexShrink: 0 }}>
             <span style={{ fontSize: fs(8), fontWeight: 700, fontFamily: T.mono, color: T.textSec }}>{m.label || m.sym}</span>
-            <span style={{ fontSize: fs(9), fontFamily: T.mono, fontWeight: 600, color: T.text }}>{m.price >= 100 ? m.price.toFixed(2) : m.price.toFixed(3)}</span>
+            <span style={{ fontSize: fs(9), fontFamily: T.mono, fontWeight: 600, color: T.text }}>{m.price >= 10 ? m.price.toFixed(2) : m.price.toFixed(3)}</span>
             <span style={{ fontSize: fs(8), fontFamily: T.mono, fontWeight: 600, color: pos ? T.green : T.red }}>{pos ? "+" : ""}{m.pct.toFixed(2)}%</span>
             <div style={{ width: dim(1), height: dim(12), background: T.border }} />
           </div>);
@@ -1855,11 +3154,14 @@ const MarketScreen = ({ sym, onSymClick }) => {
         {/* ── ROW 1: Index Cards (gauge moved to right rail) ── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 5 }}>
           {INDICES.map(idx => {
+            const liveTickerFlow = tickerFlow.find(item => item.sym === idx.sym);
+            const callPrem = liveTickerFlow?.calls ?? 0;
+            const putPrem = liveTickerFlow?.puts ?? 0;
             const p = idx.chg >= 0;
-            const totalPrem = idx.callPrem + idx.putPrem;
-            const callPct = (idx.callPrem / totalPrem) * 100;
+            const totalPrem = Math.max(callPrem + putPrem, 1);
+            const callPct = (callPrem / totalPrem) * 100;
             const putPct = 100 - callPct;
-            const flowDir = idx.callPrem - idx.putPrem;
+            const flowDir = callPrem - putPrem;
             return (<Card key={idx.sym} style={{ padding: "5px 8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.mono, color: T.text }}>{idx.sym}</div>
@@ -1872,9 +3174,9 @@ const MarketScreen = ({ sym, onSymClick }) => {
               {/* Net premium flow bar */}
               <div style={{ marginTop: sp(3), paddingTop: sp(3), borderTop: `1px solid ${T.border}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: fs(7), fontFamily: T.mono, marginBottom: sp(2) }}>
-                  <span style={{ color: T.green, fontWeight: 600 }}>C ${idx.callPrem.toFixed(1)}M</span>
+                  <span style={{ color: T.green, fontWeight: 600 }}>C ${callPrem.toFixed(1)}M</span>
                   <span style={{ color: flowDir >= 0 ? T.green : T.red, fontWeight: 700 }}>{flowDir >= 0 ? "+" : ""}${flowDir.toFixed(1)}M</span>
-                  <span style={{ color: T.red, fontWeight: 600 }}>P ${idx.putPrem.toFixed(1)}M</span>
+                  <span style={{ color: T.red, fontWeight: 600 }}>P ${putPrem.toFixed(1)}M</span>
                 </div>
                 <div style={{ display: "flex", height: dim(4), borderRadius: dim(2), overflow: "hidden", background: T.bg3 }}>
                   <div style={{ width: `${callPct}%`, background: T.green, opacity: 0.85 }} />
@@ -1909,37 +3211,62 @@ const MarketScreen = ({ sym, onSymClick }) => {
           <Card style={{ padding: "5px 10px" }}>
             <CardTitle>Put / Call</CardTitle>
             <div style={{ display: "flex", alignItems: "baseline", gap: sp(4), marginBottom: 3 }}>
-              <span style={{ fontSize: fs(18), fontWeight: 800, fontFamily: T.mono, color: T.text }}>0.79</span>
-              <span style={{ fontSize: fs(8), fontFamily: T.mono, color: T.green }}>▼ 0.03</span><span style={{ fontSize: fs(7), color: T.textMuted }}>avg 0.85</span>
+              <span style={{ fontSize: fs(18), fontWeight: 800, fontFamily: T.mono, color: T.text }}>{putCall.total.toFixed(2)}</span>
+              <span style={{ fontSize: fs(8), fontFamily: T.mono, color: putCallBullish ? T.green : T.red }}>
+                {putCallBullish ? "▼" : "▲"} {Math.abs(putCall.total - 1).toFixed(2)}
+              </span>
+              <span style={{ fontSize: fs(7), color: T.textMuted }}>neutral 1.00</span>
             </div>
             <div style={{ display: "flex", height: dim(6), borderRadius: dim(3), overflow: "hidden", marginBottom: 4 }}>
               <div style={{ flex: 1, background: `linear-gradient(to right, ${T.red}, ${T.amber})` }} />
               <div style={{ flex: 1, background: `linear-gradient(to right, ${T.amber}, ${T.green})` }} />
             </div>
-            <div style={{ position: "relative", height: dim(5), marginTop: -3 }}><div style={{ position: "absolute", left: "62%", transform: "translateX(-50%)", borderLeft: "3px solid transparent", borderRight: "3px solid transparent", borderBottom: `4px solid ${T.text}` }} /></div>
+            <div style={{ position: "relative", height: dim(5), marginTop: -3 }}><div style={{ position: "absolute", left: `${putCallMarkerPct}%`, transform: "translateX(-50%)", borderLeft: "3px solid transparent", borderRight: "3px solid transparent", borderBottom: `4px solid ${T.text}` }} /></div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: sp(3), fontSize: fs(8), fontFamily: T.mono }}>
-              <span style={{ color: T.textMuted }}>Eq <span style={{ color: T.textSec }}>0.64</span></span><span style={{ color: T.textMuted }}>Idx <span style={{ color: T.textSec }}>1.12</span></span><span style={{ color: T.textMuted }}>Tot <span style={{ color: T.textSec }}>0.79</span></span>
+              <span style={{ color: T.textMuted }}>Eq <span style={{ color: T.textSec }}>{putCall.equities.toFixed(2)}</span></span>
+              <span style={{ color: T.textMuted }}>Idx <span style={{ color: T.textSec }}>{putCall.indices.toFixed(2)}</span></span>
+              <span style={{ color: T.textMuted }}>Tot <span style={{ color: T.textSec }}>{putCall.total.toFixed(2)}</span></span>
             </div>
           </Card>
           <Card style={{ padding: "5px 10px" }}>
-            <CardTitle>Yield Curve</CardTitle>
-            <div style={{ height: 72 }}>
-              <ResponsiveContainer width="100%" height="100%"><ComposedChart data={YIELD_CURVE} margin={{ top:2,right:2,bottom:0,left:-12 }}>
-                <XAxis dataKey="term" tick={{ fontSize: fs(6), fill: T.textMuted }} /><YAxis domain={[3.8,5.5]} tick={{ fontSize: fs(6), fill: T.textMuted }} />
-                <Area dataKey="rate" fill={`${T.amber}10`} stroke={T.amber} strokeWidth={1.5} dot={{ r: 1.5, fill: T.amber }} />
-              </ComposedChart></ResponsiveContainer>
+            <CardTitle>Rates Proxies</CardTitle>
+            <div style={{ display: "flex", flexDirection: "column", gap: sp(3), minHeight: 72 }}>
+              {RATES_PROXIES.map((item) => {
+                const pos = item.pct >= 0;
+                const width = Math.max(6, Math.min(100, Math.abs(item.pct) * 48));
+                return (
+                  <div key={item.sym} style={{ display: "grid", gridTemplateColumns: "46px 40px 1fr 40px", alignItems: "center", gap: sp(4), fontSize: fs(7), fontFamily: T.mono }}>
+                    <span style={{ color: T.textDim }}>{item.term}</span>
+                    <span style={{ color: T.textSec, fontWeight: 600 }}>{item.sym}</span>
+                    <div style={{ height: dim(6), position: "relative", background: T.bg3, borderRadius: dim(3) }}>
+                      <div style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: `${width}%`, borderRadius: dim(3), background: pos ? T.green : T.red, opacity: 0.85 }} />
+                    </div>
+                    <span style={{ color: pos ? T.green : T.red, textAlign: "right", fontWeight: 700 }}>{pos ? "+" : ""}{item.pct.toFixed(2)}%</span>
+                  </div>
+                );
+              })}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: fs(7), fontFamily: T.mono }}><span style={{ color: T.textMuted }}>2s10s <span style={{ color: T.red }}>-0.33%</span></span><span style={{ color: T.textMuted }}>Fed <span style={{ color: T.textSec }}>4.25-4.50%</span></span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: fs(7), fontFamily: T.mono }}>
+              <span style={{ color: T.textMuted }}>Lead <span style={{ color: T.textSec }}>{ratesSummary.leader?.sym || "—"}</span></span>
+              <span style={{ color: T.textMuted }}>Lag <span style={{ color: T.textSec }}>{ratesSummary.laggard?.sym || "—"}</span></span>
+            </div>
           </Card>
           <Card style={{ padding: "5px 10px" }}>
             <CardTitle>Breadth</CardTitle>
             <div style={{ display: "flex", alignItems: "center", gap: sp(4), marginBottom: 3 }}>
-              <span style={{ fontSize: fs(10), fontFamily: T.mono, fontWeight: 800, color: T.green }}>4,518</span>
-              <div style={{ flex: 1, display: "flex", height: dim(7), borderRadius: dim(3), overflow: "hidden" }}><div style={{ width: "73.8%", background: T.green }} /><div style={{ width: "26.2%", background: T.red }} /></div>
-              <span style={{ fontSize: fs(10), fontFamily: T.mono, fontWeight: 800, color: T.red }}>1,605</span>
+              <span style={{ fontSize: fs(10), fontFamily: T.mono, fontWeight: 800, color: T.green }}>{breadth.advancers}</span>
+              <div style={{ flex: 1, display: "flex", height: dim(7), borderRadius: dim(3), overflow: "hidden" }}><div style={{ width: `${upPct}%`, background: T.green }} /><div style={{ width: `${downPct}%`, background: T.red }} /></div>
+              <span style={{ fontSize: fs(10), fontFamily: T.mono, fontWeight: 800, color: T.red }}>{breadth.decliners}</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(1), fontSize: fs(7), fontFamily: T.mono }}>
-              {[[">20d","62%",T.amber],[">50d","58%",T.amber],[">200d","64%",T.green],["McCl.","+18.4",T.green],["NH","124",T.green],["NL","38",T.red]].map(([l,v,c],i)=>(
+              {[
+                ["Up", `${upPct.toFixed(0)}%`, T.green],
+                ["5D+", `${breadth.positive5dPct.toFixed(0)}%`, breadth.positive5dPct >= 50 ? T.green : T.amber],
+                ["Unchg", `${breadth.unchanged}`, T.text],
+                ["Sectors+", `${breadth.positiveSectors}/${SECTORS.length}`, breadth.positiveSectors >= Math.ceil(SECTORS.length / 2) ? T.green : T.amber],
+                ["Lead", breadth.leader?.sym || "—", breadth.leader?.chg >= 0 ? T.green : T.red],
+                ["Lag", breadth.laggard?.sym || "—", breadth.laggard?.chg >= 0 ? T.green : T.red],
+              ].map(([l,v,c],i)=>(
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: sp("1px 3px"), background: i%2===0?`${T.bg3}40`:"transparent", borderRadius: 2 }}><span style={{ color: T.textDim }}>{l}</span><span style={{ color: c, fontWeight: 600 }}>{v}</span></div>
               ))}
             </div>
@@ -1948,11 +3275,11 @@ const MarketScreen = ({ sym, onSymClick }) => {
 
         {/* ── ROW 4.5: Sector Flow (full width, horizontal layout) — sector rotation read ── */}
         <Card style={{ padding: "8px 12px", flexShrink: 0 }}>
-          <CardTitle right={<span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>net option premium · today · sector rotation</span>}>Sector Flow</CardTitle>
-          {(() => {
-            const absMax = Math.max(...SECTOR_FLOW.map(x => Math.abs(x.calls - x.puts)));
+          <CardTitle right={<span style={{ fontSize: fs(8), color: flowStatus === "live" ? T.accent : T.textMuted, fontFamily: T.mono }}>{flowStatus === "live" ? "live option premium · today · sector rotation" : `flow ${flowStatus}`}</span>}>Sector Flow</CardTitle>
+          {sectorFlow.length ? (() => {
+            const absMax = Math.max(1, ...sectorFlow.map(x => Math.abs(x.calls - x.puts)));
             // Sort by net flow magnitude — strongest signals first
-            const sorted = [...SECTOR_FLOW].map(s => ({ ...s, net: s.calls - s.puts })).sort((a, b) => b.net - a.net);
+            const sorted = [...sectorFlow].map(s => ({ ...s, net: s.calls - s.puts })).sort((a, b) => b.net - a.net);
             const half = Math.ceil(sorted.length / 2);
             const left = sorted.slice(0, half);
             const right = sorted.slice(half);
@@ -1982,35 +3309,69 @@ const MarketScreen = ({ sym, onSymClick }) => {
                 <div>{right.map(renderBar)}</div>
               </div>
             );
-          })()}
+          })() : (
+            <DataUnavailableState
+              title="No live sector flow"
+              detail={flowStatus === "loading"
+                ? "Waiting on live options flow snapshots for the tracked market symbols."
+                : "Sector rotation is hidden until a live options flow provider returns current data."}
+            />
+          )}
         </Card>
 
         {/* ── ROW 5: News + Calendar + AI ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.7fr 1fr", gap: 6 }}>
           <Card style={{ padding: "6px 10px" }}>
-            <CardTitle right={<span style={{ fontSize: fs(7), color: T.accent, cursor: "pointer" }}>All →</span>}>News</CardTitle>
-            {NEWS.map((n,i)=>(<div key={i} style={{ display: "flex", gap: sp(5), padding: sp("3px 0"), alignItems: "flex-start", borderBottom: i<NEWS.length-1?`1px solid ${T.border}06`:"none", cursor: "pointer" }}
-              onMouseEnter={e=>e.currentTarget.style.background=T.bg3} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <Badge color={T.accent}>{n.tag}</Badge>
-              <div style={{ width: dim(4), height: dim(4), borderRadius: "50%", background: n.s===1?T.green:n.s===-1?T.red:T.textDim, marginTop: sp(4), flexShrink: 0 }} />
-              <span style={{ flex: 1, fontSize: fs(10), color: T.textSec, fontFamily: T.sans, lineHeight: 1.4 }}>{n.text}</span>
-              <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>{n.time}</span>
-            </div>))}
+            <CardTitle right={<span style={{ fontSize: fs(7), color: newsStatusLabel === "live · Massive" ? T.accent : T.textDim, fontFamily: T.mono }}>{newsStatusLabel}</span>}>News</CardTitle>
+            {newsItems.length ? newsItems.map((item, index) => (
+              <div
+                key={item.id}
+                style={{ display: "flex", gap: sp(5), padding: sp("3px 0"), alignItems: "flex-start", borderBottom: index < newsItems.length - 1 ? `1px solid ${T.border}06` : "none", cursor: item.articleUrl ? "pointer" : "default" }}
+                onMouseEnter={e => e.currentTarget.style.background = T.bg3}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                onClick={() => {
+                  if (!item.articleUrl || typeof window === "undefined") return;
+                  window.open(item.articleUrl, "_blank", "noopener,noreferrer");
+                }}
+                title={item.publisher || undefined}
+              >
+                <Badge color={T.accent}>{item.tag}</Badge>
+                <div style={{ width: dim(4), height: dim(4), borderRadius: "50%", background: item.s === 1 ? T.green : item.s === -1 ? T.red : T.textDim, marginTop: sp(4), flexShrink: 0 }} />
+                <span style={{ flex: 1, fontSize: fs(10), color: T.textSec, fontFamily: T.sans, lineHeight: 1.4 }}>{item.text}</span>
+                <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono, whiteSpace: "nowrap" }}>{item.time}</span>
+              </div>
+            )) : (
+              <DataUnavailableState
+                title="No live news feed"
+                detail={newsStatusLabel === "loading"
+                  ? "Waiting on the live news provider."
+                  : "The news card only shows provider-backed headlines now; no authored fallback feed is rendered."}
+              />
+            )}
           </Card>
           <Card style={{ padding: "6px 10px" }}>
-            <CardTitle>Calendar</CardTitle>
-            {EVENTS.map((ev,i)=>{const tc=ev.type==="fomc"||ev.type==="cpi"?T.amber:ev.type==="earnings"?T.green:ev.type==="holiday"?T.red:T.accent; return (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: sp(4), padding: sp("3px 0"), borderBottom: i<EVENTS.length-1?`1px solid ${T.border}06`:"none" }}>
+            <CardTitle right={<span style={{ fontSize: fs(7), color: calendarStatusLabel === "earnings · live" ? T.accent : T.textDim, fontFamily: T.mono }}>{calendarStatusLabel}</span>}>Calendar</CardTitle>
+            {calendarItems.length ? calendarItems.map((ev, i) => { const tc = ev.type === "fomc" || ev.type === "cpi" ? T.amber : ev.type === "earnings" ? T.green : ev.type === "holiday" ? T.red : T.accent; return (
+              <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: sp(4), padding: sp("3px 0"), borderBottom: i < calendarItems.length - 1 ? `1px solid ${T.border}06` : "none" }}>
                 <div style={{ width: dim(2), height: dim(16), borderRadius: dim(1), background: tc, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: fs(10), fontWeight: 600, fontFamily: T.sans, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.label}</div><div style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>{ev.date}</div></div>
-              </div>);})}
+              </div>);}) : (
+                <DataUnavailableState
+                  title="No live calendar data"
+                  detail={calendarStatusLabel === "loading"
+                    ? "Waiting on the earnings calendar provider."
+                    : researchConfigured
+                      ? "The calendar is empty because no live entries were returned for the current window."
+                      : "Research calendar access is not configured for this environment."}
+                />
+              )}
           </Card>
           <Card style={{ display: "flex", flexDirection: "column", padding: "6px 10px" }}>
             <CardTitle right={<Badge color={T.purple}>AI</Badge>}>Analysis</CardTitle>
             <div style={{ flex: 1, fontSize: fs(10), fontFamily: T.sans, color: T.textSec, lineHeight: 1.5, padding: sp("5px 8px"), background: T.bg0, borderRadius: dim(4), border: `1px solid ${T.border}` }}>
-              <span style={{ color: T.green }}>▸</span> Moderate — VIX 22nd %ile supports entries. Defensive rotation (XLU, XLC) signals late-cycle.{"\n\n"}
-              <span style={{ color: T.amber }}>▸</span> FOMC 19d — halve new sizing. 2s10s -33bp precedes vol expansion.{"\n\n"}
-              <span style={{ color: T.accent }}>▸</span> Favor existing winners. Trend intact (3 HH/HL), participation 41% below threshold.
+              <span style={{ color: volatilityProxy?.pct <= 0 ? T.green : T.amber }}>▸</span> {volatilityProxy?.label || "Volatility"} proxy {volatilityProxy?.pct >= 0 ? "firming" : "easing"} at {volatilityProxy?.price?.toFixed?.(2) || "—"}; flow is strongest in {analysisLeader?.sym || "—"} and weakest in {analysisLaggard?.sym || "—"}.{"\n\n"}
+              <span style={{ color: breadth.advancePct >= 55 ? T.green : T.amber }}>▸</span> Tracked breadth is {breadth.advancers}/{breadth.total} green with {breadth.positive5dPct.toFixed(0)}% of names positive over 5 sessions.{"\n\n"}
+              <span style={{ color: T.accent }}>▸</span> Treasury proxies are led by {ratesSummary.leader?.sym || "—"} and lagged by {ratesSummary.laggard?.sym || "—"}; keep the tape read anchored to live ETF proxies until direct index and futures entitlements are enabled.
             </div>
           </Card>
         </div>
@@ -2098,7 +3459,7 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           <span style={{ fontSize: fs(16), fontWeight: 800, fontFamily: T.display, color: T.text, letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>
             {evt.ticker} {evt.strike} {isCall ? "Call" : "Put"}
           </span>
-          <span style={{ fontSize: fs(10), fontFamily: T.mono, color: T.textDim, whiteSpace: "nowrap" }}>Exp 04/25</span>
+          <span style={{ fontSize: fs(10), fontFamily: T.mono, color: T.textDim, whiteSpace: "nowrap" }}>Exp {formatExpirationLabel(evt.expirationDate)}</span>
           <span style={{ fontSize: fs(10), fontFamily: T.mono, color: evt.dte <= 1 ? T.red : evt.dte <= 7 ? T.amber : T.textDim, fontWeight: 600 }}>{evt.dte}DTE</span>
           <span style={{ fontSize: fs(10), fontFamily: T.mono, color: evt.type === "SWEEP" ? T.amber : evt.type === "BLOCK" ? T.accent : T.purple, fontWeight: 700, padding: sp("1px 6px"), background: T.bg3, borderRadius: dim(2) }}>
             {evt.type}
@@ -2282,7 +3643,7 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   );
 };
 
-const FlowScreen = ({ onJumpToTrade }) => {
+const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
   // ── Saved scans persisted in localStorage ──
   const [savedScans, setSavedScans] = useState(_initialState.flowSavedScans || []);
   const [activeScanId, setActiveScanId] = useState(null);
@@ -2292,14 +3653,25 @@ const FlowScreen = ({ onJumpToTrade }) => {
   const [minPrem, setMinPrem] = useState(0);
   const [sortBy, setSortBy] = useState("time");
   const [selectedEvt, setSelectedEvt] = useState(null);  // currently inspected contract
+  const {
+    hasLiveFlow,
+    flowStatus,
+    flowEvents,
+    flowTide,
+    tickerFlow,
+    flowClock,
+    sectorFlow,
+    dteBuckets,
+    marketOrderFlow,
+  } = useLiveMarketFlow(symbols);
 
   // ── CLUSTER DETECTION ──
   // Group prints by (ticker + strike + cp). Any group with 2+ prints = cluster.
   // We surface cluster size + total premium on each row that's part of a cluster.
   const clusters = useMemo(() => {
     const map = {};
-    for (const e of FLOW_EVENTS) {
-      const key = `${e.ticker}_${e.strike}_${e.cp}`;
+    for (const e of flowEvents) {
+      const key = e.optionTicker || `${e.ticker}_${e.strike}_${e.cp}_${formatExpirationLabel(e.expirationDate)}`;
       if (!map[key]) map[key] = { count: 0, totalPrem: 0, ids: [], firstTime: e.time, lastTime: e.time };
       map[key].count += 1;
       map[key].totalPrem += e.premium;
@@ -2308,10 +3680,11 @@ const FlowScreen = ({ onJumpToTrade }) => {
       if (e.time > map[key].lastTime) map[key].lastTime = e.time;
     }
     return map;
-  }, []);
+  }, [flowEvents]);
   // Build per-event lookup for fast row rendering
   const clusterFor = (e) => {
-    const c = clusters[`${e.ticker}_${e.strike}_${e.cp}`];
+    const key = e.optionTicker || `${e.ticker}_${e.strike}_${e.cp}_${formatExpirationLabel(e.expirationDate)}`;
+    const c = clusters[key];
     return c && c.count >= 2 ? c : null;
   };
 
@@ -2320,9 +3693,9 @@ const FlowScreen = ({ onJumpToTrade }) => {
   // Clicking a contract chip opens the Contract Detail Drawer for the biggest print in that group.
   const topContractsByTicker = useMemo(() => {
     const byTicker = {};
-    for (const e of FLOW_EVENTS) {
+    for (const e of flowEvents) {
       if (!byTicker[e.ticker]) byTicker[e.ticker] = {};
-      const key = `${e.strike}_${e.cp}`;
+      const key = e.optionTicker || `${e.strike}_${e.cp}_${formatExpirationLabel(e.expirationDate)}`;
       if (!byTicker[e.ticker][key]) {
         byTicker[e.ticker][key] = {
           strike: e.strike, cp: e.cp, dte: e.dte,
@@ -2343,24 +3716,24 @@ const FlowScreen = ({ onJumpToTrade }) => {
         .slice(0, 3);
     }
     return result;
-  }, []);
+  }, [flowEvents]);
 
   // Aggregate stats
-  const totalCallPrem = FLOW_EVENTS.filter(e => e.cp === "C").reduce((a, e) => a + e.premium, 0);
-  const totalPutPrem = FLOW_EVENTS.filter(e => e.cp === "P").reduce((a, e) => a + e.premium, 0);
+  const totalCallPrem = flowEvents.filter(e => e.cp === "C").reduce((a, e) => a + e.premium, 0);
+  const totalPutPrem = flowEvents.filter(e => e.cp === "P").reduce((a, e) => a + e.premium, 0);
   const netPrem = totalCallPrem - totalPutPrem;
-  const goldenCount = FLOW_EVENTS.filter(e => e.golden).length;
-  const blockCount = FLOW_EVENTS.filter(e => e.type === "BLOCK").length;
-  const sweepCount = FLOW_EVENTS.filter(e => e.type === "SWEEP").length;
-  const zeroDteCount = FLOW_EVENTS.filter(e => e.dte <= 1).length;
-  const zeroDtePrem = FLOW_EVENTS.filter(e => e.dte <= 1).reduce((a, e) => a + e.premium, 0);
-  const cpRatio = totalPutPrem / totalCallPrem;
-  const mostActive = [...TICKER_FLOW].sort((a, b) => (b.calls + b.puts) - (a.calls + a.puts))[0];
+  const goldenCount = flowEvents.filter(e => e.golden).length;
+  const blockCount = flowEvents.filter(e => e.type === "BLOCK").length;
+  const sweepCount = flowEvents.filter(e => e.type === "SWEEP").length;
+  const zeroDteCount = flowEvents.filter(e => e.dte <= 1).length;
+  const zeroDtePrem = flowEvents.filter(e => e.dte <= 1).reduce((a, e) => a + e.premium, 0);
+  const cpRatio = totalCallPrem ? (totalPutPrem / totalCallPrem) : 0;
+  const mostActive = [...tickerFlow].sort((a, b) => (b.calls + b.puts) - (a.calls + a.puts))[0] || { sym: "—", calls: 0, puts: 0 };
 
   // ── SMART MONEY COMPASS ──
   // Institutional bias = net premium from XL trades (>$250K) on calls vs puts.
   // Score range -100 (max bearish) to +100 (max bullish).
-  const xlTrades = FLOW_EVENTS.filter(e => e.premium >= 250000);
+  const xlTrades = flowEvents.filter(e => e.premium >= 250000);
   const xlCallPrem = xlTrades.filter(e => e.cp === "C" && e.side === "BUY").reduce((s, e) => s + e.premium, 0)
                     - xlTrades.filter(e => e.cp === "C" && e.side === "SELL").reduce((s, e) => s + e.premium, 0);
   const xlPutPrem = xlTrades.filter(e => e.cp === "P" && e.side === "BUY").reduce((s, e) => s + e.premium, 0)
@@ -2373,7 +3746,7 @@ const FlowScreen = ({ onJumpToTrade }) => {
   const compassColor = compassScore >= 20 ? T.green : compassScore >= -20 ? T.amber : T.red;
 
   // Filter + sort
-  let filtered = FLOW_EVENTS.filter(e => {
+  let filtered = flowEvents.filter(e => {
     if (filter === "calls") return e.cp === "C";
     if (filter === "puts") return e.cp === "P";
     if (filter === "golden") return e.golden;
@@ -2385,7 +3758,28 @@ const FlowScreen = ({ onJumpToTrade }) => {
   if (sortBy === "premium") filtered = [...filtered].sort((a, b) => b.premium - a.premium);
   else if (sortBy === "score") filtered = [...filtered].sort((a, b) => b.score - a.score);
 
-  const maxTickerPrem = Math.max(...TICKER_FLOW.map(t => t.calls + t.puts));
+  const maxTickerPrem = Math.max(1, ...tickerFlow.map(t => t.calls + t.puts));
+
+  if (!flowEvents.length) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: sp(8), display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("2px 2px 0"), fontSize: fs(8), fontFamily: T.mono, color: T.textDim }}>
+            <span>Live options flow only</span>
+            <span style={{ color: flowStatus === "loading" ? T.accent : T.textMuted }}>{flowStatus}</span>
+          </div>
+          <Card style={{ padding: sp(10), minHeight: dim(220), display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <DataUnavailableState
+              title="No live options flow"
+              detail={flowStatus === "loading"
+                ? "Waiting on current options flow snapshots for the tracked symbols."
+                : "The flow workspace no longer renders synthetic sweeps or blocks. It will populate when the live provider returns actual prints."}
+            />
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   // ── SAVED SCAN HELPERS ──
   const saveCurrentScan = () => {
@@ -2407,11 +3801,15 @@ const FlowScreen = ({ onJumpToTrade }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
       <div style={{ flex: 1, overflowY: "auto", padding: sp(8), display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: sp("2px 2px 0"), fontSize: fs(8), fontFamily: T.mono, color: T.textDim }}>
+          <span>{hasLiveFlow ? "Massive snapshot-derived options activity" : "Live options flow only"}</span>
+          <span style={{ color: hasLiveFlow ? T.accent : T.textMuted }}>{hasLiveFlow ? "provider-backed" : flowStatus}</span>
+        </div>
 
         {/* ── ROW 1: KPI Bar ── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
           {[
-            { label: "TOTAL PREMIUM", value: fmtM(totalCallPrem + totalPutPrem), sub: `${FLOW_EVENTS.length} prints`, color: T.text },
+            { label: "TOTAL PREMIUM", value: fmtM(totalCallPrem + totalPutPrem), sub: `${flowEvents.length} prints`, color: T.text },
             { label: "NET PREMIUM", value: (netPrem >= 0 ? "+" : "") + fmtM(Math.abs(netPrem)), sub: cpRatio < 1 ? "Bullish" : "Bearish", color: netPrem >= 0 ? T.green : T.red },
             { label: "P/C RATIO", value: cpRatio.toFixed(2), sub: cpRatio < 0.7 ? "Greed" : cpRatio < 1 ? "Neutral" : "Fear", color: cpRatio < 0.7 ? T.green : cpRatio < 1 ? T.amber : T.red },
             { label: "★ GOLDEN SWEEPS", value: goldenCount, sub: "High conv.", color: T.amber },
@@ -2472,7 +3870,7 @@ const FlowScreen = ({ onJumpToTrade }) => {
             </div>
             <div style={{ height: dim(200), width: "100%" }}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={FLOW_TIDE}>
+                <AreaChart data={flowTide}>
                   <XAxis dataKey="time" tick={{ fontSize: fs(9), fill: T.textMuted }} />
                   <YAxis tick={{ fontSize: fs(9), fill: T.textMuted }} tickFormatter={v => `${(v/1e6).toFixed(1)}M`} />
                   <Tooltip contentStyle={{ background: T.bg4, border: `1px solid ${T.border}`, borderRadius: dim(6), fontSize: fs(10), fontFamily: T.mono }}
@@ -2490,7 +3888,7 @@ const FlowScreen = ({ onJumpToTrade }) => {
               <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec }}>Top Tickers by Flow</span>
               <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>Top 3 contracts · click to inspect</span>
             </div>
-            {TICKER_FLOW.map(t => {
+            {tickerFlow.map(t => {
               const total = t.calls + t.puts;
               const net = t.calls - t.puts;
               const callPct = (t.calls / total) * 100;
@@ -2561,8 +3959,8 @@ const FlowScreen = ({ onJumpToTrade }) => {
               <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>Activity by time</span>
             </div>
             <div style={{ display: "flex", alignItems: "flex-end", gap: sp(2), height: dim(72), padding: "0 2px" }}>
-              {FLOW_CLOCK.map((bucket, i) => {
-                const maxCount = Math.max(...FLOW_CLOCK.map(b => b.count));
+              {flowClock.map((bucket, i) => {
+                const maxCount = Math.max(...flowClock.map(b => b.count), 1);
                 const heightPct = (bucket.count / maxCount) * 100;
                 const color = bucket.prem > 1500000 ? T.amber : bucket.prem > 1000000 ? T.accent : T.textDim;
                 return (
@@ -2588,14 +3986,14 @@ const FlowScreen = ({ onJumpToTrade }) => {
               <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>$M · by trade size</span>
             </div>
             {(() => {
-              const buy = MARKET_ORDER_FLOW.buyXL + MARKET_ORDER_FLOW.buyL + MARKET_ORDER_FLOW.buyM + MARKET_ORDER_FLOW.buyS;
-              const sell = MARKET_ORDER_FLOW.sellXL + MARKET_ORDER_FLOW.sellL + MARKET_ORDER_FLOW.sellM + MARKET_ORDER_FLOW.sellS;
+              const buy = marketOrderFlow.buyXL + marketOrderFlow.buyL + marketOrderFlow.buyM + marketOrderFlow.buyS;
+              const sell = marketOrderFlow.sellXL + marketOrderFlow.sellL + marketOrderFlow.sellM + marketOrderFlow.sellS;
               const buyPct = (buy / (buy + sell)) * 100;
-              const max = Math.max(MARKET_ORDER_FLOW.buyXL, MARKET_ORDER_FLOW.buyL, MARKET_ORDER_FLOW.buyM, MARKET_ORDER_FLOW.buyS, MARKET_ORDER_FLOW.sellXL, MARKET_ORDER_FLOW.sellL, MARKET_ORDER_FLOW.sellM, MARKET_ORDER_FLOW.sellS);
+              const max = Math.max(marketOrderFlow.buyXL, marketOrderFlow.buyL, marketOrderFlow.buyM, marketOrderFlow.buyS, marketOrderFlow.sellXL, marketOrderFlow.sellL, marketOrderFlow.sellM, marketOrderFlow.sellS, 1);
               return (
                 <>
                   <div style={{ display: "flex", alignItems: "center", gap: sp(8), marginBottom: sp(2) }}>
-                    <OrderFlowDonut flow={MARKET_ORDER_FLOW} size={dim(64)} thickness={dim(10)} />
+                    <OrderFlowDonut flow={marketOrderFlow} size={dim(64)} thickness={dim(10)} />
                     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: sp(2) }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontFamily: T.mono, fontSize: fs(10) }}>
                         <span style={{ color: T.green, fontWeight: 700 }}>${buy.toFixed(0)}M</span>
@@ -2609,10 +4007,10 @@ const FlowScreen = ({ onJumpToTrade }) => {
                     </div>
                   </div>
                   <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: sp(2) }}>
-                    <SizeBucketRow label="XL" buy={MARKET_ORDER_FLOW.buyXL} sell={MARKET_ORDER_FLOW.sellXL} maxValue={max} />
-                    <SizeBucketRow label="L"  buy={MARKET_ORDER_FLOW.buyL}  sell={MARKET_ORDER_FLOW.sellL}  maxValue={max} />
-                    <SizeBucketRow label="M"  buy={MARKET_ORDER_FLOW.buyM}  sell={MARKET_ORDER_FLOW.sellM}  maxValue={max} />
-                    <SizeBucketRow label="S"  buy={MARKET_ORDER_FLOW.buyS}  sell={MARKET_ORDER_FLOW.sellS}  maxValue={max} />
+                    <SizeBucketRow label="XL" buy={marketOrderFlow.buyXL} sell={marketOrderFlow.sellXL} maxValue={max} />
+                    <SizeBucketRow label="L"  buy={marketOrderFlow.buyL}  sell={marketOrderFlow.sellL}  maxValue={max} />
+                    <SizeBucketRow label="M"  buy={marketOrderFlow.buyM}  sell={marketOrderFlow.sellM}  maxValue={max} />
+                    <SizeBucketRow label="S"  buy={marketOrderFlow.buyS}  sell={marketOrderFlow.sellS}  maxValue={max} />
                   </div>
                 </>
               );
@@ -2626,10 +4024,10 @@ const FlowScreen = ({ onJumpToTrade }) => {
               <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>C vs P premium</span>
             </div>
             <div>
-              {DTE_BUCKETS.map((b, i) => {
+              {dteBuckets.map((b, i) => {
                 const total = b.calls + b.puts;
                 const callPct = (b.calls / total) * 100;
-                const maxTotal = Math.max(...DTE_BUCKETS.map(x => x.calls + x.puts));
+                const maxTotal = Math.max(1, ...dteBuckets.map(x => x.calls + x.puts));
                 const barWidth = (total / maxTotal) * 100;
                 return (
                   <div key={i} style={{ marginBottom: 2 }}>
@@ -2660,7 +4058,7 @@ const FlowScreen = ({ onJumpToTrade }) => {
             <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>sorted by premium</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-            {[...FLOW_EVENTS].sort((a, b) => b.premium - a.premium).slice(0, 4).map(evt => {
+            {[...flowEvents].sort((a, b) => b.premium - a.premium).slice(0, 4).map(evt => {
               const sideColor = evt.side === "BUY" ? T.green : evt.side === "SELL" ? T.red : T.textDim;
               const cpColor = evt.cp === "C" ? T.green : T.red;
               const typeColor = evt.type === "SWEEP" ? T.amber : evt.type === "BLOCK" ? T.accent : T.purple;
@@ -2767,7 +4165,7 @@ const FlowScreen = ({ onJumpToTrade }) => {
             }}
           >+ Save</button>
           <span style={{ flex: 1 }} />
-          <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>{filtered.length} / {FLOW_EVENTS.length}</span>
+          <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>{filtered.length} / {flowEvents.length}</span>
         </div>
 
         {/* ── ROW 4: Flow Tape (default) or Contract Detail (when a contract is selected) ── */}
@@ -2824,7 +4222,7 @@ const FlowScreen = ({ onJumpToTrade }) => {
                   </span>
                   <span style={{ color: T.textSec, display: "flex", alignItems: "center", gap: sp(3) }}>
                     <span style={{ color: cpColor, fontWeight: 600, marginRight: 2 }}>{evt.cp}</span>
-                    {evt.strike} <span style={{ color: T.textDim }}>04/25</span>
+                    {evt.strike} <span style={{ color: T.textDim }}>{formatExpirationLabel(evt.expirationDate)}</span>
                     {(() => {
                       const c = clusterFor(evt);
                       if (!c) return null;
@@ -3006,67 +4404,160 @@ const CandleChart = ({ bars, markers, drawings, onAddDrawing, drawMode, height }
 };
 
 
-const TradeOptionChart = ({ bars, color, contract, holding }) => (
-  <div style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column" }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: fs(8), fontFamily: T.mono, color: T.textMuted, padding: "2px 6px 0" }}>
-      <span>{contract}</span>
-      {holding && <span style={{ fontSize: fs(7), padding: sp("1px 4px"), borderRadius: dim(2), background: `${T.amber}20`, color: T.amber, border: `1px solid ${T.amber}40`, fontWeight: 700, letterSpacing: "0.05em" }}>★ HOLDING</span>}
-      <span style={{ color, fontWeight: 600 }}>${bars[bars.length - 1]?.p.toFixed(2)}</span>
-    </div>
-    <div style={{ flex: 1, minHeight: 0 }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={bars} margin={{ top: 2, right: 2, bottom: 2, left: -30 }}>
-          <XAxis dataKey="t" hide />
-          <YAxis domain={["auto", "auto"]} tick={{ fontSize: fs(7), fill: T.textMuted }} tickCount={3} />
-          <ReferenceLine y={bars[0]?.p} stroke={T.textMuted} strokeDasharray="2 2" strokeWidth={0.5} />
-          {holding && <ReferenceLine y={holding.entry} stroke={T.amber} strokeDasharray="4 2" strokeWidth={1.2} label={{ value: `entry $${holding.entry.toFixed(2)}`, position: "insideBottomLeft", fill: T.amber, fontSize: fs(7), fontFamily: T.mono }} />}
-          <Area type="linear" dataKey="p" stroke={color} strokeWidth={2} fill={color} fillOpacity={0.35} isAnimationActive={false} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  </div>
-);
+const TradeOptionChart = ({ bars, color, contract, holding, timeframe = "5m", sourceLabel = "no live chart data" }) => {
+  const chartModel = useMemo(
+    () => buildResearchChartModel({
+      bars,
+      timeframe,
+      selectedIndicators: [],
+    }),
+    [bars, timeframe],
+  );
+  const referenceLines = useMemo(
+    () => (
+      Number.isFinite(holding?.entry)
+        ? [{
+            price: holding.entry,
+            color: T.amber,
+            title: "ENTRY",
+            lineWidth: 2,
+            axisLabelVisible: true,
+          }]
+        : []
+    ),
+    [holding],
+  );
+  const lastPrice = bars[bars.length - 1]?.c ?? bars[bars.length - 1]?.p ?? null;
 
-const TradeOptionsChain = ({ chain, selected, onSelect, heldStrikes }) => (
-  <div style={{ height: "100%", overflow: "auto", fontSize: fs(9), fontFamily: T.mono }}>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 46px 1fr 1fr 1fr", gap: sp(2), padding: sp("3px 6px"), borderBottom: `1px solid ${T.border}`, position: "sticky", top: 0, background: T.bg2, zIndex: 1 }}>
-      <span style={{ color: T.textMuted, fontSize: fs(7), textAlign: "right", letterSpacing: "0.06em" }}>Δ</span>
-      <span style={{ color: T.textMuted, fontSize: fs(7), textAlign: "right", letterSpacing: "0.06em" }}>VOL</span>
-      <span style={{ color: T.textMuted, fontSize: fs(7), textAlign: "right", letterSpacing: "0.06em" }}>LAST</span>
-      <span style={{ color: T.textMuted, fontSize: fs(7), textAlign: "center", letterSpacing: "0.06em", fontWeight: 700 }}>STRIKE</span>
-      <span style={{ color: T.textMuted, fontSize: fs(7), textAlign: "left", letterSpacing: "0.06em" }}>LAST</span>
-      <span style={{ color: T.textMuted, fontSize: fs(7), textAlign: "left", letterSpacing: "0.06em" }}>VOL</span>
-      <span style={{ color: T.textMuted, fontSize: fs(7), textAlign: "left", letterSpacing: "0.06em" }}>Δ</span>
+  return (
+    <div style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: fs(8), fontFamily: T.mono, color: T.textMuted, padding: "2px 6px 0" }}>
+        <span>{contract}</span>
+        {holding && <span style={{ fontSize: fs(7), padding: sp("1px 4px"), borderRadius: dim(2), background: `${T.amber}20`, color: T.amber, border: `1px solid ${T.amber}40`, fontWeight: 700, letterSpacing: "0.05em" }}>★ HOLDING</span>}
+        <span style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
+          <span style={{ color: T.textDim }}>{sourceLabel}</span>
+          <span style={{ color, fontWeight: 600 }}>{typeof lastPrice === "number" ? `$${lastPrice.toFixed(2)}` : "—"}</span>
+        </span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <ResearchChartSurface
+          theme={T}
+          themeKey={CURRENT_THEME}
+          model={chartModel}
+          referenceLines={referenceLines}
+        />
+      </div>
     </div>
-    {chain.map(row => {
-      const cSelected = selected && selected.strike === row.k && selected.cp === "C";
-      const pSelected = selected && selected.strike === row.k && selected.cp === "P";
-      const cHot = row.cVol / row.cOi > 0.5;
-      const pHot = row.pVol / row.pOi > 0.5;
-      const cHeld = heldStrikes && heldStrikes.find(x => x.strike === row.k && x.cp === "C");
-      const pHeld = heldStrikes && heldStrikes.find(x => x.strike === row.k && x.cp === "P");
-      return (
-        <div key={row.k} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 46px 1fr 1fr 1fr", gap: sp(2), padding: sp("2px 6px"), borderBottom: `1px solid ${T.border}10`, background: row.isAtm ? `${T.accent}08` : "transparent" }}>
-          <span onClick={() => onSelect(row.k, "C")} style={{ color: T.textSec, textAlign: "right", cursor: "pointer", padding: sp("0 2px"), background: cSelected ? `${T.green}25` : "transparent", borderRadius: 2 }}>{row.cDelta.toFixed(2)}</span>
-          <span onClick={() => onSelect(row.k, "C")} style={{ color: cHot ? T.amber : T.textDim, fontWeight: cHot ? 700 : 400, textAlign: "right", cursor: "pointer", padding: sp("0 2px"), background: cSelected ? `${T.green}25` : "transparent", borderRadius: 2 }}>
-            {cHot ? "⚡" : ""}{row.cVol >= 1000 ? `${(row.cVol / 1000).toFixed(1)}K` : row.cVol}
-          </span>
-          <span onClick={() => onSelect(row.k, "C")} style={{ color: T.green, fontWeight: 600, textAlign: "right", cursor: "pointer", padding: sp("0 2px"), background: cSelected ? `${T.green}25` : cHeld ? `${T.amber}18` : "transparent", borderRadius: dim(2), border: cHeld ? `1px solid ${T.amber}60` : "1px solid transparent" }}>
-            {cHeld ? "★ " : ""}{row.cPrem.toFixed(2)}
-          </span>
-          <span style={{ color: row.isAtm ? T.accent : T.text, fontWeight: 700, textAlign: "center" }}>{row.k}</span>
-          <span onClick={() => onSelect(row.k, "P")} style={{ color: T.red, fontWeight: 600, textAlign: "left", cursor: "pointer", padding: sp("0 2px"), background: pSelected ? `${T.red}25` : pHeld ? `${T.amber}18` : "transparent", borderRadius: dim(2), border: pHeld ? `1px solid ${T.amber}60` : "1px solid transparent" }}>
-            {pHeld ? "★ " : ""}{row.pPrem.toFixed(2)}
-          </span>
-          <span onClick={() => onSelect(row.k, "P")} style={{ color: pHot ? T.amber : T.textDim, fontWeight: pHot ? 700 : 400, textAlign: "left", cursor: "pointer", padding: sp("0 2px"), background: pSelected ? `${T.red}25` : "transparent", borderRadius: 2 }}>
-            {pHot ? "⚡" : ""}{row.pVol >= 1000 ? `${(row.pVol / 1000).toFixed(1)}K` : row.pVol}
-          </span>
-          <span onClick={() => onSelect(row.k, "P")} style={{ color: T.textSec, textAlign: "left", cursor: "pointer", padding: sp("0 2px"), background: pSelected ? `${T.red}25` : "transparent", borderRadius: 2 }}>{row.pDelta.toFixed(2)}</span>
+  );
+};
+
+const TradeOptionsChain = ({ chain, selected, onSelect, heldStrikes }) => {
+  const scrollRef = useRef(null);
+  const gridTemplateColumns = "48px 48px 52px 48px 56px 60px 60px 68px 72px 68px 60px 60px 56px 48px 52px 48px 48px";
+  const chainWindowKey = `${chain.length}:${chain[0]?.k ?? "na"}:${chain[chain.length - 1]?.k ?? "na"}`;
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return undefined;
+
+    const frame = requestAnimationFrame(() => {
+      node.scrollLeft = Math.max(0, (node.scrollWidth - node.clientWidth) / 2);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [chainWindowKey]);
+
+  const formatGreek = (value) => (value == null || Number.isNaN(value) ? "—" : value.toFixed(3));
+  const formatIv = (value) => (value == null || Number.isNaN(value) ? "—" : `${(value * 100).toFixed(1)}%`);
+  const formatPrice = (value, held) => `${held ? "★ " : ""}${(value || 0).toFixed(2)}`;
+  const formatVolume = (value, hot) => `${hot ? "⚡" : ""}${fmtCompactNumber(value || 0)}`;
+  const columns = [
+    { key: "cGamma", label: "Γ", side: "C", align: "right", color: T.purple, format: formatGreek },
+    { key: "cTheta", label: "Θ", side: "C", align: "right", color: T.red, format: formatGreek },
+    { key: "cVega", label: "V", side: "C", align: "right", color: T.cyan, format: formatGreek },
+    { key: "cDelta", label: "Δ", side: "C", align: "right", color: T.textSec, format: (value) => (value == null ? "—" : value.toFixed(2)) },
+    { key: "cIv", label: "IV", side: "C", align: "right", color: T.textDim, format: formatIv },
+    { key: "cOi", label: "OI", side: "C", align: "right", color: T.textDim, format: (value) => fmtCompactNumber(value || 0) },
+    { key: "cVol", label: "VOL", side: "C", align: "right", color: T.textDim, hot: true, format: (value, row) => formatVolume(value, row.cVol / Math.max(row.cOi, 1) > 0.5) },
+    { key: "cPrem", label: "LAST", side: "C", align: "right", color: T.green, heldAware: true, format: (value, _row, held) => formatPrice(value, held) },
+    { key: "k", label: "STRIKE", side: null, align: "center", strike: true, format: (value) => value },
+    { key: "pPrem", label: "LAST", side: "P", align: "left", color: T.red, heldAware: true, format: (value, _row, held) => formatPrice(value, held) },
+    { key: "pVol", label: "VOL", side: "P", align: "left", color: T.textDim, hot: true, format: (value, row) => formatVolume(value, row.pVol / Math.max(row.pOi, 1) > 0.5) },
+    { key: "pOi", label: "OI", side: "P", align: "left", color: T.textDim, format: (value) => fmtCompactNumber(value || 0) },
+    { key: "pIv", label: "IV", side: "P", align: "left", color: T.textDim, format: formatIv },
+    { key: "pDelta", label: "Δ", side: "P", align: "left", color: T.textSec, format: (value) => (value == null ? "—" : value.toFixed(2)) },
+    { key: "pVega", label: "V", side: "P", align: "left", color: T.cyan, format: formatGreek },
+    { key: "pTheta", label: "Θ", side: "P", align: "left", color: T.red, format: formatGreek },
+    { key: "pGamma", label: "Γ", side: "P", align: "left", color: T.purple, format: formatGreek },
+  ];
+
+  return (
+    <div ref={scrollRef} style={{ height: "100%", overflow: "auto", fontSize: fs(9), fontFamily: T.mono, touchAction: "pan-x pan-y" }}>
+      <div style={{ minWidth: 980 }}>
+        <div style={{ display: "grid", gridTemplateColumns, gap: sp(2), padding: sp("3px 6px"), borderBottom: `1px solid ${T.border}`, position: "sticky", top: 0, background: T.bg2, zIndex: 1 }}>
+          {columns.map((column) => (
+            <span
+              key={column.key}
+              style={{
+                color: T.textMuted,
+                fontSize: fs(7),
+                textAlign: column.align,
+                letterSpacing: "0.06em",
+                fontWeight: column.strike ? 700 : 600,
+              }}
+            >
+              {column.label}
+            </span>
+          ))}
         </div>
-      );
-    })}
-  </div>
-);
+        {chain.map((row) => (
+          <div key={row.k} style={{ display: "grid", gridTemplateColumns, gap: sp(2), padding: sp("2px 6px"), borderBottom: `1px solid ${T.border}10`, background: row.isAtm ? `${T.accent}08` : "transparent" }}>
+            {columns.map((column) => {
+              if (column.strike) {
+                return (
+                  <span key={column.key} style={{ color: row.isAtm ? T.accent : T.text, fontWeight: 700, textAlign: "center" }}>
+                    {column.format(row[column.key], row, false)}
+                  </span>
+                );
+              }
+
+              const isSelected = selected && selected.strike === row.k && selected.cp === column.side;
+              const held = Boolean(heldStrikes && heldStrikes.find((item) => item.strike === row.k && item.cp === column.side));
+              const background = isSelected
+                ? `${column.side === "C" ? T.green : T.red}25`
+                : held && column.heldAware
+                  ? `${T.amber}18`
+                  : "transparent";
+              const border = held && column.heldAware ? `1px solid ${T.amber}60` : "1px solid transparent";
+              const value = row[column.key];
+
+              return (
+                <span
+                  key={column.key}
+                  onClick={() => onSelect(row.k, column.side)}
+                  style={{
+                    color: column.hot
+                      ? ((column.side === "C" ? row.cVol / Math.max(row.cOi, 1) : row.pVol / Math.max(row.pOi, 1)) > 0.5 ? T.amber : column.color)
+                      : column.color,
+                    fontWeight: column.key.endsWith("Prem") || column.hot ? 600 : 500,
+                    textAlign: column.align,
+                    cursor: "pointer",
+                    padding: sp("0 2px"),
+                    background,
+                    borderRadius: dim(2),
+                    border,
+                  }}
+                >
+                  {column.format(value, row, held)}
+                </span>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 
 // ─── PAYOFF DIAGRAM ───
@@ -3231,20 +4722,65 @@ const PayoffDiagram = ({ optType, strike, premium, qty, currentPrice, side }) =>
   );
 };
 
-const TradeOrderTicket = ({ slot }) => {
+const TradeOrderTicket = ({
+  slot,
+  chainRows = [],
+  expiration,
+  accountId,
+  environment,
+  executionConfigured,
+}) => {
   const toast = useToast();
   const positions = usePositions();
+  const queryClient = useQueryClient();
   const info = TRADE_TICKER_INFO[slot.ticker] || TRADE_TICKER_INFO.SPY;
-  const chain = useMemo(() => genOptionsChain(info.price, info.iv, info.chainSeed), [slot.ticker]);
-  const row = chain.find(r => r.k === slot.strike);
+  const row = chainRows.find(r => r.k === slot.strike);
+  if (!row) {
+    return (
+      <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp("8px 10px"), display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ fontSize: fs(9), fontWeight: 700, color: T.textSec, fontFamily: T.display, letterSpacing: "0.08em", borderBottom: `1px solid ${T.border}`, paddingBottom: 4 }}>ORDER TICKET</div>
+        <DataUnavailableState
+          title="No live contract quote"
+          detail="The order ticket only opens once the selected option contract has a live chain row with bid, ask, and greeks."
+        />
+      </div>
+    );
+  }
   const prem = row ? (slot.cp === "C" ? row.cPrem : row.pPrem) : 3.0;
   const bid = row ? (slot.cp === "C" ? row.cBid : row.pBid) : prem - 0.04;
   const ask = row ? (slot.cp === "C" ? row.cAsk : row.pAsk) : prem + 0.04;
   const spread = ask - bid;
-  const spreadPct = (spread / prem) * 100;
+  const spreadPct = prem > 0 ? (spread / prem) * 100 : 0;
   const delta = row ? Math.abs(slot.cp === "C" ? row.cDelta : row.pDelta) : 0.5;
   const contractColor = slot.cp === "C" ? T.green : T.red;
-  const expInfo = EXPIRATIONS.find(e => e.v === slot.exp) || EXPIRATIONS[2];
+  const expInfo = expiration || {
+    value: slot.exp,
+    label: slot.exp,
+    dte: daysToExpiration(slot.exp),
+    actualDate: parseExpirationValue(slot.exp),
+  };
+  const selectedContractMeta = slot.cp === "C" ? row?.cContract : row?.pContract;
+  const liveExecutionReady = Boolean(executionConfigured && accountId && selectedContractMeta && expInfo.actualDate);
+  const placeOrderMutation = usePlaceOrder({
+    mutation: {
+      onSuccess: (order) => {
+        queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
+        toast.push({
+          kind: "success",
+          title: `Submitted ${slot.ticker} ${slot.strike}${slot.cp}`,
+          body: `${order.quantity} × ${order.type.toUpperCase()} · ${order.status.toUpperCase()} · ${order.id}`,
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "Order rejected",
+          body: error?.message || "The broker rejected the order.",
+        });
+      },
+    },
+  });
 
   // ── CONTROLLED STATE ──
   const [side, setSide] = useState("BUY");
@@ -3266,7 +4802,6 @@ const TradeOrderTicket = ({ slot }) => {
   const qtyNum = Number(qty) || 0;
   const fillPrice = orderType === "MKT" ? prem : (parseFloat(limitPrice) || prem);
   const cost = fillPrice * qtyNum * 100;
-  const maxLoss = cost;
   const breakeven = slot.cp === "C" ? slot.strike + fillPrice : slot.strike - fillPrice;
   const beMovePct = ((breakeven - info.price) / info.price) * 100;
   const pop = Math.max(15, Math.min(75, (0.5 - Math.abs(delta - 0.5)) * 100 + 25));
@@ -3274,33 +4809,86 @@ const TradeOrderTicket = ({ slot }) => {
   const tpPct = fillPrice > 0 ? ((takeProfit - fillPrice) / fillPrice * 100) : 75;
 
   const submitOrder = () => {
-    if (qtyNum <= 0) { toast.push({ kind: "error", title: "Invalid quantity", body: "Enter a positive number of contracts." }); return; }
-    if (orderType !== "MKT" && (!Number.isFinite(fillPrice) || fillPrice <= 0)) {
-      toast.push({ kind: "error", title: "Invalid limit", body: "Enter a positive limit price." }); return;
-    }
-    // IOC/FOK: simulate possible no-fill for realism
-    if (tif === "FOK" && Math.abs(fillPrice - prem) > spread * 2) {
-      toast.push({ kind: "warn", title: "Order canceled", body: `FOK not fillable at $${fillPrice.toFixed(2)} (mid $${prem.toFixed(2)}).` });
+    if (qtyNum <= 0) {
+      toast.push({ kind: "error", title: "Invalid quantity", body: "Enter a positive number of contracts." });
       return;
     }
-    positions.addPosition({
-      kind: "option",
-      ticker: slot.ticker,
-      strike: slot.strike,
-      cp: slot.cp,
-      exp: slot.exp,
-      dte: expInfo.dte,
-      side,
-      qty: qtyNum,
-      entry: fillPrice,
-      stopLoss: Number.isFinite(+stopLoss) ? +stopLoss : null,
-      takeProfit: Number.isFinite(+takeProfit) ? +takeProfit : null,
-      orderType, tif,
-    });
-    toast.push({
-      kind: "success",
-      title: `${side === "BUY" ? "Opened" : "Shorted"} ${slot.ticker} ${slot.strike}${slot.cp}`,
-      body: `${qtyNum} × $${fillPrice.toFixed(2)} · ${isLong ? "−" : "+"}$${cost.toFixed(0)} · ${orderType} ${tif}`,
+    if (orderType !== "MKT" && (!Number.isFinite(fillPrice) || fillPrice <= 0)) {
+      toast.push({ kind: "error", title: "Invalid limit", body: "Enter a positive limit price." });
+      return;
+    }
+
+    if (executionConfigured && accountId && !liveExecutionReady) {
+      toast.push({
+        kind: "info",
+        title: "Contract loading",
+        body: "Wait for the live option chain to finish loading before submitting a broker order.",
+      });
+      return;
+    }
+
+    if (!executionConfigured || !accountId) {
+      // IOC/FOK: simulate possible no-fill for realism in fallback mode only.
+      if (tif === "FOK" && Math.abs(fillPrice - prem) > spread * 2) {
+        toast.push({ kind: "warn", title: "Order canceled", body: `FOK not fillable at $${fillPrice.toFixed(2)} (mid $${prem.toFixed(2)}).` });
+        return;
+      }
+
+      positions.addPosition({
+        kind: "option",
+        ticker: slot.ticker,
+        strike: slot.strike,
+        cp: slot.cp,
+        exp: slot.exp,
+        dte: expInfo.dte,
+        side,
+        qty: qtyNum,
+        entry: fillPrice,
+        stopLoss: Number.isFinite(+stopLoss) ? +stopLoss : null,
+        takeProfit: Number.isFinite(+takeProfit) ? +takeProfit : null,
+        orderType,
+        tif,
+      });
+      toast.push({
+        kind: "success",
+        title: `${side === "BUY" ? "Opened" : "Shorted"} ${slot.ticker} ${slot.strike}${slot.cp}`,
+        body: `${qtyNum} × $${fillPrice.toFixed(2)} · ${isLong ? "−" : "+"}$${cost.toFixed(0)} · ${orderType} ${tif}`,
+      });
+      return;
+    }
+
+    if (orderType === "STP") {
+      toast.push({
+        kind: "info",
+        title: "Stop orders not wired",
+        body: "The live ticket currently supports market and limit entry orders only.",
+      });
+      return;
+    }
+
+    placeOrderMutation.mutate({
+      data: {
+        accountId,
+        mode: environment,
+        symbol: slot.ticker,
+        assetClass: "option",
+        side: side.toLowerCase(),
+        type: orderType === "MKT" ? "market" : "limit",
+        quantity: qtyNum,
+        limitPrice: orderType === "LMT" ? fillPrice : null,
+        stopPrice: null,
+        timeInForce: tif.toLowerCase(),
+        optionContract: {
+          ticker: selectedContractMeta.ticker,
+          underlying: selectedContractMeta.underlying,
+          expirationDate: expInfo.actualDate,
+          strike: selectedContractMeta.strike,
+          right: selectedContractMeta.right,
+          multiplier: selectedContractMeta.multiplier,
+          sharesPerContract: selectedContractMeta.sharesPerContract,
+          providerContractId: selectedContractMeta.providerContractId,
+        },
+      },
     });
   };
 
@@ -3310,7 +4898,7 @@ const TradeOrderTicket = ({ slot }) => {
       <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
         <span style={{ fontSize: fs(13), fontWeight: 800, fontFamily: T.mono, color: T.text }}>{slot.ticker}</span>
         <span style={{ fontSize: fs(12), fontWeight: 700, fontFamily: T.mono, color: contractColor }}>{slot.strike}{slot.cp}</span>
-        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>{slot.exp} · {expInfo.dte}d</span>
+        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>{expInfo.label || slot.exp} · {expInfo.dte}d</span>
       </div>
       {/* Bid × Ask spread strip */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: sp(4), padding: sp("4px 6px"), background: T.bg3, borderRadius: dim(3), fontFamily: T.mono }}>
@@ -3431,23 +5019,36 @@ const TradeOrderTicket = ({ slot }) => {
       </div>
       <button
         onClick={submitOrder}
-        style={{ marginTop: "auto", padding: sp("7px 0"), background: isLong ? T.green : T.red, border: "none", borderRadius: dim(4), color: "#fff", fontSize: fs(11), fontFamily: T.sans, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}
+        disabled={placeOrderMutation.isPending}
+        style={{ marginTop: "auto", padding: sp("7px 0"), background: isLong ? T.green : T.red, border: "none", borderRadius: dim(4), color: "#fff", fontSize: fs(11), fontFamily: T.sans, fontWeight: 700, cursor: placeOrderMutation.isPending ? "wait" : "pointer", letterSpacing: "0.04em", opacity: placeOrderMutation.isPending ? 0.7 : 1 }}
       >
-        {side} {qtyNum || 0} × ${fillPrice.toFixed(2)} · {isLong ? "−" : "+"}${cost.toFixed(0)}
+        {placeOrderMutation.isPending
+          ? "SUBMITTING..."
+          : `${side} ${qtyNum || 0} × $${fillPrice.toFixed(2)} · ${isLong ? "−" : "+"}$${cost.toFixed(0)}`}
       </button>
     </div>
   );
 };
 
-const TradeStrategyGreeksPanel = ({ slot, onApplyStrategy }) => {
-  const info = TRADE_TICKER_INFO[slot.ticker] || TRADE_TICKER_INFO.SPY;
-  const chain = useMemo(() => genOptionsChain(info.price, info.iv, info.chainSeed), [slot.ticker]);
-  const row = chain.find(r => r.k === slot.strike);
+const TradeStrategyGreeksPanel = ({ slot, chainRows = [], onApplyStrategy }) => {
+  const row = chainRows.find(r => r.k === slot.strike);
+  if (!row) {
+    return (
+      <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp("8px 10px"), display: "flex", flexDirection: "column", gap: sp(6), overflow: "hidden" }}>
+        <div style={{ fontSize: fs(9), fontWeight: 700, color: T.textSec, fontFamily: T.display, letterSpacing: "0.08em", borderBottom: `1px solid ${T.border}`, paddingBottom: sp(4) }}>STRATEGY</div>
+        <DataUnavailableState
+          title="No live greeks"
+          detail="Strategy presets stay available after the selected contract resolves to a live option chain row with greeks."
+        />
+      </div>
+    );
+  }
   const delta = row ? (slot.cp === "C" ? row.cDelta : row.pDelta) : 0.5;
+  const fallbackGreeks = deriveApproxGreeksFromDelta(delta);
+  const gamma = row ? (slot.cp === "C" ? row.cGamma : row.pGamma) ?? fallbackGreeks.gamma : fallbackGreeks.gamma;
+  const theta = row ? (slot.cp === "C" ? row.cTheta : row.pTheta) ?? fallbackGreeks.theta : fallbackGreeks.theta;
+  const vega = row ? (slot.cp === "C" ? row.cVega : row.pVega) ?? fallbackGreeks.vega : fallbackGreeks.vega;
   const absDelta = Math.abs(delta);
-  const gamma = +(0.08 - Math.abs(absDelta - 0.5) * 0.12).toFixed(3);
-  const theta = -+(0.06 + Math.abs(absDelta - 0.5) * 0.05).toFixed(3);
-  const vega = +(0.15 - Math.abs(absDelta - 0.5) * 0.08).toFixed(3);
   const qty = 3;
 
   const GreekBar = ({ label, value, color, max, desc }) => {
@@ -3515,19 +5116,34 @@ const TradeStrategyGreeksPanel = ({ slot, onApplyStrategy }) => {
   );
 };
 
-const TradeL2Panel = ({ slot }) => {
+const TradeL2Panel = ({ slot, chainRows = [], flowEvents = [] }) => {
   const info = TRADE_TICKER_INFO[slot.ticker] || TRADE_TICKER_INFO.SPY;
-  const chain = useMemo(() => genOptionsChain(info.price, info.iv, info.chainSeed), [slot.ticker]);
-  const row = chain.find(r => r.k === slot.strike);
+  const row = chainRows.find(r => r.k === slot.strike);
+  if (!row) {
+    return (
+      <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp("8px 10px"), display: "flex", flexDirection: "column", gap: sp(4), overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${T.border}`, paddingBottom: sp(4) }}>
+          <div style={{ display: "flex", gap: sp(8), alignItems: "center" }}>
+            <span style={{ fontSize: fs(9), fontWeight: 700, color: T.textSec, fontFamily: T.display, letterSpacing: "0.08em" }}>BOOK / FLOW / TAPE</span>
+          </div>
+          <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>waiting on live chain</span>
+        </div>
+        <DataUnavailableState
+          title="No live contract market depth"
+          detail="This panel no longer fabricates book or tape data. It unlocks once a live contract quote is available."
+        />
+      </div>
+    );
+  }
   const mid = row ? (slot.cp === "C" ? row.cPrem : row.pPrem) : 3.0;
   const bid = row ? (slot.cp === "C" ? row.cBid : row.pBid) : mid - 0.04;
   const ask = row ? (slot.cp === "C" ? row.cAsk : row.pAsk) : mid + 0.04;
   const spread = ask - bid;
-  const book = useMemo(() => genL2Book(mid, spread, info.chainSeed + slot.strike), [slot.ticker, slot.strike, slot.cp]);
-  const tape = useMemo(() => genTradeTape(mid, info.chainSeed + slot.strike + 1000), [slot.ticker, slot.strike, slot.cp]);
   // Per-ticker order flow — bullishness mirrors the day's price change
-  const tickerFlow = useMemo(() => genTickerFlow(info.chainSeed + 5000, info.pct >= 0 ? 0.58 : 0.42), [slot.ticker]);
-  const maxSize = Math.max(...book.bids.map(b => b.size), ...book.asks.map(a => a.size));
+  const tickerFlow = useMemo(
+    () => buildMarketOrderFlowFromEvents(flowEvents),
+    [flowEvents],
+  );
   const contractColor = slot.cp === "C" ? T.green : T.red;
   const [tab, setTab] = useState("book");
 
@@ -3553,106 +5169,23 @@ const TradeL2Panel = ({ slot }) => {
           <TabBtn id="flow" label="FLOW" />
           <TabBtn id="tape" label="TAPE" />
         </div>
-        <span style={{ fontSize: fs(9), fontFamily: T.mono, color: contractColor, fontWeight: 700 }}>{slot.strike}{slot.cp}</span>
-        <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>${spread.toFixed(2)} sprd</span>
+        <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
+          <span style={{ fontSize: fs(8), color: flowEvents.length ? T.accent : T.textDim, fontFamily: T.mono }}>{flowEvents.length ? "flow: Massive snapshot-derived" : "flow unavailable"}</span>
+          <span style={{ fontSize: fs(9), fontFamily: T.mono, color: contractColor, fontWeight: 700 }}>{slot.strike}{slot.cp}</span>
+          <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>${spread.toFixed(2)} sprd</span>
+        </div>
       </div>
 
-      {/* BOOK tab — Dynamic L2 with depth bars behind prices, buy/sell pressure header */}
-      {tab === "book" && (() => {
-        const totalBidSize = book.bids.reduce((s, b) => s + b.size, 0);
-        const totalAskSize = book.asks.reduce((s, a) => s + a.size, 0);
-        const buyPct = (totalBidSize / (totalBidSize + totalAskSize)) * 100;
-        const sellPct = 100 - buyPct;
-        const buyDominant = buyPct >= 50;
-        const levels = Math.min(book.bids.length, book.asks.length, 7);
-        return (
-          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, fontFamily: T.mono }}>
-            {/* Buy/Sell pressure header */}
-            <div style={{ marginBottom: sp(4) }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: fs(8), letterSpacing: "0.06em", marginBottom: sp(2) }}>
-                <span style={{ color: T.green, fontWeight: 700 }}>BUY</span>
-                <span style={{ color: buyDominant ? T.green : T.red, fontWeight: 700, fontSize: fs(10) }}>
-                  {buyPct.toFixed(2)}%
-                </span>
-                <span style={{ color: T.red, fontWeight: 700 }}>SELL</span>
-              </div>
-              <div style={{ display: "flex", height: dim(5), borderRadius: dim(2), overflow: "hidden", background: T.bg3 }}>
-                <div style={{ width: `${buyPct}%`, background: T.green, opacity: 0.85 }} />
-                <div style={{ width: `${sellPct}%`, background: T.red, opacity: 0.85 }} />
-              </div>
-            </div>
-            {/* Column header */}
-            <div style={{
-              display: "grid", gridTemplateColumns: "44px 1fr 24px 1fr 44px",
-              gap: sp(4), padding: sp("3px 4px"), color: T.textMuted, fontSize: fs(7),
-              letterSpacing: "0.08em", borderBottom: `1px solid ${T.border}`,
-            }}>
-              <span style={{ textAlign: "left" }}>SHARES</span>
-              <span style={{ textAlign: "right", color: T.green, fontWeight: 700 }}>BID</span>
-              <span style={{ textAlign: "center", padding: sp("1px 4px"), background: T.bg3, borderRadius: dim(2), color: T.textSec, fontWeight: 700 }}>{levels}</span>
-              <span style={{ textAlign: "left", color: T.red, fontWeight: 700 }}>ASK</span>
-              <span style={{ textAlign: "right" }}>SHARES</span>
-            </div>
-            {/* Rows */}
-            {Array.from({ length: levels }).map((_, i) => {
-              const b = book.bids[i];
-              const a = book.asks[i];
-              const bidBarPct = (b.size / maxSize) * 100;
-              const askBarPct = (a.size / maxSize) * 100;
-              return (
-                <div key={i} style={{
-                  display: "grid", gridTemplateColumns: "44px 1fr 24px 1fr 44px",
-                  gap: sp(4), padding: sp("2px 4px"), alignItems: "center",
-                  borderBottom: `1px solid ${T.border}10`,
-                  fontSize: fs(10),
-                }}>
-                  {/* Left: bid shares */}
-                  <span style={{ color: T.textSec, fontWeight: 600, textAlign: "left" }}>{b.size}</span>
-                  {/* Bid price with depth bar growing right-to-left */}
-                  <div style={{ position: "relative", textAlign: "right" }}>
-                    <div style={{
-                      position: "absolute", right: 0, top: -1, bottom: -1,
-                      width: `${bidBarPct}%`, background: `${T.green}28`,
-                      borderRadius: dim(2),
-                    }} />
-                    <span style={{ position: "relative", color: T.green, fontWeight: 700, paddingRight: sp(3) }}>
-                      {b.price.toFixed(2)}
-                    </span>
-                  </div>
-                  {/* Level number */}
-                  <span style={{ textAlign: "center", color: T.textMuted, fontSize: fs(8), fontWeight: 600 }}>{i + 1}</span>
-                  {/* Ask price with depth bar growing left-to-right */}
-                  <div style={{ position: "relative", textAlign: "left" }}>
-                    <div style={{
-                      position: "absolute", left: 0, top: -1, bottom: -1,
-                      width: `${askBarPct}%`, background: `${T.red}28`,
-                      borderRadius: dim(2),
-                    }} />
-                    <span style={{ position: "relative", color: T.red, fontWeight: 700, paddingLeft: sp(3) }}>
-                      {a.price.toFixed(2)}
-                    </span>
-                  </div>
-                  {/* Right: ask shares */}
-                  <span style={{ color: T.textSec, fontWeight: 600, textAlign: "right" }}>{a.size}</span>
-                </div>
-              );
-            })}
-            {/* Footer with totals */}
-            <div style={{
-              display: "grid", gridTemplateColumns: "1fr 24px 1fr",
-              gap: sp(4), padding: sp("3px 4px"), marginTop: sp(2),
-              borderTop: `1px solid ${T.border}`, fontSize: fs(8), color: T.textDim,
-            }}>
-              <span style={{ textAlign: "left" }}>Σ <span style={{ color: T.green, fontWeight: 600 }}>{totalBidSize}</span></span>
-              <span></span>
-              <span style={{ textAlign: "right" }}><span style={{ color: T.red, fontWeight: 600 }}>{totalAskSize}</span> Σ</span>
-            </div>
-          </div>
-        );
-      })()}
+      {tab === "book" && (
+        <DataUnavailableState
+          title="Order book provider not wired"
+          detail="Best bid and ask are live from the option chain, but depth-of-book levels are hidden until a real L2 feed is connected."
+        />
+      )}
 
       {/* FLOW tab — order flow distribution for this ticker */}
       {tab === "flow" && (
+        flowEvents.length ? (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: sp(4), minHeight: 0, overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: sp(8), padding: sp("4px 0") }}>
             <OrderFlowDonut flow={tickerFlow} size={70} thickness={11} />
@@ -3665,7 +5198,7 @@ const TradeL2Panel = ({ slot }) => {
               {(() => {
                 const buy = tickerFlow.buyXL + tickerFlow.buyL + tickerFlow.buyM + tickerFlow.buyS;
                 const sell = tickerFlow.sellXL + tickerFlow.sellL + tickerFlow.sellM + tickerFlow.sellS;
-                const buyPct = (buy / (buy + sell)) * 100;
+                const buyPct = (buy / Math.max(buy + sell, 1)) * 100;
                 return (
                   <>
                     <div style={{ display: "flex", height: dim(4), borderRadius: dim(2), overflow: "hidden", background: T.bg3 }}>
@@ -3693,43 +5226,70 @@ const TradeL2Panel = ({ slot }) => {
             })()}
           </div>
         </div>
+        ) : (
+          <DataUnavailableState
+            title="No live flow tape"
+            detail={`Spot flow for ${slot.ticker} is hidden until current prints are returned from the live provider.`}
+          />
+        )
       )}
 
       {/* TAPE tab — recent prints feed */}
       {tab === "tape" && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "60px 1fr 1fr 22px", gap: sp(4), padding: sp("1px 4px"), color: T.textMuted, fontSize: fs(7), letterSpacing: "0.08em" }}>
-            <span>TIME</span>
-            <span style={{ textAlign: "right" }}>PRICE</span>
-            <span style={{ textAlign: "right" }}>SIZE</span>
-            <span style={{ textAlign: "center" }}>SIDE</span>
-          </div>
-          <div style={{ flex: 1, overflow: "auto", fontFamily: T.mono, fontSize: fs(9) }}>
-            {tape.map((t, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "60px 1fr 1fr 22px", gap: sp(4), padding: sp("2px 4px"), borderBottom: `1px solid ${T.border}10`, background: t.size > 30 ? `${t.side === "B" ? T.green : T.red}08` : "transparent" }}>
-                <span style={{ color: T.textDim, fontSize: fs(8) }}>{t.time}</span>
-                <span style={{ color: t.side === "B" ? T.green : T.red, fontWeight: 600, textAlign: "right" }}>${t.price.toFixed(2)}</span>
-                <span style={{ color: t.size > 30 ? T.text : T.textSec, fontWeight: t.size > 30 ? 700 : 400, textAlign: "right" }}>×{t.size}</span>
-                <span style={{ color: t.side === "B" ? T.green : T.red, fontSize: fs(8), textAlign: "center", fontWeight: 700 }}>{t.side}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <DataUnavailableState
+          title="Trade tape provider not wired"
+          detail="Recent option prints for the selected contract are hidden until a real contract tape feed is connected."
+        />
       )}
     </div>
   );
 };
 
 
-const TradePositionsPanel = ({ onLoadPosition }) => {
+const TradePositionsPanel = ({ accountId, environment, executionConfigured, onLoadPosition }) => {
   const toast = useToast();
   const pos = usePositions();
   const [tab, setTab] = useState("open");
   const [seedClosed, setSeedClosed] = useState(new Set());  // ids of seed positions user closed
+  const positionsQuery = useListPositions(
+    { accountId, mode: environment },
+    {
+      query: {
+        enabled: Boolean(executionConfigured && accountId),
+        ...QUERY_DEFAULTS,
+      },
+    },
+  );
 
   // Merge seeded OPEN_POSITIONS (for nice initial demo) with user's mock fills.
   // User fills from PositionsContext render on top.
   const openPositions = useMemo(() => {
+    if (executionConfigured && accountId) {
+      return (positionsQuery.data?.positions || []).map((position) => {
+        const isOption = Boolean(position.optionContract);
+        const expiration = isOption ? formatExpirationLabel(position.optionContract.expirationDate) : "EQUITY";
+        const contract = isOption
+          ? `${position.optionContract.strike} ${position.optionContract.right === "call" ? "C" : "P"} ${expiration}`
+          : "EQUITY";
+
+        return {
+          _isUser: false,
+          _isLive: true,
+          _id: position.id,
+          ticker: position.symbol,
+          side: position.quantity >= 0 ? "LONG" : "SHORT",
+          contract,
+          qty: Math.abs(position.quantity),
+          entry: position.averagePrice,
+          mark: position.marketPrice,
+          pnl: position.unrealizedPnl,
+          pct: position.unrealizedPnlPercent,
+          sl: null,
+          tp: null,
+        };
+      });
+    }
+
     const userFills = pos.positions.map(p => {
       // Mark price drifts randomly from entry for demo purposes
       // Mirror the wider drift formula used in App-root alertingPositions calc.
@@ -3756,13 +5316,21 @@ const TradePositionsPanel = ({ onLoadPosition }) => {
       .filter((_, i) => !seedClosed.has(i))
       .map((p, i) => ({ ...p, _isUser: false, _id: `seed_${i}`, _seedIdx: i }));
     return [...userFills, ...seeds];
-  }, [pos.positions, seedClosed]);
+  }, [accountId, executionConfigured, pos.positions, positionsQuery.data, seedClosed]);
 
   const totalOpenPnl = openPositions.reduce((a, p) => a + p.pnl, 0);
   const totalHistPnl = TRADE_HISTORY.reduce((a, p) => a + p.pnl, 0);
-  const parseContract = str => { const parts = str.split(" "); return { strike: parseInt(parts[0], 10), cp: parts[1], exp: parts[2] }; };
+  const parseContract = str => { const parts = str.split(" "); return { strike: parseFloat(parts[0]), cp: parts[1], exp: parts[2] }; };
 
   const closeRow = (p) => {
+    if (p._isLive) {
+      toast.push({
+        kind: "info",
+        title: "Close-out not wired",
+        body: "Live position close-out still needs a dedicated execution endpoint.",
+      });
+      return;
+    }
     if (p._isUser) pos.closePosition(p._id);
     else setSeedClosed(prev => new Set([...prev, p._seedIdx]));
     toast.push({
@@ -3773,6 +5341,10 @@ const TradePositionsPanel = ({ onLoadPosition }) => {
   };
 
   const handleCloseAll = () => {
+    if (executionConfigured && accountId) {
+      toast.push({ kind: "info", title: "Close-all not wired", body: "Live flattening still needs an execution endpoint." });
+      return;
+    }
     if (openPositions.length === 0) {
       toast.push({ kind: "info", title: "Nothing to close", body: "No open positions." });
       return;
@@ -3787,6 +5359,10 @@ const TradePositionsPanel = ({ onLoadPosition }) => {
   };
 
   const handleSetStops = () => {
+    if (executionConfigured && accountId) {
+      toast.push({ kind: "info", title: "Stop management not wired", body: "Live stop management needs a modify-order endpoint." });
+      return;
+    }
     if (openPositions.length === 0) {
       toast.push({ kind: "info", title: "No positions", body: "Nothing to protect." });
       return;
@@ -3811,6 +5387,10 @@ const TradePositionsPanel = ({ onLoadPosition }) => {
   };
 
   const handleRollAll = () => {
+    if (executionConfigured && accountId) {
+      toast.push({ kind: "info", title: "Roll workflow not wired", body: "Live roll logic still needs spread/order orchestration." });
+      return;
+    }
     const userPositions = pos.positions.filter(p => p.kind === "option");
     if (userPositions.length === 0) {
       toast.push({ kind: "info", title: "Nothing to roll", body: "No option positions." });
@@ -3876,8 +5456,9 @@ const TradePositionsPanel = ({ onLoadPosition }) => {
                 <span style={{ color: p.pct >= 0 ? T.green : T.red, fontWeight: 600, textAlign: "right", fontSize: fs(8) }}>{p.pct >= 0 ? "+" : ""}{p.pct.toFixed(1)}%</span>
                 <button
                   onClick={e => { e.stopPropagation(); closeRow(p); }}
-                  title="Close position"
-                  style={{ background: "transparent", border: `1px solid ${T.red}40`, color: T.red, fontSize: fs(9), fontFamily: T.mono, fontWeight: 700, borderRadius: dim(2), cursor: "pointer", padding: sp("1px 0"), lineHeight: 1 }}
+                  title={p._isLive ? "Close-out endpoint not wired yet" : "Close position"}
+                  disabled={Boolean(p._isLive)}
+                  style={{ background: "transparent", border: `1px solid ${T.red}40`, color: T.red, fontSize: fs(9), fontFamily: T.mono, fontWeight: 700, borderRadius: dim(2), cursor: p._isLive ? "not-allowed" : "pointer", padding: sp("1px 0"), lineHeight: 1, opacity: p._isLive ? 0.45 : 1 }}
                 >✕</button>
               </div>
             );
@@ -3933,6 +5514,131 @@ const TradePositionsPanel = ({ onLoadPosition }) => {
           onClick={handleRollAll}
           style={{ flex: 1, padding: sp("4px 0"), background: "transparent", border: `1px solid ${T.amber}40`, borderRadius: dim(3), color: T.amber, fontSize: fs(9), fontFamily: T.sans, fontWeight: 600, cursor: "pointer" }}
         >Roll</button>
+      </div>
+    </div>
+  );
+};
+
+const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
+  const inputRef = useRef(null);
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query.trim());
+  const searchEnabled = open && deferredQuery.length >= 1;
+  const searchQuery = useSearchUniverseTickers(
+    searchEnabled
+      ? {
+          search: deferredQuery,
+          market: "stocks",
+          active: true,
+          limit: 12,
+        }
+      : undefined,
+    {
+      query: {
+        enabled: searchEnabled,
+        staleTime: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const results = searchQuery.data?.results || [];
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return undefined;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div style={{ padding: sp("6px 6px 0"), background: T.bg1, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+      <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp("8px 10px"), display: "flex", flexDirection: "column", gap: sp(6) }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: sp(8) }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.06em" }}>SEARCH UNIVERSE</span>
+            <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>Massive reference tickers · active stocks</span>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: "transparent", border: "none", color: T.textMuted, cursor: "pointer", fontSize: fs(12), lineHeight: 1, padding: 0 }}
+            title="Close search"
+          >
+            ×
+          </button>
+        </div>
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search ticker or company..."
+          style={{
+            width: "100%",
+            background: T.bg3,
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(4),
+            padding: sp("7px 10px"),
+            color: T.text,
+            fontSize: fs(11),
+            fontFamily: T.sans,
+            outline: "none",
+          }}
+        />
+        <div style={{ minHeight: dim(150), maxHeight: dim(220), overflowY: "auto", border: `1px solid ${T.border}`, borderRadius: dim(4), background: T.bg1 }}>
+          {!searchEnabled && (
+            <div style={{ padding: sp("12px 10px"), fontSize: fs(10), color: T.textDim, fontFamily: T.sans }}>
+              Type at least one character to search the ticker universe.
+            </div>
+          )}
+          {searchEnabled && searchQuery.isPending && (
+            <div style={{ padding: sp("12px 10px"), fontSize: fs(10), color: T.textDim, fontFamily: T.sans }}>
+              Searching Massive universe…
+            </div>
+          )}
+          {searchEnabled && !searchQuery.isPending && !results.length && (
+            <div style={{ padding: sp("12px 10px"), fontSize: fs(10), color: T.textDim, fontFamily: T.sans }}>
+              No active stock tickers matched "{deferredQuery}".
+            </div>
+          )}
+          {results.map((result) => (
+            <button
+              key={result.ticker}
+              onClick={() => onSelectTicker(result)}
+              style={{
+                width: "100%",
+                display: "grid",
+                gridTemplateColumns: "72px 1fr auto",
+                gap: sp(8),
+                alignItems: "center",
+                padding: sp("9px 10px"),
+                background: "transparent",
+                border: "none",
+                borderBottom: `1px solid ${T.border}20`,
+                textAlign: "left",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ fontSize: fs(11), fontWeight: 700, fontFamily: T.mono, color: T.text }}>{result.ticker}</span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: fs(10), color: T.textSec, fontFamily: T.sans, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{result.name}</span>
+                <span style={{ display: "block", fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                  {[result.type, result.primaryExchange].filter(Boolean).join(" · ") || "stock"}
+                </span>
+              </span>
+              <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>{result.market.toUpperCase()}</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -4000,13 +5706,12 @@ const TickerTabStrip = ({ recent, active, onSelect, onClose, onAddNew }) => {
 
 // ─── COMPACT TICKER HEADER ───
 // One row showing ticker + price + key stats. Replaces the wide account strip on Trade tab.
-const TradeTickerHeader = ({ ticker }) => {
+const TradeTickerHeader = ({ ticker, chainRows = [], expiration, chainStatus = "empty" }) => {
   const info = TRADE_TICKER_INFO[ticker] || TRADE_TICKER_INFO.SPY;
   const pos = info.pct >= 0;
-  const chain = useMemo(() => genOptionsChain(info.price, info.iv, info.chainSeed), [ticker]);
-  const atmRow = chain.find(r => r.isAtm);
-  const impMove = atmRow ? (atmRow.cPrem + atmRow.pPrem) * 0.85 : 0;
-  const impPct = (impMove / info.price) * 100;
+  const atmRow = chainRows.find(r => r.isAtm);
+  const impMove = atmRow ? (atmRow.cPrem + atmRow.pPrem) * 0.85 : null;
+  const impPct = impMove != null && info.price > 0 ? (impMove / info.price) * 100 : null;
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: sp(16),
@@ -4028,10 +5733,11 @@ const TradeTickerHeader = ({ ticker }) => {
       </div>
       <span style={{ flex: 1 }} />
       <div style={{ display: "flex", gap: sp(14), fontSize: fs(10), fontFamily: T.mono }}>
-        <div><span style={{ color: T.textMuted }}>VOL </span><span style={{ color: T.text, fontWeight: 600 }}>29.8M</span></div>
+        <div><span style={{ color: T.textMuted }}>VOL </span><span style={{ color: T.text, fontWeight: 600 }}>{fmtQuoteVolume(info.volume)}</span></div>
         <div><span style={{ color: T.textMuted }}>IV </span><span style={{ color: T.text, fontWeight: 600 }}>{(info.iv * 100).toFixed(1)}%</span></div>
-        <div><span style={{ color: T.textMuted }}>IMP </span><span style={{ color: T.cyan, fontWeight: 700 }}>±${impMove.toFixed(2)}</span> <span style={{ color: T.textDim }}>({impPct.toFixed(2)}%)</span></div>
+        <div><span style={{ color: T.textMuted }}>IMP </span><span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 700 }}>{impMove != null ? `±$${impMove.toFixed(2)}` : "—"}</span> <span style={{ color: T.textDim }}>{impPct != null ? `(${impPct.toFixed(2)}%)` : ""}</span></div>
         <div><span style={{ color: T.textMuted }}>ATM </span><span style={{ color: T.accent, fontWeight: 600 }}>{Math.round(info.price / 5) * 5}</span></div>
+        <div><span style={{ color: T.textMuted }}>CHAIN </span><span style={{ color: chainStatus === "live" ? T.accent : T.textDim, fontWeight: 600 }}>{chainStatus}</span></div>
       </div>
     </div>
   );
@@ -4040,14 +5746,67 @@ const TradeTickerHeader = ({ ticker }) => {
 // ─── FOCUSED EQUITY CHART PANEL ───
 // Big equity chart with full controls: timeframes, drawing tools, candles, crosshair, flow markers.
 // Always large (no expand toggle needed in single-ticker mode).
-const TradeEquityPanel = ({ ticker }) => {
-  const info = TRADE_TICKER_INFO[ticker] || TRADE_TICKER_INFO.SPY;
+const TradeEquityPanel = ({ ticker, flowEvents = [] }) => {
   const [tf, setTf] = useState("5m");
   const [drawings, setDrawings] = useState([]);
   const [drawMode, setDrawMode] = useState(null);
   const tfMeta = TRADE_TIMEFRAMES.find(x => x.v === tf) || TRADE_TIMEFRAMES[1];
-  const bars = useMemo(() => genTradeBars(info.barSeed + tfMeta.bars, info.price), [ticker, tf]);
-  const markers = TRADE_FLOW_MARKERS[ticker] || [];
+  const barsQuery = useQuery({
+    queryKey: ["trade-equity-bars", ticker, tf, tfMeta.bars],
+    queryFn: () => getBarsRequest({
+      symbol: ticker,
+      timeframe: tf,
+      limit: tfMeta.bars,
+    }),
+    ...QUERY_DEFAULTS,
+  });
+  const bars = useMemo(
+    () => buildTradeBarsFromApi(barsQuery.data?.bars),
+    [barsQuery.data],
+  );
+  const barsStatus = bars.length
+    ? "live"
+    : barsQuery.isPending
+      ? "loading"
+      : barsQuery.isError
+        ? "offline"
+        : "empty";
+  const markers = useMemo(
+    () => (flowEvents.length ? buildTradeFlowMarkersFromEvents(flowEvents, bars.length) : []),
+    [bars.length, flowEvents],
+  );
+  const chartMarkers = useMemo(
+    () => markers.flatMap((marker, index) => {
+      const targetBar = bars[marker?.barIdx];
+      const rawTime = targetBar?.time;
+      const time = typeof rawTime === "number"
+        ? (rawTime > 1e12 ? Math.floor(rawTime / 1000) : Math.floor(rawTime))
+        : null;
+      if (!time) return [];
+
+      const isCall = marker.cp === "C";
+      return [{
+        id: `trade-flow-${ticker}-${index}-${time}`,
+        time,
+        barIndex: marker.barIdx,
+        position: isCall ? "belowBar" : "aboveBar",
+        shape: isCall ? "arrowUp" : "arrowDown",
+        color: marker.golden ? T.amber : isCall ? T.green : T.red,
+        size: marker.golden ? 1.6 : marker.size === "lg" ? 1.25 : marker.size === "md" ? 1 : 0.8,
+        text: marker.golden ? "G" : "",
+      }];
+    }),
+    [bars, markers, ticker],
+  );
+  const chartModel = useMemo(
+    () => buildResearchChartModel({
+      bars,
+      timeframe: tf,
+      selectedIndicators: ["ema-21", "ema-55"],
+      indicatorMarkers: chartMarkers,
+    }),
+    [bars, chartMarkers, tf],
+  );
   const callFlows = markers.filter(m => m.cp === "C").length;
   const putFlows = markers.filter(m => m.cp === "P").length;
 
@@ -4078,39 +5837,23 @@ const TradeEquityPanel = ({ ticker }) => {
             style={{ padding: sp("2px 8px"), background: "transparent", border: `1px solid ${T.border}`, borderRadius: dim(3), color: T.textDim, fontSize: fs(9), fontFamily: T.mono, cursor: "pointer" }}
           >✕</button>
         </div>
+        <span style={{ fontSize: fs(8), color: barsStatus === "live" ? T.accent : T.textDim, fontFamily: T.mono }}>
+          {barsStatus === "live" ? `Massive ${tf}` : barsStatus}
+        </span>
         <div style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textMuted }}>
-          <span style={{ color: T.green }}>C {callFlows}</span> · <span style={{ color: T.red }}>P {putFlows}</span>
+          <span style={{ color: T.green }}>C {callFlows}</span> · <span style={{ color: T.red }}>P {putFlows}</span> · <span style={{ color: T.amber }}>UOA amber</span>
         </div>
       </div>
       {/* Chart body */}
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <CandleChart bars={bars} markers={markers} drawings={drawings} drawMode={drawMode} onAddDrawing={d => setDrawings(prev => [...prev, d])} />
-        </div>
-        <div style={{ height: dim(48), flexShrink: 0, position: "relative" }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={bars.map(b => ({ ...b, vNormal: b.v * (1 - (b.uoa || 0)), vUoa: b.v * (b.uoa || 0) }))}
-              margin={{ top: 0, right: 8, bottom: 0, left: -30 }}
-            >
-              <XAxis dataKey="t" hide />
-              <YAxis tick={{ fontSize: fs(7), fill: T.textMuted }} axisLine={false} />
-              {/* Normal volume — colored by candle direction */}
-              <Bar dataKey="vNormal" stackId="vol" isAnimationActive={false}>
-                {bars.map((b, i) => (
-                  <Cell key={i} fill={b.c >= b.o ? `${T.green}50` : `${T.red}50`} />
-                ))}
-              </Bar>
-              {/* Unusual options activity overlay — amber on top */}
-              <Bar dataKey="vUoa" stackId="vol" radius={[1, 1, 0, 0]} fill={T.amber} isAnimationActive={false} />
-            </BarChart>
-          </ResponsiveContainer>
-          {/* UOA legend */}
-          <div style={{ position: "absolute", top: 2, right: 12, fontSize: fs(7), fontFamily: T.mono, color: T.textMuted, display: "flex", alignItems: "center", gap: sp(3), pointerEvents: "none" }}>
-            <span style={{ display: "inline-block", width: dim(6), height: dim(6), background: T.amber, borderRadius: 1 }} />
-            <span>UOA</span>
-          </div>
-        </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <ResearchChartSurface
+          theme={T}
+          themeKey={CURRENT_THEME}
+          model={chartModel}
+          drawings={drawings}
+          drawMode={drawMode}
+          onAddHorizontalLevel={(price) => setDrawings(prev => [...prev, { type: "horizontal", price }])}
+        />
       </div>
     </div>
   );
@@ -4118,10 +5861,11 @@ const TradeEquityPanel = ({ ticker }) => {
 
 // ─── FOCUSED OPTIONS CHAIN PANEL ───
 // Taller chain panel. Header has expiration selector + implied move + ATM strike.
-const TradeChainPanel = ({ ticker, contract, onSelectContract, onChangeExp }) => {
+const TradeChainPanel = ({ ticker, contract, chainRows = [], expirations = [], onSelectContract, onChangeExp, chainStatus = "empty" }) => {
   const info = TRADE_TICKER_INFO[ticker] || TRADE_TICKER_INFO.SPY;
-  const chain = useMemo(() => genOptionsChain(info.price, info.iv, info.chainSeed), [ticker]);
-  const expInfo = EXPIRATIONS.find(e => e.v === contract.exp) || EXPIRATIONS[2];
+  const chain = chainRows;
+  const expirationOptions = expirations.length ? expirations : [{ value: contract.exp, label: contract.exp, dte: daysToExpiration(contract.exp) }];
+  const expInfo = expirationOptions.find(e => e.value === contract.exp) || expirationOptions[0] || { value: contract.exp, label: contract.exp, dte: daysToExpiration(contract.exp) };
   const heldForTicker = OPEN_POSITIONS.filter(p => p.ticker === ticker).map(p => {
     const parts = p.contract.split(" ");
     return { strike: parseInt(parts[0], 10), cp: parts[1], exp: parts[2] };
@@ -4132,29 +5876,37 @@ const TradeChainPanel = ({ ticker, contract, onSelectContract, onChangeExp }) =>
       <div style={{ display: "flex", alignItems: "center", padding: sp("6px 10px"), borderBottom: `1px solid ${T.border}`, gap: sp(8), flexShrink: 0 }}>
         <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.06em" }}>OPTIONS CHAIN</span>
         <select
-          value={contract.exp}
+          value={expInfo.value}
           onChange={e => onChangeExp(e.target.value)}
           style={{ background: T.bg3, border: `1px solid ${T.border}`, color: T.text, fontSize: fs(9), fontFamily: T.mono, fontWeight: 600, cursor: "pointer", padding: sp("2px 6px"), borderRadius: dim(3), outline: "none" }}
         >
-          {EXPIRATIONS.map(ex => <option key={ex.v} value={ex.v}>{ex.v} · {ex.tag}</option>)}
+          {expirationOptions.map(ex => <option key={ex.value} value={ex.value}>{ex.label} · {ex.dte}d</option>)}
         </select>
         <span style={{ fontSize: fs(9), color: expInfo.dte === 0 ? T.amber : T.textDim, fontFamily: T.mono, fontWeight: expInfo.dte === 0 ? 700 : 400 }}>{expInfo.dte}d</span>
         <span style={{ flex: 1 }} />
         {(() => {
           const atmRow = chain.find(r => r.isAtm);
-          const impMove = atmRow ? (atmRow.cPrem + atmRow.pPrem) * 0.85 : 0;
-          const impPct = (impMove / info.price) * 100;
-          return <span style={{ fontSize: fs(9), fontFamily: T.mono }}>IMP <span style={{ color: T.cyan, fontWeight: 700 }}>±${impMove.toFixed(2)}</span> <span style={{ color: T.textDim }}>({impPct.toFixed(2)}%)</span></span>;
+          const impMove = atmRow ? (atmRow.cPrem + atmRow.pPrem) * 0.85 : null;
+          const impPct = impMove != null && info.price > 0 ? (impMove / info.price) * 100 : null;
+          return <span style={{ fontSize: fs(9), fontFamily: T.mono }}>IMP <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 700 }}>{impMove != null ? `±$${impMove.toFixed(2)}` : "—"}</span> <span style={{ color: T.textDim }}>{impPct != null ? `(${impPct.toFixed(2)}%)` : ""}</span></span>;
         })()}
         <span style={{ fontSize: fs(9), fontFamily: T.mono }}>ATM <span style={{ color: T.accent, fontWeight: 700 }}>{Math.round(info.price / 5) * 5}</span></span>
+        <span style={{ fontSize: fs(8), color: chainStatus === "live" ? T.accent : T.textDim, fontFamily: T.mono }}>{chainStatus === "live" ? "pan ↔ for Γ Θ V" : `chain ${chainStatus}`}</span>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-        <TradeOptionsChain
-          chain={chain}
-          selected={{ strike: contract.strike, cp: contract.cp }}
-          onSelect={(k, cp) => onSelectContract(k, cp)}
-          heldStrikes={heldForTicker}
-        />
+        {chain.length ? (
+          <TradeOptionsChain
+            chain={chain}
+            selected={{ strike: contract.strike, cp: contract.cp }}
+            onSelect={(k, cp) => onSelectContract(k, cp)}
+            heldStrikes={heldForTicker}
+          />
+        ) : (
+          <DataUnavailableState
+            title="No live option chain"
+            detail={`The ${ticker} chain table is hidden until the live provider returns quotes and greeks for this expiration.`}
+          />
+        )}
       </div>
     </div>
   );
@@ -4162,15 +5914,39 @@ const TradeChainPanel = ({ ticker, contract, onSelectContract, onChangeExp }) =>
 
 // ─── FOCUSED CONTRACT DETAIL PANEL ───
 // Selected contract chart with entry line + HOLDING badge.
-const TradeContractDetailPanel = ({ ticker, contract }) => {
-  const info = TRADE_TICKER_INFO[ticker] || TRADE_TICKER_INFO.SPY;
-  const chain = useMemo(() => genOptionsChain(info.price, info.iv, info.chainSeed), [ticker]);
-  const selectedRow = chain.find(r => r.k === contract.strike);
-  const basePrem = selectedRow ? (contract.cp === "C" ? selectedRow.cPrem : selectedRow.pPrem) : 3.0;
-  const optBars = useMemo(
-    () => genOptionPriceBars(basePrem, info.optSeed + contract.strike + (contract.cp === "C" ? 0 : 1000)),
-    [ticker, contract.strike, contract.cp, contract.exp]
-  );
+const TradeContractDetailPanel = ({ ticker, contract, chainRows = [], chainStatus = "empty" }) => {
+  const selectedRow = chainRows.find(r => r.k === contract.strike);
+  const basePrem = selectedRow ? (contract.cp === "C" ? selectedRow.cPrem : selectedRow.pPrem) : null;
+  const contractMeta = contract.cp === "C" ? selectedRow?.cContract : selectedRow?.pContract;
+  const [tf, setTf] = useState("5m");
+  const tfMeta = TRADE_TIMEFRAMES.find(x => x.v === tf) || TRADE_TIMEFRAMES[1];
+  const optionBarsQuery = useQuery({
+    queryKey: ["trade-option-bars", contractMeta?.ticker, tf, tfMeta.bars],
+    queryFn: () => getBarsRequest({
+      symbol: contractMeta.ticker,
+      timeframe: tf,
+      limit: tfMeta.bars,
+    }),
+    enabled: Boolean(contractMeta?.ticker),
+    ...QUERY_DEFAULTS,
+  });
+  const optionDailyBarsQuery = useQuery({
+    queryKey: ["trade-option-bars-daily", contractMeta?.ticker],
+    queryFn: () => getBarsRequest({
+      symbol: contractMeta.ticker,
+      timeframe: "1d",
+      limit: 60,
+    }),
+    enabled: Boolean(contractMeta?.ticker) && tf !== "1d",
+    ...QUERY_DEFAULTS,
+  });
+  const liveIntradayBars = buildTradeBarsFromApi(optionBarsQuery.data?.bars);
+  const liveDailyBars = buildTradeBarsFromApi(optionDailyBarsQuery.data?.bars);
+  const optBars = useMemo(() => {
+    if (liveIntradayBars.length) return liveIntradayBars;
+    if (liveDailyBars.length) return liveDailyBars;
+    return [];
+  }, [liveDailyBars, liveIntradayBars]);
   const contractColor = contract.cp === "C" ? T.green : T.red;
   const contractStr = `${ticker} ${contract.strike}${contract.cp} ${contract.exp}`;
   const heldForTicker = OPEN_POSITIONS.filter(p => p.ticker === ticker).map(p => {
@@ -4178,6 +5954,22 @@ const TradeContractDetailPanel = ({ ticker, contract }) => {
     return { strike: parseInt(parts[0], 10), cp: parts[1], exp: parts[2], entry: p.entry, pnl: p.pnl, pct: p.pct };
   });
   const activeHolding = heldForTicker.find(hp => hp.strike === contract.strike && hp.cp === contract.cp && hp.exp === contract.exp);
+  const hasLiveIntradayBars = liveIntradayBars.length > 0;
+  const hasLiveDailyBars = liveDailyBars.length > 0;
+  const resolvedChartTimeframe = hasLiveIntradayBars ? tf : hasLiveDailyBars ? "1d" : tf;
+  const sourceLabel = !contractMeta
+    ? chainStatus === "loading"
+      ? "waiting on live chain"
+      : "no live contract selected"
+    : hasLiveIntradayBars
+      ? `Massive ${tf}`
+      : hasLiveDailyBars
+        ? "Massive 1d fallback"
+        : optionBarsQuery.isPending || optionDailyBarsQuery.isPending
+          ? `loading ${tf}`
+          : optionBarsQuery.isError || optionDailyBarsQuery.isError
+            ? "contract bars unavailable"
+            : "no live contract bars";
 
   return (
     <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" }}>
@@ -4185,7 +5977,19 @@ const TradeContractDetailPanel = ({ ticker, contract }) => {
         <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.06em" }}>CONTRACT</span>
         <span style={{ fontSize: fs(11), fontWeight: 700, fontFamily: T.mono, color: contractColor }}>{contract.strike}{contract.cp}</span>
         <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>{contract.exp}</span>
+        <div style={{ display: "flex", gap: sp(2) }}>
+          {TRADE_TIMEFRAMES.map(t => (
+            <button
+              key={t.v}
+              onClick={() => setTf(t.v)}
+              style={{ padding: sp("2px 7px"), background: t.v === tf ? T.accentDim : "transparent", border: `1px solid ${t.v === tf ? T.accent : T.border}`, borderRadius: dim(3), color: t.v === tf ? T.accent : T.textDim, fontSize: fs(8), fontFamily: T.mono, fontWeight: 600, cursor: "pointer" }}
+            >{t.tag}</button>
+          ))}
+        </div>
         <span style={{ flex: 1 }} />
+        <span style={{ fontSize: fs(8), color: hasLiveIntradayBars ? T.green : hasLiveDailyBars ? T.cyan : optionBarsQuery.isPending || optionDailyBarsQuery.isPending ? T.accent : T.textDim, fontFamily: T.mono }}>
+          {hasLiveIntradayBars ? "live contract bars" : hasLiveDailyBars ? "daily contract fallback" : optionBarsQuery.isPending || optionDailyBarsQuery.isPending ? "loading contract bars" : "no live contract bars"}
+        </span>
         {activeHolding && (
           <span style={{ padding: sp("2px 6px"), background: `${T.amber}18`, border: `1px solid ${T.amber}50`, borderRadius: dim(3), fontSize: fs(9), fontFamily: T.mono, fontWeight: 700, color: T.amber }}>★ HOLDING {activeHolding.qty || ""}</span>
         )}
@@ -4194,10 +5998,17 @@ const TradeContractDetailPanel = ({ ticker, contract }) => {
             {activeHolding.pnl >= 0 ? "+" : ""}${activeHolding.pnl}
           </span>
         )}
-        <span style={{ fontSize: fs(13), fontWeight: 700, fontFamily: T.mono, color: contractColor }}>${basePrem.toFixed(2)}</span>
+        <span style={{ fontSize: fs(13), fontWeight: 700, fontFamily: T.mono, color: contractColor }}>{typeof basePrem === "number" ? `$${basePrem.toFixed(2)}` : "—"}</span>
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <TradeOptionChart bars={optBars} color={contractColor} contract={contractStr} holding={activeHolding} />
+        <TradeOptionChart
+          bars={optBars}
+          color={contractColor}
+          contract={contractStr}
+          holding={activeHolding}
+          timeframe={resolvedChartTimeframe}
+          sourceLabel={sourceLabel}
+        />
       </div>
     </div>
   );
@@ -4360,12 +6171,35 @@ const NetFlowTimeline = ({ data, height = 130 }) => {
   );
 };
 
-const TradeOptionsFlowPanel = ({ ticker }) => {
+const TradeOptionsFlowPanel = ({ ticker, flowEvents = [] }) => {
   const info = TRADE_TICKER_INFO[ticker] || TRADE_TICKER_INFO.SPY;
-  const bullish = info.pct >= 0 ? 0.58 : 0.42;
-  const dteData = useMemo(() => genOptionsFlowByDTE(info.chainSeed + 8000, bullish), [ticker]);
-  const strikeData = useMemo(() => genOptionsFlowByStrike(info.chainSeed + 9000, info.price), [ticker]);
-  const timelineData = useMemo(() => genOptionsFlowTimeline(info.chainSeed + 10000, bullish), [ticker]);
+  const dteData = useMemo(
+    () => buildTradeOptionFlowByDte(flowEvents),
+    [flowEvents],
+  );
+  const strikeData = useMemo(
+    () => buildTradeOptionFlowByStrike(flowEvents, info.price),
+    [flowEvents, info.price],
+  );
+  const timelineData = useMemo(
+    () => buildTradeOptionFlowTimeline(flowEvents),
+    [flowEvents],
+  );
+
+  if (!flowEvents.length || !dteData.length || !strikeData.length || !timelineData.length) {
+    return (
+      <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp("8px 10px"), display: "flex", flexDirection: "column", gap: sp(4), overflow: "hidden", height: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${T.border}`, paddingBottom: sp(4) }}>
+          <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.06em" }}>OPTIONS ORDER FLOW</span>
+          <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>{ticker} · no live data</span>
+        </div>
+        <DataUnavailableState
+          title="No live options flow"
+          detail={`Strike heatmaps and DTE buckets are hidden until live options prints are returned for ${ticker}.`}
+        />
+      </div>
+    );
+  }
 
   const totalCall = dteData.reduce((s, b) => s + b.callPrem, 0);
   const totalPut = dteData.reduce((s, b) => s + b.putPrem, 0);
@@ -4434,12 +6268,28 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
 
 // ─── SPOT ORDER FLOW PANEL ───
 // Compact wrapper around the existing OrderFlowDistribution component for use in Trade tab.
-const TradeSpotFlowPanel = ({ ticker }) => {
-  const info = TRADE_TICKER_INFO[ticker] || TRADE_TICKER_INFO.SPY;
-  const tickerFlow = useMemo(() => genTickerFlow(info.chainSeed + 5000, info.pct >= 0 ? 0.58 : 0.42), [ticker]);
+const TradeSpotFlowPanel = ({ ticker, flowEvents = [] }) => {
+  const tickerFlow = useMemo(
+    () => buildMarketOrderFlowFromEvents(flowEvents),
+    [flowEvents],
+  );
+  if (!flowEvents.length) {
+    return (
+      <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp("8px 10px"), display: "flex", flexDirection: "column", gap: sp(4), overflow: "hidden", height: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${T.border}`, paddingBottom: sp(4) }}>
+          <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.06em" }}>SPOT FLOW</span>
+          <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>{ticker} · no live data</span>
+        </div>
+        <DataUnavailableState
+          title="No live spot flow"
+          detail={`This panel only renders API-backed buy and sell flow for ${ticker}.`}
+        />
+      </div>
+    );
+  }
   const totalBuy = tickerFlow.buyXL + tickerFlow.buyL + tickerFlow.buyM + tickerFlow.buyS;
   const totalSell = tickerFlow.sellXL + tickerFlow.sellL + tickerFlow.sellM + tickerFlow.sellS;
-  const buyPct = ((totalBuy / (totalBuy + totalSell)) * 100).toFixed(1);
+  const buyPct = ((totalBuy / Math.max(totalBuy + totalSell, 1)) * 100).toFixed(1);
   const max = Math.max(tickerFlow.buyXL, tickerFlow.buyL, tickerFlow.buyM, tickerFlow.buyS, tickerFlow.sellXL, tickerFlow.sellL, tickerFlow.sellM, tickerFlow.sellS);
   return (
     <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp("8px 10px"), display: "flex", flexDirection: "column", gap: sp(4), overflow: "hidden", height: "100%" }}>
@@ -4471,19 +6321,30 @@ const TradeSpotFlowPanel = ({ ticker }) => {
   );
 };
 
-const TradeScreen = ({ sym, symPing }) => {
+const TradeScreen = ({ sym, symPing, environment, accountId, executionConfigured }) => {
+  const toast = useToast();
   // Initialize from persisted state, falling back to sym prop or sensible defaults
   const initialTicker = (() => {
     const persistedActive = _initialState.tradeActiveTicker;
-    if (persistedActive && TRADE_TICKER_INFO[persistedActive]) return persistedActive;
-    if (sym && TRADE_TICKER_INFO[sym]) return sym;
+    if (persistedActive) {
+      ensureTradeTickerInfo(persistedActive, persistedActive);
+      return persistedActive;
+    }
+    if (sym) {
+      ensureTradeTickerInfo(sym, sym);
+      return sym;
+    }
     return "SPY";
   })();
   const initialRecent = (() => {
     const persistedRecent = _initialState.tradeRecentTickers;
     if (Array.isArray(persistedRecent) && persistedRecent.length > 0) {
-      // Filter out any tickers no longer in TRADE_TICKER_INFO
-      const valid = persistedRecent.filter(t => TRADE_TICKER_INFO[t]);
+      const valid = persistedRecent
+        .map((ticker) => {
+          ensureTradeTickerInfo(ticker, ticker);
+          return ticker;
+        })
+        .filter(Boolean);
       if (valid.length > 0) return valid;
     }
     return [initialTicker, "QQQ", "NVDA"].filter((t, i, a) => a.indexOf(t) === i);
@@ -4495,22 +6356,133 @@ const TradeScreen = ({ sym, symPing }) => {
   const [activeTicker, setActiveTicker] = useState(initialTicker);
   const [recentTickers, setRecentTickers] = useState(initialRecent);
   const [contracts, setContracts] = useState(initialContracts);
+  const [showUniverseSearch, setShowUniverseSearch] = useState(false);
+  const activeTickerInfo = TRADE_TICKER_INFO[activeTicker] || TRADE_TICKER_INFO.SPY;
   const contract = contracts[activeTicker] || (() => {
-    const info = TRADE_TICKER_INFO[activeTicker] || TRADE_TICKER_INFO.SPY;
-    return { strike: Math.round(info.price / 5) * 5, cp: "C", exp: "04/25" };
+    return { strike: Math.round(activeTickerInfo.price / 5) * 5, cp: "C", exp: "04/25" };
   })();
   const updateContract = (patch) => setContracts(c => ({ ...c, [activeTicker]: { ...contract, ...patch } }));
+  const activeQuoteQuery = useGetQuoteSnapshots(
+    { symbols: activeTicker },
+    {
+      query: {
+        enabled: Boolean(activeTicker),
+        staleTime: 10_000,
+        refetchInterval: 10_000,
+        retry: false,
+      },
+    },
+  );
+  const optionChainQuery = useQuery({
+    queryKey: ["trade-option-chain", activeTicker],
+    queryFn: () => getOptionChainRequest({ underlying: activeTicker }),
+    ...QUERY_DEFAULTS,
+  });
+  const expirationOptions = useMemo(() => {
+    if (optionChainQuery.data?.contracts?.length) {
+      const unique = new Map();
+      optionChainQuery.data.contracts.forEach((quote) => {
+        const actualDate = parseExpirationValue(quote.contract?.expirationDate);
+        const value = formatExpirationLabel(quote.contract?.expirationDate);
+        if (!unique.has(value)) {
+          unique.set(value, {
+            value,
+            label: value,
+            dte: daysToExpiration(actualDate),
+            actualDate,
+          });
+        }
+      });
+      return Array.from(unique.values()).sort(
+        (left, right) => (left.actualDate?.getTime() ?? 0) - (right.actualDate?.getTime() ?? 0),
+      );
+    }
+
+    return [];
+  }, [optionChainQuery.data]);
+  const chainRowsByExpiration = useMemo(() => {
+    if (optionChainQuery.data?.contracts?.length) {
+      const grouped = {};
+      optionChainQuery.data.contracts.forEach((quote) => {
+        const expiration = formatExpirationLabel(quote.contract?.expirationDate);
+        if (!grouped[expiration]) grouped[expiration] = [];
+        grouped[expiration].push(quote);
+      });
+
+      return Object.fromEntries(
+        Object.entries(grouped).map(([expiration, quotes]) => [
+          expiration,
+          buildOptionChainRowsFromApi(quotes, activeTickerInfo.price, activeTickerInfo.iv),
+        ]),
+      );
+    }
+
+    return {};
+  }, [optionChainQuery.data, activeTickerInfo.price, activeTickerInfo.iv]);
+  const activeExpiration = expirationOptions.find(option => option.value === contract.exp) || expirationOptions[0] || {
+    value: contract.exp,
+    label: contract.exp,
+    dte: daysToExpiration(contract.exp),
+    actualDate: parseExpirationValue(contract.exp),
+  };
+  const activeChainRows = chainRowsByExpiration[activeExpiration.value] || chainRowsByExpiration[contract.exp] || [];
+  const optionChainStatus = optionChainQuery.data?.contracts?.length
+    ? "live"
+    : optionChainQuery.isPending
+      ? "loading"
+      : optionChainQuery.isError
+        ? "offline"
+        : "empty";
+  const tickerFlowQuery = useQuery({
+    queryKey: ["trade-flow", activeTicker],
+    queryFn: () => listFlowEventsRequest({ underlying: activeTicker, limit: 80 }),
+    staleTime: 10_000,
+    refetchInterval: 10_000,
+    retry: false,
+  });
+  const tickerFlowEvents = useMemo(() => {
+    const liveEvents = tickerFlowQuery.data?.events?.map(mapFlowEventToUi) || [];
+    if (liveEvents.length) {
+      return liveEvents.sort((left, right) => right.premium - left.premium);
+    }
+    return [];
+  }, [tickerFlowQuery.data, activeTicker]);
+  const tradeFlowStatus = tickerFlowEvents.length
+    ? "live"
+    : tickerFlowQuery.isPending
+      ? "loading"
+      : tickerFlowQuery.isError
+        ? "offline"
+        : "empty";
 
   // Persist trade state changes
   useEffect(() => { persistState({ tradeActiveTicker: activeTicker }); }, [activeTicker]);
   useEffect(() => { persistState({ tradeRecentTickers: recentTickers }); }, [recentTickers]);
   useEffect(() => { persistState({ tradeContracts: contracts }); }, [contracts]);
 
+  useEffect(() => {
+    const quote = activeQuoteQuery.data?.quotes?.find(item => item.symbol?.toUpperCase() === activeTicker);
+    if (!quote) return;
+
+    const tradeInfo = ensureTradeTickerInfo(activeTicker, activeTickerInfo.name || activeTicker);
+    tradeInfo.price = quote.price ?? tradeInfo.price;
+    tradeInfo.chg = quote.change ?? tradeInfo.chg;
+    tradeInfo.pct = quote.changePercent ?? tradeInfo.pct;
+    tradeInfo.open = quote.open ?? tradeInfo.open ?? null;
+    tradeInfo.high = quote.high ?? tradeInfo.high ?? null;
+    tradeInfo.low = quote.low ?? tradeInfo.low ?? null;
+    tradeInfo.prevClose = quote.prevClose ?? tradeInfo.prevClose ?? null;
+    tradeInfo.volume = quote.volume ?? tradeInfo.volume ?? null;
+    tradeInfo.updatedAt = quote.updatedAt ?? tradeInfo.updatedAt ?? null;
+  }, [activeQuoteQuery.data, activeTicker, activeTickerInfo.name]);
+
   // Helper: focus a ticker, and add to recent strip if not present
-  const focusTicker = (ticker) => {
-    if (!TRADE_TICKER_INFO[ticker]) return;
-    setActiveTicker(ticker);
-    setRecentTickers(prev => prev.includes(ticker) ? prev : [...prev, ticker].slice(-8));
+  const focusTicker = (ticker, fallbackName = ticker) => {
+    const normalized = ticker?.toUpperCase?.() || ticker;
+    if (!normalized) return;
+    ensureTradeTickerInfo(normalized, fallbackName);
+    setActiveTicker(normalized);
+    setRecentTickers(prev => prev.includes(normalized) ? prev : [...prev, normalized].slice(-8));
   };
   const closeTicker = (ticker) => {
     setRecentTickers(prev => {
@@ -4523,15 +6495,63 @@ const TradeScreen = ({ sym, symPing }) => {
   // Watchlist sync
   useEffect(() => {
     if (!symPing || symPing.n === 0) return;
-    if (!TRADE_TICKER_INFO[symPing.sym]) return;
+    ensureTradeTickerInfo(symPing.sym, symPing.sym);
     focusTicker(symPing.sym);
+    if (symPing.contract) {
+      const incoming = symPing.contract;
+      setContracts((current) => {
+        const info = TRADE_TICKER_INFO[symPing.sym] || TRADE_TICKER_INFO.SPY;
+        const existing = current[symPing.sym] || {
+          strike: Math.round(info.price / 5) * 5,
+          cp: "C",
+          exp: incoming.exp || "04/25",
+        };
+
+        return {
+          ...current,
+          [symPing.sym]: {
+            ...existing,
+            ...incoming,
+          },
+        };
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symPing && symPing.n]);
 
+  useEffect(() => {
+    if (!expirationOptions.length) return;
+    if (expirationOptions.some(option => option.value === contract.exp)) return;
+
+    const nextExpiration = expirationOptions[0];
+    const atmRow = (chainRowsByExpiration[nextExpiration.value] || []).find(row => row.isAtm);
+    updateContract({
+      exp: nextExpiration.value,
+      strike: atmRow?.k ?? contract.strike,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTicker, expirationOptions, chainRowsByExpiration]);
+
+  useEffect(() => {
+    if (!activeChainRows.length) return;
+    if (activeChainRows.some(row => row.k === contract.strike)) return;
+
+    const atmRow = activeChainRows.find(row => row.isAtm) || activeChainRows[Math.floor(activeChainRows.length / 2)];
+    updateContract({ strike: atmRow?.k ?? contract.strike });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTicker, activeExpiration.value, activeChainRows, contract.strike]);
+
   // Strategy → pick a strike near the desired delta on the active ticker's chain
   const applyStrategy = (strategy) => {
-    const info = TRADE_TICKER_INFO[activeTicker] || TRADE_TICKER_INFO.SPY;
-    const chain = genOptionsChain(info.price, info.iv, info.chainSeed);
+    if (!activeChainRows.length) {
+      toast.push({
+        kind: "info",
+        title: "Chain still loading",
+        body: "Wait for a live option chain before applying a strategy preset.",
+      });
+      return;
+    }
+    const chain = activeChainRows;
     let bestStrike = chain[0].k;
     let bestDist = Infinity;
     for (const row of chain) {
@@ -4539,8 +6559,12 @@ const TradeScreen = ({ sym, symPing }) => {
       const dist = Math.abs(d - strategy.deltaTarget);
       if (dist < bestDist) { bestDist = dist; bestStrike = row.k; }
     }
-    const targetExp = strategy.dte === 0 ? "04/18" : strategy.dte <= 7 ? "04/25" : "05/02";
-    updateContract({ strike: bestStrike, cp: strategy.cp, exp: targetExp });
+    const targetExpiration = expirationOptions.length
+      ? expirationOptions.reduce((closest, option) => (
+        Math.abs(option.dte - strategy.dte) < Math.abs(closest.dte - strategy.dte) ? option : closest
+      ), expirationOptions[0]).value
+      : contract.exp;
+    updateContract({ strike: bestStrike, cp: strategy.cp, exp: targetExpiration });
   };
 
   // Slot prop adapter for existing components that expect { ticker, strike, cp, exp }
@@ -4554,41 +6578,61 @@ const TradeScreen = ({ sym, symPing }) => {
         active={activeTicker}
         onSelect={focusTicker}
         onClose={closeTicker}
-        onAddNew={() => {
-          const all = Object.keys(TRADE_TICKER_INFO);
-          const next = all.find(t => !recentTickers.includes(t));
-          if (next) focusTicker(next);
+        onAddNew={() => setShowUniverseSearch(open => !open)}
+      />
+      <TickerUniverseSearchPanel
+        open={showUniverseSearch}
+        onClose={() => setShowUniverseSearch(false)}
+        onSelectTicker={(result) => {
+          ensureTradeTickerInfo(result.ticker, result.name || result.ticker);
+          focusTicker(result.ticker, result.name || result.ticker);
+          setShowUniverseSearch(false);
         }}
       />
       {/* Main workspace */}
       <div style={{ flex: 1, padding: sp(6), display: "flex", flexDirection: "column", gap: sp(6), overflow: "auto" }}>
         {/* Compact ticker header */}
-        <TradeTickerHeader ticker={activeTicker} />
+        <TradeTickerHeader ticker={activeTicker} chainRows={activeChainRows} expiration={activeExpiration} chainStatus={optionChainStatus} />
         {/* Top zone: Equity chart + Options chain side by side */}
         <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: sp(6), height: dim(340), flexShrink: 0 }}>
-          <TradeEquityPanel ticker={activeTicker} />
+          <TradeEquityPanel ticker={activeTicker} flowEvents={tickerFlowEvents} />
           <TradeChainPanel
             ticker={activeTicker}
             contract={contract}
+            chainRows={activeChainRows}
+            expirations={expirationOptions}
+            chainStatus={optionChainStatus}
             onSelectContract={(strike, cp) => updateContract({ strike, cp })}
             onChangeExp={(exp) => updateContract({ exp })}
           />
         </div>
         {/* Middle zone: Contract chart + Spot flow + Options flow */}
         <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1.5fr", gap: sp(6), height: dim(260), flexShrink: 0 }}>
-          <TradeContractDetailPanel ticker={activeTicker} contract={contract} />
-          <TradeSpotFlowPanel ticker={activeTicker} />
-          <TradeOptionsFlowPanel ticker={activeTicker} />
+          <TradeContractDetailPanel ticker={activeTicker} contract={contract} chainRows={activeChainRows} chainStatus={optionChainStatus} />
+          <TradeSpotFlowPanel ticker={activeTicker} flowEvents={tickerFlowEvents} />
+          <TradeOptionsFlowPanel ticker={activeTicker} flowEvents={tickerFlowEvents} />
         </div>
         {/* Bottom zone: Order ticket + Strategy/Greeks + L2/Tape/Flow tabs + Positions */}
         <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(280px, 1fr) minmax(280px, 1fr) minmax(360px, 1.4fr)", gap: sp(6), height: dim(290), flexShrink: 0 }}>
-          <TradeOrderTicket slot={slot} />
-          <TradeStrategyGreeksPanel slot={slot} onApplyStrategy={applyStrategy} />
-          <TradeL2Panel slot={slot} />
-          <TradePositionsPanel onLoadPosition={({ ticker, strike, cp, exp }) => {
+          <TradeOrderTicket
+            slot={slot}
+            chainRows={activeChainRows}
+            expiration={activeExpiration}
+            accountId={accountId}
+            environment={environment}
+            executionConfigured={executionConfigured}
+          />
+          <TradeStrategyGreeksPanel slot={slot} chainRows={activeChainRows} onApplyStrategy={applyStrategy} />
+          <TradeL2Panel slot={slot} chainRows={activeChainRows} flowEvents={tickerFlowEvents} />
+          <TradePositionsPanel
+            accountId={accountId}
+            environment={environment}
+            executionConfigured={executionConfigured}
+            onLoadPosition={({ ticker, strike, cp, exp }) => {
             focusTicker(ticker);
             setContracts(c => ({ ...c, [ticker]: { strike, cp, exp } }));
-          }} />
+          }}
+          />
         </div>
       </div>
     </div>
@@ -4623,170 +6667,7 @@ const RESEARCH_THEMES_PLANNED = [
   { id: "quantum", title: "Quantum Computing", subtitle: "Hardware · Software · PQC", icon: "⚛", accent: "#8e44ad" },
 ];
 
-const ResearchScreen = ({ onJumpToTrade }) => {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: T.bg0 }}>
-      {/* ── HEADER ── */}
-      <div style={{
-        padding: sp("10px 16px"),
-        borderBottom: `1px solid ${T.border}`,
-        display: "flex", alignItems: "center", gap: sp(10),
-        background: T.bg1, flexShrink: 0,
-      }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: sp(8) }}>
-          <span style={{ fontSize: fs(16), fontFamily: T.display, fontWeight: 700, color: T.text, letterSpacing: "-0.01em" }}>
-            Emerging Themes
-          </span>
-          <span style={{ fontSize: fs(10), color: T.textDim, fontFamily: T.sans, fontVariant: "all-small-caps", letterSpacing: "0.06em" }}>
-            Research · thematic equity analysis
-          </span>
-        </div>
-        <span style={{ flex: 1 }} />
-        <span style={{
-          fontSize: fs(8), padding: sp("2px 6px"), borderRadius: dim(3),
-          background: `${T.amber}15`, color: T.amber,
-          fontFamily: T.mono, fontVariant: "all-small-caps", letterSpacing: "0.08em", fontWeight: 700,
-        }}>
-          ◇ Preview · content pending
-        </span>
-      </div>
-
-      {/* ── BODY ── scrollable placeholder that previews the integration plan */}
-      <div style={{ flex: 1, overflowY: "auto", padding: sp(16) }}>
-        <div style={{ maxWidth: dim(1000), margin: "0 auto", display: "flex", flexDirection: "column", gap: sp(14) }}>
-
-          {/* Intro card */}
-          <div style={{
-            background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6),
-            padding: sp("14px 18px"),
-          }}>
-            <div style={{ fontSize: fs(11), fontVariant: "all-small-caps", letterSpacing: "0.08em", color: T.textDim, fontWeight: 600, marginBottom: sp(6) }}>
-              About this tab
-            </div>
-            <div style={{ fontSize: fs(12), color: T.textSec, lineHeight: 1.6, fontFamily: T.sans }}>
-              The <strong style={{ color: T.text }}>Photonics Dashboard</strong> — a thematic equity research
-              tool covering AI infrastructure, aerospace & defense, nuclear, space, robotics, and quantum computing —
-              will live here. It drops into this scaffolded tab with its force-directed supply-chain graph,
-              comparative financials, macro sensitivity matrix, and earnings calendar.
-            </div>
-            <div style={{ fontSize: fs(11), color: T.textDim, lineHeight: 1.5, fontFamily: T.sans, marginTop: sp(6) }}>
-              Cross-navigation is already wired: clicking any ticker in the research graph will be able to
-              launch the Trade tab with that symbol preloaded. Watchlist integration and shared theme
-              state will follow.
-            </div>
-          </div>
-
-          {/* Planned themes preview */}
-          <div>
-            <div style={{ fontSize: fs(11), fontVariant: "all-small-caps", letterSpacing: "0.08em", color: T.textDim, fontWeight: 600, marginBottom: sp(8) }}>
-              Planned themes · 6 editorial packs
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: sp(8) }}>
-              {RESEARCH_THEMES_PLANNED.map(t => (
-                <div key={t.id} style={{
-                  background: T.bg2, border: `1px solid ${T.border}`,
-                  borderLeft: `3px solid ${t.accent}`,
-                  borderRadius: dim(6), padding: sp("10px 12px"),
-                  opacity: 0.75,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: sp(5), marginBottom: sp(3) }}>
-                    <span style={{ fontSize: fs(13), color: t.accent }}>{t.icon}</span>
-                    <span style={{ fontSize: fs(12), fontFamily: T.display, fontWeight: 700, color: T.text }}>{t.title}</span>
-                    {t.meta && (
-                      <span style={{
-                        fontSize: fs(7), padding: sp("1px 4px"), borderRadius: dim(2),
-                        background: `${T.textMuted}20`, color: T.textMuted,
-                        fontFamily: T.mono, fontWeight: 700, letterSpacing: "0.04em",
-                      }}>META</span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: fs(10), color: T.textDim, fontFamily: T.sans, lineHeight: 1.4 }}>
-                    {t.subtitle}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Integration checklist */}
-          <div style={{
-            background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6),
-            padding: sp("14px 18px"),
-          }}>
-            <div style={{ fontSize: fs(11), fontVariant: "all-small-caps", letterSpacing: "0.08em", color: T.textDim, fontWeight: 600, marginBottom: sp(8) }}>
-              Integration status
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
-              {[
-                ["Tab slot in navigation", true],
-                ["Screen routing wired", true],
-                ["Right rail suppression when active", true],
-                ["Cross-nav hook to Trade tab", true],
-                ["Theme tokens available (T, fs, dim, sp)", true],
-                ["Photonics component imported", false],
-                ["COMPANIES data ported", false],
-                ["Light → dark theme adaptation", false],
-                ["Watchlist ↔ Research linking", false],
-              ].map(([label, done]) => (
-                <div key={label} style={{
-                  display: "flex", alignItems: "center", gap: sp(8),
-                  fontSize: fs(11), fontFamily: T.mono,
-                  color: done ? T.green : T.textDim,
-                }}>
-                  <span style={{ fontSize: fs(11), width: dim(14) }}>{done ? "✓" : "○"}</span>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Cross-nav smoke test */}
-          <div style={{
-            background: T.bg2, border: `1px dashed ${T.border}`, borderRadius: dim(6),
-            padding: sp("14px 18px"),
-          }}>
-            <div style={{ fontSize: fs(11), fontVariant: "all-small-caps", letterSpacing: "0.08em", color: T.textDim, fontWeight: 600, marginBottom: sp(6) }}>
-              Cross-nav smoke test
-            </div>
-            <div style={{ fontSize: fs(11), color: T.textDim, fontFamily: T.sans, marginBottom: sp(8), lineHeight: 1.4 }}>
-              Verify the Research → Trade jump works before Photonics ships. Click any ticker to open its Trade tab.
-            </div>
-            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
-              {["SPY", "QQQ", "NVDA", "AAPL", "AMD"].map(t => (
-                <button
-                  key={t}
-                  onClick={() => onJumpToTrade && onJumpToTrade(t)}
-                  style={{
-                    padding: sp("5px 10px"), fontSize: fs(11), fontFamily: T.mono,
-                    fontWeight: 700, background: "transparent",
-                    color: T.accent, border: `1px solid ${T.accent}60`,
-                    borderRadius: dim(4), cursor: "pointer",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.background = `${T.accent}15`;
-                    e.currentTarget.style.borderColor = T.accent;
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.borderColor = `${T.accent}60`;
-                  }}
-                >{t} →</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Data source notes */}
-          <div style={{ fontSize: fs(10), color: T.textMuted, fontFamily: T.sans, textAlign: "center", padding: sp(8), lineHeight: 1.5 }}>
-            Photonics Dashboard uses <span style={{ fontFamily: T.mono, color: T.textDim }}>api.financialmodelingprep.com</span> for
-            live quotes, fundamentals, historical prices, and earnings calendar. API key handling will move to platform settings during integration.
-          </div>
-
-        </div>
-      </div>
-    </div>
-  );
-};
+const ResearchScreen = ({ onJumpToTrade }) => <PhotonicsObservatory onJumpToTrade={onJumpToTrade} />;
 
 // ═══════════════════════════════════════════════════════════════════
 // SCREEN: ALGO (EDGE Algorithm Config)
@@ -4961,7 +6842,107 @@ export default function RayAlgoPlatform() {
   const [scale, setScaleState] = useState(_initialState.scale || "m");
   // Pending sym hand-off to Trade tab — bumped each time a watchlist item is clicked
   // so TradeScreen can react even when the same sym is clicked twice
-  const [tradeSymPing, setTradeSymPing] = useState({ sym: _initialState.sym || "SPY", n: 0 });
+  const [tradeSymPing, setTradeSymPing] = useState({ sym: _initialState.sym || "SPY", n: 0, contract: null });
+
+  const sessionQuery = useGetSession({
+    query: {
+      staleTime: 60_000,
+      refetchInterval: 60_000,
+      retry: false,
+    },
+  });
+  const watchlistsQuery = useListWatchlists({
+    query: {
+      staleTime: 60_000,
+      refetchInterval: 60_000,
+      retry: false,
+    },
+  });
+  const defaultWatchlist = useMemo(() => {
+    if (!watchlistsQuery.data?.watchlists?.length) return null;
+    return watchlistsQuery.data.watchlists.find(w => w.isDefault) || watchlistsQuery.data.watchlists[0];
+  }, [watchlistsQuery.data]);
+  const watchlistSymbols = useMemo(() => {
+    const apiSymbols = defaultWatchlist?.items?.map(item => item.symbol?.toUpperCase()).filter(Boolean) || [];
+    const fallback = WATCHLIST.map(item => item.sym);
+    const unique = [...new Set(apiSymbols.length ? apiSymbols : fallback)];
+    return unique.length ? unique : ["SPY"];
+  }, [defaultWatchlist]);
+  const quoteSymbols = useMemo(() => {
+    return [...new Set([...watchlistSymbols, ...MARKET_SNAPSHOT_SYMBOLS, sym].filter(Boolean))];
+  }, [sym, watchlistSymbols]);
+  const sparklineSymbols = useMemo(() => {
+    const indexSymbols = INDICES.map(item => item.sym);
+    return [...new Set([...watchlistSymbols, ...indexSymbols].filter(Boolean))];
+  }, [watchlistSymbols]);
+  const quotesQuery = useGetQuoteSnapshots(
+    { symbols: quoteSymbols.join(",") },
+    {
+      query: {
+        staleTime: 10_000,
+        refetchInterval: 10_000,
+        retry: false,
+      },
+    },
+  );
+  const sparklineQuery = useQuery({
+    queryKey: ["market-sparklines", sparklineSymbols],
+    enabled: sparklineSymbols.length > 0,
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        sparklineSymbols.map((symbol) => getBarsRequest({
+          symbol,
+          timeframe: "5m",
+          limit: 24,
+        })),
+      );
+
+      return Object.fromEntries(
+        results.map((result, index) => [
+          sparklineSymbols[index],
+          result.status === "fulfilled" ? (result.value.bars || []) : [],
+        ]),
+      );
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const marketPerformanceQuery = useQuery({
+    queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
+    enabled: MARKET_PERFORMANCE_SYMBOLS.length > 0,
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        MARKET_PERFORMANCE_SYMBOLS.map((symbol) => getBarsRequest({
+          symbol,
+          timeframe: "1d",
+          limit: 6,
+        })),
+      );
+
+      return Object.fromEntries(
+        results.map((result, index) => {
+          const bars = result.status === "fulfilled" ? (result.value.bars || []) : [];
+          const baselineBar = bars.length > 5 ? bars[bars.length - 6] : bars[0];
+          return [MARKET_PERFORMANCE_SYMBOLS[index], baselineBar?.close ?? null];
+        }),
+      );
+    },
+    staleTime: 300_000,
+    refetchInterval: 300_000,
+    retry: false,
+  });
+  const accountsQuery = useListAccounts(
+    { mode: sessionQuery.data?.environment || "paper" },
+    {
+      query: {
+        enabled: Boolean(sessionQuery.data?.configured?.ibkr),
+        staleTime: 15_000,
+        refetchInterval: 15_000,
+        retry: false,
+      },
+    },
+  );
 
   // ── TOAST SYSTEM ──
   const [toasts, setToasts] = useState([]);
@@ -4988,6 +6969,7 @@ export default function RayAlgoPlatform() {
   // ── MOCK POSITIONS ──
   // Loaded from session-only memory (NOT persisted — fresh session each refresh for safety)
   const [positions, setPositions] = useState([]);
+  const [, setMarketDataVersion] = useState(0);
   const addPosition = useCallback((pos) => {
     setPositions(prev => [{ ...pos, id: `pos_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, openedAt: Date.now() }, ...prev]);
   }, []);
@@ -5006,6 +6988,23 @@ export default function RayAlgoPlatform() {
   const positionsValue = useMemo(() => ({
     positions, addPosition, closePosition, closeAll: closeAllPositions, updateStops, rollPosition,
   }), [positions, addPosition, closePosition, closeAllPositions, updateStops, rollPosition]);
+
+  useEffect(() => {
+    syncRuntimeMarketData(watchlistSymbols, defaultWatchlist?.items, quotesQuery.data?.quotes, {
+      sparklineBarsBySymbol: sparklineQuery.data,
+      performanceBaselineBySymbol: marketPerformanceQuery.data,
+    });
+    setMarketDataVersion(version => version + 1);
+  }, [watchlistSymbols, defaultWatchlist, quotesQuery.data, sparklineQuery.data, marketPerformanceQuery.data]);
+
+  useEffect(() => {
+    if (screen === "trade") return;
+    if (!watchlistSymbols.length || watchlistSymbols.includes(sym)) return;
+
+    const nextSym = watchlistSymbols[0];
+    setSym(nextSym);
+    setTradeSymPing(prev => ({ sym: nextSym, n: prev.n + 1 }));
+  }, [screen, watchlistSymbols, sym]);
 
   // ── POSITION ALERTS ──
   // Mirror the mock-drift logic used by TradePositionsPanel. A position "alerts" when its
@@ -5028,6 +7027,10 @@ export default function RayAlgoPlatform() {
   const winAlerts = alertingPositions.filter(a => a.kind === "profit").length;
   const lossAlerts = alertingPositions.filter(a => a.kind === "loss").length;
   const totalAlerts = winAlerts + lossAlerts;
+  const environment = sessionQuery.data?.environment || "paper";
+  const primaryAccount = accountsQuery.data?.accounts?.[0] || null;
+  const primaryStatusTicker = WATCHLIST[0] || DEFAULT_WATCHLIST_BY_SYMBOL.SPY;
+  const volatilityStatusTicker = MACRO_TICKERS.find(item => item.sym === "VIXY") || MACRO_TICKERS[0];
 
   // Persist state changes (debounced via useEffect — fires after each commit)
   useEffect(() => { persistState({ screen }); }, [screen]);
@@ -5055,37 +7058,49 @@ export default function RayAlgoPlatform() {
   // to load it into the active slot
   const handleSelectSymbol = (newSym) => {
     setSym(newSym);
-    setTradeSymPing(prev => ({ sym: newSym, n: prev.n + 1 }));
+    setTradeSymPing(prev => ({ sym: newSym, n: prev.n + 1, contract: null }));
   };
 
   // Jump to Trade tab from Flow drawer with a contract preloaded
   const handleJumpToTradeFromFlow = (evt) => {
-    if (TRADE_TICKER_INFO[evt.ticker]) {
-      setSym(evt.ticker);
-      setTradeSymPing(prev => ({ sym: evt.ticker, n: prev.n + 1 }));
-    }
+    const ticker = evt.ticker?.toUpperCase?.() || evt.ticker;
+    if (!ticker) return;
+
+    ensureTradeTickerInfo(ticker, ticker);
+    setSym(ticker);
+    setTradeSymPing(prev => ({
+      sym: ticker,
+      n: prev.n + 1,
+      contract: {
+        strike: evt.strike,
+        cp: evt.cp,
+        exp: formatExpirationLabel(evt.expirationDate || evt.exp),
+      },
+    }));
     setScreen("trade");
   };
 
   // Jump to Trade tab from Research with a ticker preloaded.
   // Research passes a plain ticker string rather than a flow event.
   const handleJumpToTradeFromResearch = (ticker) => {
-    if (TRADE_TICKER_INFO[ticker]) {
-      setSym(ticker);
-      setTradeSymPing(prev => ({ sym: ticker, n: prev.n + 1 }));
-    }
+    const normalized = ticker?.toUpperCase?.() || ticker;
+    if (!normalized) return;
+
+    ensureTradeTickerInfo(normalized, normalized);
+    setSym(normalized);
+    setTradeSymPing(prev => ({ sym: normalized, n: prev.n + 1, contract: null }));
     setScreen("trade");
   };
 
   const renderScreen = () => {
     switch (screen) {
-      case "market": return <MarketScreen sym={sym} onSymClick={handleSelectSymbol} />;
-      case "flow": return <FlowScreen onJumpToTrade={handleJumpToTradeFromFlow} />;
-      case "trade": return <TradeScreen sym={sym} symPing={tradeSymPing} />;
+      case "market": return <MarketScreen sym={sym} onSymClick={handleSelectSymbol} symbols={watchlistSymbols} researchConfigured={Boolean(sessionQuery.data?.configured?.research)} />;
+      case "flow": return <FlowScreen symbols={watchlistSymbols} onJumpToTrade={handleJumpToTradeFromFlow} />;
+      case "trade": return <TradeScreen sym={sym} symPing={tradeSymPing} environment={environment} accountId={primaryAccount?.id || null} executionConfigured={Boolean(sessionQuery.data?.configured?.ibkr && primaryAccount?.id)} />;
       case "research": return <ResearchScreen onJumpToTrade={handleJumpToTradeFromResearch} />;
       case "algo": return <AlgoScreen />;
       case "backtest": return <BacktestScreen />;
-      default: return <MarketScreen sym={sym} onSymClick={handleSelectSymbol} />;
+      default: return <MarketScreen sym={sym} onSymClick={handleSelectSymbol} symbols={watchlistSymbols} researchConfigured={Boolean(sessionQuery.data?.configured?.research)} />;
     }
   };
 
@@ -5196,12 +7211,16 @@ export default function RayAlgoPlatform() {
         <div style={{ display: "flex", gap: sp(16), alignItems: "center" }}>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: fs(8), color: T.textMuted, fontWeight: 600, letterSpacing: "0.1em" }}>NET LIQ</div>
-            <div style={{ fontSize: fs(13), fontFamily: T.mono, fontWeight: 700, color: T.text }}>$28,432</div>
+            <div style={{ fontSize: fs(13), fontFamily: T.mono, fontWeight: 700, color: T.text }}>
+              {primaryAccount ? fmtCompactCurrency(primaryAccount.netLiquidation) : "—"}
+            </div>
           </div>
           <div style={{ width: dim(1), height: dim(22), background: T.border }} />
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: fs(8), color: T.textMuted, fontWeight: 600, letterSpacing: "0.1em" }}>DAILY P&L</div>
-            <div style={{ fontSize: fs(13), fontFamily: T.mono, fontWeight: 700, color: T.green }}>+$342</div>
+            <div style={{ fontSize: fs(8), color: T.textMuted, fontWeight: 600, letterSpacing: "0.1em" }}>BUY PWR</div>
+            <div style={{ fontSize: fs(13), fontFamily: T.mono, fontWeight: 700, color: T.green }}>
+              {primaryAccount ? fmtCompactCurrency(primaryAccount.buyingPower) : "—"}
+            </div>
           </div>
         </div>
       </div>
@@ -5248,11 +7267,24 @@ export default function RayAlgoPlatform() {
         fontSize: fs(9), fontFamily: T.mono, gap: sp(12),
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <div style={{ width: dim(6), height: dim(6), borderRadius: "50%", background: T.green }} />
-          <span style={{ color: T.green, fontWeight: 600 }}>PAPER</span>
+          <div style={{ width: dim(6), height: dim(6), borderRadius: "50%", background: environment === "live" ? T.red : T.green }} />
+          <span style={{ color: environment === "live" ? T.red : T.green, fontWeight: 600 }}>{environment.toUpperCase()}</span>
         </div>
-        <span style={{ color: T.textMuted }}>SPY {WATCHLIST[0].price} {WATCHLIST[0].chg >= 0 ? "+" : ""}{WATCHLIST[0].pct}%</span>
-        <span style={{ color: T.textMuted }}>VIX {WATCHLIST[3].price}</span>
+        <span style={{ color: T.textMuted }}>
+          {primaryStatusTicker?.sym || "SPY"} {primaryStatusTicker?.price?.toFixed?.(2) || "—"} {primaryStatusTicker?.chg >= 0 ? "+" : ""}{primaryStatusTicker?.pct?.toFixed?.(2) || "0.00"}%
+        </span>
+        <span style={{ color: sessionQuery.data?.configured?.polygon ? T.green : T.red }}>
+          MD {sessionQuery.data?.configured?.polygon ? "READY" : "OFFLINE"}
+        </span>
+        <span style={{ color: sessionQuery.data?.configured?.ibkr ? T.green : T.red }}>
+          IBKR {sessionQuery.data?.configured?.ibkr ? "READY" : "OFFLINE"}
+        </span>
+        <span style={{ color: sessionQuery.data?.configured?.research ? T.green : T.red }}>
+          RSCH {sessionQuery.data?.configured?.research ? "READY" : "OFFLINE"}
+        </span>
+        <span style={{ color: T.textMuted }}>
+          {volatilityStatusTicker?.sym || "VIXY"} {typeof volatilityStatusTicker?.price === "number" ? volatilityStatusTicker.price.toFixed(2) : "—"}
+        </span>
         <span style={{ flex: 1 }} />
         <span style={{ color: T.textMuted }}>
           {new Date().toLocaleTimeString("en-US", { hour12: false, timeZone: "America/New_York" })} ET

@@ -2,14 +2,30 @@ openapi: 3.1.0
 info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 0.2.0
+  description: Internal trading platform API for Polygon market data and IBKR execution.
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+    description: Service health operations
+  - name: session
+    description: Runtime/session metadata
+  - name: broker
+    description: Broker connection metadata
+  - name: accounts
+    description: Brokerage account state
+  - name: watchlists
+    description: Saved user watchlists
+  - name: market-data
+    description: Quotes, bars, and options chain data
+  - name: orders
+    description: Order and execution lifecycle
+  - name: flow
+    description: Options flow and unusual activity feeds
+  - name: research
+    description: Server-side fundamentals, filings, transcripts, and catalyst data
 paths:
   /healthz:
     get:
@@ -24,6 +40,464 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /session:
+    get:
+      operationId: getSession
+      tags: [session]
+      summary: Get runtime session metadata
+      description: Returns environment, provider, and configuration status information.
+      responses:
+        "200":
+          description: Session metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+
+  /broker-connections:
+    get:
+      operationId: listBrokerConnections
+      tags: [broker]
+      summary: List configured broker and market data connections
+      responses:
+        "200":
+          description: Connection inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrokerConnectionsResponse"
+
+  /accounts:
+    get:
+      operationId: listAccounts
+      tags: [accounts]
+      summary: List broker accounts
+      parameters:
+        - name: mode
+          in: query
+          description: Filter by paper or live environment.
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Account list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountsResponse"
+
+  /watchlists:
+    get:
+      operationId: listWatchlists
+      tags: [watchlists]
+      summary: List saved watchlists
+      responses:
+        "200":
+          description: Watchlists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchlistsResponse"
+
+  /positions:
+    get:
+      operationId: listPositions
+      tags: [accounts]
+      summary: List open positions
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Positions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PositionsResponse"
+
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: List orders
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrdersResponse"
+    post:
+      operationId: placeOrder
+      tags: [orders]
+      summary: Submit an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceOrderRequest"
+      responses:
+        "200":
+          description: Accepted order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /quotes/snapshot:
+    get:
+      operationId: getQuoteSnapshots
+      tags: [market-data]
+      summary: Get latest quotes for symbols
+      parameters:
+        - name: symbols
+          in: query
+          required: true
+          description: Comma-separated ticker symbols.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest quotes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteSnapshotsResponse"
+
+  /news:
+    get:
+      operationId: getNews
+      tags: [market-data]
+      summary: Get latest market news articles
+      parameters:
+        - name: ticker
+          in: query
+          required: false
+          description: Optional ticker to filter articles by symbol.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of articles to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Latest market news articles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsResponse"
+
+  /universe/tickers:
+    get:
+      operationId: searchUniverseTickers
+      tags: [market-data]
+      summary: Search the ticker universe
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Search within the ticker symbol and company name.
+          schema:
+            type: string
+        - name: market
+          in: query
+          required: false
+          description: Restrict results to a market.
+          schema:
+            $ref: "#/components/schemas/UniverseMarket"
+        - name: type
+          in: query
+          required: false
+          description: Optional Polygon ticker type filter.
+          schema:
+            type: string
+        - name: active
+          in: query
+          required: false
+          description: Restrict results to active tickers.
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of search results to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Ticker universe search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UniverseTickersResponse"
+
+  /bars:
+    get:
+      operationId: getBars
+      tags: [market-data]
+      summary: Get historical bars for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: timeframe
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/BarTimeframe"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Historical bars
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BarsResponse"
+
+  /options/chains:
+    get:
+      operationId: getOptionChain
+      tags: [market-data]
+      summary: Get options chain snapshot
+      parameters:
+        - name: underlying
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: expirationDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: contractType
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OptionRight"
+      responses:
+        "200":
+          description: Options chain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionChainResponse"
+
+  /flow/events:
+    get:
+      operationId: listFlowEvents
+      tags: [flow]
+      summary: List options flow events
+      parameters:
+        - name: underlying
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        "200":
+          description: Options flow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlowEventsResponse"
+
+  /research/status:
+    get:
+      operationId: getResearchStatus
+      tags: [research]
+      summary: Get research provider status
+      description: Returns whether the server-side research provider is configured.
+      responses:
+        "200":
+          description: Research provider status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchStatus"
+
+  /research/fundamentals:
+    get:
+      operationId: getResearchFundamentals
+      tags: [research]
+      summary: Get research fundamentals for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: TTM fundamentals and profile metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchFundamentalsResponse"
+
+  /research/earnings-calendar:
+    get:
+      operationId: getResearchEarningsCalendar
+      tags: [research]
+      summary: Get earnings calendar entries
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Earnings calendar entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchCalendarResponse"
+
+  /research/sec-filings:
+    get:
+      operationId: getResearchSecFilings
+      tags: [research]
+      summary: Get recent SEC filings for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Recent SEC filings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchFilingsResponse"
+
+  /research/transcripts:
+    get:
+      operationId: getResearchTranscripts
+      tags: [research]
+      summary: List available transcript dates for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Transcript date inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchTranscriptsResponse"
+
+  /research/transcript:
+    get:
+      operationId: getResearchTranscript
+      tags: [research]
+      summary: Get a transcript for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: quarter
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 4
+        - name: year
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Transcript content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchTranscriptResponse"
 components:
   schemas:
     HealthStatus:
@@ -31,6 +505,997 @@ components:
       properties:
         status:
           type: string
+          enum: [ok]
       required:
         - status
 
+    EnvironmentMode:
+      type: string
+      enum: [paper, live]
+
+    BrokerProvider:
+      type: string
+      enum: [ibkr]
+
+    MarketDataProvider:
+      type: string
+      enum: [polygon]
+
+    UniverseMarket:
+      type: string
+      enum: [stocks, indices, fx, crypto, otc]
+
+    ResearchProvider:
+      type: string
+      enum: [fmp]
+
+    ConnectionStatus:
+      type: string
+      enum: [configured, connected, disconnected, error]
+
+    AssetClass:
+      type: string
+      enum: [equity, option]
+
+    OptionRight:
+      type: string
+      enum: [call, put]
+
+    OrderSide:
+      type: string
+      enum: [buy, sell]
+
+    OrderType:
+      type: string
+      enum: [market, limit, stop, stop_limit]
+
+    TimeInForce:
+      type: string
+      enum: [day, gtc, ioc, fok]
+
+    OrderStatus:
+      type: string
+      enum:
+        [
+          pending_submit,
+          submitted,
+          accepted,
+          partially_filled,
+          filled,
+          canceled,
+          rejected,
+          expired,
+        ]
+
+    BarTimeframe:
+      type: string
+      enum: [1s, 5s, 15s, 1m, 5m, 15m, 1h, 1d]
+
+    FlowSentiment:
+      type: string
+      enum: [bullish, bearish, neutral]
+
+    SessionInfo:
+      type: object
+      properties:
+        environment:
+          $ref: "#/components/schemas/EnvironmentMode"
+        brokerProvider:
+          $ref: "#/components/schemas/BrokerProvider"
+        marketDataProvider:
+          $ref: "#/components/schemas/MarketDataProvider"
+        configured:
+          type: object
+          properties:
+            polygon:
+              type: boolean
+            ibkr:
+              type: boolean
+            research:
+              type: boolean
+          required:
+            - polygon
+            - ibkr
+            - research
+        timestamp:
+          type: string
+          format: date-time
+      required:
+        - environment
+        - brokerProvider
+        - marketDataProvider
+        - configured
+        - timestamp
+
+    ResearchStatus:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        provider:
+          oneOf:
+            - $ref: "#/components/schemas/ResearchProvider"
+            - type: "null"
+      required:
+        - configured
+        - provider
+
+    ResearchFundamentals:
+      type: object
+      properties:
+        symbol:
+          type: string
+        revenueTTM:
+          type: [number, "null"]
+        grossMarginTTM:
+          type: [number, "null"]
+        netMarginTTM:
+          type: [number, "null"]
+        operMarginTTM:
+          type: [number, "null"]
+        roeTTM:
+          type: [number, "null"]
+        debtToEquity:
+          type: [number, "null"]
+        evToEBITDA:
+          type: [number, "null"]
+        priceToSales:
+          type: [number, "null"]
+        beta:
+          type: [number, "null"]
+        sector:
+          type: [string, "null"]
+        industry:
+          type: [string, "null"]
+        ceo:
+          type: [string, "null"]
+      required:
+        - symbol
+        - revenueTTM
+        - grossMarginTTM
+        - netMarginTTM
+        - operMarginTTM
+        - roeTTM
+        - debtToEquity
+        - evToEBITDA
+        - priceToSales
+        - beta
+        - sector
+        - industry
+        - ceo
+
+    ResearchCalendarEntry:
+      type: object
+      properties:
+        symbol:
+          type: string
+        date:
+          type: [string, "null"]
+          format: date
+        time:
+          type: [string, "null"]
+        epsEstimated:
+          type: [number, "null"]
+        revenueEstimated:
+          type: [number, "null"]
+        fiscalDateEnding:
+          type: [string, "null"]
+          format: date
+      required:
+        - symbol
+        - date
+        - time
+        - epsEstimated
+        - revenueEstimated
+        - fiscalDateEnding
+
+    ResearchFiling:
+      type: object
+      properties:
+        symbol:
+          type: string
+        type:
+          type: [string, "null"]
+        filingDate:
+          type: [string, "null"]
+          format: date
+        acceptedDate:
+          type: [string, "null"]
+        finalLink:
+          type: [string, "null"]
+        link:
+          type: [string, "null"]
+      required:
+        - symbol
+        - type
+        - filingDate
+        - acceptedDate
+        - finalLink
+        - link
+
+    TranscriptDateEntry:
+      type: object
+      properties:
+        year:
+          type: [integer, "null"]
+        quarter:
+          type: [integer, "null"]
+        date:
+          type: [string, "null"]
+          format: date
+      required:
+        - year
+        - quarter
+        - date
+
+    TranscriptEntry:
+      type: object
+      properties:
+        symbol:
+          type: string
+        quarter:
+          type: [integer, "null"]
+        year:
+          type: [integer, "null"]
+        date:
+          type: [string, "null"]
+          format: date
+        content:
+          type: [string, "null"]
+      required:
+        - symbol
+        - quarter
+        - year
+        - date
+        - content
+
+    ResearchFundamentalsResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        fundamentals:
+          oneOf:
+            - $ref: "#/components/schemas/ResearchFundamentals"
+            - type: "null"
+      required:
+        - symbol
+        - fundamentals
+
+    ResearchCalendarResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchCalendarEntry"
+      required:
+        - entries
+
+    ResearchFilingsResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        filings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchFiling"
+      required:
+        - symbol
+        - filings
+
+    ResearchTranscriptsResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        transcripts:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptDateEntry"
+      required:
+        - symbol
+        - transcripts
+
+    ResearchTranscriptResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        transcript:
+          oneOf:
+            - $ref: "#/components/schemas/TranscriptEntry"
+            - type: "null"
+      required:
+        - symbol
+        - transcript
+
+    NewsPublisher:
+      type: object
+      properties:
+        name:
+          type: string
+        homepageUrl:
+          type: string
+          nullable: true
+        logoUrl:
+          type: string
+          nullable: true
+      required:
+        - name
+        - homepageUrl
+        - logoUrl
+
+    NewsArticle:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        articleUrl:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        author:
+          type: string
+          nullable: true
+        publishedAt:
+          type: string
+          format: date-time
+        tickers:
+          type: array
+          items:
+            type: string
+        publisher:
+          $ref: "#/components/schemas/NewsPublisher"
+        sentiment:
+          type: string
+          nullable: true
+        sentimentReasoning:
+          type: string
+          nullable: true
+      required:
+        - id
+        - title
+        - description
+        - articleUrl
+        - imageUrl
+        - author
+        - publishedAt
+        - tickers
+        - publisher
+        - sentiment
+        - sentimentReasoning
+
+    UniverseTicker:
+      type: object
+      properties:
+        ticker:
+          type: string
+        name:
+          type: string
+        market:
+          $ref: "#/components/schemas/UniverseMarket"
+        locale:
+          type: [string, "null"]
+        type:
+          type: [string, "null"]
+        active:
+          type: boolean
+        primaryExchange:
+          type: [string, "null"]
+        currencyName:
+          type: [string, "null"]
+        cik:
+          type: [string, "null"]
+        compositeFigi:
+          type: [string, "null"]
+        shareClassFigi:
+          type: [string, "null"]
+        lastUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+      required:
+        - ticker
+        - name
+        - market
+        - locale
+        - type
+        - active
+        - primaryExchange
+        - currencyName
+        - cik
+        - compositeFigi
+        - shareClassFigi
+        - lastUpdatedAt
+
+    BrokerConnection:
+      type: object
+      properties:
+        id:
+          type: string
+        provider:
+          oneOf:
+            - $ref: "#/components/schemas/BrokerProvider"
+            - $ref: "#/components/schemas/MarketDataProvider"
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        status:
+          $ref: "#/components/schemas/ConnectionStatus"
+        capabilities:
+          type: array
+          items:
+            type: string
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - provider
+        - name
+        - mode
+        - status
+        - capabilities
+        - updatedAt
+
+    BrokerAccount:
+      type: object
+      properties:
+        id:
+          type: string
+        providerAccountId:
+          type: string
+        provider:
+          $ref: "#/components/schemas/BrokerProvider"
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        displayName:
+          type: string
+        currency:
+          type: string
+        buyingPower:
+          type: number
+        cash:
+          type: number
+        netLiquidation:
+          type: number
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - providerAccountId
+        - provider
+        - mode
+        - displayName
+        - currency
+        - buyingPower
+        - cash
+        - netLiquidation
+        - updatedAt
+
+    WatchlistItem:
+      type: object
+      properties:
+        id:
+          type: string
+        symbol:
+          type: string
+        sortOrder:
+          type: integer
+        addedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - symbol
+        - sortOrder
+        - addedAt
+
+    Watchlist:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        isDefault:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WatchlistItem"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - isDefault
+        - items
+        - updatedAt
+
+    QuoteSnapshot:
+      type: object
+      properties:
+        symbol:
+          type: string
+        price:
+          type: number
+        bid:
+          type: number
+        ask:
+          type: number
+        bidSize:
+          type: number
+        askSize:
+          type: number
+        change:
+          type: number
+        changePercent:
+          type: number
+        open:
+          type: number
+          nullable: true
+        high:
+          type: number
+          nullable: true
+        low:
+          type: number
+          nullable: true
+        prevClose:
+          type: number
+          nullable: true
+        volume:
+          type: number
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - symbol
+        - price
+        - bid
+        - ask
+        - bidSize
+        - askSize
+        - change
+        - changePercent
+        - open
+        - high
+        - low
+        - prevClose
+        - volume
+        - updatedAt
+
+    Bar:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+      required:
+        - timestamp
+        - open
+        - high
+        - low
+        - close
+        - volume
+
+    OptionContract:
+      type: object
+      properties:
+        ticker:
+          type: string
+        underlying:
+          type: string
+        expirationDate:
+          type: string
+          format: date
+        strike:
+          type: number
+        right:
+          $ref: "#/components/schemas/OptionRight"
+        multiplier:
+          type: integer
+        sharesPerContract:
+          type: integer
+        providerContractId:
+          type: string
+          nullable: true
+      required:
+        - ticker
+        - underlying
+        - expirationDate
+        - strike
+        - right
+        - multiplier
+        - sharesPerContract
+
+    OptionChainQuote:
+      type: object
+      properties:
+        contract:
+          $ref: "#/components/schemas/OptionContract"
+        bid:
+          type: number
+        ask:
+          type: number
+        last:
+          type: number
+        mark:
+          type: number
+        impliedVolatility:
+          type: number
+          nullable: true
+        delta:
+          type: number
+          nullable: true
+        gamma:
+          type: number
+          nullable: true
+        theta:
+          type: number
+          nullable: true
+        vega:
+          type: number
+          nullable: true
+        openInterest:
+          type: number
+        volume:
+          type: number
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - contract
+        - bid
+        - ask
+        - last
+        - mark
+        - openInterest
+        - volume
+        - updatedAt
+
+    Position:
+      type: object
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        symbol:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        quantity:
+          type: number
+        averagePrice:
+          type: number
+        marketPrice:
+          type: number
+        marketValue:
+          type: number
+        unrealizedPnl:
+          type: number
+        unrealizedPnlPercent:
+          type: number
+        optionContract:
+          oneOf:
+            - $ref: "#/components/schemas/OptionContract"
+            - type: "null"
+      required:
+        - id
+        - accountId
+        - symbol
+        - assetClass
+        - quantity
+        - averagePrice
+        - marketPrice
+        - marketValue
+        - unrealizedPnl
+        - unrealizedPnlPercent
+        - optionContract
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbol:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        side:
+          $ref: "#/components/schemas/OrderSide"
+        type:
+          $ref: "#/components/schemas/OrderType"
+        timeInForce:
+          $ref: "#/components/schemas/TimeInForce"
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        quantity:
+          type: number
+        filledQuantity:
+          type: number
+        limitPrice:
+          type: number
+          nullable: true
+        stopPrice:
+          type: number
+          nullable: true
+        placedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        optionContract:
+          oneOf:
+            - $ref: "#/components/schemas/OptionContract"
+            - type: "null"
+      required:
+        - id
+        - accountId
+        - mode
+        - symbol
+        - assetClass
+        - side
+        - type
+        - timeInForce
+        - status
+        - quantity
+        - filledQuantity
+        - limitPrice
+        - stopPrice
+        - placedAt
+        - updatedAt
+        - optionContract
+
+    PlaceOrderRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbol:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        side:
+          $ref: "#/components/schemas/OrderSide"
+        type:
+          $ref: "#/components/schemas/OrderType"
+        quantity:
+          type: number
+        limitPrice:
+          type: number
+          nullable: true
+        stopPrice:
+          type: number
+          nullable: true
+        timeInForce:
+          $ref: "#/components/schemas/TimeInForce"
+        optionContract:
+          oneOf:
+            - $ref: "#/components/schemas/OptionContract"
+            - type: "null"
+      required:
+        - accountId
+        - mode
+        - symbol
+        - assetClass
+        - side
+        - type
+        - quantity
+        - timeInForce
+        - optionContract
+
+    FlowEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        underlying:
+          type: string
+        optionTicker:
+          type: string
+        strike:
+          type: number
+        expirationDate:
+          type: string
+          format: date
+        right:
+          $ref: "#/components/schemas/OptionRight"
+        price:
+          type: number
+        size:
+          type: number
+        premium:
+          type: number
+        openInterest:
+          type: number
+        impliedVolatility:
+          oneOf:
+            - type: number
+            - type: "null"
+        exchange:
+          type: string
+        side:
+          type: string
+        sentiment:
+          $ref: "#/components/schemas/FlowSentiment"
+        tradeConditions:
+          type: array
+          items:
+            type: string
+        occurredAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - underlying
+        - optionTicker
+        - strike
+        - expirationDate
+        - right
+        - price
+        - size
+        - premium
+        - openInterest
+        - impliedVolatility
+        - exchange
+        - side
+        - sentiment
+        - tradeConditions
+        - occurredAt
+
+    BrokerConnectionsResponse:
+      type: object
+      properties:
+        connections:
+          type: array
+          items:
+            $ref: "#/components/schemas/BrokerConnection"
+      required:
+        - connections
+
+    AccountsResponse:
+      type: object
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BrokerAccount"
+      required:
+        - accounts
+
+    WatchlistsResponse:
+      type: object
+      properties:
+        watchlists:
+          type: array
+          items:
+            $ref: "#/components/schemas/Watchlist"
+      required:
+        - watchlists
+
+    PositionsResponse:
+      type: object
+      properties:
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Position"
+      required:
+        - positions
+
+    OrdersResponse:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+      required:
+        - orders
+
+    QuoteSnapshotsResponse:
+      type: object
+      properties:
+        quotes:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuoteSnapshot"
+      required:
+        - quotes
+
+    NewsResponse:
+      type: object
+      properties:
+        articles:
+          type: array
+          items:
+            $ref: "#/components/schemas/NewsArticle"
+      required:
+        - articles
+
+    UniverseTickersResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/UniverseTicker"
+      required:
+        - count
+        - results
+
+    BarsResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        timeframe:
+          $ref: "#/components/schemas/BarTimeframe"
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/Bar"
+      required:
+        - symbol
+        - timeframe
+        - bars
+
+    OptionChainResponse:
+      type: object
+      properties:
+        underlying:
+          type: string
+        expirationDate:
+          type: string
+          format: date
+          nullable: true
+        contracts:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptionChainQuote"
+      required:
+        - underlying
+        - expirationDate
+        - contracts
+
+    FlowEventsResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowEvent"
+      required:
+        - events
