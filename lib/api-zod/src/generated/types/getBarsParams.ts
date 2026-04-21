@@ -12,7 +12,7 @@ export type GetBarsParams = {
   timeframe: BarTimeframe;
   /**
    * @minimum 1
-   * @maximum 5000
+   * @maximum 50000
    */
   limit?: number;
   from?: Date;

@@ -7,7 +7,6 @@ import {
   text,
   timestamp,
   uuid,
-  varchar,
 } from "drizzle-orm/pg-core";
 import { timestamps } from "./common";
 import { algoRunStatusEnum, environmentModeEnum } from "./enums";
@@ -44,30 +43,7 @@ export const algoRunsTable = pgTable(
   ],
 );
 
-export const backtestRunsTable = pgTable(
-  "backtest_runs",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    name: text("name").notNull(),
-    symbol: varchar("symbol", { length: 64 }).notNull(),
-    mode: environmentModeEnum("mode").notNull().default("paper"),
-    parameters: jsonb("parameters").$type<Record<string, unknown>>().notNull(),
-    metrics: jsonb("metrics").$type<Record<string, unknown>>(),
-    startedAt: timestamp("started_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    finishedAt: timestamp("finished_at", { withTimezone: true }),
-    ...timestamps,
-  },
-  (table) => [
-    index("backtest_runs_symbol_idx").on(table.symbol),
-    index("backtest_runs_started_at_idx").on(table.startedAt),
-  ],
-);
-
 export const insertAlgoStrategySchema = createInsertSchema(algoStrategiesTable);
-export const insertBacktestRunSchema = createInsertSchema(backtestRunsTable);
 
 export type AlgoStrategy = typeof algoStrategiesTable.$inferSelect;
 export type AlgoRun = typeof algoRunsTable.$inferSelect;
-export type BacktestRun = typeof backtestRunsTable.$inferSelect;

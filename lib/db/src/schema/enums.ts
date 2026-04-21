@@ -48,3 +48,22 @@ export const algoRunStatusEnum = pgEnum("algo_run_status", [
   "failed",
   "canceled",
 ]);
+export const backtestJobStatusEnum = pgEnum("backtest_job_status", [
+  "queued",
+  "preparing_data",
+  "running",
+  "aggregating",
+  "completed",
+  "failed",
+  "cancel_requested",
+  "canceled",
+]);
+export const backtestOptimizerModeEnum = pgEnum("backtest_optimizer_mode", [
+  "grid",
+  "random",
+  "walk_forward",
+]);
+export const backtestDirectionModeEnum = pgEnum("backtest_direction_mode", [
+  "long_only",
+  "long_short",
+]);

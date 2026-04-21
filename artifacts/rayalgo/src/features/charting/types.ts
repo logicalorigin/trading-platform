@@ -13,6 +13,11 @@ export type MarketBar = {
   low?: number;
   close?: number;
   volume?: number;
+  vwap?: number;
+  sessionVwap?: number;
+  accumulatedVolume?: number;
+  averageTradeSize?: number;
+  source?: string;
 };
 
 export type ChartBarStyle = {
@@ -30,6 +35,11 @@ export type ChartBar = {
   l: number;
   c: number;
   v: number;
+  vwap?: number;
+  sessionVwap?: number;
+  accumulatedVolume?: number;
+  averageTradeSize?: number;
+  source?: string;
   color?: string;
   borderColor?: string;
   wickColor?: string;
@@ -102,6 +112,7 @@ export type StudySpec = {
   key: string;
   seriesType: "line" | "histogram";
   paneIndex: number;
+  paneKey?: string;
   options: Record<string, unknown>;
   data: StudyPoint[];
 };

@@ -389,7 +389,7 @@ export const SearchUniverseTickersResponse = zod.object({
 /**
  * @summary Get historical bars for a symbol
  */
-export const getBarsQueryLimitMax = 5000;
+export const getBarsQueryLimitMax = 50000;
 
 export const GetBarsQueryParams = zod.object({
   symbol: zod.coerce.string(),
@@ -619,4 +619,511 @@ export const GetResearchTranscriptResponse = zod.object({
     }),
     zod.null(),
   ]),
+});
+
+/**
+ * @summary List available backtest strategies
+ */
+export const ListBacktestStrategiesResponse = zod.object({
+  strategies: zod.array(
+    zod.object({
+      strategyId: zod.string(),
+      version: zod.string(),
+      label: zod.string(),
+      description: zod.string(),
+      status: zod.enum(["runnable", "blocked"]),
+      directionMode: zod.enum(["long_only", "long_short"]),
+      supportedTimeframes: zod.array(
+        zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
+      ),
+      compatibilityNotes: zod.array(zod.string()),
+      unsupportedFeatures: zod.array(zod.string()),
+      parameterDefinitions: zod.array(
+        zod.object({
+          key: zod.string(),
+          label: zod.string(),
+          type: zod.enum(["integer", "number", "boolean", "enum"]),
+          defaultValue: zod.union([zod.string(), zod.number(), zod.boolean()]),
+          min: zod.number().nullable(),
+          max: zod.number().nullable(),
+          step: zod.number().nullable(),
+          options: zod.array(
+            zod.union([zod.string(), zod.number(), zod.boolean()]),
+          ),
+        }),
+      ),
+      defaultParameters: zod.record(zod.string(), zod.unknown()),
+    }),
+  ),
+});
+
+/**
+ * @summary List saved backtest studies
+ */
+export const ListBacktestStudiesResponse = zod.object({
+  studies: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      strategyId: zod.string(),
+      strategyVersion: zod.string(),
+      directionMode: zod.enum(["long_only", "long_short"]),
+      watchlistId: zod.string().nullable(),
+      symbols: zod.array(zod.string()),
+      timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
+      startsAt: zod.coerce.date(),
+      endsAt: zod.coerce.date(),
+      parameters: zod.record(zod.string(), zod.unknown()),
+      portfolioRules: zod.object({
+        initialCapital: zod.number(),
+        positionSizePercent: zod.number(),
+        maxConcurrentPositions: zod.number(),
+        maxGrossExposurePercent: zod.number(),
+      }),
+      executionProfile: zod.object({
+        commissionBps: zod.number(),
+        slippageBps: zod.number(),
+      }),
+      optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
+      optimizerConfig: zod.record(zod.string(), zod.unknown()),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a backtest study
+ */
+export const CreateBacktestStudyBody = zod.object({
+  name: zod.string(),
+  strategyId: zod.string(),
+  strategyVersion: zod.string(),
+  directionMode: zod.enum(["long_only", "long_short"]),
+  watchlistId: zod.string().nullable(),
+  symbols: zod.array(zod.string()),
+  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
+  startsAt: zod.coerce.date(),
+  endsAt: zod.coerce.date(),
+  parameters: zod.record(zod.string(), zod.unknown()),
+  portfolioRules: zod.object({
+    initialCapital: zod.number(),
+    positionSizePercent: zod.number(),
+    maxConcurrentPositions: zod.number(),
+    maxGrossExposurePercent: zod.number(),
+  }),
+  executionProfile: zod.object({
+    commissionBps: zod.number(),
+    slippageBps: zod.number(),
+  }),
+  optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
+  optimizerConfig: zod.record(zod.string(), zod.unknown()),
+});
+
+/**
+ * @summary Get one backtest study
+ */
+export const GetBacktestStudyParams = zod.object({
+  studyId: zod.coerce.string(),
+});
+
+export const GetBacktestStudyResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  strategyId: zod.string(),
+  strategyVersion: zod.string(),
+  directionMode: zod.enum(["long_only", "long_short"]),
+  watchlistId: zod.string().nullable(),
+  symbols: zod.array(zod.string()),
+  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
+  startsAt: zod.coerce.date(),
+  endsAt: zod.coerce.date(),
+  parameters: zod.record(zod.string(), zod.unknown()),
+  portfolioRules: zod.object({
+    initialCapital: zod.number(),
+    positionSizePercent: zod.number(),
+    maxConcurrentPositions: zod.number(),
+    maxGrossExposurePercent: zod.number(),
+  }),
+  executionProfile: zod.object({
+    commissionBps: zod.number(),
+    slippageBps: zod.number(),
+  }),
+  optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
+  optimizerConfig: zod.record(zod.string(), zod.unknown()),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary List backtest runs
+ */
+export const ListBacktestRunsQueryParams = zod.object({
+  studyId: zod.coerce.string().optional(),
+  sweepId: zod.coerce.string().optional(),
+  status: zod
+    .enum([
+      "queued",
+      "preparing_data",
+      "running",
+      "aggregating",
+      "completed",
+      "failed",
+      "cancel_requested",
+      "canceled",
+    ])
+    .optional(),
+});
+
+export const ListBacktestRunsResponse = zod.object({
+  runs: zod.array(
+    zod.object({
+      id: zod.string(),
+      studyId: zod.string(),
+      sweepId: zod.string().nullable(),
+      name: zod.string(),
+      strategyId: zod.string(),
+      strategyVersion: zod.string(),
+      directionMode: zod.enum(["long_only", "long_short"]),
+      status: zod.enum([
+        "queued",
+        "preparing_data",
+        "running",
+        "aggregating",
+        "completed",
+        "failed",
+        "cancel_requested",
+        "canceled",
+      ]),
+      sortRank: zod.number().nullable(),
+      metrics: zod.union([
+        zod.object({
+          netPnl: zod.number(),
+          totalReturnPercent: zod.number(),
+          maxDrawdownPercent: zod.number(),
+          tradeCount: zod.number(),
+          winRatePercent: zod.number(),
+          profitFactor: zod.number(),
+          sharpeRatio: zod.number(),
+          returnOverMaxDrawdown: zod.number(),
+        }),
+        zod.null(),
+      ]),
+      warnings: zod.array(zod.string()),
+      errorMessage: zod.string().nullable(),
+      startedAt: zod.coerce.date().nullable(),
+      finishedAt: zod.coerce.date().nullable(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Queue a single backtest run
+ */
+export const CreateBacktestRunBody = zod.object({
+  studyId: zod.string(),
+  name: zod.string().nullable(),
+  parameters: zod.record(zod.string(), zod.unknown()).nullable(),
+});
+
+/**
+ * @summary Get one backtest run
+ */
+export const GetBacktestRunParams = zod.object({
+  runId: zod.coerce.string(),
+});
+
+export const GetBacktestRunResponse = zod.object({
+  run: zod.object({
+    id: zod.string(),
+    studyId: zod.string(),
+    sweepId: zod.string().nullable(),
+    name: zod.string(),
+    strategyId: zod.string(),
+    strategyVersion: zod.string(),
+    directionMode: zod.enum(["long_only", "long_short"]),
+    status: zod.enum([
+      "queued",
+      "preparing_data",
+      "running",
+      "aggregating",
+      "completed",
+      "failed",
+      "cancel_requested",
+      "canceled",
+    ]),
+    sortRank: zod.number().nullable(),
+    metrics: zod.union([
+      zod.object({
+        netPnl: zod.number(),
+        totalReturnPercent: zod.number(),
+        maxDrawdownPercent: zod.number(),
+        tradeCount: zod.number(),
+        winRatePercent: zod.number(),
+        profitFactor: zod.number(),
+        sharpeRatio: zod.number(),
+        returnOverMaxDrawdown: zod.number(),
+      }),
+      zod.null(),
+    ]),
+    warnings: zod.array(zod.string()),
+    errorMessage: zod.string().nullable(),
+    startedAt: zod.coerce.date().nullable(),
+    finishedAt: zod.coerce.date().nullable(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  study: zod.object({
+    id: zod.string(),
+    name: zod.string(),
+    strategyId: zod.string(),
+    strategyVersion: zod.string(),
+    directionMode: zod.enum(["long_only", "long_short"]),
+    watchlistId: zod.string().nullable(),
+    symbols: zod.array(zod.string()),
+    timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
+    startsAt: zod.coerce.date(),
+    endsAt: zod.coerce.date(),
+    parameters: zod.record(zod.string(), zod.unknown()),
+    portfolioRules: zod.object({
+      initialCapital: zod.number(),
+      positionSizePercent: zod.number(),
+      maxConcurrentPositions: zod.number(),
+      maxGrossExposurePercent: zod.number(),
+    }),
+    executionProfile: zod.object({
+      commissionBps: zod.number(),
+      slippageBps: zod.number(),
+    }),
+    optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
+    optimizerConfig: zod.record(zod.string(), zod.unknown()),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  trades: zod.array(
+    zod.object({
+      symbol: zod.string(),
+      side: zod.string(),
+      entryAt: zod.coerce.date(),
+      exitAt: zod.coerce.date(),
+      entryPrice: zod.number(),
+      exitPrice: zod.number(),
+      quantity: zod.number(),
+      entryValue: zod.number(),
+      exitValue: zod.number(),
+      grossPnl: zod.number(),
+      netPnl: zod.number(),
+      netPnlPercent: zod.number(),
+      barsHeld: zod.number(),
+      commissionPaid: zod.number(),
+      exitReason: zod.string(),
+    }),
+  ),
+  points: zod.array(
+    zod.object({
+      occurredAt: zod.coerce.date(),
+      equity: zod.number(),
+      cash: zod.number(),
+      grossExposure: zod.number(),
+      drawdownPercent: zod.number(),
+    }),
+  ),
+  datasets: zod.array(
+    zod.object({
+      datasetId: zod.string(),
+      symbol: zod.string(),
+      timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
+      source: zod.string(),
+      startsAt: zod.coerce.date(),
+      endsAt: zod.coerce.date(),
+      barCount: zod.number(),
+      pinnedCount: zod.number(),
+      isSeeded: zod.boolean(),
+    }),
+  ),
+});
+
+/**
+ * @summary Promote a completed run into a draft algo strategy
+ */
+export const PromoteBacktestRunParams = zod.object({
+  runId: zod.coerce.string(),
+});
+
+export const PromoteBacktestRunBody = zod.object({
+  name: zod.string(),
+  notes: zod.string().nullable(),
+});
+
+/**
+ * @summary Queue a backtest optimizer sweep
+ */
+export const CreateBacktestSweepBody = zod.object({
+  studyId: zod.string(),
+  mode: zod.enum(["grid", "random", "walk_forward"]),
+  baseParameters: zod.record(zod.string(), zod.unknown()),
+  dimensions: zod.array(
+    zod.object({
+      key: zod.string(),
+      values: zod.array(zod.unknown()),
+    }),
+  ),
+  randomCandidateBudget: zod.number().nullable(),
+  walkForwardTrainingMonths: zod.number().nullable(),
+  walkForwardTestMonths: zod.number().nullable(),
+  walkForwardStepMonths: zod.number().nullable(),
+});
+
+/**
+ * @summary Get one optimizer sweep
+ */
+export const GetBacktestSweepParams = zod.object({
+  sweepId: zod.coerce.string(),
+});
+
+export const GetBacktestSweepResponse = zod.object({
+  id: zod.string(),
+  studyId: zod.string(),
+  mode: zod.enum(["grid", "random", "walk_forward"]),
+  status: zod.enum([
+    "queued",
+    "preparing_data",
+    "running",
+    "aggregating",
+    "completed",
+    "failed",
+    "cancel_requested",
+    "canceled",
+  ]),
+  candidateTargetCount: zod.number(),
+  candidateCompletedCount: zod.number(),
+  bestRunId: zod.string().nullable(),
+  startedAt: zod.coerce.date().nullable(),
+  finishedAt: zod.coerce.date().nullable(),
+  candidates: zod.array(
+    zod.object({
+      id: zod.string(),
+      studyId: zod.string(),
+      sweepId: zod.string().nullable(),
+      name: zod.string(),
+      strategyId: zod.string(),
+      strategyVersion: zod.string(),
+      directionMode: zod.enum(["long_only", "long_short"]),
+      status: zod.enum([
+        "queued",
+        "preparing_data",
+        "running",
+        "aggregating",
+        "completed",
+        "failed",
+        "cancel_requested",
+        "canceled",
+      ]),
+      sortRank: zod.number().nullable(),
+      metrics: zod.union([
+        zod.object({
+          netPnl: zod.number(),
+          totalReturnPercent: zod.number(),
+          maxDrawdownPercent: zod.number(),
+          tradeCount: zod.number(),
+          winRatePercent: zod.number(),
+          profitFactor: zod.number(),
+          sharpeRatio: zod.number(),
+          returnOverMaxDrawdown: zod.number(),
+        }),
+        zod.null(),
+      ]),
+      warnings: zod.array(zod.string()),
+      errorMessage: zod.string().nullable(),
+      startedAt: zod.coerce.date().nullable(),
+      finishedAt: zod.coerce.date().nullable(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary List backtest jobs
+ */
+export const ListBacktestJobsResponse = zod.object({
+  jobs: zod.array(
+    zod.object({
+      id: zod.string(),
+      studyId: zod.string(),
+      kind: zod.string(),
+      runId: zod.string().nullable(),
+      sweepId: zod.string().nullable(),
+      status: zod.enum([
+        "queued",
+        "preparing_data",
+        "running",
+        "aggregating",
+        "completed",
+        "failed",
+        "cancel_requested",
+        "canceled",
+      ]),
+      progressPercent: zod.number(),
+      attemptCount: zod.number(),
+      errorMessage: zod.string().nullable(),
+      startedAt: zod.coerce.date().nullable(),
+      finishedAt: zod.coerce.date().nullable(),
+      lastHeartbeatAt: zod.coerce.date().nullable(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Request cancellation for a queued or running job
+ */
+export const CancelBacktestJobParams = zod.object({
+  jobId: zod.coerce.string(),
+});
+
+export const CancelBacktestJobResponse = zod.object({
+  id: zod.string(),
+  studyId: zod.string(),
+  kind: zod.string(),
+  runId: zod.string().nullable(),
+  sweepId: zod.string().nullable(),
+  status: zod.enum([
+    "queued",
+    "preparing_data",
+    "running",
+    "aggregating",
+    "completed",
+    "failed",
+    "cancel_requested",
+    "canceled",
+  ]),
+  progressPercent: zod.number(),
+  attemptCount: zod.number(),
+  errorMessage: zod.string().nullable(),
+  startedAt: zod.coerce.date().nullable(),
+  finishedAt: zod.coerce.date().nullable(),
+  lastHeartbeatAt: zod.coerce.date().nullable(),
+  createdAt: zod.coerce.date(),
+});
+
+/**
+ * @summary List promoted draft strategies
+ */
+export const ListBacktestDraftStrategiesResponse = zod.object({
+  drafts: zod.array(
+    zod.object({
+      id: zod.string(),
+      runId: zod.string(),
+      studyId: zod.string(),
+      name: zod.string(),
+      enabled: zod.boolean(),
+      mode: zod.enum(["paper", "live"]),
+      symbolUniverse: zod.array(zod.string()),
+      config: zod.record(zod.string(), zod.unknown()),
+      promotedAt: zod.coerce.date(),
+    }),
+  ),
 });

@@ -26,6 +26,8 @@ tags:
     description: Options flow and unusual activity feeds
   - name: research
     description: Server-side fundamentals, filings, transcripts, and catalyst data
+  - name: backtests
+    description: Backtest studies, runs, sweeps, and draft strategy promotion
 paths:
   /healthz:
     get:
@@ -287,7 +289,7 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 5000
+            maximum: 50000
         - name: from
           in: query
           required: false
@@ -498,6 +500,241 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResearchTranscriptResponse"
+
+  /backtests/strategies:
+    get:
+      operationId: listBacktestStrategies
+      tags: [backtests]
+      summary: List available backtest strategies
+      responses:
+        "200":
+          description: Strategy catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestStrategiesResponse"
+
+  /backtests/studies:
+    get:
+      operationId: listBacktestStudies
+      tags: [backtests]
+      summary: List saved backtest studies
+      responses:
+        "200":
+          description: Backtest studies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestStudiesResponse"
+    post:
+      operationId: createBacktestStudy
+      tags: [backtests]
+      summary: Create a backtest study
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BacktestStudyInput"
+      responses:
+        "201":
+          description: Created study
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestStudyRecord"
+
+  /backtests/studies/{studyId}:
+    get:
+      operationId: getBacktestStudy
+      tags: [backtests]
+      summary: Get one backtest study
+      parameters:
+        - name: studyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Backtest study
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestStudyRecord"
+
+  /backtests/runs:
+    get:
+      operationId: listBacktestRuns
+      tags: [backtests]
+      summary: List backtest runs
+      parameters:
+        - name: studyId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sweepId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/BacktestJobStatus"
+      responses:
+        "200":
+          description: Backtest runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestRunsResponse"
+    post:
+      operationId: createBacktestRun
+      tags: [backtests]
+      summary: Queue a single backtest run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBacktestRunRequest"
+      responses:
+        "201":
+          description: Queued backtest run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestRunDetail"
+
+  /backtests/runs/{runId}:
+    get:
+      operationId: getBacktestRun
+      tags: [backtests]
+      summary: Get one backtest run
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Backtest run detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestRunDetail"
+
+  /backtests/runs/{runId}/promote:
+    post:
+      operationId: promoteBacktestRun
+      tags: [backtests]
+      summary: Promote a completed run into a draft algo strategy
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromoteBacktestRunRequest"
+      responses:
+        "201":
+          description: Draft strategy created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestDraftStrategy"
+
+  /backtests/sweeps:
+    post:
+      operationId: createBacktestSweep
+      tags: [backtests]
+      summary: Queue a backtest optimizer sweep
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBacktestSweepRequest"
+      responses:
+        "201":
+          description: Queued sweep
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestSweepDetail"
+
+  /backtests/sweeps/{sweepId}:
+    get:
+      operationId: getBacktestSweep
+      tags: [backtests]
+      summary: Get one optimizer sweep
+      parameters:
+        - name: sweepId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sweep detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestSweepDetail"
+
+  /backtests/jobs:
+    get:
+      operationId: listBacktestJobs
+      tags: [backtests]
+      summary: List backtest jobs
+      responses:
+        "200":
+          description: Backtest job queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestJobsResponse"
+
+  /backtests/jobs/{jobId}/cancel:
+    post:
+      operationId: cancelBacktestJob
+      tags: [backtests]
+      summary: Request cancellation for a queued or running job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated job state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestJobSummary"
+
+  /backtests/drafts:
+    get:
+      operationId: listBacktestDraftStrategies
+      tags: [backtests]
+      summary: List promoted draft strategies
+      responses:
+        "200":
+          description: Draft strategies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestDraftStrategiesResponse"
 components:
   schemas:
     HealthStatus:
@@ -1499,3 +1736,725 @@ components:
             $ref: "#/components/schemas/FlowEvent"
       required:
         - events
+
+    BacktestStrategyStatus:
+      type: string
+      enum: [runnable, blocked]
+
+    BacktestDirectionMode:
+      type: string
+      enum: [long_only, long_short]
+
+    BacktestOptimizerMode:
+      type: string
+      enum: [grid, random, walk_forward]
+
+    BacktestJobStatus:
+      type: string
+      enum:
+        [
+          queued,
+          preparing_data,
+          running,
+          aggregating,
+          completed,
+          failed,
+          cancel_requested,
+          canceled,
+        ]
+
+    BacktestParameterDefinition:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+          enum: [integer, number, boolean, enum]
+        defaultValue:
+          oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+        min:
+          type: [number, "null"]
+        max:
+          type: [number, "null"]
+        step:
+          type: [number, "null"]
+        options:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+      required:
+        - key
+        - label
+        - type
+        - defaultValue
+        - min
+        - max
+        - step
+        - options
+
+    BacktestStrategyCatalogItem:
+      type: object
+      properties:
+        strategyId:
+          type: string
+        version:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/BacktestStrategyStatus"
+        directionMode:
+          $ref: "#/components/schemas/BacktestDirectionMode"
+        supportedTimeframes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BarTimeframe"
+        compatibilityNotes:
+          type: array
+          items:
+            type: string
+        unsupportedFeatures:
+          type: array
+          items:
+            type: string
+        parameterDefinitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestParameterDefinition"
+        defaultParameters:
+          type: object
+          additionalProperties: true
+      required:
+        - strategyId
+        - version
+        - label
+        - description
+        - status
+        - directionMode
+        - supportedTimeframes
+        - compatibilityNotes
+        - unsupportedFeatures
+        - parameterDefinitions
+        - defaultParameters
+
+    BacktestExecutionProfile:
+      type: object
+      properties:
+        commissionBps:
+          type: number
+        slippageBps:
+          type: number
+      required:
+        - commissionBps
+        - slippageBps
+
+    BacktestPortfolioRules:
+      type: object
+      properties:
+        initialCapital:
+          type: number
+        positionSizePercent:
+          type: number
+        maxConcurrentPositions:
+          type: integer
+        maxGrossExposurePercent:
+          type: number
+      required:
+        - initialCapital
+        - positionSizePercent
+        - maxConcurrentPositions
+        - maxGrossExposurePercent
+
+    BacktestStudyInput:
+      type: object
+      properties:
+        name:
+          type: string
+        strategyId:
+          type: string
+        strategyVersion:
+          type: string
+        directionMode:
+          $ref: "#/components/schemas/BacktestDirectionMode"
+        watchlistId:
+          type: [string, "null"]
+        symbols:
+          type: array
+          items:
+            type: string
+        timeframe:
+          $ref: "#/components/schemas/BarTimeframe"
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        parameters:
+          type: object
+          additionalProperties: true
+        portfolioRules:
+          $ref: "#/components/schemas/BacktestPortfolioRules"
+        executionProfile:
+          $ref: "#/components/schemas/BacktestExecutionProfile"
+        optimizerMode:
+          $ref: "#/components/schemas/BacktestOptimizerMode"
+        optimizerConfig:
+          type: object
+          additionalProperties: true
+      required:
+        - name
+        - strategyId
+        - strategyVersion
+        - directionMode
+        - watchlistId
+        - symbols
+        - timeframe
+        - startsAt
+        - endsAt
+        - parameters
+        - portfolioRules
+        - executionProfile
+        - optimizerMode
+        - optimizerConfig
+
+    BacktestStudyRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        strategyId:
+          type: string
+        strategyVersion:
+          type: string
+        directionMode:
+          $ref: "#/components/schemas/BacktestDirectionMode"
+        watchlistId:
+          type: [string, "null"]
+        symbols:
+          type: array
+          items:
+            type: string
+        timeframe:
+          $ref: "#/components/schemas/BarTimeframe"
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        parameters:
+          type: object
+          additionalProperties: true
+        portfolioRules:
+          $ref: "#/components/schemas/BacktestPortfolioRules"
+        executionProfile:
+          $ref: "#/components/schemas/BacktestExecutionProfile"
+        optimizerMode:
+          $ref: "#/components/schemas/BacktestOptimizerMode"
+        optimizerConfig:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - strategyId
+        - strategyVersion
+        - directionMode
+        - watchlistId
+        - symbols
+        - timeframe
+        - startsAt
+        - endsAt
+        - parameters
+        - portfolioRules
+        - executionProfile
+        - optimizerMode
+        - optimizerConfig
+        - createdAt
+        - updatedAt
+
+    CreateBacktestRunRequest:
+      type: object
+      properties:
+        studyId:
+          type: string
+        name:
+          type: [string, "null"]
+        parameters:
+          type: [object, "null"]
+          additionalProperties: true
+      required:
+        - studyId
+        - name
+        - parameters
+
+    BacktestSweepDimension:
+      type: object
+      properties:
+        key:
+          type: string
+        values:
+          type: array
+          items: {}
+      required:
+        - key
+        - values
+
+    CreateBacktestSweepRequest:
+      type: object
+      properties:
+        studyId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/BacktestOptimizerMode"
+        baseParameters:
+          type: object
+          additionalProperties: true
+        dimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestSweepDimension"
+        randomCandidateBudget:
+          type: [integer, "null"]
+        walkForwardTrainingMonths:
+          type: [integer, "null"]
+        walkForwardTestMonths:
+          type: [integer, "null"]
+        walkForwardStepMonths:
+          type: [integer, "null"]
+      required:
+        - studyId
+        - mode
+        - baseParameters
+        - dimensions
+        - randomCandidateBudget
+        - walkForwardTrainingMonths
+        - walkForwardTestMonths
+        - walkForwardStepMonths
+
+    BacktestMetrics:
+      type: object
+      properties:
+        netPnl:
+          type: number
+        totalReturnPercent:
+          type: number
+        maxDrawdownPercent:
+          type: number
+        tradeCount:
+          type: integer
+        winRatePercent:
+          type: number
+        profitFactor:
+          type: number
+        sharpeRatio:
+          type: number
+        returnOverMaxDrawdown:
+          type: number
+      required:
+        - netPnl
+        - totalReturnPercent
+        - maxDrawdownPercent
+        - tradeCount
+        - winRatePercent
+        - profitFactor
+        - sharpeRatio
+        - returnOverMaxDrawdown
+
+    BacktestRunSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        studyId:
+          type: string
+        sweepId:
+          type: [string, "null"]
+        name:
+          type: string
+        strategyId:
+          type: string
+        strategyVersion:
+          type: string
+        directionMode:
+          $ref: "#/components/schemas/BacktestDirectionMode"
+        status:
+          $ref: "#/components/schemas/BacktestJobStatus"
+        sortRank:
+          type: [integer, "null"]
+        metrics:
+          oneOf:
+            - $ref: "#/components/schemas/BacktestMetrics"
+            - type: "null"
+        warnings:
+          type: array
+          items:
+            type: string
+        errorMessage:
+          type: [string, "null"]
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - studyId
+        - sweepId
+        - name
+        - strategyId
+        - strategyVersion
+        - directionMode
+        - status
+        - sortRank
+        - metrics
+        - warnings
+        - errorMessage
+        - startedAt
+        - finishedAt
+        - createdAt
+        - updatedAt
+
+    BacktestTrade:
+      type: object
+      properties:
+        symbol:
+          type: string
+        side:
+          type: string
+        entryAt:
+          type: string
+          format: date-time
+        exitAt:
+          type: string
+          format: date-time
+        entryPrice:
+          type: number
+        exitPrice:
+          type: number
+        quantity:
+          type: number
+        entryValue:
+          type: number
+        exitValue:
+          type: number
+        grossPnl:
+          type: number
+        netPnl:
+          type: number
+        netPnlPercent:
+          type: number
+        barsHeld:
+          type: integer
+        commissionPaid:
+          type: number
+        exitReason:
+          type: string
+      required:
+        - symbol
+        - side
+        - entryAt
+        - exitAt
+        - entryPrice
+        - exitPrice
+        - quantity
+        - entryValue
+        - exitValue
+        - grossPnl
+        - netPnl
+        - netPnlPercent
+        - barsHeld
+        - commissionPaid
+        - exitReason
+
+    BacktestPoint:
+      type: object
+      properties:
+        occurredAt:
+          type: string
+          format: date-time
+        equity:
+          type: number
+        cash:
+          type: number
+        grossExposure:
+          type: number
+        drawdownPercent:
+          type: number
+      required:
+        - occurredAt
+        - equity
+        - cash
+        - grossExposure
+        - drawdownPercent
+
+    BacktestDatasetRef:
+      type: object
+      properties:
+        datasetId:
+          type: string
+        symbol:
+          type: string
+        timeframe:
+          $ref: "#/components/schemas/BarTimeframe"
+        source:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        barCount:
+          type: integer
+        pinnedCount:
+          type: integer
+        isSeeded:
+          type: boolean
+      required:
+        - datasetId
+        - symbol
+        - timeframe
+        - source
+        - startsAt
+        - endsAt
+        - barCount
+        - pinnedCount
+        - isSeeded
+
+    BacktestRunDetail:
+      type: object
+      properties:
+        run:
+          $ref: "#/components/schemas/BacktestRunSummary"
+        study:
+          $ref: "#/components/schemas/BacktestStudyRecord"
+        trades:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTrade"
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestPoint"
+        datasets:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestDatasetRef"
+      required:
+        - run
+        - study
+        - trades
+        - points
+        - datasets
+
+    BacktestSweepDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        studyId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/BacktestOptimizerMode"
+        status:
+          $ref: "#/components/schemas/BacktestJobStatus"
+        candidateTargetCount:
+          type: integer
+        candidateCompletedCount:
+          type: integer
+        bestRunId:
+          type: [string, "null"]
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestRunSummary"
+      required:
+        - id
+        - studyId
+        - mode
+        - status
+        - candidateTargetCount
+        - candidateCompletedCount
+        - bestRunId
+        - startedAt
+        - finishedAt
+        - candidates
+
+    BacktestJobSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        studyId:
+          type: string
+        kind:
+          type: string
+        runId:
+          type: [string, "null"]
+        sweepId:
+          type: [string, "null"]
+        status:
+          $ref: "#/components/schemas/BacktestJobStatus"
+        progressPercent:
+          type: integer
+        attemptCount:
+          type: integer
+        errorMessage:
+          type: [string, "null"]
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        lastHeartbeatAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - studyId
+        - kind
+        - runId
+        - sweepId
+        - status
+        - progressPercent
+        - attemptCount
+        - errorMessage
+        - startedAt
+        - finishedAt
+        - lastHeartbeatAt
+        - createdAt
+
+    PromoteBacktestRunRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        notes:
+          type: [string, "null"]
+      required:
+        - name
+        - notes
+
+    BacktestDraftStrategy:
+      type: object
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        studyId:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbolUniverse:
+          type: array
+          items:
+            type: string
+        config:
+          type: object
+          additionalProperties: true
+        promotedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - runId
+        - studyId
+        - name
+        - enabled
+        - mode
+        - symbolUniverse
+        - config
+        - promotedAt
+
+    BacktestStrategiesResponse:
+      type: object
+      properties:
+        strategies:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestStrategyCatalogItem"
+      required:
+        - strategies
+
+    BacktestStudiesResponse:
+      type: object
+      properties:
+        studies:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestStudyRecord"
+      required:
+        - studies
+
+    BacktestRunsResponse:
+      type: object
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestRunSummary"
+      required:
+        - runs
+
+    BacktestJobsResponse:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestJobSummary"
+      required:
+        - jobs
+
+    BacktestDraftStrategiesResponse:
+      type: object
+      properties:
+        drafts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestDraftStrategy"
+      required:
+        - drafts

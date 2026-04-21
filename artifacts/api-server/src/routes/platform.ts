@@ -39,6 +39,10 @@ import {
   placeOrder,
   searchUniverseTickers,
 } from "../services/platform";
+import {
+  isStockAggregateStreamingAvailable,
+  subscribeStockMinuteAggregates,
+} from "../services/stock-aggregate-stream";
 
 const router: IRouter = Router();
 
@@ -150,6 +154,80 @@ router.get("/flow/events", async (req, res) => {
   const data = ListFlowEventsResponse.parse(await listFlowEvents(query));
 
   res.json(data);
+});
+
+router.get("/streams/stocks/aggregates", (req, res) => {
+  const rawSymbols = Array.isArray(req.query.symbols)
+    ? req.query.symbols.join(",")
+    : typeof req.query.symbols === "string"
+      ? req.query.symbols
+      : "";
+  const symbols = rawSymbols
+    .split(",")
+    .map((symbol) => symbol.trim().toUpperCase())
+    .filter(Boolean);
+
+  if (!symbols.length) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/invalid-request",
+      title: "Missing symbols",
+      status: 400,
+      detail: "Provide one or more comma-separated stock symbols in the symbols query parameter.",
+    });
+    return;
+  }
+
+  if (!isStockAggregateStreamingAvailable()) {
+    res.status(503).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/upstream",
+      title: "Massive delayed stock streaming is not configured.",
+      status: 503,
+      detail: "Set the Massive market data API credentials and base URL before using stock aggregate streams.",
+      code: "massive_stock_stream_unavailable",
+    });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+  res.write("retry: 5000\n\n");
+
+  const writeEvent = (event: string, payload: unknown) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  writeEvent("ready", {
+    symbols,
+    delayed: true,
+    source: "massive-delayed-websocket",
+  });
+
+  const unsubscribe = subscribeStockMinuteAggregates(symbols, (message) => {
+    writeEvent("aggregate", message);
+  });
+
+  const heartbeat = setInterval(() => {
+    writeEvent("ping", { ts: new Date().toISOString() });
+  }, 25_000);
+
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    clearInterval(heartbeat);
+    unsubscribe();
+    res.end();
+  };
+
+  req.on("close", cleanup);
+  req.on("aborted", cleanup);
 });
 
 export default router;

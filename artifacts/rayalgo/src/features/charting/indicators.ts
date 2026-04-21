@@ -13,10 +13,12 @@ const buildLineStudy = (
   values: number[],
   paneIndex: number,
   options: Record<string, unknown>,
+  paneKey?: string,
 ): StudySpec => ({
   key,
   seriesType: "line",
   paneIndex,
+  paneKey,
   options,
   data: chartBars.reduce<StudyPoint[]>((points, bar, index) => {
     const value = values[index];
@@ -31,6 +33,56 @@ const buildLineStudy = (
     return points;
   }, []),
 });
+
+const buildHistogramStudy = (
+  key: string,
+  chartBars: ChartBar[],
+  values: number[],
+  paneIndex: number,
+  options: Record<string, unknown>,
+  colorResolver?: (value: number, index: number) => string | undefined,
+  paneKey?: string,
+): StudySpec => ({
+  key,
+  seriesType: "histogram",
+  paneIndex,
+  paneKey,
+  options,
+  data: chartBars.reduce<StudyPoint[]>((points, bar, index) => {
+    const value = values[index];
+    if (!Number.isFinite(value)) {
+      return points;
+    }
+
+    points.push({
+      time: bar.time,
+      value,
+      color: colorResolver?.(value, index),
+    });
+    return points;
+  }, []),
+});
+
+const buildGuideStudy = (
+  key: string,
+  chartBars: ChartBar[],
+  value: number,
+  paneKey: string,
+  color: string,
+): StudySpec => buildLineStudy(
+  key,
+  chartBars,
+  new Array<number>(chartBars.length).fill(value),
+  1,
+  {
+    color,
+    lineWidth: 1,
+    lineStyle: 2,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  },
+  paneKey,
+);
 
 const computeEma = (values: number[], period: number): number[] => {
   const result = new Array<number>(values.length).fill(Number.NaN);
@@ -62,6 +114,145 @@ const computeEma = (values: number[], period: number): number[] => {
   return result;
 };
 
+const computeSma = (values: number[], period: number): number[] => {
+  const result = new Array<number>(values.length).fill(Number.NaN);
+  if (!values.length || period <= 0) {
+    return result;
+  }
+
+  let rollingSum = 0;
+  values.forEach((value, index) => {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+
+    rollingSum += value;
+    if (index >= period) {
+      rollingSum -= values[index - period];
+    }
+
+    if (index >= period - 1) {
+      result[index] = Number((rollingSum / period).toFixed(6));
+    }
+  });
+
+  return result;
+};
+
+const computeStandardDeviation = (values: number[], period: number): number[] => {
+  const result = new Array<number>(values.length).fill(Number.NaN);
+  if (!values.length || period <= 0) {
+    return result;
+  }
+
+  values.forEach((_, index) => {
+    if (index < period - 1) {
+      return;
+    }
+
+    const window = values.slice(index - period + 1, index + 1).filter(Number.isFinite);
+    if (window.length !== period) {
+      return;
+    }
+
+    const mean = window.reduce((sum, value) => sum + value, 0) / period;
+    const variance = window.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / period;
+    result[index] = Number(Math.sqrt(variance).toFixed(6));
+  });
+
+  return result;
+};
+
+const computeRsi = (values: number[], period: number): number[] => {
+  const result = new Array<number>(values.length).fill(Number.NaN);
+  if (values.length <= period || period <= 0) {
+    return result;
+  }
+
+  let gains = 0;
+  let losses = 0;
+
+  for (let index = 1; index <= period; index += 1) {
+    const delta = values[index] - values[index - 1];
+    gains += Math.max(delta, 0);
+    losses += Math.max(-delta, 0);
+  }
+
+  let averageGain = gains / period;
+  let averageLoss = losses / period;
+  result[period] = averageLoss === 0
+    ? 100
+    : Number((100 - (100 / (1 + (averageGain / averageLoss)))).toFixed(6));
+
+  for (let index = period + 1; index < values.length; index += 1) {
+    const delta = values[index] - values[index - 1];
+    const gain = Math.max(delta, 0);
+    const loss = Math.max(-delta, 0);
+    averageGain = ((averageGain * (period - 1)) + gain) / period;
+    averageLoss = ((averageLoss * (period - 1)) + loss) / period;
+
+    if (averageLoss === 0) {
+      result[index] = 100;
+      continue;
+    }
+
+    const relativeStrength = averageGain / averageLoss;
+    result[index] = Number((100 - (100 / (1 + relativeStrength))).toFixed(6));
+  }
+
+  return result;
+};
+
+const computeAtr = (chartBars: ChartBar[], period: number): number[] => {
+  const trueRange = chartBars.map((bar, index) => {
+    if (index === 0) {
+      return bar.h - bar.l;
+    }
+
+    const previousClose = chartBars[index - 1]?.c ?? bar.c;
+    return Math.max(
+      bar.h - bar.l,
+      Math.abs(bar.h - previousClose),
+      Math.abs(bar.l - previousClose),
+    );
+  });
+  const result = new Array<number>(chartBars.length).fill(Number.NaN);
+  if (trueRange.length < period || period <= 0) {
+    return result;
+  }
+
+  let rolling = 0;
+  for (let index = 0; index < period; index += 1) {
+    rolling += trueRange[index];
+  }
+
+  let atr = rolling / period;
+  result[period - 1] = Number(atr.toFixed(6));
+
+  for (let index = period; index < trueRange.length; index += 1) {
+    atr = ((atr * (period - 1)) + trueRange[index]) / period;
+    result[index] = Number(atr.toFixed(6));
+  }
+
+  return result;
+};
+
+const computeVwap = (chartBars: ChartBar[]): number[] => {
+  let cumulativePriceVolume = 0;
+  let cumulativeVolume = 0;
+
+  return chartBars.map((bar) => {
+    const typicalPrice = (bar.h + bar.l + bar.c) / 3;
+    cumulativePriceVolume += typicalPrice * bar.v;
+    cumulativeVolume += bar.v;
+    if (cumulativeVolume <= 0) {
+      return Number.NaN;
+    }
+
+    return Number((cumulativePriceVolume / cumulativeVolume).toFixed(6));
+  });
+};
+
 const createEmaPlugin = (
   id: string,
   period: number,
@@ -86,9 +277,229 @@ const createEmaPlugin = (
   },
 });
 
+const createSmaPlugin = (
+  id: string,
+  period: number,
+  color: string,
+  lineWidth = 2,
+): IndicatorPlugin => ({
+  id,
+  compute({ chartBars }): IndicatorPluginOutput {
+    const closes = chartBars.map((bar) => bar.c);
+    const values = computeSma(closes, period);
+
+    return {
+      studySpecs: [
+        buildLineStudy(id, chartBars, values, 0, {
+          color,
+          lineWidth,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }),
+      ],
+    };
+  },
+});
+
+const createVwapPlugin = (
+  id: string,
+  color: string,
+): IndicatorPlugin => ({
+  id,
+  compute({ chartBars }): IndicatorPluginOutput {
+    const values = computeVwap(chartBars);
+
+    return {
+      studySpecs: [
+        buildLineStudy(id, chartBars, values, 0, {
+          color,
+          lineWidth: 2,
+          lineStyle: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }),
+      ],
+    };
+  },
+});
+
+const createBollingerPlugin = (
+  id: string,
+  period: number,
+  multiplier: number,
+  colors: {
+    basis: string;
+    upper: string;
+    lower: string;
+  },
+): IndicatorPlugin => ({
+  id,
+  compute({ chartBars }): IndicatorPluginOutput {
+    const closes = chartBars.map((bar) => bar.c);
+    const basis = computeSma(closes, period);
+    const deviation = computeStandardDeviation(closes, period);
+    const upper = basis.map((value, index) => (
+      Number.isFinite(value) && Number.isFinite(deviation[index])
+        ? Number((value + (deviation[index] * multiplier)).toFixed(6))
+        : Number.NaN
+    ));
+    const lower = basis.map((value, index) => (
+      Number.isFinite(value) && Number.isFinite(deviation[index])
+        ? Number((value - (deviation[index] * multiplier)).toFixed(6))
+        : Number.NaN
+    ));
+
+    return {
+      studySpecs: [
+        buildLineStudy(`${id}-basis`, chartBars, basis, 0, {
+          color: colors.basis,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }),
+        buildLineStudy(`${id}-upper`, chartBars, upper, 0, {
+          color: colors.upper,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }),
+        buildLineStudy(`${id}-lower`, chartBars, lower, 0, {
+          color: colors.lower,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }),
+      ],
+    };
+  },
+});
+
+const createRsiPlugin = (
+  id: string,
+  period: number,
+  color: string,
+): IndicatorPlugin => ({
+  id,
+  compute({ chartBars }): IndicatorPluginOutput {
+    const paneKey = id;
+    const closes = chartBars.map((bar) => bar.c);
+    const values = computeRsi(closes, period);
+
+    return {
+      studySpecs: [
+        buildLineStudy(id, chartBars, values, 1, {
+          color,
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }, paneKey),
+        buildGuideStudy(`${id}-guide-70`, chartBars, 70, paneKey, "#ef444488"),
+        buildGuideStudy(`${id}-guide-50`, chartBars, 50, paneKey, "#94a3b888"),
+        buildGuideStudy(`${id}-guide-30`, chartBars, 30, paneKey, "#10b98188"),
+      ],
+    };
+  },
+});
+
+const createAtrPlugin = (
+  id: string,
+  period: number,
+  color: string,
+): IndicatorPlugin => ({
+  id,
+  compute({ chartBars }): IndicatorPluginOutput {
+    const paneKey = id;
+    const values = computeAtr(chartBars, period);
+
+    return {
+      studySpecs: [
+        buildLineStudy(id, chartBars, values, 1, {
+          color,
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }, paneKey),
+      ],
+    };
+  },
+});
+
+const createMacdPlugin = (
+  id: string,
+  fastPeriod: number,
+  slowPeriod: number,
+  signalPeriod: number,
+  colors: {
+    macd: string;
+    signal: string;
+    positive: string;
+    negative: string;
+  },
+): IndicatorPlugin => ({
+  id,
+  compute({ chartBars }): IndicatorPluginOutput {
+    const paneKey = id;
+    const closes = chartBars.map((bar) => bar.c);
+    const fast = computeEma(closes, fastPeriod);
+    const slow = computeEma(closes, slowPeriod);
+    const macd = closes.map((_, index) => (
+      Number.isFinite(fast[index]) && Number.isFinite(slow[index])
+        ? Number((fast[index] - slow[index]).toFixed(6))
+        : Number.NaN
+    ));
+    const signal = computeEma(
+      macd.map((value) => (Number.isFinite(value) ? value : 0)),
+      signalPeriod,
+    ).map((value, index) => (Number.isFinite(macd[index]) ? value : Number.NaN));
+    const histogram = macd.map((value, index) => (
+      Number.isFinite(value) && Number.isFinite(signal[index])
+        ? Number((value - signal[index]).toFixed(6))
+        : Number.NaN
+    ));
+
+    return {
+      studySpecs: [
+        buildHistogramStudy(`${id}-histogram`, chartBars, histogram, 1, {
+          priceLineVisible: false,
+          lastValueVisible: false,
+          base: 0,
+        }, (value) => (value >= 0 ? colors.positive : colors.negative), paneKey),
+        buildLineStudy(`${id}-macd`, chartBars, macd, 1, {
+          color: colors.macd,
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }, paneKey),
+        buildLineStudy(`${id}-signal`, chartBars, signal, 1, {
+          color: colors.signal,
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }, paneKey),
+        buildGuideStudy(`${id}-zero`, chartBars, 0, paneKey, "#94a3b866"),
+      ],
+    };
+  },
+});
+
 export const defaultIndicatorRegistry: IndicatorRegistry = {
   "ema-21": createEmaPlugin("ema-21", 21, "#60a5fa", 2),
   "ema-55": createEmaPlugin("ema-55", 55, "#f59e0b", 2),
+  "sma-20": createSmaPlugin("sma-20", 20, "#c084fc", 2),
+  vwap: createVwapPlugin("vwap", "#22d3ee"),
+  "bb-20": createBollingerPlugin("bb-20", 20, 2, {
+    basis: "#94a3b8",
+    upper: "#38bdf8",
+    lower: "#38bdf8",
+  }),
+  "rsi-14": createRsiPlugin("rsi-14", 14, "#22c55e"),
+  "atr-14": createAtrPlugin("atr-14", 14, "#f97316"),
+  "macd-12-26-9": createMacdPlugin("macd-12-26-9", 12, 26, 9, {
+    macd: "#60a5fa",
+    signal: "#f59e0b",
+    positive: "#10b98199",
+    negative: "#ef444499",
+  }),
 };
 
 export const resolveIndicatorPlugins = (

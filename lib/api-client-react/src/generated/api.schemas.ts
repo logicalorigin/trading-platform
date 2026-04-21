@@ -512,6 +512,344 @@ export interface FlowEventsResponse {
   events: FlowEvent[];
 }
 
+export type BacktestStrategyStatus =
+  (typeof BacktestStrategyStatus)[keyof typeof BacktestStrategyStatus];
+
+export const BacktestStrategyStatus = {
+  runnable: "runnable",
+  blocked: "blocked",
+} as const;
+
+export type BacktestDirectionMode =
+  (typeof BacktestDirectionMode)[keyof typeof BacktestDirectionMode];
+
+export const BacktestDirectionMode = {
+  long_only: "long_only",
+  long_short: "long_short",
+} as const;
+
+export type BacktestOptimizerMode =
+  (typeof BacktestOptimizerMode)[keyof typeof BacktestOptimizerMode];
+
+export const BacktestOptimizerMode = {
+  grid: "grid",
+  random: "random",
+  walk_forward: "walk_forward",
+} as const;
+
+export type BacktestJobStatus =
+  (typeof BacktestJobStatus)[keyof typeof BacktestJobStatus];
+
+export const BacktestJobStatus = {
+  queued: "queued",
+  preparing_data: "preparing_data",
+  running: "running",
+  aggregating: "aggregating",
+  completed: "completed",
+  failed: "failed",
+  cancel_requested: "cancel_requested",
+  canceled: "canceled",
+} as const;
+
+export type BacktestParameterDefinitionType =
+  (typeof BacktestParameterDefinitionType)[keyof typeof BacktestParameterDefinitionType];
+
+export const BacktestParameterDefinitionType = {
+  integer: "integer",
+  number: "number",
+  boolean: "boolean",
+  enum: "enum",
+} as const;
+
+export interface BacktestParameterDefinition {
+  key: string;
+  label: string;
+  type: BacktestParameterDefinitionType;
+  defaultValue: string | number | boolean;
+  /** @nullable */
+  min: number | null;
+  /** @nullable */
+  max: number | null;
+  /** @nullable */
+  step: number | null;
+  options: (string | number | boolean)[];
+}
+
+export type BacktestStrategyCatalogItemDefaultParameters = {
+  [key: string]: unknown;
+};
+
+export interface BacktestStrategyCatalogItem {
+  strategyId: string;
+  version: string;
+  label: string;
+  description: string;
+  status: BacktestStrategyStatus;
+  directionMode: BacktestDirectionMode;
+  supportedTimeframes: BarTimeframe[];
+  compatibilityNotes: string[];
+  unsupportedFeatures: string[];
+  parameterDefinitions: BacktestParameterDefinition[];
+  defaultParameters: BacktestStrategyCatalogItemDefaultParameters;
+}
+
+export interface BacktestExecutionProfile {
+  commissionBps: number;
+  slippageBps: number;
+}
+
+export interface BacktestPortfolioRules {
+  initialCapital: number;
+  positionSizePercent: number;
+  maxConcurrentPositions: number;
+  maxGrossExposurePercent: number;
+}
+
+export type BacktestStudyInputParameters = { [key: string]: unknown };
+
+export type BacktestStudyInputOptimizerConfig = { [key: string]: unknown };
+
+export interface BacktestStudyInput {
+  name: string;
+  strategyId: string;
+  strategyVersion: string;
+  directionMode: BacktestDirectionMode;
+  /** @nullable */
+  watchlistId: string | null;
+  symbols: string[];
+  timeframe: BarTimeframe;
+  startsAt: string;
+  endsAt: string;
+  parameters: BacktestStudyInputParameters;
+  portfolioRules: BacktestPortfolioRules;
+  executionProfile: BacktestExecutionProfile;
+  optimizerMode: BacktestOptimizerMode;
+  optimizerConfig: BacktestStudyInputOptimizerConfig;
+}
+
+export type BacktestStudyRecordParameters = { [key: string]: unknown };
+
+export type BacktestStudyRecordOptimizerConfig = { [key: string]: unknown };
+
+export interface BacktestStudyRecord {
+  id: string;
+  name: string;
+  strategyId: string;
+  strategyVersion: string;
+  directionMode: BacktestDirectionMode;
+  /** @nullable */
+  watchlistId: string | null;
+  symbols: string[];
+  timeframe: BarTimeframe;
+  startsAt: string;
+  endsAt: string;
+  parameters: BacktestStudyRecordParameters;
+  portfolioRules: BacktestPortfolioRules;
+  executionProfile: BacktestExecutionProfile;
+  optimizerMode: BacktestOptimizerMode;
+  optimizerConfig: BacktestStudyRecordOptimizerConfig;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * @nullable
+ */
+export type CreateBacktestRunRequestParameters = {
+  [key: string]: unknown;
+} | null;
+
+export interface CreateBacktestRunRequest {
+  studyId: string;
+  /** @nullable */
+  name: string | null;
+  /** @nullable */
+  parameters: CreateBacktestRunRequestParameters;
+}
+
+export interface BacktestSweepDimension {
+  key: string;
+  values: unknown[];
+}
+
+export type CreateBacktestSweepRequestBaseParameters = {
+  [key: string]: unknown;
+};
+
+export interface CreateBacktestSweepRequest {
+  studyId: string;
+  mode: BacktestOptimizerMode;
+  baseParameters: CreateBacktestSweepRequestBaseParameters;
+  dimensions: BacktestSweepDimension[];
+  /** @nullable */
+  randomCandidateBudget: number | null;
+  /** @nullable */
+  walkForwardTrainingMonths: number | null;
+  /** @nullable */
+  walkForwardTestMonths: number | null;
+  /** @nullable */
+  walkForwardStepMonths: number | null;
+}
+
+export interface BacktestMetrics {
+  netPnl: number;
+  totalReturnPercent: number;
+  maxDrawdownPercent: number;
+  tradeCount: number;
+  winRatePercent: number;
+  profitFactor: number;
+  sharpeRatio: number;
+  returnOverMaxDrawdown: number;
+}
+
+export interface BacktestRunSummary {
+  id: string;
+  studyId: string;
+  /** @nullable */
+  sweepId: string | null;
+  name: string;
+  strategyId: string;
+  strategyVersion: string;
+  directionMode: BacktestDirectionMode;
+  status: BacktestJobStatus;
+  /** @nullable */
+  sortRank: number | null;
+  metrics: BacktestMetrics | null;
+  warnings: string[];
+  /** @nullable */
+  errorMessage: string | null;
+  /** @nullable */
+  startedAt: string | null;
+  /** @nullable */
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BacktestTrade {
+  symbol: string;
+  side: string;
+  entryAt: string;
+  exitAt: string;
+  entryPrice: number;
+  exitPrice: number;
+  quantity: number;
+  entryValue: number;
+  exitValue: number;
+  grossPnl: number;
+  netPnl: number;
+  netPnlPercent: number;
+  barsHeld: number;
+  commissionPaid: number;
+  exitReason: string;
+}
+
+export interface BacktestPoint {
+  occurredAt: string;
+  equity: number;
+  cash: number;
+  grossExposure: number;
+  drawdownPercent: number;
+}
+
+export interface BacktestDatasetRef {
+  datasetId: string;
+  symbol: string;
+  timeframe: BarTimeframe;
+  source: string;
+  startsAt: string;
+  endsAt: string;
+  barCount: number;
+  pinnedCount: number;
+  isSeeded: boolean;
+}
+
+export interface BacktestRunDetail {
+  run: BacktestRunSummary;
+  study: BacktestStudyRecord;
+  trades: BacktestTrade[];
+  points: BacktestPoint[];
+  datasets: BacktestDatasetRef[];
+}
+
+export interface BacktestSweepDetail {
+  id: string;
+  studyId: string;
+  mode: BacktestOptimizerMode;
+  status: BacktestJobStatus;
+  candidateTargetCount: number;
+  candidateCompletedCount: number;
+  /** @nullable */
+  bestRunId: string | null;
+  /** @nullable */
+  startedAt: string | null;
+  /** @nullable */
+  finishedAt: string | null;
+  candidates: BacktestRunSummary[];
+}
+
+export interface BacktestJobSummary {
+  id: string;
+  studyId: string;
+  kind: string;
+  /** @nullable */
+  runId: string | null;
+  /** @nullable */
+  sweepId: string | null;
+  status: BacktestJobStatus;
+  progressPercent: number;
+  attemptCount: number;
+  /** @nullable */
+  errorMessage: string | null;
+  /** @nullable */
+  startedAt: string | null;
+  /** @nullable */
+  finishedAt: string | null;
+  /** @nullable */
+  lastHeartbeatAt: string | null;
+  createdAt: string;
+}
+
+export interface PromoteBacktestRunRequest {
+  name: string;
+  /** @nullable */
+  notes: string | null;
+}
+
+export type BacktestDraftStrategyConfig = { [key: string]: unknown };
+
+export interface BacktestDraftStrategy {
+  id: string;
+  runId: string;
+  studyId: string;
+  name: string;
+  enabled: boolean;
+  mode: EnvironmentMode;
+  symbolUniverse: string[];
+  config: BacktestDraftStrategyConfig;
+  promotedAt: string;
+}
+
+export interface BacktestStrategiesResponse {
+  strategies: BacktestStrategyCatalogItem[];
+}
+
+export interface BacktestStudiesResponse {
+  studies: BacktestStudyRecord[];
+}
+
+export interface BacktestRunsResponse {
+  runs: BacktestRunSummary[];
+}
+
+export interface BacktestJobsResponse {
+  jobs: BacktestJobSummary[];
+}
+
+export interface BacktestDraftStrategiesResponse {
+  drafts: BacktestDraftStrategy[];
+}
+
 export type ListAccountsParams = {
   /**
    * Filter by paper or live environment.
@@ -580,7 +918,7 @@ export type GetBarsParams = {
   timeframe: BarTimeframe;
   /**
    * @minimum 1
-   * @maximum 5000
+   * @maximum 50000
    */
   limit?: number;
   from?: string;
@@ -632,4 +970,10 @@ export type GetResearchTranscriptParams = {
    */
   quarter?: number;
   year?: number;
+};
+
+export type ListBacktestRunsParams = {
+  studyId?: string;
+  sweepId?: string;
+  status?: BacktestJobStatus;
 };

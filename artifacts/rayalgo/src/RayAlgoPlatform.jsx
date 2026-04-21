@@ -18,12 +18,16 @@ import {
 } from "@workspace/api-client-react";
 import PhotonicsObservatory from "./features/research/PhotonicsObservatory";
 import {
+  ResearchSparkline,
+  ResearchChartFrame,
   ResearchChartSurface,
+  ResearchChartWidgetHeader,
+  ResearchChartWidgetFooter,
   buildResearchChartModel,
+  getStoredStockMinuteAggregates,
+  useMassiveStockAggregateStream,
+  useMassiveStreamedStockBars,
 } from "./features/charting";
-import {
-  LightweightMiniChart,
-} from "./components/trading/LightweightCharts";
 
 // ═══════════════════════════════════════════════════════════════════
 // FONTS
@@ -497,7 +501,7 @@ const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
 
 const buildFallbackWatchlistItem = (symbol, index, name) => {
   const existing = DEFAULT_WATCHLIST_BY_SYMBOL[symbol];
-  if (existing) return { ...existing, name: existing.name || name || symbol };
+  if (existing) return { ...existing, name: existing.name || name || symbol, sparkBars: existing.sparkBars || [] };
 
   const hash = hashSymbol(symbol);
   const basePrice = 40 + (hash % 360);
@@ -508,6 +512,7 @@ const buildFallbackWatchlistItem = (symbol, index, name) => {
     chg: 0,
     pct: 0,
     spark: genSparkline(2000 + hash + index, 48, basePrice, Math.max(0.5, basePrice * 0.01)),
+    sparkBars: [],
   };
 };
 
@@ -638,6 +643,19 @@ const syncRuntimeMarketData = (
   } = {},
 ) => {
   const quoteBySymbol = Object.fromEntries((quotes || []).map(quote => [quote.symbol.toUpperCase(), quote]));
+  const getLatestDelayedAggregate = (symbol) => {
+    const aggregates = getStoredStockMinuteAggregates(symbol);
+    return aggregates[aggregates.length - 1] || null;
+  };
+  const getLatestBarValue = (symbol, field) => {
+    const bars = sparklineBarsBySymbol[symbol] || [];
+    const latest = bars[bars.length - 1];
+    if (!latest) {
+      return null;
+    }
+
+    return latest[field] ?? null;
+  };
   const watchlistNameBySymbol = Object.fromEntries(
     (watchlistItems || []).map(item => {
       const symbol = item.symbol.toUpperCase();
@@ -657,19 +675,34 @@ const syncRuntimeMarketData = (
       watchlistNameBySymbol[normalized],
     );
     const quote = quoteBySymbol[normalized];
-    const price = quote?.price ?? base.price;
-    const chg = quote?.change ?? base.chg;
-    const pct = quote?.changePercent ?? base.pct;
+    const latestAggregate = getLatestDelayedAggregate(normalized);
+    const delayedStreamPrice = Number.isFinite(latestAggregate?.close) ? latestAggregate.close : null;
+    const delayedStreamOpen = Number.isFinite(latestAggregate?.open) ? latestAggregate.open : null;
+    const delayedStreamHigh = Number.isFinite(latestAggregate?.high) ? latestAggregate.high : null;
+    const delayedStreamLow = Number.isFinite(latestAggregate?.low) ? latestAggregate.low : null;
+    const delayedStreamVolume = Number.isFinite(latestAggregate?.volume) ? latestAggregate.volume : null;
+    const delayedPrice = getLatestBarValue(normalized, "close");
+    const delayedOpen = getLatestBarValue(normalized, "open");
+    const delayedHigh = getLatestBarValue(normalized, "high");
+    const delayedLow = getLatestBarValue(normalized, "low");
+    const delayedVolume = getLatestBarValue(normalized, "volume");
     const spark = buildSparklineFromHistoricalBars(
       sparklineBarsBySymbol[normalized],
       base.spark,
     );
     const tradeInfo = ensureTradeTickerInfo(normalized, base.name);
-    const open = quote?.open ?? tradeInfo.open ?? null;
-    const high = quote?.high ?? tradeInfo.high ?? null;
-    const low = quote?.low ?? tradeInfo.low ?? null;
     const prevClose = quote?.prevClose ?? tradeInfo.prevClose ?? null;
-    const volume = quote?.volume ?? tradeInfo.volume ?? null;
+    const price = delayedStreamPrice ?? delayedPrice ?? quote?.price ?? base.price;
+    const chg = Number.isFinite(price) && Number.isFinite(prevClose)
+      ? price - prevClose
+      : quote?.change ?? base.chg;
+    const pct = Number.isFinite(price) && Number.isFinite(prevClose) && prevClose !== 0
+      ? ((price - prevClose) / prevClose) * 100
+      : quote?.changePercent ?? base.pct;
+    const open = delayedStreamOpen ?? delayedOpen ?? quote?.open ?? tradeInfo.open ?? null;
+    const high = delayedStreamHigh ?? delayedHigh ?? quote?.high ?? tradeInfo.high ?? null;
+    const low = delayedStreamLow ?? delayedLow ?? quote?.low ?? tradeInfo.low ?? null;
+    const volume = delayedStreamVolume ?? delayedVolume ?? quote?.volume ?? tradeInfo.volume ?? null;
     const updatedAt = quote?.updatedAt ?? tradeInfo.updatedAt ?? null;
 
     tradeInfo.name = base.name;
@@ -700,6 +733,7 @@ const syncRuntimeMarketData = (
       prevClose,
       volume,
       updatedAt,
+      sparkBars: sparklineBarsBySymbol[normalized] || [],
     };
   });
 
@@ -727,24 +761,43 @@ const syncRuntimeMarketData = (
 
   INDICES.forEach((item) => {
     const quote = quoteBySymbol[item.sym.toUpperCase()];
-    if (!quote) return;
-
-    item.price = quote.price;
-    item.chg = quote.change;
-    item.pct = quote.changePercent;
+    const latestAggregate = getLatestDelayedAggregate(item.sym.toUpperCase());
+    const delayedPrice =
+      (Number.isFinite(latestAggregate?.close) ? latestAggregate.close : null) ??
+      getLatestBarValue(item.sym.toUpperCase(), "close");
+    const prevClose = quote?.prevClose ?? item.prevClose ?? null;
+    if (quote) {
+      item.price = delayedPrice ?? quote.price;
+      item.chg = Number.isFinite(item.price) && Number.isFinite(prevClose)
+        ? item.price - prevClose
+        : quote.change;
+      item.pct = Number.isFinite(item.price) && Number.isFinite(prevClose) && prevClose !== 0
+        ? ((item.price - prevClose) / prevClose) * 100
+        : quote.changePercent;
+    }
     item.spark = buildSparklineFromHistoricalBars(
       sparklineBarsBySymbol[item.sym.toUpperCase()],
       item.spark,
     );
+    item.sparkBars = sparklineBarsBySymbol[item.sym.toUpperCase()] || [];
   });
 
   MACRO_TICKERS.forEach((item) => {
     const quote = quoteBySymbol[item.sym.toUpperCase()];
+    const latestAggregate = getLatestDelayedAggregate(item.sym.toUpperCase());
+    const delayedPrice =
+      (Number.isFinite(latestAggregate?.close) ? latestAggregate.close : null) ??
+      getLatestBarValue(item.sym.toUpperCase(), "close");
+    const prevClose = quote?.prevClose ?? item.prevClose ?? null;
     if (!quote) return;
 
-    item.price = quote.price;
-    item.chg = quote.change;
-    item.pct = quote.changePercent;
+    item.price = delayedPrice ?? quote.price;
+    item.chg = Number.isFinite(item.price) && Number.isFinite(prevClose)
+      ? item.price - prevClose
+      : quote.change;
+    item.pct = Number.isFinite(item.price) && Number.isFinite(prevClose) && prevClose !== 0
+      ? ((item.price - prevClose) / prevClose) * 100
+      : quote.changePercent;
   });
 
   RATES_PROXIES.forEach((item) => {
@@ -1303,6 +1356,11 @@ const buildChartBarsFromApi = (bars) => (
       l: bar.low,
       c: bar.close,
       v: bar.volume,
+      vwap: Number.isFinite(bar?.vwap) ? bar.vwap : null,
+      sessionVwap: Number.isFinite(bar?.sessionVwap) ? bar.sessionVwap : null,
+      accumulatedVolume: Number.isFinite(bar?.accumulatedVolume) ? bar.accumulatedVolume : null,
+      averageTradeSize: Number.isFinite(bar?.averageTradeSize) ? bar.averageTradeSize : null,
+      source: typeof bar?.source === "string" ? bar.source : null,
       i: index,
       uoa: 0,
     });
@@ -1313,17 +1371,6 @@ const buildChartBarsFromApi = (bars) => (
 const buildMiniChartBarsFromApi = (bars) => buildChartBarsFromApi(bars);
 
 const buildTradeBarsFromApi = (bars) => buildChartBarsFromApi(bars);
-
-const timeframeStepSeconds = (timeframe) => (
-  ({
-    "1m": 60,
-    "5m": 300,
-    "15m": 900,
-    "1h": 3600,
-    "1D": 86400,
-    "1d": 86400,
-  }[timeframe] || 300)
-);
 
 // Options chain generator — strike ladder with greeks approximation
 const genOptionsChain = (basePrice, baseIv, seed) => {
@@ -1772,22 +1819,6 @@ const DataUnavailableState = ({ title = "No live data", detail = "This panel is 
   </div>
 );
 
-const MiniSparkline = ({ data, color, width = 60, height = 20 }) => {
-  if (!data || data.length < 2) return null;
-  const vals = data.map(d => d.v);
-  const min = Math.min(...vals), max = Math.max(...vals);
-  const range = max - min || 1;
-  const points = data.map((d, i) =>
-    `${(i / (data.length - 1)) * width},${height - ((d.v - min) / range) * height}`
-  ).join(" ");
-  return (
-    <svg width={width} height={height} style={{ display: "block" }}>
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-};
-
-
 const Watchlist = ({ items, selected, onSelect }) => {
   const [search, setSearch] = useState("");
   const filtered = items.filter(w =>
@@ -2024,7 +2055,13 @@ const ContextPanel = ({ screen, sym, watchlist }) => {
           <span style={{ fontSize: fs(12), fontFamily: T.mono, fontWeight: 600, color: pos ? T.green : T.red }}>
             {pos ? "+" : ""}{w.chg.toFixed(2)} ({pos ? "+" : ""}{w.pct.toFixed(2)}%)
           </span>
-          <MiniSparkline data={w.spark} color={pos ? T.green : T.red} width={50} height={16} />
+          <div style={{ width: 50, height: 16 }}>
+            <ResearchSparkline
+              bars={w.sparkBars}
+              theme={T}
+              themeKey={CURRENT_THEME}
+            />
+          </div>
         </div>
       </div>
 
@@ -2867,14 +2904,287 @@ const ShouldITradeStrip = ({ sym = "SPY" }) => {
   );
 };
 
+const MULTI_CHART_LAYOUTS = {
+  "1x1": { cols: 1, rows: 1, count: 1 },
+  "2x2": { cols: 2, rows: 2, count: 4 },
+  "2x3": { cols: 3, rows: 2, count: 6 },
+  "3x3": { cols: 3, rows: 3, count: 9 },
+};
+
+const MINI_CHART_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1D"];
+const MINI_CHART_BAR_LIMITS = {
+  "1m": 120,
+  "5m": 78,
+  "15m": 52,
+  "1h": 39,
+  "1D": 60,
+};
+const MARKET_CHART_STUDIES = [
+  { id: "ema-21", label: "E21" },
+  { id: "ema-55", label: "E55" },
+  { id: "vwap", label: "VWAP" },
+  { id: "rsi-14", label: "RSI" },
+  { id: "macd-12-26-9", label: "MACD" },
+];
+const MAX_MULTI_CHART_SLOTS = Math.max(...Object.values(MULTI_CHART_LAYOUTS).map(layout => layout.count));
+
+const normalizeTickerSymbol = (value) => value?.trim?.().toUpperCase?.() || "";
+const DEFAULT_MINI_CHART_STUDIES = ["ema-21", "vwap"];
+const normalizeMiniChartStudies = (value) => {
+  const allowed = new Set(MARKET_CHART_STUDIES.map(study => study.id));
+  if (!Array.isArray(value)) {
+    return [...DEFAULT_MINI_CHART_STUDIES];
+  }
+  return value.filter(studyId => allowed.has(studyId));
+};
+
+const buildDefaultMiniChartSymbols = (activeSym, count = MAX_MULTI_CHART_SLOTS) => {
+  const seed = normalizeTickerSymbol(activeSym) || WATCHLIST[0]?.sym || "SPY";
+  const watchlistSymbols = WATCHLIST
+    .map(item => normalizeTickerSymbol(item.sym))
+    .filter(Boolean);
+  const ordered = [seed, ...watchlistSymbols.filter(symbol => symbol !== seed)];
+
+  return Array.from({ length: count }, (_, index) => ordered[index] || ordered[index % ordered.length] || seed);
+};
+
+const hydrateMiniChartSlot = (slot, fallbackTicker) => ({
+  ticker: normalizeTickerSymbol(slot?.ticker) || fallbackTicker || WATCHLIST[0]?.sym || "SPY",
+  tf: MINI_CHART_TIMEFRAMES.includes(slot?.tf) ? slot.tf : "15m",
+  studies: normalizeMiniChartStudies(slot?.studies),
+});
+
+const buildInitialMiniChartSlots = (activeSym) => {
+  const persisted = Array.isArray(_initialState.marketGridSlots) ? _initialState.marketGridSlots : [];
+  const defaults = buildDefaultMiniChartSymbols(activeSym, MAX_MULTI_CHART_SLOTS);
+  return defaults.map((fallbackTicker, index) => hydrateMiniChartSlot(persisted[index], fallbackTicker));
+};
+
+const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query.trim());
+  const searchEnabled = open && deferredQuery.length >= 1;
+  const quickPicks = useMemo(
+    () => Array.from(new Set([
+      normalizeTickerSymbol(ticker),
+      ...WATCHLIST.map(item => normalizeTickerSymbol(item.sym)),
+    ])).filter(Boolean).slice(0, 8),
+    [ticker],
+  );
+  const searchQuery = useSearchUniverseTickers(
+    searchEnabled
+      ? {
+          search: deferredQuery,
+          market: "stocks",
+          active: true,
+          limit: 8,
+        }
+      : undefined,
+    {
+      query: {
+        enabled: searchEnabled,
+        staleTime: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const results = searchQuery.data?.results || [];
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return undefined;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [open, ticker]);
+
+  useEffect(() => {
+    if (!open || typeof document === "undefined") {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (rootRef.current?.contains(event.target)) {
+        return;
+      }
+      onClose?.();
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onClose?.();
+      }
+      if (event.key === "Enter" && results[0]) {
+        onSelectTicker?.(results[0]);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, onClose, onSelectTicker, results]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      onClick={(event) => event.stopPropagation()}
+      style={{
+        position: "absolute",
+        top: dim(34),
+        left: sp(6),
+        right: sp(6),
+        zIndex: 12,
+      }}
+    >
+      <div style={{
+        background: T.bg2,
+        border: `1px solid ${T.border}`,
+        borderRadius: dim(6),
+        boxShadow: "0 18px 36px rgba(0,0,0,0.32)",
+        overflow: "hidden",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: sp(6), padding: sp("8px 8px 6px"), borderBottom: `1px solid ${T.border}` }}>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`Search Massive universe for ${ticker}…`}
+            style={{
+              width: "100%",
+              background: T.bg3,
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(4),
+              padding: sp("6px 8px"),
+              color: T.text,
+              fontSize: fs(10),
+              fontFamily: T.sans,
+              outline: "none",
+            }}
+          />
+          <button
+            onClick={onClose}
+            title="Close search"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: T.textMuted,
+              cursor: "pointer",
+              fontSize: fs(12),
+              lineHeight: 1,
+              padding: 0,
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ maxHeight: dim(180), overflowY: "auto", background: T.bg1 }}>
+          {!searchEnabled && quickPicks.map((symbol) => {
+            const info = DEFAULT_WATCHLIST_BY_SYMBOL[symbol];
+            return (
+              <button
+                key={symbol}
+                onClick={() => onSelectTicker?.({ ticker: symbol, name: info?.name || symbol })}
+                style={{
+                  width: "100%",
+                  display: "grid",
+                  gridTemplateColumns: "64px 1fr auto",
+                  gap: sp(8),
+                  alignItems: "center",
+                  padding: sp("8px 10px"),
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: `1px solid ${T.border}20`,
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.mono, color: T.text }}>{symbol}</span>
+                <span style={{ minWidth: 0, fontSize: fs(9), color: T.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {info?.name || "Watchlist symbol"}
+                </span>
+                <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>quick</span>
+              </button>
+            );
+          })}
+          {searchEnabled && searchQuery.isPending && (
+            <div style={{ padding: sp("12px 10px"), fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}>
+              Searching Massive ticker universe…
+            </div>
+          )}
+          {searchEnabled && !searchQuery.isPending && !results.length && (
+            <div style={{ padding: sp("12px 10px"), fontSize: fs(9), color: T.textDim, fontFamily: T.sans }}>
+              No active stock tickers matched "{deferredQuery}".
+            </div>
+          )}
+          {results.map((result) => (
+            <button
+              key={`${result.market}-${result.ticker}`}
+              onClick={() => onSelectTicker?.(result)}
+              style={{
+                width: "100%",
+                display: "grid",
+                gridTemplateColumns: "64px 1fr auto",
+                gap: sp(8),
+                alignItems: "center",
+                padding: sp("8px 10px"),
+                background: "transparent",
+                border: "none",
+                borderBottom: `1px solid ${T.border}20`,
+                textAlign: "left",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.mono, color: T.text }}>{result.ticker}</span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: fs(9), color: T.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{result.name}</span>
+                <span style={{ display: "block", fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                  {[result.type, result.primaryExchange].filter(Boolean).join(" · ") || "stock"}
+                </span>
+              </span>
+              <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>{result.market?.toUpperCase?.() || "US"}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── MINI CHART CELL ───
 // Single chart cell for the multi-chart grid. Compact: ticker header, candles, volume strip.
-const MiniChartCell = ({ ticker, onFocus, isActive }) => {
-  const w = WATCHLIST.find(x => x.sym === ticker) || WATCHLIST[0];
-  const pos = w.chg >= 0;
-  const [tf, setTf] = useState("5m");
-  // Different bar counts for different timeframes (more bars on shorter TFs feels more "live")
-  const tfBars = { "1m": 120, "5m": 78, "15m": 52, "1h": 39, "1D": 60 }[tf] || 78;
+const MiniChartCell = ({
+  slot,
+  quote,
+  onFocus,
+  onChangeTicker,
+  onChangeTimeframe,
+  onChangeStudies,
+  isActive,
+  dense = false,
+}) => {
+  const ticker = slot?.ticker || WATCHLIST[0]?.sym || "SPY";
+  const tf = MINI_CHART_TIMEFRAMES.includes(slot?.tf) ? slot.tf : "15m";
+  const selectedIndicators = normalizeMiniChartStudies(slot?.studies);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const fallbackInfo = DEFAULT_WATCHLIST_BY_SYMBOL[ticker] || WATCHLIST.find(item => item.sym === ticker) || WATCHLIST[0];
+  const tfBars = MINI_CHART_BAR_LIMITS[tf] || MINI_CHART_BAR_LIMITS["15m"];
   const barsQuery = useQuery({
     queryKey: ["market-mini-bars", ticker, tf, tfBars],
     queryFn: () => getBarsRequest({
@@ -2884,9 +3194,23 @@ const MiniChartCell = ({ ticker, onFocus, isActive }) => {
     }),
     ...QUERY_DEFAULTS,
   });
+  const streamedSourceBars = useMassiveStreamedStockBars({
+    symbol: ticker,
+    timeframe: tf === "1D" ? "1d" : tf,
+    bars: barsQuery.data?.bars,
+    enabled: Boolean(ticker),
+  });
   const bars = useMemo(
-    () => buildMiniChartBarsFromApi(barsQuery.data?.bars),
-    [barsQuery.data],
+    () => buildMiniChartBarsFromApi(streamedSourceBars),
+    [streamedSourceBars],
+  );
+  const chartModel = useMemo(
+    () => buildResearchChartModel({
+      bars,
+      timeframe: tf === "1D" ? "1d" : tf,
+      selectedIndicators,
+    }),
+    [bars, selectedIndicators, tf],
   );
   const barsStatus = bars.length
     ? "live"
@@ -2895,102 +3219,222 @@ const MiniChartCell = ({ ticker, onFocus, isActive }) => {
       : barsQuery.isError
         ? "offline"
         : "empty";
+  const latestBar = bars[bars.length - 1];
+  const delayedChartPrice = Number.isFinite(latestBar?.c) ? latestBar.c : null;
+  const displayPrice = delayedChartPrice ?? (
+    Number.isFinite(quote?.price)
+      ? quote.price
+      : fallbackInfo?.price ?? null
+  );
+  const quotePrevClose = Number.isFinite(quote?.prevClose) ? quote.prevClose : null;
+  const displayChange = Number.isFinite(displayPrice) && Number.isFinite(quotePrevClose)
+    ? displayPrice - quotePrevClose
+    : Number.isFinite(quote?.change)
+      ? quote.change
+      : bars.length > 1
+        ? (latestBar?.c ?? 0) - (bars[0]?.o ?? latestBar?.c ?? 0)
+        : fallbackInfo?.chg ?? 0;
+  const displayPct = Number.isFinite(displayPrice) && Number.isFinite(quotePrevClose) && quotePrevClose !== 0
+    ? (displayChange / quotePrevClose) * 100
+    : Number.isFinite(quote?.changePercent)
+      ? quote.changePercent
+      : bars.length > 1 && Number.isFinite(bars[0]?.o) && bars[0].o !== 0
+        ? (((latestBar?.c ?? 0) - bars[0].o) / bars[0].o) * 100
+        : fallbackInfo?.pct ?? 0;
+  const pos = displayChange >= 0;
+  const showAdvancedChrome = !dense || isActive || isHovered;
+  const formatCellPrice = (value) => (
+    typeof value === "number" && Number.isFinite(value)
+      ? value.toFixed(value < 10 ? 3 : 2)
+      : "—"
+  );
+  const chartSourceLabel = latestBar?.source === "massive-delayed-stream-derived"
+    ? "STREAM"
+    : latestBar?.source
+      ? "REST"
+      : barsStatus.toUpperCase();
 
   return (
     <div
       onClick={() => onFocus && onFocus(ticker)}
       style={{
-        background: T.bg2, border: `1px solid ${isActive ? T.accent : T.border}`, borderRadius: dim(6),
-        display: "flex", flexDirection: "column", overflow: "hidden", cursor: "pointer",
+        position: "relative",
+        height: "100%",
+        cursor: "pointer",
         transition: "border-color 0.15s",
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: sp(6),
-        padding: sp("4px 8px"), borderBottom: `1px solid ${T.border}`,
-      }}>
-        <span style={{ fontSize: fs(11), fontWeight: 800, fontFamily: T.mono, color: T.text, letterSpacing: "-0.01em" }}>{w.sym}</span>
-        <span style={{ fontSize: fs(11), fontWeight: 700, fontFamily: T.mono, color: T.text }}>
-          {w.price < 10 ? w.price.toFixed(3) : w.price.toFixed(2)}
-        </span>
-        <span style={{ fontSize: fs(9), fontFamily: T.mono, fontWeight: 600, color: pos ? T.green : T.red }}>
-          {pos ? "+" : ""}{w.pct.toFixed(2)}%
-        </span>
-        <span style={{ flex: 1 }} />
-        <span style={{ fontSize: fs(7), fontFamily: T.mono, color: barsStatus === "live" ? T.accent : T.textMuted }}>
-          {barsStatus === "live" ? `Massive ${tf}` : barsStatus}
-        </span>
-        {/* Timeframe pills */}
-        <div style={{ display: "flex", gap: 1 }}>
-          {["1m", "5m", "15m", "1h", "1D"].map(t => (
-            <button
-              key={t}
-              onClick={e => { e.stopPropagation(); setTf(t); }}
-              style={{
-                padding: sp("1px 5px"), fontSize: fs(8), fontFamily: T.mono, fontWeight: 600,
-                background: t === tf ? T.accentDim : "transparent",
-                border: "none", borderRadius: dim(2), cursor: "pointer",
-                color: t === tf ? T.accent : T.textMuted, lineHeight: 1.1,
-              }}
-            >{t}</button>
-          ))}
-        </div>
-      </div>
-      {/* Chart body */}
-      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {bars.length ? (
-          <LightweightMiniChart
+      <ResearchChartFrame
+        theme={T}
+        themeKey={CURRENT_THEME}
+        model={chartModel}
+        showSurfaceToolbar={false}
+        showLegend={false}
+        hideTimeScale={false}
+        referenceLines={typeof bars[0]?.o === "number"
+          ? [{
+              price: bars[0].o,
+              color: T.textMuted,
+              lineWidth: 1,
+              axisLabelVisible: false,
+              title: "",
+            }]
+          : []}
+        style={{
+          borderColor: isActive ? T.accent : T.border,
+          boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
+        }}
+        surfaceTopOverlay={(controls) => (
+          <ResearchChartWidgetHeader
             theme={T}
-            bars={bars}
-            bullish={pos}
-            openPrice={bars[0]?.o}
-            stepSeconds={timeframeStepSeconds(tf)}
-            volumeHeight={dim(20)}
-          />
-        ) : (
-          <DataUnavailableState
-            title="No live chart bars"
-            detail={barsStatus === "loading"
-              ? `Loading ${ticker} ${tf} bars from Massive.`
-              : `No ${tf} chart bars are available for ${ticker} right now.`}
+            controls={controls}
+            symbol={ticker}
+            name={fallbackInfo?.name || ticker}
+            price={displayPrice}
+            changePercent={displayPct}
+            statusLabel={barsStatus === "live" ? `Massive ${tf}` : barsStatus}
+            timeframe={tf}
+            timeframeOptions={MINI_CHART_TIMEFRAMES.map((timeframe) => ({ value: timeframe, label: timeframe }))}
+            onChangeTimeframe={(timeframe) => onChangeTimeframe?.(timeframe)}
+            onOpenSearch={() => setSearchOpen((current) => !current)}
+            dense={!showAdvancedChrome}
+            meta={showAdvancedChrome ? {
+              open: latestBar?.o,
+              high: latestBar?.h,
+              low: latestBar?.l,
+              close: latestBar?.c,
+              volume: latestBar?.v,
+              sourceLabel: chartSourceLabel,
+            } : null}
           />
         )}
-      </div>
+        surfaceTopOverlayHeight={showAdvancedChrome ? 58 : 34}
+        surfaceBottomOverlay={showAdvancedChrome ? ((controls) => (
+          <ResearchChartWidgetFooter
+            theme={T}
+            controls={controls}
+            studies={MARKET_CHART_STUDIES}
+            selectedStudies={selectedIndicators}
+            onToggleStudy={(studyId) => {
+              const active = selectedIndicators.includes(studyId);
+              const next = active
+                ? selectedIndicators.filter((value) => value !== studyId)
+                : [...selectedIndicators, studyId];
+              onChangeStudies?.(next);
+            }}
+            dense
+          />
+        )) : null}
+        surfaceBottomOverlayHeight={showAdvancedChrome ? 28 : 0}
+      />
+      <MiniChartTickerSearch
+        open={searchOpen}
+        ticker={ticker}
+        onClose={() => setSearchOpen(false)}
+        onSelectTicker={(result) => {
+          const nextTicker = normalizeTickerSymbol(result?.ticker);
+          if (!nextTicker) {
+            return;
+          }
+          onChangeTicker?.(nextTicker);
+          setSearchOpen(false);
+        }}
+      />
     </div>
   );
 };
 
 // ─── MULTI CHART GRID ───
-// Configurable grid of mini chart cells. Layout selector + auto-pulled tickers from watchlist.
-const MULTI_CHART_LAYOUTS = {
-  "1x1": { cols: 1, rows: 1, count: 1 },
-  "2x2": { cols: 2, rows: 2, count: 4 },
-  "2x3": { cols: 3, rows: 2, count: 6 },
-  "3x3": { cols: 3, rows: 3, count: 9 },
-};
-
+// Configurable grid of mini chart cells. Layout selector + independent ticker ownership per slot.
 const MultiChartGrid = ({ activeSym, onSymClick }) => {
+  const queryClient = useQueryClient();
   const [layout, setLayout] = useState(_initialState.marketGridLayout || "2x3");
-  useEffect(() => { persistState({ marketGridLayout: layout }); }, [layout]);
-
+  const [slots, setSlots] = useState(() => buildInitialMiniChartSlots(activeSym));
   const cfg = MULTI_CHART_LAYOUTS[layout] || MULTI_CHART_LAYOUTS["2x3"];
-  // Auto-pull top N tickers from watchlist, putting active sym first
-  const tickers = useMemo(() => {
-    const all = WATCHLIST.map(w => w.sym);
-    const ordered = [activeSym, ...all.filter(s => s !== activeSym)];
-    return ordered.slice(0, cfg.count);
-  }, [activeSym, cfg.count]);
+  const defaults = useMemo(
+    () => buildDefaultMiniChartSymbols(activeSym, MAX_MULTI_CHART_SLOTS),
+    [activeSym],
+  );
+  const visibleSlots = useMemo(
+    () => slots.slice(0, cfg.count),
+    [cfg.count, slots],
+  );
+  const quoteSymbols = useMemo(
+    () => Array.from(new Set(visibleSlots.map(slot => slot.ticker).filter(Boolean))).join(","),
+    [visibleSlots],
+  );
+  const streamedSymbols = useMemo(
+    () => Array.from(new Set(visibleSlots.map(slot => normalizeTickerSymbol(slot?.ticker)).filter(Boolean))),
+    [visibleSlots],
+  );
+  const gridQuotesQuery = useGetQuoteSnapshots(
+    quoteSymbols
+      ? { symbols: quoteSymbols }
+      : undefined,
+    {
+      query: {
+        enabled: Boolean(quoteSymbols),
+        staleTime: 10_000,
+        refetchInterval: 10_000,
+        retry: false,
+      },
+    },
+  );
+  const quotesBySymbol = useMemo(
+    () => Object.fromEntries(
+      (gridQuotesQuery.data?.quotes || []).map(quote => [normalizeTickerSymbol(quote.symbol), quote]),
+    ),
+    [gridQuotesQuery.data],
+  );
+
+  useMassiveStockAggregateStream({
+    symbols: streamedSymbols,
+    enabled: streamedSymbols.length > 0,
+    onAggregate: (aggregate) => {
+      queryClient.invalidateQueries({ queryKey: ["market-mini-bars", aggregate.symbol] });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
+    },
+  });
+
+  useEffect(() => {
+    setSlots((current) => {
+      let changed = current.length !== MAX_MULTI_CHART_SLOTS;
+      const next = Array.from({ length: MAX_MULTI_CHART_SLOTS }, (_, index) => {
+        const hydrated = hydrateMiniChartSlot(current[index], defaults[index]);
+        const previous = current[index];
+        if (!previous || previous.ticker !== hydrated.ticker || previous.tf !== hydrated.tf) {
+          changed = true;
+        }
+        return hydrated;
+      });
+      return changed ? next : current;
+    });
+  }, [defaults]);
+
+  useEffect(() => {
+    persistState({
+      marketGridLayout: layout,
+      marketGridSlots: slots,
+    });
+  }, [layout, slots]);
 
   const cellHeight = layout === "1x1" ? dim(360) : layout === "2x2" ? dim(190) : layout === "2x3" ? dim(180) : dim(140);
+  const updateSlot = (slotIndex, patch) => {
+    setSlots((current) => current.map((slot, index) => (
+      index === slotIndex
+        ? hydrateMiniChartSlot({ ...slot, ...patch }, defaults[index])
+        : slot
+    )));
+  };
 
   return (
     <Card noPad style={{ flexShrink: 0, overflow: "visible" }}>
-      {/* Header with layout selector */}
       <div style={{ padding: sp("6px 10px"), borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
           <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.04em" }}>CHARTS</span>
-          <span style={{ fontSize: fs(9), color: T.textMuted, fontFamily: T.mono }}>auto · top {cfg.count} from watchlist</span>
+          <span style={{ fontSize: fs(9), color: T.textMuted, fontFamily: T.mono }}>independent slots · Massive delayed spot · {cfg.count} visible</span>
         </div>
         <div style={{ display: "flex", gap: 2, padding: sp(2), background: T.bg3, borderRadius: dim(4) }}>
           {Object.keys(MULTI_CHART_LAYOUTS).map(key => (
@@ -3016,12 +3460,17 @@ const MultiChartGrid = ({ activeSym, onSymClick }) => {
         gridAutoRows: `${cellHeight}px`,
         gap: sp(6),
       }}>
-        {tickers.map(ticker => (
+        {visibleSlots.map((slot, index) => (
           <MiniChartCell
-            key={ticker}
-            ticker={ticker}
-            isActive={ticker === activeSym}
+            key={`market-chart-slot-${index}`}
+            slot={slot}
+            quote={quotesBySymbol[slot.ticker]}
+            isActive={slot.ticker === activeSym}
+            dense={cfg.count > 4}
             onFocus={onSymClick}
+            onChangeTicker={(ticker) => updateSlot(index, { ticker })}
+            onChangeTimeframe={(tf) => updateSlot(index, { tf })}
+            onChangeStudies={(studies) => updateSlot(index, { studies })}
           />
         ))}
       </div>
@@ -3165,7 +3614,13 @@ const MarketScreen = ({ sym, onSymClick, symbols = [], researchConfigured = fals
             return (<Card key={idx.sym} style={{ padding: "5px 8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.mono, color: T.text }}>{idx.sym}</div>
-                <MiniSparkline data={idx.spark} color={p ? T.green : T.red} width={44} height={16} />
+                <div style={{ width: 44, height: 16 }}>
+                  <ResearchSparkline
+                    bars={idx.sparkBars}
+                    theme={T}
+                    themeKey={CURRENT_THEME}
+                  />
+                </div>
               </div>
               <div style={{ display: "flex", alignItems: "baseline", gap: sp(5), marginTop: sp(2) }}>
                 <span style={{ fontSize: fs(14), fontWeight: 700, fontFamily: T.mono, color: T.text, lineHeight: 1 }}>{idx.price.toFixed(2)}</span>
@@ -5746,10 +6201,22 @@ const TradeTickerHeader = ({ ticker, chainRows = [], expiration, chainStatus = "
 // ─── FOCUSED EQUITY CHART PANEL ───
 // Big equity chart with full controls: timeframes, drawing tools, candles, crosshair, flow markers.
 // Always large (no expand toggle needed in single-ticker mode).
+const EQUITY_CHART_STUDIES = [
+  { id: "ema-21", label: "EMA21" },
+  { id: "ema-55", label: "EMA55" },
+  { id: "vwap", label: "VWAP" },
+  { id: "sma-20", label: "SMA20" },
+  { id: "bb-20", label: "BB20" },
+  { id: "rsi-14", label: "RSI" },
+  { id: "macd-12-26-9", label: "MACD" },
+  { id: "atr-14", label: "ATR" },
+];
+
 const TradeEquityPanel = ({ ticker, flowEvents = [] }) => {
   const [tf, setTf] = useState("5m");
   const [drawings, setDrawings] = useState([]);
   const [drawMode, setDrawMode] = useState(null);
+  const [selectedIndicators, setSelectedIndicators] = useState(["ema-21", "ema-55"]);
   const tfMeta = TRADE_TIMEFRAMES.find(x => x.v === tf) || TRADE_TIMEFRAMES[1];
   const barsQuery = useQuery({
     queryKey: ["trade-equity-bars", ticker, tf, tfMeta.bars],
@@ -5760,9 +6227,15 @@ const TradeEquityPanel = ({ ticker, flowEvents = [] }) => {
     }),
     ...QUERY_DEFAULTS,
   });
+  const streamedSourceBars = useMassiveStreamedStockBars({
+    symbol: ticker,
+    timeframe: tf,
+    bars: barsQuery.data?.bars,
+    enabled: Boolean(ticker),
+  });
   const bars = useMemo(
-    () => buildTradeBarsFromApi(barsQuery.data?.bars),
-    [barsQuery.data],
+    () => buildTradeBarsFromApi(streamedSourceBars),
+    [streamedSourceBars],
   );
   const barsStatus = bars.length
     ? "live"
@@ -5802,60 +6275,113 @@ const TradeEquityPanel = ({ ticker, flowEvents = [] }) => {
     () => buildResearchChartModel({
       bars,
       timeframe: tf,
-      selectedIndicators: ["ema-21", "ema-55"],
+      selectedIndicators,
       indicatorMarkers: chartMarkers,
     }),
-    [bars, chartMarkers, tf],
+    [bars, chartMarkers, selectedIndicators, tf],
   );
   const callFlows = markers.filter(m => m.cp === "C").length;
   const putFlows = markers.filter(m => m.cp === "P").length;
+  const toggleIndicator = (indicatorId) => {
+    setSelectedIndicators((current) => (
+      current.includes(indicatorId)
+        ? current.filter((value) => value !== indicatorId)
+        : [...current, indicatorId]
+    ));
+  };
 
   return (
-    <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: dim(6), display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", padding: sp("6px 10px"), borderBottom: `1px solid ${T.border}`, gap: sp(8), flexShrink: 0 }}>
-        <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.06em" }}>EQUITY</span>
-        <div style={{ display: "flex", gap: sp(2) }}>
-          {TRADE_TIMEFRAMES.map(t => (
+    <ResearchChartFrame
+      dataTestId="trade-equity-chart"
+      theme={T}
+      themeKey={CURRENT_THEME}
+      model={chartModel}
+      drawings={drawings}
+      drawMode={drawMode}
+      onAddDrawing={(drawing) => setDrawings(prev => [...prev, drawing])}
+      header={(
+        <div style={{ display: "flex", alignItems: "center", padding: sp("6px 10px"), borderBottom: `1px solid ${T.border}`, gap: sp(8), flexShrink: 0 }}>
+          <span style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.display, color: T.textSec, letterSpacing: "0.06em" }}>EQUITY</span>
+          <div style={{ display: "flex", gap: sp(2) }}>
+            {TRADE_TIMEFRAMES.map(t => (
+              <button
+                key={t.v}
+                type="button"
+                aria-pressed={t.v === tf}
+                onClick={() => setTf(t.v)}
+                style={{ padding: sp("2px 8px"), background: t.v === tf ? T.accentDim : "transparent", border: `1px solid ${t.v === tf ? T.accent : T.border}`, borderRadius: dim(3), color: t.v === tf ? T.accent : T.textDim, fontSize: fs(9), fontFamily: T.mono, fontWeight: 600, cursor: "pointer" }}
+              >{t.tag}</button>
+            ))}
+          </div>
+          <span style={{ flex: 1 }} />
+          <div style={{ display: "flex", gap: sp(2) }}>
             <button
-              key={t.v}
-              onClick={() => setTf(t.v)}
-              style={{ padding: sp("2px 8px"), background: t.v === tf ? T.accentDim : "transparent", border: `1px solid ${t.v === tf ? T.accent : T.border}`, borderRadius: dim(3), color: t.v === tf ? T.accent : T.textDim, fontSize: fs(9), fontFamily: T.mono, fontWeight: 600, cursor: "pointer" }}
-            >{t.tag}</button>
-          ))}
+              type="button"
+              aria-pressed={drawMode === "horizontal"}
+              onClick={() => setDrawMode(drawMode === "horizontal" ? null : "horizontal")}
+              title="Horizontal level"
+              style={{ padding: sp("2px 8px"), background: drawMode === "horizontal" ? `${T.amber}25` : "transparent", border: `1px solid ${drawMode === "horizontal" ? T.amber : T.border}`, borderRadius: dim(3), color: drawMode === "horizontal" ? T.amber : T.textDim, fontSize: fs(9), fontFamily: T.mono, cursor: "pointer" }}
+            >─ H</button>
+            <button
+              type="button"
+              aria-pressed={drawMode === "vertical"}
+              onClick={() => setDrawMode(drawMode === "vertical" ? null : "vertical")}
+              title="Vertical marker"
+              style={{ padding: sp("2px 8px"), background: drawMode === "vertical" ? `${T.amber}25` : "transparent", border: `1px solid ${drawMode === "vertical" ? T.amber : T.border}`, borderRadius: dim(3), color: drawMode === "vertical" ? T.amber : T.textDim, fontSize: fs(9), fontFamily: T.mono, cursor: "pointer" }}
+            >│ V</button>
+            <button
+              type="button"
+              aria-pressed={drawMode === "box"}
+              onClick={() => setDrawMode(drawMode === "box" ? null : "box")}
+              title="Range box"
+              style={{ padding: sp("2px 8px"), background: drawMode === "box" ? `${T.amber}25` : "transparent", border: `1px solid ${drawMode === "box" ? T.amber : T.border}`, borderRadius: dim(3), color: drawMode === "box" ? T.amber : T.textDim, fontSize: fs(9), fontFamily: T.mono, cursor: "pointer" }}
+            >□ B</button>
+            <button
+              type="button"
+              aria-pressed="false"
+              onClick={() => { setDrawings([]); setDrawMode(null); }}
+              title="Clear drawings"
+              style={{ padding: sp("2px 8px"), background: "transparent", border: `1px solid ${T.border}`, borderRadius: dim(3), color: T.textDim, fontSize: fs(9), fontFamily: T.mono, cursor: "pointer" }}
+            >✕</button>
+          </div>
+          <span style={{ fontSize: fs(8), color: barsStatus === "live" ? T.accent : T.textDim, fontFamily: T.mono }}>
+            {barsStatus === "live" ? `Massive ${tf}` : barsStatus}
+          </span>
+          <div style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textMuted }}>
+            <span style={{ color: T.green }}>C {callFlows}</span> · <span style={{ color: T.red }}>P {putFlows}</span> · <span style={{ color: T.amber }}>UOA amber</span>
+          </div>
         </div>
-        <span style={{ flex: 1 }} />
-        <div style={{ display: "flex", gap: sp(2) }}>
-          <button
-            onClick={() => setDrawMode(drawMode === "horizontal" ? null : "horizontal")}
-            title="Horizontal level"
-            style={{ padding: sp("2px 8px"), background: drawMode === "horizontal" ? `${T.amber}25` : "transparent", border: `1px solid ${drawMode === "horizontal" ? T.amber : T.border}`, borderRadius: dim(3), color: drawMode === "horizontal" ? T.amber : T.textDim, fontSize: fs(9), fontFamily: T.mono, cursor: "pointer" }}
-          >─ H</button>
-          <button
-            onClick={() => { setDrawings([]); setDrawMode(null); }}
-            title="Clear drawings"
-            style={{ padding: sp("2px 8px"), background: "transparent", border: `1px solid ${T.border}`, borderRadius: dim(3), color: T.textDim, fontSize: fs(9), fontFamily: T.mono, cursor: "pointer" }}
-          >✕</button>
+      )}
+      subHeader={(
+        <div style={{ display: "flex", alignItems: "center", gap: sp(6), padding: sp("4px 10px"), borderBottom: `1px solid ${T.border}`, flexWrap: "wrap", flexShrink: 0 }}>
+          <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono, letterSpacing: "0.06em" }}>STUDIES</span>
+          {EQUITY_CHART_STUDIES.map((study) => {
+            const active = selectedIndicators.includes(study.id);
+            return (
+              <button
+                key={study.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => toggleIndicator(study.id)}
+                style={{
+                  padding: sp("2px 7px"),
+                  background: active ? T.accentDim : "transparent",
+                  border: `1px solid ${active ? T.accent : T.border}`,
+                  borderRadius: dim(3),
+                  color: active ? T.accent : T.textDim,
+                  fontSize: fs(8),
+                  fontFamily: T.mono,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {study.label}
+              </button>
+            );
+          })}
         </div>
-        <span style={{ fontSize: fs(8), color: barsStatus === "live" ? T.accent : T.textDim, fontFamily: T.mono }}>
-          {barsStatus === "live" ? `Massive ${tf}` : barsStatus}
-        </span>
-        <div style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textMuted }}>
-          <span style={{ color: T.green }}>C {callFlows}</span> · <span style={{ color: T.red }}>P {putFlows}</span> · <span style={{ color: T.amber }}>UOA amber</span>
-        </div>
-      </div>
-      {/* Chart body */}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <ResearchChartSurface
-          theme={T}
-          themeKey={CURRENT_THEME}
-          model={chartModel}
-          drawings={drawings}
-          drawMode={drawMode}
-          onAddHorizontalLevel={(price) => setDrawings(prev => [...prev, { type: "horizontal", price }])}
-        />
-      </div>
-    </div>
+      )}
+    />
   );
 };
 
@@ -6323,6 +6849,7 @@ const TradeSpotFlowPanel = ({ ticker, flowEvents = [] }) => {
 
 const TradeScreen = ({ sym, symPing, environment, accountId, executionConfigured }) => {
   const toast = useToast();
+  const queryClient = useQueryClient();
   // Initialize from persisted state, falling back to sym prop or sensible defaults
   const initialTicker = (() => {
     const persistedActive = _initialState.tradeActiveTicker;
@@ -6454,6 +6981,15 @@ const TradeScreen = ({ sym, symPing, environment, accountId, executionConfigured
       : tickerFlowQuery.isError
         ? "offline"
         : "empty";
+
+  useMassiveStockAggregateStream({
+    symbols: activeTicker ? [activeTicker] : [],
+    enabled: Boolean(activeTicker),
+    onAggregate: (aggregate) => {
+      queryClient.invalidateQueries({ queryKey: ["trade-equity-bars", aggregate.symbol] });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
+    },
+  });
 
   // Persist trade state changes
   useEffect(() => { persistState({ tradeActiveTicker: activeTicker }); }, [activeTicker]);
@@ -6835,6 +7371,7 @@ const ToastStack = ({ toasts, onDismiss }) => {
 // ═══════════════════════════════════════════════════════════════════
 
 export default function RayAlgoPlatform() {
+  const queryClient = useQueryClient();
   const [screen, setScreen] = useState(_initialState.screen || "market");
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(_initialState.sidebarCollapsed || false);
@@ -6875,6 +7412,10 @@ export default function RayAlgoPlatform() {
     const indexSymbols = INDICES.map(item => item.sym);
     return [...new Set([...watchlistSymbols, ...indexSymbols].filter(Boolean))];
   }, [watchlistSymbols]);
+  const streamedMarketSymbols = useMemo(
+    () => [...new Set([...quoteSymbols, ...sparklineSymbols].map(normalizeTickerSymbol).filter(Boolean))],
+    [quoteSymbols, sparklineSymbols],
+  );
   const quotesQuery = useGetQuoteSnapshots(
     { symbols: quoteSymbols.join(",") },
     {
@@ -6892,7 +7433,7 @@ export default function RayAlgoPlatform() {
       const results = await Promise.allSettled(
         sparklineSymbols.map((symbol) => getBarsRequest({
           symbol,
-          timeframe: "5m",
+          timeframe: "15m",
           limit: 24,
         })),
       );
@@ -6943,6 +7484,15 @@ export default function RayAlgoPlatform() {
       },
     },
   );
+
+  useMassiveStockAggregateStream({
+    symbols: streamedMarketSymbols,
+    enabled: streamedMarketSymbols.length > 0,
+    onAggregate: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
+      queryClient.invalidateQueries({ queryKey: ["market-sparklines"] });
+    },
+  });
 
   // ── TOAST SYSTEM ──
   const [toasts, setToasts] = useState([]);

@@ -4,20 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ./scripts/dev-server.mjs",
+    "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@massive.com/client-js": "^10.6.0",
+    "@workspace/backtest-core": "workspace:*",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "bufferutil": "^4.1.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
     "pino": "^9",
-    "pino-http": "^10"
+    "pino-http": "^10",
+    "utf-8-validate": "^6.0.6"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

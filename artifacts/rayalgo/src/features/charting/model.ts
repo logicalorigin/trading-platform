@@ -104,6 +104,11 @@ const buildChartBars = (
       l: low,
       c: close,
       v: resolveNumber(rawBar.v, rawBar.volume) ?? 0,
+      vwap: resolveNumber(rawBar.vwap) ?? undefined,
+      sessionVwap: resolveNumber(rawBar.sessionVwap) ?? undefined,
+      accumulatedVolume: resolveNumber(rawBar.accumulatedVolume) ?? undefined,
+      averageTradeSize: resolveNumber(rawBar.averageTradeSize) ?? undefined,
+      source: typeof rawBar.source === "string" ? rawBar.source : undefined,
     });
     return bars;
   }, []);
@@ -157,6 +162,28 @@ const buildStudyVisibilityMap = (studyKeys: string[]): Record<string, boolean> =
   }, {})
 );
 
+const normalizeStudyPanes = (studySpecs: ChartModel["studySpecs"]): ChartModel["studySpecs"] => {
+  const lowerPaneMap = new Map<string, number>();
+  let nextPaneIndex = 1;
+
+  return studySpecs.map((spec) => {
+    if (spec.paneIndex <= 0 && !spec.paneKey) {
+      return spec;
+    }
+
+    const paneKey = spec.paneKey || `pane-${spec.paneIndex}`;
+    if (!lowerPaneMap.has(paneKey)) {
+      lowerPaneMap.set(paneKey, nextPaneIndex);
+      nextPaneIndex += 1;
+    }
+
+    return {
+      ...spec,
+      paneIndex: lowerPaneMap.get(paneKey) || 1,
+    };
+  });
+};
+
 const resolveLowerPaneCount = (studySpecs: ChartModel["studySpecs"]): number => {
   if (!studySpecs.length) {
     return 0;
@@ -201,7 +228,9 @@ export const buildResearchChartModel = (input: BuildChartModelInput): ChartModel
     timeframe,
     selectedIndicators,
   }));
-  const pluginStudySpecs = pluginOutputs.flatMap((output) => output.studySpecs || []);
+  const pluginStudySpecs = normalizeStudyPanes(
+    pluginOutputs.flatMap((output) => output.studySpecs || []),
+  );
   const pluginMarkers = pluginOutputs.flatMap((output) => output.markers || []);
   const pluginEvents = pluginOutputs.flatMap((output) => output.events || []);
   const pluginZones = pluginOutputs.flatMap((output) => output.zones || []);

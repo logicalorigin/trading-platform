@@ -1,4 +1,5 @@
 export * from "./automation";
+export * from "./backtesting";
 export * from "./broker";
 export * from "./common";
 export * from "./enums";
