@@ -37,6 +37,9 @@ type NumericSettingKey =
   | "atrLength"
   | "atrSmoothing"
   | "volatilityMultiplier"
+  | "wireSpread"
+  | "shadowLength"
+  | "shadowStdDev"
   | "adxLength"
   | "volumeMaLength"
   | "adxMin"
@@ -54,6 +57,12 @@ type BooleanSettingKey =
   | "requireAdx"
   | "requireVolScoreRange"
   | "restrictToSelectedSessions"
+  | "showWires"
+  | "showShadow"
+  | "showKeyLevels"
+  | "showStructure"
+  | "showOrderBlocks"
+  | "showSupportResistance"
   | "showDashboard"
   | "showTpSl";
 
@@ -393,6 +402,29 @@ export function RayReplicaSettingsMenu({
               min={0.1}
               step={0.05}
             />
+            <LabeledNumberField
+              theme={theme}
+              label="Wire Spread"
+              value={settings.wireSpread}
+              onChange={(value) => setNumber("wireSpread", value)}
+              min={0}
+              step={0.05}
+            />
+            <LabeledNumberField
+              theme={theme}
+              label="Shadow Len"
+              value={settings.shadowLength}
+              onChange={(value) => setNumber("shadowLength", value)}
+              min={1}
+            />
+            <LabeledNumberField
+              theme={theme}
+              label="Shadow Dev"
+              value={settings.shadowStdDev}
+              onChange={(value) => setNumber("shadowStdDev", value)}
+              min={0.1}
+              step={0.1}
+            />
           </div>
         </section>
 
@@ -576,6 +608,48 @@ export function RayReplicaSettingsMenu({
               min={0.25}
               step={0.25}
             />
+          </div>
+        </section>
+
+        <section style={sectionStyle(theme)}>
+          <div style={titleStyle(theme)}>Overlays</div>
+          <div style={chipRowStyle}>
+            <button type="button" onClick={() => toggle("showStructure")} style={chipStyle(theme, settings.showStructure)}>
+              {settings.showStructure ? "Structure On" : "Structure Off"}
+            </button>
+            <button type="button" onClick={() => toggle("showOrderBlocks")} style={chipStyle(theme, settings.showOrderBlocks)}>
+              {settings.showOrderBlocks ? "Order Blocks On" : "Order Blocks Off"}
+            </button>
+            <button type="button" onClick={() => toggle("showSupportResistance")} style={chipStyle(theme, settings.showSupportResistance)}>
+              {settings.showSupportResistance ? "S/R On" : "S/R Off"}
+            </button>
+            <button type="button" onClick={() => toggle("showKeyLevels")} style={chipStyle(theme, settings.showKeyLevels)}>
+              {settings.showKeyLevels ? "Key Levels On" : "Key Levels Off"}
+            </button>
+            <button type="button" onClick={() => toggle("showRegimeWindows")} style={chipStyle(theme, settings.showRegimeWindows)}>
+              {settings.showRegimeWindows ? "Regime On" : "Regime Off"}
+            </button>
+          </div>
+          <div style={helperStyle(theme)}>
+            Toggle the structural overlays independently so the chart can match the Pine source more closely in dense or clean layouts.
+          </div>
+        </section>
+
+        <section style={sectionStyle(theme)}>
+          <div style={titleStyle(theme)}>Appearance</div>
+          <div style={chipRowStyle}>
+            <button type="button" onClick={() => toggle("showWires")} style={chipStyle(theme, settings.showWires)}>
+              {settings.showWires ? "Wires On" : "Wires Off"}
+            </button>
+            <button type="button" onClick={() => toggle("showShadow")} style={chipStyle(theme, settings.showShadow)}>
+              {settings.showShadow ? "Shadow On" : "Shadow Off"}
+            </button>
+            <button type="button" onClick={() => update({ colorCandles: !settings.colorCandles })} style={chipStyle(theme, settings.colorCandles)}>
+              {settings.colorCandles ? "Candle Tint On" : "Candle Tint Off"}
+            </button>
+          </div>
+          <div style={helperStyle(theme)}>
+            Wires and shadow control the main regime band presentation. Candle tint mirrors the active RayReplica regime directly on price bars.
           </div>
         </section>
 
