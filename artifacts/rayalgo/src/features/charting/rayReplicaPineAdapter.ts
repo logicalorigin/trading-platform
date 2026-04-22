@@ -14,8 +14,26 @@ import type {
 
 export const RAY_REPLICA_PINE_SCRIPT_KEY = "rayalgo-replica-smc-pro-v3";
 
+export type RayReplicaBosConfirmation = "close" | "wicks";
+export type RayReplicaTimeframeOption =
+  | "1m"
+  | "2m"
+  | "5m"
+  | "15m"
+  | "30m"
+  | "1h"
+  | "4h"
+  | "D";
+export type RayReplicaDashboardPosition =
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
+export type RayReplicaDashboardSize = "compact" | "expanded";
+
 export type RayReplicaRuntimeSettings = {
   timeHorizon: number;
+  bosConfirmation: RayReplicaBosConfirmation;
   basisLength: number;
   atrLength: number;
   atrSmoothing: number;
@@ -23,20 +41,33 @@ export type RayReplicaRuntimeSettings = {
   wireSpread: number;
   shadowLength: number;
   shadowStdDev: number;
+  adxLength: number;
+  volumeMaLength: number;
+  mtf1: RayReplicaTimeframeOption;
+  mtf2: RayReplicaTimeframeOption;
+  mtf3: RayReplicaTimeframeOption;
+  tp1Rr: number;
+  tp2Rr: number;
+  tp3Rr: number;
+  dashboardPosition: RayReplicaDashboardPosition;
+  dashboardSize: RayReplicaDashboardSize;
   showWires: boolean;
   showShadow: boolean;
   showKeyLevels: boolean;
   showStructure: boolean;
+  showContinuationSignals: boolean;
   showOrderBlocks: boolean;
   showSupportResistance: boolean;
   showTpSl: boolean;
   showDashboard: boolean;
   showRegimeWindows: boolean;
   colorCandles: boolean;
+  waitForBarClose: boolean;
 };
 
 export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   timeHorizon: 10,
+  bosConfirmation: "close",
   basisLength: 80,
   atrLength: 14,
   atrSmoothing: 21,
@@ -44,16 +75,28 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   wireSpread: 0.5,
   shadowLength: 20,
   shadowStdDev: 2,
+  adxLength: 14,
+  volumeMaLength: 20,
+  mtf1: "15m",
+  mtf2: "1h",
+  mtf3: "4h",
+  tp1Rr: 0.5,
+  tp2Rr: 1,
+  tp3Rr: 1.7,
+  dashboardPosition: "bottom-right",
+  dashboardSize: "compact",
   showWires: true,
   showShadow: true,
   showKeyLevels: true,
   showStructure: true,
+  showContinuationSignals: true,
   showOrderBlocks: true,
-  showSupportResistance: false,
+  showSupportResistance: true,
   showTpSl: true,
   showDashboard: true,
   showRegimeWindows: true,
   colorCandles: true,
+  waitForBarClose: true,
 };
 
 const BULL_COLOR = "#00bcd4";
@@ -81,9 +124,22 @@ const SUPPORT_RESISTANCE_MIN_ZONE_DISTANCE_PERCENT = 0.05;
 const SUPPORT_RESISTANCE_THICKNESS_MULTIPLIER = 0.25;
 const SUPPORT_RESISTANCE_MAX_ZONES = 7;
 const SUPPORT_RESISTANCE_EXTENSION_BARS = 100;
-const TP_RR_1 = 0.5;
-const TP_RR_2 = 1;
-const TP_RR_3 = 1.7;
+const RAY_REPLICA_MTF_OPTIONS: ReadonlyArray<RayReplicaTimeframeOption> = [
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "30m",
+  "1h",
+  "4h",
+  "D",
+];
+const RAY_REPLICA_BOS_CONFIRMATION_OPTIONS: ReadonlyArray<RayReplicaBosConfirmation> =
+  ["close", "wicks"];
+const RAY_REPLICA_DASHBOARD_POSITION_OPTIONS: ReadonlyArray<RayReplicaDashboardPosition> =
+  ["top-left", "top-right", "bottom-left", "bottom-right"];
+const RAY_REPLICA_DASHBOARD_SIZE_OPTIONS: ReadonlyArray<RayReplicaDashboardSize> =
+  ["compact", "expanded"];
 
 const resolveIntegerSetting = (
   value: unknown,
@@ -122,6 +178,15 @@ const resolveBooleanSetting = (
   }
 
   return fallback;
+};
+
+const resolveEnumSetting = <T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  fallback: T,
+): T => {
+  const resolved = String(value || "").trim() as T;
+  return allowed.includes(resolved) ? resolved : fallback;
 };
 
 const withHexAlpha = (color: string, alpha: string): string =>
@@ -167,6 +232,11 @@ export function resolveRayReplicaRuntimeSettings(
       3,
       40,
     ),
+    bosConfirmation: resolveEnumSetting(
+      input.bosConfirmation,
+      RAY_REPLICA_BOS_CONFIRMATION_OPTIONS,
+      DEFAULT_RAY_REPLICA_SETTINGS.bosConfirmation,
+    ),
     basisLength: resolveIntegerSetting(
       input.basisLength,
       DEFAULT_RAY_REPLICA_SETTINGS.basisLength,
@@ -209,6 +279,61 @@ export function resolveRayReplicaRuntimeSettings(
       0.25,
       6,
     ),
+    adxLength: resolveIntegerSetting(
+      input.adxLength,
+      DEFAULT_RAY_REPLICA_SETTINGS.adxLength,
+      2,
+      100,
+    ),
+    volumeMaLength: resolveIntegerSetting(
+      input.volumeMaLength,
+      DEFAULT_RAY_REPLICA_SETTINGS.volumeMaLength,
+      2,
+      200,
+    ),
+    mtf1: resolveEnumSetting(
+      input.mtf1,
+      RAY_REPLICA_MTF_OPTIONS,
+      DEFAULT_RAY_REPLICA_SETTINGS.mtf1,
+    ),
+    mtf2: resolveEnumSetting(
+      input.mtf2,
+      RAY_REPLICA_MTF_OPTIONS,
+      DEFAULT_RAY_REPLICA_SETTINGS.mtf2,
+    ),
+    mtf3: resolveEnumSetting(
+      input.mtf3,
+      RAY_REPLICA_MTF_OPTIONS,
+      DEFAULT_RAY_REPLICA_SETTINGS.mtf3,
+    ),
+    tp1Rr: resolveFloatSetting(
+      input.tp1Rr,
+      DEFAULT_RAY_REPLICA_SETTINGS.tp1Rr,
+      0.25,
+      10,
+    ),
+    tp2Rr: resolveFloatSetting(
+      input.tp2Rr,
+      DEFAULT_RAY_REPLICA_SETTINGS.tp2Rr,
+      0.25,
+      10,
+    ),
+    tp3Rr: resolveFloatSetting(
+      input.tp3Rr,
+      DEFAULT_RAY_REPLICA_SETTINGS.tp3Rr,
+      0.25,
+      10,
+    ),
+    dashboardPosition: resolveEnumSetting(
+      input.dashboardPosition,
+      RAY_REPLICA_DASHBOARD_POSITION_OPTIONS,
+      DEFAULT_RAY_REPLICA_SETTINGS.dashboardPosition,
+    ),
+    dashboardSize: resolveEnumSetting(
+      input.dashboardSize,
+      RAY_REPLICA_DASHBOARD_SIZE_OPTIONS,
+      DEFAULT_RAY_REPLICA_SETTINGS.dashboardSize,
+    ),
     showWires: resolveBooleanSetting(
       input.showWires,
       DEFAULT_RAY_REPLICA_SETTINGS.showWires,
@@ -224,6 +349,10 @@ export function resolveRayReplicaRuntimeSettings(
     showStructure: resolveBooleanSetting(
       input.showStructure,
       DEFAULT_RAY_REPLICA_SETTINGS.showStructure,
+    ),
+    showContinuationSignals: resolveBooleanSetting(
+      input.showContinuationSignals,
+      DEFAULT_RAY_REPLICA_SETTINGS.showContinuationSignals,
     ),
     showOrderBlocks: resolveBooleanSetting(
       input.showOrderBlocks,
@@ -248,6 +377,10 @@ export function resolveRayReplicaRuntimeSettings(
     colorCandles: resolveBooleanSetting(
       input.colorCandles,
       DEFAULT_RAY_REPLICA_SETTINGS.colorCandles,
+    ),
+    waitForBarClose: resolveBooleanSetting(
+      input.waitForBarClose,
+      DEFAULT_RAY_REPLICA_SETTINGS.waitForBarClose,
     ),
   };
 }
@@ -592,15 +725,37 @@ const computeAdx = (chartBars: ChartBar[], period: number): number[] => {
   return result;
 };
 
+const computeVolumeRatio = (
+  chartBars: ChartBar[],
+  period: number,
+): number | null => {
+  if (!chartBars.length) {
+    return null;
+  }
+
+  const safePeriod = Math.max(1, Math.round(period));
+  const window = chartBars.slice(-safePeriod);
+  const averageVolume =
+    window.reduce((sum, bar) => sum + (Number(bar.v) || 0), 0) /
+    Math.max(1, window.length);
+  const latestVolume = Number(chartBars[chartBars.length - 1]?.v) || 0;
+
+  if (!Number.isFinite(averageVolume) || averageVolume <= 0) {
+    return null;
+  }
+
+  return Number((latestVolume / averageVolume).toFixed(2));
+};
+
 const formatDashboardTimeframe = (timeframe: string): string =>
   timeframe === "D" || timeframe === "1D"
     ? "D1"
     : timeframe === "W" || timeframe === "1W"
       ? "W1"
-      : timeframe === "240"
+      : timeframe === "240" || timeframe === "4h"
         ? "H4"
-        : timeframe === "120"
-          ? "H2"
+      : timeframe === "120"
+        ? "H2"
           : timeframe === "60" || timeframe === "1h"
             ? "H1"
             : /^\d+$/.test(timeframe)
@@ -634,6 +789,16 @@ const resolveSessionLabel = (bar: ChartBar): string => {
 const resolveBucketStartMs = (timeMs: number, timeframe: string): number => {
   if (/^\d+$/.test(timeframe)) {
     const intervalMs = Number(timeframe) * 60_000;
+    return Math.floor(timeMs / intervalMs) * intervalMs;
+  }
+
+  if (/^\d+m$/i.test(timeframe)) {
+    const intervalMs = Number(timeframe.slice(0, -1)) * 60_000;
+    return Math.floor(timeMs / intervalMs) * intervalMs;
+  }
+
+  if (/^\d+h$/i.test(timeframe)) {
+    const intervalMs = Number(timeframe.slice(0, -1)) * 60 * 60_000;
     return Math.floor(timeMs / intervalMs) * intervalMs;
   }
 
@@ -683,28 +848,68 @@ const aggregateBarsForTimeframe = (
 
 const resolveTrendDirectionForBars = (
   chartBars: ChartBar[],
-  basisLength: number,
+  settings: Pick<
+    RayReplicaRuntimeSettings,
+    | "basisLength"
+    | "atrLength"
+    | "atrSmoothing"
+    | "volatilityMultiplier"
+    | "waitForBarClose"
+  >,
 ): number => {
+  if (!chartBars.length) {
+    return 1;
+  }
+
   const basis = computeWma(
     chartBars.map((bar) => bar.c),
-    basisLength,
+    settings.basisLength,
   );
-  let trendDirection = 1;
-  for (let index = 0; index < basis.length; index += 1) {
+  const atrRaw = computeAtr(chartBars, settings.atrLength);
+  const atrSmoothed = computeSma(atrRaw, settings.atrSmoothing);
+  let trendDirection = 0;
+
+  for (let index = 0; index < chartBars.length; index += 1) {
+    const bar = chartBars[index];
+    const bandBasis = basis[index];
+    const bandWidth =
+      Number.isFinite(atrSmoothed[index]) && Number.isFinite(bar.c)
+        ? Math.max(
+            atrSmoothed[index] * settings.volatilityMultiplier,
+            Math.abs(bar.c) * 0.0012,
+          )
+        : Number.NaN;
+    const bandUpper =
+      Number.isFinite(bandBasis) && Number.isFinite(bandWidth)
+        ? bandBasis + bandWidth
+        : Number.NaN;
+    const bandLower =
+      Number.isFinite(bandBasis) && Number.isFinite(bandWidth)
+        ? bandBasis - bandWidth
+        : Number.NaN;
+
     if (
-      index >= 5 &&
-      Number.isFinite(basis[index]) &&
-      Number.isFinite(basis[index - 5])
+      Number.isFinite(bandUpper) &&
+      (settings.waitForBarClose ? bar.c > bandUpper : bar.h > bandUpper)
     ) {
-      if (basis[index] > basis[index - 5]) {
-        trendDirection = 1;
-      } else if (basis[index] < basis[index - 5]) {
-        trendDirection = -1;
-      }
+      trendDirection = 1;
+      continue;
+    }
+
+    if (
+      Number.isFinite(bandLower) &&
+      (settings.waitForBarClose ? bar.c < bandLower : bar.l < bandLower)
+    ) {
+      trendDirection = -1;
+      continue;
+    }
+
+    if (!trendDirection && Number.isFinite(bandBasis)) {
+      trendDirection = bar.c >= bandBasis ? 1 : -1;
     }
   }
 
-  return trendDirection;
+  return trendDirection || 1;
 };
 
 const resolveDayKey = (bar: ChartBar): string =>
@@ -1223,6 +1428,7 @@ export function createRayReplicaPineRuntimeAdapter(
 
       const {
         timeHorizon,
+        bosConfirmation,
         basisLength,
         atrLength,
         atrSmoothing,
@@ -1230,16 +1436,28 @@ export function createRayReplicaPineRuntimeAdapter(
         wireSpread,
         shadowLength,
         shadowStdDev,
+        adxLength,
+        volumeMaLength,
+        mtf1,
+        mtf2,
+        mtf3,
+        tp1Rr,
+        tp2Rr,
+        tp3Rr,
+        dashboardPosition,
+        dashboardSize,
         showWires,
         showShadow,
         showKeyLevels,
         showStructure,
+        showContinuationSignals,
         showOrderBlocks,
         showSupportResistance,
         showTpSl,
         showDashboard,
         showRegimeWindows,
         colorCandles,
+        waitForBarClose,
       } = resolveRayReplicaRuntimeSettings(settings);
       const closes = chartBars.map((bar) => bar.c);
       const basis = computeWma(closes, basisLength);
@@ -1295,6 +1513,7 @@ export function createRayReplicaPineRuntimeAdapter(
       );
 
       let trendDirection = 1;
+      let bandTrendDirection = 0;
       let marketStructureDirection = 0;
       let lastSwingHigh = Number.NaN;
       let previousSwingHigh = Number.NaN;
@@ -1310,9 +1529,18 @@ export function createRayReplicaPineRuntimeAdapter(
       const activeBearOrderBlocks: ActiveOrderBlock[] = [];
       const supportResistanceZones: SupportResistanceZone[] = [];
       let activeTpSlOverlay: ActiveTpSlOverlay | null = null;
+      let activeContinuationDirection = 0;
       let lastFlipBarIndex = 0;
 
       for (let index = 0; index < chartBars.length; index += 1) {
+        const currentBar = chartBars[index];
+        const currentBasis = basis[index];
+        const currentUpperBand = upperBand[index];
+        const currentLowerBand = lowerBand[index];
+        const bandTouchTolerance = Number.isFinite(atrSmoothed[index])
+          ? Math.max(atrSmoothed[index] * 0.2, Math.abs(currentBar.c) * 0.0008)
+          : Math.abs(currentBar.c) * 0.0008;
+
         if (
           index >= 5 &&
           Number.isFinite(basis[index]) &&
@@ -1323,6 +1551,24 @@ export function createRayReplicaPineRuntimeAdapter(
           } else if (basis[index] < basis[index - 5]) {
             trendDirection = -1;
           }
+        }
+
+        if (
+          Number.isFinite(currentUpperBand) &&
+          (waitForBarClose
+            ? currentBar.c > currentUpperBand
+            : currentBar.h > currentUpperBand)
+        ) {
+          bandTrendDirection = 1;
+        } else if (
+          Number.isFinite(currentLowerBand) &&
+          (waitForBarClose
+            ? currentBar.c < currentLowerBand
+            : currentBar.l < currentLowerBand)
+        ) {
+          bandTrendDirection = -1;
+        } else if (!bandTrendDirection && Number.isFinite(currentBasis)) {
+          bandTrendDirection = currentBar.c >= currentBasis ? 1 : -1;
         }
 
         const pivotIndex = index - timeHorizon;
@@ -1497,7 +1743,9 @@ export function createRayReplicaPineRuntimeAdapter(
 
         if (
           Number.isFinite(breakableHigh) &&
-          chartBars[index].c > breakableHigh
+          (bosConfirmation === "wicks"
+            ? currentBar.h > breakableHigh
+            : currentBar.c > breakableHigh)
         ) {
           if (marketStructureDirection === 1) {
             bullishBos = true;
@@ -1519,7 +1767,9 @@ export function createRayReplicaPineRuntimeAdapter(
 
         if (
           Number.isFinite(breakableLow) &&
-          chartBars[index].c < breakableLow
+          (bosConfirmation === "wicks"
+            ? currentBar.l < breakableLow
+            : currentBar.c < breakableLow)
         ) {
           if (marketStructureDirection === -1) {
             bearishBos = true;
@@ -1669,17 +1919,6 @@ export function createRayReplicaPineRuntimeAdapter(
         }
 
         if (showStructure && bullishBos) {
-          markers.push(
-            buildMarker(
-              `${script.scriptKey}-bos-long-${index}`,
-              chartBars[index],
-              index,
-              "belowBar",
-              "arrowUp",
-              BULL_COLOR,
-              "BOS",
-            ),
-          );
           events.push(
             buildEvent(
               `${script.scriptKey}-bos-event-long-${index}`,
@@ -1688,22 +1927,22 @@ export function createRayReplicaPineRuntimeAdapter(
               "bullish_bos",
               "long",
               "BOS",
+              {
+                overlay: "badge",
+                variant: "structure",
+                placement: "below",
+                price:
+                  currentBar.l -
+                  (Number.isFinite(atrRaw[index]) ? atrRaw[index] * 0.85 : 0),
+                background: withHexAlpha(BULL_COLOR, "cc"),
+                borderColor: withHexAlpha(BULL_COLOR, "f2"),
+                textColor: "#ffffff",
+              },
             ),
           );
         }
 
         if (showStructure && bearishBos) {
-          markers.push(
-            buildMarker(
-              `${script.scriptKey}-bos-short-${index}`,
-              chartBars[index],
-              index,
-              "aboveBar",
-              "arrowDown",
-              BEAR_COLOR,
-              "BOS",
-            ),
-          );
           events.push(
             buildEvent(
               `${script.scriptKey}-bos-event-short-${index}`,
@@ -1712,6 +1951,17 @@ export function createRayReplicaPineRuntimeAdapter(
               "bearish_bos",
               "short",
               "BOS",
+              {
+                overlay: "badge",
+                variant: "structure",
+                placement: "above",
+                price:
+                  currentBar.h +
+                  (Number.isFinite(atrRaw[index]) ? atrRaw[index] * 0.85 : 0),
+                background: withHexAlpha(BEAR_COLOR, "cc"),
+                borderColor: withHexAlpha(BEAR_COLOR, "f2"),
+                textColor: "#ffffff",
+              },
             ),
           );
         }
@@ -1795,9 +2045,9 @@ export function createRayReplicaPineRuntimeAdapter(
             direction: "long",
             startBarIndex: index,
             stopLoss,
-            takeProfit1: Number((chartBars[index].c + risk * TP_RR_1).toFixed(6)),
-            takeProfit2: Number((chartBars[index].c + risk * TP_RR_2).toFixed(6)),
-            takeProfit3: Number((chartBars[index].c + risk * TP_RR_3).toFixed(6)),
+            takeProfit1: Number((chartBars[index].c + risk * tp1Rr).toFixed(6)),
+            takeProfit2: Number((chartBars[index].c + risk * tp2Rr).toFixed(6)),
+            takeProfit3: Number((chartBars[index].c + risk * tp3Rr).toFixed(6)),
           };
         }
 
@@ -1810,11 +2060,93 @@ export function createRayReplicaPineRuntimeAdapter(
             direction: "short",
             startBarIndex: index,
             stopLoss,
-            takeProfit1: Number((chartBars[index].c - risk * TP_RR_1).toFixed(6)),
-            takeProfit2: Number((chartBars[index].c - risk * TP_RR_2).toFixed(6)),
-            takeProfit3: Number((chartBars[index].c - risk * TP_RR_3).toFixed(6)),
+            takeProfit1: Number((chartBars[index].c - risk * tp1Rr).toFixed(6)),
+            takeProfit2: Number((chartBars[index].c - risk * tp2Rr).toFixed(6)),
+            takeProfit3: Number((chartBars[index].c - risk * tp3Rr).toFixed(6)),
           };
         }
+
+        const bullishContinuation =
+          showContinuationSignals &&
+          bandTrendDirection === 1 &&
+          Number.isFinite(currentBasis) &&
+          currentBar.l <= currentBasis + bandTouchTolerance &&
+          (waitForBarClose
+            ? currentBar.c >= currentBasis
+            : currentBar.h >= currentBasis) &&
+          !bullishBos &&
+          !bullishChoch &&
+          !(
+            Number.isFinite(currentUpperBand) &&
+            (waitForBarClose
+              ? currentBar.c > currentUpperBand
+              : currentBar.h > currentUpperBand)
+          );
+        const bearishContinuation =
+          showContinuationSignals &&
+          bandTrendDirection === -1 &&
+          Number.isFinite(currentBasis) &&
+          currentBar.h >= currentBasis - bandTouchTolerance &&
+          (waitForBarClose
+            ? currentBar.c <= currentBasis
+            : currentBar.l <= currentBasis) &&
+          !bearishBos &&
+          !bearishChoch &&
+          !(
+            Number.isFinite(currentLowerBand) &&
+            (waitForBarClose
+              ? currentBar.c < currentLowerBand
+              : currentBar.l < currentLowerBand)
+          );
+
+        if (bullishContinuation && activeContinuationDirection !== 1) {
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-continuation-long-${index}`,
+              currentBar,
+              index,
+              "continuation_long",
+              "long",
+              "▲",
+              {
+                overlay: "badge",
+                variant: "continuation",
+                placement: "below",
+                price: currentBasis,
+                background: withHexAlpha(BULL_COLOR, "cc"),
+                borderColor: withHexAlpha(BULL_COLOR, "f2"),
+                textColor: "#ffffff",
+              },
+            ),
+          );
+        }
+
+        if (bearishContinuation && activeContinuationDirection !== -1) {
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-continuation-short-${index}`,
+              currentBar,
+              index,
+              "continuation_short",
+              "short",
+              "▼",
+              {
+                overlay: "badge",
+                variant: "continuation",
+                placement: "above",
+                price: currentBasis,
+                background: withHexAlpha(BEAR_COLOR, "cc"),
+                borderColor: withHexAlpha(BEAR_COLOR, "f2"),
+                textColor: "#ffffff",
+              },
+            ),
+          );
+        }
+        activeContinuationDirection = bullishContinuation
+          ? 1
+          : bearishContinuation
+            ? -1
+            : 0;
 
         if (showOrderBlocks) {
           if (
@@ -2009,6 +2341,7 @@ export function createRayReplicaPineRuntimeAdapter(
               labelPosition: "center",
               labelVariant: "plain",
               labelColor: "#ffffff",
+              radius: 0,
             },
           });
         });
@@ -2037,6 +2370,7 @@ export function createRayReplicaPineRuntimeAdapter(
               labelPosition: "center",
               labelVariant: "plain",
               labelColor: "#ffffff",
+              radius: 0,
             },
           });
         });
@@ -2055,7 +2389,7 @@ export function createRayReplicaPineRuntimeAdapter(
         ? buildSessionKeyLevelSeries(chartBars)
         : null;
       const lastBarIndex = chartBars.length - 1;
-      const adx = computeAdx(chartBars, 14);
+      const adx = computeAdx(chartBars, adxLength);
       const bbWidthPct = bbUpper.map((value, index) =>
         Number.isFinite(value) &&
         Number.isFinite(bbLower[index]) &&
@@ -2065,6 +2399,7 @@ export function createRayReplicaPineRuntimeAdapter(
           : Number.NaN,
       );
       const volatilityPercentRank = computePercentRank(bbWidthPct, 200);
+      const volumeRatio = computeVolumeRatio(chartBars, volumeMaLength);
       if (keyLevels && lastBarIndex >= 0) {
         const dayAnchorBarIndex = keyLevels.dayStartBarIndex[lastBarIndex] ?? 0;
         const weekAnchorBarIndex =
@@ -2165,11 +2500,17 @@ export function createRayReplicaPineRuntimeAdapter(
               ? `MATURE (${trendAge})`
               : `NEW (${trendAge})`;
         const volatilityScore = Number.isFinite(volatilityPercentRank[lastBarIndex])
-          ? Math.round(volatilityPercentRank[lastBarIndex] / 10)
-          : 0;
-        const mtfConfigs = ["60", "240", "D"].map((mtfTimeframe) => {
+          ? Math.round(volatilityPercentRank[lastBarIndex])
+          : Number.NaN;
+        const mtfConfigs = [mtf1, mtf2, mtf3].map((mtfTimeframe) => {
           const mtfBars = aggregateBarsForTimeframe(chartBars, mtfTimeframe);
-          const direction = resolveTrendDirectionForBars(mtfBars, basisLength);
+          const direction = resolveTrendDirectionForBars(mtfBars, {
+            basisLength,
+            atrLength,
+            atrSmoothing,
+            volatilityMultiplier,
+            waitForBarClose,
+          });
           return {
             label: formatDashboardTimeframe(mtfTimeframe),
             value: direction === 1 ? "BULL" : "BEAR",
@@ -2188,7 +2529,8 @@ export function createRayReplicaPineRuntimeAdapter(
           label: "RayAlgo Dashboard",
           meta: {
             overlay: "dashboard",
-            position: "bottom-right",
+            position: dashboardPosition,
+            size: dashboardSize,
             title: "RAYALGO DASHBOARD",
             trendLabel: `${formatDashboardTimeframe(timeframe)} TREND`,
             trendValue: regimeDirection[lastBarIndex] === 1 ? "BULLISH" : "BEARISH",
@@ -2196,26 +2538,44 @@ export function createRayReplicaPineRuntimeAdapter(
               regimeDirection[lastBarIndex] === 1 ? BULL_COLOR : BEAR_COLOR,
             rows: [
               {
-                label: "STRENGTH",
-                value:
+                label: "ADX",
+                value: Number.isFinite(currentAdx)
+                  ? currentAdx.toFixed(1)
+                  : "--",
+                color:
                   Number.isFinite(currentAdx) && currentAdx >= 25
-                    ? "Strong"
-                    : "Weak",
-                color: "#ffffff",
+                    ? BULL_COLOR
+                    : "#ffffff",
               },
               {
-                label: "TREND AGE",
+                label: "AGE",
                 value: ageText,
                 color: "#ffffff",
               },
               {
-                label: "VOLATILITY",
-                value: `${volatilityScore}/10`,
+                label: "VOLUME",
+                value: Number.isFinite(volumeRatio)
+                  ? `${volumeRatio.toFixed(2)}x`
+                  : "--",
+                color: "#ffffff",
+              },
+              {
+                label: "VOL",
+                value: Number.isFinite(volatilityScore)
+                  ? `${volatilityScore}`
+                  : "--",
                 color: "#ffffff",
               },
               {
                 label: "SESSION",
                 value: resolveSessionLabel(lastBar),
+                color: "#ffffff",
+              },
+              {
+                label: "RISK",
+                value: showTpSl
+                  ? `${tp1Rr}/${tp2Rr}/${tp3Rr}R`
+                  : "Hidden",
                 color: "#ffffff",
               },
             ],

@@ -1005,10 +1005,13 @@ export async function getBars(input: {
       }
     >();
 
+    // Tag each bar honestly with its actual source so the chart UI / debugging
+    // can tell what came from where. IBKR bars always overwrite Polygon bars at
+    // the same timestamp because IBKR is the authoritative live broker feed.
     polygonBars.forEach((bar) => {
       merged.set(bar.timestamp.getTime(), {
         ...bar,
-        source: "ibkr+massive-gap-fill",
+        source: "polygon-history",
         providerContractId: null,
         outsideRth,
         partial: false,
@@ -1017,7 +1020,7 @@ export async function getBars(input: {
     ibkrBars.forEach((bar) => {
       merged.set(bar.timestamp.getTime(), {
         ...bar,
-        source: "ibkr+massive-gap-fill",
+        source: "ibkr-history",
       });
     });
     bars = Array.from(merged.values())

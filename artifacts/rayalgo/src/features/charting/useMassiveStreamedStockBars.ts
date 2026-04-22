@@ -13,7 +13,7 @@ type UseBrokerStreamedBarsInput = {
   enabled?: boolean;
 };
 
-const STREAM_SUPPORTED_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h"]);
+const STREAM_SUPPORTED_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "1d"]);
 
 const timeframeToStepMs = (timeframe: string): number => (
   ({
@@ -21,8 +21,15 @@ const timeframeToStepMs = (timeframe: string): number => (
     "5m": 300_000,
     "15m": 900_000,
     "1h": 3_600_000,
+    "1d": 86_400_000,
   }[timeframe] || 0)
 );
+
+// For 1d, IBKR timestamps daily bars at the trading-day boundary (typically 04:00 UTC = ET midnight).
+// We don't re-bucket — instead we patch the last historical daily bar's OHLCV using all live
+// minute-aggregates whose timestamp is >= the bar's start. This keeps daily aligned with IBKR's
+// own session boundaries while still reflecting the live last-trade price.
+const isDailyTimeframe = (timeframe: string): boolean => timeframe === "1d";
 
 const resolveTimestampMs = (value: MarketBar["timestamp"] | MarketBar["time"]): number | null => {
   if (value instanceof Date) {
@@ -97,6 +104,50 @@ const mergeBarsWithMinuteAggregates = (
   const minuteAggregates = getStoredBrokerMinuteAggregates(symbol);
   if (!minuteAggregates.length) {
     return normalizedBars;
+  }
+
+  // Daily charts: patch the last historical bar with all live aggregates that fall
+  // within its session window, rather than re-bucketing (which would mis-align with
+  // IBKR's session-day boundary, typically 04:00 UTC).
+  if (isDailyTimeframe(timeframe)) {
+    if (!normalizedBars.length) {
+      return normalizedBars;
+    }
+    const lastBar = normalizedBars[normalizedBars.length - 1];
+    const lastStartMs =
+      resolveTimestampMs(lastBar.timestamp) ?? resolveTimestampMs(lastBar.time);
+    if (lastStartMs == null) {
+      return normalizedBars;
+    }
+    const liveSinceLast = minuteAggregates.filter(
+      (aggregate) => aggregate.startMs >= lastStartMs,
+    );
+    if (!liveSinceLast.length) {
+      return normalizedBars;
+    }
+    const ordered = liveSinceLast
+      .slice()
+      .sort((left, right) => left.startMs - right.startMs);
+    const last = ordered[ordered.length - 1];
+    const liveHigh = ordered.reduce((max, m) => Math.max(max, m.high), -Infinity);
+    const liveLow = ordered.reduce((min, m) => Math.min(min, m.low), Infinity);
+    const liveVolume = ordered.reduce((sum, m) => sum + m.volume, 0);
+    const patchedLast: MarketBar = {
+      ...lastBar,
+      high: Math.max(lastBar.high ?? lastBar.h ?? -Infinity, liveHigh),
+      low: Math.min(lastBar.low ?? lastBar.l ?? Infinity, liveLow),
+      close: last.close,
+      // Prefer accumulatedVolume from the most recent live aggregate when present,
+      // since IBKR streams report session-cumulative volume; otherwise add live deltas.
+      volume:
+        last.accumulatedVolume != null
+          ? last.accumulatedVolume
+          : (lastBar.volume ?? lastBar.v ?? 0) + liveVolume,
+      sessionVwap: last.sessionVwap ?? lastBar.sessionVwap,
+      accumulatedVolume: last.accumulatedVolume ?? lastBar.accumulatedVolume,
+      source: "ibkr-websocket-derived",
+    };
+    return [...normalizedBars.slice(0, -1), patchedLast];
   }
 
   const mergedByStart = new Map<number, MarketBar>();

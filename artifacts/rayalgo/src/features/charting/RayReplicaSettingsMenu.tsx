@@ -41,19 +41,34 @@ type NumericSettingKey =
   | "volatilityMultiplier"
   | "wireSpread"
   | "shadowLength"
-  | "shadowStdDev";
+  | "shadowStdDev"
+  | "adxLength"
+  | "volumeMaLength"
+  | "tp1Rr"
+  | "tp2Rr"
+  | "tp3Rr";
+
+type EnumSettingKey =
+  | "bosConfirmation"
+  | "mtf1"
+  | "mtf2"
+  | "mtf3"
+  | "dashboardPosition"
+  | "dashboardSize";
 
 type BooleanSettingKey =
   | "showWires"
   | "showShadow"
   | "showKeyLevels"
   | "showStructure"
+  | "showContinuationSignals"
   | "showOrderBlocks"
   | "showSupportResistance"
   | "showTpSl"
   | "showDashboard"
   | "showRegimeWindows"
-  | "colorCandles";
+  | "colorCandles"
+  | "waitForBarClose";
 
 const triggerStyle = (
   theme: WidgetTheme,
@@ -98,7 +113,14 @@ const itemStyle = (theme: WidgetTheme): CSSProperties => ({
 });
 
 const formatNumericLabel = (key: NumericSettingKey, value: number): string => {
-  if (key === "volatilityMultiplier" || key === "wireSpread" || key === "shadowStdDev") {
+  if (
+    key === "volatilityMultiplier" ||
+    key === "wireSpread" ||
+    key === "shadowStdDev" ||
+    key === "tp1Rr" ||
+    key === "tp2Rr" ||
+    key === "tp3Rr"
+  ) {
     return value.toFixed(value % 1 === 0 ? 0 : 2).replace(/\.00$/, "");
   }
 
@@ -122,6 +144,80 @@ const numericOptions: Array<{
   { key: "wireSpread", label: "Wire spacing", values: [0.25, 0.5, 0.75, 1] },
   { key: "shadowLength", label: "Shadow length", values: [10, 20, 34] },
   { key: "shadowStdDev", label: "Shadow sigma", values: [1.5, 2, 2.5] },
+  { key: "adxLength", label: "ADX length", values: [10, 14, 21] },
+  { key: "volumeMaLength", label: "Volume MA", values: [10, 20, 30] },
+  { key: "tp1Rr", label: "TP1 RR", values: [0.5, 1, 1.5] },
+  { key: "tp2Rr", label: "TP2 RR", values: [1, 2, 3] },
+  { key: "tp3Rr", label: "TP3 RR", values: [1.7, 2.5, 4] },
+];
+
+const enumOptions: Array<{
+  key: EnumSettingKey;
+  label: string;
+  values: Array<{ value: string; label: string }>;
+}> = [
+  {
+    key: "bosConfirmation",
+    label: "BOS confirmation",
+    values: [
+      { value: "close", label: "Close" },
+      { value: "wicks", label: "Wicks" },
+    ],
+  },
+  {
+    key: "mtf1",
+    label: "MTF 1",
+    values: [
+      { value: "1m", label: "1m" },
+      { value: "5m", label: "5m" },
+      { value: "15m", label: "15m" },
+      { value: "30m", label: "30m" },
+      { value: "1h", label: "1h" },
+      { value: "4h", label: "4h" },
+      { value: "D", label: "D1" },
+    ],
+  },
+  {
+    key: "mtf2",
+    label: "MTF 2",
+    values: [
+      { value: "5m", label: "5m" },
+      { value: "15m", label: "15m" },
+      { value: "30m", label: "30m" },
+      { value: "1h", label: "1h" },
+      { value: "4h", label: "4h" },
+      { value: "D", label: "D1" },
+    ],
+  },
+  {
+    key: "mtf3",
+    label: "MTF 3",
+    values: [
+      { value: "15m", label: "15m" },
+      { value: "30m", label: "30m" },
+      { value: "1h", label: "1h" },
+      { value: "4h", label: "4h" },
+      { value: "D", label: "D1" },
+    ],
+  },
+  {
+    key: "dashboardPosition",
+    label: "Dashboard position",
+    values: [
+      { value: "bottom-right", label: "Bottom right" },
+      { value: "bottom-left", label: "Bottom left" },
+      { value: "top-right", label: "Top right" },
+      { value: "top-left", label: "Top left" },
+    ],
+  },
+  {
+    key: "dashboardSize",
+    label: "Dashboard size",
+    values: [
+      { value: "compact", label: "Compact" },
+      { value: "expanded", label: "Expanded" },
+    ],
+  },
 ];
 
 const booleanOptions: Array<{
@@ -132,12 +228,14 @@ const booleanOptions: Array<{
   { key: "showShadow", label: "Show shadow" },
   { key: "showKeyLevels", label: "Show key levels" },
   { key: "showStructure", label: "Show structure events" },
+  { key: "showContinuationSignals", label: "Show continuation arrows" },
   { key: "showOrderBlocks", label: "Show order blocks" },
   { key: "showSupportResistance", label: "Show support/resistance" },
   { key: "showTpSl", label: "Show TP/SL" },
   { key: "showDashboard", label: "Show dashboard" },
   { key: "showRegimeWindows", label: "Show regime windows" },
   { key: "colorCandles", label: "Color candles" },
+  { key: "waitForBarClose", label: "Wait for bar close" },
 ];
 
 export function RayReplicaSettingsMenu({
@@ -160,6 +258,13 @@ export function RayReplicaSettingsMenu({
   };
 
   const setBoolean = (key: BooleanSettingKey, value: boolean) => {
+    onChange({
+      ...settings,
+      [key]: value,
+    });
+  };
+
+  const setEnum = (key: EnumSettingKey, value: string) => {
     onChange({
       ...settings,
       [key]: value,
@@ -206,6 +311,28 @@ export function RayReplicaSettingsMenu({
                   style={itemStyle(theme)}
                 >
                   {formatNumericLabel(group.key, value)}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </div>
+        ))}
+        {enumOptions.map((group) => (
+          <div key={group.key}>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel style={labelStyle(theme)}>
+              {group.label}
+            </DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={String(settings[group.key])}
+              onValueChange={(value) => setEnum(group.key, value)}
+            >
+              {group.values.map((value) => (
+                <DropdownMenuRadioItem
+                  key={`${group.key}-${value.value}`}
+                  value={value.value}
+                  style={itemStyle(theme)}
+                >
+                  {value.label}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>

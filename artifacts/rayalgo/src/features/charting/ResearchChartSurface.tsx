@@ -130,7 +130,7 @@ type IndicatorBadgeOverlay = {
   textColor: string;
   placement: "above" | "below" | "center";
   arrow?: "up" | "down";
-  variant: "signal" | "swing";
+  variant: "signal" | "swing" | "structure" | "continuation";
 };
 
 type IndicatorDotOverlay = {
@@ -145,6 +145,7 @@ type IndicatorDotOverlay = {
 type IndicatorDashboardOverlay = {
   id: string;
   position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  size: "compact" | "expanded";
   title: string;
   trendLabel: string;
   trendValue: string;
@@ -873,6 +874,7 @@ const buildZoneOverlays = (
       const border = (meta.borderColor as string | undefined) || defaultBorder;
       const fill = (meta.fillColor as string | undefined) || defaultFill;
       const label = typeof zone.label === "string" ? zone.label : undefined;
+      const isFillBand = style === "fill-band";
 
       if (style === "line-overlay") {
         result.push({
@@ -914,15 +916,21 @@ const buildZoneOverlays = (
       result.push({
         id: zone.id,
         kind: "box",
-        left: Math.min(left, right),
-        top: Math.min(top, bottom),
-        width: Math.max(2, Math.abs(right - left)),
-        height: Math.max(2, Math.abs(bottom - top)),
+        left: isFillBand
+          ? Math.min(left, right) - barSpacing / 2
+          : Math.min(left, right),
+        top: isFillBand ? Math.min(top, bottom) - 0.5 : Math.min(top, bottom),
+        width: isFillBand
+          ? Math.max(2, Math.abs(right - left) + barSpacing + 1)
+          : Math.max(2, Math.abs(right - left)),
+        height: isFillBand
+          ? Math.max(2, Math.abs(bottom - top) + 1)
+          : Math.max(2, Math.abs(bottom - top)),
         fill,
         border,
         borderStyle: resolveOverlayBorderStyle(meta.lineStyle),
         borderWidth: resolveFiniteMetaNumber(meta.borderWidth, 1),
-        borderVisible: meta.borderVisible !== false,
+        borderVisible: isFillBand ? false : meta.borderVisible !== false,
         label,
         labelPosition: resolveOverlayLabelPosition(meta.labelPosition),
         labelColor: (meta.labelColor as string | undefined) || theme.text,
@@ -930,8 +938,8 @@ const buildZoneOverlays = (
         labelBorder: (meta.labelBorderColor as string | undefined),
         labelVariant:
           meta.labelVariant === "plain" ? "plain" : "pill",
-        radius: resolveFiniteMetaNumber(meta.radius, 4),
-        opacity: resolveFiniteMetaNumber(meta.opacity, 1),
+        radius: resolveFiniteMetaNumber(meta.radius, isFillBand ? 0 : 4),
+        opacity: resolveFiniteMetaNumber(meta.opacity, isFillBand ? 0.92 : 1),
       });
       return result;
     },
@@ -1325,6 +1333,9 @@ const buildIndicatorEventOverlays = (
         position:
           (meta.position as IndicatorDashboardOverlay["position"] | undefined) ||
           "bottom-right",
+        size:
+          (meta.size as IndicatorDashboardOverlay["size"] | undefined) ||
+          "compact",
         title: (meta.title as string | undefined) || "RAYALGO DASHBOARD",
         trendLabel: (meta.trendLabel as string | undefined) || "TREND",
         trendValue: (meta.trendValue as string | undefined) || "—",
@@ -3192,6 +3203,9 @@ export const ResearchChartSurface = ({
                 />
               ))}
               {indicatorBadgeOverlays.map((overlay) => {
+                const isSignal = overlay.variant === "signal";
+                const isContinuation = overlay.variant === "continuation";
+                const isStructure = overlay.variant === "structure";
                 const placementTransform =
                   overlay.placement === "above"
                     ? "translate(-50%, calc(-100% - 8px))"
@@ -3243,17 +3257,26 @@ export const ResearchChartSurface = ({
                       style={{
                         position: "relative",
                         padding:
-                          overlay.variant === "signal" ? "4px 10px" : "2px 8px",
-                        borderRadius: overlay.variant === "signal" ? 999 : 8,
+                          isSignal
+                            ? "4px 10px"
+                            : isContinuation
+                              ? "1px 6px"
+                              : isStructure
+                                ? "2px 7px"
+                                : "2px 8px",
+                        borderRadius: isSignal || isContinuation ? 999 : 8,
                         border: `1px solid ${overlay.borderColor}`,
                         background: overlay.background,
                         color: overlay.textColor,
-                        fontSize: overlay.variant === "signal" ? 10 : 9,
+                        fontSize: isSignal ? 10 : isContinuation ? 8 : 9,
                         fontFamily: theme.mono,
                         fontWeight: 700,
                         whiteSpace: "nowrap",
-                        boxShadow: `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
-                        letterSpacing: overlay.variant === "signal" ? "0.04em" : "normal",
+                        boxShadow: isContinuation
+                          ? `0 2px 8px ${withAlpha(theme.bg4, "66")}`
+                          : `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
+                        letterSpacing:
+                          isSignal || isStructure ? "0.04em" : "normal",
                       }}
                     >
                       {overlay.text}
@@ -3272,11 +3295,19 @@ export const ResearchChartSurface = ({
                     ...(indicatorDashboardOverlay.position.includes("left")
                       ? { left: 12 }
                       : { right: 12 }),
-                    width: compact ? 168 : 196,
+                    width: compact
+                      ? 168
+                      : indicatorDashboardOverlay.size === "expanded"
+                        ? 228
+                        : 196,
                     background: withAlpha("#000000", "b3"),
                     border: `1px solid ${withAlpha("#9ca3af", "66")}`,
                     borderRadius: 8,
-                    padding: compact ? "8px 8px 6px" : "9px 10px 7px",
+                    padding: compact
+                      ? "8px 8px 6px"
+                      : indicatorDashboardOverlay.size === "expanded"
+                        ? "10px 12px 9px"
+                        : "9px 10px 7px",
                     color: "#ffffff",
                     boxShadow: `0 10px 30px ${withAlpha(theme.bg4, "88")}`,
                   }}
@@ -3287,7 +3318,10 @@ export const ResearchChartSurface = ({
                       padding: "2px 6px",
                       borderRadius: 4,
                       background: withAlpha("#6b7280", "80"),
-                      fontSize: 9,
+                      fontSize:
+                        compact || indicatorDashboardOverlay.size === "compact"
+                          ? 9
+                          : 10,
                       fontFamily: theme.mono,
                       fontWeight: 700,
                       textAlign: "center",
@@ -3302,7 +3336,10 @@ export const ResearchChartSurface = ({
                       gridTemplateColumns: "1fr auto",
                       rowGap: 4,
                       columnGap: 8,
-                      fontSize: compact ? 9 : 10,
+                      fontSize:
+                        compact || indicatorDashboardOverlay.size === "compact"
+                          ? 9
+                          : 10,
                       fontFamily: theme.mono,
                     }}
                   >
@@ -3328,14 +3365,17 @@ export const ResearchChartSurface = ({
                     <div
                       style={{
                         marginTop: 8,
-                        display: "grid",
-                        gridTemplateColumns: `repeat(${indicatorDashboardOverlay.mtf.length}, 1fr)`,
-                        gap: 6,
-                        textAlign: "center",
-                        fontFamily: theme.mono,
-                        fontSize: compact ? 9 : 10,
-                      }}
-                    >
+                      display: "grid",
+                      gridTemplateColumns: `repeat(${indicatorDashboardOverlay.mtf.length}, 1fr)`,
+                      gap: 6,
+                      textAlign: "center",
+                      fontFamily: theme.mono,
+                      fontSize:
+                        compact || indicatorDashboardOverlay.size === "compact"
+                          ? 9
+                          : 10,
+                    }}
+                  >
                       {indicatorDashboardOverlay.mtf.map((item) => (
                         <div key={`${indicatorDashboardOverlay.id}-${item.label}`}>
                           <div style={{ color: item.color }}>{item.label}</div>
