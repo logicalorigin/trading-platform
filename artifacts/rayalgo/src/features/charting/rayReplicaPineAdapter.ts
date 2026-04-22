@@ -30,6 +30,7 @@ export type RayReplicaRuntimeSettings = {
   showOrderBlocks: boolean;
   showSupportResistance: boolean;
   showTpSl: boolean;
+  showDashboard: boolean;
   showRegimeWindows: boolean;
   colorCandles: boolean;
 };
@@ -50,6 +51,7 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   showOrderBlocks: true,
   showSupportResistance: false,
   showTpSl: true,
+  showDashboard: true,
   showRegimeWindows: true,
   colorCandles: true,
 };
@@ -235,6 +237,10 @@ export function resolveRayReplicaRuntimeSettings(
       input.showTpSl,
       DEFAULT_RAY_REPLICA_SETTINGS.showTpSl,
     ),
+    showDashboard: resolveBooleanSetting(
+      input.showDashboard,
+      DEFAULT_RAY_REPLICA_SETTINGS.showDashboard,
+    ),
     showRegimeWindows: resolveBooleanSetting(
       input.showRegimeWindows,
       DEFAULT_RAY_REPLICA_SETTINGS.showRegimeWindows,
@@ -344,6 +350,7 @@ const buildEvent = (
   eventType: string,
   direction: "long" | "short",
   label: string,
+  meta?: Record<string, unknown>,
 ): IndicatorEvent => ({
   id,
   strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
@@ -353,6 +360,7 @@ const buildEvent = (
   barIndex,
   direction,
   label,
+  meta,
 });
 
 const computeSma = (values: number[], period: number): number[] => {
@@ -472,6 +480,231 @@ const computeAtr = (chartBars: ChartBar[], period: number): number[] => {
   }
 
   return result;
+};
+
+const computePercentRank = (values: number[], period: number): number[] => {
+  const result = new Array<number>(values.length).fill(Number.NaN);
+  if (!values.length || period <= 1) {
+    return result;
+  }
+
+  for (let index = period - 1; index < values.length; index += 1) {
+    const window = values.slice(index - period + 1, index + 1);
+    const current = values[index];
+    if (!Number.isFinite(current) || window.some((value) => !Number.isFinite(value))) {
+      continue;
+    }
+
+    let lessOrEqual = 0;
+    window.forEach((value) => {
+      if (value <= current) {
+        lessOrEqual += 1;
+      }
+    });
+    result[index] = Number(
+      ((((lessOrEqual - 1) / (period - 1)) * 100) || 0).toFixed(6),
+    );
+  }
+
+  return result;
+};
+
+const computeAdx = (chartBars: ChartBar[], period: number): number[] => {
+  const length = chartBars.length;
+  const result = new Array<number>(length).fill(Number.NaN);
+  if (length <= period * 2 || period <= 0) {
+    return result;
+  }
+
+  const trueRanges = new Array<number>(length).fill(0);
+  const plusDm = new Array<number>(length).fill(0);
+  const minusDm = new Array<number>(length).fill(0);
+
+  for (let index = 1; index < length; index += 1) {
+    const currentBar = chartBars[index];
+    const previousBar = chartBars[index - 1];
+    const upMove = currentBar.h - previousBar.h;
+    const downMove = previousBar.l - currentBar.l;
+    trueRanges[index] = Math.max(
+      currentBar.h - currentBar.l,
+      Math.abs(currentBar.h - previousBar.c),
+      Math.abs(currentBar.l - previousBar.c),
+    );
+    plusDm[index] = upMove > downMove && upMove > 0 ? upMove : 0;
+    minusDm[index] = downMove > upMove && downMove > 0 ? downMove : 0;
+  }
+
+  let smoothedTr = 0;
+  let smoothedPlusDm = 0;
+  let smoothedMinusDm = 0;
+  for (let index = 1; index <= period; index += 1) {
+    smoothedTr += trueRanges[index];
+    smoothedPlusDm += plusDm[index];
+    smoothedMinusDm += minusDm[index];
+  }
+
+  const dx = new Array<number>(length).fill(Number.NaN);
+  for (let index = period; index < length; index += 1) {
+    if (index > period) {
+      smoothedTr = smoothedTr - smoothedTr / period + trueRanges[index];
+      smoothedPlusDm =
+        smoothedPlusDm - smoothedPlusDm / period + plusDm[index];
+      smoothedMinusDm =
+        smoothedMinusDm - smoothedMinusDm / period + minusDm[index];
+    }
+
+    if (!Number.isFinite(smoothedTr) || smoothedTr <= 0) {
+      continue;
+    }
+
+    const plusDi = (smoothedPlusDm / smoothedTr) * 100;
+    const minusDi = (smoothedMinusDm / smoothedTr) * 100;
+    const diSum = plusDi + minusDi;
+    if (diSum <= 0) {
+      continue;
+    }
+
+    dx[index] = Math.abs(plusDi - minusDi) / diSum * 100;
+  }
+
+  let dxSum = 0;
+  let dxCount = 0;
+  for (let index = period; index < length && dxCount < period; index += 1) {
+    if (Number.isFinite(dx[index])) {
+      dxSum += dx[index];
+      dxCount += 1;
+      if (dxCount === period) {
+        result[index] = Number((dxSum / period).toFixed(6));
+      }
+    }
+  }
+
+  for (let index = period * 2; index < length; index += 1) {
+    if (!Number.isFinite(dx[index]) || !Number.isFinite(result[index - 1])) {
+      continue;
+    }
+
+    result[index] = Number(
+      (((result[index - 1] * (period - 1) + dx[index]) / period)).toFixed(6),
+    );
+  }
+
+  return result;
+};
+
+const formatDashboardTimeframe = (timeframe: string): string =>
+  timeframe === "D" || timeframe === "1D"
+    ? "D1"
+    : timeframe === "W" || timeframe === "1W"
+      ? "W1"
+      : timeframe === "240"
+        ? "H4"
+        : timeframe === "120"
+          ? "H2"
+          : timeframe === "60" || timeframe === "1h"
+            ? "H1"
+            : /^\d+$/.test(timeframe)
+              ? `${timeframe}m`
+              : timeframe;
+
+const resolveSessionLabel = (bar: ChartBar): string => {
+  const value = new Date(bar.time * 1000);
+  const minutes = value.getUTCHours() * 60 + value.getUTCMinutes();
+  const inSession = (start: number, end: number) =>
+    start <= end
+      ? minutes >= start && minutes < end
+      : minutes >= start || minutes < end;
+
+  if (inSession(8 * 60, 17 * 60)) {
+    return "London";
+  }
+  if (inSession(13 * 60, 22 * 60)) {
+    return "New York";
+  }
+  if (inSession(0, 9 * 60)) {
+    return "Tokyo";
+  }
+  if (inSession(22 * 60, 7 * 60)) {
+    return "Sydney";
+  }
+
+  return "Closed";
+};
+
+const resolveBucketStartMs = (timeMs: number, timeframe: string): number => {
+  if (/^\d+$/.test(timeframe)) {
+    const intervalMs = Number(timeframe) * 60_000;
+    return Math.floor(timeMs / intervalMs) * intervalMs;
+  }
+
+  const value = new Date(timeMs);
+  if (timeframe === "D" || timeframe === "1D") {
+    value.setUTCHours(0, 0, 0, 0);
+    return value.getTime();
+  }
+
+  if (timeframe === "W" || timeframe === "1W") {
+    const utcDay = value.getUTCDay() || 7;
+    value.setUTCDate(value.getUTCDate() - utcDay + 1);
+    value.setUTCHours(0, 0, 0, 0);
+    return value.getTime();
+  }
+
+  return timeMs;
+};
+
+const aggregateBarsForTimeframe = (
+  chartBars: ChartBar[],
+  timeframe: string,
+): ChartBar[] => {
+  const aggregatedBars: ChartBar[] = [];
+  chartBars.forEach((bar) => {
+    const bucketStartMs = resolveBucketStartMs(bar.time * 1000, timeframe);
+    const bucketTime = Math.floor(bucketStartMs / 1000);
+    const lastBar = aggregatedBars[aggregatedBars.length - 1];
+    if (!lastBar || lastBar.time !== bucketTime) {
+      aggregatedBars.push({
+        ...bar,
+        time: bucketTime,
+        ts: new Date(bucketStartMs).toISOString(),
+        date: new Date(bucketStartMs).toISOString().slice(0, 10),
+      });
+      return;
+    }
+
+    lastBar.h = Math.max(lastBar.h, bar.h);
+    lastBar.l = Math.min(lastBar.l, bar.l);
+    lastBar.c = bar.c;
+    lastBar.v += bar.v;
+  });
+
+  return aggregatedBars;
+};
+
+const resolveTrendDirectionForBars = (
+  chartBars: ChartBar[],
+  basisLength: number,
+): number => {
+  const basis = computeWma(
+    chartBars.map((bar) => bar.c),
+    basisLength,
+  );
+  let trendDirection = 1;
+  for (let index = 0; index < basis.length; index += 1) {
+    if (
+      index >= 5 &&
+      Number.isFinite(basis[index]) &&
+      Number.isFinite(basis[index - 5])
+    ) {
+      if (basis[index] > basis[index - 5]) {
+        trendDirection = 1;
+      } else if (basis[index] < basis[index - 5]) {
+        trendDirection = -1;
+      }
+    }
+  }
+
+  return trendDirection;
 };
 
 const resolveDayKey = (bar: ChartBar): string =>
@@ -983,7 +1216,7 @@ export function createRayReplicaPineRuntimeAdapter(
 ): IndicatorPlugin {
   return {
     id: script.scriptKey,
-    compute({ chartBars, settings }): IndicatorPluginOutput {
+    compute({ chartBars, settings, timeframe }): IndicatorPluginOutput {
       if (!chartBars.length) {
         return {};
       }
@@ -1004,6 +1237,7 @@ export function createRayReplicaPineRuntimeAdapter(
         showOrderBlocks,
         showSupportResistance,
         showTpSl,
+        showDashboard,
         showRegimeWindows,
         colorCandles,
       } = resolveRayReplicaRuntimeSettings(settings);
@@ -1076,6 +1310,7 @@ export function createRayReplicaPineRuntimeAdapter(
       const activeBearOrderBlocks: ActiveOrderBlock[] = [];
       const supportResistanceZones: SupportResistanceZone[] = [];
       let activeTpSlOverlay: ActiveTpSlOverlay | null = null;
+      let lastFlipBarIndex = 0;
 
       for (let index = 0; index < chartBars.length; index += 1) {
         if (
@@ -1112,15 +1347,24 @@ export function createRayReplicaPineRuntimeAdapter(
                 resolvedPivotHigh > previousSwingHigh
                   ? "HH"
                   : "LH";
-              markers.push(
-                buildMarker(
+              events.push(
+                buildEvent(
                   `${script.scriptKey}-swing-high-${pivotIndex}`,
                   bar,
                   pivotIndex,
-                  "aboveBar",
-                  "circle",
-                  "#94a3b8",
+                  "swing_label",
+                  "short",
                   label,
+                  {
+                    overlay: "badge",
+                    variant: "swing",
+                    placement: "above",
+                    arrow: "down",
+                    price: bar.h,
+                    background: withHexAlpha("#6b7280", "cc"),
+                    borderColor: withHexAlpha("#6b7280", "f2"),
+                    textColor: "#ffffff",
+                  },
                 ),
               );
             }
@@ -1142,15 +1386,24 @@ export function createRayReplicaPineRuntimeAdapter(
                 resolvedPivotLow > previousSwingLow
                   ? "HL"
                   : "LL";
-              markers.push(
-                buildMarker(
+              events.push(
+                buildEvent(
                   `${script.scriptKey}-swing-low-${pivotIndex}`,
                   bar,
                   pivotIndex,
-                  "belowBar",
-                  "circle",
-                  "#94a3b8",
+                  "swing_label",
+                  "long",
                   label,
+                  {
+                    overlay: "badge",
+                    variant: "swing",
+                    placement: "below",
+                    arrow: "up",
+                    price: bar.l,
+                    background: withHexAlpha("#6b7280", "cc"),
+                    borderColor: withHexAlpha("#6b7280", "f2"),
+                    textColor: "#ffffff",
+                  },
                 ),
               );
             }
@@ -1250,6 +1503,7 @@ export function createRayReplicaPineRuntimeAdapter(
             bullishBos = true;
           } else {
             bullishChoch = true;
+            lastFlipBarIndex = index;
             reversalAnchorPrice = Number.isFinite(breakableLow)
               ? breakableLow
               : lastSwingLow;
@@ -1271,6 +1525,7 @@ export function createRayReplicaPineRuntimeAdapter(
             bearishBos = true;
           } else {
             bearishChoch = true;
+            lastFlipBarIndex = index;
             reversalAnchorPrice = Number.isFinite(breakableHigh)
               ? breakableHigh
               : lastSwingHigh;
@@ -1365,50 +1620,168 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
-        if (showStructure && (bullishBos || bullishChoch)) {
-          markers.push(
-            buildMarker(
-              `${script.scriptKey}-${bullishBos ? "bos" : "choch"}-long-${index}`,
-              chartBars[index],
-              index,
-              "belowBar",
-              bullishBos ? "arrowUp" : "square",
-              BULL_COLOR,
-              bullishBos ? "BOS" : "BUY",
-            ),
-          );
+        if (
+          showStructure &&
+          (bullishBos || bullishChoch) &&
+          Number.isFinite(lastSwingHigh)
+        ) {
           events.push(
             buildEvent(
-              `${script.scriptKey}-${bullishBos ? "bos" : "choch"}-event-long-${index}`,
+              `${script.scriptKey}-bull-break-${index}`,
               chartBars[index],
               index,
-              bullishBos ? "bullish_bos" : "bullish_choch",
+              "bull_break",
               "long",
-              bullishBos ? "BOS" : "BUY",
+              "Bull Break",
+              {
+                overlay: "dot",
+                price: lastSwingHigh,
+                color: BULL_COLOR,
+                borderColor: withHexAlpha(BULL_COLOR, "f2"),
+                size: 8,
+              },
             ),
           );
         }
 
-        if (showStructure && (bearishBos || bearishChoch)) {
-          markers.push(
-            buildMarker(
-              `${script.scriptKey}-${bearishBos ? "bos" : "choch"}-short-${index}`,
+        if (
+          showStructure &&
+          (bearishBos || bearishChoch) &&
+          Number.isFinite(lastSwingLow)
+        ) {
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-bear-break-${index}`,
               chartBars[index],
               index,
-              "aboveBar",
-              bearishBos ? "arrowDown" : "square",
-              BEAR_COLOR,
-              bearishBos ? "BOS" : "SELL",
+              "bear_break",
+              "short",
+              "Bear Break",
+              {
+                overlay: "dot",
+                price: lastSwingLow,
+                color: BEAR_COLOR,
+                borderColor: withHexAlpha(BEAR_COLOR, "f2"),
+                size: 8,
+              },
+            ),
+          );
+        }
+
+        if (showStructure && bullishBos) {
+          markers.push(
+            buildMarker(
+              `${script.scriptKey}-bos-long-${index}`,
+              chartBars[index],
+              index,
+              "belowBar",
+              "arrowUp",
+              BULL_COLOR,
+              "BOS",
             ),
           );
           events.push(
             buildEvent(
-              `${script.scriptKey}-${bearishBos ? "bos" : "choch"}-event-short-${index}`,
+              `${script.scriptKey}-bos-event-long-${index}`,
               chartBars[index],
               index,
-              bearishBos ? "bearish_bos" : "bearish_choch",
+              "bullish_bos",
+              "long",
+              "BOS",
+            ),
+          );
+        }
+
+        if (showStructure && bearishBos) {
+          markers.push(
+            buildMarker(
+              `${script.scriptKey}-bos-short-${index}`,
+              chartBars[index],
+              index,
+              "aboveBar",
+              "arrowDown",
+              BEAR_COLOR,
+              "BOS",
+            ),
+          );
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-bos-event-short-${index}`,
+              chartBars[index],
+              index,
+              "bearish_bos",
               "short",
-              bearishBos ? "BOS" : "SELL",
+              "BOS",
+            ),
+          );
+        }
+
+        if (showStructure && bullishChoch) {
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-signal-long-${index}`,
+              chartBars[index],
+              index,
+              "buy_signal",
+              "long",
+              "BUY",
+              {
+                overlay: "badge",
+                variant: "signal",
+                placement: "below",
+                arrow: "up",
+                price:
+                  chartBars[index].l +
+                  -(Number.isFinite(atrRaw[index]) ? atrRaw[index] * 1.5 : 0),
+                background: BULL_COLOR,
+                borderColor: withHexAlpha(BULL_COLOR, "f2"),
+                textColor: "#ffffff",
+              },
+            ),
+          );
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-choch-event-long-${index}`,
+              chartBars[index],
+              index,
+              "bullish_choch",
+              "long",
+              "BUY",
+            ),
+          );
+        }
+
+        if (showStructure && bearishChoch) {
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-signal-short-${index}`,
+              chartBars[index],
+              index,
+              "sell_signal",
+              "short",
+              "SELL",
+              {
+                overlay: "badge",
+                variant: "signal",
+                placement: "above",
+                arrow: "down",
+                price:
+                  chartBars[index].h +
+                  (Number.isFinite(atrRaw[index]) ? atrRaw[index] * 1.5 : 0),
+                background: BEAR_COLOR,
+                borderColor: withHexAlpha(BEAR_COLOR, "f2"),
+                textColor: "#ffffff",
+              },
+            ),
+          );
+          events.push(
+            buildEvent(
+              `${script.scriptKey}-choch-event-short-${index}`,
+              chartBars[index],
+              index,
+              "bearish_choch",
+              "short",
+              "SELL",
             ),
           );
         }
@@ -1682,6 +2055,16 @@ export function createRayReplicaPineRuntimeAdapter(
         ? buildSessionKeyLevelSeries(chartBars)
         : null;
       const lastBarIndex = chartBars.length - 1;
+      const adx = computeAdx(chartBars, 14);
+      const bbWidthPct = bbUpper.map((value, index) =>
+        Number.isFinite(value) &&
+        Number.isFinite(bbLower[index]) &&
+        Number.isFinite(closes[index]) &&
+        closes[index] !== 0
+          ? Number((((value - bbLower[index]) / closes[index])).toFixed(6))
+          : Number.NaN,
+      );
+      const volatilityPercentRank = computePercentRank(bbWidthPct, 200);
       if (keyLevels && lastBarIndex >= 0) {
         const dayAnchorBarIndex = keyLevels.dayStartBarIndex[lastBarIndex] ?? 0;
         const weekAnchorBarIndex =
@@ -1768,6 +2151,76 @@ export function createRayReplicaPineRuntimeAdapter(
           price: activeTpSlOverlay.takeProfit3,
           label: "TP 3",
           color: TAKE_PROFIT_COLOR,
+        });
+      }
+
+      if (showDashboard && lastBarIndex >= 0) {
+        const lastBar = chartBars[lastBarIndex];
+        const currentAdx = adx[lastBarIndex];
+        const trendAge = lastBarIndex - lastFlipBarIndex;
+        const ageText =
+          trendAge > 50
+            ? `OLD (${trendAge})`
+            : trendAge > 20
+              ? `MATURE (${trendAge})`
+              : `NEW (${trendAge})`;
+        const volatilityScore = Number.isFinite(volatilityPercentRank[lastBarIndex])
+          ? Math.round(volatilityPercentRank[lastBarIndex] / 10)
+          : 0;
+        const mtfConfigs = ["60", "240", "D"].map((mtfTimeframe) => {
+          const mtfBars = aggregateBarsForTimeframe(chartBars, mtfTimeframe);
+          const direction = resolveTrendDirectionForBars(mtfBars, basisLength);
+          return {
+            label: formatDashboardTimeframe(mtfTimeframe),
+            value: direction === 1 ? "BULL" : "BEAR",
+            color: direction === 1 ? BULL_COLOR : BEAR_COLOR,
+          };
+        });
+
+        events.push({
+          id: `${script.scriptKey}-dashboard-${lastBarIndex}`,
+          strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
+          eventType: "rayreplica_dashboard",
+          ts: lastBar.ts,
+          time: lastBar.time,
+          barIndex: lastBarIndex,
+          direction: regimeDirection[lastBarIndex] === 1 ? "long" : "short",
+          label: "RayAlgo Dashboard",
+          meta: {
+            overlay: "dashboard",
+            position: "bottom-right",
+            title: "RAYALGO DASHBOARD",
+            trendLabel: `${formatDashboardTimeframe(timeframe)} TREND`,
+            trendValue: regimeDirection[lastBarIndex] === 1 ? "BULLISH" : "BEARISH",
+            trendColor:
+              regimeDirection[lastBarIndex] === 1 ? BULL_COLOR : BEAR_COLOR,
+            rows: [
+              {
+                label: "STRENGTH",
+                value:
+                  Number.isFinite(currentAdx) && currentAdx >= 25
+                    ? "Strong"
+                    : "Weak",
+                color: "#ffffff",
+              },
+              {
+                label: "TREND AGE",
+                value: ageText,
+                color: "#ffffff",
+              },
+              {
+                label: "VOLATILITY",
+                value: `${volatilityScore}/10`,
+                color: "#ffffff",
+              },
+              {
+                label: "SESSION",
+                value: resolveSessionLabel(lastBar),
+                color: "#ffffff",
+              },
+            ],
+            mtf: mtfConfigs,
+          },
         });
       }
 

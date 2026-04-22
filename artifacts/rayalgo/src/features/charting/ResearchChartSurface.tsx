@@ -120,6 +120,39 @@ type TradeBadgeOverlay = {
   borderColor: string;
 };
 
+type IndicatorBadgeOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  text: string;
+  background: string;
+  borderColor: string;
+  textColor: string;
+  placement: "above" | "below" | "center";
+  arrow?: "up" | "down";
+  variant: "signal" | "swing";
+};
+
+type IndicatorDotOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  size: number;
+  color: string;
+  borderColor: string;
+};
+
+type IndicatorDashboardOverlay = {
+  id: string;
+  position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  title: string;
+  trendLabel: string;
+  trendValue: string;
+  trendColor: string;
+  rows: Array<{ label: string; value: string; color?: string }>;
+  mtf: Array<{ label: string; value: string; color: string }>;
+};
+
 type TradeThresholdOverlay = {
   id: string;
   left: number;
@@ -541,6 +574,83 @@ const tradeThresholdOverlaysEqual = (
   }
 
   return true;
+};
+
+const indicatorBadgeOverlaysEqual = (
+  left: IndicatorBadgeOverlay[],
+  right: IndicatorBadgeOverlay[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.id !== next.id ||
+      current.text !== next.text ||
+      current.background !== next.background ||
+      current.borderColor !== next.borderColor ||
+      current.textColor !== next.textColor ||
+      current.placement !== next.placement ||
+      current.arrow !== next.arrow ||
+      current.variant !== next.variant ||
+      !numbersClose(current.left, next.left) ||
+      !numbersClose(current.top, next.top)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const indicatorDotOverlaysEqual = (
+  left: IndicatorDotOverlay[],
+  right: IndicatorDotOverlay[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.id !== next.id ||
+      current.color !== next.color ||
+      current.borderColor !== next.borderColor ||
+      !numbersClose(current.left, next.left) ||
+      !numbersClose(current.top, next.top) ||
+      !numbersClose(current.size, next.size)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const indicatorDashboardOverlaysEqual = (
+  left: IndicatorDashboardOverlay | null,
+  right: IndicatorDashboardOverlay | null,
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
 };
 
 const tradeBadgeOverlaysEqual = (
@@ -1190,6 +1300,108 @@ const buildSelectedTradeOverlays = (
   };
 };
 
+const buildIndicatorEventOverlays = (
+  chart: any,
+  series: any,
+  model: ChartModel,
+  viewportWidth: number,
+  viewportHeight: number,
+): {
+  badges: IndicatorBadgeOverlay[];
+  dots: IndicatorDotOverlay[];
+  dashboard: IndicatorDashboardOverlay | null;
+} => {
+  const badges: IndicatorBadgeOverlay[] = [];
+  const dots: IndicatorDotOverlay[] = [];
+  let dashboard: IndicatorDashboardOverlay | null = null;
+
+  model.indicatorEvents.forEach((event) => {
+    const meta = event.meta ?? {};
+    const overlay = meta.overlay;
+
+    if (overlay === "dashboard") {
+      dashboard = {
+        id: event.id,
+        position:
+          (meta.position as IndicatorDashboardOverlay["position"] | undefined) ||
+          "bottom-right",
+        title: (meta.title as string | undefined) || "RAYALGO DASHBOARD",
+        trendLabel: (meta.trendLabel as string | undefined) || "TREND",
+        trendValue: (meta.trendValue as string | undefined) || "—",
+        trendColor: (meta.trendColor as string | undefined) || "#ffffff",
+        rows: Array.isArray(meta.rows)
+          ? (meta.rows as IndicatorDashboardOverlay["rows"])
+          : [],
+        mtf: Array.isArray(meta.mtf)
+          ? (meta.mtf as IndicatorDashboardOverlay["mtf"])
+          : [],
+      };
+      return;
+    }
+
+    if (typeof event.barIndex !== "number") {
+      return;
+    }
+
+    const bar = model.chartBars[event.barIndex];
+    if (!bar) {
+      return;
+    }
+
+    const x = chart.timeScale().timeToCoordinate(bar.time);
+    const price =
+      typeof meta.price === "number" && Number.isFinite(meta.price)
+        ? meta.price
+        : overlay === "badge"
+          ? event.direction === "short"
+            ? bar.h
+            : bar.l
+          : null;
+    const y = typeof price === "number" ? series.priceToCoordinate?.(price) : null;
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return;
+    }
+
+    if (overlay === "badge") {
+      badges.push({
+        id: event.id,
+        left: clampCoordinate(x, 24, Math.max(24, viewportWidth - 24)),
+        top: clampCoordinate(y, 12, Math.max(12, viewportHeight - 12)),
+        text: event.label || "",
+        background: (meta.background as string | undefined) || "#111827",
+        borderColor: (meta.borderColor as string | undefined) || "#9ca3af",
+        textColor: (meta.textColor as string | undefined) || "#ffffff",
+        placement:
+          (meta.placement as IndicatorBadgeOverlay["placement"] | undefined) ||
+          "center",
+        arrow: meta.arrow as IndicatorBadgeOverlay["arrow"] | undefined,
+        variant:
+          (meta.variant as IndicatorBadgeOverlay["variant"] | undefined) ||
+          "signal",
+      });
+      return;
+    }
+
+    if (overlay === "dot") {
+      const size =
+        typeof meta.size === "number" && Number.isFinite(meta.size)
+          ? meta.size
+          : 8;
+      dots.push({
+        id: event.id,
+        left: clampCoordinate(x, size / 2, Math.max(size / 2, viewportWidth - size / 2)),
+        top: clampCoordinate(y, size / 2, Math.max(size / 2, viewportHeight - size / 2)),
+        size,
+        color: (meta.color as string | undefined) || "#ffffff",
+        borderColor: (meta.borderColor as string | undefined) || "#ffffff",
+      });
+    }
+  });
+
+  return { badges, dots, dashboard };
+};
+
 const syncStudySeries = (
   chart: any,
   registry: Record<string, StudyRegistryEntry>,
@@ -1328,6 +1540,14 @@ export const ResearchChartSurface = ({
   const [tradeMarkerTargets, setTradeMarkerTargets] = useState<
     TradeMarkerTarget[]
   >([]);
+  const [indicatorBadgeOverlays, setIndicatorBadgeOverlays] = useState<
+    IndicatorBadgeOverlay[]
+  >([]);
+  const [indicatorDotOverlays, setIndicatorDotOverlays] = useState<
+    IndicatorDotOverlay[]
+  >([]);
+  const [indicatorDashboardOverlay, setIndicatorDashboardOverlay] =
+    useState<IndicatorDashboardOverlay | null>(null);
   const [tradeThresholdOverlays, setTradeThresholdOverlays] = useState<
     TradeThresholdOverlay[]
   >([]);
@@ -1351,6 +1571,23 @@ export const ResearchChartSurface = ({
   const syncTradeMarkerTargetsState = (next: TradeMarkerTarget[]) => {
     setTradeMarkerTargets((current) =>
       tradeMarkerTargetsEqual(current, next) ? current : next,
+    );
+  };
+  const syncIndicatorBadgeOverlaysState = (next: IndicatorBadgeOverlay[]) => {
+    setIndicatorBadgeOverlays((current) =>
+      indicatorBadgeOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncIndicatorDotOverlaysState = (next: IndicatorDotOverlay[]) => {
+    setIndicatorDotOverlays((current) =>
+      indicatorDotOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncIndicatorDashboardOverlayState = (
+    next: IndicatorDashboardOverlay | null,
+  ) => {
+    setIndicatorDashboardOverlay((current) =>
+      indicatorDashboardOverlaysEqual(current, next) ? current : next,
     );
   };
   const syncTradeThresholdOverlaysState = (next: TradeThresholdOverlay[]) => {
@@ -2130,6 +2367,9 @@ export const ResearchChartSurface = ({
       syncOverlayState(setVerticalDrawingOverlays, []);
       syncOverlayState(setBoxDrawingOverlays, []);
       syncTradeMarkerTargetsState([]);
+      syncIndicatorBadgeOverlaysState([]);
+      syncIndicatorDotOverlaysState([]);
+      syncIndicatorDashboardOverlayState(null);
       syncTradeThresholdOverlaysState([]);
       syncSelectedTradeConnectorState(null);
       syncSelectedTradeEntryBadgeState(null);
@@ -2175,6 +2415,16 @@ export const ResearchChartSurface = ({
         viewportHeight,
       ),
     );
+    const indicatorEventOverlays = buildIndicatorEventOverlays(
+      chartRef.current,
+      activePriceSeriesRef.current,
+      model,
+      viewportWidth,
+      viewportHeight,
+    );
+    syncIndicatorBadgeOverlaysState(indicatorEventOverlays.badges);
+    syncIndicatorDotOverlaysState(indicatorEventOverlays.dots);
+    syncIndicatorDashboardOverlayState(indicatorEventOverlays.dashboard);
     const selectedTradeOverlays = buildSelectedTradeOverlays(
       chartRef.current,
       activePriceSeriesRef.current,
@@ -2192,6 +2442,7 @@ export const ResearchChartSurface = ({
     drawings,
     model.chartBars,
     model.activeTradeSelectionId,
+    model.indicatorEvents,
     model.tradeMarkerGroups,
     model.tradeOverlays,
     model.indicatorWindows,
@@ -2693,6 +2944,9 @@ export const ResearchChartSurface = ({
           zoneOverlays.length ||
           verticalDrawingOverlays.length ||
           boxDrawingOverlays.length ||
+          indicatorBadgeOverlays.length ||
+          indicatorDotOverlays.length ||
+          indicatorDashboardOverlay ||
           tradeThresholdOverlays.length ||
           tradeMarkerTargets.length ||
           selectedTradeConnector ||
@@ -2920,6 +3174,178 @@ export const ResearchChartSurface = ({
                   ) : null}
                 </div>
               ))}
+              {indicatorDotOverlays.map((overlay) => (
+                <div
+                  key={`indicator-dot-${overlay.id}`}
+                  style={{
+                    position: "absolute",
+                    left: overlay.left,
+                    top: overlay.top,
+                    width: overlay.size,
+                    height: overlay.size,
+                    transform: "translate(-50%, -50%)",
+                    borderRadius: 999,
+                    background: overlay.color,
+                    border: `1px solid ${overlay.borderColor}`,
+                    boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
+                  }}
+                />
+              ))}
+              {indicatorBadgeOverlays.map((overlay) => {
+                const placementTransform =
+                  overlay.placement === "above"
+                    ? "translate(-50%, calc(-100% - 8px))"
+                    : overlay.placement === "below"
+                      ? "translate(-50%, 8px)"
+                      : "translate(-50%, -50%)";
+                const arrowElement =
+                  overlay.arrow === "up" ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: -6,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: 0,
+                        height: 0,
+                        borderLeft: "6px solid transparent",
+                        borderRight: "6px solid transparent",
+                        borderBottom: `6px solid ${overlay.background}`,
+                      }}
+                    />
+                  ) : overlay.arrow === "down" ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: -6,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: 0,
+                        height: 0,
+                        borderLeft: "6px solid transparent",
+                        borderRight: "6px solid transparent",
+                        borderTop: `6px solid ${overlay.background}`,
+                      }}
+                    />
+                  ) : null;
+                return (
+                  <div
+                    key={`indicator-badge-${overlay.id}`}
+                    style={{
+                      position: "absolute",
+                      left: overlay.left,
+                      top: overlay.top,
+                      transform: placementTransform,
+                      overflow: "visible",
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "relative",
+                        padding:
+                          overlay.variant === "signal" ? "4px 10px" : "2px 8px",
+                        borderRadius: overlay.variant === "signal" ? 999 : 8,
+                        border: `1px solid ${overlay.borderColor}`,
+                        background: overlay.background,
+                        color: overlay.textColor,
+                        fontSize: overlay.variant === "signal" ? 10 : 9,
+                        fontFamily: theme.mono,
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                        boxShadow: `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
+                        letterSpacing: overlay.variant === "signal" ? "0.04em" : "normal",
+                      }}
+                    >
+                      {overlay.text}
+                      {arrowElement}
+                    </div>
+                  </div>
+                );
+              })}
+              {indicatorDashboardOverlay ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    ...(indicatorDashboardOverlay.position.includes("top")
+                      ? { top: 12 }
+                      : { bottom: 12 }),
+                    ...(indicatorDashboardOverlay.position.includes("left")
+                      ? { left: 12 }
+                      : { right: 12 }),
+                    width: compact ? 168 : 196,
+                    background: withAlpha("#000000", "b3"),
+                    border: `1px solid ${withAlpha("#9ca3af", "66")}`,
+                    borderRadius: 8,
+                    padding: compact ? "8px 8px 6px" : "9px 10px 7px",
+                    color: "#ffffff",
+                    boxShadow: `0 10px 30px ${withAlpha(theme.bg4, "88")}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      marginBottom: 6,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      background: withAlpha("#6b7280", "80"),
+                      fontSize: 9,
+                      fontFamily: theme.mono,
+                      fontWeight: 700,
+                      textAlign: "center",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    {indicatorDashboardOverlay.title}
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto",
+                      rowGap: 4,
+                      columnGap: 8,
+                      fontSize: compact ? 9 : 10,
+                      fontFamily: theme.mono,
+                    }}
+                  >
+                    <div style={{ color: "#9ca3af" }}>
+                      {indicatorDashboardOverlay.trendLabel}
+                    </div>
+                    <div style={{ color: indicatorDashboardOverlay.trendColor }}>
+                      {indicatorDashboardOverlay.trendValue}
+                    </div>
+                    {indicatorDashboardOverlay.rows.map((row) => (
+                      <div
+                        key={`${indicatorDashboardOverlay.id}-${row.label}`}
+                        style={{ display: "contents" }}
+                      >
+                        <div style={{ color: "#9ca3af" }}>{row.label}</div>
+                        <div style={{ color: row.color || "#ffffff" }}>
+                          {row.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {indicatorDashboardOverlay.mtf.length ? (
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${indicatorDashboardOverlay.mtf.length}, 1fr)`,
+                        gap: 6,
+                        textAlign: "center",
+                        fontFamily: theme.mono,
+                        fontSize: compact ? 9 : 10,
+                      }}
+                    >
+                      {indicatorDashboardOverlay.mtf.map((item) => (
+                        <div key={`${indicatorDashboardOverlay.id}-${item.label}`}>
+                          <div style={{ color: item.color }}>{item.label}</div>
+                          <div style={{ color: item.color }}>{item.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {selectedTradeConnector ? (
                 <svg
                   width="100%"

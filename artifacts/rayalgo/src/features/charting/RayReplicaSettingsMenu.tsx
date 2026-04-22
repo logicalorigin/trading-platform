@@ -51,6 +51,7 @@ type BooleanSettingKey =
   | "showOrderBlocks"
   | "showSupportResistance"
   | "showTpSl"
+  | "showDashboard"
   | "showRegimeWindows"
   | "colorCandles";
 
@@ -134,6 +135,7 @@ const booleanOptions: Array<{
   { key: "showOrderBlocks", label: "Show order blocks" },
   { key: "showSupportResistance", label: "Show support/resistance" },
   { key: "showTpSl", label: "Show TP/SL" },
+  { key: "showDashboard", label: "Show dashboard" },
   { key: "showRegimeWindows", label: "Show regime windows" },
   { key: "colorCandles", label: "Color candles" },
 ];
