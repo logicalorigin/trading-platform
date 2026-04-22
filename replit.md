@@ -42,15 +42,40 @@ The IBKR feed depends on three processes running on the user's Windows machine, 
 ### Required env (already set in Replit Secrets)
 
 - `IBKR_TRANSPORT=client_portal`
-- `IBKR_BASE_URL=<cloudflared tunnel URL>/v1/api`
+- `IBKR_BASE_URL=https://ibkr.<userdomain>/v1/api` (stable named-tunnel hostname; see below)
 - `IBKR_BRIDGE_URL=http://127.0.0.1:3002`
 - `IBKR_ALLOW_INSECURE_TLS=true` (CPG uses a self-signed cert)
+
+### Tunnel: named cloudflared tunnel (recommended)
+
+Quick tunnels (`cloudflared tunnel --url ...`) mint a fresh `*.trycloudflare.com` hostname every restart, which forces `IBKR_BASE_URL` to be re-edited in Replit Secrets every session. A **named tunnel** bound to the user's Cloudflare account gives a stable hostname (e.g. `ibkr.<userdomain>`) that survives restarts, machine reboots, and cloudflared upgrades — set the secret once and forget it.
+
+One-time setup on the Windows machine (requires a Cloudflare account with a zone you control):
+
+1. `cloudflared tunnel login` — opens a browser, pick the zone (`<userdomain>`).
+2. `cloudflared tunnel create ibkr` — creates the tunnel and writes credentials to `%USERPROFILE%\.cloudflared\<TUNNEL-UUID>.json`.
+3. `cloudflared tunnel route dns ibkr ibkr.<userdomain>` — creates the public DNS CNAME.
+4. Create `%USERPROFILE%\.cloudflared\config.yml`:
+   ```yaml
+   tunnel: ibkr
+   credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL-UUID>.json
+   originRequest:
+     noTLSVerify: true
+   ingress:
+     - hostname: ibkr.<userdomain>
+       service: https://localhost:5000
+     - service: http_status:404
+   ```
+5. Set `IBKR_BASE_URL=https://ibkr.<userdomain>/v1/api` in Replit Secrets — once.
 
 ### Three windows on Windows
 
 1. **CPG (PowerShell #1)** — `cd $env:USERPROFILE\clientportal.gw; bin\run.bat root\conf.yaml`. Listens on `https://localhost:5000`. Requires OpenJDK 21.
-2. **cloudflared (PowerShell #2)** — `cloudflared tunnel --url https://localhost:5000 --no-tls-verify`. Prints a `*.trycloudflare.com` URL; that URL goes into `IBKR_BASE_URL` (with `/v1/api` appended).
+2. **cloudflared (PowerShell #2)** — `cloudflared tunnel run ibkr`. Uses the named tunnel + `config.yml` above; the public hostname stays `ibkr.<userdomain>` across restarts.
+   - **Fallback (no Cloudflare account)**: `cloudflared tunnel --url https://localhost:5000 --no-tls-verify` still works, but prints a fresh `*.trycloudflare.com` URL each run that has to be pasted into `IBKR_BASE_URL` (with `/v1/api` appended) every session.
 3. **Browser tab** — `https://localhost:5000` for login. Click through the cert warning.
+
+When a session-start script is added (see follow-up "one-click launch on Windows"), it should invoke `cloudflared tunnel run ibkr` (named tunnel by name), **not** `cloudflared tunnel --url ...`, so `IBKR_BASE_URL` never has to be touched.
 
 ### The IBKR 2FA trick that actually works
 
