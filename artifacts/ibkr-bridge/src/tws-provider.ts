@@ -4,6 +4,7 @@ import {
   ConnectionState,
   IBApiNext,
   IBApiTickType as TickType,
+  IBApiNextTickType as NextTickType,
   type Contract,
   type ContractDetails,
   MarketDataType as TwsMarketDataType,
@@ -439,7 +440,7 @@ function normalizeOrderStatus(
 
 function getTickValue(
   ticks: MarketDataTicks,
-  ...candidates: TickType[]
+  ...candidates: number[]
 ): number | null {
   for (const candidate of candidates) {
     const tick = ticks.get(candidate);
@@ -450,6 +451,70 @@ function getTickValue(
   }
 
   return null;
+}
+
+// Pick the first option-computation tick that has a usable value, preferring
+// the model computation (server-side Black-Scholes) and falling back to the
+// last/bid/ask computations. Each variant has a delayed counterpart for
+// non-live market data subscriptions.
+function getOptionComputationValue(
+  ticks: MarketDataTicks,
+  variant: "iv" | "delta" | "gamma" | "vega" | "theta",
+): number | null {
+  const map = {
+    iv: [
+      NextTickType.MODEL_OPTION_IV,
+      NextTickType.DELAYED_MODEL_OPTION_IV,
+      NextTickType.LAST_OPTION_IV,
+      NextTickType.DELAYED_LAST_OPTION_IV,
+      NextTickType.BID_OPTION_IV,
+      NextTickType.DELAYED_BID_OPTION_IV,
+      NextTickType.ASK_OPTION_IV,
+      NextTickType.DELAYED_ASK_OPTION_IV,
+    ],
+    delta: [
+      NextTickType.MODEL_OPTION_DELTA,
+      NextTickType.DELAYED_MODEL_OPTION_DELTA,
+      NextTickType.LAST_OPTION_DELTA,
+      NextTickType.DELAYED_LAST_OPTION_DELTA,
+      NextTickType.BID_OPTION_DELTA,
+      NextTickType.DELAYED_BID_OPTION_DELTA,
+      NextTickType.ASK_OPTION_DELTA,
+      NextTickType.DELAYED_ASK_OPTION_DELTA,
+    ],
+    gamma: [
+      NextTickType.MODEL_OPTION_GAMMA,
+      NextTickType.DELAYED_MODEL_OPTION_GAMMA,
+      NextTickType.LAST_OPTION_GAMMA,
+      NextTickType.DELAYED_LAST_OPTION_GAMMA,
+      NextTickType.BID_OPTION_GAMMA,
+      NextTickType.DELAYED_BID_OPTION_GAMMA,
+      NextTickType.ASK_OPTION_GAMMA,
+      NextTickType.DELAYED_ASK_OPTION_GAMMA,
+    ],
+    vega: [
+      NextTickType.MODEL_OPTION_VEGA,
+      NextTickType.DELAYED_MODEL_OPTION_VEGA,
+      NextTickType.LAST_OPTION_VEGA,
+      NextTickType.DELAYED_LAST_OPTION_VEGA,
+      NextTickType.BID_OPTION_VEGA,
+      NextTickType.DELAYED_BID_OPTION_VEGA,
+      NextTickType.ASK_OPTION_VEGA,
+      NextTickType.DELAYED_ASK_OPTION_VEGA,
+    ],
+    theta: [
+      NextTickType.MODEL_OPTION_THETA,
+      NextTickType.DELAYED_MODEL_OPTION_THETA,
+      NextTickType.LAST_OPTION_THETA,
+      NextTickType.DELAYED_LAST_OPTION_THETA,
+      NextTickType.BID_OPTION_THETA,
+      NextTickType.DELAYED_BID_OPTION_THETA,
+      NextTickType.ASK_OPTION_THETA,
+      NextTickType.DELAYED_ASK_OPTION_THETA,
+    ],
+  } satisfies Record<typeof variant, number[]>;
+
+  return getTickValue(ticks, ...map[variant]);
 }
 
 function toOptionContractMeta(
@@ -521,6 +586,11 @@ function toQuoteSnapshot(
   const low = getTickValue(ticks, TickType.LOW, TickType.DELAYED_LOW);
   const volume = getTickValue(ticks, TickType.VOLUME, TickType.DELAYED_VOLUME);
   const openInterest = getTickValue(ticks, TickType.OPEN_INTEREST);
+  const impliedVolatility = getOptionComputationValue(ticks, "iv");
+  const delta = getOptionComputationValue(ticks, "delta");
+  const gamma = getOptionComputationValue(ticks, "gamma");
+  const theta = getOptionComputationValue(ticks, "theta");
+  const vega = getOptionComputationValue(ticks, "vega");
   const updatedAt = new Date();
   const change = prevClose !== null ? price - prevClose : 0;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
@@ -544,6 +614,11 @@ function toQuoteSnapshot(
     prevClose,
     volume,
     openInterest,
+    impliedVolatility,
+    delta,
+    gamma,
+    theta,
+    vega,
     updatedAt,
     providerContractId,
     transport: "tws",
@@ -1689,10 +1764,13 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
                   symbol: resolvedOption.optionContract.ticker,
                   providerContractId:
                     resolvedOption.optionContract.providerContractId,
-                  // 100 = option volume, 101 = option open interest. Without
-                  // these generic ticks IBKR omits OPRA volume/OI from the
-                  // snapshot and downstream flow ranking degrades.
-                  genericTickList: "100,101",
+                  // 100 = option volume, 101 = option open interest, 106 =
+                  // option implied volatility (which also triggers the
+                  // server-side option computation ticks carrying delta,
+                  // gamma, vega and theta). Without these generic ticks IBKR
+                  // omits the values from the snapshot and the option chain
+                  // can't surface IV/Greeks.
+                  genericTickList: "100,101,106",
                 })) ?? null;
 
           const bid = quote?.bid ?? 0;
@@ -1705,11 +1783,11 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
             ask,
             last,
             mark: bid > 0 && ask > 0 ? (bid + ask) / 2 : last,
-            impliedVolatility: null,
-            delta: null,
-            gamma: null,
-            theta: null,
-            vega: null,
+            impliedVolatility: quote?.impliedVolatility ?? null,
+            delta: quote?.delta ?? null,
+            gamma: quote?.gamma ?? null,
+            theta: quote?.theta ?? null,
+            vega: quote?.vega ?? null,
             openInterest: quote?.openInterest ?? 0,
             volume: quote?.volume ?? 0,
             updatedAt: quote?.updatedAt ?? new Date(),

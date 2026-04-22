@@ -124,6 +124,11 @@ export type QuoteSnapshot = {
   prevClose: number | null;
   volume: number | null;
   openInterest: number | null;
+  impliedVolatility: number | null;
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
   updatedAt: Date;
   providerContractId: string | null;
   transport: IbkrTransport;
@@ -316,6 +321,11 @@ const SNAPSHOT_FIELDS = [
   "7741", // prior day close (alternate)
   "7762", // days volume
   "7638", // option open interest
+  "7283", // option implied volatility
+  "7308", // option delta
+  "7309", // option gamma
+  "7310", // option theta
+  "7311", // option vega
 ] as const;
 
 const DEFAULT_HISTORY_BAR_LIMIT = 200;
@@ -748,6 +758,31 @@ export function parseSnapshotQuote(
       asNumber(payload["7638"]),
       asNumber(payload["openInterest"]),
     );
+  // IBKR Client Portal returns option IV as a percentage value (e.g. "19.62"
+  // for 19.62%). Normalize to a fraction so consumers can format consistently
+  // with the Polygon-backed code path which already returns fractions.
+  const ivRaw = firstDefined(
+    asNumber(payload["7283"]),
+    asNumber(payload["impliedVolatility"]),
+  );
+  const impliedVolatility =
+    ivRaw === null ? null : ivRaw > 2 ? ivRaw / 100 : ivRaw;
+  const delta = firstDefined(
+    asNumber(payload["7308"]),
+    asNumber(payload["delta"]),
+  );
+  const gamma = firstDefined(
+    asNumber(payload["7309"]),
+    asNumber(payload["gamma"]),
+  );
+  const theta = firstDefined(
+    asNumber(payload["7310"]),
+    asNumber(payload["theta"]),
+  );
+  const vega = firstDefined(
+    asNumber(payload["7311"]),
+    asNumber(payload["vega"]),
+  );
   // Prefer IBKR-supplied change fields when present; fall back to
   // computing from price - prevClose. This handles the common case where
   // last is 0 but IBKR still publishes a daily change against prior close.
@@ -784,6 +819,11 @@ export function parseSnapshotQuote(
     prevClose,
     volume,
     openInterest,
+    impliedVolatility,
+    delta,
+    gamma,
+    theta,
+    vega,
     updatedAt,
     providerContractId,
     transport: "client_portal",
@@ -874,11 +914,11 @@ function toOptionChainContract(
     ask,
     last,
     mark,
-    impliedVolatility: null,
-    delta: null,
-    gamma: null,
-    theta: null,
-    vega: null,
+    impliedVolatility: quote?.impliedVolatility ?? null,
+    delta: quote?.delta ?? null,
+    gamma: quote?.gamma ?? null,
+    theta: quote?.theta ?? null,
+    vega: quote?.vega ?? null,
     openInterest: quote?.openInterest ?? 0,
     volume: quote?.volume ?? 0,
     updatedAt: quote?.updatedAt ?? new Date(),
@@ -1649,6 +1689,11 @@ export class IbkrClient {
         prevClose: null,
         volume: null,
         openInterest: null,
+        impliedVolatility: null,
+        delta: null,
+        gamma: null,
+        theta: null,
+        vega: null,
         updatedAt: new Date(),
         providerContractId: String(contract.conid),
         transport: "client_portal",
