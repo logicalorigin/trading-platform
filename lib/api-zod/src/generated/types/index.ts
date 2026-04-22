@@ -123,6 +123,7 @@ export * from "./getResearchTranscriptsParams";
 export * from "./healthStatus";
 export * from "./healthStatusStatus";
 export * from "./ibkrBridgeHealth";
+export * from "./ibkrBridgeHealthMarketDataMode";
 export * from "./ibkrBridgeHealthTransport";
 export * from "./jsonObject";
 export * from "./listAccountsParams";

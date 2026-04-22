@@ -2232,6 +2232,12 @@ const deriveFlowType = (event) => {
     String(condition).toLowerCase(),
   );
 
+  // An "unusual" tag (volume > open interest) trumps the heuristic labels —
+  // it's the strongest single signal in the print and what we want to flag in
+  // the activity feed.
+  if (event.isUnusual) {
+    return "UNUSUAL";
+  }
   if (
     event.premium >= 500000 ||
     conditions.some((condition) => condition.includes("block"))
@@ -2254,6 +2260,11 @@ const deriveFlowScore = (event, dte) => {
   score += event.side === "buy" ? 12 : event.side === "sell" ? 5 : 0;
   score += event.sentiment === "neutral" ? 0 : 10;
   score -= Math.min(10, dte / 7);
+  if (event.isUnusual) {
+    // Boost unusual prints noticeably so they sort to the top of any
+    // score-based view, with extra credit for higher volume/OI ratios.
+    score += 18 + Math.min(12, (event.unusualScore || 0) * 4);
+  }
   return Math.max(10, Math.min(99, Math.round(score)));
 };
 
@@ -2288,6 +2299,8 @@ const mapFlowEventToUi = (event) => {
     occurredAt: event.occurredAt,
     sentiment: event.sentiment,
     tradeConditions: event.tradeConditions || [],
+    isUnusual: Boolean(event.isUnusual),
+    unusualScore: isFiniteNumber(event.unusualScore) ? event.unusualScore : 0,
   };
 };
 
@@ -2327,7 +2340,18 @@ const useLiveMarketFlow = (symbols = [], { limit = 16 } = {}) => {
     if (!hasLiveFlow) return [];
     return (flowQuery.data || [])
       .map(mapFlowEventToUi)
-      .sort((left, right) => right.premium - left.premium);
+      .sort((left, right) => {
+        // Float volume-vs-OI "unusual" prints to the top so the notifications
+        // feed and unusual-options panel surface them ahead of routine high-
+        // premium prints, then fall back to premium for ranking within bands.
+        if (left.isUnusual !== right.isUnusual) {
+          return left.isUnusual ? -1 : 1;
+        }
+        if (left.isUnusual && right.isUnusual && left.unusualScore !== right.unusualScore) {
+          return right.unusualScore - left.unusualScore;
+        }
+        return right.premium - left.premium;
+      });
   }, [hasLiveFlow, flowQuery.data]);
   const flowStatus = hasLiveFlow
     ? "live"
@@ -5810,16 +5834,28 @@ const MarketActivityPanel = ({
           kind: "alert",
           priority: 0,
         })),
-        ...highlightedUnusualFlow.slice(0, 5).map((event) => ({
-          id: `flow_${event.ticker}_${event.contract}_${event.occurredAt}`,
-          title: `${event.ticker} ${event.contract}`,
-          detail: `${event.side} ${event.type} · ${fmtM(event.premium)}`,
-          meta: formatRelativeTimeShort(event.occurredAt),
-          color: event.cp === "C" ? T.green : T.red,
-          symbol: event.ticker,
-          kind: "flow",
-          priority: 1,
-        })),
+        ...highlightedUnusualFlow.slice(0, 5).map((event) => {
+          const ratioLabel =
+            event.isUnusual && event.unusualScore > 0
+              ? ` · ${event.unusualScore.toFixed(event.unusualScore >= 10 ? 0 : 1)}× OI`
+              : "";
+          return {
+            id: `flow_${event.ticker}_${event.contract}_${event.occurredAt}`,
+            title: `${event.isUnusual ? "⚡ " : ""}${event.ticker} ${event.contract}`,
+            detail: `${event.side} ${event.type} · ${fmtM(event.premium)}${ratioLabel}`,
+            meta: formatRelativeTimeShort(event.occurredAt),
+            color: event.isUnusual
+              ? T.amber
+              : event.cp === "C"
+                ? T.green
+                : T.red,
+            symbol: event.ticker,
+            kind: "flow",
+            // Bubble unusual prints above generic flow but still under
+            // explicit portfolio risk/profit alerts.
+            priority: event.isUnusual ? 0.5 : 1,
+          };
+        }),
         ...newsItems.slice(0, 4).map((item) => ({
           id: `news_${item.id}`,
           title: item.text,
@@ -6380,15 +6416,34 @@ const MarketScreen = ({
                       <span style={{ minWidth: 0 }}>
                         <span
                           style={{
-                            display: "block",
+                            display: "flex",
+                            gap: sp(4),
+                            alignItems: "center",
                             fontSize: fs(9),
                             color: T.textSec,
                             overflow: "hidden",
                             whiteSpace: "nowrap",
-                            textOverflow: "ellipsis",
                           }}
                         >
-                          {event.contract}
+                          <span
+                            style={{
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              minWidth: 0,
+                            }}
+                          >
+                            {event.contract}
+                          </span>
+                          {event.isUnusual ? (
+                            <Badge color={T.amber}>
+                              UNUSUAL{" "}
+                              {event.unusualScore > 0
+                                ? `${event.unusualScore.toFixed(
+                                    event.unusualScore >= 10 ? 0 : 1,
+                                  )}×`
+                                : ""}
+                            </Badge>
+                          ) : null}
                         </span>
                         <span
                           style={{
@@ -6401,6 +6456,8 @@ const MarketScreen = ({
                         >
                           {formatRelativeTimeShort(event.occurredAt)} ·{" "}
                           {event.side}
+                          {isFiniteNumber(event.oi) ? ` · OI ${fmtCompactNumber(event.oi)}` : ""}
+                          {isFiniteNumber(event.vol) ? ` · Vol ${fmtCompactNumber(event.vol)}` : ""}
                         </span>
                       </span>
                       <span

@@ -177,6 +177,21 @@ export const IbkrBridgeHealthTransport = {
   tws: "tws",
 } as const;
 
+/**
+ * @nullable
+ */
+export type IbkrBridgeHealthMarketDataMode =
+  | (typeof IbkrBridgeHealthMarketDataMode)[keyof typeof IbkrBridgeHealthMarketDataMode]
+  | null;
+
+export const IbkrBridgeHealthMarketDataMode = {
+  live: "live",
+  frozen: "frozen",
+  delayed: "delayed",
+  delayed_frozen: "delayed_frozen",
+  unknown: "unknown",
+} as const;
+
 export interface IbkrBridgeHealth {
   configured: boolean;
   authenticated: boolean;
@@ -196,13 +211,9 @@ export interface IbkrBridgeHealth {
   sessionMode: EnvironmentMode | null;
   /** @nullable */
   clientId: number | null;
-  marketDataMode:
-    | "live"
-    | "frozen"
-    | "delayed"
-    | "delayed_frozen"
-    | "unknown"
-    | null;
+  /** @nullable */
+  marketDataMode: IbkrBridgeHealthMarketDataMode;
+  /** @nullable */
   liveMarketDataAvailable: boolean | null;
 }
 
@@ -786,6 +797,10 @@ export interface FlowEvent {
   sentiment: FlowSentiment;
   tradeConditions: string[];
   occurredAt: string;
+  /** Volume divided by prior-session open interest, capped at 10. Higher values indicate the print is more likely to be a fresh institutional position rather than routine market-maker turnover. */
+  unusualScore: number;
+  /** True when the contract's day volume meets or exceeds its open interest (the default unusual-flow threshold). */
+  isUnusual: boolean;
 }
 
 export interface BrokerConnectionsResponse {
@@ -1835,6 +1850,9 @@ export type GetBarsParams = {
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: BarDataSource;
+  /**
+   * Explicitly allow Polygon/Massive historical synthesis when IBKR history is incomplete.
+   */
   allowHistoricalSynthesis?: boolean;
 };
 

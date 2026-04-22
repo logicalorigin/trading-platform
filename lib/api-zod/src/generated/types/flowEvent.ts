@@ -25,4 +25,8 @@ export interface FlowEvent {
   sentiment: FlowSentiment;
   tradeConditions: string[];
   occurredAt: Date;
+  /** Volume divided by prior-session open interest, capped at 10. Higher values indicate the print is more likely to be a fresh institutional position rather than routine market-maker turnover. */
+  unusualScore: number;
+  /** True when the contract's day volume meets or exceeds its open interest (the default unusual-flow threshold). */
+  isUnusual: boolean;
 }

@@ -49,7 +49,14 @@ export const GetSessionResponse = zod.object({
       sessionMode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
       clientId: zod.number().nullable(),
       marketDataMode: zod
-        .enum(["live", "frozen", "delayed", "delayed_frozen", "unknown"])
+        .union([
+          zod.literal("live"),
+          zod.literal("frozen"),
+          zod.literal("delayed"),
+          zod.literal("delayed_frozen"),
+          zod.literal("unknown"),
+          zod.literal(null),
+        ])
         .nullable(),
       liveMarketDataAvailable: zod.boolean().nullable(),
     }),
@@ -439,12 +446,12 @@ export const GetQuoteSnapshotsResponse = zod.object({
       volume: zod.number().nullable(),
       providerContractId: zod.string().nullable(),
       source: zod.enum(["ibkr", "polygon"]),
-      transport: zod.enum(["client_portal", "tws"]),
+      transport: zod.unknown(),
       delayed: zod.boolean(),
       updatedAt: zod.coerce.date(),
     }),
   ),
-  transport: zod.union([zod.enum(["client_portal", "tws"]), zod.null()]),
+  transport: zod.union([zod.unknown(), zod.null()]),
   delayed: zod.boolean(),
   fallbackUsed: zod.boolean(),
 });
@@ -554,7 +561,12 @@ export const GetBarsQueryParams = zod.object({
   providerContractId: zod.coerce.string().nullish(),
   outsideRth: zod.coerce.boolean().optional(),
   source: zod.enum(["trades", "midpoint", "bid_ask"]).optional(),
-  allowHistoricalSynthesis: zod.coerce.boolean().optional(),
+  allowHistoricalSynthesis: zod.coerce
+    .boolean()
+    .optional()
+    .describe(
+      "Explicitly allow Polygon\/Massive historical synthesis when IBKR history is incomplete.",
+    ),
 });
 
 export const GetBarsResponse = zod.object({
@@ -572,11 +584,11 @@ export const GetBarsResponse = zod.object({
       providerContractId: zod.string().nullish(),
       outsideRth: zod.boolean().optional(),
       partial: zod.boolean().optional(),
-      transport: zod.enum(["client_portal", "tws"]),
+      transport: zod.unknown(),
       delayed: zod.boolean(),
     }),
   ),
-  transport: zod.union([zod.enum(["client_portal", "tws"]), zod.null()]),
+  transport: zod.union([zod.unknown(), zod.null()]),
   delayed: zod.boolean(),
   gapFilled: zod.boolean(),
 });
@@ -701,6 +713,16 @@ export const ListFlowEventsResponse = zod.object({
       sentiment: zod.enum(["bullish", "bearish", "neutral"]),
       tradeConditions: zod.array(zod.string()),
       occurredAt: zod.coerce.date(),
+      unusualScore: zod
+        .number()
+        .describe(
+          "Volume divided by prior-session open interest, capped at 10. Higher values indicate the print is more likely to be a fresh institutional position rather than routine market-maker turnover.",
+        ),
+      isUnusual: zod
+        .boolean()
+        .describe(
+          "True when the contract's day volume meets or exceeds its open interest (the default unusual-flow threshold).",
+        ),
     }),
   ),
 });

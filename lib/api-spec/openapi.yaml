@@ -2636,6 +2636,17 @@ components:
         occurredAt:
           type: string
           format: date-time
+        unusualScore:
+          type: number
+          description: >-
+            Volume divided by prior-session open interest, capped at 10. Higher
+            values indicate the print is more likely to be a fresh
+            institutional position rather than routine market-maker turnover.
+        isUnusual:
+          type: boolean
+          description: >-
+            True when the contract's day volume meets or exceeds its open
+            interest (the default unusual-flow threshold).
       required:
         - id
         - underlying
@@ -2653,6 +2664,8 @@ components:
         - sentiment
         - tradeConditions
         - occurredAt
+        - unusualScore
+        - isUnusual
 
     BrokerConnectionsResponse:
       type: object

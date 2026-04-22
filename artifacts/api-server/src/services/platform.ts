@@ -14,7 +14,10 @@ import {
 import { normalizeSymbol } from "../lib/values";
 import { type PlaceOrderInput } from "../providers/ibkr/client";
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
-import { PolygonMarketDataClient } from "../providers/polygon/market-data";
+import {
+  PolygonMarketDataClient,
+  computeUnusualMetrics,
+} from "../providers/polygon/market-data";
 
 const BUILT_IN_WATCHLISTS = [
   {
@@ -1150,6 +1153,10 @@ export async function listFlowEvents(input: {
             : "bearish";
       const price = c.last > 0 ? c.last : c.mark;
       const size = c.volume;
+      const { unusualScore, isUnusual } = computeUnusualMetrics(
+        size,
+        c.openInterest,
+      );
       // Rank by mark-based premium (mark × volume × multiplier) so the
       // ordering is stable even when `last` is stale or zero. The display
       // `price` still prefers the most recent print when available.
@@ -1170,9 +1177,19 @@ export async function listFlowEvents(input: {
         sentiment,
         tradeConditions: [] as string[],
         occurredAt: c.updatedAt,
+        unusualScore,
+        isUnusual,
       };
     })
-    .sort((a, b) => b.premium - a.premium)
+    // Surface unusual prints (volume > open interest) above routine flow,
+    // then fall back to premium so the highest-conviction prints win ties.
+    .sort((a, b) => {
+      if (a.isUnusual !== b.isUnusual) return a.isUnusual ? -1 : 1;
+      if (a.isUnusual && b.isUnusual && a.unusualScore !== b.unusualScore) {
+        return b.unusualScore - a.unusualScore;
+      }
+      return b.premium - a.premium;
+    })
     .slice(0, limit);
 
   if (events.length === 0 && getPolygonRuntimeConfig()) {

@@ -23,5 +23,8 @@ export type GetBarsParams = {
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: BarDataSource;
+  /**
+   * Explicitly allow Polygon/Massive historical synthesis when IBKR history is incomplete.
+   */
   allowHistoricalSynthesis?: boolean;
 };

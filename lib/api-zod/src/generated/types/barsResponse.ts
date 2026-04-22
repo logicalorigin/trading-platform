@@ -5,9 +5,9 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
 import type { Bar } from "./bar";
 import type { BarTimeframe } from "./barTimeframe";
+import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
 
 export interface BarsResponse {
   symbol: string;

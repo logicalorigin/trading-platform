@@ -119,6 +119,8 @@ export type FlowEvent = {
   sentiment: FlowSentiment;
   tradeConditions: string[];
   occurredAt: Date;
+  unusualScore: number;
+  isUnusual: boolean;
 };
 
 const TIMEFRAME_TO_POLYGON_RANGE: Record<
@@ -493,6 +495,37 @@ function inferSentiment(right: OptionRight, side: string): FlowSentiment {
   return side === "buy" ? "bearish" : "bullish";
 }
 
+// Volume relative to open interest indicates "unusual" options activity:
+// when more contracts trade in a session than were open at the prior close,
+// the print is much more likely to represent a fresh institutional position
+// rather than routine market-making turnover. We surface both a continuous
+// score (volume / openInterest, capped) and a boolean flag using a default
+// threshold of 1.0 so consumers can highlight the print or change the cutoff.
+export const UNUSUAL_VOLUME_OI_RATIO = 1;
+
+export function computeUnusualMetrics(
+  size: number,
+  openInterest: number,
+  threshold: number = UNUSUAL_VOLUME_OI_RATIO,
+): { unusualScore: number; isUnusual: boolean } {
+  const safeSize = Number.isFinite(size) && size > 0 ? size : 0;
+  const safeOi = Number.isFinite(openInterest) && openInterest > 0 ? openInterest : 0;
+  if (safeSize <= 0) {
+    return { unusualScore: 0, isUnusual: false };
+  }
+  // When OI is unknown/zero treat any non-trivial volume as unusual but cap
+  // the score at 10 so a single missing-OI print can't dominate sorting.
+  if (safeOi <= 0) {
+    return { unusualScore: 10, isUnusual: true };
+  }
+  const ratio = safeSize / safeOi;
+  // Cap at 10× so a single extreme print can't dominate score-based sorting
+  // and so the field has a documented upper bound.
+  const cappedRatio = Math.min(10, ratio);
+  const unusualScore = Math.round(cappedRatio * 100) / 100;
+  return { unusualScore, isUnusual: ratio >= threshold };
+}
+
 function mapFlowEvent(underlying: string, result: unknown): FlowEvent | null {
   const record = asRecord(result);
 
@@ -555,6 +588,8 @@ function mapFlowEvent(underlying: string, result: unknown): FlowEvent | null {
       toDate(getNumberPath(lastTrade, ["t"])),
     ) ?? new Date();
   const side = inferTradeSide(price, bid, ask);
+  const openInterest = asNumber(record["open_interest"]) ?? 0;
+  const { unusualScore, isUnusual } = computeUnusualMetrics(size, openInterest);
 
   return {
     id: `${optionTicker}-${occurredAt.getTime()}`,
@@ -568,7 +603,7 @@ function mapFlowEvent(underlying: string, result: unknown): FlowEvent | null {
     price,
     size,
     premium: price * size * sharesPerContract,
-    openInterest: asNumber(record["open_interest"]) ?? 0,
+    openInterest,
     impliedVolatility: asNumber(record["implied_volatility"]),
     exchange:
       firstDefined(
@@ -581,6 +616,8 @@ function mapFlowEvent(underlying: string, result: unknown): FlowEvent | null {
       asArray(lastTrade["conditions"]).map((condition) => asString(condition)),
     ),
     occurredAt,
+    unusualScore,
+    isUnusual,
   };
 }
 
@@ -851,6 +888,15 @@ export class PolygonMarketDataClient {
 
     return compact(asArray(record?.["results"]).map((result) => mapFlowEvent(underlying, result)))
       .sort((left, right) => {
+        // Float unusual prints (volume > open interest) to the top so the
+        // notifications feed and ranked lists surface fresh institutional
+        // activity ahead of routine market-maker turnover.
+        if (left.isUnusual !== right.isUnusual) {
+          return left.isUnusual ? -1 : 1;
+        }
+        if (left.isUnusual && right.isUnusual && left.unusualScore !== right.unusualScore) {
+          return right.unusualScore - left.unusualScore;
+        }
         const timeDelta = right.occurredAt.getTime() - left.occurredAt.getTime();
         if (timeDelta !== 0) {
           return timeDelta;

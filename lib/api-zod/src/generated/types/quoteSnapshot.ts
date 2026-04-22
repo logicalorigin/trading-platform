@@ -5,8 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { QuoteSource } from "./quoteSource";
 import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
+import type { QuoteSource } from "./quoteSource";
 
 export interface QuoteSnapshot {
   symbol: string;
