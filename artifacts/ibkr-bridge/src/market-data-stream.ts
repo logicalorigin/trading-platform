@@ -233,6 +233,7 @@ export class IbkrMarketDataStream {
             "7296",
             "7741",
             "7762",
+            "7638",
           ],
         })}`,
       );

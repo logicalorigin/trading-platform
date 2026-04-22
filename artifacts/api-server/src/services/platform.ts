@@ -1120,14 +1120,13 @@ export async function listFlowEvents(input: {
   }
 
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
-  // NOTE: IBKR's option-chain mapper currently leaves `volume` and
-  // `openInterest` at 0 because those aren't fetched in the snapshot field
-  // set. We therefore key the gate off `mark > 0` (a real, marked contract)
-  // and synthesize size from `volume || 1` so high-mark contracts still
-  // surface, ranked by price. Once the bridge starts pulling OPRA volume
-  // fields (e.g. snapshot field 7762) we can tighten this back to volume>0.
+  // IBKR snapshots now include OPRA volume (field 7762) and option open
+  // interest (field 7638), so flow events can rank by real traded premium.
+  // Require both a marked contract and non-zero day volume — this filters
+  // out the long tail of contracts with no prints today and matches the
+  // Polygon-backed flow ranking semantics.
   const events = contracts
-    .filter((c) => c.mark > 0)
+    .filter((c) => c.mark > 0 && c.volume > 0)
     .map((c) => {
       const mid = (c.bid + c.ask) / 2;
       const side: "buy" | "sell" | "unknown" =
@@ -1150,7 +1149,10 @@ export async function listFlowEvents(input: {
             ? "bullish"
             : "bearish";
       const price = c.last > 0 ? c.last : c.mark;
-      const size = c.volume > 0 ? c.volume : 1;
+      const size = c.volume;
+      // Rank by mark-based premium (mark × volume × multiplier) so the
+      // ordering is stable even when `last` is stale or zero. The display
+      // `price` still prefers the most recent print when available.
       return {
         id: `${c.contract.ticker}-${c.updatedAt.getTime()}`,
         underlying: normalizeSymbol(c.contract.underlying),
@@ -1160,7 +1162,7 @@ export async function listFlowEvents(input: {
         right: c.contract.right,
         price,
         size,
-        premium: price * size * c.contract.sharesPerContract,
+        premium: c.mark * size * c.contract.sharesPerContract,
         openInterest: c.openInterest,
         impliedVolatility: c.impliedVolatility,
         exchange: "IBKR",

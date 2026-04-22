@@ -206,6 +206,9 @@ export class IbkrBridgeClient {
     );
     return payload.quotes.map((quote) => ({
       ...quote,
+      // Older bridge versions don't emit openInterest; normalize to null
+      // so downstream code can rely on the field always being present.
+      openInterest: quote.openInterest ?? null,
       updatedAt: quote.updatedAt instanceof Date ? quote.updatedAt : new Date(quote.updatedAt),
     }));
   }

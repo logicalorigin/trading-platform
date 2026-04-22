@@ -123,6 +123,7 @@ export type QuoteSnapshot = {
   low: number | null;
   prevClose: number | null;
   volume: number | null;
+  openInterest: number | null;
   updatedAt: Date;
   providerContractId: string | null;
   transport: IbkrTransport;
@@ -314,6 +315,7 @@ const SNAPSHOT_FIELDS = [
   "7296", // prior close
   "7741", // prior day close (alternate)
   "7762", // days volume
+  "7638", // option open interest
 ] as const;
 
 const DEFAULT_HISTORY_BAR_LIMIT = 200;
@@ -741,6 +743,11 @@ export function parseSnapshotQuote(
       asNumber(payload["87"]),
       asNumber(payload["volume"]),
     );
+  const openInterest =
+    firstDefined(
+      asNumber(payload["7638"]),
+      asNumber(payload["openInterest"]),
+    );
   // Prefer IBKR-supplied change fields when present; fall back to
   // computing from price - prevClose. This handles the common case where
   // last is 0 but IBKR still publishes a daily change against prior close.
@@ -776,6 +783,7 @@ export function parseSnapshotQuote(
     low,
     prevClose,
     volume,
+    openInterest,
     updatedAt,
     providerContractId,
     transport: "client_portal",
@@ -871,8 +879,8 @@ function toOptionChainContract(
     gamma: null,
     theta: null,
     vega: null,
-    openInterest: 0,
-    volume: 0,
+    openInterest: quote?.openInterest ?? 0,
+    volume: quote?.volume ?? 0,
     updatedAt: quote?.updatedAt ?? new Date(),
   };
 }
@@ -1640,6 +1648,7 @@ export class IbkrClient {
         low: null,
         prevClose: null,
         volume: null,
+        openInterest: null,
         updatedAt: new Date(),
         providerContractId: String(contract.conid),
         transport: "client_portal",

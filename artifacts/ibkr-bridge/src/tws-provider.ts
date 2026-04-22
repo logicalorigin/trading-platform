@@ -520,6 +520,7 @@ function toQuoteSnapshot(
   const high = getTickValue(ticks, TickType.HIGH, TickType.DELAYED_HIGH);
   const low = getTickValue(ticks, TickType.LOW, TickType.DELAYED_LOW);
   const volume = getTickValue(ticks, TickType.VOLUME, TickType.DELAYED_VOLUME);
+  const openInterest = getTickValue(ticks, TickType.OPEN_INTEREST);
   const updatedAt = new Date();
   const change = prevClose !== null ? price - prevClose : 0;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
@@ -542,6 +543,7 @@ function toQuoteSnapshot(
     low,
     prevClose,
     volume,
+    openInterest,
     updatedAt,
     providerContractId,
     transport: "tws",
@@ -1122,12 +1124,13 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     contract: Contract;
     symbol: string;
     providerContractId: string | null;
+    genericTickList?: string;
   }): Promise<QuoteSnapshot | null> {
     await this.ensureConnected();
     try {
       const marketData = await this.api.getMarketDataSnapshot(
         input.contract,
-        "",
+        input.genericTickList ?? "",
         false,
       );
       return toQuoteSnapshot(
@@ -1686,6 +1689,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
                   symbol: resolvedOption.optionContract.ticker,
                   providerContractId:
                     resolvedOption.optionContract.providerContractId,
+                  // 100 = option volume, 101 = option open interest. Without
+                  // these generic ticks IBKR omits OPRA volume/OI from the
+                  // snapshot and downstream flow ranking degrades.
+                  genericTickList: "100,101",
                 })) ?? null;
 
           const bid = quote?.bid ?? 0;
@@ -1703,8 +1710,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
             gamma: null,
             theta: null,
             vega: null,
-            openInterest: 0,
-            volume: 0,
+            openInterest: quote?.openInterest ?? 0,
+            volume: quote?.volume ?? 0,
             updatedAt: quote?.updatedAt ?? new Date(),
           });
         }
