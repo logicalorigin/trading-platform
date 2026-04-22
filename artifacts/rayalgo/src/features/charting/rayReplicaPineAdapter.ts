@@ -228,6 +228,14 @@ export function resolveRayReplicaRuntimeSettings(
       input.showOrderBlocks,
       DEFAULT_RAY_REPLICA_SETTINGS.showOrderBlocks,
     ),
+    showSupportResistance: resolveBooleanSetting(
+      input.showSupportResistance,
+      DEFAULT_RAY_REPLICA_SETTINGS.showSupportResistance,
+    ),
+    showTpSl: resolveBooleanSetting(
+      input.showTpSl,
+      DEFAULT_RAY_REPLICA_SETTINGS.showTpSl,
+    ),
     showRegimeWindows: resolveBooleanSetting(
       input.showRegimeWindows,
       DEFAULT_RAY_REPLICA_SETTINGS.showRegimeWindows,
@@ -258,6 +266,27 @@ type ActiveOrderBlock = {
   top: number;
   bottom: number;
   label: string;
+};
+
+type SupportResistanceZone = {
+  id: string;
+  direction: "long" | "short";
+  startBarIndex: number;
+  endBarIndex: number;
+  extendBars: number;
+  top: number;
+  bottom: number;
+  fillColor: string;
+  borderColor: string;
+};
+
+type ActiveTpSlOverlay = {
+  direction: "long" | "short";
+  startBarIndex: number;
+  stopLoss: number;
+  takeProfit1: number;
+  takeProfit2: number;
+  takeProfit3: number;
 };
 
 const buildStudyData = (
@@ -466,6 +495,8 @@ const buildSessionKeyLevelSeries = (
   todayOpen: number[];
   pwh: number[];
   pwl: number[];
+  dayStartBarIndex: number[];
+  weekStartBarIndex: number[];
 } => {
   const dayStats = new Map<
     string,
@@ -474,11 +505,14 @@ const buildSessionKeyLevelSeries = (
   const weekStats = new Map<string, { high: number; low: number }>();
   const orderedDayKeys: string[] = [];
   const orderedWeekKeys: string[] = [];
+  const dayStartBarIndexByKey = new Map<string, number>();
+  const weekStartBarIndexByKey = new Map<string, number>();
 
-  chartBars.forEach((bar) => {
+  chartBars.forEach((bar, index) => {
     const dayKey = resolveDayKey(bar);
     if (!dayStats.has(dayKey)) {
       orderedDayKeys.push(dayKey);
+      dayStartBarIndexByKey.set(dayKey, index);
       dayStats.set(dayKey, {
         open: bar.o,
         high: bar.h,
@@ -497,6 +531,7 @@ const buildSessionKeyLevelSeries = (
     const weekKey = resolveIsoWeekKey(bar);
     if (!weekStats.has(weekKey)) {
       orderedWeekKeys.push(weekKey);
+      weekStartBarIndexByKey.set(weekKey, index);
       weekStats.set(weekKey, { high: bar.h, low: bar.l });
     } else {
       const current = weekStats.get(weekKey);
@@ -546,6 +581,10 @@ const buildSessionKeyLevelSeries = (
       series.todayOpen[index] = day?.open ?? Number.NaN;
       series.pwh[index] = previousWeek?.high ?? Number.NaN;
       series.pwl[index] = previousWeek?.low ?? Number.NaN;
+      series.dayStartBarIndex[index] =
+        dayStartBarIndexByKey.get(dayKey) ?? index;
+      series.weekStartBarIndex[index] =
+        weekStartBarIndexByKey.get(weekKey) ?? index;
       return series;
     },
     {
@@ -555,8 +594,221 @@ const buildSessionKeyLevelSeries = (
       todayOpen: new Array<number>(chartBars.length).fill(Number.NaN),
       pwh: new Array<number>(chartBars.length).fill(Number.NaN),
       pwl: new Array<number>(chartBars.length).fill(Number.NaN),
+      dayStartBarIndex: new Array<number>(chartBars.length).fill(0),
+      weekStartBarIndex: new Array<number>(chartBars.length).fill(0),
     },
   );
+};
+
+const pushFilledBarZone = (
+  zones: IndicatorZone[],
+  chartBars: ChartBar[],
+  barIndex: number,
+  top: number,
+  bottom: number,
+  fillColor: string,
+) => {
+  const bar = chartBars[barIndex];
+  if (
+    !bar ||
+    !Number.isFinite(top) ||
+    !Number.isFinite(bottom) ||
+    top === bottom
+  ) {
+    return;
+  }
+
+  zones.push({
+    id: `${RAY_REPLICA_PINE_SCRIPT_KEY}-fill-${zones.length}`,
+    strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
+    zoneType: "fill-band",
+    startTs: bar.ts,
+    endTs: bar.ts,
+    startBarIndex: barIndex,
+    endBarIndex: barIndex,
+    top: Math.max(top, bottom),
+    bottom: Math.min(top, bottom),
+    meta: {
+      style: "fill-band",
+      fillColor,
+      borderVisible: false,
+    },
+  });
+};
+
+const pushLabeledLineZone = (
+  zones: IndicatorZone[],
+  chartBars: ChartBar[],
+  {
+    id,
+    zoneType,
+    direction,
+    startBarIndex,
+    endBarIndex,
+    price,
+    label,
+    lineColor,
+    lineStyle,
+    labelPosition = "center",
+    labelFillColor,
+    labelColor = "#ffffff",
+    labelOffsetBars = 0,
+    extendBars = 0,
+  }: {
+    id: string;
+    zoneType: string;
+    direction?: "long" | "short";
+    startBarIndex: number;
+    endBarIndex: number;
+    price: number;
+    label?: string;
+    lineColor: string;
+    lineStyle: string;
+    labelPosition?: string;
+    labelFillColor?: string;
+    labelColor?: string;
+    labelOffsetBars?: number;
+    extendBars?: number;
+  },
+) => {
+  const startBar = chartBars[startBarIndex];
+  const endBar = chartBars[endBarIndex];
+  if (!startBar || !endBar || !Number.isFinite(price)) {
+    return;
+  }
+
+  zones.push({
+    id,
+    strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
+    zoneType,
+    direction,
+    startTs: startBar.ts,
+    endTs: endBar.ts,
+    startBarIndex,
+    endBarIndex,
+    top: price,
+    bottom: price,
+    label,
+    meta: {
+      style: "line-overlay",
+      lineColor,
+      lineStyle,
+      labelPosition,
+      labelFillColor,
+      labelColor,
+      labelOffsetBars,
+      extendBars,
+      borderWidth: 1,
+    },
+  });
+};
+
+const pushKeyLevelZone = (
+  zones: IndicatorZone[],
+  chartBars: ChartBar[],
+  {
+    idSuffix,
+    anchorBarIndex,
+    lastBarIndex,
+    price,
+    label,
+    color,
+  }: {
+    idSuffix: string;
+    anchorBarIndex: number;
+    lastBarIndex: number;
+    price: number;
+    label: string;
+    color: string;
+  },
+) => {
+  if (!Number.isFinite(price)) {
+    return;
+  }
+
+  pushLabeledLineZone(zones, chartBars, {
+    id: `${RAY_REPLICA_PINE_SCRIPT_KEY}-${idSuffix}`,
+    zoneType: "key-level",
+    startBarIndex: anchorBarIndex,
+    endBarIndex: lastBarIndex,
+    price,
+    label: `${label} ${formatOverlayPrice(price)}`,
+    lineColor: color,
+    lineStyle: KEY_LEVEL_LINE_STYLE_NAME,
+    labelPosition: "right",
+    labelFillColor: withHexAlpha(color, "b3"),
+    labelOffsetBars: KEY_LEVEL_LABEL_OFFSET_BARS,
+    extendBars: KEY_LEVEL_LABEL_OFFSET_BARS,
+  });
+};
+
+const pushTpSlZone = (
+  zones: IndicatorZone[],
+  chartBars: ChartBar[],
+  {
+    idSuffix,
+    startBarIndex,
+    lastBarIndex,
+    price,
+    label,
+    color,
+  }: {
+    idSuffix: string;
+    startBarIndex: number;
+    lastBarIndex: number;
+    price: number;
+    label: string;
+    color: string;
+  },
+) => {
+  if (!Number.isFinite(price)) {
+    return;
+  }
+
+  pushLabeledLineZone(zones, chartBars, {
+    id: `${RAY_REPLICA_PINE_SCRIPT_KEY}-${idSuffix}`,
+    zoneType: "tp-sl",
+    startBarIndex,
+    endBarIndex: lastBarIndex,
+    price,
+    label,
+    lineColor: color,
+    lineStyle: TP_SL_LINE_STYLE,
+    labelPosition: "right",
+    labelFillColor: withHexAlpha(color, "bf"),
+  });
+};
+
+const pushSupportResistanceZone = (
+  zones: IndicatorZone[],
+  chartBars: ChartBar[],
+  supportResistanceZone: SupportResistanceZone,
+) => {
+  const startBar = chartBars[supportResistanceZone.startBarIndex];
+  const endBar = chartBars[supportResistanceZone.endBarIndex];
+  if (!startBar || !endBar) {
+    return;
+  }
+
+  zones.push({
+    id: supportResistanceZone.id,
+    strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
+    zoneType: "support-resistance",
+    direction: supportResistanceZone.direction,
+    startTs: startBar.ts,
+    endTs: endBar.ts,
+    startBarIndex: supportResistanceZone.startBarIndex,
+    endBarIndex: supportResistanceZone.endBarIndex,
+    top: supportResistanceZone.top,
+    bottom: supportResistanceZone.bottom,
+    meta: {
+      style: "support-resistance",
+      fillColor: supportResistanceZone.fillColor,
+      borderColor: supportResistanceZone.borderColor,
+      extendBars: supportResistanceZone.extendBars,
+      borderWidth: 1,
+    },
+  });
 };
 
 const resolvePivotHigh = (
@@ -626,27 +878,21 @@ const pushStructureZone = (
   chartBars: ChartBar[],
   structure: StructureRecord,
 ) => {
-  const startBar = chartBars[structure.sourceBarIndex];
-  const endBar = chartBars[structure.eventBarIndex];
-  if (!startBar || !endBar) {
-    return;
-  }
-
-  zones.push({
+  pushLabeledLineZone(zones, chartBars, {
     id: `${RAY_REPLICA_PINE_SCRIPT_KEY}-${structure.kind}-${zones.length}`,
-    strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
     zoneType: structure.kind,
     direction: structure.direction,
-    startTs: startBar.ts,
-    endTs: endBar.ts,
     startBarIndex: structure.sourceBarIndex,
     endBarIndex: structure.eventBarIndex,
-    top: structure.sourcePrice,
-    bottom: structure.sourcePrice,
+    price: structure.sourcePrice,
     label: structure.label,
-    meta: {
-      style: "structure-line",
-    },
+    lineColor: structure.direction === "short" ? BEAR_COLOR : BULL_COLOR,
+    lineStyle: STRUCTURE_LINE_STYLE,
+    labelPosition: "center",
+    labelFillColor: withHexAlpha(
+      structure.direction === "short" ? BEAR_COLOR : BULL_COLOR,
+      "66",
+    ),
   });
 };
 
@@ -662,32 +908,22 @@ const pushTrendReversalZone = (
     return;
   }
 
-  const startBar = chartBars[startBarIndex];
   const endIndex = Math.min(
     chartBars.length - 1,
     startBarIndex + signalLengthBars,
   );
-  const endBar = chartBars[endIndex];
-  if (!startBar || !endBar) {
-    return;
-  }
-
-  const resolvedPrice = price;
-  zones.push({
+  pushLabeledLineZone(zones, chartBars, {
     id: `${RAY_REPLICA_PINE_SCRIPT_KEY}-trend-reversal-${zones.length}`,
-    strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
     zoneType: "trend-reversal",
     direction,
-    startTs: startBar.ts,
-    endTs: endBar.ts,
     startBarIndex,
     endBarIndex: endIndex,
-    top: resolvedPrice,
-    bottom: resolvedPrice,
+    price,
     label: "Trend Reversal",
-    meta: {
-      style: "trend-reversal",
-    },
+    lineColor: "#ffffff",
+    lineStyle: TREND_REVERSAL_LINE_STYLE,
+    labelPosition: "center",
+    labelFillColor: withHexAlpha(direction === "short" ? BEAR_COLOR : BULL_COLOR, "b3"),
   });
 };
 
@@ -719,7 +955,7 @@ const buildRegimeWindows = (
       endBarIndex: index - 1,
       tone: currentDirection === 1 ? "bullish" : "bearish",
       meta: {
-        label: currentDirection === 1 ? "Bullish Regime" : "Bearish Regime",
+        style: "background",
       },
     });
     segmentStart = index;
@@ -736,7 +972,7 @@ const buildRegimeWindows = (
     endBarIndex: chartBars.length - 1,
     tone: currentDirection === 1 ? "bullish" : "bearish",
     meta: {
-      label: currentDirection === 1 ? "Bullish Regime" : "Bearish Regime",
+      style: "background",
     },
   });
 
@@ -767,6 +1003,8 @@ export function createRayReplicaPineRuntimeAdapter(
         showKeyLevels,
         showStructure,
         showOrderBlocks,
+        showSupportResistance,
+        showTpSl,
         showRegimeWindows,
         colorCandles,
       } = resolveRayReplicaRuntimeSettings(settings);
@@ -808,6 +1046,7 @@ export function createRayReplicaPineRuntimeAdapter(
 
       const markers: ChartMarker[] = [];
       const events: IndicatorEvent[] = [];
+      const fillZones: IndicatorZone[] = [];
       const zones: IndicatorZone[] = [];
       const barStyleByIndex = new Array<ChartBarStyle | null>(
         chartBars.length,
@@ -836,6 +1075,8 @@ export function createRayReplicaPineRuntimeAdapter(
       let breakableLowBarIndex: number | null = null;
       const activeBullOrderBlocks: ActiveOrderBlock[] = [];
       const activeBearOrderBlocks: ActiveOrderBlock[] = [];
+      const supportResistanceZones: SupportResistanceZone[] = [];
+      let activeTpSlOverlay: ActiveTpSlOverlay | null = null;
 
       for (let index = 0; index < chartBars.length; index += 1) {
         if (
@@ -913,6 +1154,83 @@ export function createRayReplicaPineRuntimeAdapter(
                   label,
                 ),
               );
+            }
+          }
+        }
+
+        if (showSupportResistance) {
+          const supportResistancePivotIndex =
+            index - SUPPORT_RESISTANCE_PIVOT_STRENGTH;
+          if (supportResistancePivotIndex >= SUPPORT_RESISTANCE_PIVOT_STRENGTH) {
+            const currentClose = chartBars[index]?.c ?? Number.NaN;
+            const currentAtr = atrRaw[index];
+            const thickness = Number.isFinite(currentAtr)
+              ? currentAtr * SUPPORT_RESISTANCE_THICKNESS_MULTIPLIER
+              : Number.NaN;
+
+            const isTooCloseToExistingZone = (price: number) =>
+              supportResistanceZones.some((zone) => {
+                const midpoint = (zone.top + zone.bottom) / 2;
+                return (
+                  Number.isFinite(currentClose) &&
+                  currentClose !== 0 &&
+                  Math.abs(price - midpoint) / currentClose * 100 <
+                    SUPPORT_RESISTANCE_MIN_ZONE_DISTANCE_PERCENT
+                );
+              });
+
+            const pivotResistance = resolvePivotHigh(
+              chartBars,
+              supportResistancePivotIndex,
+              SUPPORT_RESISTANCE_PIVOT_STRENGTH,
+            );
+            if (
+              Number.isFinite(pivotResistance) &&
+              Number.isFinite(thickness) &&
+              !isTooCloseToExistingZone(pivotResistance)
+            ) {
+              const targetEndIndex =
+                index + SUPPORT_RESISTANCE_EXTENSION_BARS;
+              supportResistanceZones.push({
+                id: `${script.scriptKey}-sr-resistance-${supportResistancePivotIndex}`,
+                direction: "short",
+                startBarIndex: supportResistancePivotIndex,
+                endBarIndex: Math.min(chartBars.length - 1, targetEndIndex),
+                extendBars: Math.max(0, targetEndIndex - (chartBars.length - 1)),
+                top: Number((pivotResistance + thickness / 2).toFixed(6)),
+                bottom: Number((pivotResistance - thickness / 2).toFixed(6)),
+                fillColor: RESISTANCE_ZONE_COLOR,
+                borderColor: withHexAlpha(BEAR_COLOR, "70"),
+              });
+            }
+
+            const pivotSupport = resolvePivotLow(
+              chartBars,
+              supportResistancePivotIndex,
+              SUPPORT_RESISTANCE_PIVOT_STRENGTH,
+            );
+            if (
+              Number.isFinite(pivotSupport) &&
+              Number.isFinite(thickness) &&
+              !isTooCloseToExistingZone(pivotSupport)
+            ) {
+              const targetEndIndex =
+                index + SUPPORT_RESISTANCE_EXTENSION_BARS;
+              supportResistanceZones.push({
+                id: `${script.scriptKey}-sr-support-${supportResistancePivotIndex}`,
+                direction: "long",
+                startBarIndex: supportResistancePivotIndex,
+                endBarIndex: Math.min(chartBars.length - 1, targetEndIndex),
+                extendBars: Math.max(0, targetEndIndex - (chartBars.length - 1)),
+                top: Number((pivotSupport + thickness / 2).toFixed(6)),
+                bottom: Number((pivotSupport - thickness / 2).toFixed(6)),
+                fillColor: SUPPORT_ZONE_COLOR,
+                borderColor: withHexAlpha(BULL_COLOR, "70"),
+              });
+            }
+
+            while (supportResistanceZones.length > SUPPORT_RESISTANCE_MAX_ZONES) {
+              supportResistanceZones.shift();
             }
           }
         }
@@ -1096,20 +1414,51 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
+        if (showTpSl && bullishChoch) {
+          const stopLoss = Number.isFinite(lastSwingLow)
+            ? lastSwingLow
+            : chartBars[index].l;
+          const risk = Math.abs(chartBars[index].c - stopLoss);
+          activeTpSlOverlay = {
+            direction: "long",
+            startBarIndex: index,
+            stopLoss,
+            takeProfit1: Number((chartBars[index].c + risk * TP_RR_1).toFixed(6)),
+            takeProfit2: Number((chartBars[index].c + risk * TP_RR_2).toFixed(6)),
+            takeProfit3: Number((chartBars[index].c + risk * TP_RR_3).toFixed(6)),
+          };
+        }
+
+        if (showTpSl && bearishChoch) {
+          const stopLoss = Number.isFinite(lastSwingHigh)
+            ? lastSwingHigh
+            : chartBars[index].h;
+          const risk = Math.abs(chartBars[index].c - stopLoss);
+          activeTpSlOverlay = {
+            direction: "short",
+            startBarIndex: index,
+            stopLoss,
+            takeProfit1: Number((chartBars[index].c - risk * TP_RR_1).toFixed(6)),
+            takeProfit2: Number((chartBars[index].c - risk * TP_RR_2).toFixed(6)),
+            takeProfit3: Number((chartBars[index].c - risk * TP_RR_3).toFixed(6)),
+          };
+        }
+
         if (showOrderBlocks) {
           if (
             (bullishBos || bullishChoch) &&
             lastSwingLowBarIndex != null &&
             chartBars[lastSwingLowBarIndex]
           ) {
+            const orderBlockBar = chartBars[lastSwingLowBarIndex];
             activeBullOrderBlocks.push({
               id: `${script.scriptKey}-bull-ob-${index}`,
               direction: "long",
               startBarIndex: lastSwingLowBarIndex,
               endBarIndex: index,
-              top: chartBars[lastSwingLowBarIndex].h,
-              bottom: chartBars[lastSwingLowBarIndex].l,
-              label: "BULL OB",
+              top: orderBlockBar.h,
+              bottom: orderBlockBar.l,
+              label: `BULL OB +++ ${formatCompactVolume(orderBlockBar.v)}`,
             });
             while (activeBullOrderBlocks.length > 5) {
               activeBullOrderBlocks.shift();
@@ -1121,14 +1470,15 @@ export function createRayReplicaPineRuntimeAdapter(
             lastSwingHighBarIndex != null &&
             chartBars[lastSwingHighBarIndex]
           ) {
+            const orderBlockBar = chartBars[lastSwingHighBarIndex];
             activeBearOrderBlocks.push({
               id: `${script.scriptKey}-bear-ob-${index}`,
               direction: "short",
               startBarIndex: lastSwingHighBarIndex,
               endBarIndex: index,
-              top: chartBars[lastSwingHighBarIndex].h,
-              bottom: chartBars[lastSwingHighBarIndex].l,
-              label: "BEAR OB",
+              top: orderBlockBar.h,
+              bottom: orderBlockBar.l,
+              label: `BEAR OB +++ ${formatCompactVolume(orderBlockBar.v)}`,
             });
             while (activeBearOrderBlocks.length > 5) {
               activeBearOrderBlocks.shift();
@@ -1200,6 +1550,51 @@ export function createRayReplicaPineRuntimeAdapter(
               (trendLine + wireDirection * wireStep * 3).toFixed(6),
             );
           }
+        }
+
+        if (showShadow) {
+          pushFilledBarZone(
+            fillZones,
+            chartBars,
+            index,
+            bbUpper[index],
+            bbLower[index],
+            SHADOW_FILL_COLOR,
+          );
+        }
+
+        if (
+          showWires &&
+          reaction &&
+          activeRegimeDirection === 1 &&
+          Number.isFinite(bullMain[index]) &&
+          Number.isFinite(bullWires[0][index])
+        ) {
+          pushFilledBarZone(
+            fillZones,
+            chartBars,
+            index,
+            bullMain[index],
+            bullWires[0][index],
+            withHexAlpha(BULL_COLOR, "38"),
+          );
+        }
+
+        if (
+          showWires &&
+          reaction &&
+          activeRegimeDirection === -1 &&
+          Number.isFinite(bearMain[index]) &&
+          Number.isFinite(bearWires[0][index])
+        ) {
+          pushFilledBarZone(
+            fillZones,
+            chartBars,
+            index,
+            bearMain[index],
+            bearWires[0][index],
+            withHexAlpha(BEAR_COLOR, "38"),
+          );
         }
 
         if (colorCandles) {
