@@ -5,6 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { AssetClass } from "./assetClass";
+import type { BarDataSource } from "./barDataSource";
 import type { BarTimeframe } from "./barTimeframe";
 
 export type GetBarsParams = {
@@ -17,4 +19,8 @@ export type GetBarsParams = {
   limit?: number;
   from?: Date;
   to?: Date;
+  assetClass?: AssetClass;
+  providerContractId?: string | null;
+  outsideRth?: boolean;
+  source?: BarDataSource;
 };

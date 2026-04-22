@@ -1,0 +1,107 @@
+import type { RuntimeMode, IbkrTransport } from "../../api-server/src/lib/runtime";
+import type {
+  BrokerAccountSnapshot,
+  BrokerBarSnapshot,
+  BrokerExecutionSnapshot,
+  BrokerMarketDepthSnapshot,
+  CancelOrderSnapshot,
+  HistoryBarTimeframe,
+  HistoryDataSource,
+  OptionChainContract,
+  OrderPreviewSnapshot,
+  PlaceOrderInput,
+  QuoteSnapshot,
+  ReplaceOrderSnapshot,
+  SessionStatusSnapshot,
+} from "../../api-server/src/providers/ibkr/client";
+
+export type BridgeHealth = {
+  configured: boolean;
+  authenticated: boolean;
+  connected: boolean;
+  competing: boolean;
+  selectedAccountId: string | null;
+  accounts: string[];
+  lastTickleAt: Date | null;
+  lastError: string | null;
+  updatedAt: Date;
+  transport: IbkrTransport;
+  connectionTarget: string | null;
+  sessionMode: RuntimeMode | null;
+  clientId: number | null;
+};
+
+export interface IbkrBridgeProvider {
+  refreshSession(): Promise<SessionStatusSnapshot | null>;
+  tickle(): Promise<void>;
+  getHealth(): Promise<BridgeHealth>;
+  listAccounts(mode: RuntimeMode): Promise<BrokerAccountSnapshot[]>;
+  listPositions(input: {
+    accountId?: string;
+    mode: RuntimeMode;
+  }): Promise<import("../../api-server/src/providers/ibkr/client").BrokerPositionSnapshot[]>;
+  listOrders(input: {
+    accountId?: string;
+    mode: RuntimeMode;
+    status?:
+      | "pending_submit"
+      | "submitted"
+      | "accepted"
+      | "partially_filled"
+      | "filled"
+      | "canceled"
+      | "rejected"
+      | "expired";
+  }): Promise<import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot[]>;
+  listExecutions(input: {
+    accountId?: string;
+    days?: number;
+    limit?: number;
+    symbol?: string;
+    providerContractId?: string | null;
+  }): Promise<BrokerExecutionSnapshot[]>;
+  getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]>;
+  getHistoricalBars(input: {
+    symbol: string;
+    timeframe: HistoryBarTimeframe;
+    limit?: number;
+    from?: Date;
+    to?: Date;
+    assetClass?: "equity" | "option";
+    providerContractId?: string | null;
+    outsideRth?: boolean;
+    source?: HistoryDataSource;
+  }): Promise<BrokerBarSnapshot[]>;
+  getOptionChain(input: {
+    underlying: string;
+    expirationDate?: Date;
+    contractType?: "call" | "put" | null;
+    maxExpirations?: number;
+    strikesAroundMoney?: number;
+  }): Promise<OptionChainContract[]>;
+  getMarketDepth(input: {
+    accountId?: string | null;
+    symbol: string;
+    assetClass?: "equity" | "option";
+    providerContractId?: string | null;
+    exchange?: string | null;
+  }): Promise<BrokerMarketDepthSnapshot | null>;
+  previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot>;
+  placeOrder(input: PlaceOrderInput): Promise<import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot>;
+  submitRawOrders(input: {
+    accountId?: string | null;
+    orders: Record<string, unknown>[];
+  }): Promise<Record<string, unknown>>;
+  replaceOrder(input: {
+    accountId: string;
+    orderId: string;
+    order: Record<string, unknown>;
+    mode: RuntimeMode;
+  }): Promise<ReplaceOrderSnapshot>;
+  cancelOrder(input: {
+    accountId: string;
+    orderId: string;
+    manualIndicator?: boolean | null;
+    extOperator?: string | null;
+  }): Promise<CancelOrderSnapshot>;
+}

@@ -13,6 +13,40 @@ type ExecutableStrategy = StrategyCatalogItem & {
   evaluate(context: StrategySignalContext): BacktestSignal;
 };
 
+const rayReplicaSignalCache = new WeakMap<
+  BacktestBar[],
+  Map<string, RayReplicaSignalTape>
+>();
+
+export type RayReplicaStructureKind = "bos" | "choch";
+
+export type RayReplicaStructureEvent = {
+  id: string;
+  kind: RayReplicaStructureKind;
+  direction: "long" | "short";
+  label: "BOS" | "CHOCH";
+  barIndex: number;
+  occurredAt: Date;
+  sourceBarIndex: number | null;
+  sourcePrice: number | null;
+};
+
+export type RayReplicaRegimeWindow = {
+  id: string;
+  direction: "long" | "short";
+  tone: "bullish" | "bearish";
+  startBarIndex: number;
+  endBarIndex: number;
+  startAt: Date;
+  endAt: Date;
+};
+
+export type RayReplicaSignalTape = {
+  signals: BacktestSignal[];
+  events: RayReplicaStructureEvent[];
+  regimeWindows: RayReplicaRegimeWindow[];
+};
+
 function movingAverage(
   bars: BacktestBar[],
   index: number,
@@ -35,6 +69,248 @@ function integerParameter(parameters: StrategyParameters, key: string): number {
   return typeof rawValue === "number" ? Math.max(1, Math.round(rawValue)) : 1;
 }
 
+function integerParameterWithDefault(
+  parameters: StrategyParameters,
+  key: string,
+  defaultValue: number,
+): number {
+  const rawValue = parameters[key];
+  return typeof rawValue === "number"
+    ? Math.max(1, Math.round(rawValue))
+    : defaultValue;
+}
+
+function resolvePivotHigh(
+  bars: BacktestBar[],
+  pivotIndex: number,
+  strength: number,
+): number | null {
+  if (pivotIndex - strength < 0 || pivotIndex + strength >= bars.length) {
+    return null;
+  }
+
+  const pivotValue = bars[pivotIndex]?.high;
+  if (!Number.isFinite(pivotValue)) {
+    return null;
+  }
+
+  for (
+    let index = pivotIndex - strength;
+    index <= pivotIndex + strength;
+    index += 1
+  ) {
+    if (index === pivotIndex) {
+      continue;
+    }
+
+    if ((bars[index]?.high ?? Number.NEGATIVE_INFINITY) > pivotValue) {
+      return null;
+    }
+  }
+
+  return pivotValue;
+}
+
+function resolvePivotLow(
+  bars: BacktestBar[],
+  pivotIndex: number,
+  strength: number,
+): number | null {
+  if (pivotIndex - strength < 0 || pivotIndex + strength >= bars.length) {
+    return null;
+  }
+
+  const pivotValue = bars[pivotIndex]?.low;
+  if (!Number.isFinite(pivotValue)) {
+    return null;
+  }
+
+  for (
+    let index = pivotIndex - strength;
+    index <= pivotIndex + strength;
+    index += 1
+  ) {
+    if (index === pivotIndex) {
+      continue;
+    }
+
+    if ((bars[index]?.low ?? Number.POSITIVE_INFINITY) < pivotValue) {
+      return null;
+    }
+  }
+
+  return pivotValue;
+}
+
+function closeRayReplicaRegimeWindow(
+  regimeWindows: RayReplicaRegimeWindow[],
+  bars: BacktestBar[],
+  direction: "long" | "short",
+  startBarIndex: number,
+  endBarIndex: number,
+): void {
+  const startBar = bars[startBarIndex];
+  const endBar = bars[endBarIndex];
+  if (!startBar || !endBar || endBarIndex < startBarIndex) {
+    return;
+  }
+
+  regimeWindows.push({
+    id: `ray-replica-regime-${direction}-${startBar.startsAt.toISOString()}`,
+    direction,
+    tone: direction === "long" ? "bullish" : "bearish",
+    startBarIndex,
+    endBarIndex,
+    startAt: startBar.startsAt,
+    endAt: endBar.startsAt,
+  });
+}
+
+export function buildRayReplicaSignalTape(
+  bars: BacktestBar[],
+  parameters: StrategyParameters,
+): RayReplicaSignalTape {
+  const timeHorizon = integerParameterWithDefault(parameters, "timeHorizon", 10);
+  const cacheKey = JSON.stringify({ timeHorizon });
+  const cachedTape = rayReplicaSignalCache.get(bars)?.get(cacheKey);
+  if (cachedTape) {
+    return cachedTape;
+  }
+
+  const signals = new Array<BacktestSignal>(bars.length).fill("hold");
+  const events: RayReplicaStructureEvent[] = [];
+  const regimeWindows: RayReplicaRegimeWindow[] = [];
+  let marketStructureDirection = 0;
+  let breakableHigh = Number.NaN;
+  let breakableHighBarIndex: number | null = null;
+  let breakableLow = Number.NaN;
+  let breakableLowBarIndex: number | null = null;
+  let activeRegimeDirection: "long" | "short" | null = null;
+  let activeRegimeStartIndex: number | null = null;
+
+  for (let index = 0; index < bars.length; index += 1) {
+    const pivotIndex = index - timeHorizon;
+    if (pivotIndex >= timeHorizon) {
+      const pivotHigh = resolvePivotHigh(bars, pivotIndex, timeHorizon);
+      if (pivotHigh != null) {
+        breakableHigh = pivotHigh;
+        breakableHighBarIndex = pivotIndex;
+      }
+
+      const pivotLow = resolvePivotLow(bars, pivotIndex, timeHorizon);
+      if (pivotLow != null) {
+        breakableLow = pivotLow;
+        breakableLowBarIndex = pivotIndex;
+      }
+    }
+
+    const close = bars[index]?.close ?? Number.NaN;
+
+    if (Number.isFinite(breakableHigh) && close > breakableHigh) {
+      const kind: RayReplicaStructureKind =
+        marketStructureDirection === 1 ? "bos" : "choch";
+      const label = kind === "choch" ? "CHOCH" : "BOS";
+      events.push({
+        id: `ray-replica-long-${label.toLowerCase()}-${bars[index]?.startsAt.toISOString() ?? index}`,
+        kind,
+        direction: "long",
+        label,
+        barIndex: index,
+        occurredAt: bars[index]?.startsAt ?? new Date(0),
+        sourceBarIndex: breakableHighBarIndex,
+        sourcePrice: breakableHigh,
+      });
+
+      if (kind === "choch") {
+        signals[index] = "enter_long";
+        if (
+          activeRegimeDirection &&
+          activeRegimeStartIndex != null &&
+          activeRegimeStartIndex <= index - 1
+        ) {
+          closeRayReplicaRegimeWindow(
+            regimeWindows,
+            bars,
+            activeRegimeDirection,
+            activeRegimeStartIndex,
+            index - 1,
+          );
+        }
+        activeRegimeDirection = "long";
+        activeRegimeStartIndex = index;
+        marketStructureDirection = 1;
+      }
+
+      breakableHigh = Number.NaN;
+      breakableHighBarIndex = null;
+    }
+
+    if (Number.isFinite(breakableLow) && close < breakableLow) {
+      const kind: RayReplicaStructureKind =
+        marketStructureDirection === -1 ? "bos" : "choch";
+      const label = kind === "choch" ? "CHOCH" : "BOS";
+      events.push({
+        id: `ray-replica-short-${label.toLowerCase()}-${bars[index]?.startsAt.toISOString() ?? index}`,
+        kind,
+        direction: "short",
+        label,
+        barIndex: index,
+        occurredAt: bars[index]?.startsAt ?? new Date(0),
+        sourceBarIndex: breakableLowBarIndex,
+        sourcePrice: breakableLow,
+      });
+
+      if (kind === "choch") {
+        signals[index] = "exit_long";
+        if (
+          activeRegimeDirection &&
+          activeRegimeStartIndex != null &&
+          activeRegimeStartIndex <= index - 1
+        ) {
+          closeRayReplicaRegimeWindow(
+            regimeWindows,
+            bars,
+            activeRegimeDirection,
+            activeRegimeStartIndex,
+            index - 1,
+          );
+        }
+        activeRegimeDirection = "short";
+        activeRegimeStartIndex = index;
+        marketStructureDirection = -1;
+      }
+
+      breakableLow = Number.NaN;
+      breakableLowBarIndex = null;
+    }
+  }
+
+  if (
+    activeRegimeDirection &&
+    activeRegimeStartIndex != null &&
+    activeRegimeStartIndex <= bars.length - 1
+  ) {
+    closeRayReplicaRegimeWindow(
+      regimeWindows,
+      bars,
+      activeRegimeDirection,
+      activeRegimeStartIndex,
+      bars.length - 1,
+    );
+  }
+
+  const tape: RayReplicaSignalTape = {
+    signals,
+    events,
+    regimeWindows,
+  };
+  const cacheBucket =
+    rayReplicaSignalCache.get(bars) ?? new Map<string, RayReplicaSignalTape>();
+  cacheBucket.set(cacheKey, tape);
+  rayReplicaSignalCache.set(bars, cacheBucket);
+  return tape;
+}
+
 const sharedTimeframes: BacktestTimeframe[] = ["1m", "5m", "15m", "1h", "1d"];
 
 const trendParameterDefinitions: StrategyParameterDefinition[] = [
@@ -43,6 +319,7 @@ const trendParameterDefinitions: StrategyParameterDefinition[] = [
     label: "Short Window",
     type: "integer",
     defaultValue: 20,
+    options: [],
     min: 2,
     max: 200,
     step: 1,
@@ -52,8 +329,22 @@ const trendParameterDefinitions: StrategyParameterDefinition[] = [
     label: "Long Window",
     type: "integer",
     defaultValue: 50,
+    options: [],
     min: 5,
     max: 300,
+    step: 1,
+  },
+];
+
+const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
+  {
+    key: "timeHorizon",
+    label: "Time Horizon",
+    type: "integer",
+    defaultValue: 10,
+    options: [],
+    min: 2,
+    max: 50,
     step: 1,
   },
 ];
@@ -107,6 +398,30 @@ const strategies: ExecutableStrategy[] = [
       }
 
       return "hold";
+    },
+  },
+  {
+    strategyId: "ray_replica_signals",
+    version: "v1",
+    label: "RayReplica Signals",
+    description:
+      "Long-only RayReplica signal port that enters on bullish CHOCH and exits on bearish CHOCH.",
+    status: "runnable",
+    directionMode: "long_only",
+    supportedTimeframes: sharedTimeframes,
+    compatibilityNotes: [
+      "Uses the current JS RayReplica market-structure port, not a full Pine executor.",
+      "BUY/SELL events map to bullish and bearish CHOCH transitions.",
+      "BOS, TP/SL, filters, and short-side execution remain chart-only for now.",
+    ],
+    unsupportedFeatures: [],
+    parameterDefinitions: rayReplicaParameterDefinitions,
+    defaultParameters: {
+      timeHorizon: 10,
+    },
+    evaluate({ bars, index, parameters }) {
+      const signals = buildRayReplicaSignalTape(bars, parameters).signals;
+      return signals[index] ?? "hold";
     },
   },
   {

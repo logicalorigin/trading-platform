@@ -8,6 +8,38 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      (() => {
+        const benignMessages = new Set([
+          "ResizeObserver loop completed with undelivered notifications.",
+          "ResizeObserver loop limit exceeded",
+        ]);
+
+        window.addEventListener("error", (event) => {
+          if (!benignMessages.has(event.message)) {
+            return;
+          }
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }, true);
+
+        window.addEventListener("unhandledrejection", (event) => {
+          const reasonText = typeof event.reason === "string"
+            ? event.reason
+            : event.reason instanceof Error
+              ? event.reason.message
+              : "";
+
+          if (!benignMessages.has(reasonText)) {
+            return;
+          }
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

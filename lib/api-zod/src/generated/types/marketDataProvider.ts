@@ -11,4 +11,5 @@ export type MarketDataProvider =
 
 export const MarketDataProvider = {
   polygon: "polygon",
+  ibkr: "ibkr",
 } as const;

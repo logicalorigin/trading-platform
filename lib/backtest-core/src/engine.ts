@@ -84,11 +84,12 @@ function buildMetrics(
       wins.reduce((sum, trade) => sum + trade.netPnl, 0) /
         (losses.reduce((sum, trade) => sum + trade.netPnl, 0) || -1),
     ) || 0;
-  const maxDrawdownPercent =
+  const maxDrawdownPercent = Math.abs(
     points.reduce(
-      (maximum, point) => Math.max(maximum, point.drawdownPercent),
+      (minimum, point) => Math.min(minimum, point.drawdownPercent),
       0,
-    ) * -1;
+    ),
+  );
   const totalReturnPercent = initialCapital > 0 ? (netPnl / initialCapital) * 100 : 0;
   const returnOverMaxDrawdown =
     maxDrawdownPercent === 0 ? totalReturnPercent : totalReturnPercent / Math.abs(maxDrawdownPercent);
@@ -110,7 +111,7 @@ function closeTrade(
   exitAt: Date,
   exitPrice: number,
   exitReason: string,
-  signalIndex: number,
+  barsHeld: number,
   commissionPaid: number,
 ): BacktestTrade {
   const exitValue = exitPrice * position.quantity;
@@ -130,7 +131,7 @@ function closeTrade(
     grossPnl,
     netPnl,
     netPnlPercent: position.entryValue > 0 ? (netPnl / position.entryValue) * 100 : 0,
-    barsHeld: Math.max(signalIndex, 0),
+    barsHeld: Math.max(Math.round(barsHeld), 1),
     commissionPaid: position.commissionPaid + commissionPaid,
     exitReason,
   };
@@ -191,6 +192,7 @@ export function runBacktest(
         exitValue,
         study.executionProfile.commissionBps,
       );
+      const exitFillIndex = (symbolIndexState.get(order.symbol) ?? -1) + 1;
 
       cash += exitValue - commissionPaid;
       trades.push(
@@ -199,7 +201,7 @@ export function runBacktest(
           occurredAt,
           exitPrice,
           order.reason,
-          Math.max((symbolIndexState.get(order.symbol) ?? 0) - order.signalIndex, 1),
+          exitFillIndex - position.entryIndex,
           commissionPaid,
         ),
       );
@@ -246,9 +248,11 @@ export function runBacktest(
       }
 
       cash -= totalCost;
+      const entryFillIndex = (symbolIndexState.get(order.symbol) ?? -1) + 1;
       positions.set(order.symbol, {
         symbol: order.symbol,
         entryAt: occurredAt,
+        entryIndex: entryFillIndex,
         entryPrice: fillPrice,
         quantity,
         entryValue,
@@ -316,6 +320,7 @@ export function runBacktest(
   const lastTimestamp = timestamps[timestamps.length - 1];
   if (lastTimestamp) {
     const lastOccurredAt = new Date(lastTimestamp);
+    const hadOpenPositions = positions.size > 0;
     [...positions.values()].forEach((position) => {
       const exitPrice = latestCloseBySymbol.get(position.symbol) ?? position.entryPrice;
       const exitValue = exitPrice * position.quantity;
@@ -331,7 +336,7 @@ export function runBacktest(
           lastOccurredAt,
           exitPrice,
           "end_of_test",
-          Math.max(symbolIndexState.get(position.symbol) ?? 1, 1),
+          ((symbolIndexState.get(position.symbol) ?? -1) + 1) - position.entryIndex,
           commissionPaid,
         ),
       );
@@ -339,14 +344,26 @@ export function runBacktest(
 
     positions.clear();
 
-    points.push({
+    const finalPoint = {
       occurredAt: lastOccurredAt,
       equity: cash,
       cash,
       grossExposure: 0,
       drawdownPercent:
         peakEquity > 0 ? ((cash - peakEquity) / peakEquity) * 100 : 0,
-    });
+    };
+
+    if (hadOpenPositions) {
+      const lastPoint = points[points.length - 1];
+      if (
+        lastPoint &&
+        lastPoint.occurredAt.getTime() === lastOccurredAt.getTime()
+      ) {
+        points[points.length - 1] = finalPoint;
+      } else {
+        points.push(finalPoint);
+      }
+    }
   }
 
   return {

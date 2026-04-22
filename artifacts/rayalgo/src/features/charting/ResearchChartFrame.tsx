@@ -1,5 +1,8 @@
 import type { CSSProperties, ReactNode } from "react";
-import { ResearchChartSurface, type OverlayContent } from "./ResearchChartSurface";
+import {
+  ResearchChartSurface,
+  type OverlayContent,
+} from "./ResearchChartSurface";
 import type { ChartModel } from "./types";
 
 type ResearchChartTheme = {
@@ -34,6 +37,9 @@ type ReferenceLine = {
   axisLabelVisible?: boolean;
 };
 
+const EMPTY_DRAWINGS: ResearchDrawing[] = [];
+const EMPTY_REFERENCE_LINES: ReferenceLine[] = [];
+
 type ResearchChartFrameProps = {
   theme: ResearchChartTheme;
   themeKey: string;
@@ -48,14 +54,17 @@ type ResearchChartFrameProps = {
   subHeader?: ReactNode;
   footer?: ReactNode;
   surfaceTopOverlay?: OverlayContent;
+  surfaceLeftOverlay?: OverlayContent;
   surfaceBottomOverlay?: OverlayContent;
   surfaceTopOverlayHeight?: number;
+  surfaceLeftOverlayWidth?: number;
   surfaceBottomOverlayHeight?: number;
   hideCrosshair?: boolean;
   drawings?: ResearchDrawing[];
   referenceLines?: ReferenceLine[];
   drawMode?: "horizontal" | "vertical" | "box" | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
+  onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
 };
 
 export const ResearchChartFrame = ({
@@ -72,14 +81,17 @@ export const ResearchChartFrame = ({
   subHeader = null,
   footer = null,
   surfaceTopOverlay = null,
+  surfaceLeftOverlay = null,
   surfaceBottomOverlay = null,
   surfaceTopOverlayHeight = 0,
+  surfaceLeftOverlayWidth = 0,
   surfaceBottomOverlayHeight = 0,
   hideCrosshair = false,
-  drawings = [],
-  referenceLines = [],
+  drawings = EMPTY_DRAWINGS,
+  referenceLines = EMPTY_REFERENCE_LINES,
   drawMode = null,
   onAddDrawing,
+  onTradeMarkerSelection,
 }: ResearchChartFrameProps) => (
   <div
     data-testid={dataTestId}
@@ -95,16 +107,8 @@ export const ResearchChartFrame = ({
       ...style,
     }}
   >
-    {header ? (
-      <div style={{ flexShrink: 0 }}>
-        {header}
-      </div>
-    ) : null}
-    {subHeader ? (
-      <div style={{ flexShrink: 0 }}>
-        {subHeader}
-      </div>
-    ) : null}
+    {header ? <div style={{ flexShrink: 0 }}>{header}</div> : null}
+    {subHeader ? <div style={{ flexShrink: 0 }}>{subHeader}</div> : null}
     <div style={{ flex: 1, minHeight: 0 }}>
       <ResearchChartSurface
         dataTestId={dataTestId ? `${dataTestId}-surface` : undefined}
@@ -117,19 +121,18 @@ export const ResearchChartFrame = ({
         hideTimeScale={hideTimeScale}
         hideCrosshair={hideCrosshair}
         topOverlay={surfaceTopOverlay}
+        leftOverlay={surfaceLeftOverlay}
         bottomOverlay={surfaceBottomOverlay}
         topOverlayHeight={surfaceTopOverlayHeight}
+        leftOverlayWidth={surfaceLeftOverlayWidth}
         bottomOverlayHeight={surfaceBottomOverlayHeight}
         drawings={drawings}
         referenceLines={referenceLines}
         drawMode={drawMode}
         onAddDrawing={onAddDrawing}
+        onTradeMarkerSelection={onTradeMarkerSelection}
       />
     </div>
-    {footer ? (
-      <div style={{ flexShrink: 0 }}>
-        {footer}
-      </div>
-    ) : null}
+    {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}
   </div>
 );

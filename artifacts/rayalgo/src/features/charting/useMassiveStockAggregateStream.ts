@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
-export type MassiveStockAggregateMessage = {
+export type BrokerStockAggregateMessage = {
   eventType: string;
   symbol: string;
   open: number;
@@ -15,23 +15,26 @@ export type MassiveStockAggregateMessage = {
   averageTradeSize: number | null;
   startMs: number;
   endMs: number;
-  delayed: true;
-  source: "massive-delayed-websocket";
+  delayed: boolean;
+  source: "ibkr-websocket-derived";
 };
 
-type UseMassiveStockAggregateStreamInput = {
+export type MassiveStockAggregateMessage = BrokerStockAggregateMessage;
+
+type UseBrokerStockAggregateStreamInput = {
   symbols: string[];
   enabled?: boolean;
-  onAggregate?: (message: MassiveStockAggregateMessage) => void;
+  onAggregate?: (message: BrokerStockAggregateMessage) => void;
 };
 
 type StreamConsumer = {
   id: number;
   symbols: Set<string>;
-  onAggregate?: (message: MassiveStockAggregateMessage) => void;
+  onAggregate?: (message: BrokerStockAggregateMessage) => void;
 };
 
 const MAX_MINUTE_AGGREGATES_PER_SYMBOL = 2_048;
+const EVENT_SOURCE_RETRY_DELAY_MS = 30_000;
 
 const normalizeSymbols = (symbols: string[]): string[] => (
   Array.from(
@@ -55,22 +58,24 @@ const buildStreamUrl = (symbols: string[]): string | null => {
   return `/api/streams/stocks/aggregates?${params.toString()}`;
 };
 
-const parseAggregateMessage = (payload: string): MassiveStockAggregateMessage | null => {
+const parseAggregateMessage = (payload: string): BrokerStockAggregateMessage | null => {
   try {
-    return JSON.parse(payload) as MassiveStockAggregateMessage;
+    return JSON.parse(payload) as BrokerStockAggregateMessage;
   } catch {
     return null;
   }
 };
 
 const consumers = new Map<number, StreamConsumer>();
-const minuteCacheBySymbol = new Map<string, Map<number, MassiveStockAggregateMessage>>();
+const minuteCacheBySymbol = new Map<string, Map<number, BrokerStockAggregateMessage>>();
 const storeListeners = new Set<() => void>();
 
 let nextConsumerId = 1;
 let storeVersion = 0;
 let eventSource: EventSource | null = null;
 let eventSourceSignature = "";
+let reconnectTimer: number | null = null;
+let reconnectBlockedUntil = 0;
 
 const notifyStoreListeners = () => {
   storeVersion += 1;
@@ -85,6 +90,15 @@ const subscribeToAggregateStore = (listener: () => void): (() => void) => {
 };
 
 const getAggregateStoreSnapshot = (): number => storeVersion;
+
+const clearReconnectTimer = () => {
+  if (reconnectTimer == null) {
+    return;
+  }
+
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+};
 
 const getUnionSymbols = (): string[] => normalizeSymbols(
   Array.from(consumers.values()).flatMap((consumer) => Array.from(consumer.symbols)),
@@ -101,7 +115,7 @@ const closeEventSource = () => {
   eventSourceSignature = "";
 };
 
-const trimMinuteCache = (cache: Map<number, MassiveStockAggregateMessage>) => {
+const trimMinuteCache = (cache: Map<number, BrokerStockAggregateMessage>) => {
   while (cache.size > MAX_MINUTE_AGGREGATES_PER_SYMBOL) {
     const oldestKey = cache.keys().next().value;
     if (oldestKey == null) {
@@ -113,8 +127,8 @@ const trimMinuteCache = (cache: Map<number, MassiveStockAggregateMessage>) => {
 };
 
 const hasAggregateChanged = (
-  current: MassiveStockAggregateMessage | undefined,
-  next: MassiveStockAggregateMessage,
+  current: BrokerStockAggregateMessage | undefined,
+  next: BrokerStockAggregateMessage,
 ): boolean => {
   if (!current) {
     return true;
@@ -134,9 +148,9 @@ const hasAggregateChanged = (
   );
 };
 
-const recordAggregate = (message: MassiveStockAggregateMessage) => {
+const recordAggregate = (message: BrokerStockAggregateMessage) => {
   const symbol = message.symbol.toUpperCase();
-  const symbolCache = minuteCacheBySymbol.get(symbol) ?? new Map<number, MassiveStockAggregateMessage>();
+  const symbolCache = minuteCacheBySymbol.get(symbol) ?? new Map<number, BrokerStockAggregateMessage>();
   const current = symbolCache.get(message.startMs);
 
   if (!hasAggregateChanged(current, message)) {
@@ -152,7 +166,7 @@ const recordAggregate = (message: MassiveStockAggregateMessage) => {
   notifyStoreListeners();
 };
 
-const handleAggregateMessage = (message: MassiveStockAggregateMessage) => {
+const handleAggregateMessage = (message: BrokerStockAggregateMessage) => {
   recordAggregate(message);
 
   consumers.forEach((consumer) => {
@@ -166,6 +180,8 @@ const handleAggregateMessage = (message: MassiveStockAggregateMessage) => {
 
 const refreshEventSource = () => {
   if (typeof window === "undefined" || typeof window.EventSource === "undefined") {
+    reconnectBlockedUntil = 0;
+    clearReconnectTimer();
     closeEventSource();
     return;
   }
@@ -174,6 +190,8 @@ const refreshEventSource = () => {
   const signature = unionSymbols.join(",");
 
   if (!signature) {
+    reconnectBlockedUntil = 0;
+    clearReconnectTimer();
     closeEventSource();
     return;
   }
@@ -181,6 +199,18 @@ const refreshEventSource = () => {
   if (eventSource && signature === eventSourceSignature) {
     return;
   }
+
+  if (reconnectBlockedUntil > Date.now()) {
+    if (reconnectTimer == null) {
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        refreshEventSource();
+      }, Math.max(0, reconnectBlockedUntil - Date.now()));
+    }
+    return;
+  }
+
+  clearReconnectTimer();
 
   closeEventSource();
 
@@ -190,6 +220,10 @@ const refreshEventSource = () => {
   }
 
   const source = new EventSource(streamUrl);
+  source.onopen = () => {
+    reconnectBlockedUntil = 0;
+    clearReconnectTimer();
+  };
   const handleAggregate = (event: MessageEvent<string>) => {
     const message = parseAggregateMessage(event.data);
     if (!message) {
@@ -201,10 +235,13 @@ const refreshEventSource = () => {
 
   source.addEventListener("aggregate", handleAggregate as EventListener);
   source.onerror = () => {
-    if (source.readyState === EventSource.CLOSED && eventSource === source) {
-      closeEventSource();
-      refreshEventSource();
+    if (source.readyState !== EventSource.CLOSED || eventSource !== source) {
+      return;
     }
+
+    reconnectBlockedUntil = Date.now() + EVENT_SOURCE_RETRY_DELAY_MS;
+    closeEventSource();
+    refreshEventSource();
   };
 
   eventSource = source;
@@ -213,7 +250,7 @@ const refreshEventSource = () => {
 
 const registerConsumer = (
   symbols: string[],
-  onAggregate?: (message: MassiveStockAggregateMessage) => void,
+  onAggregate?: (message: BrokerStockAggregateMessage) => void,
 ): (() => void) => {
   const id = nextConsumerId;
   nextConsumerId += 1;
@@ -231,7 +268,7 @@ const registerConsumer = (
   };
 };
 
-export const getStoredStockMinuteAggregates = (symbol: string): MassiveStockAggregateMessage[] => {
+export const getStoredBrokerMinuteAggregates = (symbol: string): BrokerStockAggregateMessage[] => {
   const normalized = symbol?.trim?.().toUpperCase?.() || "";
   if (!normalized) {
     return [];
@@ -249,11 +286,11 @@ export const useStockMinuteAggregateStoreVersion = (): number => (
   )
 );
 
-export const useMassiveStockAggregateStream = ({
+export const useBrokerStockAggregateStream = ({
   symbols,
   enabled = true,
   onAggregate,
-}: UseMassiveStockAggregateStreamInput): void => {
+}: UseBrokerStockAggregateStreamInput): void => {
   const onAggregateRef = useRef(onAggregate);
   const normalizedSymbols = useMemo(() => normalizeSymbols(symbols), [symbols]);
   const subscriptionSignature = normalizedSymbols.join(",");
@@ -277,3 +314,6 @@ export const useMassiveStockAggregateStream = ({
     );
   }, [enabled, stableSymbols]);
 };
+
+export const getStoredStockMinuteAggregates = getStoredBrokerMinuteAggregates;
+export const useMassiveStockAggregateStream = useBrokerStockAggregateStream;

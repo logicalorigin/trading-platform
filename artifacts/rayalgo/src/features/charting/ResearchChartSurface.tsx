@@ -1,4 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import {
   AreaSeries,
   BarSeries,
@@ -13,7 +22,12 @@ import {
   LineStyle,
   PriceScaleMode,
 } from "lightweight-charts";
-import type { ChartModel, IndicatorWindow, IndicatorZone, StudySpec } from "./types";
+import type {
+  ChartModel,
+  IndicatorWindow,
+  IndicatorZone,
+  StudySpec,
+} from "./types";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -73,15 +87,57 @@ type OverlayShape = {
   label?: string;
 };
 
+type TradeMarkerTarget = {
+  id: string;
+  left: number;
+  top: number;
+  size: number;
+  label?: string;
+  color: string;
+  borderColor: string;
+  kind: "entry" | "exit";
+  tradeSelectionIds: string[];
+};
+
+type TradeBadgeOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  text: string;
+  color: string;
+  borderColor: string;
+};
+
+type TradeThresholdOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  width: number;
+  style: "solid" | "dashed" | "dotted";
+  color: string;
+  label?: string;
+};
+
+type TradeConnectorOverlay = {
+  color: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
 export type ChartSurfaceControls = {
   baseSeriesType: BaseSeriesType;
   setBaseSeriesType: (next: BaseSeriesType) => void;
+  activeBar: HoverBar | null;
   showVolume: boolean;
   setShowVolume: (next: boolean | ((value: boolean) => boolean)) => void;
   scaleMode: ScaleMode;
   setScaleMode: (next: ScaleMode | ((value: ScaleMode) => ScaleMode)) => void;
   crosshairMode: "magnet" | "free";
-  setCrosshairMode: (next: "magnet" | "free" | ((value: "magnet" | "free") => "magnet" | "free")) => void;
+  setCrosshairMode: (
+    next: "magnet" | "free" | ((value: "magnet" | "free") => "magnet" | "free"),
+  ) => void;
   showPriceLine: boolean;
   setShowPriceLine: (next: boolean | ((value: boolean) => boolean)) => void;
   showGrid: boolean;
@@ -100,6 +156,9 @@ export type ChartSurfaceControls = {
   reset: () => void;
   fit: () => void;
   realtime: () => void;
+  takeSnapshot: () => void;
+  toggleFullscreen: () => void;
+  isFullscreen: boolean;
 };
 
 export type OverlayContent =
@@ -120,8 +179,10 @@ type ResearchChartSurfaceProps = {
   showAttributionLogo?: boolean;
   hideCrosshair?: boolean;
   topOverlay?: OverlayContent;
+  leftOverlay?: OverlayContent;
   bottomOverlay?: OverlayContent;
   topOverlayHeight?: number;
+  leftOverlayWidth?: number;
   bottomOverlayHeight?: number;
   defaultBaseSeriesType?: BaseSeriesType;
   defaultShowVolume?: boolean;
@@ -138,7 +199,17 @@ type ResearchChartSurfaceProps = {
   drawMode?: DrawMode | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
   onAddHorizontalLevel?: (price: number) => void;
+  onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
 };
+
+const EMPTY_DRAWINGS: ResearchDrawing[] = [];
+const EMPTY_REFERENCE_LINES: Array<{
+  price: number;
+  color?: string;
+  title?: string;
+  lineWidth?: number;
+  axisLabelVisible?: boolean;
+}> = [];
 
 type StudyRegistryEntry = {
   paneIndex: number;
@@ -146,11 +217,8 @@ type StudyRegistryEntry = {
   series: any;
 };
 
-const withAlpha = (color: string, alpha: string): string => (
-  /^#[0-9a-fA-F]{6}$/.test(color)
-    ? `${color}${alpha}`
-    : color
-);
+const withAlpha = (color: string, alpha: string): string =>
+  /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}${alpha}` : color;
 
 const buildChartOptions = (
   theme: ResearchChartTheme,
@@ -173,6 +241,7 @@ const buildChartOptions = (
     background: { type: ColorType.Solid, color: theme.bg2 },
     textColor: theme.textMuted,
     fontFamily: theme.mono,
+    fontSize: compact ? 8 : 11,
     attributionLogo: showAttributionLogo,
   },
   grid: {
@@ -187,6 +256,7 @@ const buildChartOptions = (
       style: LineStyle.Dashed,
       visible: true,
       labelVisible: true,
+      labelBackgroundColor: withAlpha(theme.bg3, "f0"),
     },
     horzLine: {
       color: withAlpha(theme.textMuted, "90"),
@@ -194,6 +264,7 @@ const buildChartOptions = (
       style: LineStyle.Dashed,
       visible: true,
       labelVisible: true,
+      labelBackgroundColor: withAlpha(theme.bg3, "f0"),
     },
   },
   rightPriceScale: {
@@ -201,7 +272,8 @@ const buildChartOptions = (
     textColor: theme.textMuted,
     visible: showRightPriceScale,
     borderVisible: showRightPriceScale,
-    ticksVisible: showRightPriceScale && !compact,
+    ticksVisible: showRightPriceScale,
+    minimumWidth: compact ? 34 : 50,
   },
   leftPriceScale: {
     visible: false,
@@ -209,20 +281,47 @@ const buildChartOptions = (
   },
   timeScale: {
     borderColor: theme.border,
+    borderVisible: !hideTimeScale,
     visible: !hideTimeScale,
     timeVisible: !hideTimeScale,
     secondsVisible: false,
-    ticksVisible: !compact && !hideTimeScale,
-    minBarSpacing: compact ? 1 : 6,
+    ticksVisible: !hideTimeScale,
+    rightOffset: compact ? 1 : 6,
+    rightBarStaysOnScroll: true,
+    lockVisibleTimeRangeOnResize: true,
+    minBarSpacing: compact ? 0.6 : 5,
   },
-  handleScroll: enableInteractions,
-  handleScale: enableInteractions,
+  handleScroll: enableInteractions
+    ? {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      }
+    : false,
+  handleScale: enableInteractions
+    ? {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
+        axisDoubleClickReset: {
+          time: true,
+          price: true,
+        },
+      }
+    : false,
 });
 
 const SERIES_TYPE_MAP = {
   line: LineSeries,
   histogram: HistogramSeries,
-} satisfies Record<StudySpec["seriesType"], typeof LineSeries | typeof HistogramSeries>;
+} satisfies Record<
+  StudySpec["seriesType"],
+  typeof LineSeries | typeof HistogramSeries
+>;
 
 const formatCompactNumber = (value: number): string => {
   if (!Number.isFinite(value)) {
@@ -251,7 +350,10 @@ const formatLegendTimestamp = (value: string): string => {
   }).format(new Date(parsed));
 };
 
-const formatLegendNumber = (value: number | null | undefined, digits = 2): string => {
+const formatLegendNumber = (
+  value: number | null | undefined,
+  digits = 2,
+): string => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "—";
   }
@@ -275,24 +377,32 @@ const countValueDecimals = (value: number): number => {
 };
 
 const resolvePricePrecision = (bars: ChartModel["chartBars"]): number => {
-  const maxDecimals = bars.reduce((result, bar) => Math.max(
-    result,
-    countValueDecimals(bar.o),
-    countValueDecimals(bar.h),
-    countValueDecimals(bar.l),
-    countValueDecimals(bar.c),
-    countValueDecimals(bar.vwap ?? Number.NaN),
-    countValueDecimals(bar.sessionVwap ?? Number.NaN),
-  ), 0);
+  const maxDecimals = bars.reduce(
+    (result, bar) =>
+      Math.max(
+        result,
+        countValueDecimals(bar.o),
+        countValueDecimals(bar.h),
+        countValueDecimals(bar.l),
+        countValueDecimals(bar.c),
+        countValueDecimals(bar.vwap ?? Number.NaN),
+        countValueDecimals(bar.sessionVwap ?? Number.NaN),
+      ),
+    0,
+  );
 
   return Math.min(4, Math.max(2, maxDecimals));
 };
 
-const numbersClose = (left: number, right: number, epsilon = 0.5): boolean => (
-  Math.abs(left - right) <= epsilon
-);
+const numbersClose = (left: number, right: number, epsilon = 0.5): boolean =>
+  Number.isFinite(left) &&
+  Number.isFinite(right) &&
+  Math.abs(left - right) <= epsilon;
 
-const overlayShapesEqual = (left: OverlayShape[], right: OverlayShape[]): boolean => {
+const overlayShapesEqual = (
+  left: OverlayShape[],
+  right: OverlayShape[],
+): boolean => {
   if (left === right) {
     return true;
   }
@@ -322,6 +432,136 @@ const overlayShapesEqual = (left: OverlayShape[], right: OverlayShape[]): boolea
   return true;
 };
 
+const stringArraysEqual = (left: string[], right: string[]): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const tradeMarkerTargetsEqual = (
+  left: TradeMarkerTarget[],
+  right: TradeMarkerTarget[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftTarget = left[index];
+    const rightTarget = right[index];
+
+    if (
+      leftTarget.id !== rightTarget.id ||
+      leftTarget.label !== rightTarget.label ||
+      leftTarget.color !== rightTarget.color ||
+      leftTarget.borderColor !== rightTarget.borderColor ||
+      leftTarget.kind !== rightTarget.kind ||
+      !numbersClose(leftTarget.left, rightTarget.left) ||
+      !numbersClose(leftTarget.top, rightTarget.top) ||
+      !numbersClose(leftTarget.size, rightTarget.size) ||
+      !stringArraysEqual(
+        leftTarget.tradeSelectionIds,
+        rightTarget.tradeSelectionIds,
+      )
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const tradeThresholdOverlaysEqual = (
+  left: TradeThresholdOverlay[],
+  right: TradeThresholdOverlay[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftOverlay = left[index];
+    const rightOverlay = right[index];
+
+    if (
+      leftOverlay.id !== rightOverlay.id ||
+      leftOverlay.style !== rightOverlay.style ||
+      leftOverlay.color !== rightOverlay.color ||
+      leftOverlay.label !== rightOverlay.label ||
+      !numbersClose(leftOverlay.left, rightOverlay.left) ||
+      !numbersClose(leftOverlay.top, rightOverlay.top) ||
+      !numbersClose(leftOverlay.width, rightOverlay.width)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const tradeBadgeOverlaysEqual = (
+  left: TradeBadgeOverlay | null,
+  right: TradeBadgeOverlay | null,
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.id === right.id &&
+    left.text === right.text &&
+    left.color === right.color &&
+    left.borderColor === right.borderColor &&
+    numbersClose(left.left, right.left) &&
+    numbersClose(left.top, right.top)
+  );
+};
+
+const tradeConnectorOverlaysEqual = (
+  left: TradeConnectorOverlay | null,
+  right: TradeConnectorOverlay | null,
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.color === right.color &&
+    numbersClose(left.x1, right.x1) &&
+    numbersClose(left.y1, right.y1) &&
+    numbersClose(left.x2, right.x2) &&
+    numbersClose(left.y2, right.y2)
+  );
+};
+
 const parseIsoTimeSeconds = (value: string): number | null => {
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) {
@@ -347,7 +587,10 @@ const resolveBarSpacing = (chart: any, model: ChartModel): number => {
     return 8;
   }
 
-  return Math.max(2, diffs.reduce((sum, value) => sum + value, 0) / diffs.length);
+  return Math.max(
+    2,
+    diffs.reduce((sum, value) => sum + value, 0) / diffs.length,
+  );
 };
 
 const buildWindowOverlays = (
@@ -358,45 +601,61 @@ const buildWindowOverlays = (
 ): OverlayShape[] => {
   const barSpacing = resolveBarSpacing(chart, model);
 
-  return model.indicatorWindows.reduce<OverlayShape[]>((result, indicatorWindow: IndicatorWindow) => {
-    const startTime = indicatorWindow.startBarIndex != null
-      ? model.chartBars[indicatorWindow.startBarIndex]?.time ?? null
-      : parseIsoTimeSeconds(indicatorWindow.startTs);
-    const endTime = indicatorWindow.endBarIndex != null
-      ? model.chartBars[indicatorWindow.endBarIndex]?.time ?? null
-      : parseIsoTimeSeconds(indicatorWindow.endTs);
-    const left = startTime != null ? chart.timeScale().timeToCoordinate(startTime) : null;
-    const rightBase = endTime != null ? chart.timeScale().timeToCoordinate(endTime) : null;
+  return model.indicatorWindows.reduce<OverlayShape[]>(
+    (result, indicatorWindow: IndicatorWindow) => {
+      const startTime =
+        indicatorWindow.startBarIndex != null
+          ? (model.chartBars[indicatorWindow.startBarIndex]?.time ?? null)
+          : parseIsoTimeSeconds(indicatorWindow.startTs);
+      const endTime =
+        indicatorWindow.endBarIndex != null
+          ? (model.chartBars[indicatorWindow.endBarIndex]?.time ?? null)
+          : parseIsoTimeSeconds(indicatorWindow.endTs);
+      const left =
+        startTime != null
+          ? chart.timeScale().timeToCoordinate(startTime)
+          : null;
+      const rightBase =
+        endTime != null ? chart.timeScale().timeToCoordinate(endTime) : null;
 
-    if (typeof left !== "number") {
+      if (!Number.isFinite(left)) {
+        return result;
+      }
+
+      const right =
+        typeof rightBase === "number"
+          ? rightBase + barSpacing
+          : left + barSpacing;
+      const tone =
+        indicatorWindow.tone ||
+        (indicatorWindow.direction === "short" ? "bearish" : "bullish");
+      const fill =
+        tone === "bearish"
+          ? withAlpha(theme.red, "12")
+          : tone === "neutral"
+            ? withAlpha(theme.textMuted, "10")
+            : withAlpha(theme.green, "12");
+      const border =
+        tone === "bearish"
+          ? withAlpha(theme.red, "45")
+          : tone === "neutral"
+            ? withAlpha(theme.textMuted, "38")
+            : withAlpha(theme.green, "45");
+
+      result.push({
+        id: indicatorWindow.id,
+        left: Math.min(left, right),
+        top: 0,
+        width: Math.max(2, Math.abs(right - left)),
+        height: Math.max(0, viewportHeight),
+        fill,
+        border,
+        label: indicatorWindow.meta?.label as string | undefined,
+      });
       return result;
-    }
-
-    const right = typeof rightBase === "number" ? rightBase + barSpacing : left + barSpacing;
-    const tone = indicatorWindow.tone || (indicatorWindow.direction === "short" ? "bearish" : "bullish");
-    const fill = tone === "bearish"
-      ? withAlpha(theme.red, "12")
-      : tone === "neutral"
-        ? withAlpha(theme.textMuted, "10")
-        : withAlpha(theme.green, "12");
-    const border = tone === "bearish"
-      ? withAlpha(theme.red, "45")
-      : tone === "neutral"
-        ? withAlpha(theme.textMuted, "38")
-        : withAlpha(theme.green, "45");
-
-    result.push({
-      id: indicatorWindow.id,
-      left: Math.min(left, right),
-      top: 0,
-      width: Math.max(2, Math.abs(right - left)),
-      height: Math.max(0, viewportHeight),
-      fill,
-      border,
-      label: indicatorWindow.meta?.label as string | undefined,
-    });
-    return result;
-  }, []);
+    },
+    [],
+  );
 };
 
 const buildZoneOverlays = (
@@ -407,60 +666,74 @@ const buildZoneOverlays = (
 ): OverlayShape[] => {
   const barSpacing = resolveBarSpacing(chart, model);
 
-  return model.indicatorZones.reduce<OverlayShape[]>((result, zone: IndicatorZone) => {
-    const startTime = zone.startBarIndex != null
-      ? model.chartBars[zone.startBarIndex]?.time ?? null
-      : parseIsoTimeSeconds(zone.startTs);
-    const endTime = zone.endBarIndex != null
-      ? model.chartBars[zone.endBarIndex]?.time ?? null
-      : parseIsoTimeSeconds(zone.endTs);
-    const left = startTime != null ? chart.timeScale().timeToCoordinate(startTime) : null;
-    const rightBase = endTime != null ? chart.timeScale().timeToCoordinate(endTime) : null;
-    const top = series.priceToCoordinate?.(zone.top);
-    const bottom = series.priceToCoordinate?.(zone.bottom);
+  return model.indicatorZones.reduce<OverlayShape[]>(
+    (result, zone: IndicatorZone) => {
+      const startTime =
+        zone.startBarIndex != null
+          ? (model.chartBars[zone.startBarIndex]?.time ?? null)
+          : parseIsoTimeSeconds(zone.startTs);
+      const endTime =
+        zone.endBarIndex != null
+          ? (model.chartBars[zone.endBarIndex]?.time ?? null)
+          : parseIsoTimeSeconds(zone.endTs);
+      const left =
+        startTime != null
+          ? chart.timeScale().timeToCoordinate(startTime)
+          : null;
+      const rightBase =
+        endTime != null ? chart.timeScale().timeToCoordinate(endTime) : null;
+      const top = series.priceToCoordinate?.(zone.top);
+      const bottom = series.priceToCoordinate?.(zone.bottom);
 
-    if (
-      typeof left !== "number" ||
-      typeof top !== "number" ||
-      typeof bottom !== "number"
-    ) {
+      if (
+        !Number.isFinite(left) ||
+        !Number.isFinite(top) ||
+        !Number.isFinite(bottom)
+      ) {
+        return result;
+      }
+
+      const right =
+        typeof rightBase === "number"
+          ? rightBase + barSpacing
+          : left + barSpacing;
+      const fill =
+        zone.direction === "short"
+          ? withAlpha(theme.red, "1c")
+          : withAlpha(theme.green, "1c");
+      const border =
+        zone.direction === "short"
+          ? withAlpha(theme.red, "70")
+          : withAlpha(theme.green, "70");
+
+      result.push({
+        id: zone.id,
+        left: Math.min(left, right),
+        top: Math.min(top, bottom),
+        width: Math.max(2, Math.abs(right - left)),
+        height: Math.max(2, Math.abs(bottom - top)),
+        fill,
+        border,
+        label: zone.label || zone.zoneType,
+      });
       return result;
-    }
-
-    const right = typeof rightBase === "number" ? rightBase + barSpacing : left + barSpacing;
-    const fill = zone.direction === "short"
-      ? withAlpha(theme.red, "1c")
-      : withAlpha(theme.green, "1c");
-    const border = zone.direction === "short"
-      ? withAlpha(theme.red, "70")
-      : withAlpha(theme.green, "70");
-
-    result.push({
-      id: zone.id,
-      left: Math.min(left, right),
-      top: Math.min(top, bottom),
-      width: Math.max(2, Math.abs(right - left)),
-      height: Math.max(2, Math.abs(bottom - top)),
-      fill,
-      border,
-      label: zone.label || zone.zoneType,
-    });
-    return result;
-  }, []);
+    },
+    [],
+  );
 };
 
 const buildVerticalDrawingOverlays = (
   chart: any,
   drawings: ResearchDrawing[],
   theme: ResearchChartTheme,
-): OverlayShape[] => (
+): OverlayShape[] =>
   drawings.reduce<OverlayShape[]>((result, drawing, index) => {
     if (drawing.type !== "vertical" || typeof drawing.time !== "number") {
       return result;
     }
 
     const x = chart.timeScale().timeToCoordinate(drawing.time);
-    if (typeof x !== "number") {
+    if (!Number.isFinite(x)) {
       return result;
     }
 
@@ -475,15 +748,14 @@ const buildVerticalDrawingOverlays = (
       label: "V",
     });
     return result;
-  }, [])
-);
+  }, []);
 
 const buildBoxDrawingOverlays = (
   chart: any,
   series: any,
   drawings: ResearchDrawing[],
   theme: ResearchChartTheme,
-): OverlayShape[] => (
+): OverlayShape[] =>
   drawings.reduce<OverlayShape[]>((result, drawing, index) => {
     if (
       drawing.type !== "box" ||
@@ -501,10 +773,10 @@ const buildBoxDrawingOverlays = (
     const bottomCoordinate = series.priceToCoordinate?.(drawing.bottom);
 
     if (
-      typeof leftCoordinate !== "number" ||
-      typeof rightCoordinate !== "number" ||
-      typeof topCoordinate !== "number" ||
-      typeof bottomCoordinate !== "number"
+      !Number.isFinite(leftCoordinate) ||
+      !Number.isFinite(rightCoordinate) ||
+      !Number.isFinite(topCoordinate) ||
+      !Number.isFinite(bottomCoordinate)
     ) {
       return result;
     }
@@ -520,8 +792,296 @@ const buildBoxDrawingOverlays = (
       label: "BOX",
     });
     return result;
-  }, [])
-);
+  }, []);
+
+const buildTradeMarkers = (model: ChartModel, theme: ResearchChartTheme) => {
+  const entryMarkers = model.tradeMarkerGroups.entryGroups
+    .filter((group) => group.barIndex != null)
+    .map((group) => ({
+      id: group.id,
+      time: group.time,
+      barIndex: group.barIndex ?? 0,
+      position: group.dir === "long" ? "belowBar" : "aboveBar",
+      shape: group.dir === "long" ? "arrowUp" : "arrowDown",
+      color: group.dir === "long" ? theme.green : theme.red,
+      text: group.label,
+      size: group.tradeSelectionIds.length > 1 ? 1 : undefined,
+    }));
+  const exitMarkers = model.tradeMarkerGroups.exitGroups
+    .filter((group) => group.barIndex != null)
+    .map((group) => ({
+      id: group.id,
+      time: group.time,
+      barIndex: group.barIndex ?? 0,
+      position: group.dir === "long" ? "aboveBar" : "belowBar",
+      shape: "square" as const,
+      color: group.profitable === false ? theme.red : theme.green,
+      text: group.label,
+      size: group.tradeSelectionIds.length > 1 ? 1 : undefined,
+    }));
+
+  return [...entryMarkers, ...exitMarkers].sort(
+    (left, right) => left.time - right.time,
+  );
+};
+
+const clampCoordinate = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const buildTradeMarkerTargets = (
+  chart: any,
+  series: any,
+  model: ChartModel,
+  theme: ResearchChartTheme,
+  viewportWidth: number,
+  viewportHeight: number,
+): TradeMarkerTarget[] => {
+  const groups = [
+    ...model.tradeMarkerGroups.entryGroups,
+    ...model.tradeMarkerGroups.exitGroups,
+  ];
+
+  return groups.reduce<TradeMarkerTarget[]>((result, group) => {
+    if (group.barIndex == null) {
+      return result;
+    }
+
+    const bar = model.chartBars[group.barIndex];
+    if (!bar) {
+      return result;
+    }
+
+    const x = chart.timeScale().timeToCoordinate(bar.time);
+    const priceValue =
+      group.kind === "entry"
+        ? group.dir === "long"
+          ? bar.l
+          : bar.h
+        : group.dir === "long"
+          ? bar.h
+          : bar.l;
+    const yBase = series.priceToCoordinate?.(priceValue);
+
+    if (!Number.isFinite(x) || !Number.isFinite(yBase)) {
+      return result;
+    }
+
+    const size = group.tradeSelectionIds.length > 1 ? 28 : 24;
+    const top =
+      group.kind === "entry"
+        ? group.dir === "long"
+          ? yBase + 12
+          : yBase - size - 12
+        : group.dir === "long"
+          ? yBase - size - 12
+          : yBase + 12;
+    const left = x - size / 2;
+
+    result.push({
+      id: group.id,
+      left: clampCoordinate(left, 0, Math.max(0, viewportWidth - size)),
+      top: clampCoordinate(top, 0, Math.max(0, viewportHeight - size)),
+      size,
+      label: group.label,
+      color:
+        group.kind === "entry"
+          ? group.dir === "long"
+            ? withAlpha(theme.green, "22")
+            : withAlpha(theme.red, "22")
+          : group.profitable === false
+            ? withAlpha(theme.red, "22")
+            : withAlpha(theme.green, "22"),
+      borderColor:
+        group.kind === "entry"
+          ? group.dir === "long"
+            ? theme.green
+            : theme.red
+          : group.profitable === false
+            ? theme.red
+            : theme.green,
+      kind: group.kind,
+      tradeSelectionIds: group.tradeSelectionIds,
+    });
+    return result;
+  }, []);
+};
+
+const buildSelectedTradeOverlays = (
+  chart: any,
+  series: any,
+  model: ChartModel,
+  theme: ResearchChartTheme,
+  viewportWidth: number,
+  viewportHeight: number,
+): {
+  entryBadge: TradeBadgeOverlay | null;
+  exitBadge: TradeBadgeOverlay | null;
+  connector: TradeConnectorOverlay | null;
+  thresholdSegments: TradeThresholdOverlay[];
+} => {
+  const activeTrade = model.tradeOverlays.find(
+    (trade) => trade.tradeSelectionId === model.activeTradeSelectionId,
+  );
+
+  if (!activeTrade) {
+    return {
+      entryBadge: null,
+      exitBadge: null,
+      connector: null,
+      thresholdSegments: [],
+    };
+  }
+
+  const entryBar =
+    activeTrade.entryBarIndex != null
+      ? model.chartBars[activeTrade.entryBarIndex]
+      : null;
+  const exitBar =
+    activeTrade.exitBarIndex != null
+      ? model.chartBars[activeTrade.exitBarIndex]
+      : null;
+  const entryAnchorX = entryBar
+    ? chart.timeScale().timeToCoordinate(entryBar.time)
+    : null;
+  const exitAnchorX = exitBar
+    ? chart.timeScale().timeToCoordinate(exitBar.time)
+    : null;
+  const entryAnchorY =
+    typeof activeTrade.entryPrice === "number"
+      ? series.priceToCoordinate?.(activeTrade.entryPrice)
+      : null;
+  const exitAnchorY =
+    typeof activeTrade.exitPrice === "number"
+      ? series.priceToCoordinate?.(activeTrade.exitPrice)
+      : null;
+  const badgeOffset = 28;
+  const entryBadgeTop =
+    activeTrade.dir === "long"
+      ? typeof entryAnchorY === "number"
+        ? entryAnchorY + badgeOffset
+        : null
+      : typeof entryAnchorY === "number"
+        ? entryAnchorY - badgeOffset
+        : null;
+  const exitBadgeTop =
+    activeTrade.dir === "long"
+      ? typeof exitAnchorY === "number"
+        ? exitAnchorY - badgeOffset
+        : null
+      : typeof exitAnchorY === "number"
+        ? exitAnchorY + badgeOffset
+        : null;
+  const profitable = activeTrade.profitable !== false;
+  const hasEntryBadge =
+    typeof entryAnchorX === "number" && typeof entryBadgeTop === "number";
+  const hasExitBadge =
+    typeof exitAnchorX === "number" && typeof exitBadgeTop === "number";
+  const resolvedEntryAnchorX = hasEntryBadge ? entryAnchorX : 0;
+  const resolvedEntryBadgeTop = hasEntryBadge ? entryBadgeTop : 0;
+  const resolvedExitAnchorX = hasExitBadge ? exitAnchorX : 0;
+  const resolvedExitBadgeTop = hasExitBadge ? exitBadgeTop : 0;
+  const entryBadge = hasEntryBadge
+    ? {
+        id: `${activeTrade.tradeSelectionId}-entry`,
+        left: clampCoordinate(
+          resolvedEntryAnchorX,
+          60,
+          Math.max(60, viewportWidth - 60),
+        ),
+        top: clampCoordinate(
+          resolvedEntryBadgeTop,
+          18,
+          Math.max(18, viewportHeight - 18),
+        ),
+        text: `ENTRY ${typeof activeTrade.entryPrice === "number" ? activeTrade.entryPrice.toFixed(2) : "—"}`,
+        color: withAlpha(theme.amber, "20"),
+        borderColor: theme.amber,
+      }
+    : null;
+  const exitBadge = hasExitBadge
+    ? {
+        id: `${activeTrade.tradeSelectionId}-exit`,
+        left: clampCoordinate(
+          resolvedExitAnchorX,
+          60,
+          Math.max(60, viewportWidth - 60),
+        ),
+        top: clampCoordinate(
+          resolvedExitBadgeTop,
+          18,
+          Math.max(18, viewportHeight - 18),
+        ),
+        text: `EXIT ${typeof activeTrade.exitPrice === "number" ? activeTrade.exitPrice.toFixed(2) : "—"}`,
+        color: profitable
+          ? withAlpha(theme.green, "20")
+          : withAlpha(theme.red, "20"),
+        borderColor: profitable ? theme.green : theme.red,
+      }
+    : null;
+  const connector =
+    Number.isFinite(entryAnchorX) &&
+    Number.isFinite(entryAnchorY) &&
+    Number.isFinite(exitAnchorX) &&
+    Number.isFinite(exitAnchorY) &&
+    exitAnchorX >= entryAnchorX
+      ? {
+          color: profitable ? theme.green : theme.red,
+          x1: entryAnchorX,
+          y1: entryAnchorY,
+          x2: exitAnchorX,
+          y2: exitAnchorY,
+        }
+      : null;
+  const thresholdSegments =
+    activeTrade.thresholdPath?.segments.reduce<TradeThresholdOverlay[]>(
+      (result, segment) => {
+        const startBar = model.chartBars[segment.startBarIndex];
+        const endBar = model.chartBars[segment.endBarIndex];
+        const left = startBar
+          ? chart.timeScale().timeToCoordinate(startBar.time)
+          : null;
+        const right = endBar
+          ? chart.timeScale().timeToCoordinate(endBar.time)
+          : null;
+        const top = series.priceToCoordinate?.(segment.value);
+
+        if (
+          !Number.isFinite(left) ||
+          !Number.isFinite(right) ||
+          !Number.isFinite(top)
+        ) {
+          return result;
+        }
+
+        const color =
+          segment.kind === "take_profit"
+            ? theme.green
+            : segment.kind === "stop_loss" || segment.kind === "trail_stop"
+              ? theme.red
+              : theme.amber;
+
+        result.push({
+          id: segment.id,
+          left: Math.min(left, right),
+          top,
+          width: Math.max(2, Math.abs(right - left)),
+          style: segment.style,
+          color,
+          label: segment.label,
+        });
+
+        return result;
+      },
+      [],
+    ) ?? [];
+
+  return {
+    entryBadge,
+    exitBadge,
+    connector,
+    thresholdSegments,
+  };
+};
 
 const syncStudySeries = (
   chart: any,
@@ -534,11 +1094,11 @@ const syncStudySeries = (
   specs.forEach((spec) => {
     const existing = nextRegistry[spec.key];
     const SeriesCtor = SERIES_TYPE_MAP[spec.seriesType];
-    const seriesData = spec.data.map((point) => (
+    const seriesData = spec.data.map((point) =>
       point.color
         ? { time: point.time, value: point.value, color: point.color }
-        : { time: point.time, value: point.value }
-    ));
+        : { time: point.time, value: point.value },
+    );
 
     if (
       !existing ||
@@ -590,19 +1150,23 @@ export const ResearchChartSurface = ({
   showAttributionLogo = false,
   hideCrosshair = false,
   topOverlay = null,
+  leftOverlay = null,
   bottomOverlay = null,
   topOverlayHeight = 0,
+  leftOverlayWidth = 0,
   bottomOverlayHeight = 0,
   defaultBaseSeriesType = "candles",
   defaultShowVolume = true,
   defaultShowPriceLine = true,
   defaultScaleMode = "linear",
-  drawings = [],
-  referenceLines = [],
+  drawings = EMPTY_DRAWINGS,
+  referenceLines = EMPTY_REFERENCE_LINES,
   drawMode = null,
   onAddDrawing,
   onAddHorizontalLevel,
+  onTradeMarkerSelection,
 }: ResearchChartSurfaceProps) => {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
@@ -615,6 +1179,7 @@ export const ResearchChartSurface = ({
   const studyRegistryRef = useRef<Record<string, StudyRegistryEntry>>({});
   const visibleLogicalRangeRef = useRef<any>(null);
   const initializedRangeRef = useRef(false);
+  const lastSelectionFocusTokenRef = useRef<number | null>(null);
   const drawingLinesRef = useRef<Record<BaseSeriesType, any[]>>({
     candles: [],
     bars: [],
@@ -631,10 +1196,14 @@ export const ResearchChartSurface = ({
   });
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
-  const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(defaultBaseSeriesType);
+  const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
+    defaultBaseSeriesType,
+  );
   const [showVolume, setShowVolume] = useState(defaultShowVolume);
   const [scaleMode, setScaleMode] = useState<ScaleMode>(defaultScaleMode);
-  const [crosshairMode, setCrosshairMode] = useState<"magnet" | "free">("magnet");
+  const [crosshairMode, setCrosshairMode] = useState<"magnet" | "free">(
+    "magnet",
+  );
   const [showPriceLine, setShowPriceLine] = useState(defaultShowPriceLine);
   const [showGrid, setShowGrid] = useState(true);
   const [showTimeScaleState, setShowTimeScaleState] = useState(!hideTimeScale);
@@ -643,14 +1212,61 @@ export const ResearchChartSurface = ({
   const [overlayRevision, setOverlayRevision] = useState(0);
   const [windowOverlays, setWindowOverlays] = useState<OverlayShape[]>([]);
   const [zoneOverlays, setZoneOverlays] = useState<OverlayShape[]>([]);
-  const [verticalDrawingOverlays, setVerticalDrawingOverlays] = useState<OverlayShape[]>([]);
-  const [boxDrawingOverlays, setBoxDrawingOverlays] = useState<OverlayShape[]>([]);
-  const [pendingBoxAnchor, setPendingBoxAnchor] = useState<{ time: number; price: number } | null>(null);
+  const [verticalDrawingOverlays, setVerticalDrawingOverlays] = useState<
+    OverlayShape[]
+  >([]);
+  const [boxDrawingOverlays, setBoxDrawingOverlays] = useState<OverlayShape[]>(
+    [],
+  );
+  const [tradeMarkerTargets, setTradeMarkerTargets] = useState<
+    TradeMarkerTarget[]
+  >([]);
+  const [tradeThresholdOverlays, setTradeThresholdOverlays] = useState<
+    TradeThresholdOverlay[]
+  >([]);
+  const [selectedTradeConnector, setSelectedTradeConnector] =
+    useState<TradeConnectorOverlay | null>(null);
+  const [selectedTradeEntryBadge, setSelectedTradeEntryBadge] =
+    useState<TradeBadgeOverlay | null>(null);
+  const [selectedTradeExitBadge, setSelectedTradeExitBadge] =
+    useState<TradeBadgeOverlay | null>(null);
+  const [pendingBoxAnchor, setPendingBoxAnchor] = useState<{
+    time: number;
+    price: number;
+  } | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const syncOverlayState = (
     setter: Dispatch<SetStateAction<OverlayShape[]>>,
     next: OverlayShape[],
   ) => {
     setter((current) => (overlayShapesEqual(current, next) ? current : next));
+  };
+  const syncTradeMarkerTargetsState = (next: TradeMarkerTarget[]) => {
+    setTradeMarkerTargets((current) =>
+      tradeMarkerTargetsEqual(current, next) ? current : next,
+    );
+  };
+  const syncTradeThresholdOverlaysState = (next: TradeThresholdOverlay[]) => {
+    setTradeThresholdOverlays((current) =>
+      tradeThresholdOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncSelectedTradeConnectorState = (
+    next: TradeConnectorOverlay | null,
+  ) => {
+    setSelectedTradeConnector((current) =>
+      tradeConnectorOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncSelectedTradeEntryBadgeState = (next: TradeBadgeOverlay | null) => {
+    setSelectedTradeEntryBadge((current) =>
+      tradeBadgeOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncSelectedTradeExitBadgeState = (next: TradeBadgeOverlay | null) => {
+    setSelectedTradeExitBadge((current) =>
+      tradeBadgeOverlaysEqual(current, next) ? current : next,
+    );
   };
 
   useEffect(() => {
@@ -674,6 +1290,27 @@ export const ResearchChartSurface = ({
   }, [hideTimeScale]);
 
   useEffect(() => {
+    if (!isFullscreen || typeof document === "undefined") {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsFullscreen(false);
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
     barLookupRef.current = new Map(
       model.chartBars.map((bar, index) => [
         bar.time,
@@ -688,7 +1325,8 @@ export const ResearchChartSurface = ({
           sessionVwap: bar.sessionVwap ?? null,
           averageTradeSize: bar.averageTradeSize ?? null,
           source: bar.source ?? null,
-          previousClose: index > 0 ? model.chartBars[index - 1]?.c ?? null : null,
+          previousClose:
+            index > 0 ? (model.chartBars[index - 1]?.c ?? null) : null,
           open: bar.o,
           high: bar.h,
           low: bar.l,
@@ -699,15 +1337,16 @@ export const ResearchChartSurface = ({
   }, [model.chartBars]);
 
   useEffect(() => {
-    activePriceSeriesRef.current = (
-      {
-        candles: candleSeriesRef.current,
-        bars: barSeriesRef.current,
-        line: lineSeriesRef.current,
-        area: areaSeriesRef.current,
-        baseline: baselineSeriesRef.current,
-      } satisfies Record<BaseSeriesType, any>
-    )[baseSeriesType] || candleSeriesRef.current;
+    activePriceSeriesRef.current =
+      (
+        {
+          candles: candleSeriesRef.current,
+          bars: barSeriesRef.current,
+          line: lineSeriesRef.current,
+          area: areaSeriesRef.current,
+          baseline: baselineSeriesRef.current,
+        } satisfies Record<BaseSeriesType, any>
+      )[baseSeriesType] || candleSeriesRef.current;
   }, [baseSeriesType]);
 
   useLayoutEffect(() => {
@@ -738,10 +1377,12 @@ export const ResearchChartSurface = ({
           vertLine: {
             visible: !hideCrosshair,
             labelVisible: !hideCrosshair,
+            labelBackgroundColor: withAlpha(theme.bg3, "f0"),
           },
           horzLine: {
             visible: !hideCrosshair,
             labelVisible: !hideCrosshair,
+            labelBackgroundColor: withAlpha(theme.bg3, "f0"),
           },
         },
       });
@@ -844,9 +1485,12 @@ export const ResearchChartSurface = ({
         }
 
         const timeValue = chart.timeScale().coordinateToTime(param.point.x);
-        const price = activePriceSeriesRef.current?.coordinateToPrice?.(param.point.y);
+        const price = activePriceSeriesRef.current?.coordinateToPrice?.(
+          param.point.y,
+        );
         const resolvedTime = typeof timeValue === "number" ? timeValue : null;
-        const resolvedPrice = typeof price === "number" && Number.isFinite(price) ? price : null;
+        const resolvedPrice =
+          typeof price === "number" && Number.isFinite(price) ? price : null;
 
         if (interactionRef.current.drawMode === "horizontal") {
           if (resolvedPrice == null) {
@@ -858,7 +1502,9 @@ export const ResearchChartSurface = ({
               type: "horizontal",
               price: resolvedPrice,
             });
-          } else if (typeof interactionRef.current.onAddHorizontalLevel === "function") {
+          } else if (
+            typeof interactionRef.current.onAddHorizontalLevel === "function"
+          ) {
             interactionRef.current.onAddHorizontalLevel(resolvedPrice);
           }
           return;
@@ -877,7 +1523,11 @@ export const ResearchChartSurface = ({
         }
 
         if (interactionRef.current.drawMode === "box") {
-          if (resolvedTime == null || resolvedPrice == null || typeof interactionRef.current.onAddDrawing !== "function") {
+          if (
+            resolvedTime == null ||
+            resolvedPrice == null ||
+            typeof interactionRef.current.onAddDrawing !== "function"
+          ) {
             return;
           }
 
@@ -901,11 +1551,15 @@ export const ResearchChartSurface = ({
         }
       };
 
-      chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+      chart
+        .timeScale()
+        .subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       chart.subscribeCrosshairMove(handleCrosshairMove);
       chart.subscribeClick(handleClick);
     } catch (error) {
-      setChartError(error instanceof Error ? error.message : "chart unavailable");
+      setChartError(
+        error instanceof Error ? error.message : "chart unavailable",
+      );
       if (chart) {
         chart.remove();
       }
@@ -914,7 +1568,9 @@ export const ResearchChartSurface = ({
 
     return () => {
       if (chart && handleVisibleRangeChange) {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+        chart
+          .timeScale()
+          .unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       }
       if (chart && handleCrosshairMove) {
         chart.unsubscribeCrosshairMove(handleCrosshairMove);
@@ -945,10 +1601,16 @@ export const ResearchChartSurface = ({
       activePriceSeriesRef.current = null;
       visibleLogicalRangeRef.current = null;
       initializedRangeRef.current = false;
+      lastSelectionFocusTokenRef.current = null;
       setWindowOverlays([]);
       setZoneOverlays([]);
       setVerticalDrawingOverlays([]);
       setBoxDrawingOverlays([]);
+      syncTradeMarkerTargetsState([]);
+      syncTradeThresholdOverlaysState([]);
+      syncSelectedTradeConnectorState(null);
+      syncSelectedTradeEntryBadgeState(null);
+      syncSelectedTradeExitBadgeState(null);
       setPendingBoxAnchor(null);
     };
   }, [
@@ -986,40 +1648,49 @@ export const ResearchChartSurface = ({
     const priceFormat = {
       type: "price",
       precision: pricePrecision,
-      minMove: 1 / (10 ** pricePrecision),
+      minMove: 1 / 10 ** pricePrecision,
     } as const;
     const closeSeriesData = model.chartBars.map((bar) => ({
       time: bar.time,
       value: bar.c,
     }));
 
-    candleSeries.setData(model.chartBars.map((bar) => ({
-      time: bar.time,
-      open: bar.o,
-      high: bar.h,
-      low: bar.l,
-      close: bar.c,
-      color: bar.color,
-      borderColor: bar.borderColor,
-      wickColor: bar.wickColor,
-    })));
-    barSeries.setData(model.chartBars.map((bar) => ({
-      time: bar.time,
-      open: bar.o,
-      high: bar.h,
-      low: bar.l,
-      close: bar.c,
-    })));
+    candleSeries.setData(
+      model.chartBars.map((bar) => ({
+        time: bar.time,
+        open: bar.o,
+        high: bar.h,
+        low: bar.l,
+        close: bar.c,
+        color: bar.color,
+        borderColor: bar.borderColor,
+        wickColor: bar.wickColor,
+      })),
+    );
+    barSeries.setData(
+      model.chartBars.map((bar) => ({
+        time: bar.time,
+        open: bar.o,
+        high: bar.h,
+        low: bar.l,
+        close: bar.c,
+      })),
+    );
     lineSeries.setData(closeSeriesData);
     areaSeries.setData(closeSeriesData);
     baselineSeries.setData(closeSeriesData);
-    volumeSeries.setData(showVolume ? model.chartBars.map((bar) => ({
-      time: bar.time,
-      value: bar.v,
-      color: bar.c >= bar.o
-        ? withAlpha(theme.green, "55")
-        : withAlpha(theme.red, "55"),
-    })) : []);
+    volumeSeries.setData(
+      showVolume
+        ? model.chartBars.map((bar) => ({
+            time: bar.time,
+            value: bar.v,
+            color:
+              bar.c >= bar.o
+                ? withAlpha(theme.green, "55")
+                : withAlpha(theme.red, "55"),
+          }))
+        : [],
+    );
 
     const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
 
@@ -1072,17 +1743,25 @@ export const ResearchChartSurface = ({
       invertScale,
       visible: showRightPriceScale,
       borderVisible: showRightPriceScale,
-      ticksVisible: showRightPriceScale && !compact,
+      ticksVisible: showRightPriceScale,
+      minimumWidth: compact ? 34 : 50,
       textColor: theme.textMuted,
-      mode: scaleMode === "log"
-        ? PriceScaleMode.Logarithmic
-        : scaleMode === "indexed"
-          ? PriceScaleMode.IndexedTo100
-        : scaleMode === "percentage"
-          ? PriceScaleMode.Percentage
-          : PriceScaleMode.Normal,
+      mode:
+        scaleMode === "log"
+          ? PriceScaleMode.Logarithmic
+          : scaleMode === "indexed"
+            ? PriceScaleMode.IndexedTo100
+            : scaleMode === "percentage"
+              ? PriceScaleMode.Percentage
+              : PriceScaleMode.Normal,
     });
     chartRef.current.applyOptions({
+      layout: {
+        background: { type: ColorType.Solid, color: theme.bg2 },
+        textColor: theme.textMuted,
+        fontFamily: theme.mono,
+        fontSize: compact ? 8 : 11,
+      },
       grid: {
         vertLines: { color: withAlpha(theme.border, "30"), visible: showGrid },
         horzLines: { color: withAlpha(theme.border, "50"), visible: showGrid },
@@ -1099,6 +1778,7 @@ export const ResearchChartSurface = ({
           style: LineStyle.Dashed,
           visible: !hideCrosshair,
           labelVisible: !hideCrosshair,
+          labelBackgroundColor: withAlpha(theme.bg3, "f0"),
         },
         horzLine: {
           color: withAlpha(theme.textMuted, "90"),
@@ -1106,36 +1786,66 @@ export const ResearchChartSurface = ({
           style: LineStyle.Dashed,
           visible: !hideCrosshair,
           labelVisible: !hideCrosshair,
+          labelBackgroundColor: withAlpha(theme.bg3, "f0"),
         },
       },
-      handleScroll: enableInteractions,
-      handleScale: enableInteractions,
+      handleScroll: enableInteractions
+        ? {
+            mouseWheel: true,
+            pressedMouseMove: true,
+            horzTouchDrag: true,
+            vertTouchDrag: true,
+          }
+        : false,
+      handleScale: enableInteractions
+        ? {
+            mouseWheel: true,
+            pinch: true,
+            axisPressedMouseMove: {
+              time: true,
+              price: true,
+            },
+            axisDoubleClickReset: {
+              time: true,
+              price: true,
+            },
+          }
+        : false,
       timeScale: {
         borderColor: theme.border,
+        borderVisible: !hideTimeScale && showTimeScaleState,
         visible: !hideTimeScale && showTimeScaleState,
         timeVisible: !hideTimeScale && showTimeScaleState,
         secondsVisible: false,
-        ticksVisible: !compact && !hideTimeScale && showTimeScaleState,
-        minBarSpacing: compact ? 1 : 6,
+        ticksVisible: !hideTimeScale && showTimeScaleState,
+        rightOffset: compact ? 1 : 6,
+        rightBarStaysOnScroll: true,
+        lockVisibleTimeRangeOnResize: true,
+        minBarSpacing: compact ? 0.6 : 5,
       },
     });
-    activePriceSeriesRef.current = (
-      {
-        candles: candleSeries,
-        bars: barSeries,
-        line: lineSeries,
-        area: areaSeries,
-        baseline: baselineSeries,
-      } satisfies Record<BaseSeriesType, any>
-    )[baseSeriesType] || candleSeries;
+    activePriceSeriesRef.current =
+      (
+        {
+          candles: candleSeries,
+          bars: barSeries,
+          line: lineSeries,
+          area: areaSeries,
+          baseline: baselineSeries,
+        } satisfies Record<BaseSeriesType, any>
+      )[baseSeriesType] || candleSeries;
 
     if (visibleLogicalRangeRef.current) {
-      chartRef.current.timeScale().setVisibleLogicalRange(visibleLogicalRangeRef.current);
+      chartRef.current
+        .timeScale()
+        .setVisibleLogicalRange(visibleLogicalRangeRef.current);
       return;
     }
 
     if (!initializedRangeRef.current && model.defaultVisibleLogicalRange) {
-      chartRef.current.timeScale().setVisibleLogicalRange(model.defaultVisibleLogicalRange);
+      chartRef.current
+        .timeScale()
+        .setVisibleLogicalRange(model.defaultVisibleLogicalRange);
       initializedRangeRef.current = true;
       return;
     }
@@ -1168,6 +1878,24 @@ export const ResearchChartSurface = ({
   ]);
 
   useLayoutEffect(() => {
+    if (
+      !chartRef.current ||
+      !model.selectionFocus?.visibleLogicalRange ||
+      model.selectionFocus.token === lastSelectionFocusTokenRef.current
+    ) {
+      return;
+    }
+
+    chartRef.current
+      .timeScale()
+      .setVisibleLogicalRange(model.selectionFocus.visibleLogicalRange);
+    visibleLogicalRangeRef.current = model.selectionFocus.visibleLogicalRange;
+    initializedRangeRef.current = true;
+    lastSelectionFocusTokenRef.current = model.selectionFocus.token;
+    setOverlayRevision((value) => value + 1);
+  }, [model.selectionFocus]);
+
+  useLayoutEffect(() => {
     if (!chartRef.current) {
       return;
     }
@@ -1184,7 +1912,10 @@ export const ResearchChartSurface = ({
       return;
     }
 
-    const markers = model.indicatorMarkerPayload.overviewMarkers.map((marker) => ({
+    const markers = [
+      ...model.indicatorMarkerPayload.overviewMarkers,
+      ...buildTradeMarkers(model, theme),
+    ].map((marker) => ({
       time: marker.time,
       position: marker.position,
       shape: marker.shape,
@@ -1193,7 +1924,7 @@ export const ResearchChartSurface = ({
       size: marker.size,
     }));
     markerApisRef.current.forEach((markerApi) => markerApi.setMarkers(markers));
-  }, [model.indicatorMarkerPayload]);
+  }, [model.indicatorMarkerPayload, model.tradeMarkerGroups, theme]);
 
   useLayoutEffect(() => {
     if (
@@ -1214,15 +1945,23 @@ export const ResearchChartSurface = ({
       baseline: baselineSeriesRef.current,
     } satisfies Record<BaseSeriesType, any>;
 
-    (Object.keys(priceSeriesByType) as BaseSeriesType[]).forEach((seriesType) => {
-      drawingLinesRef.current[seriesType].forEach((line) => priceSeriesByType[seriesType].removePriceLine(line));
-      drawingLinesRef.current[seriesType] = [];
-    });
+    (Object.keys(priceSeriesByType) as BaseSeriesType[]).forEach(
+      (seriesType) => {
+        drawingLinesRef.current[seriesType].forEach((line) =>
+          priceSeriesByType[seriesType].removePriceLine(line),
+        );
+        drawingLinesRef.current[seriesType] = [];
+      },
+    );
 
     const addPriceLine = (lineConfig: any) => {
-      (Object.keys(priceSeriesByType) as BaseSeriesType[]).forEach((seriesType) => {
-        drawingLinesRef.current[seriesType].push(priceSeriesByType[seriesType].createPriceLine(lineConfig));
-      });
+      (Object.keys(priceSeriesByType) as BaseSeriesType[]).forEach(
+        (seriesType) => {
+          drawingLinesRef.current[seriesType].push(
+            priceSeriesByType[seriesType].createPriceLine(lineConfig),
+          );
+        },
+      );
     };
 
     const sessionOpen = model.chartBars[0]?.o;
@@ -1239,21 +1978,27 @@ export const ResearchChartSurface = ({
     }
 
     drawings
-      .filter((drawing) => drawing?.type === "horizontal" && Number.isFinite(drawing?.price))
+      .filter(
+        (drawing) =>
+          drawing?.type === "horizontal" && Number.isFinite(drawing?.price),
+      )
       .forEach((drawing) => {
         const drawingLine = {
           price: Number(drawing.price),
           color: theme.amber,
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "L",
-      };
+          axisLabelVisible: true,
+          title: "L",
+        };
         addPriceLine(drawingLine);
       });
 
     referenceLines
-      .filter((line) => typeof line?.price === "number" && Number.isFinite(line.price))
+      .filter(
+        (line) =>
+          typeof line?.price === "number" && Number.isFinite(line.price),
+      )
       .forEach((line) => {
         const referenceLine = {
           price: line.price,
@@ -1268,22 +2013,37 @@ export const ResearchChartSurface = ({
   }, [drawings, model.chartBars, referenceLines, theme.amber, theme.textMuted]);
 
   useLayoutEffect(() => {
-    if (!chartRef.current || !activePriceSeriesRef.current || !containerRef.current) {
+    if (
+      !chartRef.current ||
+      !activePriceSeriesRef.current ||
+      !containerRef.current
+    ) {
       syncOverlayState(setWindowOverlays, []);
       syncOverlayState(setZoneOverlays, []);
       syncOverlayState(setVerticalDrawingOverlays, []);
       syncOverlayState(setBoxDrawingOverlays, []);
+      syncTradeMarkerTargetsState([]);
+      syncTradeThresholdOverlaysState([]);
+      syncSelectedTradeConnectorState(null);
+      syncSelectedTradeEntryBadgeState(null);
+      syncSelectedTradeExitBadgeState(null);
       return;
     }
 
     const viewportHeight = containerRef.current.clientHeight;
+    const viewportWidth = containerRef.current.clientWidth;
     syncOverlayState(
       setWindowOverlays,
       buildWindowOverlays(chartRef.current, model, theme, viewportHeight),
     );
     syncOverlayState(
       setZoneOverlays,
-      buildZoneOverlays(chartRef.current, activePriceSeriesRef.current, model, theme),
+      buildZoneOverlays(
+        chartRef.current,
+        activePriceSeriesRef.current,
+        model,
+        theme,
+      ),
     );
     syncOverlayState(
       setVerticalDrawingOverlays,
@@ -1291,12 +2051,42 @@ export const ResearchChartSurface = ({
     );
     syncOverlayState(
       setBoxDrawingOverlays,
-      buildBoxDrawingOverlays(chartRef.current, activePriceSeriesRef.current, drawings, theme),
+      buildBoxDrawingOverlays(
+        chartRef.current,
+        activePriceSeriesRef.current,
+        drawings,
+        theme,
+      ),
     );
+    syncTradeMarkerTargetsState(
+      buildTradeMarkerTargets(
+        chartRef.current,
+        activePriceSeriesRef.current,
+        model,
+        theme,
+        viewportWidth,
+        viewportHeight,
+      ),
+    );
+    const selectedTradeOverlays = buildSelectedTradeOverlays(
+      chartRef.current,
+      activePriceSeriesRef.current,
+      model,
+      theme,
+      viewportWidth,
+      viewportHeight,
+    );
+    syncTradeThresholdOverlaysState(selectedTradeOverlays.thresholdSegments);
+    syncSelectedTradeConnectorState(selectedTradeOverlays.connector);
+    syncSelectedTradeEntryBadgeState(selectedTradeOverlays.entryBadge);
+    syncSelectedTradeExitBadgeState(selectedTradeOverlays.exitBadge);
   }, [
     baseSeriesType,
     drawings,
     model.chartBars,
+    model.activeTradeSelectionId,
+    model.tradeMarkerGroups,
+    model.tradeOverlays,
     model.indicatorWindows,
     model.indicatorZones,
     overlayRevision,
@@ -1309,62 +2099,89 @@ export const ResearchChartSurface = ({
     theme.textMuted,
   ]);
 
-  const displayBar = hoverBar || (() => {
-    const lastBar = model.chartBars[model.chartBars.length - 1];
-    if (!lastBar) {
-      return null;
-    }
+  const displayBar =
+    hoverBar ||
+    (() => {
+      const lastBar = model.chartBars[model.chartBars.length - 1];
+      if (!lastBar) {
+        return null;
+      }
 
-    return {
-      index: model.chartBars.length - 1,
-      time: lastBar.time,
-      ts: lastBar.ts,
-      date: lastBar.date,
-      volume: lastBar.v,
-      accumulatedVolume: lastBar.accumulatedVolume ?? null,
-      vwap: lastBar.vwap ?? null,
-      sessionVwap: lastBar.sessionVwap ?? null,
-      averageTradeSize: lastBar.averageTradeSize ?? null,
-      source: lastBar.source ?? null,
-      previousClose: model.chartBars.length > 1 ? model.chartBars[model.chartBars.length - 2]?.c ?? null : null,
-      open: lastBar.o,
-      high: lastBar.h,
-      low: lastBar.l,
-      close: lastBar.c,
-    };
-  })();
-  const displayDeltaBase = displayBar?.previousClose ?? displayBar?.open ?? null;
-  const displayDelta = displayBar && displayDeltaBase != null
-    ? displayBar.close - displayDeltaBase
-    : null;
-  const displayDeltaValue = typeof displayDelta === "number" ? displayDelta : null;
-  const displayDeltaPct = displayBar && displayDeltaBase != null && displayDeltaBase !== 0
-    ? ((displayDeltaValue ?? 0) / displayDeltaBase) * 100
-    : null;
-  const displayGap = displayBar && displayBar.previousClose != null
-    ? displayBar.open - displayBar.previousClose
-    : null;
-  const displayGapPct = displayBar && displayBar.previousClose != null && displayBar.previousClose !== 0
-    ? ((displayGap ?? 0) / displayBar.previousClose) * 100
-    : null;
+      return {
+        index: model.chartBars.length - 1,
+        time: lastBar.time,
+        ts: lastBar.ts,
+        date: lastBar.date,
+        volume: lastBar.v,
+        accumulatedVolume: lastBar.accumulatedVolume ?? null,
+        vwap: lastBar.vwap ?? null,
+        sessionVwap: lastBar.sessionVwap ?? null,
+        averageTradeSize: lastBar.averageTradeSize ?? null,
+        source: lastBar.source ?? null,
+        previousClose:
+          model.chartBars.length > 1
+            ? (model.chartBars[model.chartBars.length - 2]?.c ?? null)
+            : null,
+        open: lastBar.o,
+        high: lastBar.h,
+        low: lastBar.l,
+        close: lastBar.c,
+      };
+    })();
+  const displayDeltaBase =
+    displayBar?.previousClose ?? displayBar?.open ?? null;
+  const displayDelta =
+    displayBar && displayDeltaBase != null
+      ? displayBar.close - displayDeltaBase
+      : null;
+  const displayDeltaValue =
+    typeof displayDelta === "number" ? displayDelta : null;
+  const displayDeltaPct =
+    displayBar && displayDeltaBase != null && displayDeltaBase !== 0
+      ? ((displayDeltaValue ?? 0) / displayDeltaBase) * 100
+      : null;
+  const displayGap =
+    displayBar && displayBar.previousClose != null
+      ? displayBar.open - displayBar.previousClose
+      : null;
+  const displayGapPct =
+    displayBar &&
+    displayBar.previousClose != null &&
+    displayBar.previousClose !== 0
+      ? ((displayGap ?? 0) / displayBar.previousClose) * 100
+      : null;
   const displayRange = displayBar ? displayBar.high - displayBar.low : null;
-  const displayRangePct = displayBar && displayDeltaBase != null && displayDeltaBase !== 0 && displayRange != null
-    ? (displayRange / displayDeltaBase) * 100
-    : null;
+  const displayRangePct =
+    displayBar &&
+    displayDeltaBase != null &&
+    displayDeltaBase !== 0 &&
+    displayRange != null
+      ? (displayRange / displayDeltaBase) * 100
+      : null;
   const displayBody = displayBar ? displayBar.close - displayBar.open : null;
-  const upperWick = displayBar ? displayBar.high - Math.max(displayBar.open, displayBar.close) : null;
-  const lowerWick = displayBar ? Math.min(displayBar.open, displayBar.close) - displayBar.low : null;
+  const upperWick = displayBar
+    ? displayBar.high - Math.max(displayBar.open, displayBar.close)
+    : null;
+  const lowerWick = displayBar
+    ? Math.min(displayBar.open, displayBar.close) - displayBar.low
+    : null;
   const hl2 = displayBar ? (displayBar.high + displayBar.low) / 2 : null;
-  const hlc3 = displayBar ? (displayBar.high + displayBar.low + displayBar.close) / 3 : null;
-  const ohlc4 = displayBar ? (displayBar.open + displayBar.high + displayBar.low + displayBar.close) / 4 : null;
+  const hlc3 = displayBar
+    ? (displayBar.high + displayBar.low + displayBar.close) / 3
+    : null;
+  const ohlc4 = displayBar
+    ? (displayBar.open + displayBar.high + displayBar.low + displayBar.close) /
+      4
+    : null;
   const pricePrecision = resolvePricePrecision(model.chartBars);
-  const formatPrice = (value: number | null | undefined): string => (
+  const formatPrice = (value: number | null | undefined): string =>
     typeof value === "number" && Number.isFinite(value)
       ? value.toFixed(pricePrecision)
-      : "—"
-  );
+      : "—";
   const deltaColor = (displayDeltaValue ?? 0) >= 0 ? theme.green : theme.red;
-  const setAdjustedVisibleRange = (nextRange: { from: number; to: number } | null) => {
+  const setAdjustedVisibleRange = (
+    nextRange: { from: number; to: number } | null,
+  ) => {
     if (!chartRef.current || !nextRange) {
       return;
     }
@@ -1374,20 +2191,27 @@ export const ResearchChartSurface = ({
     setOverlayRevision((value) => value + 1);
   };
   const zoomVisibleRange = (factor: number) => {
-    const currentRange = visibleLogicalRangeRef.current || chartRef.current?.timeScale?.().getVisibleLogicalRange?.();
+    const currentRange =
+      visibleLogicalRangeRef.current ||
+      chartRef.current?.timeScale?.().getVisibleLogicalRange?.();
     if (!currentRange) {
       return;
     }
 
     const center = (currentRange.from + currentRange.to) / 2;
-    const halfRange = Math.max(4, ((currentRange.to - currentRange.from) / 2) * factor);
+    const halfRange = Math.max(
+      4,
+      ((currentRange.to - currentRange.from) / 2) * factor,
+    );
     setAdjustedVisibleRange({
       from: center - halfRange,
       to: center + halfRange,
     });
   };
   const panVisibleRange = (barsDelta: number) => {
-    const currentRange = visibleLogicalRangeRef.current || chartRef.current?.timeScale?.().getVisibleLogicalRange?.();
+    const currentRange =
+      visibleLogicalRangeRef.current ||
+      chartRef.current?.timeScale?.().getVisibleLogicalRange?.();
     if (!currentRange) {
       return;
     }
@@ -1398,63 +2222,96 @@ export const ResearchChartSurface = ({
     });
   };
   const cycleScaleMode = () => {
-    setScaleMode((value) => (
+    setScaleMode((value) =>
       value === "linear"
         ? "log"
         : value === "log"
           ? "percentage"
           : value === "percentage"
             ? "indexed"
-            : "linear"
-    ));
+            : "linear",
+    );
   };
-  const resetVisibleRange = () => chartRef.current?.timeScale?.().resetTimeScale?.();
+  const resetVisibleRange = () =>
+    chartRef.current?.timeScale?.().resetTimeScale?.();
   const fitVisibleRange = () => chartRef.current?.timeScale?.().fitContent?.();
-  const scrollToRealtime = () => chartRef.current?.timeScale?.().scrollToRealTime?.();
-  const surfaceControls = useMemo<ChartSurfaceControls>(() => ({
-    baseSeriesType,
-    setBaseSeriesType,
-    showVolume,
-    setShowVolume,
-    scaleMode,
-    setScaleMode,
-    crosshairMode,
-    setCrosshairMode,
-    showPriceLine,
-    setShowPriceLine,
-    showGrid,
-    setShowGrid,
-    showTimeScale: showTimeScaleState,
-    setShowTimeScale: setShowTimeScaleState,
-    autoScale,
-    setAutoScale,
-    invertScale,
-    setInvertScale,
-    cycleScaleMode,
-    zoomIn: () => zoomVisibleRange(0.8),
-    zoomOut: () => zoomVisibleRange(1.25),
-    panLeft: () => panVisibleRange(-12),
-    panRight: () => panVisibleRange(12),
-    reset: resetVisibleRange,
-    fit: fitVisibleRange,
-    realtime: scrollToRealtime,
-  }), [
-    autoScale,
-    baseSeriesType,
-    crosshairMode,
-    invertScale,
-    scaleMode,
-    showGrid,
-    showPriceLine,
-    showTimeScaleState,
-    showVolume,
-  ]);
-  const resolvedTopOverlay = typeof topOverlay === "function"
-    ? topOverlay(surfaceControls)
-    : topOverlay;
-  const resolvedBottomOverlay = typeof bottomOverlay === "function"
-    ? bottomOverlay(surfaceControls)
-    : bottomOverlay;
+  const scrollToRealtime = () =>
+    chartRef.current?.timeScale?.().scrollToRealTime?.();
+  const takeSnapshot = () => {
+    const canvas = chartRef.current?.takeScreenshot?.(true, !hideCrosshair);
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = "chart-snapshot.png";
+    link.click();
+  };
+  const toggleFullscreen = () => {
+    setIsFullscreen((current) => !current);
+  };
+  const surfaceControls = useMemo<ChartSurfaceControls>(
+    () => ({
+      baseSeriesType,
+      setBaseSeriesType,
+      activeBar: displayBar,
+      showVolume,
+      setShowVolume,
+      scaleMode,
+      setScaleMode,
+      crosshairMode,
+      setCrosshairMode,
+      showPriceLine,
+      setShowPriceLine,
+      showGrid,
+      setShowGrid,
+      showTimeScale: showTimeScaleState,
+      setShowTimeScale: setShowTimeScaleState,
+      autoScale,
+      setAutoScale,
+      invertScale,
+      setInvertScale,
+      cycleScaleMode,
+      zoomIn: () => zoomVisibleRange(0.8),
+      zoomOut: () => zoomVisibleRange(1.25),
+      panLeft: () => panVisibleRange(-12),
+      panRight: () => panVisibleRange(12),
+      reset: resetVisibleRange,
+      fit: fitVisibleRange,
+      realtime: scrollToRealtime,
+      takeSnapshot,
+      toggleFullscreen,
+      isFullscreen,
+    }),
+    [
+      autoScale,
+      baseSeriesType,
+      crosshairMode,
+      displayBar,
+      hideCrosshair,
+      invertScale,
+      isFullscreen,
+      scaleMode,
+      showGrid,
+      showPriceLine,
+      showTimeScaleState,
+      showVolume,
+    ],
+  );
+  const resolvedTopOverlay =
+    typeof topOverlay === "function" ? topOverlay(surfaceControls) : topOverlay;
+  const resolvedLeftOverlay =
+    typeof leftOverlay === "function"
+      ? leftOverlay(surfaceControls)
+      : leftOverlay;
+  const resolvedBottomOverlay =
+    typeof bottomOverlay === "function"
+      ? bottomOverlay(surfaceControls)
+      : bottomOverlay;
+  const chartInsetTop = topOverlayHeight;
+  const chartInsetLeft = resolvedLeftOverlay ? leftOverlayWidth : 0;
+  const chartInsetBottom = bottomOverlayHeight;
 
   if (!model.chartBars.length) {
     return (
@@ -1479,7 +2336,19 @@ export const ResearchChartSurface = ({
   }
 
   return (
-    <div data-testid={dataTestId} style={{ width: "100%", height: "100%", position: "relative" }}>
+    <div
+      ref={rootRef}
+      data-testid={dataTestId}
+      style={{
+        width: isFullscreen ? "100vw" : "100%",
+        height: isFullscreen ? "100vh" : "100%",
+        position: isFullscreen ? "fixed" : "relative",
+        inset: isFullscreen ? 0 : undefined,
+        zIndex: isFullscreen ? 160 : undefined,
+        overflow: "hidden",
+        background: theme.bg2,
+      }}
+    >
       {resolvedTopOverlay ? (
         <div
           style={{
@@ -1494,12 +2363,27 @@ export const ResearchChartSurface = ({
           {resolvedTopOverlay}
         </div>
       ) : null}
+      {resolvedLeftOverlay ? (
+        <div
+          style={{
+            position: "absolute",
+            top: chartInsetTop,
+            left: 0,
+            bottom: chartInsetBottom,
+            width: leftOverlayWidth,
+            zIndex: 4,
+            pointerEvents: "auto",
+          }}
+        >
+          {resolvedLeftOverlay}
+        </div>
+      ) : null}
       {showToolbar && (
         <div
           data-testid={dataTestId ? `${dataTestId}-toolbar` : undefined}
           style={{
             position: "absolute",
-            top: 6 + topOverlayHeight,
+            top: 6 + chartInsetTop,
             right: 8,
             zIndex: 3,
             display: "flex",
@@ -1511,21 +2395,52 @@ export const ResearchChartSurface = ({
           }}
         >
           {[
-            { key: "candles", label: "CND", active: baseSeriesType === "candles", onClick: () => setBaseSeriesType("candles") },
-            { key: "bars", label: "BAR", active: baseSeriesType === "bars", onClick: () => setBaseSeriesType("bars") },
-            { key: "line", label: "LINE", active: baseSeriesType === "line", onClick: () => setBaseSeriesType("line") },
-            { key: "area", label: "AREA", active: baseSeriesType === "area", onClick: () => setBaseSeriesType("area") },
-            { key: "baseline", label: "BASE", active: baseSeriesType === "baseline", onClick: () => setBaseSeriesType("baseline") },
-            { key: "volume", label: "VOL", active: showVolume, onClick: () => setShowVolume((value) => !value) },
+            {
+              key: "candles",
+              label: "CND",
+              active: baseSeriesType === "candles",
+              onClick: () => setBaseSeriesType("candles"),
+            },
+            {
+              key: "bars",
+              label: "BAR",
+              active: baseSeriesType === "bars",
+              onClick: () => setBaseSeriesType("bars"),
+            },
+            {
+              key: "line",
+              label: "LINE",
+              active: baseSeriesType === "line",
+              onClick: () => setBaseSeriesType("line"),
+            },
+            {
+              key: "area",
+              label: "AREA",
+              active: baseSeriesType === "area",
+              onClick: () => setBaseSeriesType("area"),
+            },
+            {
+              key: "baseline",
+              label: "BASE",
+              active: baseSeriesType === "baseline",
+              onClick: () => setBaseSeriesType("baseline"),
+            },
+            {
+              key: "volume",
+              label: "VOL",
+              active: showVolume,
+              onClick: () => setShowVolume((value) => !value),
+            },
             {
               key: "scale",
-              label: scaleMode === "log"
-                ? "LOG"
-                : scaleMode === "percentage"
-                  ? "%"
-                  : scaleMode === "indexed"
-                    ? "100"
-                    : "LIN",
+              label:
+                scaleMode === "log"
+                  ? "LOG"
+                  : scaleMode === "percentage"
+                    ? "%"
+                    : scaleMode === "indexed"
+                      ? "100"
+                      : "LIN",
               active: scaleMode !== "linear",
               onClick: cycleScaleMode,
             },
@@ -1533,20 +2448,83 @@ export const ResearchChartSurface = ({
               key: "crosshair",
               label: crosshairMode === "free" ? "FREE" : "MAG",
               active: crosshairMode === "free",
-              onClick: () => setCrosshairMode((value) => value === "free" ? "magnet" : "free"),
+              onClick: () =>
+                setCrosshairMode((value) =>
+                  value === "free" ? "magnet" : "free",
+                ),
             },
-            { key: "grid", label: "GRID", active: showGrid, onClick: () => setShowGrid((value) => !value) },
-            { key: "auto-scale", label: "AUTO", active: autoScale, onClick: () => setAutoScale((value) => !value) },
-            { key: "invert-scale", label: "INV", active: invertScale, onClick: () => setInvertScale((value) => !value) },
-            { key: "time-axis", label: "TIME", active: showTimeScaleState, onClick: () => setShowTimeScaleState((value) => !value) },
-            { key: "price-line", label: "PL", active: showPriceLine, onClick: () => setShowPriceLine((value) => !value) },
-            { key: "zoom-in", label: "+", active: false, onClick: surfaceControls.zoomIn },
-            { key: "zoom-out", label: "−", active: false, onClick: surfaceControls.zoomOut },
-            { key: "pan-left", label: "←", active: false, onClick: surfaceControls.panLeft },
-            { key: "pan-right", label: "→", active: false, onClick: surfaceControls.panRight },
-            { key: "reset", label: "RST", active: false, onClick: surfaceControls.reset },
-            { key: "fit", label: "FIT", active: false, onClick: surfaceControls.fit },
-            { key: "realtime", label: "RT", active: false, onClick: surfaceControls.realtime },
+            {
+              key: "grid",
+              label: "GRID",
+              active: showGrid,
+              onClick: () => setShowGrid((value) => !value),
+            },
+            {
+              key: "auto-scale",
+              label: "AUTO",
+              active: autoScale,
+              onClick: () => setAutoScale((value) => !value),
+            },
+            {
+              key: "invert-scale",
+              label: "INV",
+              active: invertScale,
+              onClick: () => setInvertScale((value) => !value),
+            },
+            {
+              key: "time-axis",
+              label: "TIME",
+              active: showTimeScaleState,
+              onClick: () => setShowTimeScaleState((value) => !value),
+            },
+            {
+              key: "price-line",
+              label: "PL",
+              active: showPriceLine,
+              onClick: () => setShowPriceLine((value) => !value),
+            },
+            {
+              key: "zoom-in",
+              label: "+",
+              active: false,
+              onClick: surfaceControls.zoomIn,
+            },
+            {
+              key: "zoom-out",
+              label: "−",
+              active: false,
+              onClick: surfaceControls.zoomOut,
+            },
+            {
+              key: "pan-left",
+              label: "←",
+              active: false,
+              onClick: surfaceControls.panLeft,
+            },
+            {
+              key: "pan-right",
+              label: "→",
+              active: false,
+              onClick: surfaceControls.panRight,
+            },
+            {
+              key: "reset",
+              label: "RST",
+              active: false,
+              onClick: surfaceControls.reset,
+            },
+            {
+              key: "fit",
+              label: "FIT",
+              active: false,
+              onClick: surfaceControls.fit,
+            },
+            {
+              key: "realtime",
+              label: "RT",
+              active: false,
+              onClick: surfaceControls.realtime,
+            },
           ].map((control) => (
             <button
               key={control.key}
@@ -1555,8 +2533,12 @@ export const ResearchChartSurface = ({
               onClick={control.onClick}
               style={{
                 border: `1px solid ${control.active ? withAlpha(theme.accent || theme.text, "aa") : theme.border}`,
-                background: control.active ? withAlpha(theme.accent || theme.text, "18") : withAlpha(theme.bg4, "f0"),
-                color: control.active ? (theme.accent || theme.text) : theme.textMuted,
+                background: control.active
+                  ? withAlpha(theme.accent || theme.text, "18")
+                  : withAlpha(theme.bg4, "f0"),
+                color: control.active
+                  ? theme.accent || theme.text
+                  : theme.textMuted,
                 borderRadius: 4,
                 padding: "2px 7px",
                 fontSize: 10,
@@ -1591,13 +2573,32 @@ export const ResearchChartSurface = ({
         <>
           <div
             ref={containerRef}
-            style={{ width: "100%", height: "100%", cursor: drawMode ? "crosshair" : "default" }}
+            style={{
+              position: "absolute",
+              top: chartInsetTop,
+              left: chartInsetLeft,
+              right: 0,
+              bottom: chartInsetBottom,
+              cursor: drawMode ? "crosshair" : "default",
+            }}
           />
-          {(windowOverlays.length || zoneOverlays.length || verticalDrawingOverlays.length || boxDrawingOverlays.length || pendingBoxAnchor) ? (
+          {windowOverlays.length ||
+          zoneOverlays.length ||
+          verticalDrawingOverlays.length ||
+          boxDrawingOverlays.length ||
+          tradeThresholdOverlays.length ||
+          tradeMarkerTargets.length ||
+          selectedTradeConnector ||
+          selectedTradeEntryBadge ||
+          selectedTradeExitBadge ||
+          pendingBoxAnchor ? (
             <div
               style={{
                 position: "absolute",
-                inset: 0,
+                top: chartInsetTop,
+                left: chartInsetLeft,
+                right: 0,
+                bottom: chartInsetBottom,
                 pointerEvents: "none",
                 overflow: "hidden",
               }}
@@ -1697,6 +2698,118 @@ export const ResearchChartSurface = ({
                   ) : null}
                 </div>
               ))}
+              {tradeThresholdOverlays.map((overlay) => (
+                <div
+                  key={`trade-threshold-${overlay.id}`}
+                  style={{
+                    position: "absolute",
+                    left: overlay.left,
+                    top: overlay.top,
+                    width: overlay.width,
+                    borderTop: `2px ${overlay.style} ${overlay.color}`,
+                    opacity: 0.92,
+                  }}
+                >
+                  {overlay.label ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: -14,
+                        left: 0,
+                        fontSize: 9,
+                        fontFamily: theme.mono,
+                        color: overlay.color,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {overlay.label}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              {selectedTradeConnector ? (
+                <svg
+                  width="100%"
+                  height="100%"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    overflow: "visible",
+                  }}
+                >
+                  <line
+                    x1={selectedTradeConnector.x1}
+                    y1={selectedTradeConnector.y1}
+                    x2={selectedTradeConnector.x2}
+                    y2={selectedTradeConnector.y2}
+                    stroke={selectedTradeConnector.color}
+                    strokeWidth="2"
+                    strokeDasharray="4 3"
+                    opacity="0.9"
+                  />
+                </svg>
+              ) : null}
+              {[selectedTradeEntryBadge, selectedTradeExitBadge]
+                .filter((badge): badge is TradeBadgeOverlay => Boolean(badge))
+                .map((badge) => (
+                  <div
+                    key={`trade-badge-${badge.id}`}
+                    style={{
+                      position: "absolute",
+                      left: badge.left,
+                      top: badge.top,
+                      transform: "translate(-50%, -50%)",
+                      padding: "3px 7px",
+                      borderRadius: 4,
+                      border: `1px solid ${badge.borderColor}`,
+                      background: badge.color,
+                      color: theme.text,
+                      fontSize: 10,
+                      fontFamily: theme.mono,
+                      fontWeight: 700,
+                      whiteSpace: "nowrap",
+                      boxShadow: `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
+                    }}
+                  >
+                    {badge.text}
+                  </div>
+                ))}
+              {tradeMarkerTargets.map((target) => (
+                <button
+                  key={`trade-target-${target.id}`}
+                  type="button"
+                  onClick={() =>
+                    onTradeMarkerSelection?.(target.tradeSelectionIds)
+                  }
+                  style={{
+                    position: "absolute",
+                    left: target.left,
+                    top: target.top,
+                    width: target.size,
+                    height: target.size,
+                    borderRadius: 999,
+                    border: `1px solid ${target.borderColor}`,
+                    background: target.color,
+                    color: target.borderColor,
+                    fontSize: 10,
+                    fontFamily: theme.mono,
+                    fontWeight: 700,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    pointerEvents: "auto",
+                    cursor: "pointer",
+                    boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
+                  }}
+                  title={
+                    target.tradeSelectionIds.length > 1
+                      ? `${target.tradeSelectionIds.length} overlapping trades`
+                      : "Select trade"
+                  }
+                >
+                  {target.label ?? "•"}
+                </button>
+              ))}
             </div>
           ) : null}
         </>
@@ -1706,57 +2819,112 @@ export const ResearchChartSurface = ({
           data-testid={dataTestId ? `${dataTestId}-legend` : undefined}
           style={{
             position: "absolute",
-            top: 6 + topOverlayHeight,
-            left: 8,
-            background: withAlpha(theme.bg4, "f0"),
-            border: `1px solid ${theme.border}`,
+            top: 6 + chartInsetTop,
+            left: 8 + chartInsetLeft,
+            right: 12,
+            background: withAlpha(theme.bg2, "b8"),
             borderRadius: 4,
-            padding: "4px 8px",
-            fontSize: 11,
+            padding: "3px 6px",
+            fontSize: 10,
             fontFamily: theme.mono,
-            color: theme.text,
+            color: theme.textMuted,
             display: "flex",
-            flexDirection: "column",
-            gap: 4,
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
             pointerEvents: "none",
           }}
         >
-          <div style={{ display: "flex", gap: 10, color: theme.textMuted }}>
-            <span>{formatLegendTimestamp(displayBar.ts)}</span>
-            <span>#{displayBar.index + 1}</span>
-            <span>V {formatCompactNumber(displayBar.volume)}</span>
-            {displayBar.source ? <span>{displayBar.source === "massive-delayed-stream-derived" ? "STREAM" : "REST"}</span> : null}
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <span>O <span>{formatPrice(displayBar.open)}</span></span>
-            <span>H <span style={{ color: theme.green }}>{formatPrice(displayBar.high)}</span></span>
-            <span>L <span style={{ color: theme.red }}>{formatPrice(displayBar.low)}</span></span>
-            <span>C <span style={{ fontWeight: 700 }}>{formatPrice(displayBar.close)}</span></span>
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <span>Δ <span style={{ color: deltaColor }}>{displayDeltaValue != null ? `${displayDeltaValue >= 0 ? "+" : ""}${displayDeltaValue.toFixed(pricePrecision)}` : "—"}</span></span>
-            <span>% <span style={{ color: deltaColor }}>{displayDeltaPct != null ? `${displayDeltaPct >= 0 ? "+" : ""}${displayDeltaPct.toFixed(2)}%` : "—"}</span></span>
-            <span>Gap <span style={{ color: (displayGap ?? 0) >= 0 ? theme.green : theme.red }}>{displayGap != null ? `${displayGap >= 0 ? "+" : ""}${displayGap.toFixed(pricePrecision)}` : "—"}</span></span>
-            <span>R <span>{displayRange != null ? displayRange.toFixed(pricePrecision) : "—"}</span></span>
-            <span>B <span style={{ color: (displayBody ?? 0) >= 0 ? theme.green : theme.red }}>{displayBody != null ? `${displayBody >= 0 ? "+" : ""}${displayBody.toFixed(pricePrecision)}` : "—"}</span></span>
-          </div>
-          <div style={{ display: "flex", gap: 10, color: theme.textMuted }}>
-            <span>Gap% <span>{displayGapPct != null ? `${displayGapPct >= 0 ? "+" : ""}${displayGapPct.toFixed(2)}%` : "—"}</span></span>
-            <span>R% <span>{displayRangePct != null ? `${displayRangePct.toFixed(2)}%` : "—"}</span></span>
-            <span>UW <span>{upperWick != null ? upperWick.toFixed(pricePrecision) : "—"}</span></span>
-            <span>LW <span>{lowerWick != null ? lowerWick.toFixed(pricePrecision) : "—"}</span></span>
-            <span>HL2 <span>{formatPrice(hl2)}</span></span>
-            <span>HLC3 <span>{formatPrice(hlc3)}</span></span>
-            <span>OHLC4 <span>{formatPrice(ohlc4)}</span></span>
-          </div>
-          {(displayBar.vwap != null || displayBar.sessionVwap != null || displayBar.accumulatedVolume != null || displayBar.averageTradeSize != null) && (
-            <div style={{ display: "flex", gap: 10 }}>
-              <span>VWAP <span>{formatPrice(displayBar.vwap)}</span></span>
-              <span>SVWAP <span>{formatPrice(displayBar.sessionVwap)}</span></span>
-              <span>AV <span>{displayBar.accumulatedVolume != null ? formatCompactNumber(displayBar.accumulatedVolume) : "—"}</span></span>
-              <span>ASZ <span>{formatLegendNumber(displayBar.averageTradeSize, 0)}</span></span>
-            </div>
-          )}
+          <span>{formatLegendTimestamp(displayBar.ts)}</span>
+          <span>
+            O{" "}
+            <span style={{ color: theme.text }}>
+              {formatPrice(displayBar.open)}
+            </span>
+          </span>
+          <span>
+            H{" "}
+            <span style={{ color: theme.green }}>
+              {formatPrice(displayBar.high)}
+            </span>
+          </span>
+          <span>
+            L{" "}
+            <span style={{ color: theme.red }}>
+              {formatPrice(displayBar.low)}
+            </span>
+          </span>
+          <span>
+            C{" "}
+            <span style={{ color: theme.text, fontWeight: 700 }}>
+              {formatPrice(displayBar.close)}
+            </span>
+          </span>
+          <span>
+            Δ{" "}
+            <span style={{ color: deltaColor }}>
+              {displayDeltaValue != null
+                ? `${displayDeltaValue >= 0 ? "+" : ""}${displayDeltaValue.toFixed(pricePrecision)}`
+                : "—"}
+            </span>
+          </span>
+          <span>
+            %{" "}
+            <span style={{ color: deltaColor }}>
+              {displayDeltaPct != null
+                ? `${displayDeltaPct >= 0 ? "+" : ""}${displayDeltaPct.toFixed(2)}%`
+                : "—"}
+            </span>
+          </span>
+          <span>
+            V{" "}
+            <span style={{ color: theme.text }}>
+              {formatCompactNumber(displayBar.volume)}
+            </span>
+          </span>
+          {displayBar.vwap != null ? (
+            <span>
+              VWAP{" "}
+              <span style={{ color: theme.text }}>
+                {formatPrice(displayBar.vwap)}
+              </span>
+            </span>
+          ) : null}
+          {displayBar.sessionVwap != null ? (
+            <span>
+              SVWAP{" "}
+              <span style={{ color: theme.text }}>
+                {formatPrice(displayBar.sessionVwap)}
+              </span>
+            </span>
+          ) : null}
+          {displayBar.accumulatedVolume != null ? (
+            <span>
+              AV{" "}
+              <span style={{ color: theme.text }}>
+                {formatCompactNumber(displayBar.accumulatedVolume)}
+              </span>
+            </span>
+          ) : null}
+          {displayBar.averageTradeSize != null ? (
+            <span>
+              ASZ{" "}
+              <span style={{ color: theme.text }}>
+                {formatLegendNumber(displayBar.averageTradeSize, 0)}
+              </span>
+            </span>
+          ) : null}
+          {displayBar.source ? (
+            <span>
+              {displayBar.source === "ibkr-websocket-derived"
+                ? "STREAM"
+                : displayBar.source === "ibkr+massive-gap-fill"
+                  ? "IBKR + GAP"
+                  : displayBar.source === "ibkr-history"
+                    ? "IBKR"
+                    : "REST"}
+            </span>
+          ) : null}
         </div>
       )}
       {resolvedBottomOverlay ? (
@@ -1777,7 +2945,7 @@ export const ResearchChartSurface = ({
         <div
           style={{
             position: "absolute",
-            top: 34 + topOverlayHeight,
+            top: 6 + chartInsetTop,
             right: 8,
             background: withAlpha(theme.amber, "18"),
             border: `1px solid ${withAlpha(theme.amber, "66")}`,

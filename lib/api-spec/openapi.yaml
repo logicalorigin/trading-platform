@@ -26,6 +26,8 @@ tags:
     description: Options flow and unusual activity feeds
   - name: research
     description: Server-side fundamentals, filings, transcripts, and catalyst data
+  - name: automation
+    description: Algo deployment lifecycle and execution event history
   - name: backtests
     description: Backtest studies, runs, sweeps, and draft strategy promotion
 paths:
@@ -166,12 +168,104 @@ paths:
             schema:
               $ref: "#/components/schemas/PlaceOrderRequest"
       responses:
-        "200":
+        "201":
           description: Accepted order
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Order"
+
+  /orders/preview:
+    post:
+      operationId: previewOrder
+      tags: [orders]
+      summary: Preview a normalized IBKR order payload before submission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceOrderRequest"
+      responses:
+        "200":
+          description: Preview payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderPreview"
+
+  /orders/submit:
+    post:
+      operationId: submitOrders
+      tags: [orders]
+      summary: Submit either a normalized order request or raw IBKR order payloads
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/PlaceOrderRequest"
+                - $ref: "#/components/schemas/SubmitIbkrOrdersRequest"
+      responses:
+        "201":
+          description: Accepted order payload
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Order"
+                  - $ref: "#/components/schemas/SubmitIbkrOrdersResponse"
+
+  /orders/{orderId}/replace:
+    post:
+      operationId: replaceOrder
+      tags: [orders]
+      summary: Replace an existing IBKR order using the raw IBKR modify payload
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceOrderRequest"
+      responses:
+        "200":
+          description: Updated order snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /orders/{orderId}/cancel:
+    post:
+      operationId: cancelOrder
+      tags: [orders]
+      summary: Request cancellation for an existing IBKR order
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelOrderRequest"
+      responses:
+        "200":
+          description: Cancellation request accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelOrderResponse"
 
   /quotes/snapshot:
     get:
@@ -271,7 +365,7 @@ paths:
     get:
       operationId: getBars
       tags: [market-data]
-      summary: Get historical bars for a symbol
+      summary: Get broker-first historical bars for a symbol or contract
       parameters:
         - name: symbol
           in: query
@@ -302,6 +396,27 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: outsideRth
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: source
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/BarDataSource"
       responses:
         "200":
           description: Historical bars
@@ -339,6 +454,119 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OptionChainResponse"
+
+  /streams/quotes:
+    get:
+      operationId: streamQuoteSnapshots
+      tags: [market-data]
+      summary: Stream quote snapshots over server-sent events
+      parameters:
+        - name: symbols
+          in: query
+          required: true
+          description: Comma-separated ticker symbols.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Quote snapshot SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /streams/options/chains:
+    get:
+      operationId: streamOptionChains
+      tags: [market-data]
+      summary: Stream option chain snapshots over server-sent events
+      parameters:
+        - name: underlyings
+          in: query
+          required: true
+          description: Comma-separated underlying symbols.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Option chain SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /streams/orders:
+    get:
+      operationId: streamOrders
+      tags: [orders]
+      summary: Stream order snapshots over server-sent events
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+      responses:
+        "200":
+          description: Orders SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /streams/accounts:
+    get:
+      operationId: streamAccounts
+      tags: [accounts]
+      summary: Stream account and position snapshots over server-sent events
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Accounts SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /streams/stocks/aggregates:
+    get:
+      operationId: streamStockAggregates
+      tags: [market-data]
+      summary: Stream broker-derived stock minute aggregates over server-sent events
+      parameters:
+        - name: symbols
+          in: query
+          required: true
+          description: Comma-separated ticker symbols.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stock aggregate SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
 
   /flow/events:
     get:
@@ -501,6 +729,161 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResearchTranscriptResponse"
 
+  /algo/deployments:
+    get:
+      operationId: listAlgoDeployments
+      tags: [automation]
+      summary: List saved algo deployments
+      parameters:
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Deployment inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeploymentsResponse"
+    post:
+      operationId: createAlgoDeployment
+      tags: [automation]
+      summary: Create an algo deployment linked to a promoted strategy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAlgoDeploymentRequest"
+      responses:
+        "201":
+          description: Created deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
+  /algo/deployments/{deploymentId}/enable:
+    post:
+      operationId: enableAlgoDeployment
+      tags: [automation]
+      summary: Enable an algo deployment
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
+  /algo/deployments/{deploymentId}/pause:
+    post:
+      operationId: pauseAlgoDeployment
+      tags: [automation]
+      summary: Pause an algo deployment
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoDeployment"
+
+  /algo/events:
+    get:
+      operationId: listExecutionEvents
+      tags: [automation]
+      summary: List execution and deployment lifecycle events
+      parameters:
+        - name: deploymentId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Execution events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionEventsResponse"
+
+  /charting/pine-scripts:
+    get:
+      operationId: listPineScripts
+      tags: [charting]
+      summary: List saved Pine scripts for chart indicators
+      responses:
+        "200":
+          description: Pine script library
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PineScriptsResponse"
+    post:
+      operationId: createPineScript
+      tags: [charting]
+      summary: Create a Pine script library entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePineScriptRequest"
+      responses:
+        "201":
+          description: Created Pine script
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PineScriptRecord"
+
+  /charting/pine-scripts/{scriptId}:
+    patch:
+      operationId: updatePineScript
+      tags: [charting]
+      summary: Update a Pine script library entry
+      parameters:
+        - name: scriptId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePineScriptRequest"
+      responses:
+        "200":
+          description: Updated Pine script
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PineScriptRecord"
+
   /backtests/strategies:
     get:
       operationId: listBacktestStrategies
@@ -562,6 +945,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BacktestStudyRecord"
+
+  /backtests/studies/{studyId}/preview-chart:
+    get:
+      operationId: getBacktestStudyPreviewChart
+      tags: [backtests]
+      summary: Get the latest-vs-best completed study preview chart
+      parameters:
+        - name: studyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Study preview chart payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestStudyPreviewChart"
 
   /backtests/runs:
     get:
@@ -627,6 +1029,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BacktestRunDetail"
+
+  /backtests/runs/{runId}/chart:
+    get:
+      operationId: getBacktestRunChart
+      tags: [backtests]
+      summary: Get the research-chart payload for a backtest run
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: selectedTradeId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run chart payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestRunChart"
 
   /backtests/runs/{runId}/promote:
     post:
@@ -756,7 +1187,7 @@ components:
 
     MarketDataProvider:
       type: string
-      enum: [polygon]
+      enum: [polygon, ibkr]
 
     UniverseMarket:
       type: string
@@ -812,6 +1243,87 @@ components:
       type: string
       enum: [bullish, bearish, neutral]
 
+    QuoteSource:
+      type: string
+      enum: [ibkr, polygon]
+
+    BarDataSource:
+      type: string
+      enum: [trades, midpoint, bid_ask]
+
+    JsonObject:
+      type: object
+      additionalProperties: true
+
+    SessionMarketDataProviders:
+      type: object
+      properties:
+        live:
+          $ref: "#/components/schemas/MarketDataProvider"
+        historical:
+          $ref: "#/components/schemas/MarketDataProvider"
+        research:
+          oneOf:
+            - $ref: "#/components/schemas/MarketDataProvider"
+            - $ref: "#/components/schemas/ResearchProvider"
+      required:
+        - live
+        - historical
+        - research
+
+    IbkrBridgeHealth:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        authenticated:
+          type: boolean
+        connected:
+          type: boolean
+        competing:
+          type: boolean
+        selectedAccountId:
+          type: [string, "null"]
+        accounts:
+          type: array
+          items:
+            type: string
+        lastTickleAt:
+          type: [string, "null"]
+          format: date-time
+        lastError:
+          type: [string, "null"]
+        updatedAt:
+          type: string
+          format: date-time
+        transport:
+          type: string
+          enum:
+            - client_portal
+            - tws
+        connectionTarget:
+          type: [string, "null"]
+        sessionMode:
+          oneOf:
+            - $ref: "#/components/schemas/EnvironmentMode"
+            - type: "null"
+        clientId:
+          type: [integer, "null"]
+      required:
+        - configured
+        - authenticated
+        - connected
+        - competing
+        - selectedAccountId
+        - accounts
+        - lastTickleAt
+        - lastError
+        - updatedAt
+        - transport
+        - connectionTarget
+        - sessionMode
+        - clientId
+
     SessionInfo:
       type: object
       properties:
@@ -821,6 +1333,8 @@ components:
           $ref: "#/components/schemas/BrokerProvider"
         marketDataProvider:
           $ref: "#/components/schemas/MarketDataProvider"
+        marketDataProviders:
+          $ref: "#/components/schemas/SessionMarketDataProviders"
         configured:
           type: object
           properties:
@@ -834,6 +1348,10 @@ components:
             - polygon
             - ibkr
             - research
+        ibkrBridge:
+          oneOf:
+            - $ref: "#/components/schemas/IbkrBridgeHealth"
+            - type: "null"
         timestamp:
           type: string
           format: date-time
@@ -841,7 +1359,9 @@ components:
         - environment
         - brokerProvider
         - marketDataProvider
+        - marketDataProviders
         - configured
+        - ibkrBridge
         - timestamp
 
     ResearchStatus:
@@ -1294,6 +1814,10 @@ components:
         volume:
           type: number
           nullable: true
+        providerContractId:
+          type: [string, "null"]
+        source:
+          $ref: "#/components/schemas/QuoteSource"
         updatedAt:
           type: string
           format: date-time
@@ -1311,6 +1835,8 @@ components:
         - low
         - prevClose
         - volume
+        - providerContractId
+        - source
         - updatedAt
 
     Bar:
@@ -1329,6 +1855,14 @@ components:
           type: number
         volume:
           type: number
+        source:
+          type: string
+        providerContractId:
+          type: [string, "null"]
+        outsideRth:
+          type: boolean
+        partial:
+          type: boolean
       required:
         - timestamp
         - open
@@ -1551,6 +2085,93 @@ components:
         - timeInForce
         - optionContract
 
+    OrderPreview:
+      type: object
+      properties:
+        accountId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbol:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        resolvedContractId:
+          type: number
+        orderPayload:
+          $ref: "#/components/schemas/JsonObject"
+        optionContract:
+          oneOf:
+            - $ref: "#/components/schemas/OptionContract"
+            - type: "null"
+      required:
+        - accountId
+        - mode
+        - symbol
+        - assetClass
+        - resolvedContractId
+        - orderPayload
+        - optionContract
+
+    SubmitIbkrOrdersRequest:
+      type: object
+      properties:
+        accountId:
+          type: [string, "null"]
+        ibkrOrders:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+      required:
+        - ibkrOrders
+
+    SubmitIbkrOrdersResponse:
+      type: object
+      additionalProperties: true
+
+    ReplaceOrderRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        order:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - accountId
+        - order
+
+    CancelOrderRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+        manualIndicator:
+          type: [boolean, "null"]
+        extOperator:
+          type: [string, "null"]
+      required:
+        - accountId
+
+    CancelOrderResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+        accountId:
+          type: [string, "null"]
+        message:
+          type: string
+        submittedAt:
+          type: string
+          format: date-time
+      required:
+        - orderId
+        - accountId
+        - message
+        - submittedAt
+
     FlowEvent:
       type: object
       properties:
@@ -1727,6 +2348,143 @@ components:
         - expirationDate
         - contracts
 
+    SseStream:
+      type: string
+
+    AlgoDeployment:
+      type: object
+      properties:
+        id:
+          type: string
+        strategyId:
+          type: string
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        enabled:
+          type: boolean
+        providerAccountId:
+          type: string
+        symbolUniverse:
+          type: array
+          items:
+            type: string
+        config:
+          $ref: "#/components/schemas/JsonObject"
+        lastEvaluatedAt:
+          type: [string, "null"]
+          format: date-time
+        lastSignalAt:
+          type: [string, "null"]
+          format: date-time
+        lastError:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - strategyId
+        - name
+        - mode
+        - enabled
+        - providerAccountId
+        - symbolUniverse
+        - config
+        - lastEvaluatedAt
+        - lastSignalAt
+        - lastError
+        - createdAt
+        - updatedAt
+
+    CreateAlgoDeploymentRequest:
+      type: object
+      properties:
+        strategyId:
+          type: string
+        name:
+          type: string
+        providerAccountId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbolUniverse:
+          type: array
+          items:
+            type: string
+        config:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - strategyId
+        - name
+        - providerAccountId
+        - mode
+
+    AlgoDeploymentsResponse:
+      type: object
+      properties:
+        deployments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoDeployment"
+      required:
+        - deployments
+
+    ExecutionEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        deploymentId:
+          type: [string, "null"]
+        algoRunId:
+          type: [string, "null"]
+        providerAccountId:
+          type: [string, "null"]
+        symbol:
+          type: [string, "null"]
+        eventType:
+          type: string
+        summary:
+          type: string
+        payload:
+          $ref: "#/components/schemas/JsonObject"
+        occurredAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - deploymentId
+        - algoRunId
+        - providerAccountId
+        - symbol
+        - eventType
+        - summary
+        - payload
+        - occurredAt
+        - createdAt
+        - updatedAt
+
+    ExecutionEventsResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutionEvent"
+      required:
+        - events
+
     FlowEventsResponse:
       type: object
       properties:
@@ -1736,6 +2494,133 @@ components:
             $ref: "#/components/schemas/FlowEvent"
       required:
         - events
+
+    PineScriptStatus:
+      type: string
+      enum: [draft, ready, error, archived]
+
+    PineScriptPaneType:
+      type: string
+      enum: [price, lower]
+
+    PineScriptRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        scriptKey:
+          type: string
+        name:
+          type: string
+        description:
+          type: [string, "null"]
+        sourceCode:
+          type: string
+        status:
+          $ref: "#/components/schemas/PineScriptStatus"
+        defaultPaneType:
+          $ref: "#/components/schemas/PineScriptPaneType"
+        chartAccessEnabled:
+          type: boolean
+        notes:
+          type: [string, "null"]
+        lastError:
+          type: [string, "null"]
+        tags:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - scriptKey
+        - name
+        - description
+        - sourceCode
+        - status
+        - defaultPaneType
+        - chartAccessEnabled
+        - notes
+        - lastError
+        - tags
+        - metadata
+        - createdAt
+        - updatedAt
+
+    PineScriptsResponse:
+      type: object
+      properties:
+        scripts:
+          type: array
+          items:
+            $ref: "#/components/schemas/PineScriptRecord"
+      required:
+        - scripts
+
+    CreatePineScriptRequest:
+      type: object
+      properties:
+        scriptKey:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        sourceCode:
+          type: string
+        status:
+          $ref: "#/components/schemas/PineScriptStatus"
+        defaultPaneType:
+          $ref: "#/components/schemas/PineScriptPaneType"
+        chartAccessEnabled:
+          type: boolean
+        notes:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - name
+        - sourceCode
+
+    UpdatePineScriptRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        sourceCode:
+          type: string
+        status:
+          $ref: "#/components/schemas/PineScriptStatus"
+        defaultPaneType:
+          $ref: "#/components/schemas/PineScriptPaneType"
+        chartAccessEnabled:
+          type: boolean
+        notes:
+          type: string
+        lastError:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
 
     BacktestStrategyStatus:
       type: string
@@ -2145,6 +3030,8 @@ components:
     BacktestTrade:
       type: object
       properties:
+        tradeSelectionId:
+          type: string
         symbol:
           type: string
         side:
@@ -2177,7 +3064,12 @@ components:
           type: number
         exitReason:
           type: string
+        diagnostics:
+          oneOf:
+            - $ref: "#/components/schemas/BacktestTradeDiagnostics"
+            - type: "null"
       required:
+        - tradeSelectionId
         - symbol
         - side
         - entryAt
@@ -2193,6 +3085,141 @@ components:
         - barsHeld
         - commissionPaid
         - exitReason
+        - diagnostics
+
+    BacktestTradeReasonTraceStep:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: ["entry", "max_favorable", "max_adverse", "exit"]
+        label:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        barIndex:
+          type: [integer, "null"]
+        price:
+          type: number
+        deltaFromEntry:
+          type: number
+        deltaPercentFromEntry:
+          type: number
+        emphasis:
+          type: string
+          enum: ["positive", "negative", "neutral"]
+      required:
+        - id
+        - kind
+        - label
+        - occurredAt
+        - barIndex
+        - price
+        - deltaFromEntry
+        - deltaPercentFromEntry
+        - emphasis
+
+    BacktestTradeExitConsequences:
+      type: object
+      properties:
+        windowBars:
+          type: integer
+        barsObserved:
+          type: integer
+        bestPrice:
+          type: number
+        bestOccurredAt:
+          type: string
+          format: date-time
+        bestBarIndex:
+          type: integer
+        bestDelta:
+          type: number
+        bestPercent:
+          type: number
+        worstPrice:
+          type: number
+        worstOccurredAt:
+          type: string
+          format: date-time
+        worstBarIndex:
+          type: integer
+        worstDelta:
+          type: number
+        worstPercent:
+          type: number
+      required:
+        - windowBars
+        - barsObserved
+        - bestPrice
+        - bestOccurredAt
+        - bestBarIndex
+        - bestDelta
+        - bestPercent
+        - worstPrice
+        - worstOccurredAt
+        - worstBarIndex
+        - worstDelta
+        - worstPercent
+
+    BacktestTradeDiagnostics:
+      type: object
+      properties:
+        holdMinutes:
+          type: number
+        entryBarIndex:
+          type: [integer, "null"]
+        exitBarIndex:
+          type: [integer, "null"]
+        maxFavorablePrice:
+          type: [number, "null"]
+        maxFavorableAt:
+          type: [string, "null"]
+          format: date-time
+        maxFavorableBarIndex:
+          type: [integer, "null"]
+        maxFavorableDelta:
+          type: [number, "null"]
+        maxFavorablePercent:
+          type: [number, "null"]
+        maxAdversePrice:
+          type: [number, "null"]
+        maxAdverseAt:
+          type: [string, "null"]
+          format: date-time
+        maxAdverseBarIndex:
+          type: [integer, "null"]
+        maxAdverseDelta:
+          type: [number, "null"]
+        maxAdversePercent:
+          type: [number, "null"]
+        reasonTrace:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTradeReasonTraceStep"
+        exitConsequences:
+          oneOf:
+            - $ref: "#/components/schemas/BacktestTradeExitConsequences"
+            - type: "null"
+      required:
+        - holdMinutes
+        - entryBarIndex
+        - exitBarIndex
+        - maxFavorablePrice
+        - maxFavorableAt
+        - maxFavorableBarIndex
+        - maxFavorableDelta
+        - maxFavorablePercent
+        - maxAdversePrice
+        - maxAdverseAt
+        - maxAdverseBarIndex
+        - maxAdverseDelta
+        - maxAdversePercent
+        - reasonTrace
+        - exitConsequences
 
     BacktestPoint:
       type: object
@@ -2248,6 +3275,635 @@ components:
         - barCount
         - pinnedCount
         - isSeeded
+
+    BacktestChartBar:
+      type: object
+      properties:
+        time:
+          type: integer
+        ts:
+          type: string
+          format: date-time
+        date:
+          type: string
+        o:
+          type: number
+        h:
+          type: number
+        l:
+          type: number
+        c:
+          type: number
+        v:
+          type: number
+      required:
+        - time
+        - ts
+        - date
+        - o
+        - h
+        - l
+        - c
+        - v
+
+    BacktestChartBarRange:
+      type: object
+      properties:
+        startMs:
+          type: integer
+        endMs:
+          type: integer
+      required:
+        - startMs
+        - endMs
+
+    BacktestChartMarker:
+      type: object
+      properties:
+        id:
+          type: string
+        time:
+          type: integer
+        barIndex:
+          type: integer
+        position:
+          type: string
+          enum: ["aboveBar", "belowBar", "inBar"]
+        shape:
+          type: string
+          enum: ["circle", "square", "arrowUp", "arrowDown"]
+        color:
+          type: string
+        text:
+          type: [string, "null"]
+        size:
+          type: [number, "null"]
+      required:
+        - id
+        - time
+        - barIndex
+        - position
+        - shape
+        - color
+        - text
+        - size
+
+    BacktestIndicatorEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        strategy:
+          type: string
+        eventType:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        time:
+          type: [integer, "null"]
+        barIndex:
+          type: [integer, "null"]
+        direction:
+          oneOf:
+            - type: string
+              enum: ["long", "short"]
+            - type: "null"
+        label:
+          type: [string, "null"]
+        conviction:
+          type: [number, "null"]
+        meta:
+          type: object
+          additionalProperties: true
+      required:
+        - id
+        - strategy
+        - eventType
+        - ts
+        - time
+        - barIndex
+        - direction
+        - label
+        - conviction
+        - meta
+
+    BacktestIndicatorZone:
+      type: object
+      properties:
+        id:
+          type: string
+        strategy:
+          type: string
+        zoneType:
+          type: string
+        direction:
+          oneOf:
+            - type: string
+              enum: ["long", "short"]
+            - type: "null"
+        startTs:
+          type: string
+          format: date-time
+        endTs:
+          type: string
+          format: date-time
+        startBarIndex:
+          type: [integer, "null"]
+        endBarIndex:
+          type: [integer, "null"]
+        top:
+          type: number
+        bottom:
+          type: number
+        label:
+          type: [string, "null"]
+        meta:
+          type: object
+          additionalProperties: true
+      required:
+        - id
+        - strategy
+        - zoneType
+        - direction
+        - startTs
+        - endTs
+        - startBarIndex
+        - endBarIndex
+        - top
+        - bottom
+        - label
+        - meta
+
+    BacktestIndicatorWindow:
+      type: object
+      properties:
+        id:
+          type: string
+        strategy:
+          type: string
+        direction:
+          type: string
+          enum: ["long", "short"]
+        startTs:
+          type: string
+          format: date-time
+        endTs:
+          type: string
+          format: date-time
+        startBarIndex:
+          type: [integer, "null"]
+        endBarIndex:
+          type: [integer, "null"]
+        tone:
+          oneOf:
+            - type: string
+              enum: ["bullish", "bearish", "neutral"]
+            - type: "null"
+        conviction:
+          type: [number, "null"]
+        meta:
+          type: object
+          additionalProperties: true
+      required:
+        - id
+        - strategy
+        - direction
+        - startTs
+        - endTs
+        - startBarIndex
+        - endBarIndex
+        - tone
+        - conviction
+        - meta
+
+    BacktestTradeThresholdSegment:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+            [
+              "take_profit",
+              "stop_loss",
+              "trail_arm",
+              "trail_stop",
+              "exit_trigger",
+            ]
+        startBarIndex:
+          type: integer
+        endBarIndex:
+          type: integer
+        value:
+          type: number
+        style:
+          type: string
+          enum: ["solid", "dashed", "dotted"]
+        hit:
+          type: [boolean, "null"]
+        label:
+          type: [string, "null"]
+      required:
+        - id
+        - kind
+        - startBarIndex
+        - endBarIndex
+        - value
+        - style
+        - hit
+        - label
+
+    BacktestTradeThresholdPath:
+      type: object
+      properties:
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTradeThresholdSegment"
+      required:
+        - segments
+
+    BacktestTradeOverlay:
+      type: object
+      properties:
+        id:
+          type: string
+        tradeSelectionId:
+          type: string
+        symbol:
+          type: string
+        entryBarIndex:
+          type: [integer, "null"]
+        exitBarIndex:
+          type: [integer, "null"]
+        entryTs:
+          type: string
+          format: date-time
+        exitTs:
+          type: [string, "null"]
+          format: date-time
+        dir:
+          type: string
+          enum: ["long", "short"]
+        strat:
+          type: string
+        qty:
+          type: number
+        pnl:
+          type: [number, "null"]
+        pnlPercent:
+          type: [number, "null"]
+        er:
+          type: [string, "null"]
+        profitable:
+          type: [boolean, "null"]
+        pricingMode:
+          type: [string, "null"]
+        chartPriceContext:
+          type: string
+          enum: ["spot", "option"]
+        entryPrice:
+          type: [number, "null"]
+        exitPrice:
+          type: [number, "null"]
+        oe:
+          type: [number, "null"]
+        ep:
+          type: [number, "null"]
+        exitFill:
+          type: [number, "null"]
+        entrySpotPrice:
+          type: [number, "null"]
+        exitSpotPrice:
+          type: [number, "null"]
+        entryBasePrice:
+          type: [number, "null"]
+        exitBasePrice:
+          type: [number, "null"]
+        stopLossPrice:
+          type: [number, "null"]
+        takeProfitPrice:
+          type: [number, "null"]
+        trailActivationPrice:
+          type: [number, "null"]
+        lastTrailStopPrice:
+          type: [number, "null"]
+        exitTriggerPrice:
+          type: [number, "null"]
+        thresholdPath:
+          oneOf:
+            - $ref: "#/components/schemas/BacktestTradeThresholdPath"
+            - type: "null"
+      required:
+        - id
+        - tradeSelectionId
+        - symbol
+        - entryBarIndex
+        - exitBarIndex
+        - entryTs
+        - exitTs
+        - dir
+        - strat
+        - qty
+        - pnl
+        - pnlPercent
+        - er
+        - profitable
+        - pricingMode
+        - chartPriceContext
+        - entryPrice
+        - exitPrice
+        - oe
+        - ep
+        - exitFill
+        - entrySpotPrice
+        - exitSpotPrice
+        - entryBasePrice
+        - exitBasePrice
+        - stopLossPrice
+        - takeProfitPrice
+        - trailActivationPrice
+        - lastTrailStopPrice
+        - exitTriggerPrice
+        - thresholdPath
+
+    BacktestTradeMarkerGroup:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: ["entry", "exit"]
+        time:
+          type: integer
+        dir:
+          type: string
+          enum: ["long", "short"]
+        profitable:
+          type: [boolean, "null"]
+        barIndex:
+          type: [integer, "null"]
+        tradeSelectionIds:
+          type: array
+          items:
+            type: string
+        label:
+          type: [string, "null"]
+      required:
+        - id
+        - kind
+        - time
+        - dir
+        - profitable
+        - barIndex
+        - tradeSelectionIds
+        - label
+
+    BacktestTimeToTradeIdsEntry:
+      type: object
+      properties:
+        time:
+          type: string
+        tradeSelectionIds:
+          type: array
+          items:
+            type: string
+      required:
+        - time
+        - tradeSelectionIds
+
+    BacktestTradeMarkerGroups:
+      type: object
+      properties:
+        entryGroups:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTradeMarkerGroup"
+        exitGroups:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTradeMarkerGroup"
+        interactionGroups:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTradeMarkerGroup"
+        timeToTradeIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTimeToTradeIdsEntry"
+      required:
+        - entryGroups
+        - exitGroups
+        - interactionGroups
+        - timeToTradeIds
+
+    BacktestIndicatorMarkerPayload:
+      type: object
+      properties:
+        overviewMarkers:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestChartMarker"
+        markersByTradeId:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/BacktestChartMarker"
+        timeToTradeIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTimeToTradeIdsEntry"
+      required:
+        - overviewMarkers
+        - markersByTradeId
+        - timeToTradeIds
+
+    BacktestTradeSelectionFocus:
+      type: object
+      properties:
+        token:
+          type: integer
+        tradeSelectionId:
+          type: [string, "null"]
+        visibleLogicalRange:
+          oneOf:
+            - type: object
+              properties:
+                from:
+                  type: number
+                to:
+                  type: number
+              required:
+                - from
+                - to
+            - type: "null"
+      required:
+        - token
+        - tradeSelectionId
+        - visibleLogicalRange
+
+    BacktestRunChart:
+      type: object
+      properties:
+        runId:
+          type: string
+        studyId:
+          type: string
+        timeframe:
+          $ref: "#/components/schemas/BarTimeframe"
+        chartPriceContext:
+          type: string
+          enum: ["spot", "option"]
+        availableSymbols:
+          type: array
+          items:
+            type: string
+        selectedSymbol:
+          type: string
+        defaultTradeSelectionId:
+          type: [string, "null"]
+        activeTradeSelectionId:
+          type: [string, "null"]
+        chartBars:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestChartBar"
+        chartBarRanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestChartBarRange"
+        tradeOverlays:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestTradeOverlay"
+        tradeMarkerGroups:
+          $ref: "#/components/schemas/BacktestTradeMarkerGroups"
+        indicatorEvents:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestIndicatorEvent"
+        indicatorZones:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestIndicatorZone"
+        indicatorWindows:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestIndicatorWindow"
+        indicatorMarkerPayload:
+          $ref: "#/components/schemas/BacktestIndicatorMarkerPayload"
+        selectionFocus:
+          oneOf:
+            - $ref: "#/components/schemas/BacktestTradeSelectionFocus"
+            - type: "null"
+        defaultVisibleLogicalRange:
+          oneOf:
+            - type: object
+              properties:
+                from:
+                  type: number
+                to:
+                  type: number
+              required:
+                - from
+                - to
+            - type: "null"
+      required:
+        - runId
+        - studyId
+        - timeframe
+        - chartPriceContext
+        - availableSymbols
+        - selectedSymbol
+        - defaultTradeSelectionId
+        - activeTradeSelectionId
+        - chartBars
+        - chartBarRanges
+        - tradeOverlays
+        - tradeMarkerGroups
+        - indicatorEvents
+        - indicatorZones
+        - indicatorWindows
+        - indicatorMarkerPayload
+        - selectionFocus
+        - defaultVisibleLogicalRange
+
+    BacktestEquitySeriesPoint:
+      type: object
+      properties:
+        occurredAt:
+          type: string
+          format: date-time
+        equity:
+          type: number
+        drawdownPercent:
+          type: number
+      required:
+        - occurredAt
+        - equity
+        - drawdownPercent
+
+    BacktestComparisonBadge:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        format:
+          type: string
+          enum: ["currency", "percent", "number", "integer"]
+        latestValue:
+          type: [number, "null"]
+        bestValue:
+          type: [number, "null"]
+        winner:
+          type: string
+          enum: ["latest", "best", "tie", "none"]
+      required:
+        - id
+        - label
+        - format
+        - latestValue
+        - bestValue
+        - winner
+
+    BacktestStudyPreviewChart:
+      type: object
+      properties:
+        studyId:
+          type: string
+        latestCompletedRun:
+          oneOf:
+            - $ref: "#/components/schemas/BacktestRunSummary"
+            - type: "null"
+        bestCompletedRun:
+          oneOf:
+            - $ref: "#/components/schemas/BacktestRunSummary"
+            - type: "null"
+        comparisonBadges:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestComparisonBadge"
+        latestSeries:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestEquitySeriesPoint"
+        bestSeries:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacktestEquitySeriesPoint"
+      required:
+        - studyId
+        - latestCompletedRun
+        - bestCompletedRun
+        - comparisonBadges
+        - latestSeries
+        - bestSeries
 
     BacktestRunDetail:
       type: object

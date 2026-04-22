@@ -5,13 +5,30 @@ export { ResearchChartFrame } from "./ResearchChartFrame";
 export {
   ResearchChartWidgetHeader,
   ResearchChartWidgetFooter,
+  ResearchChartWidgetSidebar,
 } from "./ResearchChartWidgetChrome";
 export { ChartParityLab } from "./ChartParityLab";
 export { buildResearchChartModel } from "./model";
-export { defaultIndicatorRegistry } from "./indicators";
 export {
+  defaultIndicatorCatalog,
+  defaultIndicatorRegistry,
+} from "./indicators";
+export {
+  buildIndicatorLibrary,
+  hasPineRuntimeAdapter,
+  registerPineRuntimeAdapter,
+  resolvePineScriptChartState,
+  useIndicatorLibrary,
+} from "./pineScripts";
+export { useDrawingHistory } from "./useDrawingHistory";
+export {
+  getStoredBrokerMinuteAggregates,
   getStoredStockMinuteAggregates,
+  useBrokerStockAggregateStream,
   useMassiveStockAggregateStream,
   useStockMinuteAggregateStoreVersion,
 } from "./useMassiveStockAggregateStream";
-export { useMassiveStreamedStockBars } from "./useMassiveStreamedStockBars";
+export {
+  useBrokerStreamedBars,
+  useMassiveStreamedStockBars,
+} from "./useMassiveStreamedStockBars";

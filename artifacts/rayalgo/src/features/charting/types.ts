@@ -61,6 +61,82 @@ export type ChartMarker = {
   size?: number;
 };
 
+export type TradeThresholdSegment = {
+  id: string;
+  kind:
+    | "take_profit"
+    | "stop_loss"
+    | "trail_arm"
+    | "trail_stop"
+    | "exit_trigger";
+  startBarIndex: number;
+  endBarIndex: number;
+  value: number;
+  style: "solid" | "dashed" | "dotted";
+  hit?: boolean;
+  label?: string;
+};
+
+export type TradeOverlay = {
+  id: string;
+  tradeSelectionId: string;
+  symbol?: string;
+  entryBarIndex: number | null;
+  exitBarIndex: number | null;
+  entryTs: string;
+  exitTs?: string | null;
+  dir: "long" | "short";
+  strat: string;
+  qty: number;
+  pnl?: number | null;
+  pnlPercent?: number | null;
+  er?: string | null;
+  profitable?: boolean;
+  pricingMode?: "shares" | "options" | "option_history" | string | null;
+  chartPriceContext: "spot" | "option";
+  entryPrice?: number | null;
+  exitPrice?: number | null;
+  oe?: number | null;
+  ep?: number | null;
+  exitFill?: number | null;
+  entrySpotPrice?: number | null;
+  exitSpotPrice?: number | null;
+  entryBasePrice?: number | null;
+  exitBasePrice?: number | null;
+  stopLossPrice?: number | null;
+  takeProfitPrice?: number | null;
+  trailActivationPrice?: number | null;
+  lastTrailStopPrice?: number | null;
+  exitTriggerPrice?: number | null;
+  thresholdPath?: {
+    segments: TradeThresholdSegment[];
+  };
+};
+
+export type TradeMarkerGroup = {
+  id: string;
+  kind: "entry" | "exit";
+  time: number;
+  dir: "long" | "short";
+  profitable?: boolean;
+  barIndex: number | null;
+  tradeSelectionIds: string[];
+  label?: string;
+};
+
+export type TradeMarkerGroups = {
+  entryGroups: TradeMarkerGroup[];
+  exitGroups: TradeMarkerGroup[];
+  interactionGroups: TradeMarkerGroup[];
+  timeToTradeIds: Map<string, string[]>;
+};
+
+export type TradeSelectionFocus = {
+  token: number;
+  tradeSelectionId: string | null;
+  visibleLogicalRange: { from: number; to: number } | null;
+};
+
 export type IndicatorEvent = {
   id: string;
   strategy: string;
@@ -142,9 +218,19 @@ export type IndicatorPlugin = {
 
 export type IndicatorRegistry = Record<string, IndicatorPlugin>;
 
+export type IndicatorCatalogEntry = {
+  id: string;
+  label: string;
+  kind?: "built_in" | "pine";
+  paneType?: "price" | "lower";
+  description?: string;
+};
+
 export type ChartModel = {
   chartBars: ChartBar[];
   chartBarRanges: ChartBarRange[];
+  tradeOverlays: TradeOverlay[];
+  tradeMarkerGroups: TradeMarkerGroups;
   studySpecs: StudySpec[];
   studyVisibility: Record<string, boolean>;
   studyLowerPaneCount: number;
@@ -156,6 +242,8 @@ export type ChartModel = {
     markersByTradeId: Record<string, ChartMarker[]>;
     timeToTradeIds: Map<string, string[]>;
   };
+  activeTradeSelectionId?: string | null;
+  selectionFocus?: TradeSelectionFocus | null;
   defaultVisibleLogicalRange?: { from: number; to: number } | null;
 };
 

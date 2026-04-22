@@ -2235,7 +2235,7 @@ async function fetchTranscriptList(ticker) {
   }
 }
 
-// Pick best FMP endpoint/granularity for a given period.
+// Pick the broker timeframe/granularity for a given period.
 // Intraday gives us 15-min and 1-hour bars for recent short windows; daily otherwise.
 // Returns { interval: "15min"|"1hour"|"daily", barsEstimate: number } for the period.
 function pickIntervalForPeriod(period) {
@@ -2251,6 +2251,14 @@ function pickIntervalForPeriod(period) {
   }
 }
 
+function resolveHistSourceLabel(bars) {
+  const sources = new Set((bars || []).map((bar) => bar?.source).filter(Boolean));
+  if (sources.has("ibkr+massive-gap-fill")) return "IBKR + GAP";
+  if (sources.has("ibkr-history")) return "IBKR";
+  if (sources.has("ibkr-websocket-derived")) return "IBKR WS";
+  return sources.size ? "BROKER" : "";
+}
+
 async function fetchHist(ticker, periodOrDays) {
   // Accept either a period string ("1W", "1M", ...) or legacy numeric days
   const { interval, barsEstimate } = typeof periodOrDays === "string"
@@ -2261,7 +2269,12 @@ async function fetchHist(ticker, periodOrDays) {
   const cacheKey = ticker + "|" + interval;
   const cached = histCache.get(cacheKey);
   if (cached && (Date.now() - cached.fetchedAt) < HIST_CACHE_MS && cached.hist.length >= Math.min(barsEstimate, cached.hist.length)) {
-    return { status: "live", hist: cached.hist.slice(-barsEstimate), interval };
+    return {
+      status: "live",
+      hist: cached.hist.slice(-barsEstimate),
+      interval,
+      sourceLabel: cached.sourceLabel || "IBKR",
+    };
   }
   try {
     const timeframe = interval === "15min" ? "15m" : interval === "1hour" ? "1h" : "1d";
@@ -2269,8 +2282,11 @@ async function fetchHist(ticker, periodOrDays) {
       symbol: ticker,
       timeframe,
       limit: barsEstimate,
+      outsideRth: timeframe !== "1d",
+      source: "trades",
     });
     const bars = Array.isArray(payload?.bars) ? payload.bars : [];
+    const sourceLabel = resolveHistSourceLabel(bars) || "IBKR";
     let hist;
     if (interval === "daily") {
       if (bars.length > 0) {
@@ -2301,8 +2317,8 @@ async function fetchHist(ticker, periodOrDays) {
         return { status: "nodata", hist: null };
       }
     }
-    histCache.set(cacheKey, { hist, fetchedAt: Date.now(), interval });
-    return { status: "live", hist: hist.slice(-barsEstimate), interval };
+    histCache.set(cacheKey, { hist, fetchedAt: Date.now(), interval, sourceLabel });
+    return { status: "live", hist: hist.slice(-barsEstimate), interval, sourceLabel };
   } catch(e) {
     return { status: "error", hist: null };
   }
@@ -3156,69 +3172,43 @@ function CashFlowTable({ fd, color }) {
 }
 
 /* ════════════════════════ PRICE CHART ════════════════════════ */
-const PERIOD_DAYS = { "1W": 5, "1M": 22, "3M": 66, "6M": 132, "YTD": null, "1Y": 252, "5Y": 1260 };
-
-function PriceChart({ co, vc, price, apiKey, wkLow, wkHigh }) {
+function PriceChart({ co, vc, price, wkLow, wkHigh }) {
   const [pricePeriod, setPricePeriod] = useState("3M");
   const [liveHist, setLiveHist] = useState(null);
-  const [histStatus, setHistStatus] = useState("idle"); // idle | loading | live | sim | error | nodata | nokey
+  const [histStatus, setHistStatus] = useState("idle"); // idle | loading | live | error | nodata
   const [histInterval, setHistInterval] = useState("daily"); // "15min" | "1hour" | "daily"
+  const [histSourceLabel, setHistSourceLabel] = useState("IBKR");
   const [loading, setLoading] = useState(false);
-
-  const computeDays = (period) => {
-    if (period === "YTD") {
-      const now = new Date();
-      const jan1 = new Date(now.getFullYear(), 0, 1);
-      const msPerDay = 1000 * 60 * 60 * 24;
-      return Math.round((now - jan1) / msPerDay * 5 / 7);
-    }
-    return PERIOD_DAYS[period] || 66;
-  };
 
   useEffect(() => {
     let cancelled = false;
-    if (apiKey) {
-      setLoading(true);
-      // Pass period string — fetchHist picks intraday for 1W/1M, daily otherwise
-      fetchHist(co.t, pricePeriod, apiKey).then(r => {
-        if (cancelled) return;
-        setLoading(false);
-        if (r.status === "live" && r.hist) {
-          setLiveHist(r.hist);
-          setHistStatus("live");
-          setHistInterval(r.interval || "daily");
-        } else {
-          setLiveHist(null);
-          setHistStatus(r.status === "nokey" ? "sim" : r.status);
-          setHistInterval("daily");
-        }
-      });
-    } else {
-      setLiveHist(null);
-      setHistStatus("sim");
-      setHistInterval("daily");
-    }
+    setLoading(true);
+    fetchHist(co.t, pricePeriod).then(r => {
+      if (cancelled) return;
+      setLoading(false);
+      if (r.status === "live" && r.hist) {
+        setLiveHist(r.hist);
+        setHistStatus("live");
+        setHistInterval(r.interval || "daily");
+        setHistSourceLabel(r.sourceLabel || "IBKR");
+      } else {
+        setLiveHist(null);
+        setHistStatus(r.status);
+        setHistInterval("daily");
+        setHistSourceLabel("IBKR");
+      }
+    });
     return () => { cancelled = true; };
-  }, [co.t, pricePeriod, apiKey]);
+  }, [co.t, pricePeriod]);
 
   const priceHistory = useMemo(() => {
-    const days = computeDays(pricePeriod);
     let base;
     let isLive = false;
     if (liveHist && liveHist.length > 0) {
-      // For live data the slice is already handled by fetchHist based on period.
-      // Don't re-truncate (would drop intraday bars since days = trading days not bars).
       base = liveHist;
       isLive = true;
     } else {
-      let seed = 0;
-      for (let i = 0; i < co.t.length; i++) seed = ((seed << 5) - seed + co.t.charCodeAt(i)) | 0;
-      const rand = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed & 0x7fffffff) / 2147483647; };
-      const vol = pricePeriod === "1W" ? 0.018 : pricePeriod === "5Y" ? 0.022 : pricePeriod === "1Y" ? 0.022 : 0.028;
-      const startMult = pricePeriod === "1W" ? 0.96 : pricePeriod === "1M" ? 0.88 : pricePeriod === "3M" ? 0.82 : pricePeriod === "6M" ? 0.75 : pricePeriod === "YTD" ? 0.80 : pricePeriod === "1Y" ? 0.65 : 0.40;
-      base = []; let p = price * startMult;
-      for (let i = 0; i < days; i++) { p = p * (1 + (rand() - 0.47) * vol); base.push({ day: i, price: +p.toFixed(2) }); }
-      base[days - 1] = { day: days - 1, price: +price.toFixed(2) };
+      base = [];
     }
     const today = new Date();
     const isIntraday = histInterval === "15min" || histInterval === "1hour";
@@ -3259,11 +3249,11 @@ function PriceChart({ co, vc, price, apiKey, wkLow, wkHigh }) {
       }
     }
     return enriched;
-  }, [co.t, pricePeriod, price, liveHist, histInterval]);
+  }, [histInterval, liveHist, price, pricePeriod]);
 
   const startPrice = priceHistory[0]?.price || price;
   const endPrice = priceHistory[priceHistory.length - 1]?.price || price;
-  const periodReturn = startPrice > 0 ? ((endPrice - startPrice) / startPrice) * 100 : 0;
+  const periodReturn = priceHistory.length > 1 && startPrice > 0 ? ((endPrice - startPrice) / startPrice) * 100 : 0;
   const retColor = periodReturn >= 0 ? "#1a8a5c" : "#c44040";
 
   // Show 52-week ref lines only when period is long enough to be visually meaningful
@@ -3346,14 +3336,14 @@ function PriceChart({ co, vc, price, apiKey, wkLow, wkHigh }) {
         </span>
         {/* Data status pill — shows interval (15m/1h/D) for live intraday */}
         {(() => {
-          const intervalLabel = histInterval === "15min" ? " · 15M BARS" : histInterval === "1hour" ? " · 1H BARS" : histInterval === "daily" ? " · DAILY" : "";
+          const intervalLabel = histInterval === "15min" ? " · 15M" : histInterval === "1hour" ? " · 1H" : histInterval === "daily" ? " · DAILY" : "";
           const pill = loading ? { label: "LOADING", bg: "rgba(184,134,11,.1)", fg: "#b8860b", dot: "#b8860b" }
-            : histStatus === "live" ? { label: "LIVE" + intervalLabel, bg: "rgba(26,138,92,.1)", fg: "#1a8a5c", dot: "#1a8a5c", pulse: true }
-            : histStatus === "error" ? { label: "FETCH ERROR · SIM", bg: "rgba(196,64,64,.08)", fg: "#c44040", dot: "#c44040" }
-            : histStatus === "nodata" ? { label: "NO DATA · SIM", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#888" }
-            : { label: "SIMULATED", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#aaa" };
+            : histStatus === "live" ? { label: `${histSourceLabel}${intervalLabel}`, bg: "rgba(26,138,92,.1)", fg: "#1a8a5c", dot: "#1a8a5c", pulse: true }
+            : histStatus === "error" ? { label: "BROKER UNAVAILABLE", bg: "rgba(196,64,64,.08)", fg: "#c44040", dot: "#c44040" }
+            : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#888" }
+            : { label: "WAITING", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#aaa" };
           return (
-            <span title={histStatus === "live" ? ("Live " + histInterval + " data from FMP" + (FMP_SYM[co.t] ? " via " + FMP_SYM[co.t] : "")) : "Deterministic synthetic data — price levels reflect fallback"} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 10, background: pill.bg, fontSize: 9, fontWeight: 700, color: pill.fg, letterSpacing: 0.5 }}>
+            <span title={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 10, background: pill.bg, fontSize: 9, fontWeight: 700, color: pill.fg, letterSpacing: 0.5 }}>
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: pill.dot, animation: pill.pulse ? "pulse 1.8s ease-in-out infinite" : "none" }} />
               {pill.label}
             </span>
@@ -3365,41 +3355,51 @@ function PriceChart({ co, vc, price, apiKey, wkLow, wkHigh }) {
       </div>
 
       {/* Chart body */}
-      <ResponsiveContainer width="100%" height={240}>
-        <AreaChart data={priceHistory} margin={{ top: 8, right: showRefs ? 42 : 8, bottom: 4, left: -2 }}>
-          <defs>
-            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={vc.c} stopOpacity={0.28} />
-              <stop offset="100%" stopColor={vc.c} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#eee" }} tickLine={false} interval={tickInterval} minTickGap={8} />
-          <YAxis
-            tick={{ fontSize: 10, fill: "#aaa", fontVariantNumeric: "tabular-nums" }}
-            axisLine={false} tickLine={false}
-            domain={priceDomain}
-            tickCount={6}
-            tickFormatter={v => {
-              if (v >= 1000) return "$" + Math.round(v).toLocaleString();
-              if (v >= 100) return "$" + v.toFixed(0);
-              if (v >= 10) return "$" + v.toFixed(1);
-              return "$" + v.toFixed(2);
-            }}
-            width={52}
-          />
-          <Tooltip content={<CustomTooltip />} cursor={{ stroke: vc.c, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.5 }} />
-          {showRefs && (
-            <ReferenceLine y={wkHigh} stroke="#999" strokeDasharray="4 4" strokeOpacity={0.5}
-              label={{ value: "52w hi $" + wkHigh.toFixed(0), position: "right", fill: "#999", fontSize: 9 }} />
-          )}
-          {showRefs && (
-            <ReferenceLine y={wkLow} stroke="#999" strokeDasharray="4 4" strokeOpacity={0.5}
-              label={{ value: "52w lo $" + wkLow.toFixed(0), position: "right", fill: "#999", fontSize: 9 }} />
-          )}
-          {/* Linear interpolation — more faithful to actual price action than monotone smoothing */}
-          <Area type="linear" dataKey="price" stroke={vc.c} strokeWidth={1.6} fill={"url(#" + gradId + ")"} dot={false} activeDot={{ r: 4, fill: vc.c, stroke: "#fff", strokeWidth: 2 }} isAnimationActive={false} />
-        </AreaChart>
-      </ResponsiveContainer>
+      <div style={{ position: "relative", height: 240 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={priceHistory} margin={{ top: 8, right: showRefs ? 42 : 8, bottom: 4, left: -2 }}>
+            <defs>
+              <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={vc.c} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={vc.c} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#eee" }} tickLine={false} interval={tickInterval} minTickGap={8} />
+            <YAxis
+              tick={{ fontSize: 10, fill: "#aaa", fontVariantNumeric: "tabular-nums" }}
+              axisLine={false} tickLine={false}
+              domain={priceDomain}
+              tickCount={6}
+              tickFormatter={v => {
+                if (v >= 1000) return "$" + Math.round(v).toLocaleString();
+                if (v >= 100) return "$" + v.toFixed(0);
+                if (v >= 10) return "$" + v.toFixed(1);
+                return "$" + v.toFixed(2);
+              }}
+              width={52}
+            />
+            <Tooltip content={<CustomTooltip />} cursor={{ stroke: vc.c, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.5 }} />
+            {showRefs && (
+              <ReferenceLine y={wkHigh} stroke="#999" strokeDasharray="4 4" strokeOpacity={0.5}
+                label={{ value: "52w hi $" + wkHigh.toFixed(0), position: "right", fill: "#999", fontSize: 9 }} />
+            )}
+            {showRefs && (
+              <ReferenceLine y={wkLow} stroke="#999" strokeDasharray="4 4" strokeOpacity={0.5}
+                label={{ value: "52w lo $" + wkLow.toFixed(0), position: "right", fill: "#999", fontSize: 9 }} />
+            )}
+            {/* Linear interpolation — more faithful to actual price action than monotone smoothing */}
+            <Area type="linear" dataKey="price" stroke={vc.c} strokeWidth={1.6} fill={"url(#" + gradId + ")"} dot={false} activeDot={{ r: 4, fill: vc.c, stroke: "#fff", strokeWidth: 2 }} isAnimationActive={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+        {!loading && priceHistory.length === 0 ? (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+            <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(0,0,0,.08)", background: "rgba(255,255,255,.92)", boxShadow: "0 6px 20px rgba(0,0,0,.06)", textAlign: "center" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#444", letterSpacing: 0.4 }}>Broker chart unavailable</div>
+              <div style={{ marginTop: 4, fontSize: 10, color: "#888" }}>No broker bars returned for {co.t} over {pricePeriod}.</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -3880,7 +3880,7 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
       </table>
       <div style={{ padding: "5px 8px", fontSize: 9, color: "#bbb", background: "rgba(0,0,0,.01)", borderTop: "1px solid rgba(0,0,0,.04)", letterSpacing: .3 }}>
         <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: "#1a8a5c", marginRight: 4, verticalAlign: "middle" }} />
-        Live = FMP API · Click a peer row to switch focus · TTM = trailing twelve months · Private/uncovered names shown without metrics
+        Live dots = platform or research APIs · Click a peer row to switch focus · TTM = trailing twelve months · Private/uncovered names shown without metrics
       </div>
     </div>
   );

@@ -5,9 +5,14 @@ import {
   CreateBacktestRunBody,
   CreateBacktestStudyBody,
   CreateBacktestSweepBody,
+  GetBacktestRunChartParams,
+  GetBacktestRunChartQueryParams,
+  GetBacktestRunChartResponse,
   GetBacktestRunParams,
   GetBacktestRunResponse,
   GetBacktestStudyParams,
+  GetBacktestStudyPreviewChartParams,
+  GetBacktestStudyPreviewChartResponse,
   GetBacktestStudyResponse,
   GetBacktestSweepParams,
   GetBacktestSweepResponse,
@@ -25,8 +30,10 @@ import {
   createBacktestRun,
   createBacktestStudy,
   createBacktestSweep,
+  getBacktestRunChart,
   getBacktestRun,
   getBacktestStudy,
+  getBacktestStudyPreviewChart,
   getBacktestSweep,
   listBacktestDraftStrategies,
   listBacktestJobs,
@@ -62,6 +69,17 @@ router.get("/backtests/studies/:studyId", async (req, res): Promise<void> => {
   res.json(data);
 });
 
+router.get(
+  "/backtests/studies/:studyId/preview-chart",
+  async (req, res): Promise<void> => {
+    const params = GetBacktestStudyPreviewChartParams.parse(req.params);
+    const data = GetBacktestStudyPreviewChartResponse.parse(
+      await getBacktestStudyPreviewChart(params.studyId),
+    );
+    res.json(data);
+  },
+);
+
 router.get("/backtests/runs", async (req, res): Promise<void> => {
   const query = ListBacktestRunsQueryParams.parse(req.query);
   const data = ListBacktestRunsResponse.parse(await listBacktestRuns(query));
@@ -80,16 +98,28 @@ router.get("/backtests/runs/:runId", async (req, res): Promise<void> => {
   res.json(data);
 });
 
-router.post("/backtests/runs/:runId/promote", async (req, res): Promise<void> => {
-  const params = PromoteBacktestRunParams.parse(req.params);
-  const body = PromoteBacktestRunBody.parse(req.body);
-  const data = await promoteBacktestRun({
-    runId: params.runId,
-    name: body.name,
-    notes: body.notes,
-  });
-  res.status(201).json(data);
+router.get("/backtests/runs/:runId/chart", async (req, res): Promise<void> => {
+  const params = GetBacktestRunChartParams.parse(req.params);
+  const query = GetBacktestRunChartQueryParams.parse(req.query);
+  const data = GetBacktestRunChartResponse.parse(
+    await getBacktestRunChart(params.runId, query),
+  );
+  res.json(data);
 });
+
+router.post(
+  "/backtests/runs/:runId/promote",
+  async (req, res): Promise<void> => {
+    const params = PromoteBacktestRunParams.parse(req.params);
+    const body = PromoteBacktestRunBody.parse(req.body);
+    const data = await promoteBacktestRun({
+      runId: params.runId,
+      name: body.name,
+      notes: body.notes,
+    });
+    res.status(201).json(data);
+  },
+);
 
 router.post("/backtests/sweeps", async (req, res): Promise<void> => {
   const body = CreateBacktestSweepBody.parse(req.body);
@@ -110,13 +140,16 @@ router.get("/backtests/jobs", async (_req, res): Promise<void> => {
   res.json(data);
 });
 
-router.post("/backtests/jobs/:jobId/cancel", async (req, res): Promise<void> => {
-  const params = CancelBacktestJobParams.parse(req.params);
-  const data = CancelBacktestJobResponse.parse(
-    await cancelBacktestJob(params.jobId),
-  );
-  res.json(data);
-});
+router.post(
+  "/backtests/jobs/:jobId/cancel",
+  async (req, res): Promise<void> => {
+    const params = CancelBacktestJobParams.parse(req.params);
+    const data = CancelBacktestJobResponse.parse(
+      await cancelBacktestJob(params.jobId),
+    );
+    res.json(data);
+  },
+);
 
 router.get("/backtests/drafts", async (_req, res): Promise<void> => {
   const data = ListBacktestDraftStrategiesResponse.parse(

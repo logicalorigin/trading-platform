@@ -21,7 +21,8 @@
     "express": "^5",
     "pino": "^9",
     "pino-http": "^10",
-    "utf-8-validate": "^6.0.6"
+    "utf-8-validate": "^6.0.6",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

@@ -18,22 +18,32 @@ import type {
 
 import type {
   AccountsResponse,
+  AlgoDeployment,
+  AlgoDeploymentsResponse,
   BacktestDraftStrategiesResponse,
   BacktestDraftStrategy,
   BacktestJobSummary,
   BacktestJobsResponse,
+  BacktestRunChart,
   BacktestRunDetail,
   BacktestRunsResponse,
   BacktestStrategiesResponse,
   BacktestStudiesResponse,
   BacktestStudyInput,
+  BacktestStudyPreviewChart,
   BacktestStudyRecord,
   BacktestSweepDetail,
   BarsResponse,
   BrokerConnectionsResponse,
+  CancelOrderRequest,
+  CancelOrderResponse,
+  CreateAlgoDeploymentRequest,
   CreateBacktestRunRequest,
   CreateBacktestSweepRequest,
+  CreatePineScriptRequest,
+  ExecutionEventsResponse,
   FlowEventsResponse,
+  GetBacktestRunChartParams,
   GetBarsParams,
   GetNewsParams,
   GetOptionChainParams,
@@ -45,18 +55,24 @@ import type {
   GetResearchTranscriptsParams,
   HealthStatus,
   ListAccountsParams,
+  ListAlgoDeploymentsParams,
   ListBacktestRunsParams,
+  ListExecutionEventsParams,
   ListFlowEventsParams,
   ListOrdersParams,
   ListPositionsParams,
   NewsResponse,
   OptionChainResponse,
   Order,
+  OrderPreview,
   OrdersResponse,
+  PineScriptRecord,
+  PineScriptsResponse,
   PlaceOrderRequest,
   PositionsResponse,
   PromoteBacktestRunRequest,
   QuoteSnapshotsResponse,
+  ReplaceOrderRequest,
   ResearchCalendarResponse,
   ResearchFilingsResponse,
   ResearchFundamentalsResponse,
@@ -65,7 +81,16 @@ import type {
   ResearchTranscriptsResponse,
   SearchUniverseTickersParams,
   SessionInfo,
+  SseStream,
+  StreamAccountsParams,
+  StreamOptionChainsParams,
+  StreamOrdersParams,
+  StreamQuoteSnapshotsParams,
+  StreamStockAggregatesParams,
+  SubmitIbkrOrdersRequest,
+  SubmitIbkrOrdersResponse,
   UniverseTickersResponse,
+  UpdatePineScriptRequest,
   WatchlistsResponse,
 } from "./api.schemas";
 
@@ -749,6 +774,356 @@ export const usePlaceOrder = <
 };
 
 /**
+ * @summary Preview a normalized IBKR order payload before submission
+ */
+export const getPreviewOrderUrl = () => {
+  return `/api/orders/preview`;
+};
+
+export const previewOrder = async (
+  placeOrderRequest: PlaceOrderRequest,
+  options?: RequestInit,
+): Promise<OrderPreview> => {
+  return customFetch<OrderPreview>(getPreviewOrderUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(placeOrderRequest),
+  });
+};
+
+export const getPreviewOrderMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewOrder>>,
+    TError,
+    { data: BodyType<PlaceOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof previewOrder>>,
+  TError,
+  { data: BodyType<PlaceOrderRequest> },
+  TContext
+> => {
+  const mutationKey = ["previewOrder"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof previewOrder>>,
+    { data: BodyType<PlaceOrderRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return previewOrder(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PreviewOrderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof previewOrder>>
+>;
+export type PreviewOrderMutationBody = BodyType<PlaceOrderRequest>;
+export type PreviewOrderMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Preview a normalized IBKR order payload before submission
+ */
+export const usePreviewOrder = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewOrder>>,
+    TError,
+    { data: BodyType<PlaceOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof previewOrder>>,
+  TError,
+  { data: BodyType<PlaceOrderRequest> },
+  TContext
+> => {
+  return useMutation(getPreviewOrderMutationOptions(options));
+};
+
+/**
+ * @summary Submit either a normalized order request or raw IBKR order payloads
+ */
+export const getSubmitOrdersUrl = () => {
+  return `/api/orders/submit`;
+};
+
+export const submitOrders = async (
+  placeOrderRequestSubmitIbkrOrdersRequest:
+    | PlaceOrderRequest
+    | SubmitIbkrOrdersRequest,
+  options?: RequestInit,
+): Promise<Order | SubmitIbkrOrdersResponse> => {
+  return customFetch<Order | SubmitIbkrOrdersResponse>(getSubmitOrdersUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(placeOrderRequestSubmitIbkrOrdersRequest),
+  });
+};
+
+export const getSubmitOrdersMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitOrders>>,
+    TError,
+    { data: BodyType<PlaceOrderRequest | SubmitIbkrOrdersRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitOrders>>,
+  TError,
+  { data: BodyType<PlaceOrderRequest | SubmitIbkrOrdersRequest> },
+  TContext
+> => {
+  const mutationKey = ["submitOrders"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitOrders>>,
+    { data: BodyType<PlaceOrderRequest | SubmitIbkrOrdersRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return submitOrders(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitOrdersMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitOrders>>
+>;
+export type SubmitOrdersMutationBody = BodyType<
+  PlaceOrderRequest | SubmitIbkrOrdersRequest
+>;
+export type SubmitOrdersMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Submit either a normalized order request or raw IBKR order payloads
+ */
+export const useSubmitOrders = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitOrders>>,
+    TError,
+    { data: BodyType<PlaceOrderRequest | SubmitIbkrOrdersRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof submitOrders>>,
+  TError,
+  { data: BodyType<PlaceOrderRequest | SubmitIbkrOrdersRequest> },
+  TContext
+> => {
+  return useMutation(getSubmitOrdersMutationOptions(options));
+};
+
+/**
+ * @summary Replace an existing IBKR order using the raw IBKR modify payload
+ */
+export const getReplaceOrderUrl = (orderId: string) => {
+  return `/api/orders/${orderId}/replace`;
+};
+
+export const replaceOrder = async (
+  orderId: string,
+  replaceOrderRequest: ReplaceOrderRequest,
+  options?: RequestInit,
+): Promise<Order> => {
+  return customFetch<Order>(getReplaceOrderUrl(orderId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(replaceOrderRequest),
+  });
+};
+
+export const getReplaceOrderMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof replaceOrder>>,
+    TError,
+    { orderId: string; data: BodyType<ReplaceOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof replaceOrder>>,
+  TError,
+  { orderId: string; data: BodyType<ReplaceOrderRequest> },
+  TContext
+> => {
+  const mutationKey = ["replaceOrder"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof replaceOrder>>,
+    { orderId: string; data: BodyType<ReplaceOrderRequest> }
+  > = (props) => {
+    const { orderId, data } = props ?? {};
+
+    return replaceOrder(orderId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReplaceOrderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof replaceOrder>>
+>;
+export type ReplaceOrderMutationBody = BodyType<ReplaceOrderRequest>;
+export type ReplaceOrderMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Replace an existing IBKR order using the raw IBKR modify payload
+ */
+export const useReplaceOrder = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof replaceOrder>>,
+    TError,
+    { orderId: string; data: BodyType<ReplaceOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof replaceOrder>>,
+  TError,
+  { orderId: string; data: BodyType<ReplaceOrderRequest> },
+  TContext
+> => {
+  return useMutation(getReplaceOrderMutationOptions(options));
+};
+
+/**
+ * @summary Request cancellation for an existing IBKR order
+ */
+export const getCancelOrderUrl = (orderId: string) => {
+  return `/api/orders/${orderId}/cancel`;
+};
+
+export const cancelOrder = async (
+  orderId: string,
+  cancelOrderRequest: CancelOrderRequest,
+  options?: RequestInit,
+): Promise<CancelOrderResponse> => {
+  return customFetch<CancelOrderResponse>(getCancelOrderUrl(orderId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(cancelOrderRequest),
+  });
+};
+
+export const getCancelOrderMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelOrder>>,
+    TError,
+    { orderId: string; data: BodyType<CancelOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof cancelOrder>>,
+  TError,
+  { orderId: string; data: BodyType<CancelOrderRequest> },
+  TContext
+> => {
+  const mutationKey = ["cancelOrder"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof cancelOrder>>,
+    { orderId: string; data: BodyType<CancelOrderRequest> }
+  > = (props) => {
+    const { orderId, data } = props ?? {};
+
+    return cancelOrder(orderId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CancelOrderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof cancelOrder>>
+>;
+export type CancelOrderMutationBody = BodyType<CancelOrderRequest>;
+export type CancelOrderMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Request cancellation for an existing IBKR order
+ */
+export const useCancelOrder = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelOrder>>,
+    TError,
+    { orderId: string; data: BodyType<CancelOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof cancelOrder>>,
+  TError,
+  { orderId: string; data: BodyType<CancelOrderRequest> },
+  TContext
+> => {
+  return useMutation(getCancelOrderMutationOptions(options));
+};
+
+/**
  * @summary Get latest quotes for symbols
  */
 export const getGetQuoteSnapshotsUrl = (params: GetQuoteSnapshotsParams) => {
@@ -1035,7 +1410,7 @@ export function useSearchUniverseTickers<
 }
 
 /**
- * @summary Get historical bars for a symbol
+ * @summary Get broker-first historical bars for a symbol or contract
  */
 export const getGetBarsUrl = (params: GetBarsParams) => {
   const normalizedParams = new URLSearchParams();
@@ -1098,7 +1473,7 @@ export type GetBarsQueryResult = NonNullable<
 export type GetBarsQueryError = ErrorType<unknown>;
 
 /**
- * @summary Get historical bars for a symbol
+ * @summary Get broker-first historical bars for a symbol or contract
  */
 
 export function useGetBars<
@@ -1206,6 +1581,494 @@ export function useGetOptionChain<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetOptionChainQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Stream quote snapshots over server-sent events
+ */
+export const getStreamQuoteSnapshotsUrl = (
+  params: StreamQuoteSnapshotsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/streams/quotes?${stringifiedParams}`
+    : `/api/streams/quotes`;
+};
+
+export const streamQuoteSnapshots = async (
+  params: StreamQuoteSnapshotsParams,
+  options?: RequestInit,
+): Promise<SseStream> => {
+  return customFetch<SseStream>(getStreamQuoteSnapshotsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getStreamQuoteSnapshotsQueryKey = (
+  params?: StreamQuoteSnapshotsParams,
+) => {
+  return [`/api/streams/quotes`, ...(params ? [params] : [])] as const;
+};
+
+export const getStreamQuoteSnapshotsQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamQuoteSnapshots>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamQuoteSnapshotsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamQuoteSnapshots>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getStreamQuoteSnapshotsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof streamQuoteSnapshots>>
+  > = ({ signal }) =>
+    streamQuoteSnapshots(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamQuoteSnapshots>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type StreamQuoteSnapshotsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamQuoteSnapshots>>
+>;
+export type StreamQuoteSnapshotsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Stream quote snapshots over server-sent events
+ */
+
+export function useStreamQuoteSnapshots<
+  TData = Awaited<ReturnType<typeof streamQuoteSnapshots>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamQuoteSnapshotsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamQuoteSnapshots>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getStreamQuoteSnapshotsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Stream option chain snapshots over server-sent events
+ */
+export const getStreamOptionChainsUrl = (params: StreamOptionChainsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/streams/options/chains?${stringifiedParams}`
+    : `/api/streams/options/chains`;
+};
+
+export const streamOptionChains = async (
+  params: StreamOptionChainsParams,
+  options?: RequestInit,
+): Promise<SseStream> => {
+  return customFetch<SseStream>(getStreamOptionChainsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getStreamOptionChainsQueryKey = (
+  params?: StreamOptionChainsParams,
+) => {
+  return [`/api/streams/options/chains`, ...(params ? [params] : [])] as const;
+};
+
+export const getStreamOptionChainsQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamOptionChains>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamOptionChainsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamOptionChains>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getStreamOptionChainsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof streamOptionChains>>
+  > = ({ signal }) => streamOptionChains(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamOptionChains>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type StreamOptionChainsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamOptionChains>>
+>;
+export type StreamOptionChainsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Stream option chain snapshots over server-sent events
+ */
+
+export function useStreamOptionChains<
+  TData = Awaited<ReturnType<typeof streamOptionChains>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamOptionChainsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamOptionChains>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getStreamOptionChainsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Stream order snapshots over server-sent events
+ */
+export const getStreamOrdersUrl = (params?: StreamOrdersParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/streams/orders?${stringifiedParams}`
+    : `/api/streams/orders`;
+};
+
+export const streamOrders = async (
+  params?: StreamOrdersParams,
+  options?: RequestInit,
+): Promise<SseStream> => {
+  return customFetch<SseStream>(getStreamOrdersUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getStreamOrdersQueryKey = (params?: StreamOrdersParams) => {
+  return [`/api/streams/orders`, ...(params ? [params] : [])] as const;
+};
+
+export const getStreamOrdersQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamOrders>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: StreamOrdersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamOrders>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getStreamOrdersQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof streamOrders>>> = ({
+    signal,
+  }) => streamOrders(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamOrders>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type StreamOrdersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamOrders>>
+>;
+export type StreamOrdersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Stream order snapshots over server-sent events
+ */
+
+export function useStreamOrders<
+  TData = Awaited<ReturnType<typeof streamOrders>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: StreamOrdersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamOrders>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getStreamOrdersQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Stream account and position snapshots over server-sent events
+ */
+export const getStreamAccountsUrl = (params?: StreamAccountsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/streams/accounts?${stringifiedParams}`
+    : `/api/streams/accounts`;
+};
+
+export const streamAccounts = async (
+  params?: StreamAccountsParams,
+  options?: RequestInit,
+): Promise<SseStream> => {
+  return customFetch<SseStream>(getStreamAccountsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getStreamAccountsQueryKey = (params?: StreamAccountsParams) => {
+  return [`/api/streams/accounts`, ...(params ? [params] : [])] as const;
+};
+
+export const getStreamAccountsQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamAccounts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: StreamAccountsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamAccounts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getStreamAccountsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof streamAccounts>>> = ({
+    signal,
+  }) => streamAccounts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamAccounts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type StreamAccountsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamAccounts>>
+>;
+export type StreamAccountsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Stream account and position snapshots over server-sent events
+ */
+
+export function useStreamAccounts<
+  TData = Awaited<ReturnType<typeof streamAccounts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: StreamAccountsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamAccounts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getStreamAccountsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Stream broker-derived stock minute aggregates over server-sent events
+ */
+export const getStreamStockAggregatesUrl = (
+  params: StreamStockAggregatesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/streams/stocks/aggregates?${stringifiedParams}`
+    : `/api/streams/stocks/aggregates`;
+};
+
+export const streamStockAggregates = async (
+  params: StreamStockAggregatesParams,
+  options?: RequestInit,
+): Promise<SseStream> => {
+  return customFetch<SseStream>(getStreamStockAggregatesUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getStreamStockAggregatesQueryKey = (
+  params?: StreamStockAggregatesParams,
+) => {
+  return [
+    `/api/streams/stocks/aggregates`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getStreamStockAggregatesQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamStockAggregates>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamStockAggregatesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamStockAggregates>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getStreamStockAggregatesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof streamStockAggregates>>
+  > = ({ signal }) =>
+    streamStockAggregates(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamStockAggregates>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type StreamStockAggregatesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamStockAggregates>>
+>;
+export type StreamStockAggregatesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Stream broker-derived stock minute aggregates over server-sent events
+ */
+
+export function useStreamStockAggregates<
+  TData = Awaited<ReturnType<typeof streamStockAggregates>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamStockAggregatesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamStockAggregates>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getStreamStockAggregatesQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -1906,6 +2769,715 @@ export function useGetResearchTranscript<
 }
 
 /**
+ * @summary List saved algo deployments
+ */
+export const getListAlgoDeploymentsUrl = (
+  params?: ListAlgoDeploymentsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/algo/deployments?${stringifiedParams}`
+    : `/api/algo/deployments`;
+};
+
+export const listAlgoDeployments = async (
+  params?: ListAlgoDeploymentsParams,
+  options?: RequestInit,
+): Promise<AlgoDeploymentsResponse> => {
+  return customFetch<AlgoDeploymentsResponse>(
+    getListAlgoDeploymentsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListAlgoDeploymentsQueryKey = (
+  params?: ListAlgoDeploymentsParams,
+) => {
+  return [`/api/algo/deployments`, ...(params ? [params] : [])] as const;
+};
+
+export const getListAlgoDeploymentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAlgoDeployments>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAlgoDeploymentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlgoDeployments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListAlgoDeploymentsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAlgoDeployments>>
+  > = ({ signal }) =>
+    listAlgoDeployments(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAlgoDeployments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAlgoDeploymentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAlgoDeployments>>
+>;
+export type ListAlgoDeploymentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List saved algo deployments
+ */
+
+export function useListAlgoDeployments<
+  TData = Awaited<ReturnType<typeof listAlgoDeployments>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAlgoDeploymentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlgoDeployments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAlgoDeploymentsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create an algo deployment linked to a promoted strategy
+ */
+export const getCreateAlgoDeploymentUrl = () => {
+  return `/api/algo/deployments`;
+};
+
+export const createAlgoDeployment = async (
+  createAlgoDeploymentRequest: CreateAlgoDeploymentRequest,
+  options?: RequestInit,
+): Promise<AlgoDeployment> => {
+  return customFetch<AlgoDeployment>(getCreateAlgoDeploymentUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createAlgoDeploymentRequest),
+  });
+};
+
+export const getCreateAlgoDeploymentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlgoDeployment>>,
+    TError,
+    { data: BodyType<CreateAlgoDeploymentRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createAlgoDeployment>>,
+  TError,
+  { data: BodyType<CreateAlgoDeploymentRequest> },
+  TContext
+> => {
+  const mutationKey = ["createAlgoDeployment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createAlgoDeployment>>,
+    { data: BodyType<CreateAlgoDeploymentRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createAlgoDeployment(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateAlgoDeploymentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createAlgoDeployment>>
+>;
+export type CreateAlgoDeploymentMutationBody =
+  BodyType<CreateAlgoDeploymentRequest>;
+export type CreateAlgoDeploymentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create an algo deployment linked to a promoted strategy
+ */
+export const useCreateAlgoDeployment = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlgoDeployment>>,
+    TError,
+    { data: BodyType<CreateAlgoDeploymentRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createAlgoDeployment>>,
+  TError,
+  { data: BodyType<CreateAlgoDeploymentRequest> },
+  TContext
+> => {
+  return useMutation(getCreateAlgoDeploymentMutationOptions(options));
+};
+
+/**
+ * @summary Enable an algo deployment
+ */
+export const getEnableAlgoDeploymentUrl = (deploymentId: string) => {
+  return `/api/algo/deployments/${deploymentId}/enable`;
+};
+
+export const enableAlgoDeployment = async (
+  deploymentId: string,
+  options?: RequestInit,
+): Promise<AlgoDeployment> => {
+  return customFetch<AlgoDeployment>(getEnableAlgoDeploymentUrl(deploymentId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getEnableAlgoDeploymentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enableAlgoDeployment>>,
+    TError,
+    { deploymentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof enableAlgoDeployment>>,
+  TError,
+  { deploymentId: string },
+  TContext
+> => {
+  const mutationKey = ["enableAlgoDeployment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof enableAlgoDeployment>>,
+    { deploymentId: string }
+  > = (props) => {
+    const { deploymentId } = props ?? {};
+
+    return enableAlgoDeployment(deploymentId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EnableAlgoDeploymentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof enableAlgoDeployment>>
+>;
+
+export type EnableAlgoDeploymentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Enable an algo deployment
+ */
+export const useEnableAlgoDeployment = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enableAlgoDeployment>>,
+    TError,
+    { deploymentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof enableAlgoDeployment>>,
+  TError,
+  { deploymentId: string },
+  TContext
+> => {
+  return useMutation(getEnableAlgoDeploymentMutationOptions(options));
+};
+
+/**
+ * @summary Pause an algo deployment
+ */
+export const getPauseAlgoDeploymentUrl = (deploymentId: string) => {
+  return `/api/algo/deployments/${deploymentId}/pause`;
+};
+
+export const pauseAlgoDeployment = async (
+  deploymentId: string,
+  options?: RequestInit,
+): Promise<AlgoDeployment> => {
+  return customFetch<AlgoDeployment>(getPauseAlgoDeploymentUrl(deploymentId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPauseAlgoDeploymentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pauseAlgoDeployment>>,
+    TError,
+    { deploymentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof pauseAlgoDeployment>>,
+  TError,
+  { deploymentId: string },
+  TContext
+> => {
+  const mutationKey = ["pauseAlgoDeployment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof pauseAlgoDeployment>>,
+    { deploymentId: string }
+  > = (props) => {
+    const { deploymentId } = props ?? {};
+
+    return pauseAlgoDeployment(deploymentId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PauseAlgoDeploymentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof pauseAlgoDeployment>>
+>;
+
+export type PauseAlgoDeploymentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Pause an algo deployment
+ */
+export const usePauseAlgoDeployment = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pauseAlgoDeployment>>,
+    TError,
+    { deploymentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof pauseAlgoDeployment>>,
+  TError,
+  { deploymentId: string },
+  TContext
+> => {
+  return useMutation(getPauseAlgoDeploymentMutationOptions(options));
+};
+
+/**
+ * @summary List execution and deployment lifecycle events
+ */
+export const getListExecutionEventsUrl = (
+  params?: ListExecutionEventsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/algo/events?${stringifiedParams}`
+    : `/api/algo/events`;
+};
+
+export const listExecutionEvents = async (
+  params?: ListExecutionEventsParams,
+  options?: RequestInit,
+): Promise<ExecutionEventsResponse> => {
+  return customFetch<ExecutionEventsResponse>(
+    getListExecutionEventsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListExecutionEventsQueryKey = (
+  params?: ListExecutionEventsParams,
+) => {
+  return [`/api/algo/events`, ...(params ? [params] : [])] as const;
+};
+
+export const getListExecutionEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listExecutionEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListExecutionEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listExecutionEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListExecutionEventsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listExecutionEvents>>
+  > = ({ signal }) =>
+    listExecutionEvents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listExecutionEvents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListExecutionEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listExecutionEvents>>
+>;
+export type ListExecutionEventsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List execution and deployment lifecycle events
+ */
+
+export function useListExecutionEvents<
+  TData = Awaited<ReturnType<typeof listExecutionEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListExecutionEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listExecutionEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListExecutionEventsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List saved Pine scripts for chart indicators
+ */
+export const getListPineScriptsUrl = () => {
+  return `/api/charting/pine-scripts`;
+};
+
+export const listPineScripts = async (
+  options?: RequestInit,
+): Promise<PineScriptsResponse> => {
+  return customFetch<PineScriptsResponse>(getListPineScriptsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListPineScriptsQueryKey = () => {
+  return [`/api/charting/pine-scripts`] as const;
+};
+
+export const getListPineScriptsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPineScripts>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listPineScripts>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListPineScriptsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listPineScripts>>> = ({
+    signal,
+  }) => listPineScripts({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPineScripts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListPineScriptsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPineScripts>>
+>;
+export type ListPineScriptsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List saved Pine scripts for chart indicators
+ */
+
+export function useListPineScripts<
+  TData = Awaited<ReturnType<typeof listPineScripts>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listPineScripts>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListPineScriptsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a Pine script library entry
+ */
+export const getCreatePineScriptUrl = () => {
+  return `/api/charting/pine-scripts`;
+};
+
+export const createPineScript = async (
+  createPineScriptRequest: CreatePineScriptRequest,
+  options?: RequestInit,
+): Promise<PineScriptRecord> => {
+  return customFetch<PineScriptRecord>(getCreatePineScriptUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createPineScriptRequest),
+  });
+};
+
+export const getCreatePineScriptMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPineScript>>,
+    TError,
+    { data: BodyType<CreatePineScriptRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPineScript>>,
+  TError,
+  { data: BodyType<CreatePineScriptRequest> },
+  TContext
+> => {
+  const mutationKey = ["createPineScript"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPineScript>>,
+    { data: BodyType<CreatePineScriptRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createPineScript(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePineScriptMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createPineScript>>
+>;
+export type CreatePineScriptMutationBody = BodyType<CreatePineScriptRequest>;
+export type CreatePineScriptMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a Pine script library entry
+ */
+export const useCreatePineScript = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPineScript>>,
+    TError,
+    { data: BodyType<CreatePineScriptRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createPineScript>>,
+  TError,
+  { data: BodyType<CreatePineScriptRequest> },
+  TContext
+> => {
+  return useMutation(getCreatePineScriptMutationOptions(options));
+};
+
+/**
+ * @summary Update a Pine script library entry
+ */
+export const getUpdatePineScriptUrl = (scriptId: string) => {
+  return `/api/charting/pine-scripts/${scriptId}`;
+};
+
+export const updatePineScript = async (
+  scriptId: string,
+  updatePineScriptRequest: UpdatePineScriptRequest,
+  options?: RequestInit,
+): Promise<PineScriptRecord> => {
+  return customFetch<PineScriptRecord>(getUpdatePineScriptUrl(scriptId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updatePineScriptRequest),
+  });
+};
+
+export const getUpdatePineScriptMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePineScript>>,
+    TError,
+    { scriptId: string; data: BodyType<UpdatePineScriptRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updatePineScript>>,
+  TError,
+  { scriptId: string; data: BodyType<UpdatePineScriptRequest> },
+  TContext
+> => {
+  const mutationKey = ["updatePineScript"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updatePineScript>>,
+    { scriptId: string; data: BodyType<UpdatePineScriptRequest> }
+  > = (props) => {
+    const { scriptId, data } = props ?? {};
+
+    return updatePineScript(scriptId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdatePineScriptMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updatePineScript>>
+>;
+export type UpdatePineScriptMutationBody = BodyType<UpdatePineScriptRequest>;
+export type UpdatePineScriptMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a Pine script library entry
+ */
+export const useUpdatePineScript = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePineScript>>,
+    TError,
+    { scriptId: string; data: BodyType<UpdatePineScriptRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updatePineScript>>,
+  TError,
+  { scriptId: string; data: BodyType<UpdatePineScriptRequest> },
+  TContext
+> => {
+  return useMutation(getUpdatePineScriptMutationOptions(options));
+};
+
+/**
  * @summary List available backtest strategies
  */
 export const getListBacktestStrategiesUrl = () => {
@@ -2234,6 +3806,101 @@ export function useGetBacktestStudy<
 }
 
 /**
+ * @summary Get the latest-vs-best completed study preview chart
+ */
+export const getGetBacktestStudyPreviewChartUrl = (studyId: string) => {
+  return `/api/backtests/studies/${studyId}/preview-chart`;
+};
+
+export const getBacktestStudyPreviewChart = async (
+  studyId: string,
+  options?: RequestInit,
+): Promise<BacktestStudyPreviewChart> => {
+  return customFetch<BacktestStudyPreviewChart>(
+    getGetBacktestStudyPreviewChartUrl(studyId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetBacktestStudyPreviewChartQueryKey = (studyId: string) => {
+  return [`/api/backtests/studies/${studyId}/preview-chart`] as const;
+};
+
+export const getGetBacktestStudyPreviewChartQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBacktestStudyPreviewChart>>,
+  TError = ErrorType<unknown>,
+>(
+  studyId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestStudyPreviewChart>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetBacktestStudyPreviewChartQueryKey(studyId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBacktestStudyPreviewChart>>
+  > = ({ signal }) =>
+    getBacktestStudyPreviewChart(studyId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!studyId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBacktestStudyPreviewChart>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBacktestStudyPreviewChartQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBacktestStudyPreviewChart>>
+>;
+export type GetBacktestStudyPreviewChartQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the latest-vs-best completed study preview chart
+ */
+
+export function useGetBacktestStudyPreviewChart<
+  TData = Awaited<ReturnType<typeof getBacktestStudyPreviewChart>>,
+  TError = ErrorType<unknown>,
+>(
+  studyId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestStudyPreviewChart>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBacktestStudyPreviewChartQueryOptions(
+    studyId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary List backtest runs
  */
 export const getListBacktestRunsUrl = (params?: ListBacktestRunsParams) => {
@@ -2495,6 +4162,126 @@ export function useGetBacktestRun<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetBacktestRunQueryOptions(runId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the research-chart payload for a backtest run
+ */
+export const getGetBacktestRunChartUrl = (
+  runId: string,
+  params?: GetBacktestRunChartParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/backtests/runs/${runId}/chart?${stringifiedParams}`
+    : `/api/backtests/runs/${runId}/chart`;
+};
+
+export const getBacktestRunChart = async (
+  runId: string,
+  params?: GetBacktestRunChartParams,
+  options?: RequestInit,
+): Promise<BacktestRunChart> => {
+  return customFetch<BacktestRunChart>(
+    getGetBacktestRunChartUrl(runId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetBacktestRunChartQueryKey = (
+  runId: string,
+  params?: GetBacktestRunChartParams,
+) => {
+  return [
+    `/api/backtests/runs/${runId}/chart`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetBacktestRunChartQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBacktestRunChart>>,
+  TError = ErrorType<unknown>,
+>(
+  runId: string,
+  params?: GetBacktestRunChartParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestRunChart>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetBacktestRunChartQueryKey(runId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBacktestRunChart>>
+  > = ({ signal }) =>
+    getBacktestRunChart(runId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBacktestRunChart>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBacktestRunChartQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBacktestRunChart>>
+>;
+export type GetBacktestRunChartQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the research-chart payload for a backtest run
+ */
+
+export function useGetBacktestRunChart<
+  TData = Awaited<ReturnType<typeof getBacktestRunChart>>,
+  TError = ErrorType<unknown>,
+>(
+  runId: string,
+  params?: GetBacktestRunChartParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestRunChart>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBacktestRunChartQueryOptions(
+    runId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

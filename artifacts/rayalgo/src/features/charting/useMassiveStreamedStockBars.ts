@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import type { MarketBar } from "./types";
 import {
-  getStoredStockMinuteAggregates,
-  useMassiveStockAggregateStream,
+  getStoredBrokerMinuteAggregates,
+  useBrokerStockAggregateStream,
   useStockMinuteAggregateStoreVersion,
 } from "./useMassiveStockAggregateStream";
 
-type UseMassiveStreamedStockBarsInput = {
+type UseBrokerStreamedBarsInput = {
   symbol: string;
   timeframe: string;
   bars?: MarketBar[] | null;
@@ -94,7 +94,7 @@ const mergeBarsWithMinuteAggregates = (
     return normalizedBars;
   }
 
-  const minuteAggregates = getStoredStockMinuteAggregates(symbol);
+  const minuteAggregates = getStoredBrokerMinuteAggregates(symbol);
   if (!minuteAggregates.length) {
     return normalizedBars;
   }
@@ -109,7 +109,7 @@ const mergeBarsWithMinuteAggregates = (
     mergedByStart.set(startMs, bar);
   });
 
-  const bucketedMinutes = new Map<number, ReturnType<typeof getStoredStockMinuteAggregates>>();
+  const bucketedMinutes = new Map<number, ReturnType<typeof getStoredBrokerMinuteAggregates>>();
   minuteAggregates.forEach((aggregate) => {
     const bucketStartMs = Math.floor(aggregate.startMs / stepMs) * stepMs;
     const bucket = bucketedMinutes.get(bucketStartMs) || [];
@@ -151,7 +151,7 @@ const mergeBarsWithMinuteAggregates = (
       sessionVwap: last.sessionVwap ?? undefined,
       accumulatedVolume: last.accumulatedVolume ?? undefined,
       averageTradeSize,
-      source: "massive-delayed-stream-derived",
+      source: "ibkr-websocket-derived",
     });
   });
 
@@ -160,13 +160,13 @@ const mergeBarsWithMinuteAggregates = (
     .map(([, bar]) => bar);
 };
 
-export const useMassiveStreamedStockBars = ({
+export const useBrokerStreamedBars = ({
   symbol,
   timeframe,
   bars,
   enabled = true,
-}: UseMassiveStreamedStockBarsInput): MarketBar[] => {
-  useMassiveStockAggregateStream({
+}: UseBrokerStreamedBarsInput): MarketBar[] => {
+  useBrokerStockAggregateStream({
     symbols: symbol ? [symbol] : [],
     enabled: Boolean(enabled && symbol && STREAM_SUPPORTED_TIMEFRAMES.has(timeframe)),
   });
@@ -178,3 +178,5 @@ export const useMassiveStreamedStockBars = ({
     [bars, storeVersion, symbol, timeframe],
   );
 };
+
+export const useMassiveStreamedStockBars = useBrokerStreamedBars;

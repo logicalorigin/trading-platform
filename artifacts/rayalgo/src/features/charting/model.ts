@@ -1,4 +1,7 @@
-import { defaultIndicatorRegistry, resolveIndicatorPlugins } from "./indicators";
+import {
+  defaultIndicatorRegistry,
+  resolveIndicatorPlugins,
+} from "./indicators";
 import type {
   BuildChartModelInput,
   ChartBar,
@@ -10,7 +13,7 @@ import type {
   MarketBar,
 } from "./types";
 
-const timeframeToStepMs = (timeframe: string): number => (
+const timeframeToStepMs = (timeframe: string): number =>
   ({
     "1m": 60_000,
     "5m": 300_000,
@@ -18,10 +21,11 @@ const timeframeToStepMs = (timeframe: string): number => (
     "1h": 3_600_000,
     "1d": 86_400_000,
     "1D": 86_400_000,
-  }[timeframe] || 300_000)
-);
+  })[timeframe] || 300_000;
 
-const resolveTimestampValueMs = (value: MarketBar["time"] | MarketBar["timestamp"]): number | null => {
+const resolveTimestampValueMs = (
+  value: MarketBar["time"] | MarketBar["timestamp"],
+): number | null => {
   if (value instanceof Date) {
     return value.getTime();
   }
@@ -76,49 +80,52 @@ const buildChartBars = (
   timeframe: string,
 ): { chartBars: ChartBar[]; chartBarRanges: ChartBarRange[] } => {
   const fallbackStepMs = timeframeToStepMs(timeframe);
-  const normalizedBars = rawBars.reduce<Array<ChartBar & { startMs: number }>>((bars, rawBar) => {
-    const startMs = resolveEpochMs(rawBar);
-    const open = resolveNumber(rawBar.o, rawBar.open);
-    const high = resolveNumber(rawBar.h, rawBar.high);
-    const low = resolveNumber(rawBar.l, rawBar.low);
-    const close = resolveNumber(rawBar.c, rawBar.close);
+  const normalizedBars = rawBars.reduce<Array<ChartBar & { startMs: number }>>(
+    (bars, rawBar) => {
+      const startMs = resolveEpochMs(rawBar);
+      const open = resolveNumber(rawBar.o, rawBar.open);
+      const high = resolveNumber(rawBar.h, rawBar.high);
+      const low = resolveNumber(rawBar.l, rawBar.low);
+      const close = resolveNumber(rawBar.c, rawBar.close);
 
-    if (
-      startMs == null ||
-      open == null ||
-      high == null ||
-      low == null ||
-      close == null
-    ) {
+      if (
+        startMs == null ||
+        open == null ||
+        high == null ||
+        low == null ||
+        close == null
+      ) {
+        return bars;
+      }
+
+      const isoTimestamp = rawBar.ts || new Date(startMs).toISOString();
+      bars.push({
+        startMs,
+        time: Math.floor(startMs / 1000),
+        ts: isoTimestamp,
+        date: rawBar.date || isoTimestamp.slice(0, 10),
+        o: open,
+        h: high,
+        l: low,
+        c: close,
+        v: resolveNumber(rawBar.v, rawBar.volume) ?? 0,
+        vwap: resolveNumber(rawBar.vwap) ?? undefined,
+        sessionVwap: resolveNumber(rawBar.sessionVwap) ?? undefined,
+        accumulatedVolume: resolveNumber(rawBar.accumulatedVolume) ?? undefined,
+        averageTradeSize: resolveNumber(rawBar.averageTradeSize) ?? undefined,
+        source: typeof rawBar.source === "string" ? rawBar.source : undefined,
+      });
       return bars;
-    }
-
-    const isoTimestamp = rawBar.ts || new Date(startMs).toISOString();
-    bars.push({
-      startMs,
-      time: Math.floor(startMs / 1000),
-      ts: isoTimestamp,
-      date: rawBar.date || isoTimestamp.slice(0, 10),
-      o: open,
-      h: high,
-      l: low,
-      c: close,
-      v: resolveNumber(rawBar.v, rawBar.volume) ?? 0,
-      vwap: resolveNumber(rawBar.vwap) ?? undefined,
-      sessionVwap: resolveNumber(rawBar.sessionVwap) ?? undefined,
-      accumulatedVolume: resolveNumber(rawBar.accumulatedVolume) ?? undefined,
-      averageTradeSize: resolveNumber(rawBar.averageTradeSize) ?? undefined,
-      source: typeof rawBar.source === "string" ? rawBar.source : undefined,
-    });
-    return bars;
-  }, []);
+    },
+    [],
+  );
 
   const chartBars = normalizedBars.map(({ startMs: _startMs, ...bar }) => bar);
   const chartBarRanges = normalizedBars.map((bar, index) => {
     const nextBar = normalizedBars[index + 1];
     return {
       startMs: bar.startMs,
-      endMs: nextBar?.startMs ?? (bar.startMs + fallbackStepMs),
+      endMs: nextBar?.startMs ?? bar.startMs + fallbackStepMs,
     };
   });
 
@@ -150,19 +157,23 @@ const mergeBarStyles = (
 const applyBarStyles = (
   chartBars: ChartBar[],
   barStyles: Array<ChartBarStyle | null>,
-): ChartBar[] => chartBars.map((bar, index) => ({
-  ...bar,
-  ...(barStyles[index] || {}),
-}));
+): ChartBar[] =>
+  chartBars.map((bar, index) => ({
+    ...bar,
+    ...(barStyles[index] || {}),
+  }));
 
-const buildStudyVisibilityMap = (studyKeys: string[]): Record<string, boolean> => (
+const buildStudyVisibilityMap = (
+  studyKeys: string[],
+): Record<string, boolean> =>
   studyKeys.reduce<Record<string, boolean>>((visibility, key) => {
     visibility[key] = true;
     return visibility;
-  }, {})
-);
+  }, {});
 
-const normalizeStudyPanes = (studySpecs: ChartModel["studySpecs"]): ChartModel["studySpecs"] => {
+const normalizeStudyPanes = (
+  studySpecs: ChartModel["studySpecs"],
+): ChartModel["studySpecs"] => {
   const lowerPaneMap = new Map<string, number>();
   let nextPaneIndex = 1;
 
@@ -184,31 +195,53 @@ const normalizeStudyPanes = (studySpecs: ChartModel["studySpecs"]): ChartModel["
   });
 };
 
-const resolveLowerPaneCount = (studySpecs: ChartModel["studySpecs"]): number => {
+const resolveLowerPaneCount = (
+  studySpecs: ChartModel["studySpecs"],
+): number => {
   if (!studySpecs.length) {
     return 0;
   }
 
-  return studySpecs.reduce((maxPane, spec) => Math.max(maxPane, spec.paneIndex), 0);
+  return studySpecs.reduce(
+    (maxPane, spec) => Math.max(maxPane, spec.paneIndex),
+    0,
+  );
 };
 
-const buildDefaultVisibleRange = (chartBars: ChartBar[]): { from: number; to: number } | null => {
+const defaultVisibleBarsForTimeframe = (timeframe: string): number =>
+  ({
+    "1m": 180,
+    "5m": 156,
+    "15m": 132,
+    "1h": 110,
+    "1d": 100,
+    "1D": 100,
+  })[timeframe] || 120;
+
+const buildDefaultVisibleRange = (
+  chartBars: ChartBar[],
+  timeframe: string,
+): { from: number; to: number } | null => {
   if (!chartBars.length) {
     return null;
   }
 
   const to = chartBars.length - 1;
-  const from = Math.max(0, to - 120);
+  const from = Math.max(0, to - defaultVisibleBarsForTimeframe(timeframe));
   return { from, to };
 };
 
-const normalizeMarkers = (markers: ChartMarker[], barCount: number): ChartMarker[] => (
+const normalizeMarkers = (
+  markers: ChartMarker[],
+  barCount: number,
+): ChartMarker[] =>
   markers
     .filter((marker) => marker.barIndex >= 0 && marker.barIndex < barCount)
-    .sort((left, right) => left.time - right.time)
-);
+    .sort((left, right) => left.time - right.time);
 
-export const buildResearchChartModel = (input: BuildChartModelInput): ChartModel => {
+export const buildResearchChartModel = (
+  input: BuildChartModelInput,
+): ChartModel => {
   const {
     bars,
     dailyBars,
@@ -219,15 +252,20 @@ export const buildResearchChartModel = (input: BuildChartModelInput): ChartModel
     indicatorRegistry = defaultIndicatorRegistry,
   } = input;
   const { chartBars, chartBarRanges } = buildChartBars(bars, timeframe);
-  const plugins = resolveIndicatorPlugins(selectedIndicators, indicatorRegistry);
-  const pluginOutputs = plugins.map((plugin) => plugin.compute({
-    chartBars,
-    rawBars: bars,
-    dailyBars,
-    settings: indicatorSettings[plugin.id],
-    timeframe,
+  const plugins = resolveIndicatorPlugins(
     selectedIndicators,
-  }));
+    indicatorRegistry,
+  );
+  const pluginOutputs = plugins.map((plugin) =>
+    plugin.compute({
+      chartBars,
+      rawBars: bars,
+      dailyBars,
+      settings: indicatorSettings[plugin.id],
+      timeframe,
+      selectedIndicators,
+    }),
+  );
   const pluginStudySpecs = normalizeStudyPanes(
     pluginOutputs.flatMap((output) => output.studySpecs || []),
   );
@@ -236,7 +274,9 @@ export const buildResearchChartModel = (input: BuildChartModelInput): ChartModel
   const pluginZones = pluginOutputs.flatMap((output) => output.zones || []);
   const pluginWindows = pluginOutputs.flatMap((output) => output.windows || []);
   const mergedBarStyles = mergeBarStyles(
-    pluginOutputs.map((output: IndicatorPluginOutput) => output.barStyleByIndex || []),
+    pluginOutputs.map(
+      (output: IndicatorPluginOutput) => output.barStyleByIndex || [],
+    ),
     chartBars.length,
   );
   const styledChartBars = applyBarStyles(chartBars, mergedBarStyles);
@@ -248,8 +288,17 @@ export const buildResearchChartModel = (input: BuildChartModelInput): ChartModel
   return {
     chartBars: styledChartBars,
     chartBarRanges,
+    tradeOverlays: [],
+    tradeMarkerGroups: {
+      entryGroups: [],
+      exitGroups: [],
+      interactionGroups: [],
+      timeToTradeIds: new Map(),
+    },
     studySpecs: pluginStudySpecs,
-    studyVisibility: buildStudyVisibilityMap(pluginStudySpecs.map((spec) => spec.key)),
+    studyVisibility: buildStudyVisibilityMap(
+      pluginStudySpecs.map((spec) => spec.key),
+    ),
     studyLowerPaneCount: resolveLowerPaneCount(pluginStudySpecs),
     indicatorEvents: pluginEvents,
     indicatorZones: pluginZones,
@@ -259,6 +308,8 @@ export const buildResearchChartModel = (input: BuildChartModelInput): ChartModel
       markersByTradeId: {},
       timeToTradeIds: new Map(),
     },
-    defaultVisibleLogicalRange: buildDefaultVisibleRange(styledChartBars),
+    activeTradeSelectionId: null,
+    selectionFocus: null,
+    defaultVisibleLogicalRange: buildDefaultVisibleRange(styledChartBars, timeframe),
   };
 };

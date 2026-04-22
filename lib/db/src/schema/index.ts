@@ -1,3 +1,4 @@
+export * from "./charting";
 export * from "./automation";
 export * from "./backtesting";
 export * from "./broker";

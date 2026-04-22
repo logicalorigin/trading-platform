@@ -1,9 +1,17 @@
 import { pgEnum } from "drizzle-orm/pg-core";
 
-export const environmentModeEnum = pgEnum("environment_mode", ["paper", "live"]);
+export const environmentModeEnum = pgEnum("environment_mode", [
+  "paper",
+  "live",
+]);
 export const brokerProviderEnum = pgEnum("broker_provider", ["ibkr"]);
-export const marketDataProviderEnum = pgEnum("market_data_provider", ["polygon"]);
-export const connectionTypeEnum = pgEnum("connection_type", ["broker", "market_data"]);
+export const marketDataProviderEnum = pgEnum("market_data_provider", [
+  "polygon",
+]);
+export const connectionTypeEnum = pgEnum("connection_type", [
+  "broker",
+  "market_data",
+]);
 export const connectionStatusEnum = pgEnum("connection_status", [
   "configured",
   "connected",
@@ -19,7 +27,12 @@ export const orderTypeEnum = pgEnum("order_type", [
   "stop",
   "stop_limit",
 ]);
-export const timeInForceEnum = pgEnum("time_in_force", ["day", "gtc", "ioc", "fok"]);
+export const timeInForceEnum = pgEnum("time_in_force", [
+  "day",
+  "gtc",
+  "ioc",
+  "fok",
+]);
 export const orderStatusEnum = pgEnum("order_status", [
   "pending_submit",
   "submitted",
@@ -66,4 +79,14 @@ export const backtestOptimizerModeEnum = pgEnum("backtest_optimizer_mode", [
 export const backtestDirectionModeEnum = pgEnum("backtest_direction_mode", [
   "long_only",
   "long_short",
+]);
+export const pineScriptStatusEnum = pgEnum("pine_script_status", [
+  "draft",
+  "ready",
+  "error",
+  "archived",
+]);
+export const pineScriptPaneTypeEnum = pgEnum("pine_script_pane_type", [
+  "price",
+  "lower",
 ]);

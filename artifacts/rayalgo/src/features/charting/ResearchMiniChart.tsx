@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { buildResearchChartModel } from "./model";
 import { ResearchChartSurface } from "./ResearchChartSurface";
-import type { ChartMarker, MarketBar } from "./types";
+import type { ChartMarker, IndicatorRegistry, MarketBar } from "./types";
 
 type BaseSeriesType = "candles" | "bars" | "line" | "area" | "baseline";
 
@@ -25,6 +25,7 @@ type ResearchMiniChartProps = {
   theme: ResearchChartTheme;
   themeKey: string;
   selectedIndicators?: string[];
+  indicatorRegistry?: IndicatorRegistry;
   indicatorMarkers?: ChartMarker[];
   openPrice?: number | null;
   defaultBaseSeriesType?: BaseSeriesType;
@@ -37,32 +38,36 @@ export const ResearchMiniChart = ({
   theme,
   themeKey,
   selectedIndicators = [],
+  indicatorRegistry,
   indicatorMarkers = [],
   openPrice = null,
   defaultBaseSeriesType = "candles",
   defaultShowVolume = true,
 }: ResearchMiniChartProps) => {
   const model = useMemo(
-    () => buildResearchChartModel({
-      bars,
-      timeframe,
-      selectedIndicators,
-      indicatorMarkers,
-    }),
-    [bars, indicatorMarkers, selectedIndicators, timeframe],
+    () =>
+      buildResearchChartModel({
+        bars,
+        timeframe,
+        selectedIndicators,
+        indicatorRegistry,
+        indicatorMarkers,
+      }),
+    [bars, indicatorMarkers, indicatorRegistry, selectedIndicators, timeframe],
   );
   const referenceLines = useMemo(
-    () => (
+    () =>
       typeof openPrice === "number" && Number.isFinite(openPrice)
-        ? [{
-            price: openPrice,
-            color: theme.textMuted,
-            lineWidth: 1,
-            axisLabelVisible: false,
-            title: "",
-          }]
-        : []
-    ),
+        ? [
+            {
+              price: openPrice,
+              color: theme.textMuted,
+              lineWidth: 1,
+              axisLabelVisible: false,
+              title: "",
+            },
+          ]
+        : [],
     [openPrice, theme.textMuted],
   );
 

@@ -1,8 +1,12 @@
 import {
+  aggregateBars,
   buildCandidatesForMode,
+  buildRayReplicaSignalTape,
   buildWalkForwardWindows,
   getStrategyCatalogItem,
   listStrategies,
+  type BacktestBar,
+  type BacktestTimeframe,
   type StrategyCatalogItem,
 } from "@workspace/backtest-core";
 import {
@@ -17,6 +21,7 @@ import {
   backtestSweepsTable,
   db,
   historicalBarDatasetsTable,
+  historicalBarsTable,
   instrumentsTable,
   watchlistItemsTable,
 } from "@workspace/db";
@@ -83,6 +88,84 @@ type PromoteRunInput = {
   notes: string | null;
 };
 
+type HistoricalBarRow = {
+  startsAt: Date;
+  open: NumberLike;
+  high: NumberLike;
+  low: NumberLike;
+  close: NumberLike;
+  volume: NumberLike;
+};
+
+type TradeValueFormat = "currency" | "percent" | "number" | "integer";
+
+type BacktestComparisonBadge = {
+  id: string;
+  label: string;
+  format: TradeValueFormat;
+  latestValue: number | null;
+  bestValue: number | null;
+  winner: "latest" | "best" | "tie" | "none";
+};
+
+type BacktestEquityPoint = {
+  occurredAt: Date;
+  equity: number;
+  drawdownPercent: number;
+};
+
+type BacktestChartBarRange = {
+  startMs: number;
+  endMs: number;
+};
+
+type BacktestTradeReasonTraceStepResponse = {
+  id: string;
+  kind: "entry" | "max_favorable" | "max_adverse" | "exit";
+  label: string;
+  occurredAt: Date;
+  barIndex: number | null;
+  price: number;
+  deltaFromEntry: number;
+  deltaPercentFromEntry: number;
+  emphasis: "positive" | "negative" | "neutral";
+};
+
+type BacktestTradeExitConsequencesResponse = {
+  windowBars: number;
+  barsObserved: number;
+  bestPrice: number;
+  bestOccurredAt: Date;
+  bestBarIndex: number;
+  bestDelta: number;
+  bestPercent: number;
+  worstPrice: number;
+  worstOccurredAt: Date;
+  worstBarIndex: number;
+  worstDelta: number;
+  worstPercent: number;
+};
+
+type BacktestTradeDiagnosticsResponse = {
+  holdMinutes: number;
+  entryBarIndex: number | null;
+  exitBarIndex: number | null;
+  maxFavorablePrice: number | null;
+  maxFavorableAt: Date | null;
+  maxFavorableBarIndex: number | null;
+  maxFavorableDelta: number | null;
+  maxFavorablePercent: number | null;
+  maxAdversePrice: number | null;
+  maxAdverseAt: Date | null;
+  maxAdverseBarIndex: number | null;
+  maxAdverseDelta: number | null;
+  maxAdversePercent: number | null;
+  reasonTrace: BacktestTradeReasonTraceStepResponse[];
+  exitConsequences: BacktestTradeExitConsequencesResponse | null;
+};
+
+const POST_EXIT_CONTINUATION_WINDOW_BARS = 10;
+
 function numericValue(value: NumberLike): number {
   if (typeof value === "number") {
     return value;
@@ -96,8 +179,768 @@ function numericValue(value: NumberLike): number {
   return 0;
 }
 
+function numericValueOrNull(value: NumberLike): number | null {
+  if (value == null) {
+    return null;
+  }
+
+  const parsed = numericValue(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function timeframeToStepMs(timeframe: string): number {
+  return (
+    {
+      "1s": 1_000,
+      "5s": 5_000,
+      "15s": 15_000,
+      "1m": 60_000,
+      "5m": 300_000,
+      "15m": 900_000,
+      "1h": 3_600_000,
+      "1d": 86_400_000,
+    }[timeframe] ?? 300_000
+  );
+}
+
+function buildTradeSelectionId(
+  runId: string,
+  trade:
+    | Pick<BacktestRunTrade, "symbol" | "entryAt">
+    | {
+        symbol: string;
+        entryAt: Date | string;
+      },
+): string {
+  const symbol = normalizeSymbol(trade.symbol);
+  const entryAt =
+    trade.entryAt instanceof Date
+      ? trade.entryAt.toISOString()
+      : new Date(trade.entryAt).toISOString();
+
+  return `${runId}:${symbol}:${entryAt}`;
+}
+
+function buildSelectionFocusToken(
+  runId: string,
+  symbol: string,
+  tradeSelectionId: string | null,
+  visibleLogicalRange: { from: number; to: number } | null,
+): number {
+  const source = [
+    runId,
+    symbol,
+    tradeSelectionId ?? "none",
+    visibleLogicalRange?.from ?? "na",
+    visibleLogicalRange?.to ?? "na",
+  ].join("|");
+
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) | 0;
+  }
+
+  return Math.abs(hash);
+}
+
+function normalizeBacktestBar(row: HistoricalBarRow): BacktestBar {
+  return {
+    startsAt: row.startsAt,
+    open: numericValue(row.open),
+    high: numericValue(row.high),
+    low: numericValue(row.low),
+    close: numericValue(row.close),
+    volume: numericValue(row.volume),
+  };
+}
+
+function buildChartBarsFromBacktestBars(
+  bars: BacktestBar[],
+  timeframe: string,
+): {
+  chartBars: Array<{
+    time: number;
+    ts: string;
+    date: string;
+    o: number;
+    h: number;
+    l: number;
+    c: number;
+    v: number;
+  }>;
+  chartBarRanges: Array<{ startMs: number; endMs: number }>;
+} {
+  const fallbackStepMs = timeframeToStepMs(timeframe);
+  const chartBars = bars.map((bar) => {
+    const startMs = bar.startsAt.getTime();
+    const ts = bar.startsAt.toISOString();
+
+    return {
+      time: Math.floor(startMs / 1000),
+      ts,
+      date: ts.slice(0, 10),
+      o: bar.open,
+      h: bar.high,
+      l: bar.low,
+      c: bar.close,
+      v: bar.volume,
+    };
+  });
+  const chartBarRanges = bars.map((bar, index) => {
+    const startMs = bar.startsAt.getTime();
+    const next = bars[index + 1];
+
+    return {
+      startMs,
+      endMs: next?.startsAt.getTime() ?? startMs + fallbackStepMs,
+    };
+  });
+
+  return { chartBars, chartBarRanges };
+}
+
+function resolveBarIndex(
+  timestampMs: number | null,
+  chartBarRanges: Array<{ startMs: number; endMs: number }>,
+): number | null {
+  if (timestampMs == null) {
+    return null;
+  }
+
+  for (let index = 0; index < chartBarRanges.length; index += 1) {
+    const range = chartBarRanges[index];
+    if (timestampMs >= range.startMs && timestampMs < range.endMs) {
+      return index;
+    }
+  }
+
+  const lastRange = chartBarRanges[chartBarRanges.length - 1];
+  if (lastRange && timestampMs === lastRange.endMs) {
+    return chartBarRanges.length - 1;
+  }
+
+  return null;
+}
+
+function directionalDelta(
+  referencePrice: number,
+  observedPrice: number,
+  side: string,
+): number {
+  return side === "short"
+    ? referencePrice - observedPrice
+    : observedPrice - referencePrice;
+}
+
+function directionalPercent(delta: number, referencePrice: number): number {
+  return referencePrice > 0 ? (delta / referencePrice) * 100 : 0;
+}
+
+function resolveTraceEmphasis(
+  deltaFromEntry: number,
+): "positive" | "negative" | "neutral" {
+  if (deltaFromEntry > 0) {
+    return "positive";
+  }
+
+  if (deltaFromEntry < 0) {
+    return "negative";
+  }
+
+  return "neutral";
+}
+
+function buildDefaultVisibleRange(
+  barCount: number,
+): { from: number; to: number } | null {
+  if (barCount <= 0) {
+    return null;
+  }
+
+  const to = barCount - 1;
+  return {
+    from: Math.max(0, to - 120),
+    to,
+  };
+}
+
+function buildFocusedTradeVisibleRange(
+  entryBarIndex: number | null,
+  exitBarIndex: number | null,
+  barCount: number,
+): { from: number; to: number } | null {
+  if (barCount <= 0) {
+    return null;
+  }
+
+  const anchorFrom = entryBarIndex ?? exitBarIndex;
+  const anchorTo = exitBarIndex ?? entryBarIndex;
+
+  if (anchorFrom == null || anchorTo == null) {
+    return buildDefaultVisibleRange(barCount);
+  }
+
+  return {
+    from: Math.max(0, Math.min(anchorFrom, anchorTo) - 20),
+    to: Math.min(barCount - 1, Math.max(anchorFrom, anchorTo) + 20),
+  };
+}
+
+function buildTradeReasonTraceStep(
+  id: string,
+  kind: BacktestTradeReasonTraceStepResponse["kind"],
+  label: string,
+  occurredAt: Date,
+  barIndex: number | null,
+  price: number,
+  deltaFromEntry: number,
+  entryPrice: number,
+): BacktestTradeReasonTraceStepResponse {
+  return {
+    id,
+    kind,
+    label,
+    occurredAt,
+    barIndex,
+    price,
+    deltaFromEntry,
+    deltaPercentFromEntry: directionalPercent(deltaFromEntry, entryPrice),
+    emphasis: resolveTraceEmphasis(deltaFromEntry),
+  };
+}
+
+function buildTradeDiagnostics(
+  runId: string,
+  trade: BacktestRunTrade,
+  bars: BacktestBar[],
+  chartBarRanges: BacktestChartBarRange[],
+): BacktestTradeDiagnosticsResponse | null {
+  if (bars.length === 0 || chartBarRanges.length === 0) {
+    return null;
+  }
+
+  const entryPrice = numericValue(trade.entryPrice);
+  const exitPrice = numericValue(trade.exitPrice);
+  const entryBarIndex = resolveBarIndex(
+    trade.entryAt.getTime(),
+    chartBarRanges,
+  );
+  const exitBarIndex = resolveBarIndex(trade.exitAt.getTime(), chartBarRanges);
+
+  if (entryBarIndex == null) {
+    return null;
+  }
+
+  const holdMinutes = Math.max(
+    0,
+    (trade.exitAt.getTime() - trade.entryAt.getTime()) / 60_000,
+  );
+  const tradeSelectionId = buildTradeSelectionId(runId, trade);
+  const heldBarEndIndex =
+    exitBarIndex == null
+      ? bars.length - 1
+      : Math.max(entryBarIndex, exitBarIndex - 1);
+  const heldBars = bars.slice(entryBarIndex, heldBarEndIndex + 1);
+
+  if (heldBars.length === 0) {
+    return {
+      holdMinutes,
+      entryBarIndex,
+      exitBarIndex,
+      maxFavorablePrice: null,
+      maxFavorableAt: null,
+      maxFavorableBarIndex: null,
+      maxFavorableDelta: null,
+      maxFavorablePercent: null,
+      maxAdversePrice: null,
+      maxAdverseAt: null,
+      maxAdverseBarIndex: null,
+      maxAdverseDelta: null,
+      maxAdversePercent: null,
+      reasonTrace: [],
+      exitConsequences: null,
+    };
+  }
+
+  const entryExtreme = {
+    price: entryPrice,
+    occurredAt: trade.entryAt,
+    barIndex: entryBarIndex,
+    delta: 0,
+  };
+  let maxFavorable = entryExtreme;
+  let maxAdverse = entryExtreme;
+
+  heldBars.forEach((bar, offset) => {
+    const barIndex = entryBarIndex + offset;
+    const favorablePrice = trade.side === "short" ? bar.low : bar.high;
+    const adversePrice = trade.side === "short" ? bar.high : bar.low;
+    const favorableDelta = directionalDelta(
+      entryPrice,
+      favorablePrice,
+      trade.side,
+    );
+    const adverseDelta = directionalDelta(entryPrice, adversePrice, trade.side);
+
+    if (favorableDelta > maxFavorable.delta) {
+      maxFavorable = {
+        price: favorablePrice,
+        occurredAt: bar.startsAt,
+        barIndex,
+        delta: favorableDelta,
+      };
+    }
+
+    if (adverseDelta < maxAdverse.delta) {
+      maxAdverse = {
+        price: adversePrice,
+        occurredAt: bar.startsAt,
+        barIndex,
+        delta: adverseDelta,
+      };
+    }
+  });
+
+  const exitDelta = directionalDelta(entryPrice, exitPrice, trade.side);
+  const reasonTrace = [
+    buildTradeReasonTraceStep(
+      `${tradeSelectionId}:entry`,
+      "entry",
+      "Entry",
+      trade.entryAt,
+      entryBarIndex,
+      entryPrice,
+      0,
+      entryPrice,
+    ),
+    ...(maxFavorable.delta > 0
+      ? [
+          buildTradeReasonTraceStep(
+            `${tradeSelectionId}:max-favorable`,
+            "max_favorable",
+            "Max favorable",
+            maxFavorable.occurredAt,
+            maxFavorable.barIndex,
+            maxFavorable.price,
+            maxFavorable.delta,
+            entryPrice,
+          ),
+        ]
+      : []),
+    ...(maxAdverse.delta < 0
+      ? [
+          buildTradeReasonTraceStep(
+            `${tradeSelectionId}:max-adverse`,
+            "max_adverse",
+            "Max adverse",
+            maxAdverse.occurredAt,
+            maxAdverse.barIndex,
+            maxAdverse.price,
+            maxAdverse.delta,
+            entryPrice,
+          ),
+        ]
+      : []),
+    buildTradeReasonTraceStep(
+      `${tradeSelectionId}:exit`,
+      "exit",
+      `Exit · ${trade.exitReason}`,
+      trade.exitAt,
+      exitBarIndex,
+      exitPrice,
+      exitDelta,
+      entryPrice,
+    ),
+  ].sort((left, right) => {
+    const timeDiff = left.occurredAt.getTime() - right.occurredAt.getTime();
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+
+    const priority = {
+      entry: 0,
+      max_adverse: 1,
+      max_favorable: 2,
+      exit: 3,
+    } as const;
+    return priority[left.kind] - priority[right.kind];
+  });
+
+  const continuationSource =
+    exitBarIndex == null
+      ? []
+      : bars.slice(
+          exitBarIndex,
+          Math.min(
+            bars.length,
+            exitBarIndex + POST_EXIT_CONTINUATION_WINDOW_BARS,
+          ),
+        );
+
+  let exitConsequences: BacktestTradeExitConsequencesResponse | null = null;
+  if (continuationSource.length > 0 && exitBarIndex != null) {
+    const firstContinuationBar = continuationSource[0];
+    const initialBestPrice =
+      trade.side === "short"
+        ? firstContinuationBar.low
+        : firstContinuationBar.high;
+    const initialWorstPrice =
+      trade.side === "short"
+        ? firstContinuationBar.high
+        : firstContinuationBar.low;
+
+    let bestContinuation = {
+      price: initialBestPrice,
+      occurredAt: firstContinuationBar.startsAt,
+      barIndex: exitBarIndex,
+      delta: directionalDelta(exitPrice, initialBestPrice, trade.side),
+    };
+    let worstContinuation = {
+      price: initialWorstPrice,
+      occurredAt: firstContinuationBar.startsAt,
+      barIndex: exitBarIndex,
+      delta: directionalDelta(exitPrice, initialWorstPrice, trade.side),
+    };
+
+    continuationSource.forEach((bar, offset) => {
+      const barIndex = exitBarIndex + offset;
+      const bestPrice = trade.side === "short" ? bar.low : bar.high;
+      const worstPrice = trade.side === "short" ? bar.high : bar.low;
+      const bestDelta = directionalDelta(exitPrice, bestPrice, trade.side);
+      const worstDelta = directionalDelta(exitPrice, worstPrice, trade.side);
+
+      if (bestDelta > bestContinuation.delta) {
+        bestContinuation = {
+          price: bestPrice,
+          occurredAt: bar.startsAt,
+          barIndex,
+          delta: bestDelta,
+        };
+      }
+
+      if (worstDelta < worstContinuation.delta) {
+        worstContinuation = {
+          price: worstPrice,
+          occurredAt: bar.startsAt,
+          barIndex,
+          delta: worstDelta,
+        };
+      }
+    });
+
+    exitConsequences = {
+      windowBars: POST_EXIT_CONTINUATION_WINDOW_BARS,
+      barsObserved: continuationSource.length,
+      bestPrice: bestContinuation.price,
+      bestOccurredAt: bestContinuation.occurredAt,
+      bestBarIndex: bestContinuation.barIndex,
+      bestDelta: bestContinuation.delta,
+      bestPercent: directionalPercent(bestContinuation.delta, exitPrice),
+      worstPrice: worstContinuation.price,
+      worstOccurredAt: worstContinuation.occurredAt,
+      worstBarIndex: worstContinuation.barIndex,
+      worstDelta: worstContinuation.delta,
+      worstPercent: directionalPercent(worstContinuation.delta, exitPrice),
+    };
+  }
+
+  return {
+    holdMinutes,
+    entryBarIndex,
+    exitBarIndex,
+    maxFavorablePrice: maxFavorable.price,
+    maxFavorableAt: maxFavorable.occurredAt,
+    maxFavorableBarIndex: maxFavorable.barIndex,
+    maxFavorableDelta: maxFavorable.delta,
+    maxFavorablePercent: directionalPercent(maxFavorable.delta, entryPrice),
+    maxAdversePrice: maxAdverse.price,
+    maxAdverseAt: maxAdverse.occurredAt,
+    maxAdverseBarIndex: maxAdverse.barIndex,
+    maxAdverseDelta: maxAdverse.delta,
+    maxAdversePercent: directionalPercent(maxAdverse.delta, entryPrice),
+    reasonTrace,
+    exitConsequences,
+  };
+}
+
+async function buildTradeDiagnosticsMap(
+  runId: string,
+  study: BacktestStudy,
+  trades: BacktestRunTrade[],
+  datasets: HistoricalBarDataset[],
+): Promise<Map<string, BacktestTradeDiagnosticsResponse>> {
+  const diagnosticsByTradeId = new Map<
+    string,
+    BacktestTradeDiagnosticsResponse
+  >();
+  if (trades.length === 0 || datasets.length === 0) {
+    return diagnosticsByTradeId;
+  }
+
+  const barsBySymbol = new Map<
+    string,
+    { bars: BacktestBar[]; chartBarRanges: BacktestChartBarRange[] }
+  >();
+  const uniqueSymbols = [
+    ...new Set(trades.map((trade) => normalizeSymbol(trade.symbol))),
+  ];
+
+  for (const symbol of uniqueSymbols) {
+    const dataset = datasets.find(
+      (candidate) => normalizeSymbol(candidate.symbol) === symbol,
+    );
+
+    if (!dataset) {
+      continue;
+    }
+
+    const storedBars = await loadBacktestBarsForDataset(dataset.id);
+    const normalizedBars =
+      dataset.timeframe === study.timeframe
+        ? storedBars
+        : aggregateBars(storedBars, study.timeframe as BacktestTimeframe);
+    const { chartBarRanges } = buildChartBarsFromBacktestBars(
+      normalizedBars,
+      study.timeframe,
+    );
+    barsBySymbol.set(symbol, {
+      bars: normalizedBars,
+      chartBarRanges,
+    });
+  }
+
+  trades.forEach((trade) => {
+    const symbol = normalizeSymbol(trade.symbol);
+    const chartSource = barsBySymbol.get(symbol);
+
+    if (!chartSource) {
+      return;
+    }
+
+    const diagnostics = buildTradeDiagnostics(
+      runId,
+      trade,
+      chartSource.bars,
+      chartSource.chartBarRanges,
+    );
+
+    if (diagnostics) {
+      diagnosticsByTradeId.set(
+        buildTradeSelectionId(runId, trade),
+        diagnostics,
+      );
+    }
+  });
+
+  return diagnosticsByTradeId;
+}
+
+function compareCompletedRuns(left: BacktestRun, right: BacktestRun): number {
+  const leftFinished = left.finishedAt?.getTime() ?? left.createdAt.getTime();
+  const rightFinished =
+    right.finishedAt?.getTime() ?? right.createdAt.getTime();
+  return rightFinished - leftFinished;
+}
+
+function resolveTopTradeSymbol(
+  study: BacktestStudy,
+  trades: BacktestRunTrade[],
+): string {
+  const normalizedStudySymbols = normalizeSymbols(study.symbols);
+  if (trades.length === 0) {
+    return normalizedStudySymbols[0] ?? "";
+  }
+
+  const symbolStats = new Map<
+    string,
+    { count: number; latestExitMs: number }
+  >();
+  trades.forEach((trade) => {
+    const symbol = normalizeSymbol(trade.symbol);
+    const existing = symbolStats.get(symbol) ?? {
+      count: 0,
+      latestExitMs: 0,
+    };
+    existing.count += 1;
+    existing.latestExitMs = Math.max(
+      existing.latestExitMs,
+      trade.exitAt.getTime(),
+    );
+    symbolStats.set(symbol, existing);
+  });
+
+  return (
+    [...symbolStats.entries()].sort((left, right) => {
+      if (right[1].count !== left[1].count) {
+        return right[1].count - left[1].count;
+      }
+
+      if (right[1].latestExitMs !== left[1].latestExitMs) {
+        return right[1].latestExitMs - left[1].latestExitMs;
+      }
+
+      return (
+        normalizedStudySymbols.indexOf(left[0]) -
+        normalizedStudySymbols.indexOf(right[0])
+      );
+    })[0]?.[0] ??
+    normalizedStudySymbols[0] ??
+    ""
+  );
+}
+
+function resolveSelectedSymbol(
+  study: BacktestStudy,
+  trades: BacktestRunTrade[],
+  requestedSymbol?: string | null,
+): string {
+  const normalizedStudySymbols = normalizeSymbols(study.symbols);
+  const normalizedRequest = normalizeSymbol(requestedSymbol ?? "");
+
+  if (normalizedRequest && normalizedStudySymbols.includes(normalizedRequest)) {
+    return normalizedRequest;
+  }
+
+  return resolveTopTradeSymbol(study, trades);
+}
+
+function resolveBestCompletedRun(runs: BacktestRun[]): BacktestRun | null {
+  if (runs.length === 0) {
+    return null;
+  }
+
+  const ranked = [...runs].sort((left, right) => {
+    const leftRank = left.sortRank ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = right.sortRank ?? Number.MAX_SAFE_INTEGER;
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    const leftMetrics =
+      (left.metrics as Record<string, unknown> | null) ?? null;
+    const rightMetrics =
+      (right.metrics as Record<string, unknown> | null) ?? null;
+    const returnDelta =
+      numericValue(rightMetrics?.totalReturnPercent as NumberLike) -
+      numericValue(leftMetrics?.totalReturnPercent as NumberLike);
+
+    if (returnDelta !== 0) {
+      return returnDelta;
+    }
+
+    const sharpeDelta =
+      numericValue(rightMetrics?.sharpeRatio as NumberLike) -
+      numericValue(leftMetrics?.sharpeRatio as NumberLike);
+
+    if (sharpeDelta !== 0) {
+      return sharpeDelta;
+    }
+
+    return compareCompletedRuns(left, right);
+  });
+
+  return ranked[0] ?? null;
+}
+
+function resolveBadgeWinner(
+  latestValue: number | null,
+  bestValue: number | null,
+  {
+    lowerIsBetter = false,
+    precision = 0.0001,
+  }: {
+    lowerIsBetter?: boolean;
+    precision?: number;
+  } = {},
+): "latest" | "best" | "tie" | "none" {
+  if (latestValue == null || bestValue == null) {
+    return "none";
+  }
+
+  if (Math.abs(latestValue - bestValue) <= precision) {
+    return "tie";
+  }
+
+  if (lowerIsBetter) {
+    return latestValue < bestValue ? "latest" : "best";
+  }
+
+  return latestValue > bestValue ? "latest" : "best";
+}
+
+function buildComparisonBadges(
+  latestRun: BacktestRun | null,
+  bestRun: BacktestRun | null,
+): BacktestComparisonBadge[] {
+  const latestMetrics =
+    (latestRun?.metrics as Record<string, unknown> | null) ?? null;
+  const bestMetrics =
+    (bestRun?.metrics as Record<string, unknown> | null) ?? null;
+
+  return [
+    {
+      id: "return",
+      label: "Return",
+      format: "percent",
+      latestValue: numericValueOrNull(
+        latestMetrics?.totalReturnPercent as NumberLike,
+      ),
+      bestValue: numericValueOrNull(
+        bestMetrics?.totalReturnPercent as NumberLike,
+      ),
+      winner: resolveBadgeWinner(
+        numericValueOrNull(latestMetrics?.totalReturnPercent as NumberLike),
+        numericValueOrNull(bestMetrics?.totalReturnPercent as NumberLike),
+      ),
+    },
+    {
+      id: "sharpe",
+      label: "Sharpe",
+      format: "number",
+      latestValue: numericValueOrNull(latestMetrics?.sharpeRatio as NumberLike),
+      bestValue: numericValueOrNull(bestMetrics?.sharpeRatio as NumberLike),
+      winner: resolveBadgeWinner(
+        numericValueOrNull(latestMetrics?.sharpeRatio as NumberLike),
+        numericValueOrNull(bestMetrics?.sharpeRatio as NumberLike),
+      ),
+    },
+    {
+      id: "drawdown",
+      label: "Max DD",
+      format: "percent",
+      latestValue: numericValueOrNull(
+        latestMetrics?.maxDrawdownPercent as NumberLike,
+      ),
+      bestValue: numericValueOrNull(
+        bestMetrics?.maxDrawdownPercent as NumberLike,
+      ),
+      winner: resolveBadgeWinner(
+        numericValueOrNull(latestMetrics?.maxDrawdownPercent as NumberLike),
+        numericValueOrNull(bestMetrics?.maxDrawdownPercent as NumberLike),
+        { lowerIsBetter: true },
+      ),
+    },
+    {
+      id: "trades",
+      label: "Trades",
+      format: "integer",
+      latestValue: numericValueOrNull(latestMetrics?.tradeCount as NumberLike),
+      bestValue: numericValueOrNull(bestMetrics?.tradeCount as NumberLike),
+      winner: resolveBadgeWinner(
+        numericValueOrNull(latestMetrics?.tradeCount as NumberLike),
+        numericValueOrNull(bestMetrics?.tradeCount as NumberLike),
+      ),
+    },
+  ];
+}
+
 function normalizeSymbols(symbols: string[]): string[] {
-  return [...new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean))];
+  return [
+    ...new Set(
+      symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+    ),
+  ];
 }
 
 async function resolveStudySymbols(input: CreateStudyInput): Promise<string[]> {
@@ -145,9 +988,13 @@ function ensureStrategyCompatibility(
   }
 
   if (!strategy.supportedTimeframes.includes(timeframe as never)) {
-    throw new HttpError(400, "Selected timeframe is not supported by this strategy.", {
-      code: "backtest_timeframe_unsupported",
-    });
+    throw new HttpError(
+      400,
+      "Selected timeframe is not supported by this strategy.",
+      {
+        code: "backtest_timeframe_unsupported",
+      },
+    );
   }
 
   if (requireRunnable && strategy.status !== "runnable") {
@@ -209,8 +1056,13 @@ function runSummaryToResponse(run: BacktestRun) {
   };
 }
 
-function tradeToResponse(trade: BacktestRunTrade) {
+function tradeToResponse(
+  runId: string,
+  trade: BacktestRunTrade,
+  diagnostics: BacktestTradeDiagnosticsResponse | null,
+) {
   return {
+    tradeSelectionId: buildTradeSelectionId(runId, trade),
     symbol: trade.symbol,
     side: trade.side,
     entryAt: trade.entryAt,
@@ -226,6 +1078,7 @@ function tradeToResponse(trade: BacktestRunTrade) {
     barsHeld: trade.barsHeld,
     commissionPaid: numericValue(trade.commissionPaid),
     exitReason: trade.exitReason,
+    diagnostics,
   };
 }
 
@@ -319,6 +1172,289 @@ async function getSweepOrThrow(sweepId: string): Promise<BacktestSweep> {
   return sweep;
 }
 
+async function listRunDatasets(runId: string) {
+  return db
+    .select({
+      dataset: historicalBarDatasetsTable,
+    })
+    .from(backtestRunDatasetsTable)
+    .innerJoin(
+      historicalBarDatasetsTable,
+      eq(backtestRunDatasetsTable.datasetId, historicalBarDatasetsTable.id),
+    )
+    .where(eq(backtestRunDatasetsTable.runId, runId))
+    .orderBy(desc(historicalBarDatasetsTable.endsAt));
+}
+
+async function loadBacktestBarsForDataset(
+  datasetId: string,
+): Promise<BacktestBar[]> {
+  const rows = await db
+    .select({
+      startsAt: historicalBarsTable.startsAt,
+      open: historicalBarsTable.open,
+      high: historicalBarsTable.high,
+      low: historicalBarsTable.low,
+      close: historicalBarsTable.close,
+      volume: historicalBarsTable.volume,
+    })
+    .from(historicalBarsTable)
+    .where(eq(historicalBarsTable.datasetId, datasetId))
+    .orderBy(asc(historicalBarsTable.startsAt));
+
+  return rows.map(normalizeBacktestBar);
+}
+
+async function loadRunBarsForSymbol(
+  runId: string,
+  symbol: string,
+  timeframe: BacktestTimeframe,
+): Promise<BacktestBar[]> {
+  const datasetRows = await listRunDatasets(runId);
+  const matchingDataset = datasetRows
+    .map(({ dataset }) => dataset)
+    .find((dataset) => normalizeSymbol(dataset.symbol) === symbol);
+
+  if (!matchingDataset) {
+    return [];
+  }
+
+  const storedBars = await loadBacktestBarsForDataset(matchingDataset.id);
+  if (matchingDataset.timeframe === timeframe) {
+    return storedBars;
+  }
+
+  return aggregateBars(storedBars, timeframe);
+}
+
+async function loadRunPoints(runId: string): Promise<BacktestEquityPoint[]> {
+  const points = await db
+    .select()
+    .from(backtestRunPointsTable)
+    .where(eq(backtestRunPointsTable.runId, runId))
+    .orderBy(asc(backtestRunPointsTable.occurredAt));
+
+  return points.map((point) => ({
+    occurredAt: point.occurredAt,
+    equity: numericValue(point.equity),
+    drawdownPercent: numericValue(point.drawdownPercent),
+  }));
+}
+
+function buildTradeMarkerGroups(
+  chartBars: Array<{ time: number }>,
+  tradeOverlays: Array<{
+    tradeSelectionId: string;
+    dir: "long" | "short";
+    profitable?: boolean | null;
+    entryBarIndex: number | null;
+    exitBarIndex: number | null;
+  }>,
+) {
+  const entryGroups = new Map<
+    string,
+    {
+      id: string;
+      kind: "entry";
+      time: number;
+      dir: "long" | "short";
+      profitable: null;
+      barIndex: number | null;
+      tradeSelectionIds: string[];
+      label: string | null;
+    }
+  >();
+  const exitGroups = new Map<
+    string,
+    {
+      id: string;
+      kind: "exit";
+      time: number;
+      dir: "long" | "short";
+      profitable: boolean | null;
+      barIndex: number | null;
+      tradeSelectionIds: string[];
+      label: string | null;
+    }
+  >();
+  const timeToTradeIds = new Map<string, Set<string>>();
+
+  tradeOverlays.forEach((overlay) => {
+    if (overlay.entryBarIndex != null) {
+      const entryTime = chartBars[overlay.entryBarIndex]?.time;
+      if (typeof entryTime === "number") {
+        const key = `${overlay.entryBarIndex}:${overlay.dir}`;
+        const existing = entryGroups.get(key) ?? {
+          id: `entry-${key}`,
+          kind: "entry" as const,
+          time: entryTime,
+          dir: overlay.dir,
+          profitable: null,
+          barIndex: overlay.entryBarIndex,
+          tradeSelectionIds: [],
+          label: null,
+        };
+        existing.tradeSelectionIds.push(overlay.tradeSelectionId);
+        entryGroups.set(key, existing);
+        const timeKey = String(entryTime);
+        const idsAtTime = timeToTradeIds.get(timeKey) ?? new Set<string>();
+        idsAtTime.add(overlay.tradeSelectionId);
+        timeToTradeIds.set(timeKey, idsAtTime);
+      }
+    }
+
+    if (overlay.exitBarIndex != null) {
+      const exitTime = chartBars[overlay.exitBarIndex]?.time;
+      if (typeof exitTime === "number") {
+        const key = `${overlay.exitBarIndex}:${overlay.dir}:${overlay.profitable ? "win" : "loss"}`;
+        const existing = exitGroups.get(key) ?? {
+          id: `exit-${key}`,
+          kind: "exit" as const,
+          time: exitTime,
+          dir: overlay.dir,
+          profitable: overlay.profitable ?? null,
+          barIndex: overlay.exitBarIndex,
+          tradeSelectionIds: [],
+          label: null,
+        };
+        existing.tradeSelectionIds.push(overlay.tradeSelectionId);
+        exitGroups.set(key, existing);
+        const timeKey = String(exitTime);
+        const idsAtTime = timeToTradeIds.get(timeKey) ?? new Set<string>();
+        idsAtTime.add(overlay.tradeSelectionId);
+        timeToTradeIds.set(timeKey, idsAtTime);
+      }
+    }
+  });
+
+  const normalizeGroup = <
+    T extends {
+      tradeSelectionIds: string[];
+      label: string | null;
+      time: number;
+    },
+  >(
+    group: T,
+  ): T => ({
+    ...group,
+    label:
+      group.tradeSelectionIds.length > 1
+        ? String(group.tradeSelectionIds.length)
+        : null,
+  });
+
+  const normalizedEntryGroups = [...entryGroups.values()]
+    .map(normalizeGroup)
+    .sort((left, right) => left.time - right.time);
+  const normalizedExitGroups = [...exitGroups.values()]
+    .map(normalizeGroup)
+    .sort((left, right) => left.time - right.time);
+
+  return {
+    entryGroups: normalizedEntryGroups,
+    exitGroups: normalizedExitGroups,
+    interactionGroups: [...normalizedEntryGroups, ...normalizedExitGroups].sort(
+      (left, right) => left.time - right.time,
+    ),
+    timeToTradeIds: [...timeToTradeIds.entries()].map(([time, ids]) => ({
+      time,
+      tradeSelectionIds: [...ids],
+    })),
+  };
+}
+
+function buildRunIndicatorPayload(
+  run: Pick<BacktestRun, "strategyId">,
+  strategyParameters: Record<string, unknown>,
+  selectedSymbol: string,
+  rawBars: BacktestBar[],
+  chartBars: Array<{ time: number; ts: string }>,
+) {
+  if (run.strategyId !== "ray_replica_signals" || rawBars.length === 0) {
+    return {
+      indicatorEvents: [],
+      indicatorZones: [],
+      indicatorWindows: [],
+      indicatorMarkerPayload: {
+        overviewMarkers: [],
+        markersByTradeId: {},
+        timeToTradeIds: [],
+      },
+    };
+  }
+
+  const tape = buildRayReplicaSignalTape(
+    rawBars,
+    Object.fromEntries(
+      Object.entries(strategyParameters).map(([key, value]) => [
+        key,
+        coerceScalarParameter(value),
+      ]),
+    ),
+  );
+  const indicatorEvents = tape.events.map((event) => ({
+    id: event.id,
+    strategy: run.strategyId,
+    eventType: `${event.direction}_${event.kind}`,
+    ts: event.occurredAt,
+    time: chartBars[event.barIndex]?.time ?? null,
+    barIndex: event.barIndex,
+    direction: event.direction,
+    label: event.label,
+    conviction: null,
+    meta: {
+      symbol: selectedSymbol,
+      sourceBarIndex: event.sourceBarIndex,
+      sourcePrice: event.sourcePrice,
+    },
+  }));
+  const indicatorWindows = tape.regimeWindows.map((window) => ({
+    id: window.id,
+    strategy: run.strategyId,
+    direction: window.direction,
+    startTs: window.startAt,
+    endTs: window.endAt,
+    startBarIndex: window.startBarIndex,
+    endBarIndex: window.endBarIndex,
+    tone: window.tone,
+    conviction: null,
+    meta: {
+      symbol: selectedSymbol,
+      source: "ray_replica_signals",
+    },
+  }));
+  const overviewMarkers = tape.events
+    .filter((event) => event.kind === "choch")
+    .map((event) => ({
+      id: `${event.id}-marker`,
+      time: chartBars[event.barIndex]?.time ?? 0,
+      barIndex: event.barIndex,
+      position:
+        event.direction === "long"
+          ? ("belowBar" as const)
+          : ("aboveBar" as const),
+      shape:
+        event.direction === "long"
+          ? ("arrowUp" as const)
+          : ("arrowDown" as const),
+      color: event.direction === "long" ? "#00bcd4" : "#e91e63",
+      text: event.direction === "long" ? "BUY" : "SELL",
+      size: 1,
+    }))
+    .filter((marker) => marker.time > 0);
+
+  return {
+    indicatorEvents,
+    indicatorZones: [],
+    indicatorWindows,
+    indicatorMarkerPayload: {
+      overviewMarkers,
+      markersByTradeId: {},
+      timeToTradeIds: [],
+    },
+  };
+}
+
 function coerceScalarParameter(value: unknown): string | number | boolean {
   if (
     typeof value === "string" ||
@@ -349,7 +1485,10 @@ export async function listBacktestStudies() {
 }
 
 export async function createBacktestStudy(input: CreateStudyInput) {
-  const strategy = getStrategyCatalogItem(input.strategyId, input.strategyVersion);
+  const strategy = getStrategyCatalogItem(
+    input.strategyId,
+    input.strategyVersion,
+  );
   ensureStrategyCompatibility(strategy, input.timeframe, false);
   const symbols = await resolveStudySymbols(input);
 
@@ -436,19 +1575,36 @@ async function buildRunDetail(run: BacktestRun) {
       eq(backtestRunDatasetsTable.datasetId, historicalBarDatasetsTable.id),
     )
     .where(eq(backtestRunDatasetsTable.runId, run.id));
+  const datasets = datasetRows.map(({ dataset }) => dataset);
+  const tradeDiagnosticsByTradeId = await buildTradeDiagnosticsMap(
+    run.id,
+    study,
+    trades,
+    datasets,
+  );
 
   return {
     run: runSummaryToResponse(run),
     study: studyRecordToResponse(study),
-    trades: trades.map(tradeToResponse),
+    trades: trades.map((trade) =>
+      tradeToResponse(
+        run.id,
+        trade,
+        tradeDiagnosticsByTradeId.get(buildTradeSelectionId(run.id, trade)) ??
+          null,
+      ),
+    ),
     points: points.map(pointToResponse),
-    datasets: datasetRows.map(({ dataset }) => datasetToResponse(dataset)),
+    datasets: datasets.map((dataset) => datasetToResponse(dataset)),
   };
 }
 
 export async function createBacktestRun(input: CreateRunInput) {
   const study = await getStudyOrThrow(input.studyId);
-  const strategy = getStrategyCatalogItem(study.strategyId, study.strategyVersion);
+  const strategy = getStrategyCatalogItem(
+    study.strategyId,
+    study.strategyVersion,
+  );
   ensureStrategyCompatibility(strategy, study.timeframe, true);
   const parameters = {
     ...(study.parameters ?? {}),
@@ -492,9 +1648,241 @@ export async function getBacktestRun(runId: string) {
   return buildRunDetail(run);
 }
 
+export async function getBacktestRunChart(
+  runId: string,
+  input: {
+    symbol?: string | null;
+    selectedTradeId?: string | null;
+  } = {},
+) {
+  const run = await getRunOrThrow(runId);
+  const study = await getStudyOrThrow(run.studyId);
+  const trades = await db
+    .select()
+    .from(backtestRunTradesTable)
+    .where(eq(backtestRunTradesTable.runId, run.id))
+    .orderBy(asc(backtestRunTradesTable.entryAt));
+  const availableSymbols = [
+    ...new Set([
+      ...normalizeSymbols(study.symbols),
+      ...normalizeSymbols(trades.map((trade) => trade.symbol)),
+    ]),
+  ];
+  const selectedSymbol =
+    resolveSelectedSymbol(study, trades, input.symbol) ||
+    availableSymbols[0] ||
+    "";
+  const rawBars = selectedSymbol
+    ? await loadRunBarsForSymbol(
+        run.id,
+        selectedSymbol,
+        study.timeframe as BacktestTimeframe,
+      )
+    : [];
+  const { chartBars, chartBarRanges } = buildChartBarsFromBacktestBars(
+    rawBars,
+    study.timeframe,
+  );
+  const tradeOverlays = trades.reduce<
+    Array<{
+      id: string;
+      tradeSelectionId: string;
+      symbol: string;
+      entryBarIndex: number | null;
+      exitBarIndex: number | null;
+      entryTs: string;
+      exitTs: string;
+      dir: "long" | "short";
+      strat: string;
+      qty: number;
+      pnl: number;
+      pnlPercent: number;
+      er: string;
+      profitable: boolean;
+      pricingMode: "shares";
+      chartPriceContext: "spot";
+      entryPrice: number;
+      exitPrice: number;
+      oe: number;
+      ep: number;
+      exitFill: number;
+      entrySpotPrice: number;
+      exitSpotPrice: number;
+      entryBasePrice: null;
+      exitBasePrice: null;
+      stopLossPrice: null;
+      takeProfitPrice: null;
+      trailActivationPrice: null;
+      lastTrailStopPrice: null;
+      exitTriggerPrice: null;
+      thresholdPath: null;
+    }>
+  >((overlays, trade) => {
+    if (normalizeSymbol(trade.symbol) !== selectedSymbol) {
+      return overlays;
+    }
+
+    const entryBarIndex = resolveBarIndex(
+      trade.entryAt.getTime(),
+      chartBarRanges,
+    );
+    const exitBarIndex = resolveBarIndex(
+      trade.exitAt.getTime(),
+      chartBarRanges,
+    );
+
+    if (entryBarIndex == null && exitBarIndex == null) {
+      return overlays;
+    }
+
+    const tradeSelectionId = buildTradeSelectionId(run.id, trade);
+    const entryPrice = numericValue(trade.entryPrice);
+    const exitPrice = numericValue(trade.exitPrice);
+    const netPnl = numericValue(trade.netPnl);
+
+    overlays.push({
+      id: tradeSelectionId,
+      tradeSelectionId,
+      symbol: selectedSymbol,
+      entryBarIndex,
+      exitBarIndex,
+      entryTs: trade.entryAt.toISOString(),
+      exitTs: trade.exitAt.toISOString(),
+      dir: trade.side === "short" ? "short" : "long",
+      strat: run.strategyId,
+      qty: numericValue(trade.quantity),
+      pnl: netPnl,
+      pnlPercent: numericValue(trade.netPnlPercent),
+      er: trade.exitReason,
+      profitable: netPnl >= 0,
+      pricingMode: "shares",
+      chartPriceContext: "spot" as const,
+      entryPrice,
+      exitPrice,
+      oe: entryPrice,
+      ep: exitPrice,
+      exitFill: exitPrice,
+      entrySpotPrice: entryPrice,
+      exitSpotPrice: exitPrice,
+      entryBasePrice: null,
+      exitBasePrice: null,
+      stopLossPrice: null,
+      takeProfitPrice: null,
+      trailActivationPrice: null,
+      lastTrailStopPrice: null,
+      exitTriggerPrice: null,
+      thresholdPath: null,
+    });
+
+    return overlays;
+  }, []);
+  const defaultTradeSelectionId =
+    tradeOverlays[tradeOverlays.length - 1]?.tradeSelectionId ?? null;
+  const activeTradeSelectionId = tradeOverlays.some(
+    (overlay) => overlay.tradeSelectionId === input.selectedTradeId,
+  )
+    ? (input.selectedTradeId ?? null)
+    : defaultTradeSelectionId;
+  const activeTrade =
+    tradeOverlays.find(
+      (overlay) => overlay.tradeSelectionId === activeTradeSelectionId,
+    ) ?? null;
+  const defaultVisibleLogicalRange = activeTrade
+    ? buildFocusedTradeVisibleRange(
+        activeTrade.entryBarIndex,
+        activeTrade.exitBarIndex,
+        chartBars.length,
+      )
+    : buildDefaultVisibleRange(chartBars.length);
+  const tradeMarkerGroups = buildTradeMarkerGroups(chartBars, tradeOverlays);
+  const indicatorParameters = {
+    ...(study.parameters ?? {}),
+    ...(run.parameters ?? {}),
+  };
+  const indicatorPayload = buildRunIndicatorPayload(
+    run,
+    indicatorParameters,
+    selectedSymbol,
+    rawBars,
+    chartBars,
+  );
+
+  return {
+    runId: run.id,
+    studyId: study.id,
+    timeframe: study.timeframe,
+    chartPriceContext: "spot" as const,
+    availableSymbols,
+    selectedSymbol,
+    defaultTradeSelectionId,
+    activeTradeSelectionId,
+    chartBars,
+    chartBarRanges,
+    tradeOverlays,
+    tradeMarkerGroups,
+    indicatorEvents: indicatorPayload.indicatorEvents,
+    indicatorZones: indicatorPayload.indicatorZones,
+    indicatorWindows: indicatorPayload.indicatorWindows,
+    indicatorMarkerPayload: indicatorPayload.indicatorMarkerPayload,
+    selectionFocus: {
+      token: buildSelectionFocusToken(
+        run.id,
+        selectedSymbol,
+        activeTradeSelectionId,
+        defaultVisibleLogicalRange,
+      ),
+      tradeSelectionId: activeTradeSelectionId,
+      visibleLogicalRange: defaultVisibleLogicalRange,
+    },
+    defaultVisibleLogicalRange,
+  };
+}
+
+export async function getBacktestStudyPreviewChart(studyId: string) {
+  await getStudyOrThrow(studyId);
+  const completedRuns = await db
+    .select()
+    .from(backtestRunsTable)
+    .where(
+      and(
+        eq(backtestRunsTable.studyId, studyId),
+        eq(backtestRunsTable.status, "completed"),
+      ),
+    )
+    .orderBy(desc(backtestRunsTable.createdAt));
+  const latestCompletedRun =
+    [...completedRuns].sort(compareCompletedRuns)[0] ?? null;
+  const bestCompletedRun = resolveBestCompletedRun(completedRuns);
+  const [latestSeries, bestSeries] = await Promise.all([
+    latestCompletedRun
+      ? loadRunPoints(latestCompletedRun.id)
+      : Promise.resolve([]),
+    bestCompletedRun ? loadRunPoints(bestCompletedRun.id) : Promise.resolve([]),
+  ]);
+
+  return {
+    studyId,
+    latestCompletedRun: latestCompletedRun
+      ? runSummaryToResponse(latestCompletedRun)
+      : null,
+    bestCompletedRun: bestCompletedRun
+      ? runSummaryToResponse(bestCompletedRun)
+      : null,
+    comparisonBadges: buildComparisonBadges(
+      latestCompletedRun,
+      bestCompletedRun,
+    ),
+    latestSeries,
+    bestSeries,
+  };
+}
+
 export async function createBacktestSweep(input: CreateSweepInput) {
   const study = await getStudyOrThrow(input.studyId);
-  const strategy = getStrategyCatalogItem(study.strategyId, study.strategyVersion);
+  const strategy = getStrategyCatalogItem(
+    study.strategyId,
+    study.strategyVersion,
+  );
   ensureStrategyCompatibility(strategy, study.timeframe, true);
   const baseParameters = {
     ...(study.parameters ?? {}),
@@ -579,7 +1967,10 @@ export async function getBacktestSweep(sweepId: string) {
     .select()
     .from(backtestRunsTable)
     .where(eq(backtestRunsTable.sweepId, sweep.id))
-    .orderBy(asc(backtestRunsTable.sortRank), desc(backtestRunsTable.createdAt));
+    .orderBy(
+      asc(backtestRunsTable.sortRank),
+      desc(backtestRunsTable.createdAt),
+    );
 
   return {
     id: sweep.id,

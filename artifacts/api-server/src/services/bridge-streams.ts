@@ -1,0 +1,145 @@
+import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
+import { normalizeSymbol } from "../lib/values";
+import { logger } from "../lib/logger";
+
+const bridgeClient = new IbkrBridgeClient();
+
+type Unsubscribe = () => void;
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function createPollingStream<T>({
+  intervalMs,
+  fetchSnapshot,
+  onSnapshot,
+}: {
+  intervalMs: number;
+  fetchSnapshot: () => Promise<T>;
+  onSnapshot: (snapshot: T) => void;
+}): Unsubscribe {
+  let active = true;
+  let inFlight = false;
+  let lastSignature = "";
+
+  const tick = async () => {
+    if (!active || inFlight) {
+      return;
+    }
+
+    inFlight = true;
+
+    try {
+      const snapshot = await fetchSnapshot();
+      const signature = stableStringify(snapshot);
+
+      if (signature !== lastSignature) {
+        lastSignature = signature;
+        onSnapshot(snapshot);
+      }
+    } catch (error) {
+      logger.warn({ err: error }, "Bridge stream polling failed");
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  const timer = setInterval(() => {
+    void tick();
+  }, intervalMs);
+  timer.unref?.();
+  void tick();
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
+}
+
+export function subscribeQuoteSnapshots(
+  symbols: string[],
+  onSnapshot: (payload: { quotes: Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>> }) => void,
+): Unsubscribe {
+  const normalizedSymbols = Array.from(
+    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+
+  return createPollingStream({
+    intervalMs: 1_000,
+    fetchSnapshot: async () => ({
+      quotes: await bridgeClient.getQuoteSnapshots(normalizedSymbols),
+    }),
+    onSnapshot,
+  });
+}
+
+export function subscribeOptionChains(
+  underlyings: string[],
+  onSnapshot: (payload: {
+    underlyings: Array<{
+      underlying: string;
+      contracts: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>;
+      updatedAt: string;
+    }>;
+  }) => void,
+): Unsubscribe {
+  const normalizedUnderlyings = Array.from(
+    new Set(underlyings.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+
+  return createPollingStream({
+    intervalMs: 2_500,
+    fetchSnapshot: async () => ({
+      underlyings: await Promise.all(
+        normalizedUnderlyings.map(async (underlying) => ({
+          underlying,
+          contracts: await bridgeClient.getOptionChain({
+            underlying,
+            maxExpirations: 3,
+            strikesAroundMoney: 12,
+          }),
+          updatedAt: new Date().toISOString(),
+        })),
+      ),
+    }),
+    onSnapshot,
+  });
+}
+
+export function subscribeOrderSnapshots(
+  input: {
+    accountId?: string;
+    mode: "paper" | "live";
+    status?: "pending_submit" | "submitted" | "accepted" | "partially_filled" | "filled" | "canceled" | "rejected" | "expired";
+  },
+  onSnapshot: (payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> }) => void,
+): Unsubscribe {
+  return createPollingStream({
+    intervalMs: 1_000,
+    fetchSnapshot: async () => ({
+      orders: await bridgeClient.listOrders(input),
+    }),
+    onSnapshot,
+  });
+}
+
+export function subscribeAccountSnapshots(
+  input: {
+    accountId?: string;
+    mode: "paper" | "live";
+  },
+  onSnapshot: (payload: {
+    accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
+    positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+  }) => void,
+): Unsubscribe {
+  return createPollingStream({
+    intervalMs: 3_000,
+    fetchSnapshot: async () => ({
+      accounts: await bridgeClient.listAccounts(input.mode),
+      positions: await bridgeClient.listPositions(input),
+    }),
+    onSnapshot,
+  });
+}

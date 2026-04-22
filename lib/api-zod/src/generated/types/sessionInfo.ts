@@ -7,13 +7,17 @@
  */
 import type { BrokerProvider } from "./brokerProvider";
 import type { EnvironmentMode } from "./environmentMode";
+import type { IbkrBridgeHealth } from "./ibkrBridgeHealth";
 import type { MarketDataProvider } from "./marketDataProvider";
 import type { SessionInfoConfigured } from "./sessionInfoConfigured";
+import type { SessionMarketDataProviders } from "./sessionMarketDataProviders";
 
 export interface SessionInfo {
   environment: EnvironmentMode;
   brokerProvider: BrokerProvider;
   marketDataProvider: MarketDataProvider;
+  marketDataProviders: SessionMarketDataProviders;
   configured: SessionInfoConfigured;
+  ibkrBridge: IbkrBridgeHealth | null;
   timestamp: Date;
 }

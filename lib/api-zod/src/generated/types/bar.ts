@@ -13,4 +13,9 @@ export interface Bar {
   low: number;
   close: number;
   volume: number;
+  source?: string;
+  /** @nullable */
+  providerContractId?: string | null;
+  outsideRth?: boolean;
+  partial?: boolean;
 }

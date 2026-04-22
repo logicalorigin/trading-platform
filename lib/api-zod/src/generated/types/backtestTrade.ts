@@ -5,8 +5,10 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { BacktestTradeDiagnostics } from "./backtestTradeDiagnostics";
 
 export interface BacktestTrade {
+  tradeSelectionId: string;
   symbol: string;
   side: string;
   entryAt: Date;
@@ -22,4 +24,5 @@ export interface BacktestTrade {
   barsHeld: number;
   commissionPaid: number;
   exitReason: string;
+  diagnostics: BacktestTradeDiagnostics | null;
 }

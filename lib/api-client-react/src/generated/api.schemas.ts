@@ -36,6 +36,7 @@ export type MarketDataProvider =
 
 export const MarketDataProvider = {
   polygon: "polygon",
+  ibkr: "ibkr",
 } as const;
 
 export type UniverseMarket =
@@ -139,6 +140,64 @@ export const FlowSentiment = {
   neutral: "neutral",
 } as const;
 
+export type QuoteSource = (typeof QuoteSource)[keyof typeof QuoteSource];
+
+export const QuoteSource = {
+  ibkr: "ibkr",
+  polygon: "polygon",
+} as const;
+
+export type BarDataSource = (typeof BarDataSource)[keyof typeof BarDataSource];
+
+export const BarDataSource = {
+  trades: "trades",
+  midpoint: "midpoint",
+  bid_ask: "bid_ask",
+} as const;
+
+export interface JsonObject {
+  [key: string]: unknown;
+}
+
+export const SessionMarketDataProvidersResearch = {
+  ...MarketDataProvider,
+  ...ResearchProvider,
+} as const;
+export interface SessionMarketDataProviders {
+  live: MarketDataProvider;
+  historical: MarketDataProvider;
+  research: (typeof SessionMarketDataProvidersResearch)[keyof typeof SessionMarketDataProvidersResearch];
+}
+
+export type IbkrBridgeHealthTransport =
+  (typeof IbkrBridgeHealthTransport)[keyof typeof IbkrBridgeHealthTransport];
+
+export const IbkrBridgeHealthTransport = {
+  client_portal: "client_portal",
+  tws: "tws",
+} as const;
+
+export interface IbkrBridgeHealth {
+  configured: boolean;
+  authenticated: boolean;
+  connected: boolean;
+  competing: boolean;
+  /** @nullable */
+  selectedAccountId: string | null;
+  accounts: string[];
+  /** @nullable */
+  lastTickleAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+  updatedAt: string;
+  transport: IbkrBridgeHealthTransport;
+  /** @nullable */
+  connectionTarget: string | null;
+  sessionMode: EnvironmentMode | null;
+  /** @nullable */
+  clientId: number | null;
+}
+
 export type SessionInfoConfigured = {
   polygon: boolean;
   ibkr: boolean;
@@ -149,7 +208,9 @@ export interface SessionInfo {
   environment: EnvironmentMode;
   brokerProvider: BrokerProvider;
   marketDataProvider: MarketDataProvider;
+  marketDataProviders: SessionMarketDataProviders;
   configured: SessionInfoConfigured;
+  ibkrBridge: IbkrBridgeHealth | null;
   timestamp: string;
 }
 
@@ -358,6 +419,9 @@ export interface QuoteSnapshot {
   low: number | null;
   prevClose: number | null;
   volume: number | null;
+  /** @nullable */
+  providerContractId: string | null;
+  source: QuoteSource;
   updatedAt: string;
 }
 
@@ -368,6 +432,11 @@ export interface Bar {
   low: number;
   close: number;
   volume: number;
+  source?: string;
+  /** @nullable */
+  providerContractId?: string | null;
+  outsideRth?: boolean;
+  partial?: boolean;
 }
 
 export interface OptionContract {
@@ -444,6 +513,48 @@ export interface PlaceOrderRequest {
   optionContract: OptionContract | null;
 }
 
+export interface OrderPreview {
+  accountId: string;
+  mode: EnvironmentMode;
+  symbol: string;
+  assetClass: AssetClass;
+  resolvedContractId: number;
+  orderPayload: JsonObject;
+  optionContract: OptionContract | null;
+}
+
+export interface SubmitIbkrOrdersRequest {
+  /** @nullable */
+  accountId?: string | null;
+  ibkrOrders: JsonObject[];
+}
+
+export interface SubmitIbkrOrdersResponse {
+  [key: string]: unknown;
+}
+
+export interface ReplaceOrderRequest {
+  accountId: string;
+  mode?: EnvironmentMode;
+  order: JsonObject;
+}
+
+export interface CancelOrderRequest {
+  accountId: string;
+  /** @nullable */
+  manualIndicator?: boolean | null;
+  /** @nullable */
+  extOperator?: string | null;
+}
+
+export interface CancelOrderResponse {
+  orderId: string;
+  /** @nullable */
+  accountId: string | null;
+  message: string;
+  submittedAt: string;
+}
+
 export interface FlowEvent {
   id: string;
   underlying: string;
@@ -508,8 +619,138 @@ export interface OptionChainResponse {
   contracts: OptionChainQuote[];
 }
 
+export type SseStream = string;
+
+export interface AlgoDeployment {
+  id: string;
+  strategyId: string;
+  name: string;
+  mode: EnvironmentMode;
+  enabled: boolean;
+  providerAccountId: string;
+  symbolUniverse: string[];
+  config: JsonObject;
+  /** @nullable */
+  lastEvaluatedAt: string | null;
+  /** @nullable */
+  lastSignalAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAlgoDeploymentRequest {
+  strategyId: string;
+  name: string;
+  providerAccountId: string;
+  mode: EnvironmentMode;
+  symbolUniverse?: string[];
+  config?: JsonObject;
+}
+
+export interface AlgoDeploymentsResponse {
+  deployments: AlgoDeployment[];
+}
+
+export interface ExecutionEvent {
+  id: string;
+  /** @nullable */
+  deploymentId: string | null;
+  /** @nullable */
+  algoRunId: string | null;
+  /** @nullable */
+  providerAccountId: string | null;
+  /** @nullable */
+  symbol: string | null;
+  eventType: string;
+  summary: string;
+  payload: JsonObject;
+  occurredAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionEventsResponse {
+  events: ExecutionEvent[];
+}
+
 export interface FlowEventsResponse {
   events: FlowEvent[];
+}
+
+export type PineScriptStatus =
+  (typeof PineScriptStatus)[keyof typeof PineScriptStatus];
+
+export const PineScriptStatus = {
+  draft: "draft",
+  ready: "ready",
+  error: "error",
+  archived: "archived",
+} as const;
+
+export type PineScriptPaneType =
+  (typeof PineScriptPaneType)[keyof typeof PineScriptPaneType];
+
+export const PineScriptPaneType = {
+  price: "price",
+  lower: "lower",
+} as const;
+
+export type PineScriptRecordMetadata = { [key: string]: unknown };
+
+export interface PineScriptRecord {
+  id: string;
+  scriptKey: string;
+  name: string;
+  /** @nullable */
+  description: string | null;
+  sourceCode: string;
+  status: PineScriptStatus;
+  defaultPaneType: PineScriptPaneType;
+  chartAccessEnabled: boolean;
+  /** @nullable */
+  notes: string | null;
+  /** @nullable */
+  lastError: string | null;
+  tags: string[];
+  metadata: PineScriptRecordMetadata;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PineScriptsResponse {
+  scripts: PineScriptRecord[];
+}
+
+export type CreatePineScriptRequestMetadata = { [key: string]: unknown };
+
+export interface CreatePineScriptRequest {
+  scriptKey?: string;
+  name: string;
+  description?: string;
+  sourceCode: string;
+  status?: PineScriptStatus;
+  defaultPaneType?: PineScriptPaneType;
+  chartAccessEnabled?: boolean;
+  notes?: string;
+  tags?: string[];
+  metadata?: CreatePineScriptRequestMetadata;
+}
+
+export type UpdatePineScriptRequestMetadata = { [key: string]: unknown };
+
+export interface UpdatePineScriptRequest {
+  name?: string;
+  description?: string;
+  sourceCode?: string;
+  status?: PineScriptStatus;
+  defaultPaneType?: PineScriptPaneType;
+  chartAccessEnabled?: boolean;
+  notes?: string;
+  lastError?: string;
+  tags?: string[];
+  metadata?: UpdatePineScriptRequestMetadata;
 }
 
 export type BacktestStrategyStatus =
@@ -726,7 +967,85 @@ export interface BacktestRunSummary {
   updatedAt: string;
 }
 
+export type BacktestTradeReasonTraceStepKind =
+  (typeof BacktestTradeReasonTraceStepKind)[keyof typeof BacktestTradeReasonTraceStepKind];
+
+export const BacktestTradeReasonTraceStepKind = {
+  entry: "entry",
+  max_favorable: "max_favorable",
+  max_adverse: "max_adverse",
+  exit: "exit",
+} as const;
+
+export type BacktestTradeReasonTraceStepEmphasis =
+  (typeof BacktestTradeReasonTraceStepEmphasis)[keyof typeof BacktestTradeReasonTraceStepEmphasis];
+
+export const BacktestTradeReasonTraceStepEmphasis = {
+  positive: "positive",
+  negative: "negative",
+  neutral: "neutral",
+} as const;
+
+export interface BacktestTradeReasonTraceStep {
+  id: string;
+  kind: BacktestTradeReasonTraceStepKind;
+  label: string;
+  occurredAt: string;
+  /** @nullable */
+  barIndex: number | null;
+  price: number;
+  deltaFromEntry: number;
+  deltaPercentFromEntry: number;
+  emphasis: BacktestTradeReasonTraceStepEmphasis;
+}
+
+export interface BacktestTradeExitConsequences {
+  windowBars: number;
+  barsObserved: number;
+  bestPrice: number;
+  bestOccurredAt: string;
+  bestBarIndex: number;
+  bestDelta: number;
+  bestPercent: number;
+  worstPrice: number;
+  worstOccurredAt: string;
+  worstBarIndex: number;
+  worstDelta: number;
+  worstPercent: number;
+}
+
+export interface BacktestTradeDiagnostics {
+  holdMinutes: number;
+  /** @nullable */
+  entryBarIndex: number | null;
+  /** @nullable */
+  exitBarIndex: number | null;
+  /** @nullable */
+  maxFavorablePrice: number | null;
+  /** @nullable */
+  maxFavorableAt: string | null;
+  /** @nullable */
+  maxFavorableBarIndex: number | null;
+  /** @nullable */
+  maxFavorableDelta: number | null;
+  /** @nullable */
+  maxFavorablePercent: number | null;
+  /** @nullable */
+  maxAdversePrice: number | null;
+  /** @nullable */
+  maxAdverseAt: string | null;
+  /** @nullable */
+  maxAdverseBarIndex: number | null;
+  /** @nullable */
+  maxAdverseDelta: number | null;
+  /** @nullable */
+  maxAdversePercent: number | null;
+  reasonTrace: BacktestTradeReasonTraceStep[];
+  exitConsequences: BacktestTradeExitConsequences | null;
+}
+
 export interface BacktestTrade {
+  tradeSelectionId: string;
   symbol: string;
   side: string;
   entryAt: string;
@@ -742,6 +1061,7 @@ export interface BacktestTrade {
   barsHeld: number;
   commissionPaid: number;
   exitReason: string;
+  diagnostics: BacktestTradeDiagnostics | null;
 }
 
 export interface BacktestPoint {
@@ -762,6 +1082,374 @@ export interface BacktestDatasetRef {
   barCount: number;
   pinnedCount: number;
   isSeeded: boolean;
+}
+
+export interface BacktestChartBar {
+  time: number;
+  ts: string;
+  date: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface BacktestChartBarRange {
+  startMs: number;
+  endMs: number;
+}
+
+export type BacktestChartMarkerPosition =
+  (typeof BacktestChartMarkerPosition)[keyof typeof BacktestChartMarkerPosition];
+
+export const BacktestChartMarkerPosition = {
+  aboveBar: "aboveBar",
+  belowBar: "belowBar",
+  inBar: "inBar",
+} as const;
+
+export type BacktestChartMarkerShape =
+  (typeof BacktestChartMarkerShape)[keyof typeof BacktestChartMarkerShape];
+
+export const BacktestChartMarkerShape = {
+  circle: "circle",
+  square: "square",
+  arrowUp: "arrowUp",
+  arrowDown: "arrowDown",
+} as const;
+
+export interface BacktestChartMarker {
+  id: string;
+  time: number;
+  barIndex: number;
+  position: BacktestChartMarkerPosition;
+  shape: BacktestChartMarkerShape;
+  color: string;
+  /** @nullable */
+  text: string | null;
+  /** @nullable */
+  size: number | null;
+}
+
+export type BacktestIndicatorEventMeta = { [key: string]: unknown };
+
+export interface BacktestIndicatorEvent {
+  id: string;
+  strategy: string;
+  eventType: string;
+  ts: string;
+  /** @nullable */
+  time: number | null;
+  /** @nullable */
+  barIndex: number | null;
+  direction: "long" | "short" | null;
+  /** @nullable */
+  label: string | null;
+  /** @nullable */
+  conviction: number | null;
+  meta: BacktestIndicatorEventMeta;
+}
+
+export type BacktestIndicatorZoneMeta = { [key: string]: unknown };
+
+export interface BacktestIndicatorZone {
+  id: string;
+  strategy: string;
+  zoneType: string;
+  direction: "long" | "short" | null;
+  startTs: string;
+  endTs: string;
+  /** @nullable */
+  startBarIndex: number | null;
+  /** @nullable */
+  endBarIndex: number | null;
+  top: number;
+  bottom: number;
+  /** @nullable */
+  label: string | null;
+  meta: BacktestIndicatorZoneMeta;
+}
+
+export type BacktestIndicatorWindowDirection =
+  (typeof BacktestIndicatorWindowDirection)[keyof typeof BacktestIndicatorWindowDirection];
+
+export const BacktestIndicatorWindowDirection = {
+  long: "long",
+  short: "short",
+} as const;
+
+export type BacktestIndicatorWindowMeta = { [key: string]: unknown };
+
+export interface BacktestIndicatorWindow {
+  id: string;
+  strategy: string;
+  direction: BacktestIndicatorWindowDirection;
+  startTs: string;
+  endTs: string;
+  /** @nullable */
+  startBarIndex: number | null;
+  /** @nullable */
+  endBarIndex: number | null;
+  tone: "bullish" | "bearish" | "neutral" | null;
+  /** @nullable */
+  conviction: number | null;
+  meta: BacktestIndicatorWindowMeta;
+}
+
+export type BacktestTradeThresholdSegmentKind =
+  (typeof BacktestTradeThresholdSegmentKind)[keyof typeof BacktestTradeThresholdSegmentKind];
+
+export const BacktestTradeThresholdSegmentKind = {
+  take_profit: "take_profit",
+  stop_loss: "stop_loss",
+  trail_arm: "trail_arm",
+  trail_stop: "trail_stop",
+  exit_trigger: "exit_trigger",
+} as const;
+
+export type BacktestTradeThresholdSegmentStyle =
+  (typeof BacktestTradeThresholdSegmentStyle)[keyof typeof BacktestTradeThresholdSegmentStyle];
+
+export const BacktestTradeThresholdSegmentStyle = {
+  solid: "solid",
+  dashed: "dashed",
+  dotted: "dotted",
+} as const;
+
+export interface BacktestTradeThresholdSegment {
+  id: string;
+  kind: BacktestTradeThresholdSegmentKind;
+  startBarIndex: number;
+  endBarIndex: number;
+  value: number;
+  style: BacktestTradeThresholdSegmentStyle;
+  /** @nullable */
+  hit: boolean | null;
+  /** @nullable */
+  label: string | null;
+}
+
+export interface BacktestTradeThresholdPath {
+  segments: BacktestTradeThresholdSegment[];
+}
+
+export type BacktestTradeOverlayDir =
+  (typeof BacktestTradeOverlayDir)[keyof typeof BacktestTradeOverlayDir];
+
+export const BacktestTradeOverlayDir = {
+  long: "long",
+  short: "short",
+} as const;
+
+export type BacktestTradeOverlayChartPriceContext =
+  (typeof BacktestTradeOverlayChartPriceContext)[keyof typeof BacktestTradeOverlayChartPriceContext];
+
+export const BacktestTradeOverlayChartPriceContext = {
+  spot: "spot",
+  option: "option",
+} as const;
+
+export interface BacktestTradeOverlay {
+  id: string;
+  tradeSelectionId: string;
+  symbol: string;
+  /** @nullable */
+  entryBarIndex: number | null;
+  /** @nullable */
+  exitBarIndex: number | null;
+  entryTs: string;
+  /** @nullable */
+  exitTs: string | null;
+  dir: BacktestTradeOverlayDir;
+  strat: string;
+  qty: number;
+  /** @nullable */
+  pnl: number | null;
+  /** @nullable */
+  pnlPercent: number | null;
+  /** @nullable */
+  er: string | null;
+  /** @nullable */
+  profitable: boolean | null;
+  /** @nullable */
+  pricingMode: string | null;
+  chartPriceContext: BacktestTradeOverlayChartPriceContext;
+  /** @nullable */
+  entryPrice: number | null;
+  /** @nullable */
+  exitPrice: number | null;
+  /** @nullable */
+  oe: number | null;
+  /** @nullable */
+  ep: number | null;
+  /** @nullable */
+  exitFill: number | null;
+  /** @nullable */
+  entrySpotPrice: number | null;
+  /** @nullable */
+  exitSpotPrice: number | null;
+  /** @nullable */
+  entryBasePrice: number | null;
+  /** @nullable */
+  exitBasePrice: number | null;
+  /** @nullable */
+  stopLossPrice: number | null;
+  /** @nullable */
+  takeProfitPrice: number | null;
+  /** @nullable */
+  trailActivationPrice: number | null;
+  /** @nullable */
+  lastTrailStopPrice: number | null;
+  /** @nullable */
+  exitTriggerPrice: number | null;
+  thresholdPath: BacktestTradeThresholdPath | null;
+}
+
+export type BacktestTradeMarkerGroupKind =
+  (typeof BacktestTradeMarkerGroupKind)[keyof typeof BacktestTradeMarkerGroupKind];
+
+export const BacktestTradeMarkerGroupKind = {
+  entry: "entry",
+  exit: "exit",
+} as const;
+
+export type BacktestTradeMarkerGroupDir =
+  (typeof BacktestTradeMarkerGroupDir)[keyof typeof BacktestTradeMarkerGroupDir];
+
+export const BacktestTradeMarkerGroupDir = {
+  long: "long",
+  short: "short",
+} as const;
+
+export interface BacktestTradeMarkerGroup {
+  id: string;
+  kind: BacktestTradeMarkerGroupKind;
+  time: number;
+  dir: BacktestTradeMarkerGroupDir;
+  /** @nullable */
+  profitable: boolean | null;
+  /** @nullable */
+  barIndex: number | null;
+  tradeSelectionIds: string[];
+  /** @nullable */
+  label: string | null;
+}
+
+export interface BacktestTimeToTradeIdsEntry {
+  time: string;
+  tradeSelectionIds: string[];
+}
+
+export interface BacktestTradeMarkerGroups {
+  entryGroups: BacktestTradeMarkerGroup[];
+  exitGroups: BacktestTradeMarkerGroup[];
+  interactionGroups: BacktestTradeMarkerGroup[];
+  timeToTradeIds: BacktestTimeToTradeIdsEntry[];
+}
+
+export type BacktestIndicatorMarkerPayloadMarkersByTradeId = {
+  [key: string]: BacktestChartMarker[];
+};
+
+export interface BacktestIndicatorMarkerPayload {
+  overviewMarkers: BacktestChartMarker[];
+  markersByTradeId: BacktestIndicatorMarkerPayloadMarkersByTradeId;
+  timeToTradeIds: BacktestTimeToTradeIdsEntry[];
+}
+
+export type BacktestTradeSelectionFocusVisibleLogicalRange = {
+  from: number;
+  to: number;
+} | null;
+
+export interface BacktestTradeSelectionFocus {
+  token: number;
+  /** @nullable */
+  tradeSelectionId: string | null;
+  visibleLogicalRange: BacktestTradeSelectionFocusVisibleLogicalRange;
+}
+
+export type BacktestRunChartChartPriceContext =
+  (typeof BacktestRunChartChartPriceContext)[keyof typeof BacktestRunChartChartPriceContext];
+
+export const BacktestRunChartChartPriceContext = {
+  spot: "spot",
+  option: "option",
+} as const;
+
+export type BacktestRunChartDefaultVisibleLogicalRange = {
+  from: number;
+  to: number;
+} | null;
+
+export interface BacktestRunChart {
+  runId: string;
+  studyId: string;
+  timeframe: BarTimeframe;
+  chartPriceContext: BacktestRunChartChartPriceContext;
+  availableSymbols: string[];
+  selectedSymbol: string;
+  /** @nullable */
+  defaultTradeSelectionId: string | null;
+  /** @nullable */
+  activeTradeSelectionId: string | null;
+  chartBars: BacktestChartBar[];
+  chartBarRanges: BacktestChartBarRange[];
+  tradeOverlays: BacktestTradeOverlay[];
+  tradeMarkerGroups: BacktestTradeMarkerGroups;
+  indicatorEvents: BacktestIndicatorEvent[];
+  indicatorZones: BacktestIndicatorZone[];
+  indicatorWindows: BacktestIndicatorWindow[];
+  indicatorMarkerPayload: BacktestIndicatorMarkerPayload;
+  selectionFocus: BacktestTradeSelectionFocus | null;
+  defaultVisibleLogicalRange: BacktestRunChartDefaultVisibleLogicalRange;
+}
+
+export interface BacktestEquitySeriesPoint {
+  occurredAt: string;
+  equity: number;
+  drawdownPercent: number;
+}
+
+export type BacktestComparisonBadgeFormat =
+  (typeof BacktestComparisonBadgeFormat)[keyof typeof BacktestComparisonBadgeFormat];
+
+export const BacktestComparisonBadgeFormat = {
+  currency: "currency",
+  percent: "percent",
+  number: "number",
+  integer: "integer",
+} as const;
+
+export type BacktestComparisonBadgeWinner =
+  (typeof BacktestComparisonBadgeWinner)[keyof typeof BacktestComparisonBadgeWinner];
+
+export const BacktestComparisonBadgeWinner = {
+  latest: "latest",
+  best: "best",
+  tie: "tie",
+  none: "none",
+} as const;
+
+export interface BacktestComparisonBadge {
+  id: string;
+  label: string;
+  format: BacktestComparisonBadgeFormat;
+  /** @nullable */
+  latestValue: number | null;
+  /** @nullable */
+  bestValue: number | null;
+  winner: BacktestComparisonBadgeWinner;
+}
+
+export interface BacktestStudyPreviewChart {
+  studyId: string;
+  latestCompletedRun: BacktestRunSummary | null;
+  bestCompletedRun: BacktestRunSummary | null;
+  comparisonBadges: BacktestComparisonBadge[];
+  latestSeries: BacktestEquitySeriesPoint[];
+  bestSeries: BacktestEquitySeriesPoint[];
 }
 
 export interface BacktestRunDetail {
@@ -923,12 +1611,48 @@ export type GetBarsParams = {
   limit?: number;
   from?: string;
   to?: string;
+  assetClass?: AssetClass;
+  providerContractId?: string | null;
+  outsideRth?: boolean;
+  source?: BarDataSource;
 };
 
 export type GetOptionChainParams = {
   underlying: string;
   expirationDate?: string;
   contractType?: OptionRight;
+};
+
+export type StreamQuoteSnapshotsParams = {
+  /**
+   * Comma-separated ticker symbols.
+   */
+  symbols: string;
+};
+
+export type StreamOptionChainsParams = {
+  /**
+   * Comma-separated underlying symbols.
+   */
+  underlyings: string;
+};
+
+export type StreamOrdersParams = {
+  accountId?: string;
+  mode?: EnvironmentMode;
+  status?: OrderStatus;
+};
+
+export type StreamAccountsParams = {
+  accountId?: string;
+  mode?: EnvironmentMode;
+};
+
+export type StreamStockAggregatesParams = {
+  /**
+   * Comma-separated ticker symbols.
+   */
+  symbols: string;
 };
 
 export type ListFlowEventsParams = {
@@ -972,8 +1696,26 @@ export type GetResearchTranscriptParams = {
   year?: number;
 };
 
+export type ListAlgoDeploymentsParams = {
+  mode?: EnvironmentMode;
+};
+
+export type ListExecutionEventsParams = {
+  deploymentId?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+};
+
 export type ListBacktestRunsParams = {
   studyId?: string;
   sweepId?: string;
   status?: BacktestJobStatus;
+};
+
+export type GetBacktestRunChartParams = {
+  symbol?: string;
+  selectedTradeId?: string;
 };

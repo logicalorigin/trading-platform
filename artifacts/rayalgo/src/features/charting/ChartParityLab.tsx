@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { ResearchChartFrame } from "./ResearchChartFrame";
+import {
+  ResearchChartWidgetFooter,
+  ResearchChartWidgetHeader,
+  ResearchChartWidgetSidebar,
+} from "./ResearchChartWidgetChrome";
 import { TradingViewWidgetReference } from "./TradingViewWidgetReference";
 import { buildChartParityModel, chartParityScenarios, getChartParityScenario } from "./chartFixtures";
+import { useDrawingHistory } from "./useDrawingHistory";
 
 type DrawMode = "horizontal" | "vertical" | "box";
 type ResearchDrawing = {
@@ -224,10 +230,19 @@ const buildReferenceCard = ({
 );
 
 function useLabFrameState(initialIndicators: string[], initialTimeframe: string) {
-  const [drawings, setDrawings] = useState<ResearchDrawing[]>([]);
   const [drawMode, setDrawMode] = useState<DrawMode | null>(null);
   const [selectedIndicators, setSelectedIndicators] = useState(initialIndicators);
   const [timeframe, setTimeframe] = useState(initialTimeframe);
+  const {
+    drawings,
+    addDrawing,
+    clearDrawings,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    resetDrawings,
+  } = useDrawingHistory<ResearchDrawing>();
 
   return {
     drawings,
@@ -236,11 +251,15 @@ function useLabFrameState(initialIndicators: string[], initialTimeframe: string)
     timeframe,
     setTimeframe,
     setDrawMode,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
     clearDrawings: () => {
-      setDrawings([]);
+      clearDrawings();
       setDrawMode(null);
     },
-    addDrawing: (drawing: ResearchDrawing) => setDrawings((current) => [...current, drawing]),
+    addDrawing,
     toggleIndicator: (indicatorId: string) => setSelectedIndicators((current) => (
       current.includes(indicatorId)
         ? current.filter((value) => value !== indicatorId)
@@ -249,7 +268,7 @@ function useLabFrameState(initialIndicators: string[], initialTimeframe: string)
     resetState: (nextIndicators: string[], nextTimeframe: string) => {
       setSelectedIndicators(nextIndicators);
       setTimeframe(nextTimeframe);
-      setDrawings([]);
+      resetDrawings([]);
       setDrawMode(null);
     },
   };
@@ -279,6 +298,8 @@ export const ChartParityLab = () => {
     }),
     [appSecondary.selectedIndicators, appSecondary.timeframe, scenario],
   );
+  const primaryLastBar = primaryModel.chartBars[primaryModel.chartBars.length - 1];
+  const secondaryLastBar = secondaryModel.chartBars[secondaryModel.chartBars.length - 1];
   const shellWidth = layout === "desktop" ? 1280 : 760;
   const comparisonGridColumns = layout === "desktop" ? "1.5fr 1.5fr 1.2fr" : "1fr";
 
@@ -378,22 +399,69 @@ export const ChartParityLab = () => {
               theme={THEME}
               themeKey="chart-parity-lab"
               model={primaryModel}
+              showSurfaceToolbar={false}
+              showLegend={false}
               drawings={appPrimary.drawings}
               drawMode={appPrimary.drawMode}
               onAddDrawing={appPrimary.addDrawing}
-              header={buildFrameHeader({
-                symbol: "RAYA",
-                subtitle: "shared frame · primary",
-                statusLabel: `fixture ${appPrimary.timeframe}`,
-                timeframe: appPrimary.timeframe,
-                onChangeTimeframe: appPrimary.setTimeframe,
-                footerMeta: `${primaryModel.chartBars.length || 0} bars`,
-              })}
-              subHeader={buildStudyHeader({
-                availableIndicators: scenario.selectedIndicators,
-                selectedIndicators: appPrimary.selectedIndicators,
-                onToggleIndicator: appPrimary.toggleIndicator,
-              })}
+              surfaceTopOverlay={(controls) => (
+                <ResearchChartWidgetHeader
+                  theme={THEME}
+                  controls={controls}
+                  symbol="RAYA"
+                  name="shared frame primary"
+                  price={primaryLastBar?.c ?? null}
+                  changePercent={null}
+                  statusLabel={`fixture ${appPrimary.timeframe}`}
+                  timeframe={appPrimary.timeframe}
+                  timeframeOptions={FRAME_TIMEFRAMES}
+                  onChangeTimeframe={appPrimary.setTimeframe}
+                  onUndo={appPrimary.undo}
+                  onRedo={appPrimary.redo}
+                  canUndo={appPrimary.canUndo}
+                  canRedo={appPrimary.canRedo}
+                  showUndoRedo
+                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  selectedStudies={appPrimary.selectedIndicators}
+                  onToggleStudy={appPrimary.toggleIndicator}
+                  meta={{
+                    open: primaryLastBar?.o,
+                    high: primaryLastBar?.h,
+                    low: primaryLastBar?.l,
+                    close: primaryLastBar?.c,
+                    volume: primaryLastBar?.v,
+                    vwap: primaryLastBar?.vwap,
+                    sessionVwap: primaryLastBar?.sessionVwap,
+                    accumulatedVolume: primaryLastBar?.accumulatedVolume,
+                    averageTradeSize: primaryLastBar?.averageTradeSize,
+                    timestamp: primaryLastBar?.ts,
+                    sourceLabel: primaryLastBar?.source || "FIXTURE",
+                  }}
+                />
+              )}
+              surfaceTopOverlayHeight={40}
+              surfaceLeftOverlay={(controls) => (
+                <ResearchChartWidgetSidebar
+                  theme={THEME}
+                  controls={controls}
+                  drawMode={appPrimary.drawMode}
+                  drawingCount={appPrimary.drawings.length}
+                  onToggleDrawMode={appPrimary.setDrawMode}
+                  onClearDrawings={appPrimary.clearDrawings}
+                />
+              )}
+              surfaceLeftOverlayWidth={40}
+              surfaceBottomOverlay={(controls) => (
+                <ResearchChartWidgetFooter
+                  theme={THEME}
+                  controls={controls}
+                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  selectedStudies={appPrimary.selectedIndicators}
+                  onToggleStudy={appPrimary.toggleIndicator}
+                  statusText={`${primaryModel.chartBars.length || 0} bars`}
+                />
+              )}
+              surfaceBottomOverlayHeight={22}
             />
           </div>
 
@@ -403,22 +471,69 @@ export const ChartParityLab = () => {
               theme={THEME}
               themeKey="chart-parity-lab"
               model={secondaryModel}
+              showSurfaceToolbar={false}
+              showLegend={false}
               drawings={appSecondary.drawings}
               drawMode={appSecondary.drawMode}
               onAddDrawing={appSecondary.addDrawing}
-              header={buildFrameHeader({
-                symbol: "RAYB",
-                subtitle: "shared frame · secondary",
-                statusLabel: `fixture ${appSecondary.timeframe}`,
-                timeframe: appSecondary.timeframe,
-                onChangeTimeframe: appSecondary.setTimeframe,
-                footerMeta: `${secondaryModel.chartBars.length || 0} bars`,
-              })}
-              subHeader={buildStudyHeader({
-                availableIndicators: scenario.selectedIndicators,
-                selectedIndicators: appSecondary.selectedIndicators,
-                onToggleIndicator: appSecondary.toggleIndicator,
-              })}
+              surfaceTopOverlay={(controls) => (
+                <ResearchChartWidgetHeader
+                  theme={THEME}
+                  controls={controls}
+                  symbol="RAYB"
+                  name="shared frame secondary"
+                  price={secondaryLastBar?.c ?? null}
+                  changePercent={null}
+                  statusLabel={`fixture ${appSecondary.timeframe}`}
+                  timeframe={appSecondary.timeframe}
+                  timeframeOptions={FRAME_TIMEFRAMES}
+                  onChangeTimeframe={appSecondary.setTimeframe}
+                  onUndo={appSecondary.undo}
+                  onRedo={appSecondary.redo}
+                  canUndo={appSecondary.canUndo}
+                  canRedo={appSecondary.canRedo}
+                  showUndoRedo
+                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  selectedStudies={appSecondary.selectedIndicators}
+                  onToggleStudy={appSecondary.toggleIndicator}
+                  meta={{
+                    open: secondaryLastBar?.o,
+                    high: secondaryLastBar?.h,
+                    low: secondaryLastBar?.l,
+                    close: secondaryLastBar?.c,
+                    volume: secondaryLastBar?.v,
+                    vwap: secondaryLastBar?.vwap,
+                    sessionVwap: secondaryLastBar?.sessionVwap,
+                    accumulatedVolume: secondaryLastBar?.accumulatedVolume,
+                    averageTradeSize: secondaryLastBar?.averageTradeSize,
+                    timestamp: secondaryLastBar?.ts,
+                    sourceLabel: secondaryLastBar?.source || "FIXTURE",
+                  }}
+                />
+              )}
+              surfaceTopOverlayHeight={40}
+              surfaceLeftOverlay={(controls) => (
+                <ResearchChartWidgetSidebar
+                  theme={THEME}
+                  controls={controls}
+                  drawMode={appSecondary.drawMode}
+                  drawingCount={appSecondary.drawings.length}
+                  onToggleDrawMode={appSecondary.setDrawMode}
+                  onClearDrawings={appSecondary.clearDrawings}
+                />
+              )}
+              surfaceLeftOverlayWidth={40}
+              surfaceBottomOverlay={(controls) => (
+                <ResearchChartWidgetFooter
+                  theme={THEME}
+                  controls={controls}
+                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  selectedStudies={appSecondary.selectedIndicators}
+                  onToggleStudy={appSecondary.toggleIndicator}
+                  statusText={`${secondaryModel.chartBars.length || 0} bars`}
+                />
+              )}
+              surfaceBottomOverlayHeight={22}
             />
           </div>
 
@@ -467,7 +582,7 @@ export const ChartParityLab = () => {
           >
             <div style={{ fontSize: 12, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>Scenario notes</div>
             <div style={{ marginTop: 10, color: THEME.textSec, fontSize: 12, lineHeight: 1.55 }}>
-              The reference surface is the official TradingView embed widget. The app frames remain our own implementation on top of lightweight-charts, Massive-backed data, and our normalized chart model.
+              The reference surface is the official TradingView embed widget. The app frames remain our own implementation on top of lightweight-charts, broker-backed data, and our normalized chart model.
             </div>
           </div>
         </div>

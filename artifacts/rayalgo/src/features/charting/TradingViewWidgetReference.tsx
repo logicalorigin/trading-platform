@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useMemo } from "react";
 
 type TradingViewWidgetReferenceProps = {
   symbol?: string;
@@ -32,27 +32,11 @@ export const TradingViewWidgetReference = memo(({
   locale = "en",
   dataTestId,
 }: TradingViewWidgetReferenceProps) => {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const copyrightHref = useMemo(() => {
+  const srcDoc = useMemo(() => {
     const [exchange = "NASDAQ", ticker = "AAPL"] = symbol.split(":");
-    return `https://www.tradingview.com/symbols/${exchange}-${ticker}/`;
-  }, [symbol]);
-  const copyrightLabel = useMemo(() => {
-    const [, ticker = "AAPL"] = symbol.split(":");
-    return `${ticker} stock chart`;
-  }, [symbol]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) {
-      return undefined;
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-    script.type = "text/javascript";
-    script.async = true;
-    script.innerHTML = JSON.stringify({
+    const copyrightHref = `https://www.tradingview.com/symbols/${exchange}-${ticker}/`;
+    const copyrightLabel = `${ticker} stock chart`;
+    const config = JSON.stringify({
       allow_symbol_change: true,
       calendar: false,
       details: false,
@@ -77,50 +61,76 @@ export const TradingViewWidgetReference = memo(({
       autosize: true,
     });
 
-    container.appendChild(script);
-
-    return () => {
-      container.innerHTML = "";
-    };
+    return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: ${theme === "dark" ? "#131722" : "#ffffff"};
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .tradingview-widget-container {
+        width: 100%;
+        height: 100%;
+      }
+      .tradingview-widget-container__widget {
+        width: 100%;
+        height: calc(100% - 32px);
+      }
+      .tradingview-widget-copyright {
+        box-sizing: border-box;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #64748b;
+        background: ${theme === "dark" ? "#131722" : "#ffffff"};
+        border-top: 1px solid ${theme === "dark" ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.08)"};
+      }
+      .tradingview-widget-copyright a {
+        color: #2962ff;
+        text-decoration: none;
+      }
+      .tradingview-widget-copyright span + span {
+        margin-left: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <div class="tradingview-widget-copyright">
+        <a href="${copyrightHref}" rel="noopener nofollow" target="_blank">${copyrightLabel}</a>
+        <span>by TradingView</span>
+      </div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>${config}</script>
+    </div>
+  </body>
+</html>`;
   }, [interval, locale, symbol, theme]);
 
   return (
-    <div
-      className="tradingview-widget-container"
+    <iframe
       data-testid={dataTestId}
-      style={{ width: "100%", height: "100%" }}
-    >
-      <div
-        ref={containerRef}
-        className="tradingview-widget-container__widget"
-        style={{ width: "100%", height: "calc(100% - 32px)" }}
-      />
-      <div
-        className="tradingview-widget-copyright"
-        style={{
-          height: 32,
-          display: "flex",
-          alignItems: "center",
-          padding: "0 10px",
-          fontSize: 11,
-          fontFamily: "system-ui, -apple-system, sans-serif",
-          color: "#64748b",
-          background: theme === "dark" ? "#131722" : "#ffffff",
-          borderTop: theme === "dark" ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(15,23,42,0.08)",
-          boxSizing: "border-box",
-        }}
-      >
-        <a
-          href={copyrightHref}
-          rel="noopener nofollow"
-          target="_blank"
-          style={{ color: "#2962ff", textDecoration: "none" }}
-        >
-          {copyrightLabel}
-        </a>
-        <span style={{ marginLeft: 4 }}>by TradingView</span>
-      </div>
-    </div>
+      srcDoc={srcDoc}
+      title="TradingView Widget Reference"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      style={{
+        width: "100%",
+        height: "100%",
+        border: "none",
+        display: "block",
+        background: theme === "dark" ? "#131722" : "#ffffff",
+      }}
+    />
   );
 });
 

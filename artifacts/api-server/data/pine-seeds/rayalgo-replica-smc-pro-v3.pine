@@ -1,0 +1,778 @@
+//@version=5
+// =============================================================================
+//  RayAlgo Replica (SMC Pro v3) — behavioral clone built from public docs +
+//  extracted input/plot metadata. Not affiliated with Ray_Algo.
+// =============================================================================
+// max_labels_count is capped at 500 by Pine v5. Oldest labels get pruned FIFO
+// as new ones are added — fine for recent visible range, earliest events may
+// fall off on long histories.
+indicator("RayAlgo Replica (SMC Pro v3)", shorttitle="RayReplica", overlay=true,
+     max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_bars_back=1000)
+
+// =============================================================================
+//  INPUTS — mirrors in_0..in_65 from the protected script
+// =============================================================================
+
+// --- Market Structure ---
+gMS          = "Market Structure"
+i_timeHorizon= input.int(10, "Time Horizon", minval=2, group=gMS, tooltip="Lens for market structure: lower for scalping, higher to filter noise.")
+i_lineStyle  = input.string("Solid", "BOS/CHOCH Line Style", options=["Solid","Dashed","Dotted"], group=gMS)
+i_showBOS    = input.bool(true, "Show BOS", group=gMS)
+i_showCHOCH  = input.bool(true, "Show CHOCH", group=gMS)
+i_showSwings = input.bool(true, "Show Swing Labels", group=gMS)
+
+// --- Trend Reversal Signal ---
+gTR          = "Trend Reversal Signal"
+i_showRev    = input.bool(true, "Show Trend Reversal Signals", group=gTR)
+i_revLineCol = input.color(color.new(color.white, 25), "Line Color", group=gTR)
+i_revTxtCol  = input.color(color.white, "Text Color", group=gTR)
+i_revBars    = input.int(30, "Signal Line Length (Bars)", minval=1, group=gTR)
+
+// --- Smart Order Blocks ---
+gOB          = "Smart Order Blocks"
+i_showOB     = input.bool(true, "Show Order Blocks", group=gOB)
+i_bullOBcol  = input.color(color.new(color.rgb(0,188,212), 80), "Bullish OB Color", group=gOB)
+i_bearOBcol  = input.color(color.new(color.rgb(233,30,99), 80), "Bearish OB Color", group=gOB)
+i_maxOB      = input.int(5, "Max Active OBs (per side)", minval=1, maxval=20, group=gOB)
+
+// --- Support & Resistance ---
+gSR          = "Support & Resistance"
+i_showSR     = input.bool(false, "Show Support/Resistance Zones", group=gSR)
+i_srPivotStr = input.int(15, "Pivot Strength", minval=2, group=gSR)
+i_srMinDist  = input.float(0.05, "Minimum Zone Distance (%)", minval=0.01, step=0.01, tooltip="Prevents zones from drawing too close together.", group=gSR)
+i_srThick    = input.float(0.25, "Zone Thickness (ATR Mult)", minval=0.01, tooltip="ATR multiplier for zone thickness.", group=gSR)
+i_srMax      = input.int(7, "Max Number of Zones", minval=1, maxval=20, group=gSR)
+i_srExt      = input.int(100, "Zone Extension (Bars)", minval=1, tooltip="Bars into the future zones extend.", group=gSR)
+i_srResCol   = input.color(color.new(color.rgb(233,30,99), 75), "Resistance Color", group=gSR)
+i_srSupCol   = input.color(color.new(color.rgb(0,188,212), 75), "Support Color", group=gSR)
+
+// --- Key Levels (PDH/PDL/PDC/TO, PWH/PWL) ---
+gKL          = "Key Levels"
+i_showKL     = input.bool(true,  "Show Key Levels", group=gKL)
+i_klStyle    = input.string("Dashed", "Line Style", options=["Solid","Dashed","Dotted"], group=gKL)
+i_klLabelSz  = input.string("Small", "Label Size", options=["Tiny","Small","Normal"], group=gKL)
+i_showPDH    = input.bool(true, "Prior Day High",  inline="pd",  group=gKL)
+i_showPDL    = input.bool(true, "Prior Day Low",   inline="pd",  group=gKL)
+i_showPDC    = input.bool(true, "Prior Day Close", inline="pd2", group=gKL)
+i_showTO     = input.bool(true, "Today's Open",    inline="pd2", group=gKL)
+i_showPWH    = input.bool(true, "Prior Week High", inline="pw",  group=gKL)
+i_showPWL    = input.bool(true, "Prior Week Low",  inline="pw",  group=gKL)
+i_klHighCol  = input.color(color.new(color.rgb(239, 83, 80),  0), "High Color",  inline="c1", group=gKL)
+i_klLowCol   = input.color(color.new(color.rgb(38, 166, 154), 0), "Low Color",   inline="c1", group=gKL)
+i_klCloseCol = input.color(color.new(color.gray, 0),              "Close Color", inline="c2", group=gKL)
+i_klOpenCol  = input.color(color.new(color.yellow, 0),            "Open Color",  inline="c2", group=gKL)
+i_klLabelOff = input.int(8, "Label Offset (Bars Right)", minval=0, maxval=50, tooltip="Pushes level labels to the right of current bar so they don't overlap TP/SL markers.", group=gKL)
+
+// --- Main Trend Settings (WMA + ATR envelope) ---
+gMT          = "Main Trend Settings"
+i_basisLen   = input.int(80, "Basis Length", minval=1, group=gMT)
+i_atrLen     = input.int(14,  "ATR Length",   minval=1, group=gMT)
+i_atrSmooth  = input.int(21,  "ATR Smoothing",minval=1, group=gMT)
+i_volMult    = input.float(2, "Volatility Multiplier", minval=0.1, step=0.1, group=gMT)
+
+// --- Neon Wireframe ---
+gNW          = "Visuals: Neon Wireframe"
+i_showWire   = input.bool(true, "Show Wireframe Bands", group=gNW)
+i_wireSpread = input.float(0.5, "Wireframe Spread", minval=0.01, step=0.1, group=gNW)
+
+// --- Volatility Shadow (Bollinger Bands) ---
+gVS          = "Visuals: Volatility Shadow"
+i_showShadow = input.bool(true, "Show Volatility Shadow", group=gVS)
+i_shadowLen  = input.int(20, "Length", minval=1, group=gVS)
+i_shadowStd  = input.float(2, "StdDev", minval=0.001, maxval=50, group=gVS)
+i_shadowCol  = input.color(color.new(color.rgb(120,123,134), 90), "Shadow Color", group=gVS)
+
+// --- Sessions (display only; used by dashboard) ---
+gSS          = "Sessions"
+i_sesLon     = input.bool(false, "London (08:00–17:00 UTC)",  group=gSS)
+i_sesNY      = input.bool(false, "New York (13:00–22:00 UTC)",group=gSS)
+i_sesTok     = input.bool(false, "Tokyo (00:00–09:00 UTC)",    group=gSS)
+i_sesSyd     = input.bool(false, "Sydney (22:00–07:00 UTC)",   group=gSS)
+
+// --- TP/SL ---
+gTP          = "TP/SL Settings"
+i_showTPSL   = input.bool(true, "Show TP/SL Levels", group=gTP)
+i_tp1rr      = input.float(0.5, "TP 1 Risk/Reward", step=0.1, group=gTP)
+i_tp2rr      = input.float(1.0, "TP 2 Risk/Reward", step=0.1, group=gTP)
+i_tp3rr      = input.float(1.7, "TP 3 Risk/Reward", step=0.1, group=gTP)
+
+// --- Info Panel ---
+gIP          = "Info Panel"
+i_showPanel  = input.bool(true, "Show Info Panel", group=gIP)
+i_panelPos   = input.string("Bottom Right", "Panel Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=gIP)
+i_panelSize  = input.string("Small", "Panel Size", options=["Tiny","Small","Normal","Large"], group=gIP)
+i_adxLen     = input.int(14, "ADX Length", group=gIP)
+i_volMaLen   = input.int(20, "Volume MA Length", group=gIP)
+i_mtf1       = input.timeframe("60",  "MTF 1", group=gIP)
+i_mtf2       = input.timeframe("240", "MTF 2", group=gIP)
+i_mtf3       = input.timeframe("D",   "MTF 3", group=gIP)
+
+// --- Appearance ---
+gAP          = "Appearance"
+i_bullCol    = input.color(color.rgb(0, 188, 212), "Bull Color", inline="msc", group=gAP)
+i_bearCol    = input.color(color.rgb(233, 30, 99), "Bear Color", inline="msc", group=gAP)
+i_trendBg    = input.bool(true, "Show Trend Background", group=gAP)
+i_sigOffset  = input.float(1.5, "Buy/Sell Offset (ATR × N)", minval=0.0, step=0.1, tooltip="Distance between BUY/SELL label anchor and signal candle, in ATR units. Live RayAlgo uses ~1-2 × ATR below the low (BUY) or above the high (SELL).", group=gAP)
+
+// --- Alerts ---
+gAL          = "⚠️ Alerts"
+i_waitClose  = input.bool(true, "Wait for Bar Close (Signal Alerts)", group=gAL)
+
+// --- Signal Filters ---
+gSF          = "Signal Filters"
+i_fEnable    = input.bool(false, "Enable Signal Filters", group=gSF)
+i_fCandleCol = input.color(color.rgb(120,123,134), "Filtered Candle Color", group=gSF)
+i_fMTF1      = input.bool(false, "Require MTF 1 Alignment", group=gSF)
+i_fMTF2      = input.bool(false, "Require MTF 2 Alignment", group=gSF)
+i_fMTF3      = input.bool(false, "Require MTF 3 Alignment", group=gSF)
+i_fADX       = input.bool(false, "Require ADX >= Min", group=gSF)
+i_adxMin     = input.int(20, "ADX Min", minval=1, maxval=100, group=gSF)
+i_fVol       = input.bool(false, "Require Volatility Score Range", group=gSF)
+i_volMin     = input.int(2,  "Vol Score Min", minval=0, maxval=10, group=gSF)
+i_volMax     = input.int(10, "Vol Score Max", minval=0, maxval=10, group=gSF)
+i_fSes       = input.bool(false, "Restrict to Selected Sessions", group=gSF)
+i_fLon       = input.bool(false, "London",   group=gSF)
+i_fNY        = input.bool(false, "New York", group=gSF)
+i_fTok       = input.bool(false, "Tokyo",    group=gSF)
+i_fSyd       = input.bool(false, "Sydney",   group=gSF)
+
+// =============================================================================
+//  HELPERS
+// =============================================================================
+lineStyle(s) => s == "Solid" ? line.style_solid : s == "Dashed" ? line.style_dashed : line.style_dotted
+
+textSize(s) =>
+    s == "Tiny"   ? size.tiny   :
+     s == "Small"  ? size.small  :
+     s == "Normal" ? size.normal : size.large
+
+mtfCol(d) => d == 1 ? i_bullCol : i_bearCol
+mtfTxt(d) => d == 1 ? "BULL"    : "BEAR"
+
+// =============================================================================
+//  MAIN TREND BAND — WMA basis + ATR-smoothed envelope
+//  Trend direction: basis slope (bullish if rising, bearish if falling)
+// =============================================================================
+basis   = ta.wma(close, i_basisLen)
+atrRaw  = ta.atr(i_atrLen)
+atrSm   = ta.sma(atrRaw, i_atrSmooth)
+
+upperBand = basis + atrSm * i_volMult
+lowerBand = basis - atrSm * i_volMult
+
+var int trendDir = 1
+slopeRef = 5
+if not na(basis[slopeRef])
+    if basis > basis[slopeRef]
+        trendDir := 1
+    else if basis < basis[slopeRef]
+        trendDir := -1
+
+// Wire/main-line rendering is deferred to AFTER the Market Structure section
+// so it can use regimeDir (CHOCH-driven) instead of trendDir (basis slope).
+// RayAlgo's wireband color follows CHOCH events, not basis slope — basis slope
+// flips too often (e.g., SPY 15m Apr 2 rally). See the render block below.
+
+// =============================================================================
+//  VOLATILITY SHADOW — Bollinger Bands
+// =============================================================================
+bbMid  = ta.sma(close,  i_shadowLen)
+bbDev  = ta.stdev(close, i_shadowLen) * i_shadowStd
+bbUp   = bbMid + bbDev
+bbLo   = bbMid - bbDev
+pShadU = plot(i_showShadow ? bbUp : na, "Shadow Upper", color=color.new(i_shadowCol, 100))
+pShadL = plot(i_showShadow ? bbLo : na, "Shadow Lower", color=color.new(i_shadowCol, 100))
+fill(pShadU, pShadL, color=i_showShadow ? i_shadowCol : na, title="Shadow Fill")
+
+// Reaction/clarity-candle state is computed after the wireband section
+// (need trendLine for the rule). Keeping bbWidthPre here for the dashboard
+// Volatility Score calculation downstream.
+bbWidthPre    = bbUp - bbLo
+volPctPre     = nz(ta.percentrank(bbWidthPre / close, 100), 0)
+
+// =============================================================================
+//  MARKET STRUCTURE — pivot swings + BOS/CHOCH
+// =============================================================================
+th  = i_timeHorizon
+ph  = ta.pivothigh(high, th, th)
+pl  = ta.pivotlow (low,  th, th)
+
+var float sH       = na   // last swing high price
+var int   sHbar    = na
+var float sHprev   = na
+var float sL       = na
+var int   sLbar    = na
+var float sLprev   = na
+var int   msDir    = 0    // +1 bull, -1 bear
+
+if not na(ph)
+    sHprev := sH
+    sH     := ph
+    sHbar  := bar_index - th
+if not na(pl)
+    sLprev := sL
+    sL     := pl
+    sLbar  := bar_index - th
+
+// Swing markers — boolean series per type. Rendered via plotshape (not
+// label.new) so they don't consume the 500-label cap; that way CHOCH/BOS/
+// Trend Reversal event history stays intact (prior design lost ~60% of
+// structure events to FIFO pruning from swing-label budget pressure).
+isHH = i_showSwings and not na(ph) and not na(sHprev) and ph > sHprev
+isLH = i_showSwings and not na(ph) and (na(sHprev) or ph <= sHprev)
+isHL = i_showSwings and not na(pl) and not na(sLprev) and pl > sLprev
+isLL = i_showSwings and not na(pl) and (na(sLprev) or pl <= sLprev)
+
+// Structure break detection on close
+var float bosTrackH = na   // last swing we can still break up
+var int   bosTrackHbar = na
+var float bosTrackL = na
+var int   bosTrackLbar = na
+
+if not na(ph)
+    bosTrackH := ph
+    bosTrackHbar := bar_index - th
+if not na(pl)
+    bosTrackL := pl
+    bosTrackLbar := bar_index - th
+
+bullBOS   = false
+bearBOS   = false
+bullCHOCH = false
+bearCHOCH = false
+float revAnchorHi    = na
+int   revAnchorHiBar = 0
+float revAnchorLo    = na
+int   revAnchorLoBar = 0
+
+// Fire on first close-beyond-level. Level is consumed on fire so no re-trigger.
+// Previously also required close[1] on the correct side, but that blocked valid
+// fires when a pivot confirmed AFTER price had already broken it (the pivot is
+// from bar_index-th, price could have moved past the level before confirmation).
+if not na(bosTrackH) and close > bosTrackH
+    if msDir == 1
+        bullBOS := true
+    else
+        bullCHOCH := true
+        // Anchor falls back to sL if bosTrackL was consumed by a prior bearBOS,
+        // so every CHOCH gets a Trend Reversal line (live shows 131 of each).
+        revAnchorLo := nz(bosTrackL, sL)
+        revAnchorLoBar := na(bosTrackL) ? sLbar : bosTrackLbar
+        msDir := 1
+    bosTrackH := na
+
+if not na(bosTrackL) and close < bosTrackL
+    if msDir == -1
+        bearBOS := true
+    else
+        bearCHOCH := true
+        revAnchorHi := nz(bosTrackH, sH)
+        revAnchorHiBar := na(bosTrackH) ? sHbar : bosTrackHbar
+        msDir := -1
+    bosTrackL := na
+
+// Draw BOS/CHoCH lines. Tinted pill with white text — visible on trend-colored
+// backgrounds. style_none (text-only) looked too subtle in testing: even with
+// bull/bear textColor the small colored text washed into the regime bg.
+drawStructureLine(srcBar, srcPrice, lbl, col) =>
+    ln = line.new(srcBar, srcPrice, bar_index, srcPrice, color=col, style=lineStyle(i_lineStyle), width=1)
+    lb = label.new(math.floor((srcBar + bar_index)/2), srcPrice, lbl, style=label.style_label_center, color=color.new(col, 40), textcolor=color.white, size=size.tiny)
+    [ln, lb]
+
+if i_showBOS and bullBOS and not na(sHbar)
+    drawStructureLine(sHbar, sH, "BOS", i_bullCol)
+if i_showBOS and bearBOS and not na(sLbar)
+    drawStructureLine(sLbar, sL, "BOS", i_bearCol)
+if i_showCHOCH and bullCHOCH and not na(sHbar)
+    drawStructureLine(sHbar, sH, "CHOCH", i_bullCol)
+if i_showCHOCH and bearCHOCH and not na(sLbar)
+    drawStructureLine(sLbar, sL, "CHOCH", i_bearCol)
+
+// Break circle markers — boolean series for plotshape (keeps label budget free).
+isBullBreak = (bullBOS or bullCHOCH) and not na(sH)
+isBearBreak = (bearBOS or bearCHOCH) and not na(sL)
+
+// Trend Reversal line — short fixed forward extension, no growing. Line length
+// matches live's short dash. Labels are live's visible marker.
+// Trend Reversal: line extends from the prior opposite-swing bar forward;
+// the label sits at the MIDPOINT of that line (where live's tag appears) so
+// it doesn't overlap the CHOCH label at the swing bar. Tint at ~70 alpha
+// — more visible than the 80 transparency (which user reported as missing).
+if i_showRev and bullCHOCH and not na(revAnchorLo)
+    anchorBar = nz(revAnchorLoBar, bar_index)
+    line.new(anchorBar, revAnchorLo, anchorBar + i_revBars, revAnchorLo, color=i_revLineCol, style=line.style_dashed, width=1)
+    label.new(anchorBar + math.floor(i_revBars / 2), revAnchorLo, "Trend Reversal", style=label.style_label_center, color=color.new(i_bullCol, 70), textcolor=color.white, size=size.small)
+if i_showRev and bearCHOCH and not na(revAnchorHi)
+    anchorBar = nz(revAnchorHiBar, bar_index)
+    line.new(anchorBar, revAnchorHi, anchorBar + i_revBars, revAnchorHi, color=i_revLineCol, style=line.style_dashed, width=1)
+    label.new(anchorBar + math.floor(i_revBars / 2), revAnchorHi, "Trend Reversal", style=label.style_label_center, color=color.new(i_bearCol, 70), textcolor=color.white, size=size.small)
+
+// BOS arrows as boolean series (plotshape renders them without touching
+// label budget).
+isBullBOSarrow = i_showBOS and bullBOS
+isBearBOSarrow = i_showBOS and bearBOS
+
+// =============================================================================
+//  WIREBAND RENDER — uses regimeDir so color flips align with CHOCH (parity
+//  with live RayAlgo). Falls back to basis-slope trendDir until first CHOCH.
+// =============================================================================
+regimeDir = msDir != 0 ? msDir : trendDir
+flipped   = regimeDir != regimeDir[1]
+trendLine = regimeDir == 1 ? lowerBand : upperBand
+
+// Reaction/clarity candle state — fires when the bar's range intersects the
+// main trend line (per rayalgo.com docs: "when price approaches or interacts
+// with the trend band, candles shift into reaction colors"). Replaces the
+// prior volatility-percentile trigger which fired on any high-vol bar
+// regardless of whether price was near the trend.
+reactBull  = regimeDir ==  1 and low  <= trendLine and high >= trendLine
+reactBear  = regimeDir == -1 and high >= trendLine and low  <= trendLine
+reactState = reactBull or reactBear
+
+bullLine = (regimeDir == 1 and not flipped) ? lowerBand : na
+bearLine = (regimeDir == -1 and not flipped) ? upperBand : na
+// Main line linewidth=3 matches live's thicker main trend line; wires stay at 1.
+pBullMain = plot(bullLine, "Bullish Main Line", color=i_bullCol, linewidth=3, style=plot.style_linebr)
+pBearMain = plot(bearLine, "Bearish Main Line", color=i_bearCol, linewidth=3, style=plot.style_linebr)
+
+signDir  = regimeDir == 1 ? -1 : 1
+wireStep = atrSm * i_wireSpread
+w1 = trendLine + signDir * wireStep * 1
+w2 = trendLine + signDir * wireStep * 2
+w3 = trendLine + signDir * wireStep * 3
+
+wireBull = color.new(i_bullCol, 55)
+wireBear = color.new(i_bearCol, 55)
+bullWire(w) => (regimeDir == 1 and not flipped) ? w : na
+bearWire(w) => (regimeDir == -1 and not flipped) ? w : na
+// User preference: smooth lines (not circles). style_linebr ensures clean
+// breaks at regime flips (style_line interpolates across na values).
+pBullW1 = plot(i_showWire ? bullWire(w1) : na, "Bull Wire 1", color=wireBull, linewidth=1, style=plot.style_linebr)
+pBullW2 = plot(i_showWire ? bullWire(w2) : na, "Bull Wire 2", color=wireBull, linewidth=1, style=plot.style_linebr)
+pBullW3 = plot(i_showWire ? bullWire(w3) : na, "Bull Wire 3", color=wireBull, linewidth=1, style=plot.style_linebr)
+pBearW1 = plot(i_showWire ? bearWire(w1) : na, "Bear Wire 1", color=wireBear, linewidth=1, style=plot.style_linebr)
+pBearW2 = plot(i_showWire ? bearWire(w2) : na, "Bear Wire 2", color=wireBear, linewidth=1, style=plot.style_linebr)
+pBearW3 = plot(i_showWire ? bearWire(w3) : na, "Bear Wire 3", color=wireBear, linewidth=1, style=plot.style_linebr)
+
+// Neon glow — fires on the SAME reaction state as the clarity candles so
+// the visual effects stay synced (user noted: "yellow candle coloring
+// corresponds with the shading within the wirebands"). Tint stays subtle
+// (~0x33 alpha = transparency ~78) to match live's light wash.
+bullGlowCol = (not i_showWire or not reactState) ? na : color.new(i_bullCol, 78)
+bearGlowCol = (not i_showWire or not reactState) ? na : color.new(i_bearCol, 78)
+fill(pBullMain, pBullW1, color=bullGlowCol, title="Bull Glow")
+fill(pBearMain, pBearW1, color=bearGlowCol, title="Bear Glow")
+
+// =============================================================================
+//  ORDER BLOCKS — anchored to every confirmed pivot (bull OB at pivot low,
+//  bear OB at pivot high). Uses the pivot candle's body for zone thickness.
+// =============================================================================
+fmtVol(v) =>
+    a = math.abs(v)
+    a >= 1e9 ? str.tostring(v/1e9, "#.##") + "B"  :
+     a >= 1e6 ? str.tostring(v/1e6, "#.##") + "M"  :
+     a >= 1e3 ? str.tostring(v/1e3, "#.##") + "K"  : str.tostring(v, "#")
+
+// Live uses SINGLE-box OBs per pivot at full candle high-low (verified
+// 2026-04-18 via live box-data dump: 5 boxes, all single, high-low ranges
+// matching candle wicks). Prior dual-box (inner body + outer full) was a
+// misreading — ship with one box per pivot.
+type OB
+    box   b
+    bool  bull
+
+var array<OB> bullOBs = array.new<OB>()
+var array<OB> bearOBs = array.new<OB>()
+
+// OBs are created at STRUCTURE EVENTS (BOS/CHOCH), not on every pivot.
+// Live RayAlgo fires an OB each time a bull break happens — anchored at the
+// most-recent opposite-side pivot candle that was swept (sLbar for bull
+// breaks, sHbar for bear breaks). Verified 2026-04-18: live's 5 bull OBs at
+// x=962/982/990/994/997 correspond to bull BOS/CHOCH events, not to raw
+// pivot confirmations.
+if i_showOB and (bullBOS or bullCHOCH) and not na(sLbar)
+    pivotBar = sLbar
+    offset   = bar_index - sLbar
+    candleHi = high[offset]
+    candleLo = low[offset]
+    vol      = nz(volume[offset], 0)
+    obTxt    = "BULL OB +++ " + fmtVol(vol)
+    // border_color=na — live RayAlgo draws OBs without an outline; the 1-px
+    // tinted border previously used here reads as a candle wick at small zoom.
+    bx = box.new(pivotBar, candleHi, bar_index, candleLo, bgcolor=i_bullOBcol, border_color=na, text=obTxt, text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+    array.push(bullOBs, OB.new(bx, true))
+
+if i_showOB and (bearBOS or bearCHOCH) and not na(sHbar)
+    pivotBar = sHbar
+    offset   = bar_index - sHbar
+    candleHi = high[offset]
+    candleLo = low[offset]
+    vol      = nz(volume[offset], 0)
+    obTxt    = "BEAR OB +++ " + fmtVol(vol)
+    bx = box.new(pivotBar, candleHi, bar_index, candleLo, bgcolor=i_bearOBcol, border_color=na, text=obTxt, text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+    array.push(bearOBs, OB.new(bx, false))
+
+// Mitigation: box deleted when price fully escapes it on the wrong side.
+pruneMitigated(arr) =>
+    if array.size(arr) > 0
+        for i = array.size(arr) - 1 to 0
+            o = array.get(arr, i)
+            top = box.get_top(o.b)
+            bot = box.get_bottom(o.b)
+            if o.bull and close < bot
+                box.delete(o.b)
+                array.remove(arr, i)
+            else if not o.bull and close > top
+                box.delete(o.b)
+                array.remove(arr, i)
+
+pruneMitigated(bullOBs)
+pruneMitigated(bearOBs)
+
+// Grow all active OB boxes to the current bar (matches live — never past it)
+extendOBs(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            o = array.get(arr, i)
+            box.set_right(o.b, bar_index)
+
+extendOBs(bullOBs)
+extendOBs(bearOBs)
+
+// Cap active OBs per side at i_maxOB (delete oldest)
+while array.size(bullOBs) > i_maxOB
+    old = array.shift(bullOBs)
+    box.delete(old.b)
+while array.size(bearOBs) > i_maxOB
+    old = array.shift(bearOBs)
+    box.delete(old.b)
+
+// =============================================================================
+//  SUPPORT & RESISTANCE ZONES
+// =============================================================================
+var array<box> srBoxes = array.new<box>()
+srH = ta.pivothigh(high, i_srPivotStr, i_srPivotStr)
+srL = ta.pivotlow (low,  i_srPivotStr, i_srPivotStr)
+srThickPx = atrRaw * i_srThick
+tooClose(price) =>
+    bool near = false
+    if array.size(srBoxes) > 0
+        for i = 0 to array.size(srBoxes) - 1
+            bx = array.get(srBoxes, i)
+            mid = (box.get_top(bx) + box.get_bottom(bx)) / 2
+            if math.abs(price - mid) / close * 100 < i_srMinDist
+                near := true
+                break
+    near
+
+if i_showSR and not na(srH) and not tooClose(srH)
+    bx = box.new(bar_index - i_srPivotStr, srH + srThickPx/2, bar_index + i_srExt, srH - srThickPx/2, bgcolor=i_srResCol, border_color=color.new(color.red, 70))
+    array.push(srBoxes, bx)
+if i_showSR and not na(srL) and not tooClose(srL)
+    bx = box.new(bar_index - i_srPivotStr, srL + srThickPx/2, bar_index + i_srExt, srL - srThickPx/2, bgcolor=i_srSupCol, border_color=color.new(color.green, 70))
+    array.push(srBoxes, bx)
+
+while array.size(srBoxes) > i_srMax
+    bx = array.shift(srBoxes)
+    box.delete(bx)
+
+// =============================================================================
+//  KEY LEVELS — PDH/PDL/PDC/Today's Open, PWH/PWL
+//  Each level anchors to the first bar of its session; line extends forward
+//  to the current bar. Label sits at the right edge with "<NAME> <price>".
+// =============================================================================
+// Prior day H/L/C — offset [1] so we read YESTERDAY's completed bar.
+[pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_off)
+// Today's open — no offset, so the first print of the current session.
+todayO = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_off)
+// Prior week H/L — offset [1] for last week's completed bar.
+[pwH, pwL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_off)
+
+klLineStyle = lineStyle(i_klStyle)
+klLabelSize = textSize(i_klLabelSz)
+
+// Anchor bars: first bar of today / this week. Used as the line's left edge
+// so the level doesn't stretch across prior sessions on the chart.
+var int dayStartBar  = na
+var int weekStartBar = na
+if ta.change(time("D")) != 0
+    dayStartBar := bar_index
+if ta.change(time("W")) != 0
+    weekStartBar := bar_index
+
+// Persistent line + label pair per level. var + set_xy means we reuse the
+// same drawings every bar instead of creating/deleting (cheap).
+var line  lnPDH = na, var label lbPDH = na
+var line  lnPDL = na, var label lbPDL = na
+var line  lnPDC = na, var label lbPDC = na
+var line  lnTO  = na, var label lbTO  = na
+var line  lnPWH = na, var label lbPWH = na
+var line  lnPWL = na, var label lbPWL = na
+
+// Helper: format level name + price for the right-edge label.
+klLabelText(name, price) => name + " " + str.tostring(price, format.mintick)
+
+updateKL(lnRef, lbRef, show, anchorBar, price, col, name) =>
+    ln = lnRef
+    lb = lbRef
+    // Label sits i_klLabelOff bars to the right of current bar so it floats
+    // in the empty chart gutter past any TP/SL marker at bar_index. Line
+    // extends to the same x so the label visually terminates the line.
+    labelX = bar_index + i_klLabelOff
+    if i_showKL and show and not na(price) and not na(anchorBar)
+        if na(ln)
+            ln := line.new(anchorBar, price, labelX, price, color=col, style=klLineStyle, width=1)
+            lb := label.new(labelX, price, klLabelText(name, price), style=label.style_label_left, color=color.new(col, 70), textcolor=color.white, size=klLabelSize, xloc=xloc.bar_index)
+        else
+            line.set_xy1(ln, anchorBar, price)
+            line.set_xy2(ln, labelX, price)
+            line.set_color(ln, col)
+            line.set_style(ln, klLineStyle)
+            label.set_xy(lb, labelX, price)
+            label.set_text(lb, klLabelText(name, price))
+            label.set_color(lb, color.new(col, 70))
+            label.set_textcolor(lb, color.white)
+            label.set_size(lb, klLabelSize)
+    else
+        if not na(ln)
+            line.delete(ln)
+            label.delete(lb)
+            ln := na
+            lb := na
+    [ln, lb]
+
+if barstate.islast
+    [a1, b1] = updateKL(lnPDH, lbPDH, i_showPDH, dayStartBar,  pdH,    i_klHighCol,  "PDH")
+    lnPDH := a1
+    lbPDH := b1
+    [a2, b2] = updateKL(lnPDL, lbPDL, i_showPDL, dayStartBar,  pdL,    i_klLowCol,   "PDL")
+    lnPDL := a2
+    lbPDL := b2
+    [a3, b3] = updateKL(lnPDC, lbPDC, i_showPDC, dayStartBar,  pdC,    i_klCloseCol, "PDC")
+    lnPDC := a3
+    lbPDC := b3
+    [a4, b4] = updateKL(lnTO,  lbTO,  i_showTO,  dayStartBar,  todayO, i_klOpenCol,  "O")
+    lnTO  := a4
+    lbTO  := b4
+    [a5, b5] = updateKL(lnPWH, lbPWH, i_showPWH, weekStartBar, pwH,    i_klHighCol,  "PWH")
+    lnPWH := a5
+    lbPWH := b5
+    [a6, b6] = updateKL(lnPWL, lbPWL, i_showPWL, weekStartBar, pwL,    i_klLowCol,   "PWL")
+    lnPWL := a6
+    lbPWL := b6
+
+// =============================================================================
+//  TREND CANDLES — recolor based on trend
+// =============================================================================
+// Candle filter: if filters enabled and signal filtered, gray out.
+// regimeDir is defined earlier (right before Order Blocks) — it drives
+// candle coloring + background shading so they flip on CHOCH bars.
+bodyBull = close > open
+candleCol = regimeDir == 1 ? i_bullCol : i_bearCol
+regimeCol = regimeDir == 1 ? i_bullCol : i_bearCol
+
+// Trend background
+bgcolor(i_trendBg ? color.new(regimeCol, 92) : na)
+
+// =============================================================================
+//  MTF TREND BIAS — request bull/bear state at 3 higher timeframes
+// =============================================================================
+mtfTrend(tf) =>
+    request.security(syminfo.tickerid, tf, trendDir, barmerge.gaps_off, barmerge.lookahead_off)
+
+mtf1Dir = mtfTrend(i_mtf1)
+mtf2Dir = mtfTrend(i_mtf2)
+mtf3Dir = mtfTrend(i_mtf3)
+
+// =============================================================================
+//  DASHBOARD METRICS
+// =============================================================================
+// ADX for strength
+[diP, diM, adxV] = ta.dmi(i_adxLen, i_adxLen)
+strengthTxt = adxV >= 25 ? "Strong" : "Weak"
+
+// Trend Age — bars since last CHOCH (trend flip)
+var int lastFlipBar = 0
+if bullCHOCH or bearCHOCH
+    lastFlipBar := bar_index
+trendAge  = bar_index - lastFlipBar
+ageLabel  = trendAge > 50 ? "OLD" : trendAge > 20 ? "MATURE" : "NEW"
+ageTxt    = ageLabel + " (" + str.tostring(trendAge) + ")"
+
+// Volatility score 0-10 — percentile of BB width over 100 bars
+// Volatility score — BB-width as % of price, percent-ranked over 200 bars.
+// Best empirical match to live after calibration (within ~2 on SPY 1h).
+bbWidth    = bbUp - bbLo
+bbWidthPct = bbWidth / close
+volScore   = math.round(ta.percentrank(bbWidthPct, 200) / 10)
+
+// Session detection — uses UTC (matches RayAlgo windows)
+inSes(s, e) =>
+    t = hour(time, "UTC") * 60 + minute(time, "UTC")
+    s <= e ? (t >= s and t < e) : (t >= s or t < e)
+
+sesTxt = inSes(8*60,17*60)  ? "London" :
+         inSes(13*60,22*60) ? "New York" :
+         inSes(0,9*60)      ? "Tokyo" :
+         inSes(22*60,7*60)  ? "Sydney" : "Closed"
+
+// Format timeframe like RayAlgo: H1/H4/D1/2m/M15 etc.
+formatTF(tf) =>
+    tf == "D" or tf == "1D" ? "D1" :
+     tf == "W" or tf == "1W" ? "W1" :
+     tf == "240" ? "H4" :
+     tf == "120" ? "H2" :
+     tf == "60"  ? "H1" :
+     tf + "m"
+
+tfTxt = formatTF(timeframe.period)
+trendTxt = regimeDir == 1 ? "BULLISH" : "BEARISH"
+
+// Panel position
+panelPos = i_panelPos == "Top Right"    ? position.top_right    :
+           i_panelPos == "Top Left"     ? position.top_left     :
+           i_panelPos == "Bottom Left"  ? position.bottom_left  : position.bottom_right
+tSize = textSize(i_panelSize)
+
+var table dash = table.new(position.bottom_right, 3, 8, border_width=1)
+if i_showPanel and barstate.islast
+    table.clear(dash, 0, 0, 2, 7)
+    dash := table.new(panelPos, 3, 8, border_width=1, bgcolor=color.new(color.black, 70), frame_color=color.new(color.gray, 60), frame_width=1)
+    table.cell(dash, 0, 0, "RAYALGO DASHBOARD", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=tSize)
+    table.merge_cells(dash, 0, 0, 2, 0)
+    table.cell(dash, 0, 1, tfTxt + " TREND", text_color=color.gray, text_size=tSize)
+    table.cell(dash, 2, 1, trendTxt,         text_color=regimeCol,  text_size=tSize)
+    table.cell(dash, 0, 2, "STRENGTH",   text_color=color.gray,  text_size=tSize)
+    table.cell(dash, 2, 2, strengthTxt,  text_color=color.white, text_size=tSize)
+    table.cell(dash, 0, 3, "TREND AGE",  text_color=color.gray,  text_size=tSize)
+    table.cell(dash, 2, 3, ageTxt,       text_color=color.white, text_size=tSize)
+    table.cell(dash, 0, 4, "VOLATILITY", text_color=color.gray,  text_size=tSize)
+    table.cell(dash, 2, 4, str.tostring(volScore) + "/10", text_color=color.white, text_size=tSize)
+    table.cell(dash, 0, 5, "SESSION", text_color=color.gray,  text_size=tSize)
+    table.cell(dash, 2, 5, sesTxt,    text_color=color.white, text_size=tSize)
+    table.cell(dash, 0, 6, formatTF(i_mtf1) + "\n" + mtfTxt(mtf1Dir), text_color=mtfCol(mtf1Dir), text_size=tSize)
+    table.cell(dash, 1, 6, formatTF(i_mtf2) + "\n" + mtfTxt(mtf2Dir), text_color=mtfCol(mtf2Dir), text_size=tSize)
+    table.cell(dash, 2, 6, formatTF(i_mtf3) + "\n" + mtfTxt(mtf3Dir), text_color=mtfCol(mtf3Dir), text_size=tSize)
+
+// =============================================================================
+//  SIGNAL FILTERS
+// =============================================================================
+mtfAlignOK(dir) =>
+    okMTF1 = not i_fMTF1 or mtf1Dir == dir
+    okMTF2 = not i_fMTF2 or mtf2Dir == dir
+    okMTF3 = not i_fMTF3 or mtf3Dir == dir
+    okADX  = not i_fADX  or adxV >= i_adxMin
+    okVol  = not i_fVol  or (volScore >= i_volMin and volScore <= i_volMax)
+    okSes  = not i_fSes or
+              ((i_fLon and inSes(8*60,17*60)) or
+               (i_fNY  and inSes(13*60,22*60)) or
+               (i_fTok and inSes(0,9*60)) or
+               (i_fSyd and inSes(22*60,7*60)))
+    okMTF1 and okMTF2 and okMTF3 and okADX and okVol and okSes
+
+bullSignal = bullCHOCH and (not i_fEnable or mtfAlignOK(1))
+bearSignal = bearCHOCH and (not i_fEnable or mtfAlignOK(-1))
+filtered   = i_fEnable and ((bullCHOCH and not bullSignal) or (bearCHOCH and not bearSignal))
+
+// BUY/SELL signal bubbles — use label.new with style_label_up/_down to match
+// live RayAlgo's rendering exactly (same primitive, same anchor semantics).
+// For style_label_up: y is the arrow tip, label body hangs BELOW → set y = low - offset
+// so arrow points UP toward the candle and pill sits below.
+// For style_label_down: y is the arrow tip, label body extends ABOVE → set y = high + offset
+// so arrow points DOWN toward the candle and pill sits above.
+if bullSignal
+    label.new(bar_index, low - atrRaw * i_sigOffset, text="BUY", style=label.style_label_up, color=i_bullCol, textcolor=color.white, size=size.small)
+if bearSignal
+    label.new(bar_index, high + atrRaw * i_sigOffset, text="SELL", style=label.style_label_down, color=i_bearCol, textcolor=color.white, size=size.small)
+
+// Swing markers — plotshape to avoid label-cap pressure. Four calls because
+// plotshape text is a compile-time constant (can't be conditional series).
+plotshape(isHH, "HH", style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 80), textcolor=color.white, text="HH", size=size.normal)
+plotshape(isLH, "LH", style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 80), textcolor=color.white, text="LH", size=size.normal)
+plotshape(isHL, "HL", style=shape.labelup,   location=location.belowbar, color=color.new(color.gray, 80), textcolor=color.white, text="HL", size=size.normal)
+plotshape(isLL, "LL", style=shape.labelup,   location=location.belowbar, color=color.new(color.gray, 80), textcolor=color.white, text="LL", size=size.normal)
+
+// Break circle markers + BOS directional arrows — plotshape to stay off the
+// label budget. Break circles use location.absolute so they sit on the
+// broken swing level (sH/sL), not above/below the bar.
+bullBreakY = isBullBreak ? sH : na
+bearBreakY = isBearBreak ? sL : na
+plotshape(bullBreakY,      "Bull Break",  style=shape.circle,       location=location.absolute, color=i_bullCol, size=size.tiny)
+plotshape(bearBreakY,      "Bear Break",  style=shape.circle,       location=location.absolute, color=i_bearCol, size=size.tiny)
+plotshape(isBullBOSarrow,  "Bull BOS ↑",  style=shape.triangleup,   location=location.belowbar, color=i_bullCol, size=size.small)
+plotshape(isBearBOSarrow,  "Bear BOS ↓",  style=shape.triangledown, location=location.abovebar, color=i_bearCol, size=size.small)
+
+// =============================================================================
+//  TP/SL LEVELS — lines start at signal bar, extend to the current bar;
+//  labels track the current bar. Replaced on each new signal.
+// =============================================================================
+var line slLn = na
+var line tp1Ln = na
+var line tp2Ln = na
+var line tp3Ln = na
+var label slLb = na
+var label tp1Lb = na
+var label tp2Lb = na
+var label tp3Lb = na
+
+placeTPSL(entry, sl, rr1, rr2, rr3, isLong) =>
+    dir = isLong ? 1 : -1
+    tp1 = entry + dir * rr1 * math.abs(entry - sl)
+    tp2 = entry + dir * rr2 * math.abs(entry - sl)
+    tp3 = entry + dir * rr3 * math.abs(entry - sl)
+    [tp1, tp2, tp3]
+
+if i_showTPSL and (bullSignal or bearSignal)
+    line.delete(slLn)
+    line.delete(tp1Ln)
+    line.delete(tp2Ln)
+    line.delete(tp3Ln)
+    label.delete(slLb)
+    label.delete(tp1Lb)
+    label.delete(tp2Lb)
+    label.delete(tp3Lb)
+    entry  = close
+    sl     = bullSignal ? nz(sL, low)  : nz(sH, high)
+    isLong = bullSignal
+    [tp1, tp2, tp3] = placeTPSL(entry, sl, i_tp1rr, i_tp2rr, i_tp3rr, isLong)
+    slCol = color.new(color.red,   25)
+    tpCol = color.new(color.green, 25)
+    slLn  := line.new(bar_index, sl,  bar_index, sl,  color=slCol, width=1, style=line.style_dashed)
+    tp1Ln := line.new(bar_index, tp1, bar_index, tp1, color=tpCol, width=1, style=line.style_dashed)
+    tp2Ln := line.new(bar_index, tp2, bar_index, tp2, color=tpCol, width=1, style=line.style_dashed)
+    tp3Ln := line.new(bar_index, tp3, bar_index, tp3, color=tpCol, width=1, style=line.style_dashed)
+    slLb  := label.new(bar_index, sl,  "SL",   style=label.style_label_left, color=slCol, textcolor=color.white, size=size.small)
+    tp1Lb := label.new(bar_index, tp1, "TP 1", style=label.style_label_left, color=tpCol, textcolor=color.white, size=size.small)
+    tp2Lb := label.new(bar_index, tp2, "TP 2", style=label.style_label_left, color=tpCol, textcolor=color.white, size=size.small)
+    tp3Lb := label.new(bar_index, tp3, "TP 3", style=label.style_label_left, color=tpCol, textcolor=color.white, size=size.small)
+
+// Extend active TP/SL lines + move labels to the current bar
+if i_showTPSL and not na(slLn)
+    line.set_x2(slLn,  bar_index)
+    line.set_x2(tp1Ln, bar_index)
+    line.set_x2(tp2Ln, bar_index)
+    line.set_x2(tp3Ln, bar_index)
+    label.set_x(slLb,  bar_index)
+    label.set_x(tp1Lb, bar_index)
+    label.set_x(tp2Lb, bar_index)
+    label.set_x(tp3Lb, bar_index)
+
+// =============================================================================
+//  CANDLE COLORING (trend-based, with optional filter gray-out)
+// =============================================================================
+finalCandleCol = (i_fEnable and filtered) ? i_fCandleCol :
+                  reactState                   ? color.yellow :
+                  (regimeDir == 1 ? i_bullCol : i_bearCol)
+plotcandle(open, high, low, close, "Trend Candles", color=finalCandleCol, wickcolor=finalCandleCol, bordercolor=finalCandleCol)
+
+// =============================================================================
+//  ALERTS (8 conditions)
+// =============================================================================
+alertcondition(bullBOS,    "Bullish BOS",    "Bullish Break of Structure")
+alertcondition(bearBOS,    "Bearish BOS",    "Bearish Break of Structure")
+alertcondition(bullCHOCH,  "Bullish CHOCH",  "Bullish Change of Character")
+alertcondition(bearCHOCH,  "Bearish CHOCH",  "Bearish Change of Character")
+alertcondition(bullSignal, "Buy Signal",     "RayReplica Buy")
+alertcondition(bearSignal, "Sell Signal",    "RayReplica Sell")
+alertcondition(trendDir == 1  and trendDir[1] == -1, "Trend Flip Bull", "Trend flipped bullish")
+alertcondition(trendDir == -1 and trendDir[1] == 1,  "Trend Flip Bear", "Trend flipped bearish")

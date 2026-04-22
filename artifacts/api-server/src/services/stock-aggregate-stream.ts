@@ -1,11 +1,7 @@
-import {
-  websocketClient,
-  type IAggregateStockEvent,
-  type IWebsocketClient,
-} from "@massive.com/client-js";
-import { logger } from "../lib/logger";
-import { getPolygonRuntimeConfig } from "../lib/runtime";
+import { getProviderConfiguration } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
+import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
+import { logger } from "../lib/logger";
 
 export type StockMinuteAggregateMessage = {
   eventType: string;
@@ -22,8 +18,8 @@ export type StockMinuteAggregateMessage = {
   averageTradeSize: number | null;
   startMs: number;
   endMs: number;
-  delayed: true;
-  source: "massive-delayed-websocket";
+  delayed: false;
+  source: "ibkr-websocket-derived";
 };
 
 type Subscriber = {
@@ -32,89 +28,40 @@ type Subscriber = {
   onAggregate: (message: StockMinuteAggregateMessage) => void;
 };
 
-const DELAYED_MASSIVE_SOCKET_URL = "wss://delayed.massive.com";
-const STOCK_MINUTE_CHANNEL_PREFIX = "AM.";
-const OPEN_READY_STATE = 1;
-const RECONNECT_DELAY_MS = 3_000;
+type MinuteAccumulator = {
+  startMs: number;
+  endMs: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  accumulatedVolume: number | null;
+  lastObservedDayVolume: number | null;
+};
 
-let socket: StockWebsocket | null = null;
-let socketReady = false;
-let reconnectTimer: NodeJS.Timeout | null = null;
-let nextSubscriberId = 1;
+const POLL_INTERVAL_MS = 1_000;
 const subscribers = new Map<number, Subscriber>();
-let subscribedSymbols = new Set<string>();
-type StockWebsocket = ReturnType<IWebsocketClient["stocks"]>;
+const accumulators = new Map<string, MinuteAccumulator>();
+const bridgeClient = new IbkrBridgeClient();
 
-function getMassiveRuntimeConfig() {
-  const config = getPolygonRuntimeConfig();
+let nextSubscriberId = 1;
+let pollTimer: NodeJS.Timeout | null = null;
+let pollInFlight = false;
 
-  if (!config || !config.baseUrl.includes("massive.com")) {
-    return null;
-  }
-
-  return config;
+function getDesiredSymbols(): string[] {
+  return Array.from(
+    new Set(
+      Array.from(subscribers.values()).flatMap((subscriber) => Array.from(subscriber.symbols)),
+    ),
+  ).sort();
 }
 
-function clearReconnectTimer() {
-  if (!reconnectTimer) {
-    return;
-  }
-
-  clearTimeout(reconnectTimer);
-  reconnectTimer = null;
-}
-
-function getDesiredSymbols(): Set<string> {
-  return new Set(
-    Array.from(subscribers.values()).flatMap((subscriber) => Array.from(subscriber.symbols)),
-  );
-}
-
-function normalizeSymbols(symbols: string[]): Set<string> {
-  return new Set(
-    symbols
-      .map((symbol) => normalizeSymbol(symbol))
-      .filter(Boolean),
-  );
-}
-
-function parseSocketMessages(raw: unknown): unknown[] {
-  const payload = typeof raw === "string"
-    ? raw
-    : raw instanceof Buffer
-      ? raw.toString("utf8")
-      : null;
-
-  if (!payload) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(payload) as unknown;
-    return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    return [];
-  }
-}
-
-function mapAggregateMessage(message: IAggregateStockEvent): StockMinuteAggregateMessage {
+function getMinuteWindow(timestamp: number) {
+  const startMs = Math.floor(timestamp / 60_000) * 60_000;
   return {
-    eventType: message.ev,
-    symbol: normalizeSymbol(message.sym),
-    open: message.o,
-    high: message.h,
-    low: message.l,
-    close: message.c,
-    volume: message.v,
-    accumulatedVolume: Number.isFinite(message.av) ? message.av : null,
-    vwap: Number.isFinite(message.vw) ? message.vw : null,
-    sessionVwap: Number.isFinite(message.a) ? message.a : null,
-    officialOpen: Number.isFinite(message.op) ? message.op : null,
-    averageTradeSize: Number.isFinite(message.z) ? message.z : null,
-    startMs: message.s,
-    endMs: message.e,
-    delayed: true,
-    source: "massive-delayed-websocket",
+    startMs,
+    endMs: startMs + 59_999,
   };
 }
 
@@ -128,128 +75,141 @@ function broadcastAggregate(message: StockMinuteAggregateMessage) {
   });
 }
 
-function syncSubscriptions() {
-  if (!socket || socket.readyState !== OPEN_READY_STATE || !socketReady) {
-    return;
-  }
-
-  const desiredSymbols = getDesiredSymbols();
-  const symbolsToAdd = Array.from(desiredSymbols).filter((symbol) => !subscribedSymbols.has(symbol));
-  const symbolsToRemove = Array.from(subscribedSymbols).filter((symbol) => !desiredSymbols.has(symbol));
-
-  if (symbolsToAdd.length) {
-    socket.send(JSON.stringify({
-      action: "subscribe",
-      params: symbolsToAdd.map((symbol) => `${STOCK_MINUTE_CHANNEL_PREFIX}${symbol}`).join(","),
-    }));
-    symbolsToAdd.forEach((symbol) => subscribedSymbols.add(symbol));
-  }
-
-  if (symbolsToRemove.length) {
-    socket.send(JSON.stringify({
-      action: "unsubscribe",
-      params: symbolsToRemove.map((symbol) => `${STOCK_MINUTE_CHANNEL_PREFIX}${symbol}`).join(","),
-    }));
-    symbolsToRemove.forEach((symbol) => subscribedSymbols.delete(symbol));
-  }
-
-  if (!desiredSymbols.size) {
-    socket.close();
-  }
-}
-
-function cleanupSocket() {
-  socket = null;
-  socketReady = false;
-  subscribedSymbols = new Set<string>();
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer || subscribers.size === 0 || !getMassiveRuntimeConfig()) {
-    return;
-  }
-
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    ensureSocket();
-  }, RECONNECT_DELAY_MS);
-}
-
-function ensureSocket() {
-  const config = getMassiveRuntimeConfig();
-
-  if (!config || subscribers.size === 0 || socket) {
-    return;
-  }
-
-  const upstream: StockWebsocket = websocketClient(
-    config.apiKey,
-    DELAYED_MASSIVE_SOCKET_URL,
-  ).stocks();
-  const sdkOnOpen = upstream.onopen;
-
-  upstream.onopen = (event: unknown) => {
-    sdkOnOpen?.(event);
-    clearReconnectTimer();
-    socketReady = false;
-    subscribedSymbols = new Set<string>();
-    logger.info({ subscribers: subscribers.size }, "Connected Massive delayed stock aggregate stream");
+function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): StockMinuteAggregateMessage {
+  return {
+    eventType: "AM",
+    symbol,
+    open: accumulator.open,
+    high: accumulator.high,
+    low: accumulator.low,
+    close: accumulator.close,
+    volume: accumulator.volume,
+    accumulatedVolume: accumulator.accumulatedVolume,
+    vwap: null,
+    sessionVwap: null,
+    officialOpen: accumulator.open,
+    averageTradeSize: null,
+    startMs: accumulator.startMs,
+    endMs: accumulator.endMs,
+    delayed: false,
+    source: "ibkr-websocket-derived",
   };
+}
 
-  upstream.onmessage = (event: { data?: unknown; response?: unknown }) => {
-    const messages = parseSocketMessages(event?.data ?? event?.response);
+function updateAccumulator(input: {
+  symbol: string;
+  price: number;
+  dayVolume: number | null;
+  observedAt: number;
+}) {
+  const { startMs, endMs } = getMinuteWindow(input.observedAt);
+  const existing = accumulators.get(input.symbol);
+  const nextVolumeIncrement =
+    existing?.lastObservedDayVolume !== null &&
+    existing?.lastObservedDayVolume !== undefined &&
+    input.dayVolume !== null &&
+    input.dayVolume >= existing.lastObservedDayVolume
+      ? input.dayVolume - existing.lastObservedDayVolume
+      : 0;
 
-    messages.forEach((message) => {
-      const record = message as Partial<IAggregateStockEvent> & {
-        ev?: string;
-        status?: string;
-        message?: string;
-      };
+  if (!existing || existing.startMs !== startMs) {
+    const nextAccumulator: MinuteAccumulator = {
+      startMs,
+      endMs,
+      open: input.price,
+      high: input.price,
+      low: input.price,
+      close: input.price,
+      volume: Math.max(0, nextVolumeIncrement),
+      accumulatedVolume: input.dayVolume,
+      lastObservedDayVolume: input.dayVolume,
+    };
+    accumulators.set(input.symbol, nextAccumulator);
+    broadcastAggregate(toAggregateMessage(input.symbol, nextAccumulator));
+    return;
+  }
 
-      if (record.ev === "status") {
-        if (record.status === "auth_success" || record.message?.toLowerCase?.().includes("authenticated")) {
-          socketReady = true;
-          syncSubscriptions();
-        }
+  const nextAccumulator: MinuteAccumulator = {
+    ...existing,
+    high: Math.max(existing.high, input.price),
+    low: Math.min(existing.low, input.price),
+    close: input.price,
+    volume: existing.volume + Math.max(0, nextVolumeIncrement),
+    accumulatedVolume: input.dayVolume,
+    lastObservedDayVolume: input.dayVolume,
+  };
+  accumulators.set(input.symbol, nextAccumulator);
+  broadcastAggregate(toAggregateMessage(input.symbol, nextAccumulator));
+}
+
+async function pollQuotesOnce() {
+  if (pollInFlight) {
+    return;
+  }
+
+  const symbols = getDesiredSymbols();
+  if (symbols.length === 0) {
+    return;
+  }
+
+  pollInFlight = true;
+
+  try {
+    const quotes = await bridgeClient.getQuoteSnapshots(symbols);
+    const observedAt = Date.now();
+
+    quotes.forEach((quote) => {
+      const price = quote.price > 0 ? quote.price : quote.bid > 0 ? quote.bid : quote.ask;
+      if (!price || !Number.isFinite(price)) {
         return;
       }
 
-      if (record.ev === "AM" && typeof record.sym === "string") {
-        socketReady = true;
-        broadcastAggregate(mapAggregateMessage(record as IAggregateStockEvent));
-      }
+      updateAccumulator({
+        symbol: normalizeSymbol(quote.symbol),
+        price,
+        dayVolume: quote.volume ?? null,
+        observedAt,
+      });
     });
-  };
+  } catch (error) {
+    logger.warn({ err: error }, "IBKR quote polling failed");
+  } finally {
+    pollInFlight = false;
+  }
+}
 
-  upstream.onerror = (error: unknown) => {
-    logger.warn({ err: error }, "Massive delayed stock aggregate stream error");
-  };
+function ensurePolling() {
+  if (pollTimer || subscribers.size === 0) {
+    return;
+  }
 
-  upstream.onclose = (event: { code?: number; reason?: string }) => {
-    logger.warn(
-      {
-        code: event.code,
-        reason: event.reason,
-        subscribers: subscribers.size,
-      },
-      "Massive delayed stock aggregate stream closed",
-    );
-    cleanupSocket();
-    scheduleReconnect();
-  };
+  pollTimer = setInterval(() => {
+    void pollQuotesOnce();
+  }, POLL_INTERVAL_MS);
+  pollTimer.unref?.();
+  void pollQuotesOnce();
+}
 
-  socket = upstream;
+function stopPollingIfIdle() {
+  if (subscribers.size > 0 || !pollTimer) {
+    return;
+  }
+
+  clearInterval(pollTimer);
+  pollTimer = null;
 }
 
 export function isStockAggregateStreamingAvailable(): boolean {
-  return Boolean(getMassiveRuntimeConfig());
+  return getProviderConfiguration().ibkr;
 }
 
 export function subscribeStockMinuteAggregates(
   symbols: string[],
   onAggregate: (message: StockMinuteAggregateMessage) => void,
 ): () => void {
-  const normalizedSymbols = normalizeSymbols(symbols);
+  const normalizedSymbols = new Set(
+    symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+  );
   const subscriberId = nextSubscriberId;
   nextSubscriberId += 1;
 
@@ -258,20 +218,10 @@ export function subscribeStockMinuteAggregates(
     symbols: normalizedSymbols,
     onAggregate,
   });
-
-  ensureSocket();
-  syncSubscriptions();
+  ensurePolling();
 
   return () => {
     subscribers.delete(subscriberId);
-    syncSubscriptions();
-
-    if (subscribers.size === 0) {
-      clearReconnectTimer();
-      if (socket) {
-        socket.close();
-      }
-      cleanupSocket();
-    }
+    stopPollingIfIdle();
   };
 }

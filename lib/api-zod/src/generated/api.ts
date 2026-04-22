@@ -22,12 +22,35 @@ export const HealthCheckResponse = zod.object({
 export const GetSessionResponse = zod.object({
   environment: zod.enum(["paper", "live"]),
   brokerProvider: zod.enum(["ibkr"]),
-  marketDataProvider: zod.enum(["polygon"]),
+  marketDataProvider: zod.enum(["polygon", "ibkr"]),
+  marketDataProviders: zod.object({
+    live: zod.enum(["polygon", "ibkr"]),
+    historical: zod.enum(["polygon", "ibkr"]),
+    research: zod.union([zod.enum(["polygon", "ibkr"]), zod.enum(["fmp"])]),
+  }),
   configured: zod.object({
     polygon: zod.boolean(),
     ibkr: zod.boolean(),
     research: zod.boolean(),
   }),
+  ibkrBridge: zod.union([
+    zod.object({
+      configured: zod.boolean(),
+      authenticated: zod.boolean(),
+      connected: zod.boolean(),
+      competing: zod.boolean(),
+      selectedAccountId: zod.string().nullable(),
+      accounts: zod.array(zod.string()),
+      lastTickleAt: zod.coerce.date().nullable(),
+      lastError: zod.string().nullable(),
+      updatedAt: zod.coerce.date(),
+      transport: zod.enum(["client_portal", "tws"]),
+      connectionTarget: zod.string().nullable(),
+      sessionMode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
+      clientId: zod.number().nullable(),
+    }),
+    zod.null(),
+  ]),
   timestamp: zod.coerce.date(),
 });
 
@@ -38,7 +61,7 @@ export const ListBrokerConnectionsResponse = zod.object({
   connections: zod.array(
     zod.object({
       id: zod.string(),
-      provider: zod.union([zod.enum(["ibkr"]), zod.enum(["polygon"])]),
+      provider: zod.union([zod.enum(["ibkr"]), zod.enum(["polygon", "ibkr"])]),
       name: zod.string(),
       mode: zod.enum(["paper", "live"]),
       status: zod.enum(["configured", "connected", "disconnected", "error"]),
@@ -228,7 +251,106 @@ export const PlaceOrderBody = zod.object({
   ]),
 });
 
-export const PlaceOrderResponse = zod.object({
+/**
+ * @summary Preview a normalized IBKR order payload before submission
+ */
+export const PreviewOrderBody = zod.object({
+  accountId: zod.string(),
+  mode: zod.enum(["paper", "live"]),
+  symbol: zod.string(),
+  assetClass: zod.enum(["equity", "option"]),
+  side: zod.enum(["buy", "sell"]),
+  type: zod.enum(["market", "limit", "stop", "stop_limit"]),
+  quantity: zod.number(),
+  limitPrice: zod.number().nullish(),
+  stopPrice: zod.number().nullish(),
+  timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
+  optionContract: zod.union([
+    zod.object({
+      ticker: zod.string(),
+      underlying: zod.string(),
+      expirationDate: zod.coerce.date(),
+      strike: zod.number(),
+      right: zod.enum(["call", "put"]),
+      multiplier: zod.number(),
+      sharesPerContract: zod.number(),
+      providerContractId: zod.string().nullish(),
+    }),
+    zod.null(),
+  ]),
+});
+
+export const PreviewOrderResponse = zod.object({
+  accountId: zod.string(),
+  mode: zod.enum(["paper", "live"]),
+  symbol: zod.string(),
+  assetClass: zod.enum(["equity", "option"]),
+  resolvedContractId: zod.number(),
+  orderPayload: zod.record(zod.string(), zod.unknown()),
+  optionContract: zod.union([
+    zod.object({
+      ticker: zod.string(),
+      underlying: zod.string(),
+      expirationDate: zod.coerce.date(),
+      strike: zod.number(),
+      right: zod.enum(["call", "put"]),
+      multiplier: zod.number(),
+      sharesPerContract: zod.number(),
+      providerContractId: zod.string().nullish(),
+    }),
+    zod.null(),
+  ]),
+});
+
+/**
+ * @summary Submit either a normalized order request or raw IBKR order payloads
+ */
+export const SubmitOrdersBody = zod.union([
+  zod.object({
+    accountId: zod.string(),
+    mode: zod.enum(["paper", "live"]),
+    symbol: zod.string(),
+    assetClass: zod.enum(["equity", "option"]),
+    side: zod.enum(["buy", "sell"]),
+    type: zod.enum(["market", "limit", "stop", "stop_limit"]),
+    quantity: zod.number(),
+    limitPrice: zod.number().nullish(),
+    stopPrice: zod.number().nullish(),
+    timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
+    optionContract: zod.union([
+      zod.object({
+        ticker: zod.string(),
+        underlying: zod.string(),
+        expirationDate: zod.coerce.date(),
+        strike: zod.number(),
+        right: zod.enum(["call", "put"]),
+        multiplier: zod.number(),
+        sharesPerContract: zod.number(),
+        providerContractId: zod.string().nullish(),
+      }),
+      zod.null(),
+    ]),
+  }),
+  zod.object({
+    accountId: zod.string().nullish(),
+    ibkrOrders: zod.array(zod.record(zod.string(), zod.unknown())),
+  }),
+]);
+
+/**
+ * @summary Replace an existing IBKR order using the raw IBKR modify payload
+ */
+export const ReplaceOrderParams = zod.object({
+  orderId: zod.coerce.string(),
+});
+
+export const ReplaceOrderBody = zod.object({
+  accountId: zod.string(),
+  mode: zod.enum(["paper", "live"]).optional(),
+  order: zod.record(zod.string(), zod.unknown()),
+});
+
+export const ReplaceOrderResponse = zod.object({
   id: zod.string(),
   accountId: zod.string(),
   mode: zod.enum(["paper", "live"]),
@@ -269,6 +391,26 @@ export const PlaceOrderResponse = zod.object({
 });
 
 /**
+ * @summary Request cancellation for an existing IBKR order
+ */
+export const CancelOrderParams = zod.object({
+  orderId: zod.coerce.string(),
+});
+
+export const CancelOrderBody = zod.object({
+  accountId: zod.string(),
+  manualIndicator: zod.boolean().nullish(),
+  extOperator: zod.string().nullish(),
+});
+
+export const CancelOrderResponse = zod.object({
+  orderId: zod.string(),
+  accountId: zod.string().nullable(),
+  message: zod.string(),
+  submittedAt: zod.coerce.date(),
+});
+
+/**
  * @summary Get latest quotes for symbols
  */
 export const GetQuoteSnapshotsQueryParams = zod.object({
@@ -291,6 +433,8 @@ export const GetQuoteSnapshotsResponse = zod.object({
       low: zod.number().nullable(),
       prevClose: zod.number().nullable(),
       volume: zod.number().nullable(),
+      providerContractId: zod.string().nullable(),
+      source: zod.enum(["ibkr", "polygon"]),
       updatedAt: zod.coerce.date(),
     }),
   ),
@@ -387,7 +531,7 @@ export const SearchUniverseTickersResponse = zod.object({
 });
 
 /**
- * @summary Get historical bars for a symbol
+ * @summary Get broker-first historical bars for a symbol or contract
  */
 export const getBarsQueryLimitMax = 50000;
 
@@ -397,6 +541,10 @@ export const GetBarsQueryParams = zod.object({
   limit: zod.coerce.number().min(1).max(getBarsQueryLimitMax).optional(),
   from: zod.date().optional(),
   to: zod.date().optional(),
+  assetClass: zod.enum(["equity", "option"]).optional(),
+  providerContractId: zod.coerce.string().nullish(),
+  outsideRth: zod.coerce.boolean().optional(),
+  source: zod.enum(["trades", "midpoint", "bid_ask"]).optional(),
 });
 
 export const GetBarsResponse = zod.object({
@@ -410,6 +558,10 @@ export const GetBarsResponse = zod.object({
       low: zod.number(),
       close: zod.number(),
       volume: zod.number(),
+      source: zod.string().optional(),
+      providerContractId: zod.string().nullish(),
+      outsideRth: zod.boolean().optional(),
+      partial: zod.boolean().optional(),
     }),
   ),
 });
@@ -452,6 +604,57 @@ export const GetOptionChainResponse = zod.object({
       updatedAt: zod.coerce.date(),
     }),
   ),
+});
+
+/**
+ * @summary Stream quote snapshots over server-sent events
+ */
+export const StreamQuoteSnapshotsQueryParams = zod.object({
+  symbols: zod.coerce.string().describe("Comma-separated ticker symbols."),
+});
+
+/**
+ * @summary Stream option chain snapshots over server-sent events
+ */
+export const StreamOptionChainsQueryParams = zod.object({
+  underlyings: zod.coerce
+    .string()
+    .describe("Comma-separated underlying symbols."),
+});
+
+/**
+ * @summary Stream order snapshots over server-sent events
+ */
+export const StreamOrdersQueryParams = zod.object({
+  accountId: zod.coerce.string().optional(),
+  mode: zod.enum(["paper", "live"]).optional(),
+  status: zod
+    .enum([
+      "pending_submit",
+      "submitted",
+      "accepted",
+      "partially_filled",
+      "filled",
+      "canceled",
+      "rejected",
+      "expired",
+    ])
+    .optional(),
+});
+
+/**
+ * @summary Stream account and position snapshots over server-sent events
+ */
+export const StreamAccountsQueryParams = zod.object({
+  accountId: zod.coerce.string().optional(),
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+/**
+ * @summary Stream broker-derived stock minute aggregates over server-sent events
+ */
+export const StreamStockAggregatesQueryParams = zod.object({
+  symbols: zod.coerce.string().describe("Comma-separated ticker symbols."),
 });
 
 /**
@@ -622,6 +825,200 @@ export const GetResearchTranscriptResponse = zod.object({
 });
 
 /**
+ * @summary List saved algo deployments
+ */
+export const ListAlgoDeploymentsQueryParams = zod.object({
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const ListAlgoDeploymentsResponse = zod.object({
+  deployments: zod.array(
+    zod.object({
+      id: zod.string(),
+      strategyId: zod.string(),
+      name: zod.string(),
+      mode: zod.enum(["paper", "live"]),
+      enabled: zod.boolean(),
+      providerAccountId: zod.string(),
+      symbolUniverse: zod.array(zod.string()),
+      config: zod.record(zod.string(), zod.unknown()),
+      lastEvaluatedAt: zod.coerce.date().nullable(),
+      lastSignalAt: zod.coerce.date().nullable(),
+      lastError: zod.string().nullable(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create an algo deployment linked to a promoted strategy
+ */
+export const CreateAlgoDeploymentBody = zod.object({
+  strategyId: zod.string(),
+  name: zod.string(),
+  providerAccountId: zod.string(),
+  mode: zod.enum(["paper", "live"]),
+  symbolUniverse: zod.array(zod.string()).optional(),
+  config: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+/**
+ * @summary Enable an algo deployment
+ */
+export const EnableAlgoDeploymentParams = zod.object({
+  deploymentId: zod.coerce.string(),
+});
+
+export const EnableAlgoDeploymentResponse = zod.object({
+  id: zod.string(),
+  strategyId: zod.string(),
+  name: zod.string(),
+  mode: zod.enum(["paper", "live"]),
+  enabled: zod.boolean(),
+  providerAccountId: zod.string(),
+  symbolUniverse: zod.array(zod.string()),
+  config: zod.record(zod.string(), zod.unknown()),
+  lastEvaluatedAt: zod.coerce.date().nullable(),
+  lastSignalAt: zod.coerce.date().nullable(),
+  lastError: zod.string().nullable(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Pause an algo deployment
+ */
+export const PauseAlgoDeploymentParams = zod.object({
+  deploymentId: zod.coerce.string(),
+});
+
+export const PauseAlgoDeploymentResponse = zod.object({
+  id: zod.string(),
+  strategyId: zod.string(),
+  name: zod.string(),
+  mode: zod.enum(["paper", "live"]),
+  enabled: zod.boolean(),
+  providerAccountId: zod.string(),
+  symbolUniverse: zod.array(zod.string()),
+  config: zod.record(zod.string(), zod.unknown()),
+  lastEvaluatedAt: zod.coerce.date().nullable(),
+  lastSignalAt: zod.coerce.date().nullable(),
+  lastError: zod.string().nullable(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary List execution and deployment lifecycle events
+ */
+export const listExecutionEventsQueryLimitMax = 500;
+
+export const ListExecutionEventsQueryParams = zod.object({
+  deploymentId: zod.coerce.string().optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listExecutionEventsQueryLimitMax)
+    .optional(),
+});
+
+export const ListExecutionEventsResponse = zod.object({
+  events: zod.array(
+    zod.object({
+      id: zod.string(),
+      deploymentId: zod.string().nullable(),
+      algoRunId: zod.string().nullable(),
+      providerAccountId: zod.string().nullable(),
+      symbol: zod.string().nullable(),
+      eventType: zod.string(),
+      summary: zod.string(),
+      payload: zod.record(zod.string(), zod.unknown()),
+      occurredAt: zod.coerce.date(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary List saved Pine scripts for chart indicators
+ */
+export const ListPineScriptsResponse = zod.object({
+  scripts: zod.array(
+    zod.object({
+      id: zod.string(),
+      scriptKey: zod.string(),
+      name: zod.string(),
+      description: zod.string().nullable(),
+      sourceCode: zod.string(),
+      status: zod.enum(["draft", "ready", "error", "archived"]),
+      defaultPaneType: zod.enum(["price", "lower"]),
+      chartAccessEnabled: zod.boolean(),
+      notes: zod.string().nullable(),
+      lastError: zod.string().nullable(),
+      tags: zod.array(zod.string()),
+      metadata: zod.record(zod.string(), zod.unknown()),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a Pine script library entry
+ */
+export const CreatePineScriptBody = zod.object({
+  scriptKey: zod.string().optional(),
+  name: zod.string(),
+  description: zod.string().optional(),
+  sourceCode: zod.string(),
+  status: zod.enum(["draft", "ready", "error", "archived"]).optional(),
+  defaultPaneType: zod.enum(["price", "lower"]).optional(),
+  chartAccessEnabled: zod.boolean().optional(),
+  notes: zod.string().optional(),
+  tags: zod.array(zod.string()).optional(),
+  metadata: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+/**
+ * @summary Update a Pine script library entry
+ */
+export const UpdatePineScriptParams = zod.object({
+  scriptId: zod.coerce.string(),
+});
+
+export const UpdatePineScriptBody = zod.object({
+  name: zod.string().optional(),
+  description: zod.string().optional(),
+  sourceCode: zod.string().optional(),
+  status: zod.enum(["draft", "ready", "error", "archived"]).optional(),
+  defaultPaneType: zod.enum(["price", "lower"]).optional(),
+  chartAccessEnabled: zod.boolean().optional(),
+  notes: zod.string().optional(),
+  lastError: zod.string().optional(),
+  tags: zod.array(zod.string()).optional(),
+  metadata: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+export const UpdatePineScriptResponse = zod.object({
+  id: zod.string(),
+  scriptKey: zod.string(),
+  name: zod.string(),
+  description: zod.string().nullable(),
+  sourceCode: zod.string(),
+  status: zod.enum(["draft", "ready", "error", "archived"]),
+  defaultPaneType: zod.enum(["price", "lower"]),
+  chartAccessEnabled: zod.boolean(),
+  notes: zod.string().nullable(),
+  lastError: zod.string().nullable(),
+  tags: zod.array(zod.string()),
+  metadata: zod.record(zod.string(), zod.unknown()),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary List available backtest strategies
  */
 export const ListBacktestStrategiesResponse = zod.object({
@@ -753,6 +1150,125 @@ export const GetBacktestStudyResponse = zod.object({
   optimizerConfig: zod.record(zod.string(), zod.unknown()),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Get the latest-vs-best completed study preview chart
+ */
+export const GetBacktestStudyPreviewChartParams = zod.object({
+  studyId: zod.coerce.string(),
+});
+
+export const GetBacktestStudyPreviewChartResponse = zod.object({
+  studyId: zod.string(),
+  latestCompletedRun: zod.union([
+    zod.object({
+      id: zod.string(),
+      studyId: zod.string(),
+      sweepId: zod.string().nullable(),
+      name: zod.string(),
+      strategyId: zod.string(),
+      strategyVersion: zod.string(),
+      directionMode: zod.enum(["long_only", "long_short"]),
+      status: zod.enum([
+        "queued",
+        "preparing_data",
+        "running",
+        "aggregating",
+        "completed",
+        "failed",
+        "cancel_requested",
+        "canceled",
+      ]),
+      sortRank: zod.number().nullable(),
+      metrics: zod.union([
+        zod.object({
+          netPnl: zod.number(),
+          totalReturnPercent: zod.number(),
+          maxDrawdownPercent: zod.number(),
+          tradeCount: zod.number(),
+          winRatePercent: zod.number(),
+          profitFactor: zod.number(),
+          sharpeRatio: zod.number(),
+          returnOverMaxDrawdown: zod.number(),
+        }),
+        zod.null(),
+      ]),
+      warnings: zod.array(zod.string()),
+      errorMessage: zod.string().nullable(),
+      startedAt: zod.coerce.date().nullable(),
+      finishedAt: zod.coerce.date().nullable(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+    zod.null(),
+  ]),
+  bestCompletedRun: zod.union([
+    zod.object({
+      id: zod.string(),
+      studyId: zod.string(),
+      sweepId: zod.string().nullable(),
+      name: zod.string(),
+      strategyId: zod.string(),
+      strategyVersion: zod.string(),
+      directionMode: zod.enum(["long_only", "long_short"]),
+      status: zod.enum([
+        "queued",
+        "preparing_data",
+        "running",
+        "aggregating",
+        "completed",
+        "failed",
+        "cancel_requested",
+        "canceled",
+      ]),
+      sortRank: zod.number().nullable(),
+      metrics: zod.union([
+        zod.object({
+          netPnl: zod.number(),
+          totalReturnPercent: zod.number(),
+          maxDrawdownPercent: zod.number(),
+          tradeCount: zod.number(),
+          winRatePercent: zod.number(),
+          profitFactor: zod.number(),
+          sharpeRatio: zod.number(),
+          returnOverMaxDrawdown: zod.number(),
+        }),
+        zod.null(),
+      ]),
+      warnings: zod.array(zod.string()),
+      errorMessage: zod.string().nullable(),
+      startedAt: zod.coerce.date().nullable(),
+      finishedAt: zod.coerce.date().nullable(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+    zod.null(),
+  ]),
+  comparisonBadges: zod.array(
+    zod.object({
+      id: zod.string(),
+      label: zod.string(),
+      format: zod.enum(["currency", "percent", "number", "integer"]),
+      latestValue: zod.number().nullable(),
+      bestValue: zod.number().nullable(),
+      winner: zod.enum(["latest", "best", "tie", "none"]),
+    }),
+  ),
+  latestSeries: zod.array(
+    zod.object({
+      occurredAt: zod.coerce.date(),
+      equity: zod.number(),
+      drawdownPercent: zod.number(),
+    }),
+  ),
+  bestSeries: zod.array(
+    zod.object({
+      occurredAt: zod.coerce.date(),
+      equity: zod.number(),
+      drawdownPercent: zod.number(),
+    }),
+  ),
 });
 
 /**
@@ -904,6 +1420,7 @@ export const GetBacktestRunResponse = zod.object({
   }),
   trades: zod.array(
     zod.object({
+      tradeSelectionId: zod.string(),
       symbol: zod.string(),
       side: zod.string(),
       entryAt: zod.coerce.date(),
@@ -919,6 +1436,54 @@ export const GetBacktestRunResponse = zod.object({
       barsHeld: zod.number(),
       commissionPaid: zod.number(),
       exitReason: zod.string(),
+      diagnostics: zod.union([
+        zod.object({
+          holdMinutes: zod.number(),
+          entryBarIndex: zod.number().nullable(),
+          exitBarIndex: zod.number().nullable(),
+          maxFavorablePrice: zod.number().nullable(),
+          maxFavorableAt: zod.coerce.date().nullable(),
+          maxFavorableBarIndex: zod.number().nullable(),
+          maxFavorableDelta: zod.number().nullable(),
+          maxFavorablePercent: zod.number().nullable(),
+          maxAdversePrice: zod.number().nullable(),
+          maxAdverseAt: zod.coerce.date().nullable(),
+          maxAdverseBarIndex: zod.number().nullable(),
+          maxAdverseDelta: zod.number().nullable(),
+          maxAdversePercent: zod.number().nullable(),
+          reasonTrace: zod.array(
+            zod.object({
+              id: zod.string(),
+              kind: zod.enum(["entry", "max_favorable", "max_adverse", "exit"]),
+              label: zod.string(),
+              occurredAt: zod.coerce.date(),
+              barIndex: zod.number().nullable(),
+              price: zod.number(),
+              deltaFromEntry: zod.number(),
+              deltaPercentFromEntry: zod.number(),
+              emphasis: zod.enum(["positive", "negative", "neutral"]),
+            }),
+          ),
+          exitConsequences: zod.union([
+            zod.object({
+              windowBars: zod.number(),
+              barsObserved: zod.number(),
+              bestPrice: zod.number(),
+              bestOccurredAt: zod.coerce.date(),
+              bestBarIndex: zod.number(),
+              bestDelta: zod.number(),
+              bestPercent: zod.number(),
+              worstPrice: zod.number(),
+              worstOccurredAt: zod.coerce.date(),
+              worstBarIndex: zod.number(),
+              worstDelta: zod.number(),
+              worstPercent: zod.number(),
+            }),
+            zod.null(),
+          ]),
+        }),
+        zod.null(),
+      ]),
     }),
   ),
   points: zod.array(
@@ -943,6 +1508,251 @@ export const GetBacktestRunResponse = zod.object({
       isSeeded: zod.boolean(),
     }),
   ),
+});
+
+/**
+ * @summary Get the research-chart payload for a backtest run
+ */
+export const GetBacktestRunChartParams = zod.object({
+  runId: zod.coerce.string(),
+});
+
+export const GetBacktestRunChartQueryParams = zod.object({
+  symbol: zod.coerce.string().optional(),
+  selectedTradeId: zod.coerce.string().optional(),
+});
+
+export const GetBacktestRunChartResponse = zod.object({
+  runId: zod.string(),
+  studyId: zod.string(),
+  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
+  chartPriceContext: zod.enum(["spot", "option"]),
+  availableSymbols: zod.array(zod.string()),
+  selectedSymbol: zod.string(),
+  defaultTradeSelectionId: zod.string().nullable(),
+  activeTradeSelectionId: zod.string().nullable(),
+  chartBars: zod.array(
+    zod.object({
+      time: zod.number(),
+      ts: zod.coerce.date(),
+      date: zod.string(),
+      o: zod.number(),
+      h: zod.number(),
+      l: zod.number(),
+      c: zod.number(),
+      v: zod.number(),
+    }),
+  ),
+  chartBarRanges: zod.array(
+    zod.object({
+      startMs: zod.number(),
+      endMs: zod.number(),
+    }),
+  ),
+  tradeOverlays: zod.array(
+    zod.object({
+      id: zod.string(),
+      tradeSelectionId: zod.string(),
+      symbol: zod.string(),
+      entryBarIndex: zod.number().nullable(),
+      exitBarIndex: zod.number().nullable(),
+      entryTs: zod.coerce.date(),
+      exitTs: zod.coerce.date().nullable(),
+      dir: zod.enum(["long", "short"]),
+      strat: zod.string(),
+      qty: zod.number(),
+      pnl: zod.number().nullable(),
+      pnlPercent: zod.number().nullable(),
+      er: zod.string().nullable(),
+      profitable: zod.boolean().nullable(),
+      pricingMode: zod.string().nullable(),
+      chartPriceContext: zod.enum(["spot", "option"]),
+      entryPrice: zod.number().nullable(),
+      exitPrice: zod.number().nullable(),
+      oe: zod.number().nullable(),
+      ep: zod.number().nullable(),
+      exitFill: zod.number().nullable(),
+      entrySpotPrice: zod.number().nullable(),
+      exitSpotPrice: zod.number().nullable(),
+      entryBasePrice: zod.number().nullable(),
+      exitBasePrice: zod.number().nullable(),
+      stopLossPrice: zod.number().nullable(),
+      takeProfitPrice: zod.number().nullable(),
+      trailActivationPrice: zod.number().nullable(),
+      lastTrailStopPrice: zod.number().nullable(),
+      exitTriggerPrice: zod.number().nullable(),
+      thresholdPath: zod.union([
+        zod.object({
+          segments: zod.array(
+            zod.object({
+              id: zod.string(),
+              kind: zod.enum([
+                "take_profit",
+                "stop_loss",
+                "trail_arm",
+                "trail_stop",
+                "exit_trigger",
+              ]),
+              startBarIndex: zod.number(),
+              endBarIndex: zod.number(),
+              value: zod.number(),
+              style: zod.enum(["solid", "dashed", "dotted"]),
+              hit: zod.boolean().nullable(),
+              label: zod.string().nullable(),
+            }),
+          ),
+        }),
+        zod.null(),
+      ]),
+    }),
+  ),
+  tradeMarkerGroups: zod.object({
+    entryGroups: zod.array(
+      zod.object({
+        id: zod.string(),
+        kind: zod.enum(["entry", "exit"]),
+        time: zod.number(),
+        dir: zod.enum(["long", "short"]),
+        profitable: zod.boolean().nullable(),
+        barIndex: zod.number().nullable(),
+        tradeSelectionIds: zod.array(zod.string()),
+        label: zod.string().nullable(),
+      }),
+    ),
+    exitGroups: zod.array(
+      zod.object({
+        id: zod.string(),
+        kind: zod.enum(["entry", "exit"]),
+        time: zod.number(),
+        dir: zod.enum(["long", "short"]),
+        profitable: zod.boolean().nullable(),
+        barIndex: zod.number().nullable(),
+        tradeSelectionIds: zod.array(zod.string()),
+        label: zod.string().nullable(),
+      }),
+    ),
+    interactionGroups: zod.array(
+      zod.object({
+        id: zod.string(),
+        kind: zod.enum(["entry", "exit"]),
+        time: zod.number(),
+        dir: zod.enum(["long", "short"]),
+        profitable: zod.boolean().nullable(),
+        barIndex: zod.number().nullable(),
+        tradeSelectionIds: zod.array(zod.string()),
+        label: zod.string().nullable(),
+      }),
+    ),
+    timeToTradeIds: zod.array(
+      zod.object({
+        time: zod.string(),
+        tradeSelectionIds: zod.array(zod.string()),
+      }),
+    ),
+  }),
+  indicatorEvents: zod.array(
+    zod.object({
+      id: zod.string(),
+      strategy: zod.string(),
+      eventType: zod.string(),
+      ts: zod.coerce.date(),
+      time: zod.number().nullable(),
+      barIndex: zod.number().nullable(),
+      direction: zod.union([zod.enum(["long", "short"]), zod.null()]),
+      label: zod.string().nullable(),
+      conviction: zod.number().nullable(),
+      meta: zod.record(zod.string(), zod.unknown()),
+    }),
+  ),
+  indicatorZones: zod.array(
+    zod.object({
+      id: zod.string(),
+      strategy: zod.string(),
+      zoneType: zod.string(),
+      direction: zod.union([zod.enum(["long", "short"]), zod.null()]),
+      startTs: zod.coerce.date(),
+      endTs: zod.coerce.date(),
+      startBarIndex: zod.number().nullable(),
+      endBarIndex: zod.number().nullable(),
+      top: zod.number(),
+      bottom: zod.number(),
+      label: zod.string().nullable(),
+      meta: zod.record(zod.string(), zod.unknown()),
+    }),
+  ),
+  indicatorWindows: zod.array(
+    zod.object({
+      id: zod.string(),
+      strategy: zod.string(),
+      direction: zod.enum(["long", "short"]),
+      startTs: zod.coerce.date(),
+      endTs: zod.coerce.date(),
+      startBarIndex: zod.number().nullable(),
+      endBarIndex: zod.number().nullable(),
+      tone: zod.union([
+        zod.enum(["bullish", "bearish", "neutral"]),
+        zod.null(),
+      ]),
+      conviction: zod.number().nullable(),
+      meta: zod.record(zod.string(), zod.unknown()),
+    }),
+  ),
+  indicatorMarkerPayload: zod.object({
+    overviewMarkers: zod.array(
+      zod.object({
+        id: zod.string(),
+        time: zod.number(),
+        barIndex: zod.number(),
+        position: zod.enum(["aboveBar", "belowBar", "inBar"]),
+        shape: zod.enum(["circle", "square", "arrowUp", "arrowDown"]),
+        color: zod.string(),
+        text: zod.string().nullable(),
+        size: zod.number().nullable(),
+      }),
+    ),
+    markersByTradeId: zod.record(
+      zod.string(),
+      zod.array(
+        zod.object({
+          id: zod.string(),
+          time: zod.number(),
+          barIndex: zod.number(),
+          position: zod.enum(["aboveBar", "belowBar", "inBar"]),
+          shape: zod.enum(["circle", "square", "arrowUp", "arrowDown"]),
+          color: zod.string(),
+          text: zod.string().nullable(),
+          size: zod.number().nullable(),
+        }),
+      ),
+    ),
+    timeToTradeIds: zod.array(
+      zod.object({
+        time: zod.string(),
+        tradeSelectionIds: zod.array(zod.string()),
+      }),
+    ),
+  }),
+  selectionFocus: zod.union([
+    zod.object({
+      token: zod.number(),
+      tradeSelectionId: zod.string().nullable(),
+      visibleLogicalRange: zod.union([
+        zod.object({
+          from: zod.number(),
+          to: zod.number(),
+        }),
+        zod.null(),
+      ]),
+    }),
+    zod.null(),
+  ]),
+  defaultVisibleLogicalRange: zod.union([
+    zod.object({
+      from: zod.number(),
+      to: zod.number(),
+    }),
+    zod.null(),
+  ]),
 });
 
 /**

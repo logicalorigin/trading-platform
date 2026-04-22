@@ -1,5 +1,6 @@
 import type {
   ChartBar,
+  IndicatorCatalogEntry,
   IndicatorPlugin,
   IndicatorPluginOutput,
   IndicatorRegistry,
@@ -501,6 +502,65 @@ export const defaultIndicatorRegistry: IndicatorRegistry = {
     negative: "#ef444499",
   }),
 };
+
+export const defaultIndicatorCatalog: IndicatorCatalogEntry[] = [
+  {
+    id: "ema-21",
+    label: "EMA21",
+    kind: "built_in",
+    paneType: "price",
+    description: "21-period exponential moving average.",
+  },
+  {
+    id: "ema-55",
+    label: "EMA55",
+    kind: "built_in",
+    paneType: "price",
+    description: "55-period exponential moving average.",
+  },
+  {
+    id: "sma-20",
+    label: "SMA20",
+    kind: "built_in",
+    paneType: "price",
+    description: "20-period simple moving average.",
+  },
+  {
+    id: "vwap",
+    label: "VWAP",
+    kind: "built_in",
+    paneType: "price",
+    description: "Session volume-weighted average price.",
+  },
+  {
+    id: "bb-20",
+    label: "BB20",
+    kind: "built_in",
+    paneType: "price",
+    description: "20-period Bollinger Bands.",
+  },
+  {
+    id: "rsi-14",
+    label: "RSI14",
+    kind: "built_in",
+    paneType: "lower",
+    description: "14-period relative strength index.",
+  },
+  {
+    id: "atr-14",
+    label: "ATR14",
+    kind: "built_in",
+    paneType: "lower",
+    description: "14-period average true range.",
+  },
+  {
+    id: "macd-12-26-9",
+    label: "MACD",
+    kind: "built_in",
+    paneType: "lower",
+    description: "MACD 12/26/9 oscillator.",
+  },
+];
 
 export const resolveIndicatorPlugins = (
   selectedIndicators: string[],

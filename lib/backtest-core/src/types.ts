@@ -60,6 +60,7 @@ export type BacktestBar = {
 export type PositionState = {
   symbol: string;
   entryAt: Date;
+  entryIndex: number;
   entryPrice: number;
   quantity: number;
   entryValue: number;
