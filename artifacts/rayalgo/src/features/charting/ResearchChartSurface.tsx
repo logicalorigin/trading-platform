@@ -1611,6 +1611,13 @@ export const ResearchChartSurface = ({
     price: number;
   } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const legendRef = useRef<HTMLDivElement | null>(null);
+  const drawModeHintRef = useRef<HTMLDivElement | null>(null);
+  const [rootWidth, setRootWidth] = useState(0);
+  const [toolbarHeight, setToolbarHeight] = useState(0);
+  const [legendHeight, setLegendHeight] = useState(0);
+  const [drawModeHintHeight, setDrawModeHintHeight] = useState(0);
   const syncOverlayState = (
     setter: Dispatch<SetStateAction<OverlayShape[]>>,
     next: OverlayShape[],
@@ -2535,6 +2542,57 @@ export const ResearchChartSurface = ({
         close: lastBar.c,
       };
     })();
+  useLayoutEffect(() => {
+    if (typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+
+    const observers: ResizeObserver[] = [];
+    const watchHeight = (
+      element: HTMLElement | null,
+      setter: Dispatch<SetStateAction<number>>,
+    ) => {
+      if (!element) {
+        setter(0);
+        return;
+      }
+
+      const update = () => {
+        setter(Math.ceil(element.getBoundingClientRect().height));
+      };
+      update();
+
+      const observer = new ResizeObserver(() => {
+        update();
+      });
+      observer.observe(element);
+      observers.push(observer);
+    };
+
+    const rootElement = rootRef.current;
+    if (rootElement) {
+      const updateRootWidth = () => {
+        setRootWidth(Math.ceil(rootElement.getBoundingClientRect().width));
+      };
+      updateRootWidth();
+
+      const observer = new ResizeObserver(() => {
+        updateRootWidth();
+      });
+      observer.observe(rootElement);
+      observers.push(observer);
+    } else {
+      setRootWidth(0);
+    }
+
+    watchHeight(toolbarRef.current, setToolbarHeight);
+    watchHeight(legendRef.current, setLegendHeight);
+    watchHeight(drawModeHintRef.current, setDrawModeHintHeight);
+
+    return () => {
+      observers.forEach((observer) => observer.disconnect());
+    };
+  }, [showToolbar, showLegend, Boolean(displayBar), drawMode]);
   const displayDeltaBase =
     displayBar?.previousClose ?? displayBar?.open ?? null;
   const displayDelta =
@@ -2720,6 +2778,177 @@ export const ResearchChartSurface = ({
   const chartInsetLeft = resolvedLeftOverlay ? leftOverlayWidth : 0;
   const chartInsetBottom = bottomOverlayHeight;
   const hasChartBars = model.chartBars.length > 0;
+  const isNarrowFrame = rootWidth > 0 && rootWidth < 920;
+  const chromeGap = isNarrowFrame ? 6 : 8;
+  const topChromeBase = 6 + chartInsetTop;
+  const effectiveToolbarHeight =
+    showToolbar && toolbarHeight > 0
+      ? toolbarHeight
+      : showToolbar
+        ? isNarrowFrame
+          ? 84
+          : 42
+        : 0;
+  const toolbarOffset = showToolbar ? effectiveToolbarHeight + chromeGap : 0;
+  const effectiveLegendHeight =
+    showLegend && displayBar && legendHeight > 0
+      ? legendHeight
+      : showLegend && displayBar
+        ? isNarrowFrame
+          ? 56
+          : 30
+        : 0;
+  const legendOffset =
+    showLegend && displayBar ? effectiveLegendHeight + chromeGap : 0;
+  const effectiveDrawModeHintHeight =
+    drawMode && drawModeHintHeight > 0 ? drawModeHintHeight : drawMode ? 30 : 0;
+  const topChromeClearance =
+    12 +
+    toolbarOffset +
+    legendOffset +
+    (drawMode ? effectiveDrawModeHintHeight + chromeGap : 0);
+  const toolbarGroups = [
+    {
+      key: "display",
+      label: "display",
+      controls: [
+        {
+          key: "candles",
+          label: "Candles",
+          active: baseSeriesType === "candles",
+          onClick: () => setBaseSeriesType("candles"),
+        },
+        {
+          key: "bars",
+          label: "Bars",
+          active: baseSeriesType === "bars",
+          onClick: () => setBaseSeriesType("bars"),
+        },
+        {
+          key: "line",
+          label: "Line",
+          active: baseSeriesType === "line",
+          onClick: () => setBaseSeriesType("line"),
+        },
+        {
+          key: "area",
+          label: "Area",
+          active: baseSeriesType === "area",
+          onClick: () => setBaseSeriesType("area"),
+        },
+        {
+          key: "baseline",
+          label: "Baseline",
+          active: baseSeriesType === "baseline",
+          onClick: () => setBaseSeriesType("baseline"),
+        },
+      ],
+    },
+    {
+      key: "overlay",
+      label: "overlay",
+      controls: [
+        {
+          key: "volume",
+          label: "Volume",
+          active: showVolume,
+          onClick: () => setShowVolume((value) => !value),
+        },
+        {
+          key: "grid",
+          label: "Grid",
+          active: showGrid,
+          onClick: () => setShowGrid((value) => !value),
+        },
+        {
+          key: "time-axis",
+          label: "Time",
+          active: showTimeScaleState,
+          onClick: () => setShowTimeScaleState((value) => !value),
+        },
+        {
+          key: "price-line",
+          label: "Price",
+          active: showPriceLine,
+          onClick: () => setShowPriceLine((value) => !value),
+        },
+      ],
+    },
+    {
+      key: "scale",
+      label: "scale",
+      controls: [
+        {
+          key: "scale",
+          label:
+            scaleMode === "log"
+              ? "Log"
+              : scaleMode === "percentage"
+                ? "Percent"
+                : scaleMode === "indexed"
+                  ? "Base 100"
+                  : "Linear",
+          active: scaleMode !== "linear",
+          onClick: cycleScaleMode,
+        },
+        {
+          key: "crosshair",
+          label: crosshairMode === "free" ? "Free" : "Magnet",
+          active: crosshairMode === "free",
+          onClick: () =>
+            setCrosshairMode((value) => (value === "free" ? "magnet" : "free")),
+        },
+        {
+          key: "auto-scale",
+          label: "Auto",
+          active: autoScale,
+          onClick: () => setAutoScale((value) => !value),
+        },
+        {
+          key: "invert-scale",
+          label: "Invert",
+          active: invertScale,
+          onClick: () => setInvertScale((value) => !value),
+        },
+      ],
+    },
+    {
+      key: "nav",
+      label: "nav",
+      controls: [
+        {
+          key: "pan-left",
+          label: "Left",
+          active: false,
+          onClick: surfaceControls.panLeft,
+        },
+        {
+          key: "pan-right",
+          label: "Right",
+          active: false,
+          onClick: surfaceControls.panRight,
+        },
+        {
+          key: "reset",
+          label: "Reset",
+          active: false,
+          onClick: surfaceControls.reset,
+        },
+        {
+          key: "fit",
+          label: "Fit",
+          active: false,
+          onClick: surfaceControls.fit,
+        },
+        {
+          key: "realtime",
+          label: "Live",
+          active: false,
+          onClick: surfaceControls.realtime,
+        },
+      ],
+    },
+  ];
 
   return (
     <div
@@ -2766,163 +2995,90 @@ export const ResearchChartSurface = ({
       ) : null}
       {showToolbar && (
         <div
+          ref={toolbarRef}
           data-testid={dataTestId ? `${dataTestId}-toolbar` : undefined}
           style={{
             position: "absolute",
-            top: 6 + chartInsetTop,
+            top: topChromeBase,
             left: chartInsetLeft + 8,
             right: 8,
             zIndex: 6,
             display: "flex",
-            gap: 4,
-            rowGap: 4,
+            gap: 8,
+            rowGap: 8,
             flexWrap: "wrap",
-            justifyContent: "flex-end",
+            justifyContent: isNarrowFrame ? "flex-start" : "flex-end",
             maxWidth: `calc(100% - ${chartInsetLeft + 16}px)`,
           }}
         >
-          {[
-            {
-              key: "candles",
-              label: "CND",
-              active: baseSeriesType === "candles",
-              onClick: () => setBaseSeriesType("candles"),
-            },
-            {
-              key: "bars",
-              label: "BAR",
-              active: baseSeriesType === "bars",
-              onClick: () => setBaseSeriesType("bars"),
-            },
-            {
-              key: "line",
-              label: "LINE",
-              active: baseSeriesType === "line",
-              onClick: () => setBaseSeriesType("line"),
-            },
-            {
-              key: "area",
-              label: "AREA",
-              active: baseSeriesType === "area",
-              onClick: () => setBaseSeriesType("area"),
-            },
-            {
-              key: "baseline",
-              label: "BASE",
-              active: baseSeriesType === "baseline",
-              onClick: () => setBaseSeriesType("baseline"),
-            },
-            {
-              key: "volume",
-              label: "VOL",
-              active: showVolume,
-              onClick: () => setShowVolume((value) => !value),
-            },
-            {
-              key: "scale",
-              label:
-                scaleMode === "log"
-                  ? "LOG"
-                  : scaleMode === "percentage"
-                    ? "%"
-                    : scaleMode === "indexed"
-                      ? "100"
-                      : "LIN",
-              active: scaleMode !== "linear",
-              onClick: cycleScaleMode,
-            },
-            {
-              key: "crosshair",
-              label: crosshairMode === "free" ? "FREE" : "MAG",
-              active: crosshairMode === "free",
-              onClick: () =>
-                setCrosshairMode((value) =>
-                  value === "free" ? "magnet" : "free",
-                ),
-            },
-            {
-              key: "grid",
-              label: "GRID",
-              active: showGrid,
-              onClick: () => setShowGrid((value) => !value),
-            },
-            {
-              key: "auto-scale",
-              label: "AUTO",
-              active: autoScale,
-              onClick: () => setAutoScale((value) => !value),
-            },
-            {
-              key: "invert-scale",
-              label: "INV",
-              active: invertScale,
-              onClick: () => setInvertScale((value) => !value),
-            },
-            {
-              key: "time-axis",
-              label: "TIME",
-              active: showTimeScaleState,
-              onClick: () => setShowTimeScaleState((value) => !value),
-            },
-            {
-              key: "price-line",
-              label: "PL",
-              active: showPriceLine,
-              onClick: () => setShowPriceLine((value) => !value),
-            },
-            {
-              key: "pan-left",
-              label: "←",
-              active: false,
-              onClick: surfaceControls.panLeft,
-            },
-            {
-              key: "pan-right",
-              label: "→",
-              active: false,
-              onClick: surfaceControls.panRight,
-            },
-            {
-              key: "reset",
-              label: "RST",
-              active: false,
-              onClick: surfaceControls.reset,
-            },
-            {
-              key: "fit",
-              label: "FIT",
-              active: false,
-              onClick: surfaceControls.fit,
-            },
-            {
-              key: "realtime",
-              label: "RT",
-              active: false,
-              onClick: surfaceControls.realtime,
-            },
-          ].map((control) => (
-            <button
-              key={control.key}
-              type="button"
-              aria-pressed={control.active}
-              onClick={control.onClick}
+          {toolbarGroups.map((group) => (
+            <div
+              key={group.key}
               style={{
-                border: `1px solid ${control.active ? withAlpha(theme.accent || theme.text, "aa") : theme.border}`,
-                background: control.active
-                  ? withAlpha(theme.accent || theme.text, "18")
-                  : withAlpha(theme.bg4, "f0"),
-                color: control.active
-                  ? theme.accent || theme.text
-                  : theme.textMuted,
-                borderRadius: 4,
-                padding: "2px 7px",
-                fontSize: 10,
-                fontFamily: theme.mono,
-                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 7px",
+                border: `1px solid ${withAlpha(theme.border, "b8")}`,
+                background: withAlpha(theme.bg2, "dc"),
+                backdropFilter: "blur(14px)",
+                boxShadow: `0 12px 28px ${withAlpha(theme.bg4, "52")}`,
+                maxWidth: isNarrowFrame ? "100%" : undefined,
               }}
             >
-              {control.label}
-            </button>
+              <div
+                style={{
+                  paddingRight: 2,
+                  color: withAlpha(theme.textMuted, "8c"),
+                  fontSize: 9,
+                  fontFamily: theme.mono,
+                  letterSpacing: "0.14em",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {group.label}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 4,
+                  flexWrap: "wrap",
+                  justifyContent: isNarrowFrame ? "flex-start" : "flex-end",
+                }}
+              >
+                {group.controls.map((control) => (
+                  <button
+                    key={control.key}
+                    type="button"
+                    aria-pressed={control.active}
+                    onClick={control.onClick}
+                    style={{
+                      border: `1px solid ${control.active ? withAlpha(theme.accent || theme.text, "88") : withAlpha(theme.border, "70")}`,
+                      background: control.active
+                        ? `linear-gradient(180deg, ${withAlpha(theme.accent || theme.text, "20")} 0%, ${withAlpha(theme.accent || theme.text, "10")} 100%)`
+                        : withAlpha(theme.bg4, "d8"),
+                      color: control.active
+                        ? theme.text
+                        : withAlpha(theme.textMuted, "d2"),
+                      borderRadius: 999,
+                      padding: "4px 10px",
+                      fontSize: 10,
+                      lineHeight: 1,
+                      fontFamily: theme.mono,
+                      letterSpacing: "0.03em",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      boxShadow: control.active
+                        ? `inset 0 0 0 1px ${withAlpha(theme.accent || theme.text, "18")}`
+                        : "none",
+                    }}
+                  >
+                    {control.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -3298,7 +3454,7 @@ export const ResearchChartSurface = ({
                   style={{
                     position: "absolute",
                     ...(indicatorDashboardOverlay.position.includes("top")
-                      ? { top: 12 }
+                      ? { top: topChromeClearance }
                       : { bottom: 12 }),
                     ...(indicatorDashboardOverlay.position.includes("left")
                       ? { left: 12 }
@@ -3540,28 +3696,70 @@ export const ResearchChartSurface = ({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            border: `1px dashed ${theme.border}`,
-            borderRadius: 6,
-            color: theme.textMuted,
-            fontFamily: theme.mono,
-            fontSize: 11,
-            background: withAlpha(theme.bg3, "80"),
+            background:
+              "linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 100%)",
           }}
         >
-          no live chart data
+          <div
+            style={{
+              minWidth: 220,
+              maxWidth: 360,
+              padding: "16px 18px",
+              border: `1px solid ${withAlpha(theme.border, "b8")}`,
+              background: withAlpha(theme.bg2, "de"),
+              backdropFilter: "blur(14px)",
+              boxShadow: `0 18px 42px ${withAlpha(theme.bg4, "48")}`,
+            }}
+          >
+            <div
+              style={{
+                marginBottom: 8,
+                color: withAlpha(theme.textMuted, "8c"),
+                fontFamily: theme.mono,
+                fontSize: 9,
+                letterSpacing: "0.16em",
+                textTransform: "uppercase",
+              }}
+            >
+              Chart feed
+            </div>
+            <div
+              style={{
+                color: theme.text,
+                fontFamily: theme.mono,
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}
+            >
+              No live chart data available.
+            </div>
+            <div
+              style={{
+                marginTop: 6,
+                color: theme.textMuted,
+                fontFamily: theme.mono,
+                fontSize: 10,
+                lineHeight: 1.5,
+              }}
+            >
+              Chart controls remain available while the stream reconnects or a
+              symbol is selected.
+            </div>
+          </div>
         </div>
       )}
       {showLegend && displayBar && (
         <div
+          ref={legendRef}
           data-testid={dataTestId ? `${dataTestId}-legend` : undefined}
           style={{
             position: "absolute",
-            top: 6 + chartInsetTop,
+            top: topChromeBase + toolbarOffset,
             left: 8 + chartInsetLeft,
             right: 12,
-            background: withAlpha(theme.bg2, "b8"),
-            borderRadius: 4,
-            padding: "3px 6px",
+            background: withAlpha(theme.bg2, "d6"),
+            border: `1px solid ${withAlpha(theme.border, "9c")}`,
+            padding: "5px 8px",
             fontSize: 10,
             fontFamily: theme.mono,
             color: theme.textMuted,
@@ -3570,6 +3768,8 @@ export const ResearchChartSurface = ({
             gap: 10,
             flexWrap: "wrap",
             pointerEvents: "none",
+            backdropFilter: "blur(12px)",
+            boxShadow: `0 10px 24px ${withAlpha(theme.bg4, "34")}`,
           }}
         >
           <span>{formatLegendTimestamp(displayBar.ts)}</span>
@@ -3680,9 +3880,10 @@ export const ResearchChartSurface = ({
       ) : null}
       {drawMode && (
         <div
+          ref={drawModeHintRef}
           style={{
             position: "absolute",
-            top: 6 + chartInsetTop,
+            top: topChromeBase + toolbarOffset + legendOffset,
             right: 8,
             zIndex: 7,
             background: withAlpha(theme.amber, "18"),
