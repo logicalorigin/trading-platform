@@ -3327,7 +3327,7 @@ const Watchlist = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(0,1fr) 40px 50px 38px 24px 18px",
+          gridTemplateColumns: "minmax(0,1fr) 56px 50px 38px 24px 18px",
           gap: sp(4),
           padding: sp("4px 10px"),
           fontSize: fs(9),
@@ -3358,7 +3358,7 @@ const Watchlist = ({
               onClick={() => onSelect?.(w.sym)}
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(0,1fr) 40px 50px 38px 24px 18px",
+                gridTemplateColumns: "minmax(0,1fr) 56px 50px 38px 24px 18px",
                 gap: sp(4),
                 padding: sp("7px 10px"),
                 cursor: "pointer",
@@ -3454,7 +3454,7 @@ const Watchlist = ({
                     width: dim(18),
                     height: dim(9),
                     border: "none",
-                    borderRadius: dim(3),
+                    borderRadius: 0,
                     background: "transparent",
                     color:
                       !w.id || !canMoveUp || busy ? T.textMuted : T.textDim,
@@ -3487,7 +3487,7 @@ const Watchlist = ({
                     width: dim(18),
                     height: dim(9),
                     border: "none",
-                    borderRadius: dim(3),
+                    borderRadius: 0,
                     background: "transparent",
                     color:
                       !w.id || !canMoveDown || busy ? T.textMuted : T.textDim,
@@ -3520,7 +3520,7 @@ const Watchlist = ({
                   width: dim(18),
                   height: dim(18),
                   border: "none",
-                  borderRadius: dim(3),
+                  borderRadius: 0,
                   background: "transparent",
                   color: T.textMuted,
                   cursor: "pointer",
@@ -3830,12 +3830,12 @@ const TreemapHeatmap = ({ data, period, onSymClick }) => {
       preserveAspectRatio="xMidYMid meet"
       style={{
         display: "block",
-        borderRadius: 4,
+        borderRadius: 0,
         aspectRatio: `${VW} / ${VH}`,
       }}
     >
       {/* Background */}
-      <rect width={VW} height={VH} fill={T.bg1} rx="4" />
+      <rect width={VW} height={VH} fill={T.bg1} rx="0" />
 
       {sectors.map((sector, si) => {
         const sx = sector.x0,
@@ -3854,11 +3854,11 @@ const TreemapHeatmap = ({ data, period, onSymClick }) => {
               fill="none"
               stroke={T.border}
               strokeWidth="1"
-              rx="2"
+              rx="0"
             />
 
             {/* Sector label bar */}
-            <rect x={sx} y={sy} width={sw} height={18} fill={T.bg2} rx="2" />
+            <rect x={sx} y={sy} width={sw} height={18} fill={T.bg2} rx="0" />
             <text
               x={sx + 6}
               y={sy + 12}
@@ -3904,7 +3904,7 @@ const TreemapHeatmap = ({ data, period, onSymClick }) => {
                     width={lw}
                     height={lh}
                     fill={bg}
-                    rx="1"
+                    rx="0"
                     onMouseEnter={(e) =>
                       e.target.setAttribute("opacity", "0.8")
                     }
@@ -4000,9 +4000,9 @@ const SectorTreemap = ({ sectors, period }) => {
     <svg
       width="100%"
       viewBox={`0 0 ${VW} ${VH}`}
-      style={{ display: "block", borderRadius: 4 }}
+      style={{ display: "block", borderRadius: 0 }}
     >
-      <rect width={VW} height={VH} fill={T.bg1} rx="3" />
+      <rect width={VW} height={VH} fill={T.bg1} rx="0" />
       {(root.children || []).map((leaf, i) => {
         const lx = leaf.x0,
           ly = leaf.y0;
@@ -4020,7 +4020,7 @@ const SectorTreemap = ({ sectors, period }) => {
               width={lw}
               height={lh}
               fill={bg}
-              rx="2"
+              rx="0"
               onMouseEnter={(e) => e.target.setAttribute("opacity", "0.8")}
               onMouseLeave={(e) => e.target.setAttribute("opacity", "1")}
             />
@@ -6114,7 +6114,7 @@ const MarketScreen = ({
                       contentStyle={{
                         background: T.bg4,
                         border: `1px solid ${T.border}`,
-                        borderRadius: dim(6),
+                        borderRadius: 0,
                         fontSize: fs(10),
                         fontFamily: T.mono,
                       }}
@@ -6211,9 +6211,19 @@ const MarketScreen = ({
                         padding: sp("7px 8px"),
                         background: selectedTicker ? T.bg3 : T.bg0,
                         border: `1px solid ${selectedTicker ? T.accent : T.border}`,
-                        borderRadius: dim(4),
+                        borderRadius: 0,
                         cursor: "pointer",
                         textAlign: "left",
+                      }}
+                      onMouseEnter={(event) => {
+                        if (selectedTicker) return;
+                        event.currentTarget.style.background = T.bg2;
+                        event.currentTarget.style.borderColor = T.textMuted;
+                      }}
+                      onMouseLeave={(event) => {
+                        if (selectedTicker) return;
+                        event.currentTarget.style.background = T.bg0;
+                        event.currentTarget.style.borderColor = T.border;
                       }}
                     >
                       <span style={{ minWidth: 0 }}>
@@ -6323,7 +6333,7 @@ const MarketScreen = ({
                     fontWeight: 600,
                     background: sectorTf === v ? T.accentDim : "transparent",
                     border: `1px solid ${sectorTf === v ? T.accent : "transparent"}`,
-                    borderRadius: dim(3),
+                    borderRadius: 0,
                     color: sectorTf === v ? T.accent : T.textDim,
                     cursor: "pointer",
                   }}
@@ -7035,7 +7045,7 @@ const MarketScreen = ({
                 lineHeight: 1.5,
                 padding: sp("5px 8px"),
                 background: T.bg0,
-                borderRadius: dim(4),
+                borderRadius: 0,
                 border: `1px solid ${T.border}`,
               }}
             >
@@ -18613,6 +18623,8 @@ export default function RayAlgoPlatform() {
                   alignItems: "stretch",
                   gap: sp(12),
                   padding: sp("8px 12px"),
+                  flexWrap: "wrap",
+                  justifyContent: "space-between",
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
