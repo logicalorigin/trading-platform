@@ -39,7 +39,17 @@ export function asNumber(value: unknown): number | null {
       return null;
     }
 
-    const numeric = Number(trimmed.replace(/,/g, ""));
+    // IBKR Client Portal often prefixes price strings with marker letters
+    // such as "C709.47" (closing-marker), "H709.62" (high-marker),
+    // "B710.10" (bid), or "@709.55" (delayed). Strip a single leading
+    // non-numeric/non-sign character so the underlying number parses.
+    const stripped = trimmed.replace(/^[^0-9.+\-]+/, "").replace(/,/g, "");
+
+    if (!stripped) {
+      return null;
+    }
+
+    const numeric = Number(stripped);
     return Number.isFinite(numeric) ? numeric : null;
   }
 

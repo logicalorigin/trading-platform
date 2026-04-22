@@ -85,3 +85,26 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 - **Universe search** — `searchUniverseTickers` calls `IbkrBridgeClient.searchTickers` first (`/iserver/secdef/search`, filtered to STK). Falls back to Polygon for non-stock markets and on empty IBKR result.
 - **Flow events** — derived from `IbkrBridgeClient.getOptionChain` snapshots, ranked by premium. Note: the IBKR option-chain mapper currently leaves `volume`/`openInterest` at 0; flow events synthesize size as `volume || 1` so contracts with a real `mark` still surface. To get true volume/OI, extend the snapshot field set in `client.ts` to include OPRA fields (e.g. 7762 = volume).
 - **Bridge surface** — new endpoints `GET /news` and `GET /universe/search` on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). The TWS provider stubs both to empty arrays since the user's transport is Client Portal.
+
+## Snapshot quote pipeline (gray-screen fix)
+
+The IBKR Client Portal streams *partial* field updates per WebSocket tick and
+prefixes some prices with marker letters (`C`, `H`, `B`, `@`). Three coupled
+fixes were required so `/api/quotes/snapshot` returns real data instead of zeros:
+
+1. **`asNumber` (`artifacts/api-server/src/lib/values.ts`)** — strips leading
+   non-numeric prefix chars before parsing, so `"C709.47"` → `709.47`.
+2. **Field set expansion** — both the WebSocket subscribe in
+   `artifacts/ibkr-bridge/src/market-data-stream.ts` and the parser/snapshot
+   request fields in `artifacts/api-server/src/providers/ibkr/client.ts` now
+   include `70` (high), `71` (low), `82`/`83` (change/change%), `87`/`87_raw`/
+   `7762` (volume), `7295` (open), `7296`/`7741` (prev close).
+3. **Per-conid payload merging** — `IbkrMarketDataStream.handleMessage` now
+   merges incoming `smd+` records into a `rawPayloadsByConid` map and re-parses
+   the merged payload, so accumulated state (high/low/open/prevClose/volume)
+   survives subsequent ticks that only carry bid/ask/last deltas.
+4. **Price fallback** — `parseSnapshotQuote` falls back to bid/ask midpoint
+   (then ask, then bid) when field 31 (last) is 0 or missing, which is common on
+   paper accounts and for tickers without recent prints in the snapshot window.
+   Change/change% prefer IBKR-supplied fields 82/83 before computing from
+   prevClose.

@@ -2445,12 +2445,12 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
     style={{
       display: "flex",
       alignItems: "stretch",
-      gap: sp(6),
+      gap: 0,
       minWidth: 0,
       overflowX: "auto",
     }}
   >
-    {items.map((item) => {
+    {items.map((item, index) => {
       const positive = isFiniteNumber(item?.pct) ? item.pct >= 0 : null;
       return (
         <button
@@ -2459,90 +2459,117 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
           onClick={() => onSelect?.(item.sym)}
           title={`${item.label} proxy · ${item.sym}`}
           style={{
-            minWidth: dim(152),
-            padding: sp("7px 10px"),
-            display: "grid",
-            gridTemplateColumns: "1fr 64px",
-            gap: sp(8),
+            minWidth: dim(132),
+            padding: sp("5px 10px"),
+            display: "flex",
             alignItems: "center",
-            background: T.bg1,
-            border: `1px solid ${T.border}`,
+            gap: sp(8),
+            background: "transparent",
+            border: "none",
+            borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
             borderRadius: 0,
             color: T.text,
             cursor: "pointer",
-            transition: "background 0.12s ease, border-color 0.12s ease",
+            transition: "background 0.12s ease, color 0.12s ease",
           }}
           onMouseEnter={(event) => {
-            event.currentTarget.style.background = T.bg3;
-            event.currentTarget.style.borderColor = T.accent;
+            event.currentTarget.style.background = `${T.bg3}80`;
           }}
           onMouseLeave={(event) => {
-            event.currentTarget.style.background = T.bg1;
-            event.currentTarget.style.borderColor = T.border;
+            event.currentTarget.style.background = "transparent";
           }}
         >
-          <span style={{ minWidth: 0, textAlign: "left" }}>
+          <span
+            style={{
+              minWidth: 0,
+              flex: 1,
+              textAlign: "left",
+              display: "flex",
+              flexDirection: "column",
+              gap: 1,
+            }}
+          >
             <span
               style={{
-                display: "block",
-                fontSize: fs(8),
-                color: T.textMuted,
-                fontFamily: T.sans,
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(6),
+                minWidth: 0,
               }}
             >
-              {item.label}
+              <span
+                style={{
+                  display: "block",
+                  fontSize: fs(7),
+                  color: T.textMuted,
+                  fontFamily: T.sans,
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.label}
+              </span>
+              <span
+                style={{
+                  display: "block",
+                  fontSize: fs(7),
+                  fontWeight: 600,
+                  color: T.textMuted,
+                  fontFamily: T.sans,
+                  lineHeight: 1.1,
+                  letterSpacing: "0.08em",
+                  flexShrink: 0,
+                }}
+              >
+                {item.sym}
+              </span>
             </span>
             <span
               style={{
-                display: "block",
-                fontSize: fs(13),
-                fontWeight: 700,
-                fontFamily: T.sans,
-                color: T.text,
-                lineHeight: 1.1,
-                marginTop: 2,
+                display: "flex",
+                alignItems: "baseline",
+                gap: sp(6),
+                minWidth: 0,
               }}
             >
-              {formatQuotePrice(item.price)}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: fs(9),
-                fontWeight: 700,
-                fontFamily: T.sans,
-                color:
-                  positive == null ? T.textDim : positive ? T.green : T.red,
-                lineHeight: 1.1,
-                marginTop: 1,
-              }}
-            >
-              {formatSignedPercent(item.pct)}
-            </span>
-            <span
-              style={{
-                display: "block",
-                fontSize: fs(7),
-                fontWeight: 600,
-                color: T.textMuted,
-                fontFamily: T.sans,
-                lineHeight: 1.1,
-                marginTop: 2,
-                letterSpacing: "0.08em",
-              }}
-            >
-              {item.sym}
+              <span
+                style={{
+                  display: "block",
+                  fontSize: fs(12),
+                  fontWeight: 700,
+                  fontFamily: T.sans,
+                  color: T.text,
+                  lineHeight: 1.1,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {formatQuotePrice(item.price)}
+              </span>
+              <span
+                style={{
+                  display: "block",
+                  fontSize: fs(8),
+                  fontWeight: 700,
+                  fontFamily: T.sans,
+                  color:
+                    positive == null ? T.textDim : positive ? T.green : T.red,
+                  lineHeight: 1.1,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {formatSignedPercent(item.pct)}
+              </span>
             </span>
           </span>
-          <span style={{ display: "block" }}>
+          <span style={{ display: "block", flexShrink: 0 }}>
             <MicroSparkline
               data={item.sparkBars?.length ? item.sparkBars : item.spark}
               positive={positive !== false}
-              width={64}
-              height={24}
+              width={52}
+              height={18}
             />
           </span>
         </button>

@@ -289,13 +289,23 @@ const INTERNAL_TO_IBKR_ORDER_TYPE: Record<OrderType, string> = {
 };
 
 const SNAPSHOT_FIELDS = [
-  "31", // last
+  "31", // last price
   "55", // symbol
-  "84", // bid
-  "85", // bid size
-  "86", // ask
-  "88", // ask size
-  "7059", // size / misc depending on venue
+  "70", // high
+  "71", // low
+  "82", // change price
+  "83", // change percent
+  "84", // bid price
+  "85", // ask size
+  "86", // ask price
+  "87", // volume (formatted)
+  "87_raw", // volume (raw integer)
+  "88", // bid size
+  "7059", // last size
+  "7295", // open
+  "7296", // prior close
+  "7741", // prior day close (alternate)
+  "7762", // days volume
 ] as const;
 
 const DEFAULT_HISTORY_BAR_LIMIT = 200;
@@ -644,37 +654,50 @@ export function parseSnapshotQuote(
   providerContractId: string | null,
   payload: Record<string, unknown>,
 ): QuoteSnapshot {
+  const lastRaw = firstDefined(
+    asNumber(payload["31"]),
+    asNumber(payload["last"]),
+    asNumber(payload["price"]),
+  );
+  const bidRaw = firstDefined(
+    asNumber(payload["84"]),
+    asNumber(payload["bid"]),
+  );
+  const askRaw = firstDefined(
+    asNumber(payload["86"]),
+    asNumber(payload["ask"]),
+  );
+  // IBKR snapshots frequently omit the last-traded price (esp. on paper
+  // accounts or for tickers without a recent print in the snapshot window).
+  // Fall back to the bid/ask midpoint, then ask, then bid so the watchlist
+  // surfaces a sensible "last" instead of 0.
+  const midpoint =
+    bidRaw !== null && askRaw !== null && bidRaw > 0 && askRaw > 0
+      ? (bidRaw + askRaw) / 2
+      : null;
   const price =
-    firstDefined(
-      asNumber(payload["31"]),
-      asNumber(payload["last"]),
-      asNumber(payload["price"]),
-    ) ?? 0;
-  const bid =
-    firstDefined(
-      asNumber(payload["84"]),
-      asNumber(payload["bid"]),
-    ) ?? 0;
-  const ask =
-    firstDefined(
-      asNumber(payload["86"]),
-      asNumber(payload["ask"]),
-      bid,
-    ) ?? bid;
+    (lastRaw !== null && lastRaw > 0 ? lastRaw : null) ??
+    midpoint ??
+    (askRaw !== null && askRaw > 0 ? askRaw : null) ??
+    (bidRaw !== null && bidRaw > 0 ? bidRaw : null) ??
+    0;
+  const bid = bidRaw ?? 0;
+  const ask = askRaw ?? bid;
   const bidSize =
     firstDefined(
-      asNumber(payload["85"]),
+      asNumber(payload["88"]),
       asNumber(payload["bidSize"]),
-      asNumber(payload["7059"]),
     ) ?? 0;
   const askSize =
     firstDefined(
-      asNumber(payload["88"]),
+      asNumber(payload["85"]),
       asNumber(payload["askSize"]),
+      asNumber(payload["7059"]),
     ) ?? 0;
   const prevClose =
     firstDefined(
       asNumber(payload["7296"]),
+      asNumber(payload["7741"]),
       asNumber(payload["prevClose"]),
       asNumber(payload["close"]),
     );
@@ -695,11 +718,27 @@ export function parseSnapshotQuote(
     );
   const volume =
     firstDefined(
+      asNumber(payload["87_raw"]),
+      asNumber(payload["7762"]),
       asNumber(payload["87"]),
       asNumber(payload["volume"]),
     );
-  const change = prevClose !== null ? price - prevClose : 0;
-  const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+  // Prefer IBKR-supplied change fields when present; fall back to
+  // computing from price - prevClose. This handles the common case where
+  // last is 0 but IBKR still publishes a daily change against prior close.
+  const ibkrChange = firstDefined(
+    asNumber(payload["82"]),
+    asNumber(payload["change"]),
+  );
+  const ibkrChangePct = firstDefined(
+    asNumber(payload["83"]),
+    asNumber(payload["changePercent"]),
+  );
+  const change =
+    ibkrChange ?? (prevClose !== null && price > 0 ? price - prevClose : 0);
+  const changePercent =
+    ibkrChangePct ??
+    (prevClose ? (change / prevClose) * 100 : 0);
   const updatedAt =
     toDate(payload["_updated"]) ??
     toDate(payload["updatedAt"]) ??

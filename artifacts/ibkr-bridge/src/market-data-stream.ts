@@ -98,6 +98,10 @@ export class IbkrMarketDataStream {
     QuoteSubscriptionEntry
   >();
   private readonly quotesByConid = new Map<string, QuoteSnapshot>();
+  private readonly rawPayloadsByConid = new Map<
+    string,
+    Record<string, unknown>
+  >();
   private readonly depthSubscriptionsByKey = new Map<
     string,
     DepthSubscriptionEntry
@@ -144,7 +148,20 @@ export class IbkrMarketDataStream {
         return;
       }
 
-      this.quotesByConid.set(conid, parseSnapshotQuote(symbol, conid, record));
+      // IBKR streams partial field updates per tick. Merge incoming
+      // fields into the cached payload so accumulated state (high/low/
+      // open/prevClose/volume) survives subsequent ticks that only
+      // carry bid/ask/last deltas.
+      const previous = this.rawPayloadsByConid.get(conid) ?? {};
+      const merged: Record<string, unknown> = { ...previous };
+      for (const [key, value] of Object.entries(record)) {
+        if (value === null || value === undefined || value === "") {
+          continue;
+        }
+        merged[key] = value;
+      }
+      this.rawPayloadsByConid.set(conid, merged);
+      this.quotesByConid.set(conid, parseSnapshotQuote(symbol, conid, merged));
       return;
     }
 
@@ -197,7 +214,28 @@ export class IbkrMarketDataStream {
     }
 
     for (const subscription of this.quoteSubscriptionsByConid.values()) {
-      this.socket.send(`smd+${subscription.conid}+{"fields":["31","55","84","85","86","88","7059"]}`);
+      this.socket.send(
+        `smd+${subscription.conid}+${JSON.stringify({
+          fields: [
+            "31",
+            "55",
+            "70",
+            "71",
+            "82",
+            "83",
+            "84",
+            "85",
+            "86",
+            "87",
+            "88",
+            "7059",
+            "7295",
+            "7296",
+            "7741",
+            "7762",
+          ],
+        })}`,
+      );
     }
 
     for (const subscription of this.depthSubscriptionsByKey.values()) {
