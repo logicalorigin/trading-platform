@@ -1107,7 +1107,7 @@ const resolveSessionKey = (
   bar: ChartBar,
 ): RayReplicaSessionOption | null => {
   const minutes = resolveNewYorkMinutes(bar);
-  if (!Number.isFinite(minutes)) {
+  if (minutes == null) {
     return null;
   }
 
@@ -1129,7 +1129,7 @@ const resolveSessionKey = (
 
 const resolveSessionLabel = (bar: ChartBar): string => {
   const minutes = resolveNewYorkMinutes(bar);
-  if (!Number.isFinite(minutes)) {
+  if (minutes == null) {
     return "Waiting";
   }
 
@@ -2405,7 +2405,7 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
-        if (showStructure && bullishChoch) {
+        if (showStructure && bullishChoch && passesSignalGates) {
           events.push(
             buildEvent(
               `${script.scriptKey}-signal-long-${index}`,
@@ -2428,6 +2428,9 @@ export function createRayReplicaPineRuntimeAdapter(
               },
             ),
           );
+        }
+
+        if (showStructure && bullishChoch) {
           events.push(
             buildEvent(
               `${script.scriptKey}-choch-event-long-${index}`,
@@ -2435,12 +2438,17 @@ export function createRayReplicaPineRuntimeAdapter(
               index,
               "bullish_choch",
               "long",
-              "BUY",
+              passesSignalGates ? "BUY" : "CHOCH",
+              passesSignalGates
+                ? undefined
+                : {
+                    gated: true,
+                  },
             ),
           );
         }
 
-        if (showStructure && bearishChoch) {
+        if (showStructure && bearishChoch && passesSignalGates) {
           events.push(
             buildEvent(
               `${script.scriptKey}-signal-short-${index}`,
@@ -2463,6 +2471,9 @@ export function createRayReplicaPineRuntimeAdapter(
               },
             ),
           );
+        }
+
+        if (showStructure && bearishChoch) {
           events.push(
             buildEvent(
               `${script.scriptKey}-choch-event-short-${index}`,
@@ -2470,12 +2481,17 @@ export function createRayReplicaPineRuntimeAdapter(
               index,
               "bearish_choch",
               "short",
-              "SELL",
+              passesSignalGates ? "SELL" : "CHOCH",
+              passesSignalGates
+                ? undefined
+                : {
+                    gated: true,
+                  },
             ),
           );
         }
 
-        if (showTpSl && bullishChoch) {
+        if (showTpSl && bullishChoch && passesSignalGates) {
           const stopLoss = Number.isFinite(lastSwingLow)
             ? lastSwingLow
             : chartBars[index].l;
@@ -2490,7 +2506,7 @@ export function createRayReplicaPineRuntimeAdapter(
           };
         }
 
-        if (showTpSl && bearishChoch) {
+        if (showTpSl && bearishChoch && passesSignalGates) {
           const stopLoss = Number.isFinite(lastSwingHigh)
             ? lastSwingHigh
             : chartBars[index].h;
@@ -2746,7 +2762,6 @@ export function createRayReplicaPineRuntimeAdapter(
         ? buildSessionKeyLevelSeries(chartBars)
         : null;
       const lastBarIndex = chartBars.length - 1;
-      const adx = computeAdx(chartBars, adxLength);
       const bbWidthPct = bbUpper.map((value, index) =>
         Number.isFinite(value) &&
         Number.isFinite(bbLower[index]) &&
