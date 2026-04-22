@@ -937,10 +937,13 @@ export async function getBars(input: {
 }) {
   const bridgeClient = getIbkrClient();
   const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;
+  // Default to including extended hours across ALL timeframes so the "last close"
+  // a chart shows is consistent regardless of the selected interval. Without this,
+  // 1d returned RTH-only bars while 1m/5m/15m/1h returned extended-hours bars,
+  // causing the most-recent price to differ depending on which interval was active.
+  // Callers (e.g. backtest) can still pass outsideRth=false explicitly for strict RTH.
   const outsideRth =
-    typeof input.outsideRth === "boolean"
-      ? input.outsideRth
-      : input.timeframe !== "1d";
+    typeof input.outsideRth === "boolean" ? input.outsideRth : true;
   const isBrokerHistoryTimeframe = ["1m", "5m", "15m", "1h", "1d"].includes(
     input.timeframe,
   );
