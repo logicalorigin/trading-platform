@@ -114,4 +114,5 @@ export interface IbkrBridgeProvider {
     search?: string;
     limit?: number;
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }>;
+  prewarmQuoteSubscriptions?(symbols: string[]): Promise<void>;
 }

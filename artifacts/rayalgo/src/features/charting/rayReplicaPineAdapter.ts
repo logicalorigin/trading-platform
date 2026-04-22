@@ -30,6 +30,11 @@ export type RayReplicaDashboardPosition =
   | "bottom-left"
   | "bottom-right";
 export type RayReplicaDashboardSize = "tiny" | "small" | "normal" | "large";
+export type RayReplicaSessionOption =
+  | "asia"
+  | "london"
+  | "new_york_am"
+  | "new_york_pm";
 
 export type RayReplicaRuntimeSettings = {
   timeHorizon: number;
@@ -46,6 +51,16 @@ export type RayReplicaRuntimeSettings = {
   mtf1: RayReplicaTimeframeOption;
   mtf2: RayReplicaTimeframeOption;
   mtf3: RayReplicaTimeframeOption;
+  requireMtf1: boolean;
+  requireMtf2: boolean;
+  requireMtf3: boolean;
+  requireAdx: boolean;
+  adxMin: number;
+  requireVolScoreRange: boolean;
+  volScoreMin: number;
+  volScoreMax: number;
+  restrictToSelectedSessions: boolean;
+  sessions: RayReplicaSessionOption[];
   tp1Rr: number;
   tp2Rr: number;
   tp3Rr: number;
@@ -67,22 +82,32 @@ export type RayReplicaRuntimeSettings = {
 export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   timeHorizon: 10,
   bosConfirmation: "close",
-  basisLength: 80,
+  basisLength: 21,
   atrLength: 14,
-  atrSmoothing: 21,
-  volatilityMultiplier: 2,
+  atrSmoothing: 14,
+  volatilityMultiplier: 1.5,
   wireSpread: 0.5,
   shadowLength: 20,
   shadowStdDev: 2,
   adxLength: 14,
   volumeMaLength: 20,
-  mtf1: "1h",
-  mtf2: "4h",
-  mtf3: "D",
-  tp1Rr: 0.5,
-  tp2Rr: 1,
-  tp3Rr: 1.7,
-  dashboardPosition: "bottom-right",
+  mtf1: "15m",
+  mtf2: "1h",
+  mtf3: "4h",
+  requireMtf1: false,
+  requireMtf2: false,
+  requireMtf3: false,
+  requireAdx: false,
+  adxMin: 20,
+  requireVolScoreRange: false,
+  volScoreMin: 25,
+  volScoreMax: 85,
+  restrictToSelectedSessions: false,
+  sessions: ["new_york_am", "new_york_pm"],
+  tp1Rr: 1,
+  tp2Rr: 2,
+  tp3Rr: 3,
+  dashboardPosition: "top-left",
   dashboardSize: "small",
   showWires: true,
   showShadow: true,
@@ -122,6 +147,7 @@ const SUPPORT_RESISTANCE_MIN_ZONE_DISTANCE_PERCENT = 0.05;
 const SUPPORT_RESISTANCE_THICKNESS_MULTIPLIER = 0.25;
 const SUPPORT_RESISTANCE_MAX_ZONES = 7;
 const SUPPORT_RESISTANCE_EXTENSION_BARS = 100;
+export const RAY_REPLICA_TIME_HORIZON_OPTIONS = [6, 8, 10, 14, 20] as const;
 const RAY_REPLICA_MTF_OPTIONS: ReadonlyArray<RayReplicaTimeframeOption> = [
   "1m",
   "2m",
@@ -138,6 +164,115 @@ const RAY_REPLICA_DASHBOARD_POSITION_OPTIONS: ReadonlyArray<RayReplicaDashboardP
   ["top-left", "top-right", "bottom-left", "bottom-right"];
 const RAY_REPLICA_DASHBOARD_SIZE_OPTIONS: ReadonlyArray<RayReplicaDashboardSize> =
   ["tiny", "small", "normal", "large"];
+export const RAY_REPLICA_SESSION_OPTIONS: ReadonlyArray<{
+  value: RayReplicaSessionOption;
+  label: string;
+}> = [
+  { value: "asia", label: "Asia" },
+  { value: "london", label: "London" },
+  { value: "new_york_am", label: "NY AM" },
+  { value: "new_york_pm", label: "NY PM" },
+];
+export const RAY_REPLICA_BAND_PROFILE_OPTIONS = [
+  {
+    value: "classic",
+    label: "Classic",
+    settings: {
+      basisLength: 100,
+      atrLength: 14,
+      atrSmoothing: 21,
+      volatilityMultiplier: 2,
+    },
+  },
+  {
+    value: "balanced",
+    label: "Balanced",
+    settings: {
+      basisLength: 21,
+      atrLength: 14,
+      atrSmoothing: 14,
+      volatilityMultiplier: 1.5,
+    },
+  },
+  {
+    value: "tight",
+    label: "Tight",
+    settings: {
+      basisLength: 13,
+      atrLength: 10,
+      atrSmoothing: 10,
+      volatilityMultiplier: 1.15,
+    },
+  },
+  {
+    value: "wide",
+    label: "Wide",
+    settings: {
+      basisLength: 34,
+      atrLength: 21,
+      atrSmoothing: 21,
+      volatilityMultiplier: 2.1,
+    },
+  },
+] as const;
+
+type RayReplicaNormalizedSettings = {
+  marketStructure: {
+    timeHorizon: number;
+    bosConfirmation: RayReplicaBosConfirmation;
+  };
+  bands: {
+    basisLength: number;
+    atrLength: number;
+    atrSmoothing: number;
+    volatilityMultiplier: number;
+  };
+  confirmation: {
+    adxLength: number;
+    volumeMaLength: number;
+    mtf1: RayReplicaTimeframeOption;
+    mtf2: RayReplicaTimeframeOption;
+    mtf3: RayReplicaTimeframeOption;
+    requireMtf1: boolean;
+    requireMtf2: boolean;
+    requireMtf3: boolean;
+    requireAdx: boolean;
+    adxMin: number;
+    requireVolScoreRange: boolean;
+    volScoreMin: number;
+    volScoreMax: number;
+    restrictToSelectedSessions: boolean;
+    sessions: RayReplicaSessionOption[];
+  };
+  infoPanel: {
+    visible: boolean;
+    position: RayReplicaDashboardPosition;
+    size: RayReplicaDashboardSize;
+  };
+  risk: {
+    showTpSl: boolean;
+    tp1Rr: number;
+    tp2Rr: number;
+    tp3Rr: number;
+  };
+  appearance: {
+    waitForBarClose: boolean;
+    showWires: boolean;
+    showShadow: boolean;
+    showKeyLevels: boolean;
+    showStructure: boolean;
+    showOrderBlocks: boolean;
+    showSupportResistance: boolean;
+    showDashboard: boolean;
+    showRegimeWindows: boolean;
+    colorCandles: boolean;
+  };
+  overlays: {
+    wireSpread: number;
+    shadowLength: number;
+    shadowStdDev: number;
+  };
+};
 
 const resolveIntegerSetting = (
   value: unknown,
@@ -187,6 +322,82 @@ const resolveEnumSetting = <T extends string>(
   return allowed.includes(resolved) ? resolved : fallback;
 };
 
+const resolveSessionSelections = (
+  value: unknown,
+  fallback: RayReplicaSessionOption[],
+): RayReplicaSessionOption[] => {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+
+  const allowed = new Set(
+    RAY_REPLICA_SESSION_OPTIONS.map((option) => option.value),
+  );
+  const sessions = value.reduce<RayReplicaSessionOption[]>((acc, entry) => {
+    const resolved = String(entry || "").trim() as RayReplicaSessionOption;
+    if (!allowed.has(resolved) || acc.includes(resolved)) {
+      return acc;
+    }
+    acc.push(resolved);
+    return acc;
+  }, []);
+
+  return sessions.length ? sessions : [...fallback];
+};
+
+const resolvePercentLikeSetting = (
+  value: unknown,
+  fallback: number,
+): number => {
+  const resolved = Number(value);
+  if (!Number.isFinite(resolved)) {
+    return fallback;
+  }
+
+  return Number(Math.max(0, Math.min(100, resolved)).toFixed(1));
+};
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+
+const resolveDashboardPositionSetting = (
+  value: unknown,
+  fallback: RayReplicaDashboardPosition,
+): RayReplicaDashboardPosition => {
+  if (value === "top_left") {
+    return "top-left";
+  }
+  if (value === "top_right") {
+    return "top-right";
+  }
+  if (value === "bottom_left") {
+    return "bottom-left";
+  }
+  if (value === "bottom_right") {
+    return "bottom-right";
+  }
+
+  return resolveEnumSetting(
+    value,
+    RAY_REPLICA_DASHBOARD_POSITION_OPTIONS,
+    fallback,
+  );
+};
+
+const resolveDashboardSizeSetting = (
+  value: unknown,
+  fallback: RayReplicaDashboardSize,
+): RayReplicaDashboardSize => {
+  if (value === "compact") {
+    return "small";
+  }
+  if (value === "expanded") {
+    return "large";
+  }
+
+  return resolveEnumSetting(value, RAY_REPLICA_DASHBOARD_SIZE_OPTIONS, fallback);
+};
+
 const withHexAlpha = (color: string, alpha: string): string =>
   /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}${alpha}` : color;
 
@@ -218,165 +429,299 @@ const formatCompactVolume = (value: number): string => {
   return value.toFixed(0);
 };
 
+function normalizeRayReplicaSettings(
+  settings?: Record<string, unknown>,
+): RayReplicaNormalizedSettings {
+  const input = settings ?? {};
+  const marketStructure = asRecord(input.marketStructure);
+  const bands = asRecord(input.bands);
+  const confirmation = asRecord(input.confirmation);
+  const infoPanel = asRecord(input.infoPanel);
+  const risk = asRecord(input.risk);
+  const appearance = asRecord(input.appearance);
+
+  const volScoreMin = resolvePercentLikeSetting(
+    confirmation.volScoreMin ?? input.volScoreMin,
+    DEFAULT_RAY_REPLICA_SETTINGS.volScoreMin,
+  );
+
+  return {
+    marketStructure: {
+      timeHorizon: resolveIntegerSetting(
+        marketStructure.timeHorizon ?? input.timeHorizon,
+        DEFAULT_RAY_REPLICA_SETTINGS.timeHorizon,
+        3,
+        40,
+      ),
+      bosConfirmation: resolveEnumSetting(
+        marketStructure.bosConfirmation ?? input.bosConfirmation,
+        RAY_REPLICA_BOS_CONFIRMATION_OPTIONS,
+        DEFAULT_RAY_REPLICA_SETTINGS.bosConfirmation,
+      ),
+    },
+    bands: {
+      basisLength: resolveIntegerSetting(
+        bands.basisLength ?? input.basisLength,
+        DEFAULT_RAY_REPLICA_SETTINGS.basisLength,
+        5,
+        240,
+      ),
+      atrLength: resolveIntegerSetting(
+        bands.atrLength ?? input.atrLength,
+        DEFAULT_RAY_REPLICA_SETTINGS.atrLength,
+        2,
+        100,
+      ),
+      atrSmoothing: resolveIntegerSetting(
+        bands.atrSmoothing ?? input.atrSmoothing,
+        DEFAULT_RAY_REPLICA_SETTINGS.atrSmoothing,
+        2,
+        200,
+      ),
+      volatilityMultiplier: resolveFloatSetting(
+        bands.volatilityMultiplier ?? input.volatilityMultiplier,
+        DEFAULT_RAY_REPLICA_SETTINGS.volatilityMultiplier,
+        0.1,
+        10,
+      ),
+    },
+    confirmation: {
+      adxLength: resolveIntegerSetting(
+        confirmation.adxLength ?? input.adxLength,
+        DEFAULT_RAY_REPLICA_SETTINGS.adxLength,
+        2,
+        100,
+      ),
+      volumeMaLength: resolveIntegerSetting(
+        confirmation.volumeMaLength ?? input.volumeMaLength,
+        DEFAULT_RAY_REPLICA_SETTINGS.volumeMaLength,
+        2,
+        200,
+      ),
+      mtf1: resolveEnumSetting(
+        confirmation.mtf1 ?? input.mtf1,
+        RAY_REPLICA_MTF_OPTIONS,
+        DEFAULT_RAY_REPLICA_SETTINGS.mtf1,
+      ),
+      mtf2: resolveEnumSetting(
+        confirmation.mtf2 ?? input.mtf2,
+        RAY_REPLICA_MTF_OPTIONS,
+        DEFAULT_RAY_REPLICA_SETTINGS.mtf2,
+      ),
+      mtf3: resolveEnumSetting(
+        confirmation.mtf3 ?? input.mtf3,
+        RAY_REPLICA_MTF_OPTIONS,
+        DEFAULT_RAY_REPLICA_SETTINGS.mtf3,
+      ),
+      requireMtf1: resolveBooleanSetting(
+        confirmation.requireMtf1 ?? input.requireMtf1,
+        DEFAULT_RAY_REPLICA_SETTINGS.requireMtf1,
+      ),
+      requireMtf2: resolveBooleanSetting(
+        confirmation.requireMtf2 ?? input.requireMtf2,
+        DEFAULT_RAY_REPLICA_SETTINGS.requireMtf2,
+      ),
+      requireMtf3: resolveBooleanSetting(
+        confirmation.requireMtf3 ?? input.requireMtf3,
+        DEFAULT_RAY_REPLICA_SETTINGS.requireMtf3,
+      ),
+      requireAdx: resolveBooleanSetting(
+        confirmation.requireAdx ?? input.requireAdx,
+        DEFAULT_RAY_REPLICA_SETTINGS.requireAdx,
+      ),
+      adxMin: resolveFloatSetting(
+        confirmation.adxMin ?? input.adxMin,
+        DEFAULT_RAY_REPLICA_SETTINGS.adxMin,
+        0,
+        100,
+      ),
+      requireVolScoreRange: resolveBooleanSetting(
+        confirmation.requireVolScoreRange ?? input.requireVolScoreRange,
+        DEFAULT_RAY_REPLICA_SETTINGS.requireVolScoreRange,
+      ),
+      volScoreMin,
+      volScoreMax: resolvePercentLikeSetting(
+        Math.max(
+          volScoreMin,
+          Number(confirmation.volScoreMax ?? input.volScoreMax),
+        ),
+        DEFAULT_RAY_REPLICA_SETTINGS.volScoreMax,
+      ),
+      restrictToSelectedSessions: resolveBooleanSetting(
+        confirmation.restrictToSelectedSessions ?? input.restrictToSelectedSessions,
+        DEFAULT_RAY_REPLICA_SETTINGS.restrictToSelectedSessions,
+      ),
+      sessions: resolveSessionSelections(
+        confirmation.sessions ?? input.sessions,
+        DEFAULT_RAY_REPLICA_SETTINGS.sessions,
+      ),
+    },
+    infoPanel: {
+      visible: resolveBooleanSetting(
+        infoPanel.visible ?? input.showDashboard,
+        DEFAULT_RAY_REPLICA_SETTINGS.showDashboard,
+      ),
+      position: resolveDashboardPositionSetting(
+        infoPanel.position ?? input.dashboardPosition,
+        DEFAULT_RAY_REPLICA_SETTINGS.dashboardPosition,
+      ),
+      size: resolveDashboardSizeSetting(
+        infoPanel.size ?? input.dashboardSize,
+        DEFAULT_RAY_REPLICA_SETTINGS.dashboardSize,
+      ),
+    },
+    risk: {
+      showTpSl: resolveBooleanSetting(
+        risk.showTpSl ?? input.showTpSl,
+        DEFAULT_RAY_REPLICA_SETTINGS.showTpSl,
+      ),
+      tp1Rr: resolveFloatSetting(
+        risk.tp1Rr ?? input.tp1Rr,
+        DEFAULT_RAY_REPLICA_SETTINGS.tp1Rr,
+        0.25,
+        10,
+      ),
+      tp2Rr: resolveFloatSetting(
+        risk.tp2Rr ?? input.tp2Rr,
+        DEFAULT_RAY_REPLICA_SETTINGS.tp2Rr,
+        0.25,
+        10,
+      ),
+      tp3Rr: resolveFloatSetting(
+        risk.tp3Rr ?? input.tp3Rr,
+        DEFAULT_RAY_REPLICA_SETTINGS.tp3Rr,
+        0.25,
+        10,
+      ),
+    },
+    appearance: {
+      waitForBarClose: resolveBooleanSetting(
+        appearance.waitForBarClose ?? input.waitForBarClose,
+        DEFAULT_RAY_REPLICA_SETTINGS.waitForBarClose,
+      ),
+      showWires: resolveBooleanSetting(
+        input.showWires,
+        DEFAULT_RAY_REPLICA_SETTINGS.showWires,
+      ),
+      showShadow: resolveBooleanSetting(
+        input.showShadow,
+        DEFAULT_RAY_REPLICA_SETTINGS.showShadow,
+      ),
+      showKeyLevels: resolveBooleanSetting(
+        input.showKeyLevels,
+        DEFAULT_RAY_REPLICA_SETTINGS.showKeyLevels,
+      ),
+      showStructure: resolveBooleanSetting(
+        input.showStructure,
+        DEFAULT_RAY_REPLICA_SETTINGS.showStructure,
+      ),
+      showOrderBlocks: resolveBooleanSetting(
+        input.showOrderBlocks,
+        DEFAULT_RAY_REPLICA_SETTINGS.showOrderBlocks,
+      ),
+      showSupportResistance: resolveBooleanSetting(
+        input.showSupportResistance,
+        DEFAULT_RAY_REPLICA_SETTINGS.showSupportResistance,
+      ),
+      showDashboard: resolveBooleanSetting(
+        infoPanel.visible ?? input.showDashboard,
+        DEFAULT_RAY_REPLICA_SETTINGS.showDashboard,
+      ),
+      showRegimeWindows: resolveBooleanSetting(
+        input.showRegimeWindows,
+        DEFAULT_RAY_REPLICA_SETTINGS.showRegimeWindows,
+      ),
+      colorCandles: resolveBooleanSetting(
+        input.colorCandles,
+        DEFAULT_RAY_REPLICA_SETTINGS.colorCandles,
+      ),
+    },
+    overlays: {
+      wireSpread: resolveFloatSetting(
+        input.wireSpread,
+        DEFAULT_RAY_REPLICA_SETTINGS.wireSpread,
+        0.05,
+        5,
+      ),
+      shadowLength: resolveIntegerSetting(
+        input.shadowLength,
+        DEFAULT_RAY_REPLICA_SETTINGS.shadowLength,
+        5,
+        120,
+      ),
+      shadowStdDev: resolveFloatSetting(
+        input.shadowStdDev,
+        DEFAULT_RAY_REPLICA_SETTINGS.shadowStdDev,
+        0.25,
+        6,
+      ),
+    },
+  };
+}
+
 export function resolveRayReplicaRuntimeSettings(
   settings?: Record<string, unknown>,
 ): RayReplicaRuntimeSettings {
-  const input = settings ?? {};
+  const normalized = normalizeRayReplicaSettings(settings);
 
   return {
-    timeHorizon: resolveIntegerSetting(
-      input.timeHorizon,
-      DEFAULT_RAY_REPLICA_SETTINGS.timeHorizon,
-      3,
-      40,
-    ),
-    bosConfirmation: resolveEnumSetting(
-      input.bosConfirmation,
-      RAY_REPLICA_BOS_CONFIRMATION_OPTIONS,
-      DEFAULT_RAY_REPLICA_SETTINGS.bosConfirmation,
-    ),
-    basisLength: resolveIntegerSetting(
-      input.basisLength,
-      DEFAULT_RAY_REPLICA_SETTINGS.basisLength,
-      10,
-      240,
-    ),
-    atrLength: resolveIntegerSetting(
-      input.atrLength,
-      DEFAULT_RAY_REPLICA_SETTINGS.atrLength,
-      2,
-      100,
-    ),
-    atrSmoothing: resolveIntegerSetting(
-      input.atrSmoothing,
-      DEFAULT_RAY_REPLICA_SETTINGS.atrSmoothing,
-      2,
-      200,
-    ),
-    volatilityMultiplier: resolveFloatSetting(
-      input.volatilityMultiplier,
-      DEFAULT_RAY_REPLICA_SETTINGS.volatilityMultiplier,
-      0.25,
-      10,
-    ),
-    wireSpread: resolveFloatSetting(
-      input.wireSpread,
-      DEFAULT_RAY_REPLICA_SETTINGS.wireSpread,
-      0.05,
-      5,
-    ),
-    shadowLength: resolveIntegerSetting(
-      input.shadowLength,
-      DEFAULT_RAY_REPLICA_SETTINGS.shadowLength,
-      5,
-      120,
-    ),
-    shadowStdDev: resolveFloatSetting(
-      input.shadowStdDev,
-      DEFAULT_RAY_REPLICA_SETTINGS.shadowStdDev,
-      0.25,
-      6,
-    ),
-    adxLength: resolveIntegerSetting(
-      input.adxLength,
-      DEFAULT_RAY_REPLICA_SETTINGS.adxLength,
-      2,
-      100,
-    ),
-    volumeMaLength: resolveIntegerSetting(
-      input.volumeMaLength,
-      DEFAULT_RAY_REPLICA_SETTINGS.volumeMaLength,
-      2,
-      200,
-    ),
-    mtf1: resolveEnumSetting(
-      input.mtf1,
-      RAY_REPLICA_MTF_OPTIONS,
-      DEFAULT_RAY_REPLICA_SETTINGS.mtf1,
-    ),
-    mtf2: resolveEnumSetting(
-      input.mtf2,
-      RAY_REPLICA_MTF_OPTIONS,
-      DEFAULT_RAY_REPLICA_SETTINGS.mtf2,
-    ),
-    mtf3: resolveEnumSetting(
-      input.mtf3,
-      RAY_REPLICA_MTF_OPTIONS,
-      DEFAULT_RAY_REPLICA_SETTINGS.mtf3,
-    ),
-    tp1Rr: resolveFloatSetting(
-      input.tp1Rr,
-      DEFAULT_RAY_REPLICA_SETTINGS.tp1Rr,
-      0.25,
-      10,
-    ),
-    tp2Rr: resolveFloatSetting(
-      input.tp2Rr,
-      DEFAULT_RAY_REPLICA_SETTINGS.tp2Rr,
-      0.25,
-      10,
-    ),
-    tp3Rr: resolveFloatSetting(
-      input.tp3Rr,
-      DEFAULT_RAY_REPLICA_SETTINGS.tp3Rr,
-      0.25,
-      10,
-    ),
-    dashboardPosition: resolveEnumSetting(
-      input.dashboardPosition,
-      RAY_REPLICA_DASHBOARD_POSITION_OPTIONS,
-      DEFAULT_RAY_REPLICA_SETTINGS.dashboardPosition,
-    ),
-    dashboardSize: resolveEnumSetting(
-      input.dashboardSize,
-      RAY_REPLICA_DASHBOARD_SIZE_OPTIONS,
-      DEFAULT_RAY_REPLICA_SETTINGS.dashboardSize,
-    ),
-    showWires: resolveBooleanSetting(
-      input.showWires,
-      DEFAULT_RAY_REPLICA_SETTINGS.showWires,
-    ),
-    showShadow: resolveBooleanSetting(
-      input.showShadow,
-      DEFAULT_RAY_REPLICA_SETTINGS.showShadow,
-    ),
-    showKeyLevels: resolveBooleanSetting(
-      input.showKeyLevels,
-      DEFAULT_RAY_REPLICA_SETTINGS.showKeyLevels,
-    ),
-    showStructure: resolveBooleanSetting(
-      input.showStructure,
-      DEFAULT_RAY_REPLICA_SETTINGS.showStructure,
-    ),
-    showOrderBlocks: resolveBooleanSetting(
-      input.showOrderBlocks,
-      DEFAULT_RAY_REPLICA_SETTINGS.showOrderBlocks,
-    ),
-    showSupportResistance: resolveBooleanSetting(
-      input.showSupportResistance,
-      DEFAULT_RAY_REPLICA_SETTINGS.showSupportResistance,
-    ),
-    showTpSl: resolveBooleanSetting(
-      input.showTpSl,
-      DEFAULT_RAY_REPLICA_SETTINGS.showTpSl,
-    ),
-    showDashboard: resolveBooleanSetting(
-      input.showDashboard,
-      DEFAULT_RAY_REPLICA_SETTINGS.showDashboard,
-    ),
-    showRegimeWindows: resolveBooleanSetting(
-      input.showRegimeWindows,
-      DEFAULT_RAY_REPLICA_SETTINGS.showRegimeWindows,
-    ),
-    colorCandles: resolveBooleanSetting(
-      input.colorCandles,
-      DEFAULT_RAY_REPLICA_SETTINGS.colorCandles,
-    ),
-    waitForBarClose: resolveBooleanSetting(
-      input.waitForBarClose,
-      DEFAULT_RAY_REPLICA_SETTINGS.waitForBarClose,
-    ),
+    timeHorizon: normalized.marketStructure.timeHorizon,
+    bosConfirmation: normalized.marketStructure.bosConfirmation,
+    basisLength: normalized.bands.basisLength,
+    atrLength: normalized.bands.atrLength,
+    atrSmoothing: normalized.bands.atrSmoothing,
+    volatilityMultiplier: normalized.bands.volatilityMultiplier,
+    wireSpread: normalized.overlays.wireSpread,
+    shadowLength: normalized.overlays.shadowLength,
+    shadowStdDev: normalized.overlays.shadowStdDev,
+    adxLength: normalized.confirmation.adxLength,
+    volumeMaLength: normalized.confirmation.volumeMaLength,
+    mtf1: normalized.confirmation.mtf1,
+    mtf2: normalized.confirmation.mtf2,
+    mtf3: normalized.confirmation.mtf3,
+    requireMtf1: normalized.confirmation.requireMtf1,
+    requireMtf2: normalized.confirmation.requireMtf2,
+    requireMtf3: normalized.confirmation.requireMtf3,
+    requireAdx: normalized.confirmation.requireAdx,
+    adxMin: normalized.confirmation.adxMin,
+    requireVolScoreRange: normalized.confirmation.requireVolScoreRange,
+    volScoreMin: normalized.confirmation.volScoreMin,
+    volScoreMax: normalized.confirmation.volScoreMax,
+    restrictToSelectedSessions: normalized.confirmation.restrictToSelectedSessions,
+    sessions: normalized.confirmation.sessions,
+    tp1Rr: normalized.risk.tp1Rr,
+    tp2Rr: normalized.risk.tp2Rr,
+    tp3Rr: normalized.risk.tp3Rr,
+    dashboardPosition: normalized.infoPanel.position,
+    dashboardSize: normalized.infoPanel.size,
+    showWires: normalized.appearance.showWires,
+    showShadow: normalized.appearance.showShadow,
+    showKeyLevels: normalized.appearance.showKeyLevels,
+    showStructure: normalized.appearance.showStructure,
+    showOrderBlocks: normalized.appearance.showOrderBlocks,
+    showSupportResistance: normalized.appearance.showSupportResistance,
+    showTpSl: normalized.risk.showTpSl,
+    showDashboard: normalized.appearance.showDashboard,
+    showRegimeWindows: normalized.appearance.showRegimeWindows,
+    colorCandles: normalized.appearance.colorCandles,
+    waitForBarClose: normalized.appearance.waitForBarClose,
   };
+}
+
+export function resolveRayReplicaBandProfile(
+  settings?: Record<string, unknown> | RayReplicaRuntimeSettings,
+) {
+  const normalized = resolveRayReplicaRuntimeSettings(settings);
+  return (
+    RAY_REPLICA_BAND_PROFILE_OPTIONS.find(
+      (profile) =>
+        profile.settings.basisLength === normalized.basisLength &&
+        profile.settings.atrLength === normalized.atrLength &&
+        profile.settings.atrSmoothing === normalized.atrSmoothing &&
+        profile.settings.volatilityMultiplier ===
+          normalized.volatilityMultiplier,
+    ) || null
+  );
 }
 
 type StructureKind = "bos" | "choch";
@@ -521,30 +866,37 @@ const computeSma = (values: number[], period: number): number[] => {
   return result;
 };
 
-const computeWma = (values: number[], period: number): number[] => {
+const computeEma = (values: number[], period: number): number[] => {
   const result = new Array<number>(values.length).fill(Number.NaN);
   if (!values.length || period <= 0) {
     return result;
   }
 
-  const denominator = (period * (period + 1)) / 2;
-  for (let index = period - 1; index < values.length; index += 1) {
-    let weightedSum = 0;
-    let valid = true;
+  const multiplier = 2 / (period + 1);
+  let seedSum = 0;
 
-    for (let offset = 0; offset < period; offset += 1) {
-      const value = values[index - period + 1 + offset];
-      if (!Number.isFinite(value)) {
-        valid = false;
-        break;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+
+    if (index < period) {
+      seedSum += value;
+      if (index === period - 1) {
+        result[index] = Number((seedSum / period).toFixed(6));
       }
-
-      weightedSum += value * (offset + 1);
+      continue;
     }
 
-    if (valid) {
-      result[index] = Number((weightedSum / denominator).toFixed(6));
+    const previous = result[index - 1];
+    if (!Number.isFinite(previous)) {
+      continue;
     }
+
+    result[index] = Number(
+      (value * multiplier + previous * (1 - multiplier)).toFixed(6),
+    );
   }
 
   return result;
@@ -734,29 +1086,126 @@ const formatDashboardTimeframe = (timeframe: string): string =>
               ? `${timeframe}m`
               : timeframe;
 
-const resolveSessionLabel = (bar: ChartBar): string => {
-  const value = new Date(bar.time * 1000);
-  const minutes = value.getUTCHours() * 60 + value.getUTCMinutes();
-  const inSession = (start: number, end: number) =>
-    start <= end
-      ? minutes >= start && minutes < end
-      : minutes >= start || minutes < end;
+const resolveNewYorkMinutes = (bar: ChartBar): number | null => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(bar.time * 1000));
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
 
-  if (inSession(8 * 60, 17 * 60)) {
-    return "London";
-  }
-  if (inSession(13 * 60, 22 * 60)) {
-    return "New York";
-  }
-  if (inSession(0, 9 * 60)) {
-    return "Tokyo";
-  }
-  if (inSession(22 * 60, 7 * 60)) {
-    return "Sydney";
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return null;
   }
 
-  return "Closed";
+  return hour * 60 + minute;
 };
+
+const resolveSessionKey = (
+  bar: ChartBar,
+): RayReplicaSessionOption | null => {
+  const minutes = resolveNewYorkMinutes(bar);
+  if (!Number.isFinite(minutes)) {
+    return null;
+  }
+
+  if (minutes >= 19 * 60 || minutes < 3 * 60) {
+    return "asia";
+  }
+  if (minutes >= 3 * 60 && minutes < 9 * 60 + 30) {
+    return "london";
+  }
+  if (minutes >= 9 * 60 + 30 && minutes < 12 * 60) {
+    return "new_york_am";
+  }
+  if (minutes >= 15 * 60 && minutes <= 16 * 60) {
+    return "new_york_pm";
+  }
+
+  return null;
+};
+
+const resolveSessionLabel = (bar: ChartBar): string => {
+  const minutes = resolveNewYorkMinutes(bar);
+  if (!Number.isFinite(minutes)) {
+    return "Waiting";
+  }
+
+  if (minutes < 9 * 60 + 30) {
+    return "Pre";
+  }
+  if (minutes < 12 * 60) {
+    return "NY AM";
+  }
+  if (minutes < 15 * 60) {
+    return "Midday";
+  }
+  if (minutes <= 16 * 60) {
+    return "NY PM";
+  }
+
+  return "Post";
+};
+
+const summarizeRequiredSessions = (
+  sessions: RayReplicaSessionOption[] = [],
+): string => {
+  if (!sessions.length) {
+    return "All";
+  }
+
+  return sessions
+    .map((value) =>
+      value === "new_york_am"
+        ? "NY AM"
+        : value === "new_york_pm"
+          ? "NY PM"
+          : value === "asia"
+            ? "Asia"
+            : value === "london"
+              ? "London"
+              : value,
+    )
+    .join(" · ");
+};
+
+const computeVolumeRatioAt = (
+  chartBars: ChartBar[],
+  index: number,
+  period: number,
+): number => {
+  if (index < 0) {
+    return Number.NaN;
+  }
+
+  const start = Math.max(0, index - period + 1);
+  const window = chartBars.slice(start, index + 1);
+  const averageVolume =
+    window.reduce((sum, bar) => sum + bar.v, 0) / Math.max(1, window.length);
+
+  if (!Number.isFinite(averageVolume) || averageVolume <= 0) {
+    return Number.NaN;
+  }
+
+  return Number((chartBars[index].v / averageVolume).toFixed(2));
+};
+
+const computeVolatilityScore = (
+  atrSeries: number[],
+  closes: number[],
+): number[] =>
+  atrSeries.map((value, index) => {
+    const close = closes[index];
+    if (!Number.isFinite(value) || !Number.isFinite(close) || close <= 0) {
+      return Number.NaN;
+    }
+
+    return Number(
+      Math.max(0, Math.min(100, ((value / close) * 100 * 80))).toFixed(1),
+    );
+  });
 
 const resolveBucketStartMs = (timeMs: number, timeframe: string): number => {
   if (/^\d+$/.test(timeframe)) {
@@ -833,7 +1282,7 @@ const resolveTrendDirectionForBars = (
     return 1;
   }
 
-  const basis = computeWma(
+  const basis = computeEma(
     chartBars.map((bar) => bar.c),
     settings.basisLength,
   );
@@ -1414,6 +1863,16 @@ export function createRayReplicaPineRuntimeAdapter(
         mtf1,
         mtf2,
         mtf3,
+        requireMtf1,
+        requireMtf2,
+        requireMtf3,
+        requireAdx,
+        adxMin,
+        requireVolScoreRange,
+        volScoreMin,
+        volScoreMax,
+        restrictToSelectedSessions,
+        sessions,
         tp1Rr,
         tp2Rr,
         tp3Rr,
@@ -1432,9 +1891,10 @@ export function createRayReplicaPineRuntimeAdapter(
         waitForBarClose,
       } = resolveRayReplicaRuntimeSettings(settings);
       const closes = chartBars.map((bar) => bar.c);
-      const basis = computeWma(closes, basisLength);
+      const basis = computeEma(closes, basisLength);
       const atrRaw = computeAtr(chartBars, atrLength);
       const atrSmoothed = computeSma(atrRaw, atrSmoothing);
+      const adx = computeAdx(chartBars, adxLength);
       const upperBand = basis.map((value, index) =>
         Number.isFinite(value) && Number.isFinite(atrSmoothed[index])
           ? Number(
@@ -1466,6 +1926,7 @@ export function createRayReplicaPineRuntimeAdapter(
           ? Number((value - bbDev[index]).toFixed(6))
           : Number.NaN,
       );
+      const volatilityScore = computeVolatilityScore(atrRaw, closes);
 
       const markers: ChartMarker[] = [];
       const events: IndicatorEvent[] = [];
@@ -1740,6 +2201,42 @@ export function createRayReplicaPineRuntimeAdapter(
             ? marketStructureDirection
             : trendDirection;
         regimeDirection[index] = activeRegimeDirection;
+        const signalDirection = bullishChoch ? 1 : bearishChoch ? -1 : 0;
+        const mtfDirections =
+          signalDirection !== 0
+            ? [mtf1, mtf2, mtf3].map((mtfTimeframe) =>
+                resolveTrendDirectionForBars(
+                  aggregateBarsForTimeframe(
+                    chartBars.slice(0, index + 1),
+                    mtfTimeframe,
+                  ),
+                  {
+                    basisLength,
+                    atrLength,
+                    atrSmoothing,
+                    volatilityMultiplier,
+                    waitForBarClose,
+                  },
+                ),
+              )
+            : [];
+        const currentAdx = adx[index];
+        const currentVolatilityScore = volatilityScore[index];
+        const currentSessionKey = resolveSessionKey(currentBar);
+        const passesSignalGates =
+          signalDirection === 0
+            ? false
+            : (!requireMtf1 || mtfDirections[0] === signalDirection) &&
+              (!requireMtf2 || mtfDirections[1] === signalDirection) &&
+              (!requireMtf3 || mtfDirections[2] === signalDirection) &&
+              (!requireAdx ||
+                (Number.isFinite(currentAdx) && currentAdx >= adxMin)) &&
+              (!requireVolScoreRange ||
+                (Number.isFinite(currentVolatilityScore) &&
+                  currentVolatilityScore >= volScoreMin &&
+                  currentVolatilityScore <= volScoreMax)) &&
+              (!restrictToSelectedSessions ||
+                (currentSessionKey != null && sessions.includes(currentSessionKey)));
 
         if (
           showStructure &&

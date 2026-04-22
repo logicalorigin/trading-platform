@@ -157,6 +157,11 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     return this.marketDataStream.getQuotes(symbols);
   }
 
+  async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
+    await this.refreshSession();
+    await this.marketDataStream.prewarmSymbols(symbols);
+  }
+
   async getHistoricalBars(input: {
     symbol: string;
     timeframe: HistoryBarTimeframe;

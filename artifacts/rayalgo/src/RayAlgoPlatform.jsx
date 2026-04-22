@@ -573,6 +573,8 @@ const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
       prevClose: null,
       volume: null,
       updatedAt: null,
+      spark: [],
+      sparkBars: [],
     };
   } else if (
     fallbackName &&
@@ -580,6 +582,13 @@ const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
       TRADE_TICKER_INFO[normalized].name === normalized)
   ) {
     TRADE_TICKER_INFO[normalized].name = fallbackName;
+  }
+
+  if (!Array.isArray(TRADE_TICKER_INFO[normalized].spark)) {
+    TRADE_TICKER_INFO[normalized].spark = [];
+  }
+  if (!Array.isArray(TRADE_TICKER_INFO[normalized].sparkBars)) {
+    TRADE_TICKER_INFO[normalized].sparkBars = [];
   }
 
   return TRADE_TICKER_INFO[normalized];
@@ -880,6 +889,8 @@ const syncRuntimeMarketData = (
     tradeInfo.prevClose = prevClose;
     tradeInfo.volume = volume;
     tradeInfo.updatedAt = updatedAt;
+    tradeInfo.spark = spark;
+    tradeInfo.sparkBars = sparklineBarsBySymbol[normalized] || [];
 
     if (!TRADE_FLOW_MARKERS[normalized]) {
       TRADE_FLOW_MARKERS[normalized] = genTradeFlowMarkers(
@@ -913,6 +924,7 @@ const syncRuntimeMarketData = (
       TRADE_TICKER_INFO[symbol]?.name ||
       symbol;
     const tradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
+    const runtimeSparkBars = sparklineBarsBySymbol[symbol] || [];
 
     tradeInfo.name = fallbackName;
     tradeInfo.price = quote.price ?? tradeInfo.price;
@@ -924,6 +936,11 @@ const syncRuntimeMarketData = (
     tradeInfo.prevClose = quote.prevClose ?? tradeInfo.prevClose ?? null;
     tradeInfo.volume = quote.volume ?? tradeInfo.volume ?? null;
     tradeInfo.updatedAt = quote.updatedAt ?? tradeInfo.updatedAt ?? null;
+    tradeInfo.spark = buildSparklineFromHistoricalBars(
+      runtimeSparkBars,
+      tradeInfo.spark,
+    );
+    tradeInfo.sparkBars = runtimeSparkBars;
   });
 
   INDICES.forEach((item) => {
@@ -951,6 +968,13 @@ const syncRuntimeMarketData = (
       item.spark,
     );
     item.sparkBars = sparklineBarsBySymbol[item.sym.toUpperCase()] || [];
+    const tradeInfo = ensureTradeTickerInfo(item.sym, item.name || item.sym);
+    tradeInfo.price = item.price;
+    tradeInfo.chg = item.chg;
+    tradeInfo.pct = item.pct;
+    tradeInfo.prevClose = item.prevClose ?? tradeInfo.prevClose ?? null;
+    tradeInfo.spark = item.spark;
+    tradeInfo.sparkBars = item.sparkBars;
   });
 
   MACRO_TICKERS.forEach((item) => {
@@ -973,6 +997,21 @@ const syncRuntimeMarketData = (
       prevClose !== 0
         ? ((item.price - prevClose) / prevClose) * 100
         : quote?.changePercent ?? null;
+    item.spark = buildSparklineFromHistoricalBars(
+      sparklineBarsBySymbol[item.sym.toUpperCase()],
+      item.spark,
+    );
+    item.sparkBars = sparklineBarsBySymbol[item.sym.toUpperCase()] || [];
+    const tradeInfo = ensureTradeTickerInfo(
+      item.sym,
+      item.label || item.name || item.sym,
+    );
+    tradeInfo.price = item.price;
+    tradeInfo.chg = item.chg;
+    tradeInfo.pct = item.pct;
+    tradeInfo.prevClose = item.prevClose ?? tradeInfo.prevClose ?? null;
+    tradeInfo.spark = item.spark;
+    tradeInfo.sparkBars = item.sparkBars;
   });
 
   RATES_PROXIES.forEach((item) => {

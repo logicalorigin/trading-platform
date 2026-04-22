@@ -1660,19 +1660,60 @@ export class IbkrClient {
 
     while (remainingBars > 0 && safety < 8) {
       const chunkBars = Math.min(remainingBars, HISTORY_RESPONSE_MAX_POINTS);
-      const payload = await this.request<unknown>(
-        "/iserver/marketdata/history",
-        {},
-        {
-          conid: resolvedContract.conid,
-          exchange: resolvedContract.listingExchange,
-          period: buildHistoryPeriod(timeframe, chunkBars),
-          bar,
-          startTime: formatHistoryStartTime(cursor),
-          outsideRth,
-          source: HISTORY_SOURCE_TO_IBKR[historySource],
-        },
-      );
+      const historyArgs = {
+        conid: resolvedContract.conid,
+        exchange: resolvedContract.listingExchange,
+        period: buildHistoryPeriod(timeframe, chunkBars),
+        bar,
+        startTime: formatHistoryStartTime(cursor),
+        outsideRth,
+        source: HISTORY_SOURCE_TO_IBKR[historySource],
+      };
+      // IBKR Client Portal occasionally returns a transient
+      // 500 "Chart data unavailable" for valid symbols, especially
+      // around session boundaries. Retry a couple of times before
+      // failing the user's chart request.
+      let payload: unknown;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          payload = await this.request<unknown>(
+            "/iserver/marketdata/history",
+            {},
+            historyArgs,
+          );
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+          const status =
+            typeof (error as { statusCode?: unknown })?.statusCode === "number"
+              ? ((error as { statusCode: number }).statusCode)
+              : undefined;
+          const detail = (error as { detail?: unknown })?.detail;
+          const cause = (error as { cause?: unknown })?.cause;
+          const haystack = [
+            error instanceof Error ? error.message : String(error ?? ""),
+            typeof detail === "string" ? detail : JSON.stringify(detail ?? ""),
+            cause instanceof Error ? cause.message : String(cause ?? ""),
+          ].join(" | ");
+          const isTransientHttp = status !== undefined && status >= 500;
+          const isTransientText =
+            /Chart data unavailable|HTTP\s+5\d\d|ETIMEDOUT|ECONNRESET|ECONNREFUSED|fetch failed|socket hang up|timeout/i.test(
+              haystack,
+            );
+          const isRetryable = isTransientHttp || isTransientText;
+          if (!isRetryable || attempt === 2) {
+            break;
+          }
+          await new Promise((resolve) =>
+            setTimeout(resolve, 250 * (attempt + 1)),
+          );
+        }
+      }
+      if (lastError !== undefined) {
+        throw lastError;
+      }
       const bars = parseHistoricalBars(payload, {
         providerContractId: resolvedContract.providerContractId,
         outsideRth,

@@ -193,6 +193,11 @@ export class IbkrBridgeService {
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
     return this.ensureProvider().searchTickers(input);
   }
+
+  async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
+    if (!this.provider?.prewarmQuoteSubscriptions) return;
+    await this.provider.prewarmQuoteSubscriptions(symbols);
+  }
 }
 
 export const ibkrBridgeService = new IbkrBridgeService();

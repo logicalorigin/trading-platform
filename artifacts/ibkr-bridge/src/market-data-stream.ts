@@ -340,6 +340,32 @@ export class IbkrMarketDataStream {
     await this.resubscribeAll();
   }
 
+  private collectQuotesBySymbol(): Map<string, QuoteSnapshot> {
+    const quotesBySymbol = new Map<string, QuoteSnapshot>();
+    this.quotesByConid.forEach((quote) => {
+      quotesBySymbol.set(quote.symbol, quote);
+    });
+    return quotesBySymbol;
+  }
+
+  // After subscribing fresh symbols, the WebSocket needs a brief moment
+  // to deliver the first tick. Polling the cache here is dramatically
+  // cheaper than falling through to the REST snapshot endpoint, which
+  // typically takes 1-3s per batch on a cold session.
+  private async waitForFirstTicks(
+    symbols: string[],
+    timeoutMs: number,
+  ): Promise<void> {
+    if (symbols.length === 0) return;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const cached = this.collectQuotesBySymbol();
+      const stillMissing = symbols.filter((symbol) => !cached.has(symbol));
+      if (stillMissing.length === 0) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 75));
+    }
+  }
+
   async getQuotes(symbols: string[]): Promise<QuoteSnapshot[]> {
     const normalizedSymbols = Array.from(
       new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
@@ -349,18 +375,26 @@ export class IbkrMarketDataStream {
       return [];
     }
 
+    const initiallyMissing = normalizedSymbols.filter((symbol) => (
+      !Array.from(this.quoteSubscriptionsByConid.values()).some(
+        (entry) => entry.symbol === symbol,
+      )
+    ));
+
     try {
       await this.ensureSymbolSubscriptions(normalizedSymbols);
     } catch (error) {
       logger.warn({ err: error }, "IBKR websocket subscription bootstrap failed");
     }
 
-    const quotesBySymbol = new Map<string, QuoteSnapshot>();
-    this.quotesByConid.forEach((quote) => {
-      quotesBySymbol.set(quote.symbol, quote);
-    });
+    if (initiallyMissing.length > 0) {
+      await this.waitForFirstTicks(initiallyMissing, 800);
+    }
 
-    const missingSymbols = normalizedSymbols.filter((symbol) => !quotesBySymbol.has(symbol));
+    const quotesBySymbol = this.collectQuotesBySymbol();
+    const missingSymbols = normalizedSymbols.filter(
+      (symbol) => !quotesBySymbol.has(symbol),
+    );
     if (missingSymbols.length > 0) {
       const fallbackQuotes = await this.client.getQuoteSnapshots(missingSymbols);
       fallbackQuotes.forEach((quote) => {
@@ -375,6 +409,25 @@ export class IbkrMarketDataStream {
       const quote = quotesBySymbol.get(symbol);
       return quote ? [quote] : [];
     });
+  }
+
+  // Pre-warm a set of symbols (typically the default watchlist) so the
+  // first user-facing snapshot request finds populated cache entries.
+  async prewarmSymbols(symbols: string[]): Promise<void> {
+    const normalized = Array.from(
+      new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+    );
+    if (normalized.length === 0) return;
+    try {
+      await this.ensureSymbolSubscriptions(normalized);
+      await this.waitForFirstTicks(normalized, 1_500);
+      logger.info(
+        { symbols: normalized, cached: this.quotesByConid.size },
+        "IBKR market-data prewarm complete",
+      );
+    } catch (error) {
+      logger.warn({ err: error }, "IBKR market-data prewarm failed");
+    }
   }
 
   async getPriceLadder(input: {
