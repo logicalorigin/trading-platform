@@ -64,7 +64,7 @@ type BooleanSettingKey =
   | "showOrderBlocks"
   | "showSupportResistance"
   | "showDashboard"
-  | "showTpSl";
+  | "showTpSl"
   | "showRegimeWindows";
 
 const triggerStyle = (
