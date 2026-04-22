@@ -2393,7 +2393,7 @@ const extractSparklineValues = (data = []) =>
 
 const MicroSparkline = ({
   data = [],
-  positive = true,
+  positive = null,
   width = 64,
   height = 24,
 }) => {
@@ -2407,7 +2407,10 @@ const MicroSparkline = ({
   const max = Math.max(...values);
   const range = max - min || 1;
   const step = width / Math.max(values.length - 1, 1);
-  const lineColor = positive ? T.green : T.red;
+  const inferredPositive = values[values.length - 1] >= values[0];
+  const resolvedPositive =
+    typeof positive === "boolean" ? positive : inferredPositive;
+  const lineColor = resolvedPositive ? T.green : T.red;
   const plottedPoints = values
     .map((value, index) => {
       const x = index * step;
@@ -2427,12 +2430,12 @@ const MicroSparkline = ({
       preserveAspectRatio="none"
       style={{ display: "block" }}
     >
-      <path d={areaPath} fill={`${lineColor}14`} />
+      <path d={areaPath} fill={`${lineColor}1f`} />
       <polyline
         points={points}
         fill="none"
         stroke={lineColor}
-        strokeWidth="1.35"
+        strokeWidth="1.55"
         strokeLinejoin="round"
         strokeLinecap="round"
       />
@@ -2567,9 +2570,9 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
           <span style={{ display: "block", flexShrink: 0 }}>
             <MicroSparkline
               data={item.sparkBars?.length ? item.sparkBars : item.spark}
-              positive={positive !== false}
-              width={52}
-              height={18}
+              positive={positive}
+              width={46}
+              height={16}
             />
           </span>
         </button>
@@ -3431,9 +3434,9 @@ const Watchlist = ({
               <div style={{ width: 56 }}>
                 <MicroSparkline
                   data={w.sparkBars?.length ? w.sparkBars : w.spark}
-                  positive={pos !== false}
-                  width={56}
-                  height={20}
+                  positive={pos}
+                  width={48}
+                  height={16}
                 />
               </div>
               <div
