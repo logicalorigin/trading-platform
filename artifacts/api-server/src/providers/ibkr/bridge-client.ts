@@ -11,6 +11,8 @@ import type {
   CancelOrderSnapshot,
   HistoryBarTimeframe,
   HistoryDataSource,
+  IbkrNewsArticle,
+  IbkrUniverseTicker,
   OptionChainContract,
   OrderPreviewSnapshot,
   PlaceOrderInput,
@@ -343,5 +345,30 @@ export class IbkrBridgeClient {
       },
     );
     return { ...raw, submittedAt: toDate(raw.submittedAt) };
+  }
+
+  async getNews(input: { ticker?: string; limit?: number }): Promise<IbkrNewsArticle[]> {
+    const params: Record<string, QueryValue> = {};
+    if (input.ticker) params.ticker = input.ticker;
+    if (typeof input.limit === "number") params.limit = input.limit;
+    const raw = await this.request<IbkrNewsArticle[]>("/news", {}, params);
+    return raw.map((article) => ({
+      ...article,
+      publishedAt: toDate(article.publishedAt),
+    }));
+  }
+
+  async searchTickers(input: {
+    search?: string;
+    limit?: number;
+  }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
+    const params: Record<string, QueryValue> = {};
+    if (input.search) params.search = input.search;
+    if (typeof input.limit === "number") params.limit = input.limit;
+    return this.request<{ count: number; results: IbkrUniverseTicker[] }>(
+      "/universe/search",
+      {},
+      params,
+    );
   }
 }

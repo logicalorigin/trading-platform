@@ -49,6 +49,7 @@ export const ResearchSparkline = ({
         showKeyLevels: false,
         showStructure: false,
         showOrderBlocks: false,
+        showSupportResistance: false,
         showTpSl: false,
         showDashboard: false,
         showRegimeWindows: false,

@@ -61,7 +61,6 @@ type BooleanSettingKey =
   | "showShadow"
   | "showKeyLevels"
   | "showStructure"
-  | "showContinuationSignals"
   | "showOrderBlocks"
   | "showSupportResistance"
   | "showTpSl"
@@ -214,8 +213,10 @@ const enumOptions: Array<{
     key: "dashboardSize",
     label: "Dashboard size",
     values: [
-      { value: "compact", label: "Compact" },
-      { value: "expanded", label: "Expanded" },
+      { value: "tiny", label: "Tiny" },
+      { value: "small", label: "Small" },
+      { value: "normal", label: "Normal" },
+      { value: "large", label: "Large" },
     ],
   },
 ];
@@ -228,7 +229,6 @@ const booleanOptions: Array<{
   { key: "showShadow", label: "Show shadow" },
   { key: "showKeyLevels", label: "Show key levels" },
   { key: "showStructure", label: "Show structure events" },
-  { key: "showContinuationSignals", label: "Show continuation arrows" },
   { key: "showOrderBlocks", label: "Show order blocks" },
   { key: "showSupportResistance", label: "Show support/resistance" },
   { key: "showTpSl", label: "Show TP/SL" },

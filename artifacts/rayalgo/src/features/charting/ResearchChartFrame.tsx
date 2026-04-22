@@ -98,7 +98,7 @@ export const ResearchChartFrame = ({
     style={{
       background: theme.bg2,
       border: `1px solid ${theme.border}`,
-      borderRadius: compact ? 5 : 6,
+      borderRadius: 0,
       display: "flex",
       flexDirection: "column",
       overflow: "hidden",

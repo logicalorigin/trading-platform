@@ -75,3 +75,13 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 ### Symbol quirks
 
 - Polygon-style dotted tickers (`BRK.B`, `BF.B`) are translated to IBKR's space-separated form (`BRK B`) inside `resolveStockContract` in `artifacts/api-server/src/providers/ibkr/client.ts`. Add new mappings there if other symbol families fail.
+
+## Data sourcing (IBKR-primary, Polygon-fallback)
+
+`artifacts/api-server/src/services/platform.ts` is wired so IBKR is the primary source for everything the user has IBKR market data for, with Polygon as fallback only:
+
+- **Bars** — IBKR historical bars merged with Polygon gap fill. Bars are tagged `ibkr-history` or `polygon-history` (no blanket source label).
+- **News** — `getNews` calls `IbkrBridgeClient.getNews` first (`/iserver/news` keyed by conid). Falls back to Polygon when IBKR returns nothing (e.g. tickerless requests, since CP requires a conid).
+- **Universe search** — `searchUniverseTickers` calls `IbkrBridgeClient.searchTickers` first (`/iserver/secdef/search`, filtered to STK). Falls back to Polygon for non-stock markets and on empty IBKR result.
+- **Flow events** — derived from `IbkrBridgeClient.getOptionChain` snapshots, ranked by premium. Note: the IBKR option-chain mapper currently leaves `volume`/`openInterest` at 0; flow events synthesize size as `volume || 1` so contracts with a real `mark` still surface. To get true volume/OI, extend the snapshot field set in `client.ts` to include OPRA fields (e.g. 7762 = volume).
+- **Bridge surface** — new endpoints `GET /news` and `GET /universe/search` on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). The TWS provider stubs both to empty arrays since the user's transport is Client Portal.

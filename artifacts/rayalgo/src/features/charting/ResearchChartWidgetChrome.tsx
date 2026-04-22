@@ -103,6 +103,11 @@ type ResearchChartWidgetHeaderProps = {
   showSnapshotButton?: boolean;
   showSettingsButton?: boolean;
   showFullscreenButton?: boolean;
+  onFocusChart?: () => void;
+  focusChartActive?: boolean;
+  focusChartTitle?: string;
+  onEnterSoloMode?: () => void;
+  soloChartTitle?: string;
   rightSlot?: ReactNode;
 };
 
@@ -300,7 +305,7 @@ const barButtonStyle = ({
   minWidth: dense ? 20 : 28,
   padding: dense ? "0 4px" : "0 10px",
   border: "none",
-  borderRadius: 3,
+  borderRadius: 0,
   background: active ? palette.hover : "transparent",
   color: disabled
     ? withAlpha(theme.textMuted, "75")
@@ -339,7 +344,7 @@ const railButtonStyle = ({
     justifyContent: "center",
     background: active ? palette.hover : "transparent",
     border: "none",
-    borderRadius: 3,
+    borderRadius: 0,
     color: disabled
       ? withAlpha(theme.textMuted, "75")
       : active
@@ -367,7 +372,7 @@ const legendChipStyle = ({
   alignItems: "center",
   gap: 5,
   padding: dense ? "1px 3px" : "2px 6px",
-  borderRadius: 2,
+  borderRadius: 0,
   background: palette.chipBg,
   border: `1px solid ${palette.chipBorder}`,
   boxShadow: palette.shadow,
@@ -384,7 +389,7 @@ const menuContentStyle = (
 ): CSSProperties => ({
   minWidth,
   padding: 4,
-  borderRadius: 4,
+  borderRadius: 0,
   border: `1px solid ${theme.border}`,
   background: palette.panel,
   color: theme.text,
@@ -393,7 +398,7 @@ const menuContentStyle = (
 });
 
 const menuItemStyle = (theme: WidgetTheme): CSSProperties => ({
-  borderRadius: 3,
+  borderRadius: 0,
   color: theme.text,
   fontFamily: theme.mono,
   fontSize: 12,
@@ -570,6 +575,11 @@ export const ResearchChartWidgetHeader = ({
   showSnapshotButton = true,
   showSettingsButton = true,
   showFullscreenButton = true,
+  onFocusChart,
+  focusChartActive = false,
+  focusChartTitle = "Focus chart",
+  onEnterSoloMode,
+  soloChartTitle = "Expand chart",
   rightSlot = null,
 }: ResearchChartWidgetHeaderProps) => {
   const palette = getPanelPalette(theme);
@@ -612,6 +622,8 @@ export const ResearchChartWidgetHeader = ({
     showSnapshotButton ||
     showSettingsButton ||
     showFullscreenButton ||
+    typeof onFocusChart === "function" ||
+    typeof onEnterSoloMode === "function" ||
     rightSlot != null;
   const studyLookup = useMemo(
     () => new Map(studies.map((study) => [study.id, study.label])),
@@ -835,6 +847,35 @@ export const ResearchChartWidgetHeader = ({
 
         {showTrailingActions ? (
           <div style={dividerStyle(theme, dense)} />
+        ) : null}
+
+        {typeof onFocusChart === "function" ? (
+          <button
+            type="button"
+            onClick={onFocusChart}
+            style={barButtonStyle({
+              theme,
+              palette,
+              dense,
+              active: focusChartActive,
+            })}
+            title={focusChartTitle}
+          >
+            <Crosshair style={iconStyle(dense)} />
+            {dense ? null : <span>Focus</span>}
+          </button>
+        ) : null}
+
+        {typeof onEnterSoloMode === "function" ? (
+          <button
+            type="button"
+            onClick={onEnterSoloMode}
+            style={barButtonStyle({ theme, palette, dense })}
+            title={soloChartTitle}
+          >
+            <Maximize2 style={iconStyle(dense)} />
+            {dense ? null : <span>Solo</span>}
+          </button>
         ) : null}
 
         {showSnapshotButton ? (
@@ -1084,7 +1125,7 @@ export const ResearchChartWidgetFooter = ({
           gap: 2,
           background: palette.panel,
           border: `1px solid ${theme.border}`,
-          borderRadius: 3,
+          borderRadius: 0,
           padding: dense ? 1 : 2,
           fontFamily: theme.mono,
           fontSize: dense ? 8 : 10,
@@ -1139,7 +1180,7 @@ export const ResearchChartWidgetFooter = ({
                 background: active ? theme.accent || theme.text : "transparent",
                 color: active ? "#fff" : theme.textDim || theme.textMuted,
                 border: "none",
-                borderRadius: 2,
+                borderRadius: 0,
                 cursor: "pointer",
                 fontFamily: theme.mono,
                 fontSize: dense ? 8 : 10,
@@ -1175,7 +1216,7 @@ export const ResearchChartWidgetFooter = ({
               ? "#fff"
               : theme.textDim || theme.textMuted,
             border: "none",
-            borderRadius: 2,
+            borderRadius: 0,
             cursor: "pointer",
             display: "flex",
             alignItems: "center",
@@ -1323,22 +1364,6 @@ export const ResearchChartWidgetSidebar = ({
 
       <div style={{ flex: 1, minHeight: 8 }} />
 
-      <button
-        type="button"
-        onClick={controls.zoomIn}
-        title="Zoom in"
-        style={railButtonStyle({ theme, palette, dense })}
-      >
-        +
-      </button>
-      <button
-        type="button"
-        onClick={controls.zoomOut}
-        title="Zoom out"
-        style={railButtonStyle({ theme, palette, dense })}
-      >
-        -
-      </button>
       <button
         type="button"
         onClick={onClearDrawings}

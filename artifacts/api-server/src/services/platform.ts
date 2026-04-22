@@ -905,11 +905,27 @@ export async function getQuoteSnapshots(input: { symbols: string }) {
 }
 
 export async function getNews(input: { ticker?: string; limit?: number }) {
-  const client = getPolygonClient();
+  // IBKR is the primary news source (user has Reuters subscription via IBKR).
+  // We only fall back to Polygon when IBKR returns no headlines — typically
+  // for tickerless requests, since IBKR's /iserver/news requires a conid.
+  const ibkrClient = getIbkrClient();
+  let articles: Awaited<ReturnType<IbkrBridgeClient["getNews"]>> = [];
+  try {
+    articles = await ibkrClient.getNews(input);
+  } catch {
+    articles = [];
+  }
 
-  return {
-    articles: await client.getNews(input),
-  };
+  if (articles.length === 0 && getPolygonRuntimeConfig()) {
+    try {
+      const polygonArticles = await getPolygonClient().getNews(input);
+      return { articles: polygonArticles };
+    } catch {
+      // fall through to empty IBKR result
+    }
+  }
+
+  return { articles };
 }
 
 export async function searchUniverseTickers(input: {
@@ -919,9 +935,26 @@ export async function searchUniverseTickers(input: {
   active?: boolean;
   limit?: number;
 }) {
-  const client = getPolygonClient();
+  // IBKR is the primary universe source so the search box mirrors the
+  // contracts the broker can actually trade. Polygon remains the fallback
+  // for non-stock markets (indices/fx/crypto/otc) and any IBKR misses.
+  const ibkrClient = getIbkrClient();
+  if (input.market == null || input.market === "stocks") {
+    try {
+      const result = await ibkrClient.searchTickers({
+        search: input.search,
+        limit: input.limit,
+      });
+      if (result.results.length > 0) return result;
+    } catch {
+      // fall through to Polygon
+    }
+  }
 
-  return client.searchUniverseTickers(input);
+  if (getPolygonRuntimeConfig()) {
+    return getPolygonClient().searchUniverseTickers(input);
+  }
+  return { count: 0, results: [] };
 }
 
 export async function getBars(input: {
@@ -1092,12 +1125,91 @@ export async function listFlowEvents(input: {
     return { events: [] };
   }
 
-  const client = getPolygonClient();
-
-  return {
-    events: await client.getDerivedFlowEvents({
+  // Derive flow events from IBKR option-chain snapshots (the user has OPRA
+  // data via IBKR). One event per active contract, ranked by traded volume so
+  // the highest-activity contracts surface first. Falls back to Polygon if
+  // IBKR returns no contracts.
+  const ibkrClient = getIbkrClient();
+  let contracts: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>> = [];
+  try {
+    // Keep coverage tight — IBKR snapshots are rate-limited and the flow
+    // panel renders the highest-premium contracts first, so a moderate
+    // window around the money is plenty.
+    contracts = await ibkrClient.getOptionChain({
       underlying: input.underlying,
-      limit: input.limit,
-    }),
-  };
+      maxExpirations: 2,
+      strikesAroundMoney: 8,
+    });
+  } catch {
+    contracts = [];
+  }
+
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+  // NOTE: IBKR's option-chain mapper currently leaves `volume` and
+  // `openInterest` at 0 because those aren't fetched in the snapshot field
+  // set. We therefore key the gate off `mark > 0` (a real, marked contract)
+  // and synthesize size from `volume || 1` so high-mark contracts still
+  // surface, ranked by price. Once the bridge starts pulling OPRA volume
+  // fields (e.g. snapshot field 7762) we can tighten this back to volume>0.
+  const events = contracts
+    .filter((c) => c.mark > 0)
+    .map((c) => {
+      const mid = (c.bid + c.ask) / 2;
+      const side: "buy" | "sell" | "unknown" =
+        c.bid > 0 && c.ask > 0
+          ? c.last >= c.ask
+            ? "buy"
+            : c.last <= c.bid
+              ? "sell"
+              : c.last > mid
+                ? "buy"
+                : c.last < mid
+                  ? "sell"
+                  : "unknown"
+          : "unknown";
+      const sentiment: "bullish" | "bearish" | "neutral" =
+        side === "unknown"
+          ? "neutral"
+          : (c.contract.right === "call" && side === "buy") ||
+              (c.contract.right === "put" && side === "sell")
+            ? "bullish"
+            : "bearish";
+      const price = c.last > 0 ? c.last : c.mark;
+      const size = c.volume > 0 ? c.volume : 1;
+      return {
+        id: `${c.contract.ticker}-${c.updatedAt.getTime()}`,
+        underlying: normalizeSymbol(c.contract.underlying),
+        optionTicker: c.contract.ticker,
+        strike: c.contract.strike,
+        expirationDate: c.contract.expirationDate,
+        right: c.contract.right,
+        price,
+        size,
+        premium: price * size * c.contract.sharesPerContract,
+        openInterest: c.openInterest,
+        impliedVolatility: c.impliedVolatility,
+        exchange: "IBKR",
+        side,
+        sentiment,
+        tradeConditions: [] as string[],
+        occurredAt: c.updatedAt,
+      };
+    })
+    .sort((a, b) => b.premium - a.premium)
+    .slice(0, limit);
+
+  if (events.length === 0 && getPolygonRuntimeConfig()) {
+    try {
+      return {
+        events: await getPolygonClient().getDerivedFlowEvents({
+          underlying: input.underlying,
+          limit: input.limit,
+        }),
+      };
+    } catch {
+      return { events: [] };
+    }
+  }
+
+  return { events };
 }

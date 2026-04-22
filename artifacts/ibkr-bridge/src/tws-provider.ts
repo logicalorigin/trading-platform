@@ -1922,4 +1922,24 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       submittedAt: new Date(),
     };
   }
+
+  async getNews(_input: {
+    ticker?: string;
+    limit?: number;
+  }): Promise<import("../../api-server/src/providers/ibkr/client").IbkrNewsArticle[]> {
+    // TWS doesn't expose news via the IB Gateway API in the same way
+    // Client Portal does; the platform service falls back to the secondary
+    // provider when this returns empty.
+    return [];
+  }
+
+  async searchTickers(_input: {
+    search?: string;
+    limit?: number;
+  }): Promise<{
+    count: number;
+    results: import("../../api-server/src/providers/ibkr/client").IbkrUniverseTicker[];
+  }> {
+    return { count: 0, results: [] };
+  }
 }

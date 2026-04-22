@@ -9,6 +9,8 @@ import type {
   CancelOrderSnapshot,
   HistoryBarTimeframe,
   HistoryDataSource,
+  IbkrNewsArticle,
+  IbkrUniverseTicker,
   OptionChainContract,
   OrderPreviewSnapshot,
   PlaceOrderInput,
@@ -179,6 +181,17 @@ export class IbkrBridgeService {
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {
     return this.ensureProvider().cancelOrder(input);
+  }
+
+  getNews(input: { ticker?: string; limit?: number }): Promise<IbkrNewsArticle[]> {
+    return this.ensureProvider().getNews(input);
+  }
+
+  searchTickers(input: {
+    search?: string;
+    limit?: number;
+  }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
+    return this.ensureProvider().searchTickers(input);
   }
 }
 

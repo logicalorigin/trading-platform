@@ -177,7 +177,8 @@ const THEMES = {
 
 // Typography is theme-independent — added to both at runtime via the proxy
 const TYPOGRAPHY = {
-  mono: "'JetBrains Mono', 'SF Mono', 'Menlo', monospace",
+  mono: "'Inter', system-ui, -apple-system, sans-serif",
+  code: "'JetBrains Mono', 'SF Mono', 'Menlo', monospace",
   sans: "'Inter', system-ui, -apple-system, sans-serif",
   display: "'Inter', system-ui, sans-serif",
 };
@@ -210,7 +211,14 @@ const persistState = (patch) => {
 };
 
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
-const HEADER_KPI_SYMBOLS = ["SPY", "QQQ", "VXX", "TLT"];
+const HEADER_KPI_CONFIG = [
+  { symbol: "VIXY", label: "Volatility" },
+  { symbol: "IEF", label: "Treasuries" },
+  { symbol: "UUP", label: "Dollar" },
+  { symbol: "GLD", label: "Gold" },
+  { symbol: "USO", label: "Crude" },
+];
+const HEADER_KPI_SYMBOLS = HEADER_KPI_CONFIG.map((item) => item.symbol);
 
 const platformJsonRequest = async (path, { method = "GET", body } = {}) => {
   const response = await fetch(path, {
@@ -2002,6 +2010,121 @@ const bridgeRuntimeMessage = (session) => {
   return "IBKR connectivity is configured, but the local bridge has not authenticated yet.";
 };
 
+const ET_CLOCK_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+const ET_WEEKDAY_INDEX = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+const formatClockCountdown = (totalSeconds) => {
+  const safeSeconds = Math.max(0, Math.round(totalSeconds || 0));
+  const days = Math.floor(safeSeconds / 86400);
+  const hours = Math.floor((safeSeconds % 86400) / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  const hhmmss = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return days > 0 ? `${days}d ${hhmmss}` : hhmmss;
+};
+
+const buildMarketClockState = (now = Date.now()) => {
+  const parts = Object.fromEntries(
+    ET_CLOCK_PARTS_FORMATTER.formatToParts(new Date(now)).map((part) => [
+      part.type,
+      part.value,
+    ]),
+  );
+  const weekdayIndex = ET_WEEKDAY_INDEX[parts.weekday] ?? 0;
+  const hour = Number(parts.hour || 0);
+  const minute = Number(parts.minute || 0);
+  const second = Number(parts.second || 0);
+  const currentSeconds = hour * 3600 + minute * 60 + second;
+  const openSeconds = 9 * 3600 + 30 * 60;
+  const closeSeconds = 16 * 3600;
+  const afterHoursCloseSeconds = 20 * 3600;
+  const nextBusinessDayOffset =
+    weekdayIndex === 5 ? 3 : weekdayIndex === 6 ? 2 : weekdayIndex === 0 ? 1 : 1;
+
+  const base = {
+    timeLabel: `${parts.hour}:${parts.minute}:${parts.second} ET`,
+    dateLabel: `${parts.weekday} ${parts.month} ${parts.day}`,
+  };
+
+  if (weekdayIndex === 0 || weekdayIndex === 6) {
+    const daysUntilOpen = weekdayIndex === 6 ? 2 : 1;
+    return {
+      ...base,
+      phase: "weekend",
+      label: "Weekend",
+      action: "Opens",
+      timerLabel: formatClockCountdown(
+        daysUntilOpen * 86400 + openSeconds - currentSeconds,
+      ),
+      color: T.textDim,
+    };
+  }
+
+  if (currentSeconds < openSeconds) {
+    return {
+      ...base,
+      phase: "pre",
+      label: "Pre-market",
+      action: "Opens",
+      timerLabel: formatClockCountdown(openSeconds - currentSeconds),
+      color: T.amber,
+    };
+  }
+
+  if (currentSeconds < closeSeconds) {
+    return {
+      ...base,
+      phase: "open",
+      label: "Market open",
+      action: "Closes",
+      timerLabel: formatClockCountdown(closeSeconds - currentSeconds),
+      color: T.green,
+    };
+  }
+
+  if (currentSeconds < afterHoursCloseSeconds) {
+    return {
+      ...base,
+      phase: "post",
+      label: "After hours",
+      action: "Opens",
+      timerLabel: formatClockCountdown(
+        nextBusinessDayOffset * 86400 + openSeconds - currentSeconds,
+      ),
+      color: T.amber,
+    };
+  }
+
+  return {
+    ...base,
+    phase: "closed",
+    label: "Closed",
+    action: "Opens",
+    timerLabel: formatClockCountdown(
+      nextBusinessDayOffset * 86400 + openSeconds - currentSeconds,
+    ),
+    color: T.textDim,
+  };
+};
+
 const parseSymbolUniverseInput = (value) =>
   String(value || "")
     .split(",")
@@ -2271,8 +2394,8 @@ const extractSparklineValues = (data = []) =>
 const MicroSparkline = ({
   data = [],
   positive = true,
-  width = 56,
-  height = 18,
+  width = 64,
+  height = 24,
 }) => {
   const values = useMemo(() => extractSparklineValues(data), [data]);
 
@@ -2309,7 +2432,7 @@ const MicroSparkline = ({
         points={points}
         fill="none"
         stroke={lineColor}
-        strokeWidth="1.5"
+        strokeWidth="1.35"
         strokeLinejoin="round"
         strokeLinecap="round"
       />
@@ -2323,9 +2446,8 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
       display: "flex",
       alignItems: "stretch",
       gap: sp(6),
-      marginLeft: sp(12),
-      marginRight: sp(8),
       minWidth: 0,
+      overflowX: "auto",
     }}
   >
     {items.map((item) => {
@@ -2335,18 +2457,28 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
           key={item.sym}
           type="button"
           onClick={() => onSelect?.(item.sym)}
+          title={`${item.label} proxy · ${item.sym}`}
           style={{
-            minWidth: dim(104),
-            padding: sp("4px 8px"),
+            minWidth: dim(152),
+            padding: sp("7px 10px"),
             display: "grid",
-            gridTemplateColumns: "1fr 42px",
-            gap: sp(6),
+            gridTemplateColumns: "1fr 64px",
+            gap: sp(8),
             alignItems: "center",
-            background: T.bg2,
+            background: T.bg1,
             border: `1px solid ${T.border}`,
-            borderRadius: dim(4),
+            borderRadius: 0,
             color: T.text,
             cursor: "pointer",
+            transition: "background 0.12s ease, border-color 0.12s ease",
+          }}
+          onMouseEnter={(event) => {
+            event.currentTarget.style.background = T.bg3;
+            event.currentTarget.style.borderColor = T.accent;
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.background = T.bg1;
+            event.currentTarget.style.borderColor = T.border;
           }}
         >
           <span style={{ minWidth: 0, textAlign: "left" }}>
@@ -2355,21 +2487,23 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
                 display: "block",
                 fontSize: fs(8),
                 color: T.textMuted,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
+                fontWeight: 700,
                 letterSpacing: "0.08em",
+                textTransform: "uppercase",
               }}
             >
-              {item.sym}
+              {item.label}
             </span>
             <span
               style={{
                 display: "block",
-                fontSize: fs(11),
+                fontSize: fs(13),
                 fontWeight: 700,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 color: T.text,
                 lineHeight: 1.1,
-                marginTop: 1,
+                marginTop: 2,
               }}
             >
               {formatQuotePrice(item.price)}
@@ -2377,9 +2511,9 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
             <span
               style={{
                 display: "block",
-                fontSize: fs(8),
+                fontSize: fs(9),
                 fontWeight: 700,
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 color:
                   positive == null ? T.textDim : positive ? T.green : T.red,
                 lineHeight: 1.1,
@@ -2388,13 +2522,27 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
             >
               {formatSignedPercent(item.pct)}
             </span>
+            <span
+              style={{
+                display: "block",
+                fontSize: fs(7),
+                fontWeight: 600,
+                color: T.textMuted,
+                fontFamily: T.sans,
+                lineHeight: 1.1,
+                marginTop: 2,
+                letterSpacing: "0.08em",
+              }}
+            >
+              {item.sym}
+            </span>
           </span>
           <span style={{ display: "block" }}>
             <MicroSparkline
               data={item.sparkBars?.length ? item.sparkBars : item.spark}
               positive={positive !== false}
-              width={42}
-              height={18}
+              width={64}
+              height={24}
             />
           </span>
         </button>
@@ -2402,6 +2550,270 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
     })}
   </div>
 );
+
+const HeaderStatusCluster = ({
+  session,
+  environment,
+  bridgeTone,
+  marketClock,
+  theme,
+  onToggleTheme,
+}) => {
+  const surfaceStyle = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    minWidth: dim(130),
+    padding: sp("7px 10px"),
+    background: T.bg1,
+    border: `1px solid ${T.border}`,
+    borderRadius: 0,
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        justifyContent: "flex-end",
+        gap: sp(6),
+        flexWrap: "wrap",
+      }}
+    >
+      <div title={bridgeRuntimeMessage(session)} style={surfaceStyle}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(6),
+            fontSize: fs(8),
+            fontWeight: 700,
+            fontFamily: T.sans,
+            color: T.textMuted,
+            letterSpacing: "0.08em",
+          }}
+        >
+          <span
+            style={{
+              width: dim(7),
+              height: dim(7),
+              background: bridgeTone.color,
+              display: "inline-block",
+            }}
+          />
+          IBKR
+        </div>
+        <div
+          style={{
+            fontSize: fs(11),
+            fontWeight: 700,
+            fontFamily: T.sans,
+            color: bridgeTone.color,
+          }}
+        >
+          {session?.ibkrBridge?.transport === "tws" ? "TWS" : "CP"} ·{" "}
+          {bridgeTone.label.toUpperCase()}
+        </div>
+        <div
+          style={{
+            fontSize: fs(8),
+            color: T.textDim,
+            fontFamily: T.sans,
+          }}
+        >
+          {environment.toUpperCase()} ·{" "}
+          {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
+        </div>
+      </div>
+
+      <div
+        title={`${marketClock.dateLabel} · ${marketClock.label}`}
+        style={surfaceStyle}
+      >
+        <div
+          style={{
+            fontSize: fs(8),
+            fontWeight: 700,
+            fontFamily: T.sans,
+            color: T.textMuted,
+            letterSpacing: "0.08em",
+          }}
+        >
+          MARKET CLOCK
+        </div>
+        <div
+          style={{
+            fontSize: fs(12),
+            fontWeight: 700,
+            fontFamily: T.sans,
+            color: T.text,
+          }}
+        >
+          {marketClock.timeLabel}
+        </div>
+        <div
+          style={{
+            fontSize: fs(8),
+            color: marketClock.color,
+            fontFamily: T.sans,
+            fontWeight: 700,
+          }}
+        >
+          {marketClock.label.toUpperCase()} · {marketClock.action.toUpperCase()}{" "}
+          {marketClock.timerLabel}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onToggleTheme}
+        title={
+          theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+        }
+        style={{
+          minWidth: dim(56),
+          padding: sp("7px 10px"),
+          background: T.bg1,
+          border: `1px solid ${T.border}`,
+          borderRadius: 0,
+          color: T.textSec,
+          cursor: "pointer",
+          fontSize: fs(13),
+          lineHeight: 1,
+          fontFamily: T.sans,
+          fontWeight: 700,
+        }}
+      >
+        {theme === "dark" ? "☼" : "☾"}
+      </button>
+    </div>
+  );
+};
+
+const HeaderAccountStrip = ({
+  accounts = [],
+  primaryAccountId,
+  primaryAccount,
+  onSelectAccount,
+}) => {
+  const metricSurfaceStyle = {
+    minWidth: dim(104),
+    padding: sp("7px 10px"),
+    background: T.bg1,
+    border: `1px solid ${T.border}`,
+    borderRadius: 0,
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        justifyContent: "flex-end",
+        gap: sp(6),
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ ...metricSurfaceStyle, minWidth: dim(138) }}>
+        <div
+          style={{
+            fontSize: fs(8),
+            color: T.textMuted,
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            fontFamily: T.sans,
+            marginBottom: 2,
+          }}
+        >
+          ACCOUNT
+        </div>
+        {accounts.length ? (
+          <select
+            value={primaryAccountId || ""}
+            onChange={(event) => onSelectAccount(event.target.value || null)}
+            style={{
+              width: "100%",
+              background: "transparent",
+              border: "none",
+              color: T.text,
+              fontSize: fs(11),
+              fontFamily: T.sans,
+              fontWeight: 700,
+              outline: "none",
+              padding: 0,
+            }}
+          >
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.id}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div
+            style={{
+              fontSize: fs(11),
+              fontFamily: T.sans,
+              fontWeight: 700,
+              color: T.textDim,
+            }}
+          >
+            {primaryAccountId || MISSING_VALUE}
+          </div>
+        )}
+      </div>
+
+      {[
+        {
+          label: "Net Liq",
+          value: primaryAccount
+            ? fmtCompactCurrency(primaryAccount.netLiquidation)
+            : MISSING_VALUE,
+          color: T.text,
+        },
+        {
+          label: "Buying Power",
+          value: primaryAccount
+            ? fmtCompactCurrency(primaryAccount.buyingPower)
+            : MISSING_VALUE,
+          color: T.green,
+        },
+        {
+          label: "Cash",
+          value: primaryAccount
+            ? fmtCompactCurrency(primaryAccount.cash)
+            : MISSING_VALUE,
+          color: T.textSec,
+        },
+      ].map((metric) => (
+        <div key={metric.label} style={metricSurfaceStyle}>
+          <div
+            style={{
+              fontSize: fs(8),
+              color: T.textMuted,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              fontFamily: T.sans,
+              marginBottom: 2,
+            }}
+          >
+            {metric.label}
+          </div>
+          <div
+            style={{
+              fontSize: fs(11),
+              fontFamily: T.sans,
+              fontWeight: 700,
+              color: metric.color,
+            }}
+          >
+            {metric.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 const Watchlist = ({
   watchlists = [],
@@ -2556,7 +2968,7 @@ const Watchlist = ({
               justifyContent: "space-between",
               gap: sp(6),
               padding: sp("6px 8px"),
-              borderRadius: dim(5),
+              borderRadius: 0,
               background: T.bg2,
               border: `1px solid ${T.border}`,
               color: T.text,
@@ -2584,7 +2996,7 @@ const Watchlist = ({
             title="New watchlist"
             style={{
               padding: sp("6px 7px"),
-              borderRadius: dim(5),
+              borderRadius: 0,
               background: T.bg2,
               border: `1px solid ${T.border}`,
               color: T.accent,
@@ -2606,7 +3018,7 @@ const Watchlist = ({
             style={{
               flex: 1,
               padding: sp("4px 6px"),
-              borderRadius: dim(4),
+              borderRadius: 0,
               background: "transparent",
               border: `1px solid ${T.border}`,
               color: T.textDim,
@@ -2624,7 +3036,7 @@ const Watchlist = ({
             style={{
               flex: 1,
               padding: sp("4px 6px"),
-              borderRadius: dim(4),
+              borderRadius: 0,
               background: activeWatchlist?.isDefault ? `${T.green}12` : "transparent",
               border: `1px solid ${T.border}`,
               color: activeWatchlist?.isDefault ? T.green : T.textDim,
@@ -2645,7 +3057,7 @@ const Watchlist = ({
             style={{
               flex: 1,
               padding: sp("4px 6px"),
-              borderRadius: dim(4),
+              borderRadius: 0,
               background: "transparent",
               border: `1px solid ${T.border}`,
               color: watchlists.length <= 1 ? T.textMuted : T.red,
@@ -2667,7 +3079,7 @@ const Watchlist = ({
             alignItems: "center",
             gap: sp(6),
             padding: sp("5px 8px"),
-            borderRadius: dim(5),
+            borderRadius: 0,
             background: T.bg2,
             border: `1px solid ${T.border}`,
           }}
@@ -2691,12 +3103,12 @@ const Watchlist = ({
 
         {addMode ? (
           <div
-            style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              background: T.bg2,
-              overflow: "hidden",
-            }}
+          style={{
+            border: `1px solid ${T.border}`,
+            borderRadius: 0,
+            background: T.bg2,
+            overflow: "hidden",
+          }}
           >
             <div
               style={{
@@ -2842,7 +3254,7 @@ const Watchlist = ({
             zIndex: 20,
             background: T.bg2,
             border: `1px solid ${T.border}`,
-            borderRadius: dim(6),
+            borderRadius: 0,
             boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
             overflow: "hidden",
           }}
@@ -2989,12 +3401,12 @@ const Watchlist = ({
                   {w.name}
                 </div>
               </div>
-              <div style={{ width: 44 }}>
+              <div style={{ width: 56 }}>
                 <MicroSparkline
                   data={w.sparkBars?.length ? w.sparkBars : w.spark}
                   positive={pos !== false}
-                  width={44}
-                  height={16}
+                  width={56}
+                  height={20}
                 />
               </div>
               <div
@@ -3755,9 +4167,9 @@ const COND = [
 const Card = ({ children, style = {}, noPad }) => (
   <div
     style={{
-      background: T.bg2,
+      background: T.bg1,
       border: `1px solid ${T.border}`,
-      borderRadius: dim(6),
+      borderRadius: 0,
       padding: noPad ? 0 : "8px 10px",
       overflow: "hidden",
       ...style,
@@ -4211,7 +4623,13 @@ const buildInitialMiniChartSlots = (activeSym) => {
   );
 };
 
-const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
+const MiniChartTickerSearch = ({
+  open,
+  ticker,
+  recentTickers = [],
+  onClose,
+  onSelectTicker,
+}) => {
   const rootRef = useRef(null);
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
@@ -4222,12 +4640,13 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
       Array.from(
         new Set([
           normalizeTickerSymbol(ticker),
+          ...recentTickers.map((symbol) => normalizeTickerSymbol(symbol)),
           ...WATCHLIST.map((item) => normalizeTickerSymbol(item.sym)),
         ]),
       )
         .filter(Boolean)
-        .slice(0, 8),
-    [ticker],
+        .slice(0, 10),
+    [recentTickers, ticker],
   );
   const searchQuery = useSearchUniverseTickers(
     searchEnabled
@@ -4247,6 +4666,15 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
     },
   );
   const results = searchQuery.data?.results || [];
+  const firstSelection = searchEnabled
+    ? results[0]
+    : quickPicks[0]
+      ? {
+          ticker: quickPicks[0],
+          name:
+            DEFAULT_WATCHLIST_BY_SYMBOL[quickPicks[0]]?.name || quickPicks[0],
+        }
+      : null;
 
   useEffect(() => {
     if (!open) {
@@ -4278,8 +4706,8 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
       if (event.key === "Escape") {
         onClose?.();
       }
-      if (event.key === "Enter" && results[0]) {
-        onSelectTicker?.(results[0]);
+      if (event.key === "Enter" && firstSelection) {
+        onSelectTicker?.(firstSelection);
       }
     };
 
@@ -4290,7 +4718,7 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [open, onClose, onSelectTicker, results]);
+  }, [firstSelection, onClose, onSelectTicker, open]);
 
   if (!open) {
     return null;
@@ -4312,7 +4740,7 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
         style={{
           background: T.bg2,
           border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
+          borderRadius: 0,
           boxShadow: "0 18px 36px rgba(0,0,0,0.32)",
           overflow: "hidden",
         }}
@@ -4330,12 +4758,12 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
             ref={inputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={`Search active ticker universe for ${ticker}…`}
+            placeholder={`Search symbol or company for ${ticker}…`}
             style={{
               width: "100%",
               background: T.bg3,
               border: `1px solid ${T.border}`,
-              borderRadius: dim(4),
+              borderRadius: 0,
               padding: sp("6px 8px"),
               color: T.text,
               fontSize: fs(10),
@@ -4362,6 +4790,21 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
         <div
           style={{ maxHeight: dim(180), overflowY: "auto", background: T.bg1 }}
         >
+          {!searchEnabled && quickPicks.length ? (
+            <div
+              style={{
+                padding: sp("6px 10px 4px"),
+                fontSize: fs(8),
+                color: T.textMuted,
+                fontFamily: T.sans,
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+              }}
+            >
+              Recent and default symbols
+            </div>
+          ) : null}
           {!searchEnabled &&
             quickPicks.map((symbol) => {
               const info = DEFAULT_WATCHLIST_BY_SYMBOL[symbol];
@@ -4387,12 +4830,18 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
                     textAlign: "left",
                     cursor: "pointer",
                   }}
+                  onMouseEnter={(event) => {
+                    event.currentTarget.style.background = T.bg3;
+                  }}
+                  onMouseLeave={(event) => {
+                    event.currentTarget.style.background = "transparent";
+                  }}
                 >
                   <span
                     style={{
                       fontSize: fs(10),
                       fontWeight: 700,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                       color: T.text,
                     }}
                   >
@@ -4403,6 +4852,7 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
                       minWidth: 0,
                       fontSize: fs(9),
                       color: T.textSec,
+                      fontFamily: T.sans,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -4414,10 +4864,10 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
                     style={{
                       fontSize: fs(8),
                       color: T.textMuted,
-                      fontFamily: T.mono,
+                      fontFamily: T.sans,
                     }}
                   >
-                    quick
+                    recent
                   </span>
                 </button>
               );
@@ -4446,6 +4896,21 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
               No active stock tickers matched "{deferredQuery}".
             </div>
           )}
+          {searchEnabled && results.length ? (
+            <div
+              style={{
+                padding: sp("6px 10px 4px"),
+                fontSize: fs(8),
+                color: T.textMuted,
+                fontFamily: T.sans,
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+              }}
+            >
+              Live matches
+            </div>
+          ) : null}
           {results.map((result) => (
             <button
               key={`${result.market}-${result.ticker}`}
@@ -4463,12 +4928,18 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
                 textAlign: "left",
                 cursor: "pointer",
               }}
+              onMouseEnter={(event) => {
+                event.currentTarget.style.background = T.bg3;
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.background = "transparent";
+              }}
             >
               <span
                 style={{
                   fontSize: fs(10),
                   fontWeight: 700,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                   color: T.text,
                 }}
               >
@@ -4480,6 +4951,7 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
                     display: "block",
                     fontSize: fs(9),
                     color: T.textSec,
+                    fontFamily: T.sans,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -4492,7 +4964,7 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
                     display: "block",
                     fontSize: fs(8),
                     color: T.textDim,
-                    fontFamily: T.mono,
+                    fontFamily: T.sans,
                   }}
                 >
                   {[result.type, result.primaryExchange]
@@ -4504,7 +4976,7 @@ const MiniChartTickerSearch = ({ open, ticker, onClose, onSelectTicker }) => {
                 style={{
                   fontSize: fs(8),
                   color: T.textMuted,
-                  fontFamily: T.mono,
+                  fontFamily: T.sans,
                 }}
               >
                 {result.market?.toUpperCase?.() || "US"}
@@ -4528,6 +5000,8 @@ const MiniChartCell = ({
   onChangeTimeframe,
   onChangeStudies,
   onChangeRayReplicaSettings,
+  recentTickers = [],
+  onRememberTicker,
   isActive,
   dense = false,
   stockAggregateStreamingEnabled = false,
@@ -4629,19 +5103,23 @@ const MiniChartCell = ({
           : fallbackInfo?.pct ?? null;
   const chartSourceLabel =
     describeBrokerChartSource(latestBar?.source) || barsStatus.toUpperCase();
-  const handleInactiveChartPointerDown = useCallback(
+  const handleFramePointerDownCapture = useCallback(
     (event) => {
-      if (typeof onFocus !== "function") {
+      if (isActive || typeof onFocus !== "function") {
         return;
       }
       if (event.button != null && event.button !== 0) {
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("button,input,select,[role='menuitem']")
+      ) {
+        return;
+      }
       onFocus(ticker);
     },
-    [onFocus, ticker],
+    [isActive, onFocus, ticker],
   );
   const handleDoubleClick = useCallback(
     (event) => {
@@ -4651,9 +5129,20 @@ const MiniChartCell = ({
     },
     [onEnterSoloMode, ticker],
   );
+  const rememberTicker = useCallback(
+    (nextTicker) => {
+      const normalized = normalizeTickerSymbol(nextTicker);
+      if (!normalized) {
+        return;
+      }
+      onRememberTicker?.(normalized);
+    },
+    [onRememberTicker],
+  );
 
   return (
     <div
+      onPointerDownCapture={handleFramePointerDownCapture}
       onClick={() => onFocus && onFocus(ticker)}
       onDoubleClick={handleDoubleClick}
       style={{
@@ -4713,6 +5202,11 @@ const MiniChartCell = ({
             selectedStudies={selectedIndicators}
             showSnapshotButton={false}
             showUndoRedo={false}
+            onFocusChart={() => onFocus?.(ticker)}
+            focusChartActive={isActive}
+            focusChartTitle={`Focus ${ticker} chart`}
+            onEnterSoloMode={() => onEnterSoloMode?.(ticker)}
+            soloChartTitle={`Show ${ticker} in solo layout`}
             rightSlot={
               <RayReplicaSettingsMenu
                 theme={T}
@@ -4779,36 +5273,17 @@ const MiniChartCell = ({
         )}
         surfaceBottomOverlayHeight={dense ? 14 : 22}
       />
-      {!isActive ? (
-        <button
-          type="button"
-          onPointerDown={handleInactiveChartPointerDown}
-          onDoubleClick={handleDoubleClick}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          title={`Focus ${ticker} chart`}
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 12,
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            padding: 0,
-          }}
-        />
-      ) : null}
       <MiniChartTickerSearch
         open={searchOpen}
         ticker={ticker}
+        recentTickers={recentTickers}
         onClose={() => setSearchOpen(false)}
         onSelectTicker={(result) => {
           const nextTicker = normalizeTickerSymbol(result?.ticker);
           if (!nextTicker) {
             return;
           }
+          rememberTicker(nextTicker);
           onChangeTicker?.(nextTicker);
           setSearchOpen(false);
         }}
@@ -4840,6 +5315,14 @@ const MultiChartGrid = ({
   );
   const [slots, setSlots] = useState(() =>
     buildInitialMiniChartSlots(activeSym),
+  );
+  const [recentTickers, setRecentTickers] = useState(() =>
+    Array.isArray(_initialState.marketGridRecentTickers)
+      ? _initialState.marketGridRecentTickers
+          .map((symbol) => normalizeTickerSymbol(symbol))
+          .filter(Boolean)
+          .slice(0, 10)
+      : [],
   );
   const [gridBodyWidth, setGridBodyWidth] = useState(0);
   const cfg = MULTI_CHART_LAYOUTS[layout] || MULTI_CHART_LAYOUTS["2x3"];
@@ -4947,8 +5430,9 @@ const MultiChartGrid = ({
       marketGridSyncTimeframes: syncTimeframes,
       marketGridIndicatorPresetVersion: MARKET_GRID_INDICATOR_PRESET_VERSION,
       marketGridSlots: slots,
+      marketGridRecentTickers: recentTickers,
     });
-  }, [layout, soloSlotIndex, syncTimeframes, slots]);
+  }, [layout, recentTickers, soloSlotIndex, syncTimeframes, slots]);
 
   useEffect(() => {
     if (!gridBodyRef.current || typeof ResizeObserver === "undefined") {
@@ -4996,6 +5480,18 @@ const MultiChartGrid = ({
     ),
   );
   const updateSlot = (slotIndex, patch) => {
+    if (patch?.ticker) {
+      setRecentTickers((current) => {
+        const nextTicker = normalizeTickerSymbol(patch.ticker);
+        if (!nextTicker) {
+          return current;
+        }
+        return [nextTicker, ...current.filter((value) => value !== nextTicker)].slice(
+          0,
+          10,
+        );
+      });
+    }
     setSlots((current) =>
       current.map((slot, index) =>
         index === slotIndex
@@ -5079,7 +5575,7 @@ const MultiChartGrid = ({
               background: syncTimeframes ? T.accent : T.bg3,
               color: syncTimeframes ? "#fff" : T.textDim,
               border: "none",
-              borderRadius: dim(4),
+              borderRadius: 0,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -5092,7 +5588,7 @@ const MultiChartGrid = ({
               gap: 2,
               padding: sp(denseGrid ? 1 : 2),
               background: T.bg3,
-              borderRadius: dim(4),
+              borderRadius: 0,
             }}
           >
             {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
@@ -5108,7 +5604,7 @@ const MultiChartGrid = ({
                   background: layout === key ? T.accent : "transparent",
                   color: layout === key ? "#fff" : T.textDim,
                   border: "none",
-                  borderRadius: dim(3),
+                  borderRadius: 0,
                   cursor: "pointer",
                   letterSpacing: "0.04em",
                 }}
@@ -5153,10 +5649,200 @@ const MultiChartGrid = ({
               onChangeRayReplicaSettings={(rayReplicaSettings) =>
                 updateSlot(index, { rayReplicaSettings })
               }
+              recentTickers={recentTickers}
+              onRememberTicker={(ticker) =>
+                setRecentTickers((current) =>
+                  [ticker, ...current.filter((value) => value !== ticker)].slice(
+                    0,
+                    10,
+                  ),
+                )
+              }
             />
           ))}
         </div>
       </div>
+    </Card>
+  );
+};
+
+const MarketActivityPanel = ({
+  notifications = [],
+  highlightedUnusualFlow = [],
+  newsItems = [],
+  calendarItems = [],
+  onSymClick,
+}) => {
+  const feedItems = useMemo(
+    () =>
+      [
+        ...notifications.map((item) => ({
+          id: item.id,
+          title: item.label,
+          detail: item.detail,
+          meta: item.tone === "profit" ? "Portfolio alert" : "Risk alert",
+          color: item.tone === "profit" ? T.green : T.red,
+          symbol: item.symbol,
+          kind: "alert",
+          priority: 0,
+        })),
+        ...highlightedUnusualFlow.slice(0, 5).map((event) => ({
+          id: `flow_${event.ticker}_${event.contract}_${event.occurredAt}`,
+          title: `${event.ticker} ${event.contract}`,
+          detail: `${event.side} ${event.type} · ${fmtM(event.premium)}`,
+          meta: formatRelativeTimeShort(event.occurredAt),
+          color: event.cp === "C" ? T.green : T.red,
+          symbol: event.ticker,
+          kind: "flow",
+          priority: 1,
+        })),
+        ...newsItems.slice(0, 4).map((item) => ({
+          id: `news_${item.id}`,
+          title: item.text,
+          detail: item.publisher || item.tag,
+          meta: item.time,
+          color: T.accent,
+          symbol: item.tag,
+          articleUrl: item.articleUrl,
+          kind: "news",
+          priority: 2,
+        })),
+        ...calendarItems.slice(0, 4).map((item) => ({
+          id: `calendar_${item.id}`,
+          title: item.label,
+          detail: item.date,
+          meta: "Calendar",
+          color: item.type === "earnings" ? T.green : T.amber,
+          symbol: item.label.split(" ")[0] || null,
+          kind: "calendar",
+          priority: 3,
+        })),
+      ]
+        .sort((left, right) => left.priority - right.priority)
+        .slice(0, 10),
+    [calendarItems, highlightedUnusualFlow, newsItems, notifications],
+  );
+
+  return (
+    <Card
+      style={{
+        padding: "8px 10px",
+        minHeight: dim(340),
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <CardTitle
+        right={
+          <span
+            style={{
+              fontSize: fs(8),
+              color: T.textDim,
+              fontFamily: T.sans,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+            }}
+          >
+            LIVE FEED
+          </span>
+        }
+      >
+        Activity & Notifications
+      </CardTitle>
+      {feedItems.length ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
+          {feedItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                if (item.articleUrl && typeof window !== "undefined") {
+                  window.open(item.articleUrl, "_blank", "noopener,noreferrer");
+                  return;
+                }
+                if (item.symbol && item.kind !== "news") {
+                  onSymClick?.(item.symbol);
+                }
+              }}
+              title={item.title}
+              style={{
+                width: "100%",
+                display: "grid",
+                gridTemplateColumns: "8px 1fr auto",
+                gap: sp(8),
+                alignItems: "start",
+                padding: sp("8px 0"),
+                border: "none",
+                borderBottom: `1px solid ${T.border}10`,
+                background: "transparent",
+                textAlign: "left",
+                cursor:
+                  item.articleUrl || (item.symbol && item.kind !== "news")
+                    ? "pointer"
+                    : "default",
+              }}
+              onMouseEnter={(event) => {
+                event.currentTarget.style.background = T.bg3;
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.background = "transparent";
+              }}
+            >
+              <span
+                style={{
+                  width: dim(8),
+                  height: dim(8),
+                  background: item.color,
+                  marginTop: sp(4),
+                  display: "inline-block",
+                }}
+              />
+              <span style={{ minWidth: 0 }}>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: fs(10),
+                    fontWeight: 700,
+                    color: T.text,
+                    fontFamily: T.sans,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {item.title}
+                </span>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: fs(9),
+                    color: T.textSec,
+                    fontFamily: T.sans,
+                    lineHeight: 1.35,
+                    marginTop: 1,
+                  }}
+                >
+                  {item.detail}
+                </span>
+              </span>
+              <span
+                style={{
+                  fontSize: fs(8),
+                  color: T.textMuted,
+                  fontFamily: T.sans,
+                  whiteSpace: "nowrap",
+                  textAlign: "right",
+                }}
+              >
+                {item.meta}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <DataUnavailableState
+          title="No live market activity"
+          detail="This panel fills with portfolio alerts, unusual flow, provider-backed news, and earnings events as data arrives."
+        />
+      )}
     </Card>
   );
 };
@@ -5167,9 +5853,10 @@ const MarketScreen = ({
   symbols = [],
   researchConfigured = false,
   stockAggregateStreamingEnabled = false,
+  marketNotifications = [],
 }) => {
   const [sectorTf, setSectorTf] = useState("1d");
-  const { putCall, sectorFlow, tickerFlow, flowStatus, flowEvents, flowTide } =
+  const { putCall, sectorFlow, flowStatus, flowEvents, flowTide } =
     useLiveMarketFlow(symbols);
   const calendarWindow = useMemo(() => {
     const from = new Date();
@@ -5315,75 +6002,6 @@ const MarketScreen = ({
         overflow: "hidden",
       }}
     >
-      {/* ── TICKER RIBBON ── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          height: dim(26),
-          padding: sp("0 10px"),
-          borderBottom: `1px solid ${T.border}`,
-          gap: sp(10),
-          overflow: "hidden",
-          flexShrink: 0,
-          background: `linear-gradient(to right, ${T.bg1}, ${T.bg2})`,
-        }}
-      >
-        {MACRO_TICKERS.map((m) => {
-          const pos = isFiniteNumber(m.chg)
-            ? m.chg >= 0
-            : isFiniteNumber(m.pct)
-              ? m.pct >= 0
-              : null;
-          return (
-            <div
-              key={m.sym}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(4),
-                flexShrink: 0,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(8),
-                  fontWeight: 700,
-                  fontFamily: T.mono,
-                  color: T.textSec,
-                }}
-              >
-                {m.label || m.sym}
-              </span>
-              <span
-                style={{
-                  fontSize: fs(9),
-                  fontFamily: T.mono,
-                  fontWeight: 600,
-                  color: T.text,
-                }}
-              >
-                {formatQuotePrice(m.price)}
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                  fontWeight: 600,
-                  color: pos == null ? T.textDim : pos ? T.green : T.red,
-                }}
-              >
-                {formatSignedPercent(m.pct)}
-              </span>
-              <div
-                style={{ width: dim(1), height: dim(12), background: T.border }}
-              />
-            </div>
-          );
-        })}
-      </div>
-
-      {/* ── SCROLLABLE BODY ── */}
       <div
         style={{
           flex: 1,
@@ -5394,170 +6012,30 @@ const MarketScreen = ({
           gap: 6,
         }}
       >
-        {/* ── ROW 1: Index Cards (gauge moved to right rail) ── */}
+        {/* ── ROW 1: Chart workspace + activity feed ── */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 5,
+            gridTemplateColumns: "minmax(0, 1.45fr) minmax(320px, 0.85fr)",
+            gap: 6,
+            alignItems: "start",
           }}
         >
-          {INDICES.map((idx) => {
-            const liveTickerFlow = tickerFlow.find(
-              (item) => item.sym === idx.sym,
-            );
-            const callPrem = isFiniteNumber(liveTickerFlow?.calls)
-              ? liveTickerFlow.calls
-              : null;
-            const putPrem = isFiniteNumber(liveTickerFlow?.puts)
-              ? liveTickerFlow.puts
-              : null;
-            const p = isFiniteNumber(idx.chg)
-              ? idx.chg >= 0
-              : isFiniteNumber(idx.pct)
-                ? idx.pct >= 0
-                : null;
-            const hasLiveTickerFlow =
-              isFiniteNumber(callPrem) && isFiniteNumber(putPrem);
-            const totalPrem = hasLiveTickerFlow ? Math.max(callPrem + putPrem, 1) : null;
-            const callPct = hasLiveTickerFlow ? (callPrem / totalPrem) * 100 : null;
-            const putPct = hasLiveTickerFlow ? 100 - callPct : null;
-            const flowDir = hasLiveTickerFlow ? callPrem - putPrem : null;
-            return (
-              <Card key={idx.sym} style={{ padding: "5px 8px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: fs(10),
-                      fontWeight: 700,
-                      fontFamily: T.mono,
-                      color: T.text,
-                    }}
-                  >
-                    {idx.sym}
-                  </div>
-                  <div style={{ width: 44, height: 16 }}>
-                    <ResearchSparkline
-                      bars={idx.sparkBars}
-                      theme={T}
-                      themeKey={CURRENT_THEME}
-                    />
-                  </div>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    gap: sp(5),
-                    marginTop: sp(2),
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: fs(14),
-                      fontWeight: 700,
-                      fontFamily: T.mono,
-                      color: T.text,
-                      lineHeight: 1,
-                    }}
-                  >
-                    {formatQuotePrice(idx.price)}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: fs(8),
-                      fontFamily: T.mono,
-                      fontWeight: 600,
-                      color: p == null ? T.textDim : p ? T.green : T.red,
-                      lineHeight: 1,
-                    }}
-                  >
-                    {formatSignedPercent(idx.pct)}
-                  </span>
-                </div>
-                {/* Net premium flow bar */}
-                <div
-                  style={{
-                    marginTop: sp(3),
-                    paddingTop: sp(3),
-                    borderTop: `1px solid ${T.border}`,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: fs(7),
-                      fontFamily: T.mono,
-                      marginBottom: sp(2),
-                    }}
-                  >
-                    <span style={{ color: hasLiveTickerFlow ? T.green : T.textDim, fontWeight: 600 }}>
-                      {hasLiveTickerFlow ? `C $${callPrem.toFixed(1)}M` : `C ${MISSING_VALUE}`}
-                    </span>
-                    <span
-                      style={{
-                        color:
-                          !isFiniteNumber(flowDir)
-                            ? T.textDim
-                            : flowDir >= 0
-                              ? T.green
-                              : T.red,
-                        fontWeight: 700,
-                      }}
-                    >
-                      {isFiniteNumber(flowDir)
-                        ? `${flowDir >= 0 ? "+" : ""}$${flowDir.toFixed(1)}M`
-                        : MISSING_VALUE}
-                    </span>
-                    <span style={{ color: hasLiveTickerFlow ? T.red : T.textDim, fontWeight: 600 }}>
-                      {hasLiveTickerFlow ? `P $${putPrem.toFixed(1)}M` : `P ${MISSING_VALUE}`}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      height: dim(4),
-                      borderRadius: dim(2),
-                      overflow: "hidden",
-                      background: T.bg3,
-                    }}
-                    >
-                      <div
-                        style={{
-                        width: `${callPct ?? 0}%`,
-                        background: T.green,
-                        opacity: hasLiveTickerFlow ? 0.85 : 0,
-                        }}
-                      />
-                      <div
-                        style={{
-                        width: `${putPct ?? 0}%`,
-                        background: T.red,
-                        opacity: hasLiveTickerFlow ? 0.85 : 0,
-                        }}
-                      />
-                    </div>
-                </div>
-              </Card>
-            );
-          })}
+          <MultiChartGrid
+            activeSym={sym}
+            onSymClick={onSymClick}
+            stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+          />
+          <MarketActivityPanel
+            notifications={marketNotifications}
+            highlightedUnusualFlow={highlightedUnusualFlow}
+            newsItems={newsItems}
+            calendarItems={calendarItems}
+            onSymClick={onSymClick}
+          />
         </div>
 
-        {/* ── ROW 2: Multi-chart grid (replaces big chart + VIX panel) ── */}
-        <MultiChartGrid
-          activeSym={sym}
-          onSymClick={onSymClick}
-          stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-        />
-
-        {/* ── ROW 3: Selected ticker premium tide + unusual options activity ── */}
+        {/* ── ROW 2: Selected ticker premium tide + unusual options activity ── */}
         <div
           style={{
             display: "grid",
@@ -17085,6 +17563,12 @@ export default function RayAlgoPlatform() {
     n: 0,
     contract: null,
   });
+  const [marketClockNow, setMarketClockNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setMarketClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const sessionQuery = useGetSession({
     query: {
@@ -17184,7 +17668,7 @@ export default function RayAlgoPlatform() {
           getBarsRequest({
             symbol,
             timeframe: "15m",
-            limit: 24,
+            limit: 48,
             outsideRth: true,
             source: "trades",
           }),
@@ -17694,6 +18178,51 @@ export default function RayAlgoPlatform() {
   const winAlerts = alertingPositions.filter((a) => a.kind === "profit").length;
   const lossAlerts = alertingPositions.filter((a) => a.kind === "loss").length;
   const totalAlerts = winAlerts + lossAlerts;
+  const marketAlertItems = useMemo(() => {
+    if (!brokerConfigured || !brokerAuthenticated || !primaryAccountId) {
+      return [];
+    }
+
+    return (positionAlertsQuery.data?.positions || [])
+      .flatMap((position) => {
+        const pct = position.unrealizedPnlPercent;
+        if (!isFiniteNumber(pct)) {
+          return [];
+        }
+
+        if (pct >= 50) {
+          return [
+            {
+              id: `alert_${position.id}`,
+              symbol: position.symbol,
+              label: `${position.symbol} profit alert`,
+              detail: `${formatSignedPercent(pct, 1)} unrealized PnL`,
+              tone: "profit",
+            },
+          ];
+        }
+
+        if (pct <= -25) {
+          return [
+            {
+              id: `alert_${position.id}`,
+              symbol: position.symbol,
+              label: `${position.symbol} risk alert`,
+              detail: `${formatSignedPercent(pct, 1)} unrealized PnL`,
+              tone: "risk",
+            },
+          ];
+        }
+
+        return [];
+      })
+      .slice(0, 6);
+  }, [
+    brokerAuthenticated,
+    brokerConfigured,
+    positionAlertsQuery.data,
+    primaryAccountId,
+  ]);
   const watchlistSidebarItems = useMemo(() => {
     const sourceItems =
       activeWatchlist?.items?.length
@@ -17722,12 +18251,13 @@ export default function RayAlgoPlatform() {
   }, [activeWatchlist, marketDataVersion, watchlistSymbols]);
   const headerKpiItems = useMemo(
     () =>
-      HEADER_KPI_SYMBOLS.map((symbol, index) => {
-        const fallback = buildFallbackWatchlistItem(symbol, index, symbol);
+      HEADER_KPI_CONFIG.map(({ symbol, label }, index) => {
+        const fallback = buildFallbackWatchlistItem(symbol, index, label);
         const snapshot = getRuntimeTickerSnapshot(symbol, fallback) || fallback;
         return {
           sym: symbol,
-          name: snapshot.name || fallback.name || symbol,
+          label,
+          name: snapshot.name || fallback.name || label,
           price: snapshot.price,
           pct: snapshot.pct,
           spark: snapshot.spark || fallback.spark,
@@ -17735,6 +18265,10 @@ export default function RayAlgoPlatform() {
         };
       }),
     [marketDataVersion],
+  );
+  const marketClock = useMemo(
+    () => buildMarketClockState(marketClockNow),
+    [marketClockNow],
   );
   // Persist state changes (debounced via useEffect — fires after each commit)
   useEffect(() => {
@@ -17888,6 +18422,7 @@ export default function RayAlgoPlatform() {
               sessionQuery.data?.configured?.research,
             )}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+            marketNotifications={marketAlertItems}
           />
         );
       case "flow":
@@ -17937,6 +18472,7 @@ export default function RayAlgoPlatform() {
               sessionQuery.data?.configured?.research,
             )}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+            marketNotifications={marketAlertItems}
           />
         );
     }
@@ -17963,265 +18499,135 @@ export default function RayAlgoPlatform() {
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
-                height: dim(40),
-                padding: sp("0 12px"),
+                flexDirection: "column",
                 background: T.bg1,
                 borderBottom: `1px solid ${T.border}`,
                 flexShrink: 0,
               }}
             >
-              {/* Screen Tabs */}
-              <div style={{ display: "flex", gap: 1 }}>
-                {SCREENS.map((s) => {
-                  const isTradeTab = s.id === "trade";
-                  const hasAlerts = isTradeTab && totalAlerts > 0;
-                  // Pulse loss-colored if losses dominate, otherwise profit-colored
-                  const alertColor = lossAlerts > winAlerts ? T.red : T.amber;
-                  const pulseAnim = hasAlerts
-                    ? lossAlerts > winAlerts
-                      ? "pulseAlertLoss 1.8s ease-in-out infinite"
-                      : "pulseAlert 1.8s ease-in-out infinite"
-                    : "none";
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => setScreen(s.id)}
-                      style={{
-                        padding: sp("6px 14px"),
-                        fontSize: fs(11),
-                        fontWeight: 600,
-                        fontFamily: T.sans,
-                        background: screen === s.id ? T.bg3 : "transparent",
-                        border: "none",
-                        borderRadius: dim(4),
-                        cursor: "pointer",
-                        color: screen === s.id ? T.text : T.textDim,
-                        transition: "all 0.15s",
-                        borderBottom:
-                          screen === s.id
-                            ? `2px solid ${T.accent}`
-                            : "2px solid transparent",
-                        animation: pulseAnim,
-                        position: "relative",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (screen !== s.id)
-                          e.currentTarget.style.color = T.textSec;
-                      }}
-                      onMouseLeave={(e) => {
-                        if (screen !== s.id)
-                          e.currentTarget.style.color = T.textDim;
-                      }}
-                      title={
-                        hasAlerts
-                          ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
-                          : undefined
-                      }
-                    >
-                      <span style={{ marginRight: sp(4), fontSize: fs(10) }}>
-                        {s.icon}
-                      </span>
-                      {s.label}
-                      {hasAlerts && (
-                        <span
-                          style={{
-                            marginLeft: sp(4),
-                            padding: sp("1px 5px"),
-                            borderRadius: dim(8),
-                            background: alertColor,
-                            color: "#fff",
-                            fontSize: fs(8),
-                            fontWeight: 800,
-                            fontFamily: T.mono,
-                            letterSpacing: "0.04em",
-                            verticalAlign: "middle",
-                          }}
-                        >
-                          ⚡ {totalAlerts}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <HeaderKpiStrip
-                items={headerKpiItems}
-                onSelect={handleSelectSymbol}
-              />
-
-              <span style={{ flex: 1, minWidth: 0 }} />
-
-              {/* Theme Toggle */}
-              <button
-                onClick={toggleTheme}
-                title={
-                  theme === "dark"
-                    ? "Switch to light theme"
-                    : "Switch to dark theme"
-                }
+              <div
                 style={{
-                  background: T.bg2,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(4),
-                  color: T.textSec,
-                  cursor: "pointer",
-                  padding: sp("4px 8px"),
-                  fontSize: fs(13),
-                  lineHeight: 1,
-                  marginRight: sp(12),
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(12),
+                  padding: sp("8px 12px"),
+                  borderBottom: `1px solid ${T.border}`,
                 }}
               >
-                {theme === "dark" ? "☼" : "☾"}
-              </button>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 1,
+                    minWidth: 0,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  {SCREENS.map((s) => {
+                    const isTradeTab = s.id === "trade";
+                    const hasAlerts = isTradeTab && totalAlerts > 0;
+                    const alertColor = lossAlerts > winAlerts ? T.red : T.amber;
+                    const pulseAnim = hasAlerts
+                      ? lossAlerts > winAlerts
+                        ? "pulseAlertLoss 1.8s ease-in-out infinite"
+                        : "pulseAlert 1.8s ease-in-out infinite"
+                      : "none";
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => setScreen(s.id)}
+                        style={{
+                          padding: sp("6px 14px"),
+                          fontSize: fs(11),
+                          fontWeight: 600,
+                          fontFamily: T.sans,
+                          background: screen === s.id ? T.bg3 : "transparent",
+                          border: `1px solid ${screen === s.id ? T.accent : T.border}`,
+                          borderRadius: 0,
+                          cursor: "pointer",
+                          color: screen === s.id ? T.text : T.textDim,
+                          transition:
+                            "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
+                          animation: pulseAnim,
+                          position: "relative",
+                        }}
+                        onMouseEnter={(e) => {
+                          if (screen === s.id) return;
+                          e.currentTarget.style.color = T.textSec;
+                          e.currentTarget.style.background = T.bg2;
+                          e.currentTarget.style.borderColor = T.textMuted;
+                        }}
+                        onMouseLeave={(e) => {
+                          if (screen === s.id) return;
+                          e.currentTarget.style.color = T.textDim;
+                          e.currentTarget.style.background = "transparent";
+                          e.currentTarget.style.borderColor = T.border;
+                        }}
+                        title={
+                          hasAlerts
+                            ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
+                            : undefined
+                        }
+                      >
+                        <span style={{ marginRight: sp(4), fontSize: fs(10) }}>
+                          {s.icon}
+                        </span>
+                        {s.label}
+                        {hasAlerts && (
+                          <span
+                            style={{
+                              marginLeft: sp(4),
+                              padding: sp("1px 5px"),
+                              borderRadius: 0,
+                              background: alertColor,
+                              color: "#fff",
+                              fontSize: fs(8),
+                              fontWeight: 800,
+                              fontFamily: T.sans,
+                              letterSpacing: "0.04em",
+                              verticalAlign: "middle",
+                            }}
+                          >
+                            {totalAlerts}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
 
-              {/* Account Summary */}
+                <span style={{ flex: 1, minWidth: 0 }} />
+
+                <HeaderStatusCluster
+                  session={session}
+                  environment={environment}
+                  bridgeTone={bridgeTone}
+                  marketClock={marketClock}
+                  theme={theme}
+                  onToggleTheme={toggleTheme}
+                />
+              </div>
+
               <div
-                style={{ display: "flex", gap: sp(16), alignItems: "center" }}
+                style={{
+                  display: "flex",
+                  alignItems: "stretch",
+                  gap: sp(12),
+                  padding: sp("8px 12px"),
+                }}
               >
-                <div style={{ textAlign: "right", minWidth: dim(116) }}>
-                  <div
-                    style={{
-                      fontSize: fs(8),
-                      color: T.textMuted,
-                      fontWeight: 600,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    ACCOUNT
-                  </div>
-                  {accounts.length ? (
-                    <select
-                      value={primaryAccountId || ""}
-                      onChange={(event) =>
-                        setSelectedAccountId(event.target.value || null)
-                      }
-                      style={{
-                        minWidth: dim(112),
-                        background: T.bg2,
-                        border: `1px solid ${T.border}`,
-                        borderRadius: dim(4),
-                        color: T.text,
-                        fontSize: fs(10),
-                        fontFamily: T.mono,
-                        fontWeight: 700,
-                        padding: sp("4px 8px"),
-                        outline: "none",
-                      }}
-                    >
-                      {accounts.map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.id}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div
-                      style={{
-                        fontSize: fs(13),
-                        fontFamily: T.mono,
-                        fontWeight: 700,
-                        color: T.textDim,
-                      }}
-                    >
-                      {primaryAccountId || MISSING_VALUE}
-                    </div>
-                  )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <HeaderKpiStrip
+                    items={headerKpiItems}
+                    onSelect={handleSelectSymbol}
+                  />
                 </div>
-                <div
-                  style={{
-                    width: dim(1),
-                    height: dim(22),
-                    background: T.border,
-                  }}
+
+                <HeaderAccountStrip
+                  accounts={accounts}
+                  primaryAccountId={primaryAccountId}
+                  primaryAccount={primaryAccount}
+                  onSelectAccount={setSelectedAccountId}
                 />
-                <div style={{ textAlign: "right" }}>
-                  <div
-                    style={{
-                      fontSize: fs(8),
-                      color: T.textMuted,
-                      fontWeight: 600,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    NET LIQ
-                  </div>
-                  <div
-                    style={{
-                      fontSize: fs(13),
-                      fontFamily: T.mono,
-                      fontWeight: 700,
-                      color: T.text,
-                    }}
-                  >
-                    {primaryAccount
-                      ? fmtCompactCurrency(primaryAccount.netLiquidation)
-                      : MISSING_VALUE}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    width: dim(1),
-                    height: dim(22),
-                    background: T.border,
-                  }}
-                />
-                <div style={{ textAlign: "right" }}>
-                  <div
-                    style={{
-                      fontSize: fs(8),
-                      color: T.textMuted,
-                      fontWeight: 600,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    BUY PWR
-                  </div>
-                  <div
-                    style={{
-                      fontSize: fs(13),
-                      fontFamily: T.mono,
-                      fontWeight: 700,
-                      color: T.green,
-                    }}
-                  >
-                    {primaryAccount
-                      ? fmtCompactCurrency(primaryAccount.buyingPower)
-                      : MISSING_VALUE}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    width: dim(1),
-                    height: dim(22),
-                    background: T.border,
-                  }}
-                />
-                <div style={{ textAlign: "right" }}>
-                  <div
-                    style={{
-                      fontSize: fs(8),
-                      color: T.textMuted,
-                      fontWeight: 600,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    CASH
-                  </div>
-                  <div
-                    style={{
-                      fontSize: fs(13),
-                      fontFamily: T.mono,
-                      fontWeight: 700,
-                      color: T.textSec,
-                    }}
-                  >
-                    {primaryAccount
-                      ? fmtCompactCurrency(primaryAccount.cash)
-                      : MISSING_VALUE}
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -18254,7 +18660,7 @@ export default function RayAlgoPlatform() {
                         width: dim(28),
                         height: dim(28),
                         border: "none",
-                        borderRadius: dim(4),
+                        borderRadius: 0,
                         background: T.bg2,
                         color: T.textDim,
                         cursor: "pointer",
@@ -18276,7 +18682,7 @@ export default function RayAlgoPlatform() {
                         width: dim(18),
                         height: dim(18),
                         border: "none",
-                        borderRadius: dim(3),
+                        borderRadius: 0,
                         background: T.bg3,
                         color: T.textDim,
                         cursor: "pointer",
@@ -18336,7 +18742,7 @@ export default function RayAlgoPlatform() {
                 borderTop: `1px solid ${T.border}`,
                 flexShrink: 0,
                 fontSize: fs(9),
-                fontFamily: T.mono,
+                fontFamily: T.sans,
                 gap: sp(12),
               }}
             >
@@ -18388,17 +18794,10 @@ export default function RayAlgoPlatform() {
                 {(session?.marketDataProviders?.research || MISSING_VALUE).toUpperCase()}
               </span>
               <span style={{ color: bridgeTone.color }}>
-                IBKR {session?.ibkrBridge?.transport === "tws" ? "TWS" : "CP"}{" "}
+                BRIDGE {session?.ibkrBridge?.transport === "tws" ? "TWS" : "CP"} ·{" "}
                 {bridgeTone.label.toUpperCase()}
               </span>
               <span style={{ flex: 1 }} />
-              <span style={{ color: T.textMuted }}>
-                {new Date().toLocaleTimeString("en-US", {
-                  hour12: false,
-                  timeZone: "America/New_York",
-                })}{" "}
-                ET
-              </span>
               <span style={{ color: T.textMuted }}>v0.1.0</span>
             </div>
           </div>

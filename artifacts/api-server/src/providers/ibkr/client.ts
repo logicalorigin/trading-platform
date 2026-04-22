@@ -144,6 +144,39 @@ export type ResolvedIbkrContract = {
   providerContractId: string;
 };
 
+export type IbkrNewsArticle = {
+  id: string;
+  title: string;
+  description: string | null;
+  articleUrl: string;
+  imageUrl: string | null;
+  author: string | null;
+  publishedAt: Date;
+  tickers: string[];
+  publisher: {
+    name: string;
+    homepageUrl: string | null;
+    logoUrl: string | null;
+  };
+  sentiment: string | null;
+  sentimentReasoning: string | null;
+};
+
+export type IbkrUniverseTicker = {
+  ticker: string;
+  name: string;
+  market: "stocks" | "indices" | "fx" | "crypto" | "otc";
+  locale: string | null;
+  type: string | null;
+  active: boolean;
+  primaryExchange: string | null;
+  currencyName: string | null;
+  cik: string | null;
+  compositeFigi: string | null;
+  shareClassFigi: string | null;
+  lastUpdatedAt: Date | null;
+};
+
 export type OptionChainContract = {
   contract: {
     ticker: string;
@@ -2259,5 +2292,172 @@ export class IbkrClient {
         "Request submitted",
       submittedAt: new Date(),
     };
+  }
+
+  /**
+   * Public ticker search backed by IBKR's `/iserver/secdef/search`. Returns
+   * results in the same shape the platform service expects from Polygon's
+   * universe-search endpoint so it can be a drop-in primary source.
+   */
+  async searchTickers(input: {
+    search?: string;
+    limit?: number;
+  }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
+    const search = input.search?.trim();
+    if (!search) return { count: 0, results: [] };
+
+    const limit = Math.max(1, Math.min(input.limit ?? 12, 50));
+    let raw: Record<string, unknown>[] = [];
+    try {
+      raw = await this.searchSecurities(search, { includeName: true });
+    } catch {
+      return { count: 0, results: [] };
+    }
+
+    const results: IbkrUniverseTicker[] = [];
+    for (const record of raw) {
+      const ticker = asString(record["symbol"]);
+      const name =
+        firstDefined(
+          asString(record["companyHeader"]),
+          asString(record["companyName"]),
+          asString(record["description"]),
+        ) ?? "";
+      if (!ticker || !name) continue;
+
+      const secType = asString(record["secType"]);
+      // IBKR's secdef/search returns a mix of contract types; we only surface
+      // STK rows here so the UI's universe browser stays clean. (Options have
+      // their own dedicated chain endpoint.)
+      if (secType && secType !== "STK") continue;
+
+      results.push({
+        ticker: normalizeSymbol(ticker),
+        name,
+        market: "stocks",
+        locale: null,
+        type: secType ?? "CS",
+        active: true,
+        primaryExchange:
+          firstDefined(
+            asString(record["listingExchange"]),
+            asString(record["description"]),
+          ) ?? null,
+        currencyName: null,
+        cik: null,
+        compositeFigi: null,
+        shareClassFigi: null,
+        lastUpdatedAt: null,
+      });
+      if (results.length >= limit) break;
+    }
+
+    return { count: results.length, results };
+  }
+
+  /**
+   * News headlines from IBKR's `/iserver/news` endpoint. Requires an active
+   * Reuters/Dow Jones subscription on the IBKR account; returns an empty list
+   * if the subscription isn't present or the endpoint is unavailable, allowing
+   * the platform service to fall back to a secondary provider.
+   */
+  async getNews(input: {
+    ticker?: string;
+    limit?: number;
+  }): Promise<IbkrNewsArticle[]> {
+    const limit = Math.max(1, Math.min(input.limit ?? 20, 50));
+
+    let conid: number | null = null;
+    if (input.ticker) {
+      try {
+        const resolved = await this.resolveStockContract(input.ticker);
+        conid = resolved.conid;
+      } catch {
+        return [];
+      }
+    }
+
+    if (!conid) {
+      // IBKR's Client Portal API doesn't expose a general "market news"
+      // firehose without a contract id. The caller should fall back to the
+      // secondary provider for tickerless requests.
+      return [];
+    }
+
+    let payload: unknown = null;
+    try {
+      payload = await this.request<unknown>(
+        "/iserver/news",
+        {},
+        { conids: String(conid), pageSize: limit },
+      );
+    } catch {
+      return [];
+    }
+
+    const records = compact(asArray(payload).map(asRecord));
+    const ticker = input.ticker ? normalizeSymbol(input.ticker) : null;
+
+    return compact(
+      records.map((record): IbkrNewsArticle | null => {
+        const id = asString(record["id"]);
+        const headline = asString(record["headline"]);
+        if (!id || !headline) return null;
+
+        const updated =
+          firstDefined(
+            asString(record["updated"]),
+            asString(record["date"]),
+          ) ?? null;
+        // IBKR timestamps are typically ms since epoch as a number-or-string,
+        // sometimes formatted as "YYYYMMDDhhmmss". Try both shapes.
+        let publishedAt: Date | null = null;
+        if (updated) {
+          const numeric = Number(updated);
+          if (Number.isFinite(numeric) && numeric > 1_000_000_000_000) {
+            publishedAt = new Date(numeric);
+          } else if (/^\d{14}$/.test(updated)) {
+            const y = updated.slice(0, 4);
+            const mo = updated.slice(4, 6);
+            const d = updated.slice(6, 8);
+            const hh = updated.slice(8, 10);
+            const mm = updated.slice(10, 12);
+            const ss = updated.slice(12, 14);
+            publishedAt = new Date(`${y}-${mo}-${d}T${hh}:${mm}:${ss}Z`);
+          } else {
+            const parsed = Date.parse(updated);
+            if (!Number.isNaN(parsed)) publishedAt = new Date(parsed);
+          }
+        }
+        if (!publishedAt) publishedAt = new Date();
+
+        const provider =
+          firstDefined(
+            asString(record["provider"]),
+            asString(record["source"]),
+          ) ?? "IBKR News";
+
+        return {
+          id,
+          title: headline,
+          description: null,
+          // IBKR news bodies are fetched separately via /iserver/news/{id};
+          // we don't have a public URL, so point at the IBKR portal as a stable
+          // (non-broken) link the UI can render.
+          articleUrl: `https://www.interactivebrokers.com/en/index.php?f=2222&conid=${conid}`,
+          imageUrl: null,
+          author: null,
+          publishedAt,
+          tickers: ticker ? [ticker] : [],
+          publisher: {
+            name: provider,
+            homepageUrl: null,
+            logoUrl: null,
+          },
+          sentiment: null,
+          sentimentReasoning: null,
+        };
+      }),
+    );
   }
 }

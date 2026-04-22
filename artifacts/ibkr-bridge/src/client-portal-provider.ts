@@ -12,6 +12,8 @@ import {
   type CancelOrderSnapshot,
   type HistoryBarTimeframe,
   type HistoryDataSource,
+  type IbkrNewsArticle,
+  type IbkrUniverseTicker,
   type OptionChainContract,
   type OrderPreviewSnapshot,
   type PlaceOrderInput,
@@ -230,5 +232,21 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   }): Promise<CancelOrderSnapshot> {
     await this.refreshSession();
     return this.client.cancelOrder(input);
+  }
+
+  async getNews(input: {
+    ticker?: string;
+    limit?: number;
+  }): Promise<IbkrNewsArticle[]> {
+    await this.refreshSession();
+    return this.client.getNews(input);
+  }
+
+  async searchTickers(input: {
+    search?: string;
+    limit?: number;
+  }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
+    await this.refreshSession();
+    return this.client.searchTickers(input);
   }
 }

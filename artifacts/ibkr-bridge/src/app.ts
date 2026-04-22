@@ -296,6 +296,28 @@ app.post("/orders/:orderId/cancel", async (req, res) => {
   }));
 });
 
+app.get("/news", async (req, res) => {
+  const ticker = typeof req.query.ticker === "string" ? req.query.ticker : undefined;
+  const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+  res.json(
+    await ibkrBridgeService.getNews({
+      ticker,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    }),
+  );
+});
+
+app.get("/universe/search", async (req, res) => {
+  const search = typeof req.query.search === "string" ? req.query.search : undefined;
+  const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+  res.json(
+    await ibkrBridgeService.searchTickers({
+      search,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    }),
+  );
+});
+
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (res.headersSent) {
     return;
