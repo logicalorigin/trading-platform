@@ -35,6 +35,66 @@ type BridgeHealthSnapshot = {
   clientId: number | null;
 };
 
+function toDate(value: unknown): Date {
+  return value instanceof Date ? value : new Date(value as string);
+}
+
+function hydrateOptionContract<
+  T extends { expirationDate: unknown } | null | undefined,
+>(contract: T): T {
+  if (!contract) return contract;
+  return { ...contract, expirationDate: toDate(contract.expirationDate) } as T;
+}
+
+function hydrateAccount(raw: BrokerAccountSnapshot): BrokerAccountSnapshot {
+  return { ...raw, updatedAt: toDate(raw.updatedAt) };
+}
+
+function hydratePosition(raw: BrokerPositionSnapshot): BrokerPositionSnapshot {
+  return { ...raw, optionContract: hydrateOptionContract(raw.optionContract) };
+}
+
+function hydrateOrder(raw: BrokerOrderSnapshot): BrokerOrderSnapshot {
+  return {
+    ...raw,
+    placedAt: toDate(raw.placedAt),
+    updatedAt: toDate(raw.updatedAt),
+    optionContract: hydrateOptionContract(raw.optionContract),
+  };
+}
+
+function hydrateExecution(raw: BrokerExecutionSnapshot): BrokerExecutionSnapshot {
+  return { ...raw, executedAt: toDate(raw.executedAt) };
+}
+
+function hydrateMarketDepth(
+  raw: BrokerMarketDepthSnapshot | null,
+): BrokerMarketDepthSnapshot | null {
+  if (!raw) return raw;
+  return { ...raw, updatedAt: toDate(raw.updatedAt) };
+}
+
+function hydrateOptionChainContract(raw: OptionChainContract): OptionChainContract {
+  return {
+    ...raw,
+    updatedAt: toDate(raw.updatedAt),
+    contract: { ...raw.contract, expirationDate: toDate(raw.contract.expirationDate) },
+  };
+}
+
+function hydrateSession(raw: SessionStatusSnapshot | null): SessionStatusSnapshot | null {
+  if (!raw) return raw;
+  return { ...raw, updatedAt: toDate(raw.updatedAt) };
+}
+
+function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
+  return {
+    ...raw,
+    updatedAt: toDate(raw.updatedAt),
+    lastTickleAt: raw.lastTickleAt ? toDate(raw.lastTickleAt) : null,
+  };
+}
+
 export class IbkrBridgeClient {
   private readonly config = getIbkrBridgeRuntimeConfig();
 
@@ -62,17 +122,17 @@ export class IbkrBridgeClient {
     });
   }
 
-  getHealth(): Promise<BridgeHealthSnapshot> {
-    return this.request<BridgeHealthSnapshot>("/healthz");
+  async getHealth(): Promise<BridgeHealthSnapshot> {
+    return hydrateHealth(await this.request<BridgeHealthSnapshot>("/healthz"));
   }
 
-  getSession(): Promise<SessionStatusSnapshot | null> {
-    return this.request<SessionStatusSnapshot | null>("/session");
+  async getSession(): Promise<SessionStatusSnapshot | null> {
+    return hydrateSession(await this.request<SessionStatusSnapshot | null>("/session"));
   }
 
   async listAccounts(mode: RuntimeMode): Promise<BrokerAccountSnapshot[]> {
     const payload = await this.request<{ accounts: BrokerAccountSnapshot[] }>("/accounts", {}, { mode });
-    return payload.accounts;
+    return payload.accounts.map(hydrateAccount);
   }
 
   async listPositions(input: {
@@ -83,7 +143,7 @@ export class IbkrBridgeClient {
       mode: input.mode,
       accountId: input.accountId,
     });
-    return payload.positions;
+    return payload.positions.map(hydratePosition);
   }
 
   async listOrders(input: {
@@ -104,7 +164,7 @@ export class IbkrBridgeClient {
       accountId: input.accountId,
       status: input.status,
     });
-    return payload.orders;
+    return payload.orders.map(hydrateOrder);
   }
 
   async listExecutions(input: {
@@ -125,14 +185,19 @@ export class IbkrBridgeClient {
         providerContractId: input.providerContractId,
       },
     );
-    return payload.executions;
+    return payload.executions.map(hydrateExecution);
   }
 
   async getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
-    const payload = await this.request<{ quotes: QuoteSnapshot[] }>("/quotes/snapshot", {}, {
-      symbols: symbols.join(","),
-    });
-    return payload.quotes;
+    const payload = await this.request<{ quotes: Array<Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }> }>(
+      "/quotes/snapshot",
+      {},
+      { symbols: symbols.join(",") },
+    );
+    return payload.quotes.map((quote) => ({
+      ...quote,
+      updatedAt: quote.updatedAt instanceof Date ? quote.updatedAt : new Date(quote.updatedAt),
+    }));
   }
 
   async getHistoricalBars(input: {
@@ -146,18 +211,25 @@ export class IbkrBridgeClient {
     outsideRth?: boolean;
     source?: HistoryDataSource;
   }): Promise<BrokerBarSnapshot[]> {
-    const payload = await this.request<{ bars: BrokerBarSnapshot[] }>("/bars", {}, {
-      symbol: input.symbol,
-      timeframe: input.timeframe,
-      limit: input.limit,
-      from: input.from,
-      to: input.to,
-      assetClass: input.assetClass,
-      providerContractId: input.providerContractId,
-      outsideRth: input.outsideRth,
-      source: input.source,
-    });
-    return payload.bars;
+    const payload = await this.request<{ bars: Array<Omit<BrokerBarSnapshot, "timestamp"> & { timestamp: string | Date }> }>(
+      "/bars",
+      {},
+      {
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        from: input.from,
+        to: input.to,
+        assetClass: input.assetClass,
+        providerContractId: input.providerContractId,
+        outsideRth: input.outsideRth,
+        source: input.source,
+      },
+    );
+    return payload.bars.map((bar) => ({
+      ...bar,
+      timestamp: bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp),
+    }));
   }
 
   async getOptionChain(input: {
@@ -174,7 +246,7 @@ export class IbkrBridgeClient {
       maxExpirations: input.maxExpirations,
       strikesAroundMoney: input.strikesAroundMoney,
     });
-    return payload.contracts;
+    return payload.contracts.map(hydrateOptionChainContract);
   }
 
   async getMarketDepth(input: {
@@ -195,27 +267,30 @@ export class IbkrBridgeClient {
         exchange: input.exchange,
       },
     );
-    return payload.depth;
+    return hydrateMarketDepth(payload.depth);
   }
 
-  previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot> {
-    return this.request<OrderPreviewSnapshot>("/orders/preview", {
+  async previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot> {
+    const raw = await this.request<OrderPreviewSnapshot>("/orders/preview", {
       method: "POST",
       body: JSON.stringify(input),
       headers: {
         "Content-Type": "application/json",
       },
     });
+    return { ...raw, optionContract: hydrateOptionContract(raw.optionContract) };
   }
 
-  placeOrder(input: PlaceOrderInput): Promise<BrokerOrderSnapshot> {
-    return this.request<BrokerOrderSnapshot>("/orders", {
-      method: "POST",
-      body: JSON.stringify(input),
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+  async placeOrder(input: PlaceOrderInput): Promise<BrokerOrderSnapshot> {
+    return hydrateOrder(
+      await this.request<BrokerOrderSnapshot>("/orders", {
+        method: "POST",
+        body: JSON.stringify(input),
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
+    );
   }
 
   submitRawOrders(input: {
@@ -231,33 +306,42 @@ export class IbkrBridgeClient {
     });
   }
 
-  replaceOrder(input: {
+  async replaceOrder(input: {
     accountId: string;
     orderId: string;
     order: Record<string, unknown>;
     mode: RuntimeMode;
   }): Promise<ReplaceOrderSnapshot> {
-    return this.request<ReplaceOrderSnapshot>(`/orders/${encodeURIComponent(input.orderId)}/replace`, {
-      method: "POST",
-      body: JSON.stringify(input),
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+    return hydrateOrder(
+      await this.request<ReplaceOrderSnapshot>(
+        `/orders/${encodeURIComponent(input.orderId)}/replace`,
+        {
+          method: "POST",
+          body: JSON.stringify(input),
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      ),
+    );
   }
 
-  cancelOrder(input: {
+  async cancelOrder(input: {
     accountId: string;
     orderId: string;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {
-    return this.request<CancelOrderSnapshot>(`/orders/${encodeURIComponent(input.orderId)}/cancel`, {
-      method: "POST",
-      body: JSON.stringify(input),
-      headers: {
-        "Content-Type": "application/json",
+    const raw = await this.request<CancelOrderSnapshot>(
+      `/orders/${encodeURIComponent(input.orderId)}/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+        headers: {
+          "Content-Type": "application/json",
+        },
       },
-    });
+    );
+    return { ...raw, submittedAt: toDate(raw.submittedAt) };
   }
 }

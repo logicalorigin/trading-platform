@@ -2961,7 +2961,7 @@ export const ResearchChartSurface = ({
                 right: 0,
                 bottom: chartInsetBottom,
                 pointerEvents: "none",
-                overflow: "hidden",
+                overflow: "visible",
               }}
             >
               {windowOverlays.map((overlay) => (
