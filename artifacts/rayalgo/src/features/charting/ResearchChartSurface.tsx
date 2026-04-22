@@ -85,6 +85,18 @@ type OverlayShape = {
   fill: string;
   border: string;
   label?: string;
+  kind?: "box" | "line";
+  borderStyle?: "solid" | "dashed" | "dotted";
+  borderWidth?: number;
+  borderVisible?: boolean;
+  labelPosition?: "top-left" | "center" | "right";
+  labelOffsetX?: number;
+  labelColor?: string;
+  labelFill?: string;
+  labelBorder?: string;
+  labelVariant?: "plain" | "pill";
+  radius?: number;
+  opacity?: number;
 };
 
 type TradeMarkerTarget = {
@@ -417,9 +429,21 @@ const overlayShapesEqual = (
 
     if (
       leftShape.id !== rightShape.id ||
+      leftShape.kind !== rightShape.kind ||
       leftShape.fill !== rightShape.fill ||
       leftShape.border !== rightShape.border ||
+      leftShape.borderStyle !== rightShape.borderStyle ||
+      leftShape.borderWidth !== rightShape.borderWidth ||
+      leftShape.borderVisible !== rightShape.borderVisible ||
       leftShape.label !== rightShape.label ||
+      leftShape.labelPosition !== rightShape.labelPosition ||
+      leftShape.labelOffsetX !== rightShape.labelOffsetX ||
+      leftShape.labelColor !== rightShape.labelColor ||
+      leftShape.labelFill !== rightShape.labelFill ||
+      leftShape.labelBorder !== rightShape.labelBorder ||
+      leftShape.labelVariant !== rightShape.labelVariant ||
+      leftShape.radius !== rightShape.radius ||
+      leftShape.opacity !== rightShape.opacity ||
       !numbersClose(leftShape.left, rightShape.left) ||
       !numbersClose(leftShape.top, rightShape.top) ||
       !numbersClose(leftShape.width, rightShape.width) ||
@@ -571,6 +595,29 @@ const parseIsoTimeSeconds = (value: string): number | null => {
   return Math.floor(parsed / 1000);
 };
 
+const resolveOverlayBorderStyle = (
+  value: unknown,
+): "solid" | "dashed" | "dotted" => {
+  if (value === "dashed" || value === "dotted") {
+    return value;
+  }
+
+  return "solid";
+};
+
+const resolveOverlayLabelPosition = (
+  value: unknown,
+): "top-left" | "center" | "right" => {
+  if (value === "center" || value === "right") {
+    return value;
+  }
+
+  return "top-left";
+};
+
+const resolveFiniteMetaNumber = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
 const resolveBarSpacing = (chart: any, model: ChartModel): number => {
   const sample = model.chartBars.slice(-40);
   const diffs: number[] = [];
@@ -641,6 +688,8 @@ const buildWindowOverlays = (
           : tone === "neutral"
             ? withAlpha(theme.textMuted, "38")
             : withAlpha(theme.green, "45");
+      const isBackground =
+        (indicatorWindow.meta?.style as string | undefined) === "background";
 
       result.push({
         id: indicatorWindow.id,
@@ -649,8 +698,11 @@ const buildWindowOverlays = (
         width: Math.max(2, Math.abs(right - left)),
         height: Math.max(0, viewportHeight),
         fill,
-        border,
-        label: indicatorWindow.meta?.label as string | undefined,
+        border: isBackground ? "transparent" : border,
+        borderVisible: !isBackground,
+        label: isBackground
+          ? undefined
+          : (indicatorWindow.meta?.label as string | undefined),
       });
       return result;
     },
@@ -684,6 +736,7 @@ const buildZoneOverlays = (
         endTime != null ? chart.timeScale().timeToCoordinate(endTime) : null;
       const top = series.priceToCoordinate?.(zone.top);
       const bottom = series.priceToCoordinate?.(zone.bottom);
+      const meta = zone.meta ?? {};
 
       if (
         !Number.isFinite(left) ||
@@ -693,28 +746,82 @@ const buildZoneOverlays = (
         return result;
       }
 
+      const extendBars = resolveFiniteMetaNumber(meta.extendBars, 0);
       const right =
         typeof rightBase === "number"
-          ? rightBase + barSpacing
-          : left + barSpacing;
-      const fill =
+          ? rightBase + barSpacing * (1 + Math.max(0, extendBars))
+          : left + barSpacing * (1 + Math.max(0, extendBars));
+      const defaultFill =
         zone.direction === "short"
           ? withAlpha(theme.red, "1c")
           : withAlpha(theme.green, "1c");
-      const border =
+      const defaultBorder =
         zone.direction === "short"
           ? withAlpha(theme.red, "70")
           : withAlpha(theme.green, "70");
+      const style = meta.style as string | undefined;
+      const border = (meta.borderColor as string | undefined) || defaultBorder;
+      const fill = (meta.fillColor as string | undefined) || defaultFill;
+      const label = zone.label || zone.zoneType;
+
+      if (style === "line-overlay") {
+        result.push({
+          id: zone.id,
+          kind: "line",
+          left: Math.min(left, right),
+          top: (top + bottom) / 2,
+          width: Math.max(2, Math.abs(right - left)),
+          height: 0,
+          fill: "transparent",
+          border: (meta.lineColor as string | undefined) || border,
+          borderStyle: resolveOverlayBorderStyle(meta.lineStyle),
+          borderWidth: resolveFiniteMetaNumber(meta.borderWidth, 1),
+          borderVisible: true,
+          label,
+          labelPosition: resolveOverlayLabelPosition(meta.labelPosition),
+          labelOffsetX:
+            resolveFiniteMetaNumber(meta.labelOffsetBars, 0) * barSpacing,
+          labelColor: (meta.labelColor as string | undefined) || "#ffffff",
+          labelFill:
+            (meta.labelFillColor as string | undefined) ||
+            withAlpha(
+              ((meta.lineColor as string | undefined) || border) as string,
+              "70",
+            ),
+          labelBorder:
+            (meta.labelBorderColor as string | undefined) ||
+            withAlpha(
+              ((meta.lineColor as string | undefined) || border) as string,
+              "90",
+            ),
+          labelVariant:
+            meta.labelVariant === "plain" ? "plain" : "pill",
+          opacity: 0.95,
+        });
+        return result;
+      }
 
       result.push({
         id: zone.id,
+        kind: "box",
         left: Math.min(left, right),
         top: Math.min(top, bottom),
         width: Math.max(2, Math.abs(right - left)),
         height: Math.max(2, Math.abs(bottom - top)),
         fill,
         border,
-        label: zone.label || zone.zoneType,
+        borderStyle: resolveOverlayBorderStyle(meta.lineStyle),
+        borderWidth: resolveFiniteMetaNumber(meta.borderWidth, 1),
+        borderVisible: meta.borderVisible !== false,
+        label,
+        labelPosition: resolveOverlayLabelPosition(meta.labelPosition),
+        labelColor: (meta.labelColor as string | undefined) || theme.text,
+        labelFill: (meta.labelFillColor as string | undefined),
+        labelBorder: (meta.labelBorderColor as string | undefined),
+        labelVariant:
+          meta.labelVariant === "plain" ? "plain" : "pill",
+        radius: resolveFiniteMetaNumber(meta.radius, 4),
+        opacity: resolveFiniteMetaNumber(meta.opacity, 1),
       });
       return result;
     },
@@ -2613,8 +2720,15 @@ export const ResearchChartSurface = ({
                     width: overlay.width,
                     height: overlay.height,
                     background: overlay.fill,
-                    borderLeft: `1px solid ${overlay.border}`,
-                    borderRight: `1px solid ${overlay.border}`,
+                    borderLeft:
+                      overlay.borderVisible === false
+                        ? "none"
+                        : `${overlay.borderWidth ?? 1}px solid ${overlay.border}`,
+                    borderRight:
+                      overlay.borderVisible === false
+                        ? "none"
+                        : `${overlay.borderWidth ?? 1}px solid ${overlay.border}`,
+                    opacity: overlay.opacity ?? 1,
                   }}
                 />
               ))}
@@ -2633,38 +2747,117 @@ export const ResearchChartSurface = ({
                 />
               ))}
               {zoneOverlays.map((overlay) => (
-                <div
-                  key={`zone-${overlay.id}`}
-                  style={{
-                    position: "absolute",
-                    left: overlay.left,
-                    top: overlay.top,
-                    width: overlay.width,
-                    height: overlay.height,
-                    background: overlay.fill,
-                    border: `1px solid ${overlay.border}`,
-                    borderRadius: 4,
-                    boxShadow: `inset 0 0 0 1px ${withAlpha(overlay.border, "38")}`,
-                    overflow: "hidden",
-                  }}
-                >
-                  {overlay.label ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: 2,
-                        left: 4,
-                        fontSize: 9,
-                        fontFamily: theme.mono,
-                        color: theme.text,
-                        opacity: 0.85,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {overlay.label}
-                    </div>
-                  ) : null}
-                </div>
+                overlay.kind === "line" ? (
+                  <div
+                    key={`zone-${overlay.id}`}
+                    style={{
+                      position: "absolute",
+                      left: overlay.left,
+                      top: overlay.top,
+                      width: overlay.width,
+                      height: 0,
+                      borderTop: `${overlay.borderWidth ?? 1}px ${overlay.borderStyle ?? "solid"} ${overlay.border}`,
+                      opacity: overlay.opacity ?? 0.95,
+                      overflow: "visible",
+                    }}
+                  >
+                    {overlay.label ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left:
+                            overlay.labelPosition === "center"
+                              ? "50%"
+                              : overlay.labelPosition === "right"
+                                ? overlay.width + (overlay.labelOffsetX ?? 0)
+                                : 4,
+                          top: overlay.labelPosition === "top-left" ? -14 : 0,
+                          transform:
+                            overlay.labelPosition === "center"
+                              ? "translate(-50%, -50%)"
+                              : overlay.labelPosition === "right"
+                                ? "translate(0, -50%)"
+                                : "none",
+                          padding:
+                            overlay.labelVariant === "plain" ? 0 : "1px 6px",
+                          borderRadius: overlay.labelVariant === "plain" ? 0 : 999,
+                          border:
+                            overlay.labelVariant === "plain"
+                              ? "none"
+                              : `1px solid ${overlay.labelBorder || overlay.border}`,
+                          background:
+                            overlay.labelVariant === "plain"
+                              ? "transparent"
+                              : overlay.labelFill || withAlpha(theme.bg4, "e6"),
+                          fontSize: 9,
+                          fontFamily: theme.mono,
+                          color: overlay.labelColor || "#ffffff",
+                          whiteSpace: "nowrap",
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {overlay.label}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div
+                    key={`zone-${overlay.id}`}
+                    style={{
+                      position: "absolute",
+                      left: overlay.left,
+                      top: overlay.top,
+                      width: overlay.width,
+                      height: overlay.height,
+                      background: overlay.fill,
+                      border:
+                        overlay.borderVisible === false
+                          ? "none"
+                          : `${overlay.borderWidth ?? 1}px ${overlay.borderStyle ?? "solid"} ${overlay.border}`,
+                      borderRadius: overlay.radius ?? 4,
+                      boxShadow:
+                        overlay.borderVisible === false
+                          ? "none"
+                          : `inset 0 0 0 1px ${withAlpha(overlay.border, "38")}`,
+                      overflow: "visible",
+                      opacity: overlay.opacity ?? 1,
+                    }}
+                  >
+                    {overlay.label ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: overlay.labelPosition === "center" ? "50%" : 2,
+                          left: overlay.labelPosition === "center" ? "50%" : 4,
+                          transform:
+                            overlay.labelPosition === "center"
+                              ? "translate(-50%, -50%)"
+                              : "none",
+                          padding:
+                            overlay.labelVariant === "plain" ? 0 : "1px 6px",
+                          borderRadius: overlay.labelVariant === "plain" ? 0 : 999,
+                          border:
+                            overlay.labelVariant === "plain"
+                              ? "none"
+                              : `1px solid ${overlay.labelBorder || withAlpha(overlay.border, "70")}`,
+                          background:
+                            overlay.labelVariant === "plain"
+                              ? "transparent"
+                              : overlay.labelFill || withAlpha(theme.bg4, "e6"),
+                          fontSize: 9,
+                          fontFamily: theme.mono,
+                          color: overlay.labelColor || theme.text,
+                          opacity: 0.92,
+                          whiteSpace: "nowrap",
+                          textAlign:
+                            overlay.labelPosition === "center" ? "center" : "left",
+                        }}
+                      >
+                        {overlay.label}
+                      </div>
+                    ) : null}
+                  </div>
+                )
               ))}
               {boxDrawingOverlays.map((overlay) => (
                 <div

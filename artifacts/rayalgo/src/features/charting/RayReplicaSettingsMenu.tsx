@@ -49,6 +49,8 @@ type BooleanSettingKey =
   | "showKeyLevels"
   | "showStructure"
   | "showOrderBlocks"
+  | "showSupportResistance"
+  | "showTpSl"
   | "showRegimeWindows"
   | "colorCandles";
 
@@ -130,6 +132,8 @@ const booleanOptions: Array<{
   { key: "showKeyLevels", label: "Show key levels" },
   { key: "showStructure", label: "Show structure events" },
   { key: "showOrderBlocks", label: "Show order blocks" },
+  { key: "showSupportResistance", label: "Show support/resistance" },
+  { key: "showTpSl", label: "Show TP/SL" },
   { key: "showRegimeWindows", label: "Show regime windows" },
   { key: "colorCandles", label: "Color candles" },
 ];

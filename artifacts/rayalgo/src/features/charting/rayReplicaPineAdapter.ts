@@ -1185,7 +1185,7 @@ export function createRayReplicaPineRuntimeAdapter(
               SUPPORT_RESISTANCE_PIVOT_STRENGTH,
             );
             if (
-              Number.isFinite(pivotResistance) &&
+              typeof pivotResistance === "number" &&
               Number.isFinite(thickness) &&
               !isTooCloseToExistingZone(pivotResistance)
             ) {
@@ -1210,7 +1210,7 @@ export function createRayReplicaPineRuntimeAdapter(
               SUPPORT_RESISTANCE_PIVOT_STRENGTH,
             );
             if (
-              Number.isFinite(pivotSupport) &&
+              typeof pivotSupport === "number" &&
               Number.isFinite(thickness) &&
               !isTooCloseToExistingZone(pivotSupport)
             ) {
@@ -1631,6 +1631,13 @@ export function createRayReplicaPineRuntimeAdapter(
             top: orderBlock.top,
             bottom: orderBlock.bottom,
             label: orderBlock.label,
+            meta: {
+              fillColor: ORDER_BLOCK_BULL_COLOR,
+              borderVisible: false,
+              labelPosition: "center",
+              labelVariant: "plain",
+              labelColor: "#ffffff",
+            },
           });
         });
         activeBearOrderBlocks.forEach((orderBlock, index) => {
@@ -1652,8 +1659,21 @@ export function createRayReplicaPineRuntimeAdapter(
             top: orderBlock.top,
             bottom: orderBlock.bottom,
             label: orderBlock.label,
+            meta: {
+              fillColor: ORDER_BLOCK_BEAR_COLOR,
+              borderVisible: false,
+              labelPosition: "center",
+              labelVariant: "plain",
+              labelColor: "#ffffff",
+            },
           });
         });
+      }
+
+      if (showSupportResistance) {
+        supportResistanceZones.forEach((zone) =>
+          pushSupportResistanceZone(zones, chartBars, zone),
+        );
       }
 
       const windows = showRegimeWindows
@@ -1662,6 +1682,96 @@ export function createRayReplicaPineRuntimeAdapter(
       const keyLevels = showKeyLevels
         ? buildSessionKeyLevelSeries(chartBars)
         : null;
+      const lastBarIndex = chartBars.length - 1;
+      if (keyLevels && lastBarIndex >= 0) {
+        const dayAnchorBarIndex = keyLevels.dayStartBarIndex[lastBarIndex] ?? 0;
+        const weekAnchorBarIndex =
+          keyLevels.weekStartBarIndex[lastBarIndex] ?? 0;
+        pushKeyLevelZone(zones, chartBars, {
+          idSuffix: "pdh",
+          anchorBarIndex: dayAnchorBarIndex,
+          lastBarIndex,
+          price: keyLevels.pdh[lastBarIndex],
+          label: "PDH",
+          color: KEY_LEVEL_HIGH_COLOR,
+        });
+        pushKeyLevelZone(zones, chartBars, {
+          idSuffix: "pdl",
+          anchorBarIndex: dayAnchorBarIndex,
+          lastBarIndex,
+          price: keyLevels.pdl[lastBarIndex],
+          label: "PDL",
+          color: KEY_LEVEL_LOW_COLOR,
+        });
+        pushKeyLevelZone(zones, chartBars, {
+          idSuffix: "pdc",
+          anchorBarIndex: dayAnchorBarIndex,
+          lastBarIndex,
+          price: keyLevels.pdc[lastBarIndex],
+          label: "PDC",
+          color: KEY_LEVEL_CLOSE_COLOR,
+        });
+        pushKeyLevelZone(zones, chartBars, {
+          idSuffix: "open",
+          anchorBarIndex: dayAnchorBarIndex,
+          lastBarIndex,
+          price: keyLevels.todayOpen[lastBarIndex],
+          label: "O",
+          color: KEY_LEVEL_OPEN_COLOR,
+        });
+        pushKeyLevelZone(zones, chartBars, {
+          idSuffix: "pwh",
+          anchorBarIndex: weekAnchorBarIndex,
+          lastBarIndex,
+          price: keyLevels.pwh[lastBarIndex],
+          label: "PWH",
+          color: KEY_LEVEL_HIGH_COLOR,
+        });
+        pushKeyLevelZone(zones, chartBars, {
+          idSuffix: "pwl",
+          anchorBarIndex: weekAnchorBarIndex,
+          lastBarIndex,
+          price: keyLevels.pwl[lastBarIndex],
+          label: "PWL",
+          color: KEY_LEVEL_LOW_COLOR,
+        });
+      }
+
+      if (showTpSl && activeTpSlOverlay) {
+        pushTpSlZone(zones, chartBars, {
+          idSuffix: "sl",
+          startBarIndex: activeTpSlOverlay.startBarIndex,
+          lastBarIndex,
+          price: activeTpSlOverlay.stopLoss,
+          label: "SL",
+          color: STOP_LOSS_COLOR,
+        });
+        pushTpSlZone(zones, chartBars, {
+          idSuffix: "tp1",
+          startBarIndex: activeTpSlOverlay.startBarIndex,
+          lastBarIndex,
+          price: activeTpSlOverlay.takeProfit1,
+          label: "TP 1",
+          color: TAKE_PROFIT_COLOR,
+        });
+        pushTpSlZone(zones, chartBars, {
+          idSuffix: "tp2",
+          startBarIndex: activeTpSlOverlay.startBarIndex,
+          lastBarIndex,
+          price: activeTpSlOverlay.takeProfit2,
+          label: "TP 2",
+          color: TAKE_PROFIT_COLOR,
+        });
+        pushTpSlZone(zones, chartBars, {
+          idSuffix: "tp3",
+          startBarIndex: activeTpSlOverlay.startBarIndex,
+          lastBarIndex,
+          price: activeTpSlOverlay.takeProfit3,
+          label: "TP 3",
+          color: TAKE_PROFIT_COLOR,
+        });
+      }
+
       const studyPrefix = script.scriptKey;
 
       return {
@@ -1678,19 +1788,21 @@ export function createRayReplicaPineRuntimeAdapter(
             priceLineVisible: false,
             lastValueVisible: false,
           }),
-          ...bullWires.map((values, index) =>
-            buildLineStudy(
-              `${studyPrefix}-bull-wire-${index + 1}`,
-              chartBars,
-              values,
-              {
-                color: `${BULL_COLOR}88`,
-                lineWidth: 1,
-                priceLineVisible: false,
-                lastValueVisible: false,
-              },
-            ),
-          ),
+          ...(showWires
+            ? bullWires.map((values, index) =>
+                buildLineStudy(
+                  `${studyPrefix}-bull-wire-${index + 1}`,
+                  chartBars,
+                  values,
+                  {
+                    color: `${BULL_COLOR}88`,
+                    lineWidth: 1,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                  },
+                ),
+              )
+            : []),
           ...(showWires
             ? bearWires.map((values, index) =>
                 buildLineStudy(
@@ -1732,61 +1844,10 @@ export function createRayReplicaPineRuntimeAdapter(
                 ),
               ]
             : []),
-          ...(keyLevels
-            ? [
-                buildLineStudy(`${studyPrefix}-pdh`, chartBars, keyLevels.pdh, {
-                  color: KEY_LEVEL_HIGH_COLOR,
-                  lineWidth: 1,
-                  lineStyle: KEY_LEVEL_LINE_STYLE,
-                  priceLineVisible: false,
-                  lastValueVisible: false,
-                }),
-                buildLineStudy(`${studyPrefix}-pdl`, chartBars, keyLevels.pdl, {
-                  color: KEY_LEVEL_LOW_COLOR,
-                  lineWidth: 1,
-                  lineStyle: KEY_LEVEL_LINE_STYLE,
-                  priceLineVisible: false,
-                  lastValueVisible: false,
-                }),
-                buildLineStudy(`${studyPrefix}-pdc`, chartBars, keyLevels.pdc, {
-                  color: KEY_LEVEL_CLOSE_COLOR,
-                  lineWidth: 1,
-                  lineStyle: KEY_LEVEL_LINE_STYLE,
-                  priceLineVisible: false,
-                  lastValueVisible: false,
-                }),
-                buildLineStudy(
-                  `${studyPrefix}-open`,
-                  chartBars,
-                  keyLevels.todayOpen,
-                  {
-                    color: KEY_LEVEL_OPEN_COLOR,
-                    lineWidth: 1,
-                    lineStyle: KEY_LEVEL_LINE_STYLE,
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                  },
-                ),
-                buildLineStudy(`${studyPrefix}-pwh`, chartBars, keyLevels.pwh, {
-                  color: KEY_LEVEL_HIGH_COLOR,
-                  lineWidth: 1,
-                  lineStyle: KEY_LEVEL_LINE_STYLE,
-                  priceLineVisible: false,
-                  lastValueVisible: false,
-                }),
-                buildLineStudy(`${studyPrefix}-pwl`, chartBars, keyLevels.pwl, {
-                  color: KEY_LEVEL_LOW_COLOR,
-                  lineWidth: 1,
-                  lineStyle: KEY_LEVEL_LINE_STYLE,
-                  priceLineVisible: false,
-                  lastValueVisible: false,
-                }),
-              ]
-            : []),
         ],
         markers,
         events,
-        zones,
+        zones: [...fillZones, ...zones],
         windows,
         barStyleByIndex: colorCandles ? barStyleByIndex : undefined,
       };
