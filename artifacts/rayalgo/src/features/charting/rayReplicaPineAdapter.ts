@@ -54,7 +54,6 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   colorCandles: true,
 };
 
-const KEY_LEVEL_LINE_STYLE = 2;
 const BULL_COLOR = "#00bcd4";
 const BEAR_COLOR = "#e91e63";
 const SHADOW_COLOR = "#787b86";

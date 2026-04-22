@@ -762,7 +762,7 @@ const buildZoneOverlays = (
       const style = meta.style as string | undefined;
       const border = (meta.borderColor as string | undefined) || defaultBorder;
       const fill = (meta.fillColor as string | undefined) || defaultFill;
-      const label = zone.label || zone.zoneType;
+      const label = typeof zone.label === "string" ? zone.label : undefined;
 
       if (style === "line-overlay") {
         result.push({
