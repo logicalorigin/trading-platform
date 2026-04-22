@@ -2719,28 +2719,7 @@ export const ResearchChartSurface = ({
   const chartInsetTop = topOverlayHeight;
   const chartInsetLeft = resolvedLeftOverlay ? leftOverlayWidth : 0;
   const chartInsetBottom = bottomOverlayHeight;
-
-  if (!model.chartBars.length) {
-    return (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          border: `1px dashed ${theme.border}`,
-          borderRadius: 6,
-          color: theme.textMuted,
-          fontFamily: theme.mono,
-          fontSize: 11,
-          background: withAlpha(theme.bg3, "80"),
-        }}
-      >
-        no live chart data
-      </div>
-    );
-  }
+  const hasChartBars = model.chartBars.length > 0;
 
   return (
     <div
@@ -2965,7 +2944,7 @@ export const ResearchChartSurface = ({
         >
           {chartError}
         </div>
-      ) : (
+      ) : hasChartBars ? (
         <>
           <div
             ref={containerRef}
@@ -3550,6 +3529,27 @@ export const ResearchChartSurface = ({
             </div>
           ) : null}
         </>
+      ) : (
+        <div
+          style={{
+            position: "absolute",
+            top: chartInsetTop,
+            left: chartInsetLeft,
+            right: 0,
+            bottom: chartInsetBottom,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: `1px dashed ${theme.border}`,
+            borderRadius: 6,
+            color: theme.textMuted,
+            fontFamily: theme.mono,
+            fontSize: 11,
+            background: withAlpha(theme.bg3, "80"),
+          }}
+        >
+          no live chart data
+        </div>
       )}
       {showLegend && displayBar && (
         <div
