@@ -28,4 +28,8 @@ export interface UniverseTicker {
   shareClassFigi: string | null;
   /** @nullable */
   lastUpdatedAt: Date | null;
+  /** @nullable */
+  provider?: "ibkr" | "polygon" | null;
+  /** @nullable */
+  providerContractId?: string | null;
 }

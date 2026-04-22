@@ -4774,30 +4774,86 @@ const buildInitialMiniChartSlots = (activeSym) => {
   );
 };
 
-const MiniChartTickerSearch = ({
+const normalizeTickerSearchQuery = (value) => value?.trim?.().toLowerCase?.() || "";
+
+const buildTickerSearchRowKey = (result) =>
+  [
+    normalizeTickerSymbol(result?.ticker),
+    result?.primaryExchange?.trim?.().toUpperCase?.() || "",
+    result?.providerContractId || "",
+    result?.provider || "",
+    result?.market || "",
+  ].join("|");
+
+const scoreTickerSearchResult = (
+  result,
+  { query, currentTicker, recentTickerSet, defaultTickerSet },
+) => {
+  const normalizedTicker = normalizeTickerSymbol(result?.ticker);
+  const normalizedName = result?.name?.trim?.().toLowerCase?.() || "";
+  if (!query || !normalizedTicker) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  let score = 0;
+  if (normalizedTicker === query.toUpperCase()) score += 1500;
+  else if (normalizedTicker.startsWith(query.toUpperCase())) score += 1050;
+  else if (normalizedTicker.includes(query.toUpperCase())) score += 780;
+
+  if (normalizedName === query) score += 720;
+  else if (normalizedName.startsWith(query)) score += 560;
+  else if (
+    normalizedName
+      .split(/[\s./-]+/)
+      .some((part) => part && part.startsWith(query))
+  ) {
+    score += 500;
+  } else if (normalizedName.includes(query)) {
+    score += 320;
+  }
+
+  if (normalizedTicker === normalizeTickerSymbol(currentTicker)) score += 40;
+  if (recentTickerSet.has(normalizedTicker)) score += 140;
+  if (defaultTickerSet.has(normalizedTicker)) score += 55;
+  if (result?.provider === "ibkr") score += 35;
+  if (result?.providerContractId) score += 20;
+  if (result?.primaryExchange) score += 10;
+
+  return score;
+};
+
+const useTickerSearchController = ({
   open,
-  ticker,
+  query,
+  currentTicker,
   recentTickers = [],
-  onClose,
-  onSelectTicker,
+  limit = 8,
 }) => {
-  const rootRef = useRef(null);
-  const inputRef = useRef(null);
-  const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
-  const searchEnabled = open && deferredQuery.length >= 1;
+  const normalizedQuery = normalizeTickerSearchQuery(deferredQuery);
+  const searchEnabled = open && normalizedQuery.length >= 2;
   const quickPicks = useMemo(
     () =>
       Array.from(
         new Set([
-          normalizeTickerSymbol(ticker),
+          normalizeTickerSymbol(currentTicker),
           ...recentTickers.map((symbol) => normalizeTickerSymbol(symbol)),
           ...WATCHLIST.map((item) => normalizeTickerSymbol(item.sym)),
         ]),
       )
         .filter(Boolean)
-        .slice(0, 10),
-    [recentTickers, ticker],
+        .slice(0, 10)
+        .map((symbol) => ({
+          ticker: symbol,
+          name: DEFAULT_WATCHLIST_BY_SYMBOL[symbol]?.name || symbol,
+          market: "stocks",
+          type: "stock",
+          primaryExchange: null,
+          provider: null,
+          providerContractId: null,
+          _kind: "quick-pick",
+        })),
+    [currentTicker, recentTickers],
   );
   const searchQuery = useSearchUniverseTickers(
     searchEnabled
@@ -4805,7 +4861,7 @@ const MiniChartTickerSearch = ({
           search: deferredQuery,
           market: "stocks",
           active: true,
-          limit: 8,
+          limit: Math.max(limit * 2, 16),
         }
       : undefined,
     {
@@ -4816,20 +4872,96 @@ const MiniChartTickerSearch = ({
       },
     },
   );
-  const results = searchQuery.data?.results || [];
-  const firstSelection = searchEnabled
-    ? results[0]
-    : quickPicks[0]
-      ? {
-          ticker: quickPicks[0],
-          name:
-            DEFAULT_WATCHLIST_BY_SYMBOL[quickPicks[0]]?.name || quickPicks[0],
+  const rankedResults = useMemo(() => {
+    if (!searchEnabled) {
+      return [];
+    }
+
+    const recentTickerSet = new Set(
+      recentTickers.map((symbol) => normalizeTickerSymbol(symbol)).filter(Boolean),
+    );
+    const defaultTickerSet = new Set(
+      WATCHLIST.map((item) => normalizeTickerSymbol(item.sym)).filter(Boolean),
+    );
+    const deduped = new Map();
+    for (const result of searchQuery.data?.results || []) {
+      const key = buildTickerSearchRowKey(result);
+      if (!deduped.has(key)) {
+        deduped.set(key, result);
+      }
+    }
+
+    return Array.from(deduped.values())
+      .map((result) => ({
+        ...result,
+        _kind: "result",
+        _score: scoreTickerSearchResult(result, {
+          query: normalizedQuery,
+          currentTicker,
+          recentTickerSet,
+          defaultTickerSet,
+        }),
+      }))
+      .filter((result) => Number.isFinite(result._score))
+      .sort((left, right) => {
+        if (right._score !== left._score) {
+          return right._score - left._score;
         }
-      : null;
+        const tickerDiff = left.ticker.localeCompare(right.ticker);
+        if (tickerDiff !== 0) return tickerDiff;
+        return (left.primaryExchange || "").localeCompare(right.primaryExchange || "");
+      })
+      .slice(0, limit);
+  }, [
+    currentTicker,
+    limit,
+    normalizedQuery,
+    recentTickers,
+    searchEnabled,
+    searchQuery.data?.results,
+  ]);
+
+  return {
+    deferredQuery,
+    normalizedQuery,
+    searchEnabled,
+    searchQuery,
+    quickPicks,
+    results: rankedResults,
+    selectableResults: searchEnabled ? rankedResults : quickPicks,
+  };
+};
+
+const MiniChartTickerSearch = ({
+  open,
+  ticker,
+  recentTickers = [],
+  onClose,
+  onSelectTicker,
+}) => {
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const {
+    deferredQuery,
+    searchEnabled,
+    searchQuery,
+    quickPicks,
+    results,
+    selectableResults,
+  } = useTickerSearchController({
+    open,
+    query,
+    currentTicker: ticker,
+    recentTickers,
+    limit: 8,
+  });
 
   useEffect(() => {
     if (!open) {
       setQuery("");
+      setActiveIndex(0);
       return undefined;
     }
 
@@ -4840,6 +4972,10 @@ const MiniChartTickerSearch = ({
 
     return () => cancelAnimationFrame(frame);
   }, [open, ticker]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [open, deferredQuery, selectableResults.length]);
 
   useEffect(() => {
     if (!open || typeof document === "undefined") {
@@ -4857,9 +4993,6 @@ const MiniChartTickerSearch = ({
       if (event.key === "Escape") {
         onClose?.();
       }
-      if (event.key === "Enter" && firstSelection) {
-        onSelectTicker?.(firstSelection);
-      }
     };
 
     document.addEventListener("mousedown", handlePointerDown);
@@ -4869,7 +5002,50 @@ const MiniChartTickerSearch = ({
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [firstSelection, onClose, onSelectTicker, open]);
+  }, [onClose, open]);
+
+  const handleSelect = useCallback(
+    (result) => {
+      if (!result) {
+        return;
+      }
+      onSelectTicker?.(result);
+    },
+    [onSelectTicker],
+  );
+
+  const handleInputKeyDown = useCallback(
+    (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveIndex((current) =>
+          selectableResults.length
+            ? Math.min(current + 1, selectableResults.length - 1)
+            : 0,
+        );
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveIndex((current) =>
+          selectableResults.length ? Math.max(current - 1, 0) : 0,
+        );
+        return;
+      }
+      if (event.key === "Enter") {
+        if (selectableResults[activeIndex]) {
+          event.preventDefault();
+          handleSelect(selectableResults[activeIndex]);
+        }
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose?.();
+      }
+    },
+    [activeIndex, handleSelect, onClose, selectableResults],
+  );
 
   if (!open) {
     return null;
@@ -4909,6 +5085,7 @@ const MiniChartTickerSearch = ({
             ref={inputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={handleInputKeyDown}
             placeholder={`Search symbol or company for ${ticker}…`}
             style={{
               width: "100%",
@@ -4957,17 +5134,13 @@ const MiniChartTickerSearch = ({
             </div>
           ) : null}
           {!searchEnabled &&
-            quickPicks.map((symbol) => {
-              const info = DEFAULT_WATCHLIST_BY_SYMBOL[symbol];
+            quickPicks.map((result, index) => {
               return (
                 <button
-                  key={symbol}
-                  onClick={() =>
-                    onSelectTicker?.({
-                      ticker: symbol,
-                      name: info?.name || symbol,
-                    })
-                  }
+                  key={buildTickerSearchRowKey(result)}
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  onClick={() => handleSelect(result)}
                   style={{
                     width: "100%",
                     display: "grid",
@@ -4975,7 +5148,7 @@ const MiniChartTickerSearch = ({
                     gap: sp(8),
                     alignItems: "center",
                     padding: sp("8px 10px"),
-                    background: "transparent",
+                    background: index === activeIndex ? T.bg3 : "transparent",
                     border: "none",
                     borderBottom: `1px solid ${T.border}20`,
                     textAlign: "left",
@@ -4983,9 +5156,7 @@ const MiniChartTickerSearch = ({
                   }}
                   onMouseEnter={(event) => {
                     event.currentTarget.style.background = T.bg3;
-                  }}
-                  onMouseLeave={(event) => {
-                    event.currentTarget.style.background = "transparent";
+                    setActiveIndex(index);
                   }}
                 >
                   <span
@@ -4996,7 +5167,7 @@ const MiniChartTickerSearch = ({
                       color: T.text,
                     }}
                   >
-                    {symbol}
+                    {result.ticker}
                   </span>
                   <span
                     style={{
@@ -5009,7 +5180,7 @@ const MiniChartTickerSearch = ({
                       textOverflow: "ellipsis",
                     }}
                   >
-                    {info?.name || "Watchlist symbol"}
+                    {result.name || "Watchlist symbol"}
                   </span>
                   <span
                     style={{
@@ -5062,10 +5233,12 @@ const MiniChartTickerSearch = ({
               Live matches
             </div>
           ) : null}
-          {results.map((result) => (
+          {results.map((result, index) => (
             <button
-              key={`${result.market}-${result.ticker}`}
-              onClick={() => onSelectTicker?.(result)}
+              key={buildTickerSearchRowKey(result)}
+              role="option"
+              aria-selected={index === activeIndex}
+              onClick={() => handleSelect(result)}
               style={{
                 width: "100%",
                 display: "grid",
@@ -5073,18 +5246,13 @@ const MiniChartTickerSearch = ({
                 gap: sp(8),
                 alignItems: "center",
                 padding: sp("8px 10px"),
-                background: "transparent",
+                background: index === activeIndex ? T.bg3 : "transparent",
                 border: "none",
                 borderBottom: `1px solid ${T.border}20`,
                 textAlign: "left",
                 cursor: "pointer",
               }}
-              onMouseEnter={(event) => {
-                event.currentTarget.style.background = T.bg3;
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.background = "transparent";
-              }}
+              onMouseEnter={() => setActiveIndex(index)}
             >
               <span
                 style={{
@@ -5117,23 +5285,24 @@ const MiniChartTickerSearch = ({
                     color: T.textDim,
                     fontFamily: T.sans,
                   }}
-                >
-                  {[result.type, result.primaryExchange]
-                    .filter(Boolean)
-                    .join(" · ") || "stock"}
+                  >
+                    {[result.type, result.primaryExchange]
+                      .filter(Boolean)
+                      .join(" · ") || "stock"}
+                  </span>
                 </span>
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textMuted,
-                  fontFamily: T.sans,
-                }}
-              >
-                {result.market?.toUpperCase?.() || "US"}
-              </span>
-            </button>
-          ))}
+                <span
+                  style={{
+                    fontSize: fs(8),
+                    color: T.textMuted,
+                    fontFamily: T.sans,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {result.provider || result.market?.toUpperCase?.() || "US"}
+                </span>
+              </button>
+            ))}
         </div>
       </div>
     </div>
@@ -5429,6 +5598,7 @@ const MiniChartCell = ({
           if (!nextTicker) {
             return;
           }
+          ensureTradeTickerInfo(nextTicker, result?.name || nextTicker);
           rememberTicker(nextTicker);
           onChangeTicker?.(nextTicker);
           setSearchOpen(false);
@@ -14152,30 +14322,20 @@ const TradePositionsPanel = ({
 const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query.trim());
-  const searchEnabled = open && deferredQuery.length >= 1;
-  const searchQuery = useSearchUniverseTickers(
-    searchEnabled
-      ? {
-          search: deferredQuery,
-          market: "stocks",
-          active: true,
-          limit: 12,
-        }
-      : undefined,
-    {
-      query: {
-        enabled: searchEnabled,
-        staleTime: 60_000,
-        retry: false,
-      },
-    },
-  );
-  const results = searchQuery.data?.results || [];
+  const [activeIndex, setActiveIndex] = useState(0);
+  const { deferredQuery, searchEnabled, searchQuery, results, selectableResults } =
+    useTickerSearchController({
+      open,
+      query,
+      currentTicker: "",
+      recentTickers: [],
+      limit: 12,
+    });
 
   useEffect(() => {
     if (!open) {
       setQuery("");
+      setActiveIndex(0);
       return undefined;
     }
 
@@ -14186,6 +14346,53 @@ const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
 
     return () => cancelAnimationFrame(frame);
   }, [open]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [open, deferredQuery, selectableResults.length]);
+
+  const handleSelect = useCallback(
+    (result) => {
+      if (!result) {
+        return;
+      }
+      onSelectTicker(result);
+    },
+    [onSelectTicker],
+  );
+
+  const handleInputKeyDown = useCallback(
+    (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveIndex((current) =>
+          selectableResults.length
+            ? Math.min(current + 1, selectableResults.length - 1)
+            : 0,
+        );
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveIndex((current) =>
+          selectableResults.length ? Math.max(current - 1, 0) : 0,
+        );
+        return;
+      }
+      if (event.key === "Enter") {
+        if (selectableResults[activeIndex]) {
+          event.preventDefault();
+          handleSelect(selectableResults[activeIndex]);
+        }
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose?.();
+      }
+    },
+    [activeIndex, handleSelect, onClose, selectableResults],
+  );
 
   if (!open) {
     return null;
@@ -14257,6 +14464,7 @@ const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
           ref={inputRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={handleInputKeyDown}
           placeholder="Search ticker or company..."
           style={{
             width: "100%",
@@ -14289,7 +14497,7 @@ const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
                 fontFamily: T.sans,
               }}
             >
-              Type at least one character to search the ticker universe.
+              Type at least two characters to search the ticker universe.
             </div>
           )}
           {searchEnabled && searchQuery.isPending && (
@@ -14316,10 +14524,12 @@ const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
               No active stock tickers matched "{deferredQuery}".
             </div>
           )}
-          {results.map((result) => (
+          {results.map((result, index) => (
             <button
-              key={result.ticker}
-              onClick={() => onSelectTicker(result)}
+              key={buildTickerSearchRowKey(result)}
+              role="option"
+              aria-selected={index === activeIndex}
+              onClick={() => handleSelect(result)}
               style={{
                 width: "100%",
                 display: "grid",
@@ -14327,12 +14537,13 @@ const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
                 gap: sp(8),
                 alignItems: "center",
                 padding: sp("9px 10px"),
-                background: "transparent",
+                background: index === activeIndex ? T.bg3 : "transparent",
                 border: "none",
                 borderBottom: `1px solid ${T.border}20`,
                 textAlign: "left",
                 cursor: "pointer",
               }}
+              onMouseEnter={() => setActiveIndex(index)}
             >
               <span
                 style={{
@@ -14376,9 +14587,10 @@ const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
                   fontSize: fs(8),
                   color: T.textMuted,
                   fontFamily: T.mono,
+                  textTransform: "uppercase",
                 }}
               >
-                {result.market.toUpperCase()}
+                {result.provider || result.market.toUpperCase()}
               </span>
             </button>
           ))}

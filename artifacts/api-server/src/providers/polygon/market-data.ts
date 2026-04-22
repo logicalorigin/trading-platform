@@ -49,6 +49,8 @@ export type UniverseTicker = {
   compositeFigi: string | null;
   shareClassFigi: string | null;
   lastUpdatedAt: Date | null;
+  provider?: "ibkr" | "polygon" | null;
+  providerContractId?: string | null;
 };
 
 export type QuoteSnapshot = {
@@ -703,6 +705,8 @@ function mapUniverseTicker(result: unknown): UniverseTicker | null {
     compositeFigi: asString(record["composite_figi"]),
     shareClassFigi: asString(record["share_class_figi"]),
     lastUpdatedAt: toDate(record["last_updated_utc"]),
+    provider: "polygon",
+    providerContractId: null,
   };
 }
 

@@ -189,6 +189,8 @@ export type IbkrUniverseTicker = {
   compositeFigi: string | null;
   shareClassFigi: string | null;
   lastUpdatedAt: Date | null;
+  provider?: "ibkr" | "polygon" | null;
+  providerContractId?: string | null;
 };
 
 export type OptionChainContract = {
@@ -2506,6 +2508,8 @@ export class IbkrClient {
         compositeFigi: null,
         shareClassFigi: null,
         lastUpdatedAt: null,
+        provider: "ibkr",
+        providerContractId: asString(record["conid"]),
       });
       if (results.length >= limit) break;
     }

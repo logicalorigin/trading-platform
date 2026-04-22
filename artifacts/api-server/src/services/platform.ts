@@ -17,6 +17,7 @@ import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import {
   PolygonMarketDataClient,
   computeUnusualMetrics,
+  type UniverseTicker,
 } from "../providers/polygon/market-data";
 
 const BUILT_IN_WATCHLISTS = [
@@ -907,26 +908,121 @@ export async function searchUniverseTickers(input: {
   active?: boolean;
   limit?: number;
 }) {
-  // IBKR is the primary universe source so the search box mirrors the
-  // contracts the broker can actually trade. Polygon remains the fallback
-  // for non-stock markets (indices/fx/crypto/otc) and any IBKR misses.
-  const ibkrClient = getIbkrClient();
-  if (input.market == null || input.market === "stocks") {
-    try {
-      const result = await ibkrClient.searchTickers({
-        search: input.search,
-        limit: input.limit,
-      });
-      if (result.results.length > 0) return result;
-    } catch {
-      // fall through to Polygon
+  const normalizedSearch = input.search?.trim() ?? "";
+  const resultLimit = Math.max(1, Math.min(input.limit ?? 12, 50));
+  const scoreUniverseTicker = (
+    ticker: UniverseTicker,
+    query: string,
+  ): number => {
+    const normalizedTicker = normalizeSymbol(ticker.ticker);
+    const normalizedName = ticker.name.trim().toLowerCase();
+    const queryLower = query.toLowerCase();
+    let score = 0;
+
+    if (normalizedTicker === query.toUpperCase()) score += 1_500;
+    else if (normalizedTicker.startsWith(query.toUpperCase())) score += 1_050;
+    else if (normalizedTicker.includes(query.toUpperCase())) score += 800;
+
+    if (normalizedName === queryLower) score += 720;
+    else if (normalizedName.startsWith(queryLower)) score += 560;
+    else if (
+      normalizedName
+        .split(/[\s./-]+/)
+        .some((part) => part.startsWith(queryLower))
+    ) {
+      score += 500;
+    } else if (normalizedName.includes(queryLower)) {
+      score += 320;
     }
+
+    if (ticker.provider === "ibkr") score += 40;
+    if (ticker.providerContractId) score += 25;
+    if (ticker.active) score += 10;
+    if (ticker.primaryExchange) score += 5;
+
+    return score;
+  };
+  const mergeUniverseTicker = (
+    current: UniverseTicker | undefined,
+    incoming: UniverseTicker,
+  ): UniverseTicker => {
+    if (!current) return incoming;
+    return {
+      ...current,
+      ...incoming,
+      name:
+        incoming.name.length > current.name.length ? incoming.name : current.name,
+      primaryExchange: current.primaryExchange || incoming.primaryExchange,
+      currencyName: current.currencyName || incoming.currencyName,
+      cik: current.cik || incoming.cik,
+      compositeFigi: current.compositeFigi || incoming.compositeFigi,
+      shareClassFigi: current.shareClassFigi || incoming.shareClassFigi,
+      lastUpdatedAt: current.lastUpdatedAt || incoming.lastUpdatedAt,
+      provider:
+        current.provider === "ibkr" || incoming.provider !== "ibkr"
+          ? current.provider
+          : incoming.provider,
+      providerContractId:
+        current.providerContractId || incoming.providerContractId,
+    };
+  };
+
+  // IBKR is the primary stock universe source so the search box mirrors the
+  // contracts the broker can actually trade, but Polygon still contributes
+  // enrichment and fallback coverage. For non-stock markets, Polygon remains
+  // the single source.
+  if (input.market != null && input.market !== "stocks") {
+    if (getPolygonRuntimeConfig()) {
+      return getPolygonClient().searchUniverseTickers(input);
+    }
+    return { count: 0, results: [] };
   }
 
-  if (getPolygonRuntimeConfig()) {
-    return getPolygonClient().searchUniverseTickers(input);
+  const ibkrClient = getIbkrClient();
+  const ibkrPromise = normalizedSearch
+    ? ibkrClient
+        .searchTickers({
+          search: normalizedSearch,
+          limit: Math.max(resultLimit * 2, 16),
+        })
+        .catch(() => ({ count: 0, results: [] as UniverseTicker[] }))
+    : Promise.resolve({ count: 0, results: [] as UniverseTicker[] });
+  const polygonPromise =
+    normalizedSearch && getPolygonRuntimeConfig()
+      ? getPolygonClient()
+          .searchUniverseTickers({
+            ...input,
+            search: normalizedSearch,
+            market: "stocks",
+            limit: Math.max(resultLimit * 2, 16),
+          })
+          .catch(() => ({ count: 0, results: [] as UniverseTicker[] }))
+      : Promise.resolve({ count: 0, results: [] as UniverseTicker[] });
+
+  const [ibkrResult, polygonResult] = await Promise.all([ibkrPromise, polygonPromise]);
+  const merged = new Map<string, UniverseTicker>();
+  for (const ticker of [...ibkrResult.results, ...polygonResult.results]) {
+    const key = [
+      normalizeSymbol(ticker.ticker),
+      ticker.market,
+      ticker.primaryExchange?.trim().toUpperCase() ?? "",
+    ].join("|");
+    merged.set(key, mergeUniverseTicker(merged.get(key), ticker));
   }
-  return { count: 0, results: [] };
+
+  const results = Array.from(merged.values())
+    .sort((left, right) => {
+      const scoreDiff =
+        scoreUniverseTicker(right, normalizedSearch) -
+        scoreUniverseTicker(left, normalizedSearch);
+      if (scoreDiff !== 0) return scoreDiff;
+      const tickerDiff = left.ticker.localeCompare(right.ticker);
+      if (tickerDiff !== 0) return tickerDiff;
+      return (left.primaryExchange ?? "").localeCompare(right.primaryExchange ?? "");
+    })
+    .slice(0, resultLimit);
+
+  return { count: results.length, results };
 }
 
 export async function getBars(input: {

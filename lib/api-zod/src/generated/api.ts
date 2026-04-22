@@ -542,6 +542,8 @@ export const SearchUniverseTickersResponse = zod.object({
       compositeFigi: zod.string().nullable(),
       shareClassFigi: zod.string().nullable(),
       lastUpdatedAt: zod.coerce.date().nullable(),
+      provider: zod.enum(["ibkr", "polygon"]).nullable().optional(),
+      providerContractId: zod.string().nullable().optional(),
     }),
   ),
 });
