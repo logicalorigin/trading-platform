@@ -1796,12 +1796,33 @@ export class IbkrClient {
     secType: string;
     listingExchange: string;
   }> {
-    const results = await this.searchSecurities(symbol, { secType: "STK" });
-    const match =
-      results.find(
-        (result) =>
-          normalizeSymbol(asString(result["symbol"]) ?? "") === normalizeSymbol(symbol),
-      ) ?? results[0];
+    // IBKR represents share-class tickers with a space (e.g. "BRK B"), while the
+    // rest of the platform uses Polygon's dotted style (e.g. "BRK.B"). Try the
+    // dotted form first, then fall back to the space-separated form on miss.
+    const variants = Array.from(
+      new Set(
+        [symbol, symbol.replace(/\./g, " "), symbol.replace(/\./g, "")]
+          .map((variant) => variant.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    let match: Record<string, unknown> | undefined;
+    for (const variant of variants) {
+      const results = await this.searchSecurities(variant, { secType: "STK" });
+      const variantUpper = variant.toUpperCase();
+      match =
+        results.find(
+          (result) =>
+            (asString(result["symbol"]) ?? "").toUpperCase() === variantUpper,
+        ) ??
+        results.find(
+          (result) =>
+            normalizeSymbol(asString(result["symbol"]) ?? "") === normalizeSymbol(symbol),
+        ) ??
+        results[0];
+      if (match) break;
+    }
 
     if (!match) {
       throw new HttpError(404, `Unable to resolve IBKR contract for ${symbol}.`, {
