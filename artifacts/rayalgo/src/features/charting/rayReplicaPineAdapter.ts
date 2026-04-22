@@ -28,6 +28,8 @@ export type RayReplicaRuntimeSettings = {
   showKeyLevels: boolean;
   showStructure: boolean;
   showOrderBlocks: boolean;
+  showSupportResistance: boolean;
+  showTpSl: boolean;
   showRegimeWindows: boolean;
   colorCandles: boolean;
 };
@@ -46,6 +48,8 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   showKeyLevels: true,
   showStructure: true,
   showOrderBlocks: true,
+  showSupportResistance: false,
+  showTpSl: true,
   showRegimeWindows: true,
   colorCandles: true,
 };
@@ -59,6 +63,26 @@ const KEY_LEVEL_HIGH_COLOR = "#ef5350";
 const KEY_LEVEL_LOW_COLOR = "#26a69a";
 const KEY_LEVEL_CLOSE_COLOR = "#9ca3af";
 const KEY_LEVEL_OPEN_COLOR = "#facc15";
+const ORDER_BLOCK_BULL_COLOR = "#00bcd433";
+const ORDER_BLOCK_BEAR_COLOR = "#e91e6333";
+const SUPPORT_ZONE_COLOR = "#00bcd440";
+const RESISTANCE_ZONE_COLOR = "#e91e6340";
+const STOP_LOSS_COLOR = "#ef4444";
+const TAKE_PROFIT_COLOR = "#22c55e";
+const SHADOW_FILL_COLOR = "#787b8618";
+const STRUCTURE_LINE_STYLE = "solid";
+const TREND_REVERSAL_LINE_STYLE = "dashed";
+const KEY_LEVEL_LINE_STYLE_NAME = "dashed";
+const TP_SL_LINE_STYLE = "dashed";
+const KEY_LEVEL_LABEL_OFFSET_BARS = 8;
+const SUPPORT_RESISTANCE_PIVOT_STRENGTH = 15;
+const SUPPORT_RESISTANCE_MIN_ZONE_DISTANCE_PERCENT = 0.05;
+const SUPPORT_RESISTANCE_THICKNESS_MULTIPLIER = 0.25;
+const SUPPORT_RESISTANCE_MAX_ZONES = 7;
+const SUPPORT_RESISTANCE_EXTENSION_BARS = 100;
+const TP_RR_1 = 0.5;
+const TP_RR_2 = 1;
+const TP_RR_3 = 1.7;
 
 const resolveIntegerSetting = (
   value: unknown,
@@ -97,6 +121,37 @@ const resolveBooleanSetting = (
   }
 
   return fallback;
+};
+
+const withHexAlpha = (color: string, alpha: string): string =>
+  /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}${alpha}` : color;
+
+const formatOverlayPrice = (value: number): string => {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  const fixed = value.toFixed(Math.abs(value) >= 100 ? 2 : 4);
+  return fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+};
+
+const formatCompactVolume = (value: number): string => {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(2).replace(/\.?0+$/, "")}B`;
+  }
+  if (absolute >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
+  }
+  if (absolute >= 1_000) {
+    return `${(value / 1_000).toFixed(2).replace(/\.?0+$/, "")}K`;
+  }
+
+  return value.toFixed(0);
 };
 
 export function resolveRayReplicaRuntimeSettings(
