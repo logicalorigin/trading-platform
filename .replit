@@ -86,24 +86,3 @@ IBKR_TRANSPORT = "client_portal"
 IBKR_BRIDGE_URL = "http://127.0.0.1:3002"
 
 [workflows]
-runButton = "Project"
-
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "IBKR Bridge"
-
-[[workflows.workflow]]
-name = "IBKR Bridge"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=3002 node --enable-source-maps artifacts/ibkr-bridge/dist/index.mjs"
