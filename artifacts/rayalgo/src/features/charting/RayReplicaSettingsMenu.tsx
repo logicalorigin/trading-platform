@@ -65,6 +65,7 @@ type BooleanSettingKey =
   | "showSupportResistance"
   | "showDashboard"
   | "showTpSl";
+  | "showRegimeWindows";
 
 const triggerStyle = (
   theme: WidgetTheme,
