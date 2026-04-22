@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
+import { once } from "node:events";
 import {
   GetBarsQueryParams,
   GetBarsResponse,
@@ -50,6 +51,12 @@ import {
   updateWatchlist,
 } from "../services/platform";
 import {
+  fetchAccountSnapshotPayload,
+  fetchExecutionSnapshotPayload,
+  fetchMarketDepthSnapshotPayload,
+  fetchOptionChainSnapshotPayload,
+  fetchOrderSnapshotPayload,
+  fetchQuoteSnapshotPayload,
   subscribeAccountSnapshots,
   subscribeExecutionSnapshots,
   subscribeMarketDepthSnapshots,
@@ -58,6 +65,7 @@ import {
   subscribeQuoteSnapshots,
 } from "../services/bridge-streams";
 import {
+  getCurrentStockMinuteAggregates,
   isStockAggregateStreamingAvailable,
   subscribeStockMinuteAggregates,
 } from "../services/stock-aggregate-stream";
@@ -162,29 +170,69 @@ function coerceDateQueryFields<T extends Record<string, unknown>>(
   return output;
 }
 
-function startSse(
+async function startSse(
   req: Request,
   res: Response,
-  setup: (writeEvent: (event: string, payload: unknown) => void) => () => void,
+  setup: (controls: {
+    writeEvent: (event: string, payload: unknown) => Promise<void>;
+    writeComment: (comment: string) => Promise<void>;
+    lastEventId: string | null;
+  }) => Promise<() => void> | (() => void),
 ) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
-  res.write("retry: 5000\n\n");
-
-  const writeEvent = (event: string, payload: unknown) => {
-    res.write(`event: ${event}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  };
-
-  const unsubscribe = setup(writeEvent);
-  const heartbeat = setInterval(() => {
-    writeEvent("ping", { ts: new Date().toISOString() });
-  }, 25_000);
 
   let cleanedUp = false;
+  let nextEventId = 1;
+  let writeQueue = Promise.resolve();
+  let unsubscribe: () => void = () => {};
+  const lastEventId =
+    typeof req.headers["last-event-id"] === "string" &&
+    req.headers["last-event-id"].trim()
+      ? req.headers["last-event-id"].trim()
+      : null;
+
+  const enqueueChunk = (chunk: string): Promise<void> => {
+    writeQueue = writeQueue
+      .then(async () => {
+        if (cleanedUp) {
+          return;
+        }
+
+        if (res.write(chunk)) {
+          return;
+        }
+
+        await once(res, "drain");
+      })
+      .catch(() => {});
+
+    return writeQueue;
+  };
+
+  const writeComment = (comment: string): Promise<void> =>
+    enqueueChunk(`: ${comment.replace(/\r?\n/g, " ")}\n\n`);
+
+  const writeEvent = (event: string, payload: unknown): Promise<void> => {
+    const eventId = String(nextEventId);
+    nextEventId += 1;
+
+    return enqueueChunk(
+      `id: ${eventId}\n` +
+        `event: ${event}\n` +
+        `data: ${JSON.stringify(payload)}\n\n`,
+    );
+  };
+
+  await enqueueChunk("retry: 5000\n\n");
+
+  const heartbeat = setInterval(() => {
+    void writeComment(`ping ${new Date().toISOString()}`);
+  }, 15_000);
+
   const cleanup = () => {
     if (cleanedUp) {
       return;
@@ -198,6 +246,26 @@ function startSse(
 
   req.on("close", cleanup);
   req.on("aborted", cleanup);
+
+  try {
+    unsubscribe =
+      (await setup({
+        writeEvent,
+        writeComment,
+        lastEventId,
+      })) ?? (() => {});
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(500);
+    }
+
+    await writeEvent("error", {
+      title: "Stream setup failed",
+      status: 500,
+      detail: error instanceof Error ? error.message : "Unknown stream error.",
+    }).catch(() => {});
+    cleanup();
+  }
 }
 
 router.get("/session", async (_req, res) => {
@@ -421,7 +489,7 @@ router.get("/flow/events", async (req, res) => {
   res.json(data);
 });
 
-router.get("/streams/quotes", (req, res) => {
+router.get("/streams/quotes", async (req, res) => {
   const rawSymbols = Array.isArray(req.query.symbols)
     ? req.query.symbols.join(",")
     : typeof req.query.symbols === "string"
@@ -442,8 +510,9 @@ router.get("/streams/quotes", (req, res) => {
     return;
   }
 
-  startSse(req, res, (writeEvent) => {
-    writeEvent("ready", {
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent("quotes", await fetchQuoteSnapshotPayload(symbols));
+    await writeEvent("ready", {
       symbols,
       source: "ibkr-bridge",
     });
@@ -454,7 +523,7 @@ router.get("/streams/quotes", (req, res) => {
   });
 });
 
-router.get("/streams/options/chains", (req, res) => {
+router.get("/streams/options/chains", async (req, res) => {
   const rawUnderlyings = Array.isArray(req.query.underlyings)
     ? req.query.underlyings.join(",")
     : typeof req.query.underlyings === "string"
@@ -477,8 +546,12 @@ router.get("/streams/options/chains", (req, res) => {
     return;
   }
 
-  startSse(req, res, (writeEvent) => {
-    writeEvent("ready", {
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent(
+      "chains",
+      await fetchOptionChainSnapshotPayload(underlyings),
+    );
+    await writeEvent("ready", {
       underlyings,
       source: "ibkr-bridge",
     });
@@ -489,13 +562,17 @@ router.get("/streams/options/chains", (req, res) => {
   });
 });
 
-router.get("/streams/orders", (req, res) => {
+router.get("/streams/orders", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "paper";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const status = typeof req.query.status === "string" ? req.query.status as Parameters<typeof subscribeOrderSnapshots>[0]["status"] : undefined;
 
-  startSse(req, res, (writeEvent) => {
-    writeEvent("ready", {
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent(
+      "orders",
+      await fetchOrderSnapshotPayload({ accountId, mode, status }),
+    );
+    await writeEvent("ready", {
       accountId: accountId ?? null,
       mode,
       source: "ibkr-bridge",
@@ -507,7 +584,7 @@ router.get("/streams/orders", (req, res) => {
   });
 });
 
-router.get("/streams/executions", (req, res) => {
+router.get("/streams/executions", async (req, res) => {
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const days =
@@ -525,8 +602,18 @@ router.get("/streams/executions", (req, res) => {
       ? req.query.providerContractId.trim()
       : null;
 
-  startSse(req, res, (writeEvent) => {
-    writeEvent("ready", {
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent(
+      "executions",
+      await fetchExecutionSnapshotPayload({
+        accountId,
+        days,
+        limit,
+        symbol,
+        providerContractId,
+      }),
+    );
+    await writeEvent("ready", {
       accountId: accountId ?? null,
       symbol: symbol ?? null,
       providerContractId,
@@ -548,7 +635,7 @@ router.get("/streams/executions", (req, res) => {
   });
 });
 
-router.get("/streams/market-depth", (req, res) => {
+router.get("/streams/market-depth", async (req, res) => {
   if (typeof req.query.symbol !== "string" || !req.query.symbol.trim()) {
     res.status(400).type("application/problem+json").json({
       type: "https://rayalgo.local/problems/invalid-request",
@@ -576,11 +663,22 @@ router.get("/streams/market-depth", (req, res) => {
     typeof req.query.exchange === "string" && req.query.exchange.trim()
       ? req.query.exchange.trim()
       : null;
+  const symbol = req.query.symbol.trim().toUpperCase();
 
-  startSse(req, res, (writeEvent) => {
-    writeEvent("ready", {
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent(
+      "depth",
+      await fetchMarketDepthSnapshotPayload({
+        accountId,
+        symbol,
+        assetClass,
+        providerContractId,
+        exchange,
+      }),
+    );
+    await writeEvent("ready", {
       accountId: accountId ?? null,
-      symbol: req.query.symbol,
+      symbol,
       providerContractId,
       source: "ibkr-bridge",
     });
@@ -588,7 +686,7 @@ router.get("/streams/market-depth", (req, res) => {
     return subscribeMarketDepthSnapshots(
       {
         accountId,
-        symbol: req.query.symbol,
+        symbol,
         assetClass,
         providerContractId,
         exchange,
@@ -600,12 +698,16 @@ router.get("/streams/market-depth", (req, res) => {
   });
 });
 
-router.get("/streams/accounts", (req, res) => {
+router.get("/streams/accounts", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "paper";
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
 
-  startSse(req, res, (writeEvent) => {
-    writeEvent("ready", {
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent(
+      "accounts",
+      await fetchAccountSnapshotPayload({ accountId, mode }),
+    );
+    await writeEvent("ready", {
       accountId: accountId ?? null,
       mode,
       source: "ibkr-bridge",
@@ -617,7 +719,7 @@ router.get("/streams/accounts", (req, res) => {
   });
 });
 
-router.get("/streams/stocks/aggregates", (req, res) => {
+router.get("/streams/stocks/aggregates", async (req, res) => {
   const rawSymbols = Array.isArray(req.query.symbols)
     ? req.query.symbols.join(",")
     : typeof req.query.symbols === "string"
@@ -649,8 +751,13 @@ router.get("/streams/stocks/aggregates", (req, res) => {
     return;
   }
 
-  startSse(req, res, (writeEvent) => {
-    writeEvent("ready", {
+  await startSse(req, res, async ({ writeEvent }) => {
+    const snapshotAggregates = getCurrentStockMinuteAggregates(symbols);
+    for (const aggregate of snapshotAggregates) {
+      await writeEvent("aggregate", aggregate);
+    }
+
+    await writeEvent("ready", {
       symbols,
       delayed: false,
       source: "ibkr-websocket-derived",

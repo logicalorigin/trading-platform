@@ -57,6 +57,118 @@ function createPollingStream<T>({
   };
 }
 
+export async function fetchQuoteSnapshotPayload(symbols: string[]): Promise<{
+  quotes: Array<
+    Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>>[number] & {
+      source: "ibkr";
+    }
+  >;
+}> {
+  const normalizedSymbols = Array.from(
+    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+
+  return {
+    quotes: (await bridgeClient.getQuoteSnapshots(normalizedSymbols)).map(
+      (quote) => ({
+        ...quote,
+        source: "ibkr" as const,
+      }),
+    ),
+  };
+}
+
+export async function fetchOptionChainSnapshotPayload(
+  underlyings: string[],
+): Promise<{
+  underlyings: Array<{
+    underlying: string;
+    contracts: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>;
+    updatedAt: string;
+  }>;
+}> {
+  const normalizedUnderlyings = Array.from(
+    new Set(
+      underlyings.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+    ),
+  );
+
+  return {
+    underlyings: await Promise.all(
+      normalizedUnderlyings.map(async (underlying) => ({
+        underlying,
+        contracts: await bridgeClient.getOptionChain({
+          underlying,
+          maxExpirations: 3,
+          strikesAroundMoney: 12,
+        }),
+        updatedAt: new Date().toISOString(),
+      })),
+    ),
+  };
+}
+
+export async function fetchOrderSnapshotPayload(input: {
+  accountId?: string;
+  mode: "paper" | "live";
+  status?:
+    | "pending_submit"
+    | "submitted"
+    | "accepted"
+    | "partially_filled"
+    | "filled"
+    | "canceled"
+    | "rejected"
+    | "expired";
+}): Promise<{
+  orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
+}> {
+  return {
+    orders: await bridgeClient.listOrders(input),
+  };
+}
+
+export async function fetchAccountSnapshotPayload(input: {
+  accountId?: string;
+  mode: "paper" | "live";
+}): Promise<{
+  accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
+  positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+}> {
+  return {
+    accounts: await bridgeClient.listAccounts(input.mode),
+    positions: await bridgeClient.listPositions(input),
+  };
+}
+
+export async function fetchExecutionSnapshotPayload(input: {
+  accountId?: string;
+  days?: number;
+  limit?: number;
+  symbol?: string;
+  providerContractId?: string | null;
+}): Promise<{
+  executions: Awaited<ReturnType<IbkrBridgeClient["listExecutions"]>>;
+}> {
+  return {
+    executions: await bridgeClient.listExecutions(input),
+  };
+}
+
+export async function fetchMarketDepthSnapshotPayload(input: {
+  accountId?: string;
+  symbol: string;
+  assetClass?: "equity" | "option";
+  providerContractId?: string | null;
+  exchange?: string | null;
+}): Promise<{
+  depth: Awaited<ReturnType<IbkrBridgeClient["getMarketDepth"]>>;
+}> {
+  return {
+    depth: await bridgeClient.getMarketDepth(input),
+  };
+}
+
 export function subscribeQuoteSnapshots(
   symbols: string[],
   onSnapshot: (payload: {
@@ -73,14 +185,7 @@ export function subscribeQuoteSnapshots(
 
   return createPollingStream({
     intervalMs: 1_000,
-    fetchSnapshot: async () => ({
-      quotes: (await bridgeClient.getQuoteSnapshots(normalizedSymbols)).map(
-        (quote) => ({
-          ...quote,
-          source: "ibkr" as const,
-        }),
-      ),
-    }),
+    fetchSnapshot: async () => fetchQuoteSnapshotPayload(normalizedSymbols),
     onSnapshot,
   });
 }
@@ -101,19 +206,8 @@ export function subscribeOptionChains(
 
   return createPollingStream({
     intervalMs: 2_500,
-    fetchSnapshot: async () => ({
-      underlyings: await Promise.all(
-        normalizedUnderlyings.map(async (underlying) => ({
-          underlying,
-          contracts: await bridgeClient.getOptionChain({
-            underlying,
-            maxExpirations: 3,
-            strikesAroundMoney: 12,
-          }),
-          updatedAt: new Date().toISOString(),
-        })),
-      ),
-    }),
+    fetchSnapshot: async () =>
+      fetchOptionChainSnapshotPayload(normalizedUnderlyings),
     onSnapshot,
   });
 }
@@ -128,9 +222,7 @@ export function subscribeOrderSnapshots(
 ): Unsubscribe {
   return createPollingStream({
     intervalMs: 1_000,
-    fetchSnapshot: async () => ({
-      orders: await bridgeClient.listOrders(input),
-    }),
+    fetchSnapshot: async () => fetchOrderSnapshotPayload(input),
     onSnapshot,
   });
 }
@@ -147,10 +239,7 @@ export function subscribeAccountSnapshots(
 ): Unsubscribe {
   return createPollingStream({
     intervalMs: 3_000,
-    fetchSnapshot: async () => ({
-      accounts: await bridgeClient.listAccounts(input.mode),
-      positions: await bridgeClient.listPositions(input),
-    }),
+    fetchSnapshot: async () => fetchAccountSnapshotPayload(input),
     onSnapshot,
   });
 }
@@ -169,9 +258,7 @@ export function subscribeExecutionSnapshots(
 ): Unsubscribe {
   return createPollingStream({
     intervalMs: 1_000,
-    fetchSnapshot: async () => ({
-      executions: await bridgeClient.listExecutions(input),
-    }),
+    fetchSnapshot: async () => fetchExecutionSnapshotPayload(input),
     onSnapshot,
   });
 }
@@ -190,9 +277,7 @@ export function subscribeMarketDepthSnapshots(
 ): Unsubscribe {
   return createPollingStream({
     intervalMs: 1_000,
-    fetchSnapshot: async () => ({
-      depth: await bridgeClient.getMarketDepth(input),
-    }),
+    fetchSnapshot: async () => fetchMarketDepthSnapshotPayload(input),
     onSnapshot,
   });
 }

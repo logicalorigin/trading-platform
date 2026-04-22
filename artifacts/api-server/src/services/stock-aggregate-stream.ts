@@ -96,6 +96,17 @@ function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): Sto
   };
 }
 
+export function getCurrentStockMinuteAggregates(
+  symbols: string[],
+): StockMinuteAggregateMessage[] {
+  return Array.from(
+    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  ).flatMap((symbol) => {
+    const accumulator = accumulators.get(symbol);
+    return accumulator ? [toAggregateMessage(symbol, accumulator)] : [];
+  });
+}
+
 function updateAccumulator(input: {
   symbol: string;
   price: number;
