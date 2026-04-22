@@ -77,6 +77,21 @@ One-time setup on the Windows machine (requires a Cloudflare account with a zone
 
 When a session-start script is added (see follow-up "one-click launch on Windows"), it should invoke `cloudflared tunnel run ibkr` (named tunnel by name), **not** `cloudflared tunnel --url ...`, so `IBKR_BASE_URL` never has to be touched.
 
+### One-click launcher (`scripts/windows/start-ibkr.ps1`)
+
+Instead of opening windows #1 and #2 by hand, just run the launcher:
+
+- **Double-click** `scripts\windows\start-ibkr.cmd`, **or**
+- **From PowerShell**: `powershell -ExecutionPolicy Bypass -File scripts\windows\start-ibkr.ps1`
+
+What it does:
+
+1. Opens CPG in its own PowerShell window (`%USERPROFILE%\clientportal.gw\bin\run.bat root\conf.yaml`).
+2. Opens `cloudflared tunnel --url https://localhost:5000 --no-tls-verify` in another window and tees its output to `%TEMP%\rayalgo-ibkr\cloudflared-<timestamp>.log`.
+3. Watches the log for the `*.trycloudflare.com` hostname and prints a big banner with the fully formatted `IBKR_BASE_URL` (already includes `/v1/api`). The value is copied to the clipboard when possible.
+
+Only manual step left: paste that `IBKR_BASE_URL` into Replit Secrets, then complete the browser login at `https://localhost:5000`. Override defaults with `-CpgPath`, `-CloudflaredExe`, or `-TunnelTimeoutSeconds` if your install differs.
+
 ### The IBKR 2FA trick that actually works
 
 The default "push notification to IBKR Mobile" flow **silently fails** with CPG. Use challenge/response instead:
