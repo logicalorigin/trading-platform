@@ -2,6 +2,7 @@ export { ResearchChartSurface } from "./ResearchChartSurface";
 export { ResearchMiniChart } from "./ResearchMiniChart";
 export { ResearchSparkline } from "./ResearchSparkline";
 export { ResearchChartFrame } from "./ResearchChartFrame";
+export { RayReplicaSettingsMenu } from "./RayReplicaSettingsMenu";
 export {
   ResearchChartWidgetHeader,
   ResearchChartWidgetFooter,
@@ -20,6 +21,11 @@ export {
   resolvePineScriptChartState,
   useIndicatorLibrary,
 } from "./pineScripts";
+export {
+  DEFAULT_RAY_REPLICA_SETTINGS,
+  RAY_REPLICA_PINE_SCRIPT_KEY,
+  resolveRayReplicaRuntimeSettings,
+} from "./rayReplicaPineAdapter";
 export { useDrawingHistory } from "./useDrawingHistory";
 export {
   getStoredBrokerMinuteAggregates,

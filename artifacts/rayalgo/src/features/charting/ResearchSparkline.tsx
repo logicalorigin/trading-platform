@@ -1,5 +1,10 @@
 import { useMemo } from "react";
 import { ResearchMiniChart } from "./ResearchMiniChart";
+import { useIndicatorLibrary } from "./pineScripts";
+import {
+  DEFAULT_RAY_REPLICA_SETTINGS,
+  RAY_REPLICA_PINE_SCRIPT_KEY,
+} from "./rayReplicaPineAdapter";
 import type { MarketBar } from "./types";
 
 type ResearchChartTheme = {
@@ -27,12 +32,28 @@ export const ResearchSparkline = ({
   theme,
   themeKey,
 }: ResearchSparklineProps) => {
+  const { indicatorRegistry } = useIndicatorLibrary();
   const sparkBars = useMemo(
     () => Array.isArray(bars) ? bars.filter((bar) => (
       typeof (bar.close ?? bar.c) === "number" &&
       Number.isFinite(bar.close ?? bar.c)
     )) : [],
     [bars],
+  );
+  const indicatorSettings = useMemo(
+    () => ({
+      [RAY_REPLICA_PINE_SCRIPT_KEY]: {
+        ...DEFAULT_RAY_REPLICA_SETTINGS,
+        showWires: false,
+        showShadow: false,
+        showKeyLevels: false,
+        showStructure: false,
+        showOrderBlocks: false,
+        showRegimeWindows: false,
+        colorCandles: false,
+      },
+    }),
+    [],
   );
 
   if (sparkBars.length < 2) {
@@ -45,6 +66,9 @@ export const ResearchSparkline = ({
       themeKey={themeKey}
       bars={sparkBars}
       timeframe="5m"
+      selectedIndicators={[RAY_REPLICA_PINE_SCRIPT_KEY]}
+      indicatorSettings={indicatorSettings}
+      indicatorRegistry={indicatorRegistry}
       defaultBaseSeriesType="line"
       defaultShowVolume={false}
     />

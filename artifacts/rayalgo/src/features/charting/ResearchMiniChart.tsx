@@ -25,6 +25,7 @@ type ResearchMiniChartProps = {
   theme: ResearchChartTheme;
   themeKey: string;
   selectedIndicators?: string[];
+  indicatorSettings?: Record<string, Record<string, unknown>>;
   indicatorRegistry?: IndicatorRegistry;
   indicatorMarkers?: ChartMarker[];
   openPrice?: number | null;
@@ -38,6 +39,7 @@ export const ResearchMiniChart = ({
   theme,
   themeKey,
   selectedIndicators = [],
+  indicatorSettings = {},
   indicatorRegistry,
   indicatorMarkers = [],
   openPrice = null,
@@ -50,10 +52,18 @@ export const ResearchMiniChart = ({
         bars,
         timeframe,
         selectedIndicators,
+        indicatorSettings,
         indicatorRegistry,
         indicatorMarkers,
       }),
-    [bars, indicatorMarkers, indicatorRegistry, selectedIndicators, timeframe],
+    [
+      bars,
+      indicatorMarkers,
+      indicatorRegistry,
+      indicatorSettings,
+      selectedIndicators,
+      timeframe,
+    ],
   );
   const referenceLines = useMemo(
     () =>

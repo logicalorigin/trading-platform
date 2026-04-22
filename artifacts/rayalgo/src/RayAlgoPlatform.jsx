@@ -56,6 +56,9 @@ import {
   ResearchChartWidgetHeader,
   ResearchChartWidgetFooter,
   ResearchChartWidgetSidebar,
+  RayReplicaSettingsMenu,
+  RAY_REPLICA_PINE_SCRIPT_KEY,
+  resolveRayReplicaRuntimeSettings,
   buildResearchChartModel,
   getStoredBrokerMinuteAggregates,
   useIndicatorLibrary,
@@ -4080,17 +4083,76 @@ const MARKET_CHART_STUDIES = [
 const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
+const MARKET_GRID_INDICATOR_PRESET_VERSION = 2;
+const TRADE_EQUITY_INDICATOR_PRESET_VERSION = 1;
+const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
+const DEFAULT_MINI_CHART_STUDIES = [
+  RAY_REPLICA_PINE_SCRIPT_KEY,
+  "ema-21",
+  "vwap",
+];
+const DEFAULT_TRADE_EQUITY_STUDIES = [
+  RAY_REPLICA_PINE_SCRIPT_KEY,
+  "ema-21",
+  "ema-55",
+];
+const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
 
 const normalizeTickerSymbol = (value) => value?.trim?.().toUpperCase?.() || "";
-const DEFAULT_MINI_CHART_STUDIES = ["ema-21", "vwap"];
-const normalizeMiniChartStudies = (value) => {
-  if (!Array.isArray(value)) {
-    return [...DEFAULT_MINI_CHART_STUDIES];
-  }
-  return value.filter(
-    (studyId) => typeof studyId === "string" && studyId.trim(),
-  );
+
+const normalizeIndicatorSelection = (value, fallback = []) => {
+  const source = Array.isArray(value) ? value : fallback;
+  const seen = new Set();
+  return source.filter((indicatorId) => {
+    if (typeof indicatorId !== "string" || !indicatorId.trim()) {
+      return false;
+    }
+    if (seen.has(indicatorId)) {
+      return false;
+    }
+    seen.add(indicatorId);
+    return true;
+  });
 };
+
+const mergeIndicatorSelections = (...selections) =>
+  normalizeIndicatorSelection(selections.flat(), []);
+
+const normalizeMiniChartStudies = (value, includeRayReplicaByDefault = false) => {
+  const fallback = includeRayReplicaByDefault
+    ? DEFAULT_MINI_CHART_STUDIES
+    : DEFAULT_MINI_CHART_STUDIES.filter(
+        (studyId) => studyId !== RAY_REPLICA_PINE_SCRIPT_KEY,
+      );
+  const normalized = normalizeIndicatorSelection(value, fallback);
+  return includeRayReplicaByDefault
+    ? mergeIndicatorSelections(DEFAULT_MINI_CHART_STUDIES, normalized)
+    : normalized;
+};
+
+const resolvePersistedIndicatorPreset = ({
+  indicators,
+  defaults,
+  persistedVersion,
+  currentVersion,
+}) => {
+  const normalized = normalizeIndicatorSelection(indicators, defaults);
+  return persistedVersion === currentVersion
+    ? normalized
+    : mergeIndicatorSelections(defaults, normalized);
+};
+
+const resolvePersistedRayReplicaSettings = (value) =>
+  resolveRayReplicaRuntimeSettings(
+    value && typeof value === "object" ? value : undefined,
+  );
+
+const buildRayReplicaIndicatorSettings = (settings) => ({
+  [RAY_REPLICA_PINE_SCRIPT_KEY]: settings,
+});
+
+const isRayReplicaIndicatorSelected = (selectedIndicators = []) =>
+  selectedIndicators.includes(RAY_REPLICA_PINE_SCRIPT_KEY);
 
 const buildDefaultMiniChartSymbols = (
   activeSym,
@@ -4111,14 +4173,24 @@ const buildDefaultMiniChartSymbols = (
   );
 };
 
-const hydrateMiniChartSlot = (slot, fallbackTicker) => ({
+const hydrateMiniChartSlot = (
+  slot,
+  fallbackTicker,
+  includeRayReplicaByDefault = false,
+) => ({
   ticker:
     normalizeTickerSymbol(slot?.ticker) ||
     fallbackTicker ||
     WATCHLIST[0]?.sym ||
     "SPY",
   tf: MINI_CHART_TIMEFRAMES.includes(slot?.tf) ? slot.tf : "15m",
-  studies: normalizeMiniChartStudies(slot?.studies),
+  studies: normalizeMiniChartStudies(
+    slot?.studies,
+    includeRayReplicaByDefault,
+  ),
+  rayReplicaSettings: resolvePersistedRayReplicaSettings(
+    slot?.rayReplicaSettings,
+  ),
 });
 
 const buildInitialMiniChartSlots = (activeSym) => {
@@ -4130,7 +4202,12 @@ const buildInitialMiniChartSlots = (activeSym) => {
     MAX_MULTI_CHART_SLOTS,
   );
   return defaults.map((fallbackTicker, index) =>
-    hydrateMiniChartSlot(persisted[index], fallbackTicker),
+    hydrateMiniChartSlot(
+      persisted[index],
+      fallbackTicker,
+      _initialState.marketGridIndicatorPresetVersion !==
+        MARKET_GRID_INDICATOR_PRESET_VERSION,
+    ),
   );
 };
 
@@ -4450,6 +4527,7 @@ const MiniChartCell = ({
   onChangeTicker,
   onChangeTimeframe,
   onChangeStudies,
+  onChangeRayReplicaSettings,
   isActive,
   dense = false,
   stockAggregateStreamingEnabled = false,
@@ -4459,6 +4537,14 @@ const MiniChartCell = ({
   const ticker = slot?.ticker || WATCHLIST[0]?.sym || "SPY";
   const tf = MINI_CHART_TIMEFRAMES.includes(slot?.tf) ? slot.tf : "15m";
   const selectedIndicators = normalizeMiniChartStudies(slot?.studies);
+  const rayReplicaSettings = useMemo(
+    () => resolvePersistedRayReplicaSettings(slot?.rayReplicaSettings),
+    [slot?.rayReplicaSettings],
+  );
+  const indicatorSettings = useMemo(
+    () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
+    [rayReplicaSettings],
+  );
   const minuteAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
   const [searchOpen, setSearchOpen] = useState(false);
   const [drawMode, setDrawMode] = useState(null);
@@ -4502,9 +4588,10 @@ const MiniChartCell = ({
         bars,
         timeframe: tf === "1D" ? "1d" : tf,
         selectedIndicators,
+        indicatorSettings,
         indicatorRegistry,
       }),
-    [bars, indicatorRegistry, selectedIndicators, tf],
+    [bars, indicatorRegistry, indicatorSettings, selectedIndicators, tf],
   );
   const barsStatus = liveBars.length
     ? "live"
@@ -4626,6 +4713,15 @@ const MiniChartCell = ({
             selectedStudies={selectedIndicators}
             showSnapshotButton={false}
             showUndoRedo={false}
+            rightSlot={
+              <RayReplicaSettingsMenu
+                theme={T}
+                settings={rayReplicaSettings}
+                onChange={(next) => onChangeRayReplicaSettings?.(next)}
+                dense={dense}
+                disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+              />
+            }
             onToggleStudy={(studyId) => {
               const active = selectedIndicators.includes(studyId);
               const next = active
@@ -4830,7 +4926,11 @@ const MultiChartGrid = ({
         if (
           !previous ||
           previous.ticker !== hydrated.ticker ||
-          previous.tf !== hydrated.tf
+          previous.tf !== hydrated.tf ||
+          JSON.stringify(previous.studies || []) !==
+            JSON.stringify(hydrated.studies || []) ||
+          JSON.stringify(previous.rayReplicaSettings || {}) !==
+            JSON.stringify(hydrated.rayReplicaSettings || {})
         ) {
           changed = true;
         }
@@ -4845,6 +4945,7 @@ const MultiChartGrid = ({
       marketGridLayout: layout,
       marketGridSoloSlotIndex: soloSlotIndex,
       marketGridSyncTimeframes: syncTimeframes,
+      marketGridIndicatorPresetVersion: MARKET_GRID_INDICATOR_PRESET_VERSION,
       marketGridSlots: slots,
     });
   }, [layout, soloSlotIndex, syncTimeframes, slots]);
@@ -5049,6 +5150,9 @@ const MultiChartGrid = ({
               onChangeTicker={(ticker) => updateSlot(index, { ticker })}
               onChangeTimeframe={(tf) => updateSlotTimeframe(index, tf)}
               onChangeStudies={(studies) => updateSlot(index, { studies })}
+              onChangeRayReplicaSettings={(rayReplicaSettings) =>
+                updateSlot(index, { rayReplicaSettings })
+              }
             />
           ))}
         </div>
@@ -9073,15 +9177,35 @@ const TradeOptionChart = ({
   holding,
   timeframe = "5m",
   sourceLabel = "no live chart data",
+  onChangeTimeframe,
 }) => {
+  const { studies: availableStudies, indicatorRegistry } =
+    useIndicatorLibrary();
+  const [selectedIndicators, setSelectedIndicators] = useState(() =>
+    resolvePersistedIndicatorPreset({
+      indicators: _initialState.tradeOptionSelectedIndicators,
+      defaults: DEFAULT_TRADE_OPTION_STUDIES,
+      persistedVersion: _initialState.tradeOptionIndicatorPresetVersion,
+      currentVersion: TRADE_OPTION_INDICATOR_PRESET_VERSION,
+    }),
+  );
+  const [rayReplicaSettings, setRayReplicaSettings] = useState(() =>
+    resolvePersistedRayReplicaSettings(_initialState.tradeOptionRayReplicaSettings),
+  );
+  const indicatorSettings = useMemo(
+    () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
+    [rayReplicaSettings],
+  );
   const chartModel = useMemo(
     () =>
       buildResearchChartModel({
         bars,
         timeframe,
-        selectedIndicators: [],
+        selectedIndicators,
+        indicatorSettings,
+        indicatorRegistry,
       }),
-    [bars, timeframe],
+    [bars, indicatorRegistry, indicatorSettings, selectedIndicators, timeframe],
   );
   const referenceLines = useMemo(
     () =>
@@ -9098,64 +9222,117 @@ const TradeOptionChart = ({
         : [],
     [holding],
   );
-  const lastPrice =
-    bars[bars.length - 1]?.c ?? bars[bars.length - 1]?.p ?? null;
+  const latestBar = bars[bars.length - 1];
+  const previousClose =
+    bars.length > 1 ? (bars[bars.length - 2]?.c ?? null) : null;
+  const lastPrice = latestBar?.c ?? bars[bars.length - 1]?.p ?? null;
+  const changePercent =
+    Number.isFinite(lastPrice) &&
+    Number.isFinite(previousClose) &&
+    previousClose !== 0
+      ? ((lastPrice - previousClose) / previousClose) * 100
+      : null;
+  const toggleIndicator = (indicatorId) => {
+    setSelectedIndicators((current) =>
+      current.includes(indicatorId)
+        ? current.filter((value) => value !== indicatorId)
+        : [...current, indicatorId],
+    );
+  };
+
+  useEffect(() => {
+    persistState({
+      tradeOptionSelectedIndicators: selectedIndicators,
+      tradeOptionIndicatorPresetVersion: TRADE_OPTION_INDICATOR_PRESET_VERSION,
+    });
+  }, [selectedIndicators]);
+
+  useEffect(() => {
+    persistState({ tradeOptionRayReplicaSettings: rayReplicaSettings });
+  }, [rayReplicaSettings]);
 
   return (
-    <div
-      style={{
-        height: "100%",
-        width: "100%",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          fontSize: fs(8),
-          fontFamily: T.mono,
-          color: T.textMuted,
-          padding: "2px 6px 0",
-        }}
-      >
-        <span>{contract}</span>
-        {holding && (
-          <span
-            style={{
-              fontSize: fs(7),
-              padding: sp("1px 4px"),
-              borderRadius: dim(2),
-              background: `${T.amber}20`,
-              color: T.amber,
-              border: `1px solid ${T.amber}40`,
-              fontWeight: 700,
-              letterSpacing: "0.05em",
-            }}
-          >
-            ★ HOLDING
-          </span>
-        )}
-        <span style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
-          <span style={{ color: T.textDim }}>{sourceLabel}</span>
-          <span style={{ color, fontWeight: 600 }}>
-            {typeof lastPrice === "number"
-              ? `$${lastPrice.toFixed(2)}`
-              : MISSING_VALUE}
-          </span>
-        </span>
-      </div>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <ResearchChartSurface
+    <ResearchChartFrame
+      theme={T}
+      themeKey={`${CURRENT_THEME}-trade-option`}
+      model={chartModel}
+      referenceLines={referenceLines}
+      showSurfaceToolbar={false}
+      showLegend={false}
+      surfaceTopOverlay={(controls) => (
+        <ResearchChartWidgetHeader
           theme={T}
-          themeKey={CURRENT_THEME}
-          model={chartModel}
-          referenceLines={referenceLines}
+          controls={controls}
+          symbol={contract}
+          name={holding ? "Held option contract" : "Option contract"}
+          price={lastPrice}
+          changePercent={changePercent}
+          statusLabel={sourceLabel}
+          timeframe={timeframe}
+          timeframeOptions={TRADE_TIMEFRAMES.map((entry) => ({
+            value: entry.v,
+            label: entry.tag,
+          }))}
+          onChangeTimeframe={onChangeTimeframe}
+          studies={availableStudies}
+          selectedStudies={selectedIndicators}
+          onToggleStudy={toggleIndicator}
+          meta={{
+            open: latestBar?.o,
+            high: latestBar?.h,
+            low: latestBar?.l,
+            close: latestBar?.c,
+            volume: latestBar?.v,
+            timestamp: latestBar?.ts,
+            sourceLabel,
+          }}
+          rightSlot={
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: sp(6),
+              }}
+            >
+              {holding ? (
+                <span
+                  style={{
+                    fontSize: fs(7),
+                    padding: sp("1px 4px"),
+                    borderRadius: dim(2),
+                    background: `${T.amber}20`,
+                    color: T.amber,
+                    border: `1px solid ${T.amber}40`,
+                    fontWeight: 700,
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  ★ HOLDING
+                </span>
+              ) : null}
+              <RayReplicaSettingsMenu
+                theme={T}
+                settings={rayReplicaSettings}
+                onChange={setRayReplicaSettings}
+                disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+              />
+            </div>
+          }
         />
-      </div>
-    </div>
+      )}
+      surfaceTopOverlayHeight={40}
+      surfaceBottomOverlay={(controls) => (
+        <ResearchChartWidgetFooter
+          theme={T}
+          controls={controls}
+          studies={availableStudies}
+          selectedStudies={selectedIndicators}
+          onToggleStudy={toggleIndicator}
+          statusText={sourceLabel}
+        />
+      )}
+      surfaceBottomOverlayHeight={22}
+    />
   );
 };
 
@@ -13637,10 +13814,21 @@ const TradeEquityPanel = ({
     useIndicatorLibrary();
   const [tf, setTf] = useState("5m");
   const [drawMode, setDrawMode] = useState(null);
-  const [selectedIndicators, setSelectedIndicators] = useState([
-    "ema-21",
-    "ema-55",
-  ]);
+  const [selectedIndicators, setSelectedIndicators] = useState(() =>
+    resolvePersistedIndicatorPreset({
+      indicators: _initialState.tradeEquitySelectedIndicators,
+      defaults: DEFAULT_TRADE_EQUITY_STUDIES,
+      persistedVersion: _initialState.tradeEquityIndicatorPresetVersion,
+      currentVersion: TRADE_EQUITY_INDICATOR_PRESET_VERSION,
+    }),
+  );
+  const [rayReplicaSettings, setRayReplicaSettings] = useState(() =>
+    resolvePersistedRayReplicaSettings(_initialState.tradeEquityRayReplicaSettings),
+  );
+  const indicatorSettings = useMemo(
+    () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
+    [rayReplicaSettings],
+  );
   const { drawings, addDrawing, clearDrawings, undo, redo, canUndo, canRedo } =
     useDrawingHistory();
   const tfMeta =
@@ -13721,10 +13909,18 @@ const TradeEquityPanel = ({
         bars,
         timeframe: tf,
         selectedIndicators,
+        indicatorSettings,
         indicatorRegistry,
         indicatorMarkers: chartMarkers,
       }),
-    [bars, chartMarkers, indicatorRegistry, selectedIndicators, tf],
+    [
+      bars,
+      chartMarkers,
+      indicatorRegistry,
+      indicatorSettings,
+      selectedIndicators,
+      tf,
+    ],
   );
   const latestBar = bars[bars.length - 1];
   const previousClose =
@@ -13749,6 +13945,17 @@ const TradeEquityPanel = ({
         : [...current, indicatorId],
     );
   };
+
+  useEffect(() => {
+    persistState({
+      tradeEquitySelectedIndicators: selectedIndicators,
+      tradeEquityIndicatorPresetVersion: TRADE_EQUITY_INDICATOR_PRESET_VERSION,
+    });
+  }, [selectedIndicators]);
+
+  useEffect(() => {
+    persistState({ tradeEquityRayReplicaSettings: rayReplicaSettings });
+  }, [rayReplicaSettings]);
 
   return (
     <ResearchChartFrame
@@ -13784,6 +13991,14 @@ const TradeEquityPanel = ({
           studies={availableStudies}
           selectedStudies={selectedIndicators}
           onToggleStudy={toggleIndicator}
+          rightSlot={
+            <RayReplicaSettingsMenu
+              theme={T}
+              settings={rayReplicaSettings}
+              onChange={setRayReplicaSettings}
+              disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+            />
+          }
           meta={{
             open: latestBar?.o,
             high: latestBar?.h,
@@ -14141,27 +14356,6 @@ const TradeContractDetailPanel = ({
         <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>
           {contract.exp}
         </span>
-        <div style={{ display: "flex", gap: sp(2) }}>
-          {TRADE_TIMEFRAMES.map((t) => (
-            <button
-              key={t.v}
-              onClick={() => setTf(t.v)}
-              style={{
-                padding: sp("2px 7px"),
-                background: t.v === tf ? T.accentDim : "transparent",
-                border: `1px solid ${t.v === tf ? T.accent : T.border}`,
-                borderRadius: dim(3),
-                color: t.v === tf ? T.accent : T.textDim,
-                fontSize: fs(8),
-                fontFamily: T.mono,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              {t.tag}
-            </button>
-          ))}
-        </div>
         <span style={{ flex: 1 }} />
         <span
           style={{
@@ -14226,6 +14420,7 @@ const TradeContractDetailPanel = ({
             holding={activeHolding}
             timeframe={resolvedChartTimeframe}
             sourceLabel={sourceLabel}
+            onChangeTimeframe={setTf}
           />
         ) : (
           <DataUnavailableState
