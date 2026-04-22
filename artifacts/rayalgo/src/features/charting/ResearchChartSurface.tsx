@@ -2763,7 +2763,7 @@ export const ResearchChartSurface = ({
             top: 0,
             left: 0,
             right: 0,
-            zIndex: 4,
+            zIndex: 5,
             pointerEvents: "auto",
           }}
         >
@@ -2778,7 +2778,7 @@ export const ResearchChartSurface = ({
             left: 0,
             bottom: chartInsetBottom,
             width: leftOverlayWidth,
-            zIndex: 4,
+            zIndex: 5,
             pointerEvents: "auto",
           }}
         >
@@ -2791,14 +2791,15 @@ export const ResearchChartSurface = ({
           style={{
             position: "absolute",
             top: 6 + chartInsetTop,
+            left: chartInsetLeft + 8,
             right: 8,
-            zIndex: 3,
+            zIndex: 6,
             display: "flex",
             gap: 4,
             rowGap: 4,
             flexWrap: "wrap",
             justifyContent: "flex-end",
-            maxWidth: "calc(100% - 16px)",
+            maxWidth: `calc(100% - ${chartInsetLeft + 16}px)`,
           }}
         >
           {[
@@ -3670,7 +3671,7 @@ export const ResearchChartSurface = ({
             bottom: 0,
             left: 0,
             right: 0,
-            zIndex: 4,
+            zIndex: 5,
             pointerEvents: "auto",
           }}
         >
@@ -3683,6 +3684,7 @@ export const ResearchChartSurface = ({
             position: "absolute",
             top: 6 + chartInsetTop,
             right: 8,
+            zIndex: 7,
             background: withAlpha(theme.amber, "18"),
             border: `1px solid ${withAlpha(theme.amber, "66")}`,
             borderRadius: 4,
