@@ -17051,6 +17051,10 @@ export default function RayAlgoPlatform() {
     },
   );
   const accounts = accountsQuery.data?.accounts || [];
+  const marketStockAggregateStreamingEnabled = Boolean(
+    sessionQuery.data?.configured?.ibkr &&
+      sessionQuery.data?.ibkrBridge?.authenticated,
+  );
 
   useEffect(() => {
     if (!accounts.length) {
@@ -17079,7 +17083,7 @@ export default function RayAlgoPlatform() {
   useBrokerStockAggregateStream({
     symbols: streamedMarketSymbols,
     enabled: Boolean(
-      stockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
+      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
     ),
     onAggregate: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });

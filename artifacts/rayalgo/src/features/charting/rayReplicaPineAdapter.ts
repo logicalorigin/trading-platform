@@ -14,14 +14,42 @@ import type {
 
 export const RAY_REPLICA_PINE_SCRIPT_KEY = "rayalgo-replica-smc-pro-v3";
 
-const TIME_HORIZON = 10;
-const BASIS_LENGTH = 80;
-const ATR_LENGTH = 14;
-const ATR_SMOOTHING = 21;
-const VOLATILITY_MULTIPLIER = 2;
-const WIRE_SPREAD = 0.5;
-const SHADOW_LENGTH = 20;
-const SHADOW_STD_DEV = 2;
+export type RayReplicaRuntimeSettings = {
+  timeHorizon: number;
+  basisLength: number;
+  atrLength: number;
+  atrSmoothing: number;
+  volatilityMultiplier: number;
+  wireSpread: number;
+  shadowLength: number;
+  shadowStdDev: number;
+  showWires: boolean;
+  showShadow: boolean;
+  showKeyLevels: boolean;
+  showStructure: boolean;
+  showOrderBlocks: boolean;
+  showRegimeWindows: boolean;
+  colorCandles: boolean;
+};
+
+export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
+  timeHorizon: 10,
+  basisLength: 80,
+  atrLength: 14,
+  atrSmoothing: 21,
+  volatilityMultiplier: 2,
+  wireSpread: 0.5,
+  shadowLength: 20,
+  shadowStdDev: 2,
+  showWires: true,
+  showShadow: true,
+  showKeyLevels: true,
+  showStructure: true,
+  showOrderBlocks: true,
+  showRegimeWindows: true,
+  colorCandles: true,
+};
+
 const KEY_LEVEL_LINE_STYLE = 2;
 const BULL_COLOR = "#00bcd4";
 const BEAR_COLOR = "#e91e63";
@@ -31,6 +59,130 @@ const KEY_LEVEL_HIGH_COLOR = "#ef5350";
 const KEY_LEVEL_LOW_COLOR = "#26a69a";
 const KEY_LEVEL_CLOSE_COLOR = "#9ca3af";
 const KEY_LEVEL_OPEN_COLOR = "#facc15";
+
+const resolveIntegerSetting = (
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number => {
+  const resolved = Number(value);
+  if (!Number.isFinite(resolved)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(resolved)));
+};
+
+const resolveFloatSetting = (
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number => {
+  const resolved = Number(value);
+  if (!Number.isFinite(resolved)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, resolved));
+};
+
+const resolveBooleanSetting = (
+  value: unknown,
+  fallback: boolean,
+): boolean => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return fallback;
+};
+
+export function resolveRayReplicaRuntimeSettings(
+  settings?: Record<string, unknown>,
+): RayReplicaRuntimeSettings {
+  const input = settings ?? {};
+
+  return {
+    timeHorizon: resolveIntegerSetting(
+      input.timeHorizon,
+      DEFAULT_RAY_REPLICA_SETTINGS.timeHorizon,
+      3,
+      40,
+    ),
+    basisLength: resolveIntegerSetting(
+      input.basisLength,
+      DEFAULT_RAY_REPLICA_SETTINGS.basisLength,
+      10,
+      240,
+    ),
+    atrLength: resolveIntegerSetting(
+      input.atrLength,
+      DEFAULT_RAY_REPLICA_SETTINGS.atrLength,
+      2,
+      100,
+    ),
+    atrSmoothing: resolveIntegerSetting(
+      input.atrSmoothing,
+      DEFAULT_RAY_REPLICA_SETTINGS.atrSmoothing,
+      2,
+      200,
+    ),
+    volatilityMultiplier: resolveFloatSetting(
+      input.volatilityMultiplier,
+      DEFAULT_RAY_REPLICA_SETTINGS.volatilityMultiplier,
+      0.25,
+      10,
+    ),
+    wireSpread: resolveFloatSetting(
+      input.wireSpread,
+      DEFAULT_RAY_REPLICA_SETTINGS.wireSpread,
+      0.05,
+      5,
+    ),
+    shadowLength: resolveIntegerSetting(
+      input.shadowLength,
+      DEFAULT_RAY_REPLICA_SETTINGS.shadowLength,
+      5,
+      120,
+    ),
+    shadowStdDev: resolveFloatSetting(
+      input.shadowStdDev,
+      DEFAULT_RAY_REPLICA_SETTINGS.shadowStdDev,
+      0.25,
+      6,
+    ),
+    showWires: resolveBooleanSetting(
+      input.showWires,
+      DEFAULT_RAY_REPLICA_SETTINGS.showWires,
+    ),
+    showShadow: resolveBooleanSetting(
+      input.showShadow,
+      DEFAULT_RAY_REPLICA_SETTINGS.showShadow,
+    ),
+    showKeyLevels: resolveBooleanSetting(
+      input.showKeyLevels,
+      DEFAULT_RAY_REPLICA_SETTINGS.showKeyLevels,
+    ),
+    showStructure: resolveBooleanSetting(
+      input.showStructure,
+      DEFAULT_RAY_REPLICA_SETTINGS.showStructure,
+    ),
+    showOrderBlocks: resolveBooleanSetting(
+      input.showOrderBlocks,
+      DEFAULT_RAY_REPLICA_SETTINGS.showOrderBlocks,
+    ),
+    showRegimeWindows: resolveBooleanSetting(
+      input.showRegimeWindows,
+      DEFAULT_RAY_REPLICA_SETTINGS.showRegimeWindows,
+    ),
+    colorCandles: resolveBooleanSetting(
+      input.colorCandles,
+      DEFAULT_RAY_REPLICA_SETTINGS.colorCandles,
+    ),
+  };
+}
 
 type StructureKind = "bos" | "choch";
 
@@ -541,34 +693,51 @@ export function createRayReplicaPineRuntimeAdapter(
 ): IndicatorPlugin {
   return {
     id: script.scriptKey,
-    compute({ chartBars }): IndicatorPluginOutput {
+    compute({ chartBars, settings }): IndicatorPluginOutput {
       if (!chartBars.length) {
         return {};
       }
 
+      const {
+        timeHorizon,
+        basisLength,
+        atrLength,
+        atrSmoothing,
+        volatilityMultiplier,
+        wireSpread,
+        shadowLength,
+        shadowStdDev,
+        showWires,
+        showShadow,
+        showKeyLevels,
+        showStructure,
+        showOrderBlocks,
+        showRegimeWindows,
+        colorCandles,
+      } = resolveRayReplicaRuntimeSettings(settings);
       const closes = chartBars.map((bar) => bar.c);
-      const basis = computeWma(closes, BASIS_LENGTH);
-      const atrRaw = computeAtr(chartBars, ATR_LENGTH);
-      const atrSmoothed = computeSma(atrRaw, ATR_SMOOTHING);
+      const basis = computeWma(closes, basisLength);
+      const atrRaw = computeAtr(chartBars, atrLength);
+      const atrSmoothed = computeSma(atrRaw, atrSmoothing);
       const upperBand = basis.map((value, index) =>
         Number.isFinite(value) && Number.isFinite(atrSmoothed[index])
           ? Number(
-              (value + atrSmoothed[index] * VOLATILITY_MULTIPLIER).toFixed(6),
+              (value + atrSmoothed[index] * volatilityMultiplier).toFixed(6),
             )
           : Number.NaN,
       );
       const lowerBand = basis.map((value, index) =>
         Number.isFinite(value) && Number.isFinite(atrSmoothed[index])
           ? Number(
-              (value - atrSmoothed[index] * VOLATILITY_MULTIPLIER).toFixed(6),
+              (value - atrSmoothed[index] * volatilityMultiplier).toFixed(6),
             )
           : Number.NaN,
       );
-      const bbMid = computeSma(closes, SHADOW_LENGTH);
-      const bbDev = computeStandardDeviation(closes, SHADOW_LENGTH).map(
+      const bbMid = computeSma(closes, shadowLength);
+      const bbDev = computeStandardDeviation(closes, shadowLength).map(
         (value) =>
           Number.isFinite(value)
-            ? Number((value * SHADOW_STD_DEV).toFixed(6))
+            ? Number((value * shadowStdDev).toFixed(6))
             : Number.NaN,
       );
       const bbUpper = bbMid.map((value, index) =>
@@ -626,12 +795,12 @@ export function createRayReplicaPineRuntimeAdapter(
           }
         }
 
-        const pivotIndex = index - TIME_HORIZON;
-        if (pivotIndex >= TIME_HORIZON) {
+        const pivotIndex = index - timeHorizon;
+        if (pivotIndex >= timeHorizon) {
           const pivotHigh = resolvePivotHigh(
             chartBars,
             pivotIndex,
-            TIME_HORIZON,
+            timeHorizon,
           );
           if (pivotHigh != null) {
             const resolvedPivotHigh = pivotHigh;
@@ -642,7 +811,7 @@ export function createRayReplicaPineRuntimeAdapter(
             breakableHighBarIndex = pivotIndex;
 
             const bar = chartBars[pivotIndex];
-            if (bar) {
+            if (bar && showStructure) {
               const label =
                 Number.isFinite(previousSwingHigh) &&
                 resolvedPivotHigh > previousSwingHigh
@@ -662,7 +831,7 @@ export function createRayReplicaPineRuntimeAdapter(
             }
           }
 
-          const pivotLow = resolvePivotLow(chartBars, pivotIndex, TIME_HORIZON);
+          const pivotLow = resolvePivotLow(chartBars, pivotIndex, timeHorizon);
           if (pivotLow != null) {
             const resolvedPivotLow = pivotLow;
             previousSwingLow = lastSwingLow;
@@ -672,7 +841,7 @@ export function createRayReplicaPineRuntimeAdapter(
             breakableLowBarIndex = pivotIndex;
 
             const bar = chartBars[pivotIndex];
-            if (bar) {
+            if (bar && showStructure) {
               const label =
                 Number.isFinite(previousSwingLow) &&
                 resolvedPivotLow > previousSwingLow
@@ -750,6 +919,7 @@ export function createRayReplicaPineRuntimeAdapter(
         regimeDirection[index] = activeRegimeDirection;
 
         if (
+          showStructure &&
           bullishBos &&
           lastSwingHighBarIndex != null &&
           Number.isFinite(lastSwingHigh)
@@ -765,6 +935,7 @@ export function createRayReplicaPineRuntimeAdapter(
         }
 
         if (
+          showStructure &&
           bearishBos &&
           lastSwingLowBarIndex != null &&
           Number.isFinite(lastSwingLow)
@@ -780,6 +951,7 @@ export function createRayReplicaPineRuntimeAdapter(
         }
 
         if (
+          showStructure &&
           bullishChoch &&
           lastSwingHighBarIndex != null &&
           Number.isFinite(lastSwingHigh)
@@ -795,6 +967,7 @@ export function createRayReplicaPineRuntimeAdapter(
         }
 
         if (
+          showStructure &&
           bearishChoch &&
           lastSwingLowBarIndex != null &&
           Number.isFinite(lastSwingLow)
@@ -809,7 +982,7 @@ export function createRayReplicaPineRuntimeAdapter(
           });
         }
 
-        if (reversalDirection) {
+        if (showStructure && reversalDirection) {
           pushTrendReversalZone(
             zones,
             chartBars,
@@ -820,7 +993,7 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
-        if (bullishBos || bullishChoch) {
+        if (showStructure && (bullishBos || bullishChoch)) {
           markers.push(
             buildMarker(
               `${script.scriptKey}-${bullishBos ? "bos" : "choch"}-long-${index}`,
@@ -844,7 +1017,7 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
-        if (bearishBos || bearishChoch) {
+        if (showStructure && (bearishBos || bearishChoch)) {
           markers.push(
             buildMarker(
               `${script.scriptKey}-${bearishBos ? "bos" : "choch"}-short-${index}`,
@@ -868,65 +1041,67 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
-        if (
-          (bullishBos || bullishChoch) &&
-          lastSwingLowBarIndex != null &&
-          chartBars[lastSwingLowBarIndex]
-        ) {
-          activeBullOrderBlocks.push({
-            id: `${script.scriptKey}-bull-ob-${index}`,
-            direction: "long",
-            startBarIndex: lastSwingLowBarIndex,
-            endBarIndex: index,
-            top: chartBars[lastSwingLowBarIndex].h,
-            bottom: chartBars[lastSwingLowBarIndex].l,
-            label: "BULL OB",
-          });
-          while (activeBullOrderBlocks.length > 5) {
-            activeBullOrderBlocks.shift();
+        if (showOrderBlocks) {
+          if (
+            (bullishBos || bullishChoch) &&
+            lastSwingLowBarIndex != null &&
+            chartBars[lastSwingLowBarIndex]
+          ) {
+            activeBullOrderBlocks.push({
+              id: `${script.scriptKey}-bull-ob-${index}`,
+              direction: "long",
+              startBarIndex: lastSwingLowBarIndex,
+              endBarIndex: index,
+              top: chartBars[lastSwingLowBarIndex].h,
+              bottom: chartBars[lastSwingLowBarIndex].l,
+              label: "BULL OB",
+            });
+            while (activeBullOrderBlocks.length > 5) {
+              activeBullOrderBlocks.shift();
+            }
           }
-        }
 
-        if (
-          (bearishBos || bearishChoch) &&
-          lastSwingHighBarIndex != null &&
-          chartBars[lastSwingHighBarIndex]
-        ) {
-          activeBearOrderBlocks.push({
-            id: `${script.scriptKey}-bear-ob-${index}`,
-            direction: "short",
-            startBarIndex: lastSwingHighBarIndex,
-            endBarIndex: index,
-            top: chartBars[lastSwingHighBarIndex].h,
-            bottom: chartBars[lastSwingHighBarIndex].l,
-            label: "BEAR OB",
-          });
-          while (activeBearOrderBlocks.length > 5) {
-            activeBearOrderBlocks.shift();
+          if (
+            (bearishBos || bearishChoch) &&
+            lastSwingHighBarIndex != null &&
+            chartBars[lastSwingHighBarIndex]
+          ) {
+            activeBearOrderBlocks.push({
+              id: `${script.scriptKey}-bear-ob-${index}`,
+              direction: "short",
+              startBarIndex: lastSwingHighBarIndex,
+              endBarIndex: index,
+              top: chartBars[lastSwingHighBarIndex].h,
+              bottom: chartBars[lastSwingHighBarIndex].l,
+              label: "BEAR OB",
+            });
+            while (activeBearOrderBlocks.length > 5) {
+              activeBearOrderBlocks.shift();
+            }
           }
-        }
 
-        for (
-          let orderBlockIndex = activeBullOrderBlocks.length - 1;
-          orderBlockIndex >= 0;
-          orderBlockIndex -= 1
-        ) {
-          const orderBlock = activeBullOrderBlocks[orderBlockIndex];
-          orderBlock.endBarIndex = index;
-          if (chartBars[index].c < orderBlock.bottom) {
-            activeBullOrderBlocks.splice(orderBlockIndex, 1);
+          for (
+            let orderBlockIndex = activeBullOrderBlocks.length - 1;
+            orderBlockIndex >= 0;
+            orderBlockIndex -= 1
+          ) {
+            const orderBlock = activeBullOrderBlocks[orderBlockIndex];
+            orderBlock.endBarIndex = index;
+            if (chartBars[index].c < orderBlock.bottom) {
+              activeBullOrderBlocks.splice(orderBlockIndex, 1);
+            }
           }
-        }
 
-        for (
-          let orderBlockIndex = activeBearOrderBlocks.length - 1;
-          orderBlockIndex >= 0;
-          orderBlockIndex -= 1
-        ) {
-          const orderBlock = activeBearOrderBlocks[orderBlockIndex];
-          orderBlock.endBarIndex = index;
-          if (chartBars[index].c > orderBlock.top) {
-            activeBearOrderBlocks.splice(orderBlockIndex, 1);
+          for (
+            let orderBlockIndex = activeBearOrderBlocks.length - 1;
+            orderBlockIndex >= 0;
+            orderBlockIndex -= 1
+          ) {
+            const orderBlock = activeBearOrderBlocks[orderBlockIndex];
+            orderBlock.endBarIndex = index;
+            if (chartBars[index].c > orderBlock.top) {
+              activeBearOrderBlocks.splice(orderBlockIndex, 1);
+            }
           }
         }
 
@@ -939,7 +1114,7 @@ export function createRayReplicaPineRuntimeAdapter(
 
         const wireDirection = activeRegimeDirection === 1 ? -1 : 1;
         const wireStep = Number.isFinite(atrSmoothed[index])
-          ? atrSmoothed[index] * WIRE_SPREAD
+          ? atrSmoothed[index] * wireSpread
           : Number.NaN;
         if (activeRegimeDirection === 1 && Number.isFinite(lowerBand[index])) {
           bullMain[index] = lowerBand[index];
@@ -972,63 +1147,71 @@ export function createRayReplicaPineRuntimeAdapter(
           }
         }
 
-        const candleColor = reaction
-          ? REACTION_COLOR
-          : activeRegimeDirection === 1
-            ? BULL_COLOR
-            : BEAR_COLOR;
-        barStyleByIndex[index] = {
-          color: candleColor,
-          borderColor: candleColor,
-          wickColor: candleColor,
-        };
+        if (colorCandles) {
+          const candleColor = reaction
+            ? REACTION_COLOR
+            : activeRegimeDirection === 1
+              ? BULL_COLOR
+              : BEAR_COLOR;
+          barStyleByIndex[index] = {
+            color: candleColor,
+            borderColor: candleColor,
+            wickColor: candleColor,
+          };
+        }
       }
 
-      activeBullOrderBlocks.forEach((orderBlock, index) => {
-        const startBar = chartBars[orderBlock.startBarIndex];
-        const endBar = chartBars[orderBlock.endBarIndex];
-        if (!startBar || !endBar) {
-          return;
-        }
+      if (showOrderBlocks) {
+        activeBullOrderBlocks.forEach((orderBlock, index) => {
+          const startBar = chartBars[orderBlock.startBarIndex];
+          const endBar = chartBars[orderBlock.endBarIndex];
+          if (!startBar || !endBar) {
+            return;
+          }
 
-        zones.push({
-          id: `${orderBlock.id}-${index}`,
-          strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
-          zoneType: "order-block",
-          direction: orderBlock.direction,
-          startTs: startBar.ts,
-          endTs: endBar.ts,
-          startBarIndex: orderBlock.startBarIndex,
-          endBarIndex: orderBlock.endBarIndex,
-          top: orderBlock.top,
-          bottom: orderBlock.bottom,
-          label: orderBlock.label,
+          zones.push({
+            id: `${orderBlock.id}-${index}`,
+            strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
+            zoneType: "order-block",
+            direction: orderBlock.direction,
+            startTs: startBar.ts,
+            endTs: endBar.ts,
+            startBarIndex: orderBlock.startBarIndex,
+            endBarIndex: orderBlock.endBarIndex,
+            top: orderBlock.top,
+            bottom: orderBlock.bottom,
+            label: orderBlock.label,
+          });
         });
-      });
-      activeBearOrderBlocks.forEach((orderBlock, index) => {
-        const startBar = chartBars[orderBlock.startBarIndex];
-        const endBar = chartBars[orderBlock.endBarIndex];
-        if (!startBar || !endBar) {
-          return;
-        }
+        activeBearOrderBlocks.forEach((orderBlock, index) => {
+          const startBar = chartBars[orderBlock.startBarIndex];
+          const endBar = chartBars[orderBlock.endBarIndex];
+          if (!startBar || !endBar) {
+            return;
+          }
 
-        zones.push({
-          id: `${orderBlock.id}-${index}`,
-          strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
-          zoneType: "order-block",
-          direction: orderBlock.direction,
-          startTs: startBar.ts,
-          endTs: endBar.ts,
-          startBarIndex: orderBlock.startBarIndex,
-          endBarIndex: orderBlock.endBarIndex,
-          top: orderBlock.top,
-          bottom: orderBlock.bottom,
-          label: orderBlock.label,
+          zones.push({
+            id: `${orderBlock.id}-${index}`,
+            strategy: RAY_REPLICA_PINE_SCRIPT_KEY,
+            zoneType: "order-block",
+            direction: orderBlock.direction,
+            startTs: startBar.ts,
+            endTs: endBar.ts,
+            startBarIndex: orderBlock.startBarIndex,
+            endBarIndex: orderBlock.endBarIndex,
+            top: orderBlock.top,
+            bottom: orderBlock.bottom,
+            label: orderBlock.label,
+          });
         });
-      });
+      }
 
-      const windows = buildRegimeWindows(chartBars, regimeDirection);
-      const keyLevels = buildSessionKeyLevelSeries(chartBars);
+      const windows = showRegimeWindows
+        ? buildRegimeWindows(chartBars, regimeDirection)
+        : [];
+      const keyLevels = showKeyLevels
+        ? buildSessionKeyLevelSeries(chartBars)
+        : null;
       const studyPrefix = script.scriptKey;
 
       return {
@@ -1058,84 +1241,104 @@ export function createRayReplicaPineRuntimeAdapter(
               },
             ),
           ),
-          ...bearWires.map((values, index) =>
-            buildLineStudy(
-              `${studyPrefix}-bear-wire-${index + 1}`,
-              chartBars,
-              values,
-              {
-                color: `${BEAR_COLOR}88`,
-                lineWidth: 1,
-                priceLineVisible: false,
-                lastValueVisible: false,
-              },
-            ),
-          ),
-          buildLineStudy(`${studyPrefix}-shadow-upper`, chartBars, bbUpper, {
-            color: `${SHADOW_COLOR}55`,
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }),
-          buildLineStudy(`${studyPrefix}-shadow-lower`, chartBars, bbLower, {
-            color: `${SHADOW_COLOR}55`,
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }),
-          buildLineStudy(`${studyPrefix}-pdh`, chartBars, keyLevels.pdh, {
-            color: KEY_LEVEL_HIGH_COLOR,
-            lineWidth: 1,
-            lineStyle: KEY_LEVEL_LINE_STYLE,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }),
-          buildLineStudy(`${studyPrefix}-pdl`, chartBars, keyLevels.pdl, {
-            color: KEY_LEVEL_LOW_COLOR,
-            lineWidth: 1,
-            lineStyle: KEY_LEVEL_LINE_STYLE,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }),
-          buildLineStudy(`${studyPrefix}-pdc`, chartBars, keyLevels.pdc, {
-            color: KEY_LEVEL_CLOSE_COLOR,
-            lineWidth: 1,
-            lineStyle: KEY_LEVEL_LINE_STYLE,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }),
-          buildLineStudy(
-            `${studyPrefix}-open`,
-            chartBars,
-            keyLevels.todayOpen,
-            {
-              color: KEY_LEVEL_OPEN_COLOR,
-              lineWidth: 1,
-              lineStyle: KEY_LEVEL_LINE_STYLE,
-              priceLineVisible: false,
-              lastValueVisible: false,
-            },
-          ),
-          buildLineStudy(`${studyPrefix}-pwh`, chartBars, keyLevels.pwh, {
-            color: KEY_LEVEL_HIGH_COLOR,
-            lineWidth: 1,
-            lineStyle: KEY_LEVEL_LINE_STYLE,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }),
-          buildLineStudy(`${studyPrefix}-pwl`, chartBars, keyLevels.pwl, {
-            color: KEY_LEVEL_LOW_COLOR,
-            lineWidth: 1,
-            lineStyle: KEY_LEVEL_LINE_STYLE,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          }),
+          ...(showWires
+            ? bearWires.map((values, index) =>
+                buildLineStudy(
+                  `${studyPrefix}-bear-wire-${index + 1}`,
+                  chartBars,
+                  values,
+                  {
+                    color: `${BEAR_COLOR}88`,
+                    lineWidth: 1,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                  },
+                ),
+              )
+            : []),
+          ...(showShadow
+            ? [
+                buildLineStudy(
+                  `${studyPrefix}-shadow-upper`,
+                  chartBars,
+                  bbUpper,
+                  {
+                    color: `${SHADOW_COLOR}55`,
+                    lineWidth: 1,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                  },
+                ),
+                buildLineStudy(
+                  `${studyPrefix}-shadow-lower`,
+                  chartBars,
+                  bbLower,
+                  {
+                    color: `${SHADOW_COLOR}55`,
+                    lineWidth: 1,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                  },
+                ),
+              ]
+            : []),
+          ...(keyLevels
+            ? [
+                buildLineStudy(`${studyPrefix}-pdh`, chartBars, keyLevels.pdh, {
+                  color: KEY_LEVEL_HIGH_COLOR,
+                  lineWidth: 1,
+                  lineStyle: KEY_LEVEL_LINE_STYLE,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                }),
+                buildLineStudy(`${studyPrefix}-pdl`, chartBars, keyLevels.pdl, {
+                  color: KEY_LEVEL_LOW_COLOR,
+                  lineWidth: 1,
+                  lineStyle: KEY_LEVEL_LINE_STYLE,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                }),
+                buildLineStudy(`${studyPrefix}-pdc`, chartBars, keyLevels.pdc, {
+                  color: KEY_LEVEL_CLOSE_COLOR,
+                  lineWidth: 1,
+                  lineStyle: KEY_LEVEL_LINE_STYLE,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                }),
+                buildLineStudy(
+                  `${studyPrefix}-open`,
+                  chartBars,
+                  keyLevels.todayOpen,
+                  {
+                    color: KEY_LEVEL_OPEN_COLOR,
+                    lineWidth: 1,
+                    lineStyle: KEY_LEVEL_LINE_STYLE,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                  },
+                ),
+                buildLineStudy(`${studyPrefix}-pwh`, chartBars, keyLevels.pwh, {
+                  color: KEY_LEVEL_HIGH_COLOR,
+                  lineWidth: 1,
+                  lineStyle: KEY_LEVEL_LINE_STYLE,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                }),
+                buildLineStudy(`${studyPrefix}-pwl`, chartBars, keyLevels.pwl, {
+                  color: KEY_LEVEL_LOW_COLOR,
+                  lineWidth: 1,
+                  lineStyle: KEY_LEVEL_LINE_STYLE,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                }),
+              ]
+            : []),
         ],
         markers,
         events,
         zones,
         windows,
-        barStyleByIndex,
+        barStyleByIndex: colorCandles ? barStyleByIndex : undefined,
       };
     },
   };
