@@ -300,6 +300,7 @@ export function buildBacktestChartModel(
   payload: BacktestRunChart,
   options: {
     selectedIndicators?: string[];
+    indicatorSettings?: Record<string, Record<string, unknown>>;
     indicatorRegistry?: IndicatorRegistry;
   } = {},
 ): ChartModel {
@@ -307,6 +308,7 @@ export function buildBacktestChartModel(
     bars: payload.chartBars,
     timeframe: payload.timeframe,
     selectedIndicators: options.selectedIndicators ?? [],
+    indicatorSettings: options.indicatorSettings,
     indicatorRegistry: options.indicatorRegistry,
   });
   const payloadIndicatorMarkerPayload = buildIndicatorMarkerPayload(
@@ -362,6 +364,7 @@ export function buildHydratedBacktestSpotChartModel(
     timeframe: string;
     runChart: BacktestRunChart | null;
     selectedIndicators?: string[];
+    indicatorSettings?: Record<string, Record<string, unknown>>;
     indicatorRegistry?: IndicatorRegistry;
   },
 ): ChartModel {
@@ -369,6 +372,7 @@ export function buildHydratedBacktestSpotChartModel(
     bars: input.bars,
     timeframe: input.timeframe,
     selectedIndicators: input.selectedIndicators ?? [],
+    indicatorSettings: input.indicatorSettings,
     indicatorRegistry: input.indicatorRegistry,
   });
 

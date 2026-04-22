@@ -67,8 +67,10 @@ import type {
 } from "@workspace/api-client-react";
 import type { TradeThresholdSegment } from "../charting/types";
 import {
+  RayReplicaSettingsMenu,
   ResearchChartFrame,
   resolvePineScriptChartState,
+  resolveRayReplicaRuntimeSettings,
   useIndicatorLibrary,
 } from "../charting";
 import { RAY_REPLICA_PINE_SCRIPT_KEY } from "../charting/rayReplicaPineAdapter";
@@ -4177,6 +4179,9 @@ export function BacktestWorkspace({
   const [selectedIndicators, setSelectedIndicators] = useState<string[]>(
     DEFAULT_BACKTEST_INDICATORS,
   );
+  const [rayReplicaSettings, setRayReplicaSettings] = useState(() =>
+    resolveRayReplicaRuntimeSettings(),
+  );
   const [hasAutoEnabledRayAlgoOverlay, setHasAutoEnabledRayAlgoOverlay] =
     useState(false);
   const [summaryTradeLens, setSummaryTradeLens] =
@@ -4320,10 +4325,13 @@ export function BacktestWorkspace({
       runChart
         ? buildBacktestChartModel(runChart, {
             selectedIndicators,
+            indicatorSettings: {
+              [RAY_REPLICA_PINE_SCRIPT_KEY]: rayReplicaSettings,
+            },
             indicatorRegistry,
           })
         : null,
-    [indicatorRegistry, runChart, selectedIndicators],
+    [indicatorRegistry, rayReplicaSettings, runChart, selectedIndicators],
   );
   const previewChart = studyPreviewQuery.data ?? null;
   const derivedSweepDimensions = selectedStudy
@@ -4540,11 +4548,15 @@ export function BacktestWorkspace({
             timeframe: selectedChartTimeframe,
             runChart,
             selectedIndicators,
+            indicatorSettings: {
+              [RAY_REPLICA_PINE_SCRIPT_KEY]: rayReplicaSettings,
+            },
             indicatorRegistry,
           })
         : null,
     [
       indicatorRegistry,
+      rayReplicaSettings,
       runChart,
       selectedChartTimeframe,
       selectedIndicators,
@@ -6012,9 +6024,20 @@ export function BacktestWorkspace({
                   fontSize: scale.fs(9),
                   color: theme.textDim,
                   fontFamily: theme.mono,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: scale.sp(8),
                 }}
               >
-                {activeIndicatorCount} active · {chartReadyPineScripts.length} Pine ready
+                <span>
+                  {activeIndicatorCount} active · {chartReadyPineScripts.length} Pine ready
+                </span>
+                <RayReplicaSettingsMenu
+                  theme={theme}
+                  settings={rayReplicaSettings}
+                  onChange={setRayReplicaSettings}
+                  disabled={!selectedIndicators.includes(RAY_REPLICA_PINE_SCRIPT_KEY)}
+                />
               </div>
             </div>
 
