@@ -494,6 +494,7 @@ export const ChartParityLab = () => {
                   showUndoRedo
                   studies={scenarioStudies}
                   selectedStudies={appPrimary.selectedIndicators}
+                  studySpecs={primaryModel.studySpecs}
                   onToggleStudy={appPrimary.toggleIndicator}
                   meta={{
                     open: primaryLastBar?.o,
@@ -528,6 +529,7 @@ export const ChartParityLab = () => {
                   controls={controls}
                   studies={scenarioStudies}
                   selectedStudies={appPrimary.selectedIndicators}
+                  studySpecs={primaryModel.studySpecs}
                   onToggleStudy={appPrimary.toggleIndicator}
                   statusText={`${primaryModel.chartBars.length || 0} bars`}
                 />
@@ -566,6 +568,7 @@ export const ChartParityLab = () => {
                   showUndoRedo
                   studies={scenarioStudies}
                   selectedStudies={appSecondary.selectedIndicators}
+                  studySpecs={secondaryModel.studySpecs}
                   onToggleStudy={appSecondary.toggleIndicator}
                   meta={{
                     open: secondaryLastBar?.o,
@@ -600,6 +603,7 @@ export const ChartParityLab = () => {
                   controls={controls}
                   studies={scenarioStudies}
                   selectedStudies={appSecondary.selectedIndicators}
+                  studySpecs={secondaryModel.studySpecs}
                   onToggleStudy={appSecondary.toggleIndicator}
                   statusText={`${secondaryModel.chartBars.length || 0} bars`}
                 />

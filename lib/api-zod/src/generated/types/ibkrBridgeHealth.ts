@@ -27,4 +27,12 @@ export interface IbkrBridgeHealth {
   sessionMode: EnvironmentMode | null;
   /** @nullable */
   clientId: number | null;
+  marketDataMode:
+    | "live"
+    | "frozen"
+    | "delayed"
+    | "delayed_frozen"
+    | "unknown"
+    | null;
+  liveMarketDataAvailable: boolean | null;
 }

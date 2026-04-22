@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.2.0
  */
 
+import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
+
 export interface Bar {
   timestamp: Date;
   open: number;
@@ -18,4 +20,6 @@ export interface Bar {
   providerContractId?: string | null;
   outsideRth?: boolean;
   partial?: boolean;
+  transport: IbkrBridgeHealthTransport;
+  delayed: boolean;
 }

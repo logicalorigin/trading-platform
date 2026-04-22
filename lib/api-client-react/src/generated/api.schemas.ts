@@ -196,6 +196,14 @@ export interface IbkrBridgeHealth {
   sessionMode: EnvironmentMode | null;
   /** @nullable */
   clientId: number | null;
+  marketDataMode:
+    | "live"
+    | "frozen"
+    | "delayed"
+    | "delayed_frozen"
+    | "unknown"
+    | null;
+  liveMarketDataAvailable: boolean | null;
 }
 
 export type SessionInfoConfigured = {
@@ -245,6 +253,199 @@ export interface ResearchFundamentals {
   industry: string | null;
   /** @nullable */
   ceo: string | null;
+}
+
+export interface ResearchIncomeStatementPeriod {
+  /** @nullable */
+  rev: number | null;
+  /** @nullable */
+  cogs: number | null;
+  /** @nullable */
+  grossProfit: number | null;
+  /** @nullable */
+  rd: number | null;
+  /** @nullable */
+  sga: number | null;
+  /** @nullable */
+  da: number | null;
+  /** @nullable */
+  totalOpex: number | null;
+  /** @nullable */
+  opIncome: number | null;
+  /** @nullable */
+  intExp: number | null;
+  /** @nullable */
+  otherInc: number | null;
+  /** @nullable */
+  preTax: number | null;
+  /** @nullable */
+  tax: number | null;
+  /** @nullable */
+  netIncome: number | null;
+  /** @nullable */
+  eps: number | null;
+}
+
+export interface ResearchBalanceSheetPeriod {
+  /** @nullable */
+  ca: number | null;
+  /** @nullable */
+  cashSTI: number | null;
+  /** @nullable */
+  cash: number | null;
+  /** @nullable */
+  sti: number | null;
+  /** @nullable */
+  recv: number | null;
+  /** @nullable */
+  inv: number | null;
+  /** @nullable */
+  invFG: number | null;
+  /** @nullable */
+  invWIP: number | null;
+  /** @nullable */
+  invRM: number | null;
+  /** @nullable */
+  prepaid: number | null;
+  /** @nullable */
+  ta: number | null;
+  /** @nullable */
+  ppe: number | null;
+  /** @nullable */
+  gw: number | null;
+  /** @nullable */
+  otherLT: number | null;
+  /** @nullable */
+  cl: number | null;
+  /** @nullable */
+  ap: number | null;
+  /** @nullable */
+  stDebt: number | null;
+  /** @nullable */
+  accrued: number | null;
+  /** @nullable */
+  ltDebt: number | null;
+  /** @nullable */
+  tl: number | null;
+  /** @nullable */
+  equity: number | null;
+  /** @nullable */
+  tlse: number | null;
+}
+
+export interface ResearchCashFlowPeriod {
+  /** @nullable */
+  netIncome: number | null;
+  /** @nullable */
+  da: number | null;
+  /** @nullable */
+  sbc: number | null;
+  /** @nullable */
+  wcImpact: number | null;
+  /** @nullable */
+  cfo: number | null;
+  /** @nullable */
+  capex: number | null;
+  /** @nullable */
+  cfi: number | null;
+  /** @nullable */
+  divPaid: number | null;
+  /** @nullable */
+  buybacks: number | null;
+  /** @nullable */
+  debtChg: number | null;
+  /** @nullable */
+  cff: number | null;
+  /** @nullable */
+  fcf: number | null;
+}
+
+export interface ResearchRatiosPeriod {
+  /** @nullable */
+  roic: number | null;
+  /** @nullable */
+  fcfMargin: number | null;
+  /** @nullable */
+  fcfYield: number | null;
+  /** @nullable */
+  debtEbitda: number | null;
+  /** @nullable */
+  netDebt: number | null;
+  /** @nullable */
+  currentRatio: number | null;
+  /** @nullable */
+  rdIntensity: number | null;
+  /** @nullable */
+  capexIntensity: number | null;
+  /** @nullable */
+  gmPct: number | null;
+  /** @nullable */
+  opmPct: number | null;
+  /** @nullable */
+  netMargin: number | null;
+  /** @nullable */
+  runwayQtrs: number | null;
+}
+
+export interface ResearchQuarterlyEpsPoint {
+  label: string;
+  /** @nullable */
+  actual: number | null;
+  /** @nullable */
+  estimate: number | null;
+  /** @nullable */
+  beat: boolean | null;
+  /** @nullable */
+  diff: number | null;
+}
+
+export interface ResearchAnnualEarningsPoint {
+  year: string;
+  /** @nullable */
+  earnings: number | null;
+  isEstimate: boolean;
+}
+
+export interface ResearchFinancials {
+  symbol: string;
+  years: string[];
+  revs: (number | null)[];
+  isData: ResearchIncomeStatementPeriod[];
+  bsData: ResearchBalanceSheetPeriod[];
+  cfData: ResearchCashFlowPeriod[];
+  ratiosData: ResearchRatiosPeriod[];
+  qEPS: ResearchQuarterlyEpsPoint[];
+  annualEarnings: ResearchAnnualEarningsPoint[];
+}
+
+export interface ResearchSnapshot {
+  symbol: string;
+  /** @nullable */
+  price: number | null;
+  /** @nullable */
+  bid: number | null;
+  /** @nullable */
+  ask: number | null;
+  /** @nullable */
+  change: number | null;
+  /** @nullable */
+  changePercent: number | null;
+  /** @nullable */
+  dayLow: number | null;
+  /** @nullable */
+  dayHigh: number | null;
+  /** @nullable */
+  yearLow: number | null;
+  /** @nullable */
+  yearHigh: number | null;
+  /** @nullable */
+  mc: number | null;
+  /** @nullable */
+  pe: number | null;
+  /** @nullable */
+  eps: number | null;
+  /** @nullable */
+  sharesOut: number | null;
 }
 
 export interface ResearchCalendarEntry {
@@ -299,6 +500,15 @@ export interface TranscriptEntry {
 export interface ResearchFundamentalsResponse {
   symbol: string;
   fundamentals: ResearchFundamentals | null;
+}
+
+export interface ResearchFinancialsResponse {
+  symbol: string;
+  financials: ResearchFinancials | null;
+}
+
+export interface ResearchSnapshotsResponse {
+  snapshots: ResearchSnapshot[];
 }
 
 export interface ResearchCalendarResponse {
@@ -422,6 +632,8 @@ export interface QuoteSnapshot {
   /** @nullable */
   providerContractId: string | null;
   source: QuoteSource;
+  transport: IbkrBridgeHealthTransport;
+  delayed: boolean;
   updatedAt: string;
 }
 
@@ -437,6 +649,8 @@ export interface Bar {
   providerContractId?: string | null;
   outsideRth?: boolean;
   partial?: boolean;
+  transport: IbkrBridgeHealthTransport;
+  delayed: boolean;
 }
 
 export interface OptionContract {
@@ -596,6 +810,9 @@ export interface OrdersResponse {
 
 export interface QuoteSnapshotsResponse {
   quotes: QuoteSnapshot[];
+  transport: IbkrBridgeHealthTransport | null;
+  delayed: boolean;
+  fallbackUsed: boolean;
 }
 
 export interface NewsResponse {
@@ -611,6 +828,9 @@ export interface BarsResponse {
   symbol: string;
   timeframe: BarTimeframe;
   bars: Bar[];
+  transport: IbkrBridgeHealthTransport | null;
+  delayed: boolean;
+  gapFilled: boolean;
 }
 
 export interface OptionChainResponse {
@@ -1615,6 +1835,7 @@ export type GetBarsParams = {
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: BarDataSource;
+  allowHistoricalSynthesis?: boolean;
 };
 
 export type GetOptionChainParams = {
@@ -1666,6 +1887,14 @@ export type ListFlowEventsParams = {
 
 export type GetResearchFundamentalsParams = {
   symbol: string;
+};
+
+export type GetResearchFinancialsParams = {
+  symbol: string;
+};
+
+export type GetResearchSnapshotsParams = {
+  symbols: string;
 };
 
 export type GetResearchEarningsCalendarParams = {

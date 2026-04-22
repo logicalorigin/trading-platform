@@ -145,7 +145,7 @@ type IndicatorDotOverlay = {
 type IndicatorDashboardOverlay = {
   id: string;
   position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
-  size: "tiny" | "small" | "normal" | "large";
+  size: "compact" | "expanded" | "tiny" | "small" | "normal" | "large";
   title: string;
   subtitle?: string;
   trendLabel: string;
@@ -154,6 +154,42 @@ type IndicatorDashboardOverlay = {
   rows: Array<{ label: string; value: string; color?: string; detail?: string }>;
   mtf: Array<{ label: string; value: string; color: string; detail?: string }>;
 };
+
+function resolveDashboardDensity(
+  size: IndicatorDashboardOverlay["size"],
+  compact: boolean,
+) {
+  if (compact) {
+    return {
+      width: 184,
+      padding: "8px 9px 7px",
+      titleSize: 8,
+      subtitleSize: 7,
+      bodySize: 8,
+      detailSize: 7,
+    };
+  }
+
+  if (size === "expanded" || size === "large" || size === "normal") {
+    return {
+      width: 236,
+      padding: "11px 12px 10px",
+      titleSize: 10,
+      subtitleSize: 9,
+      bodySize: 10,
+      detailSize: 9,
+    };
+  }
+
+  return {
+    width: 192,
+    padding: "8px 9px 7px",
+    titleSize: 8,
+    subtitleSize: 7,
+    bodySize: 8,
+    detailSize: 7,
+  };
+}
 
 type TradeThresholdOverlay = {
   id: string;
@@ -1337,7 +1373,7 @@ const buildIndicatorEventOverlays = (
         size:
           (meta.size as IndicatorDashboardOverlay["size"] | undefined) ||
           "small",
-        title: (meta.title as string | undefined) || "RAYALGO DASHBOARD",
+        title: (meta.title as string | undefined) || "RAYREPLICA DASHBOARD",
         subtitle: (meta.subtitle as string | undefined) || undefined,
         trendLabel: (meta.trendLabel as string | undefined) || "TREND",
         trendValue: (meta.trendValue as string | undefined) || "—",
@@ -3287,27 +3323,20 @@ export const ResearchChartSurface = ({
                     ...(indicatorDashboardOverlay.position.includes("left")
                       ? { left: 12 }
                       : { right: 12 }),
-                    width: compact
-                      ? 184
-                      : indicatorDashboardOverlay.size === "tiny"
-                        ? 172
-                        : indicatorDashboardOverlay.size === "small"
-                          ? 208
-                          : indicatorDashboardOverlay.size === "normal"
-                            ? 236
-                            : 264,
+                    ...(() => {
+                      const density = resolveDashboardDensity(
+                        indicatorDashboardOverlay.size,
+                        compact,
+                      );
+
+                      return {
+                        width: density.width,
+                        padding: density.padding,
+                      };
+                    })(),
                     background: withAlpha("#000000", "b3"),
                     border: `1px solid ${withAlpha("#9ca3af", "66")}`,
                     borderRadius: 0,
-                    padding: compact
-                      ? "8px 9px 7px"
-                      : indicatorDashboardOverlay.size === "tiny"
-                        ? "7px 8px 6px"
-                        : indicatorDashboardOverlay.size === "small"
-                          ? "9px 10px 8px"
-                          : indicatorDashboardOverlay.size === "normal"
-                            ? "11px 12px 10px"
-                            : "12px 13px 11px",
                     color: "#ffffff",
                     boxShadow: "none",
                   }}
@@ -3318,12 +3347,10 @@ export const ResearchChartSurface = ({
                       padding: "2px 6px",
                       borderRadius: 0,
                       background: withAlpha("#6b7280", "80"),
-                      fontSize:
-                        compact || indicatorDashboardOverlay.size === "tiny"
-                          ? 8
-                          : indicatorDashboardOverlay.size === "small"
-                            ? 9
-                            : 10,
+                      fontSize: resolveDashboardDensity(
+                        indicatorDashboardOverlay.size,
+                        compact,
+                      ).titleSize,
                       fontFamily: theme.mono,
                       fontWeight: 700,
                       textAlign: "center",
@@ -3338,12 +3365,10 @@ export const ResearchChartSurface = ({
                         marginBottom: 8,
                         color: "#9ca3af",
                         fontFamily: theme.mono,
-                        fontSize:
-                          compact || indicatorDashboardOverlay.size === "tiny"
-                            ? 7
-                            : indicatorDashboardOverlay.size === "small"
-                              ? 8
-                              : 9,
+                        fontSize: resolveDashboardDensity(
+                          indicatorDashboardOverlay.size,
+                          compact,
+                        ).subtitleSize,
                         lineHeight: 1.35,
                         letterSpacing: "0.02em",
                       }}
@@ -3357,12 +3382,10 @@ export const ResearchChartSurface = ({
                       gridTemplateColumns: "1fr auto",
                       rowGap: 3,
                       columnGap: 8,
-                      fontSize:
-                        compact || indicatorDashboardOverlay.size === "tiny"
-                          ? 8
-                          : indicatorDashboardOverlay.size === "small"
-                            ? 9
-                            : 10,
+                      fontSize: resolveDashboardDensity(
+                        indicatorDashboardOverlay.size,
+                        compact,
+                      ).bodySize,
                       fontFamily: theme.mono,
                     }}
                   >
@@ -3386,12 +3409,10 @@ export const ResearchChartSurface = ({
                             style={{
                               gridColumn: "1 / -1",
                               color: "#6b7280",
-                              fontSize:
-                                compact || indicatorDashboardOverlay.size === "tiny"
-                                  ? 7
-                                  : indicatorDashboardOverlay.size === "small"
-                                    ? 8
-                                    : 9,
+                              fontSize: resolveDashboardDensity(
+                                indicatorDashboardOverlay.size,
+                                compact,
+                              ).detailSize,
                               lineHeight: 1.3,
                               marginTop: -1,
                               marginBottom: 2,
@@ -3412,12 +3433,10 @@ export const ResearchChartSurface = ({
                         gap: 6,
                         textAlign: "center",
                         fontFamily: theme.mono,
-                        fontSize:
-                          compact || indicatorDashboardOverlay.size === "tiny"
-                            ? 8
-                            : indicatorDashboardOverlay.size === "small"
-                              ? 9
-                              : 10,
+                        fontSize: resolveDashboardDensity(
+                          indicatorDashboardOverlay.size,
+                          compact,
+                        ).bodySize,
                       }}
                     >
                       {indicatorDashboardOverlay.mtf.map((item) => (
@@ -3428,10 +3447,10 @@ export const ResearchChartSurface = ({
                             <div
                               style={{
                                 color: "#6b7280",
-                                fontSize:
-                                  compact || indicatorDashboardOverlay.size === "tiny"
-                                    ? 7
-                                    : 8,
+                                fontSize: resolveDashboardDensity(
+                                  indicatorDashboardOverlay.size,
+                                  compact,
+                                ).detailSize,
                                 marginTop: 1,
                               }}
                             >

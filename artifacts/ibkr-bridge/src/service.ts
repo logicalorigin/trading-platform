@@ -70,6 +70,8 @@ export class IbkrBridgeService {
         connectionTarget: null,
         sessionMode: null,
         clientId: null,
+        marketDataMode: null,
+        liveMarketDataAvailable: null,
       };
     }
 

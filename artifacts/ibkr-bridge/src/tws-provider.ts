@@ -30,6 +30,10 @@ import {
   normalizeSymbol,
   toDate,
 } from "../../api-server/src/lib/values";
+import {
+  isLiveIbkrMarketDataMode,
+  resolveIbkrMarketDataMode,
+} from "../../api-server/src/lib/runtime";
 import type {
   IbkrTwsRuntimeConfig,
   RuntimeMode,
@@ -481,7 +485,16 @@ function toQuoteSnapshot(
   symbol: string,
   providerContractId: string | null,
   ticks: MarketDataTicks,
+  marketDataType: 1 | 2 | 3 | 4,
 ): QuoteSnapshot {
+  const hasLiveTicks =
+    getTickValue(ticks, TickType.LAST) !== null ||
+    getTickValue(ticks, TickType.BID) !== null ||
+    getTickValue(ticks, TickType.ASK) !== null;
+  const hasDelayedTicks =
+    getTickValue(ticks, TickType.DELAYED_LAST) !== null ||
+    getTickValue(ticks, TickType.DELAYED_BID) !== null ||
+    getTickValue(ticks, TickType.DELAYED_ASK) !== null;
   const price =
     firstDefined(
       getTickValue(ticks, TickType.LAST, TickType.DELAYED_LAST),
@@ -510,6 +523,10 @@ function toQuoteSnapshot(
   const updatedAt = new Date();
   const change = prevClose !== null ? price - prevClose : 0;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+  const delayed =
+    marketDataType === 3 ||
+    marketDataType === 4 ||
+    (!hasLiveTicks && hasDelayedTicks);
 
   return {
     symbol,
@@ -527,6 +544,8 @@ function toQuoteSnapshot(
     volume,
     updatedAt,
     providerContractId,
+    transport: "tws",
+    delayed,
   };
 }
 
@@ -1082,6 +1101,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
             resolved.resolved.symbol,
             providerContractId,
             update.all,
+            this.config.marketDataType,
           ),
         );
       },
@@ -1114,6 +1134,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         input.symbol,
         input.providerContractId,
         marketData,
+        this.config.marketDataType,
       );
     } catch (error) {
       this.recordError(error);
@@ -1286,6 +1307,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   async getHealth(): Promise<BridgeHealth> {
     await this.refreshSession().catch(() => this.latestSession);
     const session = this.latestSession ?? this.buildSessionSnapshot();
+    const marketDataMode = resolveIbkrMarketDataMode(this.config.marketDataType);
 
     return {
       configured: true,
@@ -1301,6 +1323,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       connectionTarget: `${this.config.host}:${this.config.port}`,
       sessionMode: this.config.mode,
       clientId: this.config.clientId,
+      marketDataMode,
+      liveMarketDataAvailable: isLiveIbkrMarketDataMode(marketDataMode),
     };
   }
 
@@ -1548,10 +1572,12 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
           low,
           close,
           volume,
-          source: "ibkr-tws-history",
+          source: "ibkr-history",
           providerContractId,
           outsideRth: Boolean(input.outsideRth),
           partial: false,
+          transport: "tws",
+          delayed: this.config.marketDataType === 3 || this.config.marketDataType === 4,
         } satisfies BrokerBarSnapshot;
       }),
     )

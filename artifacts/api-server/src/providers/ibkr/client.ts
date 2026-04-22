@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { HttpError } from "../../lib/errors";
 import { fetchJson, withSearchParams, type QueryValue } from "../../lib/http";
-import type { IbkrRuntimeConfig, RuntimeMode } from "../../lib/runtime";
+import type {
+  IbkrRuntimeConfig,
+  IbkrTransport,
+  RuntimeMode,
+} from "../../lib/runtime";
 import {
   asArray,
   asNumber,
@@ -121,6 +125,8 @@ export type QuoteSnapshot = {
   volume: number | null;
   updatedAt: Date;
   providerContractId: string | null;
+  transport: IbkrTransport;
+  delayed: boolean;
 };
 
 export type BrokerBarSnapshot = {
@@ -134,6 +140,8 @@ export type BrokerBarSnapshot = {
   providerContractId: string | null;
   outsideRth: boolean;
   partial: boolean;
+  transport: IbkrTransport;
+  delayed: boolean;
 };
 
 export type ResolvedIbkrContract = {
@@ -654,6 +662,16 @@ export function parseSnapshotQuote(
   providerContractId: string | null,
   payload: Record<string, unknown>,
 ): QuoteSnapshot {
+  const delayed =
+    [
+      payload["31"],
+      payload["84"],
+      payload["86"],
+      payload["70"],
+      payload["71"],
+      payload["7295"],
+      payload["7296"],
+    ].some((value) => typeof value === "string" && value.trim().startsWith("@"));
   const lastRaw = firstDefined(
     asNumber(payload["31"]),
     asNumber(payload["last"]),
@@ -760,6 +778,8 @@ export function parseSnapshotQuote(
     volume,
     updatedAt,
     providerContractId,
+    transport: "client_portal",
+    delayed,
   };
 }
 
@@ -812,6 +832,8 @@ function parseHistoricalBars(
         providerContractId,
         outsideRth,
         partial: false,
+        transport: "client_portal",
+        delayed: false,
       } satisfies BrokerBarSnapshot;
     }),
   ).sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
@@ -1620,6 +1642,8 @@ export class IbkrClient {
         volume: null,
         updatedAt: new Date(),
         providerContractId: String(contract.conid),
+        transport: "client_portal",
+        delayed: false,
       }
     ));
   }

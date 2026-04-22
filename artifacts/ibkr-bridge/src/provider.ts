@@ -1,4 +1,8 @@
-import type { RuntimeMode, IbkrTransport } from "../../api-server/src/lib/runtime";
+import type {
+  RuntimeMode,
+  IbkrTransport,
+  IbkrMarketDataMode,
+} from "../../api-server/src/lib/runtime";
 import type {
   BrokerAccountSnapshot,
   BrokerBarSnapshot,
@@ -31,6 +35,8 @@ export type BridgeHealth = {
   connectionTarget: string | null;
   sessionMode: RuntimeMode | null;
   clientId: number | null;
+  marketDataMode: IbkrMarketDataMode | null;
+  liveMarketDataAvailable: boolean | null;
 };
 
 export interface IbkrBridgeProvider {

@@ -19,6 +19,12 @@ export type IbkrRuntimeConfig = {
   allowInsecureTls: boolean;
 };
 export type IbkrTransport = "client_portal" | "tws";
+export type IbkrMarketDataMode =
+  | "live"
+  | "frozen"
+  | "delayed"
+  | "delayed_frozen"
+  | "unknown";
 export type IbkrTwsRuntimeConfig = {
   host: string;
   port: number;
@@ -390,6 +396,41 @@ export function getIbkrBridgeRuntimeConfig(): IbkrBridgeRuntimeConfig | null {
   return {
     baseUrl: stripTrailingSlash(baseUrl),
   };
+}
+
+export function resolveIbkrMarketDataMode(
+  marketDataType: 1 | 2 | 3 | 4,
+): IbkrMarketDataMode {
+  switch (marketDataType) {
+    case 1:
+      return "live";
+    case 2:
+      return "frozen";
+    case 3:
+      return "delayed";
+    case 4:
+      return "delayed_frozen";
+    default:
+      return "unknown";
+  }
+}
+
+export function isLiveIbkrMarketDataMode(
+  mode: IbkrMarketDataMode | null,
+): boolean | null {
+  if (!mode) {
+    return null;
+  }
+
+  if (mode === "live" || mode === "frozen") {
+    return true;
+  }
+
+  if (mode === "delayed" || mode === "delayed_frozen") {
+    return false;
+  }
+
+  return null;
 }
 
 export function getProviderConfiguration() {

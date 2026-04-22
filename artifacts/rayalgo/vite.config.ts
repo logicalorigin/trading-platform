@@ -26,6 +26,25 @@ if (!basePath) {
   );
 }
 
+const getNodeModulePackageName = (id: string): string | null => {
+  const normalizedId = id.replaceAll("\\", "/");
+  const nodeModulesIndex = normalizedId.lastIndexOf("/node_modules/");
+
+  if (nodeModulesIndex === -1) {
+    return null;
+  }
+
+  const packagePath = normalizedId
+    .slice(nodeModulesIndex + "/node_modules/".length)
+    .split("/");
+
+  if (packagePath[0]?.startsWith("@") && packagePath[1]) {
+    return `${packagePath[0]}/${packagePath[1]}`;
+  }
+
+  return packagePath[0] ?? null;
+};
+
 export default defineConfig({
   base: basePath,
   plugins: [
@@ -57,6 +76,88 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    chunkSizeWarningLimit: 650,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replaceAll("\\", "/");
+          const packageName = getNodeModulePackageName(normalizedId);
+
+          if (packageName) {
+            if (
+              packageName === "lightweight-charts" ||
+              packageName === "recharts" ||
+              packageName === "recharts-scale" ||
+              packageName === "react-resizable-panels" ||
+              packageName === "react-smooth" ||
+              packageName === "victory-vendor" ||
+              packageName === "eventemitter3" ||
+              packageName === "react-is" ||
+              packageName === "tiny-invariant" ||
+              packageName.startsWith("d3")
+            ) {
+              return "chart-vendor";
+            }
+
+            if (
+              packageName.startsWith("@radix-ui/") ||
+              packageName === "cmdk" ||
+              packageName === "input-otp" ||
+              packageName === "react-day-picker" ||
+              packageName === "vaul"
+            ) {
+              return "ui-vendor";
+            }
+
+            if (
+              packageName === "framer-motion" ||
+              packageName === "embla-carousel-react" ||
+              packageName === "next-themes" ||
+              packageName === "sonner"
+            ) {
+              return "motion-vendor";
+            }
+
+            if (
+              packageName === "react-icons" ||
+              packageName === "lucide-react"
+            ) {
+              return "icon-vendor";
+            }
+
+            if (
+              packageName === "@hookform/resolvers" ||
+              packageName === "@tanstack/react-query" ||
+              packageName === "date-fns" ||
+              packageName === "react-hook-form" ||
+              packageName === "zod"
+            ) {
+              return "data-vendor";
+            }
+
+            if (
+              packageName === "react" ||
+              packageName === "react-dom" ||
+              packageName === "scheduler"
+            ) {
+              return "framework-vendor";
+            }
+
+            return "vendor";
+          }
+
+          if (normalizedId.includes("/src/features/charting/")) {
+            return "feature-charting";
+          }
+
+          if (normalizedId.includes("/src/features/backtesting/")) {
+            return "feature-backtesting";
+          }
+
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port,

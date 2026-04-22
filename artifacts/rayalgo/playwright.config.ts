@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.PLAYWRIGHT_PORT || 18747);
 const baseURL = `http://127.0.0.1:${port}`;
+const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?.trim();
 
 export default defineConfig({
   testDir: "./e2e",
@@ -23,6 +24,13 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
+        ...(chromiumExecutablePath
+          ? {
+              launchOptions: {
+                executablePath: chromiumExecutablePath,
+              },
+            }
+          : {}),
       },
     },
   ],

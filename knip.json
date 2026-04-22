@@ -1,0 +1,50 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.{ts,js,mjs}"],
+      "project": ["scripts/**/*.{ts,js,mjs}"]
+    },
+    "artifacts/api-server": {
+      "entry": ["src/index.ts", "build.mjs"],
+      "project": "src/**/*.ts"
+    },
+    "artifacts/ibkr-bridge": {
+      "entry": ["src/index.ts", "build.mjs"],
+      "project": "src/**/*.ts"
+    },
+    "artifacts/backtest-worker": {
+      "entry": ["src/index.ts", "build.mjs"],
+      "project": "src/**/*.ts"
+    },
+    "artifacts/rayalgo": {
+      "entry": ["src/main.tsx", "src/main.jsx", "index.html", "vite.config.ts"],
+      "project": "src/**/*.{ts,tsx,js,jsx}"
+    },
+    "lib/api-spec": {
+      "entry": ["src/index.ts", "scripts/**/*.{ts,mjs}"],
+      "project": "src/**/*.ts"
+    },
+    "lib/api-zod": {
+      "entry": ["src/index.ts"],
+      "project": "src/**/*.ts"
+    },
+    "lib/api-client-react": {
+      "entry": ["src/index.ts"],
+      "project": "src/**/*.ts"
+    },
+    "lib/db": {
+      "entry": ["src/index.ts"],
+      "project": "src/**/*.ts"
+    },
+    "lib/backtest-core": {
+      "entry": ["src/index.ts"],
+      "project": "src/**/*.ts"
+    }
+  },
+  "ignoreDependencies": [
+    "@replit/vite-plugin-cartographer",
+    "@replit/vite-plugin-dev-banner",
+    "@replit/vite-plugin-runtime-error-modal"
+  ]
+}

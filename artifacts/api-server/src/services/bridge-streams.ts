@@ -59,7 +59,13 @@ function createPollingStream<T>({
 
 export function subscribeQuoteSnapshots(
   symbols: string[],
-  onSnapshot: (payload: { quotes: Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>> }) => void,
+  onSnapshot: (payload: {
+    quotes: Array<
+      Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>>[number] & {
+        source: "ibkr";
+      }
+    >;
+  }) => void,
 ): Unsubscribe {
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
@@ -68,7 +74,12 @@ export function subscribeQuoteSnapshots(
   return createPollingStream({
     intervalMs: 1_000,
     fetchSnapshot: async () => ({
-      quotes: await bridgeClient.getQuoteSnapshots(normalizedSymbols),
+      quotes: (await bridgeClient.getQuoteSnapshots(normalizedSymbols)).map(
+        (quote) => ({
+          ...quote,
+          source: "ibkr" as const,
+        }),
+      ),
     }),
     onSnapshot,
   });
@@ -139,6 +150,48 @@ export function subscribeAccountSnapshots(
     fetchSnapshot: async () => ({
       accounts: await bridgeClient.listAccounts(input.mode),
       positions: await bridgeClient.listPositions(input),
+    }),
+    onSnapshot,
+  });
+}
+
+export function subscribeExecutionSnapshots(
+  input: {
+    accountId?: string;
+    days?: number;
+    limit?: number;
+    symbol?: string;
+    providerContractId?: string | null;
+  },
+  onSnapshot: (payload: {
+    executions: Awaited<ReturnType<IbkrBridgeClient["listExecutions"]>>;
+  }) => void,
+): Unsubscribe {
+  return createPollingStream({
+    intervalMs: 1_000,
+    fetchSnapshot: async () => ({
+      executions: await bridgeClient.listExecutions(input),
+    }),
+    onSnapshot,
+  });
+}
+
+export function subscribeMarketDepthSnapshots(
+  input: {
+    accountId?: string;
+    symbol: string;
+    assetClass?: "equity" | "option";
+    providerContractId?: string | null;
+    exchange?: string | null;
+  },
+  onSnapshot: (payload: {
+    depth: Awaited<ReturnType<IbkrBridgeClient["getMarketDepth"]>>;
+  }) => void,
+): Unsubscribe {
+  return createPollingStream({
+    intervalMs: 1_000,
+    fetchSnapshot: async () => ({
+      depth: await bridgeClient.getMarketDepth(input),
     }),
     onSnapshot,
   });

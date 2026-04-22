@@ -417,6 +417,12 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/BarDataSource"
+        - name: allowHistoricalSynthesis
+          in: query
+          required: false
+          description: Explicitly allow Polygon/Massive historical synthesis when IBKR history is incomplete.
+          schema:
+            type: boolean
       responses:
         "200":
           description: Historical bars
@@ -626,6 +632,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResearchFundamentalsResponse"
+
+  /research/financials:
+    get:
+      operationId: getResearchFinancials
+      tags: [research]
+      summary: Get normalized research financial statements for a symbol
+      description: Returns annual statement history plus trailing-twelve-month rollups for the research UI.
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Research financial statements
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchFinancialsResponse"
+
+  /research/snapshots:
+    get:
+      operationId: getResearchSnapshots
+      tags: [research]
+      summary: Get research-ready market snapshots for symbols
+      description: Returns broker quote fields plus research enrichment needed by the research UI.
+      parameters:
+        - name: symbols
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Enriched market snapshots
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchSnapshotsResponse"
 
   /research/earnings-calendar:
     get:
@@ -1309,6 +1355,17 @@ components:
             - type: "null"
         clientId:
           type: [integer, "null"]
+        marketDataMode:
+          type: [string, "null"]
+          enum:
+            - live
+            - frozen
+            - delayed
+            - delayed_frozen
+            - unknown
+            - null
+        liveMarketDataAvailable:
+          type: [boolean, "null"]
       required:
         - configured
         - authenticated
@@ -1323,6 +1380,8 @@ components:
         - connectionTarget
         - sessionMode
         - clientId
+        - marketDataMode
+        - liveMarketDataAvailable
 
     SessionInfo:
       type: object
@@ -1421,6 +1480,335 @@ components:
         - industry
         - ceo
 
+    ResearchIncomeStatementPeriod:
+      type: object
+      properties:
+        rev:
+          type: [number, "null"]
+        cogs:
+          type: [number, "null"]
+        grossProfit:
+          type: [number, "null"]
+        rd:
+          type: [number, "null"]
+        sga:
+          type: [number, "null"]
+        da:
+          type: [number, "null"]
+        totalOpex:
+          type: [number, "null"]
+        opIncome:
+          type: [number, "null"]
+        intExp:
+          type: [number, "null"]
+        otherInc:
+          type: [number, "null"]
+        preTax:
+          type: [number, "null"]
+        tax:
+          type: [number, "null"]
+        netIncome:
+          type: [number, "null"]
+        eps:
+          type: [number, "null"]
+      required:
+        - rev
+        - cogs
+        - grossProfit
+        - rd
+        - sga
+        - da
+        - totalOpex
+        - opIncome
+        - intExp
+        - otherInc
+        - preTax
+        - tax
+        - netIncome
+        - eps
+
+    ResearchBalanceSheetPeriod:
+      type: object
+      properties:
+        ca:
+          type: [number, "null"]
+        cashSTI:
+          type: [number, "null"]
+        cash:
+          type: [number, "null"]
+        sti:
+          type: [number, "null"]
+        recv:
+          type: [number, "null"]
+        inv:
+          type: [number, "null"]
+        invFG:
+          type: [number, "null"]
+        invWIP:
+          type: [number, "null"]
+        invRM:
+          type: [number, "null"]
+        prepaid:
+          type: [number, "null"]
+        ta:
+          type: [number, "null"]
+        ppe:
+          type: [number, "null"]
+        gw:
+          type: [number, "null"]
+        otherLT:
+          type: [number, "null"]
+        cl:
+          type: [number, "null"]
+        ap:
+          type: [number, "null"]
+        stDebt:
+          type: [number, "null"]
+        accrued:
+          type: [number, "null"]
+        ltDebt:
+          type: [number, "null"]
+        tl:
+          type: [number, "null"]
+        equity:
+          type: [number, "null"]
+        tlse:
+          type: [number, "null"]
+      required:
+        - ca
+        - cashSTI
+        - cash
+        - sti
+        - recv
+        - inv
+        - invFG
+        - invWIP
+        - invRM
+        - prepaid
+        - ta
+        - ppe
+        - gw
+        - otherLT
+        - cl
+        - ap
+        - stDebt
+        - accrued
+        - ltDebt
+        - tl
+        - equity
+        - tlse
+
+    ResearchCashFlowPeriod:
+      type: object
+      properties:
+        netIncome:
+          type: [number, "null"]
+        da:
+          type: [number, "null"]
+        sbc:
+          type: [number, "null"]
+        wcImpact:
+          type: [number, "null"]
+        cfo:
+          type: [number, "null"]
+        capex:
+          type: [number, "null"]
+        cfi:
+          type: [number, "null"]
+        divPaid:
+          type: [number, "null"]
+        buybacks:
+          type: [number, "null"]
+        debtChg:
+          type: [number, "null"]
+        cff:
+          type: [number, "null"]
+        fcf:
+          type: [number, "null"]
+      required:
+        - netIncome
+        - da
+        - sbc
+        - wcImpact
+        - cfo
+        - capex
+        - cfi
+        - divPaid
+        - buybacks
+        - debtChg
+        - cff
+        - fcf
+
+    ResearchRatiosPeriod:
+      type: object
+      properties:
+        roic:
+          type: [number, "null"]
+        fcfMargin:
+          type: [number, "null"]
+        fcfYield:
+          type: [number, "null"]
+        debtEbitda:
+          type: [number, "null"]
+        netDebt:
+          type: [number, "null"]
+        currentRatio:
+          type: [number, "null"]
+        rdIntensity:
+          type: [number, "null"]
+        capexIntensity:
+          type: [number, "null"]
+        gmPct:
+          type: [number, "null"]
+        opmPct:
+          type: [number, "null"]
+        netMargin:
+          type: [number, "null"]
+        runwayQtrs:
+          type: [number, "null"]
+      required:
+        - roic
+        - fcfMargin
+        - fcfYield
+        - debtEbitda
+        - netDebt
+        - currentRatio
+        - rdIntensity
+        - capexIntensity
+        - gmPct
+        - opmPct
+        - netMargin
+        - runwayQtrs
+
+    ResearchQuarterlyEpsPoint:
+      type: object
+      properties:
+        label:
+          type: string
+        actual:
+          type: [number, "null"]
+        estimate:
+          type: [number, "null"]
+        beat:
+          type: [boolean, "null"]
+        diff:
+          type: [number, "null"]
+      required:
+        - label
+        - actual
+        - estimate
+        - beat
+        - diff
+
+    ResearchAnnualEarningsPoint:
+      type: object
+      properties:
+        year:
+          type: string
+        earnings:
+          type: [number, "null"]
+        isEstimate:
+          type: boolean
+      required:
+        - year
+        - earnings
+        - isEstimate
+
+    ResearchFinancials:
+      type: object
+      properties:
+        symbol:
+          type: string
+        years:
+          type: array
+          items:
+            type: string
+        revs:
+          type: array
+          items:
+            type: [number, "null"]
+        isData:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchIncomeStatementPeriod"
+        bsData:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchBalanceSheetPeriod"
+        cfData:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchCashFlowPeriod"
+        ratiosData:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchRatiosPeriod"
+        qEPS:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchQuarterlyEpsPoint"
+        annualEarnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchAnnualEarningsPoint"
+      required:
+        - symbol
+        - years
+        - revs
+        - isData
+        - bsData
+        - cfData
+        - ratiosData
+        - qEPS
+        - annualEarnings
+
+    ResearchSnapshot:
+      type: object
+      properties:
+        symbol:
+          type: string
+        price:
+          type: [number, "null"]
+        bid:
+          type: [number, "null"]
+        ask:
+          type: [number, "null"]
+        change:
+          type: [number, "null"]
+        changePercent:
+          type: [number, "null"]
+        dayLow:
+          type: [number, "null"]
+        dayHigh:
+          type: [number, "null"]
+        yearLow:
+          type: [number, "null"]
+        yearHigh:
+          type: [number, "null"]
+        mc:
+          type: [number, "null"]
+        pe:
+          type: [number, "null"]
+        eps:
+          type: [number, "null"]
+        sharesOut:
+          type: [number, "null"]
+      required:
+        - symbol
+        - price
+        - bid
+        - ask
+        - change
+        - changePercent
+        - dayLow
+        - dayHigh
+        - yearLow
+        - yearHigh
+        - mc
+        - pe
+        - eps
+        - sharesOut
+
     ResearchCalendarEntry:
       type: object
       properties:
@@ -1518,6 +1906,29 @@ components:
       required:
         - symbol
         - fundamentals
+
+    ResearchFinancialsResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        financials:
+          oneOf:
+            - $ref: "#/components/schemas/ResearchFinancials"
+            - type: "null"
+      required:
+        - symbol
+        - financials
+
+    ResearchSnapshotsResponse:
+      type: object
+      properties:
+        snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchSnapshot"
+      required:
+        - snapshots
 
     ResearchCalendarResponse:
       type: object
@@ -1818,6 +2229,10 @@ components:
           type: [string, "null"]
         source:
           $ref: "#/components/schemas/QuoteSource"
+        transport:
+          $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+        delayed:
+          type: boolean
         updatedAt:
           type: string
           format: date-time
@@ -1837,6 +2252,8 @@ components:
         - volume
         - providerContractId
         - source
+        - transport
+        - delayed
         - updatedAt
 
     Bar:
@@ -1863,6 +2280,10 @@ components:
           type: boolean
         partial:
           type: boolean
+        transport:
+          $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+        delayed:
+          type: boolean
       required:
         - timestamp
         - open
@@ -1870,6 +2291,8 @@ components:
         - low
         - close
         - volume
+        - transport
+        - delayed
 
     OptionContract:
       type: object
@@ -2288,8 +2711,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuoteSnapshot"
+        transport:
+          oneOf:
+            - $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+            - type: "null"
+        delayed:
+          type: boolean
+        fallbackUsed:
+          type: boolean
       required:
         - quotes
+        - transport
+        - delayed
+        - fallbackUsed
 
     NewsResponse:
       type: object
@@ -2325,10 +2759,21 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Bar"
+        transport:
+          oneOf:
+            - $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+            - type: "null"
+        delayed:
+          type: boolean
+        gapFilled:
+          type: boolean
       required:
         - symbol
         - timeframe
         - bars
+        - transport
+        - delayed
+        - gapFilled
 
     OptionChainResponse:
       type: object

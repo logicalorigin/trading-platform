@@ -44,16 +44,8 @@ export const ResearchSparkline = ({
     () => ({
       [RAY_REPLICA_PINE_SCRIPT_KEY]: {
         ...DEFAULT_RAY_REPLICA_SETTINGS,
-        showWires: false,
-        showShadow: false,
-        showKeyLevels: false,
-        showStructure: false,
-        showOrderBlocks: false,
-        showSupportResistance: false,
         showTpSl: false,
         showDashboard: false,
-        showRegimeWindows: false,
-        colorCandles: false,
       },
     }),
     [],

@@ -49,8 +49,10 @@ import type {
   GetOptionChainParams,
   GetQuoteSnapshotsParams,
   GetResearchEarningsCalendarParams,
+  GetResearchFinancialsParams,
   GetResearchFundamentalsParams,
   GetResearchSecFilingsParams,
+  GetResearchSnapshotsParams,
   GetResearchTranscriptParams,
   GetResearchTranscriptsParams,
   HealthStatus,
@@ -75,7 +77,9 @@ import type {
   ReplaceOrderRequest,
   ResearchCalendarResponse,
   ResearchFilingsResponse,
+  ResearchFinancialsResponse,
   ResearchFundamentalsResponse,
+  ResearchSnapshotsResponse,
   ResearchStatus,
   ResearchTranscriptResponse,
   ResearchTranscriptsResponse,
@@ -2342,6 +2346,214 @@ export function useGetResearchFundamentals<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetResearchFundamentalsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns annual statement history plus trailing-twelve-month rollups for the research UI.
+ * @summary Get normalized research financial statements for a symbol
+ */
+export const getGetResearchFinancialsUrl = (
+  params: GetResearchFinancialsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/research/financials?${stringifiedParams}`
+    : `/api/research/financials`;
+};
+
+export const getResearchFinancials = async (
+  params: GetResearchFinancialsParams,
+  options?: RequestInit,
+): Promise<ResearchFinancialsResponse> => {
+  return customFetch<ResearchFinancialsResponse>(
+    getGetResearchFinancialsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetResearchFinancialsQueryKey = (
+  params?: GetResearchFinancialsParams,
+) => {
+  return [`/api/research/financials`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetResearchFinancialsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getResearchFinancials>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetResearchFinancialsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getResearchFinancials>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetResearchFinancialsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getResearchFinancials>>
+  > = ({ signal }) =>
+    getResearchFinancials(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getResearchFinancials>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetResearchFinancialsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getResearchFinancials>>
+>;
+export type GetResearchFinancialsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get normalized research financial statements for a symbol
+ */
+
+export function useGetResearchFinancials<
+  TData = Awaited<ReturnType<typeof getResearchFinancials>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetResearchFinancialsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getResearchFinancials>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetResearchFinancialsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns broker quote fields plus research enrichment needed by the research UI.
+ * @summary Get research-ready market snapshots for symbols
+ */
+export const getGetResearchSnapshotsUrl = (
+  params: GetResearchSnapshotsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/research/snapshots?${stringifiedParams}`
+    : `/api/research/snapshots`;
+};
+
+export const getResearchSnapshots = async (
+  params: GetResearchSnapshotsParams,
+  options?: RequestInit,
+): Promise<ResearchSnapshotsResponse> => {
+  return customFetch<ResearchSnapshotsResponse>(
+    getGetResearchSnapshotsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetResearchSnapshotsQueryKey = (
+  params?: GetResearchSnapshotsParams,
+) => {
+  return [`/api/research/snapshots`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetResearchSnapshotsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getResearchSnapshots>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetResearchSnapshotsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getResearchSnapshots>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetResearchSnapshotsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getResearchSnapshots>>
+  > = ({ signal }) =>
+    getResearchSnapshots(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getResearchSnapshots>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetResearchSnapshotsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getResearchSnapshots>>
+>;
+export type GetResearchSnapshotsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get research-ready market snapshots for symbols
+ */
+
+export function useGetResearchSnapshots<
+  TData = Awaited<ReturnType<typeof getResearchSnapshots>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetResearchSnapshotsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getResearchSnapshots>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetResearchSnapshotsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

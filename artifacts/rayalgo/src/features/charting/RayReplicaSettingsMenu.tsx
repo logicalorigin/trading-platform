@@ -55,15 +55,7 @@ type BooleanSettingKey =
   | "requireVolScoreRange"
   | "restrictToSelectedSessions"
   | "showDashboard"
-  | "showTpSl"
-  | "showWires"
-  | "showShadow"
-  | "showKeyLevels"
-  | "showStructure"
-  | "showOrderBlocks"
-  | "showSupportResistance"
-  | "showRegimeWindows"
-  | "colorCandles";
+  | "showTpSl";
 
 const triggerStyle = (
   theme: WidgetTheme,
@@ -180,17 +172,6 @@ const helperStyle = (theme: WidgetTheme): CSSProperties => ({
   color: theme.textMuted,
   fontFamily: theme.mono,
 });
-
-const overlayToggleLabels: Array<{ key: BooleanSettingKey; label: string }> = [
-  { key: "showWires", label: "Wires" },
-  { key: "showShadow", label: "Shadow" },
-  { key: "showKeyLevels", label: "Key Levels" },
-  { key: "showStructure", label: "Structure" },
-  { key: "showOrderBlocks", label: "Order Blocks" },
-  { key: "showSupportResistance", label: "S/R" },
-  { key: "showRegimeWindows", label: "Regime" },
-  { key: "colorCandles", label: "Ray Colors" },
-];
 
 const positionLabel = (value: RayReplicaRuntimeSettings["dashboardPosition"]) =>
   value
@@ -559,7 +540,7 @@ export function RayReplicaSettingsMenu({
             />
           </div>
           <div style={helperStyle(theme)}>
-            The dashboard mirrors the active chart regime plus the configured MTF confirmation blocks.
+            The dashboard mirrors the current shading and signal timeframes plus the configured MTF confirmation blocks.
           </div>
         </section>
 
@@ -598,61 +579,6 @@ export function RayReplicaSettingsMenu({
           </div>
         </section>
 
-        <section style={sectionStyle(theme)}>
-          <div style={titleStyle(theme)}>Overlay</div>
-          <div style={chipRowStyle}>
-            {overlayToggleLabels.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                onClick={() => toggle(option.key)}
-                style={chipStyle(theme, settings[option.key])}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <div style={fieldGridStyle}>
-            <LabeledNumberField
-              theme={theme}
-              label="Wire Spread"
-              value={settings.wireSpread}
-              onChange={(value) => {
-                const resolved = Number(value);
-                if (Number.isFinite(resolved)) {
-                  update({ wireSpread: resolved });
-                }
-              }}
-              min={0.05}
-              step={0.05}
-            />
-            <LabeledNumberField
-              theme={theme}
-              label="Shadow Length"
-              value={settings.shadowLength}
-              onChange={(value) => {
-                const resolved = Number(value);
-                if (Number.isFinite(resolved)) {
-                  update({ shadowLength: resolved });
-                }
-              }}
-              min={1}
-            />
-            <LabeledNumberField
-              theme={theme}
-              label="Shadow Sigma"
-              value={settings.shadowStdDev}
-              onChange={(value) => {
-                const resolved = Number(value);
-                if (Number.isFinite(resolved)) {
-                  update({ shadowStdDev: resolved });
-                }
-              }}
-              min={0.25}
-              step={0.25}
-            />
-          </div>
-        </section>
       </PopoverContent>
     </Popover>
   );

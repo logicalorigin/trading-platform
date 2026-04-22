@@ -86,7 +86,10 @@ export function buildIndicatorLibrary(pineScripts: PineScriptRecord[] = []): {
   const pineStudies = chartReadyPineScripts.map<IndicatorCatalogEntry>(
     (script) => ({
       id: script.scriptKey,
-      label: script.name,
+      label:
+        script.scriptKey === RAY_REPLICA_PINE_SCRIPT_KEY
+          ? "RayReplica"
+          : script.name,
       kind: "pine",
       paneType: script.defaultPaneType,
       description:

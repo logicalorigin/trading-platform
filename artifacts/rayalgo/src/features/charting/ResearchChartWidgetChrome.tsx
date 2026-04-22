@@ -34,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { ChartSurfaceControls } from "./ResearchChartSurface";
+import type { StudySpec } from "./types";
 
 type WidgetTheme = {
   bg2: string;
@@ -94,6 +95,7 @@ type ResearchChartWidgetHeaderProps = {
   meta?: OhlcvMeta | null;
   studies?: StudyOption[];
   selectedStudies?: string[];
+  studySpecs?: StudySpec[];
   onToggleStudy?: (studyId: string) => void;
   onUndo?: () => void;
   onRedo?: () => void;
@@ -116,9 +118,16 @@ type ResearchChartWidgetFooterProps = {
   controls: ChartSurfaceControls;
   studies?: StudyOption[];
   selectedStudies?: string[];
+  studySpecs?: StudySpec[];
   onToggleStudy?: (studyId: string) => void;
   dense?: boolean;
   statusText?: string | null;
+};
+
+type RenderedStudyLegendItem = {
+  id: string;
+  label: string;
+  colors: string[];
 };
 
 type ResearchChartWidgetSidebarProps = {
@@ -245,6 +254,23 @@ const formatTimestamp = (value: string | null | undefined): string => {
     hour12: false,
     timeZone: "America/New_York",
   }).format(new Date(parsed));
+};
+
+const specBelongsToStudy = (specKey: string, studyId: string): boolean =>
+  specKey === studyId || specKey.startsWith(`${studyId}-`);
+
+const resolveStudySpecColor = (spec: StudySpec): string | null => {
+  const optionColor = spec.options?.color;
+  if (typeof optionColor === "string" && optionColor.trim()) {
+    return optionColor;
+  }
+
+  const pointColor = spec.data.find(
+    (point) => typeof point.color === "string" && point.color.trim(),
+  )?.color;
+  return typeof pointColor === "string" && pointColor.trim()
+    ? pointColor
+    : null;
 };
 
 const dedupeTimeframes = (options: TimeframeOption[]): TimeframeOption[] => {
@@ -566,6 +592,7 @@ export const ResearchChartWidgetHeader = ({
   meta = null,
   studies = [],
   selectedStudies = [],
+  studySpecs = [],
   onToggleStudy,
   onUndo,
   onRedo,
@@ -628,6 +655,36 @@ export const ResearchChartWidgetHeader = ({
   const studyLookup = useMemo(
     () => new Map(studies.map((study) => [study.id, study.label])),
     [studies],
+  );
+  const renderedStudyItems = useMemo<RenderedStudyLegendItem[]>(
+    () =>
+      selectedStudies.reduce<RenderedStudyLegendItem[]>((items, studyId) => {
+        const visibleSpecs = studySpecs.filter(
+          (spec) =>
+            specBelongsToStudy(spec.key, studyId) &&
+            spec.options?.visible !== false &&
+            spec.data.length > 0,
+        );
+        if (!visibleSpecs.length) {
+          return items;
+        }
+
+        const colors = Array.from(
+          new Set(
+            visibleSpecs
+              .map(resolveStudySpecColor)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+
+        items.push({
+          id: studyId,
+          label: studyLookup.get(studyId) || studyId,
+          colors: colors.length ? colors : [theme.accent || theme.text],
+        });
+        return items;
+      }, []),
+    [selectedStudies, studyLookup, studySpecs, theme.accent, theme.text],
   );
 
   return (
@@ -1030,7 +1087,7 @@ export const ResearchChartWidgetHeader = ({
           ) : null}
         </div>
 
-        {selectedStudies.length ? (
+        {renderedStudyItems.length ? (
           <div
             style={{
               display: "flex",
@@ -1039,9 +1096,9 @@ export const ResearchChartWidgetHeader = ({
               flexWrap: "wrap",
             }}
           >
-            {selectedStudies.map((studyId) => (
+            {renderedStudyItems.map((study) => (
               <span
-                key={studyId}
+                key={study.id}
                 style={legendChipStyle({
                   theme,
                   palette,
@@ -1049,16 +1106,19 @@ export const ResearchChartWidgetHeader = ({
                   color: theme.textMuted,
                 })}
               >
-                <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: "50%",
-                    background: theme.accent || theme.text,
-                    display: "inline-block",
-                  }}
-                />
-                {studyLookup.get(studyId) || studyId}
+                {study.colors.map((color, index) => (
+                  <span
+                    key={`${study.id}-${color}-${index}`}
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: color,
+                      display: "inline-block",
+                    }}
+                  />
+                ))}
+                {study.label}
               </span>
             ))}
           </div>
@@ -1073,17 +1133,27 @@ export const ResearchChartWidgetFooter = ({
   controls,
   studies = [],
   selectedStudies = [],
+  studySpecs = [],
   onToggleStudy: _onToggleStudy,
   dense = false,
   statusText = null,
 }: ResearchChartWidgetFooterProps) => {
   const palette = getPanelPalette(theme);
   const footerHeight = dense ? 16 : 22;
+  const studyLookup = useMemo(
+    () => new Map(studies.map((study) => [study.id, study.label])),
+    [studies],
+  );
   const activeLabels = selectedStudies
-    .map(
-      (studyId) =>
-        studies.find((study) => study.id === studyId)?.label || studyId,
+    .filter((studyId) =>
+      studySpecs.some(
+        (spec) =>
+          specBelongsToStudy(spec.key, studyId) &&
+          spec.options?.visible !== false &&
+          spec.data.length > 0,
+      ),
     )
+    .map((studyId) => studyLookup.get(studyId) || studyId)
     .slice(0, 4);
 
   return (

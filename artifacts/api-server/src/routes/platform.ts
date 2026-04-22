@@ -51,6 +51,8 @@ import {
 } from "../services/platform";
 import {
   subscribeAccountSnapshots,
+  subscribeExecutionSnapshots,
+  subscribeMarketDepthSnapshots,
   subscribeOptionChains,
   subscribeOrderSnapshots,
   subscribeQuoteSnapshots,
@@ -502,6 +504,99 @@ router.get("/streams/orders", (req, res) => {
     return subscribeOrderSnapshots({ accountId, mode, status }, (payload) => {
       writeEvent("orders", payload);
     });
+  });
+});
+
+router.get("/streams/executions", (req, res) => {
+  const accountId =
+    typeof req.query.accountId === "string" ? req.query.accountId : undefined;
+  const days =
+    typeof req.query.days === "string" && req.query.days.trim()
+      ? Number(req.query.days)
+      : undefined;
+  const limit =
+    typeof req.query.limit === "string" && req.query.limit.trim()
+      ? Number(req.query.limit)
+      : undefined;
+  const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
+  const providerContractId =
+    typeof req.query.providerContractId === "string" &&
+    req.query.providerContractId.trim()
+      ? req.query.providerContractId.trim()
+      : null;
+
+  startSse(req, res, (writeEvent) => {
+    writeEvent("ready", {
+      accountId: accountId ?? null,
+      symbol: symbol ?? null,
+      providerContractId,
+      source: "ibkr-bridge",
+    });
+
+    return subscribeExecutionSnapshots(
+      {
+        accountId,
+        days,
+        limit,
+        symbol,
+        providerContractId,
+      },
+      (payload) => {
+        writeEvent("executions", payload);
+      },
+    );
+  });
+});
+
+router.get("/streams/market-depth", (req, res) => {
+  if (typeof req.query.symbol !== "string" || !req.query.symbol.trim()) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/invalid-request",
+      title: "Missing symbol",
+      status: 400,
+      detail: "Provide a symbol query parameter.",
+    });
+    return;
+  }
+
+  const accountId =
+    typeof req.query.accountId === "string" ? req.query.accountId : undefined;
+  const assetClass =
+    req.query.assetClass === "option"
+      ? "option"
+      : req.query.assetClass === "equity"
+        ? "equity"
+        : undefined;
+  const providerContractId =
+    typeof req.query.providerContractId === "string" &&
+    req.query.providerContractId.trim()
+      ? req.query.providerContractId.trim()
+      : null;
+  const exchange =
+    typeof req.query.exchange === "string" && req.query.exchange.trim()
+      ? req.query.exchange.trim()
+      : null;
+
+  startSse(req, res, (writeEvent) => {
+    writeEvent("ready", {
+      accountId: accountId ?? null,
+      symbol: req.query.symbol,
+      providerContractId,
+      source: "ibkr-bridge",
+    });
+
+    return subscribeMarketDepthSnapshots(
+      {
+        accountId,
+        symbol: req.query.symbol,
+        assetClass,
+        providerContractId,
+        exchange,
+      },
+      (payload) => {
+        writeEvent("depth", payload);
+      },
+    );
   });
 });
 

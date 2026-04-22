@@ -4,6 +4,8 @@ import {
   useRef,
   useCallback,
   useMemo,
+  Suspense,
+  lazy,
   createContext,
   useContext,
   useDeferredValue,
@@ -48,7 +50,6 @@ import {
   usePreviewOrder,
   useReplaceOrder,
 } from "@workspace/api-client-react";
-import PhotonicsObservatory from "./features/research/PhotonicsObservatory";
 import {
   ResearchSparkline,
   ResearchChartFrame,
@@ -71,6 +72,16 @@ import {
   AlgoDraftStrategiesPanel,
   BacktestWorkspace,
 } from "./features/backtesting/BacktestingPanels";
+import {
+  useIbkrAccountSnapshotStream,
+  useIbkrOptionChainStream,
+  useIbkrOrderSnapshotStream,
+  useIbkrQuoteSnapshotStream,
+} from "./features/platform/live-streams";
+
+const PhotonicsObservatory = lazy(
+  () => import("./features/research/PhotonicsObservatory"),
+);
 
 // ═══════════════════════════════════════════════════════════════════
 // FONTS
@@ -792,18 +803,9 @@ const syncRuntimeMarketData = (
   const quoteBySymbol = Object.fromEntries(
     (quotes || []).map((quote) => [quote.symbol.toUpperCase(), quote]),
   );
-  const getLatestDelayedAggregate = (symbol) => {
+  const getLatestAggregate = (symbol) => {
     const aggregates = getStoredBrokerMinuteAggregates(symbol);
     return aggregates[aggregates.length - 1] || null;
-  };
-  const getLatestBarValue = (symbol, field) => {
-    const bars = sparklineBarsBySymbol[symbol] || [];
-    const latest = bars[bars.length - 1];
-    if (!latest) {
-      return null;
-    }
-
-    return latest[field] ?? null;
   };
   const watchlistNameBySymbol = Object.fromEntries(
     (watchlistItems || []).map((item) => {
@@ -824,27 +826,22 @@ const syncRuntimeMarketData = (
       watchlistNameBySymbol[normalized],
     );
     const quote = quoteBySymbol[normalized];
-    const latestAggregate = getLatestDelayedAggregate(normalized);
-    const delayedStreamPrice = Number.isFinite(latestAggregate?.close)
+    const latestAggregate = getLatestAggregate(normalized);
+    const liveAggregatePrice = Number.isFinite(latestAggregate?.close)
       ? latestAggregate.close
       : null;
-    const delayedStreamOpen = Number.isFinite(latestAggregate?.open)
+    const liveAggregateOpen = Number.isFinite(latestAggregate?.open)
       ? latestAggregate.open
       : null;
-    const delayedStreamHigh = Number.isFinite(latestAggregate?.high)
+    const liveAggregateHigh = Number.isFinite(latestAggregate?.high)
       ? latestAggregate.high
       : null;
-    const delayedStreamLow = Number.isFinite(latestAggregate?.low)
+    const liveAggregateLow = Number.isFinite(latestAggregate?.low)
       ? latestAggregate.low
       : null;
-    const delayedStreamVolume = Number.isFinite(latestAggregate?.volume)
+    const liveAggregateVolume = Number.isFinite(latestAggregate?.volume)
       ? latestAggregate.volume
       : null;
-    const delayedPrice = getLatestBarValue(normalized, "close");
-    const delayedOpen = getLatestBarValue(normalized, "open");
-    const delayedHigh = getLatestBarValue(normalized, "high");
-    const delayedLow = getLatestBarValue(normalized, "low");
-    const delayedVolume = getLatestBarValue(normalized, "volume");
     const spark = buildSparklineFromHistoricalBars(
       sparklineBarsBySymbol[normalized],
       base.spark,
@@ -852,8 +849,7 @@ const syncRuntimeMarketData = (
     const tradeInfo = ensureTradeTickerInfo(normalized, base.name);
     const prevClose = quote?.prevClose ?? tradeInfo.prevClose ?? null;
     const price =
-      delayedStreamPrice ??
-      delayedPrice ??
+      liveAggregatePrice ??
       quote?.price ??
       tradeInfo.price ??
       null;
@@ -866,18 +862,21 @@ const syncRuntimeMarketData = (
         ? ((price - prevClose) / prevClose) * 100
         : (quote?.changePercent ?? tradeInfo.pct ?? null);
     const open =
-      delayedStreamOpen ?? delayedOpen ?? quote?.open ?? tradeInfo.open ?? null;
+      liveAggregateOpen ?? quote?.open ?? tradeInfo.open ?? null;
     const high =
-      delayedStreamHigh ?? delayedHigh ?? quote?.high ?? tradeInfo.high ?? null;
+      liveAggregateHigh ?? quote?.high ?? tradeInfo.high ?? null;
     const low =
-      delayedStreamLow ?? delayedLow ?? quote?.low ?? tradeInfo.low ?? null;
+      liveAggregateLow ?? quote?.low ?? tradeInfo.low ?? null;
     const volume =
-      delayedStreamVolume ??
-      delayedVolume ??
+      liveAggregateVolume ??
       quote?.volume ??
       tradeInfo.volume ??
       null;
-    const updatedAt = quote?.updatedAt ?? tradeInfo.updatedAt ?? null;
+    const updatedAt =
+      quote?.updatedAt ??
+      (latestAggregate ? new Date(latestAggregate.endMs) : null) ??
+      tradeInfo.updatedAt ??
+      null;
 
     tradeInfo.name = base.name;
     tradeInfo.price = price;
@@ -945,14 +944,13 @@ const syncRuntimeMarketData = (
 
   INDICES.forEach((item) => {
     const quote = quoteBySymbol[item.sym.toUpperCase()];
-    const latestAggregate = getLatestDelayedAggregate(item.sym.toUpperCase());
-    const delayedPrice =
-      (Number.isFinite(latestAggregate?.close)
-        ? latestAggregate.close
-        : null) ?? getLatestBarValue(item.sym.toUpperCase(), "close");
+    const latestAggregate = getLatestAggregate(item.sym.toUpperCase());
+    const liveAggregatePrice = Number.isFinite(latestAggregate?.close)
+      ? latestAggregate.close
+      : null;
     const prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.prevClose = quote?.prevClose ?? item.prevClose ?? null;
-    item.price = delayedPrice ?? quote?.price ?? null;
+    item.price = liveAggregatePrice ?? quote?.price ?? item.price ?? null;
     item.chg =
       Number.isFinite(item.price) && Number.isFinite(prevClose)
         ? item.price - prevClose
@@ -979,14 +977,13 @@ const syncRuntimeMarketData = (
 
   MACRO_TICKERS.forEach((item) => {
     const quote = quoteBySymbol[item.sym.toUpperCase()];
-    const latestAggregate = getLatestDelayedAggregate(item.sym.toUpperCase());
-    const delayedPrice =
-      (Number.isFinite(latestAggregate?.close)
-        ? latestAggregate.close
-        : null) ?? getLatestBarValue(item.sym.toUpperCase(), "close");
+    const latestAggregate = getLatestAggregate(item.sym.toUpperCase());
+    const liveAggregatePrice = Number.isFinite(latestAggregate?.close)
+      ? latestAggregate.close
+      : null;
     const prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.prevClose = quote?.prevClose ?? item.prevClose ?? null;
-    item.price = delayedPrice ?? quote?.price ?? null;
+    item.price = liveAggregatePrice ?? quote?.price ?? item.price ?? null;
     item.chg =
       Number.isFinite(item.price) && Number.isFinite(prevClose)
         ? item.price - prevClose
@@ -2012,6 +2009,9 @@ const orderStatusColor = (status) => {
 
 const bridgeRuntimeTone = (session) => {
   if (!session?.configured?.ibkr) return { label: "offline", color: T.red };
+  if (session?.ibkrBridge?.liveMarketDataAvailable === false) {
+    return { label: "delayed", color: T.amber };
+  }
   if (session?.ibkrBridge?.authenticated)
     return { label: "authenticated", color: T.green };
   if (session?.ibkrBridge?.connected)
@@ -2030,11 +2030,16 @@ const bridgeRuntimeMessage = (session) => {
     return "Interactive Brokers is not configured in this workspace.";
   }
 
+  const marketDataMode = session?.ibkrBridge?.marketDataMode || null;
   if (session?.ibkrBridge?.authenticated) {
     const accountMeta = session.ibkrBridge.selectedAccountId
       ? ` account ${session.ibkrBridge.selectedAccountId}`
       : "";
     const transportMeta = bridgeTransportLabel(session);
+    if (session?.ibkrBridge?.liveMarketDataAvailable === false) {
+      const modeMeta = marketDataMode ? ` (${marketDataMode})` : "";
+      return `IBKR bridge authenticated via ${transportMeta}${accountMeta}, but market data is delayed${modeMeta}.`;
+    }
     return `IBKR bridge authenticated via ${transportMeta}${accountMeta}.`;
   }
 
@@ -5168,7 +5173,7 @@ const MiniChartCell = ({
     bars: barsQuery.data?.bars,
     enabled: Boolean(stockAggregateStreamingEnabled && ticker),
   });
-  const latestDelayedSpotPrice = useMemo(() => {
+  const latestAggregateSpotPrice = useMemo(() => {
     const aggregates = getStoredBrokerMinuteAggregates(ticker);
     const latest = aggregates[aggregates.length - 1];
     return Number.isFinite(latest?.close) ? latest.close : null;
@@ -5195,13 +5200,10 @@ const MiniChartCell = ({
       ? "loading"
       : "empty";
   const latestBar = bars[bars.length - 1];
-  const delayedChartPrice = Number.isFinite(latestBar?.c) ? latestBar.c : null;
   const displayPrice =
-    latestDelayedSpotPrice ??
-    (Number.isFinite(quote?.price) ? quote.price : delayedChartPrice) ??
-    (Number.isFinite(delayedChartPrice)
-      ? delayedChartPrice
-      : (fallbackInfo?.price ?? null));
+    latestAggregateSpotPrice ??
+    (Number.isFinite(quote?.price) ? quote.price : null) ??
+    null;
   const quotePrevClose = Number.isFinite(quote?.prevClose)
     ? quote.prevClose
     : null;
@@ -5210,9 +5212,7 @@ const MiniChartCell = ({
       ? displayPrice - quotePrevClose
       : Number.isFinite(quote?.change)
         ? quote.change
-        : bars.length > 1
-          ? (latestBar?.c ?? 0) - (bars[0]?.o ?? latestBar?.c ?? 0)
-          : fallbackInfo?.chg ?? null;
+        : null;
   const displayPct =
     Number.isFinite(displayPrice) &&
     Number.isFinite(quotePrevClose) &&
@@ -5220,9 +5220,7 @@ const MiniChartCell = ({
       ? (displayChange / quotePrevClose) * 100
       : Number.isFinite(quote?.changePercent)
         ? quote.changePercent
-        : bars.length > 1 && Number.isFinite(bars[0]?.o) && bars[0].o !== 0
-          ? (((latestBar?.c ?? 0) - bars[0].o) / bars[0].o) * 100
-          : fallbackInfo?.pct ?? null;
+        : null;
   const chartSourceLabel =
     describeBrokerChartSource(latestBar?.source) || barsStatus.toUpperCase();
   const handleFramePointerDownCapture = useCallback(
@@ -5322,6 +5320,7 @@ const MiniChartCell = ({
             dense={dense}
             studies={availableStudies}
             selectedStudies={selectedIndicators}
+            studySpecs={chartModel.studySpecs}
             showSnapshotButton={false}
             showUndoRedo={false}
             onFocusChart={() => onFocus?.(ticker)}
@@ -5382,6 +5381,7 @@ const MiniChartCell = ({
             controls={controls}
             studies={availableStudies}
             selectedStudies={selectedIndicators}
+            studySpecs={chartModel.studySpecs}
             onToggleStudy={(studyId) => {
               const active = selectedIndicators.includes(studyId);
               const next = active
@@ -5494,12 +5494,15 @@ const MultiChartGrid = ({
     {
       query: {
         enabled: Boolean(quoteSymbols),
-        staleTime: 10_000,
-        refetchInterval: 10_000,
+        staleTime: 60_000,
         retry: false,
       },
     },
   );
+  useIbkrQuoteSnapshotStream({
+    symbols: streamedSymbols,
+    enabled: Boolean(stockAggregateStreamingEnabled && streamedSymbols.length > 0),
+  });
   const quotesBySymbol = useMemo(
     () =>
       Object.fromEntries(
@@ -5518,7 +5521,6 @@ const MultiChartGrid = ({
       queryClient.invalidateQueries({
         queryKey: ["market-mini-bars", aggregate.symbol],
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
     },
   });
 
@@ -9933,6 +9935,7 @@ const TradeOptionChart = ({
           onChangeTimeframe={onChangeTimeframe}
           studies={availableStudies}
           selectedStudies={selectedIndicators}
+          studySpecs={chartModel.studySpecs}
           onToggleStudy={toggleIndicator}
           meta={{
             open: latestBar?.o,
@@ -9984,6 +9987,7 @@ const TradeOptionChart = ({
           controls={controls}
           studies={availableStudies}
           selectedStudies={selectedIndicators}
+          studySpecs={chartModel.studySpecs}
           onToggleStudy={toggleIndicator}
           statusText={sourceLabel}
         />
@@ -11876,6 +11880,7 @@ const TradeL2Panel = ({
   brokerConfigured,
   brokerAuthenticated,
 }) => {
+  const queryClient = useQueryClient();
   const row = chainRows.find((r) => r.k === slot.strike);
   const mid = row ? (slot.cp === "C" ? row.cPrem : row.pPrem) : 3.0;
   const bid = row ? (slot.cp === "C" ? row.cBid : row.pBid) : mid - 0.04;
@@ -11908,7 +11913,7 @@ const TradeL2Panel = ({
       brokerAuthenticated && accountId && selectedContractMeta?.providerContractId,
     ),
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval: false,
     retry: false,
   });
   const tapeQuery = useQuery({
@@ -11930,9 +11935,101 @@ const TradeL2Panel = ({
       brokerAuthenticated && accountId && selectedContractMeta?.providerContractId,
     ),
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval: false,
     retry: false,
   });
+  useEffect(() => {
+    if (
+      !brokerAuthenticated ||
+      !accountId ||
+      !selectedContractMeta?.providerContractId ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return undefined;
+    }
+
+    const params = new URLSearchParams({
+      accountId,
+      symbol: slot.ticker,
+      assetClass: "option",
+      providerContractId: selectedContractMeta.providerContractId,
+      exchange: "SMART",
+    });
+    const source = new EventSource(`/api/streams/market-depth?${params.toString()}`);
+    const handleDepth = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        queryClient.setQueryData(
+          [
+            "trade-market-depth",
+            accountId,
+            slot.ticker,
+            selectedContractMeta.providerContractId,
+          ],
+          payload,
+        );
+      } catch {}
+    };
+
+    source.addEventListener("depth", handleDepth);
+    return () => {
+      source.removeEventListener("depth", handleDepth);
+      source.close();
+    };
+  }, [
+    accountId,
+    brokerAuthenticated,
+    queryClient,
+    selectedContractMeta?.providerContractId,
+    slot.ticker,
+  ]);
+  useEffect(() => {
+    if (
+      !brokerAuthenticated ||
+      !accountId ||
+      !selectedContractMeta?.providerContractId ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return undefined;
+    }
+
+    const params = new URLSearchParams({
+      accountId,
+      symbol: slot.ticker,
+      providerContractId: selectedContractMeta.providerContractId,
+      days: "2",
+      limit: "24",
+    });
+    const source = new EventSource(`/api/streams/executions?${params.toString()}`);
+    const handleExecutions = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        queryClient.setQueryData(
+          [
+            "trade-contract-executions",
+            accountId,
+            slot.ticker,
+            selectedContractMeta.providerContractId,
+          ],
+          payload,
+        );
+      } catch {}
+    };
+
+    source.addEventListener("executions", handleExecutions);
+    return () => {
+      source.removeEventListener("executions", handleExecutions);
+      source.close();
+    };
+  }, [
+    accountId,
+    brokerAuthenticated,
+    queryClient,
+    selectedContractMeta?.providerContractId,
+    slot.ticker,
+  ]);
   const depthLevels = depthQuery.data?.depth?.levels || [];
   const contractExecutions = tapeQuery.data?.executions || [];
   const liveStatusLabel =
@@ -12618,6 +12715,7 @@ const TradePositionsPanel = ({
       query: {
         enabled: Boolean(brokerAuthenticated && accountId),
         ...QUERY_DEFAULTS,
+        refetchInterval: false,
       },
     },
   );
@@ -12627,9 +12725,15 @@ const TradePositionsPanel = ({
       query: {
         enabled: Boolean(brokerAuthenticated && accountId),
         ...QUERY_DEFAULTS,
+        refetchInterval: false,
       },
     },
   );
+  useIbkrOrderSnapshotStream({
+    accountId,
+    mode: environment,
+    enabled: Boolean(brokerAuthenticated && accountId),
+  });
   const executionsQuery = useQuery({
     queryKey: ["broker-executions", accountId, environment],
     queryFn: () =>
@@ -12640,9 +12744,41 @@ const TradePositionsPanel = ({
       }),
     enabled: Boolean(brokerAuthenticated && accountId),
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval: false,
     retry: false,
   });
+  useEffect(() => {
+    if (
+      !brokerAuthenticated ||
+      !accountId ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return undefined;
+    }
+
+    const params = new URLSearchParams({
+      accountId,
+      days: "7",
+      limit: "64",
+    });
+    const source = new EventSource(`/api/streams/executions?${params.toString()}`);
+    const handleExecutions = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        queryClient.setQueryData(
+          ["broker-executions", accountId, environment],
+          payload,
+        );
+      } catch {}
+    };
+
+    source.addEventListener("executions", handleExecutions);
+    return () => {
+      source.removeEventListener("executions", handleExecutions);
+      source.close();
+    };
+  }, [accountId, brokerAuthenticated, environment, queryClient]);
   const refreshBrokerQueries = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
     queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
@@ -14647,6 +14783,7 @@ const TradeEquityPanel = ({
           showUndoRedo
           studies={availableStudies}
           selectedStudies={selectedIndicators}
+          studySpecs={chartModel.studySpecs}
           onToggleStudy={toggleIndicator}
           rightSlot={
             <RayReplicaSettingsMenu
@@ -14692,6 +14829,7 @@ const TradeEquityPanel = ({
           controls={controls}
           studies={availableStudies}
           selectedStudies={selectedIndicators}
+          studySpecs={chartModel.studySpecs}
           onToggleStudy={toggleIndicator}
           statusText={`${describeBrokerChartStatus(barsStatus, tf)}  C ${callFlows}  P ${putFlows}  UOA amber`}
         />
@@ -15978,16 +16116,24 @@ const TradeScreen = ({
     {
       query: {
         enabled: Boolean(activeTicker),
-        staleTime: 10_000,
-        refetchInterval: 10_000,
+        staleTime: 60_000,
         retry: false,
       },
     },
   );
+  useIbkrQuoteSnapshotStream({
+    symbols: activeTicker ? [activeTicker] : [],
+    enabled: Boolean(stockAggregateStreamingEnabled && activeTicker),
+  });
   const optionChainQuery = useQuery({
     queryKey: ["trade-option-chain", activeTicker],
     queryFn: () => getOptionChainRequest({ underlying: activeTicker }),
     ...QUERY_DEFAULTS,
+    refetchInterval: false,
+  });
+  useIbkrOptionChainStream({
+    underlying: activeTicker,
+    enabled: Boolean(stockAggregateStreamingEnabled && activeTicker),
   });
   const expirationOptions = useMemo(() => {
     if (optionChainQuery.data?.contracts?.length) {
@@ -16086,6 +16232,7 @@ const TradeScreen = ({
       query: {
         enabled: Boolean(brokerAuthenticated && accountId),
         ...QUERY_DEFAULTS,
+        refetchInterval: false,
       },
     },
   );
@@ -16144,7 +16291,6 @@ const TradeScreen = ({
       queryClient.invalidateQueries({
         queryKey: ["trade-equity-bars", aggregate.symbol],
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
     },
   });
 
@@ -16568,7 +16714,9 @@ const RESEARCH_THEMES_PLANNED = [
 ];
 
 const ResearchScreen = ({ onJumpToTrade }) => (
-  <PhotonicsObservatory onJumpToTrade={onJumpToTrade} />
+  <Suspense fallback={null}>
+    <PhotonicsObservatory onJumpToTrade={onJumpToTrade} />
+  </Suspense>
 );
 
 // ═══════════════════════════════════════════════════════════════════
@@ -17832,8 +17980,7 @@ export default function RayAlgoPlatform() {
     { symbols: quoteSymbols.join(",") },
     {
       query: {
-        staleTime: 10_000,
-        refetchInterval: 10_000,
+        staleTime: 60_000,
         retry: false,
       },
     },
@@ -17902,8 +18049,7 @@ export default function RayAlgoPlatform() {
     {
       query: {
         enabled: Boolean(sessionQuery.data?.ibkrBridge?.authenticated),
-        staleTime: 15_000,
-        refetchInterval: 15_000,
+        staleTime: 60_000,
         retry: false,
       },
     },
@@ -17913,6 +18059,18 @@ export default function RayAlgoPlatform() {
     sessionQuery.data?.configured?.ibkr &&
       sessionQuery.data?.ibkrBridge?.authenticated,
   );
+  useIbkrQuoteSnapshotStream({
+    symbols: streamedMarketSymbols,
+    enabled: Boolean(
+      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
+    ),
+  });
+  useIbkrAccountSnapshotStream({
+    accountId:
+      selectedAccountId ?? sessionQuery.data?.ibkrBridge?.selectedAccountId ?? null,
+    mode: sessionQuery.data?.environment || "paper",
+    enabled: Boolean(sessionQuery.data?.ibkrBridge?.authenticated),
+  });
 
   useEffect(() => {
     if (!accounts.length) {
@@ -17944,7 +18102,6 @@ export default function RayAlgoPlatform() {
       marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
     ),
     onAggregate: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
       queryClient.invalidateQueries({ queryKey: ["market-sparklines"] });
     },
   });
@@ -18327,6 +18484,7 @@ export default function RayAlgoPlatform() {
       query: {
         enabled: Boolean(brokerAuthenticated && primaryAccountId),
         ...QUERY_DEFAULTS,
+        refetchInterval: false,
       },
     },
   );
@@ -18954,7 +19112,10 @@ export default function RayAlgoPlatform() {
               <span
                 style={{ color: session?.configured?.ibkr ? T.green : T.red }}
               >
-                LIVE {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
+                {session?.ibkrBridge?.liveMarketDataAvailable === false
+                  ? "DELAYED"
+                  : "LIVE"}{" "}
+                {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
               </span>
               <span
                 style={{

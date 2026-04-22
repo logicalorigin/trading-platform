@@ -498,7 +498,7 @@ export const buildChartParityModel = (
 
   return {
     ...model,
-    indicatorWindows,
-    indicatorZones,
+    indicatorWindows: [...indicatorWindows, ...model.indicatorWindows],
+    indicatorZones: [...indicatorZones, ...model.indicatorZones],
   };
 };

@@ -852,55 +852,24 @@ export async function getQuoteSnapshots(input: { symbols: string }) {
     .map((symbol) => normalizeSymbol(symbol))
     .filter(Boolean);
   const bridgeClient = getIbkrClient();
-  const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;
-
-  const [ibkrQuotes, polygonQuotes] = await Promise.all([
-    bridgeClient.getQuoteSnapshots(symbols).catch(() => []),
-    polygonClient?.getQuoteSnapshots(symbols).catch(() => []) ??
-      Promise.resolve([]),
+  const [bridgeHealth, ibkrQuotes] = await Promise.all([
+    bridgeClient.getHealth().catch(() => null),
+    bridgeClient
+      .getQuoteSnapshots(symbols)
+      .catch(
+        (): Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>> => [],
+      ),
   ]);
-  const polygonBySymbol = new Map(
-    polygonQuotes.map((quote) => [quote.symbol, quote]),
-  );
-  const merged = ibkrQuotes.map((quote) => {
-    const polygonQuote = polygonBySymbol.get(quote.symbol);
-
-    return {
-      ...quote,
-      providerContractId: quote.providerContractId ?? null,
-      change:
-        quote.change !== 0 || quote.prevClose !== null
-          ? quote.change
-          : (polygonQuote?.change ?? 0),
-      changePercent:
-        quote.changePercent !== 0 || quote.prevClose !== null
-          ? quote.changePercent
-          : (polygonQuote?.changePercent ?? 0),
-      open: quote.open ?? polygonQuote?.open ?? null,
-      high: quote.high ?? polygonQuote?.high ?? null,
-      low: quote.low ?? polygonQuote?.low ?? null,
-      prevClose: quote.prevClose ?? polygonQuote?.prevClose ?? null,
-      volume: quote.volume ?? polygonQuote?.volume ?? null,
-      source: "ibkr" as const,
-    };
-  });
-
-  const missingFromIbkr = symbols.flatMap((symbol) =>
-    merged.some((quote) => quote.symbol === symbol)
-      ? []
-      : polygonBySymbol.get(symbol)
-        ? [
-            {
-              ...polygonBySymbol.get(symbol),
-              providerContractId: null,
-              source: "polygon" as const,
-            },
-          ]
-        : [],
-  );
 
   return {
-    quotes: [...merged, ...missingFromIbkr],
+    quotes: ibkrQuotes.map((quote) => ({
+      ...quote,
+      providerContractId: quote.providerContractId ?? null,
+      source: "ibkr" as const,
+    })),
+    transport: bridgeHealth?.transport ?? null,
+    delayed: ibkrQuotes.some((quote) => quote.delayed),
+    fallbackUsed: false,
   };
 }
 
@@ -967,8 +936,10 @@ export async function getBars(input: {
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
+  allowHistoricalSynthesis?: boolean;
 }) {
   const bridgeClient = getIbkrClient();
+  const bridgeHealth = await bridgeClient.getHealth().catch(() => null);
   const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;
   // Default to including extended hours across ALL timeframes so the "last close"
   // a chart shows is consistent regardless of the selected interval. Without this,
@@ -1000,13 +971,16 @@ export async function getBars(input: {
     }
   }
   const desiredBars = Math.max(input.limit ?? ibkrBars.length ?? 0, 1);
+  const allowHistoricalSynthesis = input.allowHistoricalSynthesis === true;
   const needsGapFill =
+    allowHistoricalSynthesis &&
     input.assetClass !== "option" &&
     polygonClient &&
     (!isBrokerHistoryTimeframe ||
       (desiredBars > 0 && ibkrBars.length < desiredBars));
 
   let bars = ibkrBars;
+  let gapFilled = false;
 
   if (needsGapFill && polygonClient) {
     let polygonBars: Awaited<ReturnType<PolygonMarketDataClient["getBars"]>> =
@@ -1035,6 +1009,8 @@ export async function getBars(input: {
         providerContractId: string | null;
         outsideRth: boolean;
         partial: boolean;
+        transport: "client_portal" | "tws";
+        delayed: boolean;
       }
     >();
 
@@ -1042,12 +1018,15 @@ export async function getBars(input: {
     // can tell what came from where. IBKR bars always overwrite Polygon bars at
     // the same timestamp because IBKR is the authoritative live broker feed.
     polygonBars.forEach((bar) => {
+      gapFilled = true;
       merged.set(bar.timestamp.getTime(), {
         ...bar,
         source: "polygon-history",
         providerContractId: null,
         outsideRth,
         partial: false,
+        transport: bridgeHealth?.transport ?? "client_portal",
+        delayed: false,
       });
     });
     ibkrBars.forEach((bar) => {
@@ -1067,6 +1046,9 @@ export async function getBars(input: {
     symbol: normalizeSymbol(input.symbol),
     timeframe: input.timeframe,
     bars,
+    transport: bars[0]?.transport ?? bridgeHealth?.transport ?? null,
+    delayed: bars.some((bar) => bar.delayed),
+    gapFilled,
   };
 }
 
@@ -1076,7 +1058,6 @@ export async function getOptionChain(input: {
   contractType?: "call" | "put";
 }) {
   const bridgeClient = getIbkrClient();
-  const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;
   const ibkrContracts = await bridgeClient
     .getOptionChain({
       ...input,
@@ -1084,17 +1065,11 @@ export async function getOptionChain(input: {
       strikesAroundMoney: 12,
     })
     .catch(() => []);
-  const polygonContracts = polygonClient
-    ? await polygonClient.getOptionChain(input).catch(() => [])
-    : [];
-
-  const mergedContracts =
-    ibkrContracts.length > 0 ? ibkrContracts : polygonContracts;
 
   return {
     underlying: normalizeSymbol(input.underlying),
     expirationDate: input.expirationDate ?? null,
-    contracts: mergedContracts,
+    contracts: ibkrContracts,
   };
 }
 

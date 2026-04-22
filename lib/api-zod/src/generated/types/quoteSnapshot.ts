@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { QuoteSource } from "./quoteSource";
+import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
 
 export interface QuoteSnapshot {
   symbol: string;
@@ -24,5 +25,7 @@ export interface QuoteSnapshot {
   /** @nullable */
   providerContractId: string | null;
   source: QuoteSource;
+  transport: IbkrBridgeHealthTransport;
+  delayed: boolean;
   updatedAt: Date;
 }

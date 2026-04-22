@@ -48,6 +48,10 @@ export const GetSessionResponse = zod.object({
       connectionTarget: zod.string().nullable(),
       sessionMode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
       clientId: zod.number().nullable(),
+      marketDataMode: zod
+        .enum(["live", "frozen", "delayed", "delayed_frozen", "unknown"])
+        .nullable(),
+      liveMarketDataAvailable: zod.boolean().nullable(),
     }),
     zod.null(),
   ]),
@@ -435,9 +439,14 @@ export const GetQuoteSnapshotsResponse = zod.object({
       volume: zod.number().nullable(),
       providerContractId: zod.string().nullable(),
       source: zod.enum(["ibkr", "polygon"]),
+      transport: zod.enum(["client_portal", "tws"]),
+      delayed: zod.boolean(),
       updatedAt: zod.coerce.date(),
     }),
   ),
+  transport: zod.union([zod.enum(["client_portal", "tws"]), zod.null()]),
+  delayed: zod.boolean(),
+  fallbackUsed: zod.boolean(),
 });
 
 /**
@@ -545,6 +554,7 @@ export const GetBarsQueryParams = zod.object({
   providerContractId: zod.coerce.string().nullish(),
   outsideRth: zod.coerce.boolean().optional(),
   source: zod.enum(["trades", "midpoint", "bid_ask"]).optional(),
+  allowHistoricalSynthesis: zod.coerce.boolean().optional(),
 });
 
 export const GetBarsResponse = zod.object({
@@ -562,8 +572,13 @@ export const GetBarsResponse = zod.object({
       providerContractId: zod.string().nullish(),
       outsideRth: zod.boolean().optional(),
       partial: zod.boolean().optional(),
+      transport: zod.enum(["client_portal", "tws"]),
+      delayed: zod.boolean(),
     }),
   ),
+  transport: zod.union([zod.enum(["client_portal", "tws"]), zod.null()]),
+  delayed: zod.boolean(),
+  gapFilled: zod.boolean(),
 });
 
 /**
@@ -726,6 +741,147 @@ export const GetResearchFundamentalsResponse = zod.object({
     }),
     zod.null(),
   ]),
+});
+
+/**
+ * Returns annual statement history plus trailing-twelve-month rollups for the research UI.
+ * @summary Get normalized research financial statements for a symbol
+ */
+export const GetResearchFinancialsQueryParams = zod.object({
+  symbol: zod.coerce.string(),
+});
+
+export const GetResearchFinancialsResponse = zod.object({
+  symbol: zod.string(),
+  financials: zod.union([
+    zod.object({
+      symbol: zod.string(),
+      years: zod.array(zod.string()),
+      revs: zod.array(zod.number().nullable()),
+      isData: zod.array(
+        zod.object({
+          rev: zod.number().nullable(),
+          cogs: zod.number().nullable(),
+          grossProfit: zod.number().nullable(),
+          rd: zod.number().nullable(),
+          sga: zod.number().nullable(),
+          da: zod.number().nullable(),
+          totalOpex: zod.number().nullable(),
+          opIncome: zod.number().nullable(),
+          intExp: zod.number().nullable(),
+          otherInc: zod.number().nullable(),
+          preTax: zod.number().nullable(),
+          tax: zod.number().nullable(),
+          netIncome: zod.number().nullable(),
+          eps: zod.number().nullable(),
+        }),
+      ),
+      bsData: zod.array(
+        zod.object({
+          ca: zod.number().nullable(),
+          cashSTI: zod.number().nullable(),
+          cash: zod.number().nullable(),
+          sti: zod.number().nullable(),
+          recv: zod.number().nullable(),
+          inv: zod.number().nullable(),
+          invFG: zod.number().nullable(),
+          invWIP: zod.number().nullable(),
+          invRM: zod.number().nullable(),
+          prepaid: zod.number().nullable(),
+          ta: zod.number().nullable(),
+          ppe: zod.number().nullable(),
+          gw: zod.number().nullable(),
+          otherLT: zod.number().nullable(),
+          cl: zod.number().nullable(),
+          ap: zod.number().nullable(),
+          stDebt: zod.number().nullable(),
+          accrued: zod.number().nullable(),
+          ltDebt: zod.number().nullable(),
+          tl: zod.number().nullable(),
+          equity: zod.number().nullable(),
+          tlse: zod.number().nullable(),
+        }),
+      ),
+      cfData: zod.array(
+        zod.object({
+          netIncome: zod.number().nullable(),
+          da: zod.number().nullable(),
+          sbc: zod.number().nullable(),
+          wcImpact: zod.number().nullable(),
+          cfo: zod.number().nullable(),
+          capex: zod.number().nullable(),
+          cfi: zod.number().nullable(),
+          divPaid: zod.number().nullable(),
+          buybacks: zod.number().nullable(),
+          debtChg: zod.number().nullable(),
+          cff: zod.number().nullable(),
+          fcf: zod.number().nullable(),
+        }),
+      ),
+      ratiosData: zod.array(
+        zod.object({
+          roic: zod.number().nullable(),
+          fcfMargin: zod.number().nullable(),
+          fcfYield: zod.number().nullable(),
+          debtEbitda: zod.number().nullable(),
+          netDebt: zod.number().nullable(),
+          currentRatio: zod.number().nullable(),
+          rdIntensity: zod.number().nullable(),
+          capexIntensity: zod.number().nullable(),
+          gmPct: zod.number().nullable(),
+          opmPct: zod.number().nullable(),
+          netMargin: zod.number().nullable(),
+          runwayQtrs: zod.number().nullable(),
+        }),
+      ),
+      qEPS: zod.array(
+        zod.object({
+          label: zod.string(),
+          actual: zod.number().nullable(),
+          estimate: zod.number().nullable(),
+          beat: zod.boolean().nullable(),
+          diff: zod.number().nullable(),
+        }),
+      ),
+      annualEarnings: zod.array(
+        zod.object({
+          year: zod.string(),
+          earnings: zod.number().nullable(),
+          isEstimate: zod.boolean(),
+        }),
+      ),
+    }),
+    zod.null(),
+  ]),
+});
+
+/**
+ * Returns broker quote fields plus research enrichment needed by the research UI.
+ * @summary Get research-ready market snapshots for symbols
+ */
+export const GetResearchSnapshotsQueryParams = zod.object({
+  symbols: zod.coerce.string(),
+});
+
+export const GetResearchSnapshotsResponse = zod.object({
+  snapshots: zod.array(
+    zod.object({
+      symbol: zod.string(),
+      price: zod.number().nullable(),
+      bid: zod.number().nullable(),
+      ask: zod.number().nullable(),
+      change: zod.number().nullable(),
+      changePercent: zod.number().nullable(),
+      dayLow: zod.number().nullable(),
+      dayHigh: zod.number().nullable(),
+      yearLow: zod.number().nullable(),
+      yearHigh: zod.number().nullable(),
+      mc: zod.number().nullable(),
+      pe: zod.number().nullable(),
+      eps: zod.number().nullable(),
+      sharesOut: zod.number().nullable(),
+    }),
+  ),
 });
 
 /**

@@ -23,4 +23,5 @@ export type GetBarsParams = {
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: BarDataSource;
+  allowHistoricalSynthesis?: boolean;
 };

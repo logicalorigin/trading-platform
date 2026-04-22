@@ -108,6 +108,8 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
       connectionTarget: this.config.baseUrl,
       sessionMode: null,
       clientId: null,
+      marketDataMode: "unknown",
+      liveMarketDataAvailable: null,
     };
   }
 

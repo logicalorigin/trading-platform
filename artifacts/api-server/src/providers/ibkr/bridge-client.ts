@@ -35,6 +35,14 @@ type BridgeHealthSnapshot = {
   connectionTarget: string | null;
   sessionMode: RuntimeMode | null;
   clientId: number | null;
+  marketDataMode:
+    | "live"
+    | "frozen"
+    | "delayed"
+    | "delayed_frozen"
+    | "unknown"
+    | null;
+  liveMarketDataAvailable: boolean | null;
 };
 
 function toDate(value: unknown): Date {

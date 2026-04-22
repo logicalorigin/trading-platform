@@ -1,7 +1,18 @@
+import { Suspense, lazy } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
-import { RayAlgoApp } from "../features/platform/RayAlgoApp";
-import { ChartParityLab } from "../features/charting";
+
+const RayAlgoApp = lazy(async () => {
+  const mod = await import("../features/platform/RayAlgoApp");
+
+  return { default: mod.RayAlgoApp };
+});
+
+const ChartParityLab = lazy(async () => {
+  const mod = await import("../features/charting");
+
+  return { default: mod.ChartParityLab };
+});
 
 const resolveLabMode = (): string | null => {
   if (typeof window === "undefined") {
@@ -16,7 +27,9 @@ function App() {
 
   return (
     <AppProviders>
-      {labMode === "chart-parity" ? <ChartParityLab /> : <RayAlgoApp />}
+      <Suspense fallback={null}>
+        {labMode === "chart-parity" ? <ChartParityLab /> : <RayAlgoApp />}
+      </Suspense>
     </AppProviders>
   );
 }

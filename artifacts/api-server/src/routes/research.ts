@@ -2,8 +2,12 @@ import { Router, type IRouter } from "express";
 import {
   GetResearchEarningsCalendarQueryParams,
   GetResearchEarningsCalendarResponse,
+  GetResearchFinancialsQueryParams,
+  GetResearchFinancialsResponse,
   GetResearchFundamentalsQueryParams,
   GetResearchFundamentalsResponse,
+  GetResearchSnapshotsQueryParams,
+  GetResearchSnapshotsResponse,
   GetResearchSecFilingsQueryParams,
   GetResearchSecFilingsResponse,
   GetResearchStatusResponse,
@@ -15,7 +19,9 @@ import {
 import {
   getResearchCalendar,
   getResearchFilings,
+  getResearchFinancials,
   getResearchFundamentals,
+  getResearchSnapshots,
   getResearchStatus,
   getResearchTranscript,
   getResearchTranscriptDates,
@@ -50,6 +56,24 @@ router.get("/research/fundamentals", async (req, res) => {
   const query = GetResearchFundamentalsQueryParams.parse(req.query);
   const data = GetResearchFundamentalsResponse.parse(
     await getResearchFundamentals(query),
+  );
+
+  res.json(data);
+});
+
+router.get("/research/financials", async (req, res) => {
+  const query = GetResearchFinancialsQueryParams.parse(req.query);
+  const data = GetResearchFinancialsResponse.parse(
+    await getResearchFinancials(query),
+  );
+
+  res.json(data);
+});
+
+router.get("/research/snapshots", async (req, res) => {
+  const query = GetResearchSnapshotsQueryParams.parse(req.query);
+  const data = GetResearchSnapshotsResponse.parse(
+    await getResearchSnapshots(query),
   );
 
   res.json(data);

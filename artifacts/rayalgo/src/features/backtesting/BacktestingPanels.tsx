@@ -431,6 +431,7 @@ async function fetchSpotHistoryBarsWindow(input: {
     from: input.fromIso,
     to: input.toIso,
     limit: String(input.limit),
+    allowHistoricalSynthesis: "true",
   });
   if (typeof input.outsideRth === "boolean") {
     params.set("outsideRth", String(input.outsideRth));
