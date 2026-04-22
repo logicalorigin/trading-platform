@@ -2637,6 +2637,7 @@ const HeaderStatusCluster = ({
     background: T.bg1,
     border: `1px solid ${T.border}`,
     borderRadius: 0,
+    transition: "background 0.12s ease, border-color 0.12s ease",
   };
 
   return (
@@ -2649,7 +2650,18 @@ const HeaderStatusCluster = ({
         flexWrap: "wrap",
       }}
     >
-      <div title={bridgeRuntimeMessage(session)} style={surfaceStyle}>
+      <div
+        title={bridgeRuntimeMessage(session)}
+        style={surfaceStyle}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.background = T.bg3;
+          event.currentTarget.style.borderColor = T.textMuted;
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.background = T.bg1;
+          event.currentTarget.style.borderColor = T.border;
+        }}
+      >
         <div
           style={{
             display: "flex",
@@ -2698,6 +2710,14 @@ const HeaderStatusCluster = ({
       <div
         title={`${marketClock.dateLabel} · ${marketClock.label}`}
         style={surfaceStyle}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.background = T.bg3;
+          event.currentTarget.style.borderColor = T.textMuted;
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.background = T.bg1;
+          event.currentTarget.style.borderColor = T.border;
+        }}
       >
         <div
           style={{
@@ -2751,6 +2771,15 @@ const HeaderStatusCluster = ({
           lineHeight: 1,
           fontFamily: T.sans,
           fontWeight: 700,
+          transition: "background 0.12s ease, border-color 0.12s ease",
+        }}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.background = T.bg3;
+          event.currentTarget.style.borderColor = T.textMuted;
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.background = T.bg1;
+          event.currentTarget.style.borderColor = T.border;
         }}
       >
         {theme === "dark" ? "☼" : "☾"}
@@ -2771,6 +2800,7 @@ const HeaderAccountStrip = ({
     background: T.bg1,
     border: `1px solid ${T.border}`,
     borderRadius: 0,
+    transition: "background 0.12s ease, border-color 0.12s ease",
   };
 
   return (
@@ -2783,7 +2813,18 @@ const HeaderAccountStrip = ({
         flexWrap: "wrap",
       }}
     >
-      <div style={{ ...metricSurfaceStyle, minWidth: dim(138) }}>
+      <div
+        title="Active broker account for trading, orders, and portfolio views"
+        style={{ ...metricSurfaceStyle, minWidth: dim(138) }}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.background = T.bg3;
+          event.currentTarget.style.borderColor = T.textMuted;
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.background = T.bg1;
+          event.currentTarget.style.borderColor = T.border;
+        }}
+      >
         <div
           style={{
             fontSize: fs(8),
@@ -2855,7 +2896,19 @@ const HeaderAccountStrip = ({
           color: T.textSec,
         },
       ].map((metric) => (
-        <div key={metric.label} style={metricSurfaceStyle}>
+        <div
+          key={metric.label}
+          title={metric.label}
+          style={metricSurfaceStyle}
+          onMouseEnter={(event) => {
+            event.currentTarget.style.background = T.bg3;
+            event.currentTarget.style.borderColor = T.textMuted;
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.background = T.bg1;
+            event.currentTarget.style.borderColor = T.border;
+          }}
+        >
           <div
             style={{
               fontSize: fs(8),
@@ -5924,7 +5977,10 @@ const MarketScreen = ({
   stockAggregateStreamingEnabled = false,
   marketNotifications = [],
 }) => {
-  const [sectorTf, setSectorTf] = useState("1d");
+  const [sectorTf, setSectorTf] = useState(_initialState.marketSectorTf || "1d");
+  useEffect(() => {
+    persistState({ marketSectorTf: sectorTf });
+  }, [sectorTf]);
   const { putCall, sectorFlow, flowStatus, flowEvents, flowTide } =
     useLiveMarketFlow(symbols);
   const calendarWindow = useMemo(() => {
@@ -7596,15 +7652,35 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
   const [savedScans, setSavedScans] = useState(
     _initialState.flowSavedScans || [],
   );
-  const [activeScanId, setActiveScanId] = useState(null);
+  const [activeScanId, setActiveScanId] = useState(
+    _initialState.flowActiveScanId || null,
+  );
   useEffect(() => {
     persistState({ flowSavedScans: savedScans });
   }, [savedScans]);
 
-  const [filter, setFilter] = useState("all");
-  const [minPrem, setMinPrem] = useState(0);
-  const [sortBy, setSortBy] = useState("time");
+  const [filter, setFilter] = useState(_initialState.flowFilter || "all");
+  const [minPrem, setMinPrem] = useState(
+    Number.isFinite(_initialState.flowMinPrem) ? _initialState.flowMinPrem : 0,
+  );
+  const [sortBy, setSortBy] = useState(_initialState.flowSortBy || "time");
   const [selectedEvt, setSelectedEvt] = useState(null); // currently inspected contract
+  useEffect(() => {
+    persistState({
+      flowActiveScanId: activeScanId,
+      flowFilter: filter,
+      flowMinPrem: minPrem,
+      flowSortBy: sortBy,
+    });
+  }, [activeScanId, filter, minPrem, sortBy]);
+  useEffect(() => {
+    if (!activeScanId) {
+      return;
+    }
+    if (!savedScans.some((scan) => scan.id === activeScanId)) {
+      setActiveScanId(null);
+    }
+  }, [activeScanId, savedScans]);
   const {
     hasLiveFlow,
     flowStatus,
@@ -9024,13 +9100,30 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                   alignItems: "center",
                   gap: sp(3),
                   padding: sp("3px 6px 3px 8px"),
-                  borderRadius: dim(3),
+                  borderRadius: 0,
                   background:
                     activeScanId === scan.id ? `${T.accent}20` : T.bg2,
                   border: `1px solid ${activeScanId === scan.id ? T.accent : T.border}`,
                   cursor: "pointer",
+                  transition:
+                    "background 0.12s ease, border-color 0.12s ease, transform 0.12s ease",
                 }}
                 onClick={() => loadScan(scan)}
+                onMouseEnter={(event) => {
+                  if (activeScanId !== scan.id) {
+                    event.currentTarget.style.background = T.bg3;
+                    event.currentTarget.style.borderColor = T.textMuted;
+                  }
+                  event.currentTarget.style.transform = "translateY(-1px)";
+                }}
+                onMouseLeave={(event) => {
+                  event.currentTarget.style.background =
+                    activeScanId === scan.id ? `${T.accent}20` : T.bg2;
+                  event.currentTarget.style.borderColor =
+                    activeScanId === scan.id ? T.accent : T.border;
+                  event.currentTarget.style.transform = "translateY(0)";
+                }}
+                title={`${scan.name} · ${scan.filter} · min ${scan.minPrem} · sort ${scan.sortBy}`}
               >
                 <span
                   style={{
@@ -9205,8 +9298,15 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
               background: "transparent",
               color: T.accent,
               border: `1px solid ${T.accent}`,
-              borderRadius: dim(3),
+              borderRadius: 0,
               cursor: "pointer",
+              transition: "background 0.12s ease, color 0.12s ease",
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.background = `${T.accent}14`;
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.background = "transparent";
             }}
           >
             + Save

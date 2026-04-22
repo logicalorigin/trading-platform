@@ -85,3 +85,15 @@ test("preserves frame structure on empty scenarios", async ({ page }) => {
   await expect(page.locator(primaryFrame)).toContainText("fixture 5m");
   await expect(page.getByText("no live chart data").first()).toBeVisible();
 });
+
+test("renders the live RayReplica parity fixture and settings surface", async ({ page }) => {
+  await page.getByTestId("parity-scenario-rayreplica").click();
+
+  await expect(page.locator(primaryFrame).getByRole("button", { name: "RayReplica" })).toBeVisible();
+  await expect(page.getByTitle("Tune RayReplica overlay settings")).toBeVisible();
+  await expect(page.locator(primaryFrame).getByText(/RAYALGO/i).first()).toBeVisible();
+
+  await page.getByTitle("Tune RayReplica overlay settings").click();
+  await expect(page.getByText("Structure").first()).toBeVisible();
+  await expect(page.getByText("Confirm").first()).toBeVisible();
+});

@@ -1,7 +1,21 @@
 import { buildResearchChartModel } from "./model";
-import type { ChartMarker, ChartModel, IndicatorWindow, IndicatorZone, MarketBar } from "./types";
+import type {
+  BuildChartModelInput,
+  ChartMarker,
+  ChartModel,
+  IndicatorWindow,
+  IndicatorZone,
+  MarketBar,
+} from "./types";
+import { RAY_REPLICA_PINE_SCRIPT_KEY } from "./rayReplicaPineAdapter";
 
-export type ChartParityScenarioId = "core" | "panes" | "history" | "sparse" | "empty";
+export type ChartParityScenarioId =
+  | "core"
+  | "panes"
+  | "history"
+  | "sparse"
+  | "rayreplica"
+  | "empty";
 
 export type ChartParityScenario = {
   id: ChartParityScenarioId;
@@ -304,6 +318,21 @@ const chartParityFixtureProfiles: Partial<Record<ChartParityScenarioId, ChartPar
       "1d": 30,
     },
   },
+  rayreplica: {
+    seed: 113,
+    basePrice: 138.4,
+    amplitude: 5.4,
+    trendPerBar: 0.031,
+    markerSeed: 505,
+    includeOverlays: false,
+    countByTimeframe: {
+      "1m": 360,
+      "5m": 220,
+      "15m": 180,
+      "1h": 96,
+      "1d": 90,
+    },
+  },
 };
 
 const buildScenarioBarsForTimeframe = (
@@ -404,6 +433,25 @@ export const chartParityScenarios: ChartParityScenario[] = [
     includeOverlays: false,
   }),
   {
+    id: "rayreplica",
+    label: "RayReplica",
+    description: "Deterministic fixture for the real RayReplica runtime, dashboard, and settings surface.",
+    timeframe: "5m",
+    bars: buildFixtureBars({
+      seed: 113,
+      count: 220,
+      timeframe: "5m",
+      startMs: baseStartMs - (timeframeToStepMs("5m") * 160),
+      basePrice: 138.4,
+      amplitude: 5.4,
+      trendPerBar: 0.031,
+    }),
+    selectedIndicators: [RAY_REPLICA_PINE_SCRIPT_KEY],
+    indicatorMarkers: [],
+    indicatorWindows: [],
+    indicatorZones: [],
+  },
+  {
     id: "empty",
     label: "Empty",
     description: "No bars available to validate empty chart states and shell stability.",
@@ -425,19 +473,26 @@ export const buildChartParityModel = (
   options?: {
     timeframe?: string;
     selectedIndicators?: string[];
+    indicatorSettings?: Record<string, Record<string, unknown>>;
+    indicatorRegistry?: BuildChartModelInput["indicatorRegistry"];
   },
 ): ChartModel => {
   const timeframe = normalizeParityTimeframe(options?.timeframe || scenario.timeframe);
   const selectedIndicators = options?.selectedIndicators || scenario.selectedIndicators;
   const profile = chartParityFixtureProfiles[scenario.id];
   const bars = profile ? buildScenarioBarsForTimeframe(scenario.id, timeframe) : scenario.bars;
-  const indicatorMarkers = profile ? buildFixtureMarkers(bars, profile.markerSeed) : scenario.indicatorMarkers;
+  const indicatorMarkers =
+    profile && scenario.id !== "rayreplica"
+      ? buildFixtureMarkers(bars, profile.markerSeed)
+      : scenario.indicatorMarkers;
   const indicatorWindows = profile && profile.includeOverlays ? buildFixtureWindows(bars) : scenario.indicatorWindows;
   const indicatorZones = profile && profile.includeOverlays ? buildFixtureZones(bars) : scenario.indicatorZones;
   const model = buildResearchChartModel({
     bars,
     timeframe,
     selectedIndicators,
+    indicatorSettings: options?.indicatorSettings,
+    indicatorRegistry: options?.indicatorRegistry,
     indicatorMarkers,
   });
 

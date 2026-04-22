@@ -133,6 +133,29 @@ export function toDate(value: unknown): Date | null {
     return value;
   }
 
+  // IBKR (and several other brokers) return option expiries as a compact
+  // 8-digit YYYYMMDD string/number (e.g. "20260423"). Detect that *before*
+  // the generic numeric branch — otherwise asNumber() returns 20_260_423
+  // which falls into the unscaled milliseconds path and yields
+  // 1970-01-01T05:37:40Z (the symptom of broken option chain dates).
+  const compactText =
+    typeof value === "string"
+      ? value.trim()
+      : typeof value === "number" && Number.isInteger(value)
+        ? String(value)
+        : null;
+  if (compactText && /^\d{8}$/.test(compactText)) {
+    const year = Number(compactText.slice(0, 4));
+    const month = Number(compactText.slice(4, 6)) - 1;
+    const day = Number(compactText.slice(6, 8));
+    if (year >= 1970 && month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+      const date = new Date(Date.UTC(year, month, day));
+      if (!Number.isNaN(date.getTime())) {
+        return date;
+      }
+    }
+  }
+
   const numeric = asNumber(value);
 
   if (numeric !== null) {

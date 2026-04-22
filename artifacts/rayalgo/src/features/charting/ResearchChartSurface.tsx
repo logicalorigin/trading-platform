@@ -147,11 +147,12 @@ type IndicatorDashboardOverlay = {
   position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   size: "tiny" | "small" | "normal" | "large";
   title: string;
+  subtitle?: string;
   trendLabel: string;
   trendValue: string;
   trendColor: string;
-  rows: Array<{ label: string; value: string; color?: string }>;
-  mtf: Array<{ label: string; value: string; color: string }>;
+  rows: Array<{ label: string; value: string; color?: string; detail?: string }>;
+  mtf: Array<{ label: string; value: string; color: string; detail?: string }>;
 };
 
 type TradeThresholdOverlay = {
@@ -1337,6 +1338,7 @@ const buildIndicatorEventOverlays = (
           (meta.size as IndicatorDashboardOverlay["size"] | undefined) ||
           "small",
         title: (meta.title as string | undefined) || "RAYALGO DASHBOARD",
+        subtitle: (meta.subtitle as string | undefined) || undefined,
         trendLabel: (meta.trendLabel as string | undefined) || "TREND",
         trendValue: (meta.trendValue as string | undefined) || "—",
         trendColor: (meta.trendColor as string | undefined) || "#ffffff",
@@ -3286,26 +3288,26 @@ export const ResearchChartSurface = ({
                       ? { left: 12 }
                       : { right: 12 }),
                     width: compact
-                      ? 168
+                      ? 184
                       : indicatorDashboardOverlay.size === "tiny"
-                        ? 156
+                        ? 172
                         : indicatorDashboardOverlay.size === "small"
-                          ? 188
+                          ? 208
                           : indicatorDashboardOverlay.size === "normal"
-                            ? 212
-                            : 236,
+                            ? 236
+                            : 264,
                     background: withAlpha("#000000", "b3"),
                     border: `1px solid ${withAlpha("#9ca3af", "66")}`,
                     borderRadius: 0,
                     padding: compact
-                      ? "8px 8px 6px"
+                      ? "8px 9px 7px"
                       : indicatorDashboardOverlay.size === "tiny"
-                        ? "6px 7px 5px"
+                        ? "7px 8px 6px"
                         : indicatorDashboardOverlay.size === "small"
-                          ? "8px 9px 6px"
+                          ? "9px 10px 8px"
                           : indicatorDashboardOverlay.size === "normal"
-                            ? "10px 11px 8px"
-                            : "11px 12px 9px",
+                            ? "11px 12px 10px"
+                            : "12px 13px 11px",
                     color: "#ffffff",
                     boxShadow: "none",
                   }}
@@ -3330,11 +3332,30 @@ export const ResearchChartSurface = ({
                   >
                     {indicatorDashboardOverlay.title}
                   </div>
+                  {indicatorDashboardOverlay.subtitle ? (
+                    <div
+                      style={{
+                        marginBottom: 8,
+                        color: "#9ca3af",
+                        fontFamily: theme.mono,
+                        fontSize:
+                          compact || indicatorDashboardOverlay.size === "tiny"
+                            ? 7
+                            : indicatorDashboardOverlay.size === "small"
+                              ? 8
+                              : 9,
+                        lineHeight: 1.35,
+                        letterSpacing: "0.02em",
+                      }}
+                    >
+                      {indicatorDashboardOverlay.subtitle}
+                    </div>
+                  ) : null}
                   <div
                     style={{
                       display: "grid",
                       gridTemplateColumns: "1fr auto",
-                      rowGap: 4,
+                      rowGap: 3,
                       columnGap: 8,
                       fontSize:
                         compact || indicatorDashboardOverlay.size === "tiny"
@@ -3360,6 +3381,25 @@ export const ResearchChartSurface = ({
                         <div style={{ color: row.color || "#ffffff" }}>
                           {row.value}
                         </div>
+                        {row.detail ? (
+                          <div
+                            style={{
+                              gridColumn: "1 / -1",
+                              color: "#6b7280",
+                              fontSize:
+                                compact || indicatorDashboardOverlay.size === "tiny"
+                                  ? 7
+                                  : indicatorDashboardOverlay.size === "small"
+                                    ? 8
+                                    : 9,
+                              lineHeight: 1.3,
+                              marginTop: -1,
+                              marginBottom: 2,
+                            }}
+                          >
+                            {row.detail}
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -3367,23 +3407,37 @@ export const ResearchChartSurface = ({
                     <div
                       style={{
                         marginTop: 8,
-                      display: "grid",
-                      gridTemplateColumns: `repeat(${indicatorDashboardOverlay.mtf.length}, 1fr)`,
-                      gap: 6,
-                      textAlign: "center",
-                      fontFamily: theme.mono,
-                      fontSize:
-                        compact || indicatorDashboardOverlay.size === "tiny"
-                          ? 8
-                          : indicatorDashboardOverlay.size === "small"
-                            ? 9
-                            : 10,
-                    }}
-                  >
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${indicatorDashboardOverlay.mtf.length}, 1fr)`,
+                        gap: 6,
+                        textAlign: "center",
+                        fontFamily: theme.mono,
+                        fontSize:
+                          compact || indicatorDashboardOverlay.size === "tiny"
+                            ? 8
+                            : indicatorDashboardOverlay.size === "small"
+                              ? 9
+                              : 10,
+                      }}
+                    >
                       {indicatorDashboardOverlay.mtf.map((item) => (
                         <div key={`${indicatorDashboardOverlay.id}-${item.label}`}>
-                          <div style={{ color: item.color }}>{item.label}</div>
+                          <div style={{ color: "#9ca3af" }}>{item.label}</div>
                           <div style={{ color: item.color }}>{item.value}</div>
+                          {item.detail ? (
+                            <div
+                              style={{
+                                color: "#6b7280",
+                                fontSize:
+                                  compact || indicatorDashboardOverlay.size === "tiny"
+                                    ? 7
+                                    : 8,
+                                marginTop: 1,
+                              }}
+                            >
+                              {item.detail}
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                     </div>

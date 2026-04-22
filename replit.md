@@ -84,6 +84,7 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 - **News** — `getNews` calls `IbkrBridgeClient.getNews` first (`/iserver/news` keyed by conid). Falls back to Polygon when IBKR returns nothing (e.g. tickerless requests, since CP requires a conid).
 - **Universe search** — `searchUniverseTickers` calls `IbkrBridgeClient.searchTickers` first (`/iserver/secdef/search`, filtered to STK). Falls back to Polygon for non-stock markets and on empty IBKR result.
 - **Flow events** — derived from `IbkrBridgeClient.getOptionChain` snapshots, ranked by premium. Note: the IBKR option-chain mapper currently leaves `volume`/`openInterest` at 0; flow events synthesize size as `volume || 1` so contracts with a real `mark` still surface. To get true volume/OI, extend the snapshot field set in `client.ts` to include OPRA fields (e.g. 7762 = volume).
+  - **Expiry parsing fix** — IBKR returns option expiries as compact YYYYMMDD strings (e.g. `"20260423"`). `lib/values.ts` `toDate()` now handles 8-digit string/integer inputs as calendar dates *before* the numeric-milliseconds branch. Previously every option contract resolved to `1970-01-01T05:37:40Z`, which collapsed flow event IDs and broke UI dedupe.
 - **Bridge surface** — new endpoints `GET /news` and `GET /universe/search` on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). The TWS provider stubs both to empty arrays since the user's transport is Client Portal.
 
 ## Snapshot quote pipeline (gray-screen fix)

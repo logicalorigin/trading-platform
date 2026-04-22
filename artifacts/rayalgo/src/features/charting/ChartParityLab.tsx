@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { PineScriptRecord } from "@workspace/api-client-react";
 import { ResearchChartFrame } from "./ResearchChartFrame";
 import {
   ResearchChartWidgetFooter,
@@ -7,6 +8,13 @@ import {
 } from "./ResearchChartWidgetChrome";
 import { TradingViewWidgetReference } from "./TradingViewWidgetReference";
 import { buildChartParityModel, chartParityScenarios, getChartParityScenario } from "./chartFixtures";
+import {
+  createRayReplicaPineRuntimeAdapter,
+  DEFAULT_RAY_REPLICA_SETTINGS,
+  RAY_REPLICA_PINE_SCRIPT_KEY,
+} from "./rayReplicaPineAdapter";
+import { defaultIndicatorRegistry } from "./indicators";
+import { RayReplicaSettingsMenu } from "./RayReplicaSettingsMenu";
 import { useDrawingHistory } from "./useDrawingHistory";
 
 type DrawMode = "horizontal" | "vertical" | "box";
@@ -62,6 +70,15 @@ const FRAME_TIMEFRAMES = [
   { value: "1h", label: "1h" },
   { value: "1D", label: "1D" },
 ];
+
+const PARITY_RAY_REPLICA_SCRIPT = {
+  id: "parity-rayreplica",
+  scriptKey: RAY_REPLICA_PINE_SCRIPT_KEY,
+  name: "RayReplica",
+  status: "ready",
+  chartAccessEnabled: true,
+  defaultPaneType: "price",
+} as PineScriptRecord;
 
 const buildFrameHeader = ({
   symbol,
@@ -280,23 +297,67 @@ export const ChartParityLab = () => {
   const requestedLayout = params.get("layout");
   const [scenarioId, setScenarioId] = useState(requestedScenario || "core");
   const [layout, setLayout] = useState<LayoutMode>(requestedLayout === "narrow" ? "narrow" : "desktop");
+  const [rayReplicaSettings, setRayReplicaSettings] = useState(() => ({
+    ...DEFAULT_RAY_REPLICA_SETTINGS,
+  }));
   const scenario = useMemo(() => getChartParityScenario(scenarioId), [scenarioId]);
   const appPrimary = useLabFrameState(scenario.selectedIndicators, scenario.timeframe);
   const appSecondary = useLabFrameState(scenario.selectedIndicators, scenario.timeframe);
+  const isRayReplicaScenario = scenario.id === "rayreplica";
+  const parityIndicatorRegistry = useMemo(
+    () => ({
+      ...defaultIndicatorRegistry,
+      [RAY_REPLICA_PINE_SCRIPT_KEY]:
+        createRayReplicaPineRuntimeAdapter(PARITY_RAY_REPLICA_SCRIPT),
+    }),
+    [],
+  );
+  const rayReplicaIndicatorSettings = useMemo(
+    () => ({
+      [RAY_REPLICA_PINE_SCRIPT_KEY]: rayReplicaSettings,
+    }),
+    [rayReplicaSettings],
+  );
+  const scenarioStudies = useMemo(
+    () =>
+      scenario.selectedIndicators.map((indicator) => ({
+        id: indicator,
+        label: indicator === RAY_REPLICA_PINE_SCRIPT_KEY ? "RayReplica" : indicator,
+      })),
+    [scenario.selectedIndicators],
+  );
 
   const primaryModel = useMemo(
     () => buildChartParityModel(scenario, {
       timeframe: appPrimary.timeframe,
       selectedIndicators: appPrimary.selectedIndicators,
+      indicatorSettings: isRayReplicaScenario ? rayReplicaIndicatorSettings : undefined,
+      indicatorRegistry: isRayReplicaScenario ? parityIndicatorRegistry : undefined,
     }),
-    [appPrimary.selectedIndicators, appPrimary.timeframe, scenario],
+    [
+      appPrimary.selectedIndicators,
+      appPrimary.timeframe,
+      isRayReplicaScenario,
+      parityIndicatorRegistry,
+      rayReplicaIndicatorSettings,
+      scenario,
+    ],
   );
   const secondaryModel = useMemo(
     () => buildChartParityModel(scenario, {
       timeframe: appSecondary.timeframe,
       selectedIndicators: appSecondary.selectedIndicators,
+      indicatorSettings: isRayReplicaScenario ? rayReplicaIndicatorSettings : undefined,
+      indicatorRegistry: isRayReplicaScenario ? parityIndicatorRegistry : undefined,
     }),
-    [appSecondary.selectedIndicators, appSecondary.timeframe, scenario],
+    [
+      appSecondary.selectedIndicators,
+      appSecondary.timeframe,
+      isRayReplicaScenario,
+      parityIndicatorRegistry,
+      rayReplicaIndicatorSettings,
+      scenario,
+    ],
   );
   const primaryLastBar = primaryModel.chartBars[primaryModel.chartBars.length - 1];
   const secondaryLastBar = secondaryModel.chartBars[secondaryModel.chartBars.length - 1];
@@ -345,6 +406,9 @@ export const ChartParityLab = () => {
                     setScenarioId(entry.id);
                     appPrimary.resetState(entry.selectedIndicators, entry.timeframe);
                     appSecondary.resetState(entry.selectedIndicators, entry.timeframe);
+                    if (entry.id === "rayreplica") {
+                      setRayReplicaSettings({ ...DEFAULT_RAY_REPLICA_SETTINGS });
+                    }
                   }}
                   style={{
                     ...BUTTON_BASE,
@@ -379,9 +443,16 @@ export const ChartParityLab = () => {
                 </button>
               );
             })}
+            {isRayReplicaScenario ? (
+              <RayReplicaSettingsMenu
+                theme={THEME}
+                settings={rayReplicaSettings}
+                onChange={setRayReplicaSettings}
+              />
+            ) : null}
           </div>
           <div style={{ fontSize: 11, color: THEME.textMuted, fontFamily: THEME.mono }}>
-            Use <code>?lab=chart-parity</code> with optional <code>&amp;scenario=core</code> or <code>&amp;layout=narrow</code> for direct review targets.
+            Use <code>?lab=chart-parity</code> with optional <code>&amp;scenario=core</code>, <code>&amp;scenario=rayreplica</code>, or <code>&amp;layout=narrow</code> for direct review targets.
           </div>
         </div>
 
@@ -421,7 +492,7 @@ export const ChartParityLab = () => {
                   canUndo={appPrimary.canUndo}
                   canRedo={appPrimary.canRedo}
                   showUndoRedo
-                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  studies={scenarioStudies}
                   selectedStudies={appPrimary.selectedIndicators}
                   onToggleStudy={appPrimary.toggleIndicator}
                   meta={{
@@ -455,7 +526,7 @@ export const ChartParityLab = () => {
                 <ResearchChartWidgetFooter
                   theme={THEME}
                   controls={controls}
-                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  studies={scenarioStudies}
                   selectedStudies={appPrimary.selectedIndicators}
                   onToggleStudy={appPrimary.toggleIndicator}
                   statusText={`${primaryModel.chartBars.length || 0} bars`}
@@ -493,7 +564,7 @@ export const ChartParityLab = () => {
                   canUndo={appSecondary.canUndo}
                   canRedo={appSecondary.canRedo}
                   showUndoRedo
-                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  studies={scenarioStudies}
                   selectedStudies={appSecondary.selectedIndicators}
                   onToggleStudy={appSecondary.toggleIndicator}
                   meta={{
@@ -527,7 +598,7 @@ export const ChartParityLab = () => {
                 <ResearchChartWidgetFooter
                   theme={THEME}
                   controls={controls}
-                  studies={scenario.selectedIndicators.map((indicator) => ({ id: indicator, label: indicator }))}
+                  studies={scenarioStudies}
                   selectedStudies={appSecondary.selectedIndicators}
                   onToggleStudy={appSecondary.toggleIndicator}
                   statusText={`${secondaryModel.chartBars.length || 0} bars`}

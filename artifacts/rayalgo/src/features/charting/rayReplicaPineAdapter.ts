@@ -148,7 +148,7 @@ const SUPPORT_RESISTANCE_THICKNESS_MULTIPLIER = 0.25;
 const SUPPORT_RESISTANCE_MAX_ZONES = 7;
 const SUPPORT_RESISTANCE_EXTENSION_BARS = 100;
 export const RAY_REPLICA_TIME_HORIZON_OPTIONS = [6, 8, 10, 14, 20] as const;
-const RAY_REPLICA_MTF_OPTIONS: ReadonlyArray<RayReplicaTimeframeOption> = [
+export const RAY_REPLICA_MTF_OPTIONS: ReadonlyArray<RayReplicaTimeframeOption> = [
   "1m",
   "2m",
   "5m",
@@ -158,11 +158,11 @@ const RAY_REPLICA_MTF_OPTIONS: ReadonlyArray<RayReplicaTimeframeOption> = [
   "4h",
   "D",
 ];
-const RAY_REPLICA_BOS_CONFIRMATION_OPTIONS: ReadonlyArray<RayReplicaBosConfirmation> =
+export const RAY_REPLICA_BOS_CONFIRMATION_OPTIONS: ReadonlyArray<RayReplicaBosConfirmation> =
   ["close", "wicks"];
-const RAY_REPLICA_DASHBOARD_POSITION_OPTIONS: ReadonlyArray<RayReplicaDashboardPosition> =
+export const RAY_REPLICA_DASHBOARD_POSITION_OPTIONS: ReadonlyArray<RayReplicaDashboardPosition> =
   ["top-left", "top-right", "bottom-left", "bottom-right"];
-const RAY_REPLICA_DASHBOARD_SIZE_OPTIONS: ReadonlyArray<RayReplicaDashboardSize> =
+export const RAY_REPLICA_DASHBOARD_SIZE_OPTIONS: ReadonlyArray<RayReplicaDashboardSize> =
   ["tiny", "small", "normal", "large"];
 export const RAY_REPLICA_SESSION_OPTIONS: ReadonlyArray<{
   value: RayReplicaSessionOption;
@@ -2762,15 +2762,6 @@ export function createRayReplicaPineRuntimeAdapter(
         ? buildSessionKeyLevelSeries(chartBars)
         : null;
       const lastBarIndex = chartBars.length - 1;
-      const bbWidthPct = bbUpper.map((value, index) =>
-        Number.isFinite(value) &&
-        Number.isFinite(bbLower[index]) &&
-        Number.isFinite(closes[index]) &&
-        closes[index] !== 0
-          ? Number((((value - bbLower[index]) / closes[index])).toFixed(6))
-          : Number.NaN,
-      );
-      const volatilityPercentRank = computePercentRank(bbWidthPct, 200);
       if (keyLevels && lastBarIndex >= 0) {
         const dayAnchorBarIndex = keyLevels.dayStartBarIndex[lastBarIndex] ?? 0;
         const weekAnchorBarIndex =
@@ -2863,17 +2854,32 @@ export function createRayReplicaPineRuntimeAdapter(
       if (showDashboard && lastBarIndex >= 0) {
         const lastBar = chartBars[lastBarIndex];
         const currentAdx = adx[lastBarIndex];
-        const trendAge = lastBarIndex - lastFlipBarIndex;
-        const ageText =
-          trendAge > 50
-            ? `OLD (${trendAge})`
-            : trendAge > 20
-              ? `MATURE (${trendAge})`
-              : `NEW (${trendAge})`;
-        const volatilityScore = Number.isFinite(volatilityPercentRank[lastBarIndex])
-          ? Math.round(volatilityPercentRank[lastBarIndex] / 10)
-          : Number.NaN;
-        const mtfConfigs = [mtf1, mtf2, mtf3].map((mtfTimeframe) => {
+        const currentVolatility = volatilityScore[lastBarIndex];
+        const currentVolumeRatio = computeVolumeRatioAt(
+          chartBars,
+          lastBarIndex,
+          volumeMaLength,
+        );
+        const currentSessionKey = resolveSessionKey(lastBar);
+        const activeBandProfile = resolveRayReplicaBandProfile(
+          resolveRayReplicaRuntimeSettings(settings),
+        ) || { label: "Custom" };
+        const adxPass =
+          !requireAdx ||
+          (Number.isFinite(currentAdx) && currentAdx >= adxMin);
+        const volatilityPass =
+          !requireVolScoreRange ||
+          (Number.isFinite(currentVolatility) &&
+            currentVolatility >= volScoreMin &&
+            currentVolatility <= volScoreMax);
+        const sessionPass =
+          !restrictToSelectedSessions ||
+          (currentSessionKey != null && sessions.includes(currentSessionKey));
+        const mtfConfigs = [
+          { timeframe: mtf1, required: requireMtf1, label: "MTF 1" },
+          { timeframe: mtf2, required: requireMtf2, label: "MTF 2" },
+          { timeframe: mtf3, required: requireMtf3, label: "MTF 3" },
+        ].map(({ timeframe: mtfTimeframe, required, label }) => {
           const mtfBars = aggregateBarsForTimeframe(chartBars, mtfTimeframe);
           const direction = resolveTrendDirectionForBars(mtfBars, {
             basisLength,
@@ -2883,9 +2889,15 @@ export function createRayReplicaPineRuntimeAdapter(
             waitForBarClose,
           });
           return {
-            label: formatDashboardTimeframe(mtfTimeframe),
-            value: direction === 1 ? "BULL" : "BEAR",
+            label,
+            value:
+              direction === 1
+                ? "Bullish"
+                : direction === -1
+                  ? "Bearish"
+                  : "Neutral",
             color: direction === 1 ? BULL_COLOR : BEAR_COLOR,
+            detail: `${formatDashboardTimeframe(mtfTimeframe)}${required ? " · Req" : ""}`,
           };
         });
 
@@ -2902,36 +2914,58 @@ export function createRayReplicaPineRuntimeAdapter(
             overlay: "dashboard",
             position: dashboardPosition,
             size: dashboardSize,
-            title: "RAYALGO DASHBOARD",
+            title: `RAYALGO · ${activeBandProfile.label.toUpperCase()}`,
+            subtitle: `TH ${timeHorizon} · ${bosConfirmation === "wicks" ? "Wicks" : "Close"} BOS`,
             trendLabel: `${formatDashboardTimeframe(timeframe)} TREND`,
-            trendValue: regimeDirection[lastBarIndex] === 1 ? "BULLISH" : "BEARISH",
+            trendValue:
+              regimeDirection[lastBarIndex] === 1 ? "Bullish" : "Bearish",
             trendColor:
               regimeDirection[lastBarIndex] === 1 ? BULL_COLOR : BEAR_COLOR,
             rows: [
               {
-                label: "STRENGTH",
-                value:
-                  Number.isFinite(currentAdx) && currentAdx >= 25
-                    ? "Strong"
-                    : "Weak",
-                color: "#ffffff",
+                label: "ADX",
+                value: Number.isFinite(currentAdx) ? currentAdx.toFixed(1) : "--",
+                detail: requireAdx
+                  ? `Gate ${adxMin.toFixed(1)}+`
+                  : "Gate off",
+                color: adxPass ? BULL_COLOR : BEAR_COLOR,
               },
               {
-                label: "TREND AGE",
-                value: ageText,
-                color: "#ffffff",
+                label: "VOLUME",
+                value: Number.isFinite(currentVolumeRatio)
+                  ? `${currentVolumeRatio.toFixed(2)}x`
+                  : "--",
+                detail: `MA ${volumeMaLength}`,
+                color:
+                  Number.isFinite(currentVolumeRatio) && currentVolumeRatio >= 1
+                    ? BULL_COLOR
+                    : "#9ca3af",
               },
               {
                 label: "VOLATILITY",
-                value: Number.isFinite(volatilityScore)
-                  ? `${volatilityScore}/10`
+                value: Number.isFinite(currentVolatility)
+                  ? currentVolatility.toFixed(1)
                   : "--",
-                color: "#ffffff",
+                detail: requireVolScoreRange
+                  ? `${volScoreMin.toFixed(0)}-${volScoreMax.toFixed(0)}`
+                  : "Gate off",
+                color: volatilityPass ? BULL_COLOR : BEAR_COLOR,
               },
               {
                 label: "SESSION",
                 value: resolveSessionLabel(lastBar),
-                color: "#ffffff",
+                detail: restrictToSelectedSessions
+                  ? summarizeRequiredSessions(sessions)
+                  : "All sessions",
+                color: sessionPass ? "#ffffff" : BEAR_COLOR,
+              },
+              {
+                label: "RISK",
+                value: showTpSl
+                  ? `${tp1Rr.toFixed(1)}/${tp2Rr.toFixed(1)}/${tp3Rr.toFixed(1)}R`
+                  : "Hidden",
+                detail: "TP1 / TP2 / TP3",
+                color: showTpSl ? BULL_COLOR : "#9ca3af",
               },
             ],
             mtf: mtfConfigs,
