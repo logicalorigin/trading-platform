@@ -99,8 +99,8 @@ export async function fetchOptionChainSnapshotPayload(
         underlying,
         contracts: await bridgeClient.getOptionChain({
           underlying,
-          maxExpirations: 3,
-          strikesAroundMoney: 12,
+          maxExpirations: 1,
+          strikesAroundMoney: 6,
         }),
         updatedAt: new Date().toISOString(),
       })),

@@ -5885,16 +5885,6 @@ const MultiChartGrid = ({
     [gridQuotesQuery.data],
   );
 
-  useBrokerStockAggregateStream({
-    symbols: streamedSymbols,
-    enabled: Boolean(stockAggregateStreamingEnabled && streamedSymbols.length > 0),
-    onAggregate: (aggregate) => {
-      queryClient.invalidateQueries({
-        queryKey: ["market-mini-bars", aggregate.symbol],
-      });
-    },
-  });
-
   useEffect(() => {
     setSlots((current) => {
       let changed = current.length !== MAX_MULTI_CHART_SLOTS;
@@ -17299,16 +17289,6 @@ const TradeScreen = ({
     tradePositionsQuery.data,
   ]);
 
-  useBrokerStockAggregateStream({
-    symbols: activeTicker ? [activeTicker] : [],
-    enabled: Boolean(stockAggregateStreamingEnabled && activeTicker),
-    onAggregate: (aggregate) => {
-      queryClient.invalidateQueries({
-        queryKey: ["trade-equity-bars", aggregate.symbol],
-      });
-    },
-  });
-
   // Persist trade state changes
   useEffect(() => {
     persistState({ tradeActiveTicker: activeTicker });
@@ -19175,6 +19155,7 @@ export default function RayAlgoPlatform() {
     ],
     [quoteSymbols, sparklineSymbols],
   );
+  const marketAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
   const quotesQuery = useGetQuoteSnapshots(
     { symbols: quoteSymbols.join(",") },
     {
@@ -19207,8 +19188,7 @@ export default function RayAlgoPlatform() {
         ]),
       );
     },
-    staleTime: 60_000,
-    refetchInterval: 60_000,
+    ...BARS_QUERY_DEFAULTS,
     retry: false,
   });
   const marketPerformanceQuery = useQuery({
@@ -19240,7 +19220,9 @@ export default function RayAlgoPlatform() {
       );
     },
     staleTime: 300_000,
-    refetchInterval: 300_000,
+    gcTime: BARS_QUERY_DEFAULTS.gcTime,
+    refetchInterval: false,
+    refetchOnMount: false,
     retry: false,
   });
   const accountsQuery = useListAccounts(
@@ -19300,9 +19282,6 @@ export default function RayAlgoPlatform() {
     enabled: Boolean(
       marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
     ),
-    onAggregate: () => {
-      queryClient.invalidateQueries({ queryKey: ["market-sparklines"] });
-    },
   });
 
   // ── TOAST SYSTEM ──
@@ -19605,6 +19584,7 @@ export default function RayAlgoPlatform() {
     quotesQuery.data,
     sparklineQuery.data,
     marketPerformanceQuery.data,
+    marketAggregateStoreVersion,
   ]);
 
   useEffect(() => {
