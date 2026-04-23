@@ -4846,11 +4846,11 @@ const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
 
 const MINI_CHART_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1D"];
 const MINI_CHART_BAR_LIMITS = {
-  "1m": 390,
-  "5m": 312,
-  "15m": 260,
-  "1h": 220,
-  "1D": 252,
+  "1m": 900,
+  "5m": 900,
+  "15m": 900,
+  "1h": 780,
+  "1D": 504,
 };
 const MARKET_CHART_STUDIES = [
   { id: "ema-21", label: "E21" },
@@ -10984,10 +10984,10 @@ const FlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
 // ─── Trade tab sub-components ───
 
 const TRADE_TIMEFRAMES = [
-  { v: "1m", bars: 390, tag: "1m" },
-  { v: "5m", bars: 312, tag: "5m" },
-  { v: "15m", bars: 260, tag: "15m" },
-  { v: "1h", bars: 220, tag: "1h" },
+  { v: "1m", bars: 2400, tag: "1m" },
+  { v: "5m", bars: 2400, tag: "5m" },
+  { v: "15m", bars: 2000, tag: "15m" },
+  { v: "1h", bars: 1500, tag: "1h" },
 ];
 
 // Custom SVG candlestick chart (Recharts has no native candle component).

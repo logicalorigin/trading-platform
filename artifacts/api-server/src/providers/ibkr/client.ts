@@ -2193,14 +2193,19 @@ export class IbkrClient {
           break;
         }
 
+        const collectedCountBeforeChunk = collected.size;
         bars.forEach((barPoint) => {
           collected.set(barPoint.timestamp.getTime(), barPoint);
         });
+        const addedBars = collected.size - collectedCountBeforeChunk;
 
         remainingBars = Math.max(0, desiredBars - collected.size);
         const earliestBar = bars[0];
 
-        if (!earliestBar || bars.length < chunkBars) {
+        // Market-hour calendars often return fewer points than the requested
+        // chunk window even when older bars exist. Continue paging while the
+        // cursor is still moving, but stop if IBKR returns only duplicates.
+        if (!earliestBar || addedBars <= 0) {
           break;
         }
 

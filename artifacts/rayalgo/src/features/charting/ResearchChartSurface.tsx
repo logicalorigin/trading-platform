@@ -2222,7 +2222,7 @@ export const ResearchChartSurface = ({
         rightOffset: compact ? 1 : 6,
         rightBarStaysOnScroll: true,
         lockVisibleTimeRangeOnResize: true,
-        minBarSpacing: compact ? 0.6 : 5,
+        minBarSpacing: compact ? 0.35 : 1.1,
       },
     });
     activePriceSeriesRef.current =

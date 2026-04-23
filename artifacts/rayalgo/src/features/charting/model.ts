@@ -210,13 +210,13 @@ const resolveLowerPaneCount = (
 
 const defaultVisibleBarsForTimeframe = (timeframe: string): number =>
   ({
-    "1m": 180,
-    "5m": 156,
-    "15m": 132,
-    "1h": 110,
-    "1d": 100,
-    "1D": 100,
-  })[timeframe] || 120;
+    "1m": 720,
+    "5m": 620,
+    "15m": 520,
+    "1h": 420,
+    "1d": 260,
+    "1D": 260,
+  })[timeframe] || 360;
 
 const buildDefaultVisibleRange = (
   chartBars: ChartBar[],
