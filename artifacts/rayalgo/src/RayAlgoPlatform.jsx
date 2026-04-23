@@ -1810,6 +1810,21 @@ const QUERY_DEFAULTS = {
   refetchOnMount: true,
 };
 
+// Bar/chart data is expensive on the upstream broker (each /api/bars call
+// can hold an IBKR history slot for many seconds). Live updates flow in
+// through the streaming aggregate hook (`useBrokerStreamedBars`), so we
+// don't need React Query to repoll bars on a 15s timer. Use a long
+// staleTime, no automatic refetch interval, and an explicit gcTime so
+// chart caches for inactive symbols/timeframes are evicted from memory.
+const BARS_QUERY_DEFAULTS = {
+  staleTime: 60_000,
+  gcTime: 5 * 60_000,
+  refetchInterval: false,
+  refetchOnMount: false,
+  retry: 1,
+  retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
+};
+
 const clampNumber = (value, min, max) =>
   Math.min(max, Math.max(min, value));
 
@@ -5507,7 +5522,7 @@ const MiniChartCell = ({
         outsideRth: tf !== "1D",
         source: "trades",
       }),
-    ...QUERY_DEFAULTS,
+    ...BARS_QUERY_DEFAULTS,
   });
   const streamedSourceBars = useBrokerStreamedBars({
     symbol: ticker,
@@ -15551,7 +15566,7 @@ const TradeEquityPanel = ({
         outsideRth: tf !== "1d",
         source: "trades",
       }),
-    ...QUERY_DEFAULTS,
+    ...BARS_QUERY_DEFAULTS,
   });
   const streamedSourceBars = useBrokerStreamedBars({
     symbol: ticker,
@@ -15957,7 +15972,7 @@ const TradeContractDetailPanel = ({
         source: "trades",
       }),
     enabled: Boolean(contractMeta?.ticker),
-    ...QUERY_DEFAULTS,
+    ...BARS_QUERY_DEFAULTS,
   });
   const optionDailyBarsQuery = useQuery({
     queryKey: [
@@ -15976,7 +15991,7 @@ const TradeContractDetailPanel = ({
         source: "trades",
       }),
     enabled: Boolean(contractMeta?.ticker) && tf !== "1d",
-    ...QUERY_DEFAULTS,
+    ...BARS_QUERY_DEFAULTS,
   });
   const liveIntradayBars = buildTradeBarsFromApi(optionBarsQuery.data?.bars);
   const liveDailyBars = buildTradeBarsFromApi(optionDailyBarsQuery.data?.bars);

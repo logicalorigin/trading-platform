@@ -1103,7 +1103,7 @@ export async function searchUniverseTickers(input: {
   return { count: results.length, results };
 }
 
-export async function getBars(input: {
+type GetBarsInput = {
   symbol: string;
   timeframe: Parameters<PolygonMarketDataClient["getBars"]>[0]["timeframe"];
   limit?: number;
@@ -1114,7 +1114,95 @@ export async function getBars(input: {
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
   allowHistoricalSynthesis?: boolean;
-}) {
+};
+
+type GetBarsResult = Awaited<ReturnType<typeof getBarsImpl>>;
+
+// Coalesce identical /api/bars requests so multiple chart panels
+// (or refetches racing each other) share a single upstream IBKR/Polygon
+// fetch. The bridge can hold an upstream history slot for 7-15s, so even
+// a small TTL of a few seconds dramatically reduces request volume.
+const BARS_CACHE_TTL_MS = 5_000;
+const BARS_CACHE_MAX_ENTRIES = 256;
+const barsCache = new Map<
+  string,
+  { value: GetBarsResult; expiresAt: number }
+>();
+const barsInFlight = new Map<string, Promise<GetBarsResult>>();
+
+function pruneBarsCache(now: number): void {
+  for (const [key, entry] of barsCache) {
+    if (entry.expiresAt <= now) {
+      barsCache.delete(key);
+    }
+  }
+  if (barsCache.size <= BARS_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  // Map preserves insertion order, so dropping the oldest entries first
+  // gives us a simple FIFO bound to keep memory in check on long runs
+  // with many unique symbol/timeframe combinations.
+  const overflow = barsCache.size - BARS_CACHE_MAX_ENTRIES;
+  let removed = 0;
+  for (const key of barsCache.keys()) {
+    if (removed >= overflow) break;
+    barsCache.delete(key);
+    removed += 1;
+  }
+}
+
+function buildBarsCacheKey(input: GetBarsInput): string {
+  return JSON.stringify({
+    symbol: normalizeSymbol(input.symbol),
+    timeframe: input.timeframe,
+    limit: input.limit ?? null,
+    from: input.from ? input.from.getTime() : null,
+    to: input.to ? input.to.getTime() : null,
+    assetClass: input.assetClass ?? null,
+    providerContractId: input.providerContractId ?? null,
+    outsideRth: input.outsideRth ?? null,
+    source: input.source ?? null,
+    allowHistoricalSynthesis: input.allowHistoricalSynthesis === true,
+  });
+}
+
+export async function getBars(input: GetBarsInput): Promise<GetBarsResult> {
+  const key = buildBarsCacheKey(input);
+  const now = Date.now();
+
+  const cached = barsCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached) {
+    barsCache.delete(key);
+  }
+
+  const inFlight = barsInFlight.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const promise = (async () => {
+    try {
+      const value = await getBarsImpl(input);
+      const settledAt = Date.now();
+      barsCache.set(key, {
+        value,
+        expiresAt: settledAt + BARS_CACHE_TTL_MS,
+      });
+      pruneBarsCache(settledAt);
+      return value;
+    } finally {
+      barsInFlight.delete(key);
+    }
+  })();
+
+  barsInFlight.set(key, promise);
+  return promise;
+}
+
+async function getBarsImpl(input: GetBarsInput) {
   const bridgeClient = getIbkrClient();
   const bridgeHealth = await bridgeClient.getHealth().catch(() => null);
   const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;

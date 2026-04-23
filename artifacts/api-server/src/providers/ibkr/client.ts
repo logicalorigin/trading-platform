@@ -2047,11 +2047,14 @@ export class IbkrClient {
         };
         // IBKR Client Portal occasionally returns a transient
         // 500 "Chart data unavailable" for valid symbols, especially
-        // around session boundaries. Retry a couple of times before
-        // failing the user's chart request.
+        // around session boundaries. Retry once before failing the
+        // user's chart request — retrying more aggressively here just
+        // pins additional upstream history slots and amplifies load
+        // when IBKR is genuinely unhappy. The frontend already retries
+        // with a backoff and surfaces a single error to the user.
         let payload: unknown;
         let lastError: unknown;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
           try {
             payload = await this.request<unknown>(
               "/iserver/marketdata/history",
@@ -2079,7 +2082,7 @@ export class IbkrClient {
                 haystack,
               );
             const isRetryable = isTransientHttp || isTransientText;
-            if (!isRetryable || attempt === 2) {
+            if (!isRetryable || attempt === 1) {
               break;
             }
             await new Promise((resolve) =>
