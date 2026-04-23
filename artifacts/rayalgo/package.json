@@ -27,6 +27,7 @@
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "@workspace/api-client-react": "workspace:*",
+    "@workspace/rayreplica-core": "workspace:*",
     "clsx": "catalog:",
     "d3": "^7.9.0",
     "lucide-react": "catalog:",

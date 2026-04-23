@@ -5,12 +5,16 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { FlowDataProvider } from "./flowDataProvider";
+import type { FlowEventBasis } from "./flowEventBasis";
 import type { FlowSentiment } from "./flowSentiment";
 import type { OptionRight } from "./optionRight";
 
 export interface FlowEvent {
   id: string;
   underlying: string;
+  provider: FlowDataProvider;
+  basis: FlowEventBasis;
   optionTicker: string;
   strike: number;
   expirationDate: Date;
@@ -25,7 +29,7 @@ export interface FlowEvent {
   sentiment: FlowSentiment;
   tradeConditions: string[];
   occurredAt: Date;
-  /** Volume divided by prior-session open interest, capped at 10. Higher values indicate the print is more likely to be a fresh institutional position rather than routine market-maker turnover. */
+  /** Volume divided by prior-session open interest, capped at 10. Higher values indicate the event is more likely to be a fresh institutional position rather than routine market-maker turnover. */
   unusualScore: number;
   /** True when the contract's day volume meets or exceeds its open interest (the default unusual-flow threshold). */
   isUnusual: boolean;

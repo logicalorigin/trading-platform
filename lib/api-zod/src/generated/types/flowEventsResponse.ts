@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { FlowEvent } from "./flowEvent";
+import type { FlowEventsSource } from "./flowEventsSource";
 
 export interface FlowEventsResponse {
   events: FlowEvent[];
+  source: FlowEventsSource;
 }

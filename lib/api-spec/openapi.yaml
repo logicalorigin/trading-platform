@@ -24,6 +24,8 @@ tags:
     description: Order and execution lifecycle
   - name: flow
     description: Options flow and unusual activity feeds
+  - name: signal-monitor
+    description: RayReplica watchlist signal monitoring
   - name: research
     description: Server-side fundamentals, filings, transcripts, and catalyst data
   - name: automation
@@ -599,6 +601,111 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FlowEventsResponse"
+
+  /signal-monitor/profile:
+    get:
+      operationId: getSignalMonitorProfile
+      tags: [signal-monitor]
+      summary: Get the RayReplica monitor profile for an environment
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Signal monitor profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalMonitorProfile"
+    put:
+      operationId: updateSignalMonitorProfile
+      tags: [signal-monitor]
+      summary: Update the RayReplica monitor profile for an environment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSignalMonitorProfileRequest"
+      responses:
+        "200":
+          description: Updated signal monitor profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalMonitorProfile"
+
+  /signal-monitor/evaluate:
+    post:
+      operationId: evaluateSignalMonitor
+      tags: [signal-monitor]
+      summary: Evaluate the RayReplica monitor profile
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvaluateSignalMonitorRequest"
+      responses:
+        "200":
+          description: Signal monitor state after evaluation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalMonitorStateResponse"
+
+  /signal-monitor/state:
+    get:
+      operationId: getSignalMonitorState
+      tags: [signal-monitor]
+      summary: List current RayReplica signal states
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Signal monitor state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalMonitorStateResponse"
+
+  /signal-monitor/events:
+    get:
+      operationId: listSignalMonitorEvents
+      tags: [signal-monitor]
+      summary: List RayReplica signal monitor events
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Signal monitor events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalMonitorEventsResponse"
 
   /research/status:
     get:
@@ -1235,6 +1342,22 @@ components:
       type: string
       enum: [polygon, ibkr]
 
+    FlowDataProvider:
+      type: string
+      enum: [ibkr, polygon]
+
+    FlowEventBasis:
+      type: string
+      enum: [snapshot, trade]
+
+    FlowEventsSourceProvider:
+      type: string
+      enum: [ibkr, polygon, none]
+
+    FlowEventsSourceStatus:
+      type: string
+      enum: [live, fallback, empty, error]
+
     UniverseMarket:
       type: string
       enum: [stocks, indices, fx, crypto, otc]
@@ -1284,6 +1407,10 @@ components:
     BarTimeframe:
       type: string
       enum: [1s, 5s, 15s, 1m, 5m, 15m, 1h, 1d]
+
+    SignalMonitorTimeframe:
+      type: string
+      enum: [1m, 5m, 15m, 1h, 1d]
 
     FlowSentiment:
       type: string
@@ -1339,6 +1466,11 @@ components:
           format: date-time
         lastError:
           type: [string, "null"]
+        lastRecoveryAttemptAt:
+          type: [string, "null"]
+          format: date-time
+        lastRecoveryError:
+          type: [string, "null"]
         updatedAt:
           type: string
           format: date-time
@@ -1375,6 +1507,8 @@ components:
         - accounts
         - lastTickleAt
         - lastError
+        - lastRecoveryAttemptAt
+        - lastRecoveryError
         - updatedAt
         - transport
         - connectionTarget
@@ -2069,6 +2203,12 @@ components:
         lastUpdatedAt:
           type: [string, "null"]
           format: date-time
+        provider:
+          oneOf:
+            - $ref: "#/components/schemas/MarketDataProvider"
+            - type: "null"
+        providerContractId:
+          type: [string, "null"]
       required:
         - ticker
         - name
@@ -2082,6 +2222,8 @@ components:
         - compositeFigi
         - shareClassFigi
         - lastUpdatedAt
+        - provider
+        - providerContractId
 
     BrokerConnection:
       type: object
@@ -2418,6 +2560,8 @@ components:
           type: string
         mode:
           $ref: "#/components/schemas/EnvironmentMode"
+        confirm:
+          type: boolean
         symbol:
           type: string
         assetClass:
@@ -2541,6 +2685,12 @@ components:
       properties:
         accountId:
           type: [string, "null"]
+        mode:
+          oneOf:
+            - $ref: "#/components/schemas/EnvironmentMode"
+            - type: "null"
+        confirm:
+          type: boolean
         ibkrOrders:
           type: array
           items:
@@ -2559,6 +2709,8 @@ components:
           type: string
         mode:
           $ref: "#/components/schemas/EnvironmentMode"
+        confirm:
+          type: boolean
         order:
           $ref: "#/components/schemas/JsonObject"
       required:
@@ -2570,6 +2722,8 @@ components:
       properties:
         accountId:
           type: string
+        confirm:
+          type: boolean
         manualIndicator:
           type: [boolean, "null"]
         extOperator:
@@ -2602,6 +2756,10 @@ components:
           type: string
         underlying:
           type: string
+        provider:
+          $ref: "#/components/schemas/FlowDataProvider"
+        basis:
+          $ref: "#/components/schemas/FlowEventBasis"
         optionTicker:
           type: string
         strike:
@@ -2640,7 +2798,7 @@ components:
           type: number
           description: >-
             Volume divided by prior-session open interest, capped at 10. Higher
-            values indicate the print is more likely to be a fresh
+            values indicate the event is more likely to be a fresh
             institutional position rather than routine market-maker turnover.
         isUnusual:
           type: boolean
@@ -2650,6 +2808,8 @@ components:
       required:
         - id
         - underlying
+        - provider
+        - basis
         - optionTicker
         - strike
         - expirationDate
@@ -2666,6 +2826,32 @@ components:
         - occurredAt
         - unusualScore
         - isUnusual
+
+    FlowEventsSource:
+      type: object
+      properties:
+        provider:
+          $ref: "#/components/schemas/FlowEventsSourceProvider"
+        status:
+          $ref: "#/components/schemas/FlowEventsSourceStatus"
+        fallbackUsed:
+          type: boolean
+        attemptedProviders:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowDataProvider"
+        errorMessage:
+          type: [string, "null"]
+        fetchedAt:
+          type: string
+          format: date-time
+      required:
+        - provider
+        - status
+        - fallbackUsed
+        - attemptedProviders
+        - errorMessage
+        - fetchedAt
 
     BrokerConnectionsResponse:
       type: object
@@ -2950,6 +3136,239 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/FlowEvent"
+        source:
+          $ref: "#/components/schemas/FlowEventsSource"
+      required:
+        - events
+        - source
+
+    SignalMonitorDirection:
+      type: string
+      enum: [buy, sell]
+
+    SignalMonitorSymbolStatus:
+      type: string
+      enum: [ok, stale, unavailable, error, unknown]
+
+    SignalMonitorProfile:
+      type: object
+      properties:
+        id:
+          type: string
+        environment:
+          $ref: "#/components/schemas/EnvironmentMode"
+        enabled:
+          type: boolean
+        watchlistId:
+          type: [string, "null"]
+        timeframe:
+          $ref: "#/components/schemas/SignalMonitorTimeframe"
+        rayReplicaSettings:
+          $ref: "#/components/schemas/JsonObject"
+        freshWindowBars:
+          type: integer
+        pollIntervalSeconds:
+          type: integer
+        maxSymbols:
+          type: integer
+        evaluationConcurrency:
+          type: integer
+        lastEvaluatedAt:
+          type: [string, "null"]
+          format: date-time
+        lastError:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - environment
+        - enabled
+        - watchlistId
+        - timeframe
+        - rayReplicaSettings
+        - freshWindowBars
+        - pollIntervalSeconds
+        - maxSymbols
+        - evaluationConcurrency
+        - lastEvaluatedAt
+        - lastError
+        - createdAt
+        - updatedAt
+
+    UpdateSignalMonitorProfileRequest:
+      type: object
+      properties:
+        environment:
+          $ref: "#/components/schemas/EnvironmentMode"
+        enabled:
+          type: boolean
+        watchlistId:
+          type: [string, "null"]
+        timeframe:
+          $ref: "#/components/schemas/SignalMonitorTimeframe"
+        rayReplicaSettings:
+          $ref: "#/components/schemas/JsonObject"
+        freshWindowBars:
+          type: integer
+          minimum: 1
+          maximum: 20
+        pollIntervalSeconds:
+          type: integer
+          minimum: 15
+          maximum: 3600
+        maxSymbols:
+          type: integer
+          minimum: 1
+          maximum: 250
+        evaluationConcurrency:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    EvaluateSignalMonitorRequest:
+      type: object
+      properties:
+        environment:
+          $ref: "#/components/schemas/EnvironmentMode"
+        mode:
+          type: string
+          enum: [hydrate, incremental]
+          default: incremental
+        watchlistId:
+          type: [string, "null"]
+
+    SignalMonitorSymbolState:
+      type: object
+      properties:
+        id:
+          type: string
+        profileId:
+          type: string
+        symbol:
+          type: string
+        timeframe:
+          $ref: "#/components/schemas/SignalMonitorTimeframe"
+        currentSignalDirection:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorDirection"
+            - type: "null"
+        currentSignalAt:
+          type: [string, "null"]
+          format: date-time
+        currentSignalPrice:
+          type: [number, "null"]
+        latestBarAt:
+          type: [string, "null"]
+          format: date-time
+        barsSinceSignal:
+          type: [integer, "null"]
+        fresh:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/SignalMonitorSymbolStatus"
+        active:
+          type: boolean
+        lastEvaluatedAt:
+          type: [string, "null"]
+          format: date-time
+        lastError:
+          type: [string, "null"]
+      required:
+        - id
+        - profileId
+        - symbol
+        - timeframe
+        - currentSignalDirection
+        - currentSignalAt
+        - currentSignalPrice
+        - latestBarAt
+        - barsSinceSignal
+        - fresh
+        - status
+        - active
+        - lastEvaluatedAt
+        - lastError
+
+    SignalMonitorEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        profileId:
+          type: string
+        environment:
+          $ref: "#/components/schemas/EnvironmentMode"
+        symbol:
+          type: string
+        timeframe:
+          $ref: "#/components/schemas/SignalMonitorTimeframe"
+        direction:
+          $ref: "#/components/schemas/SignalMonitorDirection"
+        signalAt:
+          type: string
+          format: date-time
+        signalPrice:
+          type: [number, "null"]
+        close:
+          type: [number, "null"]
+        emittedAt:
+          type: string
+          format: date-time
+        source:
+          type: string
+        payload:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - id
+        - profileId
+        - environment
+        - symbol
+        - timeframe
+        - direction
+        - signalAt
+        - signalPrice
+        - close
+        - emittedAt
+        - source
+        - payload
+
+    SignalMonitorStateResponse:
+      type: object
+      properties:
+        profile:
+          $ref: "#/components/schemas/SignalMonitorProfile"
+        states:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorSymbolState"
+        evaluatedAt:
+          type: string
+          format: date-time
+        truncated:
+          type: boolean
+        skippedSymbols:
+          type: array
+          items:
+            type: string
+      required:
+        - profile
+        - states
+        - evaluatedAt
+        - truncated
+        - skippedSymbols
+
+    SignalMonitorEventsResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorEvent"
       required:
         - events
 

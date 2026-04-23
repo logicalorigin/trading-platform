@@ -21,6 +21,10 @@ export interface IbkrBridgeHealth {
   lastTickleAt: Date | null;
   /** @nullable */
   lastError: string | null;
+  /** @nullable */
+  lastRecoveryAttemptAt: Date | null;
+  /** @nullable */
+  lastRecoveryError: string | null;
   updatedAt: Date;
   transport: IbkrBridgeHealthTransport;
   /** @nullable */

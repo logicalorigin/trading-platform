@@ -65,6 +65,8 @@ export class IbkrBridgeService {
         accounts: [],
         lastTickleAt: null,
         lastError: null,
+        lastRecoveryAttemptAt: null,
+        lastRecoveryError: null,
         updatedAt: new Date(),
         transport: "client_portal",
         connectionTarget: null,
@@ -162,6 +164,8 @@ export class IbkrBridgeService {
 
   submitRawOrders(input: {
     accountId?: string | null;
+    mode?: RuntimeMode | null;
+    confirm?: boolean | null;
     orders: Record<string, unknown>[];
   }): Promise<Record<string, unknown>> {
     return this.ensureProvider().submitRawOrders(input);
@@ -172,6 +176,7 @@ export class IbkrBridgeService {
     orderId: string;
     order: Record<string, unknown>;
     mode: RuntimeMode;
+    confirm?: boolean | null;
   }): Promise<ReplaceOrderSnapshot> {
     return this.ensureProvider().replaceOrder(input);
   }
@@ -179,6 +184,7 @@ export class IbkrBridgeService {
   cancelOrder(input: {
     accountId: string;
     orderId: string;
+    confirm?: boolean | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {

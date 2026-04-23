@@ -41,6 +41,7 @@ import type {
   CreateBacktestRunRequest,
   CreateBacktestSweepRequest,
   CreatePineScriptRequest,
+  EvaluateSignalMonitorRequest,
   ExecutionEventsResponse,
   FlowEventsResponse,
   GetBacktestRunChartParams,
@@ -55,6 +56,8 @@ import type {
   GetResearchSnapshotsParams,
   GetResearchTranscriptParams,
   GetResearchTranscriptsParams,
+  GetSignalMonitorProfileParams,
+  GetSignalMonitorStateParams,
   HealthStatus,
   ListAccountsParams,
   ListAlgoDeploymentsParams,
@@ -63,6 +66,7 @@ import type {
   ListFlowEventsParams,
   ListOrdersParams,
   ListPositionsParams,
+  ListSignalMonitorEventsParams,
   NewsResponse,
   OptionChainResponse,
   Order,
@@ -85,6 +89,9 @@ import type {
   ResearchTranscriptsResponse,
   SearchUniverseTickersParams,
   SessionInfo,
+  SignalMonitorEventsResponse,
+  SignalMonitorProfile,
+  SignalMonitorStateResponse,
   SseStream,
   StreamAccountsParams,
   StreamOptionChainsParams,
@@ -95,6 +102,7 @@ import type {
   SubmitIbkrOrdersResponse,
   UniverseTickersResponse,
   UpdatePineScriptRequest,
+  UpdateSignalMonitorProfileRequest,
   WatchlistsResponse,
 } from "./api.schemas";
 
@@ -2167,6 +2175,492 @@ export function useListFlowEvents<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListFlowEventsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the RayReplica monitor profile for an environment
+ */
+export const getGetSignalMonitorProfileUrl = (
+  params?: GetSignalMonitorProfileParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/signal-monitor/profile?${stringifiedParams}`
+    : `/api/signal-monitor/profile`;
+};
+
+export const getSignalMonitorProfile = async (
+  params?: GetSignalMonitorProfileParams,
+  options?: RequestInit,
+): Promise<SignalMonitorProfile> => {
+  return customFetch<SignalMonitorProfile>(
+    getGetSignalMonitorProfileUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSignalMonitorProfileQueryKey = (
+  params?: GetSignalMonitorProfileParams,
+) => {
+  return [`/api/signal-monitor/profile`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetSignalMonitorProfileQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSignalMonitorProfile>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSignalMonitorProfileParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSignalMonitorProfile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSignalMonitorProfileQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSignalMonitorProfile>>
+  > = ({ signal }) =>
+    getSignalMonitorProfile(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSignalMonitorProfile>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSignalMonitorProfileQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSignalMonitorProfile>>
+>;
+export type GetSignalMonitorProfileQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the RayReplica monitor profile for an environment
+ */
+
+export function useGetSignalMonitorProfile<
+  TData = Awaited<ReturnType<typeof getSignalMonitorProfile>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSignalMonitorProfileParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSignalMonitorProfile>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSignalMonitorProfileQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update the RayReplica monitor profile for an environment
+ */
+export const getUpdateSignalMonitorProfileUrl = () => {
+  return `/api/signal-monitor/profile`;
+};
+
+export const updateSignalMonitorProfile = async (
+  updateSignalMonitorProfileRequest: UpdateSignalMonitorProfileRequest,
+  options?: RequestInit,
+): Promise<SignalMonitorProfile> => {
+  return customFetch<SignalMonitorProfile>(getUpdateSignalMonitorProfileUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateSignalMonitorProfileRequest),
+  });
+};
+
+export const getUpdateSignalMonitorProfileMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSignalMonitorProfile>>,
+    TError,
+    { data: BodyType<UpdateSignalMonitorProfileRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSignalMonitorProfile>>,
+  TError,
+  { data: BodyType<UpdateSignalMonitorProfileRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateSignalMonitorProfile"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSignalMonitorProfile>>,
+    { data: BodyType<UpdateSignalMonitorProfileRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateSignalMonitorProfile(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSignalMonitorProfileMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSignalMonitorProfile>>
+>;
+export type UpdateSignalMonitorProfileMutationBody =
+  BodyType<UpdateSignalMonitorProfileRequest>;
+export type UpdateSignalMonitorProfileMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update the RayReplica monitor profile for an environment
+ */
+export const useUpdateSignalMonitorProfile = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSignalMonitorProfile>>,
+    TError,
+    { data: BodyType<UpdateSignalMonitorProfileRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSignalMonitorProfile>>,
+  TError,
+  { data: BodyType<UpdateSignalMonitorProfileRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateSignalMonitorProfileMutationOptions(options));
+};
+
+/**
+ * @summary Evaluate the RayReplica monitor profile
+ */
+export const getEvaluateSignalMonitorUrl = () => {
+  return `/api/signal-monitor/evaluate`;
+};
+
+export const evaluateSignalMonitor = async (
+  evaluateSignalMonitorRequest?: EvaluateSignalMonitorRequest,
+  options?: RequestInit,
+): Promise<SignalMonitorStateResponse> => {
+  return customFetch<SignalMonitorStateResponse>(
+    getEvaluateSignalMonitorUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(evaluateSignalMonitorRequest),
+    },
+  );
+};
+
+export const getEvaluateSignalMonitorMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof evaluateSignalMonitor>>,
+    TError,
+    { data: BodyType<EvaluateSignalMonitorRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof evaluateSignalMonitor>>,
+  TError,
+  { data: BodyType<EvaluateSignalMonitorRequest> },
+  TContext
+> => {
+  const mutationKey = ["evaluateSignalMonitor"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof evaluateSignalMonitor>>,
+    { data: BodyType<EvaluateSignalMonitorRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return evaluateSignalMonitor(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EvaluateSignalMonitorMutationResult = NonNullable<
+  Awaited<ReturnType<typeof evaluateSignalMonitor>>
+>;
+export type EvaluateSignalMonitorMutationBody =
+  BodyType<EvaluateSignalMonitorRequest>;
+export type EvaluateSignalMonitorMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Evaluate the RayReplica monitor profile
+ */
+export const useEvaluateSignalMonitor = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof evaluateSignalMonitor>>,
+    TError,
+    { data: BodyType<EvaluateSignalMonitorRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof evaluateSignalMonitor>>,
+  TError,
+  { data: BodyType<EvaluateSignalMonitorRequest> },
+  TContext
+> => {
+  return useMutation(getEvaluateSignalMonitorMutationOptions(options));
+};
+
+/**
+ * @summary List current RayReplica signal states
+ */
+export const getGetSignalMonitorStateUrl = (
+  params?: GetSignalMonitorStateParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/signal-monitor/state?${stringifiedParams}`
+    : `/api/signal-monitor/state`;
+};
+
+export const getSignalMonitorState = async (
+  params?: GetSignalMonitorStateParams,
+  options?: RequestInit,
+): Promise<SignalMonitorStateResponse> => {
+  return customFetch<SignalMonitorStateResponse>(
+    getGetSignalMonitorStateUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSignalMonitorStateQueryKey = (
+  params?: GetSignalMonitorStateParams,
+) => {
+  return [`/api/signal-monitor/state`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetSignalMonitorStateQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSignalMonitorState>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSignalMonitorStateParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSignalMonitorState>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSignalMonitorStateQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSignalMonitorState>>
+  > = ({ signal }) =>
+    getSignalMonitorState(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSignalMonitorState>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSignalMonitorStateQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSignalMonitorState>>
+>;
+export type GetSignalMonitorStateQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List current RayReplica signal states
+ */
+
+export function useGetSignalMonitorState<
+  TData = Awaited<ReturnType<typeof getSignalMonitorState>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSignalMonitorStateParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSignalMonitorState>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSignalMonitorStateQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List RayReplica signal monitor events
+ */
+export const getListSignalMonitorEventsUrl = (
+  params?: ListSignalMonitorEventsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/signal-monitor/events?${stringifiedParams}`
+    : `/api/signal-monitor/events`;
+};
+
+export const listSignalMonitorEvents = async (
+  params?: ListSignalMonitorEventsParams,
+  options?: RequestInit,
+): Promise<SignalMonitorEventsResponse> => {
+  return customFetch<SignalMonitorEventsResponse>(
+    getListSignalMonitorEventsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListSignalMonitorEventsQueryKey = (
+  params?: ListSignalMonitorEventsParams,
+) => {
+  return [`/api/signal-monitor/events`, ...(params ? [params] : [])] as const;
+};
+
+export const getListSignalMonitorEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSignalMonitorEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSignalMonitorEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSignalMonitorEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListSignalMonitorEventsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listSignalMonitorEvents>>
+  > = ({ signal }) =>
+    listSignalMonitorEvents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSignalMonitorEvents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSignalMonitorEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSignalMonitorEvents>>
+>;
+export type ListSignalMonitorEventsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List RayReplica signal monitor events
+ */
+
+export function useListSignalMonitorEvents<
+  TData = Awaited<ReturnType<typeof listSignalMonitorEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSignalMonitorEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSignalMonitorEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSignalMonitorEventsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

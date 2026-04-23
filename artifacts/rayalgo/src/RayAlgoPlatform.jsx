@@ -29,15 +29,22 @@ import * as d3 from "d3";
 import {
   getBars as getBarsRequest,
   getOptionChain as getOptionChainRequest,
+  getGetSignalMonitorProfileQueryKey,
+  getGetSignalMonitorStateQueryKey,
+  getListSignalMonitorEventsQueryKey,
   listFlowEvents as listFlowEventsRequest,
   useCancelOrder,
+  useEvaluateSignalMonitor,
   useGetNews,
   useGetQuoteSnapshots,
   useGetResearchEarningsCalendar,
+  useGetSignalMonitorProfile,
+  useGetSignalMonitorState,
   useListAlgoDeployments,
   useListBacktestDraftStrategies,
   useListExecutionEvents,
   useListOrders,
+  useListSignalMonitorEvents,
   useSearchUniverseTickers,
   useCreateAlgoDeployment,
   useEnableAlgoDeployment,
@@ -49,6 +56,7 @@ import {
   usePlaceOrder,
   usePreviewOrder,
   useReplaceOrder,
+  useUpdateSignalMonitorProfile,
 } from "@workspace/api-client-react";
 import {
   ResearchSparkline,
@@ -1802,6 +1810,9 @@ const QUERY_DEFAULTS = {
   refetchOnMount: true,
 };
 
+const clampNumber = (value, min, max) =>
+  Math.min(max, Math.max(min, value));
+
 const buildApiUrl = (path, params = {}) => {
   const origin =
     typeof window !== "undefined" && window.location?.origin
@@ -2047,6 +2058,10 @@ const bridgeRuntimeMessage = (session) => {
     return `${bridgeTransportLabel(session)} is reachable, but the broker session still needs login/authorization.`;
   }
 
+  if (session?.ibkrBridge?.lastRecoveryError) {
+    return session.ibkrBridge.lastRecoveryError;
+  }
+
   if (session?.ibkrBridge?.lastError) {
     return session.ibkrBridge.lastError;
   }
@@ -2227,16 +2242,27 @@ const formatSessionBucketLabel = (minutes) => {
   return `${hour}:${String(minute).padStart(2, "0")}`;
 };
 
+const flowProviderColor = (provider) =>
+  provider === "ibkr" ? T.accent : provider === "polygon" ? T.cyan : T.textDim;
+
+const flowEventSourceLabel = (event) => {
+  const provider = (event.provider || "unknown").toUpperCase();
+  const basis = event.basis === "trade" ? "TRADE" : "SNAPSHOT";
+  return `${provider} ${basis}`;
+};
+
 const deriveFlowType = (event) => {
   const conditions = (event.tradeConditions || []).map((condition) =>
     String(condition).toLowerCase(),
   );
 
-  // An "unusual" tag (volume > open interest) trumps the heuristic labels —
-  // it's the strongest single signal in the print and what we want to flag in
-  // the activity feed.
+  // An "unusual" tag (volume > open interest) trumps the heuristic labels.
+  // It is the strongest single signal in the event and what we want to flag.
   if (event.isUnusual) {
     return "UNUSUAL";
+  }
+  if (event.basis === "snapshot") {
+    return event.premium >= 500000 ? "XL" : "ACTIVE";
   }
   if (
     event.premium >= 500000 ||
@@ -2261,7 +2287,7 @@ const deriveFlowScore = (event, dte) => {
   score += event.sentiment === "neutral" ? 0 : 10;
   score -= Math.min(10, dte / 7);
   if (event.isUnusual) {
-    // Boost unusual prints noticeably so they sort to the top of any
+    // Boost unusual events noticeably so they sort to the top of any
     // score-based view, with extra credit for higher volume/OI ratios.
     score += 18 + Math.min(12, (event.unusualScore || 0) * 4);
   }
@@ -2277,6 +2303,9 @@ const mapFlowEventToUi = (event) => {
     id: event.id,
     time: formatEtTime(event.occurredAt),
     ticker: event.underlying,
+    provider: event.provider || "unknown",
+    basis: event.basis || "trade",
+    sourceLabel: flowEventSourceLabel(event),
     side,
     contract: `${event.underlying} ${event.strike}${cp} ${formatExpirationLabel(event.expirationDate)}`,
     strike: event.strike,
@@ -2326,24 +2355,49 @@ const useLiveMarketFlow = (symbols = [], { limit = 16 } = {}) => {
         ),
       );
 
-      return results.flatMap((result) =>
-        result.status === "fulfilled" ? result.value.events || [] : [],
-      );
+      const responses = [];
+      const failures = [];
+
+      results.forEach((result, index) => {
+        const symbol = liveSymbols[index];
+        if (result.status === "fulfilled") {
+          responses.push({
+            symbol,
+            events: result.value.events || [],
+            source: result.value.source || null,
+          });
+          return;
+        }
+
+        failures.push({
+          symbol,
+          error:
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason ?? "Flow request failed"),
+        });
+      });
+
+      return {
+        responses,
+        failures,
+        events: responses.flatMap((response) => response.events || []),
+      };
     },
     staleTime: 10_000,
     refetchInterval: 10_000,
     retry: false,
   });
 
-  const hasLiveFlow = (flowQuery.data?.length || 0) > 0;
+  const hasLiveFlow = (flowQuery.data?.events?.length || 0) > 0;
   const flowEvents = useMemo(() => {
     if (!hasLiveFlow) return [];
-    return (flowQuery.data || [])
+    return (flowQuery.data?.events || [])
       .map(mapFlowEventToUi)
       .sort((left, right) => {
-        // Float volume-vs-OI "unusual" prints to the top so the notifications
+        // Float volume-vs-OI "unusual" events to the top so the notifications
         // feed and unusual-options panel surface them ahead of routine high-
-        // premium prints, then fall back to premium for ranking within bands.
+        // premium events, then fall back to premium for ranking within bands.
         if (left.isUnusual !== right.isUnusual) {
           return left.isUnusual ? -1 : 1;
         }
@@ -2360,10 +2414,58 @@ const useLiveMarketFlow = (symbols = [], { limit = 16 } = {}) => {
       : flowQuery.isError
         ? "offline"
         : "empty";
+  const providerSummary = useMemo(() => {
+    const responses = flowQuery.data?.responses || [];
+    const failures = flowQuery.data?.failures || [];
+    const events = flowQuery.data?.events || [];
+    const providerSet = new Set(events.map((event) => event.provider).filter(Boolean));
+    const fallbackUsed = responses.some((response) =>
+      Boolean(response.source?.fallbackUsed),
+    );
+    const erroredSource =
+      responses.find((response) => response.source?.status === "error")?.source ||
+      null;
+    const sourcesBySymbol = Object.fromEntries(
+      responses.map((response) => [response.symbol, response.source]),
+    );
+
+    let label = "No IBKR flow";
+    let color = T.textMuted;
+    if (flowQuery.isPending) {
+      label = "Loading flow";
+      color = T.accent;
+    } else if (providerSet.has("ibkr") && providerSet.has("polygon")) {
+      label = "Mixed sources";
+      color = T.amber;
+    } else if (providerSet.has("ibkr")) {
+      label = "IBKR snapshot live";
+      color = T.accent;
+    } else if (providerSet.has("polygon")) {
+      label = "Polygon trade fallback";
+      color = T.cyan;
+    } else if (failures.length || erroredSource) {
+      label = "Flow source error";
+      color = T.red;
+    } else if (fallbackUsed) {
+      label = "Fallback empty";
+      color = T.textMuted;
+    }
+
+    return {
+      label,
+      color,
+      fallbackUsed,
+      sourcesBySymbol,
+      failures,
+      erroredSource,
+      providers: Array.from(providerSet),
+    };
+  }, [flowQuery.data, flowQuery.isPending]);
 
   return {
     hasLiveFlow,
     flowStatus,
+    providerSummary,
     flowEvents,
     flowTide: buildFlowTideFromEvents(flowEvents),
     tickerFlow: buildTickerFlowFromEvents(flowEvents),
@@ -2980,6 +3082,8 @@ const Watchlist = ({
   onAddSymbol,
   onMoveSymbol,
   onRemoveSymbol,
+  onSignalAction,
+  signalStatesBySymbol = {},
   busy = false,
 }) => {
   const toast = useToast();
@@ -3503,6 +3607,13 @@ const Watchlist = ({
           const itemIndex = items.findIndex((item) => item.id === w.id);
           const canMoveUp = itemIndex > 0;
           const canMoveDown = itemIndex >= 0 && itemIndex < items.length - 1;
+          const signalState = signalStatesBySymbol[w.sym] || null;
+          const signalDirection = signalState?.currentSignalDirection;
+          const hasFreshSignal =
+            signalState?.fresh &&
+            signalState?.status === "ok" &&
+            (signalDirection === "buy" || signalDirection === "sell");
+          const signalColor = signalDirection === "buy" ? T.green : T.red;
           return (
             <div
               key={w.id || w.sym}
@@ -3530,13 +3641,51 @@ const Watchlist = ({
               <div style={{ minWidth: 0 }}>
                 <div
                   style={{
-                    fontSize: fs(12),
-                    fontWeight: 700,
-                    fontFamily: T.mono,
-                    color: T.text,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: sp(4),
+                    minWidth: 0,
                   }}
                 >
-                  {w.sym}
+                  <span
+                    style={{
+                      fontSize: fs(12),
+                      fontWeight: 700,
+                      fontFamily: T.mono,
+                      color: T.text,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {w.sym}
+                  </span>
+                  {hasFreshSignal ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSignalAction?.(w.sym, signalState);
+                      }}
+                      title={`${signalDirection.toUpperCase()} signal · ${signalState.timeframe} · ${signalState.barsSinceSignal ?? 0} bars ago`}
+                      style={{
+                        border: `1px solid ${signalColor}`,
+                        background: `${signalColor}18`,
+                        color: signalColor,
+                        cursor: "pointer",
+                        fontFamily: T.mono,
+                        fontSize: fs(7),
+                        fontWeight: 900,
+                        letterSpacing: "0.08em",
+                        lineHeight: 1,
+                        padding: sp("2px 3px"),
+                        borderRadius: 0,
+                      }}
+                    >
+                      {signalDirection.toUpperCase()}
+                    </button>
+                  ) : null}
                 </div>
                 <div
                   style={{
@@ -5987,11 +6136,20 @@ const MultiChartGrid = ({
 const MarketActivityPanel = ({
   notifications = [],
   highlightedUnusualFlow = [],
+  signalEvents = [],
+  signalStates = [],
+  signalMonitorProfile = null,
+  signalMonitorPending = false,
   newsItems = [],
   calendarItems = [],
   onSymClick,
+  onSignalAction,
+  onScanNow,
+  onToggleMonitor,
+  onChangeMonitorTimeframe,
 }) => {
-  const feedItems = useMemo(
+  const [activityFilter, setActivityFilter] = useState("all");
+  const feedItemsRaw = useMemo(
     () =>
       [
         ...notifications.map((item) => ({
@@ -6004,14 +6162,29 @@ const MarketActivityPanel = ({
           kind: "alert",
           priority: 0,
         })),
-        ...highlightedUnusualFlow.slice(0, 5).map((event) => {
+        ...signalEvents.slice(0, 10).map((event) => {
+          const direction = String(event.direction || "").toUpperCase();
+          const isBuy = event.direction === "buy";
+          return {
+            id: `signal_${event.id}`,
+            title: `${direction} signal · ${event.symbol}`,
+            detail: `${event.timeframe} RayReplica · ${formatQuotePrice(event.signalPrice ?? event.close)}`,
+            meta: formatRelativeTimeShort(event.signalAt),
+            color: isBuy ? T.green : T.red,
+            symbol: event.symbol,
+            kind: "signal",
+            priority: 0.25,
+            signalEvent: event,
+          };
+        }),
+        ...highlightedUnusualFlow.slice(0, 12).map((event) => {
           const ratioLabel =
             event.isUnusual && event.unusualScore > 0
               ? ` · ${event.unusualScore.toFixed(event.unusualScore >= 10 ? 0 : 1)}× OI`
               : "";
           return {
             id: `flow_${event.ticker}_${event.contract}_${event.occurredAt}`,
-            title: `${event.isUnusual ? "⚡ " : ""}${event.ticker} ${event.contract}`,
+            title: `${event.isUnusual ? "UOA · " : ""}${event.ticker} ${event.contract}`,
             detail: `${event.side} ${event.type} · ${fmtM(event.premium)}${ratioLabel}`,
             meta: formatRelativeTimeShort(event.occurredAt),
             color: event.isUnusual
@@ -6021,12 +6194,12 @@ const MarketActivityPanel = ({
                 : T.red,
             symbol: event.ticker,
             kind: "flow",
-            // Bubble unusual prints above generic flow but still under
+            // Bubble unusual events above generic flow but still under
             // explicit portfolio risk/profit alerts.
             priority: event.isUnusual ? 0.5 : 1,
           };
         }),
-        ...newsItems.slice(0, 4).map((item) => ({
+        ...newsItems.slice(0, 6).map((item) => ({
           id: `news_${item.id}`,
           title: item.text,
           detail: item.publisher || item.tag,
@@ -6037,7 +6210,7 @@ const MarketActivityPanel = ({
           kind: "news",
           priority: 2,
         })),
-        ...calendarItems.slice(0, 4).map((item) => ({
+        ...calendarItems.slice(0, 6).map((item) => ({
           id: `calendar_${item.id}`,
           title: item.label,
           detail: item.date,
@@ -6049,15 +6222,84 @@ const MarketActivityPanel = ({
         })),
       ]
         .sort((left, right) => left.priority - right.priority)
-        .slice(0, 10),
-    [calendarItems, highlightedUnusualFlow, newsItems, notifications],
+        .slice(0, 30),
+    [
+      calendarItems,
+      highlightedUnusualFlow,
+      newsItems,
+      notifications,
+      signalEvents,
+    ],
   );
+  const filterOptions = useMemo(
+    () => [
+      { id: "all", label: "All", count: feedItemsRaw.length },
+      {
+        id: "signal",
+        label: "Signals",
+        count: feedItemsRaw.filter((item) => item.kind === "signal").length,
+      },
+      {
+        id: "flow",
+        label: "UOA",
+        count: feedItemsRaw.filter((item) => item.kind === "flow").length,
+      },
+      {
+        id: "alert",
+        label: "Alerts",
+        count: feedItemsRaw.filter((item) => item.kind === "alert").length,
+      },
+      {
+        id: "news",
+        label: "News",
+        count: feedItemsRaw.filter((item) => item.kind === "news").length,
+      },
+      {
+        id: "calendar",
+        label: "Calendar",
+        count: feedItemsRaw.filter((item) => item.kind === "calendar").length,
+      },
+    ],
+    [feedItemsRaw],
+  );
+  const feedItems = useMemo(
+    () =>
+      feedItemsRaw
+        .filter((item) => activityFilter === "all" || item.kind === activityFilter)
+        .slice(0, 12),
+    [activityFilter, feedItemsRaw],
+  );
+  const freshSignalCount = signalStates.filter(
+    (state) =>
+      state?.fresh &&
+      state?.status === "ok" &&
+      (state?.currentSignalDirection === "buy" ||
+        state?.currentSignalDirection === "sell"),
+  ).length;
+  const monitorMeta = signalMonitorPending
+    ? "SCANNING"
+    : signalMonitorProfile?.enabled
+      ? `${freshSignalCount} FRESH`
+      : "PAUSED";
+
+  useEffect(() => {
+    if (
+      activityFilter === "all" ||
+      filterOptions.some(
+        (option) => option.id === activityFilter && option.count > 0,
+      )
+    ) {
+      return;
+    }
+    setActivityFilter("all");
+  }, [activityFilter, filterOptions]);
 
   return (
     <Card
       style={{
         padding: "8px 10px",
         minHeight: dim(340),
+        height: "100%",
         display: "flex",
         flexDirection: "column",
       }}
@@ -6067,20 +6309,133 @@ const MarketActivityPanel = ({
           <span
             style={{
               fontSize: fs(8),
-              color: T.textDim,
+              color: signalMonitorPending ? T.amber : T.textDim,
               fontFamily: T.sans,
               fontWeight: 700,
               letterSpacing: "0.08em",
             }}
           >
-            LIVE FEED
+            {monitorMeta}
           </span>
         }
       >
         Activity & Notifications
       </CardTitle>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto auto",
+          gap: sp(4),
+          marginBottom: sp(6),
+          alignItems: "center",
+        }}
+      >
+        <button
+          type="button"
+          onClick={onToggleMonitor}
+          style={{
+            border: `1px solid ${signalMonitorProfile?.enabled ? T.green : T.border}`,
+            background: signalMonitorProfile?.enabled ? `${T.green}14` : T.bg2,
+            color: signalMonitorProfile?.enabled ? T.green : T.textDim,
+            cursor: "pointer",
+            fontFamily: T.mono,
+            fontSize: fs(8),
+            fontWeight: 900,
+            letterSpacing: "0.08em",
+            padding: sp("5px 6px"),
+            borderRadius: 0,
+            textAlign: "left",
+          }}
+        >
+          {signalMonitorProfile?.enabled ? "MONITOR ON" : "MONITOR OFF"}
+        </button>
+        <select
+          value={signalMonitorProfile?.timeframe || "15m"}
+          onChange={(event) => onChangeMonitorTimeframe?.(event.target.value)}
+          style={{
+            background: T.bg2,
+            border: `1px solid ${T.border}`,
+            color: T.textSec,
+            fontFamily: T.mono,
+            fontSize: fs(8),
+            fontWeight: 800,
+            padding: sp("5px 4px"),
+            borderRadius: 0,
+            outline: "none",
+          }}
+        >
+          {["1m", "5m", "15m", "1h", "1d"].map((timeframe) => (
+            <option key={timeframe} value={timeframe}>
+              {timeframe.toUpperCase()}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={onScanNow}
+          disabled={signalMonitorPending}
+          style={{
+            border: `1px solid ${signalMonitorPending ? T.amber : T.accent}`,
+            background: signalMonitorPending ? `${T.amber}14` : T.accentDim,
+            color: signalMonitorPending ? T.amber : T.accent,
+            cursor: signalMonitorPending ? "wait" : "pointer",
+            fontFamily: T.mono,
+            fontSize: fs(8),
+            fontWeight: 900,
+            letterSpacing: "0.08em",
+            padding: sp("5px 7px"),
+            borderRadius: 0,
+          }}
+        >
+          {signalMonitorPending ? "SCAN..." : "SCAN"}
+        </button>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: sp(4),
+          marginBottom: sp(6),
+        }}
+      >
+        {filterOptions.map((option) => {
+          const active = activityFilter === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setActivityFilter(option.id)}
+              style={{
+                border: `1px solid ${active ? T.accent : T.border}`,
+                background: active ? T.accentDim : T.bg2,
+                color: active ? T.text : T.textDim,
+                cursor: "pointer",
+                fontFamily: T.mono,
+                fontSize: fs(8),
+                fontWeight: 800,
+                letterSpacing: "0.06em",
+                padding: sp("4px 6px"),
+                borderRadius: 0,
+              }}
+            >
+              {option.label} {option.count}
+            </button>
+          );
+        })}
+      </div>
+
       {feedItems.length ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(4),
+            overflowY: "auto",
+            minHeight: 0,
+          }}
+        >
           {feedItems.map((item) => (
             <button
               key={item.id}
@@ -6088,6 +6443,10 @@ const MarketActivityPanel = ({
               onClick={() => {
                 if (item.articleUrl && typeof window !== "undefined") {
                   window.open(item.articleUrl, "_blank", "noopener,noreferrer");
+                  return;
+                }
+                if (item.kind === "signal" && item.symbol) {
+                  onSignalAction?.(item.symbol, item.signalEvent);
                   return;
                 }
                 if (item.symbol && item.kind !== "news") {
@@ -6169,8 +6528,8 @@ const MarketActivityPanel = ({
         </div>
       ) : (
         <DataUnavailableState
-          title="No live market activity"
-          detail="This panel fills with portfolio alerts, unusual flow, provider-backed news, and earnings events as data arrives."
+          title="No matching market activity"
+          detail="Use the filters above to switch between RayReplica signals, unusual options activity, alerts, news, and calendar events."
         />
       )}
     </Card>
@@ -6184,11 +6543,46 @@ const MarketScreen = ({
   researchConfigured = false,
   stockAggregateStreamingEnabled = false,
   marketNotifications = [],
+  signalEvents = [],
+  signalStates = [],
+  signalMonitorProfile = null,
+  signalMonitorPending = false,
+  onSignalAction,
+  onScanNow,
+  onToggleMonitor,
+  onChangeMonitorTimeframe,
 }) => {
   const [sectorTf, setSectorTf] = useState(_initialState.marketSectorTf || "1d");
+  const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
+    Number.isFinite(_initialState.marketActivityPanelWidth)
+      ? clampNumber(_initialState.marketActivityPanelWidth, 320, 720)
+      : 420,
+  );
   useEffect(() => {
     persistState({ marketSectorTf: sectorTf });
   }, [sectorTf]);
+  useEffect(() => {
+    persistState({ marketActivityPanelWidth: activityPanelWidth });
+  }, [activityPanelWidth]);
+  const handleStartActivityPanelResize = useCallback(
+    (event) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = activityPanelWidth;
+      const handlePointerMove = (moveEvent) => {
+        const delta = moveEvent.clientX - startX;
+        setActivityPanelWidth(clampNumber(startWidth - delta, 320, 720));
+      };
+      const handlePointerUp = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+    },
+    [activityPanelWidth],
+  );
   const { putCall, sectorFlow, flowStatus, flowEvents, flowTide } =
     useLiveMarketFlow(symbols);
   const calendarWindow = useMemo(() => {
@@ -6256,7 +6650,7 @@ const MarketScreen = ({
     0,
   );
   const highlightedUnusualFlow = useMemo(
-    () => flowEvents.slice(0, 8),
+    () => flowEvents.slice(0, 12),
     [flowEvents],
   );
   const newsItems = useMemo(() => {
@@ -6349,7 +6743,7 @@ const MarketScreen = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1.45fr) minmax(320px, 0.85fr)",
+            gridTemplateColumns: `minmax(0, 1fr) 6px ${activityPanelWidth}px`,
             gap: 6,
             alignItems: "start",
           }}
@@ -6359,20 +6753,42 @@ const MarketScreen = ({
             onSymClick={onSymClick}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           />
+          <div
+            role="separator"
+            aria-label="Resize activity and notifications panel"
+            onPointerDown={handleStartActivityPanelResize}
+            title="Drag to resize activity panel"
+            style={{
+              alignSelf: "stretch",
+              minHeight: dim(340),
+              cursor: "col-resize",
+              background: `linear-gradient(180deg, transparent, ${T.borderLight}, transparent)`,
+              borderLeft: `1px solid ${T.border}55`,
+              borderRight: `1px solid ${T.border}55`,
+            }}
+          />
           <MarketActivityPanel
             notifications={marketNotifications}
             highlightedUnusualFlow={highlightedUnusualFlow}
+            signalEvents={signalEvents}
+            signalStates={signalStates}
+            signalMonitorProfile={signalMonitorProfile}
+            signalMonitorPending={signalMonitorPending}
             newsItems={newsItems}
             calendarItems={calendarItems}
             onSymClick={onSymClick}
+            onSignalAction={onSignalAction}
+            onScanNow={onScanNow}
+            onToggleMonitor={onToggleMonitor}
+            onChangeMonitorTimeframe={onChangeMonitorTimeframe}
           />
         </div>
 
-        {/* ── ROW 2: Selected ticker premium tide + unusual options activity ── */}
+        {/* ── ROW 2: Selected ticker premium tide ── */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.35fr 1fr",
+            gridTemplateColumns: "1fr",
             gap: 6,
           }}
         >
@@ -6474,12 +6890,12 @@ const MarketScreen = ({
             ) : (
               <DataUnavailableState
                 title={`No live flow for ${sym}`}
-                detail="Select another ticker or wait for new options prints."
+                detail="Select another ticker or wait for new options activity."
               />
             )}
           </Card>
 
-          <Card style={{ padding: "8px 10px" }}>
+          <Card style={{ display: "none" }}>
             <div
               style={{
                 display: "flex",
@@ -6508,13 +6924,13 @@ const MarketScreen = ({
                     marginTop: 1,
                   }}
                 >
-                  Highest premium prints across the tracked market universe
+                  Highest premium options activity across the tracked universe
                 </div>
               </div>
               <span
                 style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}
               >
-                {highlightedUnusualFlow.length} prints
+                {highlightedUnusualFlow.length} events
               </span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
@@ -7473,19 +7889,22 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   const cpColor = isCall ? T.green : T.red;
   const typeColor =
     evt.type === "SWEEP" ? T.amber : evt.type === "BLOCK" ? T.accent : T.purple;
+  const isSnapshotFlow = evt.basis === "snapshot";
   const voi =
     isFiniteNumber(evt.vol) && isFiniteNumber(evt.oi) && evt.oi > 0
       ? evt.vol / evt.oi
       : null;
   const sentimentScore = mapNewsSentimentToScore(evt.sentiment);
-  const sideRead =
-    evt.side === "BUY"
+  const sideRead = isSnapshotFlow
+    ? "Side inferred from bid/ask snapshot"
+    : evt.side === "BUY"
       ? "Buyer initiated"
       : evt.side === "SELL"
         ? "Seller initiated"
         : "Side unavailable";
-  const flowRead =
-    evt.type === "BLOCK"
+  const flowRead = isSnapshotFlow
+    ? "Snapshot-derived active contract"
+    : evt.type === "BLOCK"
       ? "Large negotiated block"
       : evt.type === "SWEEP"
         ? "Aggressive routed sweep"
@@ -7623,6 +8042,9 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           >
             {evt.type}
           </span>
+          <Badge color={flowProviderColor(evt.provider)}>
+            {evt.sourceLabel}
+          </Badge>
         </div>
         <span style={{ flex: 1 }} />
         <div
@@ -7689,7 +8111,7 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               kind: next ? "success" : "info",
               title: next ? "Alert set" : "Alert removed",
               body: next
-                ? `${evt.ticker} ${evt.strike}${evt.cp} · Notify on next big print (>$100K)`
+                ? `${evt.ticker} ${evt.strike}${evt.cp} · Notify on next big activity (>$100K)`
                 : `${evt.ticker} ${evt.strike}${evt.cp} · No longer watching this contract`,
             });
           }}
@@ -7867,7 +8289,7 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           >
             <DataUnavailableState
               title="No broker-backed contract chart here"
-              detail="The flow detail view no longer invents intraday contract prints or candles. Use Open in Trade to load the live broker contract chart and book data."
+              detail="The flow detail view no longer invents intraday contract tape or candles. Use Open in Trade to load the live broker contract chart and book data."
             />
           </div>
         </Card>
@@ -7876,7 +8298,7 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   );
 };
 
-const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
+const FlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
   // ── Saved scans persisted in localStorage ──
   const [savedScans, setSavedScans] = useState(
     _initialState.flowSavedScans || [],
@@ -7913,17 +8335,17 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
   const {
     hasLiveFlow,
     flowStatus,
+    providerSummary,
     flowEvents,
     flowTide,
     tickerFlow,
     flowClock,
-    sectorFlow,
     dteBuckets,
     marketOrderFlow,
   } = useLiveMarketFlow(symbols);
 
   // ── CLUSTER DETECTION ──
-  // Group prints by (ticker + strike + cp). Any group with 2+ prints = cluster.
+  // Group activity by (ticker + strike + cp). Any group with 2+ events = cluster.
   // We surface cluster size + total premium on each row that's part of a cluster.
   const clusters = useMemo(() => {
     const map = {};
@@ -7958,7 +8380,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
 
   // ── TOP CONTRACTS BY VOLUME, per ticker ──
   // For each ticker, group live flow events by (strike + cp), sum volume + premium, pick top 3.
-  // Clicking a contract chip opens the Contract Detail Drawer for the biggest print in that group.
+  // Clicking a contract chip opens the Contract Detail Drawer for the biggest event in that group.
   const topContractsByTicker = useMemo(() => {
     const byTicker = {};
     for (const e of flowEvents) {
@@ -8065,6 +8487,88 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
     filtered = [...filtered].sort((a, b) => b.score - a.score);
 
   const maxTickerPrem = Math.max(1, ...tickerFlow.map((t) => t.calls + t.puts));
+  const bridgeTone = bridgeRuntimeTone(session);
+  const ibkrLoginRequired =
+    Boolean(session?.configured?.ibkr) &&
+    !session?.ibkrBridge?.authenticated &&
+    !providerSummary.providers.includes("polygon");
+  const flowDisplayLabel =
+    !hasLiveFlow && ibkrLoginRequired
+      ? "IBKR login required"
+      : providerSummary.label === "IBKR snapshot live" &&
+          session?.ibkrBridge?.liveMarketDataAvailable === false
+        ? "IBKR delayed"
+        : providerSummary.label;
+  const flowDisplayColor =
+    !hasLiveFlow && ibkrLoginRequired
+      ? T.amber
+      : flowDisplayLabel === "IBKR delayed"
+        ? T.amber
+        : providerSummary.color;
+  const flowClockActiveBuckets = flowClock.filter((bucket) => bucket.count > 0);
+  const flowClockPeak =
+    flowClockActiveBuckets.reduce(
+      (best, bucket) =>
+        !best || bucket.count > best.count || bucket.prem > best.prem
+          ? bucket
+          : best,
+      null,
+    )?.time || MISSING_VALUE;
+  const flowClockAverage = Math.round(
+    flowEvents.length / Math.max(1, flowClock.length),
+  );
+  const emptyFlowDetail =
+    flowStatus === "loading"
+      ? "Waiting on current options activity snapshots for the tracked symbols."
+      : ibkrLoginRequired
+        ? bridgeRuntimeMessage(session)
+        : providerSummary.erroredSource?.errorMessage
+          ? providerSummary.erroredSource.errorMessage
+          : providerSummary.failures[0]?.error
+            ? providerSummary.failures[0].error
+            : providerSummary.fallbackUsed
+              ? "IBKR returned no active snapshot flow and the Polygon trade fallback was empty."
+              : "IBKR returned no active snapshot flow for the tracked symbols.";
+  const flowHeader = (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: sp(8),
+        padding: sp("2px 2px 0"),
+        fontSize: fs(8),
+        fontFamily: T.mono,
+        color: T.textDim,
+      }}
+    >
+      <span>
+        Flow source ·{" "}
+        <span style={{ color: flowDisplayColor, fontWeight: 700 }}>
+          {flowDisplayLabel}
+        </span>
+      </span>
+      <span
+        title={bridgeRuntimeMessage(session)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(5),
+          color: bridgeTone.color,
+        }}
+      >
+        <span
+          style={{
+            width: dim(6),
+            height: dim(6),
+            background: bridgeTone.color,
+            display: "inline-block",
+          }}
+        />
+        IBKR {bridgeTone.label.toUpperCase()}
+      </span>
+    </div>
+  );
 
   if (!flowEvents.length) {
     return (
@@ -8087,26 +8591,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
             gap: 6,
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: sp("2px 2px 0"),
-              fontSize: fs(8),
-              fontFamily: T.mono,
-              color: T.textDim,
-            }}
-          >
-            <span>Live options flow only</span>
-            <span
-              style={{
-                color: flowStatus === "loading" ? T.accent : T.textMuted,
-              }}
-            >
-              {flowStatus}
-            </span>
-          </div>
+          {flowHeader}
           <Card
             style={{
               padding: sp(10),
@@ -8117,12 +8602,8 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
             }}
           >
             <DataUnavailableState
-              title="No live options flow"
-              detail={
-                flowStatus === "loading"
-                  ? "Waiting on current options flow snapshots for the tracked symbols."
-                  : "The flow workspace no longer renders synthetic sweeps or blocks. It will populate when the live provider returns actual prints."
-              }
+              title="No live options activity"
+              detail={emptyFlowDetail}
             />
           </Card>
         </div>
@@ -8176,26 +8657,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
           gap: 6,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: sp("2px 2px 0"),
-            fontSize: fs(8),
-            fontFamily: T.mono,
-            color: T.textDim,
-          }}
-        >
-          <span>
-            {hasLiveFlow
-              ? "Provider-backed options activity"
-              : "Live options flow only"}
-          </span>
-          <span style={{ color: hasLiveFlow ? T.accent : T.textMuted }}>
-            {hasLiveFlow ? "provider-backed" : flowStatus}
-          </span>
-        </div>
+        {flowHeader}
 
         {/* ── ROW 1: KPI Bar ── */}
         <div
@@ -8209,7 +8671,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
             {
               label: "TOTAL PREMIUM",
               value: fmtM(totalCallPrem + totalPutPrem),
-              sub: `${flowEvents.length} prints`,
+              sub: `${flowEvents.length} contracts`,
               color: T.text,
             },
             {
@@ -8615,7 +9077,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                                   : c.biggestEvt,
                               )
                             }
-                            title={`${t.sym} ${c.strike}${c.cp} · ${c.count} print${c.count === 1 ? "" : "s"} · ${fmtM(c.premium)} premium · ${volStr} vol`}
+                            title={`${t.sym} ${c.strike}${c.cp} · ${c.count} event${c.count === 1 ? "" : "s"} · ${fmtM(c.premium)} premium · ${volStr} vol`}
                             style={{
                               display: "flex",
                               alignItems: "center",
@@ -8793,13 +9255,13 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
               <span>
                 Peak:{" "}
                 <span style={{ color: T.amber, fontWeight: 600 }}>
-                  12:30 ET
+                  {flowClockPeak}
                 </span>
               </span>
               <span>
                 Avg:{" "}
                 <span style={{ color: T.textSec, fontWeight: 600 }}>
-                  21 / 30min
+                  {flowClockAverage} / 30min
                 </span>
               </span>
             </div>
@@ -9048,7 +9510,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                         {b.bucket}
                       </span>
                       <span style={{ color: T.textDim }}>
-                        {b.count} prints · {fmtM(total)}
+                        {b.count} events · {fmtM(total)}
                       </span>
                     </div>
                     <div
@@ -9079,7 +9541,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
           </div>
         </div>
 
-        {/* ── ROW 2C: Top Trades Spotlight (hidden when contract detail is up) ── */}
+        {/* ── ROW 2C: Top Activity Spotlight (hidden when contract detail is up) ── */}
         {!selectedEvt && (
           <div>
             <div
@@ -9100,7 +9562,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                   letterSpacing: "0.02em",
                 }}
               >
-                Top Trades Today
+                Top Activity Today
               </span>
               <div style={{ flex: 1, height: dim(1), background: T.border }} />
               <span
@@ -9143,9 +9605,12 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                       : evt.score >= 60
                         ? T.green
                         : T.textDim;
-                  const context = evt.golden
-                    ? "Golden sweep · High conviction"
-                    : evt.type === "BLOCK"
+                  const context =
+                    evt.basis === "snapshot"
+                      ? "Snapshot-derived option activity"
+                      : evt.golden
+                        ? "Golden sweep · High conviction"
+                        : evt.type === "BLOCK"
                       ? "Institutional block · Off-exchange"
                       : evt.type === "SWEEP"
                         ? "Aggressive multi-exchange sweep"
@@ -9263,6 +9728,9 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                         </span>
                         <Badge color={sideColor}>{evt.side}</Badge>
                         <Badge color={typeColor}>{evt.type}</Badge>
+                        <Badge color={flowProviderColor(evt.provider)}>
+                          {evt.sourceLabel}
+                        </Badge>
                       </div>
                       <div
                         style={{
@@ -9707,7 +10175,7 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                         if (!c) return null;
                         return (
                           <span
-                            title={`${c.count} prints on this contract today · total $${(c.totalPrem / 1e6).toFixed(2)}M`}
+                            title={`${c.count} events on this contract today · total $${(c.totalPrem / 1e6).toFixed(2)}M`}
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
@@ -9727,6 +10195,9 @@ const FlowScreen = ({ onJumpToTrade, symbols = [] }) => {
                           </span>
                         );
                       })()}
+                      <Badge color={flowProviderColor(evt.provider)}>
+                        {evt.sourceLabel}
+                      </Badge>
                     </span>
                     <span style={{ textAlign: "right", color: T.textDim }}>
                       {evt.dte}d
@@ -10898,6 +11369,8 @@ const TradeOrderTicket = ({
       },
     },
   });
+  const [liveConfirmState, setLiveConfirmState] = useState(null);
+  const [liveConfirmPending, setLiveConfirmPending] = useState(false);
 
   // ── CONTROLLED STATE ──
   const [side, setSide] = useState("BUY");
@@ -10937,6 +11410,26 @@ const TradeOrderTicket = ({
     brokerConfigured,
     brokerAuthenticated,
   ]);
+  const closeLiveConfirm = () => {
+    if (liveConfirmPending) {
+      return;
+    }
+
+    setLiveConfirmState(null);
+  };
+  const runLiveConfirm = async () => {
+    if (!liveConfirmState?.onConfirm) {
+      return;
+    }
+
+    setLiveConfirmPending(true);
+    try {
+      await liveConfirmState.onConfirm();
+      setLiveConfirmState(null);
+    } finally {
+      setLiveConfirmPending(false);
+    }
+  };
 
   if (
     !row ||
@@ -11144,11 +11637,42 @@ const TradeOrderTicket = ({
       return;
     }
 
-    placeOrderMutation.mutate({ data: orderRequest });
+    setLiveConfirmState({
+      title: `${side} ${slot.ticker} ${slot.strike}${slot.cp}`,
+      detail: `Submit this ${environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
+      confirmLabel: `${side} LIVE ORDER`,
+      confirmTone: isLong ? T.green : T.red,
+      lines: [
+        { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+        { label: "SYMBOL", value: slot.ticker },
+        { label: "CONTRACT", value: `${slot.strike}${slot.cp} ${expInfo.label || slot.exp}` },
+        { label: "TYPE", value: orderType },
+        { label: "TIF", value: tif },
+        { label: "QTY", value: String(qtyNum || 0) },
+        {
+          label: orderType === "STP" ? "STOP" : orderType === "MKT" ? "MARK" : "LIMIT",
+          value: `$${fillPrice.toFixed(2)}`,
+        },
+        {
+          label: isLong ? "EST COST" : "EST CREDIT",
+          value: `$${cost.toFixed(0)}`,
+          valueColor: isLong ? T.red : T.green,
+        },
+      ],
+      onConfirm: async () => {
+        await placeOrderMutation.mutateAsync({
+          data: {
+            ...orderRequest,
+            confirm: true,
+          },
+        });
+      },
+    });
   };
 
   return (
-    <div
+    <>
+      <div
       style={{
         background: T.bg2,
         border: `1px solid ${T.border}`,
@@ -11744,7 +12268,22 @@ const TradeOrderTicket = ({
             : `${side} ${qtyNum || 0} × $${fillPrice.toFixed(2)} · ${isLong ? "−" : "+"}$${cost.toFixed(0)}`}
         </button>
       </div>
-    </div>
+      </div>
+      <BrokerActionConfirmDialog
+        open={Boolean(liveConfirmState)}
+        title={liveConfirmState?.title || "Confirm live order"}
+        detail={
+          liveConfirmState?.detail ||
+          "Submit this live Interactive Brokers order."
+        }
+        lines={liveConfirmState?.lines || []}
+        confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM LIVE ORDER"}
+        confirmTone={liveConfirmState?.confirmTone || T.red}
+        pending={liveConfirmPending}
+        onCancel={closeLiveConfirm}
+        onConfirm={runLiveConfirm}
+      />
+    </>
   );
 };
 
@@ -13046,6 +13585,28 @@ const TradePositionsPanel = ({
       },
     },
   });
+  const [liveConfirmState, setLiveConfirmState] = useState(null);
+  const [liveConfirmPending, setLiveConfirmPending] = useState(false);
+  const closeLiveConfirm = () => {
+    if (liveConfirmPending) {
+      return;
+    }
+
+    setLiveConfirmState(null);
+  };
+  const runLiveConfirm = async () => {
+    if (!liveConfirmState?.onConfirm) {
+      return;
+    }
+
+    setLiveConfirmPending(true);
+    try {
+      await liveConfirmState.onConfirm();
+      setLiveConfirmState(null);
+    } finally {
+      setLiveConfirmPending(false);
+    }
+  };
 
   const openPositions = useMemo(() => {
     if (brokerConfigured) {
@@ -13234,16 +13795,32 @@ const TradePositionsPanel = ({
     }
 
     if (p._isLive && p._brokerPosition) {
-      try {
-        await placeOrderMutation.mutateAsync({
-          data: buildCloseOrderRequest(p._brokerPosition),
-        });
-        toast.push({
-          kind: "success",
-          title: "Close submitted",
-          body: `${p.ticker} ${p.contract} · ${p.qty} to flatten`,
-        });
-      } catch (error) {}
+      setLiveConfirmState({
+        title: `Flatten ${p.ticker} ${p.contract}`,
+        detail: "Submit a live market order to close this broker position.",
+        confirmLabel: "SEND LIVE CLOSE",
+        confirmTone: T.red,
+        lines: [
+          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+          { label: "SYMBOL", value: p.ticker },
+          { label: "CONTRACT", value: p.contract },
+          { label: "SIDE", value: p.side },
+          { label: "QTY", value: String(p.qty) },
+        ],
+        onConfirm: async () => {
+          await placeOrderMutation.mutateAsync({
+            data: {
+              ...buildCloseOrderRequest(p._brokerPosition),
+              confirm: true,
+            },
+          });
+          toast.push({
+            kind: "success",
+            title: "Close submitted",
+            body: `${p.ticker} ${p.contract} · ${p.qty} to flatten`,
+          });
+        },
+      });
       return;
     }
 
@@ -13285,23 +13862,39 @@ const TradePositionsPanel = ({
 
     if (brokerConfigured) {
       const livePositions = openPositions.filter((position) => position._isLive);
-      const results = await Promise.allSettled(
-        livePositions.map((position) =>
-          placeOrderMutation.mutateAsync({
-            data: buildCloseOrderRequest(position._brokerPosition),
-          }),
-        ),
-      );
-      const successCount = results.filter(
-        (result) => result.status === "fulfilled",
-      ).length;
-      toast.push({
-        kind: successCount === livePositions.length ? "success" : "warn",
-        title: `Submitted ${successCount}/${livePositions.length} close order${livePositions.length === 1 ? "" : "s"}`,
-        body:
-          successCount === livePositions.length
-            ? "All live positions received flatten requests."
-            : "Some live positions could not be flattened.",
+      setLiveConfirmState({
+        title: `Flatten ${livePositions.length} live position${livePositions.length === 1 ? "" : "s"}`,
+        detail:
+          "Submit live broker orders to flatten every open IBKR position in the active account.",
+        confirmLabel: "FLATTEN LIVE POSITIONS",
+        confirmTone: T.red,
+        lines: [
+          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+          { label: "POSITIONS", value: String(livePositions.length) },
+        ],
+        onConfirm: async () => {
+          const results = await Promise.allSettled(
+            livePositions.map((position) =>
+              placeOrderMutation.mutateAsync({
+                data: {
+                  ...buildCloseOrderRequest(position._brokerPosition),
+                  confirm: true,
+                },
+              }),
+            ),
+          );
+          const successCount = results.filter(
+            (result) => result.status === "fulfilled",
+          ).length;
+          toast.push({
+            kind: successCount === livePositions.length ? "success" : "warn",
+            title: `Submitted ${successCount}/${livePositions.length} close order${livePositions.length === 1 ? "" : "s"}`,
+            body:
+              successCount === livePositions.length
+                ? "All live positions received flatten requests."
+                : "Some live positions could not be flattened.",
+          });
+        },
       });
       return;
     }
@@ -13344,56 +13937,78 @@ const TradePositionsPanel = ({
       const livePositions = (positionsQuery.data?.positions || []).filter(
         (position) => Math.abs(position.quantity) > 0,
       );
-      let protectedCount = 0;
-      let failedCount = 0;
+      setLiveConfirmState({
+        title: `Protect ${livePositions.length} live position${livePositions.length === 1 ? "" : "s"}`,
+        detail:
+          "Preview and synchronize live protective stop orders for every open broker position.",
+        confirmLabel: "SYNC LIVE STOPS",
+        confirmTone: T.amber,
+        lines: [
+          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+          { label: "POSITIONS", value: String(livePositions.length) },
+        ],
+        onConfirm: async () => {
+          let protectedCount = 0;
+          let failedCount = 0;
 
-      for (const position of livePositions) {
-        const referencePrice =
-          isFiniteNumber(position.marketPrice) && position.marketPrice > 0
-            ? position.marketPrice
-            : position.averagePrice;
-        if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
-          failedCount += 1;
-          continue;
-        }
+          for (const position of livePositions) {
+            const referencePrice =
+              isFiniteNumber(position.marketPrice) && position.marketPrice > 0
+                ? position.marketPrice
+                : position.averagePrice;
+            if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
+              failedCount += 1;
+              continue;
+            }
 
-        const stopPrice = +(
-          position.quantity >= 0 ? referencePrice * 0.8 : referencePrice * 1.2
-        ).toFixed(2);
-        const stopRequest = buildStopOrderRequest(position, stopPrice);
+            const stopPrice = +(
+              position.quantity >= 0
+                ? referencePrice * 0.8
+                : referencePrice * 1.2
+            ).toFixed(2);
+            const stopRequest = buildStopOrderRequest(position, stopPrice);
 
-        try {
-          const preview = await previewOrderMutation.mutateAsync({
-            data: stopRequest,
-          });
-          const existingStop = findExistingStopOrder(position);
+            try {
+              const preview = await previewOrderMutation.mutateAsync({
+                data: stopRequest,
+              });
+              const existingStop = findExistingStopOrder(position);
 
-          if (existingStop && preview?.orderPayload) {
-            await replaceOrderMutation.mutateAsync({
-              orderId: existingStop.id,
-              data: {
-                accountId,
-                mode: environment,
-                order: preview.orderPayload,
-              },
-            });
-          } else {
-            await placeOrderMutation.mutateAsync({ data: stopRequest });
+              if (existingStop && preview?.orderPayload) {
+                await replaceOrderMutation.mutateAsync({
+                  orderId: existingStop.id,
+                  data: {
+                    accountId,
+                    mode: environment,
+                    confirm: true,
+                    order: preview.orderPayload,
+                  },
+                });
+              } else {
+                await placeOrderMutation.mutateAsync({
+                  data: {
+                    ...stopRequest,
+                    confirm: true,
+                  },
+                });
+              }
+
+              protectedCount += 1;
+            } catch (error) {
+              failedCount += 1;
+            }
           }
 
-          protectedCount += 1;
-        } catch (error) {
-          failedCount += 1;
-        }
-      }
-
-      toast.push({
-        kind: failedCount === 0 ? "success" : protectedCount ? "warn" : "error",
-        title: `Stops updated ${protectedCount}/${livePositions.length}`,
-        body:
-          failedCount === 0
-            ? "Protective broker stop orders are in sync."
-            : "Some positions could not be protected.",
+          toast.push({
+            kind:
+              failedCount === 0 ? "success" : protectedCount ? "warn" : "error",
+            title: `Stops updated ${protectedCount}/${livePositions.length}`,
+            body:
+              failedCount === 0
+                ? "Protective broker stop orders are in sync."
+                : "Some positions could not be protected.",
+          });
+        },
       });
       return;
     }
@@ -13473,11 +14088,28 @@ const TradePositionsPanel = ({
       return;
     }
 
-    cancelOrderMutation.mutate({
-      orderId: order.id,
-      data: {
-        accountId,
-        manualIndicator: true,
+    setLiveConfirmState({
+      title: `Cancel ${order.symbol} ${order.type.toUpperCase()} order`,
+      detail: "Send a live broker cancellation request for this working IBKR order.",
+      confirmLabel: "CANCEL LIVE ORDER",
+      confirmTone: T.red,
+      lines: [
+        { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+        { label: "SYMBOL", value: order.symbol },
+        { label: "SIDE", value: order.side.toUpperCase() },
+        { label: "TYPE", value: order.type.toUpperCase() },
+        { label: "QTY", value: String(order.quantity) },
+        { label: "STATUS", value: formatEnumLabel(order.status) },
+      ],
+      onConfirm: async () => {
+        await cancelOrderMutation.mutateAsync({
+          orderId: order.id,
+          data: {
+            accountId,
+            manualIndicator: true,
+            confirm: true,
+          },
+        });
       },
     });
   };
@@ -14315,6 +14947,20 @@ const TradePositionsPanel = ({
             : "Connect IBKR to enable live order management."}
         </div>
       )}
+      <BrokerActionConfirmDialog
+        open={Boolean(liveConfirmState)}
+        title={liveConfirmState?.title || "Confirm live broker action"}
+        detail={
+          liveConfirmState?.detail ||
+          "Confirm this live Interactive Brokers action before sending it."
+        }
+        lines={liveConfirmState?.lines || []}
+        confirmLabel={liveConfirmState?.confirmLabel || "CONFIRM LIVE ACTION"}
+        confirmTone={liveConfirmState?.confirmTone || T.red}
+        pending={liveConfirmPending}
+        onCancel={closeLiveConfirm}
+        onConfirm={runLiveConfirm}
+      />
     </div>
   );
 };
@@ -16814,6 +17460,15 @@ const TradeScreen = ({
               <br />
               last heartbeat{" "}
               {formatRelativeTimeShort(session?.ibkrBridge?.lastTickleAt)}
+              {session?.ibkrBridge?.lastRecoveryAttemptAt ? (
+                <>
+                  <br />
+                  recovery{" "}
+                  {formatRelativeTimeShort(
+                    session.ibkrBridge.lastRecoveryAttemptAt,
+                  )}
+                </>
+              ) : null}
             </div>
           </div>
         )}
@@ -18011,6 +18666,181 @@ const BacktestScreen = ({ watchlists, defaultWatchlistId }) => (
 );
 
 // ═══════════════════════════════════════════════════════════════════
+// LIVE BROKER CONFIRMATION
+// ═══════════════════════════════════════════════════════════════════
+
+const BrokerActionConfirmDialog = ({
+  open,
+  title,
+  detail,
+  lines = [],
+  confirmLabel = "CONFIRM LIVE ACTION",
+  confirmTone = T.red,
+  pending = false,
+  onConfirm,
+  onCancel,
+}) => {
+  if (!open) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 210,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: sp(16),
+        background: "rgba(4, 10, 18, 0.72)",
+        backdropFilter: "blur(10px)",
+      }}
+    >
+      <div
+        style={{
+          width: "min(100%, 520px)",
+          background: T.bg1,
+          border: `1px solid ${confirmTone}55`,
+          borderRadius: dim(8),
+          boxShadow: "0 24px 72px rgba(0,0,0,0.45)",
+          padding: sp("14px 16px"),
+          display: "flex",
+          flexDirection: "column",
+          gap: sp(10),
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(3) }}>
+          <span
+            style={{
+              fontSize: fs(10),
+              fontWeight: 800,
+              color: confirmTone,
+              fontFamily: T.display,
+              letterSpacing: "0.08em",
+            }}
+          >
+            LIVE IBKR CONFIRMATION
+          </span>
+          <span
+            style={{
+              fontSize: fs(14),
+              fontWeight: 800,
+              color: T.text,
+              fontFamily: T.sans,
+            }}
+          >
+            {title}
+          </span>
+          <span
+            style={{
+              fontSize: fs(9),
+              color: T.textSec,
+              fontFamily: T.sans,
+              lineHeight: 1.45,
+            }}
+          >
+            {detail}
+          </span>
+        </div>
+        {lines.length > 0 && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) auto",
+              gap: sp(6),
+              padding: sp("8px 10px"),
+              background: T.bg2,
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(5),
+              fontFamily: T.mono,
+            }}
+          >
+            {lines.map((line) => (
+              <Fragment key={line.label}>
+                <span
+                  style={{
+                    fontSize: fs(8),
+                    color: T.textMuted,
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  {line.label}
+                </span>
+                <span
+                  style={{
+                    fontSize: fs(8),
+                    color: line.valueColor || T.text,
+                    fontWeight: 700,
+                    textAlign: "right",
+                  }}
+                >
+                  {line.value}
+                </span>
+              </Fragment>
+            ))}
+          </div>
+        )}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: sp(10),
+            fontSize: fs(8),
+            color: T.textDim,
+            fontFamily: T.sans,
+            lineHeight: 1.4,
+          }}
+        >
+          <span>
+            This sends a live broker instruction. Review the account,
+            instrument, side, size, and price before continuing.
+          </span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
+          <button
+            onClick={onCancel}
+            disabled={pending}
+            style={{
+              padding: sp("8px 0"),
+              background: T.bg2,
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(5),
+              color: T.textSec,
+              fontSize: fs(10),
+              fontFamily: T.sans,
+              fontWeight: 700,
+              cursor: pending ? "not-allowed" : "pointer",
+              opacity: pending ? 0.65 : 1,
+            }}
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={pending}
+            style={{
+              padding: sp("8px 0"),
+              background: confirmTone,
+              border: "none",
+              borderRadius: dim(5),
+              color: "#fff",
+              fontSize: fs(10),
+              fontFamily: T.sans,
+              fontWeight: 800,
+              cursor: pending ? "wait" : "pointer",
+              opacity: pending ? 0.75 : 1,
+            }}
+          >
+            {pending ? "SUBMITTING..." : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════
 // TOAST STACK — bottom-right stacked notifications
 // ═══════════════════════════════════════════════════════════════════
 
@@ -18829,6 +19659,173 @@ export default function RayAlgoPlatform() {
     positionAlertsQuery.data,
     primaryAccountId,
   ]);
+  const signalMonitorParams = useMemo(() => ({ environment }), [environment]);
+  const signalMonitorEventsParams = useMemo(
+    () => ({ environment, limit: 100 }),
+    [environment],
+  );
+  const signalMonitorProfileQuery = useGetSignalMonitorProfile(
+    signalMonitorParams,
+    {
+      query: {
+        staleTime: 60_000,
+        refetchInterval: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const signalMonitorProfile = signalMonitorProfileQuery.data || null;
+  const signalMonitorPollMs = clampNumber(
+    (signalMonitorProfile?.pollIntervalSeconds || 60) * 1000,
+    15_000,
+    3_600_000,
+  );
+  const signalMonitorStateQuery = useGetSignalMonitorState(
+    signalMonitorParams,
+    {
+      query: {
+        staleTime: 15_000,
+        refetchInterval: signalMonitorProfile?.enabled
+          ? signalMonitorPollMs
+          : false,
+        retry: false,
+      },
+    },
+  );
+  const signalMonitorEventsQuery = useListSignalMonitorEvents(
+    signalMonitorEventsParams,
+    {
+      query: {
+        staleTime: 15_000,
+        refetchInterval: signalMonitorProfile?.enabled
+          ? signalMonitorPollMs
+          : false,
+        retry: false,
+      },
+    },
+  );
+  const signalMonitorEvaluationInFlightRef = useRef(false);
+  const updateSignalMonitorProfileMutation = useUpdateSignalMonitorProfile({
+    mutation: {
+      onSuccess: (profile) => {
+        queryClient.setQueryData(
+          getGetSignalMonitorProfileQueryKey({
+            environment: profile.environment,
+          }),
+          profile,
+        );
+        queryClient.invalidateQueries({
+          queryKey: getGetSignalMonitorStateQueryKey({
+            environment: profile.environment,
+          }),
+        });
+      },
+      onError: (error) => {
+        pushToast({
+          title: "Unable to update signal monitor",
+          body: error?.message || "Request failed",
+          kind: "error",
+        });
+      },
+    },
+  });
+  const evaluateSignalMonitorMutation = useEvaluateSignalMonitor({
+    mutation: {
+      onSuccess: (data) => {
+        queryClient.setQueryData(
+          getGetSignalMonitorStateQueryKey({
+            environment: data.profile.environment,
+          }),
+          data,
+        );
+        queryClient.invalidateQueries({
+          queryKey: getListSignalMonitorEventsQueryKey({
+            environment: data.profile.environment,
+            limit: 100,
+          }),
+        });
+      },
+      onError: (error) => {
+        pushToast({
+          title: "Signal monitor scan failed",
+          body: error?.message || "Request failed",
+          kind: "error",
+        });
+      },
+      onSettled: () => {
+        signalMonitorEvaluationInFlightRef.current = false;
+      },
+    },
+  });
+  const runSignalMonitorEvaluation = useCallback(
+    (mode = "incremental") => {
+      if (!activeWatchlist?.id || signalMonitorEvaluationInFlightRef.current) {
+        return;
+      }
+      signalMonitorEvaluationInFlightRef.current = true;
+      evaluateSignalMonitorMutation.mutate({
+        data: {
+          environment,
+          mode,
+          watchlistId: activeWatchlist.id,
+        },
+      });
+    },
+    [activeWatchlist?.id, environment, evaluateSignalMonitorMutation.mutate],
+  );
+  useEffect(() => {
+    if (!activeWatchlist?.id || !signalMonitorProfile) {
+      return;
+    }
+    if (signalMonitorProfile.watchlistId === activeWatchlist.id) {
+      return;
+    }
+    if (updateSignalMonitorProfileMutation.isPending) {
+      return;
+    }
+
+    updateSignalMonitorProfileMutation.mutate({
+      data: {
+        environment,
+        watchlistId: activeWatchlist.id,
+      },
+    });
+  }, [
+    activeWatchlist?.id,
+    environment,
+    signalMonitorProfile,
+    updateSignalMonitorProfileMutation.isPending,
+    updateSignalMonitorProfileMutation.mutate,
+  ]);
+  useEffect(() => {
+    if (!activeWatchlist?.id || !signalMonitorProfile?.enabled) {
+      return undefined;
+    }
+
+    runSignalMonitorEvaluation("incremental");
+    const timer = window.setInterval(
+      () => runSignalMonitorEvaluation("incremental"),
+      signalMonitorPollMs,
+    );
+    return () => window.clearInterval(timer);
+  }, [
+    activeWatchlist?.id,
+    runSignalMonitorEvaluation,
+    signalMonitorPollMs,
+    signalMonitorProfile?.enabled,
+    signalMonitorProfile?.timeframe,
+  ]);
+  const signalMonitorStates = signalMonitorStateQuery.data?.states || [];
+  const signalMonitorEvents = signalMonitorEventsQuery.data?.events || [];
+  const signalStatesBySymbol = useMemo(
+    () =>
+      Object.fromEntries(
+        signalMonitorStates
+          .filter((state) => state?.symbol)
+          .map((state) => [state.symbol.toUpperCase(), state]),
+      ),
+    [signalMonitorStates],
+  );
   const watchlistSidebarItems = useMemo(() => {
     const sourceItems =
       activeWatchlist?.items?.length
@@ -18852,9 +19849,10 @@ export default function RayAlgoPlatform() {
         pct: snapshot.pct,
         spark: snapshot.spark || fallback.spark,
         sparkBars: snapshot.sparkBars || fallback.sparkBars || [],
+        signalState: signalStatesBySymbol[symbol] || null,
       };
     });
-  }, [activeWatchlist, marketDataVersion, watchlistSymbols]);
+  }, [activeWatchlist, marketDataVersion, signalStatesBySymbol, watchlistSymbols]);
   const headerKpiItems = useMemo(
     () =>
       HEADER_KPI_CONFIG.map(({ symbol, label }, index) => {
@@ -18906,6 +19904,53 @@ export default function RayAlgoPlatform() {
   const handleSelectSymbol = (newSym) => {
     setSym(newSym);
     setTradeSymPing((prev) => ({ sym: newSym, n: prev.n + 1, contract: null }));
+  };
+
+  const handleSignalAction = (ticker, signal) => {
+    const normalized = normalizeTickerSymbol(ticker);
+    if (!normalized) {
+      return;
+    }
+
+    ensureTradeTickerInfo(normalized, normalized);
+    setSym(normalized);
+    setTradeSymPing((prev) => ({
+      sym: normalized,
+      n: prev.n + 1,
+      contract: null,
+    }));
+    setScreen("trade");
+    pushToast({
+      title: `${normalized} ${String(signal?.currentSignalDirection || signal?.direction || "signal").toUpperCase()} signal`,
+      body: signal?.timeframe
+        ? `${signal.timeframe} RayReplica monitor signal loaded into Trade.`
+        : "RayReplica monitor signal loaded into Trade.",
+      kind:
+        signal?.currentSignalDirection === "sell" || signal?.direction === "sell"
+          ? "warn"
+          : "success",
+      duration: 2600,
+    });
+  };
+
+  const handleToggleSignalMonitor = () => {
+    updateSignalMonitorProfileMutation.mutate({
+      data: {
+        environment,
+        enabled: !signalMonitorProfile?.enabled,
+        watchlistId: activeWatchlist?.id || signalMonitorProfile?.watchlistId || null,
+      },
+    });
+  };
+
+  const handleChangeSignalMonitorTimeframe = (timeframe) => {
+    updateSignalMonitorProfileMutation.mutate({
+      data: {
+        environment,
+        timeframe,
+        watchlistId: activeWatchlist?.id || signalMonitorProfile?.watchlistId || null,
+      },
+    });
   };
 
   const handleCreateWatchlist = (name) => {
@@ -19029,11 +20074,20 @@ export default function RayAlgoPlatform() {
             )}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
             marketNotifications={marketAlertItems}
+            signalEvents={signalMonitorEvents}
+            signalStates={signalMonitorStates}
+            signalMonitorProfile={signalMonitorProfile}
+            signalMonitorPending={evaluateSignalMonitorMutation.isPending}
+            onSignalAction={handleSignalAction}
+            onScanNow={() => runSignalMonitorEvaluation("incremental")}
+            onToggleMonitor={handleToggleSignalMonitor}
+            onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
           />
         );
       case "flow":
         return (
           <FlowScreen
+            session={session}
             symbols={watchlistSymbols}
             onJumpToTrade={handleJumpToTradeFromFlow}
           />
@@ -19079,6 +20133,14 @@ export default function RayAlgoPlatform() {
             )}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
             marketNotifications={marketAlertItems}
+            signalEvents={signalMonitorEvents}
+            signalStates={signalMonitorStates}
+            signalMonitorProfile={signalMonitorProfile}
+            signalMonitorPending={evaluateSignalMonitorMutation.isPending}
+            onSignalAction={handleSignalAction}
+            onScanNow={() => runSignalMonitorEvaluation("incremental")}
+            onToggleMonitor={handleToggleSignalMonitor}
+            onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
           />
         );
     }
@@ -19313,6 +20375,8 @@ export default function RayAlgoPlatform() {
                       onAddSymbol={handleAddSymbolToWatchlist}
                       onMoveSymbol={handleMoveSymbolInWatchlist}
                       onRemoveSymbol={handleRemoveSymbolFromWatchlist}
+                      onSignalAction={handleSignalAction}
+                      signalStatesBySymbol={signalStatesBySymbol}
                       busy={
                         createWatchlistMutation.isPending ||
                         updateWatchlistMutation.isPending ||

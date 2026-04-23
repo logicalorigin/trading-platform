@@ -22,6 +22,8 @@ import {
   ListPositionsQueryParams,
   ListPositionsResponse,
   PlaceOrderBody,
+  ReplaceOrderBody,
+  CancelOrderBody,
 } from "@workspace/api-zod";
 import {
   cancelOrder,
@@ -353,6 +355,11 @@ router.post("/orders/submit", async (req, res) => {
         typeof req.body.accountId === "string"
           ? req.body.accountId
           : null,
+      mode:
+        req.body.mode === "live" || req.body.mode === "paper"
+          ? req.body.mode
+          : null,
+      confirm: req.body.confirm === true,
       ibkrOrders: req.body.ibkrOrders,
     }));
     return;
@@ -363,25 +370,29 @@ router.post("/orders/submit", async (req, res) => {
 });
 
 router.post("/orders/:orderId/replace", async (req, res) => {
+  const body = ReplaceOrderBody.parse(req.body);
   res.json(await replaceOrder({
-    accountId: String(req.body.accountId ?? ""),
+    accountId: body.accountId,
     orderId: req.params.orderId,
-    order: req.body.order && typeof req.body.order === "object" ? req.body.order : {},
-    mode: req.body.mode === "live" ? "live" : "paper",
+    order: body.order,
+    mode: body.mode === "live" ? "live" : "paper",
+    confirm: body.confirm ?? false,
   }));
 });
 
 router.post("/orders/:orderId/cancel", async (req, res) => {
+  const body = CancelOrderBody.parse(req.body);
   res.json(await cancelOrder({
-    accountId: String(req.body.accountId ?? ""),
+    accountId: body.accountId,
     orderId: req.params.orderId,
+    confirm: body.confirm ?? false,
     manualIndicator:
-      typeof req.body.manualIndicator === "boolean"
-        ? req.body.manualIndicator
+      typeof body.manualIndicator === "boolean"
+        ? body.manualIndicator
         : null,
     extOperator:
-      typeof req.body.extOperator === "string"
-        ? req.body.extOperator
+      typeof body.extOperator === "string"
+        ? body.extOperator
         : null,
   }));
 });

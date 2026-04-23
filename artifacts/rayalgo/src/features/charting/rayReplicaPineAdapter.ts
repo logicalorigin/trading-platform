@@ -1,4 +1,14 @@
 import type { PineScriptRecord } from "@workspace/api-client-react";
+import {
+  aggregateRayReplicaBarsForTimeframe,
+  computeRayReplicaVolatilityScore,
+  computeRayReplicaWma,
+  evaluateRayReplicaSignals,
+  resolveRayReplicaSessionKey,
+  resolveRayReplicaSessionLabel,
+  resolveRayReplicaTrendDirection,
+  type RayReplicaSessionOption as CoreRayReplicaSessionOption,
+} from "@workspace/rayreplica-core";
 import type {
   ChartBar,
   ChartBarStyle,
@@ -31,6 +41,9 @@ export type RayReplicaDashboardPosition =
   | "bottom-right";
 export type RayReplicaDashboardSize = "tiny" | "small" | "normal" | "large";
 export type RayReplicaSessionOption =
+  | "new_york"
+  | "tokyo"
+  | "sydney"
   | "asia"
   | "london"
   | "new_york_am"
@@ -54,6 +67,7 @@ export type RayReplicaRuntimeSettings = {
   requireMtf1: boolean;
   requireMtf2: boolean;
   requireMtf3: boolean;
+  signalFiltersEnabled: boolean;
   requireAdx: boolean;
   adxMin: number;
   requireVolScoreRange: boolean;
@@ -97,13 +111,14 @@ export const DEFAULT_RAY_REPLICA_SETTINGS: RayReplicaRuntimeSettings = {
   requireMtf1: false,
   requireMtf2: false,
   requireMtf3: false,
+  signalFiltersEnabled: false,
   requireAdx: false,
   adxMin: 20,
   requireVolScoreRange: false,
-  volScoreMin: 25,
-  volScoreMax: 85,
+  volScoreMin: 2,
+  volScoreMax: 10,
   restrictToSelectedSessions: false,
-  sessions: ["new_york_am", "new_york_pm"],
+  sessions: ["new_york"],
   tp1Rr: 0.5,
   tp2Rr: 1,
   tp3Rr: 1.7,
@@ -168,10 +183,10 @@ export const RAY_REPLICA_SESSION_OPTIONS: ReadonlyArray<{
   value: RayReplicaSessionOption;
   label: string;
 }> = [
-  { value: "asia", label: "Asia" },
   { value: "london", label: "London" },
-  { value: "new_york_am", label: "NY AM" },
-  { value: "new_york_pm", label: "NY PM" },
+  { value: "new_york", label: "New York" },
+  { value: "tokyo", label: "Tokyo" },
+  { value: "sydney", label: "Sydney" },
 ];
 export const RAY_REPLICA_BAND_PROFILE_OPTIONS = [
   {
@@ -236,6 +251,7 @@ type RayReplicaNormalizedSettings = {
     requireMtf1: boolean;
     requireMtf2: boolean;
     requireMtf3: boolean;
+    signalFiltersEnabled: boolean;
     requireAdx: boolean;
     adxMin: number;
     requireVolScoreRange: boolean;
@@ -345,7 +361,7 @@ const resolveSessionSelections = (
   return sessions.length ? sessions : [...fallback];
 };
 
-const resolvePercentLikeSetting = (
+const resolveVolScoreSetting = (
   value: unknown,
   fallback: number,
 ): number => {
@@ -354,7 +370,8 @@ const resolvePercentLikeSetting = (
     return fallback;
   }
 
-  return Number(Math.max(0, Math.min(100, resolved)).toFixed(1));
+  const normalized = resolved > 10 ? resolved / 10 : resolved;
+  return Number(Math.max(0, Math.min(10, normalized)).toFixed(1));
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -440,7 +457,7 @@ function normalizeRayReplicaSettings(
   const risk = asRecord(input.risk);
   const appearance = asRecord(input.appearance);
 
-  const volScoreMin = resolvePercentLikeSetting(
+  const volScoreMin = resolveVolScoreSetting(
     confirmation.volScoreMin ?? input.volScoreMin,
     DEFAULT_RAY_REPLICA_SETTINGS.volScoreMin,
   );
@@ -525,6 +542,12 @@ function normalizeRayReplicaSettings(
         confirmation.requireMtf3 ?? input.requireMtf3,
         DEFAULT_RAY_REPLICA_SETTINGS.requireMtf3,
       ),
+      signalFiltersEnabled: resolveBooleanSetting(
+        confirmation.signalFiltersEnabled ??
+          confirmation.filtersEnabled ??
+          input.signalFiltersEnabled,
+        DEFAULT_RAY_REPLICA_SETTINGS.signalFiltersEnabled,
+      ),
       requireAdx: resolveBooleanSetting(
         confirmation.requireAdx ?? input.requireAdx,
         DEFAULT_RAY_REPLICA_SETTINGS.requireAdx,
@@ -540,12 +563,12 @@ function normalizeRayReplicaSettings(
         DEFAULT_RAY_REPLICA_SETTINGS.requireVolScoreRange,
       ),
       volScoreMin,
-      volScoreMax: resolvePercentLikeSetting(
-        Math.max(
-          volScoreMin,
-          Number(confirmation.volScoreMax ?? input.volScoreMax),
+      volScoreMax: Math.max(
+        volScoreMin,
+        resolveVolScoreSetting(
+          confirmation.volScoreMax ?? input.volScoreMax,
+          DEFAULT_RAY_REPLICA_SETTINGS.volScoreMax,
         ),
-        DEFAULT_RAY_REPLICA_SETTINGS.volScoreMax,
       ),
       restrictToSelectedSessions: resolveBooleanSetting(
         confirmation.restrictToSelectedSessions ?? input.restrictToSelectedSessions,
@@ -682,6 +705,7 @@ export function resolveRayReplicaRuntimeSettings(
     requireMtf1: normalized.confirmation.requireMtf1,
     requireMtf2: normalized.confirmation.requireMtf2,
     requireMtf3: normalized.confirmation.requireMtf3,
+    signalFiltersEnabled: normalized.confirmation.signalFiltersEnabled,
     requireAdx: normalized.confirmation.requireAdx,
     adxMin: normalized.confirmation.adxMin,
     requireVolScoreRange: normalized.confirmation.requireVolScoreRange,
@@ -1162,6 +1186,12 @@ const summarizeRequiredSessions = (
         ? "NY AM"
         : value === "new_york_pm"
           ? "NY PM"
+          : value === "new_york"
+            ? "New York"
+          : value === "tokyo"
+            ? "Tokyo"
+          : value === "sydney"
+            ? "Sydney"
           : value === "asia"
             ? "Asia"
             : value === "london"
@@ -1866,6 +1896,7 @@ export function createRayReplicaPineRuntimeAdapter(
         requireMtf1,
         requireMtf2,
         requireMtf3,
+        signalFiltersEnabled,
         requireAdx,
         adxMin,
         requireVolScoreRange,
@@ -1891,7 +1922,7 @@ export function createRayReplicaPineRuntimeAdapter(
         waitForBarClose,
       } = resolveRayReplicaRuntimeSettings(settings);
       const closes = chartBars.map((bar) => bar.c);
-      const basis = computeEma(closes, basisLength);
+      const basis = computeRayReplicaWma(closes, basisLength);
       const atrRaw = computeAtr(chartBars, atrLength);
       const atrSmoothed = computeSma(atrRaw, atrSmoothing);
       const adx = computeAdx(chartBars, adxLength);
@@ -1926,7 +1957,45 @@ export function createRayReplicaPineRuntimeAdapter(
           ? Number((value - bbDev[index]).toFixed(6))
           : Number.NaN,
       );
-      const volatilityScore = computeVolatilityScore(atrRaw, closes);
+      const volatilityScore = computeRayReplicaVolatilityScore(
+        chartBars,
+        shadowLength,
+        shadowStdDev,
+      );
+      const signalEvaluation = evaluateRayReplicaSignals({
+        chartBars,
+        settings: {
+          timeHorizon,
+          bosConfirmation,
+          basisLength,
+          atrLength,
+          atrSmoothing,
+          volatilityMultiplier,
+          shadowLength,
+          shadowStdDev,
+          adxLength,
+          volumeMaLength,
+          mtf1,
+          mtf2,
+          mtf3,
+          signalFiltersEnabled,
+          requireMtf1,
+          requireMtf2,
+          requireMtf3,
+          requireAdx,
+          adxMin,
+          requireVolScoreRange,
+          volScoreMin,
+          volScoreMax,
+          restrictToSelectedSessions,
+          sessions: sessions as CoreRayReplicaSessionOption[],
+          waitForBarClose,
+        },
+        includeProvisionalSignals: true,
+      });
+      const signalEventByBarIndex = new Map(
+        signalEvaluation.signalEvents.map((event) => [event.barIndex, event]),
+      );
 
       const markers: ChartMarker[] = [];
       const events: IndicatorEvent[] = [];
@@ -2201,42 +2270,11 @@ export function createRayReplicaPineRuntimeAdapter(
             ? marketStructureDirection
             : trendDirection;
         regimeDirection[index] = activeRegimeDirection;
-        const signalDirection = bullishChoch ? 1 : bearishChoch ? -1 : 0;
-        const mtfDirections =
-          signalDirection !== 0
-            ? [mtf1, mtf2, mtf3].map((mtfTimeframe) =>
-                resolveTrendDirectionForBars(
-                  aggregateBarsForTimeframe(
-                    chartBars.slice(0, index + 1),
-                    mtfTimeframe,
-                  ),
-                  {
-                    basisLength,
-                    atrLength,
-                    atrSmoothing,
-                    volatilityMultiplier,
-                    waitForBarClose,
-                  },
-                ),
-              )
-            : [];
-        const currentAdx = adx[index];
-        const currentVolatilityScore = volatilityScore[index];
-        const currentSessionKey = resolveSessionKey(currentBar);
+        const signalEvent = signalEventByBarIndex.get(index);
         const passesSignalGates =
-          signalDirection === 0
-            ? false
-            : (!requireMtf1 || mtfDirections[0] === signalDirection) &&
-              (!requireMtf2 || mtfDirections[1] === signalDirection) &&
-              (!requireMtf3 || mtfDirections[2] === signalDirection) &&
-              (!requireAdx ||
-                (Number.isFinite(currentAdx) && currentAdx >= adxMin)) &&
-              (!requireVolScoreRange ||
-                (Number.isFinite(currentVolatilityScore) &&
-                  currentVolatilityScore >= volScoreMin &&
-                  currentVolatilityScore <= volScoreMax)) &&
-              (!restrictToSelectedSessions ||
-                (currentSessionKey != null && sessions.includes(currentSessionKey)));
+          Boolean(signalEvent) &&
+          ((bullishChoch && signalEvent?.direction === "long") ||
+            (bearishChoch && signalEvent?.direction === "short"));
 
         if (
           showStructure &&
@@ -2405,7 +2443,7 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
-        if (showStructure && bullishChoch && passesSignalGates) {
+        if (signalEvent?.direction === "long" && passesSignalGates) {
           events.push(
             buildEvent(
               `${script.scriptKey}-signal-long-${index}`,
@@ -2419,9 +2457,7 @@ export function createRayReplicaPineRuntimeAdapter(
                 variant: "signal",
                 placement: "below",
                 arrow: "up",
-                price:
-                  chartBars[index].l +
-                  -(Number.isFinite(atrRaw[index]) ? atrRaw[index] * 1.5 : 0),
+                price: signalEvent.price,
                 background: BULL_COLOR,
                 borderColor: withHexAlpha(BULL_COLOR, "f2"),
                 textColor: "#ffffff",
@@ -2448,7 +2484,7 @@ export function createRayReplicaPineRuntimeAdapter(
           );
         }
 
-        if (showStructure && bearishChoch && passesSignalGates) {
+        if (signalEvent?.direction === "short" && passesSignalGates) {
           events.push(
             buildEvent(
               `${script.scriptKey}-signal-short-${index}`,
@@ -2462,9 +2498,7 @@ export function createRayReplicaPineRuntimeAdapter(
                 variant: "signal",
                 placement: "above",
                 arrow: "down",
-                price:
-                  chartBars[index].h +
-                  (Number.isFinite(atrRaw[index]) ? atrRaw[index] * 1.5 : 0),
+                price: signalEvent.price,
                 background: BEAR_COLOR,
                 borderColor: withHexAlpha(BEAR_COLOR, "f2"),
                 textColor: "#ffffff",
@@ -2860,34 +2894,46 @@ export function createRayReplicaPineRuntimeAdapter(
           lastBarIndex,
           volumeMaLength,
         );
-        const currentSessionKey = resolveSessionKey(lastBar);
+        const currentSessionKey = resolveRayReplicaSessionKey(lastBar);
         const activeBandProfile = resolveRayReplicaBandProfile(
           resolveRayReplicaRuntimeSettings(settings),
         ) || { label: "Custom" };
         const adxPass =
+          !signalFiltersEnabled ||
           !requireAdx ||
           (Number.isFinite(currentAdx) && currentAdx >= adxMin);
         const volatilityPass =
+          !signalFiltersEnabled ||
           !requireVolScoreRange ||
           (Number.isFinite(currentVolatility) &&
             currentVolatility >= volScoreMin &&
             currentVolatility <= volScoreMax);
         const sessionPass =
+          !signalFiltersEnabled ||
           !restrictToSelectedSessions ||
-          (currentSessionKey != null && sessions.includes(currentSessionKey));
+          sessions.some((session) => {
+            if (session === currentSessionKey) return true;
+            if (session === "asia") {
+              return currentSessionKey === "tokyo" || currentSessionKey === "sydney";
+            }
+            if (session === "new_york_am" || session === "new_york_pm") {
+              return currentSessionKey === "new_york";
+            }
+            return false;
+          });
         const mtfConfigs = [
           { timeframe: mtf1, required: requireMtf1, label: "MTF 1" },
           { timeframe: mtf2, required: requireMtf2, label: "MTF 2" },
           { timeframe: mtf3, required: requireMtf3, label: "MTF 3" },
         ].map(({ timeframe: mtfTimeframe, required, label }) => {
-          const mtfBars = aggregateBarsForTimeframe(chartBars, mtfTimeframe);
-          const direction = resolveTrendDirectionForBars(mtfBars, {
+          const mtfBars = aggregateRayReplicaBarsForTimeframe(
+            chartBars,
+            mtfTimeframe,
+          );
+          const direction = resolveRayReplicaTrendDirection(
+            mtfBars,
             basisLength,
-            atrLength,
-            atrSmoothing,
-            volatilityMultiplier,
-            waitForBarClose,
-          });
+          );
           return {
             label,
             value:
@@ -2925,7 +2971,7 @@ export function createRayReplicaPineRuntimeAdapter(
               {
                 label: "ADX",
                 value: Number.isFinite(currentAdx) ? currentAdx.toFixed(1) : "--",
-                detail: requireAdx
+                detail: signalFiltersEnabled && requireAdx
                   ? `Gate ${adxMin.toFixed(1)}+`
                   : "Gate off",
                 color: adxPass ? BULL_COLOR : BEAR_COLOR,
@@ -2946,15 +2992,15 @@ export function createRayReplicaPineRuntimeAdapter(
                 value: Number.isFinite(currentVolatility)
                   ? currentVolatility.toFixed(1)
                   : "--",
-                detail: requireVolScoreRange
+                detail: signalFiltersEnabled && requireVolScoreRange
                   ? `${volScoreMin.toFixed(0)}-${volScoreMax.toFixed(0)}`
                   : "Gate off",
                 color: volatilityPass ? BULL_COLOR : BEAR_COLOR,
               },
               {
                 label: "SESSION",
-                value: resolveSessionLabel(lastBar),
-                detail: restrictToSelectedSessions
+                value: resolveRayReplicaSessionLabel(lastBar),
+                detail: signalFiltersEnabled && restrictToSelectedSessions
                   ? summarizeRequiredSessions(sessions)
                   : "All sessions",
                 color: sessionPass ? "#ffffff" : BEAR_COLOR,

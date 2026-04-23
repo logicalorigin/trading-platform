@@ -43,6 +43,8 @@ export const GetSessionResponse = zod.object({
       accounts: zod.array(zod.string()),
       lastTickleAt: zod.coerce.date().nullable(),
       lastError: zod.string().nullable(),
+      lastRecoveryAttemptAt: zod.coerce.date().nullable(),
+      lastRecoveryError: zod.string().nullable(),
       updatedAt: zod.coerce.date(),
       transport: zod.enum(["client_portal", "tws"]),
       connectionTarget: zod.string().nullable(),
@@ -195,6 +197,7 @@ export const ListOrdersResponse = zod.object({
       id: zod.string(),
       accountId: zod.string(),
       mode: zod.enum(["paper", "live"]),
+      confirm: zod.boolean().optional(),
       symbol: zod.string(),
       assetClass: zod.enum(["equity", "option"]),
       side: zod.enum(["buy", "sell"]),
@@ -344,6 +347,8 @@ export const SubmitOrdersBody = zod.union([
   }),
   zod.object({
     accountId: zod.string().nullish(),
+    mode: zod.union([zod.enum(["paper", "live"]), zod.null()]).optional(),
+    confirm: zod.boolean().optional(),
     ibkrOrders: zod.array(zod.record(zod.string(), zod.unknown())),
   }),
 ]);
@@ -358,6 +363,7 @@ export const ReplaceOrderParams = zod.object({
 export const ReplaceOrderBody = zod.object({
   accountId: zod.string(),
   mode: zod.enum(["paper", "live"]).optional(),
+  confirm: zod.boolean().optional(),
   order: zod.record(zod.string(), zod.unknown()),
 });
 
@@ -365,6 +371,7 @@ export const ReplaceOrderResponse = zod.object({
   id: zod.string(),
   accountId: zod.string(),
   mode: zod.enum(["paper", "live"]),
+  confirm: zod.boolean().optional(),
   symbol: zod.string(),
   assetClass: zod.enum(["equity", "option"]),
   side: zod.enum(["buy", "sell"]),
@@ -410,6 +417,7 @@ export const CancelOrderParams = zod.object({
 
 export const CancelOrderBody = zod.object({
   accountId: zod.string(),
+  confirm: zod.boolean().optional(),
   manualIndicator: zod.boolean().nullish(),
   extOperator: zod.string().nullish(),
 });
@@ -542,8 +550,8 @@ export const SearchUniverseTickersResponse = zod.object({
       compositeFigi: zod.string().nullable(),
       shareClassFigi: zod.string().nullable(),
       lastUpdatedAt: zod.coerce.date().nullable(),
-      provider: zod.enum(["ibkr", "polygon"]).nullable().optional(),
-      providerContractId: zod.string().nullable().optional(),
+      provider: zod.union([zod.enum(["polygon", "ibkr"]), zod.null()]),
+      providerContractId: zod.string().nullable(),
     }),
   ),
 });
@@ -701,6 +709,8 @@ export const ListFlowEventsResponse = zod.object({
     zod.object({
       id: zod.string(),
       underlying: zod.string(),
+      provider: zod.enum(["ibkr", "polygon"]),
+      basis: zod.enum(["snapshot", "trade"]),
       optionTicker: zod.string(),
       strike: zod.number(),
       expirationDate: zod.coerce.date(),
@@ -718,13 +728,242 @@ export const ListFlowEventsResponse = zod.object({
       unusualScore: zod
         .number()
         .describe(
-          "Volume divided by prior-session open interest, capped at 10. Higher values indicate the print is more likely to be a fresh institutional position rather than routine market-maker turnover.",
+          "Volume divided by prior-session open interest, capped at 10. Higher values indicate the event is more likely to be a fresh institutional position rather than routine market-maker turnover.",
         ),
       isUnusual: zod
         .boolean()
         .describe(
           "True when the contract's day volume meets or exceeds its open interest (the default unusual-flow threshold).",
         ),
+    }),
+  ),
+  source: zod.object({
+    provider: zod.enum(["ibkr", "polygon", "none"]),
+    status: zod.enum(["live", "fallback", "empty", "error"]),
+    fallbackUsed: zod.boolean(),
+    attemptedProviders: zod.array(zod.enum(["ibkr", "polygon"])),
+    errorMessage: zod.string().nullable(),
+    fetchedAt: zod.coerce.date(),
+  }),
+});
+
+/**
+ * @summary Get the RayReplica monitor profile for an environment
+ */
+export const GetSignalMonitorProfileQueryParams = zod.object({
+  environment: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetSignalMonitorProfileResponse = zod.object({
+  id: zod.string(),
+  environment: zod.enum(["paper", "live"]),
+  enabled: zod.boolean(),
+  watchlistId: zod.string().nullable(),
+  timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
+  rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
+  freshWindowBars: zod.number(),
+  pollIntervalSeconds: zod.number(),
+  maxSymbols: zod.number(),
+  evaluationConcurrency: zod.number(),
+  lastEvaluatedAt: zod.coerce.date().nullable(),
+  lastError: zod.string().nullable(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Update the RayReplica monitor profile for an environment
+ */
+export const updateSignalMonitorProfileBodyFreshWindowBarsMax = 20;
+
+export const updateSignalMonitorProfileBodyPollIntervalSecondsMin = 15;
+export const updateSignalMonitorProfileBodyPollIntervalSecondsMax = 3600;
+
+export const updateSignalMonitorProfileBodyMaxSymbolsMax = 250;
+
+export const updateSignalMonitorProfileBodyEvaluationConcurrencyMax = 10;
+
+export const UpdateSignalMonitorProfileBody = zod.object({
+  environment: zod.enum(["paper", "live"]).optional(),
+  enabled: zod.boolean().optional(),
+  watchlistId: zod.string().nullish(),
+  timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]).optional(),
+  rayReplicaSettings: zod.record(zod.string(), zod.unknown()).optional(),
+  freshWindowBars: zod
+    .number()
+    .min(1)
+    .max(updateSignalMonitorProfileBodyFreshWindowBarsMax)
+    .optional(),
+  pollIntervalSeconds: zod
+    .number()
+    .min(updateSignalMonitorProfileBodyPollIntervalSecondsMin)
+    .max(updateSignalMonitorProfileBodyPollIntervalSecondsMax)
+    .optional(),
+  maxSymbols: zod
+    .number()
+    .min(1)
+    .max(updateSignalMonitorProfileBodyMaxSymbolsMax)
+    .optional(),
+  evaluationConcurrency: zod
+    .number()
+    .min(1)
+    .max(updateSignalMonitorProfileBodyEvaluationConcurrencyMax)
+    .optional(),
+});
+
+export const UpdateSignalMonitorProfileResponse = zod.object({
+  id: zod.string(),
+  environment: zod.enum(["paper", "live"]),
+  enabled: zod.boolean(),
+  watchlistId: zod.string().nullable(),
+  timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
+  rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
+  freshWindowBars: zod.number(),
+  pollIntervalSeconds: zod.number(),
+  maxSymbols: zod.number(),
+  evaluationConcurrency: zod.number(),
+  lastEvaluatedAt: zod.coerce.date().nullable(),
+  lastError: zod.string().nullable(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Evaluate the RayReplica monitor profile
+ */
+export const evaluateSignalMonitorBodyModeDefault = `incremental`;
+
+export const EvaluateSignalMonitorBody = zod.object({
+  environment: zod.enum(["paper", "live"]).optional(),
+  mode: zod
+    .enum(["hydrate", "incremental"])
+    .default(evaluateSignalMonitorBodyModeDefault),
+  watchlistId: zod.string().nullish(),
+});
+
+export const EvaluateSignalMonitorResponse = zod.object({
+  profile: zod.object({
+    id: zod.string(),
+    environment: zod.enum(["paper", "live"]),
+    enabled: zod.boolean(),
+    watchlistId: zod.string().nullable(),
+    timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
+    rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
+    freshWindowBars: zod.number(),
+    pollIntervalSeconds: zod.number(),
+    maxSymbols: zod.number(),
+    evaluationConcurrency: zod.number(),
+    lastEvaluatedAt: zod.coerce.date().nullable(),
+    lastError: zod.string().nullable(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  states: zod.array(
+    zod.object({
+      id: zod.string(),
+      profileId: zod.string(),
+      symbol: zod.string(),
+      timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
+      currentSignalDirection: zod.union([
+        zod.enum(["buy", "sell"]),
+        zod.null(),
+      ]),
+      currentSignalAt: zod.coerce.date().nullable(),
+      currentSignalPrice: zod.number().nullable(),
+      latestBarAt: zod.coerce.date().nullable(),
+      barsSinceSignal: zod.number().nullable(),
+      fresh: zod.boolean(),
+      status: zod.enum(["ok", "stale", "unavailable", "error", "unknown"]),
+      active: zod.boolean(),
+      lastEvaluatedAt: zod.coerce.date().nullable(),
+      lastError: zod.string().nullable(),
+    }),
+  ),
+  evaluatedAt: zod.coerce.date(),
+  truncated: zod.boolean(),
+  skippedSymbols: zod.array(zod.string()),
+});
+
+/**
+ * @summary List current RayReplica signal states
+ */
+export const GetSignalMonitorStateQueryParams = zod.object({
+  environment: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetSignalMonitorStateResponse = zod.object({
+  profile: zod.object({
+    id: zod.string(),
+    environment: zod.enum(["paper", "live"]),
+    enabled: zod.boolean(),
+    watchlistId: zod.string().nullable(),
+    timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
+    rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
+    freshWindowBars: zod.number(),
+    pollIntervalSeconds: zod.number(),
+    maxSymbols: zod.number(),
+    evaluationConcurrency: zod.number(),
+    lastEvaluatedAt: zod.coerce.date().nullable(),
+    lastError: zod.string().nullable(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  states: zod.array(
+    zod.object({
+      id: zod.string(),
+      profileId: zod.string(),
+      symbol: zod.string(),
+      timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
+      currentSignalDirection: zod.union([
+        zod.enum(["buy", "sell"]),
+        zod.null(),
+      ]),
+      currentSignalAt: zod.coerce.date().nullable(),
+      currentSignalPrice: zod.number().nullable(),
+      latestBarAt: zod.coerce.date().nullable(),
+      barsSinceSignal: zod.number().nullable(),
+      fresh: zod.boolean(),
+      status: zod.enum(["ok", "stale", "unavailable", "error", "unknown"]),
+      active: zod.boolean(),
+      lastEvaluatedAt: zod.coerce.date().nullable(),
+      lastError: zod.string().nullable(),
+    }),
+  ),
+  evaluatedAt: zod.coerce.date(),
+  truncated: zod.boolean(),
+  skippedSymbols: zod.array(zod.string()),
+});
+
+/**
+ * @summary List RayReplica signal monitor events
+ */
+export const listSignalMonitorEventsQueryLimitMax = 500;
+
+export const ListSignalMonitorEventsQueryParams = zod.object({
+  environment: zod.enum(["paper", "live"]).optional(),
+  symbol: zod.coerce.string().optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listSignalMonitorEventsQueryLimitMax)
+    .optional(),
+});
+
+export const ListSignalMonitorEventsResponse = zod.object({
+  events: zod.array(
+    zod.object({
+      id: zod.string(),
+      profileId: zod.string(),
+      environment: zod.enum(["paper", "live"]),
+      symbol: zod.string(),
+      timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
+      direction: zod.enum(["buy", "sell"]),
+      signalAt: zod.coerce.date(),
+      signalPrice: zod.number().nullable(),
+      close: zod.number().nullable(),
+      emittedAt: zod.coerce.date(),
+      source: zod.string(),
+      payload: zod.record(zod.string(), zod.unknown()),
     }),
   ),
 });

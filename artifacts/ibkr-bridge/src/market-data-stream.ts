@@ -6,6 +6,7 @@ import {
   parseSnapshotQuote,
   type QuoteSnapshot,
   type ResolvedIbkrContract,
+  STREAMING_SNAPSHOT_FIELDS,
 } from "../../api-server/src/providers/ibkr/client";
 import {
   asArray,
@@ -93,6 +94,11 @@ export class IbkrMarketDataStream {
   private socket: WebSocket | null = null;
   private connectPromise: Promise<void> | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private smdRenewTimer: NodeJS.Timeout | null = null;
+  private readonly smdRenewIntervalMs = Math.max(
+    60_000,
+    Number(process.env["IBKR_SMD_RENEW_INTERVAL_MS"] ?? "540000"),
+  );
   private readonly quoteSubscriptionsByConid = new Map<
     string,
     QuoteSubscriptionEntry
@@ -161,7 +167,10 @@ export class IbkrMarketDataStream {
         merged[key] = value;
       }
       this.rawPayloadsByConid.set(conid, merged);
-      this.quotesByConid.set(conid, parseSnapshotQuote(symbol, conid, merged));
+      this.quotesByConid.set(
+        conid,
+        parseSnapshotQuote(symbol, conid, merged, "equity"),
+      );
       return;
     }
 
@@ -208,47 +217,63 @@ export class IbkrMarketDataStream {
     this.reconnectTimer.unref?.();
   }
 
+  private sendQuoteSubscription(subscription: QuoteSubscriptionEntry) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.socket.send(
+      `smd+${subscription.conid}+${JSON.stringify({
+        fields: STREAMING_SNAPSHOT_FIELDS,
+      })}`,
+    );
+  }
+
+  private sendDepthSubscription(subscription: DepthSubscriptionEntry) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.socket.send(
+      `sbd+${subscription.accountId}+${subscription.providerContractId}+${subscription.exchange}`,
+    );
+  }
+
+  private renewQuoteSubscriptions() {
+    for (const subscription of this.quoteSubscriptionsByConid.values()) {
+      this.sendQuoteSubscription(subscription);
+    }
+  }
+
   private async resubscribeAll() {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       return;
     }
 
-    for (const subscription of this.quoteSubscriptionsByConid.values()) {
-      this.socket.send(
-        `smd+${subscription.conid}+${JSON.stringify({
-          fields: [
-            "31",
-            "55",
-            "70",
-            "71",
-            "82",
-            "83",
-            "84",
-            "85",
-            "86",
-            "87",
-            "88",
-            "7059",
-            "7295",
-            "7296",
-            "7741",
-            "7762",
-            "7638",
-            "7283",
-            "7308",
-            "7309",
-            "7310",
-            "7311",
-          ],
-        })}`,
-      );
-    }
+    this.renewQuoteSubscriptions();
 
     for (const subscription of this.depthSubscriptionsByKey.values()) {
-      this.socket.send(
-        `sbd+${subscription.accountId}+${subscription.providerContractId}+${subscription.exchange}`,
-      );
+      this.sendDepthSubscription(subscription);
     }
+  }
+
+  private ensureSmdRenewalLoop() {
+    if (this.smdRenewTimer) {
+      return;
+    }
+
+    this.smdRenewTimer = setInterval(() => {
+      if (this.quoteSubscriptionsByConid.size === 0) {
+        return;
+      }
+
+      void this.ensureConnected()
+        .then(() => this.renewQuoteSubscriptions())
+        .catch((error) => {
+          logger.warn({ err: error }, "IBKR SMD subscription renewal failed");
+        });
+    }, this.smdRenewIntervalMs);
+    this.smdRenewTimer.unref?.();
   }
 
   async ensureConnected(): Promise<void> {
@@ -338,6 +363,7 @@ export class IbkrMarketDataStream {
     }
 
     await this.ensureConnected();
+    this.ensureSmdRenewalLoop();
 
     if (missingSymbols.length === 0) {
       return;

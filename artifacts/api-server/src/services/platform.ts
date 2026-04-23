@@ -387,6 +387,58 @@ function getIbkrClient(): IbkrBridgeClient {
   return new IbkrBridgeClient();
 }
 
+type FlowDataProvider = "ibkr" | "polygon";
+type FlowSourceProvider = FlowDataProvider | "none";
+type FlowSourceStatus = "live" | "fallback" | "empty" | "error";
+
+type FlowEventsSource = {
+  provider: FlowSourceProvider;
+  status: FlowSourceStatus;
+  fallbackUsed: boolean;
+  attemptedProviders: FlowDataProvider[];
+  errorMessage: string | null;
+  fetchedAt: Date;
+};
+
+type FlowEventsResult = {
+  events: unknown[];
+  source: FlowEventsSource;
+};
+
+const FLOW_EVENTS_CACHE_TTL_MS = 15_000;
+const flowEventsCache = new Map<
+  string,
+  { value: FlowEventsResult; expiresAt: number }
+>();
+const flowEventsInFlight = new Map<string, Promise<FlowEventsResult>>();
+
+function flowSource(input: {
+  provider: FlowSourceProvider;
+  status: FlowSourceStatus;
+  fallbackUsed?: boolean;
+  attemptedProviders?: FlowDataProvider[];
+  errorMessage?: string | null;
+}): FlowEventsSource {
+  return {
+    provider: input.provider,
+    status: input.status,
+    fallbackUsed: Boolean(input.fallbackUsed),
+    attemptedProviders: input.attemptedProviders ?? [],
+    errorMessage: input.errorMessage ?? null,
+    fetchedAt: new Date(),
+  };
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return typeof error === "string" && error.trim()
+    ? error
+    : "Unknown provider error.";
+}
+
 export async function getSession() {
   const bridgeHealth = await getIbkrClient()
     .getHealth()
@@ -807,7 +859,25 @@ export async function listExecutions(input: {
   };
 }
 
+function assertLiveOrderConfirmed(
+  mode: "paper" | "live" | null | undefined,
+  confirm: boolean | null | undefined,
+) {
+  if (mode !== "live" || confirm === true) {
+    return;
+  }
+
+  throw new HttpError(
+    409,
+    "Live IBKR order actions require explicit confirmation. Retry with confirm=true after the user reviews the order details.",
+    {
+      code: "ibkr_live_order_confirmation_required",
+    },
+  );
+}
+
 export async function placeOrder(input: PlaceOrderInput) {
+  assertLiveOrderConfirmed(input.mode, input.confirm);
   const client = getIbkrClient();
   return client.placeOrder(input);
 }
@@ -819,8 +889,11 @@ export async function previewOrder(input: PlaceOrderInput) {
 
 export async function submitRawOrders(input: {
   accountId?: string | null;
+  mode?: "paper" | "live" | null;
+  confirm?: boolean | null;
   ibkrOrders: Record<string, unknown>[];
 }) {
+  assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
   const client = getIbkrClient();
   return client.submitRawOrders(input);
 }
@@ -830,22 +903,27 @@ export async function replaceOrder(input: {
   orderId: string;
   order: Record<string, unknown>;
   mode?: "paper" | "live";
+  confirm?: boolean | null;
 }) {
+  assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
   const client = getIbkrClient();
   return client.replaceOrder({
     accountId: input.accountId,
     orderId: input.orderId,
     order: input.order,
     mode: input.mode ?? getRuntimeMode(),
+    confirm: input.confirm,
   });
 }
 
 export async function cancelOrder(input: {
   accountId: string;
   orderId: string;
+  confirm?: boolean | null;
   manualIndicator?: boolean | null;
   extOperator?: string | null;
 }) {
+  assertLiveOrderConfirmed(getRuntimeMode(), input.confirm);
   const client = getIbkrClient();
   return client.cancelOrder(input);
 }
@@ -1194,17 +1272,67 @@ export async function getMarketDepth(input: {
 export async function listFlowEvents(input: {
   underlying?: string;
   limit?: number;
-}) {
-  if (!input.underlying) {
-    return { events: [] };
+}): Promise<FlowEventsResult> {
+  const underlying = normalizeSymbol(input.underlying ?? "");
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+
+  if (!underlying) {
+    return {
+      events: [],
+      source: flowSource({
+        provider: "none",
+        status: "empty",
+      }),
+    };
   }
 
-  // Derive flow events from IBKR option-chain snapshots (the user has OPRA
-  // data via IBKR). One event per active contract, ranked by traded volume so
-  // the highest-activity contracts surface first. Falls back to Polygon if
-  // IBKR returns no contracts.
+  const cacheKey = `${underlying}:${limit}`;
+  const cached = flowEventsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+  if (cached) {
+    flowEventsCache.delete(cacheKey);
+  }
+
+  const inFlight = flowEventsInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = listFlowEventsUncached({
+    underlying,
+    limit,
+  }).then((value) => {
+    flowEventsCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + FLOW_EVENTS_CACHE_TTL_MS,
+    });
+    return value;
+  });
+
+  flowEventsInFlight.set(cacheKey, request);
+
+  try {
+    return await request;
+  } finally {
+    flowEventsInFlight.delete(cacheKey);
+  }
+}
+
+async function listFlowEventsUncached(input: {
+  underlying: string;
+  limit: number;
+}): Promise<FlowEventsResult> {
+  // Derive IBKR flow from option-chain snapshots. These are not consolidated
+  // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
+  // labels them as active/unusual contracts rather than verified sweeps.
   const ibkrClient = getIbkrClient();
   let contracts: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>> = [];
+  const attemptedProviders: FlowDataProvider[] = ["ibkr"];
+  let ibkrError: string | null = null;
+  let polygonError: string | null = null;
+
   try {
     // Keep coverage tight — IBKR snapshots are rate-limited and the flow
     // panel renders the highest-premium contracts first, so a moderate
@@ -1214,16 +1342,15 @@ export async function listFlowEvents(input: {
       maxExpirations: 2,
       strikesAroundMoney: 8,
     });
-  } catch {
+  } catch (error) {
+    ibkrError = getErrorMessage(error);
     contracts = [];
   }
 
-  const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
   // IBKR snapshots now include OPRA volume (field 7762) and option open
   // interest (field 7638), so flow events can rank by real traded premium.
-  // Require both a marked contract and non-zero day volume — this filters
-  // out the long tail of contracts with no prints today and matches the
-  // Polygon-backed flow ranking semantics.
+  // Require both a marked contract and non-zero day volume to filter out the
+  // inactive long tail.
   const events = contracts
     .filter((c) => c.mark > 0 && c.volume > 0)
     .map((c) => {
@@ -1255,10 +1382,12 @@ export async function listFlowEvents(input: {
       );
       // Rank by mark-based premium (mark × volume × multiplier) so the
       // ordering is stable even when `last` is stale or zero. The display
-      // `price` still prefers the most recent print when available.
+      // `price` still prefers the last field when available.
       return {
         id: `${c.contract.ticker}-${c.updatedAt.getTime()}`,
         underlying: normalizeSymbol(c.contract.underlying),
+        provider: "ibkr" as const,
+        basis: "snapshot" as const,
         optionTicker: c.contract.ticker,
         strike: c.contract.strike,
         expirationDate: c.contract.expirationDate,
@@ -1277,8 +1406,8 @@ export async function listFlowEvents(input: {
         isUnusual,
       };
     })
-    // Surface unusual prints (volume > open interest) above routine flow,
-    // then fall back to premium so the highest-conviction prints win ties.
+    // Surface unusual contracts (volume > open interest) above routine flow,
+    // then fall back to premium so the highest-conviction events win ties.
     .sort((a, b) => {
       if (a.isUnusual !== b.isUnusual) return a.isUnusual ? -1 : 1;
       if (a.isUnusual && b.isUnusual && a.unusualScore !== b.unusualScore) {
@@ -1286,20 +1415,53 @@ export async function listFlowEvents(input: {
       }
       return b.premium - a.premium;
     })
-    .slice(0, limit);
+    .slice(0, input.limit);
 
-  if (events.length === 0 && getPolygonRuntimeConfig()) {
+  if (events.length > 0) {
+    return {
+      events,
+      source: flowSource({
+        provider: "ibkr",
+        status: "live",
+        attemptedProviders,
+      }),
+    };
+  }
+
+  if (getPolygonRuntimeConfig()) {
+    attemptedProviders.push("polygon");
     try {
-      return {
-        events: await getPolygonClient().getDerivedFlowEvents({
-          underlying: input.underlying,
-          limit: input.limit,
-        }),
-      };
-    } catch {
-      return { events: [] };
+      const polygonEvents = await getPolygonClient().getDerivedFlowEvents({
+        underlying: input.underlying,
+        limit: input.limit,
+      });
+
+      if (polygonEvents.length > 0) {
+        return {
+          events: polygonEvents,
+          source: flowSource({
+            provider: "polygon",
+            status: "fallback",
+            fallbackUsed: true,
+            attemptedProviders,
+            errorMessage: ibkrError,
+          }),
+        };
+      }
+    } catch (error) {
+      polygonError = getErrorMessage(error);
     }
   }
 
-  return { events };
+  const errorMessage = polygonError ?? ibkrError;
+  return {
+    events: [],
+    source: flowSource({
+      provider: "none",
+      status: errorMessage ? "error" : "empty",
+      fallbackUsed: attemptedProviders.includes("polygon"),
+      attemptedProviders,
+      errorMessage,
+    }),
+  };
 }

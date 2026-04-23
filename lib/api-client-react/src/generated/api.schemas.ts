@@ -39,6 +39,41 @@ export const MarketDataProvider = {
   ibkr: "ibkr",
 } as const;
 
+export type FlowDataProvider =
+  (typeof FlowDataProvider)[keyof typeof FlowDataProvider];
+
+export const FlowDataProvider = {
+  ibkr: "ibkr",
+  polygon: "polygon",
+} as const;
+
+export type FlowEventBasis =
+  (typeof FlowEventBasis)[keyof typeof FlowEventBasis];
+
+export const FlowEventBasis = {
+  snapshot: "snapshot",
+  trade: "trade",
+} as const;
+
+export type FlowEventsSourceProvider =
+  (typeof FlowEventsSourceProvider)[keyof typeof FlowEventsSourceProvider];
+
+export const FlowEventsSourceProvider = {
+  ibkr: "ibkr",
+  polygon: "polygon",
+  none: "none",
+} as const;
+
+export type FlowEventsSourceStatus =
+  (typeof FlowEventsSourceStatus)[keyof typeof FlowEventsSourceStatus];
+
+export const FlowEventsSourceStatus = {
+  live: "live",
+  fallback: "fallback",
+  empty: "empty",
+  error: "error",
+} as const;
+
 export type UniverseMarket =
   (typeof UniverseMarket)[keyof typeof UniverseMarket];
 
@@ -132,6 +167,17 @@ export const BarTimeframe = {
   "1d": "1d",
 } as const;
 
+export type SignalMonitorTimeframe =
+  (typeof SignalMonitorTimeframe)[keyof typeof SignalMonitorTimeframe];
+
+export const SignalMonitorTimeframe = {
+  "1m": "1m",
+  "5m": "5m",
+  "15m": "15m",
+  "1h": "1h",
+  "1d": "1d",
+} as const;
+
 export type FlowSentiment = (typeof FlowSentiment)[keyof typeof FlowSentiment];
 
 export const FlowSentiment = {
@@ -204,6 +250,10 @@ export interface IbkrBridgeHealth {
   lastTickleAt: string | null;
   /** @nullable */
   lastError: string | null;
+  /** @nullable */
+  lastRecoveryAttemptAt: string | null;
+  /** @nullable */
+  lastRecoveryError: string | null;
   updatedAt: string;
   transport: IbkrBridgeHealthTransport;
   /** @nullable */
@@ -582,6 +632,9 @@ export interface UniverseTicker {
   shareClassFigi: string | null;
   /** @nullable */
   lastUpdatedAt: string | null;
+  provider: MarketDataProvider | null;
+  /** @nullable */
+  providerContractId: string | null;
 }
 
 export const BrokerConnectionProvider = {
@@ -709,6 +762,7 @@ export interface Order {
   id: string;
   accountId: string;
   mode: EnvironmentMode;
+  confirm?: boolean;
   symbol: string;
   assetClass: AssetClass;
   side: OrderSide;
@@ -751,6 +805,8 @@ export interface OrderPreview {
 export interface SubmitIbkrOrdersRequest {
   /** @nullable */
   accountId?: string | null;
+  mode?: EnvironmentMode | null;
+  confirm?: boolean;
   ibkrOrders: JsonObject[];
 }
 
@@ -761,11 +817,13 @@ export interface SubmitIbkrOrdersResponse {
 export interface ReplaceOrderRequest {
   accountId: string;
   mode?: EnvironmentMode;
+  confirm?: boolean;
   order: JsonObject;
 }
 
 export interface CancelOrderRequest {
   accountId: string;
+  confirm?: boolean;
   /** @nullable */
   manualIndicator?: boolean | null;
   /** @nullable */
@@ -783,6 +841,8 @@ export interface CancelOrderResponse {
 export interface FlowEvent {
   id: string;
   underlying: string;
+  provider: FlowDataProvider;
+  basis: FlowEventBasis;
   optionTicker: string;
   strike: number;
   expirationDate: string;
@@ -797,10 +857,20 @@ export interface FlowEvent {
   sentiment: FlowSentiment;
   tradeConditions: string[];
   occurredAt: string;
-  /** Volume divided by prior-session open interest, capped at 10. Higher values indicate the print is more likely to be a fresh institutional position rather than routine market-maker turnover. */
+  /** Volume divided by prior-session open interest, capped at 10. Higher values indicate the event is more likely to be a fresh institutional position rather than routine market-maker turnover. */
   unusualScore: number;
   /** True when the contract's day volume meets or exceeds its open interest (the default unusual-flow threshold). */
   isUnusual: boolean;
+}
+
+export interface FlowEventsSource {
+  provider: FlowEventsSourceProvider;
+  status: FlowEventsSourceStatus;
+  fallbackUsed: boolean;
+  attemptedProviders: FlowDataProvider[];
+  /** @nullable */
+  errorMessage: string | null;
+  fetchedAt: string;
 }
 
 export interface BrokerConnectionsResponse {
@@ -912,6 +982,142 @@ export interface ExecutionEventsResponse {
 
 export interface FlowEventsResponse {
   events: FlowEvent[];
+  source: FlowEventsSource;
+}
+
+export type SignalMonitorDirection =
+  (typeof SignalMonitorDirection)[keyof typeof SignalMonitorDirection];
+
+export const SignalMonitorDirection = {
+  buy: "buy",
+  sell: "sell",
+} as const;
+
+export type SignalMonitorSymbolStatus =
+  (typeof SignalMonitorSymbolStatus)[keyof typeof SignalMonitorSymbolStatus];
+
+export const SignalMonitorSymbolStatus = {
+  ok: "ok",
+  stale: "stale",
+  unavailable: "unavailable",
+  error: "error",
+  unknown: "unknown",
+} as const;
+
+export interface SignalMonitorProfile {
+  id: string;
+  environment: EnvironmentMode;
+  enabled: boolean;
+  /** @nullable */
+  watchlistId: string | null;
+  timeframe: SignalMonitorTimeframe;
+  rayReplicaSettings: JsonObject;
+  freshWindowBars: number;
+  pollIntervalSeconds: number;
+  maxSymbols: number;
+  evaluationConcurrency: number;
+  /** @nullable */
+  lastEvaluatedAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpdateSignalMonitorProfileRequest {
+  environment?: EnvironmentMode;
+  enabled?: boolean;
+  /** @nullable */
+  watchlistId?: string | null;
+  timeframe?: SignalMonitorTimeframe;
+  rayReplicaSettings?: JsonObject;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  freshWindowBars?: number;
+  /**
+   * @minimum 15
+   * @maximum 3600
+   */
+  pollIntervalSeconds?: number;
+  /**
+   * @minimum 1
+   * @maximum 250
+   */
+  maxSymbols?: number;
+  /**
+   * @minimum 1
+   * @maximum 10
+   */
+  evaluationConcurrency?: number;
+}
+
+export type EvaluateSignalMonitorRequestMode =
+  (typeof EvaluateSignalMonitorRequestMode)[keyof typeof EvaluateSignalMonitorRequestMode];
+
+export const EvaluateSignalMonitorRequestMode = {
+  hydrate: "hydrate",
+  incremental: "incremental",
+} as const;
+
+export interface EvaluateSignalMonitorRequest {
+  environment?: EnvironmentMode;
+  mode?: EvaluateSignalMonitorRequestMode;
+  /** @nullable */
+  watchlistId?: string | null;
+}
+
+export interface SignalMonitorSymbolState {
+  id: string;
+  profileId: string;
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  currentSignalDirection: SignalMonitorDirection | null;
+  /** @nullable */
+  currentSignalAt: string | null;
+  /** @nullable */
+  currentSignalPrice: number | null;
+  /** @nullable */
+  latestBarAt: string | null;
+  /** @nullable */
+  barsSinceSignal: number | null;
+  fresh: boolean;
+  status: SignalMonitorSymbolStatus;
+  active: boolean;
+  /** @nullable */
+  lastEvaluatedAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+}
+
+export interface SignalMonitorEvent {
+  id: string;
+  profileId: string;
+  environment: EnvironmentMode;
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  direction: SignalMonitorDirection;
+  signalAt: string;
+  /** @nullable */
+  signalPrice: number | null;
+  /** @nullable */
+  close: number | null;
+  emittedAt: string;
+  source: string;
+  payload: JsonObject;
+}
+
+export interface SignalMonitorStateResponse {
+  profile: SignalMonitorProfile;
+  states: SignalMonitorSymbolState[];
+  evaluatedAt: string;
+  truncated: boolean;
+  skippedSymbols: string[];
+}
+
+export interface SignalMonitorEventsResponse {
+  events: SignalMonitorEvent[];
 }
 
 export type PineScriptStatus =
@@ -1899,6 +2105,24 @@ export type ListFlowEventsParams = {
   /**
    * @minimum 1
    * @maximum 1000
+   */
+  limit?: number;
+};
+
+export type GetSignalMonitorProfileParams = {
+  environment?: EnvironmentMode;
+};
+
+export type GetSignalMonitorStateParams = {
+  environment?: EnvironmentMode;
+};
+
+export type ListSignalMonitorEventsParams = {
+  environment?: EnvironmentMode;
+  symbol?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
    */
   limit?: number;
 };

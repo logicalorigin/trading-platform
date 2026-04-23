@@ -11,5 +11,6 @@ import type { JsonObject } from "./jsonObject";
 export interface ReplaceOrderRequest {
   accountId: string;
   mode?: EnvironmentMode;
+  confirm?: boolean;
   order: JsonObject;
 }

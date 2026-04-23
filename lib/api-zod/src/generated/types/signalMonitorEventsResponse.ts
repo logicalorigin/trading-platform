@@ -5,12 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { SignalMonitorEvent } from "./signalMonitorEvent";
 
-export interface CancelOrderRequest {
-  accountId: string;
-  confirm?: boolean;
-  /** @nullable */
-  manualIndicator?: boolean | null;
-  /** @nullable */
-  extOperator?: string | null;
+export interface SignalMonitorEventsResponse {
+  events: SignalMonitorEvent[];
 }

@@ -107,6 +107,8 @@ export type OptionChainContract = {
 export type FlowEvent = {
   id: string;
   underlying: string;
+  provider: "polygon";
+  basis: "trade";
   optionTicker: string;
   strike: number;
   expirationDate: Date;
@@ -598,6 +600,8 @@ function mapFlowEvent(underlying: string, result: unknown): FlowEvent | null {
     underlying: normalizeSymbol(
       asString(details["underlying_ticker"]) ?? underlying,
     ),
+    provider: "polygon",
+    basis: "trade",
     optionTicker,
     strike,
     expirationDate,

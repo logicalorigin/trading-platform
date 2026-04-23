@@ -17,6 +17,7 @@ export interface Order {
   id: string;
   accountId: string;
   mode: EnvironmentMode;
+  confirm?: boolean;
   symbol: string;
   assetClass: AssetClass;
   side: OrderSide;

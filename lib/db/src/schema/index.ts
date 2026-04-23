@@ -7,5 +7,6 @@ export * from "./enums";
 export * from "./flow";
 export * from "./instruments";
 export * from "./market-data";
+export * from "./signal-monitor";
 export * from "./trading";
 export * from "./watchlists";

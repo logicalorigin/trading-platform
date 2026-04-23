@@ -5,6 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { MarketDataProvider } from "./marketDataProvider";
 import type { UniverseMarket } from "./universeMarket";
 
 export interface UniverseTicker {
@@ -28,8 +29,7 @@ export interface UniverseTicker {
   shareClassFigi: string | null;
   /** @nullable */
   lastUpdatedAt: Date | null;
+  provider: MarketDataProvider | null;
   /** @nullable */
-  provider?: "ibkr" | "polygon" | null;
-  /** @nullable */
-  providerContractId?: string | null;
+  providerContractId: string | null;
 }

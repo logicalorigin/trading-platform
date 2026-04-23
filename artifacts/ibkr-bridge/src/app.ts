@@ -252,6 +252,11 @@ app.post("/orders/submit", async (req, res) => {
   if (Array.isArray(req.body?.ibkrOrders)) {
     res.status(201).json(await ibkrBridgeService.submitRawOrders({
       accountId: typeof req.body.accountId === "string" ? req.body.accountId : null,
+      mode:
+        req.body.mode === "live" || req.body.mode === "paper"
+          ? req.body.mode
+          : null,
+      confirm: req.body.confirm === true,
       orders: req.body.ibkrOrders,
     }));
     return;
@@ -264,6 +269,11 @@ app.post("/orders", async (req, res) => {
   if (Array.isArray(req.body?.ibkrOrders)) {
     res.status(201).json(await ibkrBridgeService.submitRawOrders({
       accountId: typeof req.body.accountId === "string" ? req.body.accountId : null,
+      mode:
+        req.body.mode === "live" || req.body.mode === "paper"
+          ? req.body.mode
+          : null,
+      confirm: req.body.confirm === true,
       orders: req.body.ibkrOrders,
     }));
     return;

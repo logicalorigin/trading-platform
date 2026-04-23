@@ -30,6 +30,8 @@ type BridgeHealthSnapshot = {
   accounts: string[];
   lastTickleAt: Date | null;
   lastError: string | null;
+  lastRecoveryAttemptAt: Date | null;
+  lastRecoveryError: string | null;
   updatedAt: Date;
   transport: "client_portal" | "tws";
   connectionTarget: string | null;
@@ -102,7 +104,10 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
     ...raw,
     updatedAt: toDate(raw.updatedAt),
     lastTickleAt: raw.lastTickleAt ? toDate(raw.lastTickleAt) : null,
-  };
+    lastRecoveryAttemptAt: raw.lastRecoveryAttemptAt
+      ? toDate(raw.lastRecoveryAttemptAt)
+      : null,
+    };
 }
 
 export class IbkrBridgeClient {
@@ -308,6 +313,8 @@ export class IbkrBridgeClient {
 
   submitRawOrders(input: {
     accountId?: string | null;
+    mode?: RuntimeMode | null;
+    confirm?: boolean | null;
     ibkrOrders: Record<string, unknown>[];
   }): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>("/orders/submit", {
@@ -324,6 +331,7 @@ export class IbkrBridgeClient {
     orderId: string;
     order: Record<string, unknown>;
     mode: RuntimeMode;
+    confirm?: boolean | null;
   }): Promise<ReplaceOrderSnapshot> {
     return hydrateOrder(
       await this.request<ReplaceOrderSnapshot>(
@@ -342,6 +350,7 @@ export class IbkrBridgeClient {
   async cancelOrder(input: {
     accountId: string;
     orderId: string;
+    confirm?: boolean | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {

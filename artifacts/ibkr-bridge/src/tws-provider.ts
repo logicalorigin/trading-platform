@@ -1396,6 +1396,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       accounts: session.accounts,
       lastTickleAt: this.lastTickleAt,
       lastError: this.lastError,
+      lastRecoveryAttemptAt: null,
+      lastRecoveryError: null,
       updatedAt: new Date(),
       transport: "tws",
       connectionTarget: `${this.config.host}:${this.config.port}`,
@@ -1936,6 +1938,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
   async submitRawOrders(input: {
     accountId?: string | null;
+    mode?: RuntimeMode | null;
+    confirm?: boolean | null;
     orders: Record<string, unknown>[];
   }): Promise<Record<string, unknown>> {
     await this.refreshSession();
@@ -1962,6 +1966,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     orderId: string;
     order: Record<string, unknown>;
     mode: RuntimeMode;
+    confirm?: boolean | null;
   }): Promise<ReplaceOrderSnapshot> {
     await this.refreshSession();
     const accountId = await this.requireAccountId(input.accountId);
@@ -2012,6 +2017,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   async cancelOrder(input: {
     accountId: string;
     orderId: string;
+    confirm?: boolean | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {

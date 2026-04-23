@@ -30,6 +30,8 @@ export type BridgeHealth = {
   accounts: string[];
   lastTickleAt: Date | null;
   lastError: string | null;
+  lastRecoveryAttemptAt: Date | null;
+  lastRecoveryError: string | null;
   updatedAt: Date;
   transport: IbkrTransport;
   connectionTarget: string | null;
@@ -98,6 +100,8 @@ export interface IbkrBridgeProvider {
   placeOrder(input: PlaceOrderInput): Promise<import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot>;
   submitRawOrders(input: {
     accountId?: string | null;
+    mode?: RuntimeMode | null;
+    confirm?: boolean | null;
     orders: Record<string, unknown>[];
   }): Promise<Record<string, unknown>>;
   replaceOrder(input: {
@@ -105,10 +109,12 @@ export interface IbkrBridgeProvider {
     orderId: string;
     order: Record<string, unknown>;
     mode: RuntimeMode;
+    confirm?: boolean | null;
   }): Promise<ReplaceOrderSnapshot>;
   cancelOrder(input: {
     accountId: string;
     orderId: string;
+    confirm?: boolean | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot>;

@@ -54,6 +54,7 @@ type BooleanSettingKey =
   | "requireMtf1"
   | "requireMtf2"
   | "requireMtf3"
+  | "signalFiltersEnabled"
   | "requireAdx"
   | "requireVolScoreRange"
   | "restrictToSelectedSessions"
@@ -431,6 +432,15 @@ export function RayReplicaSettingsMenu({
 
         <section style={sectionStyle(theme)}>
           <div style={titleStyle(theme)}>Confirm</div>
+          <div style={chipRowStyle}>
+            <button
+              type="button"
+              onClick={() => toggle("signalFiltersEnabled")}
+              style={chipStyle(theme, settings.signalFiltersEnabled)}
+            >
+              {settings.signalFiltersEnabled ? "Filters On" : "Filters Off"}
+            </button>
+          </div>
           <div style={fieldGridStyle}>
             <LabeledNumberField
               theme={theme}
@@ -503,7 +513,7 @@ export function RayReplicaSettingsMenu({
               value={settings.volScoreMin}
               onChange={(value) => setNumber("volScoreMin", value)}
               min={0}
-              max={100}
+              max={10}
             />
             <LabeledNumberField
               theme={theme}
@@ -511,7 +521,7 @@ export function RayReplicaSettingsMenu({
               value={settings.volScoreMax}
               onChange={(value) => setNumber("volScoreMax", value)}
               min={0}
-              max={100}
+              max={10}
             />
           </div>
           <div style={chipRowStyle}>

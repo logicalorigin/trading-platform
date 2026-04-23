@@ -6,12 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from "./environmentMode";
-import type { JsonObject } from "./jsonObject";
+import type { EvaluateSignalMonitorRequestMode } from "./evaluateSignalMonitorRequestMode";
 
-export interface SubmitIbkrOrdersRequest {
+export interface EvaluateSignalMonitorRequest {
+  environment?: EnvironmentMode;
+  mode?: EvaluateSignalMonitorRequestMode;
   /** @nullable */
-  accountId?: string | null;
-  mode?: EnvironmentMode | null;
-  confirm?: boolean;
-  ibkrOrders: JsonObject[];
+  watchlistId?: string | null;
 }

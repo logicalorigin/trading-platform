@@ -1,4 +1,5 @@
 import type {
+  IbkrMarketDataMode,
   IbkrRuntimeConfig,
   RuntimeMode,
 } from "../../api-server/src/lib/runtime";
@@ -30,10 +31,18 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   private readonly tickleIntervalMs = Number(
     process.env["IBKR_BRIDGE_TICKLE_INTERVAL_MS"] ?? "55000",
   );
+  private readonly recoveryCooldownMs = Math.max(
+    5_000,
+    Number(process.env["IBKR_BRIDGE_RECOVERY_COOLDOWN_MS"] ?? "30000"),
+  );
   private tickleTimer: NodeJS.Timeout | null = null;
   private latestSession: SessionStatusSnapshot | null = null;
   private lastTickleAt: Date | null = null;
   private lastError: string | null = null;
+  private lastRecoveryAttemptAt: Date | null = null;
+  private lastRecoveryError: string | null = null;
+  private observedMarketDataMode: IbkrMarketDataMode | null = "unknown";
+  private observedLiveMarketDataAvailable: boolean | null = null;
 
   constructor(private readonly config: IbkrRuntimeConfig) {
     this.client = new IbkrClient(this.config);
@@ -67,9 +76,75 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
         : "Unknown IBKR bridge error.";
   }
 
+  private shouldAttemptRecovery(session: SessionStatusSnapshot | null): boolean {
+    if (!session) {
+      return false;
+    }
+
+    if (session.authenticated && session.connected) {
+      return false;
+    }
+
+    if (
+      this.lastRecoveryAttemptAt &&
+      Date.now() - this.lastRecoveryAttemptAt.getTime() < this.recoveryCooldownMs
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private async maybeRecoverSession(
+    session: SessionStatusSnapshot | null,
+  ): Promise<SessionStatusSnapshot | null> {
+    if (!this.shouldAttemptRecovery(session)) {
+      return session;
+    }
+
+    this.lastRecoveryAttemptAt = new Date();
+
+    try {
+      const recoveredSession = await this.client.recoverBrokerageSession();
+      this.lastRecoveryError = null;
+      return recoveredSession;
+    } catch (error) {
+      this.lastRecoveryError =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unknown brokerage recovery error.";
+      throw error;
+    }
+  }
+
+  private observeDelayedFlags(delayedFlags: boolean[]): void {
+    if (delayedFlags.length === 0) {
+      return;
+    }
+
+    const anyLive = delayedFlags.some((delayed) => !delayed);
+    const allDelayed = delayedFlags.every(Boolean);
+
+    if (anyLive) {
+      this.observedMarketDataMode = "live";
+      this.observedLiveMarketDataAvailable = true;
+      return;
+    }
+
+    if (allDelayed) {
+      this.observedMarketDataMode = "delayed";
+      this.observedLiveMarketDataAvailable = false;
+    }
+  }
+
   async refreshSession(): Promise<SessionStatusSnapshot | null> {
     try {
-      const session = await this.client.ensureBrokerageSession();
+      let session: SessionStatusSnapshot | null =
+        await this.client.ensureBrokerageSession();
+      session = await this.maybeRecoverSession(session);
+      if (session?.authenticated && session?.connected) {
+        session = await this.client.ensureBrokerageSession();
+      }
       this.latestSession = session;
       this.lastError = null;
       return session;
@@ -103,13 +178,15 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
       accounts: session?.accounts ?? [],
       lastTickleAt: this.lastTickleAt,
       lastError: this.lastError,
+      lastRecoveryAttemptAt: this.lastRecoveryAttemptAt,
+      lastRecoveryError: this.lastRecoveryError,
       updatedAt: new Date(),
       transport: "client_portal",
       connectionTarget: this.config.baseUrl,
       sessionMode: null,
       clientId: null,
-      marketDataMode: "unknown",
-      liveMarketDataAvailable: null,
+      marketDataMode: this.observedMarketDataMode,
+      liveMarketDataAvailable: this.observedLiveMarketDataAvailable,
     };
   }
 
@@ -156,7 +233,9 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
 
   async getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
     await this.refreshSession();
-    return this.marketDataStream.getQuotes(symbols);
+    const quotes = await this.marketDataStream.getQuotes(symbols);
+    this.observeDelayedFlags(quotes.map((quote) => quote.delayed));
+    return quotes;
   }
 
   async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
@@ -176,7 +255,9 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     source?: HistoryDataSource;
   }): Promise<BrokerBarSnapshot[]> {
     await this.refreshSession();
-    return this.client.getHistoricalBars(input);
+    const bars = await this.client.getHistoricalBars(input);
+    this.observeDelayedFlags(bars.map((bar) => bar.delayed));
+    return bars;
   }
 
   async getOptionChain(input: {
@@ -215,6 +296,8 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
 
   async submitRawOrders(input: {
     accountId?: string | null;
+    mode?: RuntimeMode | null;
+    confirm?: boolean | null;
     orders: Record<string, unknown>[];
   }): Promise<Record<string, unknown>> {
     await this.refreshSession();
@@ -226,6 +309,7 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     orderId: string;
     order: Record<string, unknown>;
     mode: RuntimeMode;
+    confirm?: boolean | null;
   }): Promise<ReplaceOrderSnapshot> {
     await this.refreshSession();
     return this.client.replaceOrder(input);
@@ -234,6 +318,7 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   async cancelOrder(input: {
     accountId: string;
     orderId: string;
+    confirm?: boolean | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {
