@@ -1732,6 +1732,7 @@ const describeBrokerChartStatus = (status, timeframe) =>
 const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },
   { id: "flow", label: "Flow", icon: "◈" },
+  { id: "unusual", label: "Unusual", icon: "⚡" },
   { id: "trade", label: "Trade", icon: "◧" },
   { id: "research", label: "Research", icon: "◎" },
   { id: "algo", label: "Algo", icon: "⬡" },
@@ -2361,7 +2362,7 @@ const mapFlowEventToUi = (event) => {
 
 const useLiveMarketFlow = (
   symbols = [],
-  { limit = 16, unusualThreshold } = {},
+  { limit = 16, maxSymbols = 8, unusualThreshold } = {},
 ) => {
   const liveSymbols = useMemo(
     () =>
@@ -2371,8 +2372,8 @@ const useLiveMarketFlow = (
             .map((symbol) => symbol?.toUpperCase())
             .filter(Boolean),
         ),
-      ].slice(0, 8),
-    [symbols],
+      ].slice(0, Math.max(1, maxSymbols)),
+    [symbols, maxSymbols],
   );
   const normalizedThreshold =
     Number.isFinite(unusualThreshold) && unusualThreshold > 0
@@ -8461,6 +8462,563 @@ const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               detail="The flow detail view no longer invents intraday contract tape or candles. Use Open in Trade to load the live broker contract chart and book data."
             />
           </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+const UNUSUAL_SCANNER_MAX_SYMBOLS = 30;
+const UNUSUAL_SCANNER_PER_SYMBOL_LIMIT = 25;
+
+const UNUSUAL_SORT_OPTIONS = [
+  { id: "ratio", label: "Vol/OI", numeric: true },
+  { id: "premium", label: "Premium", numeric: true },
+  { id: "dte", label: "DTE", numeric: true },
+  { id: "underlying", label: "Underlying", numeric: false },
+];
+
+const readPersistedState = () => {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return {};
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+};
+
+const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
+  const [sortBy, setSortBy] = useState(
+    () => readPersistedState().unusualSortBy || "ratio",
+  );
+  const [sortDir, setSortDir] = useState(
+    () => readPersistedState().unusualSortDir || "desc",
+  );
+  const [sideFilter, setSideFilter] = useState(
+    () => readPersistedState().unusualSideFilter || "all",
+  );
+
+  useEffect(() => {
+    persistState({
+      unusualSortBy: sortBy,
+      unusualSortDir: sortDir,
+      unusualSideFilter: sideFilter,
+    });
+  }, [sideFilter, sortBy, sortDir]);
+
+  const {
+    hasLiveFlow,
+    flowStatus,
+    providerSummary,
+    flowEvents,
+  } = useLiveMarketFlow(symbols, {
+    limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
+    maxSymbols: UNUSUAL_SCANNER_MAX_SYMBOLS,
+  });
+
+  const scannedSymbols = useMemo(
+    () =>
+      [
+        ...new Set(
+          (symbols || [])
+            .map((symbol) => symbol?.toUpperCase())
+            .filter(Boolean),
+        ),
+      ].slice(0, UNUSUAL_SCANNER_MAX_SYMBOLS),
+    [symbols],
+  );
+  const totalWatchlistSymbols = useMemo(
+    () =>
+      new Set(
+        (symbols || [])
+          .map((symbol) => symbol?.toUpperCase())
+          .filter(Boolean),
+      ).size,
+    [symbols],
+  );
+
+  const unusualEvents = useMemo(
+    () => flowEvents.filter((event) => event.isUnusual),
+    [flowEvents],
+  );
+
+  const filteredEvents = useMemo(() => {
+    if (sideFilter === "calls") {
+      return unusualEvents.filter((event) => event.cp === "C");
+    }
+    if (sideFilter === "puts") {
+      return unusualEvents.filter((event) => event.cp === "P");
+    }
+    return unusualEvents;
+  }, [sideFilter, unusualEvents]);
+
+  const sortedEvents = useMemo(() => {
+    const direction = sortDir === "asc" ? 1 : -1;
+    const events = [...filteredEvents];
+    events.sort((left, right) => {
+      let cmp = 0;
+      if (sortBy === "ratio") {
+        cmp = (left.unusualScore || 0) - (right.unusualScore || 0);
+      } else if (sortBy === "premium") {
+        cmp = (left.premium || 0) - (right.premium || 0);
+      } else if (sortBy === "dte") {
+        const leftDte = Number.isFinite(left.dte) ? left.dte : Infinity;
+        const rightDte = Number.isFinite(right.dte) ? right.dte : Infinity;
+        cmp = leftDte - rightDte;
+      } else if (sortBy === "underlying") {
+        cmp = String(left.ticker || "").localeCompare(String(right.ticker || ""));
+      }
+      if (cmp === 0) {
+        cmp = (left.premium || 0) - (right.premium || 0);
+      }
+      return cmp * direction;
+    });
+    return events;
+  }, [filteredEvents, sortBy, sortDir]);
+
+  const totalPremium = unusualEvents.reduce(
+    (sum, event) => sum + (event.premium || 0),
+    0,
+  );
+  const callPremium = unusualEvents.reduce(
+    (sum, event) => sum + (event.cp === "C" ? event.premium || 0 : 0),
+    0,
+  );
+  const putPremium = unusualEvents.reduce(
+    (sum, event) => sum + (event.cp === "P" ? event.premium || 0 : 0),
+    0,
+  );
+  const uniqueUnderlyings = useMemo(
+    () => new Set(unusualEvents.map((event) => event.ticker)).size,
+    [unusualEvents],
+  );
+  const peakRatio = unusualEvents.reduce(
+    (best, event) => Math.max(best, event.unusualScore || 0),
+    0,
+  );
+
+  const bridgeTone = bridgeRuntimeTone(session);
+  const ibkrLoginRequired =
+    Boolean(session?.configured?.ibkr) &&
+    !session?.ibkrBridge?.authenticated &&
+    !providerSummary.providers.includes("polygon");
+  const flowDisplayLabel =
+    !hasLiveFlow && ibkrLoginRequired
+      ? "IBKR login required"
+      : providerSummary.label === "IBKR snapshot live" &&
+          session?.ibkrBridge?.liveMarketDataAvailable === false
+        ? "IBKR delayed"
+        : providerSummary.label;
+  const flowDisplayColor =
+    !hasLiveFlow && ibkrLoginRequired
+      ? T.amber
+      : flowDisplayLabel === "IBKR delayed"
+        ? T.amber
+        : providerSummary.color;
+
+  const handleSort = (id) => {
+    if (sortBy === id) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortBy(id);
+    const opt = UNUSUAL_SORT_OPTIONS.find((option) => option.id === id);
+    setSortDir(opt && !opt.numeric ? "asc" : "desc");
+  };
+
+  const sortIndicator = (id) =>
+    sortBy === id ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+
+  const emptyDetail =
+    flowStatus === "loading"
+      ? "Scanning the watchlist for contracts where today's volume already exceeds open interest."
+      : ibkrLoginRequired
+        ? bridgeRuntimeMessage(session)
+        : providerSummary.failures[0]?.error
+          ? providerSummary.failures[0].error
+          : !flowEvents.length
+            ? "No live options flow returned for the watchlist symbols yet."
+            : "No contracts in the current watchlist have volume above open interest right now.";
+
+  const headerBar = (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: sp(8),
+        padding: sp("2px 2px 0"),
+        fontSize: fs(8),
+        fontFamily: T.mono,
+        color: T.textDim,
+      }}
+    >
+      <span>
+        Flow source ·{" "}
+        <span style={{ color: flowDisplayColor, fontWeight: 700 }}>
+          {flowDisplayLabel}
+        </span>
+        <span style={{ marginLeft: sp(8) }}>
+          Scanning {scannedSymbols.length}/{totalWatchlistSymbols || scannedSymbols.length}{" "}
+          watchlist symbols
+        </span>
+      </span>
+      <span
+        title={bridgeRuntimeMessage(session)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(5),
+          color: bridgeTone.color,
+        }}
+      >
+        <span
+          style={{
+            width: dim(6),
+            height: dim(6),
+            background: bridgeTone.color,
+            display: "inline-block",
+          }}
+        />
+        IBKR {bridgeTone.label.toUpperCase()}
+      </span>
+    </div>
+  );
+
+  const kpiCards = [
+    {
+      label: "UNUSUAL CONTRACTS",
+      value: unusualEvents.length,
+      sub: `${uniqueUnderlyings} underlying${uniqueUnderlyings === 1 ? "" : "s"}`,
+      color: T.amber,
+    },
+    {
+      label: "TOTAL PREMIUM",
+      value: fmtM(totalPremium),
+      sub: `${fmtM(callPremium)} C · ${fmtM(putPremium)} P`,
+      color: T.text,
+    },
+    {
+      label: "PEAK VOL/OI",
+      value: peakRatio ? `${peakRatio.toFixed(peakRatio >= 10 ? 0 : 1)}×` : MISSING_VALUE,
+      sub: "Highest ratio in scan",
+      color: T.cyan,
+    },
+    {
+      label: "CALL / PUT MIX",
+      value: `${unusualEvents.filter((e) => e.cp === "C").length} / ${unusualEvents.filter((e) => e.cp === "P").length}`,
+      sub: "Calls vs puts",
+      color: T.purple,
+    },
+  ];
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: sp(8),
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        }}
+      >
+        {headerBar}
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 6,
+          }}
+        >
+          {kpiCards.map((k) => (
+            <Card key={k.label} style={{ padding: "5px 9px" }}>
+              <div
+                style={{
+                  fontSize: fs(7),
+                  fontWeight: 600,
+                  color: T.textDim,
+                  letterSpacing: "0.06em",
+                  fontVariant: "all-small-caps",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  lineHeight: 1,
+                }}
+              >
+                {k.label}
+              </div>
+              <div
+                style={{
+                  fontSize: fs(18),
+                  fontWeight: 800,
+                  fontFamily: T.mono,
+                  color: k.color,
+                  marginTop: sp(2),
+                  lineHeight: 1,
+                }}
+              >
+                {k.value}
+              </div>
+              <div
+                style={{
+                  fontSize: fs(8),
+                  color: T.textDim,
+                  fontFamily: T.sans,
+                  marginTop: sp(1),
+                  lineHeight: 1,
+                }}
+              >
+                {k.sub}
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
+          <CardTitle
+            right={
+              <span
+                style={{
+                  fontSize: fs(8),
+                  color: T.textDim,
+                  fontFamily: T.mono,
+                }}
+              >
+                {sortedEvents.length} of {unusualEvents.length} shown
+              </span>
+            }
+          >
+            Unusual Flow Scanner
+          </CardTitle>
+
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: sp(4),
+              alignItems: "center",
+            }}
+          >
+            <span
+              style={{
+                fontSize: fs(8),
+                color: T.textDim,
+                fontFamily: T.mono,
+                marginRight: sp(4),
+              }}
+            >
+              SIDE
+            </span>
+            {[
+              { id: "all", label: "All" },
+              { id: "calls", label: "Calls" },
+              { id: "puts", label: "Puts" },
+            ].map((option) => (
+              <Pill
+                key={option.id}
+                active={sideFilter === option.id}
+                onClick={() => setSideFilter(option.id)}
+              >
+                {option.label}
+              </Pill>
+            ))}
+            <span
+              style={{
+                fontSize: fs(8),
+                color: T.textDim,
+                fontFamily: T.mono,
+                marginLeft: sp(8),
+                marginRight: sp(4),
+              }}
+            >
+              SORT
+            </span>
+            {UNUSUAL_SORT_OPTIONS.map((option) => (
+              <Pill
+                key={option.id}
+                active={sortBy === option.id}
+                onClick={() => handleSort(option.id)}
+              >
+                {option.label}
+                {sortIndicator(option.id)}
+              </Pill>
+            ))}
+          </div>
+
+          {sortedEvents.length ? (
+            <div
+              style={{
+                border: `1px solid ${T.border}`,
+                background: T.bg0,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "60px minmax(0, 1.6fr) 60px 70px 70px 80px 90px 60px 70px",
+                  gap: sp(6),
+                  padding: sp("6px 8px"),
+                  background: T.bg2,
+                  borderBottom: `1px solid ${T.border}`,
+                  fontSize: fs(8),
+                  fontWeight: 700,
+                  fontFamily: T.mono,
+                  color: T.textDim,
+                  letterSpacing: "0.05em",
+                }}
+              >
+                <span
+                  onClick={() => handleSort("underlying")}
+                  style={{ cursor: "pointer" }}
+                >
+                  TICKER{sortIndicator("underlying")}
+                </span>
+                <span>CONTRACT</span>
+                <span
+                  onClick={() => handleSort("dte")}
+                  style={{ cursor: "pointer", textAlign: "right" }}
+                >
+                  DTE{sortIndicator("dte")}
+                </span>
+                <span style={{ textAlign: "right" }}>VOL</span>
+                <span style={{ textAlign: "right" }}>OI</span>
+                <span
+                  onClick={() => handleSort("ratio")}
+                  style={{ cursor: "pointer", textAlign: "right" }}
+                >
+                  VOL/OI{sortIndicator("ratio")}
+                </span>
+                <span
+                  onClick={() => handleSort("premium")}
+                  style={{ cursor: "pointer", textAlign: "right" }}
+                >
+                  PREMIUM{sortIndicator("premium")}
+                </span>
+                <span style={{ textAlign: "right" }}>SIDE</span>
+                <span style={{ textAlign: "right" }}>TIME</span>
+              </div>
+              <div style={{ maxHeight: dim(520), overflowY: "auto" }}>
+                {sortedEvents.map((event) => {
+                  const ratio = event.unusualScore || 0;
+                  const sideColor =
+                    event.side === "BUY"
+                      ? event.cp === "C"
+                        ? T.green
+                        : T.red
+                      : event.side === "SELL"
+                        ? T.textSec
+                        : T.textDim;
+                  return (
+                    <button
+                      key={event.id}
+                      type="button"
+                      onClick={() => onJumpToTrade?.(event)}
+                      style={{
+                        width: "100%",
+                        display: "grid",
+                        gridTemplateColumns:
+                          "60px minmax(0, 1.6fr) 60px 70px 70px 80px 90px 60px 70px",
+                        gap: sp(6),
+                        padding: sp("6px 8px"),
+                        background: T.bg0,
+                        border: "none",
+                        borderBottom: `1px solid ${T.border}55`,
+                        cursor: "pointer",
+                        textAlign: "left",
+                        fontFamily: T.mono,
+                        fontSize: fs(10),
+                        color: T.text,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = T.bg2;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = T.bg0;
+                      }}
+                      title="Open underlying chart and option chain"
+                    >
+                      <span style={{ fontWeight: 800 }}>{event.ticker}</span>
+                      <span
+                        style={{
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: T.textSec,
+                        }}
+                      >
+                        <span style={{ color: event.cp === "C" ? T.green : T.red, fontWeight: 700 }}>
+                          {event.cp}
+                        </span>{" "}
+                        {formatPriceValue(event.strike)}{" "}
+                        <span style={{ color: T.textDim }}>
+                          {formatExpirationLabel(event.expirationDate)}
+                        </span>
+                      </span>
+                      <span style={{ textAlign: "right", color: T.textSec }}>
+                        {Number.isFinite(event.dte) ? event.dte : MISSING_VALUE}
+                      </span>
+                      <span style={{ textAlign: "right" }}>
+                        {Number.isFinite(event.vol) ? event.vol.toLocaleString() : MISSING_VALUE}
+                      </span>
+                      <span style={{ textAlign: "right", color: T.textSec }}>
+                        {Number.isFinite(event.oi) ? event.oi.toLocaleString() : MISSING_VALUE}
+                      </span>
+                      <span
+                        style={{
+                          textAlign: "right",
+                          color: T.amber,
+                          fontWeight: 800,
+                        }}
+                      >
+                        {ratio ? `${ratio.toFixed(ratio >= 10 ? 0 : 1)}×` : MISSING_VALUE}
+                      </span>
+                      <span
+                        style={{
+                          textAlign: "right",
+                          color: T.text,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {fmtM(event.premium)}
+                      </span>
+                      <span
+                        style={{
+                          textAlign: "right",
+                          color: sideColor,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {event.side}
+                      </span>
+                      <span style={{ textAlign: "right", color: T.textDim }}>
+                        {event.time}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <DataUnavailableState
+              title="No unusual options activity"
+              detail={emptyDetail}
+            />
+          )}
         </Card>
       </div>
     </div>
@@ -20252,6 +20810,14 @@ export default function RayAlgoPlatform() {
       case "flow":
         return (
           <FlowScreen
+            session={session}
+            symbols={watchlistSymbols}
+            onJumpToTrade={handleJumpToTradeFromFlow}
+          />
+        );
+      case "unusual":
+        return (
+          <UnusualFlowScreen
             session={session}
             symbols={watchlistSymbols}
             onJumpToTrade={handleJumpToTradeFromFlow}
