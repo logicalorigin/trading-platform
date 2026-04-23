@@ -482,9 +482,15 @@ function normalizeHistoryDataSource(source: HistoryDataSource | null | undefined
   return source ?? "trades";
 }
 
-function buildHistoryPeriod(timeframe: HistoryBarTimeframe, barCount: number): string {
+function buildHistoryPeriod(
+  timeframe: HistoryBarTimeframe,
+  barCount: number,
+  outsideRth = true,
+): string {
   const desiredBars = Math.max(1, Math.min(HISTORY_RESPONSE_MAX_POINTS, Math.ceil(barCount)));
-  const totalMs = desiredBars * resolveHistoryStepMs(timeframe);
+  const marketHoursPadding =
+    timeframe === "1d" ? 1 : outsideRth ? 2.25 : 5;
+  const totalMs = desiredBars * resolveHistoryStepMs(timeframe) * marketHoursPadding;
   const minuteMs = 60_000;
   const hourMs = 3_600_000;
   const dayMs = 86_400_000;
@@ -2130,7 +2136,7 @@ export class IbkrClient {
         const historyArgs = {
           conid: resolvedContract.conid,
           exchange: resolvedContract.listingExchange,
-          period: buildHistoryPeriod(timeframe, chunkBars),
+          period: buildHistoryPeriod(timeframe, chunkBars, outsideRth),
           bar,
           startTime: formatHistoryStartTime(cursor),
           outsideRth,
