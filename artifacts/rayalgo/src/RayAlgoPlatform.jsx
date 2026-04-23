@@ -14783,6 +14783,210 @@ const ToastStack = ({ toasts, onDismiss }) => {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════
 
+// ─── LIVE-DATA SUBSCRIPTION ISOLATION ───
+// Live quote ticks, sparkline refreshes, and per-minute aggregate store updates
+// used to be subscribed to from the top-level RayAlgoPlatform component, which
+// then bumped a `marketDataVersion` state on every change. That re-rendered the
+// entire ~20k LOC trading terminal tree on every tick.
+//
+// MarketDataSubscriptionProvider now owns those subscriptions and exposes a
+// version counter via context. Only the small wrapper components below
+// (HeaderKpiStripContainer, WatchlistContainer) subscribe to the context, so a
+// quote tick re-renders just those panels — not the whole terminal.
+const MarketDataVersionContext = createContext(0);
+const useMarketDataVersion = () => useContext(MarketDataVersionContext);
+
+const MarketDataSubscriptionProvider = ({
+  watchlistSymbols,
+  activeWatchlistItems,
+  quoteSymbols,
+  sparklineSymbols,
+  streamedMarketSymbols,
+  marketStockAggregateStreamingEnabled,
+  children,
+}) => {
+  const marketAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
+  const quotesQuery = useGetQuoteSnapshots(
+    { symbols: quoteSymbols.join(",") },
+    {
+      query: {
+        staleTime: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const sparklineQuery = useQuery({
+    queryKey: ["market-sparklines", sparklineSymbols],
+    enabled: sparklineSymbols.length > 0,
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        sparklineSymbols.map((symbol) =>
+          getBarsRequest({
+            symbol,
+            timeframe: "15m",
+            limit: 48,
+            outsideRth: true,
+            source: "trades",
+          }),
+        ),
+      );
+
+      return Object.fromEntries(
+        results.map((result, index) => [
+          sparklineSymbols[index],
+          result.status === "fulfilled" ? result.value.bars || [] : [],
+        ]),
+      );
+    },
+    ...BARS_QUERY_DEFAULTS,
+    retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
+  });
+  const marketPerformanceQuery = useQuery({
+    queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
+    enabled: MARKET_PERFORMANCE_SYMBOLS.length > 0,
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        MARKET_PERFORMANCE_SYMBOLS.map((symbol) =>
+          getBarsRequest({
+            symbol,
+            timeframe: "1d",
+            limit: 6,
+            outsideRth: false,
+            source: "trades",
+          }),
+        ),
+      );
+
+      return Object.fromEntries(
+        results.map((result, index) => {
+          const bars =
+            result.status === "fulfilled" ? result.value.bars || [] : [];
+          const baselineBar = bars.length > 5 ? bars[bars.length - 6] : bars[0];
+          return [
+            MARKET_PERFORMANCE_SYMBOLS[index],
+            baselineBar?.close ?? null,
+          ];
+        }),
+      );
+    },
+    staleTime: 300_000,
+    refetchInterval: false,
+    refetchOnMount: false,
+    retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
+  });
+
+  useIbkrQuoteSnapshotStream({
+    symbols: streamedMarketSymbols,
+    enabled: Boolean(
+      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
+    ),
+  });
+  useBrokerStockAggregateStream({
+    symbols: streamedMarketSymbols,
+    enabled: Boolean(
+      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
+    ),
+  });
+
+  const [marketDataVersion, setMarketDataVersion] = useState(0);
+  useEffect(() => {
+    syncRuntimeMarketData(
+      watchlistSymbols,
+      activeWatchlistItems,
+      quotesQuery.data?.quotes,
+      {
+        sparklineBarsBySymbol: sparklineQuery.data,
+        performanceBaselineBySymbol: marketPerformanceQuery.data,
+      },
+    );
+    setMarketDataVersion((version) => version + 1);
+  }, [
+    watchlistSymbols,
+    activeWatchlistItems,
+    quotesQuery.data,
+    sparklineQuery.data,
+    marketPerformanceQuery.data,
+    marketAggregateStoreVersion,
+  ]);
+
+  return (
+    <MarketDataVersionContext.Provider value={marketDataVersion}>
+      {children}
+    </MarketDataVersionContext.Provider>
+  );
+};
+
+const HeaderKpiStripContainer = ({ onSelect }) => {
+  const version = useMarketDataVersion();
+  const items = useMemo(
+    () =>
+      HEADER_KPI_CONFIG.map(({ symbol, label }, index) => {
+        const fallback = buildFallbackWatchlistItem(symbol, index, label);
+        const snapshot = getRuntimeTickerSnapshot(symbol, fallback) || fallback;
+        return {
+          sym: symbol,
+          label,
+          name: snapshot.name || fallback.name || label,
+          price: snapshot.price,
+          pct: snapshot.pct,
+          spark: snapshot.spark || fallback.spark,
+          sparkBars: snapshot.sparkBars || fallback.sparkBars || [],
+        };
+      }),
+    // version drives recomputation; HEADER_KPI_CONFIG is module-level constant
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [version],
+  );
+  return <HeaderKpiStrip items={items} onSelect={onSelect} />;
+};
+
+const WatchlistContainer = ({
+  activeWatchlist,
+  watchlistSymbols,
+  signalStatesBySymbol,
+  ...rest
+}) => {
+  const version = useMarketDataVersion();
+  const items = useMemo(() => {
+    const sourceItems = activeWatchlist?.items?.length
+      ? activeWatchlist.items
+      : watchlistSymbols.map((symbol) => ({ id: symbol, symbol }));
+
+    return sourceItems.map((item, index) => {
+      const symbol = item.symbol.toUpperCase();
+      const fallback = buildFallbackWatchlistItem(
+        symbol,
+        index,
+        item.name || symbol,
+      );
+      const snapshot = getRuntimeTickerSnapshot(symbol, fallback) || fallback;
+      return {
+        id: item.id || symbol,
+        sym: symbol,
+        name: item.name || snapshot.name || fallback.name || symbol,
+        price: snapshot.price,
+        chg: snapshot.chg,
+        pct: snapshot.pct,
+        spark: snapshot.spark || fallback.spark,
+        sparkBars: snapshot.sparkBars || fallback.sparkBars || [],
+        signalState: signalStatesBySymbol[symbol] || null,
+      };
+    });
+    // version drives recomputation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWatchlist, version, signalStatesBySymbol, watchlistSymbols]);
+  return (
+    <Watchlist
+      activeWatchlistId={activeWatchlist?.id || null}
+      items={items}
+      signalStatesBySymbol={signalStatesBySymbol}
+      {...rest}
+    />
+  );
+};
+
 export default function RayAlgoPlatform() {
   const queryClient = useQueryClient();
   const [screen, setScreen] = useState(_initialState.screen || "market");
@@ -14890,77 +15094,6 @@ export default function RayAlgoPlatform() {
     ],
     [quoteSymbols, sparklineSymbols],
   );
-  const marketAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
-  const quotesQuery = useGetQuoteSnapshots(
-    { symbols: quoteSymbols.join(",") },
-    {
-      query: {
-        staleTime: 60_000,
-        retry: false,
-      },
-    },
-  );
-  const sparklineQuery = useQuery({
-    queryKey: ["market-sparklines", sparklineSymbols],
-    enabled: sparklineSymbols.length > 0,
-    queryFn: async () => {
-      const results = await Promise.allSettled(
-        sparklineSymbols.map((symbol) =>
-          getBarsRequest({
-            symbol,
-            timeframe: "15m",
-            limit: 48,
-            outsideRth: true,
-            source: "trades",
-          }),
-        ),
-      );
-
-      return Object.fromEntries(
-        results.map((result, index) => [
-          sparklineSymbols[index],
-          result.status === "fulfilled" ? result.value.bars || [] : [],
-        ]),
-      );
-    },
-    ...BARS_QUERY_DEFAULTS,
-    retry: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
-  const marketPerformanceQuery = useQuery({
-    queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
-    enabled: MARKET_PERFORMANCE_SYMBOLS.length > 0,
-    queryFn: async () => {
-      const results = await Promise.allSettled(
-        MARKET_PERFORMANCE_SYMBOLS.map((symbol) =>
-          getBarsRequest({
-            symbol,
-            timeframe: "1d",
-            limit: 6,
-            outsideRth: false,
-            source: "trades",
-          }),
-        ),
-      );
-
-      return Object.fromEntries(
-        results.map((result, index) => {
-          const bars =
-            result.status === "fulfilled" ? result.value.bars || [] : [];
-          const baselineBar = bars.length > 5 ? bars[bars.length - 6] : bars[0];
-          return [
-            MARKET_PERFORMANCE_SYMBOLS[index],
-            baselineBar?.close ?? null,
-          ];
-        }),
-      );
-    },
-    staleTime: 300_000,
-    refetchInterval: false,
-    refetchOnMount: false,
-    retry: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
   const accountsQuery = useListAccounts(
     { mode: sessionQuery.data?.environment || "paper" },
     {
@@ -14976,12 +15109,6 @@ export default function RayAlgoPlatform() {
     sessionQuery.data?.configured?.ibkr &&
       sessionQuery.data?.ibkrBridge?.authenticated,
   );
-  useIbkrQuoteSnapshotStream({
-    symbols: streamedMarketSymbols,
-    enabled: Boolean(
-      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
-    ),
-  });
   useIbkrAccountSnapshotStream({
     accountId:
       selectedAccountId ?? sessionQuery.data?.ibkrBridge?.selectedAccountId ?? null,
@@ -15012,13 +15139,6 @@ export default function RayAlgoPlatform() {
       setSelectedAccountId(nextAccountId);
     }
   }, [accounts, selectedAccountId, sessionQuery.data?.ibkrBridge?.selectedAccountId]);
-
-  useBrokerStockAggregateStream({
-    symbols: streamedMarketSymbols,
-    enabled: Boolean(
-      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
-    ),
-  });
 
   // ── TOAST SYSTEM ──
   const [toasts, setToasts] = useState([]);
@@ -15249,7 +15369,6 @@ export default function RayAlgoPlatform() {
   // ── LOCAL POSITION CONTEXT ──
   // Session-only UI state. Live broker positions are queried separately.
   const [positions, setPositions] = useState([]);
-  const [marketDataVersion, setMarketDataVersion] = useState(0);
   const addPosition = useCallback((pos) => {
     setPositions((prev) => [
       {
@@ -15302,26 +15421,6 @@ export default function RayAlgoPlatform() {
       rollPosition,
     ],
   );
-
-  useEffect(() => {
-    syncRuntimeMarketData(
-      watchlistSymbols,
-      activeWatchlist?.items,
-      quotesQuery.data?.quotes,
-      {
-        sparklineBarsBySymbol: sparklineQuery.data,
-        performanceBaselineBySymbol: marketPerformanceQuery.data,
-      },
-    );
-    setMarketDataVersion((version) => version + 1);
-  }, [
-    watchlistSymbols,
-    activeWatchlist,
-    quotesQuery.data,
-    sparklineQuery.data,
-    marketPerformanceQuery.data,
-    marketAggregateStoreVersion,
-  ]);
 
   useEffect(() => {
     if (!watchlistsQuery.data?.watchlists?.length) {
@@ -15642,50 +15741,6 @@ export default function RayAlgoPlatform() {
       ),
     [signalMonitorStates],
   );
-  const watchlistSidebarItems = useMemo(() => {
-    const sourceItems =
-      activeWatchlist?.items?.length
-        ? activeWatchlist.items
-        : watchlistSymbols.map((symbol) => ({ id: symbol, symbol }));
-
-    return sourceItems.map((item, index) => {
-      const symbol = item.symbol.toUpperCase();
-      const fallback = buildFallbackWatchlistItem(
-        symbol,
-        index,
-        item.name || symbol,
-      );
-      const snapshot = getRuntimeTickerSnapshot(symbol, fallback) || fallback;
-      return {
-        id: item.id || symbol,
-        sym: symbol,
-        name: item.name || snapshot.name || fallback.name || symbol,
-        price: snapshot.price,
-        chg: snapshot.chg,
-        pct: snapshot.pct,
-        spark: snapshot.spark || fallback.spark,
-        sparkBars: snapshot.sparkBars || fallback.sparkBars || [],
-        signalState: signalStatesBySymbol[symbol] || null,
-      };
-    });
-  }, [activeWatchlist, marketDataVersion, signalStatesBySymbol, watchlistSymbols]);
-  const headerKpiItems = useMemo(
-    () =>
-      HEADER_KPI_CONFIG.map(({ symbol, label }, index) => {
-        const fallback = buildFallbackWatchlistItem(symbol, index, label);
-        const snapshot = getRuntimeTickerSnapshot(symbol, fallback) || fallback;
-        return {
-          sym: symbol,
-          label,
-          name: snapshot.name || fallback.name || label,
-          price: snapshot.price,
-          pct: snapshot.pct,
-          spark: snapshot.spark || fallback.spark,
-          sparkBars: snapshot.sparkBars || fallback.sparkBars || [],
-        };
-      }),
-    [marketDataVersion],
-  );
   const marketClock = useMemo(
     () => buildMarketClockState(marketClockNow),
     [marketClockNow],
@@ -15974,6 +16029,14 @@ export default function RayAlgoPlatform() {
     <ThemeContext.Provider value={{ theme, toggle: toggleTheme }}>
       <ToastContext.Provider value={toastValue}>
         <PositionsContext.Provider value={positionsValue}>
+        <MarketDataSubscriptionProvider
+          watchlistSymbols={watchlistSymbols}
+          activeWatchlistItems={activeWatchlist?.items}
+          quoteSymbols={quoteSymbols}
+          sparklineSymbols={sparklineSymbols}
+          streamedMarketSymbols={streamedMarketSymbols}
+          marketStockAggregateStreamingEnabled={marketStockAggregateStreamingEnabled}
+        >
           <div
             style={{
               height: "100vh",
@@ -16110,8 +16173,7 @@ export default function RayAlgoPlatform() {
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <HeaderKpiStrip
-                    items={headerKpiItems}
+                  <HeaderKpiStripContainer
                     onSelect={handleSelectSymbol}
                   />
                 </div>
@@ -16185,10 +16247,10 @@ export default function RayAlgoPlatform() {
                     >
                       ◂
                     </button>
-                    <Watchlist
+                    <WatchlistContainer
                       watchlists={watchlistsQuery.data?.watchlists || []}
-                      activeWatchlistId={activeWatchlist?.id || null}
-                      items={watchlistSidebarItems}
+                      activeWatchlist={activeWatchlist}
+                      watchlistSymbols={watchlistSymbols}
                       selected={sym}
                       onSelect={handleSelectSymbol}
                       onSelectWatchlist={handleSelectWatchlist}
@@ -16300,6 +16362,7 @@ export default function RayAlgoPlatform() {
               <span style={{ color: T.textMuted }}>v0.1.0</span>
             </div>
           </div>
+        </MarketDataSubscriptionProvider>
         </PositionsContext.Provider>
       </ToastContext.Provider>
     </ThemeContext.Provider>
