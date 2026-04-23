@@ -81,7 +81,9 @@ export const FlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
     flowClock,
     dteBuckets,
     marketOrderFlow,
-  } = useLiveMarketFlow(symbols);
+  } = useLiveMarketFlow(symbols, {
+    enabled: Boolean(session),
+  });
 
   // ── CLUSTER DETECTION ──
   // Group activity by (ticker + strike + cp). Any group with 2+ events = cluster.

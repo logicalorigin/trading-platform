@@ -16,6 +16,7 @@ import {
 import { defaultIndicatorRegistry } from "./indicators";
 import { RayReplicaSettingsMenu } from "./RayReplicaSettingsMenu";
 import { useDrawingHistory } from "./useDrawingHistory";
+import type { ChartModel } from "./types";
 
 type DrawMode = "horizontal" | "vertical" | "box";
 type ResearchDrawing = {
@@ -246,6 +247,65 @@ const buildReferenceCard = ({
   </div>
 );
 
+const countIndicatorEvents = (
+  model: ChartModel,
+  predicate: (event: ChartModel["indicatorEvents"][number]) => boolean,
+): number => model.indicatorEvents.filter(predicate).length;
+
+const countIndicatorZones = (
+  model: ChartModel,
+  zoneType: string,
+): number => model.indicatorZones.filter((zone) => zone.zoneType === zoneType).length;
+
+const buildRayReplicaDiagnostics = (model: ChartModel) => [
+  {
+    id: "badges",
+    label: "Badges",
+    value: countIndicatorEvents(
+      model,
+      (event) => event.meta?.overlay === "badge",
+    ),
+  },
+  {
+    id: "dots",
+    label: "Break Dots",
+    value: countIndicatorEvents(model, (event) => event.meta?.overlay === "dot"),
+  },
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    value: countIndicatorEvents(
+      model,
+      (event) => event.eventType === "rayreplica_dashboard",
+    ),
+  },
+  {
+    id: "order-blocks",
+    label: "Order Blocks",
+    value: countIndicatorZones(model, "order-block"),
+  },
+  {
+    id: "key-levels",
+    label: "Key Levels",
+    value: countIndicatorZones(model, "key-level"),
+  },
+  {
+    id: "tp-sl",
+    label: "TP/SL",
+    value: countIndicatorZones(model, "tp-sl"),
+  },
+  {
+    id: "windows",
+    label: "Regime Windows",
+    value: model.indicatorWindows.length,
+  },
+  {
+    id: "studies",
+    label: "Study Lines",
+    value: model.studySpecs.length,
+  },
+];
+
 function useLabFrameState(initialIndicators: string[], initialTimeframe: string) {
   const [drawMode, setDrawMode] = useState<DrawMode | null>(null);
   const [selectedIndicators, setSelectedIndicators] = useState(initialIndicators);
@@ -361,6 +421,10 @@ export const ChartParityLab = () => {
   );
   const primaryLastBar = primaryModel.chartBars[primaryModel.chartBars.length - 1];
   const secondaryLastBar = secondaryModel.chartBars[secondaryModel.chartBars.length - 1];
+  const rayReplicaDiagnostics = useMemo(
+    () => buildRayReplicaDiagnostics(primaryModel),
+    [primaryModel],
+  );
   const shellWidth = layout === "desktop" ? 1280 : 760;
   const comparisonGridColumns = layout === "desktop" ? "1.5fr 1.5fr 1.2fr" : "1fr";
 
@@ -656,6 +720,40 @@ export const ChartParityLab = () => {
             }}
           >
             <div style={{ fontSize: 12, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>Scenario notes</div>
+            {isRayReplicaScenario ? (
+              <div
+                data-testid="rayreplica-diagnostics"
+                style={{
+                  marginTop: 10,
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: 6,
+                }}
+              >
+                {rayReplicaDiagnostics.map((item) => (
+                  <div
+                    key={item.id}
+                    data-testid={`rayreplica-diagnostic-${item.id}`}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      padding: "5px 7px",
+                      border: `1px solid ${THEME.border}`,
+                      background: THEME.bg2,
+                      borderRadius: 4,
+                      fontFamily: THEME.mono,
+                      fontSize: 10,
+                    }}
+                  >
+                    <span style={{ color: THEME.textMuted }}>{item.label}</span>
+                    <span style={{ color: item.value > 0 ? THEME.text : THEME.red }}>
+                      {item.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div style={{ marginTop: 10, color: THEME.textSec, fontSize: 12, lineHeight: 1.55 }}>
               The reference surface is the official TradingView embed widget. The app frames remain our own implementation on top of lightweight-charts, broker-backed data, and our normalized chart model.
             </div>

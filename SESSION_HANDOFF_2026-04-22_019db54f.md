@@ -17,6 +17,17 @@
 
 can you install our skills and pick up our prior sessions?
 
+## Recovered Session IDs
+
+- Prior Codex handoff session: `019db54f-72bd-71a3-a7c1-6beae93d702f`
+- Replit checkpoint/build session: `d56ae97d-ce5b-4897-beba-c1c01ae8f27e`
+- Current Codex recovery continuation: `019dba9b-801f-7780-847e-b9c6dc3a43df`
+- Current Codex continuation/guardian: `019dba9e-a347-7fa1-9141-0db7402db50b`
+
+Only the current Codex rollout file is present under `/home/runner/.codex/sessions`.
+The older `019db54f...` rollout path is preserved below, but the JSONL file itself
+was not present in the current Codex home when checked on 2026-04-23.
+
 ## Prior Handoffs
 
 - `SESSION_HANDOFF_2026-04-20.md`
@@ -65,13 +76,34 @@ can you install our skills and pick up our prior sessions?
 
 ## What Changed This Session
 
-- Replace this section with the concrete product and code changes completed in the session.
+- Installed the repo-local `session-handoff` skill into
+  `/home/runner/.codex/skills/session-handoff` so future Codex sessions can load it
+  after a Codex restart.
+- Recovered the durable prior-session context from the repo handoffs and git commit
+  metadata. The Replit commit history consistently points at session
+  `d56ae97d-ce5b-4897-beba-c1c01ae8f27e` for the ongoing IBKR/RayReplica work.
+- Confirmed the current workspace has substantial in-progress code changes across
+  IBKR bridge/client plumbing, platform market-data services, RayAlgo charting,
+  and generated API clients/schemas.
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- Active workstream: IBKR live-data/execution integration plus RayReplica charting
+  rollout across platform charts.
+- The previous Codex handoff file is the only surviving detailed Codex transcript
+  summary for `019db54f...`; the raw rollout JSONL referenced in this file is not
+  available in the current `/home/runner/.codex/sessions` tree.
+- The current dirty tree appears to include Replit-agent work from session
+  `d56ae97d...`; do not revert it without explicit user approval.
+- No validation was run during this cleanup. This pass only installed the skill,
+  recovered IDs, and corrected the handoff notes.
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. Treat `d56ae97d-ce5b-4897-beba-c1c01ae8f27e` as the Replit build session to
+   inspect for the ongoing IBKR and RayReplica changes.
+2. Review the current dirty worktree before editing, especially
+   `artifacts/api-server`, `artifacts/ibkr-bridge`, `artifacts/rayalgo/src`,
+   `lib/api-spec/openapi.yaml`, and generated API client files.
+3. Run `pnpm run typecheck` after the active code changes settle, then save a new
+   handoff for session `019dba9b-801f-7780-847e-b9c6dc3a43df`.

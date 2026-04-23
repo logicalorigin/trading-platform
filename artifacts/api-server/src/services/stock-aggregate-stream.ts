@@ -1,7 +1,7 @@
 import { getProviderConfiguration } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
-import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
-import { logger } from "../lib/logger";
+import type { QuoteSnapshot } from "../providers/ibkr/client";
+import { subscribeBridgeQuoteSnapshots } from "./bridge-quote-stream";
 
 export type StockMinuteAggregateMessage = {
   eventType: string;
@@ -20,6 +20,7 @@ export type StockMinuteAggregateMessage = {
   endMs: number;
   delayed: false;
   source: "ibkr-websocket-derived";
+  latency?: QuoteSnapshot["latency"];
 };
 
 type Subscriber = {
@@ -27,6 +28,9 @@ type Subscriber = {
   symbols: Set<string>;
   onAggregate: (message: StockMinuteAggregateMessage) => void;
 };
+type BridgeQuoteSnapshotPayload = Parameters<
+  Parameters<typeof subscribeBridgeQuoteSnapshots>[1]
+>[0];
 
 type MinuteAccumulator = {
   startMs: number;
@@ -38,16 +42,15 @@ type MinuteAccumulator = {
   volume: number;
   accumulatedVolume: number | null;
   lastObservedDayVolume: number | null;
+  latency?: QuoteSnapshot["latency"];
 };
 
-const POLL_INTERVAL_MS = 1_000;
 const subscribers = new Map<number, Subscriber>();
 const accumulators = new Map<string, MinuteAccumulator>();
-const bridgeClient = new IbkrBridgeClient();
 
 let nextSubscriberId = 1;
-let pollTimer: NodeJS.Timeout | null = null;
-let pollInFlight = false;
+let quoteUnsubscribe: (() => void) | null = null;
+let quoteSubscriptionSignature = "";
 
 function getDesiredSymbols(): string[] {
   return Array.from(
@@ -93,6 +96,7 @@ function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): Sto
     endMs: accumulator.endMs,
     delayed: false,
     source: "ibkr-websocket-derived",
+    latency: accumulator.latency,
   };
 }
 
@@ -112,6 +116,7 @@ function updateAccumulator(input: {
   price: number;
   dayVolume: number | null;
   observedAt: number;
+  latency?: QuoteSnapshot["latency"];
 }) {
   const { startMs, endMs } = getMinuteWindow(input.observedAt);
   const existing = accumulators.get(input.symbol);
@@ -134,6 +139,7 @@ function updateAccumulator(input: {
       volume: Math.max(0, nextVolumeIncrement),
       accumulatedVolume: input.dayVolume,
       lastObservedDayVolume: input.dayVolume,
+      latency: input.latency,
     };
     accumulators.set(input.symbol, nextAccumulator);
     broadcastAggregate(toAggregateMessage(input.symbol, nextAccumulator));
@@ -148,66 +154,48 @@ function updateAccumulator(input: {
     volume: existing.volume + Math.max(0, nextVolumeIncrement),
     accumulatedVolume: input.dayVolume,
     lastObservedDayVolume: input.dayVolume,
+    latency: input.latency,
   };
   accumulators.set(input.symbol, nextAccumulator);
   broadcastAggregate(toAggregateMessage(input.symbol, nextAccumulator));
 }
 
-async function pollQuotesOnce() {
-  if (pollInFlight) {
-    return;
-  }
+function handleQuoteSnapshot(payload: BridgeQuoteSnapshotPayload) {
+  const observedAt = Date.now();
 
-  const symbols = getDesiredSymbols();
-  if (symbols.length === 0) {
-    return;
-  }
+  payload.quotes.forEach((quote) => {
+    const price = quote.price > 0 ? quote.price : quote.bid > 0 ? quote.bid : quote.ask;
+    if (!price || !Number.isFinite(price)) {
+      return;
+    }
 
-  pollInFlight = true;
-
-  try {
-    const quotes = await bridgeClient.getQuoteSnapshots(symbols);
-    const observedAt = Date.now();
-
-    quotes.forEach((quote) => {
-      const price = quote.price > 0 ? quote.price : quote.bid > 0 ? quote.bid : quote.ask;
-      if (!price || !Number.isFinite(price)) {
-        return;
-      }
-
-      updateAccumulator({
-        symbol: normalizeSymbol(quote.symbol),
-        price,
-        dayVolume: quote.volume ?? null,
-        observedAt,
-      });
+    updateAccumulator({
+      symbol: normalizeSymbol(quote.symbol),
+      price,
+      dayVolume: quote.volume ?? null,
+      observedAt,
+      latency: quote.latency,
     });
-  } catch (error) {
-    logger.warn({ err: error }, "IBKR quote polling failed");
-  } finally {
-    pollInFlight = false;
-  }
+  });
 }
 
-function ensurePolling() {
-  if (pollTimer || subscribers.size === 0) {
+function refreshQuoteSubscription() {
+  const symbols = getDesiredSymbols();
+  const nextSignature = symbols.join(",");
+
+  if (nextSignature === quoteSubscriptionSignature) {
     return;
   }
 
-  pollTimer = setInterval(() => {
-    void pollQuotesOnce();
-  }, POLL_INTERVAL_MS);
-  pollTimer.unref?.();
-  void pollQuotesOnce();
-}
+  quoteUnsubscribe?.();
+  quoteUnsubscribe = null;
+  quoteSubscriptionSignature = nextSignature;
 
-function stopPollingIfIdle() {
-  if (subscribers.size > 0 || !pollTimer) {
+  if (!symbols.length) {
     return;
   }
 
-  clearInterval(pollTimer);
-  pollTimer = null;
+  quoteUnsubscribe = subscribeBridgeQuoteSnapshots(symbols, handleQuoteSnapshot);
 }
 
 export function isStockAggregateStreamingAvailable(): boolean {
@@ -229,10 +217,10 @@ export function subscribeStockMinuteAggregates(
     symbols: normalizedSymbols,
     onAggregate,
   });
-  ensurePolling();
+  refreshQuoteSubscription();
 
   return () => {
     subscribers.delete(subscriberId);
-    stopPollingIfIdle();
+    refreshQuoteSubscription();
   };
 }

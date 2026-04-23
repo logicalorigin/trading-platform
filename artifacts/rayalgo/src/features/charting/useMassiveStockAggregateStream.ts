@@ -17,6 +17,12 @@ export type BrokerStockAggregateMessage = {
   endMs: number;
   delayed: boolean;
   source: "ibkr-websocket-derived";
+  latency?: {
+    bridgeReceivedAt?: string | null;
+    bridgeEmittedAt?: string | null;
+    apiServerReceivedAt?: string | null;
+    apiServerEmittedAt?: string | null;
+  } | null;
 };
 
 export type MassiveStockAggregateMessage = BrokerStockAggregateMessage;
@@ -69,9 +75,17 @@ const parseAggregateMessage = (payload: string): BrokerStockAggregateMessage | n
 const consumers = new Map<number, StreamConsumer>();
 const minuteCacheBySymbol = new Map<string, Map<number, BrokerStockAggregateMessage>>();
 const storeListeners = new Set<() => void>();
+const latencyStoreListeners = new Set<() => void>();
+const latencySamples = {
+  bridgeToApiMs: [] as number[],
+  apiToReactMs: [] as number[],
+  totalMs: [] as number[],
+};
+const MAX_LIVE_LATENCY_SAMPLE_AGE_MS = 10_000;
 
 let nextConsumerId = 1;
 let storeVersion = 0;
+let latencyStoreVersion = 0;
 let eventSource: EventSource | null = null;
 let eventSourceSignature = "";
 let reconnectTimer: number | null = null;
@@ -96,6 +110,90 @@ const notifyStoreListeners = () => {
   }
 
   setTimeout(flushStoreListeners, 0);
+};
+
+const notifyLatencyStoreListeners = () => {
+  latencyStoreVersion += 1;
+  Array.from(latencyStoreListeners).forEach((listener) => listener());
+};
+
+const subscribeToLatencyStore = (listener: () => void): (() => void) => {
+  latencyStoreListeners.add(listener);
+  return () => {
+    latencyStoreListeners.delete(listener);
+  };
+};
+
+const getLatencyStoreSnapshot = (): number => latencyStoreVersion;
+
+const readTimestampMs = (value: string | null | undefined): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const pushLatencySample = (bucket: number[], value: number | null) => {
+  if (value === null || !Number.isFinite(value) || value < 0) {
+    return;
+  }
+
+  bucket.push(value);
+  while (bucket.length > 256) {
+    bucket.shift();
+  }
+};
+
+const percentile = (values: number[], pct: number): number | null => {
+  if (!values.length) {
+    return null;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((pct / 100) * sorted.length) - 1),
+  );
+  return sorted[index];
+};
+
+const summarizeBucket = (values: number[]) => ({
+  p50: percentile(values, 50),
+  p95: percentile(values, 95),
+});
+
+const recordLatencySample = (message: BrokerStockAggregateMessage) => {
+  const latency = message.latency;
+  if (!latency) {
+    return;
+  }
+
+  const now = Date.now();
+  const bridgeReceivedAt = readTimestampMs(latency.bridgeReceivedAt);
+  const bridgeEmittedAt = readTimestampMs(latency.bridgeEmittedAt);
+  const apiServerReceivedAt = readTimestampMs(latency.apiServerReceivedAt);
+  const apiServerEmittedAt = readTimestampMs(latency.apiServerEmittedAt);
+  const endToEndAgeMs =
+    bridgeReceivedAt !== null ? now - bridgeReceivedAt : null;
+  const bridgeToApiMs =
+    bridgeEmittedAt !== null && apiServerReceivedAt !== null
+      ? apiServerReceivedAt - bridgeEmittedAt
+      : null;
+  const apiToReactMs =
+    apiServerEmittedAt !== null ? now - apiServerEmittedAt : null;
+
+  if (bridgeToApiMs !== null && bridgeToApiMs <= MAX_LIVE_LATENCY_SAMPLE_AGE_MS) {
+    pushLatencySample(latencySamples.bridgeToApiMs, bridgeToApiMs);
+  }
+  if (apiToReactMs !== null && apiToReactMs <= MAX_LIVE_LATENCY_SAMPLE_AGE_MS) {
+    pushLatencySample(latencySamples.apiToReactMs, apiToReactMs);
+  }
+  if (endToEndAgeMs !== null && endToEndAgeMs <= MAX_LIVE_LATENCY_SAMPLE_AGE_MS) {
+    pushLatencySample(latencySamples.totalMs, endToEndAgeMs);
+  }
+  notifyLatencyStoreListeners();
 };
 
 const subscribeToAggregateStore = (listener: () => void): (() => void) => {
@@ -184,6 +282,7 @@ const recordAggregate = (message: BrokerStockAggregateMessage) => {
 
 const handleAggregateMessage = (message: BrokerStockAggregateMessage) => {
   recordAggregate(message);
+  recordLatencySample(message);
 
   consumers.forEach((consumer) => {
     if (!consumer.symbols.has(message.symbol)) {
@@ -301,6 +400,25 @@ export const useStockMinuteAggregateStoreVersion = (): number => (
     () => 0,
   )
 );
+
+export const useIbkrLatencyStats = () => {
+  useSyncExternalStore(
+    subscribeToLatencyStore,
+    getLatencyStoreSnapshot,
+    () => 0,
+  );
+
+  return {
+    bridgeToApiMs: summarizeBucket(latencySamples.bridgeToApiMs),
+    apiToReactMs: summarizeBucket(latencySamples.apiToReactMs),
+    totalMs: summarizeBucket(latencySamples.totalMs),
+    sampleCount: Math.max(
+      latencySamples.bridgeToApiMs.length,
+      latencySamples.apiToReactMs.length,
+      latencySamples.totalMs.length,
+    ),
+  };
+};
 
 export const useBrokerStockAggregateStream = ({
   symbols,

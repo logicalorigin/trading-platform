@@ -94,6 +94,284 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountsResponse"
 
+  /accounts/flex/health:
+    get:
+      operationId: getFlexHealth
+      tags: [accounts]
+      summary: Get IBKR Flex setup and refresh health
+      responses:
+        "200":
+          description: Flex integration health
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlexHealthResponse"
+
+  /accounts/flex/test:
+    post:
+      operationId: testFlexToken
+      tags: [accounts]
+      summary: Test the configured IBKR Flex token and query
+      responses:
+        "200":
+          description: Flex test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlexTestResponse"
+
+  /accounts/{accountId}/summary:
+    get:
+      operationId: getAccountSummary
+      tags: [accounts]
+      summary: Get live account header metrics
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Account summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountSummaryResponse"
+
+  /accounts/{accountId}/equity-history:
+    get:
+      operationId: getAccountEquityHistory
+      tags: [accounts]
+      summary: Get Flex and intraday NAV history
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: range
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AccountHistoryRange"
+        - name: benchmark
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Equity history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountEquityHistoryResponse"
+
+  /accounts/{accountId}/allocation:
+    get:
+      operationId: getAccountAllocation
+      tags: [accounts]
+      summary: Get allocation and exposure summary
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Allocation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountAllocationResponse"
+
+  /accounts/{accountId}/positions:
+    get:
+      operationId: getAccountPositions
+      tags: [accounts]
+      summary: Get current positions with lots and open order context
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Current positions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountPositionsResponse"
+
+  /accounts/{accountId}/closed-trades:
+    get:
+      operationId: getAccountClosedTrades
+      tags: [accounts]
+      summary: Get closed trades and recent live executions
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pnlSign
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, winners, losers]
+        - name: holdDuration
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Closed trades
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountClosedTradesResponse"
+
+  /accounts/{accountId}/orders:
+    get:
+      operationId: getAccountOrders
+      tags: [accounts]
+      summary: Get working or historical orders for an account
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: tab
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [working, history]
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Account orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountOrdersResponse"
+
+  /accounts/{accountId}/orders/{orderId}/cancel:
+    post:
+      operationId: cancelAccountOrder
+      tags: [accounts]
+      summary: Cancel a working order from the Account screen
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelAccountOrderRequest"
+      responses:
+        "200":
+          description: Cancel result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelOrderResponse"
+
+  /accounts/{accountId}/risk:
+    get:
+      operationId: getAccountRisk
+      tags: [accounts]
+      summary: Get portfolio risk dashboard metrics
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Account risk
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountRiskResponse"
+
+  /accounts/{accountId}/cash-activity:
+    get:
+      operationId: getAccountCashActivity
+      tags: [accounts]
+      summary: Get cash and funding activity
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Cash activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountCashActivityResponse"
+
   /watchlists:
     get:
       operationId: listWatchlists
@@ -335,6 +613,16 @@ paths:
           description: Restrict results to a market.
           schema:
             $ref: "#/components/schemas/UniverseMarket"
+        - name: markets
+          in: query
+          required: false
+          description: Restrict results to one or more markets. Takes precedence over market when provided.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/UniverseMarket"
         - name: type
           in: query
           required: false
@@ -403,6 +691,12 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/AssetClass"
+        - name: market
+          in: query
+          required: false
+          description: Provider market context from ticker search; used to avoid cross-asset historical fallbacks.
+          schema:
+            $ref: "#/components/schemas/UniverseMarket"
         - name: providerContractId
           in: query
           required: false
@@ -422,7 +716,7 @@ paths:
         - name: allowHistoricalSynthesis
           in: query
           required: false
-          description: Explicitly allow Polygon/Massive historical synthesis when IBKR history is incomplete.
+          description: Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
           schema:
             type: boolean
       responses:
@@ -1332,6 +1626,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/BacktestDraftStrategiesResponse"
 components:
+  parameters:
+    AccountIdPath:
+      name: accountId
+      in: path
+      required: true
+      description: IBKR account id or the virtual "combined" account id.
+      schema:
+        type: string
+
   schemas:
     HealthStatus:
       type: object
@@ -1372,7 +1675,7 @@ components:
 
     UniverseMarket:
       type: string
-      enum: [stocks, indices, fx, crypto, otc]
+      enum: [stocks, etf, indices, futures, fx, crypto, otc]
 
     ResearchProvider:
       type: string
@@ -1491,6 +1794,7 @@ components:
           enum:
             - client_portal
             - tws
+            - ibx
         connectionTarget:
           type: [string, "null"]
         sessionMode:
@@ -2196,6 +2500,26 @@ components:
           type: string
         market:
           $ref: "#/components/schemas/UniverseMarket"
+        rootSymbol:
+          type: [string, "null"]
+        normalizedExchangeMic:
+          type: [string, "null"]
+        exchangeDisplay:
+          type: [string, "null"]
+        logoUrl:
+          type: [string, "null"]
+        contractDescription:
+          type: [string, "null"]
+        contractMeta:
+          type:
+            - object
+            - "null"
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+              - type: "null"
         locale:
           type: [string, "null"]
         type:
@@ -2219,12 +2543,30 @@ components:
           oneOf:
             - $ref: "#/components/schemas/MarketDataProvider"
             - type: "null"
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketDataProvider"
+        tradeProvider:
+          oneOf:
+            - $ref: "#/components/schemas/MarketDataProvider"
+            - type: "null"
+        dataProviderPreference:
+          oneOf:
+            - $ref: "#/components/schemas/MarketDataProvider"
+            - type: "null"
         providerContractId:
           type: [string, "null"]
       required:
         - ticker
         - name
         - market
+        - rootSymbol
+        - normalizedExchangeMic
+        - exchangeDisplay
+        - logoUrl
+        - contractDescription
+        - contractMeta
         - locale
         - type
         - active
@@ -2235,6 +2577,9 @@ components:
         - shareClassFigi
         - lastUpdatedAt
         - provider
+        - providers
+        - tradeProvider
+        - dataProviderPreference
         - providerContractId
 
     BrokerConnection:
@@ -2289,6 +2634,51 @@ components:
           type: number
         netLiquidation:
           type: number
+        accountType:
+          type: string
+          nullable: true
+        totalCashValue:
+          type: number
+          nullable: true
+        settledCash:
+          type: number
+          nullable: true
+        accruedCash:
+          type: number
+          nullable: true
+        initialMargin:
+          type: number
+          nullable: true
+        maintenanceMargin:
+          type: number
+          nullable: true
+        excessLiquidity:
+          type: number
+          nullable: true
+        cushion:
+          type: number
+          nullable: true
+        sma:
+          type: number
+          nullable: true
+        dayTradingBuyingPower:
+          type: number
+          nullable: true
+        regTInitialMargin:
+          type: number
+          nullable: true
+        grossPositionValue:
+          type: number
+          nullable: true
+        leverage:
+          type: number
+          nullable: true
+        dayTradesRemaining:
+          type: number
+          nullable: true
+        isPatternDayTrader:
+          type: boolean
+          nullable: true
         updatedAt:
           type: string
           format: date-time
@@ -2387,6 +2777,28 @@ components:
           $ref: "#/components/schemas/IbkrBridgeHealthTransport"
         delayed:
           type: boolean
+        freshness:
+          type: string
+          enum: [live, stale, pending]
+        cacheAgeMs:
+          type: [number, "null"]
+        latency:
+          type:
+            - object
+            - "null"
+          properties:
+            bridgeReceivedAt:
+              type: [string, "null"]
+              format: date-time
+            bridgeEmittedAt:
+              type: [string, "null"]
+              format: date-time
+            apiServerReceivedAt:
+              type: [string, "null"]
+              format: date-time
+            apiServerEmittedAt:
+              type: [string, "null"]
+              format: date-time
         updatedAt:
           type: string
           format: date-time
@@ -2887,6 +3299,838 @@ components:
             $ref: "#/components/schemas/BrokerAccount"
       required:
         - accounts
+
+    AccountHistoryRange:
+      type: string
+      enum: [1W, 1M, 3M, YTD, 1Y, ALL]
+
+    AccountMetricSource:
+      type: string
+      enum: [IBKR_ACCOUNT_SUMMARY, IBKR_POSITIONS, FLEX, LOCAL_LEDGER]
+
+    AccountMetric:
+      type: object
+      properties:
+        value:
+          type: number
+          nullable: true
+        currency:
+          type: string
+          nullable: true
+        source:
+          $ref: "#/components/schemas/AccountMetricSource"
+        field:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - value
+        - currency
+        - source
+        - field
+        - updatedAt
+
+    AccountSummaryMetrics:
+      type: object
+      properties:
+        netLiquidation:
+          $ref: "#/components/schemas/AccountMetric"
+        totalCash:
+          $ref: "#/components/schemas/AccountMetric"
+        buyingPower:
+          $ref: "#/components/schemas/AccountMetric"
+        marginUsed:
+          $ref: "#/components/schemas/AccountMetric"
+        maintenanceMargin:
+          $ref: "#/components/schemas/AccountMetric"
+        maintenanceMarginCushionPercent:
+          $ref: "#/components/schemas/AccountMetric"
+        dayPnl:
+          $ref: "#/components/schemas/AccountMetric"
+        dayPnlPercent:
+          $ref: "#/components/schemas/AccountMetric"
+        totalPnl:
+          $ref: "#/components/schemas/AccountMetric"
+        totalPnlPercent:
+          $ref: "#/components/schemas/AccountMetric"
+        settledCash:
+          $ref: "#/components/schemas/AccountMetric"
+        unsettledCash:
+          $ref: "#/components/schemas/AccountMetric"
+        sma:
+          $ref: "#/components/schemas/AccountMetric"
+        dayTradingBuyingPower:
+          $ref: "#/components/schemas/AccountMetric"
+        regTInitialMargin:
+          $ref: "#/components/schemas/AccountMetric"
+        leverage:
+          $ref: "#/components/schemas/AccountMetric"
+        grossPositionValue:
+          $ref: "#/components/schemas/AccountMetric"
+
+    AccountSummaryAccount:
+      type: object
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        currency:
+          type: string
+        live:
+          type: boolean
+        accountType:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - displayName
+        - currency
+        - live
+        - accountType
+        - updatedAt
+
+    AccountFx:
+      type: object
+      properties:
+        baseCurrency:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+          nullable: true
+        rates:
+          type: object
+          additionalProperties:
+            type: number
+            nullable: true
+        warning:
+          type: string
+          nullable: true
+      required:
+        - baseCurrency
+        - timestamp
+        - rates
+        - warning
+
+    AccountSummaryResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        isCombined:
+          type: boolean
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        currency:
+          type: string
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountSummaryAccount"
+        updatedAt:
+          type: string
+          format: date-time
+        fx:
+          $ref: "#/components/schemas/AccountFx"
+        badges:
+          $ref: "#/components/schemas/JsonObject"
+        metrics:
+          $ref: "#/components/schemas/AccountSummaryMetrics"
+      required:
+        - accountId
+        - isCombined
+        - mode
+        - currency
+        - accounts
+        - updatedAt
+        - fx
+        - badges
+        - metrics
+
+    AccountEquityPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        netLiquidation:
+          type: number
+        currency:
+          type: string
+        source:
+          type: string
+          enum: [FLEX, LOCAL_LEDGER]
+        deposits:
+          type: number
+        withdrawals:
+          type: number
+        dividends:
+          type: number
+        fees:
+          type: number
+        returnPercent:
+          type: number
+        benchmarkPercent:
+          type: number
+          nullable: true
+      required:
+        - timestamp
+        - netLiquidation
+        - currency
+        - source
+        - deposits
+        - withdrawals
+        - dividends
+        - fees
+        - returnPercent
+        - benchmarkPercent
+
+    AccountCashEvent:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        type:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+        source:
+          type: string
+      required:
+        - timestamp
+        - type
+        - amount
+        - currency
+        - source
+
+    AccountEquityHistoryResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        range:
+          $ref: "#/components/schemas/AccountHistoryRange"
+        currency:
+          type: string
+        flexConfigured:
+          type: boolean
+        lastFlexRefreshAt:
+          type: string
+          format: date-time
+          nullable: true
+        benchmark:
+          type: string
+          nullable: true
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountEquityPoint"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountCashEvent"
+      required:
+        - accountId
+        - range
+        - currency
+        - flexConfigured
+        - lastFlexRefreshAt
+        - benchmark
+        - points
+        - events
+
+    AccountAllocationBucket:
+      type: object
+      properties:
+        label:
+          type: string
+        value:
+          type: number
+        weightPercent:
+          type: number
+          nullable: true
+        source:
+          type: string
+      required:
+        - label
+        - value
+        - weightPercent
+        - source
+
+    AccountExposureSummary:
+      type: object
+      properties:
+        grossLong:
+          type: number
+        grossShort:
+          type: number
+        netExposure:
+          type: number
+      required:
+        - grossLong
+        - grossShort
+        - netExposure
+
+    AccountAllocationResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        currency:
+          type: string
+        assetClass:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountAllocationBucket"
+        sector:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountAllocationBucket"
+        exposure:
+          $ref: "#/components/schemas/AccountExposureSummary"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - accountId
+        - currency
+        - assetClass
+        - sector
+        - exposure
+        - updatedAt
+
+    AccountPositionLot:
+      type: object
+      properties:
+        accountId:
+          type: string
+        symbol:
+          type: string
+        quantity:
+          type: number
+        averageCost:
+          type: number
+        marketPrice:
+          type: number
+          nullable: true
+        marketValue:
+          type: number
+          nullable: true
+        unrealizedPnl:
+          type: number
+          nullable: true
+        asOf:
+          type: string
+          format: date-time
+        source:
+          type: string
+      required:
+        - accountId
+        - symbol
+        - quantity
+        - averageCost
+        - marketPrice
+        - marketValue
+        - unrealizedPnl
+        - asOf
+        - source
+
+    AccountPositionRow:
+      type: object
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        accounts:
+          type: array
+          items:
+            type: string
+        symbol:
+          type: string
+        description:
+          type: string
+        assetClass:
+          type: string
+        sector:
+          type: string
+        quantity:
+          type: number
+        averageCost:
+          type: number
+        mark:
+          type: number
+        dayChange:
+          type: number
+          nullable: true
+        dayChangePercent:
+          type: number
+          nullable: true
+        unrealizedPnl:
+          type: number
+        unrealizedPnlPercent:
+          type: number
+        marketValue:
+          type: number
+        weightPercent:
+          type: number
+          nullable: true
+        betaWeightedDelta:
+          type: number
+          nullable: true
+        lots:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountPositionLot"
+        openOrders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        source:
+          type: string
+      required:
+        - id
+        - accountId
+        - accounts
+        - symbol
+        - description
+        - assetClass
+        - sector
+        - quantity
+        - averageCost
+        - mark
+        - dayChange
+        - dayChangePercent
+        - unrealizedPnl
+        - unrealizedPnlPercent
+        - marketValue
+        - weightPercent
+        - betaWeightedDelta
+        - lots
+        - openOrders
+        - source
+
+    AccountPositionsResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        currency:
+          type: string
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountPositionRow"
+        totals:
+          $ref: "#/components/schemas/JsonObject"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - accountId
+        - currency
+        - positions
+        - totals
+        - updatedAt
+
+    AccountTrade:
+      type: object
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          enum: [LIVE, FLEX]
+        accountId:
+          type: string
+        symbol:
+          type: string
+        side:
+          type: string
+        assetClass:
+          type: string
+        quantity:
+          type: number
+        openDate:
+          type: string
+          format: date-time
+          nullable: true
+        closeDate:
+          type: string
+          format: date-time
+          nullable: true
+        avgOpen:
+          type: number
+          nullable: true
+        avgClose:
+          type: number
+          nullable: true
+        realizedPnl:
+          type: number
+          nullable: true
+        realizedPnlPercent:
+          type: number
+          nullable: true
+        holdDurationMinutes:
+          type: number
+          nullable: true
+        commissions:
+          type: number
+          nullable: true
+        currency:
+          type: string
+      required:
+        - id
+        - source
+        - accountId
+        - symbol
+        - side
+        - assetClass
+        - quantity
+        - openDate
+        - closeDate
+        - avgOpen
+        - avgClose
+        - realizedPnl
+        - realizedPnlPercent
+        - holdDurationMinutes
+        - commissions
+        - currency
+
+    AccountClosedTradesResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        currency:
+          type: string
+        trades:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountTrade"
+        summary:
+          $ref: "#/components/schemas/JsonObject"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - accountId
+        - currency
+        - trades
+        - summary
+        - updatedAt
+
+    AccountOrder:
+      type: object
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        symbol:
+          type: string
+        side:
+          $ref: "#/components/schemas/OrderSide"
+        type:
+          $ref: "#/components/schemas/OrderType"
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        quantity:
+          type: number
+        filledQuantity:
+          type: number
+        limitPrice:
+          type: number
+          nullable: true
+        stopPrice:
+          type: number
+          nullable: true
+        timeInForce:
+          $ref: "#/components/schemas/TimeInForce"
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        placedAt:
+          type: string
+          format: date-time
+        filledAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+        averageFillPrice:
+          type: number
+          nullable: true
+        commission:
+          type: number
+          nullable: true
+        source:
+          type: string
+      required:
+        - id
+        - accountId
+        - symbol
+        - side
+        - type
+        - assetClass
+        - quantity
+        - filledQuantity
+        - limitPrice
+        - stopPrice
+        - timeInForce
+        - status
+        - placedAt
+        - filledAt
+        - updatedAt
+        - averageFillPrice
+        - commission
+        - source
+
+    AccountOrdersResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        tab:
+          type: string
+          enum: [working, history]
+        currency:
+          type: string
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountOrder"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - accountId
+        - tab
+        - currency
+        - orders
+        - updatedAt
+
+    CancelAccountOrderRequest:
+      type: object
+      properties:
+        confirm:
+          type: boolean
+
+    AccountRiskResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        currency:
+          type: string
+        concentration:
+          $ref: "#/components/schemas/JsonObject"
+        winnersLosers:
+          $ref: "#/components/schemas/JsonObject"
+        margin:
+          $ref: "#/components/schemas/JsonObject"
+        greeks:
+          $ref: "#/components/schemas/JsonObject"
+        expiryConcentration:
+          $ref: "#/components/schemas/JsonObject"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - accountId
+        - currency
+        - concentration
+        - winnersLosers
+        - margin
+        - greeks
+        - expiryConcentration
+        - updatedAt
+
+    AccountCashActivity:
+      type: object
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        date:
+          type: string
+          format: date-time
+        type:
+          type: string
+        description:
+          type: string
+          nullable: true
+        amount:
+          type: number
+        currency:
+          type: string
+        source:
+          type: string
+      required:
+        - id
+        - accountId
+        - date
+        - type
+        - description
+        - amount
+        - currency
+        - source
+
+    AccountDividend:
+      type: object
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        symbol:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        paidDate:
+          type: string
+          format: date-time
+        amount:
+          type: number
+        currency:
+          type: string
+        source:
+          type: string
+      required:
+        - id
+        - accountId
+        - symbol
+        - description
+        - paidDate
+        - amount
+        - currency
+        - source
+
+    AccountCashActivityResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        currency:
+          type: string
+        settledCash:
+          type: number
+          nullable: true
+        unsettledCash:
+          type: number
+          nullable: true
+        totalCash:
+          type: number
+          nullable: true
+        dividendsMonth:
+          type: number
+        dividendsYtd:
+          type: number
+        interestPaidEarnedYtd:
+          type: number
+        feesYtd:
+          type: number
+        activities:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountCashActivity"
+        dividends:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountDividend"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - accountId
+        - currency
+        - settledCash
+        - unsettledCash
+        - totalCash
+        - dividendsMonth
+        - dividendsYtd
+        - interestPaidEarnedYtd
+        - feesYtd
+        - activities
+        - dividends
+        - updatedAt
+
+    FlexHealthResponse:
+      type: object
+      properties:
+        bridgeConnected:
+          type: boolean
+          nullable: true
+        flexConfigured:
+          type: boolean
+        flexTokenPresent:
+          type: boolean
+        flexQueryIdPresent:
+          type: boolean
+        lastSuccessfulRefreshAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastStatus:
+          type: string
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        snapshotsRecording:
+          type: boolean
+        lastSnapshotAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - bridgeConnected
+        - flexConfigured
+        - flexTokenPresent
+        - flexQueryIdPresent
+        - lastSuccessfulRefreshAt
+        - lastAttemptAt
+        - lastStatus
+        - lastError
+        - snapshotsRecording
+        - lastSnapshotAt
+
+    FlexTestResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        runId:
+          type: string
+        referenceCode:
+          type: string
+        counts:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - ok
+        - message
+        - runId
+        - referenceCode
+        - counts
 
     WatchlistsResponse:
       type: object

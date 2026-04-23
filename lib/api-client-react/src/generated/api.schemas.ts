@@ -79,7 +79,9 @@ export type UniverseMarket =
 
 export const UniverseMarket = {
   stocks: "stocks",
+  etf: "etf",
   indices: "indices",
+  futures: "futures",
   fx: "fx",
   crypto: "crypto",
   otc: "otc",
@@ -221,6 +223,7 @@ export type IbkrBridgeHealthTransport =
 export const IbkrBridgeHealthTransport = {
   client_portal: "client_portal",
   tws: "tws",
+  ibx: "ibx",
 } as const;
 
 /**
@@ -611,10 +614,29 @@ export interface NewsArticle {
   sentimentReasoning: string | null;
 }
 
+/**
+ * @nullable
+ */
+export type UniverseTickerContractMeta = {
+  [key: string]: string | number | boolean | null;
+} | null;
+
 export interface UniverseTicker {
   ticker: string;
   name: string;
   market: UniverseMarket;
+  /** @nullable */
+  rootSymbol: string | null;
+  /** @nullable */
+  normalizedExchangeMic: string | null;
+  /** @nullable */
+  exchangeDisplay: string | null;
+  /** @nullable */
+  logoUrl: string | null;
+  /** @nullable */
+  contractDescription: string | null;
+  /** @nullable */
+  contractMeta: UniverseTickerContractMeta;
   /** @nullable */
   locale: string | null;
   /** @nullable */
@@ -633,6 +655,9 @@ export interface UniverseTicker {
   /** @nullable */
   lastUpdatedAt: string | null;
   provider: MarketDataProvider | null;
+  providers: MarketDataProvider[];
+  tradeProvider: MarketDataProvider | null;
+  dataProviderPreference: MarketDataProvider | null;
   /** @nullable */
   providerContractId: string | null;
 }
@@ -661,6 +686,21 @@ export interface BrokerAccount {
   buyingPower: number;
   cash: number;
   netLiquidation: number;
+  accountType?: string | null;
+  totalCashValue?: number | null;
+  settledCash?: number | null;
+  accruedCash?: number | null;
+  initialMargin?: number | null;
+  maintenanceMargin?: number | null;
+  excessLiquidity?: number | null;
+  cushion?: number | null;
+  sma?: number | null;
+  dayTradingBuyingPower?: number | null;
+  regTInitialMargin?: number | null;
+  grossPositionValue?: number | null;
+  leverage?: number | null;
+  dayTradesRemaining?: number | null;
+  isPatternDayTrader?: boolean | null;
   updatedAt: string;
 }
 
@@ -678,6 +718,29 @@ export interface Watchlist {
   items: WatchlistItem[];
   updatedAt: string;
 }
+
+export type QuoteSnapshotFreshness =
+  (typeof QuoteSnapshotFreshness)[keyof typeof QuoteSnapshotFreshness];
+
+export const QuoteSnapshotFreshness = {
+  live: "live",
+  stale: "stale",
+  pending: "pending",
+} as const;
+
+/**
+ * @nullable
+ */
+export type QuoteSnapshotLatency = {
+  /** @nullable */
+  bridgeReceivedAt?: string | null;
+  /** @nullable */
+  bridgeEmittedAt?: string | null;
+  /** @nullable */
+  apiServerReceivedAt?: string | null;
+  /** @nullable */
+  apiServerEmittedAt?: string | null;
+} | null;
 
 export interface QuoteSnapshot {
   symbol: string;
@@ -698,6 +761,11 @@ export interface QuoteSnapshot {
   source: QuoteSource;
   transport: IbkrBridgeHealthTransport;
   delayed: boolean;
+  freshness?: QuoteSnapshotFreshness;
+  /** @nullable */
+  cacheAgeMs?: number | null;
+  /** @nullable */
+  latency?: QuoteSnapshotLatency;
   updatedAt: string;
 }
 
@@ -881,6 +949,336 @@ export interface BrokerConnectionsResponse {
 
 export interface AccountsResponse {
   accounts: BrokerAccount[];
+}
+
+export type AccountHistoryRange =
+  (typeof AccountHistoryRange)[keyof typeof AccountHistoryRange];
+
+export const AccountHistoryRange = {
+  "1W": "1W",
+  "1M": "1M",
+  "3M": "3M",
+  YTD: "YTD",
+  "1Y": "1Y",
+  ALL: "ALL",
+} as const;
+
+export type AccountMetricSource =
+  (typeof AccountMetricSource)[keyof typeof AccountMetricSource];
+
+export const AccountMetricSource = {
+  IBKR_ACCOUNT_SUMMARY: "IBKR_ACCOUNT_SUMMARY",
+  IBKR_POSITIONS: "IBKR_POSITIONS",
+  FLEX: "FLEX",
+  LOCAL_LEDGER: "LOCAL_LEDGER",
+} as const;
+
+export interface AccountMetric {
+  value: number | null;
+  currency: string | null;
+  source: AccountMetricSource;
+  field: string;
+  updatedAt: string | null;
+}
+
+export interface AccountSummaryMetrics {
+  netLiquidation?: AccountMetric;
+  totalCash?: AccountMetric;
+  buyingPower?: AccountMetric;
+  marginUsed?: AccountMetric;
+  maintenanceMargin?: AccountMetric;
+  maintenanceMarginCushionPercent?: AccountMetric;
+  dayPnl?: AccountMetric;
+  dayPnlPercent?: AccountMetric;
+  totalPnl?: AccountMetric;
+  totalPnlPercent?: AccountMetric;
+  settledCash?: AccountMetric;
+  unsettledCash?: AccountMetric;
+  sma?: AccountMetric;
+  dayTradingBuyingPower?: AccountMetric;
+  regTInitialMargin?: AccountMetric;
+  leverage?: AccountMetric;
+  grossPositionValue?: AccountMetric;
+}
+
+export interface AccountSummaryAccount {
+  id: string;
+  displayName: string;
+  currency: string;
+  live: boolean;
+  accountType: string | null;
+  updatedAt: string;
+}
+
+export type AccountFxRates = { [key: string]: number | null };
+
+export interface AccountFx {
+  baseCurrency: string;
+  timestamp: string | null;
+  rates: AccountFxRates;
+  warning: string | null;
+}
+
+export interface AccountSummaryResponse {
+  accountId: string;
+  isCombined: boolean;
+  mode: EnvironmentMode;
+  currency: string;
+  accounts: AccountSummaryAccount[];
+  updatedAt: string;
+  fx: AccountFx;
+  badges: JsonObject;
+  metrics: AccountSummaryMetrics;
+}
+
+export type AccountEquityPointSource =
+  (typeof AccountEquityPointSource)[keyof typeof AccountEquityPointSource];
+
+export const AccountEquityPointSource = {
+  FLEX: "FLEX",
+  LOCAL_LEDGER: "LOCAL_LEDGER",
+} as const;
+
+export interface AccountEquityPoint {
+  timestamp: string;
+  netLiquidation: number;
+  currency: string;
+  source: AccountEquityPointSource;
+  deposits: number;
+  withdrawals: number;
+  dividends: number;
+  fees: number;
+  returnPercent: number;
+  benchmarkPercent: number | null;
+}
+
+export interface AccountCashEvent {
+  timestamp: string;
+  type: string;
+  amount: number;
+  currency: string;
+  source: string;
+}
+
+export interface AccountEquityHistoryResponse {
+  accountId: string;
+  range: AccountHistoryRange;
+  currency: string;
+  flexConfigured: boolean;
+  lastFlexRefreshAt: string | null;
+  benchmark: string | null;
+  points: AccountEquityPoint[];
+  events: AccountCashEvent[];
+}
+
+export interface AccountAllocationBucket {
+  label: string;
+  value: number;
+  weightPercent: number | null;
+  source: string;
+}
+
+export interface AccountExposureSummary {
+  grossLong: number;
+  grossShort: number;
+  netExposure: number;
+}
+
+export interface AccountAllocationResponse {
+  accountId: string;
+  currency: string;
+  assetClass: AccountAllocationBucket[];
+  sector: AccountAllocationBucket[];
+  exposure: AccountExposureSummary;
+  updatedAt: string;
+}
+
+export interface AccountPositionLot {
+  accountId: string;
+  symbol: string;
+  quantity: number;
+  averageCost: number;
+  marketPrice: number | null;
+  marketValue: number | null;
+  unrealizedPnl: number | null;
+  asOf: string;
+  source: string;
+}
+
+export interface AccountPositionRow {
+  id: string;
+  accountId: string;
+  accounts: string[];
+  symbol: string;
+  description: string;
+  assetClass: string;
+  sector: string;
+  quantity: number;
+  averageCost: number;
+  mark: number;
+  dayChange: number | null;
+  dayChangePercent: number | null;
+  unrealizedPnl: number;
+  unrealizedPnlPercent: number;
+  marketValue: number;
+  weightPercent: number | null;
+  betaWeightedDelta: number | null;
+  lots: AccountPositionLot[];
+  openOrders: Order[];
+  source: string;
+}
+
+export interface AccountPositionsResponse {
+  accountId: string;
+  currency: string;
+  positions: AccountPositionRow[];
+  totals: JsonObject;
+  updatedAt: string;
+}
+
+export type AccountTradeSource =
+  (typeof AccountTradeSource)[keyof typeof AccountTradeSource];
+
+export const AccountTradeSource = {
+  LIVE: "LIVE",
+  FLEX: "FLEX",
+} as const;
+
+export interface AccountTrade {
+  id: string;
+  source: AccountTradeSource;
+  accountId: string;
+  symbol: string;
+  side: string;
+  assetClass: string;
+  quantity: number;
+  openDate: string | null;
+  closeDate: string | null;
+  avgOpen: number | null;
+  avgClose: number | null;
+  realizedPnl: number | null;
+  realizedPnlPercent: number | null;
+  holdDurationMinutes: number | null;
+  commissions: number | null;
+  currency: string;
+}
+
+export interface AccountClosedTradesResponse {
+  accountId: string;
+  currency: string;
+  trades: AccountTrade[];
+  summary: JsonObject;
+  updatedAt: string;
+}
+
+export interface AccountOrder {
+  id: string;
+  accountId: string;
+  symbol: string;
+  side: OrderSide;
+  type: OrderType;
+  assetClass: AssetClass;
+  quantity: number;
+  filledQuantity: number;
+  limitPrice: number | null;
+  stopPrice: number | null;
+  timeInForce: TimeInForce;
+  status: OrderStatus;
+  placedAt: string;
+  filledAt: string | null;
+  updatedAt: string;
+  averageFillPrice: number | null;
+  commission: number | null;
+  source: string;
+}
+
+export type AccountOrdersResponseTab =
+  (typeof AccountOrdersResponseTab)[keyof typeof AccountOrdersResponseTab];
+
+export const AccountOrdersResponseTab = {
+  working: "working",
+  history: "history",
+} as const;
+
+export interface AccountOrdersResponse {
+  accountId: string;
+  tab: AccountOrdersResponseTab;
+  currency: string;
+  orders: AccountOrder[];
+  updatedAt: string;
+}
+
+export interface CancelAccountOrderRequest {
+  confirm?: boolean;
+}
+
+export interface AccountRiskResponse {
+  accountId: string;
+  currency: string;
+  concentration: JsonObject;
+  winnersLosers: JsonObject;
+  margin: JsonObject;
+  greeks: JsonObject;
+  expiryConcentration: JsonObject;
+  updatedAt: string;
+}
+
+export interface AccountCashActivity {
+  id: string;
+  accountId: string;
+  date: string;
+  type: string;
+  description: string | null;
+  amount: number;
+  currency: string;
+  source: string;
+}
+
+export interface AccountDividend {
+  id: string;
+  accountId: string;
+  symbol: string | null;
+  description: string | null;
+  paidDate: string;
+  amount: number;
+  currency: string;
+  source: string;
+}
+
+export interface AccountCashActivityResponse {
+  accountId: string;
+  currency: string;
+  settledCash: number | null;
+  unsettledCash: number | null;
+  totalCash: number | null;
+  dividendsMonth: number;
+  dividendsYtd: number;
+  interestPaidEarnedYtd: number;
+  feesYtd: number;
+  activities: AccountCashActivity[];
+  dividends: AccountDividend[];
+  updatedAt: string;
+}
+
+export interface FlexHealthResponse {
+  bridgeConnected: boolean | null;
+  flexConfigured: boolean;
+  flexTokenPresent: boolean;
+  flexQueryIdPresent: boolean;
+  lastSuccessfulRefreshAt: string | null;
+  lastAttemptAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  snapshotsRecording: boolean;
+  lastSnapshotAt: string | null;
+}
+
+export interface FlexTestResponse {
+  ok: boolean;
+  message: string;
+  runId: string;
+  referenceCode: string;
+  counts: JsonObject;
 }
 
 export interface WatchlistsResponse {
@@ -1988,6 +2386,67 @@ export type ListAccountsParams = {
   mode?: EnvironmentMode;
 };
 
+export type GetAccountSummaryParams = {
+  mode?: EnvironmentMode;
+};
+
+export type GetAccountEquityHistoryParams = {
+  range?: AccountHistoryRange;
+  benchmark?: string;
+  mode?: EnvironmentMode;
+};
+
+export type GetAccountAllocationParams = {
+  mode?: EnvironmentMode;
+};
+
+export type GetAccountPositionsParams = {
+  assetClass?: string;
+  mode?: EnvironmentMode;
+};
+
+export type GetAccountClosedTradesParams = {
+  from?: string;
+  to?: string;
+  symbol?: string;
+  assetClass?: string;
+  pnlSign?: GetAccountClosedTradesPnlSign;
+  holdDuration?: string;
+  mode?: EnvironmentMode;
+};
+
+export type GetAccountClosedTradesPnlSign =
+  (typeof GetAccountClosedTradesPnlSign)[keyof typeof GetAccountClosedTradesPnlSign];
+
+export const GetAccountClosedTradesPnlSign = {
+  all: "all",
+  winners: "winners",
+  losers: "losers",
+} as const;
+
+export type GetAccountOrdersParams = {
+  tab?: GetAccountOrdersTab;
+  mode?: EnvironmentMode;
+};
+
+export type GetAccountOrdersTab =
+  (typeof GetAccountOrdersTab)[keyof typeof GetAccountOrdersTab];
+
+export const GetAccountOrdersTab = {
+  working: "working",
+  history: "history",
+} as const;
+
+export type GetAccountRiskParams = {
+  mode?: EnvironmentMode;
+};
+
+export type GetAccountCashActivityParams = {
+  from?: string;
+  to?: string;
+  mode?: EnvironmentMode;
+};
+
 export type ListPositionsParams = {
   accountId?: string;
   mode?: EnvironmentMode;
@@ -2029,6 +2488,10 @@ export type SearchUniverseTickersParams = {
    */
   market?: UniverseMarket;
   /**
+   * Restrict results to one or more markets. Takes precedence over market when provided.
+   */
+  markets?: UniverseMarket[];
+  /**
    * Optional Polygon ticker type filter.
    */
   type?: string;
@@ -2055,11 +2518,15 @@ export type GetBarsParams = {
   from?: string;
   to?: string;
   assetClass?: AssetClass;
+  /**
+   * Provider market context from ticker search; used to avoid cross-asset historical fallbacks.
+   */
+  market?: UniverseMarket;
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: BarDataSource;
   /**
-   * Explicitly allow Polygon/Massive historical synthesis when IBKR history is incomplete.
+   * Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
    */
   allowHistoricalSynthesis?: boolean;
 };

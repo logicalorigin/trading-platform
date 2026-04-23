@@ -1,6 +1,11 @@
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
+import {
+  fetchBridgeQuoteSnapshots,
+  subscribeBridgeQuoteSnapshots,
+} from "./bridge-quote-stream";
+import { recordAccountSnapshots } from "./account";
 
 const bridgeClient = new IbkrBridgeClient();
 
@@ -123,18 +128,7 @@ export async function fetchQuoteSnapshotPayload(symbols: string[]): Promise<{
     }
   >;
 }> {
-  const normalizedSymbols = Array.from(
-    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  );
-
-  return {
-    quotes: (await bridgeClient.getQuoteSnapshots(normalizedSymbols)).map(
-      (quote) => ({
-        ...quote,
-        source: "ibkr" as const,
-      }),
-    ),
-  };
+  return fetchBridgeQuoteSnapshots(symbols);
 }
 
 export async function fetchOptionChainSnapshotPayload(
@@ -184,8 +178,13 @@ export async function fetchAccountSnapshotPayload(input: {
   accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
   positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
 }> {
+  const accounts = await bridgeClient.listAccounts(input.mode);
+  void recordAccountSnapshots(accounts).catch((error) => {
+    logger.warn({ err: error }, "Failed to record account balance snapshots");
+  });
+
   return {
-    accounts: await bridgeClient.listAccounts(input.mode),
+    accounts,
     positions: await bridgeClient.listPositions(input),
   };
 }
@@ -232,11 +231,7 @@ export function subscribeQuoteSnapshots(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
 
-  return createPollingStream({
-    intervalMs: 1_000,
-    fetchSnapshot: async () => fetchQuoteSnapshotPayload(normalizedSymbols),
-    onSnapshot,
-  });
+  return subscribeBridgeQuoteSnapshots(normalizedSymbols, onSnapshot);
 }
 
 export function subscribeOptionChains(

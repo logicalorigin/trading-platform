@@ -86,21 +86,52 @@ const HISTORY_SOURCE_TO_TWS: Record<
 };
 
 const ACCOUNT_SUMMARY_TAGS = [
+  "AccountType",
   "NetLiquidation",
   "BuyingPower",
   "TotalCashValue",
   "SettledCash",
   "CashBalance",
+  "AccruedCash",
+  "InitMarginReq",
+  "MaintMarginReq",
+  "ExcessLiquidity",
+  "Cushion",
+  "SMA",
+  "DayTradesRemaining",
+  "DayTradesRemainingT+1",
+  "DayTradesRemainingT+2",
+  "DayTradesRemainingT+3",
+  "DayTradesRemainingT+4",
+  "DayTradingBuyingPower",
+  "RegTEquity",
+  "RegTMargin",
+  "GrossPositionValue",
+  "Leverage",
 ] as const;
 
 const ACCOUNT_SUMMARY_REQUEST = ACCOUNT_SUMMARY_TAGS.join(",");
 const CONTRACT_CACHE_TTL_MS = 5 * 60_000;
 
 type SummarySnapshot = {
+  accountType: string | null;
   buyingPower: number;
   cash: number;
   currency: string;
   netLiquidation: number;
+  totalCashValue: number | null;
+  settledCash: number | null;
+  accruedCash: number | null;
+  initialMargin: number | null;
+  maintenanceMargin: number | null;
+  excessLiquidity: number | null;
+  cushion: number | null;
+  sma: number | null;
+  dayTradingBuyingPower: number | null;
+  regTInitialMargin: number | null;
+  grossPositionValue: number | null;
+  leverage: number | null;
+  dayTradesRemaining: number | null;
   updatedAt: Date;
 };
 
@@ -118,12 +149,20 @@ type CachedOptionContract = {
 
 type QuoteSubscription = {
   contract: Contract;
+  providerContractId: string;
+  symbol: string;
   stop(): void;
 };
 
 type DepthSubscription = {
   contract: Contract;
   stop(): void;
+};
+
+type QuoteStreamListener = {
+  id: number;
+  symbols: Set<string>;
+  onQuote: (quote: QuoteSnapshot) => void;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -314,6 +353,32 @@ function pickSummaryValue(
     value: null,
     currency: null,
   };
+}
+
+function pickSummaryText(
+  summary:
+    | ReadonlyMap<string, ReadonlyMap<string, { value: string; ingressTm: number }>>
+    | undefined,
+  tags: readonly string[],
+): string | null {
+  if (!summary) {
+    return null;
+  }
+
+  for (const tag of tags) {
+    const values = summary.get(tag);
+    if (!values) {
+      continue;
+    }
+
+    for (const entry of values.values()) {
+      if (entry.value.trim()) {
+        return entry.value.trim();
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizeAssetClassFromSecType(
@@ -686,6 +751,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   private readonly optionContracts = new Map<string, CachedOptionContract>();
   private readonly quoteSubscriptions = new Map<string, QuoteSubscription>();
   private readonly quotesByProviderContractId = new Map<string, QuoteSnapshot>();
+  private readonly prewarmQuoteSymbols = new Set<string>();
+  private readonly quoteStreamListeners = new Map<number, QuoteStreamListener>();
   private readonly depthSubscriptions = new Map<string, DepthSubscription>();
   private readonly depthByKey = new Map<string, BrokerMarketDepthSnapshot>();
   private readonly accountSummaries = new Map<string, SummarySnapshot>();
@@ -705,6 +772,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   private baseSubscriptionsStarted = false;
   private accountSummaryInitialized = false;
   private positionsInitialized = false;
+  private nextQuoteStreamListenerId = 1;
 
   constructor(private readonly config: IbkrTwsRuntimeConfig) {
     this.api = new IBApiNext({
@@ -800,6 +868,104 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     }
   }
 
+  private getQuoteFreshness(quote: QuoteSnapshot, now = Date.now()) {
+    const cacheAgeMs = Math.max(0, now - quote.updatedAt.getTime());
+    return {
+      freshness: cacheAgeMs <= 5_000 ? "live" as const : "stale" as const,
+      cacheAgeMs,
+    };
+  }
+
+  private withBridgeReceivedLatency(
+    quote: QuoteSnapshot,
+    bridgeReceivedAt = new Date(),
+  ): QuoteSnapshot {
+    return {
+      ...quote,
+      ...this.getQuoteFreshness(quote, bridgeReceivedAt.getTime()),
+      latency: {
+        ...(quote.latency ?? {}),
+        bridgeReceivedAt,
+      },
+    };
+  }
+
+  private decorateQuoteForEmit(
+    quote: QuoteSnapshot,
+    bridgeEmittedAt = new Date(),
+  ): QuoteSnapshot {
+    return {
+      ...quote,
+      ...this.getQuoteFreshness(quote, bridgeEmittedAt.getTime()),
+      latency: {
+        ...(quote.latency ?? {}),
+        bridgeEmittedAt,
+      },
+    };
+  }
+
+  private collectQuotesBySymbol(): Map<string, QuoteSnapshot> {
+    const now = Date.now();
+    const quotesBySymbol = new Map<string, QuoteSnapshot>();
+
+    this.quotesByProviderContractId.forEach((quote) => {
+      const symbol = normalizeSymbol(quote.symbol);
+      if (!symbol) {
+        return;
+      }
+
+      quotesBySymbol.set(symbol, {
+        ...quote,
+        ...this.getQuoteFreshness(quote, now),
+      });
+    });
+
+    return quotesBySymbol;
+  }
+
+  private emitQuote(quote: QuoteSnapshot) {
+    const normalizedSymbol = normalizeSymbol(quote.symbol);
+    if (!normalizedSymbol) {
+      return;
+    }
+
+    const emittedQuote = this.decorateQuoteForEmit(quote);
+    this.quoteStreamListeners.forEach((listener) => {
+      if (listener.symbols.has(normalizedSymbol)) {
+        listener.onQuote(emittedQuote);
+      }
+    });
+  }
+
+  private getDesiredQuoteSymbols(extraSymbols: string[] = []): Set<string> {
+    const desiredSymbols = new Set<string>();
+
+    this.prewarmQuoteSymbols.forEach((symbol) => desiredSymbols.add(symbol));
+    this.quoteStreamListeners.forEach((listener) => {
+      listener.symbols.forEach((symbol) => desiredSymbols.add(symbol));
+    });
+    extraSymbols
+      .map((symbol) => normalizeSymbol(symbol))
+      .filter(Boolean)
+      .forEach((symbol) => desiredSymbols.add(symbol));
+
+    return desiredSymbols;
+  }
+
+  private trimUnusedQuoteSubscriptions() {
+    const desiredSymbols = this.getDesiredQuoteSymbols();
+
+    for (const [providerContractId, subscription] of this.quoteSubscriptions) {
+      if (desiredSymbols.has(subscription.symbol)) {
+        continue;
+      }
+
+      subscription.stop();
+      this.quoteSubscriptions.delete(providerContractId);
+      this.quotesByProviderContractId.delete(providerContractId);
+    }
+  }
+
   private async ensureConnected(): Promise<void> {
     if (this.connectionState === ConnectionState.Connected) {
       return;
@@ -862,14 +1028,25 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       next: (update) => {
         update.all.forEach((summary, accountId) => {
           const buyingPower = pickSummaryValue(summary, ["BuyingPower"]);
-          const cash = pickSummaryValue(summary, [
-            "TotalCashValue",
-            "SettledCash",
-            "CashBalance",
-          ]);
+          const totalCashValue = pickSummaryValue(summary, ["TotalCashValue"]);
+          const settledCash = pickSummaryValue(summary, ["SettledCash"]);
+          const cashBalance = pickSummaryValue(summary, ["CashBalance"]);
+          const cash =
+            totalCashValue.value !== null
+              ? totalCashValue
+              : settledCash.value !== null
+                ? settledCash
+                : cashBalance;
           const netLiquidation = pickSummaryValue(summary, ["NetLiquidation"]);
+          const initialMargin = pickSummaryValue(summary, ["InitMarginReq"]);
+          const maintenanceMargin = pickSummaryValue(summary, ["MaintMarginReq"]);
+          const dayTradesRemaining = pickSummaryValue(summary, [
+            "DayTradesRemaining",
+            "DayTradesRemainingT+4",
+          ]);
 
           this.accountSummaries.set(accountId, {
+            accountType: pickSummaryText(summary, ["AccountType"]),
             buyingPower: buyingPower.value ?? 0,
             cash: cash.value ?? 0,
             netLiquidation: netLiquidation.value ?? 0,
@@ -878,6 +1055,23 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
               cash.currency ??
               netLiquidation.currency ??
               "USD",
+            totalCashValue: totalCashValue.value,
+            settledCash: settledCash.value,
+            accruedCash: pickSummaryValue(summary, ["AccruedCash"]).value,
+            initialMargin: initialMargin.value,
+            maintenanceMargin: maintenanceMargin.value,
+            excessLiquidity: pickSummaryValue(summary, ["ExcessLiquidity"]).value,
+            cushion: pickSummaryValue(summary, ["Cushion"]).value,
+            sma: pickSummaryValue(summary, ["SMA"]).value,
+            dayTradingBuyingPower: pickSummaryValue(summary, [
+              "DayTradingBuyingPower",
+            ]).value,
+            regTInitialMargin: pickSummaryValue(summary, ["RegTMargin"]).value,
+            grossPositionValue: pickSummaryValue(summary, [
+              "GrossPositionValue",
+            ]).value,
+            leverage: pickSummaryValue(summary, ["Leverage"]).value,
+            dayTradesRemaining: dayTradesRemaining.value,
             updatedAt: new Date(),
           });
         });
@@ -1172,8 +1366,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       false,
     ).subscribe({
       next: (update) => {
-        this.quotesByProviderContractId.set(
-          providerContractId,
+        const quote = this.withBridgeReceivedLatency(
           toQuoteSnapshot(
             resolved.resolved.symbol,
             providerContractId,
@@ -1181,6 +1374,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
             this.config.marketDataType,
           ),
         );
+        this.quotesByProviderContractId.set(providerContractId, quote);
+        this.emitQuote(quote);
       },
       error: (error) => {
         this.recordError(error);
@@ -1189,10 +1384,31 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
     this.quoteSubscriptions.set(providerContractId, {
       contract: resolved.contract,
+      providerContractId,
+      symbol: resolved.resolved.symbol,
       stop: () => subscription.unsubscribe(),
     });
 
     return providerContractId;
+  }
+
+  private async ensureQuoteSubscriptionsForSymbols(
+    symbols: string[],
+  ): Promise<Map<string, string>> {
+    await this.refreshSession();
+
+    const normalizedSymbols = Array.from(
+      new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+    );
+    const providerContractIdsBySymbol = new Map<string, string>();
+
+    for (const symbol of normalizedSymbols) {
+      const resolved = await this.resolveStockContract(symbol);
+      const providerContractId = await this.ensureQuoteSubscription(resolved);
+      providerContractIdsBySymbol.set(symbol, providerContractId);
+    }
+
+    return providerContractIdsBySymbol;
   }
 
   private async getContractQuoteSnapshot(input: {
@@ -1208,11 +1424,13 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         input.genericTickList ?? "",
         false,
       );
-      return toQuoteSnapshot(
-        input.symbol,
-        input.providerContractId,
-        marketData,
-        this.config.marketDataType,
+      return this.withBridgeReceivedLatency(
+        toQuoteSnapshot(
+          input.symbol,
+          input.providerContractId,
+          marketData,
+          this.config.marketDataType,
+        ),
       );
     } catch (error) {
       this.recordError(error);
@@ -1424,6 +1642,21 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         buyingPower: summary?.buyingPower ?? 0,
         cash: summary?.cash ?? 0,
         netLiquidation: summary?.netLiquidation ?? 0,
+        accountType: summary?.accountType ?? null,
+        totalCashValue: summary?.totalCashValue ?? null,
+        settledCash: summary?.settledCash ?? null,
+        accruedCash: summary?.accruedCash ?? null,
+        initialMargin: summary?.initialMargin ?? null,
+        maintenanceMargin: summary?.maintenanceMargin ?? null,
+        excessLiquidity: summary?.excessLiquidity ?? null,
+        cushion: summary?.cushion ?? null,
+        sma: summary?.sma ?? null,
+        dayTradingBuyingPower: summary?.dayTradingBuyingPower ?? null,
+        regTInitialMargin: summary?.regTInitialMargin ?? null,
+        grossPositionValue: summary?.grossPositionValue ?? null,
+        leverage: summary?.leverage ?? null,
+        dayTradesRemaining: summary?.dayTradesRemaining ?? null,
+        isPatternDayTrader: null,
         updatedAt: summary?.updatedAt ?? new Date(),
       };
     });
@@ -1555,7 +1788,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
       const liveQuote = this.quotesByProviderContractId.get(providerContractId);
       if (liveQuote) {
-        results.push(liveQuote);
+        results.push(this.decorateQuoteForEmit(liveQuote));
         continue;
       }
 
@@ -1571,11 +1804,92 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
       if (fallbackQuote) {
         this.quotesByProviderContractId.set(providerContractId, fallbackQuote);
-        results.push(fallbackQuote);
+        results.push(this.decorateQuoteForEmit(fallbackQuote));
       }
     }
 
     return results;
+  }
+
+  async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
+    const normalizedSymbols = Array.from(
+      new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+    );
+
+    this.prewarmQuoteSymbols.clear();
+    normalizedSymbols.forEach((symbol) => this.prewarmQuoteSymbols.add(symbol));
+
+    if (normalizedSymbols.length === 0) {
+      this.trimUnusedQuoteSubscriptions();
+      return;
+    }
+
+    const providerContractIdsBySymbol =
+      await this.ensureQuoteSubscriptionsForSymbols(normalizedSymbols);
+    await this.waitForCondition(
+      () =>
+        normalizedSymbols.every((symbol) => {
+          const providerContractId = providerContractIdsBySymbol.get(symbol);
+          return Boolean(
+            providerContractId &&
+              this.quotesByProviderContractId.has(providerContractId),
+          );
+        }),
+      600,
+      50,
+    );
+
+    this.trimUnusedQuoteSubscriptions();
+  }
+
+  async subscribeQuoteStream(
+    symbols: string[],
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void> {
+    const normalizedSymbols = Array.from(
+      new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+    );
+
+    if (normalizedSymbols.length === 0) {
+      return () => {};
+    }
+
+    const listenerId = this.nextQuoteStreamListenerId;
+    this.nextQuoteStreamListenerId += 1;
+    this.quoteStreamListeners.set(listenerId, {
+      id: listenerId,
+      symbols: new Set(normalizedSymbols),
+      onQuote,
+    });
+
+    try {
+      const cachedQuotes = this.collectQuotesBySymbol();
+      normalizedSymbols.forEach((symbol) => {
+        const quote = cachedQuotes.get(symbol);
+        if (quote) {
+          onQuote(this.decorateQuoteForEmit(quote));
+        }
+      });
+
+      await this.ensureQuoteSubscriptionsForSymbols(normalizedSymbols);
+
+      const nextCachedQuotes = this.collectQuotesBySymbol();
+      normalizedSymbols.forEach((symbol) => {
+        const quote = nextCachedQuotes.get(symbol);
+        if (quote) {
+          onQuote(this.decorateQuoteForEmit(quote));
+        }
+      });
+    } catch (error) {
+      this.quoteStreamListeners.delete(listenerId);
+      this.trimUnusedQuoteSubscriptions();
+      throw error;
+    }
+
+    return () => {
+      this.quoteStreamListeners.delete(listenerId);
+      this.trimUnusedQuoteSubscriptions();
+    };
   }
 
   async getHistoricalBars(input: {
@@ -2052,7 +2366,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
   async searchTickers(_input: {
     search?: string;
+    market?: import("../../api-server/src/providers/ibkr/client").IbkrUniverseTicker["market"];
+    markets?: import("../../api-server/src/providers/ibkr/client").IbkrUniverseTicker["market"][];
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<{
     count: number;
     results: import("../../api-server/src/providers/ibkr/client").IbkrUniverseTicker[];

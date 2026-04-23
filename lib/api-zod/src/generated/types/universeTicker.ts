@@ -7,11 +7,24 @@
  */
 import type { MarketDataProvider } from "./marketDataProvider";
 import type { UniverseMarket } from "./universeMarket";
+import type { UniverseTickerContractMeta } from "./universeTickerContractMeta";
 
 export interface UniverseTicker {
   ticker: string;
   name: string;
   market: UniverseMarket;
+  /** @nullable */
+  rootSymbol: string | null;
+  /** @nullable */
+  normalizedExchangeMic: string | null;
+  /** @nullable */
+  exchangeDisplay: string | null;
+  /** @nullable */
+  logoUrl: string | null;
+  /** @nullable */
+  contractDescription: string | null;
+  /** @nullable */
+  contractMeta: UniverseTickerContractMeta;
   /** @nullable */
   locale: string | null;
   /** @nullable */
@@ -30,6 +43,9 @@ export interface UniverseTicker {
   /** @nullable */
   lastUpdatedAt: Date | null;
   provider: MarketDataProvider | null;
+  providers: MarketDataProvider[];
+  tradeProvider: MarketDataProvider | null;
+  dataProviderPreference: MarketDataProvider | null;
   /** @nullable */
   providerContractId: string | null;
 }

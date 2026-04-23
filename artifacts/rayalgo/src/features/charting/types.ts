@@ -180,7 +180,7 @@ export type IndicatorWindow = {
 
 export type StudyPoint = {
   time: number;
-  value: number;
+  value?: number;
   color?: string;
 };
 

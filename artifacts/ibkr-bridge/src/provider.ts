@@ -125,7 +125,14 @@ export interface IbkrBridgeProvider {
   }): Promise<IbkrNewsArticle[]>;
   searchTickers(input: {
     search?: string;
+    market?: IbkrUniverseTicker["market"];
+    markets?: IbkrUniverseTicker["market"][];
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }>;
   prewarmQuoteSubscriptions?(symbols: string[]): Promise<void>;
+  subscribeQuoteStream?(
+    symbols: string[],
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void>;
 }

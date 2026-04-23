@@ -92,6 +92,8 @@ const panelStyle = (theme: WidgetTheme): CSSProperties => ({
   width: 440,
   maxHeight: "min(78vh, 760px)",
   overflowY: "auto",
+  zIndex: 1000,
+  pointerEvents: "auto",
   borderRadius: 0,
   border: `1px solid ${theme.border}`,
   background: theme.bg4,
@@ -583,7 +585,7 @@ export function RayReplicaSettingsMenu({
             />
           </div>
           <div style={helperStyle(theme)}>
-            The dashboard mirrors the current shading and signal timeframes plus the configured MTF confirmation blocks.
+            The dashboard mirrors the Pine table: trend, strength, trend age, volatility, session, and configured MTF blocks.
           </div>
         </section>
 

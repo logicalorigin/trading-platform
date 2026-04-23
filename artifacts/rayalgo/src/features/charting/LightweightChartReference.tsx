@@ -57,11 +57,15 @@ const syncStudySeries = (
   specs.forEach((spec) => {
     const existing = nextRegistry[spec.key];
     const SeriesCtor = SERIES_TYPE_MAP[spec.seriesType];
-    const seriesData = spec.data.map((point) => (
-      point.color
+    const seriesData = spec.data.map((point) => {
+      if (!Number.isFinite(point.value)) {
+        return { time: point.time };
+      }
+
+      return point.color
         ? { time: point.time, value: point.value, color: point.color }
-        : { time: point.time, value: point.value }
-    ));
+        : { time: point.time, value: point.value };
+    });
 
     if (!existing || existing.paneIndex !== spec.paneIndex || existing.seriesType !== spec.seriesType) {
       if (existing?.series) {

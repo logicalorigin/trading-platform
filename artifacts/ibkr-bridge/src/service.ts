@@ -27,7 +27,9 @@ export class IbkrBridgeService {
   private readonly provider: IbkrBridgeProvider | null = this.runtime
     ? this.runtime.transport === "tws"
       ? new TwsIbkrBridgeProvider(this.runtime.config)
-      : new ClientPortalIbkrBridgeProvider(this.runtime.config)
+      : this.runtime.transport === "client_portal"
+        ? new ClientPortalIbkrBridgeProvider(this.runtime.config)
+        : null
     : null;
 
   private ensureProvider(): IbkrBridgeProvider {
@@ -64,11 +66,14 @@ export class IbkrBridgeService {
         selectedAccountId: null,
         accounts: [],
         lastTickleAt: null,
-        lastError: null,
+        lastError:
+          this.runtime?.transport === "ibx"
+            ? "IBX transport is recognized, but the bridge provider is not implemented yet."
+            : null,
         lastRecoveryAttemptAt: null,
         lastRecoveryError: null,
         updatedAt: new Date(),
-        transport: "client_portal",
+        transport: this.runtime?.transport ?? "client_portal",
         connectionTarget: null,
         sessionMode: null,
         clientId: null,
@@ -198,7 +203,10 @@ export class IbkrBridgeService {
 
   searchTickers(input: {
     search?: string;
+    market?: IbkrUniverseTicker["market"];
+    markets?: IbkrUniverseTicker["market"][];
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
     return this.ensureProvider().searchTickers(input);
   }
@@ -206,6 +214,17 @@ export class IbkrBridgeService {
   async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
     if (!this.provider?.prewarmQuoteSubscriptions) return;
     await this.provider.prewarmQuoteSubscriptions(symbols);
+  }
+
+  async subscribeQuoteStream(
+    symbols: string[],
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void> {
+    if (!this.provider?.subscribeQuoteStream) {
+      throw new Error("IBKR quote streaming is not supported by this transport.");
+    }
+
+    return this.provider.subscribeQuoteStream(symbols, onQuote);
   }
 }
 

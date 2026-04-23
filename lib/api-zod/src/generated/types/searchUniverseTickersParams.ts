@@ -17,6 +17,10 @@ export type SearchUniverseTickersParams = {
    */
   market?: UniverseMarket;
   /**
+   * Restrict results to one or more markets. Takes precedence over market when provided.
+   */
+  markets?: UniverseMarket[];
+  /**
    * Optional Polygon ticker type filter.
    */
   type?: string;

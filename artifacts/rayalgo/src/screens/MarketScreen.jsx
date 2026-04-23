@@ -38,6 +38,7 @@ import {
   buildTrackedBreadthSummary,
   clampNumber,
   dim,
+  fmtCompactNumber,
   fmtM,
   formatCalendarMeta,
   formatIsoDate,
@@ -58,6 +59,7 @@ export const MarketScreen = ({
   onSymClick,
   symbols = [],
   researchConfigured = false,
+  flowScannerEnabled = true,
   stockAggregateStreamingEnabled = false,
   marketNotifications = [],
   signalEvents = [],
@@ -120,7 +122,25 @@ export const MarketScreen = ({
     flowEvents,
     flowTide,
     providerSummary: flowProviderSummary,
-  } = useLiveMarketFlow(symbols, { unusualThreshold });
+  } = useLiveMarketFlow(symbols, {
+    enabled: flowScannerEnabled,
+    unusualThreshold,
+  });
+  const popularTickers = useMemo(() => {
+    const bySymbol = new Map();
+    for (const event of flowEvents || []) {
+      const symbol = event?.underlying?.toUpperCase?.();
+      if (!symbol) continue;
+      const current = bySymbol.get(symbol) || { symbol, count: 0, premium: 0 };
+      current.count += 1;
+      current.premium += Number.isFinite(event?.premium) ? event.premium : 0;
+      bySymbol.set(symbol, current);
+    }
+    return Array.from(bySymbol.values())
+      .sort((left, right) => right.count - left.count || right.premium - left.premium)
+      .map((entry) => entry.symbol)
+      .slice(0, 5);
+  }, [flowEvents]);
   const calendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -287,6 +307,8 @@ export const MarketScreen = ({
           <MultiChartGrid
             activeSym={sym}
             onSymClick={onSymClick}
+            watchlistSymbols={symbols}
+            popularTickers={popularTickers}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           />
           <div

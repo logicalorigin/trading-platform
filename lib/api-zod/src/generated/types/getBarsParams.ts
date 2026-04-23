@@ -8,6 +8,7 @@
 import type { AssetClass } from "./assetClass";
 import type { BarDataSource } from "./barDataSource";
 import type { BarTimeframe } from "./barTimeframe";
+import type { UniverseMarket } from "./universeMarket";
 
 export type GetBarsParams = {
   symbol: string;
@@ -20,11 +21,15 @@ export type GetBarsParams = {
   from?: Date;
   to?: Date;
   assetClass?: AssetClass;
+  /**
+   * Provider market context from ticker search; used to avoid cross-asset historical fallbacks.
+   */
+  market?: UniverseMarket;
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: BarDataSource;
   /**
-   * Explicitly allow Polygon/Massive historical synthesis when IBKR history is incomplete.
+   * Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
    */
   allowHistoricalSynthesis?: boolean;
 };

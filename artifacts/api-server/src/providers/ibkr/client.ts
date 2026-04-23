@@ -38,6 +38,18 @@ type TimeInForce = "day" | "gtc" | "ioc" | "fok";
 export type HistoryBarTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
 export type HistoryDataSource = "trades" | "midpoint" | "bid_ask";
 type HeaderInput = ConstructorParameters<typeof Headers>[0];
+export type UniverseMarket =
+  | "stocks"
+  | "etf"
+  | "indices"
+  | "futures"
+  | "fx"
+  | "crypto"
+  | "otc";
+type MarketDataProvider = "ibkr" | "polygon";
+type UniverseTickerContractMeta =
+  | Record<string, string | number | boolean | null>
+  | null;
 export type OptionContractSnapshot = {
   ticker: string;
   underlying: string;
@@ -59,6 +71,21 @@ export type BrokerAccountSnapshot = {
   buyingPower: number;
   cash: number;
   netLiquidation: number;
+  accountType?: string | null;
+  totalCashValue?: number | null;
+  settledCash?: number | null;
+  accruedCash?: number | null;
+  initialMargin?: number | null;
+  maintenanceMargin?: number | null;
+  excessLiquidity?: number | null;
+  cushion?: number | null;
+  sma?: number | null;
+  dayTradingBuyingPower?: number | null;
+  regTInitialMargin?: number | null;
+  grossPositionValue?: number | null;
+  leverage?: number | null;
+  dayTradesRemaining?: number | null;
+  isPatternDayTrader?: boolean | null;
   updatedAt: Date;
 };
 
@@ -134,6 +161,14 @@ export type QuoteSnapshot = {
   providerContractId: string | null;
   transport: IbkrTransport;
   delayed: boolean;
+  freshness?: "live" | "stale" | "pending";
+  cacheAgeMs?: number | null;
+  latency?: {
+    bridgeReceivedAt?: Date | null;
+    bridgeEmittedAt?: Date | null;
+    apiServerReceivedAt?: Date | null;
+    apiServerEmittedAt?: Date | null;
+  } | null;
 };
 
 export type BrokerBarSnapshot = {
@@ -180,7 +215,13 @@ export type IbkrNewsArticle = {
 export type IbkrUniverseTicker = {
   ticker: string;
   name: string;
-  market: "stocks" | "indices" | "fx" | "crypto" | "otc";
+  market: UniverseMarket;
+  rootSymbol: string | null;
+  normalizedExchangeMic: string | null;
+  exchangeDisplay: string | null;
+  logoUrl: string | null;
+  contractDescription: string | null;
+  contractMeta: UniverseTickerContractMeta;
   locale: string | null;
   type: string | null;
   active: boolean;
@@ -190,7 +231,10 @@ export type IbkrUniverseTicker = {
   compositeFigi: string | null;
   shareClassFigi: string | null;
   lastUpdatedAt: Date | null;
-  provider?: "ibkr" | "polygon" | null;
+  provider: MarketDataProvider | null;
+  providers: MarketDataProvider[];
+  tradeProvider: MarketDataProvider | null;
+  dataProviderPreference: MarketDataProvider | null;
   providerContractId?: string | null;
 };
 
@@ -282,6 +326,8 @@ export type BrokerMarketDepthSnapshot = {
   exchange: string | null;
   updatedAt: Date;
   levels: BrokerMarketDepthLevel[];
+  freshness?: "live" | "stale" | "pending";
+  cacheAgeMs?: number | null;
 };
 
 const IBKR_TO_INTERNAL_TIF: Record<string, TimeInForce> = {
@@ -342,6 +388,7 @@ const SECURITY_SEARCH_CACHE_TTL_MS = 60_000;
 const OPTION_CHAIN_METADATA_CACHE_TTL_MS = 5 * 60_000;
 const DEFAULT_OPTION_CHAIN_EXPIRATIONS = 1;
 const DEFAULT_OPTION_CHAIN_STRIKES_AROUND_MONEY = 6;
+const OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY = 16;
 const HISTORY_SOURCE_TO_IBKR: Record<HistoryDataSource, string> = {
   trades: "Trades",
   midpoint: "Midpoint",
@@ -362,6 +409,13 @@ const HISTORY_TIMEFRAME_STEP_MS: Record<HistoryBarTimeframe, number> = {
   "15m": 900_000,
   "1h": 3_600_000,
   "1d": 86_400_000,
+};
+const HISTORY_TIMEFRAME_MAX_PAGES: Record<HistoryBarTimeframe, number> = {
+  "1m": 20,
+  "5m": 20,
+  "15m": 15,
+  "1h": 10,
+  "1d": 5,
 };
 
 function chunk<T>(values: T[], size: number): T[][] {
@@ -399,6 +453,86 @@ function positiveIntegerOrDefault(value: number | undefined, fallback: number): 
   }
 
   return Math.max(1, Math.floor(value));
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  task: (value: T, index: number) => Promise<R>,
+  signal?: AbortSignal,
+): Promise<R[]> {
+  if (values.length === 0) {
+    return [];
+  }
+
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(values.length, Math.max(1, concurrency));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        throwIfAborted(signal);
+        const index = nextIndex;
+        nextIndex += 1;
+
+        if (index >= values.length) {
+          return;
+        }
+
+        results[index] = await task(values[index], index);
+      }
+    }),
+  );
+
+  return results;
+}
+
+async function collectSettledWithin<T>(
+  tasks: Array<Promise<T>>,
+  deadlineMs: number,
+  signal?: AbortSignal,
+): Promise<T[]> {
+  if (tasks.length === 0) return [];
+
+  const results: T[] = [];
+  let settledCount = 0;
+  let resolveWait: () => void = () => {};
+
+  const waitForCompletion = new Promise<void>((resolve) => {
+    resolveWait = resolve;
+  });
+  const timeout = setTimeout(() => resolveWait(), Math.max(1, deadlineMs));
+  const abort = () => resolveWait();
+
+  signal?.addEventListener("abort", abort, { once: true });
+
+  tasks.forEach((task) => {
+    task
+      .then((result) => {
+        results.push(result);
+      })
+      .catch(() => {
+        // Individual secType failures should not prevent partial universe
+        // results from returning quickly.
+      })
+      .finally(() => {
+        settledCount += 1;
+        if (settledCount >= tasks.length) {
+          resolveWait();
+        }
+      });
+  });
+
+  if (signal?.aborted) {
+    resolveWait();
+  }
+
+  await waitForCompletion;
+  clearTimeout(timeout);
+  signal?.removeEventListener("abort", abort);
+  throwIfAborted(signal);
+  return results;
 }
 
 function readCachedValue<T>(
@@ -489,7 +623,7 @@ function buildHistoryPeriod(
 ): string {
   const desiredBars = Math.max(1, Math.min(HISTORY_RESPONSE_MAX_POINTS, Math.ceil(barCount)));
   const marketHoursPadding =
-    timeframe === "1d" ? 1 : outsideRth ? 2.25 : 5;
+    timeframe === "1d" ? 1 : outsideRth ? 1 : 5;
   const totalMs = desiredBars * resolveHistoryStepMs(timeframe) * marketHoursPadding;
   const minuteMs = 60_000;
   const hourMs = 3_600_000;
@@ -1052,6 +1186,10 @@ export class IbkrClient {
     1,
     Number(process.env["IBKR_REQUEST_TIMEOUT_MS"] ?? "12000"),
   );
+  private readonly universeSearchPartialDeadlineMs = Math.max(
+    250,
+    Number(process.env["IBKR_UNIVERSE_SEARCH_PARTIAL_DEADLINE_MS"] ?? "2000"),
+  );
   private activeHistoryRequests = 0;
   private activeOptionChainRequests = 0;
   private readonly historyWaiters: Array<() => void> = [];
@@ -1593,6 +1731,22 @@ export class IbkrClient {
             findMetric(summary, ["buyingpower", "availablefunds"]),
             netLiquidation,
           ) ?? 0;
+        const totalCashValue = findMetric(summary, ["totalcashvalue"]);
+        const settledCash = findMetric(summary, ["settledcash"]);
+        const accountType =
+          firstDefined(
+            asString(findCaseInsensitiveValue(summary ?? {}, "accounttype")),
+            asString(account["accountType"]),
+            asString(account["type"]),
+          ) ?? null;
+        const dayTradesRemaining = findMetric(summary, [
+          "daytradesremaining",
+          "daytradesremainingt+4",
+        ]);
+        const patternDayTraderRaw = firstDefined(
+          asString(findCaseInsensitiveValue(summary ?? {}, "patterndaytrader")),
+          asString(findCaseInsensitiveValue(summary ?? {}, "ispatterndaytrader")),
+        );
 
         return {
           id: accountId,
@@ -1610,6 +1764,30 @@ export class IbkrClient {
           buyingPower,
           cash,
           netLiquidation,
+          accountType,
+          totalCashValue,
+          settledCash,
+          accruedCash: findMetric(summary, ["accruedcash"]),
+          initialMargin: findMetric(summary, ["initmarginreq", "initialmargin"]),
+          maintenanceMargin: findMetric(summary, [
+            "maintmarginreq",
+            "maintenancemargin",
+            "maintenance_margin",
+          ]),
+          excessLiquidity: findMetric(summary, ["excessliquidity"]),
+          cushion: findMetric(summary, ["cushion"]),
+          sma: findMetric(summary, ["sma"]),
+          dayTradingBuyingPower: findMetric(summary, ["daytradingbuyingpower"]),
+          regTInitialMargin: findMetric(summary, [
+            "regtmargin",
+            "regtinitialmargin",
+          ]),
+          grossPositionValue: findMetric(summary, ["grosspositionvalue"]),
+          leverage: findMetric(summary, ["leverage"]),
+          dayTradesRemaining,
+          isPatternDayTrader: patternDayTraderRaw
+            ? ["true", "yes", "1", "y"].includes(patternDayTraderRaw.toLowerCase())
+            : null,
           updatedAt: new Date(),
         };
       }),
@@ -1977,16 +2155,16 @@ export class IbkrClient {
     const fieldList = fields.join(",");
     const conidBatches = chunk(conids, SNAPSHOT_BATCH_SIZE);
 
-    for (const conidBatch of conidBatches) {
-      await this.request<unknown>(
+    await Promise.all(conidBatches.map((conidBatch) =>
+      this.request<unknown>(
         "/iserver/marketdata/snapshot",
         { signal },
         {
           conids: conidBatch.join(","),
           fields: fieldList,
         },
-      );
-    }
+      ),
+    ));
 
     await sleep(150);
   }
@@ -2004,7 +2182,7 @@ export class IbkrClient {
       signal,
     );
 
-    for (const requestBatch of chunk(requests, SNAPSHOT_BATCH_SIZE)) {
+    const batchResults = await Promise.all(chunk(requests, SNAPSHOT_BATCH_SIZE).map(async (requestBatch) => {
       const payload = await this.request<unknown>(
         "/iserver/marketdata/snapshot",
         { signal },
@@ -2014,8 +2192,13 @@ export class IbkrClient {
         },
       );
 
-      const rows = compact(asArray(payload).map(asRecord));
+      return {
+        requestBatch,
+        rows: compact(asArray(payload).map(asRecord)),
+      };
+    }));
 
+    batchResults.forEach(({ requestBatch, rows }) => {
       rows.forEach((row) => {
         const conid = asString(row["conid"]) ?? asString(row["conidEx"]);
         if (!conid) {
@@ -2037,7 +2220,7 @@ export class IbkrClient {
           ),
         );
       });
-    }
+    });
 
     return byConid;
   }
@@ -2130,8 +2313,9 @@ export class IbkrClient {
       let remainingBars = desiredBars;
       let cursor = new Date(to);
       let safety = 0;
+      const maxPages = HISTORY_TIMEFRAME_MAX_PAGES[timeframe];
 
-      while (remainingBars > 0 && safety < 8) {
+      while (remainingBars > 0 && safety < maxPages) {
         const chunkBars = Math.min(remainingBars, HISTORY_RESPONSE_MAX_POINTS);
         const historyArgs = {
           conid: resolvedContract.conid,
@@ -2327,86 +2511,90 @@ export class IbkrClient {
                   })()
                 : strikes;
 
-            const contractGroups = await Promise.all(
-              relevantStrikes.flatMap((strike) =>
-                rights.map(async (right): Promise<
-                  NonNullable<BrokerPositionSnapshot["optionContract"]>[]
-                > => {
-                  const matches = await this.getCachedOptionInfo({
-                    conid: underlyingConid,
-                    month,
-                    strike,
-                    right,
-                  }, signal);
-                  const parsedMatches = compact(
-                    matches.map((record) => {
-                      const optionContract = parseOptionDetails(record);
-                      if (!optionContract) {
-                        return null;
+            const contractRequests = relevantStrikes.flatMap((strike) =>
+              rights.map((right) => ({ strike, right })),
+            );
+            const contractGroups = await mapWithConcurrency(
+              contractRequests,
+              OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY,
+              async ({ strike, right }): Promise<
+                NonNullable<BrokerPositionSnapshot["optionContract"]>[]
+              > => {
+                const matches = await this.getCachedOptionInfo({
+                  conid: underlyingConid,
+                  month,
+                  strike,
+                  right,
+                }, signal);
+                const parsedMatches = compact(
+                  matches.map((record) => {
+                    const optionContract = parseOptionDetails(record);
+                    if (!optionContract) {
+                      return null;
+                    }
+
+                    if (
+                      input.expirationDate &&
+                      optionContract.expirationDate.toISOString().slice(0, 10) !==
+                        input.expirationDate.toISOString().slice(0, 10)
+                    ) {
+                      return null;
+                    }
+
+                    return {
+                      record,
+                      optionContract,
+                    };
+                  }),
+                );
+
+                const preferredContracts = Array.from(
+                  parsedMatches.reduce<
+                    Map<
+                      string,
+                      {
+                        record: Record<string, unknown>;
+                        optionContract: NonNullable<
+                          BrokerPositionSnapshot["optionContract"]
+                        >;
                       }
+                    >
+                  >((acc, candidate) => {
+                    const expiryKey = candidate.optionContract.expirationDate
+                      .toISOString()
+                      .slice(0, 10);
+                    const existing = acc.get(expiryKey);
+                    const tradingClass = normalizeSymbol(
+                      asString(candidate.record["tradingClass"]) ?? "",
+                    );
+                    const existingTradingClass = normalizeSymbol(
+                      asString(existing?.record["tradingClass"]) ?? "",
+                    );
+                    const candidateScore =
+                      tradingClass === normalizedUnderlying
+                        ? 0
+                        : tradingClass.startsWith(normalizedUnderlying)
+                          ? 1
+                          : 2;
+                    const existingScore =
+                      existingTradingClass === normalizedUnderlying
+                        ? 0
+                        : existingTradingClass.startsWith(normalizedUnderlying)
+                          ? 1
+                          : 2;
 
-                      if (
-                        input.expirationDate &&
-                        optionContract.expirationDate.toISOString().slice(0, 10) !==
-                          input.expirationDate.toISOString().slice(0, 10)
-                      ) {
-                        return null;
-                      }
+                    if (!existing || candidateScore < existingScore) {
+                      acc.set(expiryKey, candidate);
+                    }
 
-                      return {
-                        record,
-                        optionContract,
-                      };
-                    }),
-                  );
+                    return acc;
+                  }, new Map())
+                    .values(),
+                ).map((candidate) => candidate.optionContract);
 
-                  const preferredContracts = Array.from(
-                    parsedMatches.reduce<
-                      Map<
-                        string,
-                        {
-                          record: Record<string, unknown>;
-                          optionContract: NonNullable<
-                            BrokerPositionSnapshot["optionContract"]
-                          >;
-                        }
-                      >
-                    >((acc, candidate) => {
-                      const expiryKey = candidate.optionContract.expirationDate
-                        .toISOString()
-                        .slice(0, 10);
-                      const existing = acc.get(expiryKey);
-                      const tradingClass = normalizeSymbol(
-                        asString(candidate.record["tradingClass"]) ?? "",
-                      );
-                      const existingTradingClass = normalizeSymbol(
-                        asString(existing?.record["tradingClass"]) ?? "",
-                      );
-                      const candidateScore =
-                        tradingClass === normalizedUnderlying
-                          ? 0
-                          : tradingClass.startsWith(normalizedUnderlying)
-                            ? 1
-                            : 2;
-                      const existingScore =
-                        existingTradingClass === normalizedUnderlying
-                          ? 0
-                          : existingTradingClass.startsWith(normalizedUnderlying)
-                            ? 1
-                            : 2;
-
-                      if (!existing || candidateScore < existingScore) {
-                        acc.set(expiryKey, candidate);
-                      }
-
-                      return acc;
-                    }, new Map())
-                      .values(),
-                  ).map((candidate) => candidate.optionContract);
-
-                  return preferredContracts;
-                }),
-              ),
+                return preferredContracts;
+              },
+              signal,
             );
 
             return contractGroups.flat();
@@ -2957,60 +3145,417 @@ export class IbkrClient {
    * results in the same shape the platform service expects from Polygon's
    * universe-search endpoint so it can be a drop-in primary source.
    */
+  private extractIbkrExchangeHint(value: string | null | undefined): string | null {
+    const text = value?.trim() ?? "";
+    const match = text.match(/\(([A-Z0-9._ -]{2,16})\)\s*$/);
+    return match?.[1]?.trim() ?? null;
+  }
+
+  private looksLikeIbkrEtf(name: string): boolean {
+    return /\b(ETF|ETN|ETP|ETC|UCITS|SPDR|ISHARES|PROSHARES|INVESCO|VANGUARD|DIREXION|WISDOMTREE|GLOBAL X|GRAYSCALE|TRACKER|TRUST-US)\b/i.test(
+      name,
+    );
+  }
+
+  private isPreferredIbkrExchange(exchange: string | null | undefined): boolean {
+    const normalized = exchange?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") ?? "";
+    return [
+      "NASDAQ",
+      "NASDAQNMS",
+      "NYSE",
+      "ARCA",
+      "ARCX",
+      "CBOE",
+      "CME",
+      "IDEALPRO",
+      "ZEROHASH",
+      "PINK",
+      "OTC",
+    ].includes(normalized);
+  }
+
+  private mapIbkrUniverseMarket(
+    secType: string | null,
+    exchange: string | null,
+    name: string,
+  ): UniverseMarket | null {
+    const normalizedSecType = secType?.trim().toUpperCase() ?? "";
+    const normalizedExchange = exchange?.trim().toUpperCase() ?? "";
+
+    if (normalizedSecType === "ETF") return "etf";
+    if (normalizedSecType === "IND") return "indices";
+    if (normalizedSecType === "FUT") return "futures";
+    if (normalizedSecType === "CASH") return "fx";
+    if (normalizedSecType === "CRYPTO") return "crypto";
+    if (normalizedSecType === "STK") {
+      if (this.looksLikeIbkrEtf(name)) {
+        return "etf";
+      }
+      return /\b(OTC|PINK|PINX|GREY|QB|QX)\b/.test(normalizedExchange)
+        ? "otc"
+        : "stocks";
+    }
+
+    return null;
+  }
+
+  private findIbkrSecuritySection(
+    record: Record<string, unknown>,
+    secType: string | null,
+  ): Record<string, unknown> | null {
+    const normalizedSecType = secType?.trim().toUpperCase() ?? "";
+    if (!normalizedSecType) return null;
+
+    return (
+      compact(asArray(record["sections"]).map(asRecord)).find(
+        (section) =>
+          asString(section["secType"])?.trim().toUpperCase() ===
+          normalizedSecType,
+      ) ?? null
+    );
+  }
+
+  private mapIbkrUniverseTicker(
+    record: Record<string, unknown>,
+    identifierMatch = false,
+    fallbackSecType: string | null = null,
+  ): IbkrUniverseTicker | null {
+    const ticker =
+      firstDefined(
+        asString(record["symbol"]),
+        asString(record["ticker"]),
+        asString(record["tradingClass"]),
+      ) ?? null;
+    const name =
+      firstDefined(
+        asString(record["companyHeader"]),
+        asString(record["companyName"]),
+        asString(record["description"]),
+        asString(record["name"]),
+      ) ?? "";
+    if (!ticker || !name) return null;
+
+    const fallbackSection = this.findIbkrSecuritySection(record, fallbackSecType);
+    const recordSecType = asString(record["secType"]);
+    if (
+      !recordSecType &&
+      fallbackSecType &&
+      fallbackSecType !== "STK" &&
+      !fallbackSection
+    ) {
+      return null;
+    }
+    const secType = firstDefined(
+      recordSecType,
+      asString(fallbackSection?.["secType"]),
+      fallbackSecType?.trim().toUpperCase() || null,
+    );
+    if (secType?.toUpperCase() === "OPT") return null;
+
+    const primaryExchange =
+      firstDefined(
+        asString(record["listingExchange"]),
+        asString(record["exchange"]),
+        asString(record["description"]),
+        asString(fallbackSection?.["exchange"]),
+        this.extractIbkrExchangeHint(name),
+      ) ?? null;
+    const market = this.mapIbkrUniverseMarket(secType, primaryExchange, name);
+    if (!market) return null;
+
+    const normalizedTicker = normalizeSymbol(ticker);
+    const providerContractId =
+      firstDefined(asString(record["conid"]), asNumber(record["conid"])?.toString()) ??
+      null;
+
+    return {
+      ticker: normalizedTicker,
+      name,
+      market,
+      rootSymbol: normalizedTicker.split(/[./:-]/)[0] || normalizedTicker,
+      normalizedExchangeMic: primaryExchange,
+      exchangeDisplay: primaryExchange,
+      logoUrl: null,
+      contractDescription: name,
+      contractMeta: {
+        secType: secType ?? null,
+        identifierMatch,
+        rootConid: providerContractId,
+        months: asString(fallbackSection?.["months"]),
+        exchange: asString(fallbackSection?.["exchange"]) ?? primaryExchange,
+      },
+      locale: null,
+      type: secType ?? null,
+      active: true,
+      primaryExchange,
+      currencyName: asString(record["currency"]),
+      cik: null,
+      compositeFigi: null,
+      shareClassFigi: null,
+      lastUpdatedAt: null,
+      provider: "ibkr",
+      providers: ["ibkr"],
+      tradeProvider: "ibkr",
+      dataProviderPreference: "ibkr",
+      providerContractId,
+    };
+  }
+
+  private async hydrateFrontFuturesTicker(
+    ticker: IbkrUniverseTicker,
+    signal?: AbortSignal,
+  ): Promise<IbkrUniverseTicker> {
+    if (ticker.market !== "futures") return ticker;
+
+    const meta = asRecord(ticker.contractMeta);
+    const rootConid = asNumber(meta?.["rootConid"] ?? ticker.providerContractId);
+    const frontMonth = asString(meta?.["months"])
+      ?.split(";")
+      .map((month) => month.trim())
+      .find(Boolean);
+    const exchange =
+      asString(meta?.["exchange"])
+        ?.split(/[;,]/)
+        .map((part) => part.trim())
+        .find(Boolean) ||
+      ticker.primaryExchange ||
+      "CME";
+
+    if (rootConid === null || !frontMonth) {
+      return ticker;
+    }
+
+    try {
+      const infoPayload = await this.request<unknown>(
+        "/iserver/secdef/info",
+        { signal },
+        {
+          conid: rootConid,
+          sectype: "FUT",
+          month: frontMonth,
+          exchange,
+        },
+      );
+      const info = compact(asArray(infoPayload).map(asRecord))[0];
+      if (!info) return ticker;
+
+      const providerContractId =
+        firstDefined(asString(info["conid"]), asNumber(info["conid"])?.toString()) ??
+        ticker.providerContractId;
+      const listingExchange =
+        firstDefined(
+          asString(info["listingExchange"]),
+          asString(info["exchange"]),
+          ticker.primaryExchange,
+        ) ?? ticker.primaryExchange;
+      const expiry =
+        firstDefined(asString(info["maturityDate"]), asString(info["lastTradeDate"])) ??
+        null;
+      const description = asString(info["desc1"]);
+
+      return {
+        ...ticker,
+        providerContractId,
+        primaryExchange: listingExchange,
+        normalizedExchangeMic: listingExchange,
+        exchangeDisplay: listingExchange,
+        contractDescription: [ticker.name, description].filter(Boolean).join(" "),
+        contractMeta: {
+          ...(ticker.contractMeta ?? {}),
+          rootConid: String(rootConid),
+          frontMonth,
+          expiry,
+          lastTradeDateOrContractMonth: frontMonth,
+          multiplier: asString(info["multiplier"]),
+          exchange: listingExchange,
+          tradingClass: asString(info["tradingClass"]),
+        },
+        currencyName: asString(info["currency"]) ?? ticker.currencyName,
+      };
+    } catch {
+      return ticker;
+    }
+  }
+
+  private resolveIbkrSearchSecTypes(markets?: UniverseMarket[]): string[] {
+    const selectedMarkets = markets?.length
+      ? new Set(markets)
+      : new Set<UniverseMarket>([
+          "stocks",
+          "etf",
+          "indices",
+          "futures",
+          "fx",
+          "crypto",
+          "otc",
+        ]);
+    const secTypes = new Set<string>();
+
+    if (selectedMarkets.has("stocks") || selectedMarkets.has("otc")) {
+      secTypes.add("STK");
+    }
+    if (selectedMarkets.has("etf")) {
+      // Client Portal commonly exposes ETFs as STK rows whose description
+      // carries the ETF identity. Search both so ETF-only filters still return
+      // the IBKR-tradable contract instead of Polygon-only metadata.
+      secTypes.add("STK");
+      secTypes.add("ETF");
+    }
+    if (selectedMarkets.has("indices")) secTypes.add("IND");
+    if (selectedMarkets.has("futures")) secTypes.add("FUT");
+    if (selectedMarkets.has("fx")) secTypes.add("CASH");
+    if (selectedMarkets.has("crypto")) secTypes.add("CRYPTO");
+
+    return Array.from(secTypes);
+  }
+
+  private scoreIbkrUniverseTicker(
+    ticker: IbkrUniverseTicker,
+    query: string,
+    requestedMarkets: Set<UniverseMarket>,
+  ): number {
+    const normalizedQuery = normalizeSymbol(query);
+    const normalizedTicker = normalizeSymbol(ticker.ticker);
+    const normalizedName = ticker.name.trim().toLowerCase();
+    const normalizedQueryLower = query.trim().toLowerCase();
+    const meta = asRecord(ticker.contractMeta);
+    let score = 0;
+
+    if (meta?.["identifierMatch"]) score += 5_000;
+    if (ticker.providerContractId === query.trim()) score += 4_500;
+    if (normalizedTicker === normalizedQuery) score += 3_000;
+    else if (normalizedTicker.startsWith(normalizedQuery)) score += 1_050;
+    else if (normalizedTicker.includes(normalizedQuery)) score += 780;
+
+    if (normalizedName === normalizedQueryLower) score += 720;
+    else if (normalizedName.startsWith(normalizedQueryLower)) score += 560;
+    else if (
+      normalizedName
+        .split(/[\s./-]+/)
+        .some((part) => part && part.startsWith(normalizedQueryLower))
+    ) {
+      score += 500;
+    } else if (normalizedName.includes(normalizedQueryLower)) {
+      score += 320;
+    }
+
+    if (requestedMarkets.size && requestedMarkets.has(ticker.market)) score += 120;
+    if (this.isPreferredIbkrExchange(ticker.primaryExchange ?? ticker.exchangeDisplay)) {
+      score += 180;
+    }
+    if (ticker.providerContractId) score += 40;
+    if (ticker.primaryExchange || ticker.exchangeDisplay) score += 10;
+
+    return score;
+  }
+
   async searchTickers(input: {
     search?: string;
+    market?: UniverseMarket;
+    markets?: UniverseMarket[];
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
     const search = input.search?.trim();
     if (!search) return { count: 0, results: [] };
 
     const limit = Math.max(1, Math.min(input.limit ?? 12, 50));
-    let raw: Record<string, unknown>[] = [];
+    const requestedMarkets = new Set(
+      input.markets?.length ? input.markets : input.market ? [input.market] : [],
+    );
+    const identifierSearch = search.toUpperCase();
+    const isLikelyFigi =
+      identifierSearch.startsWith("BBG") ||
+      (/^[A-Z0-9]{12}$/.test(identifierSearch) &&
+        !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(identifierSearch));
+    const raw: Array<{
+      record: Record<string, unknown>;
+      identifierMatch: boolean;
+      fallbackSecType: string | null;
+    }> = [];
+
+    if (/^\d+$/.test(search)) {
+      try {
+        const infoPayload = await this.request<unknown>(
+          "/iserver/secdef/info",
+          { signal: input.signal },
+          { conid: Number(search) },
+        );
+        const infoRecords = Array.isArray(infoPayload)
+          ? compact(asArray(infoPayload).map(asRecord))
+          : compact([asRecord(infoPayload)]);
+        raw.push(
+          ...infoRecords.map((record) => ({
+            record,
+            identifierMatch: true,
+            fallbackSecType: null,
+          })),
+        );
+      } catch {
+        // Fall through to normal symbol search.
+      }
+    }
+
     try {
-      raw = await this.searchSecurities(search, { includeName: true });
+      const secTypes = this.resolveIbkrSearchSecTypes(
+        input.markets ?? (input.market ? [input.market] : undefined),
+      );
+      const searchTasks = secTypes.map(async (secType) =>
+        (await this.searchSecurities(search, {
+          secType,
+          includeName: secType === "STK" || secType === "ETF",
+          signal: input.signal,
+        }).catch(() => [] as Record<string, unknown>[])).map((record) => ({
+          record,
+          fallbackSecType: secType,
+        })),
+      );
+      const searchBatches =
+        searchTasks.length <= 1
+          ? await Promise.all(searchTasks)
+          : await collectSettledWithin(
+              searchTasks,
+              this.universeSearchPartialDeadlineMs,
+              input.signal,
+            );
+      raw.push(
+        ...searchBatches.flat().map(({ record, fallbackSecType }) => ({
+          record,
+          identifierMatch: isLikelyFigi,
+          fallbackSecType,
+        })),
+      );
     } catch {
-      return { count: 0, results: [] };
+      // Keep identifier results if available; otherwise return an empty result set.
     }
 
-    const results: IbkrUniverseTicker[] = [];
-    for (const record of raw) {
-      const ticker = asString(record["symbol"]);
-      const name =
-        firstDefined(
-          asString(record["companyHeader"]),
-          asString(record["companyName"]),
-          asString(record["description"]),
-        ) ?? "";
-      if (!ticker || !name) continue;
+    const seenConids = new Set<string>();
+    const mappedResults: Array<{ ticker: IbkrUniverseTicker; index: number }> = [];
+    for (const { record, identifierMatch, fallbackSecType } of raw) {
+      let mapped = this.mapIbkrUniverseTicker(record, identifierMatch, fallbackSecType);
+      if (mapped?.market === "futures") {
+        mapped = await this.hydrateFrontFuturesTicker(mapped, input.signal);
+      }
+      if (!mapped) continue;
+      if (requestedMarkets.size && !requestedMarkets.has(mapped.market)) continue;
+      const conidKey = mapped.providerContractId ?? `${mapped.ticker}:${mapped.market}:${mapped.primaryExchange ?? ""}`;
+      if (seenConids.has(conidKey)) continue;
+      seenConids.add(conidKey);
 
-      const secType = asString(record["secType"]);
-      // IBKR's secdef/search returns a mix of contract types; we only surface
-      // STK rows here so the UI's universe browser stays clean. (Options have
-      // their own dedicated chain endpoint.)
-      if (secType && secType !== "STK") continue;
-
-      results.push({
-        ticker: normalizeSymbol(ticker),
-        name,
-        market: "stocks",
-        locale: null,
-        type: secType ?? "CS",
-        active: true,
-        primaryExchange:
-          firstDefined(
-            asString(record["listingExchange"]),
-            asString(record["description"]),
-          ) ?? null,
-        currencyName: null,
-        cik: null,
-        compositeFigi: null,
-        shareClassFigi: null,
-        lastUpdatedAt: null,
-        provider: "ibkr",
-        providerContractId: asString(record["conid"]),
-      });
-      if (results.length >= limit) break;
+      mappedResults.push({ ticker: mapped, index: mappedResults.length });
     }
+
+    const results = mappedResults
+      .sort((left, right) => {
+        const scoreDiff =
+          this.scoreIbkrUniverseTicker(right.ticker, search, requestedMarkets) -
+          this.scoreIbkrUniverseTicker(left.ticker, search, requestedMarkets);
+        if (scoreDiff !== 0) return scoreDiff;
+        const tickerDiff = left.ticker.ticker.localeCompare(right.ticker.ticker);
+        return tickerDiff !== 0 ? tickerDiff : left.index - right.index;
+      })
+      .map(({ ticker }) => ticker)
+      .slice(0, limit);
 
     return { count: results.length, results };
   }

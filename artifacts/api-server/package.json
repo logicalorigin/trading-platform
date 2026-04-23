@@ -7,6 +7,7 @@
     "dev": "export NODE_ENV=development && pnpm run build && exec pnpm run start",
     "build": "node ./build.mjs",
     "start": "exec node --enable-source-maps ./dist/index.mjs",
+    "test:live:universe": "node --test \"src/services/universe-search.live.test.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

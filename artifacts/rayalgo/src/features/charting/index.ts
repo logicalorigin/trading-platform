@@ -30,6 +30,7 @@ export { useDrawingHistory } from "./useDrawingHistory";
 export {
   getStoredBrokerMinuteAggregates,
   getStoredStockMinuteAggregates,
+  useIbkrLatencyStats,
   useBrokerStockAggregateStream,
   useMassiveStockAggregateStream,
   useStockMinuteAggregateStoreVersion,

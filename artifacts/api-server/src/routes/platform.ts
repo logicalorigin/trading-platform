@@ -71,8 +71,44 @@ import {
   isStockAggregateStreamingAvailable,
   subscribeStockMinuteAggregates,
 } from "../services/stock-aggregate-stream";
+import {
+  cancelAccountOrder,
+  getAccountAllocation,
+  getAccountCashActivity,
+  getAccountClosedTrades,
+  getAccountEquityHistory,
+  getAccountOrders,
+  getAccountPositions,
+  getAccountRisk,
+  getAccountSummary,
+  getFlexHealth,
+  testFlexToken,
+} from "../services/account";
 
 const router: IRouter = Router();
+
+function createRequestAbortSignal(req: Request, res: Response): AbortSignal {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+  const abortIfResponseDidNotFinish = () => {
+    if (!res.writableEnded) {
+      abort();
+    }
+  };
+
+  if (req.aborted) {
+    abort();
+  } else {
+    req.once("aborted", abort);
+    res.once("close", abortIfResponseDidNotFinish);
+  }
+
+  return controller.signal;
+}
 
 function readOptionalString(value: unknown, maxLength = 160): string | undefined {
   if (typeof value !== "string") {
@@ -166,6 +202,62 @@ function coerceDateQueryFields<T extends Record<string, unknown>>(
 
     if (typeof value === "string" && value.trim()) {
       output[key] = new Date(value);
+    }
+  });
+
+  return output;
+}
+
+function coerceArrayQueryFields<T extends Record<string, unknown>>(
+  input: T,
+  keys: string[],
+): Record<string, unknown> {
+  const output: Record<string, unknown> = { ...input };
+
+  keys.forEach((key) => {
+    const value = output[key];
+
+    if (typeof value === "string") {
+      output[key] = value
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      output[key] = value.flatMap((entry) =>
+        typeof entry === "string"
+          ? entry
+              .split(",")
+              .map((part) => part.trim())
+              .filter(Boolean)
+          : [entry],
+      );
+    }
+  });
+
+  return output;
+}
+
+function coerceBooleanQueryFields<T extends Record<string, unknown>>(
+  input: T,
+  keys: string[],
+): Record<string, unknown> {
+  const output: Record<string, unknown> = { ...input };
+
+  keys.forEach((key) => {
+    const value = output[key];
+
+    if (typeof value !== "string") {
+      return;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      output[key] = true;
+    } else if (["false", "0", "no"].includes(normalized)) {
+      output[key] = false;
     }
   });
 
@@ -287,6 +379,125 @@ router.get("/accounts", async (req, res) => {
   const data = ListAccountsResponse.parse(await listAccounts(query));
 
   res.json(data);
+});
+
+router.get("/accounts/flex/health", async (_req, res) => {
+  res.json(await getFlexHealth());
+});
+
+router.post("/accounts/flex/test", async (_req, res) => {
+  res.json(await testFlexToken());
+});
+
+router.get("/accounts/:accountId/summary", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(await getAccountSummary({ accountId: req.params.accountId, mode }));
+});
+
+router.get("/accounts/:accountId/equity-history", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(
+    await getAccountEquityHistory({
+      accountId: req.params.accountId,
+      range:
+        typeof req.query.range === "string"
+          ? (req.query.range as "1W" | "1M" | "3M" | "YTD" | "1Y" | "ALL")
+          : undefined,
+      benchmark:
+        typeof req.query.benchmark === "string" ? req.query.benchmark : null,
+      mode,
+    }),
+  );
+});
+
+router.get("/accounts/:accountId/allocation", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(await getAccountAllocation({ accountId: req.params.accountId, mode }));
+});
+
+router.get("/accounts/:accountId/positions", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(
+    await getAccountPositions({
+      accountId: req.params.accountId,
+      assetClass:
+        typeof req.query.assetClass === "string" ? req.query.assetClass : null,
+      mode,
+    }),
+  );
+});
+
+router.get("/accounts/:accountId/closed-trades", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(
+    await getAccountClosedTrades({
+      accountId: req.params.accountId,
+      from:
+        typeof req.query.from === "string" && req.query.from.trim()
+          ? new Date(req.query.from)
+          : null,
+      to:
+        typeof req.query.to === "string" && req.query.to.trim()
+          ? new Date(req.query.to)
+          : null,
+      symbol: typeof req.query.symbol === "string" ? req.query.symbol : null,
+      assetClass:
+        typeof req.query.assetClass === "string" ? req.query.assetClass : null,
+      pnlSign: typeof req.query.pnlSign === "string" ? req.query.pnlSign : null,
+      holdDuration:
+        typeof req.query.holdDuration === "string"
+          ? req.query.holdDuration
+          : null,
+      mode,
+    }),
+  );
+});
+
+router.get("/accounts/:accountId/orders", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(
+    await getAccountOrders({
+      accountId: req.params.accountId,
+      tab:
+        req.query.tab === "history" || req.query.tab === "working"
+          ? req.query.tab
+          : undefined,
+      mode,
+    }),
+  );
+});
+
+router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
+  res.json(
+    await cancelAccountOrder({
+      accountId: req.params.accountId,
+      orderId: req.params.orderId,
+      confirm: req.body?.confirm === true,
+    }),
+  );
+});
+
+router.get("/accounts/:accountId/risk", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(await getAccountRisk({ accountId: req.params.accountId, mode }));
+});
+
+router.get("/accounts/:accountId/cash-activity", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(
+    await getAccountCashActivity({
+      accountId: req.params.accountId,
+      from:
+        typeof req.query.from === "string" && req.query.from.trim()
+          ? new Date(req.query.from)
+          : null,
+      to:
+        typeof req.query.to === "string" && req.query.to.trim()
+          ? new Date(req.query.to)
+          : null,
+      mode,
+    }),
+  );
 });
 
 router.get("/watchlists", async (_req, res) => {
@@ -435,15 +646,22 @@ router.get("/news", async (req, res) => {
 });
 
 router.get("/universe/tickers", async (req, res) => {
-  const query = SearchUniverseTickersQueryParams.parse(req.query);
-  const data = SearchUniverseTickersResponse.parse(await searchUniverseTickers(query));
+  const query = SearchUniverseTickersQueryParams.parse(
+    coerceArrayQueryFields(req.query as Record<string, unknown>, ["markets"]),
+  );
+  const data = SearchUniverseTickersResponse.parse(
+    await searchUniverseTickers(query, { signal: createRequestAbortSignal(req, res) }),
+  );
 
   res.json(data);
 });
 
 router.get("/bars", async (req, res) => {
   const query = GetBarsQueryParams.parse(
-    coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
+    coerceBooleanQueryFields(
+      coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
+      ["outsideRth", "allowHistoricalSynthesis"],
+    ),
   );
   const data = GetBarsResponse.parse(await getBars(query));
 
@@ -765,7 +983,13 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
   await startSse(req, res, async ({ writeEvent }) => {
     const snapshotAggregates = getCurrentStockMinuteAggregates(symbols);
     for (const aggregate of snapshotAggregates) {
-      await writeEvent("aggregate", aggregate);
+      await writeEvent("aggregate", {
+        ...aggregate,
+        latency: {
+          ...(aggregate.latency ?? {}),
+          apiServerEmittedAt: new Date(),
+        },
+      });
     }
 
     await writeEvent("ready", {
@@ -775,7 +999,13 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
     });
 
     return subscribeStockMinuteAggregates(symbols, (message) => {
-      writeEvent("aggregate", message);
+      writeEvent("aggregate", {
+        ...message,
+        latency: {
+          ...(message.latency ?? {}),
+          apiServerEmittedAt: new Date(),
+        },
+      });
     });
   });
 });

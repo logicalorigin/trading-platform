@@ -17,6 +17,14 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AccountAllocationResponse,
+  AccountCashActivityResponse,
+  AccountClosedTradesResponse,
+  AccountEquityHistoryResponse,
+  AccountOrdersResponse,
+  AccountPositionsResponse,
+  AccountRiskResponse,
+  AccountSummaryResponse,
   AccountsResponse,
   AlgoDeployment,
   AlgoDeploymentsResponse,
@@ -35,6 +43,7 @@ import type {
   BacktestSweepDetail,
   BarsResponse,
   BrokerConnectionsResponse,
+  CancelAccountOrderRequest,
   CancelOrderRequest,
   CancelOrderResponse,
   CreateAlgoDeploymentRequest,
@@ -43,7 +52,17 @@ import type {
   CreatePineScriptRequest,
   EvaluateSignalMonitorRequest,
   ExecutionEventsResponse,
+  FlexHealthResponse,
+  FlexTestResponse,
   FlowEventsResponse,
+  GetAccountAllocationParams,
+  GetAccountCashActivityParams,
+  GetAccountClosedTradesParams,
+  GetAccountEquityHistoryParams,
+  GetAccountOrdersParams,
+  GetAccountPositionsParams,
+  GetAccountRiskParams,
+  GetAccountSummaryParams,
   GetBacktestRunChartParams,
   GetBarsParams,
   GetNewsParams,
@@ -428,6 +447,1240 @@ export function useListAccounts<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListAccountsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get IBKR Flex setup and refresh health
+ */
+export const getGetFlexHealthUrl = () => {
+  return `/api/accounts/flex/health`;
+};
+
+export const getFlexHealth = async (
+  options?: RequestInit,
+): Promise<FlexHealthResponse> => {
+  return customFetch<FlexHealthResponse>(getGetFlexHealthUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFlexHealthQueryKey = () => {
+  return [`/api/accounts/flex/health`] as const;
+};
+
+export const getGetFlexHealthQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFlexHealth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFlexHealth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFlexHealthQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getFlexHealth>>> = ({
+    signal,
+  }) => getFlexHealth({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFlexHealth>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFlexHealthQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFlexHealth>>
+>;
+export type GetFlexHealthQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get IBKR Flex setup and refresh health
+ */
+
+export function useGetFlexHealth<
+  TData = Awaited<ReturnType<typeof getFlexHealth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFlexHealth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFlexHealthQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Test the configured IBKR Flex token and query
+ */
+export const getTestFlexTokenUrl = () => {
+  return `/api/accounts/flex/test`;
+};
+
+export const testFlexToken = async (
+  options?: RequestInit,
+): Promise<FlexTestResponse> => {
+  return customFetch<FlexTestResponse>(getTestFlexTokenUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getTestFlexTokenMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testFlexToken>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof testFlexToken>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["testFlexToken"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof testFlexToken>>,
+    void
+  > = () => {
+    return testFlexToken(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TestFlexTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof testFlexToken>>
+>;
+
+export type TestFlexTokenMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Test the configured IBKR Flex token and query
+ */
+export const useTestFlexToken = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testFlexToken>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof testFlexToken>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getTestFlexTokenMutationOptions(options));
+};
+
+/**
+ * @summary Get live account header metrics
+ */
+export const getGetAccountSummaryUrl = (
+  accountId: string,
+  params?: GetAccountSummaryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/summary?${stringifiedParams}`
+    : `/api/accounts/${accountId}/summary`;
+};
+
+export const getAccountSummary = async (
+  accountId: string,
+  params?: GetAccountSummaryParams,
+  options?: RequestInit,
+): Promise<AccountSummaryResponse> => {
+  return customFetch<AccountSummaryResponse>(
+    getGetAccountSummaryUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountSummaryQueryKey = (
+  accountId: string,
+  params?: GetAccountSummaryParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/summary`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAccountSummaryQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAccountSummary>>
+  > = ({ signal }) =>
+    getAccountSummary(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountSummary>>
+>;
+export type GetAccountSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get live account header metrics
+ */
+
+export function useGetAccountSummary<
+  TData = Awaited<ReturnType<typeof getAccountSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountSummaryQueryOptions(
+    accountId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get Flex and intraday NAV history
+ */
+export const getGetAccountEquityHistoryUrl = (
+  accountId: string,
+  params?: GetAccountEquityHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/equity-history?${stringifiedParams}`
+    : `/api/accounts/${accountId}/equity-history`;
+};
+
+export const getAccountEquityHistory = async (
+  accountId: string,
+  params?: GetAccountEquityHistoryParams,
+  options?: RequestInit,
+): Promise<AccountEquityHistoryResponse> => {
+  return customFetch<AccountEquityHistoryResponse>(
+    getGetAccountEquityHistoryUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountEquityHistoryQueryKey = (
+  accountId: string,
+  params?: GetAccountEquityHistoryParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/equity-history`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountEquityHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountEquityHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountEquityHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountEquityHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetAccountEquityHistoryQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAccountEquityHistory>>
+  > = ({ signal }) =>
+    getAccountEquityHistory(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountEquityHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountEquityHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountEquityHistory>>
+>;
+export type GetAccountEquityHistoryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get Flex and intraday NAV history
+ */
+
+export function useGetAccountEquityHistory<
+  TData = Awaited<ReturnType<typeof getAccountEquityHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountEquityHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountEquityHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountEquityHistoryQueryOptions(
+    accountId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get allocation and exposure summary
+ */
+export const getGetAccountAllocationUrl = (
+  accountId: string,
+  params?: GetAccountAllocationParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/allocation?${stringifiedParams}`
+    : `/api/accounts/${accountId}/allocation`;
+};
+
+export const getAccountAllocation = async (
+  accountId: string,
+  params?: GetAccountAllocationParams,
+  options?: RequestInit,
+): Promise<AccountAllocationResponse> => {
+  return customFetch<AccountAllocationResponse>(
+    getGetAccountAllocationUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountAllocationQueryKey = (
+  accountId: string,
+  params?: GetAccountAllocationParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/allocation`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountAllocationQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountAllocation>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountAllocationParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountAllocation>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetAccountAllocationQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAccountAllocation>>
+  > = ({ signal }) =>
+    getAccountAllocation(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountAllocation>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountAllocationQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountAllocation>>
+>;
+export type GetAccountAllocationQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get allocation and exposure summary
+ */
+
+export function useGetAccountAllocation<
+  TData = Awaited<ReturnType<typeof getAccountAllocation>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountAllocationParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountAllocation>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountAllocationQueryOptions(
+    accountId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get current positions with lots and open order context
+ */
+export const getGetAccountPositionsUrl = (
+  accountId: string,
+  params?: GetAccountPositionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/positions?${stringifiedParams}`
+    : `/api/accounts/${accountId}/positions`;
+};
+
+export const getAccountPositions = async (
+  accountId: string,
+  params?: GetAccountPositionsParams,
+  options?: RequestInit,
+): Promise<AccountPositionsResponse> => {
+  return customFetch<AccountPositionsResponse>(
+    getGetAccountPositionsUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountPositionsQueryKey = (
+  accountId: string,
+  params?: GetAccountPositionsParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/positions`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountPositionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountPositions>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountPositionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountPositions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAccountPositionsQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAccountPositions>>
+  > = ({ signal }) =>
+    getAccountPositions(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountPositions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountPositionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountPositions>>
+>;
+export type GetAccountPositionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get current positions with lots and open order context
+ */
+
+export function useGetAccountPositions<
+  TData = Awaited<ReturnType<typeof getAccountPositions>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountPositionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountPositions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountPositionsQueryOptions(
+    accountId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get closed trades and recent live executions
+ */
+export const getGetAccountClosedTradesUrl = (
+  accountId: string,
+  params?: GetAccountClosedTradesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/closed-trades?${stringifiedParams}`
+    : `/api/accounts/${accountId}/closed-trades`;
+};
+
+export const getAccountClosedTrades = async (
+  accountId: string,
+  params?: GetAccountClosedTradesParams,
+  options?: RequestInit,
+): Promise<AccountClosedTradesResponse> => {
+  return customFetch<AccountClosedTradesResponse>(
+    getGetAccountClosedTradesUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountClosedTradesQueryKey = (
+  accountId: string,
+  params?: GetAccountClosedTradesParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/closed-trades`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountClosedTradesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountClosedTrades>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountClosedTradesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountClosedTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetAccountClosedTradesQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAccountClosedTrades>>
+  > = ({ signal }) =>
+    getAccountClosedTrades(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountClosedTrades>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountClosedTradesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountClosedTrades>>
+>;
+export type GetAccountClosedTradesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get closed trades and recent live executions
+ */
+
+export function useGetAccountClosedTrades<
+  TData = Awaited<ReturnType<typeof getAccountClosedTrades>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountClosedTradesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountClosedTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountClosedTradesQueryOptions(
+    accountId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get working or historical orders for an account
+ */
+export const getGetAccountOrdersUrl = (
+  accountId: string,
+  params?: GetAccountOrdersParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/orders?${stringifiedParams}`
+    : `/api/accounts/${accountId}/orders`;
+};
+
+export const getAccountOrders = async (
+  accountId: string,
+  params?: GetAccountOrdersParams,
+  options?: RequestInit,
+): Promise<AccountOrdersResponse> => {
+  return customFetch<AccountOrdersResponse>(
+    getGetAccountOrdersUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountOrdersQueryKey = (
+  accountId: string,
+  params?: GetAccountOrdersParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/orders`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountOrdersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountOrders>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountOrdersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountOrders>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAccountOrdersQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAccountOrders>>
+  > = ({ signal }) =>
+    getAccountOrders(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountOrders>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountOrdersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountOrders>>
+>;
+export type GetAccountOrdersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get working or historical orders for an account
+ */
+
+export function useGetAccountOrders<
+  TData = Awaited<ReturnType<typeof getAccountOrders>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountOrdersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountOrders>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountOrdersQueryOptions(
+    accountId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Cancel a working order from the Account screen
+ */
+export const getCancelAccountOrderUrl = (
+  accountId: string,
+  orderId: string,
+) => {
+  return `/api/accounts/${accountId}/orders/${orderId}/cancel`;
+};
+
+export const cancelAccountOrder = async (
+  accountId: string,
+  orderId: string,
+  cancelAccountOrderRequest?: CancelAccountOrderRequest,
+  options?: RequestInit,
+): Promise<CancelOrderResponse> => {
+  return customFetch<CancelOrderResponse>(
+    getCancelAccountOrderUrl(accountId, orderId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(cancelAccountOrderRequest),
+    },
+  );
+};
+
+export const getCancelAccountOrderMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelAccountOrder>>,
+    TError,
+    {
+      accountId: string;
+      orderId: string;
+      data: BodyType<CancelAccountOrderRequest>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof cancelAccountOrder>>,
+  TError,
+  {
+    accountId: string;
+    orderId: string;
+    data: BodyType<CancelAccountOrderRequest>;
+  },
+  TContext
+> => {
+  const mutationKey = ["cancelAccountOrder"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof cancelAccountOrder>>,
+    {
+      accountId: string;
+      orderId: string;
+      data: BodyType<CancelAccountOrderRequest>;
+    }
+  > = (props) => {
+    const { accountId, orderId, data } = props ?? {};
+
+    return cancelAccountOrder(accountId, orderId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CancelAccountOrderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof cancelAccountOrder>>
+>;
+export type CancelAccountOrderMutationBody =
+  BodyType<CancelAccountOrderRequest>;
+export type CancelAccountOrderMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Cancel a working order from the Account screen
+ */
+export const useCancelAccountOrder = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelAccountOrder>>,
+    TError,
+    {
+      accountId: string;
+      orderId: string;
+      data: BodyType<CancelAccountOrderRequest>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof cancelAccountOrder>>,
+  TError,
+  {
+    accountId: string;
+    orderId: string;
+    data: BodyType<CancelAccountOrderRequest>;
+  },
+  TContext
+> => {
+  return useMutation(getCancelAccountOrderMutationOptions(options));
+};
+
+/**
+ * @summary Get portfolio risk dashboard metrics
+ */
+export const getGetAccountRiskUrl = (
+  accountId: string,
+  params?: GetAccountRiskParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/risk?${stringifiedParams}`
+    : `/api/accounts/${accountId}/risk`;
+};
+
+export const getAccountRisk = async (
+  accountId: string,
+  params?: GetAccountRiskParams,
+  options?: RequestInit,
+): Promise<AccountRiskResponse> => {
+  return customFetch<AccountRiskResponse>(
+    getGetAccountRiskUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountRiskQueryKey = (
+  accountId: string,
+  params?: GetAccountRiskParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/risk`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountRiskQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountRisk>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountRiskParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountRisk>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAccountRiskQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountRisk>>> = ({
+    signal,
+  }) => getAccountRisk(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountRisk>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountRiskQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountRisk>>
+>;
+export type GetAccountRiskQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get portfolio risk dashboard metrics
+ */
+
+export function useGetAccountRisk<
+  TData = Awaited<ReturnType<typeof getAccountRisk>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountRiskParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountRisk>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountRiskQueryOptions(
+    accountId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get cash and funding activity
+ */
+export const getGetAccountCashActivityUrl = (
+  accountId: string,
+  params?: GetAccountCashActivityParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/accounts/${accountId}/cash-activity?${stringifiedParams}`
+    : `/api/accounts/${accountId}/cash-activity`;
+};
+
+export const getAccountCashActivity = async (
+  accountId: string,
+  params?: GetAccountCashActivityParams,
+  options?: RequestInit,
+): Promise<AccountCashActivityResponse> => {
+  return customFetch<AccountCashActivityResponse>(
+    getGetAccountCashActivityUrl(accountId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAccountCashActivityQueryKey = (
+  accountId: string,
+  params?: GetAccountCashActivityParams,
+) => {
+  return [
+    `/api/accounts/${accountId}/cash-activity`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAccountCashActivityQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAccountCashActivity>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountCashActivityParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountCashActivity>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetAccountCashActivityQueryKey(accountId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAccountCashActivity>>
+  > = ({ signal }) =>
+    getAccountCashActivity(accountId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!accountId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAccountCashActivity>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAccountCashActivityQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAccountCashActivity>>
+>;
+export type GetAccountCashActivityQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get cash and funding activity
+ */
+
+export function useGetAccountCashActivity<
+  TData = Awaited<ReturnType<typeof getAccountCashActivity>>,
+  TError = ErrorType<unknown>,
+>(
+  accountId: string,
+  params?: GetAccountCashActivityParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAccountCashActivity>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAccountCashActivityQueryOptions(
+    accountId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

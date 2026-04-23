@@ -435,7 +435,7 @@ async function evaluateSymbol(input: {
       assetClass: "equity",
       outsideRth: true,
       source: "trades",
-      allowHistoricalSynthesis: false,
+      allowHistoricalSynthesis: true,
     });
     const chartBars = barsToRayReplicaBars(barsResult.bars);
     const latestBar = chartBars.at(-1);

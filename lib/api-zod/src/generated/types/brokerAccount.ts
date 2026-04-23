@@ -18,5 +18,20 @@ export interface BrokerAccount {
   buyingPower: number;
   cash: number;
   netLiquidation: number;
+  accountType?: string | null;
+  totalCashValue?: number | null;
+  settledCash?: number | null;
+  accruedCash?: number | null;
+  initialMargin?: number | null;
+  maintenanceMargin?: number | null;
+  excessLiquidity?: number | null;
+  cushion?: number | null;
+  sma?: number | null;
+  dayTradingBuyingPower?: number | null;
+  regTInitialMargin?: number | null;
+  grossPositionValue?: number | null;
+  leverage?: number | null;
+  dayTradesRemaining?: number | null;
+  isPatternDayTrader?: boolean | null;
   updatedAt: Date;
 }

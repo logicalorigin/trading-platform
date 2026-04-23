@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
+import http from "node:http";
+import https from "node:https";
 import { HttpError } from "../../lib/errors";
-import { fetchJson, withSearchParams, type QueryValue } from "../../lib/http";
+import { withSearchParams, type QueryValue } from "../../lib/http";
+import { logger } from "../../lib/logger";
 import { getIbkrBridgeRuntimeConfig, type RuntimeMode } from "../../lib/runtime";
 import type {
   BrokerBarSnapshot,
@@ -33,7 +37,7 @@ type BridgeHealthSnapshot = {
   lastRecoveryAttemptAt: Date | null;
   lastRecoveryError: string | null;
   updatedAt: Date;
-  transport: "client_portal" | "tws";
+  transport: "client_portal" | "tws" | "ibx";
   connectionTarget: string | null;
   sessionMode: RuntimeMode | null;
   clientId: number | null;
@@ -46,6 +50,26 @@ type BridgeHealthSnapshot = {
     | null;
   liveMarketDataAvailable: boolean | null;
 };
+
+type QuoteStreamPayload = {
+  quotes?: Array<Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }>;
+};
+
+type SseMessage = {
+  event: string;
+  data: string;
+};
+
+const bridgeHttpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 16,
+  maxFreeSockets: 8,
+});
+const bridgeHttpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 16,
+  maxFreeSockets: 8,
+});
 
 function toDate(value: unknown): Date {
   return value instanceof Date ? value : new Date(value as string);
@@ -110,6 +134,133 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
     };
 }
 
+function hydrateLatency(
+  latency: QuoteSnapshot["latency"] | undefined,
+): QuoteSnapshot["latency"] {
+  if (!latency) return latency ?? null;
+
+  return {
+    bridgeReceivedAt: latency.bridgeReceivedAt
+      ? toDate(latency.bridgeReceivedAt)
+      : latency.bridgeReceivedAt,
+    bridgeEmittedAt: latency.bridgeEmittedAt
+      ? toDate(latency.bridgeEmittedAt)
+      : latency.bridgeEmittedAt,
+    apiServerReceivedAt: latency.apiServerReceivedAt
+      ? toDate(latency.apiServerReceivedAt)
+      : latency.apiServerReceivedAt,
+    apiServerEmittedAt: latency.apiServerEmittedAt
+      ? toDate(latency.apiServerEmittedAt)
+      : latency.apiServerEmittedAt,
+  };
+}
+
+function hydrateQuote(
+  raw: Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date },
+): QuoteSnapshot {
+  return {
+    ...raw,
+    // Older bridge versions don't emit openInterest; normalize to null
+    // so downstream code can rely on the field always being present.
+    openInterest: raw.openInterest ?? null,
+    updatedAt: raw.updatedAt instanceof Date ? raw.updatedAt : new Date(raw.updatedAt),
+    latency: hydrateLatency(raw.latency),
+  };
+}
+
+function readJsonResponsePayload(text: string, contentType: string): unknown {
+  if (!text) {
+    return null;
+  }
+
+  if (contentType.includes("application/json") || contentType.includes("+json")) {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return text;
+    }
+  }
+
+  return text;
+}
+
+function buildBridgeErrorMessage(
+  status: number,
+  statusText: string,
+  body: unknown,
+): string {
+  const prefix = `HTTP ${status} ${statusText}`;
+
+  if (typeof body === "string") {
+    const trimmed = body.trim();
+    return trimmed ? `${prefix}: ${trimmed}` : prefix;
+  }
+
+  if (body && typeof body === "object") {
+    const record = body as Record<string, unknown>;
+    const detail =
+      record["detail"] ??
+      record["message"] ??
+      record["error_description"] ??
+      record["error"];
+
+    if (typeof detail === "string" && detail.trim()) {
+      return `${prefix}: ${detail.trim()}`;
+    }
+  }
+
+  return prefix;
+}
+
+function parseSseBlock(block: string): SseMessage | null {
+  const lines = block.split(/\r?\n/);
+  let event = "message";
+  const data: string[] = [];
+
+  lines.forEach((line) => {
+    if (!line || line.startsWith(":")) {
+      return;
+    }
+
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+      return;
+    }
+
+    if (line.startsWith("data:")) {
+      data.push(line.slice("data:".length).trimStart());
+    }
+  });
+
+  if (data.length === 0) {
+    return null;
+  }
+
+  return {
+    event,
+    data: data.join("\n"),
+  };
+}
+
+function findSseBoundary(buffer: string): { index: number; length: number } | null {
+  const lf = buffer.indexOf("\n\n");
+  const crlf = buffer.indexOf("\r\n\r\n");
+
+  if (lf === -1 && crlf === -1) {
+    return null;
+  }
+
+  if (lf === -1) {
+    return { index: crlf, length: 4 };
+  }
+
+  if (crlf === -1 || lf < crlf) {
+    return { index: lf, length: 2 };
+  }
+
+  return { index: crlf, length: 4 };
+}
+
 export class IbkrBridgeClient {
   private readonly config = getIbkrBridgeRuntimeConfig();
   private readonly requestTimeoutMs = Math.max(
@@ -147,14 +298,14 @@ export class IbkrBridgeClient {
       inputSignal?.addEventListener("abort", abortFromInput, { once: true });
     }
 
-    return fetchJson<T>(this.buildUrl(path, params), {
+    return this.requestJson<T>(path, this.buildUrl(path, params), {
       ...init,
       headers: {
         Accept: "application/json",
         ...(init.headers ? Object.fromEntries(new Headers(init.headers).entries()) : {}),
       },
       signal: controller.signal,
-    }).catch((error) => {
+    }).catch((error: unknown) => {
       if (didTimeout) {
         throw new HttpError(504, `IBKR bridge request to ${path} timed out after ${this.requestTimeoutMs}ms.`, {
           code: "ibkr_bridge_request_timeout",
@@ -166,6 +317,117 @@ export class IbkrBridgeClient {
     }).finally(() => {
       clearTimeout(timeout);
       inputSignal?.removeEventListener("abort", abortFromInput);
+    });
+  }
+
+  private requestJson<T>(
+    path: string,
+    url: URL,
+    init: RequestInit,
+  ): Promise<T> {
+    const startedAt = performance.now();
+    const requestId = randomUUID();
+    const headers = new Headers(init.headers);
+    const method = init.method ?? "GET";
+    const body =
+      typeof init.body === "string" || Buffer.isBuffer(init.body)
+        ? init.body
+        : init.body == null
+          ? undefined
+          : String(init.body);
+
+    if (body !== undefined && !headers.has("Content-Length")) {
+      headers.set("Content-Length", String(Buffer.byteLength(body)));
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const client = url.protocol === "https:" ? https : http;
+      const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+      const request = client.request(
+        url,
+        {
+          method,
+          headers: Object.fromEntries(headers.entries()),
+          agent,
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on("end", () => {
+            const durationMs = Math.round(performance.now() - startedAt);
+            const text = Buffer.concat(chunks).toString("utf8");
+            const statusCode = response.statusCode ?? 0;
+            const statusMessage = response.statusMessage ?? "";
+            const payload = readJsonResponsePayload(
+              text,
+              String(response.headers["content-type"] ?? ""),
+            );
+            const logPayload = {
+              requestId,
+              path,
+              method,
+              statusCode,
+              durationMs,
+              reusedSocket: request.reusedSocket,
+            };
+            const logLevel = process.env.LOG_LEVEL === "info" ? "info" : "debug";
+            logger[logLevel](logPayload, "IBKR bridge request completed");
+
+            if (statusCode < 200 || statusCode >= 300) {
+              reject(new HttpError(
+                statusCode,
+                buildBridgeErrorMessage(statusCode, statusMessage, payload),
+                {
+                  code: "upstream_http_error",
+                  detail:
+                    typeof payload === "string"
+                      ? payload
+                      : payload && typeof payload === "object"
+                        ? JSON.stringify(payload)
+                        : undefined,
+                  data: payload,
+                  expose: statusCode < 500,
+                },
+              ));
+              return;
+            }
+
+            resolve(payload as T);
+          });
+        },
+      );
+
+      request.on("error", (error) => {
+        reject(new HttpError(502, "Upstream request failed.", {
+          code: "upstream_request_failed",
+          cause: error,
+          detail:
+            error instanceof Error && error.message
+              ? error.message
+              : "The upstream service could not be reached.",
+        }));
+      });
+
+      const abort = () => {
+        request.destroy(init.signal?.reason);
+      };
+
+      if (init.signal?.aborted) {
+        abort();
+      } else {
+        init.signal?.addEventListener("abort", abort, { once: true });
+      }
+
+      request.on("close", () => {
+        init.signal?.removeEventListener("abort", abort);
+      });
+
+      if (body !== undefined) {
+        request.write(body);
+      }
+      request.end();
     });
   }
 
@@ -241,13 +503,127 @@ export class IbkrBridgeClient {
       {},
       { symbols: symbols.join(",") },
     );
-    return payload.quotes.map((quote) => ({
-      ...quote,
-      // Older bridge versions don't emit openInterest; normalize to null
-      // so downstream code can rely on the field always being present.
-      openInterest: quote.openInterest ?? null,
-      updatedAt: quote.updatedAt instanceof Date ? quote.updatedAt : new Date(quote.updatedAt),
-    }));
+    return payload.quotes.map(hydrateQuote);
+  }
+
+  async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
+    const normalizedSymbols = Array.from(
+      new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean)),
+    );
+
+    await this.request<{ symbols: string[]; updatedAt: string }>(
+      "/quotes/prewarm",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ symbols: normalizedSymbols }),
+      },
+    );
+  }
+
+  streamQuoteSnapshots(
+    symbols: string[],
+    onQuotes: (quotes: QuoteSnapshot[]) => void,
+    onError?: (error: unknown) => void,
+  ): () => void {
+    const url = this.buildUrl("/streams/quotes", { symbols: symbols.join(",") });
+    const requestId = randomUUID();
+    const client = url.protocol === "https:" ? https : http;
+    const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+    let stopped = false;
+    let buffer = "";
+
+    const request = client.request(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Accept: "text/event-stream",
+        },
+        agent,
+      },
+      (response) => {
+        if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on("end", () => {
+            if (stopped) {
+              return;
+            }
+
+            onError?.(new HttpError(
+              response.statusCode ?? 502,
+              `IBKR bridge quote stream failed with HTTP ${response.statusCode ?? 0}.`,
+              {
+                code: "ibkr_bridge_stream_failed",
+                detail: Buffer.concat(chunks).toString("utf8"),
+              },
+            ));
+          });
+          return;
+        }
+
+        logger.info(
+          {
+            requestId,
+            symbols,
+            reusedSocket: request.reusedSocket,
+          },
+          "IBKR bridge quote stream connected",
+        );
+
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          if (stopped) {
+            return;
+          }
+
+          buffer += chunk;
+          let boundary = findSseBoundary(buffer);
+          while (boundary) {
+            const rawBlock = buffer.slice(0, boundary.index);
+            buffer = buffer.slice(boundary.index + boundary.length);
+            const message = parseSseBlock(rawBlock);
+
+            if (message?.event === "quotes") {
+              try {
+                const payload = JSON.parse(message.data) as QuoteStreamPayload;
+                const quotes = (payload.quotes ?? []).map(hydrateQuote);
+                if (quotes.length) {
+                  onQuotes(quotes);
+                }
+              } catch (error) {
+                logger.warn({ err: error }, "IBKR bridge quote stream payload parse failed");
+              }
+            }
+
+            boundary = findSseBoundary(buffer);
+          }
+        });
+        response.on("end", () => {
+          if (!stopped) {
+            onError?.(new Error("IBKR bridge quote stream ended."));
+          }
+        });
+      },
+    );
+
+    request.on("error", (error) => {
+      if (!stopped) {
+        onError?.(error);
+      }
+    });
+
+    request.end();
+
+    return () => {
+      stopped = true;
+      request.destroy();
+    };
   }
 
   async getHistoricalBars(input: {
@@ -415,14 +791,19 @@ export class IbkrBridgeClient {
 
   async searchTickers(input: {
     search?: string;
+    market?: IbkrUniverseTicker["market"];
+    markets?: IbkrUniverseTicker["market"][];
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
     const params: Record<string, QueryValue> = {};
     if (input.search) params.search = input.search;
+    if (input.market) params.market = input.market;
+    if (input.markets?.length) params.markets = input.markets;
     if (typeof input.limit === "number") params.limit = input.limit;
     return this.request<{ count: number; results: IbkrUniverseTicker[] }>(
       "/universe/search",
-      {},
+      { signal: input.signal },
       params,
     );
   }

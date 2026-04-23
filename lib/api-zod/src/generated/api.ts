@@ -46,7 +46,7 @@ export const GetSessionResponse = zod.object({
       lastRecoveryAttemptAt: zod.coerce.date().nullable(),
       lastRecoveryError: zod.string().nullable(),
       updatedAt: zod.coerce.date(),
-      transport: zod.enum(["client_portal", "tws"]),
+      transport: zod.enum(["client_portal", "tws", "ibx"]),
       connectionTarget: zod.string().nullable(),
       sessionMode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
       clientId: zod.number().nullable(),
@@ -106,9 +106,709 @@ export const ListAccountsResponse = zod.object({
       buyingPower: zod.number(),
       cash: zod.number(),
       netLiquidation: zod.number(),
+      accountType: zod.string().nullish(),
+      totalCashValue: zod.number().nullish(),
+      settledCash: zod.number().nullish(),
+      accruedCash: zod.number().nullish(),
+      initialMargin: zod.number().nullish(),
+      maintenanceMargin: zod.number().nullish(),
+      excessLiquidity: zod.number().nullish(),
+      cushion: zod.number().nullish(),
+      sma: zod.number().nullish(),
+      dayTradingBuyingPower: zod.number().nullish(),
+      regTInitialMargin: zod.number().nullish(),
+      grossPositionValue: zod.number().nullish(),
+      leverage: zod.number().nullish(),
+      dayTradesRemaining: zod.number().nullish(),
+      isPatternDayTrader: zod.boolean().nullish(),
       updatedAt: zod.coerce.date(),
     }),
   ),
+});
+
+/**
+ * @summary Get IBKR Flex setup and refresh health
+ */
+export const GetFlexHealthResponse = zod.object({
+  bridgeConnected: zod.boolean().nullable(),
+  flexConfigured: zod.boolean(),
+  flexTokenPresent: zod.boolean(),
+  flexQueryIdPresent: zod.boolean(),
+  lastSuccessfulRefreshAt: zod.coerce.date().nullable(),
+  lastAttemptAt: zod.coerce.date().nullable(),
+  lastStatus: zod.string().nullable(),
+  lastError: zod.string().nullable(),
+  snapshotsRecording: zod.boolean(),
+  lastSnapshotAt: zod.coerce.date().nullable(),
+});
+
+/**
+ * @summary Test the configured IBKR Flex token and query
+ */
+export const TestFlexTokenResponse = zod.object({
+  ok: zod.boolean(),
+  message: zod.string(),
+  runId: zod.string(),
+  referenceCode: zod.string(),
+  counts: zod.record(zod.string(), zod.unknown()),
+});
+
+/**
+ * @summary Get live account header metrics
+ */
+export const GetAccountSummaryParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountSummaryQueryParams = zod.object({
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountSummaryResponse = zod.object({
+  accountId: zod.string(),
+  isCombined: zod.boolean(),
+  mode: zod.enum(["paper", "live"]),
+  currency: zod.string(),
+  accounts: zod.array(
+    zod.object({
+      id: zod.string(),
+      displayName: zod.string(),
+      currency: zod.string(),
+      live: zod.boolean(),
+      accountType: zod.string().nullable(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+  updatedAt: zod.coerce.date(),
+  fx: zod.object({
+    baseCurrency: zod.string(),
+    timestamp: zod.coerce.date().nullable(),
+    rates: zod.record(zod.string(), zod.number().nullable()),
+    warning: zod.string().nullable(),
+  }),
+  badges: zod.record(zod.string(), zod.unknown()),
+  metrics: zod.object({
+    netLiquidation: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    totalCash: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    buyingPower: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    marginUsed: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    maintenanceMargin: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    maintenanceMarginCushionPercent: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    dayPnl: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    dayPnlPercent: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    totalPnl: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    totalPnlPercent: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    settledCash: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    unsettledCash: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    sma: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    dayTradingBuyingPower: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    regTInitialMargin: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    leverage: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+    grossPositionValue: zod
+      .object({
+        value: zod.number().nullable(),
+        currency: zod.string().nullable(),
+        source: zod.enum([
+          "IBKR_ACCOUNT_SUMMARY",
+          "IBKR_POSITIONS",
+          "FLEX",
+          "LOCAL_LEDGER",
+        ]),
+        field: zod.string(),
+        updatedAt: zod.coerce.date().nullable(),
+      })
+      .optional(),
+  }),
+});
+
+/**
+ * @summary Get Flex and intraday NAV history
+ */
+export const GetAccountEquityHistoryParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountEquityHistoryQueryParams = zod.object({
+  range: zod.enum(["1W", "1M", "3M", "YTD", "1Y", "ALL"]).optional(),
+  benchmark: zod.coerce.string().optional(),
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountEquityHistoryResponse = zod.object({
+  accountId: zod.string(),
+  range: zod.enum(["1W", "1M", "3M", "YTD", "1Y", "ALL"]),
+  currency: zod.string(),
+  flexConfigured: zod.boolean(),
+  lastFlexRefreshAt: zod.coerce.date().nullable(),
+  benchmark: zod.string().nullable(),
+  points: zod.array(
+    zod.object({
+      timestamp: zod.coerce.date(),
+      netLiquidation: zod.number(),
+      currency: zod.string(),
+      source: zod.enum(["FLEX", "LOCAL_LEDGER"]),
+      deposits: zod.number(),
+      withdrawals: zod.number(),
+      dividends: zod.number(),
+      fees: zod.number(),
+      returnPercent: zod.number(),
+      benchmarkPercent: zod.number().nullable(),
+    }),
+  ),
+  events: zod.array(
+    zod.object({
+      timestamp: zod.coerce.date(),
+      type: zod.string(),
+      amount: zod.number(),
+      currency: zod.string(),
+      source: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get allocation and exposure summary
+ */
+export const GetAccountAllocationParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountAllocationQueryParams = zod.object({
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountAllocationResponse = zod.object({
+  accountId: zod.string(),
+  currency: zod.string(),
+  assetClass: zod.array(
+    zod.object({
+      label: zod.string(),
+      value: zod.number(),
+      weightPercent: zod.number().nullable(),
+      source: zod.string(),
+    }),
+  ),
+  sector: zod.array(
+    zod.object({
+      label: zod.string(),
+      value: zod.number(),
+      weightPercent: zod.number().nullable(),
+      source: zod.string(),
+    }),
+  ),
+  exposure: zod.object({
+    grossLong: zod.number(),
+    grossShort: zod.number(),
+    netExposure: zod.number(),
+  }),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Get current positions with lots and open order context
+ */
+export const GetAccountPositionsParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountPositionsQueryParams = zod.object({
+  assetClass: zod.coerce.string().optional(),
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountPositionsResponse = zod.object({
+  accountId: zod.string(),
+  currency: zod.string(),
+  positions: zod.array(
+    zod.object({
+      id: zod.string(),
+      accountId: zod.string(),
+      accounts: zod.array(zod.string()),
+      symbol: zod.string(),
+      description: zod.string(),
+      assetClass: zod.string(),
+      sector: zod.string(),
+      quantity: zod.number(),
+      averageCost: zod.number(),
+      mark: zod.number(),
+      dayChange: zod.number().nullable(),
+      dayChangePercent: zod.number().nullable(),
+      unrealizedPnl: zod.number(),
+      unrealizedPnlPercent: zod.number(),
+      marketValue: zod.number(),
+      weightPercent: zod.number().nullable(),
+      betaWeightedDelta: zod.number().nullable(),
+      lots: zod.array(
+        zod.object({
+          accountId: zod.string(),
+          symbol: zod.string(),
+          quantity: zod.number(),
+          averageCost: zod.number(),
+          marketPrice: zod.number().nullable(),
+          marketValue: zod.number().nullable(),
+          unrealizedPnl: zod.number().nullable(),
+          asOf: zod.coerce.date(),
+          source: zod.string(),
+        }),
+      ),
+      openOrders: zod.array(
+        zod.object({
+          id: zod.string(),
+          accountId: zod.string(),
+          mode: zod.enum(["paper", "live"]),
+          confirm: zod.boolean().optional(),
+          symbol: zod.string(),
+          assetClass: zod.enum(["equity", "option"]),
+          side: zod.enum(["buy", "sell"]),
+          type: zod.enum(["market", "limit", "stop", "stop_limit"]),
+          timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
+          status: zod.enum([
+            "pending_submit",
+            "submitted",
+            "accepted",
+            "partially_filled",
+            "filled",
+            "canceled",
+            "rejected",
+            "expired",
+          ]),
+          quantity: zod.number(),
+          filledQuantity: zod.number(),
+          limitPrice: zod.number().nullable(),
+          stopPrice: zod.number().nullable(),
+          placedAt: zod.coerce.date(),
+          updatedAt: zod.coerce.date(),
+          optionContract: zod.union([
+            zod.object({
+              ticker: zod.string(),
+              underlying: zod.string(),
+              expirationDate: zod.coerce.date(),
+              strike: zod.number(),
+              right: zod.enum(["call", "put"]),
+              multiplier: zod.number(),
+              sharesPerContract: zod.number(),
+              providerContractId: zod.string().nullish(),
+            }),
+            zod.null(),
+          ]),
+        }),
+      ),
+      source: zod.string(),
+    }),
+  ),
+  totals: zod.record(zod.string(), zod.unknown()),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Get closed trades and recent live executions
+ */
+export const GetAccountClosedTradesParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountClosedTradesQueryParams = zod.object({
+  from: zod.date().optional(),
+  to: zod.date().optional(),
+  symbol: zod.coerce.string().optional(),
+  assetClass: zod.coerce.string().optional(),
+  pnlSign: zod.enum(["all", "winners", "losers"]).optional(),
+  holdDuration: zod.coerce.string().optional(),
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountClosedTradesResponse = zod.object({
+  accountId: zod.string(),
+  currency: zod.string(),
+  trades: zod.array(
+    zod.object({
+      id: zod.string(),
+      source: zod.enum(["LIVE", "FLEX"]),
+      accountId: zod.string(),
+      symbol: zod.string(),
+      side: zod.string(),
+      assetClass: zod.string(),
+      quantity: zod.number(),
+      openDate: zod.coerce.date().nullable(),
+      closeDate: zod.coerce.date().nullable(),
+      avgOpen: zod.number().nullable(),
+      avgClose: zod.number().nullable(),
+      realizedPnl: zod.number().nullable(),
+      realizedPnlPercent: zod.number().nullable(),
+      holdDurationMinutes: zod.number().nullable(),
+      commissions: zod.number().nullable(),
+      currency: zod.string(),
+    }),
+  ),
+  summary: zod.record(zod.string(), zod.unknown()),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Get working or historical orders for an account
+ */
+export const GetAccountOrdersParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountOrdersQueryParams = zod.object({
+  tab: zod.enum(["working", "history"]).optional(),
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountOrdersResponse = zod.object({
+  accountId: zod.string(),
+  tab: zod.enum(["working", "history"]),
+  currency: zod.string(),
+  orders: zod.array(
+    zod.object({
+      id: zod.string(),
+      accountId: zod.string(),
+      symbol: zod.string(),
+      side: zod.enum(["buy", "sell"]),
+      type: zod.enum(["market", "limit", "stop", "stop_limit"]),
+      assetClass: zod.enum(["equity", "option"]),
+      quantity: zod.number(),
+      filledQuantity: zod.number(),
+      limitPrice: zod.number().nullable(),
+      stopPrice: zod.number().nullable(),
+      timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
+      status: zod.enum([
+        "pending_submit",
+        "submitted",
+        "accepted",
+        "partially_filled",
+        "filled",
+        "canceled",
+        "rejected",
+        "expired",
+      ]),
+      placedAt: zod.coerce.date(),
+      filledAt: zod.coerce.date().nullable(),
+      updatedAt: zod.coerce.date(),
+      averageFillPrice: zod.number().nullable(),
+      commission: zod.number().nullable(),
+      source: zod.string(),
+    }),
+  ),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Cancel a working order from the Account screen
+ */
+export const CancelAccountOrderParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+  orderId: zod.coerce.string(),
+});
+
+export const CancelAccountOrderBody = zod.object({
+  confirm: zod.boolean().optional(),
+});
+
+export const CancelAccountOrderResponse = zod.object({
+  orderId: zod.string(),
+  accountId: zod.string().nullable(),
+  message: zod.string(),
+  submittedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Get portfolio risk dashboard metrics
+ */
+export const GetAccountRiskParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountRiskQueryParams = zod.object({
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountRiskResponse = zod.object({
+  accountId: zod.string(),
+  currency: zod.string(),
+  concentration: zod.record(zod.string(), zod.unknown()),
+  winnersLosers: zod.record(zod.string(), zod.unknown()),
+  margin: zod.record(zod.string(), zod.unknown()),
+  greeks: zod.record(zod.string(), zod.unknown()),
+  expiryConcentration: zod.record(zod.string(), zod.unknown()),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Get cash and funding activity
+ */
+export const GetAccountCashActivityParams = zod.object({
+  accountId: zod.coerce
+    .string()
+    .describe('IBKR account id or the virtual \"combined\" account id.'),
+});
+
+export const GetAccountCashActivityQueryParams = zod.object({
+  from: zod.date().optional(),
+  to: zod.date().optional(),
+  mode: zod.enum(["paper", "live"]).optional(),
+});
+
+export const GetAccountCashActivityResponse = zod.object({
+  accountId: zod.string(),
+  currency: zod.string(),
+  settledCash: zod.number().nullable(),
+  unsettledCash: zod.number().nullable(),
+  totalCash: zod.number().nullable(),
+  dividendsMonth: zod.number(),
+  dividendsYtd: zod.number(),
+  interestPaidEarnedYtd: zod.number(),
+  feesYtd: zod.number(),
+  activities: zod.array(
+    zod.object({
+      id: zod.string(),
+      accountId: zod.string(),
+      date: zod.coerce.date(),
+      type: zod.string(),
+      description: zod.string().nullable(),
+      amount: zod.number(),
+      currency: zod.string(),
+      source: zod.string(),
+    }),
+  ),
+  dividends: zod.array(
+    zod.object({
+      id: zod.string(),
+      accountId: zod.string(),
+      symbol: zod.string().nullable(),
+      description: zod.string().nullable(),
+      paidDate: zod.coerce.date(),
+      amount: zod.number(),
+      currency: zod.string(),
+      source: zod.string(),
+    }),
+  ),
+  updatedAt: zod.coerce.date(),
 });
 
 /**
@@ -456,6 +1156,16 @@ export const GetQuoteSnapshotsResponse = zod.object({
       source: zod.enum(["ibkr", "polygon"]),
       transport: zod.unknown(),
       delayed: zod.boolean(),
+      freshness: zod.enum(["live", "stale", "pending"]).optional(),
+      cacheAgeMs: zod.number().nullish(),
+      latency: zod
+        .object({
+          bridgeReceivedAt: zod.coerce.date().nullish(),
+          bridgeEmittedAt: zod.coerce.date().nullish(),
+          apiServerReceivedAt: zod.coerce.date().nullish(),
+          apiServerEmittedAt: zod.coerce.date().nullish(),
+        })
+        .nullish(),
       updatedAt: zod.coerce.date(),
     }),
   ),
@@ -515,9 +1225,17 @@ export const SearchUniverseTickersQueryParams = zod.object({
     .optional()
     .describe("Search within the ticker symbol and company name."),
   market: zod
-    .enum(["stocks", "indices", "fx", "crypto", "otc"])
+    .enum(["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"])
     .optional()
     .describe("Restrict results to a market."),
+  markets: zod
+    .array(
+      zod.enum(["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"]),
+    )
+    .optional()
+    .describe(
+      "Restrict results to one or more markets. Takes precedence over market when provided.",
+    ),
   type: zod.coerce
     .string()
     .optional()
@@ -540,7 +1258,26 @@ export const SearchUniverseTickersResponse = zod.object({
     zod.object({
       ticker: zod.string(),
       name: zod.string(),
-      market: zod.enum(["stocks", "indices", "fx", "crypto", "otc"]),
+      market: zod.enum([
+        "stocks",
+        "etf",
+        "indices",
+        "futures",
+        "fx",
+        "crypto",
+        "otc",
+      ]),
+      rootSymbol: zod.string().nullable(),
+      normalizedExchangeMic: zod.string().nullable(),
+      exchangeDisplay: zod.string().nullable(),
+      logoUrl: zod.string().nullable(),
+      contractDescription: zod.string().nullable(),
+      contractMeta: zod
+        .record(
+          zod.string(),
+          zod.union([zod.string(), zod.number(), zod.boolean(), zod.null()]),
+        )
+        .nullable(),
       locale: zod.string().nullable(),
       type: zod.string().nullable(),
       active: zod.boolean(),
@@ -551,6 +1288,12 @@ export const SearchUniverseTickersResponse = zod.object({
       shareClassFigi: zod.string().nullable(),
       lastUpdatedAt: zod.coerce.date().nullable(),
       provider: zod.union([zod.enum(["polygon", "ibkr"]), zod.null()]),
+      providers: zod.array(zod.enum(["polygon", "ibkr"])),
+      tradeProvider: zod.union([zod.enum(["polygon", "ibkr"]), zod.null()]),
+      dataProviderPreference: zod.union([
+        zod.enum(["polygon", "ibkr"]),
+        zod.null(),
+      ]),
       providerContractId: zod.string().nullable(),
     }),
   ),
@@ -568,6 +1311,12 @@ export const GetBarsQueryParams = zod.object({
   from: zod.date().optional(),
   to: zod.date().optional(),
   assetClass: zod.enum(["equity", "option"]).optional(),
+  market: zod
+    .enum(["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"])
+    .optional()
+    .describe(
+      "Provider market context from ticker search; used to avoid cross-asset historical fallbacks.",
+    ),
   providerContractId: zod.coerce.string().nullish(),
   outsideRth: zod.coerce.boolean().optional(),
   source: zod.enum(["trades", "midpoint", "bid_ask"]).optional(),
@@ -575,7 +1324,7 @@ export const GetBarsQueryParams = zod.object({
     .boolean()
     .optional()
     .describe(
-      "Explicitly allow Polygon\/Massive historical synthesis when IBKR history is incomplete.",
+      "Allow Polygon\/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.",
     ),
 });
 

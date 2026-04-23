@@ -11,13 +11,16 @@ import {
   getProviderConfiguration,
   getRuntimeMode,
 } from "../lib/runtime";
+import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
 import { type PlaceOrderInput } from "../providers/ibkr/client";
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import {
   PolygonMarketDataClient,
   computeUnusualMetrics,
+  type MarketDataProvider,
   type UniverseTicker,
+  type UniverseMarket,
 } from "../providers/polygon/market-data";
 
 const BUILT_IN_WATCHLISTS = [
@@ -271,6 +274,85 @@ async function getWatchlistById(
   const rows = await selectWatchlistRows(watchlistId);
   const [watchlist] = mapWatchlistRows(rows).watchlists;
   return watchlist ?? null;
+}
+
+let lastIbkrWatchlistPrewarmSignature: string | null = null;
+let pendingIbkrWatchlistPrewarmSignature: string | null = null;
+let ibkrWatchlistPrewarmSequence = 0;
+
+function collectWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
+  return Array.from(
+    new Set(
+      watchlists.flatMap((watchlist) =>
+        watchlist.items
+          .map((item) => normalizeSymbol(item.symbol).toUpperCase())
+          .filter(Boolean),
+      ),
+    ),
+  ).sort();
+}
+
+function scheduleIbkrWatchlistPrewarm(
+  watchlists: WatchlistRecord[],
+  reason: string,
+) {
+  if (!getProviderConfiguration().ibkr) {
+    return;
+  }
+
+  const symbols = collectWatchlistSymbols(watchlists);
+  const signature = symbols.join(",");
+
+  if (
+    signature === lastIbkrWatchlistPrewarmSignature ||
+    signature === pendingIbkrWatchlistPrewarmSignature
+  ) {
+    return;
+  }
+
+  const sequence = ibkrWatchlistPrewarmSequence + 1;
+  ibkrWatchlistPrewarmSequence = sequence;
+  pendingIbkrWatchlistPrewarmSignature = signature;
+
+  void getIbkrClient()
+    .prewarmQuoteSubscriptions(symbols)
+    .then(() => {
+      if (sequence !== ibkrWatchlistPrewarmSequence) {
+        return;
+      }
+
+      lastIbkrWatchlistPrewarmSignature = signature;
+      logger.info(
+        { symbols, reason },
+        "IBKR bridge watchlist prewarm synced",
+      );
+    })
+    .catch((error) => {
+      logger.warn(
+        { err: error, symbols, reason },
+        "IBKR bridge watchlist prewarm failed",
+      );
+    })
+    .finally(() => {
+      if (sequence === ibkrWatchlistPrewarmSequence) {
+        pendingIbkrWatchlistPrewarmSignature = null;
+      }
+    });
+}
+
+function scheduleIbkrWatchlistPrewarmFromDb(reason: string) {
+  if (!getProviderConfiguration().ibkr) {
+    return;
+  }
+
+  void listWatchlistsFromDb()
+    .then((snapshot) => scheduleIbkrWatchlistPrewarm(snapshot.watchlists, reason))
+    .catch((error) => {
+      logger.warn(
+        { err: error, reason },
+        "IBKR bridge watchlist prewarm snapshot failed",
+      );
+    });
 }
 
 async function ensureInstrumentForSymbol({
@@ -572,7 +654,9 @@ export async function listAccounts(input: { mode?: "paper" | "live" }) {
 }
 
 export async function listWatchlists() {
-  return listWatchlistsFromDb();
+  const snapshot = await listWatchlistsFromDb();
+  scheduleIbkrWatchlistPrewarm(snapshot.watchlists, "list");
+  return snapshot;
 }
 
 export async function createWatchlist(input: {
@@ -620,7 +704,9 @@ export async function createWatchlist(input: {
     });
   }
 
-  return getWatchlistById(watchlist.id);
+  const created = await getWatchlistById(watchlist.id);
+  scheduleIbkrWatchlistPrewarmFromDb("create");
+  return created;
 }
 
 export async function updateWatchlist(
@@ -662,7 +748,9 @@ export async function updateWatchlist(
     await setDefaultWatchlistIfNeeded(watchlistId);
   }
 
-  return getWatchlistById(watchlistId);
+  const updated = await getWatchlistById(watchlistId);
+  scheduleIbkrWatchlistPrewarmFromDb("update");
+  return updated;
 }
 
 export async function deleteWatchlist(watchlistId: string) {
@@ -696,6 +784,7 @@ export async function deleteWatchlist(watchlistId: string) {
     }
   }
 
+  scheduleIbkrWatchlistPrewarmFromDb("delete");
   return { ok: true };
 }
 
@@ -739,7 +828,9 @@ export async function addWatchlistSymbol(
     sortOrder: (lastItem?.sortOrder ?? -1) + 1,
   });
 
-  return getWatchlistById(watchlistId);
+  const updated = await getWatchlistById(watchlistId);
+  scheduleIbkrWatchlistPrewarmFromDb("add-symbol");
+  return updated;
 }
 
 export async function removeWatchlistSymbol(
@@ -769,7 +860,9 @@ export async function removeWatchlistSymbol(
     .delete(watchlistItemsTable)
     .where(eq(watchlistItemsTable.id, itemId));
   await rebalanceWatchlistSortOrder(watchlistId);
-  return getWatchlistById(watchlistId);
+  const updated = await getWatchlistById(watchlistId);
+  scheduleIbkrWatchlistPrewarmFromDb("remove-symbol");
+  return updated;
 }
 
 export async function reorderWatchlistSymbols(
@@ -814,7 +907,9 @@ export async function reorderWatchlistSymbols(
     ),
   );
 
-  return getWatchlistById(watchlistId);
+  const updated = await getWatchlistById(watchlistId);
+  scheduleIbkrWatchlistPrewarmFromDb("reorder");
+  return updated;
 }
 
 export async function listPositions(input: {
@@ -986,128 +1081,822 @@ export async function getNews(input: { ticker?: string; limit?: number }) {
   return { articles };
 }
 
-export async function searchUniverseTickers(input: {
+type SearchUniverseTickersInput = {
   search?: string;
-  market?: "stocks" | "indices" | "fx" | "crypto" | "otc";
+  market?: UniverseMarket;
+  markets?: UniverseMarket[];
   type?: string;
   active?: boolean;
   limit?: number;
-}) {
-  const normalizedSearch = input.search?.trim() ?? "";
-  const resultLimit = Math.max(1, Math.min(input.limit ?? 12, 50));
-  const scoreUniverseTicker = (
-    ticker: UniverseTicker,
-    query: string,
-  ): number => {
-    const normalizedTicker = normalizeSymbol(ticker.ticker);
-    const normalizedName = ticker.name.trim().toLowerCase();
-    const queryLower = query.toLowerCase();
-    let score = 0;
+};
 
-    if (normalizedTicker === query.toUpperCase()) score += 1_500;
-    else if (normalizedTicker.startsWith(query.toUpperCase())) score += 1_050;
-    else if (normalizedTicker.includes(query.toUpperCase())) score += 800;
+type SearchUniverseTickersOptions = {
+  signal?: AbortSignal;
+};
 
-    if (normalizedName === queryLower) score += 720;
-    else if (normalizedName.startsWith(queryLower)) score += 560;
-    else if (
-      normalizedName
-        .split(/[\s./-]+/)
-        .some((part) => part.startsWith(queryLower))
-    ) {
-      score += 500;
-    } else if (normalizedName.includes(queryLower)) {
-      score += 320;
-    }
+type UniverseSearchResponse = { count: number; results: UniverseTicker[] };
 
-    if (ticker.provider === "ibkr") score += 40;
-    if (ticker.providerContractId) score += 25;
-    if (ticker.active) score += 10;
-    if (ticker.primaryExchange) score += 5;
+const ALL_UNIVERSE_MARKETS: UniverseMarket[] = [
+  "stocks",
+  "etf",
+  "indices",
+  "futures",
+  "fx",
+  "crypto",
+  "otc",
+];
+const POLYGON_SEARCH_MARKETS: UniverseMarket[] = [
+  "stocks",
+  "etf",
+  "indices",
+  "fx",
+  "crypto",
+  "otc",
+];
+const UNIVERSE_SEARCH_CACHE_TTL_MS = 30_000;
+const UNIVERSE_SEARCH_CACHE_MAX = 120;
+const UNIVERSE_SEARCH_IBKR_BUDGET_MS = 2_200;
+const UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS = 300;
+const UNIVERSE_SEARCH_INTERACTIVE_BUDGET_MS = 2_500;
+const UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS = 8_000;
+const universeSearchCache = new Map<
+  string,
+  { expiresAt: number; data: UniverseSearchResponse }
+>();
+const universeSearchInFlight = new Map<
+  string,
+  {
+    controller: AbortController;
+    consumers: number;
+    settled: boolean;
+    promise: Promise<UniverseSearchResponse>;
+  }
+>();
+const universeSearchBackgroundInFlight = new Set<string>();
 
-    return score;
-  };
-  const mergeUniverseTicker = (
-    current: UniverseTicker | undefined,
-    incoming: UniverseTicker,
-  ): UniverseTicker => {
-    if (!current) return incoming;
-    return {
-      ...current,
-      ...incoming,
-      name:
-        incoming.name.length > current.name.length ? incoming.name : current.name,
-      primaryExchange: current.primaryExchange || incoming.primaryExchange,
-      currencyName: current.currencyName || incoming.currencyName,
-      cik: current.cik || incoming.cik,
-      compositeFigi: current.compositeFigi || incoming.compositeFigi,
-      shareClassFigi: current.shareClassFigi || incoming.shareClassFigi,
-      lastUpdatedAt: current.lastUpdatedAt || incoming.lastUpdatedAt,
-      provider:
-        current.provider === "ibkr" || incoming.provider !== "ibkr"
-          ? current.provider
-          : incoming.provider,
-      providerContractId:
-        current.providerContractId || incoming.providerContractId,
-    };
-  };
+const EXCHANGE_MIC_ALIASES: Record<string, string> = {
+  NASDAQ: "XNAS",
+  NASD: "XNAS",
+  NMS: "XNAS",
+  XNAS: "XNAS",
+  NYSE: "XNYS",
+  NYS: "XNYS",
+  ARCA: "ARCX",
+  ARCX: "ARCX",
+  XNYS: "XNYS",
+  AMEX: "XASE",
+  ASE: "XASE",
+  XASE: "XASE",
+  CME: "XCME",
+  GLOBEX: "XCME",
+  XCME: "XCME",
+  CBOE: "XCBO",
+  BATS: "BATS",
+  OTC: "OTC",
+  OTCM: "OTC",
+  PINK: "OTC",
+  PINX: "OTC",
+  OTCLINK: "OTC",
+};
+const US_PRIMARY_EXCHANGE_MICS = new Set(["XNAS", "XNYS", "ARCX", "XASE", "BATS"]);
+const US_EXCHANGE_PREFERENCE_SCORE: Record<string, number> = {
+  XNAS: 680,
+  XNYS: 660,
+  ARCX: 640,
+  XASE: 520,
+  BATS: 500,
+};
 
-  // IBKR is the primary stock universe source so the search box mirrors the
-  // contracts the broker can actually trade, but Polygon still contributes
-  // enrichment and fallback coverage. For non-stock markets, Polygon remains
-  // the single source.
-  if (input.market != null && input.market !== "stocks") {
-    if (getPolygonRuntimeConfig()) {
-      return getPolygonClient().searchUniverseTickers(input);
-    }
-    return { count: 0, results: [] };
+function resolveRequestedUniverseMarkets(input: SearchUniverseTickersInput) {
+  const raw = input.markets?.length
+    ? input.markets
+    : input.market
+      ? [input.market]
+      : ALL_UNIVERSE_MARKETS;
+  const allowed = new Set(ALL_UNIVERSE_MARKETS);
+  return Array.from(new Set(raw.filter((market) => allowed.has(market))));
+}
+
+function normalizeExchangeMic(exchange: string | null | undefined, market: UniverseMarket) {
+  const raw = exchange?.trim().toUpperCase() ?? "";
+  if (!raw) {
+    if (market === "fx") return "FX";
+    if (market === "crypto") return "COIN";
+    if (market === "futures") return "FUT";
+    return "";
+  }
+  const compact = raw.replace(/[^A-Z0-9]/g, "");
+  return EXCHANGE_MIC_ALIASES[compact] ?? compact;
+}
+
+function extractExchangeHintFromText(value: string | null | undefined) {
+  const text = value?.trim() ?? "";
+  const match = text.match(/\(([A-Z0-9._ -]{2,16})\)\s*$/);
+  return match?.[1]?.trim() ?? null;
+}
+
+function inferLegacyIbkrUniverseMarket(ticker: UniverseTicker): UniverseMarket {
+  if (ticker.provider !== "ibkr" || ticker.market !== "stocks") {
+    return ticker.market;
   }
 
-  const ibkrClient = getIbkrClient();
-  const ibkrPromise = normalizedSearch
-    ? ibkrClient
-        .searchTickers({
-          search: normalizedSearch,
-          limit: Math.max(resultLimit * 2, 16),
-        })
-        .catch(() => ({ count: 0, results: [] as UniverseTicker[] }))
-    : Promise.resolve({ count: 0, results: [] as UniverseTicker[] });
-  const polygonPromise =
-    normalizedSearch && getPolygonRuntimeConfig()
-      ? getPolygonClient()
-          .searchUniverseTickers({
-            ...input,
-            search: normalizedSearch,
-            market: "stocks",
-            limit: Math.max(resultLimit * 2, 16),
-          })
-          .catch(() => ({ count: 0, results: [] as UniverseTicker[] }))
-      : Promise.resolve({ count: 0, results: [] as UniverseTicker[] });
+  const type = ticker.type?.trim().toUpperCase() ?? "";
+  const name = ticker.name.trim().toUpperCase();
 
-  const [ibkrResult, polygonResult] = await Promise.all([ibkrPromise, polygonPromise]);
+  if (type === "ETF") return "etf";
+  if (
+    type === "STK" &&
+    /\b(ETF|ETN|ETP|UCITS|SPDR|ISHARES|PROSHARES|INVESCO|VANGUARD|DIREXION|WISDOMTREE|GLOBAL X|GRAYSCALE)\b/.test(
+      name,
+    )
+  ) {
+    return "etf";
+  }
+
+  return ticker.market;
+}
+
+function normalizeRootSymbol(ticker: UniverseTicker) {
+  const root =
+    ticker.rootSymbol?.trim() ||
+    normalizeSymbol(ticker.ticker).replace(/^X:/, "").split(/[./:\s-]+/)[0] ||
+    normalizeSymbol(ticker.ticker);
+  return normalizeSymbol(root);
+}
+
+function hydrateUniverseTickerMetadata(ticker: UniverseTicker): UniverseTicker {
+  const normalizedTicker = normalizeSymbol(ticker.ticker);
+  const market = inferLegacyIbkrUniverseMarket(ticker);
+  const exchangeHint =
+    ticker.normalizedExchangeMic ??
+    ticker.primaryExchange ??
+    ticker.exchangeDisplay ??
+    extractExchangeHintFromText(ticker.name) ??
+    extractExchangeHintFromText(ticker.contractDescription);
+  const normalizedExchangeMic = normalizeExchangeMic(
+    exchangeHint,
+    market,
+  );
+  const providers = Array.from(
+    new Set([
+      ...(ticker.providers ?? []),
+      ...(ticker.provider ? [ticker.provider] : []),
+    ].filter((provider): provider is MarketDataProvider => provider === "ibkr" || provider === "polygon")),
+  ).sort((left, right) => (left === "ibkr" ? -1 : right === "ibkr" ? 1 : left.localeCompare(right)));
+  const tradeProvider =
+    ticker.tradeProvider ??
+    (ticker.providerContractId && providers.includes("ibkr") ? "ibkr" : null);
+
+  return {
+    ...ticker,
+    ticker: normalizedTicker,
+    market,
+    rootSymbol: ticker.rootSymbol ?? normalizeRootSymbol(ticker),
+    normalizedExchangeMic,
+    exchangeDisplay: ticker.exchangeDisplay ?? ticker.primaryExchange ?? exchangeHint ?? (normalizedExchangeMic || null),
+    logoUrl: ticker.logoUrl ?? null,
+    contractDescription: ticker.contractDescription ?? ticker.name,
+    contractMeta: ticker.contractMeta ?? null,
+    providers,
+    provider: tradeProvider ?? ticker.provider ?? providers[0] ?? null,
+    tradeProvider,
+    dataProviderPreference:
+      ticker.dataProviderPreference ??
+      (providers.includes("ibkr")
+        ? "ibkr"
+        : providers.includes("polygon")
+          ? "polygon"
+          : null),
+  };
+}
+
+function buildUniverseTickerMergeKey(ticker: UniverseTicker) {
+  const hydrated = hydrateUniverseTickerMetadata(ticker);
+  return [
+    normalizeRootSymbol(hydrated),
+    hydrated.market,
+    hydrated.normalizedExchangeMic ?? "",
+  ].join("|");
+}
+
+function buildTickerSearchAliases(ticker: UniverseTicker): string[] {
+  const normalizedTicker = normalizeSymbol(ticker.ticker);
+  const withoutProviderPrefix = normalizedTicker.replace(/^[A-Z]:/, "");
+  const aliases = new Set([
+    normalizedTicker,
+    withoutProviderPrefix,
+    normalizeRootSymbol(ticker),
+  ]);
+
+  if (ticker.market === "crypto" && withoutProviderPrefix.endsWith("USD")) {
+    aliases.add(withoutProviderPrefix.slice(0, -3));
+  }
+
+  return Array.from(aliases).filter(Boolean);
+}
+
+function mergeUniverseTicker(
+  current: UniverseTicker | undefined,
+  incoming: UniverseTicker,
+): UniverseTicker {
+  const next = hydrateUniverseTickerMetadata(incoming);
+  if (!current) return next;
+
+  const existing = hydrateUniverseTickerMetadata(current);
+  const providers = Array.from(new Set([...existing.providers, ...next.providers])).sort(
+    (left, right) => (left === "ibkr" ? -1 : right === "ibkr" ? 1 : left.localeCompare(right)),
+  );
+  const ibkrProviderContractId =
+    existing.provider === "ibkr" || existing.tradeProvider === "ibkr"
+      ? existing.providerContractId
+      : next.provider === "ibkr" || next.tradeProvider === "ibkr"
+        ? next.providerContractId
+        : null;
+  const providerContractId =
+    ibkrProviderContractId ?? existing.providerContractId ?? next.providerContractId ?? null;
+  const tradeProvider = providerContractId && providers.includes("ibkr") ? "ibkr" : null;
+
+  return {
+    ...existing,
+    ...next,
+    name: next.name.length > existing.name.length ? next.name : existing.name,
+    rootSymbol: existing.rootSymbol || next.rootSymbol,
+    normalizedExchangeMic: existing.normalizedExchangeMic || next.normalizedExchangeMic,
+    exchangeDisplay: existing.exchangeDisplay || next.exchangeDisplay,
+    logoUrl: existing.logoUrl || next.logoUrl,
+    contractDescription:
+      next.contractDescription && next.contractDescription.length > (existing.contractDescription ?? "").length
+        ? next.contractDescription
+        : existing.contractDescription || next.contractDescription,
+    contractMeta: {
+      ...(existing.contractMeta ?? {}),
+      ...(next.contractMeta ?? {}),
+    },
+    primaryExchange: existing.primaryExchange || next.primaryExchange,
+    currencyName: existing.currencyName || next.currencyName,
+    cik: existing.cik || next.cik,
+    compositeFigi: existing.compositeFigi || next.compositeFigi,
+    shareClassFigi: existing.shareClassFigi || next.shareClassFigi,
+    lastUpdatedAt: existing.lastUpdatedAt || next.lastUpdatedAt,
+    providers,
+    provider: tradeProvider ?? (providers.includes("polygon") ? "polygon" : providers[0] ?? null),
+    tradeProvider,
+    dataProviderPreference: providers.includes("ibkr")
+      ? "ibkr"
+      : providers.includes("polygon")
+        ? "polygon"
+        : null,
+    providerContractId,
+  };
+}
+
+function scoreUniverseTicker(
+  ticker: UniverseTicker,
+  query: string,
+  requestedMarkets: Set<UniverseMarket>,
+): number {
+  const normalizedTicker = normalizeSymbol(ticker.ticker);
+  const normalizedName = ticker.name.trim().toLowerCase();
+  const queryUpper = query.toUpperCase();
+  const queryLower = query.toLowerCase();
+  const tickerAliases = buildTickerSearchAliases(ticker);
+  let score = 0;
+
+  if (ticker.contractMeta?.identifierMatch) score += 3_000;
+  if (ticker.providerContractId === query) score += 2_000;
+
+  if (tickerAliases.includes(queryUpper)) score += 3_000;
+  else if (normalizedTicker === queryUpper) score += 3_000;
+  else if (normalizedTicker.startsWith(queryUpper)) score += 1_050;
+  else if (normalizedTicker.includes(queryUpper)) score += 800;
+
+  if (normalizedName === queryLower) score += 720;
+  else if (normalizedName.startsWith(queryLower)) score += 560;
+  else if (
+    normalizedName
+      .split(/[\s./-]+/)
+      .some((part) => part.startsWith(queryLower))
+  ) {
+    score += 500;
+  } else if (normalizedName.includes(queryLower)) {
+    score += 320;
+  }
+
+  if (requestedMarkets.has(ticker.market)) score += 80;
+  if (ticker.providers.includes("ibkr")) score += 45;
+  if (ticker.providerContractId) score += 30;
+  if (ticker.providers.includes("polygon")) score += 12;
+  if (ticker.active) score += 10;
+  if (
+    ticker.normalizedExchangeMic &&
+    US_PRIMARY_EXCHANGE_MICS.has(ticker.normalizedExchangeMic)
+  ) {
+    score +=
+      tickerAliases.includes(queryUpper) &&
+      (ticker.market === "stocks" || ticker.market === "etf" || ticker.market === "otc")
+        ? US_EXCHANGE_PREFERENCE_SCORE[ticker.normalizedExchangeMic] ?? 450
+        : 220;
+  }
+  if (ticker.normalizedExchangeMic || ticker.primaryExchange) score += 5;
+
+  return score;
+}
+
+function getUniverseSearchCacheKey(
+  input: SearchUniverseTickersInput,
+  markets: UniverseMarket[],
+  limit: number,
+) {
+  return JSON.stringify({
+    search: input.search?.trim().toUpperCase() ?? "",
+    market: input.market ?? null,
+    markets: [...markets].sort(),
+    type: input.type ?? null,
+    active: input.active ?? null,
+    limit,
+  });
+}
+
+function readUniverseSearchCache(key: string) {
+  const cached = universeSearchCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    universeSearchCache.delete(key);
+    return null;
+  }
+  universeSearchCache.delete(key);
+  universeSearchCache.set(key, cached);
+  return sanitizeUniverseSearchResponse(cached.data);
+}
+
+function writeUniverseSearchCache(
+  key: string,
+  data: UniverseSearchResponse,
+) {
+  const sanitized = sanitizeUniverseSearchResponse(data);
+  universeSearchCache.set(key, {
+    expiresAt: Date.now() + UNIVERSE_SEARCH_CACHE_TTL_MS,
+    data: sanitized,
+  });
+  while (universeSearchCache.size > UNIVERSE_SEARCH_CACHE_MAX) {
+    const oldestKey = universeSearchCache.keys().next().value;
+    if (!oldestKey) break;
+    universeSearchCache.delete(oldestKey);
+  }
+}
+
+function createClientAbortedError() {
+  return new HttpError(499, "Ticker search request was aborted.", {
+    code: "ticker_search_aborted",
+  });
+}
+
+function throwIfSignalAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createClientAbortedError();
+  }
+}
+
+async function awaitWithAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return promise;
+  throwIfSignalAborted(signal);
+
+  let abortListener: (() => void) | null = null;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    abortListener = () => reject(createClientAbortedError());
+    signal.addEventListener("abort", abortListener, { once: true });
+  });
+
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    if (abortListener) signal.removeEventListener("abort", abortListener);
+  }
+}
+
+function createBudgetSignal(parentSignal: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort(new Error(`Ticker search budget exceeded after ${timeoutMs}ms.`));
+    }
+  }, Math.max(1, timeoutMs));
+  const abortFromParent = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(parentSignal?.reason);
+    }
+  };
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
+function isTickerLikeSearch(query: string) {
+  return /^[A-Z][A-Z0-9.:-]{0,15}$/i.test(query.trim());
+}
+
+function sanitizeUniverseSearchResponse(response: UniverseSearchResponse): UniverseSearchResponse {
+  return {
+    count: response.results.length,
+    results: response.results.map((ticker) => ({
+      ...ticker,
+      logoUrl: null,
+    })),
+  };
+}
+
+function finalizeUniverseSearchResponse(input: {
+  providerResults: UniverseTicker[];
+  requestedMarketSet: Set<UniverseMarket>;
+  normalizedSearch: string;
+  resultLimit: number;
+}): UniverseSearchResponse {
   const merged = new Map<string, UniverseTicker>();
-  for (const ticker of [...ibkrResult.results, ...polygonResult.results]) {
-    const key = [
-      normalizeSymbol(ticker.ticker),
-      ticker.market,
-      ticker.primaryExchange?.trim().toUpperCase() ?? "",
-    ].join("|");
-    merged.set(key, mergeUniverseTicker(merged.get(key), ticker));
+
+  for (const ticker of input.providerResults) {
+    const hydrated = hydrateUniverseTickerMetadata(ticker);
+    if (!input.requestedMarketSet.has(hydrated.market)) continue;
+    const key = buildUniverseTickerMergeKey(hydrated);
+    merged.set(key, mergeUniverseTicker(merged.get(key), hydrated));
   }
 
   const results = Array.from(merged.values())
     .sort((left, right) => {
       const scoreDiff =
-        scoreUniverseTicker(right, normalizedSearch) -
-        scoreUniverseTicker(left, normalizedSearch);
+        scoreUniverseTicker(right, input.normalizedSearch, input.requestedMarketSet) -
+        scoreUniverseTicker(left, input.normalizedSearch, input.requestedMarketSet);
       if (scoreDiff !== 0) return scoreDiff;
       const tickerDiff = left.ticker.localeCompare(right.ticker);
       if (tickerDiff !== 0) return tickerDiff;
-      return (left.primaryExchange ?? "").localeCompare(right.primaryExchange ?? "");
+      return (left.normalizedExchangeMic ?? "").localeCompare(right.normalizedExchangeMic ?? "");
     })
-    .slice(0, resultLimit);
+    .slice(0, input.resultLimit);
 
-  return { count: results.length, results };
+  return sanitizeUniverseSearchResponse({ count: results.length, results });
+}
+
+async function runUniverseSearchTask(
+  label: string,
+  budgetMs: number,
+  signal: AbortSignal | undefined,
+  task: (signal: AbortSignal) => Promise<{ count: number; results: UniverseTicker[] }>,
+): Promise<{
+  label: string;
+  elapsedMs: number;
+  result: { count: number; results: UniverseTicker[] } | null;
+}> {
+  const startedAt = Date.now();
+  const budgetSignal = createBudgetSignal(signal, budgetMs);
+
+  try {
+    const result = await task(budgetSignal.signal);
+    return {
+      label,
+      elapsedMs: Date.now() - startedAt,
+      result,
+    };
+  } catch (error) {
+    logger.debug(
+      { err: error, provider: label, elapsedMs: Date.now() - startedAt },
+      "ticker search provider did not return within interactive budget",
+    );
+    return {
+      label,
+      elapsedMs: Date.now() - startedAt,
+      result: null,
+    };
+  } finally {
+    budgetSignal.dispose();
+  }
+}
+
+function deriveCusipCandidates(query: string) {
+  const normalized = query.trim().toUpperCase();
+  const candidates = new Set<string>();
+  if (/^[A-Z0-9]{9}$/.test(normalized)) candidates.add(normalized);
+  if (/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(normalized) && !normalized.startsWith("BBG")) {
+    candidates.add(normalized.slice(2, 11));
+  }
+  return Array.from(candidates);
+}
+
+function resolveInteractiveIbkrMarkets(
+  input: SearchUniverseTickersInput,
+  normalizedSearch: string,
+  requestedMarkets: UniverseMarket[],
+) {
+  const hasExplicitMarketFilter = Boolean(input.market || input.markets?.length);
+  if (hasExplicitMarketFilter || !isTickerLikeSearch(normalizedSearch)) {
+    return requestedMarkets;
+  }
+
+  const preferredMarkets: UniverseMarket[] = ["stocks", "etf", "otc"];
+  return preferredMarkets.filter((market) => requestedMarkets.includes(market));
+}
+
+function hasIbkrTradableResult(response: UniverseSearchResponse) {
+  return response.results.some(
+    (row) => row.providers.includes("ibkr") && row.tradeProvider === "ibkr" && row.providerContractId,
+  );
+}
+
+async function runInteractiveUniverseSearch(input: {
+  searchInput: SearchUniverseTickersInput;
+  normalizedSearch: string;
+  requestedMarkets: UniverseMarket[];
+  requestedMarketSet: Set<UniverseMarket>;
+  resultLimit: number;
+  cacheKey: string;
+  signal: AbortSignal;
+}): Promise<UniverseSearchResponse> {
+  const startedAt = Date.now();
+  const searchLimit = Math.max(input.resultLimit * 3, 24);
+  const polygonConfig = getPolygonRuntimeConfig();
+  const polygonClient = polygonConfig ? getPolygonClient() : null;
+  const interactiveIbkrMarkets = resolveInteractiveIbkrMarkets(
+    input.searchInput,
+    input.normalizedSearch,
+    input.requestedMarkets,
+  );
+
+  const ibkrTask = runUniverseSearchTask(
+    "ibkr",
+    UNIVERSE_SEARCH_IBKR_BUDGET_MS,
+    input.signal,
+    (signal) =>
+      getIbkrClient().searchTickers({
+        search: input.normalizedSearch,
+        markets: interactiveIbkrMarkets.length ? interactiveIbkrMarkets : input.requestedMarkets,
+        limit: searchLimit,
+        signal,
+      }),
+  );
+  const polygonInteractiveTasks: Array<
+    Promise<{
+      label: string;
+      elapsedMs: number;
+      result: { count: number; results: UniverseTicker[] } | null;
+    }>
+  > = [];
+
+  if (polygonClient && isTickerLikeSearch(input.normalizedSearch)) {
+    polygonInteractiveTasks.push(
+      runUniverseSearchTask(
+        "polygon-exact",
+        UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS,
+        input.signal,
+        async (signal) => {
+          const ticker = await polygonClient.getUniverseTickerByTicker(
+            input.normalizedSearch,
+            signal,
+          );
+          return {
+            count: ticker ? 1 : 0,
+            results: ticker ? [ticker] : [],
+          };
+        },
+      ),
+    );
+  }
+
+  if (polygonClient) {
+    const polygonMarkets = POLYGON_SEARCH_MARKETS.filter(
+      (market) =>
+        input.requestedMarketSet.has(market) &&
+        (market === "stocks" || market === "etf" || market === "otc"),
+    );
+    for (const cusip of deriveCusipCandidates(input.normalizedSearch)) {
+      for (const market of polygonMarkets) {
+        polygonInteractiveTasks.push(
+          runUniverseSearchTask(
+            `polygon-cusip-${market}`,
+            UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS,
+            input.signal,
+            (signal) =>
+              polygonClient.searchUniverseTickers({
+                market,
+                markets: [market],
+                cusip,
+                active: input.searchInput.active,
+                limit: searchLimit,
+                signal,
+              }),
+          ),
+        );
+      }
+    }
+  }
+
+  const [ibkrResult, polygonInteractiveResults] = await Promise.all([
+    ibkrTask,
+    Promise.all(polygonInteractiveTasks),
+  ]);
+  const providerResults = [
+    ...(ibkrResult.result?.results ?? []),
+    ...polygonInteractiveResults.flatMap((result) => result.result?.results ?? []),
+  ];
+  const response = finalizeUniverseSearchResponse({
+    providerResults,
+    requestedMarketSet: input.requestedMarketSet,
+    normalizedSearch: input.normalizedSearch,
+    resultLimit: input.resultLimit,
+  });
+
+  if (hasIbkrTradableResult(response)) {
+    writeUniverseSearchCache(input.cacheKey, response);
+  }
+  startUniverseSearchBackgroundEnrichment({
+    ...input,
+    searchLimit,
+    seedResults: providerResults,
+    polygonClient,
+  });
+
+  logger.debug(
+    {
+      search: input.normalizedSearch,
+      elapsedMs: Date.now() - startedAt,
+      ibkrElapsedMs: ibkrResult.elapsedMs,
+      polygonInteractiveElapsedMs: polygonInteractiveResults.reduce(
+        (max, result) => Math.max(max, result.elapsedMs),
+        0,
+      ),
+      count: response.count,
+      firstTicker: response.results[0]?.ticker ?? null,
+      firstTradeProvider: response.results[0]?.tradeProvider ?? null,
+    },
+    "ticker search completed",
+  );
+
+  return response;
+}
+
+function startUniverseSearchBackgroundEnrichment(input: {
+  searchInput: SearchUniverseTickersInput;
+  normalizedSearch: string;
+  requestedMarkets: UniverseMarket[];
+  requestedMarketSet: Set<UniverseMarket>;
+  resultLimit: number;
+  cacheKey: string;
+  searchLimit: number;
+  seedResults: UniverseTicker[];
+  polygonClient: PolygonMarketDataClient | null;
+}) {
+  if (!input.polygonClient || input.normalizedSearch.length < 2) return;
+  if (universeSearchBackgroundInFlight.has(input.cacheKey)) return;
+
+  const polygonClient = input.polygonClient;
+  universeSearchBackgroundInFlight.add(input.cacheKey);
+
+  void (async () => {
+    const budgetSignal = createBudgetSignal(undefined, UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS);
+      const providerResults = [
+        ...input.seedResults,
+        ...(readUniverseSearchCache(input.cacheKey)?.results ?? []),
+      ];
+
+    try {
+      const polygonMarkets = POLYGON_SEARCH_MARKETS.filter((market) =>
+        input.requestedMarketSet.has(market),
+      );
+      const tasks: Array<Promise<{ count: number; results: UniverseTicker[] }>> = [];
+
+      if (isTickerLikeSearch(input.normalizedSearch)) {
+        tasks.push(
+          polygonClient
+            .getUniverseTickerByTicker(input.normalizedSearch, budgetSignal.signal)
+            .then((ticker) => ({
+              count: ticker ? 1 : 0,
+              results: ticker ? [ticker] : [],
+            })),
+        );
+      }
+
+      for (const cusip of deriveCusipCandidates(input.normalizedSearch)) {
+        for (const market of polygonMarkets.filter((candidate) =>
+          candidate === "stocks" || candidate === "etf" || candidate === "otc",
+        )) {
+          tasks.push(
+            polygonClient.searchUniverseTickers({
+              market,
+              markets: [market],
+              cusip,
+              active: input.searchInput.active,
+              limit: input.searchLimit,
+              signal: budgetSignal.signal,
+            }),
+          );
+        }
+      }
+
+      for (const market of polygonMarkets) {
+        tasks.push(
+          polygonClient.searchUniverseTickers({
+            search: input.normalizedSearch,
+            market,
+            markets: [market],
+            type: input.searchInput.type,
+            active: input.searchInput.active,
+            limit: input.searchLimit,
+            signal: budgetSignal.signal,
+          }),
+        );
+      }
+
+      const settled = await Promise.allSettled(tasks);
+      for (const result of settled) {
+        if (result.status === "fulfilled") {
+          providerResults.push(...result.value.results);
+        }
+      }
+
+      const response = finalizeUniverseSearchResponse({
+        providerResults,
+        requestedMarketSet: input.requestedMarketSet,
+        normalizedSearch: input.normalizedSearch,
+        resultLimit: input.resultLimit,
+      });
+      if (hasIbkrTradableResult(response)) {
+        writeUniverseSearchCache(input.cacheKey, response);
+      }
+    } catch (error) {
+      logger.debug(
+        { err: error, search: input.normalizedSearch },
+        "ticker search background enrichment failed",
+      );
+    } finally {
+      budgetSignal.dispose();
+      universeSearchBackgroundInFlight.delete(input.cacheKey);
+    }
+  })();
+}
+
+export async function searchUniverseTickers(
+  input: SearchUniverseTickersInput,
+  options: SearchUniverseTickersOptions = {},
+) {
+  const normalizedSearch = input.search?.trim() ?? "";
+  if (!normalizedSearch) return { count: 0, results: [] };
+
+  const resultLimit = Math.max(1, Math.min(input.limit ?? 12, 50));
+  const requestedMarkets = resolveRequestedUniverseMarkets(input);
+  const requestedMarketSet = new Set(requestedMarkets);
+  const cacheKey = getUniverseSearchCacheKey(input, requestedMarkets, resultLimit);
+  const cached = readUniverseSearchCache(cacheKey);
+  if (cached) return cached;
+
+  let flight = universeSearchInFlight.get(cacheKey);
+  if (!flight) {
+    const controller = new AbortController();
+    const interactiveBudget = createBudgetSignal(
+      controller.signal,
+      UNIVERSE_SEARCH_INTERACTIVE_BUDGET_MS,
+    );
+    flight = {
+      controller,
+      consumers: 0,
+      settled: false,
+      promise: runInteractiveUniverseSearch({
+        searchInput: input,
+        normalizedSearch,
+        requestedMarkets,
+        requestedMarketSet,
+        resultLimit,
+        cacheKey,
+        signal: interactiveBudget.signal,
+      }).finally(() => {
+        interactiveBudget.dispose();
+        const current = universeSearchInFlight.get(cacheKey);
+        if (current) current.settled = true;
+        universeSearchInFlight.delete(cacheKey);
+      }),
+    };
+    universeSearchInFlight.set(cacheKey, flight);
+  }
+
+  flight.consumers += 1;
+  try {
+    return await awaitWithAbort(flight.promise, options.signal);
+  } finally {
+    flight.consumers -= 1;
+    if (flight.consumers <= 0 && !flight.settled) {
+      flight.controller.abort();
+    }
+  }
 }
 
 type GetBarsInput = {
@@ -1117,6 +1906,7 @@ type GetBarsInput = {
   from?: Date;
   to?: Date;
   assetClass?: "equity" | "option";
+  market?: UniverseMarket;
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
@@ -1124,6 +1914,96 @@ type GetBarsInput = {
 };
 
 type GetBarsResult = Awaited<ReturnType<typeof getBarsImpl>>;
+
+const BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<Record<GetBarsInput["timeframe"], number>> = {
+  "1m": 20_000,
+  "5m": 20_000,
+  "15m": 15_000,
+  "1h": 10_000,
+  "1d": 5_000,
+};
+const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<Record<GetBarsInput["timeframe"], number>> = {
+  "1m": 5_000,
+  "5m": 5_000,
+  "15m": 5_000,
+  "1h": 5_000,
+  "1d": 1_000,
+};
+const DEFAULT_BARS_LIMIT = 200;
+const BROKER_RECENT_HISTORY_MS = 24 * 60 * 60 * 1_000;
+const BROKER_HISTORY_STEP_MS: Partial<Record<GetBarsInput["timeframe"], number>> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "1h": 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+};
+
+function shouldLimitBrokerHistoryToRecent(input: GetBarsInput): boolean {
+  return input.assetClass !== "option" && input.market !== "futures";
+}
+
+function sanitizeBarsLimit(input: GetBarsInput): number {
+  const rawLimit =
+    typeof input.limit === "number" && Number.isFinite(input.limit)
+      ? Math.floor(input.limit)
+      : DEFAULT_BARS_LIMIT;
+  const normalizedLimit = Math.max(1, rawLimit);
+  const caps =
+    input.assetClass === "option"
+      ? OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME
+      : BAR_LIMIT_CAPS_BY_TIMEFRAME;
+  const cap = caps[input.timeframe] ?? DEFAULT_BARS_LIMIT;
+
+  return Math.min(normalizedLimit, cap);
+}
+
+function sanitizeBarsInput(input: GetBarsInput): GetBarsInput {
+  return {
+    ...input,
+    limit: sanitizeBarsLimit(input),
+  };
+}
+
+function buildRecentBrokerHistoryInput(
+  input: GetBarsInput,
+  now: Date,
+): GetBarsInput | null {
+  if (!shouldLimitBrokerHistoryToRecent(input)) {
+    return input;
+  }
+
+  const stepMs = BROKER_HISTORY_STEP_MS[input.timeframe];
+  if (!stepMs) {
+    return input;
+  }
+
+  const requestedTo = input.to ?? now;
+  const brokerTo = new Date(Math.min(requestedTo.getTime(), now.getTime()));
+  const recentBoundaryMs = now.getTime() - BROKER_RECENT_HISTORY_MS;
+  if (brokerTo.getTime() < recentBoundaryMs) {
+    return null;
+  }
+
+  const explicitFromMs = input.from?.getTime();
+  const recentFromMs = Math.max(explicitFromMs ?? recentBoundaryMs, recentBoundaryMs);
+  const recentFrom = new Date(Math.min(recentFromMs, brokerTo.getTime()));
+  if (recentFrom.getTime() > brokerTo.getTime()) {
+    return null;
+  }
+
+  const expectedRecentBars = Math.max(
+    1,
+    Math.ceil((brokerTo.getTime() - recentFrom.getTime()) / stepMs) + 1,
+  );
+
+  return {
+    ...input,
+    from: recentFrom,
+    to: brokerTo,
+    limit: Math.min(input.limit ?? expectedRecentBars, expectedRecentBars),
+  };
+}
 
 // Coalesce identical /api/bars requests so multiple chart panels
 // (or refetches racing each other) share a single upstream IBKR/Polygon
@@ -1166,15 +2046,17 @@ function buildBarsCacheKey(input: GetBarsInput): string {
     from: input.from ? input.from.getTime() : null,
     to: input.to ? input.to.getTime() : null,
     assetClass: input.assetClass ?? null,
+    market: input.market ?? null,
     providerContractId: input.providerContractId ?? null,
     outsideRth: input.outsideRth ?? null,
     source: input.source ?? null,
-    allowHistoricalSynthesis: input.allowHistoricalSynthesis === true,
+    allowHistoricalSynthesis: input.allowHistoricalSynthesis ?? null,
   });
 }
 
 export async function getBars(input: GetBarsInput): Promise<GetBarsResult> {
-  const key = buildBarsCacheKey(input);
+  const sanitizedInput = sanitizeBarsInput(input);
+  const key = buildBarsCacheKey(sanitizedInput);
   const now = Date.now();
 
   const cached = barsCache.get(key);
@@ -1192,7 +2074,7 @@ export async function getBars(input: GetBarsInput): Promise<GetBarsResult> {
 
   const promise = (async () => {
     try {
-      const value = await getBarsImpl(input);
+      const value = await getBarsImpl(sanitizedInput);
       const settledAt = Date.now();
       barsCache.set(key, {
         value,
@@ -1212,7 +2094,9 @@ export async function getBars(input: GetBarsInput): Promise<GetBarsResult> {
 async function getBarsImpl(input: GetBarsInput) {
   const bridgeClient = getIbkrClient();
   const bridgeHealth = await bridgeClient.getHealth().catch(() => null);
-  const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;
+  const polygonConfig = getPolygonRuntimeConfig();
+  const polygonClient = polygonConfig ? getPolygonClient() : null;
+  const polygonBarsDelayed = polygonConfig?.baseUrl.includes("massive.com") ?? false;
   // Default to including extended hours across ALL timeframes so the "last close"
   // a chart shows is consistent regardless of the selected interval. Without this,
   // 1d returned RTH-only bars while 1m/5m/15m/1h returned extended-hours bars,
@@ -1227,26 +2111,33 @@ async function getBarsImpl(input: GetBarsInput) {
 
   if (isBrokerHistoryTimeframe) {
     try {
-      ibkrBars = await bridgeClient.getHistoricalBars({
-        symbol: input.symbol,
-        timeframe: input.timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
-        limit: input.limit,
-        from: input.from,
-        to: input.to,
-        assetClass: input.assetClass,
-        providerContractId: input.providerContractId,
-        outsideRth,
-        source: input.source,
-      });
+      const brokerHistoryInput = buildRecentBrokerHistoryInput(
+        input,
+        new Date(),
+      );
+      if (brokerHistoryInput) {
+        ibkrBars = await bridgeClient.getHistoricalBars({
+          symbol: brokerHistoryInput.symbol,
+          timeframe: brokerHistoryInput.timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
+          limit: brokerHistoryInput.limit,
+          from: brokerHistoryInput.from,
+          to: brokerHistoryInput.to,
+          assetClass: brokerHistoryInput.assetClass,
+          providerContractId: brokerHistoryInput.providerContractId,
+          outsideRth,
+          source: brokerHistoryInput.source,
+        });
+      }
     } catch (error) {
       ibkrBars = [];
     }
   }
   const desiredBars = Math.max(input.limit ?? ibkrBars.length ?? 0, 1);
-  const allowHistoricalSynthesis = input.allowHistoricalSynthesis === true;
+  const allowHistoricalSynthesis = input.allowHistoricalSynthesis !== false;
   const needsGapFill =
     allowHistoricalSynthesis &&
     input.assetClass !== "option" &&
+    input.market !== "futures" &&
     polygonClient &&
     (!isBrokerHistoryTimeframe ||
       (desiredBars > 0 && ibkrBars.length < desiredBars));
@@ -1281,7 +2172,7 @@ async function getBarsImpl(input: GetBarsInput) {
         providerContractId: string | null;
         outsideRth: boolean;
         partial: boolean;
-        transport: "client_portal" | "tws";
+        transport: "client_portal" | "tws" | "ibx";
         delayed: boolean;
       }
     >();
@@ -1298,7 +2189,7 @@ async function getBarsImpl(input: GetBarsInput) {
         outsideRth,
         partial: false,
         transport: bridgeHealth?.transport ?? "client_portal",
-        delayed: false,
+        delayed: polygonBarsDelayed,
       });
     });
     ibkrBars.forEach((bar) => {

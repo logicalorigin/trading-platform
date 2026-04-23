@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import { isHttpError } from "../../api-server/src/lib/errors";
@@ -23,6 +23,29 @@ function isZodError(error: unknown): error is ZodErrorLike {
       (error as ZodErrorLike).name === "ZodError" &&
       Array.isArray((error as ZodErrorLike).issues),
   );
+}
+
+function createRequestAbortSignal(req: Request, res: Response): AbortSignal {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+  const abortIfResponseDidNotFinish = () => {
+    if (!res.writableEnded) {
+      abort();
+    }
+  };
+
+  if (req.aborted) {
+    abort();
+  } else {
+    req.once("aborted", abort);
+    res.once("close", abortIfResponseDidNotFinish);
+  }
+
+  return controller.signal;
 }
 
 app.use((req, _res, next) => {
@@ -131,6 +154,110 @@ app.get("/quotes/snapshot", async (req, res) => {
   res.json({
     quotes: await ibkrBridgeService.getQuoteSnapshots(symbols),
   });
+});
+
+app.post("/quotes/prewarm", async (req, res) => {
+  const body = req.body as { symbols?: unknown };
+  const rawSymbols = Array.isArray(body.symbols)
+    ? body.symbols
+    : typeof body.symbols === "string"
+      ? body.symbols.split(",")
+      : [];
+  const symbols = Array.from(
+    new Set(
+      rawSymbols
+        .map((symbol) => String(symbol).trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+
+  await ibkrBridgeService.prewarmQuoteSubscriptions(symbols);
+  res.json({
+    symbols,
+    updatedAt: new Date().toISOString(),
+  });
+});
+
+app.get("/streams/quotes", async (req, res, next) => {
+  const rawSymbols = Array.isArray(req.query.symbols)
+    ? req.query.symbols.join(",")
+    : typeof req.query.symbols === "string"
+      ? req.query.symbols
+      : "";
+  const symbols = Array.from(
+    new Set(rawSymbols.split(",").map((symbol) => symbol.trim().toUpperCase()).filter(Boolean)),
+  );
+
+  if (!symbols.length) {
+    res.status(400).json({
+      error: "symbols query parameter is required",
+    });
+    return;
+  }
+
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write("retry: 5000\n\n");
+
+  let cleanedUp = false;
+  let unsubscribe: () => void = () => {};
+  let eventId = 1;
+
+  const writeEvent = (event: string, payload: unknown) => {
+    if (cleanedUp || res.destroyed) {
+      return;
+    }
+
+    res.write(
+      `id: ${eventId}\n` +
+        `event: ${event}\n` +
+        `data: ${JSON.stringify(payload)}\n\n`,
+    );
+    eventId += 1;
+  };
+
+  const heartbeat = setInterval(() => {
+    if (!cleanedUp && !res.destroyed) {
+      res.write(`: ping ${new Date().toISOString()}\n\n`);
+    }
+  }, 15_000);
+  heartbeat.unref?.();
+
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    clearInterval(heartbeat);
+    unsubscribe();
+    res.end();
+  };
+
+  req.on("close", cleanup);
+  req.on("aborted", cleanup);
+
+  try {
+    const nextUnsubscribe = await ibkrBridgeService.subscribeQuoteStream(symbols, (quote) => {
+      writeEvent("quotes", { quotes: [quote] });
+    });
+    if (cleanedUp) {
+      nextUnsubscribe();
+      return;
+    }
+
+    unsubscribe = nextUnsubscribe;
+    writeEvent("ready", {
+      symbols,
+      source: "ibkr-bridge",
+    });
+  } catch (error) {
+    cleanup();
+    next(error);
+  }
 });
 
 app.get("/bars", async (req, res) => {
@@ -356,11 +483,26 @@ app.get("/news", async (req, res) => {
 
 app.get("/universe/search", async (req, res) => {
   const search = typeof req.query.search === "string" ? req.query.search : undefined;
+  const market = typeof req.query.market === "string" ? req.query.market : undefined;
+  const marketsRaw = req.query.markets;
+  const markets =
+    typeof marketsRaw === "string"
+      ? marketsRaw.split(",").map((value) => value.trim()).filter(Boolean)
+      : Array.isArray(marketsRaw)
+        ? marketsRaw.flatMap((value) =>
+            typeof value === "string"
+              ? value.split(",").map((part) => part.trim()).filter(Boolean)
+              : [],
+          )
+        : undefined;
   const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
   res.json(
     await ibkrBridgeService.searchTickers({
       search,
+      market: market as Parameters<typeof ibkrBridgeService.searchTickers>[0]["market"],
+      markets: markets as Parameters<typeof ibkrBridgeService.searchTickers>[0]["markets"],
       limit: Number.isFinite(limit) ? limit : undefined,
+      signal: createRequestAbortSignal(req, res),
     }),
   );
 });

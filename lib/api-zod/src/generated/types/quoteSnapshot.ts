@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
+import type { QuoteSnapshotFreshness } from "./quoteSnapshotFreshness";
+import type { QuoteSnapshotLatency } from "./quoteSnapshotLatency";
 import type { QuoteSource } from "./quoteSource";
 
 export interface QuoteSnapshot {
@@ -27,5 +29,10 @@ export interface QuoteSnapshot {
   source: QuoteSource;
   transport: IbkrBridgeHealthTransport;
   delayed: boolean;
+  freshness?: QuoteSnapshotFreshness;
+  /** @nullable */
+  cacheAgeMs?: number | null;
+  /** @nullable */
+  latency?: QuoteSnapshotLatency;
   updatedAt: Date;
 }

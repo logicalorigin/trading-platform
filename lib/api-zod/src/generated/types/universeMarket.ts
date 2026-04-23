@@ -11,7 +11,9 @@ export type UniverseMarket =
 
 export const UniverseMarket = {
   stocks: "stocks",
+  etf: "etf",
   indices: "indices",
+  futures: "futures",
   fx: "fx",
   crypto: "crypto",
   otc: "otc",

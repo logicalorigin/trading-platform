@@ -705,6 +705,7 @@ export const ResearchChartWidgetHeader = ({
       >
         <button
           type="button"
+          data-testid={canSearch ? "chart-symbol-search-button" : undefined}
           onClick={canSearch ? onOpenSearch : undefined}
           style={{
             ...barButtonStyle({ theme, palette, dense }),

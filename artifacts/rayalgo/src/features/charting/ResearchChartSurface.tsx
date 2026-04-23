@@ -79,6 +79,7 @@ type ResearchDrawing = {
 
 type OverlayShape = {
   id: string;
+  dataTestId?: string;
   left: number;
   top: number;
   width: number;
@@ -123,6 +124,7 @@ type TradeBadgeOverlay = {
 
 type IndicatorBadgeOverlay = {
   id: string;
+  dataTestId?: string;
   left: number;
   top: number;
   text: string;
@@ -136,6 +138,7 @@ type IndicatorBadgeOverlay = {
 
 type IndicatorDotOverlay = {
   id: string;
+  dataTestId?: string;
   left: number;
   top: number;
   size: number;
@@ -145,6 +148,7 @@ type IndicatorDotOverlay = {
 
 type IndicatorDashboardOverlay = {
   id: string;
+  dataTestId?: string;
   position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   size: "compact" | "expanded" | "tiny" | "small" | "normal" | "large";
   title: string;
@@ -155,6 +159,23 @@ type IndicatorDashboardOverlay = {
   rows: Array<{ label: string; value: string; color?: string; detail?: string }>;
   mtf: Array<{ label: string; value: string; color: string; detail?: string }>;
 };
+
+const RAY_REPLICA_STRATEGY_KEY = "rayalgo-replica-smc-pro-v3";
+
+const toDataTestIdSegment = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "item";
+
+const buildRayReplicaOverlayTestId = (
+  strategy: string | undefined,
+  category: string,
+  value: string,
+): string | undefined =>
+  strategy === RAY_REPLICA_STRATEGY_KEY
+    ? `rayreplica-${category}-${toDataTestIdSegment(value)}`
+    : undefined;
 
 function resolveDashboardDensity(
   size: IndicatorDashboardOverlay["size"],
@@ -767,6 +788,99 @@ const resolveOverlayLabelPosition = (
 const resolveFiniteMetaNumber = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
+const clampCoordinate = (value: number, min: number, max: number): number => {
+  if (max < min) {
+    return min;
+  }
+
+  return Math.min(max, Math.max(min, value));
+};
+
+const clampVisualAnchor = (
+  value: number,
+  halfSize: number,
+  viewportSize: number,
+): number => {
+  if (viewportSize <= halfSize * 2) {
+    return viewportSize / 2;
+  }
+
+  return clampCoordinate(value, halfSize, viewportSize - halfSize);
+};
+
+const clipSpanToViewport = (
+  start: number,
+  end: number,
+  viewportSize: number,
+  minimumSize = 1,
+): { start: number; size: number } | null => {
+  if (
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    !Number.isFinite(viewportSize) ||
+    viewportSize <= 0
+  ) {
+    return null;
+  }
+
+  const rawStart = Math.min(start, end);
+  const rawEnd = Math.max(start, end);
+
+  if (rawEnd < 0 || rawStart > viewportSize) {
+    return null;
+  }
+
+  const clippedStart = clampCoordinate(rawStart, 0, viewportSize);
+  const clippedEnd = clampCoordinate(rawEnd, 0, viewportSize);
+  const size = Math.min(
+    viewportSize,
+    Math.max(minimumSize, clippedEnd - clippedStart),
+  );
+  const adjustedStart = clampCoordinate(clippedStart, 0, viewportSize - size);
+
+  return { start: adjustedStart, size };
+};
+
+const clipRectToViewport = ({
+  left,
+  right,
+  top,
+  bottom,
+  viewportWidth,
+  viewportHeight,
+  minimumWidth = 2,
+  minimumHeight = 2,
+}: {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  minimumWidth?: number;
+  minimumHeight?: number;
+}): { left: number; top: number; width: number; height: number } | null => {
+  const xSpan = clipSpanToViewport(left, right, viewportWidth, minimumWidth);
+  const ySpan = clipSpanToViewport(top, bottom, viewportHeight, minimumHeight);
+
+  if (!xSpan || !ySpan) {
+    return null;
+  }
+
+  return {
+    left: xSpan.start,
+    top: ySpan.start,
+    width: xSpan.size,
+    height: ySpan.size,
+  };
+};
+
+const estimateMonoTextWidth = (
+  text: string,
+  fontSize: number,
+  horizontalPadding: number,
+): number => text.length * fontSize * 0.68 + horizontalPadding * 2 + 2;
+
 const resolveBarSpacing = (chart: any, model: ChartModel): number => {
   const sample = model.chartBars.slice(-40);
   const diffs: number[] = [];
@@ -793,6 +907,7 @@ const buildWindowOverlays = (
   chart: any,
   model: ChartModel,
   theme: ResearchChartTheme,
+  viewportWidth: number,
   viewportHeight: number,
 ): OverlayShape[] => {
   const barSpacing = resolveBarSpacing(chart, model);
@@ -822,6 +937,12 @@ const buildWindowOverlays = (
         typeof rightBase === "number"
           ? rightBase + barSpacing
           : left + barSpacing;
+      const xSpan = clipSpanToViewport(left, right, viewportWidth, 2);
+
+      if (!xSpan) {
+        return result;
+      }
+
       const tone =
         indicatorWindow.tone ||
         (indicatorWindow.direction === "short" ? "bearish" : "bullish");
@@ -842,9 +963,14 @@ const buildWindowOverlays = (
 
       result.push({
         id: indicatorWindow.id,
-        left: Math.min(left, right),
+        dataTestId: buildRayReplicaOverlayTestId(
+          indicatorWindow.strategy,
+          "window",
+          indicatorWindow.tone || indicatorWindow.direction,
+        ),
+        left: xSpan.start,
         top: 0,
-        width: Math.max(2, Math.abs(right - left)),
+        width: xSpan.size,
         height: Math.max(0, viewportHeight),
         fill,
         border: isBackground ? "transparent" : border,
@@ -864,6 +990,8 @@ const buildZoneOverlays = (
   series: any,
   model: ChartModel,
   theme: ResearchChartTheme,
+  viewportWidth: number,
+  viewportHeight: number,
 ): OverlayShape[] => {
   const barSpacing = resolveBarSpacing(chart, model);
 
@@ -915,12 +1043,30 @@ const buildZoneOverlays = (
       const isFillBand = style === "fill-band";
 
       if (style === "line-overlay") {
+        const xSpan = clipSpanToViewport(left, right, viewportWidth, 2);
+        const rawLineTop = (top + bottom) / 2;
+
+        if (!xSpan || rawLineTop < 0 || rawLineTop > viewportHeight) {
+          return result;
+        }
+
+        const lineTop = clampCoordinate(
+          rawLineTop,
+          1,
+          Math.max(1, viewportHeight - 1),
+        );
+
         result.push({
           id: zone.id,
+          dataTestId: buildRayReplicaOverlayTestId(
+            zone.strategy,
+            "zone",
+            zone.zoneType || "line",
+          ),
           kind: "line",
-          left: Math.min(left, right),
-          top: (top + bottom) / 2,
-          width: Math.max(2, Math.abs(right - left)),
+          left: xSpan.start,
+          top: lineTop,
+          width: xSpan.size,
           height: 0,
           fill: "transparent",
           border: (meta.lineColor as string | undefined) || border,
@@ -951,19 +1097,43 @@ const buildZoneOverlays = (
         return result;
       }
 
+      const rawLeft = isFillBand
+        ? Math.min(left, right) - barSpacing / 2
+        : Math.min(left, right);
+      const rawRight = isFillBand
+        ? Math.max(left, right) + barSpacing / 2 + 1
+        : Math.max(left, right);
+      const rawTop = isFillBand
+        ? Math.min(top, bottom) - 0.5
+        : Math.min(top, bottom);
+      const rawBottom = isFillBand
+        ? Math.max(top, bottom) + 0.5
+        : Math.max(top, bottom);
+      const clippedRect = clipRectToViewport({
+        left: rawLeft,
+        right: rawRight,
+        top: rawTop,
+        bottom: rawBottom,
+        viewportWidth,
+        viewportHeight,
+      });
+
+      if (!clippedRect) {
+        return result;
+      }
+
       result.push({
         id: zone.id,
+        dataTestId: buildRayReplicaOverlayTestId(
+          zone.strategy,
+          "zone",
+          zone.zoneType || "box",
+        ),
         kind: "box",
-        left: isFillBand
-          ? Math.min(left, right) - barSpacing / 2
-          : Math.min(left, right),
-        top: isFillBand ? Math.min(top, bottom) - 0.5 : Math.min(top, bottom),
-        width: isFillBand
-          ? Math.max(2, Math.abs(right - left) + barSpacing + 1)
-          : Math.max(2, Math.abs(right - left)),
-        height: isFillBand
-          ? Math.max(2, Math.abs(bottom - top) + 1)
-          : Math.max(2, Math.abs(bottom - top)),
+        left: clippedRect.left,
+        top: clippedRect.top,
+        width: clippedRect.width,
+        height: clippedRect.height,
         fill,
         border,
         borderStyle: resolveOverlayBorderStyle(meta.lineStyle),
@@ -989,6 +1159,7 @@ const buildVerticalDrawingOverlays = (
   chart: any,
   drawings: ResearchDrawing[],
   theme: ResearchChartTheme,
+  viewportWidth: number,
 ): OverlayShape[] =>
   drawings.reduce<OverlayShape[]>((result, drawing, index) => {
     if (drawing.type !== "vertical" || typeof drawing.time !== "number") {
@@ -1000,9 +1171,11 @@ const buildVerticalDrawingOverlays = (
       return result;
     }
 
+    const clippedX = clampCoordinate(x, 0, Math.max(0, viewportWidth - 1));
+
     result.push({
       id: `vertical-${index}-${drawing.time}`,
-      left: x,
+      left: clippedX,
       top: 0,
       width: 1,
       height: 0,
@@ -1018,6 +1191,8 @@ const buildBoxDrawingOverlays = (
   series: any,
   drawings: ResearchDrawing[],
   theme: ResearchChartTheme,
+  viewportWidth: number,
+  viewportHeight: number,
 ): OverlayShape[] =>
   drawings.reduce<OverlayShape[]>((result, drawing, index) => {
     if (
@@ -1044,12 +1219,25 @@ const buildBoxDrawingOverlays = (
       return result;
     }
 
+    const clippedRect = clipRectToViewport({
+      left: leftCoordinate,
+      right: rightCoordinate,
+      top: topCoordinate,
+      bottom: bottomCoordinate,
+      viewportWidth,
+      viewportHeight,
+    });
+
+    if (!clippedRect) {
+      return result;
+    }
+
     result.push({
       id: `box-${index}-${drawing.fromTime}-${drawing.toTime}`,
-      left: Math.min(leftCoordinate, rightCoordinate),
-      top: Math.min(topCoordinate, bottomCoordinate),
-      width: Math.max(2, Math.abs(rightCoordinate - leftCoordinate)),
-      height: Math.max(2, Math.abs(bottomCoordinate - topCoordinate)),
+      left: clippedRect.left,
+      top: clippedRect.top,
+      width: clippedRect.width,
+      height: clippedRect.height,
       fill: withAlpha(theme.amber, "16"),
       border: withAlpha(theme.amber, "a8"),
       label: "BOX",
@@ -1087,9 +1275,6 @@ const buildTradeMarkers = (model: ChartModel, theme: ResearchChartTheme) => {
     (left, right) => left.time - right.time,
   );
 };
-
-const clampCoordinate = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value));
 
 const buildTradeMarkerTargets = (
   chart: any,
@@ -1243,20 +1428,25 @@ const buildSelectedTradeOverlays = (
   const resolvedEntryBadgeTop = hasEntryBadge ? entryBadgeTop : 0;
   const resolvedExitAnchorX = hasExitBadge ? exitAnchorX : 0;
   const resolvedExitBadgeTop = hasExitBadge ? exitBadgeTop : 0;
+  const entryText = `ENTRY ${typeof activeTrade.entryPrice === "number" ? activeTrade.entryPrice.toFixed(2) : "—"}`;
+  const exitText = `EXIT ${typeof activeTrade.exitPrice === "number" ? activeTrade.exitPrice.toFixed(2) : "—"}`;
+  const entryBadgeWidth = estimateMonoTextWidth(entryText, 10, 7);
+  const exitBadgeWidth = estimateMonoTextWidth(exitText, 10, 7);
+  const tradeBadgeHeight = 24;
   const entryBadge = hasEntryBadge
     ? {
         id: `${activeTrade.tradeSelectionId}-entry`,
-        left: clampCoordinate(
+        left: clampVisualAnchor(
           resolvedEntryAnchorX,
-          60,
-          Math.max(60, viewportWidth - 60),
+          entryBadgeWidth / 2,
+          viewportWidth,
         ),
-        top: clampCoordinate(
+        top: clampVisualAnchor(
           resolvedEntryBadgeTop,
-          18,
-          Math.max(18, viewportHeight - 18),
+          tradeBadgeHeight / 2,
+          viewportHeight,
         ),
-        text: `ENTRY ${typeof activeTrade.entryPrice === "number" ? activeTrade.entryPrice.toFixed(2) : "—"}`,
+        text: entryText,
         color: withAlpha(theme.amber, "20"),
         borderColor: theme.amber,
       }
@@ -1264,17 +1454,17 @@ const buildSelectedTradeOverlays = (
   const exitBadge = hasExitBadge
     ? {
         id: `${activeTrade.tradeSelectionId}-exit`,
-        left: clampCoordinate(
+        left: clampVisualAnchor(
           resolvedExitAnchorX,
-          60,
-          Math.max(60, viewportWidth - 60),
+          exitBadgeWidth / 2,
+          viewportWidth,
         ),
-        top: clampCoordinate(
+        top: clampVisualAnchor(
           resolvedExitBadgeTop,
-          18,
-          Math.max(18, viewportHeight - 18),
+          tradeBadgeHeight / 2,
+          viewportHeight,
         ),
-        text: `EXIT ${typeof activeTrade.exitPrice === "number" ? activeTrade.exitPrice.toFixed(2) : "—"}`,
+        text: exitText,
         color: profitable
           ? withAlpha(theme.green, "20")
           : withAlpha(theme.red, "20"),
@@ -1289,10 +1479,10 @@ const buildSelectedTradeOverlays = (
     exitAnchorX >= entryAnchorX
       ? {
           color: profitable ? theme.green : theme.red,
-          x1: entryAnchorX,
-          y1: entryAnchorY,
-          x2: exitAnchorX,
-          y2: exitAnchorY,
+          x1: clampCoordinate(entryAnchorX, 0, viewportWidth),
+          y1: clampCoordinate(entryAnchorY, 0, viewportHeight),
+          x2: clampCoordinate(exitAnchorX, 0, viewportWidth),
+          y2: clampCoordinate(exitAnchorY, 0, viewportHeight),
         }
       : null;
   const thresholdSegments =
@@ -1316,6 +1506,12 @@ const buildSelectedTradeOverlays = (
           return result;
         }
 
+        const xSpan = clipSpanToViewport(left, right, viewportWidth, 2);
+
+        if (!xSpan || top < 0 || top > viewportHeight) {
+          return result;
+        }
+
         const color =
           segment.kind === "take_profit"
             ? theme.green
@@ -1325,9 +1521,9 @@ const buildSelectedTradeOverlays = (
 
         result.push({
           id: segment.id,
-          left: Math.min(left, right),
-          top,
-          width: Math.max(2, Math.abs(right - left)),
+          left: xSpan.start,
+          top: clampCoordinate(top, 1, Math.max(1, viewportHeight - 1)),
+          width: xSpan.size,
           style: segment.style,
           color,
           label: segment.label,
@@ -1368,6 +1564,9 @@ const buildIndicatorEventOverlays = (
     if (overlay === "dashboard") {
       dashboard = {
         id: event.id,
+        dataTestId:
+          (meta.dataTestId as string | undefined) ||
+          buildRayReplicaOverlayTestId(event.strategy, "dashboard", "panel"),
         position:
           (meta.position as IndicatorDashboardOverlay["position"] | undefined) ||
           "bottom-right",
@@ -1414,21 +1613,53 @@ const buildIndicatorEventOverlays = (
     }
 
     if (overlay === "badge") {
+      const variant =
+        (meta.variant as IndicatorBadgeOverlay["variant"] | undefined) ||
+        "signal";
+      const placement =
+        (meta.placement as IndicatorBadgeOverlay["placement"] | undefined) ||
+        "center";
+      const text = event.label || "";
+      const isSignal = variant === "signal";
+      const isTriangle = variant === "triangle";
+      const isStructure = variant === "structure";
+      const fontSize = isSignal ? 10 : isTriangle ? 12 : 9;
+      const horizontalPadding = isSignal
+        ? 10
+        : isTriangle
+          ? 0
+          : isStructure
+            ? 7
+            : 8;
+      const estimatedWidth = estimateMonoTextWidth(
+        text,
+        fontSize,
+        horizontalPadding,
+      );
+      const badgeHeight = isSignal ? 24 : isTriangle ? 16 : 18;
+      const arrowClearance = meta.arrow ? 6 : 0;
+      const badgeClearance = badgeHeight + arrowClearance;
+      const clampedTop =
+        placement === "above"
+          ? clampCoordinate(y, badgeClearance + 8, viewportHeight)
+          : placement === "below"
+            ? clampCoordinate(y, 0, Math.max(0, viewportHeight - badgeClearance - 8))
+            : clampVisualAnchor(y, badgeClearance / 2, viewportHeight);
+
       badges.push({
         id: event.id,
-        left: clampCoordinate(x, 24, Math.max(24, viewportWidth - 24)),
-        top: clampCoordinate(y, 12, Math.max(12, viewportHeight - 12)),
-        text: event.label || "",
+        dataTestId:
+          (meta.dataTestId as string | undefined) ||
+          buildRayReplicaOverlayTestId(event.strategy, "badge", event.eventType),
+        left: clampVisualAnchor(x, estimatedWidth / 2, viewportWidth),
+        top: clampedTop,
+        text,
         background: (meta.background as string | undefined) || "#111827",
         borderColor: (meta.borderColor as string | undefined) || "#9ca3af",
         textColor: (meta.textColor as string | undefined) || "#ffffff",
-        placement:
-          (meta.placement as IndicatorBadgeOverlay["placement"] | undefined) ||
-          "center",
+        placement,
         arrow: meta.arrow as IndicatorBadgeOverlay["arrow"] | undefined,
-        variant:
-          (meta.variant as IndicatorBadgeOverlay["variant"] | undefined) ||
-          "signal",
+        variant,
       });
       return;
     }
@@ -1438,10 +1669,14 @@ const buildIndicatorEventOverlays = (
         typeof meta.size === "number" && Number.isFinite(meta.size)
           ? meta.size
           : 8;
+      const visualRadius = size / 2 + 2;
       dots.push({
         id: event.id,
-        left: clampCoordinate(x, size / 2, Math.max(size / 2, viewportWidth - size / 2)),
-        top: clampCoordinate(y, size / 2, Math.max(size / 2, viewportHeight - size / 2)),
+        dataTestId:
+          (meta.dataTestId as string | undefined) ||
+          buildRayReplicaOverlayTestId(event.strategy, "dot", event.eventType),
+        left: clampVisualAnchor(x, visualRadius, viewportWidth),
+        top: clampVisualAnchor(y, visualRadius, viewportHeight),
         size,
         color: (meta.color as string | undefined) || "#ffffff",
         borderColor: (meta.borderColor as string | undefined) || "#ffffff",
@@ -1463,11 +1698,15 @@ const syncStudySeries = (
   specs.forEach((spec) => {
     const existing = nextRegistry[spec.key];
     const SeriesCtor = SERIES_TYPE_MAP[spec.seriesType];
-    const seriesData = spec.data.map((point) =>
-      point.color
+    const seriesData = spec.data.map((point) => {
+      if (!Number.isFinite(point.value)) {
+        return { time: point.time };
+      }
+
+      return point.color
         ? { time: point.time, value: point.value, color: point.color }
-        : { time: point.time, value: point.value },
-    );
+        : { time: point.time, value: point.value };
+    });
 
     if (
       !existing ||
@@ -1616,6 +1855,7 @@ export const ResearchChartSurface = ({
   const legendRef = useRef<HTMLDivElement | null>(null);
   const drawModeHintRef = useRef<HTMLDivElement | null>(null);
   const [rootWidth, setRootWidth] = useState(0);
+  const [plotSize, setPlotSize] = useState({ width: 0, height: 0 });
   const [toolbarHeight, setToolbarHeight] = useState(0);
   const [legendHeight, setLegendHeight] = useState(0);
   const [drawModeHintHeight, setDrawModeHintHeight] = useState(0);
@@ -2438,7 +2678,13 @@ export const ResearchChartSurface = ({
     const viewportWidth = containerRef.current.clientWidth;
     syncOverlayState(
       setWindowOverlays,
-      buildWindowOverlays(chartRef.current, model, theme, viewportHeight),
+      buildWindowOverlays(
+        chartRef.current,
+        model,
+        theme,
+        viewportWidth,
+        viewportHeight,
+      ),
     );
     syncOverlayState(
       setZoneOverlays,
@@ -2447,11 +2693,18 @@ export const ResearchChartSurface = ({
         activePriceSeriesRef.current,
         model,
         theme,
+        viewportWidth,
+        viewportHeight,
       ),
     );
     syncOverlayState(
       setVerticalDrawingOverlays,
-      buildVerticalDrawingOverlays(chartRef.current, drawings, theme),
+      buildVerticalDrawingOverlays(
+        chartRef.current,
+        drawings,
+        theme,
+        viewportWidth,
+      ),
     );
     syncOverlayState(
       setBoxDrawingOverlays,
@@ -2460,6 +2713,8 @@ export const ResearchChartSurface = ({
         activePriceSeriesRef.current,
         drawings,
         theme,
+        viewportWidth,
+        viewportHeight,
       ),
     );
     syncTradeMarkerTargetsState(
@@ -2505,6 +2760,9 @@ export const ResearchChartSurface = ({
     model.indicatorWindows,
     model.indicatorZones,
     overlayRevision,
+    plotSize.height,
+    plotSize.width,
+    rootWidth,
     scaleMode,
     showVolume,
     theme.amber,
@@ -2589,6 +2847,30 @@ export const ResearchChartSurface = ({
     watchHeight(toolbarRef.current, setToolbarHeight);
     watchHeight(legendRef.current, setLegendHeight);
     watchHeight(drawModeHintRef.current, setDrawModeHintHeight);
+
+    const plotElement = containerRef.current;
+    if (plotElement) {
+      const updatePlotSize = () => {
+        const rect = plotElement.getBoundingClientRect();
+        const nextWidth = Math.ceil(rect.width);
+        const nextHeight = Math.ceil(rect.height);
+
+        setPlotSize((current) =>
+          current.width === nextWidth && current.height === nextHeight
+            ? current
+            : { width: nextWidth, height: nextHeight },
+        );
+      };
+      updatePlotSize();
+
+      const observer = new ResizeObserver(() => {
+        updatePlotSize();
+      });
+      observer.observe(plotElement);
+      observers.push(observer);
+    } else {
+      setPlotSize({ width: 0, height: 0 });
+    }
 
     return () => {
       observers.forEach((observer) => observer.disconnect());
@@ -3105,6 +3387,7 @@ export const ResearchChartSurface = ({
         <>
           <div
             ref={containerRef}
+            data-testid={dataTestId ? `${dataTestId}-plot` : undefined}
             style={{
               position: "absolute",
               top: chartInsetTop,
@@ -3128,6 +3411,7 @@ export const ResearchChartSurface = ({
           selectedTradeExitBadge ||
           pendingBoxAnchor ? (
             <div
+              data-testid={dataTestId ? `${dataTestId}-overlay-layer` : undefined}
               style={{
                 position: "absolute",
                 top: chartInsetTop,
@@ -3135,12 +3419,14 @@ export const ResearchChartSurface = ({
                 right: 0,
                 bottom: chartInsetBottom,
                 pointerEvents: "none",
-                overflow: "visible",
+                overflow: "hidden",
+                zIndex: 5,
               }}
             >
               {windowOverlays.map((overlay) => (
                 <div
                   key={`window-${overlay.id}`}
+                  data-testid={overlay.dataTestId}
                   style={{
                     position: "absolute",
                     left: overlay.left,
@@ -3148,6 +3434,7 @@ export const ResearchChartSurface = ({
                     width: overlay.width,
                     height: overlay.height,
                     background: overlay.fill,
+                    boxSizing: "border-box",
                     borderLeft:
                       overlay.borderVisible === false
                         ? "none"
@@ -3178,6 +3465,7 @@ export const ResearchChartSurface = ({
                 overlay.kind === "line" ? (
                   <div
                     key={`zone-${overlay.id}`}
+                    data-testid={overlay.dataTestId}
                     style={{
                       position: "absolute",
                       left: overlay.left,
@@ -3231,6 +3519,7 @@ export const ResearchChartSurface = ({
                 ) : (
                   <div
                     key={`zone-${overlay.id}`}
+                    data-testid={overlay.dataTestId}
                     style={{
                       position: "absolute",
                       left: overlay.left,
@@ -3238,6 +3527,7 @@ export const ResearchChartSurface = ({
                       width: overlay.width,
                       height: overlay.height,
                       background: overlay.fill,
+                      boxSizing: "border-box",
                       border:
                         overlay.borderVisible === false
                           ? "none"
@@ -3297,6 +3587,7 @@ export const ResearchChartSurface = ({
                     width: overlay.width,
                     height: overlay.height,
                     background: overlay.fill,
+                    boxSizing: "border-box",
                     border: `1px dashed ${overlay.border}`,
                     borderRadius: 4,
                     overflow: "hidden",
@@ -3351,6 +3642,7 @@ export const ResearchChartSurface = ({
               {indicatorDotOverlays.map((overlay) => (
                 <div
                   key={`indicator-dot-${overlay.id}`}
+                  data-testid={overlay.dataTestId}
                   style={{
                     position: "absolute",
                     left: overlay.left,
@@ -3359,6 +3651,7 @@ export const ResearchChartSurface = ({
                     height: overlay.size,
                     transform: "translate(-50%, -50%)",
                     borderRadius: 999,
+                    boxSizing: "border-box",
                     background: overlay.color,
                     border: `1px solid ${overlay.borderColor}`,
                     boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
@@ -3408,6 +3701,7 @@ export const ResearchChartSurface = ({
                 return (
                   <div
                     key={`indicator-badge-${overlay.id}`}
+                    data-testid={overlay.dataTestId}
                     style={{
                       position: "absolute",
                       left: overlay.left,
@@ -3452,14 +3746,15 @@ export const ResearchChartSurface = ({
               })}
               {indicatorDashboardOverlay ? (
                 <div
+                  data-testid={indicatorDashboardOverlay.dataTestId}
                   style={{
                     position: "absolute",
                     ...(indicatorDashboardOverlay.position.includes("top")
                       ? { top: topChromeClearance }
-                      : { bottom: 12 }),
+                      : { bottom: compact ? 42 : 36 }),
                     ...(indicatorDashboardOverlay.position.includes("left")
                       ? { left: 12 }
-                      : { right: 12 }),
+                      : { right: compact ? 54 : 62 }),
                     ...(() => {
                       const density = resolveDashboardDensity(
                         indicatorDashboardOverlay.size,
@@ -3474,8 +3769,13 @@ export const ResearchChartSurface = ({
                     background: withAlpha("#000000", "b3"),
                     border: `1px solid ${withAlpha("#9ca3af", "66")}`,
                     borderRadius: 0,
+                    boxSizing: "border-box",
                     color: "#ffffff",
                     boxShadow: "none",
+                    maxWidth: indicatorDashboardOverlay.position.includes("left")
+                      ? "calc(100% - 24px)"
+                      : `calc(100% - ${(compact ? 54 : 62) + 12}px)`,
+                    zIndex: 6,
                   }}
                 >
                   <div
@@ -3607,7 +3907,7 @@ export const ResearchChartSurface = ({
                   style={{
                     position: "absolute",
                     inset: 0,
-                    overflow: "visible",
+                    overflow: "hidden",
                   }}
                 >
                   <line
@@ -3661,6 +3961,7 @@ export const ResearchChartSurface = ({
                     width: target.size,
                     height: target.size,
                     borderRadius: 999,
+                    boxSizing: "border-box",
                     border: `1px solid ${target.borderColor}`,
                     background: target.color,
                     color: target.borderColor,

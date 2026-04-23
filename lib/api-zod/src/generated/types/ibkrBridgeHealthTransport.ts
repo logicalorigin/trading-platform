@@ -12,4 +12,5 @@ export type IbkrBridgeHealthTransport =
 export const IbkrBridgeHealthTransport = {
   client_portal: "client_portal",
   tws: "tws",
+  ibx: "ibx",
 } as const;

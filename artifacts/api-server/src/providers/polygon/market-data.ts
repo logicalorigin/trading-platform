@@ -17,6 +17,19 @@ import type { PolygonRuntimeConfig } from "../../lib/runtime";
 type BarTimeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "1d";
 type OptionRight = "call" | "put";
 type FlowSentiment = "bullish" | "bearish" | "neutral";
+const POLYGON_TICKER_LOGO_CACHE_TTL_MS = 10 * 60 * 1_000;
+export type UniverseMarket =
+  | "stocks"
+  | "etf"
+  | "indices"
+  | "futures"
+  | "fx"
+  | "crypto"
+  | "otc";
+export type MarketDataProvider = "ibkr" | "polygon";
+export type UniverseTickerContractMeta =
+  | Record<string, string | number | boolean | null>
+  | null;
 
 export type NewsArticle = {
   id: string;
@@ -39,7 +52,13 @@ export type NewsArticle = {
 export type UniverseTicker = {
   ticker: string;
   name: string;
-  market: "stocks" | "indices" | "fx" | "crypto" | "otc";
+  market: UniverseMarket;
+  rootSymbol: string | null;
+  normalizedExchangeMic: string | null;
+  exchangeDisplay: string | null;
+  logoUrl: string | null;
+  contractDescription: string | null;
+  contractMeta: UniverseTickerContractMeta;
   locale: string | null;
   type: string | null;
   active: boolean;
@@ -49,7 +68,10 @@ export type UniverseTicker = {
   compositeFigi: string | null;
   shareClassFigi: string | null;
   lastUpdatedAt: Date | null;
-  provider?: "ibkr" | "polygon" | null;
+  provider: MarketDataProvider | null;
+  providers: MarketDataProvider[];
+  tradeProvider: MarketDataProvider | null;
+  dataProviderPreference: MarketDataProvider | null;
   providerContractId?: string | null;
 };
 
@@ -142,6 +164,9 @@ const TIMEFRAME_TO_POLYGON_RANGE: Record<
 };
 
 const MASSIVE_DELAYED_INTRADAY_LAG_MS = 15 * 60 * 1_000;
+const AGGREGATE_BASE_LIMIT_MAX = 50_000;
+const INTRADAY_AGGREGATE_WINDOW_MS = 31 * 24 * 60 * 60 * 1_000;
+const AGGREGATE_CHUNK_MAX = 60;
 
 function isIntradayTimeframe(timeframe: BarTimeframe): boolean {
   return timeframe !== "1d";
@@ -684,6 +709,33 @@ function mapNewsArticle(article: unknown, preferredTicker?: string): NewsArticle
   };
 }
 
+function mapPolygonUniverseMarket(
+  market: string,
+  type: string | null,
+): UniverseMarket | null {
+  const normalizedMarket = market.trim().toLowerCase();
+  const normalizedType = type?.trim().toUpperCase() ?? "";
+
+  if (
+    normalizedMarket === "stocks" &&
+    ["ETF", "ETN", "ETV", "ETS", "ETP"].includes(normalizedType)
+  ) {
+    return "etf";
+  }
+
+  if (
+    normalizedMarket === "stocks" ||
+    normalizedMarket === "indices" ||
+    normalizedMarket === "fx" ||
+    normalizedMarket === "crypto" ||
+    normalizedMarket === "otc"
+  ) {
+    return normalizedMarket;
+  }
+
+  return null;
+}
+
 function mapUniverseTicker(result: unknown): UniverseTicker | null {
   const record = asRecord(result);
 
@@ -694,35 +746,52 @@ function mapUniverseTicker(result: unknown): UniverseTicker | null {
   const ticker = asString(record["ticker"]);
   const name = asString(record["name"]);
   const market = asString(record["market"]);
+  const type = asString(record["type"]);
+  const mappedMarket = market ? mapPolygonUniverseMarket(market, type) : null;
 
-  if (
-    !ticker ||
-    !name ||
-    !market ||
-    !["stocks", "indices", "fx", "crypto", "otc"].includes(market)
-  ) {
+  if (!ticker || !name || !mappedMarket) {
     return null;
   }
 
+  const normalizedTicker = normalizeSymbol(ticker);
+  const primaryExchange = asString(record["primary_exchange"]);
+
   return {
-    ticker: normalizeSymbol(ticker),
+    ticker: normalizedTicker,
     name,
-    market: market as UniverseTicker["market"],
+    market: mappedMarket,
+    rootSymbol: normalizedTicker.split(/[./:-]/)[0] || normalizedTicker,
+    normalizedExchangeMic: primaryExchange,
+    exchangeDisplay: primaryExchange,
+    logoUrl: null,
+    contractDescription: name,
+    contractMeta: {
+      polygonMarket: market,
+      polygonType: type,
+    },
     locale: asString(record["locale"]),
-    type: asString(record["type"]),
+    type,
     active: record["active"] !== false,
-    primaryExchange: asString(record["primary_exchange"]),
+    primaryExchange,
     currencyName: asString(record["currency_name"]),
     cik: asString(record["cik"]),
     compositeFigi: asString(record["composite_figi"]),
     shareClassFigi: asString(record["share_class_figi"]),
     lastUpdatedAt: toDate(record["last_updated_utc"]),
     provider: "polygon",
+    providers: ["polygon"],
+    tradeProvider: null,
+    dataProviderPreference: "polygon",
     providerContractId: null,
   };
 }
 
 export class PolygonMarketDataClient {
+  private readonly tickerLogoCache = new Map<
+    string,
+    { expiresAt: number; logoUrl: string | null }
+  >();
+
   constructor(private readonly config: PolygonRuntimeConfig) {}
 
   private buildUrl(pathOrUrl: string, params: Record<string, unknown> = {}): URL {
@@ -783,21 +852,70 @@ export class PolygonMarketDataClient {
       : rangeConfig.stepMs * desiredBars;
     const from =
       input.from ?? new Date(to.getTime() - lookbackMs);
-    const baseAggregateLimit = Math.min(50_000, resolveAggregateBaseLimit(input.timeframe, desiredBars));
+    const normalizedSymbol = normalizeSymbol(input.symbol);
+    const fetchAggregateWindow = async (
+      windowFrom: Date,
+      windowTo: Date,
+    ): Promise<BarSnapshot[]> => {
+      const approximateBars = Math.max(
+        1,
+        Math.ceil(
+          Math.max(rangeConfig.stepMs, windowTo.getTime() - windowFrom.getTime()) /
+            rangeConfig.stepMs,
+        ) + 1,
+      );
+      const baseAggregateLimit = Math.min(
+        AGGREGATE_BASE_LIMIT_MAX,
+        resolveAggregateBaseLimit(input.timeframe, approximateBars),
+      );
+      const url = this.buildUrl(
+        `/v2/aggs/ticker/${encodeURIComponent(normalizedSymbol)}/range/${rangeConfig.multiplier}/${rangeConfig.timespan}/${windowFrom.getTime()}/${windowTo.getTime()}`,
+        {
+          adjusted: true,
+          sort: "asc",
+          limit: baseAggregateLimit,
+        },
+      );
+      const payload = await fetchJson<unknown>(url);
+      const record = asRecord(payload);
 
-    const url = this.buildUrl(
-      `/v2/aggs/ticker/${encodeURIComponent(normalizeSymbol(input.symbol))}/range/${rangeConfig.multiplier}/${rangeConfig.timespan}/${from.getTime()}/${to.getTime()}`,
-      {
-        adjusted: true,
-        sort: "asc",
-        limit: baseAggregateLimit,
-      },
-    );
+      return compact(asArray(record?.["results"]).map(mapAggregateBar));
+    };
 
-    const payload = await fetchJson<unknown>(url);
-    const record = asRecord(payload);
+    const needsChunking =
+      isIntradayTimeframe(input.timeframe) &&
+      (to.getTime() - from.getTime() > INTRADAY_AGGREGATE_WINDOW_MS ||
+        resolveAggregateBaseLimit(input.timeframe, desiredBars) >
+          AGGREGATE_BASE_LIMIT_MAX);
 
-    return compact(asArray(record?.["results"]).map(mapAggregateBar)).slice(-desiredBars);
+    if (!needsChunking) {
+      return (await fetchAggregateWindow(from, to)).slice(-desiredBars);
+    }
+
+    const barsByTimestamp = new Map<number, BarSnapshot>();
+    let cursor = new Date(to);
+    let chunkCount = 0;
+
+    while (
+      cursor.getTime() > from.getTime() &&
+      barsByTimestamp.size < desiredBars &&
+      chunkCount < AGGREGATE_CHUNK_MAX
+    ) {
+      const windowFrom = new Date(
+        Math.max(from.getTime(), cursor.getTime() - INTRADAY_AGGREGATE_WINDOW_MS),
+      );
+      const chunkBars = await fetchAggregateWindow(windowFrom, cursor);
+      chunkBars.forEach((bar) => {
+        barsByTimestamp.set(bar.timestamp.getTime(), bar);
+      });
+
+      cursor = new Date(windowFrom.getTime() - rangeConfig.stepMs);
+      chunkCount += 1;
+    }
+
+    return Array.from(barsByTimestamp.values())
+      .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
+      .slice(-desiredBars);
   }
 
   async getNews(input: {
@@ -822,28 +940,156 @@ export class PolygonMarketDataClient {
   async searchUniverseTickers(input: {
     search?: string;
     market?: UniverseTicker["market"];
+    markets?: UniverseTicker["market"][];
     type?: string;
+    cusip?: string;
     active?: boolean;
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<{ count: number; results: UniverseTicker[] }> {
+    const requestedMarkets = new Set(input.markets ?? (input.market ? [input.market] : []));
+    const polygonMarket =
+      input.market === "etf"
+        ? "stocks"
+        : input.market === "futures"
+          ? null
+          : input.market;
+    const polygonType =
+      input.market === "etf" ? input.type ?? "ETF" : asString(input.type);
+
+    if (polygonMarket === null) {
+      return { count: 0, results: [] };
+    }
+
     const payload = await fetchJson<unknown>(
       this.buildUrl("/v3/reference/tickers", {
-        search: asString(input.search),
-        market: input.market,
-        type: asString(input.type),
+        search: input.cusip ? undefined : asString(input.search),
+        cusip: asString(input.cusip),
+        market: polygonMarket,
+        type: polygonType,
         active: input.active,
         sort: "ticker",
         order: "asc",
         limit: Math.max(1, Math.min(input.limit ?? 12, 50)),
       }),
+      { signal: input.signal },
     );
     const record = asRecord(payload);
-    const results = compact(asArray(record?.["results"]).map(mapUniverseTicker));
+    const results = compact(asArray(record?.["results"]).map(mapUniverseTicker))
+      .filter((ticker) => !requestedMarkets.size || requestedMarkets.has(ticker.market))
+      .map((ticker) =>
+        input.cusip
+          ? {
+              ...ticker,
+              contractMeta: {
+                ...(ticker.contractMeta ?? {}),
+                identifierMatch: true,
+                identifierType: "cusip",
+              },
+            }
+          : ticker,
+      );
 
     return {
       count: asNumber(record?.["count"]) ?? results.length,
       results,
     };
+  }
+
+  private async getTickerLogoUrl(
+    ticker: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const normalizedTicker = normalizeSymbol(ticker);
+    if (!normalizedTicker) return null;
+
+    const cached = this.tickerLogoCache.get(normalizedTicker);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.logoUrl;
+    }
+
+    let logoUrl: string | null = null;
+    try {
+      const payload = await fetchJson<unknown>(
+        this.buildUrl(`/v3/reference/tickers/${encodeURIComponent(normalizedTicker)}`),
+        { signal },
+      );
+      const record = asRecord(payload);
+      const results = asRecord(record?.["results"]);
+      const branding = asRecord(results?.["branding"]);
+      const brandingLogoUrl = asString(branding?.["logo_url"]);
+      if (brandingLogoUrl) {
+        const logoResponse = await fetch(this.buildUrl(brandingLogoUrl), { signal });
+        const contentType = logoResponse.headers.get("content-type") ?? "";
+        const contentLength = Number(logoResponse.headers.get("content-length") ?? 0);
+        if (
+          logoResponse.ok &&
+          contentType.startsWith("image/") &&
+          (!Number.isFinite(contentLength) || contentLength <= 250_000)
+        ) {
+          const bytes = Buffer.from(await logoResponse.arrayBuffer());
+          logoUrl = `data:${contentType};base64,${bytes.toString("base64")}`;
+        }
+      }
+    } catch {
+      logoUrl = null;
+    }
+
+    this.tickerLogoCache.set(normalizedTicker, {
+      expiresAt: Date.now() + POLYGON_TICKER_LOGO_CACHE_TTL_MS,
+      logoUrl,
+    });
+    return logoUrl;
+  }
+
+  async enrichUniverseTickerLogos(
+    input: UniverseTicker[],
+    limit = 10,
+    signal?: AbortSignal,
+  ): Promise<UniverseTicker[]> {
+    const logoTargets = input
+      .slice(0, Math.max(0, limit))
+      .map((ticker, index) => ({ ticker, index }))
+      .filter(
+        ({ ticker }) =>
+          ticker.providers.includes("polygon") || ticker.provider === "polygon",
+      );
+    const logoEntries = await Promise.all(
+      logoTargets.map(async ({ ticker, index }) => [
+        index,
+        ticker.logoUrl ?? (await this.getTickerLogoUrl(ticker.ticker, signal)),
+      ] as const),
+    );
+    const logoByIndex = new Map(logoEntries);
+
+    return input.map((ticker, index) => ({
+      ...ticker,
+      logoUrl: ticker.logoUrl ?? logoByIndex.get(index) ?? null,
+    }));
+  }
+
+  async getUniverseTickerByTicker(
+    ticker: string,
+    signal?: AbortSignal,
+  ): Promise<UniverseTicker | null> {
+    const normalizedTicker = normalizeSymbol(ticker);
+    if (!normalizedTicker) return null;
+
+    const payload = await fetchJson<unknown>(
+      this.buildUrl(`/v3/reference/tickers/${encodeURIComponent(normalizedTicker)}`),
+      { signal },
+    );
+    const record = asRecord(payload);
+    const mapped = mapUniverseTicker(record?.["results"]);
+    return mapped
+      ? {
+          ...mapped,
+          contractMeta: {
+            ...(mapped.contractMeta ?? {}),
+            exactTickerLookup: true,
+          },
+        }
+      : null;
   }
 
   private async fetchChainPage(

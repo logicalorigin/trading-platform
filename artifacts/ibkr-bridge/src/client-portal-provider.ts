@@ -3,6 +3,7 @@ import type {
   IbkrRuntimeConfig,
   RuntimeMode,
 } from "../../api-server/src/lib/runtime";
+import { isHttpError } from "../../api-server/src/lib/errors";
 import {
   IbkrClient,
   type BrokerBarSnapshot,
@@ -28,6 +29,8 @@ import type { BridgeHealth, IbkrBridgeProvider } from "./provider";
 export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   private readonly client: IbkrClient;
   private readonly marketDataStream: IbkrMarketDataStream;
+  private readonly sessionRefreshTtlMs = 10 * 60_000;
+  private readonly optionChainCacheTtlMs = 30_000;
   private readonly tickleIntervalMs = Number(
     process.env["IBKR_BRIDGE_TICKLE_INTERVAL_MS"] ?? "55000",
   );
@@ -43,6 +46,13 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   private lastRecoveryError: string | null = null;
   private observedMarketDataMode: IbkrMarketDataMode | null = "unknown";
   private observedLiveMarketDataAvailable: boolean | null = null;
+  private lastSessionRefreshAt: Date | null = null;
+  private sessionRefreshPromise: Promise<SessionStatusSnapshot | null> | null = null;
+  private readonly optionChainCache = new Map<
+    string,
+    { value: OptionChainContract[]; expiresAt: number }
+  >();
+  private readonly optionChainInFlight = new Map<string, Promise<OptionChainContract[]>>();
 
   constructor(private readonly config: IbkrRuntimeConfig) {
     this.client = new IbkrClient(this.config);
@@ -146,12 +156,72 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
         session = await this.client.ensureBrokerageSession();
       }
       this.latestSession = session;
+      this.lastSessionRefreshAt = new Date();
       this.lastError = null;
       return session;
     } catch (error) {
       this.recordError(error);
       throw error;
     }
+  }
+
+  private async ensureFreshSession({
+    force = false,
+  }: { force?: boolean } = {}): Promise<SessionStatusSnapshot | null> {
+    if (
+      !force &&
+      this.latestSession?.authenticated &&
+      this.latestSession.connected &&
+      this.lastSessionRefreshAt &&
+      Date.now() - this.lastSessionRefreshAt.getTime() < this.sessionRefreshTtlMs
+    ) {
+      return this.latestSession;
+    }
+
+    if (!force && this.sessionRefreshPromise) {
+      return this.sessionRefreshPromise;
+    }
+
+    this.sessionRefreshPromise = this.refreshSession();
+    try {
+      return await this.sessionRefreshPromise;
+    } finally {
+      this.sessionRefreshPromise = null;
+    }
+  }
+
+  private async withFreshSession<T>(
+    task: () => Promise<T>,
+    { retryUnauthorized = true }: { retryUnauthorized?: boolean } = {},
+  ): Promise<T> {
+    await this.ensureFreshSession();
+
+    try {
+      return await task();
+    } catch (error) {
+      if (retryUnauthorized && isHttpError(error) && error.statusCode === 401) {
+        await this.ensureFreshSession({ force: true });
+        return task();
+      }
+
+      throw error;
+    }
+  }
+
+  private buildOptionChainCacheKey(input: {
+    underlying: string;
+    expirationDate?: Date;
+    contractType?: "call" | "put" | null;
+    maxExpirations?: number;
+    strikesAroundMoney?: number;
+  }): string {
+    return JSON.stringify({
+      underlying: input.underlying.trim().toUpperCase(),
+      expirationDate: input.expirationDate?.toISOString().slice(0, 10) ?? null,
+      contractType: input.contractType ?? null,
+      maxExpirations: input.maxExpirations ?? null,
+      strikesAroundMoney: input.strikesAroundMoney ?? null,
+    });
   }
 
   async tickle(): Promise<void> {
@@ -166,7 +236,7 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   }
 
   async getHealth(): Promise<BridgeHealth> {
-    const session = await this.refreshSession().catch(() => this.latestSession);
+    const session = await this.ensureFreshSession().catch(() => this.latestSession);
 
     return {
       configured: true,
@@ -191,16 +261,14 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   }
 
   async listAccounts(mode: RuntimeMode) {
-    await this.refreshSession();
-    return this.client.listAccounts(mode);
+    return this.withFreshSession(() => this.client.listAccounts(mode));
   }
 
   async listPositions(input: {
     accountId?: string;
     mode: RuntimeMode;
   }): Promise<BrokerPositionSnapshot[]> {
-    await this.refreshSession();
-    return this.client.listPositions(input);
+    return this.withFreshSession(() => this.client.listPositions(input));
   }
 
   async listOrders(input: {
@@ -216,8 +284,7 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
       | "rejected"
       | "expired";
   }): Promise<BrokerOrderSnapshot[]> {
-    await this.refreshSession();
-    return this.client.listOrders(input);
+    return this.withFreshSession(() => this.client.listOrders(input));
   }
 
   async listExecutions(input: {
@@ -227,20 +294,19 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     symbol?: string;
     providerContractId?: string | null;
   }): Promise<BrokerExecutionSnapshot[]> {
-    await this.refreshSession();
-    return this.client.listExecutions(input);
+    return this.withFreshSession(() => this.client.listExecutions(input));
   }
 
   async getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
-    await this.refreshSession();
-    const quotes = await this.marketDataStream.getQuotes(symbols);
+    const quotes = await this.withFreshSession(() =>
+      this.marketDataStream.getQuotes(symbols),
+    );
     this.observeDelayedFlags(quotes.map((quote) => quote.delayed));
     return quotes;
   }
 
   async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
-    await this.refreshSession();
-    await this.marketDataStream.prewarmSymbols(symbols);
+    await this.withFreshSession(() => this.marketDataStream.prewarmSymbols(symbols));
   }
 
   async getHistoricalBars(input: {
@@ -254,8 +320,9 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     outsideRth?: boolean;
     source?: HistoryDataSource;
   }): Promise<BrokerBarSnapshot[]> {
-    await this.refreshSession();
-    const bars = await this.client.getHistoricalBars(input);
+    const bars = await this.withFreshSession(() =>
+      this.client.getHistoricalBars(input),
+    );
     this.observeDelayedFlags(bars.map((bar) => bar.delayed));
     return bars;
   }
@@ -268,8 +335,40 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     strikesAroundMoney?: number;
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
-    await this.refreshSession();
-    return this.client.getOptionChain(input);
+    const cacheKey = this.buildOptionChainCacheKey(input);
+    const now = Date.now();
+    const cached = this.optionChainCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    if (cached) {
+      this.optionChainCache.delete(cacheKey);
+    }
+
+    const inFlight = this.optionChainInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = this.withFreshSession(() => this.client.getOptionChain(input))
+      .then((value) => {
+        if (!input.signal?.aborted) {
+          this.optionChainCache.set(cacheKey, {
+            value,
+            expiresAt: Date.now() + this.optionChainCacheTtlMs,
+          });
+        }
+
+        return value;
+      })
+      .finally(() => {
+        this.optionChainInFlight.delete(cacheKey);
+      });
+
+    this.optionChainInFlight.set(cacheKey, promise);
+    return promise;
   }
 
   async getMarketDepth(input: {
@@ -279,20 +378,21 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     providerContractId?: string | null;
     exchange?: string | null;
   }): Promise<BrokerMarketDepthSnapshot | null> {
-    await this.refreshSession();
-    return this.marketDataStream.getPriceLadder(input);
+    return this.withFreshSession(() => this.marketDataStream.getPriceLadder(input));
   }
 
   async previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot> {
-    await this.refreshSession();
-    return this.client.previewOrder(input);
+    return this.withFreshSession(() => this.client.previewOrder(input), {
+      retryUnauthorized: false,
+    });
   }
 
   async placeOrder(
     input: PlaceOrderInput,
   ): Promise<import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot> {
-    await this.refreshSession();
-    return this.client.placeOrder(input);
+    return this.withFreshSession(() => this.client.placeOrder(input), {
+      retryUnauthorized: false,
+    });
   }
 
   async submitRawOrders(input: {
@@ -301,8 +401,9 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     confirm?: boolean | null;
     orders: Record<string, unknown>[];
   }): Promise<Record<string, unknown>> {
-    await this.refreshSession();
-    return this.client.submitRawOrders(input);
+    return this.withFreshSession(() => this.client.submitRawOrders(input), {
+      retryUnauthorized: false,
+    });
   }
 
   async replaceOrder(input: {
@@ -312,8 +413,9 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     mode: RuntimeMode;
     confirm?: boolean | null;
   }): Promise<ReplaceOrderSnapshot> {
-    await this.refreshSession();
-    return this.client.replaceOrder(input);
+    return this.withFreshSession(() => this.client.replaceOrder(input), {
+      retryUnauthorized: false,
+    });
   }
 
   async cancelOrder(input: {
@@ -323,23 +425,34 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {
-    await this.refreshSession();
-    return this.client.cancelOrder(input);
+    return this.withFreshSession(() => this.client.cancelOrder(input), {
+      retryUnauthorized: false,
+    });
   }
 
   async getNews(input: {
     ticker?: string;
     limit?: number;
   }): Promise<IbkrNewsArticle[]> {
-    await this.refreshSession();
-    return this.client.getNews(input);
+    return this.withFreshSession(() => this.client.getNews(input));
   }
 
   async searchTickers(input: {
     search?: string;
+    market?: IbkrUniverseTicker["market"];
+    markets?: IbkrUniverseTicker["market"][];
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<{ count: number; results: IbkrUniverseTicker[] }> {
-    await this.refreshSession();
-    return this.client.searchTickers(input);
+    return this.withFreshSession(() => this.client.searchTickers(input));
+  }
+
+  async subscribeQuoteStream(
+    symbols: string[],
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void> {
+    return this.withFreshSession(() =>
+      this.marketDataStream.subscribeQuotes(symbols, onQuote),
+    );
   }
 }

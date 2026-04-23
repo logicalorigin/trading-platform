@@ -74,6 +74,7 @@ import {
   useDrawingHistory,
   useBrokerStockAggregateStream,
   useBrokerStreamedBars,
+  useIbkrLatencyStats,
   useStockMinuteAggregateStoreVersion,
 } from "./features/charting";
 import {
@@ -90,6 +91,7 @@ import {
 import MarketScreen from "./screens/MarketScreen";
 import FlowScreen from "./screens/FlowScreen";
 import TradeScreen from "./screens/TradeScreen";
+import AccountScreen from "./screens/AccountScreen";
 import ResearchScreen from "./screens/ResearchScreen";
 import AlgoScreen from "./screens/AlgoScreen";
 import BacktestScreen from "./screens/BacktestScreen";
@@ -339,6 +341,13 @@ const PositionsContext = createContext({
   rollPosition: () => {},
 });
 export const usePositions = () => useContext(PositionsContext);
+
+export const AccountSelectionContext = createContext({
+  accounts: [],
+  selectedAccountId: null,
+  setSelectedAccountId: () => {},
+});
+export const useAccountSelection = () => useContext(AccountSelectionContext);
 
 // ═══════════════════════════════════════════════════════════════════
 // STATIC DATA / GENERATORS
@@ -1741,6 +1750,7 @@ const SCREENS = [
   { id: "flow", label: "Flow", icon: "◈" },
   { id: "unusual", label: "Unusual", icon: "⚡" },
   { id: "trade", label: "Trade", icon: "◧" },
+  { id: "account", label: "Account", icon: "▣" },
   { id: "research", label: "Research", icon: "◎" },
   { id: "algo", label: "Algo", icon: "⬡" },
   { id: "backtest", label: "Backtest", icon: "⏣" },
@@ -1846,6 +1856,34 @@ export const HEAVY_PAYLOAD_GC_MS = 15_000;
 
 export const clampNumber = (value, min, max) =>
   Math.min(max, Math.max(min, value));
+
+const settleWithConcurrency = async (items, concurrency, mapper) => {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        try {
+          results[index] = {
+            status: "fulfilled",
+            value: await mapper(items[index], index),
+          };
+        } catch (reason) {
+          results[index] = {
+            status: "rejected",
+            reason,
+          };
+        }
+      }
+    }),
+  );
+
+  return results;
+};
 
 const buildApiUrl = (path, params = {}) => {
   const origin =
@@ -2370,6 +2408,7 @@ export const mapFlowEventToUi = (event) => {
 export const useLiveMarketFlow = (
   symbols = [],
   {
+    enabled = true,
     limit = 16,
     maxSymbols = 8,
     batchSize,
@@ -2432,14 +2471,16 @@ export const useLiveMarketFlow = (
   }, [liveSymbolsKey]);
 
   useEffect(() => {
-    if (!liveSymbols.length) return undefined;
+    if (!enabled || !liveSymbols.length) return undefined;
     let cancelled = false;
     let timer = null;
     let consecutiveErrorBatches = 0;
 
     const schedule = (delay) => {
       if (cancelled) return;
-      timer = setTimeout(runOnce, Math.max(250, delay));
+      const visibilityMultiplier =
+        typeof document !== "undefined" && document.hidden ? 6 : 1;
+      timer = setTimeout(runOnce, Math.max(250, delay * visibilityMultiplier));
     };
 
     const runOnce = async () => {
@@ -2531,7 +2572,7 @@ export const useLiveMarketFlow = (
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [liveSymbolsKey, effectiveBatchSize, normalizedThreshold, limit, intervalMs]);
+  }, [enabled, liveSymbolsKey, effectiveBatchSize, normalizedThreshold, limit, intervalMs]);
 
   const responses = useMemo(
     () =>
@@ -3324,7 +3365,7 @@ const Watchlist = ({
     addMode && deferredAddQuery.length > 0
       ? {
           search: deferredAddQuery,
-          market: "stocks",
+          markets: ["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"],
           active: true,
           limit: 8,
         }
@@ -5000,6 +5041,37 @@ const MINI_CHART_BAR_LIMITS = {
   "1h": 780,
   "1D": 504,
 };
+const PRIMARY_CHART_BAR_LIMITS = {
+  "1m": 20_000,
+  "5m": 20_000,
+  "15m": 15_000,
+  "1h": 10_000,
+  "1d": 5_000,
+  "1D": 5_000,
+};
+const OPTION_CHART_BAR_LIMITS = {
+  "1m": 5_000,
+  "5m": 5_000,
+  "15m": 5_000,
+  "1h": 5_000,
+  "1d": 1_000,
+  "1D": 1_000,
+};
+const getChartBarLimit = (timeframe, role = "primary") => {
+  const normalizedTimeframe = timeframe === "1D" ? "1d" : timeframe;
+  const limits =
+    role === "option"
+      ? OPTION_CHART_BAR_LIMITS
+      : role === "mini"
+        ? MINI_CHART_BAR_LIMITS
+        : PRIMARY_CHART_BAR_LIMITS;
+
+  return (
+    limits[timeframe] ||
+    limits[normalizedTimeframe] ||
+    PRIMARY_CHART_BAR_LIMITS["15m"]
+  );
+};
 const MARKET_CHART_STUDIES = [
   { id: "ema-21", label: "E21" },
   { id: "ema-55", label: "E55" },
@@ -5118,6 +5190,19 @@ const hydrateMiniChartSlot = (
   rayReplicaSettings: resolvePersistedRayReplicaSettings(
     slot?.rayReplicaSettings,
   ),
+  market: slot?.market || "stocks",
+  provider: slot?.provider || null,
+  providers: Array.isArray(slot?.providers) ? slot.providers.filter(Boolean) : [],
+  tradeProvider: slot?.tradeProvider || null,
+  dataProviderPreference: slot?.dataProviderPreference || null,
+  providerContractId: slot?.providerContractId || null,
+  exchange:
+    slot?.exchange ||
+    slot?.exchangeDisplay ||
+    slot?.normalizedExchangeMic ||
+    slot?.primaryExchange ||
+    null,
+  searchResult: normalizeTickerSearchResultForStorage(slot?.searchResult) || null,
 });
 
 const buildInitialMiniChartSlots = (activeSym) => {
@@ -5138,29 +5223,133 @@ const buildInitialMiniChartSlots = (activeSym) => {
   );
 };
 
+const TICKER_SEARCH_MARKET_FILTERS = [
+  { value: "all", label: "All", markets: null },
+  { value: "stocks", label: "Stocks", markets: ["stocks"] },
+  { value: "etf", label: "ETF", markets: ["etf"] },
+  { value: "indices", label: "Index", markets: ["indices"] },
+  { value: "futures", label: "Futures", markets: ["futures"] },
+  { value: "fx", label: "FX", markets: ["fx"] },
+  { value: "crypto", label: "Crypto", markets: ["crypto"] },
+];
+const TICKER_SEARCH_MARKET_BY_VALUE = Object.fromEntries(
+  TICKER_SEARCH_MARKET_FILTERS.map((filter) => [filter.value, filter]),
+);
+
 const normalizeTickerSearchQuery = (value) => value?.trim?.().toLowerCase?.() || "";
+const normalizeTickerSearchMarketFilter = (value) =>
+  TICKER_SEARCH_MARKET_BY_VALUE[value] ? value : "all";
 
 const buildTickerSearchRowKey = (result) =>
   [
     normalizeTickerSymbol(result?.ticker),
-    result?.primaryExchange?.trim?.().toUpperCase?.() || "",
-    result?.providerContractId || "",
-    result?.provider || "",
     result?.market || "",
+    result?.normalizedExchangeMic ||
+      result?.primaryExchange?.trim?.().toUpperCase?.() ||
+      "",
+    result?.providerContractId || "",
   ].join("|");
+
+const getTickerSearchRowStorageKey = (result) =>
+  [
+    normalizeTickerSymbol(result?.ticker),
+    result?.market || "",
+    result?.normalizedExchangeMic ||
+      result?.primaryExchange?.trim?.().toUpperCase?.() ||
+      "",
+  ].join("|");
+
+const isApiBackedTickerSearchRow = (result) =>
+  Boolean(
+    result &&
+      normalizeTickerSymbol(result.ticker) &&
+      result.market &&
+      Array.isArray(result.providers) &&
+      result.providers.length,
+  );
+
+const normalizeTickerSearchResultForStorage = (result) => {
+  if (!isApiBackedTickerSearchRow(result)) return null;
+  const ticker = normalizeTickerSymbol(result.ticker);
+  return {
+    ticker,
+    name: result.name || ticker,
+    market: result.market,
+    rootSymbol: result.rootSymbol || ticker,
+    normalizedExchangeMic:
+      result.normalizedExchangeMic || result.primaryExchange || null,
+    exchangeDisplay:
+      result.exchangeDisplay || result.primaryExchange || result.normalizedExchangeMic || null,
+    logoUrl: result.logoUrl || null,
+    contractDescription: result.contractDescription || result.name || ticker,
+    contractMeta: result.contractMeta || null,
+    locale: result.locale || null,
+    type: result.type || null,
+    active: result.active !== false,
+    primaryExchange: result.primaryExchange || result.exchangeDisplay || null,
+    currencyName: result.currencyName || null,
+    cik: result.cik || null,
+    compositeFigi: result.compositeFigi || null,
+    shareClassFigi: result.shareClassFigi || null,
+    lastUpdatedAt: result.lastUpdatedAt || null,
+    provider: result.provider || result.tradeProvider || result.providers[0] || null,
+    providers: [...new Set(result.providers.filter(Boolean))],
+    tradeProvider: result.tradeProvider || null,
+    dataProviderPreference: result.dataProviderPreference || result.provider || null,
+    providerContractId: result.providerContractId || null,
+  };
+};
+
+const normalizePersistedTickerSearchRows = (rows, limit = 40) =>
+  (Array.isArray(rows) ? rows : [])
+    .map(normalizeTickerSearchResultForStorage)
+    .filter(Boolean)
+    .slice(0, limit);
+
+const buildTickerSearchCache = (...rowLists) => {
+  const cache = {};
+  for (const row of rowLists.flat()) {
+    const normalized = normalizeTickerSearchResultForStorage(row);
+    if (!normalized) continue;
+    cache[getTickerSearchRowStorageKey(normalized)] = normalized;
+    cache[normalizeTickerSymbol(normalized.ticker)] = normalized;
+  }
+  return cache;
+};
+
+const getTickerSearchCachedRow = (cache, symbol) => {
+  const normalized = normalizeTickerSymbol(symbol);
+  return normalized ? cache?.[normalized] || null : null;
+};
+
+const buildTickerSearchAliases = (result) => {
+  const normalizedTicker = normalizeTickerSymbol(result?.ticker);
+  const withoutProviderPrefix = normalizedTicker.replace(/^[A-Z]:/, "");
+  const aliases = new Set([
+    normalizedTicker,
+    withoutProviderPrefix,
+    normalizeTickerSymbol(result?.rootSymbol),
+  ]);
+
+  if (result?.market === "crypto" && withoutProviderPrefix.endsWith("USD")) {
+    aliases.add(withoutProviderPrefix.slice(0, -3));
+  }
+
+  return Array.from(aliases).filter(Boolean);
+};
 
 const scoreTickerSearchResult = (
   result,
-  { query, currentTicker, recentTickerSet, defaultTickerSet },
+  { query, currentTicker, recentTickerSet, watchlistTickerSet, favoriteTickerSet },
 ) => {
   const normalizedTicker = normalizeTickerSymbol(result?.ticker);
   const normalizedName = result?.name?.trim?.().toLowerCase?.() || "";
-  if (!query || !normalizedTicker) {
-    return Number.NEGATIVE_INFINITY;
-  }
+  const tickerAliases = buildTickerSearchAliases(result);
+  if (!query || !normalizedTicker) return Number.NEGATIVE_INFINITY;
 
   let score = 0;
-  if (normalizedTicker === query.toUpperCase()) score += 1500;
+  if (tickerAliases.includes(query.toUpperCase())) score += 3000;
+  else if (normalizedTicker === query.toUpperCase()) score += 3000;
   else if (normalizedTicker.startsWith(query.toUpperCase())) score += 1050;
   else if (normalizedTicker.includes(query.toUpperCase())) score += 780;
 
@@ -5178,84 +5367,363 @@ const scoreTickerSearchResult = (
 
   if (normalizedTicker === normalizeTickerSymbol(currentTicker)) score += 40;
   if (recentTickerSet.has(normalizedTicker)) score += 140;
-  if (defaultTickerSet.has(normalizedTicker)) score += 55;
-  if (result?.provider === "ibkr") score += 35;
+  if (favoriteTickerSet.has(normalizedTicker)) score += 120;
+  if (watchlistTickerSet.has(normalizedTicker)) score += 90;
+  if (result?.providers?.includes?.("ibkr")) score += 35;
   if (result?.providerContractId) score += 20;
-  if (result?.primaryExchange) score += 10;
+  if (result?.normalizedExchangeMic || result?.primaryExchange) score += 10;
 
   return score;
+};
+
+const marketLabelForTickerRow = (result) => {
+  if (result?.market === "etf") return "ETF";
+  if (result?.market === "indices") return "Index";
+  if (result?.market === "futures") return "Futures";
+  if (result?.market === "fx") return "FX";
+  if (result?.market === "crypto") return "Crypto";
+  if (result?.market === "otc") return "OTC";
+  return "Stock";
+};
+
+const buildTickerSearchContractLine = (result) => {
+  const meta = result?.contractMeta || {};
+  if (result?.market === "futures") {
+    return [meta.expiry || meta.lastTradeDateOrContractMonth, meta.multiplier]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (result?.market === "fx") {
+    return result.currencyName ? `Quote currency ${result.currencyName}` : "Currency pair";
+  }
+  if (result?.market === "crypto") {
+    return result.currencyName ? `Pair quoted in ${result.currencyName}` : "Crypto pair";
+  }
+  return result?.contractDescription && result.contractDescription !== result.name
+    ? result.contractDescription
+    : "";
+};
+
+const tickerLogoFallbackColor = (ticker) => {
+  const normalized = normalizeTickerSymbol(ticker) || "X";
+  const hue = Array.from(normalized).reduce(
+    (total, char) => total + char.charCodeAt(0),
+    0,
+  ) % 360;
+  return `hsl(${hue} 62% 42%)`;
+};
+
+const TickerSearchRow = ({
+  result,
+  active,
+  favorite,
+  onSelect,
+  onToggleFavorite,
+  onMouseEnter,
+}) => {
+  const disabled = result?._disabled || !isApiBackedTickerSearchRow(result);
+  const providerLabel = result?.providers?.length
+    ? result.providers.map((provider) => provider.toUpperCase()).join(" + ")
+    : "Resolve";
+  const contractLine = buildTickerSearchContractLine(result);
+  const exchangeLabel =
+    result?.exchangeDisplay ||
+    result?.normalizedExchangeMic ||
+    result?.primaryExchange ||
+    (result?.market === "fx" ? "FX" : result?.market === "crypto" ? "COIN" : "US");
+
+  return (
+    <button
+      key={buildTickerSearchRowKey(result)}
+      role="option"
+      aria-selected={active}
+      data-testid="ticker-search-row"
+      data-ticker={normalizeTickerSymbol(result?.ticker)}
+      data-market={result?.market || ""}
+      data-provider-contract-id={result?.providerContractId || ""}
+      disabled={false}
+      onClick={() => onSelect?.(result)}
+      onMouseEnter={onMouseEnter}
+      title={disabled ? "Search this symbol to resolve provider metadata" : undefined}
+      style={{
+        width: "100%",
+        display: "grid",
+        gridTemplateColumns: "28px 1fr auto",
+        gap: sp(8),
+        alignItems: "center",
+        padding: sp("8px 10px"),
+        background: active ? T.bg3 : "transparent",
+        border: "none",
+        borderBottom: `1px solid ${T.border}20`,
+        textAlign: "left",
+        cursor: "pointer",
+        opacity: disabled ? 0.62 : 1,
+      }}
+    >
+      <span
+        style={{
+          width: dim(24),
+          height: dim(24),
+          borderRadius: 999,
+          display: "grid",
+          placeItems: "center",
+          overflow: "hidden",
+          background: tickerLogoFallbackColor(result?.ticker),
+          color: "#fff",
+          fontSize: fs(9),
+          fontFamily: T.mono,
+          fontWeight: 800,
+        }}
+      >
+        {result?.logoUrl ? (
+          <img
+            src={result.logoUrl}
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          normalizeTickerSymbol(result?.ticker).slice(0, 2) || "?"
+        )}
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(5),
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              fontSize: fs(10),
+              fontWeight: 800,
+              fontFamily: T.sans,
+              color: T.text,
+            }}
+          >
+            {result?.ticker}
+          </span>
+          <span
+            style={{
+              border: `1px solid ${T.border}`,
+              color: T.textMuted,
+              fontSize: fs(7),
+              fontFamily: T.mono,
+              padding: sp("1px 4px"),
+              textTransform: "uppercase",
+            }}
+          >
+            {exchangeLabel}
+          </span>
+          <span
+            style={{
+              background: `${T.accent}1A`,
+              color: T.accent,
+              fontSize: fs(7),
+              fontFamily: T.mono,
+              padding: sp("1px 4px"),
+              textTransform: "uppercase",
+            }}
+          >
+            {marketLabelForTickerRow(result)}
+          </span>
+        </span>
+        <span
+          style={{
+            display: "block",
+            fontSize: fs(9),
+            color: T.textSec,
+            fontFamily: T.sans,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {result?.name || result?.contractDescription || "Search to resolve"}
+        </span>
+        {contractLine ? (
+          <span
+            style={{
+              display: "block",
+              fontSize: fs(8),
+              color: T.textDim,
+              fontFamily: T.sans,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {contractLine}
+          </span>
+        ) : null}
+      </span>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(5),
+        }}
+      >
+        <span
+          style={{
+            fontSize: fs(7),
+            color: disabled ? T.amber : T.textMuted,
+            fontFamily: T.mono,
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {disabled ? "Search" : providerLabel}
+        </span>
+        <span
+          role="button"
+          tabIndex={-1}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!disabled) onToggleFavorite?.(result);
+          }}
+          style={{
+            color: favorite ? T.amber : T.textMuted,
+            fontSize: fs(12),
+            cursor: disabled ? "default" : "pointer",
+            lineHeight: 1,
+          }}
+        >
+          {favorite ? "★" : "☆"}
+        </span>
+      </span>
+    </button>
+  );
+};
+
+const TickerSearchSkeletonRows = () => (
+  <div style={{ padding: sp("4px 0") }}>
+    {[0, 1, 2].map((index) => (
+      <div
+        key={index}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "28px 1fr auto",
+          gap: sp(8),
+          alignItems: "center",
+          padding: sp("8px 10px"),
+          borderBottom: `1px solid ${T.border}20`,
+        }}
+      >
+        <span
+          style={{
+            width: dim(24),
+            height: dim(24),
+            borderRadius: 999,
+            background: T.bg3,
+          }}
+        />
+        <span>
+          <span
+            style={{
+              display: "block",
+              height: dim(8),
+              width: `${58 + index * 10}%`,
+              background: T.bg3,
+              marginBottom: 5,
+            }}
+          />
+          <span
+            style={{
+              display: "block",
+              height: dim(7),
+              width: `${72 - index * 8}%`,
+              background: T.bg2,
+            }}
+          />
+        </span>
+        <span style={{ width: dim(42), height: dim(8), background: T.bg3 }} />
+      </div>
+    ))}
+  </div>
+);
+
+const buildUnresolvedTickerSearchRow = (symbol, group) => {
+  const ticker = normalizeTickerSymbol(symbol);
+  return {
+    ticker,
+    name: DEFAULT_WATCHLIST_BY_SYMBOL[ticker]?.name || "Search to resolve provider",
+    market: "stocks",
+    rootSymbol: ticker,
+    normalizedExchangeMic: null,
+    exchangeDisplay: null,
+    logoUrl: null,
+    contractDescription: null,
+    contractMeta: null,
+    locale: null,
+    type: null,
+    active: true,
+    primaryExchange: null,
+    currencyName: null,
+    cik: null,
+    compositeFigi: null,
+    shareClassFigi: null,
+    lastUpdatedAt: null,
+    provider: null,
+    providers: [],
+    tradeProvider: null,
+    dataProviderPreference: null,
+    providerContractId: null,
+    _group: group,
+    _disabled: true,
+  };
 };
 
 const useTickerSearchController = ({
   open,
   query,
+  marketFilter,
   currentTicker,
-  recentTickers = [],
+  recentTickerRows = [],
+  watchlistSymbols = [],
+  favoriteRows = [],
+  popularTickers = [],
+  rowCache = {},
   limit = 8,
 }) => {
   const deferredQuery = useDeferredValue(query.trim());
   const normalizedQuery = normalizeTickerSearchQuery(deferredQuery);
-  const searchEnabled = open && normalizedQuery.length >= 2;
-  const quickPicks = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          normalizeTickerSymbol(currentTicker),
-          ...recentTickers.map((symbol) => normalizeTickerSymbol(symbol)),
-          ...WATCHLIST.map((item) => normalizeTickerSymbol(item.sym)),
-        ]),
-      )
-        .filter(Boolean)
-        .slice(0, 10)
-        .map((symbol) => ({
-          ticker: symbol,
-          name: DEFAULT_WATCHLIST_BY_SYMBOL[symbol]?.name || symbol,
-          market: "stocks",
-          type: "stock",
-          primaryExchange: null,
-          provider: null,
-          providerContractId: null,
-          _kind: "quick-pick",
-        })),
-    [currentTicker, recentTickers],
-  );
+  const selectedFilter = TICKER_SEARCH_MARKET_BY_VALUE[marketFilter] || TICKER_SEARCH_MARKET_BY_VALUE.all;
+  const searchEnabled = open && normalizedQuery.length >= 1;
   const searchQuery = useSearchUniverseTickers(
     searchEnabled
       ? {
           search: deferredQuery,
-          market: "stocks",
+          ...(selectedFilter.markets ? { markets: selectedFilter.markets } : {}),
           active: true,
-          limit: Math.max(limit * 2, 16),
+          limit: Math.max(limit * 3, 24),
         }
       : undefined,
     {
       query: {
         enabled: searchEnabled,
-        staleTime: 60_000,
+        staleTime: 30_000,
         retry: false,
       },
     },
   );
+
   const rankedResults = useMemo(() => {
-    if (!searchEnabled) {
-      return [];
-    }
+    if (!searchEnabled) return [];
 
     const recentTickerSet = new Set(
-      recentTickers.map((symbol) => normalizeTickerSymbol(symbol)).filter(Boolean),
+      recentTickerRows.map((row) => normalizeTickerSymbol(row?.ticker)).filter(Boolean),
     );
-    const defaultTickerSet = new Set(
-      WATCHLIST.map((item) => normalizeTickerSymbol(item.sym)).filter(Boolean),
+    const watchlistTickerSet = new Set(
+      watchlistSymbols.map((symbol) => normalizeTickerSymbol(symbol)).filter(Boolean),
     );
-    const deduped = new Map();
-    for (const result of searchQuery.data?.results || []) {
-      const key = buildTickerSearchRowKey(result);
-      if (!deduped.has(key)) {
-        deduped.set(key, result);
-      }
-    }
+    const favoriteTickerSet = new Set(
+      favoriteRows.map((row) => normalizeTickerSymbol(row?.ticker)).filter(Boolean),
+    );
 
-    return Array.from(deduped.values())
+    return (searchQuery.data?.results || [])
       .map((result) => ({
         ...result,
         _kind: "result",
@@ -5263,64 +5731,146 @@ const useTickerSearchController = ({
           query: normalizedQuery,
           currentTicker,
           recentTickerSet,
-          defaultTickerSet,
+          watchlistTickerSet,
+          favoriteTickerSet,
         }),
       }))
       .filter((result) => Number.isFinite(result._score))
       .sort((left, right) => {
-        if (right._score !== left._score) {
-          return right._score - left._score;
-        }
-        const tickerDiff = left.ticker.localeCompare(right.ticker);
-        if (tickerDiff !== 0) return tickerDiff;
-        return (left.primaryExchange || "").localeCompare(right.primaryExchange || "");
+        if (right._score !== left._score) return right._score - left._score;
+        return left.ticker.localeCompare(right.ticker);
       })
       .slice(0, limit);
   }, [
     currentTicker,
+    favoriteRows,
     limit,
     normalizedQuery,
-    recentTickers,
+    recentTickerRows,
     searchEnabled,
     searchQuery.data?.results,
+    watchlistSymbols,
   ]);
+
+  const quickPickGroups = useMemo(() => {
+    if (searchEnabled) return [];
+    const buildRows = (symbols, group, max = 5) =>
+      Array.from(new Set(symbols.map(normalizeTickerSymbol).filter(Boolean)))
+        .slice(0, max)
+        .map((symbol) => {
+          const cached = getTickerSearchCachedRow(rowCache, symbol);
+          return cached
+            ? { ...cached, _group: group, _kind: "quick-pick" }
+            : buildUnresolvedTickerSearchRow(symbol, group);
+        });
+
+    const recentRows = normalizePersistedTickerSearchRows(recentTickerRows, 8).map(
+      (row) => ({ ...row, _group: "Recent", _kind: "quick-pick" }),
+    );
+    const favoriteGroupRows = normalizePersistedTickerSearchRows(favoriteRows, 8).map(
+      (row) => ({ ...row, _group: "Favorites", _kind: "quick-pick" }),
+    );
+    const groups = [];
+    if (favoriteGroupRows.length) groups.push({ label: "Favorites", rows: favoriteGroupRows });
+    if (recentRows.length) groups.push({ label: "Recent", rows: recentRows });
+    groups.push({ label: "Watchlist", rows: buildRows(watchlistSymbols, "Watchlist", 5) });
+    groups.push({ label: "Popular today", rows: buildRows(popularTickers, "Popular today", 5) });
+    return groups.filter((group) => group.rows.length);
+  }, [
+    favoriteRows,
+    popularTickers,
+    recentTickerRows,
+    rowCache,
+    searchEnabled,
+    watchlistSymbols,
+  ]);
+
+  const selectableResults = searchEnabled
+    ? rankedResults
+    : quickPickGroups.flatMap((group) => group.rows);
 
   return {
     deferredQuery,
     normalizedQuery,
     searchEnabled,
     searchQuery,
-    quickPicks,
+    quickPickGroups,
     results: rankedResults,
-    selectableResults: searchEnabled ? rankedResults : quickPicks,
+    selectableResults,
   };
 };
 
 const MiniChartTickerSearch = ({
   open,
   ticker,
-  recentTickers = [],
+  recentTickerRows = [],
+  watchlistSymbols = [],
+  popularTickers = [],
   onClose,
   onSelectTicker,
+  onRememberTickerRow,
 }) => {
   const rootRef = useRef(null);
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [marketFilter, setMarketFilter] = useState(() =>
+    normalizeTickerSearchMarketFilter(_initialState.marketGridTickerSearchMarketFilter),
+  );
+  const [favoriteRows, setFavoriteRows] = useState(() =>
+    normalizePersistedTickerSearchRows(_initialState.marketGridTickerSearchFavorites),
+  );
+  const [rowCache, setRowCache] = useState(() =>
+    buildTickerSearchCache(
+      normalizePersistedTickerSearchRows(_initialState.marketGridTickerSearchCache),
+      recentTickerRows,
+      favoriteRows,
+    ),
+  );
   const {
     deferredQuery,
     searchEnabled,
     searchQuery,
-    quickPicks,
+    quickPickGroups,
     results,
     selectableResults,
   } = useTickerSearchController({
     open,
     query,
+    marketFilter,
     currentTicker: ticker,
-    recentTickers,
+    recentTickerRows,
+    watchlistSymbols,
+    favoriteRows,
+    popularTickers,
+    rowCache,
     limit: 8,
   });
+
+  useEffect(() => {
+    persistState({ marketGridTickerSearchMarketFilter: marketFilter });
+  }, [marketFilter]);
+
+  useEffect(() => {
+    persistState({ marketGridTickerSearchFavorites: favoriteRows });
+  }, [favoriteRows]);
+
+  useEffect(() => {
+    const rows = (searchQuery.data?.results || [])
+      .map(normalizeTickerSearchResultForStorage)
+      .filter(Boolean);
+    if (!rows.length) return;
+
+    setRowCache((current) => {
+      const next = { ...current, ...buildTickerSearchCache(rows) };
+      persistState({
+        marketGridTickerSearchCache: Object.values(next)
+          .filter((row, index, all) => all.findIndex((candidate) => getTickerSearchRowStorageKey(candidate) === getTickerSearchRowStorageKey(row)) === index)
+          .slice(0, 80),
+      });
+      return next;
+    });
+  }, [searchQuery.data?.results]);
 
   useEffect(() => {
     if (!open) {
@@ -5368,14 +5918,45 @@ const MiniChartTickerSearch = ({
     };
   }, [onClose, open]);
 
+  const handleCycleMarketFilter = useCallback((direction = 1) => {
+    setMarketFilter((current) => {
+      const index = TICKER_SEARCH_MARKET_FILTERS.findIndex(
+        (filter) => filter.value === current,
+      );
+      const nextIndex =
+        (Math.max(0, index) + direction + TICKER_SEARCH_MARKET_FILTERS.length) %
+        TICKER_SEARCH_MARKET_FILTERS.length;
+      return TICKER_SEARCH_MARKET_FILTERS[nextIndex].value;
+    });
+  }, []);
+
+  const handleToggleFavorite = useCallback((result) => {
+    const normalized = normalizeTickerSearchResultForStorage(result);
+    if (!normalized) return;
+    const key = getTickerSearchRowStorageKey(normalized);
+    setFavoriteRows((current) => {
+      const exists = current.some((row) => getTickerSearchRowStorageKey(row) === key);
+      return exists
+        ? current.filter((row) => getTickerSearchRowStorageKey(row) !== key)
+        : [normalized, ...current].slice(0, 20);
+    });
+  }, []);
+
   const handleSelect = useCallback(
     (result) => {
       if (!result) {
         return;
       }
-      onSelectTicker?.(result);
+      if (!isApiBackedTickerSearchRow(result)) {
+        setQuery(normalizeTickerSymbol(result.ticker));
+        return;
+      }
+      const normalized = normalizeTickerSearchResultForStorage(result);
+      if (!normalized) return;
+      onRememberTickerRow?.(normalized);
+      onSelectTicker?.(normalized);
     },
-    [onSelectTicker],
+    [onRememberTickerRow, onSelectTicker],
   );
 
   const handleInputKeyDown = useCallback(
@@ -5403,12 +5984,17 @@ const MiniChartTickerSearch = ({
         }
         return;
       }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        handleCycleMarketFilter(event.shiftKey ? -1 : 1);
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         onClose?.();
       }
     },
-    [activeIndex, handleSelect, onClose, selectableResults],
+    [activeIndex, handleCycleMarketFilter, handleSelect, onClose, selectableResults],
   );
 
   if (!open) {
@@ -5417,6 +6003,7 @@ const MiniChartTickerSearch = ({
 
   return (
     <div
+      data-testid="ticker-search-popover"
       ref={rootRef}
       onClick={(event) => event.stopPropagation()}
       style={{
@@ -5435,7 +6022,41 @@ const MiniChartTickerSearch = ({
           boxShadow: "0 18px 36px rgba(0,0,0,0.32)",
           overflow: "hidden",
         }}
-      >
+        >
+        <div
+          style={{
+            display: "flex",
+            gap: sp(4),
+            padding: sp("7px 8px 0"),
+            flexWrap: "wrap",
+            background: T.bg2,
+          }}
+        >
+          {TICKER_SEARCH_MARKET_FILTERS.map((filter) => {
+            const active = marketFilter === filter.value;
+            return (
+              <button
+                key={filter.value}
+                type="button"
+                data-testid={`ticker-search-filter-${filter.value}`}
+                aria-pressed={active}
+                onClick={() => setMarketFilter(filter.value)}
+                style={{
+                  border: `1px solid ${active ? T.accent : T.border}`,
+                  background: active ? `${T.accent}20` : T.bg1,
+                  color: active ? T.accent : T.textDim,
+                  fontFamily: T.mono,
+                  fontSize: fs(8),
+                  padding: sp("2px 6px"),
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                }}
+              >
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
         <div
           style={{
             display: "flex",
@@ -5447,6 +6068,7 @@ const MiniChartTickerSearch = ({
         >
           <input
             ref={inputRef}
+            data-testid="ticker-search-input"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleInputKeyDown}
@@ -5480,85 +6102,88 @@ const MiniChartTickerSearch = ({
           </button>
         </div>
         <div
-          style={{ maxHeight: dim(180), overflowY: "auto", background: T.bg1 }}
+          style={{ maxHeight: dim(260), overflowY: "auto", background: T.bg1 }}
         >
-          {!searchEnabled && quickPicks.length ? (
-            <div
-              style={{
-                padding: sp("6px 10px 4px"),
-                fontSize: fs(8),
-                color: T.textMuted,
-                fontFamily: T.sans,
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-              }}
-            >
-              Recent and default symbols
-            </div>
-          ) : null}
-          {!searchEnabled &&
-            quickPicks.map((result, index) => {
-              return (
-                <button
-                  key={buildTickerSearchRowKey(result)}
-                  role="option"
-                  aria-selected={index === activeIndex}
-                  onClick={() => handleSelect(result)}
-                  style={{
-                    width: "100%",
-                    display: "grid",
-                    gridTemplateColumns: "64px 1fr auto",
-                    gap: sp(8),
-                    alignItems: "center",
-                    padding: sp("8px 10px"),
-                    background: index === activeIndex ? T.bg3 : "transparent",
-                    border: "none",
-                    borderBottom: `1px solid ${T.border}20`,
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(event) => {
-                    event.currentTarget.style.background = T.bg3;
-                    setActiveIndex(index);
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: fs(10),
-                      fontWeight: 700,
-                      fontFamily: T.sans,
-                      color: T.text,
-                    }}
-                  >
-                    {result.ticker}
-                  </span>
-                  <span
-                    style={{
-                      minWidth: 0,
-                      fontSize: fs(9),
-                      color: T.textSec,
-                      fontFamily: T.sans,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {result.name || "Watchlist symbol"}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: fs(8),
-                      color: T.textMuted,
-                      fontFamily: T.sans,
-                    }}
-                  >
-                    recent
-                  </span>
-                </button>
-              );
-            })}
+          {!searchEnabled
+            ? quickPickGroups.map((group) => {
+                let baseIndex = 0;
+                for (const priorGroup of quickPickGroups) {
+                  if (priorGroup === group) break;
+                  baseIndex += priorGroup.rows.length;
+                }
+                return (
+                  <div key={group.label}>
+                    <div
+                      style={{
+                        padding: sp("7px 10px 3px"),
+                        fontSize: fs(8),
+                        color: T.textMuted,
+                        fontFamily: T.sans,
+                        fontWeight: 700,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {group.label}
+                    </div>
+                    {group.rows.map((result, offset) => {
+                      const index = baseIndex + offset;
+                      return (
+                        <TickerSearchRow
+                          key={`${group.label}-${buildTickerSearchRowKey(result)}`}
+                          result={result}
+                          active={index === activeIndex}
+                          favorite={favoriteRows.some(
+                            (row) =>
+                              getTickerSearchRowStorageKey(row) ===
+                              getTickerSearchRowStorageKey(result),
+                          )}
+                          onSelect={handleSelect}
+                          onToggleFavorite={handleToggleFavorite}
+                          onMouseEnter={() => setActiveIndex(index)}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              })
+            : null}
           {searchEnabled && searchQuery.isPending && (
+            <TickerSearchSkeletonRows />
+          )}
+          {searchEnabled && searchQuery.isError && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: sp(8),
+                padding: sp("10px"),
+                fontSize: fs(9),
+                color: T.amber,
+                fontFamily: T.sans,
+                background: `${T.amber}10`,
+              }}
+            >
+              <span>Search failed</span>
+              <button
+                type="button"
+                onClick={() => searchQuery.refetch()}
+                style={{
+                  border: `1px solid ${T.amber}`,
+                  background: "transparent",
+                  color: T.amber,
+                  fontFamily: T.mono,
+                  fontSize: fs(8),
+                  cursor: "pointer",
+                  padding: sp("2px 6px"),
+                }}
+              >
+                retry
+              </button>
+            </div>
+          )}
+          {searchEnabled && !searchQuery.isPending && !searchQuery.isError && !results.length && (
             <div
               style={{
                 padding: sp("12px 10px"),
@@ -5567,22 +6192,10 @@ const MiniChartTickerSearch = ({
                 fontFamily: T.sans,
               }}
             >
-              Searching active ticker universe…
+              No results for "{deferredQuery}".
             </div>
           )}
-          {searchEnabled && !searchQuery.isPending && !results.length && (
-            <div
-              style={{
-                padding: sp("12px 10px"),
-                fontSize: fs(9),
-                color: T.textDim,
-                fontFamily: T.sans,
-              }}
-            >
-              No active stock tickers matched "{deferredQuery}".
-            </div>
-          )}
-          {searchEnabled && results.length ? (
+          {searchEnabled && !searchQuery.isPending && !searchQuery.isError && results.length ? (
             <div
               style={{
                 padding: sp("6px 10px 4px"),
@@ -5597,75 +6210,23 @@ const MiniChartTickerSearch = ({
               Live matches
             </div>
           ) : null}
-          {results.map((result, index) => (
-            <button
-              key={buildTickerSearchRowKey(result)}
-              role="option"
-              aria-selected={index === activeIndex}
-              onClick={() => handleSelect(result)}
-              style={{
-                width: "100%",
-                display: "grid",
-                gridTemplateColumns: "64px 1fr auto",
-                gap: sp(8),
-                alignItems: "center",
-                padding: sp("8px 10px"),
-                background: index === activeIndex ? T.bg3 : "transparent",
-                border: "none",
-                borderBottom: `1px solid ${T.border}20`,
-                textAlign: "left",
-                cursor: "pointer",
-              }}
-              onMouseEnter={() => setActiveIndex(index)}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.sans,
-                  color: T.text,
-                }}
-              >
-                {result.ticker}
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: fs(9),
-                    color: T.textSec,
-                    fontFamily: T.sans,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {result.name}
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: fs(8),
-                    color: T.textDim,
-                    fontFamily: T.sans,
-                  }}
-                  >
-                    {[result.type, result.primaryExchange]
-                      .filter(Boolean)
-                      .join(" · ") || "stock"}
-                  </span>
-                </span>
-                <span
-                  style={{
-                    fontSize: fs(8),
-                    color: T.textMuted,
-                    fontFamily: T.sans,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {result.provider || result.market?.toUpperCase?.() || "US"}
-                </span>
-              </button>
+          {searchEnabled &&
+            !searchQuery.isPending &&
+            !searchQuery.isError &&
+            results.map((result, index) => (
+              <TickerSearchRow
+                key={buildTickerSearchRowKey(result)}
+                result={result}
+                active={index === activeIndex}
+                favorite={favoriteRows.some(
+                  (row) =>
+                    getTickerSearchRowStorageKey(row) ===
+                    getTickerSearchRowStorageKey(result),
+                )}
+                onSelect={handleSelect}
+                onToggleFavorite={handleToggleFavorite}
+                onMouseEnter={() => setActiveIndex(index)}
+              />
             ))}
         </div>
       </div>
@@ -5685,6 +6246,9 @@ const MiniChartCell = ({
   onChangeStudies,
   onChangeRayReplicaSettings,
   recentTickers = [],
+  recentTickerRows = [],
+  watchlistSymbols = [],
+  popularTickers = [],
   onRememberTicker,
   isActive,
   dense = false,
@@ -5693,6 +6257,7 @@ const MiniChartCell = ({
   const { studies: availableStudies, indicatorRegistry } =
     useIndicatorLibrary();
   const ticker = slot?.ticker || WATCHLIST[0]?.sym || "SPY";
+  const slotMarket = slot?.market || "stocks";
   const tf = MINI_CHART_TIMEFRAMES.includes(slot?.tf) ? slot.tf : "15m";
   const selectedIndicators = normalizeMiniChartStudies(slot?.studies);
   const rayReplicaSettings = useMemo(
@@ -5711,16 +6276,26 @@ const MiniChartCell = ({
     DEFAULT_WATCHLIST_BY_SYMBOL[ticker] ||
     WATCHLIST.find((item) => item.sym === ticker) ||
     WATCHLIST[0];
-  const tfBars = MINI_CHART_BAR_LIMITS[tf] || MINI_CHART_BAR_LIMITS["15m"];
+  const tfBars = getChartBarLimit(tf, isActive ? "primary" : "mini");
   const barsQuery = useQuery({
-    queryKey: ["market-mini-bars", ticker, tf, tfBars],
+    queryKey: [
+      "market-mini-bars",
+      ticker,
+      tf,
+      tfBars,
+      slotMarket,
+      slot?.providerContractId || null,
+    ],
     queryFn: () =>
       getBarsRequest({
         symbol: ticker,
         timeframe: tf === "1D" ? "1d" : tf,
         limit: tfBars,
+        market: slotMarket,
         outsideRth: tf !== "1D",
         source: "trades",
+        allowHistoricalSynthesis: true,
+        providerContractId: slot?.providerContractId || undefined,
       }),
     ...BARS_QUERY_DEFAULTS,
   });
@@ -5728,7 +6303,11 @@ const MiniChartCell = ({
     symbol: ticker,
     timeframe: tf === "1D" ? "1d" : tf,
     bars: barsQuery.data?.bars,
-    enabled: Boolean(stockAggregateStreamingEnabled && ticker),
+    enabled: Boolean(
+      stockAggregateStreamingEnabled &&
+        ticker &&
+        ["stocks", "etf", "otc"].includes(slotMarket),
+    ),
   });
   const latestAggregateSpotPrice = useMemo(() => {
     const aggregates = getStoredBrokerMinuteAggregates(ticker);
@@ -5807,12 +6386,15 @@ const MiniChartCell = ({
     [onEnterSoloMode, ticker],
   );
   const rememberTicker = useCallback(
-    (nextTicker) => {
-      const normalized = normalizeTickerSymbol(nextTicker);
+    (nextTickerOrRow) => {
+      const normalized =
+        typeof nextTickerOrRow === "string"
+          ? normalizeTickerSymbol(nextTickerOrRow)
+          : normalizeTickerSymbol(nextTickerOrRow?.ticker);
       if (!normalized) {
         return;
       }
-      onRememberTicker?.(normalized);
+      onRememberTicker?.(nextTickerOrRow);
     },
     [onRememberTicker],
   );
@@ -5955,7 +6537,9 @@ const MiniChartCell = ({
       <MiniChartTickerSearch
         open={searchOpen}
         ticker={ticker}
-        recentTickers={recentTickers}
+        recentTickerRows={recentTickerRows}
+        watchlistSymbols={watchlistSymbols}
+        popularTickers={popularTickers}
         onClose={() => setSearchOpen(false)}
         onSelectTicker={(result) => {
           const nextTicker = normalizeTickerSymbol(result?.ticker);
@@ -5963,10 +6547,11 @@ const MiniChartCell = ({
             return;
           }
           ensureTradeTickerInfo(nextTicker, result?.name || nextTicker);
-          rememberTicker(nextTicker);
-          onChangeTicker?.(nextTicker);
+          rememberTicker(result);
+          onChangeTicker?.(nextTicker, result);
           setSearchOpen(false);
         }}
+        onRememberTickerRow={rememberTicker}
       />
     </div>
   );
@@ -5977,6 +6562,8 @@ const MiniChartCell = ({
 export const MultiChartGrid = ({
   activeSym,
   onSymClick,
+  watchlistSymbols = [],
+  popularTickers = [],
   stockAggregateStreamingEnabled = false,
 }) => {
   const queryClient = useQueryClient();
@@ -6003,6 +6590,9 @@ export const MultiChartGrid = ({
           .filter(Boolean)
           .slice(0, 10)
       : [],
+  );
+  const [recentTickerRows, setRecentTickerRows] = useState(() =>
+    normalizePersistedTickerSearchRows(_initialState.marketGridRecentTickerRows, 10),
   );
   const [gridBodyWidth, setGridBodyWidth] = useState(0);
   const cfg = MULTI_CHART_LAYOUTS[layout] || MULTI_CHART_LAYOUTS["2x3"];
@@ -6103,8 +6693,9 @@ export const MultiChartGrid = ({
       marketGridIndicatorPresetVersion: MARKET_GRID_INDICATOR_PRESET_VERSION,
       marketGridSlots: slots,
       marketGridRecentTickers: recentTickers,
+      marketGridRecentTickerRows: recentTickerRows,
     });
-  }, [layout, recentTickers, soloSlotIndex, syncTimeframes, slots]);
+  }, [layout, recentTickerRows, recentTickers, soloSlotIndex, syncTimeframes, slots]);
 
   useEffect(() => {
     if (!gridBodyRef.current || typeof ResizeObserver === "undefined") {
@@ -6151,18 +6742,35 @@ export const MultiChartGrid = ({
         1,
     ),
   );
+  const rememberSearchRow = (tickerOrRow) => {
+    const normalizedTicker =
+      typeof tickerOrRow === "string"
+        ? normalizeTickerSymbol(tickerOrRow)
+        : normalizeTickerSymbol(tickerOrRow?.ticker);
+    if (!normalizedTicker) return;
+
+    setRecentTickers((current) =>
+      [normalizedTicker, ...current.filter((value) => value !== normalizedTicker)].slice(
+        0,
+        10,
+      ),
+    );
+
+    const normalizedRow = normalizeTickerSearchResultForStorage(tickerOrRow);
+    if (normalizedRow) {
+      const key = getTickerSearchRowStorageKey(normalizedRow);
+      setRecentTickerRows((current) =>
+        [
+          normalizedRow,
+          ...current.filter((row) => getTickerSearchRowStorageKey(row) !== key),
+        ].slice(0, 10),
+      );
+    }
+  };
+
   const updateSlot = (slotIndex, patch) => {
     if (patch?.ticker) {
-      setRecentTickers((current) => {
-        const nextTicker = normalizeTickerSymbol(patch.ticker);
-        if (!nextTicker) {
-          return current;
-        }
-        return [nextTicker, ...current.filter((value) => value !== nextTicker)].slice(
-          0,
-          10,
-        );
-      });
+      rememberSearchRow(patch.searchResult || patch);
     }
     setSlots((current) =>
       current.map((slot, index) =>
@@ -6315,21 +6923,33 @@ export const MultiChartGrid = ({
                 setLayout("1x1");
                 onSymClick?.(slot.ticker);
               }}
-              onChangeTicker={(ticker) => updateSlot(index, { ticker })}
+              onChangeTicker={(ticker, result) =>
+                updateSlot(index, {
+                  ticker,
+                  market: result?.market || "stocks",
+                  provider: result?.provider || result?.tradeProvider || null,
+                  providers: Array.isArray(result?.providers) ? result.providers : [],
+                  tradeProvider: result?.tradeProvider || null,
+                  dataProviderPreference: result?.dataProviderPreference || null,
+                  providerContractId: result?.providerContractId || null,
+                  exchange:
+                    result?.exchangeDisplay ||
+                    result?.normalizedExchangeMic ||
+                    result?.primaryExchange ||
+                    null,
+                  searchResult: result || null,
+                })
+              }
               onChangeTimeframe={(tf) => updateSlotTimeframe(index, tf)}
               onChangeStudies={(studies) => updateSlot(index, { studies })}
               onChangeRayReplicaSettings={(rayReplicaSettings) =>
                 updateSlot(index, { rayReplicaSettings })
               }
               recentTickers={recentTickers}
-              onRememberTicker={(ticker) =>
-                setRecentTickers((current) =>
-                  [ticker, ...current.filter((value) => value !== ticker)].slice(
-                    0,
-                    10,
-                  ),
-                )
-              }
+              recentTickerRows={recentTickerRows}
+              watchlistSymbols={watchlistSymbols}
+              popularTickers={popularTickers}
+              onRememberTicker={rememberSearchRow}
             />
           ))}
         </div>
@@ -7316,6 +7936,7 @@ const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
     providerSummary,
     flowEvents,
   } = useLiveMarketFlow(symbols, {
+    enabled: Boolean(session),
     limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
     maxSymbols: UNUSUAL_SCANNER_MAX_WATCHLIST,
     batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
@@ -7960,10 +8581,10 @@ const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
 // ─── Trade tab sub-components ───
 
 const TRADE_TIMEFRAMES = [
-  { v: "1m", bars: 2400, tag: "1m" },
-  { v: "5m", bars: 2400, tag: "5m" },
-  { v: "15m", bars: 2000, tag: "15m" },
-  { v: "1h", bars: 1500, tag: "1h" },
+  { v: "1m", bars: getChartBarLimit("1m", "primary"), tag: "1m" },
+  { v: "5m", bars: getChartBarLimit("5m", "primary"), tag: "5m" },
+  { v: "15m", bars: getChartBarLimit("15m", "primary"), tag: "15m" },
+  { v: "1h", bars: getChartBarLimit("1h", "primary"), tag: "1h" },
 ];
 
 // Custom SVG candlestick chart (Recharts has no native candle component).
@@ -12675,14 +13296,35 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [marketFilter, setMarketFilter] = useState(() =>
+    normalizeTickerSearchMarketFilter(_initialState.marketGridTickerSearchMarketFilter),
+  );
+  const [rowCache, setRowCache] = useState(() =>
+    buildTickerSearchCache(
+      normalizePersistedTickerSearchRows(_initialState.marketGridTickerSearchCache),
+    ),
+  );
   const { deferredQuery, searchEnabled, searchQuery, results, selectableResults } =
     useTickerSearchController({
       open,
       query,
+      marketFilter,
       currentTicker: "",
-      recentTickers: [],
+      rowCache,
       limit: 12,
     });
+
+  useEffect(() => {
+    persistState({ marketGridTickerSearchMarketFilter: marketFilter });
+  }, [marketFilter]);
+
+  useEffect(() => {
+    const rows = (searchQuery.data?.results || [])
+      .map(normalizeTickerSearchResultForStorage)
+      .filter(Boolean);
+    if (!rows.length) return;
+    setRowCache((current) => ({ ...current, ...buildTickerSearchCache(rows) }));
+  }, [searchQuery.data?.results]);
 
   useEffect(() => {
     if (!open) {
@@ -12742,6 +13384,19 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
         event.preventDefault();
         onClose?.();
       }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        setMarketFilter((current) => {
+          const index = TICKER_SEARCH_MARKET_FILTERS.findIndex(
+            (filter) => filter.value === current,
+          );
+          const direction = event.shiftKey ? -1 : 1;
+          const nextIndex =
+            (Math.max(0, index) + direction + TICKER_SEARCH_MARKET_FILTERS.length) %
+            TICKER_SEARCH_MARKET_FILTERS.length;
+          return TICKER_SEARCH_MARKET_FILTERS[nextIndex].value;
+        });
+      }
     },
     [activeIndex, handleSelect, onClose, selectableResults],
   );
@@ -12793,7 +13448,7 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
             <span
               style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}
             >
-              Provider-backed ticker search · active stocks
+              Provider-backed ticker search · multi-market
             </span>
           </div>
           <button
@@ -12812,8 +13467,35 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
             ×
           </button>
         </div>
+        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+          {TICKER_SEARCH_MARKET_FILTERS.map((filter) => {
+            const active = marketFilter === filter.value;
+            return (
+              <button
+                key={filter.value}
+                type="button"
+                data-testid={`ticker-search-filter-${filter.value}`}
+                aria-pressed={active}
+                onClick={() => setMarketFilter(filter.value)}
+                style={{
+                  border: `1px solid ${active ? T.accent : T.border}`,
+                  background: active ? `${T.accent}20` : T.bg1,
+                  color: active ? T.accent : T.textDim,
+                  fontFamily: T.mono,
+                  fontSize: fs(8),
+                  padding: sp("2px 6px"),
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                }}
+              >
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
         <input
           ref={inputRef}
+          data-testid="ticker-search-input"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={handleInputKeyDown}
@@ -12849,102 +13531,68 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
                 fontFamily: T.sans,
               }}
             >
-              Type at least two characters to search the ticker universe.
+              Type a ticker, name, CUSIP, ISIN, FIGI, or IBKR conid.
             </div>
           )}
           {searchEnabled && searchQuery.isPending && (
+            <TickerSearchSkeletonRows />
+          )}
+          {searchEnabled && searchQuery.isError && (
             <div
               style={{
-                padding: sp("12px 10px"),
-                fontSize: fs(10),
-                color: T.textDim,
-                fontFamily: T.sans,
-              }}
-            >
-              Searching active stock universe…
-            </div>
-          )}
-          {searchEnabled && !searchQuery.isPending && !results.length && (
-            <div
-              style={{
-                padding: sp("12px 10px"),
-                fontSize: fs(10),
-                color: T.textDim,
-                fontFamily: T.sans,
-              }}
-            >
-              No active stock tickers matched "{deferredQuery}".
-            </div>
-          )}
-          {results.map((result, index) => (
-            <button
-              key={buildTickerSearchRowKey(result)}
-              role="option"
-              aria-selected={index === activeIndex}
-              onClick={() => handleSelect(result)}
-              style={{
-                width: "100%",
-                display: "grid",
-                gridTemplateColumns: "72px 1fr auto",
-                gap: sp(8),
+                display: "flex",
+                justifyContent: "space-between",
                 alignItems: "center",
-                padding: sp("9px 10px"),
-                background: index === activeIndex ? T.bg3 : "transparent",
-                border: "none",
-                borderBottom: `1px solid ${T.border}20`,
-                textAlign: "left",
-                cursor: "pointer",
+                gap: sp(8),
+                padding: sp("10px"),
+                fontSize: fs(10),
+                color: T.amber,
+                fontFamily: T.sans,
+                background: `${T.amber}10`,
               }}
-              onMouseEnter={() => setActiveIndex(index)}
             >
-              <span
+              <span>Search failed</span>
+              <button
+                type="button"
+                onClick={() => searchQuery.refetch()}
                 style={{
-                  fontSize: fs(11),
-                  fontWeight: 700,
+                  border: `1px solid ${T.amber}`,
+                  background: "transparent",
+                  color: T.amber,
                   fontFamily: T.mono,
-                  color: T.text,
-                }}
-              >
-                {result.ticker}
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: fs(10),
-                    color: T.textSec,
-                    fontFamily: T.sans,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {result.name}
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: fs(8),
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                  }}
-                >
-                  {[result.type, result.primaryExchange]
-                    .filter(Boolean)
-                    .join(" · ") || "stock"}
-                </span>
-              </span>
-              <span
-                style={{
                   fontSize: fs(8),
-                  color: T.textMuted,
-                  fontFamily: T.mono,
-                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  padding: sp("2px 6px"),
                 }}
               >
-                {result.provider || result.market.toUpperCase()}
-              </span>
-            </button>
+                retry
+              </button>
+            </div>
+          )}
+          {searchEnabled && !searchQuery.isPending && !searchQuery.isError && !results.length && (
+            <div
+              style={{
+                padding: sp("12px 10px"),
+                fontSize: fs(10),
+                color: T.textDim,
+                fontFamily: T.sans,
+              }}
+            >
+              No results for "{deferredQuery}".
+            </div>
+          )}
+          {searchEnabled &&
+            !searchQuery.isPending &&
+            !searchQuery.isError &&
+            results.map((result, index) => (
+            <TickerSearchRow
+              key={buildTickerSearchRowKey(result)}
+              result={result}
+              active={index === activeIndex}
+              favorite={false}
+              onSelect={handleSelect}
+              onMouseEnter={() => setActiveIndex(index)}
+            />
           ))}
         </div>
       </div>
@@ -13256,6 +13904,7 @@ export const TradeEquityPanel = ({
         limit: tfMeta.bars,
         outsideRth: tf !== "1d",
         source: "trades",
+        allowHistoricalSynthesis: true,
       }),
     ...BARS_QUERY_DEFAULTS,
   });
@@ -13642,21 +14291,20 @@ export const TradeContractDetailPanel = ({
   const contractMeta =
     contract.cp === "C" ? selectedRow?.cContract : selectedRow?.pContract;
   const [tf, setTf] = useState("5m");
-  const tfMeta =
-    TRADE_TIMEFRAMES.find((x) => x.v === tf) || TRADE_TIMEFRAMES[1];
+  const optionBarsLimit = getChartBarLimit(tf, "option");
   const optionBarsQuery = useQuery({
     queryKey: [
       "trade-option-bars",
       contractMeta?.ticker,
       contractMeta?.providerContractId,
       tf,
-      tfMeta.bars,
+      optionBarsLimit,
     ],
     queryFn: () =>
       getBarsRequest({
         symbol: contractMeta.ticker,
         timeframe: tf,
-        limit: tfMeta.bars,
+        limit: optionBarsLimit,
         assetClass: "option",
         providerContractId: contractMeta?.providerContractId,
         outsideRth: tf !== "1d",
@@ -13670,12 +14318,13 @@ export const TradeContractDetailPanel = ({
       "trade-option-bars-daily",
       contractMeta?.ticker,
       contractMeta?.providerContractId,
+      getChartBarLimit("1d", "option"),
     ],
     queryFn: () =>
       getBarsRequest({
         symbol: contractMeta.ticker,
         timeframe: "1d",
-        limit: 180,
+        limit: getChartBarLimit("1d", "option"),
         assetClass: "option",
         providerContractId: contractMeta?.providerContractId,
         outsideRth: false,
@@ -15070,6 +15719,7 @@ const MarketDataSubscriptionProvider = ({
   sparklineSymbols,
   streamedMarketSymbols,
   marketStockAggregateStreamingEnabled,
+  lowPriorityHistoryEnabled = true,
   children,
 }) => {
   const marketAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
@@ -15106,10 +15756,12 @@ const MarketDataSubscriptionProvider = ({
   );
   const sparklineQuery = useQuery({
     queryKey: ["market-sparklines", sparklineSymbols],
-    enabled: sparklineSymbols.length > 0,
+    enabled: lowPriorityHistoryEnabled && sparklineSymbols.length > 0,
     queryFn: async () => {
-      const results = await Promise.allSettled(
-        sparklineSymbols.map((symbol) =>
+      const results = await settleWithConcurrency(
+        sparklineSymbols,
+        4,
+        (symbol) =>
           getBarsRequest({
             symbol,
             timeframe: "15m",
@@ -15117,7 +15769,6 @@ const MarketDataSubscriptionProvider = ({
             outsideRth: true,
             source: "trades",
           }),
-        ),
       );
 
       return Object.fromEntries(
@@ -15133,10 +15784,12 @@ const MarketDataSubscriptionProvider = ({
   });
   const marketPerformanceQuery = useQuery({
     queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
-    enabled: MARKET_PERFORMANCE_SYMBOLS.length > 0,
+    enabled: lowPriorityHistoryEnabled && MARKET_PERFORMANCE_SYMBOLS.length > 0,
     queryFn: async () => {
-      const results = await Promise.allSettled(
-        MARKET_PERFORMANCE_SYMBOLS.map((symbol) =>
+      const results = await settleWithConcurrency(
+        MARKET_PERFORMANCE_SYMBOLS,
+        4,
+        (symbol) =>
           getBarsRequest({
             symbol,
             timeframe: "1d",
@@ -15144,7 +15797,6 @@ const MarketDataSubscriptionProvider = ({
             outsideRth: false,
             source: "trades",
           }),
-        ),
       );
 
       return Object.fromEntries(
@@ -15277,8 +15929,59 @@ const WatchlistContainer = ({
   );
 };
 
+const formatLatencyMetric = (value) => (
+  Number.isFinite(value) ? `${Math.round(value)}ms` : "n/a"
+);
+
+const LatencyDebugStrip = () => {
+  const stats = useIbkrLatencyStats();
+  const cells = [
+    ["Bridge->API", stats.bridgeToApiMs],
+    ["API->React", stats.apiToReactMs],
+    ["Total", stats.totalMs],
+  ];
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        right: 12,
+        bottom: 12,
+        zIndex: 10000,
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: "1px solid rgba(148,163,184,0.35)",
+        background: "rgba(2,6,23,0.88)",
+        color: "#dbeafe",
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 11,
+        boxShadow: "0 18px 45px rgba(0,0,0,0.35)",
+        pointerEvents: "none",
+      }}
+    >
+      <strong style={{ color: "#93c5fd", fontWeight: 700 }}>Latency</strong>
+      {cells.map(([label, metric]) => (
+        <span key={label} style={{ whiteSpace: "nowrap" }}>
+          {label} p50 {formatLatencyMetric(metric.p50)} p95{" "}
+          {formatLatencyMetric(metric.p95)}
+        </span>
+      ))}
+      <span style={{ color: "#94a3b8" }}>n={stats.sampleCount}</span>
+    </div>
+  );
+};
+
 export default function RayAlgoPlatform() {
   const queryClient = useQueryClient();
+  const latencyDebugEnabled = useMemo(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("latency") === "1",
+    [],
+  );
   const [screen, setScreen] = useState(_initialState.screen || "market");
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -15312,6 +16015,9 @@ export default function RayAlgoPlatform() {
       retry: false,
     },
   });
+  const sessionMetadataSettled = Boolean(
+    sessionQuery.data || sessionQuery.isFetched || sessionQuery.isError,
+  );
   const watchlistsQuery = useListWatchlists({
     query: {
       staleTime: 60_000,
@@ -16233,6 +16939,7 @@ export default function RayAlgoPlatform() {
             researchConfigured={Boolean(
               sessionQuery.data?.configured?.research,
             )}
+            flowScannerEnabled={sessionMetadataSettled}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
             marketNotifications={marketAlertItems}
             signalEvents={signalMonitorEvents}
@@ -16271,6 +16978,21 @@ export default function RayAlgoPlatform() {
             accountId={primaryAccountId}
             brokerConfigured={brokerConfigured}
             brokerAuthenticated={brokerAuthenticated}
+          />
+        );
+      case "account":
+        return (
+          <AccountScreen
+            accounts={accounts}
+            selectedAccountId={primaryAccountId}
+            onSelectTradingAccount={setSelectedAccountId}
+            environment={environment}
+            brokerConfigured={brokerConfigured}
+            brokerAuthenticated={brokerAuthenticated}
+            onJumpToTrade={(symbol) => {
+              handleSelectSymbol(symbol);
+              setScreen("trade");
+            }}
           />
         );
       case "research":
@@ -16319,6 +17041,13 @@ export default function RayAlgoPlatform() {
     <ThemeContext.Provider value={{ theme, toggle: toggleTheme }}>
       <ToastContext.Provider value={toastValue}>
         <PositionsContext.Provider value={positionsValue}>
+        <AccountSelectionContext.Provider
+          value={{
+            accounts,
+            selectedAccountId: primaryAccountId,
+            setSelectedAccountId,
+          }}
+        >
         <MarketDataSubscriptionProvider
           watchlistSymbols={watchlistSymbols}
           activeWatchlistItems={activeWatchlist?.items}
@@ -16326,6 +17055,7 @@ export default function RayAlgoPlatform() {
           sparklineSymbols={sparklineSymbols}
           streamedMarketSymbols={streamedMarketSymbols}
           marketStockAggregateStreamingEnabled={marketStockAggregateStreamingEnabled}
+          lowPriorityHistoryEnabled={sessionMetadataSettled}
         >
           <div
             style={{
@@ -16339,6 +17069,7 @@ export default function RayAlgoPlatform() {
           >
             <style>{FONT_CSS}</style>
             <ToastStack toasts={toasts} onDismiss={dismissToast} />
+            {latencyDebugEnabled && <LatencyDebugStrip />}
 
             {/* ══════ TOP ANCHOR BAR ══════ */}
             <div
@@ -16653,6 +17384,7 @@ export default function RayAlgoPlatform() {
             </div>
           </div>
         </MarketDataSubscriptionProvider>
+        </AccountSelectionContext.Provider>
         </PositionsContext.Provider>
       </ToastContext.Provider>
     </ThemeContext.Provider>

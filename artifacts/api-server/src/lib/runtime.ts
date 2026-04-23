@@ -18,7 +18,7 @@ export type IbkrRuntimeConfig = {
   password: string | null;
   allowInsecureTls: boolean;
 };
-export type IbkrTransport = "client_portal" | "tws";
+export type IbkrTransport = "client_portal" | "tws" | "ibx";
 export type IbkrMarketDataMode =
   | "live"
   | "frozen"
@@ -41,6 +41,10 @@ export type IbkrBridgeProviderRuntimeConfig =
   | {
       transport: "tws";
       config: IbkrTwsRuntimeConfig;
+    }
+  | {
+      transport: "ibx";
+      config: null;
     };
 export type IbkrBridgeRuntimeConfig = {
   baseUrl: string;
@@ -241,6 +245,10 @@ function normalizeIbkrTransport(value: string | null): IbkrTransport | null {
     return "tws";
   }
 
+  if (normalized === "ibx" || normalized === "direct") {
+    return "ibx";
+  }
+
   return null;
 }
 
@@ -358,6 +366,10 @@ export function getIbkrBridgeProviderRuntimeConfig(): IbkrBridgeProviderRuntimeC
   if (explicitTransport === "tws") {
     const config = getIbkrTwsRuntimeConfig();
     return config ? { transport: "tws", config } : null;
+  }
+
+  if (explicitTransport === "ibx") {
+    return { transport: "ibx", config: null };
   }
 
   if (explicitTransport === "client_portal") {
