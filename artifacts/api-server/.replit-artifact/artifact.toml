@@ -13,7 +13,7 @@ paths = ["/api"]
 PORT = "8080"
 
 [services.development]
-run = "pnpm --filter @workspace/api-server run dev"
+run = "LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev"
 
 [services.production]
 

@@ -105,9 +105,10 @@ args = "IBKR Bridge"
 name = "IBKR Bridge"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=3002 node --enable-source-maps artifacts/ibkr-bridge/dist/index.mjs"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=3002 LOG_LEVEL=warn node --enable-source-maps artifacts/ibkr-bridge/dist/index.mjs"
+waitForPort = 3002

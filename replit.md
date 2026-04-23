@@ -127,6 +127,34 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
   - **Expiry parsing fix** — IBKR returns option expiries as compact YYYYMMDD strings (e.g. `"20260423"`). `lib/values.ts` `toDate()` now handles 8-digit string/integer inputs as calendar dates *before* the numeric-milliseconds branch. Previously every option contract resolved to `1970-01-01T05:37:40Z`, which collapsed flow event IDs and broke UI dedupe.
 - **Bridge surface** — new endpoints `GET /news` and `GET /universe/search` on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). The TWS provider stubs both to empty arrays since the user's transport is Client Portal.
 
+## Server log noise (dev workflow)
+
+Both the API server and the IBKR Bridge use `pino-http` with a shared
+`customLogLevel` policy in `artifacts/api-server/src/app.ts` and
+`artifacts/ibkr-bridge/src/app.ts`:
+
+- 5xx → `error`, 4xx → `warn`
+- any request with `responseTime >= 1000ms` → `warn` (preserves the
+  bridge-overloaded signal even when the base level is `warn`)
+- `GET /healthz*` under 1s → `silent`
+- everything else → `info`
+
+The dev workflows pin `LOG_LEVEL=warn`:
+
+- IBKR Bridge: prefix on the `.replit` workflow command
+  (`PORT=3002 LOG_LEVEL=warn node ...`).
+- API Server: prefix on the `[services.development] run` line in
+  `artifacts/api-server/.replit-artifact/artifact.toml`
+  (`LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`).
+
+To temporarily restore verbose per-request logging while debugging, drop
+the `LOG_LEVEL=warn` prefix in the relevant workflow command and restart
+that workflow. Production is unaffected: it runs raw JSON pino without
+`pino-pretty` and the `[services.production.run.env]` block does not set
+`LOG_LEVEL`. Any change to `artifacts/ibkr-bridge/src/**` still requires
+`pnpm --filter @workspace/ibkr-bridge run build` before restart since the
+bridge runs the compiled `dist/index.mjs`.
+
 ## Snapshot quote pipeline (gray-screen fix)
 
 The IBKR Client Portal streams *partial* field updates per WebSocket tick and

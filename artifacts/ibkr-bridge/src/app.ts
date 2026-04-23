@@ -28,6 +28,14 @@ function isZodError(error: unknown): error is ZodErrorLike {
 app.use(
   pinoHttp({
     logger,
+    customLogLevel(req, res, err) {
+      if (err || res.statusCode >= 500) return "error";
+      if (res.statusCode >= 400) return "warn";
+      const responseTime = (res as { responseTime?: number }).responseTime ?? 0;
+      if (responseTime >= 1000) return "warn";
+      if (req.url?.startsWith("/healthz")) return "silent";
+      return "info";
+    },
     serializers: {
       req(req) {
         return {
