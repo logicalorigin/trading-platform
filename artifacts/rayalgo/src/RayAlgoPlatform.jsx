@@ -15073,6 +15073,28 @@ const MarketDataSubscriptionProvider = ({
   children,
 }) => {
   const marketAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
+  const watchlistSymbolsKey = useMemo(
+    () => (watchlistSymbols || []).join(","),
+    [watchlistSymbols],
+  );
+  const activeWatchlistItemsKey = useMemo(
+    () =>
+      (activeWatchlistItems || [])
+        .map((item) =>
+          [
+            item?.id,
+            item?.symbol,
+            item?.name,
+            item?.assetClass,
+            item?.provider,
+            item?.providerContractId,
+          ]
+            .filter(Boolean)
+            .join(":"),
+        )
+        .join("|"),
+    [activeWatchlistItems],
+  );
   const quotesQuery = useGetQuoteSnapshots(
     { symbols: quoteSymbols.join(",") },
     {
@@ -15158,6 +15180,14 @@ const MarketDataSubscriptionProvider = ({
   });
 
   const [marketDataVersion, setMarketDataVersion] = useState(0);
+  const marketDataSyncKey = [
+    watchlistSymbolsKey,
+    activeWatchlistItemsKey,
+    quotesQuery.dataUpdatedAt || 0,
+    sparklineQuery.dataUpdatedAt || 0,
+    marketPerformanceQuery.dataUpdatedAt || 0,
+    marketAggregateStoreVersion,
+  ].join("::");
   useEffect(() => {
     syncRuntimeMarketData(
       watchlistSymbols,
@@ -15169,14 +15199,7 @@ const MarketDataSubscriptionProvider = ({
       },
     );
     setMarketDataVersion((version) => version + 1);
-  }, [
-    watchlistSymbols,
-    activeWatchlistItems,
-    quotesQuery.data,
-    sparklineQuery.data,
-    marketPerformanceQuery.data,
-    marketAggregateStoreVersion,
-  ]);
+  }, [marketDataSyncKey]);
 
   return (
     <MarketDataVersionContext.Provider value={marketDataVersion}>

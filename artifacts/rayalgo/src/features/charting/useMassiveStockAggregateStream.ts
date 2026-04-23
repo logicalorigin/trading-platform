@@ -76,10 +76,26 @@ let eventSource: EventSource | null = null;
 let eventSourceSignature = "";
 let reconnectTimer: number | null = null;
 let reconnectBlockedUntil = 0;
+let storeNotifyScheduled = false;
+
+const flushStoreListeners = () => {
+  storeNotifyScheduled = false;
+  storeVersion += 1;
+  Array.from(storeListeners).forEach((listener) => listener());
+};
 
 const notifyStoreListeners = () => {
-  storeVersion += 1;
-  storeListeners.forEach((listener) => listener());
+  if (storeNotifyScheduled) {
+    return;
+  }
+
+  storeNotifyScheduled = true;
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(flushStoreListeners);
+    return;
+  }
+
+  setTimeout(flushStoreListeners, 0);
 };
 
 const subscribeToAggregateStore = (listener: () => void): (() => void) => {
