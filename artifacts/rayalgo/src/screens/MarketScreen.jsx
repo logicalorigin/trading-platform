@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  memo,
   useMemo,
   useState,
 } from "react";
@@ -8,6 +9,10 @@ import {
   useGetNews,
   useGetResearchEarningsCalendar,
 } from "@workspace/api-client-react";
+import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
+import { useMarketAlertsSnapshot } from "../features/platform/marketAlertsStore";
+import { useMarketFlowSnapshot } from "../features/platform/marketFlowStore";
+import { useSignalMonitorSnapshot } from "../features/platform/signalMonitorStore";
 import {
   Area,
   AreaChart,
@@ -23,13 +28,11 @@ import {
   CardTitle,
   DataUnavailableState,
   MACRO_TICKERS,
-  MISSING_VALUE,
   MarketActivityPanel,
   MultiChartGrid,
   RATES_PROXIES,
   SECTORS,
   SectorTreemap,
-  T,
   TREEMAP_DATA,
   TreemapHeatmap,
   _initialState,
@@ -37,7 +40,6 @@ import {
   buildRatesProxySummary,
   buildTrackedBreadthSummary,
   clampNumber,
-  dim,
   fmtCompactNumber,
   fmtM,
   formatCalendarMeta,
@@ -45,27 +47,178 @@ import {
   formatQuotePrice,
   formatRelativeTimeShort,
   formatSignedPercent,
-  fs,
   isFiniteNumber,
   mapNewsSentimentToScore,
   normalizeTickerSymbol,
   persistState,
-  sp,
-  useLiveMarketFlow,
 } from "../RayAlgoPlatform";
+import {
+  MISSING_VALUE,
+  T,
+  dim,
+  fs,
+  sp,
+} from "../lib/uiTokens";
+
+const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
+  return <MultiChartGrid {...props} />;
+});
+
+const SelectedPremiumTidePanel = memo(function SelectedPremiumTidePanel({
+  sym,
+  selectedCallPremium,
+  selectedPutPremium,
+  selectedFlowTide,
+}) {
+  return (
+    <Card style={{ padding: "8px 10px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 6,
+          gap: sp(8),
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: fs(10),
+              fontWeight: 700,
+              fontFamily: T.display,
+              color: T.textSec,
+            }}
+          >
+            Premium Tide · {sym}
+          </div>
+          <div
+            style={{
+              fontSize: fs(8),
+              color: T.textDim,
+              fontFamily: T.mono,
+              marginTop: 1,
+            }}
+          >
+            Intraday premium flow follows the selected ticker
+          </div>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: sp(8),
+            fontSize: fs(9),
+            fontFamily: T.mono,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
+          <span style={{ color: T.green }}>Calls {fmtM(selectedCallPremium)}</span>
+          <span style={{ color: T.red }}>Puts {fmtM(selectedPutPremium)}</span>
+          <span style={{ color: T.accent, fontWeight: 700 }}>
+            Net {selectedCallPremium - selectedPutPremium >= 0 ? "+" : ""}
+            {fmtM(Math.abs(selectedCallPremium - selectedPutPremium))}
+          </span>
+        </div>
+      </div>
+      {selectedFlowTide.length ? (
+        <div style={{ height: dim(190), width: "100%" }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={selectedFlowTide}>
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: fs(9), fill: T.textMuted }}
+              />
+              <YAxis
+                tick={{ fontSize: fs(9), fill: T.textMuted }}
+                tickFormatter={(value) => `${(value / 1e6).toFixed(1)}M`}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: T.bg4,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 0,
+                  fontSize: fs(10),
+                  fontFamily: T.mono,
+                }}
+                formatter={(value) =>
+                  `${value >= 0 ? "+" : ""}$${(value / 1e6).toFixed(2)}M`
+                }
+              />
+              <ReferenceLine y={0} stroke={T.textMuted} strokeDasharray="2 2" />
+              <Area
+                type="monotone"
+                dataKey="cumNet"
+                stroke={T.accent}
+                fill={T.accent}
+                fillOpacity={0.28}
+                strokeWidth={2}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <DataUnavailableState
+          title={`No live flow for ${sym}`}
+          detail="Select another ticker or wait for new options activity."
+        />
+      )}
+    </Card>
+  );
+});
+
+const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer({
+  isVisible,
+  highlightedUnusualFlow,
+  newsItems,
+  calendarItems,
+  onSymClick,
+  onSignalAction,
+  onScanNow,
+  onToggleMonitor,
+  onChangeMonitorTimeframe,
+  unusualThreshold,
+  onChangeUnusualThreshold,
+}) {
+  const signalMonitorSnapshot = useSignalMonitorSnapshot({
+    subscribeToUpdates: isVisible,
+  });
+  const marketAlertsSnapshot = useMarketAlertsSnapshot({
+    subscribeToUpdates: isVisible,
+  });
+
+  return (
+    <MarketActivityPanel
+      notifications={marketAlertsSnapshot.items}
+      highlightedUnusualFlow={highlightedUnusualFlow}
+      signalEvents={signalMonitorSnapshot.events || []}
+      signalStates={signalMonitorSnapshot.states || []}
+      signalMonitorProfile={signalMonitorSnapshot.profile || null}
+      signalMonitorPending={Boolean(signalMonitorSnapshot.pending)}
+      newsItems={newsItems}
+      calendarItems={calendarItems}
+      onSymClick={onSymClick}
+      onSignalAction={onSignalAction}
+      onScanNow={onScanNow}
+      onToggleMonitor={onToggleMonitor}
+      onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+      unusualThreshold={unusualThreshold}
+      onChangeUnusualThreshold={onChangeUnusualThreshold}
+      appliedUnusualThreshold={
+        Number.isFinite(unusualThreshold) ? unusualThreshold : null
+      }
+      appliedUnusualThresholdConsistent
+    />
+  );
+});
 
 export const MarketScreen = ({
   sym,
   onSymClick,
   symbols = [],
+  isVisible = false,
   researchConfigured = false,
-  flowScannerEnabled = true,
   stockAggregateStreamingEnabled = false,
-  marketNotifications = [],
-  signalEvents = [],
-  signalStates = [],
-  signalMonitorProfile = null,
-  signalMonitorPending = false,
   onSignalAction,
   onScanNow,
   onToggleMonitor,
@@ -115,6 +268,9 @@ export const MarketScreen = ({
     },
     [activityPanelWidth],
   );
+  const flowSnapshot = useMarketFlowSnapshot(symbols, {
+    subscribe: isVisible,
+  });
   const {
     putCall,
     sectorFlow,
@@ -122,10 +278,7 @@ export const MarketScreen = ({
     flowEvents,
     flowTide,
     providerSummary: flowProviderSummary,
-  } = useLiveMarketFlow(symbols, {
-    enabled: flowScannerEnabled,
-    unusualThreshold,
-  });
+  } = flowSnapshot;
   const popularTickers = useMemo(() => {
     const bySymbol = new Map();
     for (const event of flowEvents || []) {
@@ -141,6 +294,10 @@ export const MarketScreen = ({
       .map((entry) => entry.symbol)
       .slice(0, 5);
   }, [flowEvents]);
+  const stablePopularTickers = useMemo(
+    () => popularTickers,
+    [popularTickers.join(",")],
+  );
   const calendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -156,7 +313,7 @@ export const MarketScreen = ({
     {
       query: {
         staleTime: 60_000,
-        refetchInterval: 60_000,
+        refetchInterval: isVisible ? 60_000 : false,
         retry: false,
       },
     },
@@ -167,9 +324,21 @@ export const MarketScreen = ({
         researchConfigured && calendarWindow.from && calendarWindow.to,
       ),
       staleTime: 300_000,
-      refetchInterval: 300_000,
+      refetchInterval: isVisible ? 300_000 : false,
       retry: false,
     },
+  });
+  useRuntimeWorkloadFlag("market:news", isVisible, {
+    kind: "poll",
+    label: "Market news",
+    detail: "60s",
+    priority: 6,
+  });
+  useRuntimeWorkloadFlag("market:earnings", isVisible && researchConfigured, {
+    kind: "poll",
+    label: "Market earnings",
+    detail: "300s",
+    priority: 7,
   });
   const breadth = buildTrackedBreadthSummary();
   const ratesSummary = buildRatesProxySummary();
@@ -206,8 +375,19 @@ export const MarketScreen = ({
     0,
   );
   const highlightedUnusualFlow = useMemo(
-    () => flowEvents.slice(0, 12),
-    [flowEvents],
+    () =>
+      flowEvents
+        .filter((event) => {
+          if (!event.isUnusual) {
+            return false;
+          }
+          if (!Number.isFinite(unusualThreshold) || unusualThreshold <= 0) {
+            return true;
+          }
+          return (event.unusualScore || 0) >= unusualThreshold;
+        })
+        .slice(0, 12),
+    [flowEvents, unusualThreshold],
   );
   const newsItems = useMemo(() => {
     const articles = newsQuery.data?.articles || [];
@@ -304,11 +484,11 @@ export const MarketScreen = ({
             alignItems: "start",
           }}
         >
-          <MultiChartGrid
+          <MemoMultiChartGrid
             activeSym={sym}
             onSymClick={onSymClick}
             watchlistSymbols={symbols}
-            popularTickers={popularTickers}
+            popularTickers={stablePopularTickers}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           />
           <div
@@ -325,13 +505,9 @@ export const MarketScreen = ({
               borderRight: `1px solid ${T.border}55`,
             }}
           />
-          <MarketActivityPanel
-            notifications={marketNotifications}
+          <MarketActivityPanelContainer
+            isVisible={isVisible}
             highlightedUnusualFlow={highlightedUnusualFlow}
-            signalEvents={signalEvents}
-            signalStates={signalStates}
-            signalMonitorProfile={signalMonitorProfile}
-            signalMonitorPending={signalMonitorPending}
             newsItems={newsItems}
             calendarItems={calendarItems}
             onSymClick={onSymClick}
@@ -341,12 +517,6 @@ export const MarketScreen = ({
             onChangeMonitorTimeframe={onChangeMonitorTimeframe}
             unusualThreshold={unusualThreshold}
             onChangeUnusualThreshold={handleChangeUnusualThreshold}
-            appliedUnusualThreshold={
-              flowProviderSummary?.appliedUnusualThreshold ?? null
-            }
-            appliedUnusualThresholdConsistent={
-              flowProviderSummary?.appliedUnusualThresholdConsistent ?? true
-            }
           />
         </div>
 
@@ -358,108 +528,12 @@ export const MarketScreen = ({
             gap: 6,
           }}
         >
-          <Card style={{ padding: "8px 10px" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 6,
-                gap: sp(8),
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(10),
-                    fontWeight: 700,
-                    fontFamily: T.display,
-                    color: T.textSec,
-                  }}
-                >
-                  Premium Tide · {sym}
-                </div>
-                <div
-                  style={{
-                    fontSize: fs(8),
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                    marginTop: 1,
-                  }}
-                >
-                  Intraday premium flow follows the selected ticker
-                </div>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  gap: sp(8),
-                  fontSize: fs(9),
-                  fontFamily: T.mono,
-                  flexWrap: "wrap",
-                  justifyContent: "flex-end",
-                }}
-              >
-                <span style={{ color: T.green }}>
-                  Calls {fmtM(selectedCallPremium)}
-                </span>
-                <span style={{ color: T.red }}>
-                  Puts {fmtM(selectedPutPremium)}
-                </span>
-                <span style={{ color: T.accent, fontWeight: 700 }}>
-                  Net{" "}
-                  {selectedCallPremium - selectedPutPremium >= 0 ? "+" : ""}
-                  {fmtM(Math.abs(selectedCallPremium - selectedPutPremium))}
-                </span>
-              </div>
-            </div>
-            {selectedFlowTide.length ? (
-              <div style={{ height: dim(190), width: "100%" }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={selectedFlowTide}>
-                    <XAxis
-                      dataKey="time"
-                      tick={{ fontSize: fs(9), fill: T.textMuted }}
-                    />
-                    <YAxis
-                      tick={{ fontSize: fs(9), fill: T.textMuted }}
-                      tickFormatter={(value) => `${(value / 1e6).toFixed(1)}M`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: T.bg4,
-                        border: `1px solid ${T.border}`,
-                        borderRadius: 0,
-                        fontSize: fs(10),
-                        fontFamily: T.mono,
-                      }}
-                      formatter={(value) =>
-                        `${value >= 0 ? "+" : ""}$${(value / 1e6).toFixed(2)}M`
-                      }
-                    />
-                    <ReferenceLine
-                      y={0}
-                      stroke={T.textMuted}
-                      strokeDasharray="2 2"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="cumNet"
-                      stroke={T.accent}
-                      strokeWidth={2}
-                      fill={T.accent}
-                      fillOpacity={0.28}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <DataUnavailableState
-                title={`No live flow for ${sym}`}
-                detail="Select another ticker or wait for new options activity."
-              />
-            )}
-          </Card>
+          <SelectedPremiumTidePanel
+            sym={sym}
+            selectedCallPremium={selectedCallPremium}
+            selectedPutPremium={selectedPutPremium}
+            selectedFlowTide={selectedFlowTide}
+          />
 
           <Card style={{ display: "none" }}>
             <div

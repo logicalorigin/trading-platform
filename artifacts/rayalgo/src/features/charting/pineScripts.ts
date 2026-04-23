@@ -144,8 +144,10 @@ export function useIndicatorLibrary() {
   const pineScriptsQuery = useListPineScripts({
     query: {
       queryKey: ["/api/charting/pine-scripts"],
-      staleTime: 5_000,
-      refetchInterval: 15_000,
+      staleTime: 5 * 60_000,
+      refetchInterval: false,
+      refetchOnMount: false,
+      gcTime: 10 * 60_000,
     },
   });
   const pineScripts = pineScriptsQuery.data?.scripts ?? [];

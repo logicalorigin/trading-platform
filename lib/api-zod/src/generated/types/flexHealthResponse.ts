@@ -11,10 +11,19 @@ export interface FlexHealthResponse {
   flexConfigured: boolean;
   flexTokenPresent: boolean;
   flexQueryIdPresent: boolean;
+  schemaReady: boolean;
+  missingTables: string[];
+  schemaError: string | null;
   lastSuccessfulRefreshAt: Date | null;
   lastAttemptAt: Date | null;
   lastStatus: string | null;
   lastError: string | null;
   snapshotsRecording: boolean;
   lastSnapshotAt: Date | null;
+  snapshotCoverageStartAt: Date | null;
+  snapshotCoverageEndAt: Date | null;
+  snapshotPointCount: number;
+  flexNavCoverageStartDate: Date | null;
+  flexNavCoverageEndDate: Date | null;
+  flexNavRowCount: number;
 }

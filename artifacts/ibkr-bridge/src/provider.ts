@@ -135,4 +135,26 @@ export interface IbkrBridgeProvider {
     symbols: string[],
     onQuote: (quote: QuoteSnapshot) => void,
   ): Promise<() => void>;
+  getOptionQuoteSnapshots?(input: {
+    underlying?: string | null;
+    providerContractIds: string[];
+  }): Promise<QuoteSnapshot[]>;
+  subscribeOptionQuoteStream?(
+    input: {
+      underlying?: string | null;
+      providerContractIds: string[];
+    },
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void>;
+  subscribeHistoricalBarStream?(
+    input: {
+      symbol: string;
+      timeframe: HistoryBarTimeframe;
+      assetClass?: "equity" | "option";
+      providerContractId?: string | null;
+      outsideRth?: boolean;
+      source?: HistoryDataSource;
+    },
+    onBar: (bar: BrokerBarSnapshot) => void,
+  ): Promise<() => void>;
 }

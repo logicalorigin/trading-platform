@@ -9,4 +9,5 @@ export * from "./instruments";
 export * from "./market-data";
 export * from "./signal-monitor";
 export * from "./trading";
+export * from "./universe";
 export * from "./watchlists";

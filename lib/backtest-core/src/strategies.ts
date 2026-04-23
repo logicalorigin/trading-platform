@@ -8,6 +8,10 @@ import type {
   StrategySignalContext,
   StrategyStatus,
 } from "./types";
+import {
+  backtestOptionPresets,
+  defaultBacktestOptionPresetId,
+} from "./options";
 
 type ExecutableStrategy = StrategyCatalogItem & {
   evaluate(context: StrategySignalContext): BacktestSignal;
@@ -338,6 +342,20 @@ const trendParameterDefinitions: StrategyParameterDefinition[] = [
 
 const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
   {
+    key: "executionMode",
+    label: "Execution Mode",
+    type: "enum",
+    defaultValue: "spot",
+    options: ["spot", "options"],
+  },
+  {
+    key: "contractPresetId",
+    label: "Options Preset",
+    type: "enum",
+    defaultValue: defaultBacktestOptionPresetId,
+    options: backtestOptionPresets.map((preset) => preset.id),
+  },
+  {
     key: "timeHorizon",
     label: "Time Horizon",
     type: "integer",
@@ -412,11 +430,14 @@ const strategies: ExecutableStrategy[] = [
     compatibilityNotes: [
       "Uses the current JS RayReplica market-structure port, not a full Pine executor.",
       "BUY/SELL events map to bullish and bearish CHOCH transitions.",
-      "BOS, TP/SL, filters, and short-side execution remain chart-only for now.",
+      "Spot mode remains the baseline path; options mode is long-premium only and uses preset contract selection.",
+      "BOS, TP/SL, filters, and short-side shares execution remain chart-only for now.",
     ],
     unsupportedFeatures: [],
     parameterDefinitions: rayReplicaParameterDefinitions,
     defaultParameters: {
+      executionMode: "spot",
+      contractPresetId: defaultBacktestOptionPresetId,
       timeHorizon: 10,
     },
     evaluate({ bars, index, parameters }) {

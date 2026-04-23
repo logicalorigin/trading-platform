@@ -3,6 +3,7 @@ import {
   buildCandidatesForMode,
   buildRayReplicaSignalTape,
   buildWalkForwardWindows,
+  getBacktestOptionPreset,
   getStrategyCatalogItem,
   listStrategies,
   type BacktestBar,
@@ -36,7 +37,12 @@ import type {
 } from "@workspace/db";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
+import { getPolygonRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
+import {
+  PolygonMarketDataClient,
+  type HistoricalOptionContract,
+} from "../providers/polygon/market-data";
 
 type NumberLike = number | string | null | undefined;
 
@@ -80,6 +86,27 @@ type CreateSweepInput = {
   walkForwardTrainingMonths: number | null;
   walkForwardTestMonths: number | null;
   walkForwardStepMonths: number | null;
+};
+
+export type ResolveBacktestOptionContractInput = {
+  underlying: string;
+  occurredAt: Date;
+  right: "call" | "put";
+  spotPrice: number;
+  contractPresetId?: string | null;
+};
+
+export type ResolvedBacktestOptionContract = {
+  ticker: string;
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+  multiplier: number;
+  sharesPerContract: number;
+  providerContractId: string | null;
+  contractPresetId: string;
+  dte: number;
 };
 
 type PromoteRunInput = {
@@ -166,6 +193,177 @@ type BacktestTradeDiagnosticsResponse = {
 
 const POST_EXIT_CONTINUATION_WINDOW_BARS = 10;
 
+const OPTION_CONTRACT_LOOKAHEAD_DAYS = 60;
+
+function getPolygonClient(): PolygonMarketDataClient {
+  const config = getPolygonRuntimeConfig();
+
+  if (!config) {
+    throw new HttpError(503, "Polygon / Massive market data is not configured.", {
+      code: "polygon_runtime_unavailable",
+    });
+  }
+
+  return new PolygonMarketDataClient(config);
+}
+
+function startOfUtcDay(value: Date): Date {
+  return new Date(
+    Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
+  );
+}
+
+function addUtcDays(value: Date, days: number): Date {
+  return new Date(value.getTime() + days * 24 * 60 * 60 * 1_000);
+}
+
+function calculateDte(occurredAt: Date, expirationDate: Date): number {
+  const start = startOfUtcDay(occurredAt).getTime();
+  const expiration = startOfUtcDay(expirationDate).getTime();
+  return Math.round((expiration - start) / (24 * 60 * 60 * 1_000));
+}
+
+function selectExpiryWindow(
+  contracts: HistoricalOptionContract[],
+  occurredAt: Date,
+  targetDte: number,
+  minDte: number,
+  maxDte: number,
+): HistoricalOptionContract[] {
+  const inWindow = contracts.filter((contract) => {
+    const dte = calculateDte(occurredAt, contract.expirationDate);
+    return dte >= minDte && dte <= maxDte;
+  });
+
+  const candidates = inWindow.length > 0 ? inWindow : contracts;
+  const expirations = [
+    ...new Set(
+      candidates.map((contract) => contract.expirationDate.toISOString()),
+    ),
+  ]
+    .map((iso) => new Date(iso))
+    .sort((left, right) => left.getTime() - right.getTime());
+
+  const selectedExpiration =
+    expirations.sort((left, right) => {
+      const leftDte = calculateDte(occurredAt, left);
+      const rightDte = calculateDte(occurredAt, right);
+      const dteDelta = Math.abs(leftDte - targetDte) - Math.abs(rightDte - targetDte);
+
+      if (dteDelta !== 0) {
+        return dteDelta;
+      }
+
+      return left.getTime() - right.getTime();
+    })[0] ?? null;
+
+  if (!selectedExpiration) {
+    return [];
+  }
+
+  const selectedIso = selectedExpiration.toISOString();
+  return candidates.filter(
+    (contract) => contract.expirationDate.toISOString() === selectedIso,
+  );
+}
+
+function scoreContractStrike(
+  contract: HistoricalOptionContract,
+  spotPrice: number,
+  right: "call" | "put",
+  strikeTarget: ReturnType<typeof getBacktestOptionPreset>["strikeTarget"],
+): number {
+  const distance = contract.strike - spotPrice;
+  const absoluteDistance = Math.abs(distance);
+  const percentDistance = spotPrice > 0 ? absoluteDistance / spotPrice : absoluteDistance;
+  const callOtm = distance >= 0;
+  const putOtm = distance <= 0;
+  const isOtm = right === "call" ? callOtm : putOtm;
+  const isItm = right === "call" ? !callOtm : !putOtm;
+  const stepTarget =
+    strikeTarget === "otm_step_2" ? 0.02 : strikeTarget === "itm_step_1" ? 0.015 : 0.01;
+
+  switch (strikeTarget) {
+    case "atm":
+      return absoluteDistance;
+    case "otm_step_1":
+    case "otm_step_2":
+      return isOtm ? Math.abs(percentDistance - stepTarget) : 10 + percentDistance;
+    case "itm_step_1":
+      return isItm ? Math.abs(percentDistance - stepTarget) : 10 + percentDistance;
+    default:
+      return absoluteDistance;
+  }
+}
+
+export async function resolveBacktestOptionContract(
+  input: ResolveBacktestOptionContractInput,
+): Promise<ResolvedBacktestOptionContract | null> {
+  const underlying = normalizeSymbol(input.underlying);
+  const preset = getBacktestOptionPreset(input.contractPresetId);
+  const occurredAt = new Date(input.occurredAt);
+
+  if (!underlying) {
+    throw new HttpError(400, "A valid underlying symbol is required.", {
+      code: "backtest_option_underlying_required",
+    });
+  }
+
+  if (!Number.isFinite(input.spotPrice) || input.spotPrice <= 0) {
+    throw new HttpError(400, "A positive spot reference price is required.", {
+      code: "backtest_option_spot_price_required",
+    });
+  }
+
+  const polygonClient = getPolygonClient();
+  const contracts = await polygonClient.getHistoricalOptionContracts({
+    underlying,
+    asOf: occurredAt,
+    contractType: input.right,
+    expirationDateGte: startOfUtcDay(occurredAt),
+    expirationDateLte: addUtcDays(
+      startOfUtcDay(occurredAt),
+      Math.max(preset.maxDte, preset.targetDte) + OPTION_CONTRACT_LOOKAHEAD_DAYS,
+    ),
+    limit: 1_000,
+  });
+
+  if (contracts.length === 0) {
+    return null;
+  }
+
+  const filteredByExpiry = selectExpiryWindow(
+    contracts,
+    occurredAt,
+    preset.targetDte,
+    preset.minDte,
+    preset.maxDte,
+  );
+
+  const selected =
+    [...filteredByExpiry].sort((left, right) => {
+      const strikeDelta =
+        scoreContractStrike(left, input.spotPrice, input.right, preset.strikeTarget) -
+        scoreContractStrike(right, input.spotPrice, input.right, preset.strikeTarget);
+
+      if (strikeDelta !== 0) {
+        return strikeDelta;
+      }
+
+      return left.strike - right.strike;
+    })[0] ?? null;
+
+  if (!selected) {
+    return null;
+  }
+
+  return {
+    ...selected,
+    contractPresetId: preset.id,
+    dte: calculateDte(occurredAt, selected.expirationDate),
+  };
+}
+
 function numericValue(value: NumberLike): number {
   if (typeof value === "number") {
     return value;
@@ -219,6 +417,10 @@ function buildTradeSelectionId(
       : new Date(trade.entryAt).toISOString();
 
   return `${runId}:${symbol}:${entryAt}`;
+}
+
+function buildOptionDatasetRole(symbol: string, entryAt: Date): string {
+  return `option:${normalizeSymbol(symbol).slice(0, 8)}:${entryAt.getTime()}`;
 }
 
 function buildSelectionFocusToken(
@@ -1186,6 +1388,21 @@ async function listRunDatasets(runId: string) {
     .orderBy(desc(historicalBarDatasetsTable.endsAt));
 }
 
+async function listRunDatasetBindings(runId: string) {
+  return db
+    .select({
+      dataset: historicalBarDatasetsTable,
+      role: backtestRunDatasetsTable.role,
+    })
+    .from(backtestRunDatasetsTable)
+    .innerJoin(
+      historicalBarDatasetsTable,
+      eq(backtestRunDatasetsTable.datasetId, historicalBarDatasetsTable.id),
+    )
+    .where(eq(backtestRunDatasetsTable.runId, runId))
+    .orderBy(desc(historicalBarDatasetsTable.endsAt));
+}
+
 async function loadBacktestBarsForDataset(
   datasetId: string,
 ): Promise<BacktestBar[]> {
@@ -1214,6 +1431,27 @@ async function loadRunBarsForSymbol(
   const matchingDataset = datasetRows
     .map(({ dataset }) => dataset)
     .find((dataset) => normalizeSymbol(dataset.symbol) === symbol);
+
+  if (!matchingDataset) {
+    return [];
+  }
+
+  const storedBars = await loadBacktestBarsForDataset(matchingDataset.id);
+  if (matchingDataset.timeframe === timeframe) {
+    return storedBars;
+  }
+
+  return aggregateBars(storedBars, timeframe);
+}
+
+async function loadRunBarsForRole(
+  runId: string,
+  role: string,
+  timeframe: BacktestTimeframe,
+): Promise<BacktestBar[]> {
+  const datasetRows = await listRunDatasetBindings(runId);
+  const matchingDataset =
+    datasetRows.find((binding) => binding.role === role)?.dataset ?? null;
 
   if (!matchingDataset) {
     return [];
@@ -1367,10 +1605,11 @@ function buildRunIndicatorPayload(
   run: Pick<BacktestRun, "strategyId">,
   strategyParameters: Record<string, unknown>,
   selectedSymbol: string,
-  rawBars: BacktestBar[],
+  signalBars: BacktestBar[],
   chartBars: Array<{ time: number; ts: string }>,
+  chartBarRanges: Array<{ startMs: number; endMs: number }>,
 ) {
-  if (run.strategyId !== "ray_replica_signals" || rawBars.length === 0) {
+  if (run.strategyId !== "ray_replica_signals" || signalBars.length === 0) {
     return {
       indicatorEvents: [],
       indicatorZones: [],
@@ -1384,7 +1623,7 @@ function buildRunIndicatorPayload(
   }
 
   const tape = buildRayReplicaSignalTape(
-    rawBars,
+    signalBars,
     Object.fromEntries(
       Object.entries(strategyParameters).map(([key, value]) => [
         key,
@@ -1392,55 +1631,76 @@ function buildRunIndicatorPayload(
       ]),
     ),
   );
-  const indicatorEvents = tape.events.map((event) => ({
-    id: event.id,
-    strategy: run.strategyId,
-    eventType: `${event.direction}_${event.kind}`,
-    ts: event.occurredAt,
-    time: chartBars[event.barIndex]?.time ?? null,
-    barIndex: event.barIndex,
-    direction: event.direction,
-    label: event.label,
-    conviction: null,
-    meta: {
-      symbol: selectedSymbol,
-      sourceBarIndex: event.sourceBarIndex,
-      sourcePrice: event.sourcePrice,
-    },
-  }));
-  const indicatorWindows = tape.regimeWindows.map((window) => ({
-    id: window.id,
-    strategy: run.strategyId,
-    direction: window.direction,
-    startTs: window.startAt,
-    endTs: window.endAt,
-    startBarIndex: window.startBarIndex,
-    endBarIndex: window.endBarIndex,
-    tone: window.tone,
-    conviction: null,
-    meta: {
-      symbol: selectedSymbol,
-      source: "ray_replica_signals",
-    },
-  }));
+  const indicatorEvents = tape.events.map((event) => {
+    const timeIndex = resolveBarIndex(
+      event.occurredAt.getTime(),
+      chartBarRanges,
+    );
+
+    return {
+      id: event.id,
+      strategy: run.strategyId,
+      eventType: `${event.direction}_${event.kind}`,
+      ts: event.occurredAt,
+      time: timeIndex != null ? chartBars[timeIndex]?.time ?? null : null,
+      barIndex: timeIndex,
+      direction: event.direction,
+      label: event.label,
+      conviction: null,
+      meta: {
+        symbol: selectedSymbol,
+        sourceBarIndex: event.sourceBarIndex,
+        sourcePrice: event.sourcePrice,
+      },
+    };
+  });
+  const indicatorWindows = tape.regimeWindows.map((window) => {
+    const startBarIndex = resolveBarIndex(
+      window.startAt.getTime(),
+      chartBarRanges,
+    );
+    const endBarIndex = resolveBarIndex(
+      window.endAt.getTime(),
+      chartBarRanges,
+    );
+
+    return {
+      id: window.id,
+      strategy: run.strategyId,
+      direction: window.direction,
+      startTs: window.startAt,
+      endTs: window.endAt,
+      startBarIndex,
+      endBarIndex,
+      tone: window.tone,
+      conviction: null,
+      meta: {
+        symbol: selectedSymbol,
+        source: "ray_replica_signals",
+      },
+    };
+  });
   const overviewMarkers = tape.events
     .filter((event) => event.kind === "choch")
-    .map((event) => ({
-      id: `${event.id}-marker`,
-      time: chartBars[event.barIndex]?.time ?? 0,
-      barIndex: event.barIndex,
-      position:
-        event.direction === "long"
-          ? ("belowBar" as const)
-          : ("aboveBar" as const),
-      shape:
-        event.direction === "long"
-          ? ("arrowUp" as const)
-          : ("arrowDown" as const),
-      color: event.direction === "long" ? "#00bcd4" : "#e91e63",
-      text: event.direction === "long" ? "BUY" : "SELL",
-      size: 1,
-    }))
+    .map((event) => {
+      const barIndex = resolveBarIndex(event.occurredAt.getTime(), chartBarRanges);
+      return {
+        id: `${event.id}-marker`,
+        time: barIndex != null ? chartBars[barIndex]?.time ?? 0 : 0,
+        barIndex,
+        position:
+          event.direction === "long"
+            ? ("belowBar" as const)
+            : ("aboveBar" as const),
+        shape:
+          event.direction === "long"
+            ? ("arrowUp" as const)
+            : ("arrowDown" as const),
+        color: event.direction === "long" ? "#00bcd4" : "#e91e63",
+        text: event.direction === "long" ? "BUY" : "SELL",
+        size: 1,
+      };
+    })
     .filter((marker) => marker.time > 0);
 
   return {
@@ -1453,6 +1713,12 @@ function buildRunIndicatorPayload(
       timeToTradeIds: [],
     },
   };
+}
+
+function resolveRunExecutionMode(
+  parameters: Record<string, unknown> | null | undefined,
+): "spot" | "options" {
+  return parameters?.executionMode === "options" ? "options" : "spot";
 }
 
 function coerceScalarParameter(value: unknown): string | number | boolean {
@@ -1657,6 +1923,11 @@ export async function getBacktestRunChart(
 ) {
   const run = await getRunOrThrow(runId);
   const study = await getStudyOrThrow(run.studyId);
+  const indicatorParameters = {
+    ...(study.parameters ?? {}),
+    ...(run.parameters ?? {}),
+  };
+  const executionMode = resolveRunExecutionMode(indicatorParameters);
   const trades = await db
     .select()
     .from(backtestRunTradesTable)
@@ -1672,17 +1943,58 @@ export async function getBacktestRunChart(
     resolveSelectedSymbol(study, trades, input.symbol) ||
     availableSymbols[0] ||
     "";
-  const rawBars = selectedSymbol
+  const spotBars = selectedSymbol
     ? await loadRunBarsForSymbol(
         run.id,
         selectedSymbol,
         study.timeframe as BacktestTimeframe,
       )
     : [];
-  const { chartBars, chartBarRanges } = buildChartBarsFromBacktestBars(
-    rawBars,
+  const { chartBarRanges: spotChartBarRanges } = buildChartBarsFromBacktestBars(
+    spotBars,
     study.timeframe,
   );
+  const tradesForSelectedSymbol = trades.filter(
+    (trade) => normalizeSymbol(trade.symbol) === selectedSymbol,
+  );
+  const defaultTradeSelectionId =
+    (tradesForSelectedSymbol.length > 0
+      ? buildTradeSelectionId(
+          run.id,
+          tradesForSelectedSymbol[tradesForSelectedSymbol.length - 1]!,
+        )
+      : null) ?? null;
+  const activeTradeSelectionId = tradesForSelectedSymbol.some(
+    (trade) => buildTradeSelectionId(run.id, trade) === input.selectedTradeId,
+  )
+    ? (input.selectedTradeId ?? null)
+    : defaultTradeSelectionId;
+  const activeTradeRecord =
+    tradesForSelectedSymbol.find(
+      (trade) => buildTradeSelectionId(run.id, trade) === activeTradeSelectionId,
+    ) ?? null;
+  const optionBars =
+    executionMode === "options" && activeTradeRecord
+      ? await loadRunBarsForRole(
+          run.id,
+          buildOptionDatasetRole(activeTradeRecord.symbol, activeTradeRecord.entryAt),
+          study.timeframe as BacktestTimeframe,
+        )
+      : [];
+  const chartPriceContext =
+    executionMode === "options" && optionBars.length > 0 ? ("option" as const) : ("spot" as const);
+  const chartContextBars =
+    chartPriceContext === "option" ? optionBars : spotBars;
+  const { chartBars, chartBarRanges } = buildChartBarsFromBacktestBars(
+    chartContextBars,
+    study.timeframe,
+  );
+
+  const spotPriceAt = (timestampMs: number): number | null => {
+    const barIndex = resolveBarIndex(timestampMs, spotChartBarRanges);
+    return barIndex != null ? spotBars[barIndex]?.close ?? null : null;
+  };
+
   const tradeOverlays = trades.reduce<
     Array<{
       id: string;
@@ -1699,8 +2011,8 @@ export async function getBacktestRunChart(
       pnlPercent: number;
       er: string;
       profitable: boolean;
-      pricingMode: "shares";
-      chartPriceContext: "spot";
+      pricingMode: "shares" | "options";
+      chartPriceContext: "spot" | "option";
       entryPrice: number;
       exitPrice: number;
       oe: number;
@@ -1731,14 +2043,12 @@ export async function getBacktestRunChart(
       chartBarRanges,
     );
 
-    if (entryBarIndex == null && exitBarIndex == null) {
-      return overlays;
-    }
-
     const tradeSelectionId = buildTradeSelectionId(run.id, trade);
     const entryPrice = numericValue(trade.entryPrice);
     const exitPrice = numericValue(trade.exitPrice);
     const netPnl = numericValue(trade.netPnl);
+    const entrySpotPrice = spotPriceAt(trade.entryAt.getTime()) ?? entryPrice;
+    const exitSpotPrice = spotPriceAt(trade.exitAt.getTime()) ?? exitPrice;
 
     overlays.push({
       id: tradeSelectionId,
@@ -1755,15 +2065,15 @@ export async function getBacktestRunChart(
       pnlPercent: numericValue(trade.netPnlPercent),
       er: trade.exitReason,
       profitable: netPnl >= 0,
-      pricingMode: "shares",
-      chartPriceContext: "spot" as const,
+      pricingMode: executionMode === "options" ? "options" : "shares",
+      chartPriceContext,
       entryPrice,
       exitPrice,
       oe: entryPrice,
       ep: exitPrice,
       exitFill: exitPrice,
-      entrySpotPrice: entryPrice,
-      exitSpotPrice: exitPrice,
+      entrySpotPrice,
+      exitSpotPrice,
       entryBasePrice: null,
       exitBasePrice: null,
       stopLossPrice: null,
@@ -1776,13 +2086,6 @@ export async function getBacktestRunChart(
 
     return overlays;
   }, []);
-  const defaultTradeSelectionId =
-    tradeOverlays[tradeOverlays.length - 1]?.tradeSelectionId ?? null;
-  const activeTradeSelectionId = tradeOverlays.some(
-    (overlay) => overlay.tradeSelectionId === input.selectedTradeId,
-  )
-    ? (input.selectedTradeId ?? null)
-    : defaultTradeSelectionId;
   const activeTrade =
     tradeOverlays.find(
       (overlay) => overlay.tradeSelectionId === activeTradeSelectionId,
@@ -1795,23 +2098,20 @@ export async function getBacktestRunChart(
       )
     : buildDefaultVisibleRange(chartBars.length);
   const tradeMarkerGroups = buildTradeMarkerGroups(chartBars, tradeOverlays);
-  const indicatorParameters = {
-    ...(study.parameters ?? {}),
-    ...(run.parameters ?? {}),
-  };
   const indicatorPayload = buildRunIndicatorPayload(
     run,
     indicatorParameters,
     selectedSymbol,
-    rawBars,
+    spotBars,
     chartBars,
+    chartBarRanges,
   );
 
   return {
     runId: run.id,
     studyId: study.id,
     timeframe: study.timeframe,
-    chartPriceContext: "spot" as const,
+    chartPriceContext,
     availableSymbols,
     selectedSymbol,
     defaultTradeSelectionId,

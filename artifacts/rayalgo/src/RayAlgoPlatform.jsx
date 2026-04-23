@@ -1,13 +1,15 @@
 import {
+  createContext,
+  memo,
   useState,
   useEffect,
   useRef,
+  useContext,
   useCallback,
   useMemo,
-  Suspense,
+  useSyncExternalStore,
   lazy,
-  createContext,
-  useContext,
+  startTransition,
   useDeferredValue,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,9 +30,14 @@ import {
 import * as d3 from "d3";
 import {
   getBars as getBarsRequest,
+  getGetNewsQueryOptions,
+  getGetQuoteSnapshotsQueryOptions,
+  getGetResearchEarningsCalendarQueryOptions,
   getOptionChain as getOptionChainRequest,
   getGetSignalMonitorProfileQueryKey,
   getGetSignalMonitorStateQueryKey,
+  getListAlgoDeploymentsQueryOptions,
+  getListBacktestDraftStrategiesQueryOptions,
   getListSignalMonitorEventsQueryKey,
   listFlowEvents as listFlowEventsRequest,
   useCancelOrder,
@@ -68,14 +75,22 @@ import {
   RayReplicaSettingsMenu,
   RAY_REPLICA_PINE_SCRIPT_KEY,
   resolveRayReplicaRuntimeSettings,
-  buildResearchChartModel,
+  buildResearchChartModelIncremental,
   getStoredBrokerMinuteAggregates,
   useIndicatorLibrary,
   useDrawingHistory,
   useBrokerStockAggregateStream,
   useBrokerStreamedBars,
+  useHistoricalBarStream,
   useIbkrLatencyStats,
-  useStockMinuteAggregateStoreVersion,
+  useChartHydrationStats,
+  useOptionQuotePatchedBars,
+  usePrependableHistoricalBars,
+  expandLocalRollupLimit,
+  resolveLocalRollupBaseTimeframe,
+  rollupMarketBars,
+  useStockMinuteAggregateSymbolVersion,
+  useStockMinuteAggregateSymbolsVersion,
 } from "./features/charting";
 import {
   AlgoDraftStrategiesPanel,
@@ -86,15 +101,59 @@ import {
   useIbkrOptionChainStream,
   useIbkrOrderSnapshotStream,
   useIbkrQuoteSnapshotStream,
+  useStoredOptionQuoteSnapshot,
 } from "./features/platform/live-streams";
+import BloombergLiveDock from "./features/platform/BloombergLiveDock";
+import {
+  useRuntimeWorkloadFlag,
+  useRuntimeWorkloadStats,
+} from "./features/platform/workloadStats";
+import {
+  buildMarketFlowStoreKey,
+  clearMarketFlowSnapshot,
+  publishMarketFlowSnapshot,
+} from "./features/platform/marketFlowStore";
+import { publishMarketAlertsSnapshot } from "./features/platform/marketAlertsStore";
+import {
+  publishSignalMonitorSnapshot,
+  useSignalMonitorStateForSymbol,
+} from "./features/platform/signalMonitorStore";
+import { useTradeFlowSnapshot } from "./features/platform/tradeFlowStore";
+import {
+  resolveTradeOptionChainSnapshot,
+  useTradeOptionChainSnapshot,
+} from "./features/platform/tradeOptionChainStore";
+import {
+  getCurrentTheme,
+  MISSING_VALUE,
+  RAYALGO_STORAGE_KEY,
+  T,
+  dim,
+  fs,
+  setCurrentTheme,
+  sp,
+} from "./lib/uiTokens";
+import {
+  clearChartHydrationScope,
+  consumeChartLivePatchPending,
+  recordChartHydrationMetric,
+} from "./features/charting/chartHydrationStats";
 
 import MarketScreen from "./screens/MarketScreen";
 import FlowScreen from "./screens/FlowScreen";
 import TradeScreen from "./screens/TradeScreen";
-const AccountScreen = lazy(() => import("./screens/AccountScreen"));
+import AccountScreen from "./screens/AccountScreen";
 import ResearchScreen from "./screens/ResearchScreen";
 import AlgoScreen from "./screens/AlgoScreen";
 import BacktestScreen from "./screens/BacktestScreen";
+
+const MemoMarketScreen = memo(MarketScreen);
+const MemoFlowScreen = memo(FlowScreen);
+const MemoTradeScreen = memo(TradeScreen);
+const MemoAccountScreen = memo(AccountScreen);
+const MemoResearchScreen = memo(ResearchScreen);
+const MemoAlgoScreen = memo(AlgoScreen);
+const MemoBacktestScreen = memo(BacktestScreen);
 
 export const PhotonicsObservatory = lazy(
   () => import("./features/research/PhotonicsObservatory"),
@@ -117,109 +176,14 @@ input[type=range]{accent-color:#3b82f6}
 @keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.6)}50%{box-shadow:0 0 0 4px rgba(239,68,68,0)}}
 `;
 
-// ═══════════════════════════════════════════════════════════════════
-// DESIGN TOKENS — "Obsidian Terminal"
-// Inspired by: IB Desktop (layout), Fincept (architecture),
-//              Secured Finance (depth, density, gradients)
-// ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
-// THEME SYSTEM — light + dark palettes with same key shape
-// ═══════════════════════════════════════════════════════════════════
-
-const THEMES = {
-  dark: {
-    // Backgrounds (layered depth)
-    bg0: "#080b12", // deepest — app bg
-    bg1: "#0d1117", // panels, sidebar
-    bg2: "#141b27", // cards, elevated surfaces
-    bg3: "#1a2235", // hover states, active items
-    bg4: "#212d42", // tooltips, dropdowns
-
-    // Borders
-    border: "#1e293b",
-    borderLight: "#253349",
-    borderFocus: "#3b82f6",
-
-    // Text
-    text: "#e2e8f0",
-    textSec: "#94a3b8",
-    textDim: "#64748b",
-    textMuted: "#475569",
-
-    // Accents
-    accent: "#3b82f6",
-    accentDim: "#1e3a5f",
-
-    // Semantic
-    green: "#10b981",
-    greenDim: "#064e3b",
-    greenBg: "rgba(16,185,129,0.08)",
-    red: "#ef4444",
-    redDim: "#7f1d1d",
-    redBg: "rgba(239,68,68,0.08)",
-    amber: "#f59e0b",
-    amberDim: "#78350f",
-    amberBg: "rgba(245,158,11,0.08)",
-    blue: "#3b82f6",
-    purple: "#8b5cf6",
-    cyan: "#06b6d4",
-  },
-  light: {
-    // Light palette tuned for trader UIs — true whites for surfaces, near-black text, slightly darker semantics for contrast on white
-    bg0: "#f5f5f4", // app bg — very subtle warm gray so white panels pop
-    bg1: "#ffffff", // panels, sidebar — pure white
-    bg2: "#ffffff", // cards, elevated surfaces — pure white
-    bg3: "#f8fafc", // hover states, active items — barely-tinted (only on interaction)
-    bg4: "#ffffff", // tooltips, dropdowns — pure white
-
-    // Borders
-    border: "#e2e8f0",
-    borderLight: "#cbd5e1",
-    borderFocus: "#2563eb",
-
-    // Text — near-black primary for contrast
-    text: "#0f172a",
-    textSec: "#475569",
-    textDim: "#64748b",
-    textMuted: "#94a3b8",
-
-    // Accents — slightly darker blue for white bg contrast
-    accent: "#2563eb",
-    accentDim: "#dbeafe",
-
-    // Semantic — pulled darker/more saturated to read on white
-    green: "#059669",
-    greenDim: "#a7f3d0",
-    greenBg: "rgba(5,150,105,0.10)",
-    red: "#dc2626",
-    redDim: "#fecaca",
-    redBg: "rgba(220,38,38,0.10)",
-    amber: "#d97706",
-    amberDim: "#fde68a",
-    amberBg: "rgba(217,119,6,0.10)",
-    blue: "#2563eb",
-    purple: "#7c3aed",
-    cyan: "#0891b2",
-  },
-};
-
-// Typography is theme-independent — added to both at runtime via the proxy
-const TYPOGRAPHY = {
-  mono: "'Inter', system-ui, -apple-system, sans-serif",
-  code: "'JetBrains Mono', 'SF Mono', 'Menlo', monospace",
-  sans: "'Inter', system-ui, -apple-system, sans-serif",
-  display: "'Inter', system-ui, sans-serif",
-};
-
 // ─── PERSISTENCE LAYER ───
 // Safe localStorage wrapper. Wrapped in try/catch so it degrades gracefully in
 // sandboxed iframes (e.g. Claude.ai artifact preview) where storage is blocked.
 // On Replit and other standalone deployments, persistence works normally.
-const STORAGE_KEY = "rayalgo:state:v1";
 export const _initialState = (() => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return {};
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(RAYALGO_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch (e) {
     return {};
@@ -229,10 +193,10 @@ export const persistState = (patch) => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return;
     const current = JSON.parse(
-      window.localStorage.getItem(STORAGE_KEY) || "{}",
+      window.localStorage.getItem(RAYALGO_STORAGE_KEY) || "{}",
     );
     window.localStorage.setItem(
-      STORAGE_KEY,
+      RAYALGO_STORAGE_KEY,
       JSON.stringify({ ...current, ...patch }),
     );
   } catch (e) {}
@@ -276,52 +240,6 @@ const platformJsonRequest = async (path, { method = "GET", body } = {}) => {
 
   return response.json();
 };
-
-// Mutable current theme name — flipped by setThemeMode, forces re-render via React state at App root
-let CURRENT_THEME = _initialState.theme || "dark";
-
-// ─── SIZE SCALE SYSTEM ───
-// Mirror of theme system — global mutable scale level, helpers that read from it,
-// React state at App root triggers cascade re-render so all fs()/sp()/dim() calls re-evaluate.
-const SCALE_LEVELS = {
-  xs: 0.85,
-  s: 0.92,
-  m: 1.0,
-  l: 1.12,
-  xl: 1.25,
-};
-let CURRENT_SCALE = "m";
-const SCALE_FACTOR = () => SCALE_LEVELS[CURRENT_SCALE];
-
-// fs(n) — scale a font size. Minimum readable size is 10px (matches watchlist price text).
-export const fs = (n) => Math.max(10, Math.round(n * SCALE_FACTOR()));
-
-// dim(n) — scale a fixed dimension (height, width, gap, border-radius, etc.).
-export const dim = (n) => Math.round(n * SCALE_FACTOR());
-
-// sp(v) — scale a padding/margin/gap value. Accepts either a number or a CSS string like "4px 6px".
-export const sp = (v) => {
-  if (typeof v === "number") return Math.round(v * SCALE_FACTOR());
-  if (typeof v === "string") {
-    return v.replace(/(-?\d*\.?\d+)(px|em|rem)?/g, (_, num, unit) => {
-      return Math.round(parseFloat(num) * SCALE_FACTOR()) + (unit || "px");
-    });
-  }
-  return v;
-};
-
-// Proxy that reads from the current theme on every property access.
-// This means components doing `T.bg2` get fresh values whenever React re-renders,
-// without any of them needing to import a hook or call useContext.
-export const T = new Proxy(
-  {},
-  {
-    get(_target, prop) {
-      if (prop in TYPOGRAPHY) return TYPOGRAPHY[prop];
-      return THEMES[CURRENT_THEME][prop];
-    },
-  },
-);
 
 // React context provides the toggle to children + holds state that triggers re-renders
 const ThemeContext = createContext({ theme: "dark", toggle: () => {} });
@@ -629,6 +547,215 @@ export const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
   return TRADE_TICKER_INFO[normalized];
 };
 
+const runtimeTickerSnapshotListeners = new Map();
+const runtimeTickerSnapshotVersions = new Map();
+
+const normalizeRuntimeTickerSymbols = (symbols) => (
+  Array.from(
+    new Set(
+      (symbols || [])
+        .map((symbol) => symbol?.trim?.().toUpperCase?.() || "")
+        .filter(Boolean),
+    ),
+  ).sort()
+);
+
+const areDateValuesEqual = (left, right) => {
+  if (left === right) {
+    return true;
+  }
+
+  const leftMs =
+    left instanceof Date
+      ? left.getTime()
+      : typeof left === "string" || typeof left === "number"
+        ? Date.parse(String(left))
+        : Number.NaN;
+  const rightMs =
+    right instanceof Date
+      ? right.getTime()
+      : typeof right === "string" || typeof right === "number"
+        ? Date.parse(String(right))
+        : Number.NaN;
+
+  if (Number.isNaN(leftMs) || Number.isNaN(rightMs)) {
+    return left == null && right == null;
+  }
+
+  return leftMs === rightMs;
+};
+
+const areSparkPointsEqual = (left, right) => {
+  if (left === right) {
+    return true;
+  }
+
+  const leftPoints = Array.isArray(left) ? left : [];
+  const rightPoints = Array.isArray(right) ? right : [];
+  if (leftPoints.length !== rightPoints.length) {
+    return false;
+  }
+
+  for (let index = 0; index < leftPoints.length; index += 1) {
+    const current = leftPoints[index];
+    const next = rightPoints[index];
+    if (!current || !next || current.i !== next.i || current.v !== next.v) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const resolveRuntimeBarTimeMs = (bar) => {
+  if (!bar) {
+    return null;
+  }
+  if (bar.timestamp instanceof Date) {
+    return bar.timestamp.getTime();
+  }
+  if (typeof bar.timestamp === "string" || typeof bar.timestamp === "number") {
+    const parsed = Date.parse(String(bar.timestamp));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (bar.time instanceof Date) {
+    return bar.time.getTime();
+  }
+  if (typeof bar.time === "string" || typeof bar.time === "number") {
+    const parsed = Date.parse(String(bar.time));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const areSparkBarsEqual = (left, right) => {
+  if (left === right) {
+    return true;
+  }
+
+  const leftBars = Array.isArray(left) ? left : [];
+  const rightBars = Array.isArray(right) ? right : [];
+  if (leftBars.length !== rightBars.length) {
+    return false;
+  }
+
+  for (let index = 0; index < leftBars.length; index += 1) {
+    const current = leftBars[index];
+    const next = rightBars[index];
+    if (
+      resolveRuntimeBarTimeMs(current) !== resolveRuntimeBarTimeMs(next) ||
+      (current?.close ?? current?.c ?? null) !== (next?.close ?? next?.c ?? null) ||
+      (current?.volume ?? current?.v ?? null) !== (next?.volume ?? next?.v ?? null)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const isRuntimeTickerFieldEqual = (field, currentValue, nextValue) => {
+  if (field === "updatedAt") {
+    return areDateValuesEqual(currentValue, nextValue);
+  }
+  if (field === "spark") {
+    return areSparkPointsEqual(currentValue, nextValue);
+  }
+  if (field === "sparkBars") {
+    return areSparkBarsEqual(currentValue, nextValue);
+  }
+  return Object.is(currentValue, nextValue);
+};
+
+const applyRuntimeTickerInfoPatch = (symbol, fallbackName, patch) => {
+  const tradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
+  let changed = false;
+
+  Object.entries(patch).forEach(([field, nextValue]) => {
+    if (isRuntimeTickerFieldEqual(field, tradeInfo[field], nextValue)) {
+      return;
+    }
+
+    tradeInfo[field] = nextValue;
+    changed = true;
+  });
+
+  return {
+    tradeInfo,
+    changed,
+  };
+};
+
+const notifyRuntimeTickerSnapshotSymbols = (symbols) => {
+  normalizeRuntimeTickerSymbols(symbols).forEach((symbol) => {
+    runtimeTickerSnapshotVersions.set(
+      symbol,
+      (runtimeTickerSnapshotVersions.get(symbol) ?? 0) + 1,
+    );
+    Array.from(runtimeTickerSnapshotListeners.get(symbol) || []).forEach((listener) =>
+      listener(),
+    );
+  });
+};
+
+const subscribeToRuntimeTickerSnapshotSymbols = (symbols, listener) => {
+  const normalizedSymbols = normalizeRuntimeTickerSymbols(symbols);
+  normalizedSymbols.forEach((symbol) => {
+    const listeners = runtimeTickerSnapshotListeners.get(symbol) || new Set();
+    listeners.add(listener);
+    runtimeTickerSnapshotListeners.set(symbol, listeners);
+  });
+
+  return () => {
+    normalizedSymbols.forEach((symbol) => {
+      const listeners = runtimeTickerSnapshotListeners.get(symbol);
+      if (!listeners) {
+        return;
+      }
+      listeners.delete(listener);
+      if (listeners.size === 0) {
+        runtimeTickerSnapshotListeners.delete(symbol);
+      }
+    });
+  };
+};
+
+const useRuntimeTickerSnapshot = (
+  symbol,
+  fallback = null,
+  { subscribe = true } = {},
+) => {
+  const normalizedSymbol = useMemo(() => normalizeTickerSymbol(symbol), [symbol]);
+  useSyncExternalStore(
+    subscribe && normalizedSymbol
+      ? (listener) =>
+          subscribeToRuntimeTickerSnapshotSymbols([normalizedSymbol], listener)
+      : () => () => {},
+    subscribe && normalizedSymbol
+      ? () => runtimeTickerSnapshotVersions.get(normalizedSymbol) ?? 0
+      : () => 0,
+    () => 0,
+  );
+  return getRuntimeTickerSnapshot(normalizedSymbol, fallback) || fallback;
+};
+
+export const publishRuntimeTickerSnapshot = (symbol, fallbackName, patch) => {
+  const normalizedSymbol = normalizeTickerSymbol(symbol);
+  if (!normalizedSymbol) {
+    return null;
+  }
+
+  const result = applyRuntimeTickerInfoPatch(
+    normalizedSymbol,
+    fallbackName,
+    patch,
+  );
+  if (result?.changed) {
+    notifyRuntimeTickerSnapshotSymbols([normalizedSymbol]);
+  }
+  return result?.tradeInfo || null;
+};
+
 const buildFallbackWatchlistItem = (symbol, index, name) => {
   const existing = DEFAULT_WATCHLIST_BY_SYMBOL[symbol];
   if (existing)
@@ -824,6 +951,7 @@ const syncRuntimeMarketData = (
   quotes,
   { sparklineBarsBySymbol = {}, performanceBaselineBySymbol = {} } = {},
 ) => {
+  const changedSymbols = new Set();
   const quoteBySymbol = Object.fromEntries(
     (quotes || []).map((quote) => [quote.symbol.toUpperCase(), quote]),
   );
@@ -902,18 +1030,24 @@ const syncRuntimeMarketData = (
       tradeInfo.updatedAt ??
       null;
 
-    tradeInfo.name = base.name;
-    tradeInfo.price = price;
-    tradeInfo.chg = chg;
-    tradeInfo.pct = pct;
-    tradeInfo.open = open;
-    tradeInfo.high = high;
-    tradeInfo.low = low;
-    tradeInfo.prevClose = prevClose;
-    tradeInfo.volume = volume;
-    tradeInfo.updatedAt = updatedAt;
-    tradeInfo.spark = spark;
-    tradeInfo.sparkBars = sparklineBarsBySymbol[normalized] || [];
+    if (
+      applyRuntimeTickerInfoPatch(normalized, base.name, {
+        name: base.name,
+        price,
+        chg,
+        pct,
+        open,
+        high,
+        low,
+        prevClose,
+        volume,
+        updatedAt,
+        spark,
+        sparkBars: sparklineBarsBySymbol[normalized] || [],
+      }).changed
+    ) {
+      changedSymbols.add(normalized);
+    }
 
     if (!TRADE_FLOW_MARKERS[normalized]) {
       TRADE_FLOW_MARKERS[normalized] = genTradeFlowMarkers(
@@ -946,24 +1080,30 @@ const syncRuntimeMarketData = (
       INDICES.find((item) => item.sym === symbol)?.name ||
       TRADE_TICKER_INFO[symbol]?.name ||
       symbol;
-    const tradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
     const runtimeSparkBars = sparklineBarsBySymbol[symbol] || [];
 
-    tradeInfo.name = fallbackName;
-    tradeInfo.price = quote.price ?? tradeInfo.price;
-    tradeInfo.chg = quote.change ?? tradeInfo.chg;
-    tradeInfo.pct = quote.changePercent ?? tradeInfo.pct;
-    tradeInfo.open = quote.open ?? tradeInfo.open ?? null;
-    tradeInfo.high = quote.high ?? tradeInfo.high ?? null;
-    tradeInfo.low = quote.low ?? tradeInfo.low ?? null;
-    tradeInfo.prevClose = quote.prevClose ?? tradeInfo.prevClose ?? null;
-    tradeInfo.volume = quote.volume ?? tradeInfo.volume ?? null;
-    tradeInfo.updatedAt = quote.updatedAt ?? tradeInfo.updatedAt ?? null;
-    tradeInfo.spark = buildSparklineFromHistoricalBars(
-      runtimeSparkBars,
-      tradeInfo.spark,
-    );
-    tradeInfo.sparkBars = runtimeSparkBars;
+    const currentTradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
+    if (
+      applyRuntimeTickerInfoPatch(symbol, fallbackName, {
+        name: fallbackName,
+        price: quote.price ?? currentTradeInfo.price,
+        chg: quote.change ?? currentTradeInfo.chg,
+        pct: quote.changePercent ?? currentTradeInfo.pct,
+        open: quote.open ?? currentTradeInfo.open ?? null,
+        high: quote.high ?? currentTradeInfo.high ?? null,
+        low: quote.low ?? currentTradeInfo.low ?? null,
+        prevClose: quote.prevClose ?? currentTradeInfo.prevClose ?? null,
+        volume: quote.volume ?? currentTradeInfo.volume ?? null,
+        updatedAt: quote.updatedAt ?? currentTradeInfo.updatedAt ?? null,
+        spark: buildSparklineFromHistoricalBars(
+          runtimeSparkBars,
+          currentTradeInfo.spark,
+        ),
+        sparkBars: runtimeSparkBars,
+      }).changed
+    ) {
+      changedSymbols.add(symbol);
+    }
   });
 
   INDICES.forEach((item) => {
@@ -990,13 +1130,19 @@ const syncRuntimeMarketData = (
       item.spark,
     );
     item.sparkBars = sparklineBarsBySymbol[item.sym.toUpperCase()] || [];
-    const tradeInfo = ensureTradeTickerInfo(item.sym, item.name || item.sym);
-    tradeInfo.price = item.price;
-    tradeInfo.chg = item.chg;
-    tradeInfo.pct = item.pct;
-    tradeInfo.prevClose = item.prevClose ?? tradeInfo.prevClose ?? null;
-    tradeInfo.spark = item.spark;
-    tradeInfo.sparkBars = item.sparkBars;
+    if (
+      applyRuntimeTickerInfoPatch(item.sym, item.name || item.sym, {
+        name: item.name || item.sym,
+        price: item.price,
+        chg: item.chg,
+        pct: item.pct,
+        prevClose: item.prevClose ?? TRADE_TICKER_INFO[item.sym]?.prevClose ?? null,
+        spark: item.spark,
+        sparkBars: item.sparkBars,
+      }).changed
+    ) {
+      changedSymbols.add(item.sym.toUpperCase());
+    }
   });
 
   MACRO_TICKERS.forEach((item) => {
@@ -1023,16 +1169,24 @@ const syncRuntimeMarketData = (
       item.spark,
     );
     item.sparkBars = sparklineBarsBySymbol[item.sym.toUpperCase()] || [];
-    const tradeInfo = ensureTradeTickerInfo(
-      item.sym,
-      item.label || item.name || item.sym,
-    );
-    tradeInfo.price = item.price;
-    tradeInfo.chg = item.chg;
-    tradeInfo.pct = item.pct;
-    tradeInfo.prevClose = item.prevClose ?? tradeInfo.prevClose ?? null;
-    tradeInfo.spark = item.spark;
-    tradeInfo.sparkBars = item.sparkBars;
+    if (
+      applyRuntimeTickerInfoPatch(
+        item.sym,
+        item.label || item.name || item.sym,
+        {
+          name: item.label || item.name || item.sym,
+          price: item.price,
+          chg: item.chg,
+          pct: item.pct,
+          prevClose:
+            item.prevClose ?? TRADE_TICKER_INFO[item.sym]?.prevClose ?? null,
+          spark: item.spark,
+          sparkBars: item.sparkBars,
+        },
+      ).changed
+    ) {
+      changedSymbols.add(item.sym.toUpperCase());
+    }
   });
 
   RATES_PROXIES.forEach((item) => {
@@ -1074,6 +1228,9 @@ const syncRuntimeMarketData = (
     });
   });
 
+  if (changedSymbols.size > 0) {
+    notifyRuntimeTickerSnapshotSymbols(Array.from(changedSymbols));
+  }
 };
 
 const getRuntimeQuoteDetail = (symbol) => {
@@ -1732,7 +1889,13 @@ const CHART_TIMEFRAME_STEP_MS = {
 };
 
 const describeBrokerChartSource = (source) => {
+  if (typeof source === "string" && source.endsWith(":rollup")) {
+    const baseSource = source.replace(/:rollup$/, "");
+    const baseLabel = describeBrokerChartSource(baseSource);
+    return baseLabel ? `${baseLabel} ROLL` : "ROLL";
+  }
   if (source === "ibkr-websocket-derived") return "WS";
+  if (source === "ibkr-option-quote-derived") return "LIVE";
   if (source === "ibkr+massive-gap-fill") return "IBKR + GAP";
   if (source === "ibkr-history") return "IBKR";
   return source ? "REST" : "";
@@ -1748,13 +1911,32 @@ const describeBrokerChartStatus = (status, timeframe) =>
 const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },
   { id: "flow", label: "Flow", icon: "◈" },
-  { id: "unusual", label: "Unusual", icon: "⚡" },
   { id: "trade", label: "Trade", icon: "◧" },
   { id: "account", label: "Account", icon: "▣" },
   { id: "research", label: "Research", icon: "◎" },
   { id: "algo", label: "Algo", icon: "⬡" },
   { id: "backtest", label: "Backtest", icon: "⏣" },
 ];
+
+const OPERATIONAL_SCREEN_PRELOAD_ORDER = ["trade", "market", "flow", "algo"];
+const IDLE_HEAVY_SCREEN_PRELOAD_ORDER = ["research", "backtest"];
+
+const buildMountedScreenState = (activeScreen) =>
+  Object.fromEntries(
+    SCREENS.map(({ id }) => [id, id === "account" || id === activeScreen]),
+  );
+
+const scheduleIdleWork = (callback, timeout = 1_500) => {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+  if (typeof window.requestIdleCallback === "function") {
+    const idleId = window.requestIdleCallback(callback, { timeout });
+    return () => window.cancelIdleCallback?.(idleId);
+  }
+  const timerId = window.setTimeout(callback, 180);
+  return () => window.clearTimeout(timerId);
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // SMALL COMPONENTS
@@ -1783,7 +1965,6 @@ export const Pill = ({ children, active, onClick, color }) => (
 // Format dollar amount in millions (or thousands if smaller). Module-level so any screen can use it.
 export const fmtM = (v) =>
   v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${(v / 1e3).toFixed(0)}K`;
-export const MISSING_VALUE = "----";
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
   if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
@@ -2405,6 +2586,8 @@ export const mapFlowEventToUi = (event) => {
   };
 };
 
+let liveMarketFlowInstanceCounter = 0;
+
 export const useLiveMarketFlow = (
   symbols = [],
   {
@@ -2416,6 +2599,11 @@ export const useLiveMarketFlow = (
     intervalMs = 10_000,
   } = {},
 ) => {
+  const instanceIdRef = useRef(null);
+  if (instanceIdRef.current == null) {
+    liveMarketFlowInstanceCounter += 1;
+    instanceIdRef.current = liveMarketFlowInstanceCounter;
+  }
   const liveSymbols = useMemo(
     () =>
       [
@@ -2436,6 +2624,19 @@ export const useLiveMarketFlow = (
     Number.isFinite(unusualThreshold) && unusualThreshold > 0
       ? unusualThreshold
       : undefined;
+  useRuntimeWorkloadFlag(
+    `market-flow:${instanceIdRef.current}`,
+    Boolean(enabled && liveSymbols.length),
+    {
+      kind: "poll",
+      label:
+        effectiveBatchSize >= 30
+          ? "Flow unusual scanner"
+          : "Flow watchlist base",
+      detail: `${liveSymbols.length}s/${effectiveBatchSize}b`,
+      priority: effectiveBatchSize >= 30 ? 4 : 3,
+    },
+  );
 
   // Rotate through the watchlist in batches so large lists eventually get
   // covered without slamming IBKR's snapshot rate limit on every poll.
@@ -2733,6 +2934,28 @@ export const useLiveMarketFlow = (
   };
 };
 
+const SharedMarketFlowRuntime = memo(({
+  symbols = [],
+  enabled = true,
+  intervalMs = 10_000,
+}) => {
+  const storeKey = useMemo(() => buildMarketFlowStoreKey(symbols), [symbols]);
+  const snapshot = useLiveMarketFlow(symbols, {
+    enabled,
+    intervalMs,
+  });
+
+  useEffect(() => {
+    publishMarketFlowSnapshot(storeKey, snapshot);
+  }, [storeKey, snapshot]);
+
+  useEffect(() => () => {
+    clearMarketFlowSnapshot(storeKey);
+  }, [storeKey]);
+
+  return null;
+});
+
 export const Badge = ({ children, color = T.textDim }) => (
   <span
     style={{
@@ -2869,7 +3092,142 @@ const MicroSparkline = ({
   );
 };
 
-const HeaderKpiStrip = ({ items = [], onSelect }) => (
+const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
+  const fallback = useMemo(
+    () => buildFallbackWatchlistItem(symbol, index, label),
+    [index, label, symbol],
+  );
+  const snapshot = useRuntimeTickerSnapshot(symbol, fallback);
+  const positive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect?.(symbol)}
+      title={`${label} proxy · ${symbol}`}
+      style={{
+        minWidth: dim(132),
+        padding: sp("5px 10px"),
+        display: "flex",
+        alignItems: "center",
+        gap: sp(8),
+        background: "transparent",
+        border: "none",
+        borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+        borderRadius: 0,
+        color: T.text,
+        cursor: "pointer",
+        transition: "background 0.12s ease, color 0.12s ease",
+      }}
+      onMouseEnter={(event) => {
+        event.currentTarget.style.background = `${T.bg3}80`;
+      }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.background = "transparent";
+      }}
+    >
+      <span
+        style={{
+          minWidth: 0,
+          flex: 1,
+          textAlign: "left",
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+        }}
+      >
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(6),
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              fontSize: fs(7),
+              color: T.textMuted,
+              fontFamily: T.sans,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}
+          </span>
+          <span
+            style={{
+              display: "block",
+              fontSize: fs(7),
+              fontWeight: 600,
+              color: T.textMuted,
+              fontFamily: T.sans,
+              lineHeight: 1.1,
+              letterSpacing: "0.08em",
+              flexShrink: 0,
+            }}
+          >
+            {symbol}
+          </span>
+        </span>
+        <span
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: sp(6),
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              fontSize: fs(12),
+              fontWeight: 700,
+              fontFamily: T.sans,
+              color: T.text,
+              lineHeight: 1.1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {formatQuotePrice(snapshot?.price)}
+          </span>
+          <span
+            style={{
+              display: "block",
+              fontSize: fs(8),
+              fontWeight: 700,
+              fontFamily: T.sans,
+              color:
+                positive == null ? T.textDim : positive ? T.green : T.red,
+              lineHeight: 1.1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {formatSignedPercent(snapshot?.pct)}
+          </span>
+        </span>
+      </span>
+      <span style={{ display: "block", flexShrink: 0 }}>
+        <MicroSparkline
+          data={
+            snapshot?.sparkBars?.length
+              ? snapshot.sparkBars
+              : snapshot?.spark || fallback.spark
+          }
+          positive={positive}
+          width={46}
+          height={16}
+        />
+      </span>
+    </button>
+  );
+});
+
+const HeaderKpiStrip = ({ onSelect }) => (
   <div
     style={{
       display: "flex",
@@ -2879,131 +3237,15 @@ const HeaderKpiStrip = ({ items = [], onSelect }) => (
       overflowX: "auto",
     }}
   >
-    {items.map((item, index) => {
-      const positive = isFiniteNumber(item?.pct) ? item.pct >= 0 : null;
-      return (
-        <button
-          key={item.sym}
-          type="button"
-          onClick={() => onSelect?.(item.sym)}
-          title={`${item.label} proxy · ${item.sym}`}
-          style={{
-            minWidth: dim(132),
-            padding: sp("5px 10px"),
-            display: "flex",
-            alignItems: "center",
-            gap: sp(8),
-            background: "transparent",
-            border: "none",
-            borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
-            borderRadius: 0,
-            color: T.text,
-            cursor: "pointer",
-            transition: "background 0.12s ease, color 0.12s ease",
-          }}
-          onMouseEnter={(event) => {
-            event.currentTarget.style.background = `${T.bg3}80`;
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.background = "transparent";
-          }}
-        >
-          <span
-            style={{
-              minWidth: 0,
-              flex: 1,
-              textAlign: "left",
-              display: "flex",
-              flexDirection: "column",
-              gap: 1,
-            }}
-          >
-            <span
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: sp(6),
-                minWidth: 0,
-              }}
-            >
-              <span
-                style={{
-                  display: "block",
-                  fontSize: fs(7),
-                  color: T.textMuted,
-                  fontFamily: T.sans,
-                  fontWeight: 700,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {item.label}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: fs(7),
-                  fontWeight: 600,
-                  color: T.textMuted,
-                  fontFamily: T.sans,
-                  lineHeight: 1.1,
-                  letterSpacing: "0.08em",
-                  flexShrink: 0,
-                }}
-              >
-                {item.sym}
-              </span>
-            </span>
-            <span
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: sp(6),
-                minWidth: 0,
-              }}
-            >
-              <span
-                style={{
-                  display: "block",
-                  fontSize: fs(12),
-                  fontWeight: 700,
-                  fontFamily: T.sans,
-                  color: T.text,
-                  lineHeight: 1.1,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {formatQuotePrice(item.price)}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: fs(8),
-                  fontWeight: 700,
-                  fontFamily: T.sans,
-                  color:
-                    positive == null ? T.textDim : positive ? T.green : T.red,
-                  lineHeight: 1.1,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {formatSignedPercent(item.pct)}
-              </span>
-            </span>
-          </span>
-          <span style={{ display: "block", flexShrink: 0 }}>
-            <MicroSparkline
-              data={item.sparkBars?.length ? item.sparkBars : item.spark}
-              positive={positive}
-              width={46}
-              height={16}
-            />
-          </span>
-        </button>
-      );
-    })}
+    {HEADER_KPI_CONFIG.map(({ symbol, label }, index) => (
+      <HeaderKpiStripItem
+        key={symbol}
+        symbol={symbol}
+        label={label}
+        index={index}
+        onSelect={onSelect}
+      />
+    ))}
   </div>
 );
 
@@ -3011,10 +3253,18 @@ const HeaderStatusCluster = ({
   session,
   environment,
   bridgeTone,
-  marketClock,
   theme,
   onToggleTheme,
 }) => {
+  const [marketClockNow, setMarketClockNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setMarketClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const marketClock = useMemo(
+    () => buildMarketClockState(marketClockNow),
+    [marketClockNow],
+  );
   const surfaceStyle = {
     display: "flex",
     flexDirection: "column",
@@ -3175,6 +3425,8 @@ const HeaderStatusCluster = ({
   );
 };
 
+const MemoHeaderStatusCluster = memo(HeaderStatusCluster);
+
 const HeaderAccountStrip = ({
   accounts = [],
   primaryAccountId,
@@ -3324,6 +3576,258 @@ const HeaderAccountStrip = ({
   );
 };
 
+const WatchlistRow = memo(
+  ({
+    item,
+    itemIndex,
+    itemsLength,
+    selected,
+    onSelect,
+    onMoveSymbol,
+    onRemoveSymbol,
+    onSignalAction,
+    busy = false,
+  }) => {
+    const toast = useToast();
+    const fallback = useMemo(
+      () =>
+        buildFallbackWatchlistItem(item.sym, itemIndex, item.name || item.sym),
+      [item.name, item.sym, itemIndex],
+    );
+    const snapshot = useRuntimeTickerSnapshot(item.sym, fallback);
+    const signalState = useSignalMonitorStateForSymbol(item.sym);
+    const sel = selected === item.sym;
+    const pos = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
+    const canMoveUp = itemIndex > 0;
+    const canMoveDown = itemIndex >= 0 && itemIndex < itemsLength - 1;
+    const signalDirection = signalState?.currentSignalDirection;
+    const hasFreshSignal =
+      signalState?.fresh &&
+      signalState?.status === "ok" &&
+      (signalDirection === "buy" || signalDirection === "sell");
+    const signalColor = signalDirection === "buy" ? T.green : T.red;
+    const displayName = item.name || snapshot?.name || fallback.name || item.sym;
+
+    return (
+      <div
+        onClick={() => onSelect?.(item.sym)}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0,1fr) 56px 50px 38px 24px 18px",
+          gap: sp(4),
+          padding: sp("7px 10px"),
+          cursor: "pointer",
+          alignItems: "center",
+          background: sel ? T.bg3 : "transparent",
+          borderLeft: sel ? `2px solid ${T.accent}` : "2px solid transparent",
+          transition: "background 0.1s",
+        }}
+        onMouseEnter={(event) => {
+          if (!sel) event.currentTarget.style.background = T.bg2;
+        }}
+        onMouseLeave={(event) => {
+          if (!sel) event.currentTarget.style.background = "transparent";
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: sp(4),
+              minWidth: 0,
+            }}
+          >
+            <span
+              style={{
+                fontSize: fs(12),
+                fontWeight: 700,
+                fontFamily: T.mono,
+                color: T.text,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {item.sym}
+            </span>
+            {hasFreshSignal ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSignalAction?.(item.sym, signalState);
+                }}
+                title={`${signalDirection.toUpperCase()} signal · ${signalState.timeframe} · ${signalState.barsSinceSignal ?? 0} bars ago`}
+                style={{
+                  border: `1px solid ${signalColor}`,
+                  background: `${signalColor}18`,
+                  color: signalColor,
+                  cursor: "pointer",
+                  fontFamily: T.mono,
+                  fontSize: fs(7),
+                  fontWeight: 900,
+                  letterSpacing: "0.08em",
+                  lineHeight: 1,
+                  padding: sp("2px 3px"),
+                  borderRadius: 0,
+                }}
+              >
+                {signalDirection.toUpperCase()}
+              </button>
+            ) : null}
+          </div>
+          <div
+            style={{
+              fontSize: fs(9),
+              color: T.textDim,
+              fontFamily: T.sans,
+              marginTop: sp(1),
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {displayName}
+          </div>
+        </div>
+        <div style={{ width: 56 }}>
+          <MicroSparkline
+            data={
+              snapshot?.sparkBars?.length
+                ? snapshot.sparkBars
+                : snapshot?.spark || fallback.spark
+            }
+            positive={pos}
+            width={48}
+            height={16}
+          />
+        </div>
+        <div
+          style={{
+            textAlign: "right",
+            fontSize: fs(11),
+            fontFamily: T.mono,
+            fontWeight: 500,
+            color: T.text,
+          }}
+        >
+          {formatQuotePrice(snapshot?.price)}
+        </div>
+        <div
+          style={{
+            textAlign: "right",
+            fontSize: fs(10),
+            fontFamily: T.mono,
+            fontWeight: 700,
+            color: pos == null ? T.textDim : pos ? T.green : T.red,
+          }}
+        >
+          {formatSignedPercent(snapshot?.pct)}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!item.id || !canMoveUp) {
+                return;
+              }
+              onMoveSymbol?.(item.id, "up");
+            }}
+            title={
+              canMoveUp ? `Move ${item.sym} up` : `${item.sym} is already first`
+            }
+            disabled={!item.id || !canMoveUp || busy}
+            style={{
+              width: dim(18),
+              height: dim(9),
+              border: "none",
+              borderRadius: 0,
+              background: "transparent",
+              color:
+                !item.id || !canMoveUp || busy ? T.textMuted : T.textDim,
+              cursor: item.id && canMoveUp && !busy ? "pointer" : "default",
+              fontFamily: T.mono,
+              fontSize: fs(8),
+              lineHeight: 1,
+              padding: 0,
+            }}
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!item.id || !canMoveDown) {
+                return;
+              }
+              onMoveSymbol?.(item.id, "down");
+            }}
+            title={
+              canMoveDown ? `Move ${item.sym} down` : `${item.sym} is already last`
+            }
+            disabled={!item.id || !canMoveDown || busy}
+            style={{
+              width: dim(18),
+              height: dim(9),
+              border: "none",
+              borderRadius: 0,
+              background: "transparent",
+              color:
+                !item.id || !canMoveDown || busy ? T.textMuted : T.textDim,
+              cursor: item.id && canMoveDown && !busy ? "pointer" : "default",
+              fontFamily: T.mono,
+              fontSize: fs(8),
+              lineHeight: 1,
+              padding: 0,
+            }}
+          >
+            ▼
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!item.id) {
+              toast.push({
+                title: "Symbol missing watchlist item id",
+                kind: "warn",
+              });
+              return;
+            }
+            onRemoveSymbol?.(item.id, item.sym);
+          }}
+          title={`Remove ${item.sym}`}
+          style={{
+            width: dim(18),
+            height: dim(18),
+            border: "none",
+            borderRadius: 0,
+            background: "transparent",
+            color: T.textMuted,
+            cursor: "pointer",
+            fontFamily: T.mono,
+            fontSize: fs(10),
+          }}
+        >
+          ×
+        </button>
+      </div>
+    );
+  },
+);
+
 const Watchlist = ({
   watchlists = [],
   activeWatchlistId = null,
@@ -3339,10 +3843,8 @@ const Watchlist = ({
   onMoveSymbol,
   onRemoveSymbol,
   onSignalAction,
-  signalStatesBySymbol = {},
   busy = false,
 }) => {
-  const toast = useToast();
   const rootRef = useRef(null);
   const [search, setSearch] = useState("");
   const [watchlistMenuOpen, setWatchlistMenuOpen] = useState(false);
@@ -3382,6 +3884,11 @@ const Watchlist = ({
     (w) =>
       w.sym.toLowerCase().includes(search.toLowerCase()) ||
       w.name.toLowerCase().includes(search.toLowerCase()),
+  );
+  const itemOrder = useMemo(
+    () =>
+      new Map(items.map((item, index) => [item.id || item.sym, index])),
+    [items],
   );
 
   useEffect(() => {
@@ -3857,236 +4364,21 @@ const Watchlist = ({
       </div>
 
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {filtered.map((w) => {
-          const sel = selected === w.sym;
-          const pos = isFiniteNumber(w.pct) ? w.pct >= 0 : null;
-          const itemIndex = items.findIndex((item) => item.id === w.id);
-          const canMoveUp = itemIndex > 0;
-          const canMoveDown = itemIndex >= 0 && itemIndex < items.length - 1;
-          const signalState = signalStatesBySymbol[w.sym] || null;
-          const signalDirection = signalState?.currentSignalDirection;
-          const hasFreshSignal =
-            signalState?.fresh &&
-            signalState?.status === "ok" &&
-            (signalDirection === "buy" || signalDirection === "sell");
-          const signalColor = signalDirection === "buy" ? T.green : T.red;
+        {filtered.map((item) => {
+          const itemKey = item.id || item.sym;
           return (
-            <div
-              key={w.id || w.sym}
-              onClick={() => onSelect?.(w.sym)}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0,1fr) 56px 50px 38px 24px 18px",
-                gap: sp(4),
-                padding: sp("7px 10px"),
-                cursor: "pointer",
-                alignItems: "center",
-                background: sel ? T.bg3 : "transparent",
-                borderLeft: sel
-                  ? `2px solid ${T.accent}`
-                  : "2px solid transparent",
-                transition: "background 0.1s",
-              }}
-              onMouseEnter={(e) => {
-                if (!sel) e.currentTarget.style.background = T.bg2;
-              }}
-              onMouseLeave={(e) => {
-                if (!sel) e.currentTarget.style.background = "transparent";
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: sp(4),
-                    minWidth: 0,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: fs(12),
-                      fontWeight: 700,
-                      fontFamily: T.mono,
-                      color: T.text,
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {w.sym}
-                  </span>
-                  {hasFreshSignal ? (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onSignalAction?.(w.sym, signalState);
-                      }}
-                      title={`${signalDirection.toUpperCase()} signal · ${signalState.timeframe} · ${signalState.barsSinceSignal ?? 0} bars ago`}
-                      style={{
-                        border: `1px solid ${signalColor}`,
-                        background: `${signalColor}18`,
-                        color: signalColor,
-                        cursor: "pointer",
-                        fontFamily: T.mono,
-                        fontSize: fs(7),
-                        fontWeight: 900,
-                        letterSpacing: "0.08em",
-                        lineHeight: 1,
-                        padding: sp("2px 3px"),
-                        borderRadius: 0,
-                      }}
-                    >
-                      {signalDirection.toUpperCase()}
-                    </button>
-                  ) : null}
-                </div>
-                <div
-                  style={{
-                    fontSize: fs(9),
-                    color: T.textDim,
-                    fontFamily: T.sans,
-                    marginTop: sp(1),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {w.name}
-                </div>
-              </div>
-              <div style={{ width: 56 }}>
-                <MicroSparkline
-                  data={w.sparkBars?.length ? w.sparkBars : w.spark}
-                  positive={pos}
-                  width={48}
-                  height={16}
-                />
-              </div>
-              <div
-                style={{
-                  textAlign: "right",
-                  fontSize: fs(11),
-                  fontFamily: T.mono,
-                  fontWeight: 500,
-                  color: T.text,
-                }}
-              >
-                {formatQuotePrice(w.price)}
-              </div>
-              <div
-                style={{
-                  textAlign: "right",
-                  fontSize: fs(10),
-                  fontFamily: T.mono,
-                  fontWeight: 700,
-                  color: pos == null ? T.textDim : pos ? T.green : T.red,
-                }}
-                >
-                  {formatSignedPercent(w.pct)}
-                </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 1,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!w.id || !canMoveUp) {
-                      return;
-                    }
-                    onMoveSymbol?.(w.id, "up");
-                  }}
-                  title={canMoveUp ? `Move ${w.sym} up` : `${w.sym} is already first`}
-                  disabled={!w.id || !canMoveUp || busy}
-                  style={{
-                    width: dim(18),
-                    height: dim(9),
-                    border: "none",
-                    borderRadius: 0,
-                    background: "transparent",
-                    color:
-                      !w.id || !canMoveUp || busy ? T.textMuted : T.textDim,
-                    cursor:
-                      w.id && canMoveUp && !busy ? "pointer" : "default",
-                    fontFamily: T.mono,
-                    fontSize: fs(8),
-                    lineHeight: 1,
-                    padding: 0,
-                  }}
-                >
-                  ▲
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!w.id || !canMoveDown) {
-                      return;
-                    }
-                    onMoveSymbol?.(w.id, "down");
-                  }}
-                  title={
-                    canMoveDown
-                      ? `Move ${w.sym} down`
-                      : `${w.sym} is already last`
-                  }
-                  disabled={!w.id || !canMoveDown || busy}
-                  style={{
-                    width: dim(18),
-                    height: dim(9),
-                    border: "none",
-                    borderRadius: 0,
-                    background: "transparent",
-                    color:
-                      !w.id || !canMoveDown || busy ? T.textMuted : T.textDim,
-                    cursor:
-                      w.id && canMoveDown && !busy ? "pointer" : "default",
-                    fontFamily: T.mono,
-                    fontSize: fs(8),
-                    lineHeight: 1,
-                    padding: 0,
-                  }}
-                >
-                  ▼
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (!w.id) {
-                    toast.push({
-                      title: "Symbol missing watchlist item id",
-                      kind: "warn",
-                    });
-                    return;
-                  }
-                  onRemoveSymbol?.(w.id, w.sym);
-                }}
-                title={`Remove ${w.sym}`}
-                style={{
-                  width: dim(18),
-                  height: dim(18),
-                  border: "none",
-                  borderRadius: 0,
-                  background: "transparent",
-                  color: T.textMuted,
-                  cursor: "pointer",
-                  fontFamily: T.mono,
-                  fontSize: fs(10),
-                }}
-              >
-                ×
-              </button>
-            </div>
+            <WatchlistRow
+              key={itemKey}
+              item={item}
+              itemIndex={itemOrder.get(itemKey) ?? -1}
+              itemsLength={items.length}
+              selected={selected}
+              onSelect={onSelect}
+              onMoveSymbol={onMoveSymbol}
+              onRemoveSymbol={onRemoveSymbol}
+              onSignalAction={onSignalAction}
+              busy={busy}
+            />
           );
         })}
       </div>
@@ -5033,6 +5325,112 @@ const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
   "3x3": 248,
 };
 
+const MARKET_GRID_TRACK_SESSION_KEY = "rayalgo:market-grid-track-sizes";
+const LEGACY_MARKET_GRID_CARD_SIZE_SESSION_KEY = "rayalgo:market-grid-card-size";
+const LEGACY_MARKET_GRID_CARD_SCALE_SESSION_KEY = "rayalgo:market-grid-card-scale";
+
+const buildEqualTrackWeights = (count) => {
+  const safeCount = Math.max(1, count || 1);
+  return Array.from({ length: safeCount }, () => 1 / safeCount);
+};
+
+const normalizeMarketGridTrackWeights = (weights, count) => {
+  if (!Array.isArray(weights) || weights.length !== count) {
+    return buildEqualTrackWeights(count);
+  }
+
+  const sanitized = weights.map((value) =>
+    Number.isFinite(value) && value > 0 ? value : 0,
+  );
+  const total = sanitized.reduce((sum, value) => sum + value, 0);
+  if (!(total > 0)) {
+    return buildEqualTrackWeights(count);
+  }
+
+  return sanitized.map((value) => value / total);
+};
+
+const normalizeMarketGridTrackLayoutState = (value, cols, rows) => ({
+  cols: normalizeMarketGridTrackWeights(value?.cols, cols),
+  rows: normalizeMarketGridTrackWeights(value?.rows, rows),
+});
+
+const readMarketGridTrackSession = () => {
+  try {
+    if (typeof window === "undefined" || !window.sessionStorage) {
+      return {};
+    }
+
+    const raw = window.sessionStorage.getItem(MARKET_GRID_TRACK_SESSION_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    }
+
+    return {};
+  } catch (error) {
+    return {};
+  }
+};
+
+const writeMarketGridTrackSession = (nextState) => {
+  try {
+    if (typeof window === "undefined" || !window.sessionStorage) return;
+    window.sessionStorage.setItem(
+      MARKET_GRID_TRACK_SESSION_KEY,
+      JSON.stringify(nextState || {}),
+    );
+    window.sessionStorage.removeItem(LEGACY_MARKET_GRID_CARD_SIZE_SESSION_KEY);
+    window.sessionStorage.removeItem(LEGACY_MARKET_GRID_CARD_SCALE_SESSION_KEY);
+  } catch (error) {}
+};
+
+const resizeMarketGridTrackWeights = (
+  weights,
+  dividerIndex,
+  deltaPx,
+  totalTrackPx,
+  minTrackPx,
+) => {
+  if (
+    !Array.isArray(weights) ||
+    dividerIndex <= 0 ||
+    dividerIndex >= weights.length ||
+    !(totalTrackPx > 0)
+  ) {
+    return weights;
+  }
+
+  const currentTrackPx = weights.map((value) => value * totalTrackPx);
+  const leftIndex = dividerIndex - 1;
+  const rightIndex = dividerIndex;
+  const pairTotal = currentTrackPx[leftIndex] + currentTrackPx[rightIndex];
+  const safeMin = Math.max(
+    24,
+    Math.min(minTrackPx, pairTotal / 2 - 4),
+  );
+
+  if (!(pairTotal > safeMin * 2)) {
+    return weights;
+  }
+
+  const nextTrackPx = [...currentTrackPx];
+  const unclampedLeft = currentTrackPx[leftIndex] + deltaPx;
+  const nextLeft = clampNumber(unclampedLeft, safeMin, pairTotal - safeMin);
+  const nextRight = pairTotal - nextLeft;
+
+  nextTrackPx[leftIndex] = nextLeft;
+  nextTrackPx[rightIndex] = nextRight;
+
+  return normalizeMarketGridTrackWeights(
+    nextTrackPx.map((value) => value / totalTrackPx),
+    weights.length,
+  );
+};
+
+const buildMarketGridResizeHandleKey = (mode, colGapIndex, rowGapIndex) =>
+  [mode, Number.isFinite(colGapIndex) ? colGapIndex : "na", Number.isFinite(rowGapIndex) ? rowGapIndex : "na"].join(":");
+
 const MINI_CHART_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1D"];
 const MINI_CHART_BAR_LIMITS = {
   "1m": 900,
@@ -5041,21 +5439,56 @@ const MINI_CHART_BAR_LIMITS = {
   "1h": 780,
   "1D": 504,
 };
+// Primary charts do not need archive-sized history on first paint. Keep the
+// default window large enough for the active indicators and recent context, but
+// small enough that a cold IBKR history fetch returns quickly.
 const PRIMARY_CHART_BAR_LIMITS = {
-  "1m": 20_000,
-  "5m": 20_000,
-  "15m": 15_000,
-  "1h": 10_000,
-  "1d": 5_000,
-  "1D": 5_000,
+  "1m": 1_800,
+  "5m": 1_800,
+  "15m": 1_500,
+  "1h": 1_000,
+  "1d": 756,
+  "1D": 756,
 };
 const OPTION_CHART_BAR_LIMITS = {
-  "1m": 5_000,
-  "5m": 5_000,
-  "15m": 5_000,
-  "1h": 5_000,
-  "1d": 1_000,
-  "1D": 1_000,
+  "1m": 720,
+  "5m": 720,
+  "15m": 720,
+  "1h": 720,
+  "1d": 252,
+  "1D": 252,
+};
+const MAX_PRIMARY_CHART_BAR_LIMITS = {
+  "1m": 20_000,
+  "5m": 12_000,
+  "15m": 8_000,
+  "1h": 4_000,
+  "1d": 2_500,
+  "1D": 2_500,
+};
+const MAX_OPTION_CHART_BAR_LIMITS = {
+  "1m": 2_400,
+  "5m": 2_400,
+  "15m": 1_800,
+  "1h": 1_200,
+  "1d": 756,
+  "1D": 756,
+};
+const INITIAL_PRIMARY_CHART_BAR_LIMITS = {
+  "1m": 360,
+  "5m": 360,
+  "15m": 300,
+  "1h": 240,
+  "1d": 252,
+  "1D": 252,
+};
+const INITIAL_OPTION_CHART_BAR_LIMITS = {
+  "1m": 240,
+  "5m": 240,
+  "15m": 240,
+  "1h": 240,
+  "1d": 126,
+  "1D": 126,
 };
 const getChartBarLimit = (timeframe, role = "primary") => {
   const normalizedTimeframe = timeframe === "1D" ? "1d" : timeframe;
@@ -5072,6 +5505,335 @@ const getChartBarLimit = (timeframe, role = "primary") => {
     PRIMARY_CHART_BAR_LIMITS["15m"]
   );
 };
+const getInitialChartBarLimit = (timeframe, role = "primary") => {
+  const normalizedTimeframe = timeframe === "1D" ? "1d" : timeframe;
+  const limits =
+    role === "option"
+      ? INITIAL_OPTION_CHART_BAR_LIMITS
+      : role === "mini"
+        ? MINI_CHART_BAR_LIMITS
+        : INITIAL_PRIMARY_CHART_BAR_LIMITS;
+  const targetLimit = getChartBarLimit(timeframe, role);
+
+  return Math.min(
+    targetLimit,
+    limits[timeframe] || limits[normalizedTimeframe] || targetLimit,
+  );
+};
+const getMaxChartBarLimit = (timeframe, role = "primary") => {
+  const normalizedTimeframe = timeframe === "1D" ? "1d" : timeframe;
+  const limits =
+    role === "option"
+      ? MAX_OPTION_CHART_BAR_LIMITS
+      : role === "mini"
+        ? PRIMARY_CHART_BAR_LIMITS
+        : MAX_PRIMARY_CHART_BAR_LIMITS;
+  const baseLimit = getChartBarLimit(timeframe, role);
+
+  return Math.max(
+    baseLimit,
+    limits[timeframe] || limits[normalizedTimeframe] || baseLimit,
+  );
+};
+const buildChartBarScopeKey = (...parts) =>
+  parts.filter((part) => part != null && part !== "").join("::");
+// Trade charts feel slow when the first IBKR history request has to pull the
+// entire target window. Start with a first-paint slice, warm the deeper window
+// in the query cache, then switch once it is already available.
+const useProgressiveChartBarLimit = ({
+  scopeKey,
+  timeframe,
+  role = "primary",
+  enabled = true,
+  warmTargetLimit,
+}) => {
+  const targetLimit = getChartBarLimit(timeframe, role);
+  const initialLimit = getInitialChartBarLimit(timeframe, role);
+  const maxLimit = getMaxChartBarLimit(timeframe, role);
+  const progressiveKey = `${scopeKey}::${role}::${timeframe}`;
+  const activeScopeKeyRef = useRef(progressiveKey);
+  const warmingKeyRef = useRef(null);
+  const [requestedLimit, setRequestedLimit] = useState(initialLimit);
+
+  useEffect(() => {
+    activeScopeKeyRef.current = progressiveKey;
+    warmingKeyRef.current = null;
+    setRequestedLimit(initialLimit);
+  }, [initialLimit, progressiveKey]);
+
+  const hydrateLimit = useCallback(
+    (nextRequestedLimit) => {
+      const normalizedNextLimit = Math.min(
+        maxLimit,
+        Math.max(initialLimit, Math.ceil(nextRequestedLimit)),
+      );
+
+      if (!enabled || normalizedNextLimit <= requestedLimit) {
+        return;
+      }
+
+      const warmingKey = `${progressiveKey}::${normalizedNextLimit}`;
+      if (warmingKeyRef.current === warmingKey) {
+        return;
+      }
+
+      warmingKeyRef.current = warmingKey;
+
+      Promise.resolve()
+        .then(() => warmTargetLimit(normalizedNextLimit))
+        .then(() => {
+          if (activeScopeKeyRef.current !== progressiveKey) {
+            return;
+          }
+
+          startTransition(() => {
+            setRequestedLimit((current) =>
+              current < normalizedNextLimit ? normalizedNextLimit : current,
+            );
+          });
+        })
+        .catch(() => {
+          if (
+            activeScopeKeyRef.current === progressiveKey &&
+            warmingKeyRef.current === warmingKey
+          ) {
+            warmingKeyRef.current = null;
+          }
+        });
+    },
+    [
+      enabled,
+      initialLimit,
+      maxLimit,
+      progressiveKey,
+      requestedLimit,
+      warmTargetLimit,
+    ],
+  );
+
+  useEffect(() => {
+    if (!enabled || initialLimit >= targetLimit) {
+      return;
+    }
+
+    hydrateLimit(targetLimit);
+  }, [enabled, hydrateLimit, initialLimit, targetLimit]);
+
+  const hydrateFullWindow = useCallback(() => {
+    if (!enabled || initialLimit >= targetLimit || requestedLimit >= targetLimit) {
+      return;
+    }
+
+    hydrateLimit(targetLimit);
+  }, [
+    enabled,
+    hydrateLimit,
+    initialLimit,
+    requestedLimit,
+    targetLimit,
+  ]);
+
+  const expandForVisibleRange = useCallback(
+    (range, loadedBarCount, options = {}) => {
+      if (!enabled || !range) {
+        return;
+      }
+
+      const visibleBars = Math.max(1, Math.ceil(range.to - range.from));
+      const leftEdgeBufferBars = Math.max(
+        24,
+        Math.min(144, Math.ceil(visibleBars * 0.2)),
+      );
+      if (range.from > leftEdgeBufferBars) {
+        return;
+      }
+
+      const resolvedLoadedBarCount = Number.isFinite(loadedBarCount)
+        ? Math.ceil(loadedBarCount)
+        : 0;
+      const canPrependOlderHistory =
+        requestedLimit >= targetLimit &&
+        resolvedLoadedBarCount < maxLimit &&
+        typeof options.prependOlderBars === "function" &&
+        Number.isFinite(options.oldestLoadedAtMs);
+
+      if (canPrependOlderHistory) {
+        const remainingBars = Math.max(0, maxLimit - resolvedLoadedBarCount);
+        const minimumPageSize =
+          role === "option"
+            ? getInitialChartBarLimit(timeframe, "option")
+            : role === "mini"
+              ? getInitialChartBarLimit(timeframe, "mini")
+              : getInitialChartBarLimit(timeframe, "primary");
+        const prependPageSize = Math.max(
+          minimumPageSize,
+          Math.ceil(visibleBars * 2),
+          role === "option" ? 240 : 360,
+        );
+        if (remainingBars > 0) {
+          options.prependOlderBars({
+            pageSize: Math.min(remainingBars, prependPageSize),
+          });
+        }
+        return;
+      }
+
+      if (requestedLimit >= maxLimit) {
+        return;
+      }
+
+      const effectiveLoadedBars = Math.max(
+        requestedLimit,
+        resolvedLoadedBarCount,
+        Math.ceil(range.to + 1),
+      );
+      const nextRequestedLimit = Math.max(
+        targetLimit,
+        Math.ceil(effectiveLoadedBars * 2),
+        effectiveLoadedBars + Math.max(visibleBars * 2, 480),
+      );
+
+      hydrateLimit(nextRequestedLimit);
+    },
+    [
+      enabled,
+      hydrateLimit,
+      maxLimit,
+      requestedLimit,
+      role,
+      targetLimit,
+      timeframe,
+    ],
+  );
+
+  return {
+    requestedLimit,
+    targetLimit,
+    maxLimit,
+    isHydratingFullWindow: enabled && requestedLimit < targetLimit,
+    hydrateFullWindow,
+    expandForVisibleRange,
+  };
+};
+
+const nowMs = () =>
+  typeof performance !== "undefined" && Number.isFinite(performance.now())
+    ? performance.now()
+    : Date.now();
+
+const measureChartBarsRequest = async ({
+  scopeKey,
+  metric,
+  request,
+}) => {
+  const startedAt = nowMs();
+  try {
+    return await request();
+  } finally {
+    recordChartHydrationMetric(metric, nowMs() - startedAt, scopeKey);
+  }
+};
+
+const useMeasuredChartModel = ({
+  scopeKey,
+  bars,
+  buildInput,
+  deps,
+}) => {
+  const initialHydrationStartedAtRef = useRef(nowMs());
+  const hasRecordedFirstPaintRef = useRef(false);
+  const previousBuildStateRef = useRef(null);
+
+  useEffect(() => {
+    initialHydrationStartedAtRef.current = nowMs();
+    hasRecordedFirstPaintRef.current = false;
+    previousBuildStateRef.current = null;
+    clearChartHydrationScope(scopeKey);
+  }, [scopeKey]);
+
+  const chartModel = useMemo(() => {
+    const startedAt = nowMs();
+    const nextResult = buildResearchChartModelIncremental(
+      buildInput,
+      previousBuildStateRef.current,
+    );
+    previousBuildStateRef.current = nextResult.state;
+    recordChartHydrationMetric("modelBuildMs", nowMs() - startedAt, scopeKey);
+    return nextResult.model;
+  }, deps);
+
+  const latestBarSignature = useMemo(() => {
+    const lastBar = bars[bars.length - 1];
+    if (!lastBar) {
+      return "empty";
+    }
+
+    return [
+      bars.length,
+      resolveApiBarTimestampMs(lastBar.timestamp ?? lastBar.time) ?? "",
+      lastBar.close ?? lastBar.c ?? "",
+      lastBar.volume ?? lastBar.v ?? "",
+    ].join("|");
+  }, [bars]);
+
+  useEffect(() => {
+    if (!chartModel.chartBars.length) {
+      return;
+    }
+
+    const pendingLivePatchStartedAt = consumeChartLivePatchPending(scopeKey);
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      if (cancelled) {
+        return;
+      }
+
+      if (!hasRecordedFirstPaintRef.current) {
+        recordChartHydrationMetric(
+          "firstPaintMs",
+          nowMs() - initialHydrationStartedAtRef.current,
+          scopeKey,
+        );
+        hasRecordedFirstPaintRef.current = true;
+      }
+
+      if (pendingLivePatchStartedAt !== null) {
+        recordChartHydrationMetric(
+          "livePatchToPaintMs",
+          nowMs() - pendingLivePatchStartedAt,
+          scopeKey,
+        );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [chartModel.chartBars.length, latestBarSignature, scopeKey]);
+
+  return chartModel;
+};
+
+const buildBarsPageQueryKey = ({
+  queryBase,
+  timeframe,
+  limit,
+  from,
+  to,
+  market = null,
+  assetClass = null,
+  providerContractId = null,
+}) => [
+  ...queryBase,
+  timeframe,
+  limit,
+  from,
+  to,
+  market,
+  assetClass,
+  providerContractId,
+];
 const MARKET_CHART_STUDIES = [
   { id: "ema-21", label: "E21" },
   { id: "ema-55", label: "E55" },
@@ -5338,6 +6100,187 @@ const buildTickerSearchAliases = (result) => {
   return Array.from(aliases).filter(Boolean);
 };
 
+const TICKER_SEARCH_US_PRIMARY_EXCHANGE_SCORES = {
+  XNAS: 680,
+  XNYS: 660,
+  ARCX: 640,
+  XASE: 520,
+  BATS: 500,
+};
+const TICKER_SEARCH_FX_CURRENCY_CODES = new Set([
+  "AUD",
+  "BRL",
+  "CAD",
+  "CHF",
+  "CNH",
+  "CNY",
+  "CZK",
+  "DKK",
+  "EUR",
+  "GBP",
+  "HKD",
+  "HUF",
+  "ILS",
+  "INR",
+  "JPY",
+  "KRW",
+  "MXN",
+  "NOK",
+  "NZD",
+  "PLN",
+  "SEK",
+  "SGD",
+  "TRY",
+  "USD",
+  "ZAR",
+]);
+const TICKER_SEARCH_INDEX_HINTS = new Set([
+  "DJI",
+  "DOW",
+  "MID",
+  "NDX",
+  "NYA",
+  "OEX",
+  "RUA",
+  "RUT",
+  "RVX",
+  "SKEW",
+  "SOX",
+  "SPX",
+  "VIX",
+  "VXN",
+  "XAU",
+]);
+const TICKER_SEARCH_CRYPTO_HINTS = new Set([
+  "AAVE",
+  "ADA",
+  "ATOM",
+  "AVAX",
+  "BCH",
+  "BTC",
+  "DOGE",
+  "DOT",
+  "ETC",
+  "ETH",
+  "LINK",
+  "LTC",
+  "MATIC",
+  "SHIB",
+  "SOL",
+  "UNI",
+  "XLM",
+  "XRP",
+]);
+const TICKER_SEARCH_FUTURES_HINTS = new Set([
+  "6A",
+  "6B",
+  "6C",
+  "6E",
+  "6J",
+  "6N",
+  "6S",
+  "CL",
+  "ES",
+  "GC",
+  "GF",
+  "HE",
+  "HG",
+  "HO",
+  "KE",
+  "LE",
+  "M2K",
+  "M6E",
+  "MCL",
+  "MES",
+  "MGC",
+  "MNQ",
+  "MYM",
+  "NG",
+  "NQ",
+  "PA",
+  "PL",
+  "RB",
+  "RTY",
+  "SI",
+  "UB",
+  "YM",
+  "ZB",
+  "ZC",
+  "ZF",
+  "ZL",
+  "ZM",
+  "ZN",
+  "ZS",
+  "ZT",
+  "ZW",
+]);
+
+const normalizeTickerSearchHintQuery = (query) => normalizeTickerSymbol(query);
+
+const isTickerSearchFxHint = (query) => {
+  const normalized = normalizeTickerSearchHintQuery(query);
+  if (TICKER_SEARCH_FX_CURRENCY_CODES.has(normalized)) return true;
+  if (!/^[A-Z]{6}$/.test(normalized)) return false;
+  return (
+    TICKER_SEARCH_FX_CURRENCY_CODES.has(normalized.slice(0, 3)) &&
+    TICKER_SEARCH_FX_CURRENCY_CODES.has(normalized.slice(3))
+  );
+};
+
+const isTickerSearchIndexHint = (query) =>
+  TICKER_SEARCH_INDEX_HINTS.has(normalizeTickerSearchHintQuery(query));
+
+const isTickerSearchCryptoHint = (query) => {
+  const normalized = normalizeTickerSearchHintQuery(query).replace(/^X:/, "");
+  if (TICKER_SEARCH_CRYPTO_HINTS.has(normalized)) return true;
+  return (
+    normalized.endsWith("USD") &&
+    TICKER_SEARCH_CRYPTO_HINTS.has(normalized.slice(0, -3))
+  );
+};
+
+const isTickerSearchFuturesHint = (query) =>
+  TICKER_SEARCH_FUTURES_HINTS.has(normalizeTickerSearchHintQuery(query));
+
+const isLikelyTickerSearchInput = (query) => {
+  const normalized = normalizeTickerSearchHintQuery(query);
+  if (!normalized) return false;
+  if (normalized.length <= 4) return true;
+  if (/[\d.:-]/.test(normalized)) return true;
+  return (
+    isTickerSearchFxHint(normalized) ||
+    isTickerSearchIndexHint(normalized) ||
+    isTickerSearchCryptoHint(normalized) ||
+    isTickerSearchFuturesHint(normalized)
+  );
+};
+
+const getTickerSearchMinQueryLength = (query) =>
+  isLikelyTickerSearchInput(query) ? 1 : 2;
+
+const getTickerSearchRequestLimit = (limit) =>
+  Math.min(16, Math.max(limit + 4, 10));
+
+const normalizeTickerSearchExchangeKey = (result) => {
+  const raw = (
+    result?.normalizedExchangeMic ||
+    result?.primaryExchange ||
+    result?.exchangeDisplay ||
+    ""
+  )
+    .trim()
+    .toUpperCase();
+
+  if (!raw) return "";
+  if (raw === "NASDAQ") return "XNAS";
+  if (raw === "NYSE") return "XNYS";
+  if (raw === "ARCA") return "ARCX";
+  return raw;
+};
+
+const isTickerSearchUsExactMatchCandidate = (result) =>
+  result?.market === "stocks" || result?.market === "etf" || result?.market === "otc";
+
 const scoreTickerSearchResult = (
   result,
   { query, currentTicker, recentTickerSet, watchlistTickerSet, favoriteTickerSet },
@@ -5348,8 +6291,12 @@ const scoreTickerSearchResult = (
   if (!query || !normalizedTicker) return Number.NEGATIVE_INFINITY;
 
   let score = 0;
-  if (tickerAliases.includes(query.toUpperCase())) score += 3000;
-  else if (normalizedTicker === query.toUpperCase()) score += 3000;
+  const uppercaseQuery = query.toUpperCase();
+  const exactTickerMatch =
+    tickerAliases.includes(uppercaseQuery) || normalizedTicker === uppercaseQuery;
+  const strongNamePrefixMatch =
+    normalizedName === query || normalizedName.startsWith(query);
+  if (exactTickerMatch) score += 3000;
   else if (normalizedTicker.startsWith(query.toUpperCase())) score += 1050;
   else if (normalizedTicker.includes(query.toUpperCase())) score += 780;
 
@@ -5365,13 +6312,44 @@ const scoreTickerSearchResult = (
     score += 320;
   }
 
-  if (normalizedTicker === normalizeTickerSymbol(currentTicker)) score += 40;
-  if (recentTickerSet.has(normalizedTicker)) score += 140;
-  if (favoriteTickerSet.has(normalizedTicker)) score += 120;
-  if (watchlistTickerSet.has(normalizedTicker)) score += 90;
+  if (!exactTickerMatch) {
+    if (normalizedTicker === normalizeTickerSymbol(currentTicker)) score += 40;
+    if (recentTickerSet.has(normalizedTicker)) score += 140;
+    if (favoriteTickerSet.has(normalizedTicker)) score += 120;
+    if (watchlistTickerSet.has(normalizedTicker)) score += 90;
+  }
   if (result?.providers?.includes?.("ibkr")) score += 35;
   if (result?.providerContractId) score += 20;
   if (result?.normalizedExchangeMic || result?.primaryExchange) score += 10;
+
+  if (strongNamePrefixMatch) {
+    if (/^[A-Z]{1,6}$/.test(normalizedTicker)) score += 180;
+    if (/^\d/.test(normalizedTicker)) score -= 260;
+    if (isTickerSearchUsExactMatchCandidate(result)) {
+      score +=
+        TICKER_SEARCH_US_PRIMARY_EXCHANGE_SCORES[
+          normalizeTickerSearchExchangeKey(result)
+        ] || 0;
+      if (result?.providers?.includes?.("ibkr")) score += 160;
+      if (result?.providerContractId) score += 120;
+    }
+  }
+
+  if (exactTickerMatch) {
+    if (result?.market === "fx" && isTickerSearchFxHint(uppercaseQuery)) score += 1500;
+    if (result?.market === "crypto" && isTickerSearchCryptoHint(uppercaseQuery)) score += 1500;
+    if (result?.market === "indices" && isTickerSearchIndexHint(uppercaseQuery)) score += 1500;
+    if (result?.market === "futures" && isTickerSearchFuturesHint(uppercaseQuery)) score += 1500;
+  }
+
+  if (exactTickerMatch && isTickerSearchUsExactMatchCandidate(result)) {
+    score +=
+      TICKER_SEARCH_US_PRIMARY_EXCHANGE_SCORES[
+        normalizeTickerSearchExchangeKey(result)
+      ] || 0;
+    if (result?.providers?.includes?.("ibkr")) score += 220;
+    if (result?.providerContractId) score += 180;
+  }
 
   return score;
 };
@@ -5676,6 +6654,50 @@ const buildUnresolvedTickerSearchRow = (symbol, group) => {
   };
 };
 
+const isIgnorableTickerSearchError = (error) => {
+  if (!error) return false;
+
+  const message =
+    typeof error?.message === "string" ? error.message.toLowerCase() : "";
+  const code =
+    typeof error?.data?.code === "string" ? error.data.code.toLowerCase() : "";
+  const name = typeof error?.name === "string" ? error.name.toLowerCase() : "";
+  const causeName =
+    typeof error?.cause?.name === "string" ? error.cause.name.toLowerCase() : "";
+
+  return (
+    error?.status === 499 ||
+    code === "ticker_search_aborted" ||
+    name === "aborterror" ||
+    causeName === "aborterror" ||
+    name === "cancellederror" ||
+    message.includes("aborted") ||
+    message.includes("canceled") ||
+    message.includes("cancelled")
+  );
+};
+
+const useDebouncedTickerSearchQuery = (query) => {
+  const trimmedQuery = query.trim();
+  const [debouncedQuery, setDebouncedQuery] = useState(trimmedQuery);
+  const debounceDelayMs = isLikelyTickerSearchInput(trimmedQuery) ? 120 : 220;
+
+  useEffect(() => {
+    if (!trimmedQuery) {
+      setDebouncedQuery("");
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedQuery(trimmedQuery);
+    }, debounceDelayMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [debounceDelayMs, trimmedQuery]);
+
+  return debouncedQuery;
+};
+
 const useTickerSearchController = ({
   open,
   query,
@@ -5689,26 +6711,33 @@ const useTickerSearchController = ({
   limit = 8,
 }) => {
   const deferredQuery = useDeferredValue(query.trim());
-  const normalizedQuery = normalizeTickerSearchQuery(deferredQuery);
+  const debouncedQuery = useDebouncedTickerSearchQuery(deferredQuery);
+  const normalizedQuery = normalizeTickerSearchQuery(debouncedQuery);
   const selectedFilter = TICKER_SEARCH_MARKET_BY_VALUE[marketFilter] || TICKER_SEARCH_MARKET_BY_VALUE.all;
-  const searchEnabled = open && normalizedQuery.length >= 1;
+  const minimumQueryLength = getTickerSearchMinQueryLength(debouncedQuery);
+  const searchEnabled = open && normalizedQuery.length >= minimumQueryLength;
   const searchQuery = useSearchUniverseTickers(
     searchEnabled
       ? {
-          search: deferredQuery,
+          search: debouncedQuery,
           ...(selectedFilter.markets ? { markets: selectedFilter.markets } : {}),
           active: true,
-          limit: Math.max(limit * 3, 24),
+          limit: getTickerSearchRequestLimit(limit),
         }
       : undefined,
     {
       query: {
         enabled: searchEnabled,
         staleTime: 30_000,
+        placeholderData: (previousData) => previousData,
         retry: false,
       },
     },
   );
+  const hasDisplayableSearchError =
+    searchEnabled &&
+    searchQuery.isError &&
+    !isIgnorableTickerSearchError(searchQuery.error);
 
   const rankedResults = useMemo(() => {
     if (!searchEnabled) return [];
@@ -5790,10 +6819,11 @@ const useTickerSearchController = ({
     : quickPickGroups.flatMap((group) => group.rows);
 
   return {
-    deferredQuery,
+    deferredQuery: debouncedQuery,
     normalizedQuery,
     searchEnabled,
     searchQuery,
+    hasDisplayableSearchError,
     quickPickGroups,
     results: rankedResults,
     selectableResults,
@@ -5831,6 +6861,7 @@ const MiniChartTickerSearch = ({
     deferredQuery,
     searchEnabled,
     searchQuery,
+    hasDisplayableSearchError,
     quickPickGroups,
     results,
     selectableResults,
@@ -5846,6 +6877,9 @@ const MiniChartTickerSearch = ({
     rowCache,
     limit: 8,
   });
+  const hasLiveResults = searchEnabled && results.length > 0;
+  const showLoadingSkeleton = searchEnabled && searchQuery.isPending && !hasLiveResults;
+  const showUpdatingState = searchEnabled && searchQuery.isFetching && hasLiveResults;
 
   useEffect(() => {
     persistState({ marketGridTickerSearchMarketFilter: marketFilter });
@@ -6148,10 +7182,24 @@ const MiniChartTickerSearch = ({
                 );
               })
             : null}
-          {searchEnabled && searchQuery.isPending && (
+          {showLoadingSkeleton && (
             <TickerSearchSkeletonRows />
           )}
-          {searchEnabled && searchQuery.isError && (
+          {showUpdatingState ? (
+            <div
+              style={{
+                padding: sp("6px 10px 0"),
+                fontSize: fs(8),
+                color: T.textDim,
+                fontFamily: T.mono,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
+              Updating…
+            </div>
+          ) : null}
+          {hasDisplayableSearchError && (
             <div
               style={{
                 display: "flex",
@@ -6183,7 +7231,7 @@ const MiniChartTickerSearch = ({
               </button>
             </div>
           )}
-          {searchEnabled && !searchQuery.isPending && !searchQuery.isError && !results.length && (
+          {searchEnabled && !showLoadingSkeleton && !hasDisplayableSearchError && !results.length && (
             <div
               style={{
                 padding: sp("12px 10px"),
@@ -6195,7 +7243,7 @@ const MiniChartTickerSearch = ({
               No results for "{deferredQuery}".
             </div>
           )}
-          {searchEnabled && !searchQuery.isPending && !searchQuery.isError && results.length ? (
+          {searchEnabled && !hasDisplayableSearchError && results.length ? (
             <div
               style={{
                 padding: sp("6px 10px 4px"),
@@ -6211,8 +7259,7 @@ const MiniChartTickerSearch = ({
             </div>
           ) : null}
           {searchEnabled &&
-            !searchQuery.isPending &&
-            !searchQuery.isError &&
+            !hasDisplayableSearchError &&
             results.map((result, index) => (
               <TickerSearchRow
                 key={buildTickerSearchRowKey(result)}
@@ -6234,6 +7281,170 @@ const MiniChartTickerSearch = ({
   );
 };
 
+export function TickerSearchLab() {
+  const [selectedTicker, setSelectedTicker] = useState("SPY");
+  const [selectedRow, setSelectedRow] = useState(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const popularTickers = ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "MSFT", "TSLA", "AMD"];
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: T.bg0,
+        color: T.text,
+        fontFamily: T.sans,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: sp(24),
+      }}
+    >
+      <style>{FONT_CSS}</style>
+      <div
+        style={{
+          width: dim(640),
+          minHeight: dim(280),
+          position: "relative",
+          background: T.bg1,
+          border: `1px solid ${T.border}`,
+          boxShadow: "0 18px 45px rgba(0,0,0,0.22)",
+          padding: sp(16),
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(6),
+            marginBottom: sp(14),
+          }}
+        >
+          <div
+            style={{
+              fontSize: fs(13),
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            Ticker Search Lab
+          </div>
+          <div
+            style={{
+              fontSize: fs(10),
+              color: T.textDim,
+            }}
+          >
+            Real IBKR-backed ticker search, isolated from the rest of the platform.
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(12),
+            marginBottom: sp(12),
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: fs(9),
+                color: T.textMuted,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                marginBottom: sp(3),
+              }}
+            >
+              Selected
+            </div>
+            <div
+              data-testid="ticker-search-selected"
+              title={`Search ${selectedTicker}`}
+              style={{
+                fontSize: fs(16),
+                fontWeight: 800,
+                color: T.text,
+                fontFamily: T.mono,
+              }}
+            >
+              {selectedTicker}
+            </div>
+            {selectedRow?.providerContractId ? (
+              <div
+                style={{
+                  marginTop: sp(4),
+                  fontSize: fs(9),
+                  color: T.textDim,
+                  fontFamily: T.mono,
+                }}
+              >
+                conid {selectedRow.providerContractId}
+              </div>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            data-testid="chart-symbol-search-button"
+            title={`Search ${selectedTicker}`}
+            onClick={() => setSearchOpen(true)}
+            style={{
+              border: `1px solid ${T.accent}`,
+              background: `${T.accent}18`,
+              color: T.accent,
+              padding: sp("8px 12px"),
+              fontSize: fs(10),
+              fontWeight: 700,
+              cursor: "pointer",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            Search Symbol
+          </button>
+        </div>
+
+        <div
+          style={{
+            fontSize: fs(10),
+            color: T.textDim,
+            lineHeight: 1.5,
+            maxWidth: dim(460),
+          }}
+        >
+          Search by ticker or company name. Enter selects the top live row; click selects any
+          visible row. The popover below uses the same live search component as the chart grid.
+        </div>
+
+        <MiniChartTickerSearch
+          open={searchOpen}
+          ticker={selectedTicker}
+          recentTickerRows={selectedRow ? [selectedRow] : []}
+          watchlistSymbols={popularTickers}
+          popularTickers={popularTickers}
+          onClose={() => setSearchOpen(false)}
+          onSelectTicker={(result) => {
+            const nextTicker = normalizeTickerSymbol(result?.ticker);
+            const normalized = normalizeTickerSearchResultForStorage(result);
+            if (!nextTicker || !normalized) {
+              return;
+            }
+            setSelectedTicker(nextTicker);
+            setSelectedRow(normalized);
+            setSearchOpen(false);
+          }}
+          onRememberTickerRow={(row) => setSelectedRow(row)}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── MINI CHART CELL ───
 // Single chart cell for the multi-chart grid. Compact: ticker header, candles, volume strip.
 const MiniChartCell = ({
@@ -6254,6 +7465,7 @@ const MiniChartCell = ({
   dense = false,
   stockAggregateStreamingEnabled = false,
 }) => {
+  const queryClient = useQueryClient();
   const { studies: availableStudies, indicatorRegistry } =
     useIndicatorLibrary();
   const ticker = slot?.ticker || WATCHLIST[0]?.sym || "SPY";
@@ -6268,7 +7480,7 @@ const MiniChartCell = ({
     () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
     [rayReplicaSettings],
   );
-  const minuteAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
+  const minuteAggregateStoreVersion = useStockMinuteAggregateSymbolVersion(ticker);
   const [searchOpen, setSearchOpen] = useState(false);
   const [drawMode, setDrawMode] = useState(null);
   const { drawings, addDrawing, clearDrawings } = useDrawingHistory();
@@ -6276,33 +7488,200 @@ const MiniChartCell = ({
     DEFAULT_WATCHLIST_BY_SYMBOL[ticker] ||
     WATCHLIST.find((item) => item.sym === ticker) ||
     WATCHLIST[0];
-  const tfBars = getChartBarLimit(tf, isActive ? "primary" : "mini");
+  const normalizedTimeframe = tf === "1D" ? "1d" : tf;
+  const rollupBaseTimeframe = useMemo(
+    () =>
+      isActive
+        ? resolveLocalRollupBaseTimeframe(
+            normalizedTimeframe,
+            getChartBarLimit(tf, "primary"),
+            "primary",
+          )
+        : normalizedTimeframe,
+    [isActive, normalizedTimeframe, tf],
+  );
+  const barsScopeKey = buildChartBarScopeKey(
+    "market-mini-bars",
+    ticker,
+    slotMarket,
+    slot?.providerContractId || null,
+  );
+  const baseBarsScopeKey = buildChartBarScopeKey(
+    "market-mini-base-bars",
+    ticker,
+    slotMarket,
+    slot?.providerContractId || null,
+    rollupBaseTimeframe,
+  );
+  const chartHydrationScopeKey = buildChartBarScopeKey(
+    "market-mini-chart",
+    ticker,
+    normalizedTimeframe,
+    slotMarket,
+    slot?.providerContractId || null,
+  );
+  const progressiveBars = useProgressiveChartBarLimit({
+    scopeKey: barsScopeKey,
+    timeframe: tf,
+    role: isActive ? "primary" : "mini",
+    enabled: Boolean(ticker),
+    warmTargetLimit: useCallback(
+      (limit) =>
+        queryClient.prefetchQuery({
+          queryKey: [
+            "market-mini-bars",
+            ticker,
+            rollupBaseTimeframe,
+            expandLocalRollupLimit(
+              limit,
+              normalizedTimeframe,
+              rollupBaseTimeframe,
+            ),
+            slotMarket,
+            slot?.providerContractId || null,
+          ],
+          queryFn: () =>
+            measureChartBarsRequest({
+              scopeKey: chartHydrationScopeKey,
+              metric: "barsRequestMs",
+              request: () =>
+                getBarsRequest({
+                  symbol: ticker,
+                  timeframe: rollupBaseTimeframe,
+                  limit: expandLocalRollupLimit(
+                    limit,
+                    normalizedTimeframe,
+                    rollupBaseTimeframe,
+                  ),
+                  market: slotMarket,
+                  outsideRth: tf !== "1D",
+                  source: "trades",
+                  allowHistoricalSynthesis: true,
+                  providerContractId: slot?.providerContractId || undefined,
+                }),
+            }),
+          ...BARS_QUERY_DEFAULTS,
+        }),
+      [
+        chartHydrationScopeKey,
+        normalizedTimeframe,
+        queryClient,
+        rollupBaseTimeframe,
+        slot?.providerContractId,
+        slotMarket,
+        tf,
+        ticker,
+      ],
+    ),
+  });
+  const baseRequestedLimit = useMemo(
+    () =>
+      expandLocalRollupLimit(
+        progressiveBars.requestedLimit,
+        normalizedTimeframe,
+        rollupBaseTimeframe,
+      ),
+    [normalizedTimeframe, progressiveBars.requestedLimit, rollupBaseTimeframe],
+  );
   const barsQuery = useQuery({
     queryKey: [
       "market-mini-bars",
       ticker,
-      tf,
-      tfBars,
+      rollupBaseTimeframe,
+      baseRequestedLimit,
       slotMarket,
       slot?.providerContractId || null,
     ],
     queryFn: () =>
-      getBarsRequest({
-        symbol: ticker,
-        timeframe: tf === "1D" ? "1d" : tf,
-        limit: tfBars,
-        market: slotMarket,
-        outsideRth: tf !== "1D",
-        source: "trades",
-        allowHistoricalSynthesis: true,
-        providerContractId: slot?.providerContractId || undefined,
+      measureChartBarsRequest({
+        scopeKey: chartHydrationScopeKey,
+        metric: "barsRequestMs",
+        request: () =>
+          getBarsRequest({
+            symbol: ticker,
+            timeframe: rollupBaseTimeframe,
+            limit: baseRequestedLimit,
+            market: slotMarket,
+            outsideRth: tf !== "1D",
+            source: "trades",
+            allowHistoricalSynthesis: true,
+            providerContractId: slot?.providerContractId || undefined,
+          }),
       }),
     ...BARS_QUERY_DEFAULTS,
   });
+  useEffect(() => {
+    if (!barsQuery.data?.bars?.length) {
+      return;
+    }
+
+    progressiveBars.hydrateFullWindow();
+  }, [barsQuery.data?.bars?.length, progressiveBars.hydrateFullWindow]);
+  const prependableBars = usePrependableHistoricalBars({
+    scopeKey: baseBarsScopeKey,
+    timeframe: rollupBaseTimeframe,
+    bars: barsQuery.data?.bars,
+    enabled: Boolean(ticker && isActive),
+    fetchOlderBars: useCallback(
+      async ({ from, to, limit }) => {
+        const fromIso = from.toISOString();
+        const toIso = to.toISOString();
+        const baseLimit = expandLocalRollupLimit(
+          limit,
+          normalizedTimeframe,
+          rollupBaseTimeframe,
+        );
+        const payload = await queryClient.fetchQuery({
+          queryKey: buildBarsPageQueryKey({
+            queryBase: ["market-mini-bars-prepend", ticker],
+            timeframe: rollupBaseTimeframe,
+            limit: baseLimit,
+            from: fromIso,
+            to: toIso,
+            market: slotMarket,
+            providerContractId: slot?.providerContractId || null,
+          }),
+          queryFn: () =>
+            measureChartBarsRequest({
+              scopeKey: chartHydrationScopeKey,
+              metric: "prependRequestMs",
+              request: () =>
+                getBarsRequest({
+                  symbol: ticker,
+                  timeframe: rollupBaseTimeframe,
+                  limit: baseLimit,
+                  from: fromIso,
+                  to: toIso,
+                  market: slotMarket,
+                  outsideRth: tf !== "1D",
+                  source: "trades",
+                  allowHistoricalSynthesis: true,
+                  providerContractId: slot?.providerContractId || undefined,
+                }),
+            }),
+          ...BARS_QUERY_DEFAULTS,
+        });
+
+        return payload?.bars || [];
+      },
+      [
+        chartHydrationScopeKey,
+        isActive,
+        baseBarsScopeKey,
+        normalizedTimeframe,
+        queryClient,
+        rollupBaseTimeframe,
+        slot?.providerContractId,
+        slotMarket,
+        tf,
+        ticker,
+      ],
+    ),
+  });
   const streamedSourceBars = useBrokerStreamedBars({
     symbol: ticker,
-    timeframe: tf === "1D" ? "1d" : tf,
-    bars: barsQuery.data?.bars,
+    timeframe: rollupBaseTimeframe,
+    bars: prependableBars.bars,
     enabled: Boolean(
       stockAggregateStreamingEnabled &&
         ticker &&
@@ -6318,19 +7697,51 @@ const MiniChartCell = ({
     () => buildMiniChartBarsFromApi(streamedSourceBars),
     [streamedSourceBars],
   );
-  const bars = useMemo(() => liveBars, [liveBars]);
-  const chartModel = useMemo(
+  const streamedLiveBars = useHistoricalBarStream({
+    symbol: ticker,
+    timeframe: rollupBaseTimeframe,
+    bars: liveBars,
+    enabled: Boolean(
+      isActive &&
+        stockAggregateStreamingEnabled &&
+        ticker &&
+        tf !== "1D" &&
+        ["stocks", "etf", "otc"].includes(slotMarket),
+    ),
+    providerContractId: slot?.providerContractId || null,
+    outsideRth: tf !== "1D",
+    source: "trades",
+    instrumentationScope: chartHydrationScopeKey,
+  });
+  const bars = useMemo(
     () =>
-      buildResearchChartModel({
-        bars,
-        timeframe: tf === "1D" ? "1d" : tf,
-        selectedIndicators,
-        indicatorSettings,
-        indicatorRegistry,
-      }),
-    [bars, indicatorRegistry, indicatorSettings, selectedIndicators, tf],
+      rollupMarketBars(
+        streamedLiveBars,
+        rollupBaseTimeframe,
+        normalizedTimeframe,
+      ),
+    [normalizedTimeframe, rollupBaseTimeframe, streamedLiveBars],
   );
-  const barsStatus = liveBars.length
+  const chartModel = useMeasuredChartModel({
+    scopeKey: chartHydrationScopeKey,
+    bars,
+    buildInput: {
+      bars,
+      timeframe: normalizedTimeframe,
+      selectedIndicators,
+      indicatorSettings,
+      indicatorRegistry,
+    },
+    deps: [
+      bars,
+      chartHydrationScopeKey,
+      indicatorRegistry,
+      indicatorSettings,
+      normalizedTimeframe,
+      selectedIndicators,
+    ],
+  });
+  const barsStatus = bars.length
     ? "live"
     : barsQuery.isPending
       ? "loading"
@@ -6385,6 +7796,19 @@ const MiniChartCell = ({
     },
     [onEnterSoloMode, ticker],
   );
+  const handleVisibleLogicalRangeChange = useCallback(
+    (range) => {
+      if (!isActive) {
+        return;
+      }
+
+      progressiveBars.expandForVisibleRange(range, prependableBars.loadedBarCount, {
+        oldestLoadedAtMs: prependableBars.oldestLoadedAtMs,
+        prependOlderBars: prependableBars.prependOlderBars,
+      });
+    },
+    [isActive, prependableBars, progressiveBars],
+  );
   const rememberTicker = useCallback(
     (nextTickerOrRow) => {
       const normalized =
@@ -6413,7 +7837,8 @@ const MiniChartCell = ({
     >
       <ResearchChartFrame
         theme={T}
-        themeKey={CURRENT_THEME}
+        themeKey={getCurrentTheme()}
+        surfaceUiStateKey="market-mini-chart"
         model={chartModel}
         compact={dense}
         drawings={drawings}
@@ -6439,6 +7864,7 @@ const MiniChartCell = ({
           borderColor: isActive ? T.accent : T.border,
           boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
         }}
+        onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
         surfaceTopOverlay={(controls) => (
           <ResearchChartWidgetHeader
             theme={T}
@@ -6595,8 +8021,50 @@ export const MultiChartGrid = ({
     normalizePersistedTickerSearchRows(_initialState.marketGridRecentTickerRows, 10),
   );
   const [gridBodyWidth, setGridBodyWidth] = useState(0);
+  const [marketGridTrackState, setMarketGridTrackState] = useState(() =>
+    readMarketGridTrackSession(),
+  );
+  const [gridResizeHoverHandle, setGridResizeHoverHandle] = useState(null);
+  const [gridResizeActiveHandle, setGridResizeActiveHandle] = useState(null);
   const cfg = MULTI_CHART_LAYOUTS[layout] || MULTI_CHART_LAYOUTS["2x3"];
   const defaults = defaultSymbolsRef.current;
+  const layoutTrackState = useMemo(
+    () =>
+      normalizeMarketGridTrackLayoutState(
+        marketGridTrackState?.[layout],
+        cfg.cols,
+        cfg.rows,
+      ),
+    [cfg.cols, cfg.rows, layout, marketGridTrackState],
+  );
+  const setLayoutTrackState = useCallback(
+    (updater) => {
+      setMarketGridTrackState((current) => {
+        const currentLayoutState = normalizeMarketGridTrackLayoutState(
+          current?.[layout],
+          cfg.cols,
+          cfg.rows,
+        );
+        const proposedLayoutState =
+          typeof updater === "function" ? updater(currentLayoutState) : updater;
+        const nextLayoutState = normalizeMarketGridTrackLayoutState(
+          proposedLayoutState,
+          cfg.cols,
+          cfg.rows,
+        );
+        if (
+          JSON.stringify(currentLayoutState) === JSON.stringify(nextLayoutState)
+        ) {
+          return current;
+        }
+        return {
+          ...(current || {}),
+          [layout]: nextLayoutState,
+        };
+      });
+    },
+    [cfg.cols, cfg.rows, layout],
+  );
   const visibleSlotEntries = useMemo(() => {
     if (!slots.length) {
       return [];
@@ -6698,6 +8166,10 @@ export const MultiChartGrid = ({
   }, [layout, recentTickerRows, recentTickers, soloSlotIndex, syncTimeframes, slots]);
 
   useEffect(() => {
+    writeMarketGridTrackSession(marketGridTrackState);
+  }, [marketGridTrackState]);
+
+  useEffect(() => {
     if (!gridBodyRef.current || typeof ResizeObserver === "undefined") {
       return undefined;
     }
@@ -6726,21 +8198,185 @@ export const MultiChartGrid = ({
 
   const denseGrid = cfg.count > 4;
   const gridGap = sp(denseGrid ? 4 : 6);
-  const cardMinWidth = dim(
+  const gridPadding = sp(denseGrid ? 4 : 6);
+  const baseCardMinWidth = dim(
     MULTI_CHART_LAYOUT_CARD_WIDTH[layout] ||
       MULTI_CHART_LAYOUT_CARD_WIDTH["2x3"],
   );
-  const cellHeight = dim(
+  const baseCellHeight = dim(
     MULTI_CHART_LAYOUT_CARD_HEIGHT[layout] ||
       MULTI_CHART_LAYOUT_CARD_HEIGHT["2x3"],
   );
-  const fittedCols = Math.max(
-    1,
-    Math.min(
-      cfg.cols,
-      Math.floor(((gridBodyWidth || 0) + gridGap) / (cardMinWidth + gridGap)) ||
-        1,
-    ),
+  const renderedCols = layout === "1x1" ? 1 : cfg.cols;
+  const renderedRows = layout === "1x1" ? 1 : cfg.rows;
+  const hasVerticalResizeGap = renderedCols > 1;
+  const hasHorizontalResizeGap = renderedRows > 1;
+  const showGridResizeControl = hasVerticalResizeGap || hasHorizontalResizeGap;
+  const effectiveGridWidth = Math.max(0, (gridBodyWidth || 0) - gridPadding * 2);
+  const trackAreaWidth = Math.max(
+    0,
+    effectiveGridWidth - Math.max(0, renderedCols - 1) * gridGap,
+  );
+  const trackAreaHeight = Math.max(0, baseCellHeight * renderedRows);
+  const columnWeights = normalizeMarketGridTrackWeights(
+    layoutTrackState.cols,
+    renderedCols,
+  );
+  const rowWeights = normalizeMarketGridTrackWeights(
+    layoutTrackState.rows,
+    renderedRows,
+  );
+  const columnWidths = columnWeights.map((weight) => weight * trackAreaWidth);
+  const rowHeights = rowWeights.map((weight) => weight * trackAreaHeight);
+  const gridRenderedHeight =
+    trackAreaHeight + Math.max(0, renderedRows - 1) * gridGap;
+  const verticalDividerOffsets = hasVerticalResizeGap
+    ? Array.from({ length: renderedCols - 1 }, (_, index) => {
+        const dividerIndex = index + 1;
+        const leftTrackWidth = columnWidths
+          .slice(0, dividerIndex)
+          .reduce((sum, value) => sum + value, 0);
+        return {
+          dividerIndex,
+          offset:
+            gridPadding +
+            leftTrackWidth +
+            index * gridGap +
+            gridGap / 2,
+        };
+      })
+    : [];
+  const horizontalDividerOffsets = hasHorizontalResizeGap
+    ? Array.from({ length: renderedRows - 1 }, (_, index) => {
+        const dividerIndex = index + 1;
+        const topTrackHeight = rowHeights
+          .slice(0, dividerIndex)
+          .reduce((sum, value) => sum + value, 0);
+        return {
+          dividerIndex,
+          offset:
+            gridPadding +
+            topTrackHeight +
+            index * gridGap +
+            gridGap / 2,
+        };
+      })
+    : [];
+  const verticalDividerHitThickness = dim(denseGrid ? 14 : 16);
+  const horizontalDividerHitThickness = dim(denseGrid ? 14 : 16);
+  const intersectionHandleSize = dim(denseGrid ? 12 : 14);
+  const crosshairStroke = 2;
+  const gridResizeIdleColor = "rgba(166, 174, 182, 0.38)";
+  const gridResizeHoverColor = "rgba(196, 203, 210, 0.74)";
+  const gridScaleResetDisabled = useMemo(() => {
+    const defaultColumnWeights = buildEqualTrackWeights(renderedCols);
+    const defaultRowWeights = buildEqualTrackWeights(renderedRows);
+    const columnsMatch =
+      columnWeights.length === defaultColumnWeights.length &&
+      columnWeights.every(
+        (value, index) => Math.abs(value - defaultColumnWeights[index]) < 0.001,
+      );
+    const rowsMatch =
+      rowWeights.length === defaultRowWeights.length &&
+      rowHeights.length === defaultRowWeights.length &&
+      rowWeights.every(
+        (value, index) => Math.abs(value - defaultRowWeights[index]) < 0.001,
+      );
+    return columnsMatch && rowsMatch;
+  }, [columnWeights, renderedCols, renderedRows, rowHeights.length, rowWeights]);
+  const resetGridCardScale = useCallback(() => {
+    setLayoutTrackState({
+      cols: buildEqualTrackWeights(renderedCols),
+      rows: buildEqualTrackWeights(renderedRows),
+    });
+  }, [renderedCols, renderedRows, setLayoutTrackState]);
+  const startGridResize = useCallback(
+    ({ mode, colGapIndex = null, rowGapIndex = null, handleKey }, event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const handleElement = event.currentTarget;
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startColumnWeights = [...columnWeights];
+      const startRowWeights = [...rowWeights];
+      const minColumnWidth = Math.max(dim(denseGrid ? 140 : 170), baseCardMinWidth * 0.36);
+      const minRowHeight = Math.max(dim(denseGrid ? 120 : 140), baseCellHeight * 0.5);
+      let lastClientX = startX;
+      let lastClientY = startY;
+      const handlePointerMove = (moveEvent) => {
+        lastClientX = moveEvent.clientX;
+        lastClientY = moveEvent.clientY;
+        const deltaX = moveEvent.clientX - startX;
+        const deltaY = moveEvent.clientY - startY;
+        const nextLayoutState = {
+          cols: startColumnWeights,
+          rows: startRowWeights,
+        };
+
+        if (
+          (mode === "x" || mode === "xy") &&
+          Number.isFinite(colGapIndex) &&
+          trackAreaWidth > 0
+        ) {
+          nextLayoutState.cols = resizeMarketGridTrackWeights(
+            startColumnWeights,
+            colGapIndex,
+            deltaX,
+            trackAreaWidth,
+            minColumnWidth,
+          );
+        }
+
+        if (
+          (mode === "y" || mode === "xy") &&
+          Number.isFinite(rowGapIndex) &&
+          trackAreaHeight > 0
+        ) {
+          nextLayoutState.rows = resizeMarketGridTrackWeights(
+            startRowWeights,
+            rowGapIndex,
+            deltaY,
+            trackAreaHeight,
+            minRowHeight,
+          );
+        }
+
+        setLayoutTrackState(nextLayoutState);
+      };
+      const finishResize = () => {
+        const hoveredHandle =
+          typeof document !== "undefined"
+            ? document
+                .elementFromPoint(lastClientX, lastClientY)
+                ?.closest?.("[data-grid-resize-handle]")
+                ?.getAttribute?.("data-grid-resize-handle")
+            : null;
+        setGridResizeActiveHandle(null);
+        setGridResizeHoverHandle(hoveredHandle || null);
+        handleElement?.releasePointerCapture?.(pointerId);
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", finishResize);
+        window.removeEventListener("pointercancel", finishResize);
+      };
+
+      setGridResizeActiveHandle(handleKey);
+      setGridResizeHoverHandle(handleKey);
+      handleElement.setPointerCapture?.(pointerId);
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", finishResize);
+      window.addEventListener("pointercancel", finishResize);
+    },
+    [
+      baseCardMinWidth,
+      baseCellHeight,
+      columnWeights,
+      rowWeights,
+      denseGrid,
+      setLayoutTrackState,
+      trackAreaHeight,
+      trackAreaWidth,
+    ],
   );
   const rememberSearchRow = (tickerOrRow) => {
     const normalizedTicker =
@@ -6827,6 +8463,26 @@ export const MultiChartGrid = ({
         <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
           <button
             type="button"
+            onClick={resetGridCardScale}
+            disabled={gridScaleResetDisabled}
+            style={{
+              padding: sp("3px 8px"),
+              fontSize: fs(9),
+              fontFamily: T.mono,
+              fontWeight: 700,
+              background: gridScaleResetDisabled ? T.bg3 : "rgba(255,255,255,0.08)",
+              color: gridScaleResetDisabled ? T.textMuted : T.text,
+              border: "none",
+              borderRadius: 0,
+              cursor: gridScaleResetDisabled ? "default" : "pointer",
+              letterSpacing: "0.04em",
+              opacity: gridScaleResetDisabled ? 0.55 : 1,
+            }}
+          >
+            RESET SIZE
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setSyncTimeframes((current) => {
                 const next = !current;
@@ -6898,15 +8554,24 @@ export const MultiChartGrid = ({
       {/* Grid */}
       <div
         ref={gridBodyRef}
-        style={{ padding: sp(denseGrid ? 4 : 6), overflow: "visible" }}
+        style={{
+          position: "relative",
+          padding: gridPadding,
+          overflow: "visible",
+        }}
       >
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: `repeat(${fittedCols}, minmax(0, 1fr))`,
-            gridAutoRows: `${cellHeight}px`,
+            gridTemplateColumns: columnWidths
+              .map((width) => `${Math.max(width, 0)}px`)
+              .join(" "),
+            gridTemplateRows: rowHeights
+              .map((height) => `${Math.max(height, 0)}px`)
+              .join(" "),
             gap: gridGap,
-            width: "100%",
+            width: `${effectiveGridWidth}px`,
+            height: `${gridRenderedHeight}px`,
           }}
         >
           {visibleSlotEntries.map(({ slot, index }) => (
@@ -6953,6 +8618,254 @@ export const MultiChartGrid = ({
             />
           ))}
         </div>
+        {showGridResizeControl ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
+              zIndex: 20,
+            }}
+          >
+            {verticalDividerOffsets.map(({ dividerIndex, offset }) => {
+              const handleKey = buildMarketGridResizeHandleKey(
+                "x",
+                dividerIndex,
+                null,
+              );
+              const isActive = gridResizeActiveHandle === handleKey;
+              const isHovered = gridResizeHoverHandle === handleKey;
+              const dividerColor = isActive
+                ? T.accent
+                : isHovered
+                  ? gridResizeHoverColor
+                  : gridResizeIdleColor;
+              return (
+                <button
+                  key={handleKey}
+                  type="button"
+                  data-grid-resize-handle={handleKey}
+                  aria-label={`Resize market chart columns ${dividerIndex} and ${
+                    dividerIndex + 1
+                  }`}
+                  title="Drag to resize chart columns"
+                  onPointerDown={(event) =>
+                    startGridResize(
+                      {
+                        mode: "x",
+                        colGapIndex: dividerIndex,
+                        handleKey,
+                      },
+                      event,
+                    )
+                  }
+                  onPointerEnter={() => {
+                    if (!gridResizeActiveHandle) {
+                      setGridResizeHoverHandle(handleKey);
+                    }
+                  }}
+                  onPointerLeave={() => {
+                    if (!gridResizeActiveHandle) {
+                      setGridResizeHoverHandle(null);
+                    }
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: offset - verticalDividerHitThickness / 2,
+                    top: gridPadding,
+                    width: verticalDividerHitThickness,
+                    height: gridRenderedHeight,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    cursor: "col-resize",
+                    pointerEvents: "auto",
+                    touchAction: "none",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      left:
+                        (verticalDividerHitThickness - crosshairStroke) / 2,
+                      top: 0,
+                      width: crosshairStroke,
+                      height: "100%",
+                      background: dividerColor,
+                      boxShadow: isActive
+                        ? `0 0 0 1px ${T.bg}, 0 0 12px rgba(91,140,255,0.35)`
+                        : isHovered
+                          ? `0 0 0 1px rgba(0,0,0,0.18)`
+                          : "none",
+                      opacity: isActive ? 1 : isHovered ? 0.92 : 0.78,
+                      transition:
+                        "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
+                    }}
+                  />
+                </button>
+              );
+            })}
+            {horizontalDividerOffsets.map(({ dividerIndex, offset }) => {
+              const handleKey = buildMarketGridResizeHandleKey(
+                "y",
+                null,
+                dividerIndex,
+              );
+              const isActive = gridResizeActiveHandle === handleKey;
+              const isHovered = gridResizeHoverHandle === handleKey;
+              const dividerColor = isActive
+                ? T.accent
+                : isHovered
+                  ? gridResizeHoverColor
+                  : gridResizeIdleColor;
+              return (
+                <button
+                  key={handleKey}
+                  type="button"
+                  data-grid-resize-handle={handleKey}
+                  aria-label={`Resize market chart rows ${dividerIndex} and ${
+                    dividerIndex + 1
+                  }`}
+                  title="Drag to resize chart rows"
+                  onPointerDown={(event) =>
+                    startGridResize(
+                      {
+                        mode: "y",
+                        rowGapIndex: dividerIndex,
+                        handleKey,
+                      },
+                      event,
+                    )
+                  }
+                  onPointerEnter={() => {
+                    if (!gridResizeActiveHandle) {
+                      setGridResizeHoverHandle(handleKey);
+                    }
+                  }}
+                  onPointerLeave={() => {
+                    if (!gridResizeActiveHandle) {
+                      setGridResizeHoverHandle(null);
+                    }
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: gridPadding,
+                    top: offset - horizontalDividerHitThickness / 2,
+                    width: effectiveGridWidth,
+                    height: horizontalDividerHitThickness,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    cursor: "row-resize",
+                    pointerEvents: "auto",
+                    touchAction: "none",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top:
+                        (horizontalDividerHitThickness - crosshairStroke) / 2,
+                      width: "100%",
+                      height: crosshairStroke,
+                      background: dividerColor,
+                      boxShadow: isActive
+                        ? `0 0 0 1px ${T.bg}, 0 0 12px rgba(91,140,255,0.35)`
+                        : isHovered
+                          ? `0 0 0 1px rgba(0,0,0,0.18)`
+                          : "none",
+                      opacity: isActive ? 1 : isHovered ? 0.92 : 0.78,
+                      transition:
+                        "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
+                    }}
+                  />
+                </button>
+              );
+            })}
+            {verticalDividerOffsets.flatMap((verticalDivider) =>
+              horizontalDividerOffsets.map((horizontalDivider) => {
+                const handleKey = buildMarketGridResizeHandleKey(
+                  "xy",
+                  verticalDivider.dividerIndex,
+                  horizontalDivider.dividerIndex,
+                );
+                const isActive = gridResizeActiveHandle === handleKey;
+                const isHovered = gridResizeHoverHandle === handleKey;
+                return (
+                  <button
+                    key={handleKey}
+                    type="button"
+                    data-grid-resize-handle={handleKey}
+                    aria-label={`Resize market chart rows and columns at divider ${verticalDivider.dividerIndex}-${horizontalDivider.dividerIndex}`}
+                    title="Drag diagonally to resize chart rows and columns"
+                    onPointerDown={(event) =>
+                      startGridResize(
+                        {
+                          mode: "xy",
+                          colGapIndex: verticalDivider.dividerIndex,
+                          rowGapIndex: horizontalDivider.dividerIndex,
+                          handleKey,
+                        },
+                        event,
+                      )
+                    }
+                    onPointerEnter={() => {
+                      if (!gridResizeActiveHandle) {
+                        setGridResizeHoverHandle(handleKey);
+                      }
+                    }}
+                    onPointerLeave={() => {
+                      if (!gridResizeActiveHandle) {
+                        setGridResizeHoverHandle(null);
+                      }
+                    }}
+                    style={{
+                      position: "absolute",
+                      left:
+                        verticalDivider.offset - intersectionHandleSize / 2,
+                      top:
+                        horizontalDivider.offset - intersectionHandleSize / 2,
+                      width: intersectionHandleSize,
+                      height: intersectionHandleSize,
+                      padding: 0,
+                      border: "none",
+                      borderRadius: 999,
+                      background: "transparent",
+                      cursor: "nwse-resize",
+                      pointerEvents: "auto",
+                      touchAction: "none",
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        borderRadius: 999,
+                        background: isActive
+                          ? T.accent
+                          : isHovered
+                            ? gridResizeHoverColor
+                            : "rgba(166, 174, 182, 0.48)",
+                        boxShadow: isActive
+                          ? `0 0 0 1px ${T.bg}, 0 0 14px rgba(91,140,255,0.4)`
+                          : isHovered
+                            ? `0 0 0 1px ${T.bg}`
+                            : `0 0 0 1px rgba(0,0,0,0.28)`,
+                        opacity: isActive ? 1 : isHovered ? 0.92 : 0.8,
+                        transition:
+                          "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
+                      }}
+                    />
+                  </button>
+                );
+              }),
+            )}
+          </div>
+        ) : null}
       </div>
     </Card>
   );
@@ -7888,19 +9801,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   );
 };
 
-const UNUSUAL_SCANNER_BATCH_SIZE = 30;
-const UNUSUAL_SCANNER_PER_SYMBOL_LIMIT = 25;
-// No upper bound on watchlist size — the rotating batched scanner will cycle
-// through every symbol over multiple polls.
-const UNUSUAL_SCANNER_MAX_WATCHLIST = Number.POSITIVE_INFINITY;
-
-const UNUSUAL_SORT_OPTIONS = [
-  { id: "ratio", label: "Vol/OI", numeric: true },
-  { id: "premium", label: "Premium", numeric: true },
-  { id: "dte", label: "DTE", numeric: true },
-  { id: "underlying", label: "Underlying", numeric: false },
-];
-
 const readPersistedState = () => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return {};
@@ -7909,667 +9809,6 @@ const readPersistedState = () => {
   } catch (e) {
     return {};
   }
-};
-
-const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
-  const [sortBy, setSortBy] = useState(
-    () => readPersistedState().unusualSortBy || "ratio",
-  );
-  const [sortDir, setSortDir] = useState(
-    () => readPersistedState().unusualSortDir || "desc",
-  );
-  const [sideFilter, setSideFilter] = useState(
-    () => readPersistedState().unusualSideFilter || "all",
-  );
-
-  useEffect(() => {
-    persistState({
-      unusualSortBy: sortBy,
-      unusualSortDir: sortDir,
-      unusualSideFilter: sideFilter,
-    });
-  }, [sideFilter, sortBy, sortDir]);
-
-  const {
-    hasLiveFlow,
-    flowStatus,
-    providerSummary,
-    flowEvents,
-  } = useLiveMarketFlow(symbols, {
-    enabled: Boolean(session),
-    limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
-    maxSymbols: UNUSUAL_SCANNER_MAX_WATCHLIST,
-    batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
-  });
-
-  const watchlistSymbols = useMemo(
-    () => [
-      ...new Set(
-        (symbols || [])
-          .map((symbol) => symbol?.toUpperCase())
-          .filter(Boolean),
-      ),
-    ],
-    [symbols],
-  );
-  const totalWatchlistSymbols = watchlistSymbols.length;
-  const coverage = providerSummary.coverage || {
-    totalSymbols: totalWatchlistSymbols,
-    scannedSymbols: 0,
-    batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
-    currentBatch: [],
-    cycle: 0,
-    isFetching: false,
-    lastScannedAt: {},
-    isRotating: totalWatchlistSymbols > UNUSUAL_SCANNER_BATCH_SIZE,
-  };
-  const oldestScanAt = useMemo(() => {
-    const stamps = Object.values(coverage.lastScannedAt || {});
-    if (!stamps.length) return null;
-    return Math.min(...stamps);
-  }, [coverage.lastScannedAt]);
-  const newestScanAt = useMemo(() => {
-    const stamps = Object.values(coverage.lastScannedAt || {});
-    if (!stamps.length) return null;
-    return Math.max(...stamps);
-  }, [coverage.lastScannedAt]);
-
-  const unusualEvents = useMemo(
-    () => flowEvents.filter((event) => event.isUnusual),
-    [flowEvents],
-  );
-
-  const filteredEvents = useMemo(() => {
-    if (sideFilter === "calls") {
-      return unusualEvents.filter((event) => event.cp === "C");
-    }
-    if (sideFilter === "puts") {
-      return unusualEvents.filter((event) => event.cp === "P");
-    }
-    return unusualEvents;
-  }, [sideFilter, unusualEvents]);
-
-  const sortedEvents = useMemo(() => {
-    const direction = sortDir === "asc" ? 1 : -1;
-    const events = [...filteredEvents];
-    events.sort((left, right) => {
-      let cmp = 0;
-      if (sortBy === "ratio") {
-        cmp = (left.unusualScore || 0) - (right.unusualScore || 0);
-      } else if (sortBy === "premium") {
-        cmp = (left.premium || 0) - (right.premium || 0);
-      } else if (sortBy === "dte") {
-        const leftDte = Number.isFinite(left.dte) ? left.dte : Infinity;
-        const rightDte = Number.isFinite(right.dte) ? right.dte : Infinity;
-        cmp = leftDte - rightDte;
-      } else if (sortBy === "underlying") {
-        cmp = String(left.ticker || "").localeCompare(String(right.ticker || ""));
-      }
-      if (cmp === 0) {
-        cmp = (left.premium || 0) - (right.premium || 0);
-      }
-      return cmp * direction;
-    });
-    return events;
-  }, [filteredEvents, sortBy, sortDir]);
-
-  const totalPremium = unusualEvents.reduce(
-    (sum, event) => sum + (event.premium || 0),
-    0,
-  );
-  const callPremium = unusualEvents.reduce(
-    (sum, event) => sum + (event.cp === "C" ? event.premium || 0 : 0),
-    0,
-  );
-  const putPremium = unusualEvents.reduce(
-    (sum, event) => sum + (event.cp === "P" ? event.premium || 0 : 0),
-    0,
-  );
-  const uniqueUnderlyings = useMemo(
-    () => new Set(unusualEvents.map((event) => event.ticker)).size,
-    [unusualEvents],
-  );
-  const peakRatio = unusualEvents.reduce(
-    (best, event) => Math.max(best, event.unusualScore || 0),
-    0,
-  );
-
-  const bridgeTone = bridgeRuntimeTone(session);
-  const ibkrLoginRequired =
-    Boolean(session?.configured?.ibkr) &&
-    !session?.ibkrBridge?.authenticated &&
-    !providerSummary.providers.includes("polygon");
-  const flowDisplayLabel =
-    !hasLiveFlow && ibkrLoginRequired
-      ? "IBKR login required"
-      : providerSummary.label === "IBKR snapshot live" &&
-          session?.ibkrBridge?.liveMarketDataAvailable === false
-        ? "IBKR delayed"
-        : providerSummary.label;
-  const flowDisplayColor =
-    !hasLiveFlow && ibkrLoginRequired
-      ? T.amber
-      : flowDisplayLabel === "IBKR delayed"
-        ? T.amber
-        : providerSummary.color;
-
-  const handleSort = (id) => {
-    if (sortBy === id) {
-      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
-      return;
-    }
-    setSortBy(id);
-    const opt = UNUSUAL_SORT_OPTIONS.find((option) => option.id === id);
-    setSortDir(opt && !opt.numeric ? "asc" : "desc");
-  };
-
-  const sortIndicator = (id) =>
-    sortBy === id ? (sortDir === "asc" ? " ▲" : " ▼") : "";
-
-  const emptyDetail =
-    flowStatus === "loading"
-      ? "Scanning the watchlist for contracts where today's volume already exceeds open interest."
-      : ibkrLoginRequired
-        ? bridgeRuntimeMessage(session)
-        : providerSummary.failures[0]?.error
-          ? providerSummary.failures[0].error
-          : !flowEvents.length
-            ? "No live options flow returned for the watchlist symbols yet."
-            : "No contracts in the current watchlist have volume above open interest right now.";
-
-  const headerBar = (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: sp(8),
-        padding: sp("2px 2px 0"),
-        fontSize: fs(8),
-        fontFamily: T.mono,
-        color: T.textDim,
-      }}
-    >
-      <span>
-        Flow source ·{" "}
-        <span style={{ color: flowDisplayColor, fontWeight: 700 }}>
-          {flowDisplayLabel}
-        </span>
-        <span style={{ marginLeft: sp(8) }}>
-          Coverage{" "}
-          <span style={{ color: T.text, fontWeight: 700 }}>
-            {coverage.scannedSymbols}/{totalWatchlistSymbols || coverage.scannedSymbols}
-          </span>{" "}
-          watchlist symbols
-          {coverage.isRotating ? (
-            <span style={{ marginLeft: sp(6), color: T.textMuted }}>
-              · rotating {coverage.batchSize}/cycle
-              {coverage.currentBatch?.length
-                ? ` · scanning ${coverage.currentBatch[0]}${coverage.currentBatch.length > 1 ? `–${coverage.currentBatch[coverage.currentBatch.length - 1]}` : ""}`
-                : ""}
-            </span>
-          ) : null}
-          {newestScanAt ? (
-            <span
-              style={{ marginLeft: sp(6), color: T.textMuted }}
-              title={
-                oldestScanAt
-                  ? `Oldest scan: ${new Date(oldestScanAt).toLocaleTimeString()} · Newest scan: ${new Date(newestScanAt).toLocaleTimeString()}`
-                  : undefined
-              }
-            >
-              · newest scan {formatRelativeTimeShort(new Date(newestScanAt).toISOString())}
-              {coverage.isRotating && oldestScanAt && oldestScanAt !== newestScanAt
-                ? ` · oldest ${formatRelativeTimeShort(new Date(oldestScanAt).toISOString())}`
-                : ""}
-            </span>
-          ) : null}
-        </span>
-      </span>
-      <span
-        title={bridgeRuntimeMessage(session)}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(5),
-          color: bridgeTone.color,
-        }}
-      >
-        <span
-          style={{
-            width: dim(6),
-            height: dim(6),
-            background: bridgeTone.color,
-            display: "inline-block",
-          }}
-        />
-        IBKR {bridgeTone.label.toUpperCase()}
-      </span>
-    </div>
-  );
-
-  const kpiCards = [
-    {
-      label: "UNUSUAL CONTRACTS",
-      value: unusualEvents.length,
-      sub: `${uniqueUnderlyings} underlying${uniqueUnderlyings === 1 ? "" : "s"}`,
-      color: T.amber,
-    },
-    {
-      label: "TOTAL PREMIUM",
-      value: fmtM(totalPremium),
-      sub: `${fmtM(callPremium)} C · ${fmtM(putPremium)} P`,
-      color: T.text,
-    },
-    {
-      label: "PEAK VOL/OI",
-      value: peakRatio ? `${peakRatio.toFixed(peakRatio >= 10 ? 0 : 1)}×` : MISSING_VALUE,
-      sub: "Highest ratio in scan",
-      color: T.cyan,
-    },
-    {
-      label: "CALL / PUT MIX",
-      value: `${unusualEvents.filter((e) => e.cp === "C").length} / ${unusualEvents.filter((e) => e.cp === "P").length}`,
-      sub: "Calls vs puts",
-      color: T.purple,
-    },
-  ];
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        overflow: "hidden",
-        position: "relative",
-      }}
-    >
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: sp(8),
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
-        {headerBar}
-
-        {watchlistSymbols.length > 0 ? (
-          <Card style={{ padding: "6px 9px" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "baseline",
-                gap: sp(8),
-                marginBottom: sp(4),
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                  letterSpacing: "0.06em",
-                  fontVariant: "all-small-caps",
-                  fontWeight: 700,
-                }}
-              >
-                Symbol Coverage
-              </span>
-              <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>
-                {coverage.scannedSymbols}/{watchlistSymbols.length} scanned
-                {coverage.cycle ? ` · cycle ${coverage.cycle}` : ""}
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: sp(4),
-                maxHeight: dim(96),
-                overflowY: "auto",
-              }}
-            >
-              {watchlistSymbols.map((symbol) => {
-                const scannedAt = coverage.lastScannedAt?.[symbol] || null;
-                const inFlight = coverage.currentBatch?.includes(symbol);
-                const stale =
-                  scannedAt &&
-                  oldestScanAt &&
-                  newestScanAt &&
-                  newestScanAt - scannedAt > 60_000;
-                const tone = inFlight
-                  ? T.accent
-                  : !scannedAt
-                    ? T.textMuted
-                    : stale
-                      ? T.amber
-                      : T.text;
-                const labelText = scannedAt
-                  ? formatRelativeTimeShort(new Date(scannedAt).toISOString())
-                  : "pending";
-                const tooltip = scannedAt
-                  ? `${symbol} · last scanned ${new Date(scannedAt).toLocaleTimeString()}`
-                  : `${symbol} · not yet scanned`;
-                return (
-                  <span
-                    key={symbol}
-                    title={tooltip}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: sp(3),
-                      fontSize: fs(8),
-                      fontFamily: T.mono,
-                      padding: sp("1px 5px"),
-                      border: `1px solid ${tone}30`,
-                      background: `${tone}12`,
-                      color: tone,
-                      borderRadius: dim(2),
-                    }}
-                  >
-                    <span style={{ fontWeight: 700 }}>{symbol}</span>
-                    <span style={{ color: T.textMuted }}>·</span>
-                    <span>{inFlight ? "scanning…" : labelText}</span>
-                  </span>
-                );
-              })}
-            </div>
-          </Card>
-        ) : null}
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 6,
-          }}
-        >
-          {kpiCards.map((k) => (
-            <Card key={k.label} style={{ padding: "5px 9px" }}>
-              <div
-                style={{
-                  fontSize: fs(7),
-                  fontWeight: 600,
-                  color: T.textDim,
-                  letterSpacing: "0.06em",
-                  fontVariant: "all-small-caps",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  lineHeight: 1,
-                }}
-              >
-                {k.label}
-              </div>
-              <div
-                style={{
-                  fontSize: fs(18),
-                  fontWeight: 800,
-                  fontFamily: T.mono,
-                  color: k.color,
-                  marginTop: sp(2),
-                  lineHeight: 1,
-                }}
-              >
-                {k.value}
-              </div>
-              <div
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.sans,
-                  marginTop: sp(1),
-                  lineHeight: 1,
-                }}
-              >
-                {k.sub}
-              </div>
-            </Card>
-          ))}
-        </div>
-
-        <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
-          <CardTitle
-            right={
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                {sortedEvents.length} of {unusualEvents.length} shown
-              </span>
-            }
-          >
-            Unusual Flow Scanner
-          </CardTitle>
-
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: sp(4),
-              alignItems: "center",
-            }}
-          >
-            <span
-              style={{
-                fontSize: fs(8),
-                color: T.textDim,
-                fontFamily: T.mono,
-                marginRight: sp(4),
-              }}
-            >
-              SIDE
-            </span>
-            {[
-              { id: "all", label: "All" },
-              { id: "calls", label: "Calls" },
-              { id: "puts", label: "Puts" },
-            ].map((option) => (
-              <Pill
-                key={option.id}
-                active={sideFilter === option.id}
-                onClick={() => setSideFilter(option.id)}
-              >
-                {option.label}
-              </Pill>
-            ))}
-            <span
-              style={{
-                fontSize: fs(8),
-                color: T.textDim,
-                fontFamily: T.mono,
-                marginLeft: sp(8),
-                marginRight: sp(4),
-              }}
-            >
-              SORT
-            </span>
-            {UNUSUAL_SORT_OPTIONS.map((option) => (
-              <Pill
-                key={option.id}
-                active={sortBy === option.id}
-                onClick={() => handleSort(option.id)}
-              >
-                {option.label}
-                {sortIndicator(option.id)}
-              </Pill>
-            ))}
-          </div>
-
-          {sortedEvents.length ? (
-            <div
-              style={{
-                border: `1px solid ${T.border}`,
-                background: T.bg0,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns:
-                    "60px minmax(0, 1.6fr) 60px 70px 70px 80px 90px 60px 70px",
-                  gap: sp(6),
-                  padding: sp("6px 8px"),
-                  background: T.bg2,
-                  borderBottom: `1px solid ${T.border}`,
-                  fontSize: fs(8),
-                  fontWeight: 700,
-                  fontFamily: T.mono,
-                  color: T.textDim,
-                  letterSpacing: "0.05em",
-                }}
-              >
-                <span
-                  onClick={() => handleSort("underlying")}
-                  style={{ cursor: "pointer" }}
-                >
-                  TICKER{sortIndicator("underlying")}
-                </span>
-                <span>CONTRACT</span>
-                <span
-                  onClick={() => handleSort("dte")}
-                  style={{ cursor: "pointer", textAlign: "right" }}
-                >
-                  DTE{sortIndicator("dte")}
-                </span>
-                <span style={{ textAlign: "right" }}>VOL</span>
-                <span style={{ textAlign: "right" }}>OI</span>
-                <span
-                  onClick={() => handleSort("ratio")}
-                  style={{ cursor: "pointer", textAlign: "right" }}
-                >
-                  VOL/OI{sortIndicator("ratio")}
-                </span>
-                <span
-                  onClick={() => handleSort("premium")}
-                  style={{ cursor: "pointer", textAlign: "right" }}
-                >
-                  PREMIUM{sortIndicator("premium")}
-                </span>
-                <span style={{ textAlign: "right" }}>SIDE</span>
-                <span style={{ textAlign: "right" }}>TIME</span>
-              </div>
-              <div style={{ maxHeight: dim(520), overflowY: "auto" }}>
-                {sortedEvents.map((event) => {
-                  const ratio = event.unusualScore || 0;
-                  const sideColor =
-                    event.side === "BUY"
-                      ? event.cp === "C"
-                        ? T.green
-                        : T.red
-                      : event.side === "SELL"
-                        ? T.textSec
-                        : T.textDim;
-                  return (
-                    <button
-                      key={event.id}
-                      type="button"
-                      onClick={() => onJumpToTrade?.(event)}
-                      style={{
-                        width: "100%",
-                        display: "grid",
-                        gridTemplateColumns:
-                          "60px minmax(0, 1.6fr) 60px 70px 70px 80px 90px 60px 70px",
-                        gap: sp(6),
-                        padding: sp("6px 8px"),
-                        background: T.bg0,
-                        border: "none",
-                        borderBottom: `1px solid ${T.border}55`,
-                        cursor: "pointer",
-                        textAlign: "left",
-                        fontFamily: T.mono,
-                        fontSize: fs(10),
-                        color: T.text,
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = T.bg2;
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = T.bg0;
-                      }}
-                      title="Open underlying chart and option chain"
-                    >
-                      <span style={{ fontWeight: 800 }}>{event.ticker}</span>
-                      <span
-                        style={{
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          color: T.textSec,
-                        }}
-                      >
-                        <span style={{ color: event.cp === "C" ? T.green : T.red, fontWeight: 700 }}>
-                          {event.cp}
-                        </span>{" "}
-                        {formatPriceValue(event.strike)}{" "}
-                        <span style={{ color: T.textDim }}>
-                          {formatExpirationLabel(event.expirationDate)}
-                        </span>
-                      </span>
-                      <span style={{ textAlign: "right", color: T.textSec }}>
-                        {Number.isFinite(event.dte) ? event.dte : MISSING_VALUE}
-                      </span>
-                      <span style={{ textAlign: "right" }}>
-                        {Number.isFinite(event.vol) ? event.vol.toLocaleString() : MISSING_VALUE}
-                      </span>
-                      <span style={{ textAlign: "right", color: T.textSec }}>
-                        {Number.isFinite(event.oi) ? event.oi.toLocaleString() : MISSING_VALUE}
-                      </span>
-                      <span
-                        style={{
-                          textAlign: "right",
-                          color: T.amber,
-                          fontWeight: 800,
-                        }}
-                      >
-                        {ratio ? `${ratio.toFixed(ratio >= 10 ? 0 : 1)}×` : MISSING_VALUE}
-                      </span>
-                      <span
-                        style={{
-                          textAlign: "right",
-                          color: T.text,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {fmtM(event.premium)}
-                      </span>
-                      <span
-                        style={{
-                          textAlign: "right",
-                          color: sideColor,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {event.side}
-                      </span>
-                      <span style={{ textAlign: "right", color: T.textDim }}>
-                        {event.time}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <DataUnavailableState
-              title="No unusual options activity"
-              detail={emptyDetail}
-            />
-          )}
-        </Card>
-      </div>
-    </div>
-  );
 };
 
 // FlowScreen extracted to ./screens/FlowScreen.jsx
@@ -8858,7 +10097,10 @@ const TradeOptionChart = ({
   holding,
   timeframe = "5m",
   sourceLabel = "no live chart data",
+  hydrationScopeKey,
   onChangeTimeframe,
+  onOpenSearch,
+  onVisibleLogicalRangeChange,
 }) => {
   const { studies: availableStudies, indicatorRegistry } =
     useIndicatorLibrary();
@@ -8877,17 +10119,20 @@ const TradeOptionChart = ({
     () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
     [rayReplicaSettings],
   );
-  const chartModel = useMemo(
-    () =>
-      buildResearchChartModel({
-        bars,
-        timeframe,
-        selectedIndicators,
-        indicatorSettings,
-        indicatorRegistry,
-      }),
-    [bars, indicatorRegistry, indicatorSettings, selectedIndicators, timeframe],
-  );
+  const chartModel = useMeasuredChartModel({
+    scopeKey:
+      hydrationScopeKey ||
+      buildChartBarScopeKey("trade-option-chart", contract, timeframe),
+    bars,
+    buildInput: {
+      bars,
+      timeframe,
+      selectedIndicators,
+      indicatorSettings,
+      indicatorRegistry,
+    },
+    deps: [bars, indicatorRegistry, indicatorSettings, selectedIndicators, timeframe],
+  });
   const referenceLines = useMemo(
     () =>
       Number.isFinite(holding?.entry)
@@ -8934,12 +10179,15 @@ const TradeOptionChart = ({
 
   return (
     <ResearchChartFrame
+      dataTestId="trade-option-chart"
       theme={T}
-      themeKey={`${CURRENT_THEME}-trade-option`}
+      themeKey={`${getCurrentTheme()}-trade-option`}
+      surfaceUiStateKey="trade-option-chart"
       model={chartModel}
       referenceLines={referenceLines}
       showSurfaceToolbar={false}
       showLegend={false}
+      onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
       surfaceTopOverlay={(controls) => (
         <ResearchChartWidgetHeader
           theme={T}
@@ -8955,6 +10203,7 @@ const TradeOptionChart = ({
             label: entry.tag,
           }))}
           onChangeTimeframe={onChangeTimeframe}
+          onOpenSearch={onOpenSearch}
           studies={availableStudies}
           selectedStudies={selectedIndicators}
           studySpecs={chartModel.studySpecs}
@@ -9019,7 +10268,13 @@ const TradeOptionChart = ({
   );
 };
 
-const TradeOptionsChain = ({ chain, selected, onSelect, heldStrikes }) => {
+const TradeOptionsChain = ({
+  chain,
+  selected,
+  onSelect,
+  heldStrikes,
+  atmStrike = null,
+}) => {
   const scrollRef = useRef(null);
   const gridTemplateColumns =
     "48px 48px 52px 48px 56px 60px 60px 68px 72px 68px 60px 60px 56px 48px 52px 48px 48px";
@@ -9235,7 +10490,9 @@ const TradeOptionsChain = ({ chain, selected, onSelect, heldStrikes }) => {
             </span>
           ))}
         </div>
-        {chain.map((row) => (
+        {chain.map((row) => {
+          const isAtmRow = atmStrike != null ? row.k === atmStrike : row.isAtm;
+          return (
           <div
             key={row.k}
             style={{
@@ -9244,7 +10501,7 @@ const TradeOptionsChain = ({ chain, selected, onSelect, heldStrikes }) => {
               gap: sp(2),
               padding: sp("2px 6px"),
               borderBottom: `1px solid ${T.border}10`,
-              background: row.isAtm ? `${T.accent}08` : "transparent",
+              background: isAtmRow ? `${T.accent}08` : "transparent",
             }}
           >
             {columns.map((column) => {
@@ -9253,7 +10510,7 @@ const TradeOptionsChain = ({ chain, selected, onSelect, heldStrikes }) => {
                   <span
                     key={column.key}
                     style={{
-                      color: row.isAtm ? T.accent : T.text,
+                      color: isAtmRow ? T.accent : T.text,
                       fontWeight: 700,
                       textAlign: "center",
                     }}
@@ -9311,7 +10568,8 @@ const TradeOptionsChain = ({ chain, selected, onSelect, heldStrikes }) => {
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -9332,6 +10590,11 @@ const PayoffDiagram = ({
   const isCall = optType === "C";
   const isLong = side === "BUY";
   const debit = premium * qty * 100;
+  const resolvedCurrentPrice = isFiniteNumber(currentPrice)
+    ? currentPrice
+    : isFiniteNumber(strike)
+      ? strike
+      : 1;
 
   // P&L at expiration for any underlying price S
   const pnl = (S) => {
@@ -9343,8 +10606,8 @@ const PayoffDiagram = ({
   };
 
   // X range: 25% above and below current price gives enough room for visible breakeven
-  const xMin = currentPrice * 0.75;
-  const xMax = currentPrice * 1.25;
+  const xMin = resolvedCurrentPrice * 0.75;
+  const xMax = resolvedCurrentPrice * 1.25;
   const STEPS = 80;
   const points = [];
   for (let i = 0; i <= STEPS; i++) {
@@ -9436,7 +10699,9 @@ const PayoffDiagram = ({
         <span style={{ display: "flex", gap: sp(6) }}>
           <span>
             <span style={{ color: T.accent }}>━</span> now $
-            {currentPrice.toFixed(2)}
+            {isFiniteNumber(currentPrice)
+              ? currentPrice.toFixed(2)
+              : MISSING_VALUE}
           </span>
           <span>
             <span style={{ color: T.amber }}>┃</span> strike ${strike}
@@ -9625,8 +10890,18 @@ export const TradeOrderTicket = ({
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const info = ensureTradeTickerInfo(slot.ticker, slot.ticker);
-  const row = chainRows.find((r) => r.k === slot.strike);
+  const fallback = useMemo(
+    () => ensureTradeTickerInfo(slot.ticker, slot.ticker),
+    [slot.ticker],
+  );
+  const info = useRuntimeTickerSnapshot(slot.ticker, fallback);
+  const chainSnapshot = useTradeOptionChainSnapshot(slot.ticker);
+  const { chainRows: snapshotChainRows } = resolveTradeOptionChainSnapshot(
+    chainSnapshot,
+    slot.exp,
+  );
+  const resolvedChainRows = chainRows.length ? chainRows : snapshotChainRows;
+  const row = resolvedChainRows.find((r) => r.k === slot.strike);
   const prem = row ? (slot.cp === "C" ? row.cPrem : row.pPrem) : null;
   const bid = row ? (slot.cp === "C" ? row.cBid : row.pBid) : null;
   const ask = row ? (slot.cp === "C" ? row.cAsk : row.pAsk) : null;
@@ -10616,7 +11891,13 @@ export const TradeStrategyGreeksPanel = ({
   chainRows = [],
   onApplyStrategy,
 }) => {
-  const row = chainRows.find((r) => r.k === slot.strike);
+  const chainSnapshot = useTradeOptionChainSnapshot(slot.ticker);
+  const { chainRows: snapshotChainRows } = resolveTradeOptionChainSnapshot(
+    chainSnapshot,
+    slot.exp,
+  );
+  const resolvedChainRows = chainRows.length ? chainRows : snapshotChainRows;
+  const row = resolvedChainRows.find((r) => r.k === slot.strike);
   if (!row) {
     return (
       <div
@@ -10965,20 +12246,28 @@ export const TradeStrategyGreeksPanel = ({
 export const TradeL2Panel = ({
   slot,
   chainRows = [],
-  flowEvents = [],
+  flowEvents,
   accountId,
   brokerConfigured,
   brokerAuthenticated,
 }) => {
   const queryClient = useQueryClient();
-  const row = chainRows.find((r) => r.k === slot.strike);
+  const tradeFlowSnapshot = useTradeFlowSnapshot(slot.ticker);
+  const effectiveFlowEvents = flowEvents?.length ? flowEvents : tradeFlowSnapshot.events;
+  const chainSnapshot = useTradeOptionChainSnapshot(slot.ticker);
+  const { chainRows: snapshotChainRows } = resolveTradeOptionChainSnapshot(
+    chainSnapshot,
+    slot.exp,
+  );
+  const resolvedChainRows = chainRows.length ? chainRows : snapshotChainRows;
+  const row = resolvedChainRows.find((r) => r.k === slot.strike);
   const mid = row ? (slot.cp === "C" ? row.cPrem : row.pPrem) : 3.0;
   const bid = row ? (slot.cp === "C" ? row.cBid : row.pBid) : mid - 0.04;
   const ask = row ? (slot.cp === "C" ? row.cAsk : row.pAsk) : mid + 0.04;
   const spread = ask - bid;
   const tickerFlow = useMemo(
-    () => buildMarketOrderFlowFromEvents(flowEvents),
-    [flowEvents],
+    () => buildMarketOrderFlowFromEvents(effectiveFlowEvents),
+    [effectiveFlowEvents],
   );
   const contractColor = slot.cp === "C" ? T.green : T.red;
   const [tab, setTab] = useState("book");
@@ -11126,7 +12415,7 @@ export const TradeL2Panel = ({
   const contractExecutions = tapeQuery.data?.executions || [];
   const liveStatusLabel =
     tab === "flow"
-      ? flowEvents.length
+      ? effectiveFlowEvents.length
         ? "flow: external options flow"
         : "flow unavailable"
       : brokerConfigured
@@ -11572,7 +12861,7 @@ export const TradeL2Panel = ({
               fontSize: fs(8),
               color:
                 tab === "flow"
-                  ? flowEvents.length
+                  ? effectiveFlowEvents.length
                     ? T.accent
                     : T.textDim
                   : brokerAuthenticated
@@ -11605,7 +12894,7 @@ export const TradeL2Panel = ({
       {tab === "book" && renderBookPanel()}
 
       {tab === "flow" &&
-        (flowEvents.length ? (
+        (effectiveFlowEvents.length ? (
           <div
             style={{
               flex: 1,
@@ -11796,6 +13085,7 @@ export const TradePositionsPanel = ({
   brokerConfigured,
   brokerAuthenticated,
   onLoadPosition,
+  streamingPaused = false,
 }) => {
   const toast = useToast();
   const pos = usePositions();
@@ -11824,7 +13114,7 @@ export const TradePositionsPanel = ({
   useIbkrOrderSnapshotStream({
     accountId,
     mode: environment,
-    enabled: Boolean(brokerAuthenticated && accountId),
+    enabled: Boolean(brokerAuthenticated && accountId && !streamingPaused),
   });
   const executionsQuery = useQuery({
     queryKey: ["broker-executions", accountId, environment],
@@ -11844,6 +13134,7 @@ export const TradePositionsPanel = ({
     if (
       !brokerAuthenticated ||
       !accountId ||
+      streamingPaused ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
     ) {
@@ -11871,7 +13162,7 @@ export const TradePositionsPanel = ({
       source.removeEventListener("executions", handleExecutions);
       source.close();
     };
-  }, [accountId, brokerAuthenticated, environment, queryClient]);
+  }, [accountId, brokerAuthenticated, environment, queryClient, streamingPaused]);
   const refreshBrokerQueries = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
     queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
@@ -13292,7 +14583,12 @@ export const TradePositionsPanel = ({
   );
 };
 
-export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
+export const TickerUniverseSearchPanel = ({
+  open,
+  onSelectTicker,
+  onClose,
+  currentTicker = "",
+}) => {
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -13304,15 +14600,25 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
       normalizePersistedTickerSearchRows(_initialState.marketGridTickerSearchCache),
     ),
   );
-  const { deferredQuery, searchEnabled, searchQuery, results, selectableResults } =
+  const {
+    deferredQuery,
+    searchEnabled,
+    searchQuery,
+    hasDisplayableSearchError,
+    results,
+    selectableResults,
+  } =
     useTickerSearchController({
       open,
       query,
       marketFilter,
-      currentTicker: "",
+      currentTicker,
       rowCache,
       limit: 12,
     });
+  const hasLiveResults = searchEnabled && results.length > 0;
+  const showLoadingSkeleton = searchEnabled && searchQuery.isPending && !hasLiveResults;
+  const showUpdatingState = searchEnabled && searchQuery.isFetching && hasLiveResults;
 
   useEffect(() => {
     persistState({ marketGridTickerSearchMarketFilter: marketFilter });
@@ -13407,6 +14713,7 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
 
   return (
     <div
+      data-testid="ticker-search-panel"
       style={{
         padding: sp("6px 6px 0"),
         background: T.bg1,
@@ -13534,10 +14841,24 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
               Type a ticker, name, CUSIP, ISIN, FIGI, or IBKR conid.
             </div>
           )}
-          {searchEnabled && searchQuery.isPending && (
+          {showLoadingSkeleton && (
             <TickerSearchSkeletonRows />
           )}
-          {searchEnabled && searchQuery.isError && (
+          {showUpdatingState ? (
+            <div
+              style={{
+                padding: sp("6px 10px 0"),
+                fontSize: fs(8),
+                color: T.textDim,
+                fontFamily: T.mono,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
+              Updating…
+            </div>
+          ) : null}
+          {hasDisplayableSearchError && (
             <div
               style={{
                 display: "flex",
@@ -13569,7 +14890,7 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
               </button>
             </div>
           )}
-          {searchEnabled && !searchQuery.isPending && !searchQuery.isError && !results.length && (
+          {searchEnabled && !showLoadingSkeleton && !hasDisplayableSearchError && !results.length && (
             <div
               style={{
                 padding: sp("12px 10px"),
@@ -13582,8 +14903,7 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
             </div>
           )}
           {searchEnabled &&
-            !searchQuery.isPending &&
-            !searchQuery.isError &&
+            !hasDisplayableSearchError &&
             results.map((result, index) => (
             <TickerSearchRow
               key={buildTickerSearchRowKey(result)}
@@ -13602,6 +14922,88 @@ export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => 
 
 // ─── TICKER TAB STRIP ───
 // Browser-style horizontal tabs of recently-viewed/pinned tickers.
+const TickerTabStripItem = ({
+  ticker,
+  active,
+  showClose,
+  onSelect,
+  onClose,
+}) => {
+  const fallback = useMemo(
+    () => ensureTradeTickerInfo(ticker, ticker),
+    [ticker],
+  );
+  const info = useRuntimeTickerSnapshot(ticker, fallback);
+  const pos = isFiniteNumber(info?.pct) ? info.pct >= 0 : null;
+  const isActive = ticker === active;
+
+  return (
+    <div
+      onClick={() => onSelect(ticker)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: sp(5),
+        padding: sp("4px 8px 5px"),
+        background: isActive ? T.bg2 : "transparent",
+        borderTop: isActive
+          ? `2px solid ${T.accent}`
+          : "2px solid transparent",
+        borderLeft: `1px solid ${isActive ? T.border : "transparent"}`,
+        borderRight: `1px solid ${isActive ? T.border : "transparent"}`,
+        borderTopLeftRadius: dim(4),
+        borderTopRightRadius: dim(4),
+        cursor: "pointer",
+        flexShrink: 0,
+        position: "relative",
+        top: 1,
+      }}
+    >
+      <span
+        style={{
+          fontSize: fs(11),
+          fontWeight: 700,
+          fontFamily: T.mono,
+          color: isActive ? T.text : T.textSec,
+        }}
+      >
+        {ticker}
+      </span>
+      <span
+        style={{
+          fontSize: fs(9),
+          fontFamily: T.mono,
+          color: pos == null ? T.textDim : pos ? T.green : T.red,
+          fontWeight: 600,
+        }}
+      >
+        {formatSignedPercent(info?.pct)}
+      </span>
+      {showClose ? (
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose?.(ticker);
+          }}
+          title="Close"
+          style={{
+            background: "transparent",
+            border: "none",
+            color: T.textMuted,
+            cursor: "pointer",
+            fontSize: fs(11),
+            padding: 0,
+            lineHeight: 1,
+            marginLeft: sp(2),
+          }}
+        >
+          ×
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
 // Click to switch the focused ticker. ✕ removes from strip.
 export const TickerTabStrip = ({ recent, active, onSelect, onClose, onAddNew }) => {
   return (
@@ -13617,77 +15019,16 @@ export const TickerTabStrip = ({ recent, active, onSelect, onClose, onAddNew }) 
         flexShrink: 0,
       }}
     >
-      {recent.map((ticker) => {
-        const info = ensureTradeTickerInfo(ticker, ticker);
-        const pos = isFiniteNumber(info.pct) ? info.pct >= 0 : null;
-        const isActive = ticker === active;
-        return (
-          <div
-            key={ticker}
-            onClick={() => onSelect(ticker)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: sp(5),
-              padding: sp("4px 8px 5px"),
-              background: isActive ? T.bg2 : "transparent",
-              borderTop: isActive
-                ? `2px solid ${T.accent}`
-                : "2px solid transparent",
-              borderLeft: `1px solid ${isActive ? T.border : "transparent"}`,
-              borderRight: `1px solid ${isActive ? T.border : "transparent"}`,
-              borderTopLeftRadius: dim(4),
-              borderTopRightRadius: dim(4),
-              cursor: "pointer",
-              flexShrink: 0,
-              position: "relative",
-              top: 1,
-            }}
-          >
-            <span
-              style={{
-                fontSize: fs(11),
-                fontWeight: 700,
-                fontFamily: T.mono,
-                color: isActive ? T.text : T.textSec,
-              }}
-            >
-              {ticker}
-            </span>
-            <span
-              style={{
-                fontSize: fs(9),
-                fontFamily: T.mono,
-                color: pos == null ? T.textDim : pos ? T.green : T.red,
-                fontWeight: 600,
-              }}
-            >
-              {formatSignedPercent(info.pct)}
-            </span>
-            {recent.length > 1 && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose && onClose(ticker);
-                }}
-                title="Close"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: T.textMuted,
-                  cursor: "pointer",
-                  fontSize: fs(11),
-                  padding: 0,
-                  lineHeight: 1,
-                  marginLeft: sp(2),
-                }}
-              >
-                ×
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {recent.map((ticker) => (
+        <TickerTabStripItem
+          key={ticker}
+          ticker={ticker}
+          active={active}
+          showClose={recent.length > 1}
+          onSelect={onSelect}
+          onClose={onClose}
+        />
+      ))}
       <button
         onClick={onAddNew}
         title="Add ticker"
@@ -13713,18 +15054,38 @@ export const TickerTabStrip = ({ recent, active, onSelect, onClose, onAddNew }) 
 export const TradeTickerHeader = ({
   ticker,
   chainRows = [],
+  expirationValue = "",
   expiration,
   chainStatus = "empty",
 }) => {
-  const info = ensureTradeTickerInfo(ticker, ticker);
-  const pos = isFiniteNumber(info.pct) ? info.pct >= 0 : null;
-  const atmRow = chainRows.find((r) => r.isAtm);
+  const fallback = useMemo(
+    () => ensureTradeTickerInfo(ticker, ticker),
+    [ticker],
+  );
+  const info = useRuntimeTickerSnapshot(ticker, fallback);
+  const chainSnapshot = useTradeOptionChainSnapshot(ticker);
+  const { chainRows: snapshotChainRows, chainStatus: snapshotChainStatus } =
+    resolveTradeOptionChainSnapshot(chainSnapshot, expirationValue);
+  const resolvedChainRows = chainRows.length ? chainRows : snapshotChainRows;
+  const resolvedChainStatus =
+    chainRows.length || chainStatus !== "empty" ? chainStatus : snapshotChainStatus;
+  const pos = isFiniteNumber(info?.pct) ? info.pct >= 0 : null;
+  const atmRow =
+    (isFiniteNumber(info?.price)
+      ? resolvedChainRows.reduce((closest, row) => {
+          if (!closest) return row;
+          return Math.abs(row.k - info.price) < Math.abs(closest.k - info.price)
+            ? row
+            : closest;
+        }, null)
+      : null) ||
+    resolvedChainRows.find((r) => r.isAtm);
   const impMove =
     atmRow && isFiniteNumber(atmRow.cPrem) && isFiniteNumber(atmRow.pPrem)
       ? (atmRow.cPrem + atmRow.pPrem) * 0.85
       : null;
   const impPct =
-    impMove != null && isFiniteNumber(info.price) && info.price > 0
+    impMove != null && isFiniteNumber(info?.price) && info.price > 0
       ? (impMove / info.price) * 100
       : null;
   return (
@@ -13755,7 +15116,7 @@ export const TradeTickerHeader = ({
         <span
           style={{ fontSize: fs(11), color: T.textDim, fontFamily: T.sans }}
         >
-          {info.name || ticker}
+          {info?.name || ticker}
         </span>
       </div>
       <div style={{ display: "flex", alignItems: "baseline", gap: sp(8) }}>
@@ -13767,7 +15128,7 @@ export const TradeTickerHeader = ({
             color: T.text,
           }}
         >
-          {formatQuotePrice(info.price)}
+          {formatQuotePrice(info?.price)}
         </span>
         <span
           style={{
@@ -13777,7 +15138,7 @@ export const TradeTickerHeader = ({
             color: pos == null ? T.textDim : pos ? T.green : T.red,
           }}
         >
-          {isFiniteNumber(info.chg)
+          {isFiniteNumber(info?.chg)
             ? `${info.chg >= 0 ? "▲ +" : "▼ "}${Math.abs(info.chg).toFixed(2)}`
             : MISSING_VALUE}
         </span>
@@ -13789,7 +15150,7 @@ export const TradeTickerHeader = ({
             color: pos == null ? T.textDim : pos ? T.green : T.red,
           }}
         >
-          {isFiniteNumber(info.pct)
+          {isFiniteNumber(info?.pct)
             ? `(${formatSignedPercent(info.pct)})`
             : MISSING_VALUE}
         </span>
@@ -13806,13 +15167,13 @@ export const TradeTickerHeader = ({
         <div>
           <span style={{ color: T.textMuted }}>VOL </span>
           <span style={{ color: T.text, fontWeight: 600 }}>
-            {fmtQuoteVolume(info.volume)}
+            {fmtQuoteVolume(info?.volume)}
           </span>
         </div>
         <div>
           <span style={{ color: T.textMuted }}>IV </span>
           <span style={{ color: T.text, fontWeight: 600 }}>
-            {isFiniteNumber(info.iv)
+            {isFiniteNumber(info?.iv)
               ? `${(info.iv * 100).toFixed(1)}%`
               : MISSING_VALUE}
           </span>
@@ -13834,18 +15195,18 @@ export const TradeTickerHeader = ({
         <div>
           <span style={{ color: T.textMuted }}>ATM </span>
           <span style={{ color: T.accent, fontWeight: 600 }}>
-            {atmRow?.k ?? getAtmStrikeFromPrice(info.price) ?? MISSING_VALUE}
+            {atmRow?.k ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
           </span>
         </div>
         <div>
           <span style={{ color: T.textMuted }}>CHAIN </span>
           <span
             style={{
-              color: chainStatus === "live" ? T.accent : T.textDim,
+              color: resolvedChainStatus === "live" ? T.accent : T.textDim,
               fontWeight: 600,
             }}
           >
-            {chainStatus}
+            {resolvedChainStatus}
           </span>
         </div>
       </div>
@@ -13869,9 +15230,13 @@ const EQUITY_CHART_STUDIES = [
 
 export const TradeEquityPanel = ({
   ticker,
-  flowEvents = [],
+  flowEvents,
   stockAggregateStreamingEnabled = false,
+  onOpenSearch,
 }) => {
+  const queryClient = useQueryClient();
+  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
+  const effectiveFlowEvents = flowEvents?.length ? flowEvents : tradeFlowSnapshot.events;
   const { studies: availableStudies, indicatorRegistry } =
     useIndicatorLibrary();
   const [tf, setTf] = useState("5m");
@@ -13893,43 +15258,175 @@ export const TradeEquityPanel = ({
   );
   const { drawings, addDrawing, clearDrawings, undo, redo, canUndo, canRedo } =
     useDrawingHistory();
-  const tfMeta =
-    TRADE_TIMEFRAMES.find((x) => x.v === tf) || TRADE_TIMEFRAMES[1];
+  const rollupBaseTimeframe = useMemo(
+    () =>
+      resolveLocalRollupBaseTimeframe(
+        tf,
+        getChartBarLimit(tf, "primary"),
+        "primary",
+      ),
+    [tf],
+  );
+  const baseBarsScopeKey = buildChartBarScopeKey(
+    "trade-equity-base-bars",
+    ticker,
+    rollupBaseTimeframe,
+  );
+  const chartHydrationScopeKey = buildChartBarScopeKey(
+    "trade-equity-chart",
+    ticker,
+    tf,
+  );
+  const progressiveBars = useProgressiveChartBarLimit({
+    scopeKey: buildChartBarScopeKey("trade-equity-bars", ticker),
+    timeframe: tf,
+    role: "primary",
+    enabled: Boolean(ticker),
+    warmTargetLimit: useCallback(
+      (limit) =>
+        queryClient.prefetchQuery({
+          queryKey: [
+            "trade-equity-bars",
+            ticker,
+            rollupBaseTimeframe,
+            expandLocalRollupLimit(limit, tf, rollupBaseTimeframe),
+          ],
+          queryFn: () =>
+            measureChartBarsRequest({
+              scopeKey: chartHydrationScopeKey,
+              metric: "barsRequestMs",
+              request: () =>
+                getBarsRequest({
+                  symbol: ticker,
+                  timeframe: rollupBaseTimeframe,
+                  limit: expandLocalRollupLimit(limit, tf, rollupBaseTimeframe),
+                  outsideRth: rollupBaseTimeframe !== "1d",
+                  source: "trades",
+                  allowHistoricalSynthesis: true,
+                }),
+            }),
+          ...BARS_QUERY_DEFAULTS,
+        }),
+      [chartHydrationScopeKey, queryClient, rollupBaseTimeframe, tf, ticker],
+    ),
+  });
+  const baseRequestedLimit = useMemo(
+    () =>
+      expandLocalRollupLimit(
+        progressiveBars.requestedLimit,
+        tf,
+        rollupBaseTimeframe,
+      ),
+    [progressiveBars.requestedLimit, rollupBaseTimeframe, tf],
+  );
   const barsQuery = useQuery({
-    queryKey: ["trade-equity-bars", ticker, tf, tfMeta.bars],
+    queryKey: [
+      "trade-equity-bars",
+      ticker,
+      rollupBaseTimeframe,
+      baseRequestedLimit,
+    ],
     queryFn: () =>
-      getBarsRequest({
-        symbol: ticker,
-        timeframe: tf,
-        limit: tfMeta.bars,
-        outsideRth: tf !== "1d",
-        source: "trades",
-        allowHistoricalSynthesis: true,
+      measureChartBarsRequest({
+        scopeKey: chartHydrationScopeKey,
+        metric: "barsRequestMs",
+        request: () =>
+          getBarsRequest({
+            symbol: ticker,
+            timeframe: rollupBaseTimeframe,
+            limit: baseRequestedLimit,
+            outsideRth: rollupBaseTimeframe !== "1d",
+            source: "trades",
+            allowHistoricalSynthesis: true,
+          }),
       }),
     ...BARS_QUERY_DEFAULTS,
   });
+  useEffect(() => {
+    if (!barsQuery.data?.bars?.length) {
+      return;
+    }
+
+    progressiveBars.hydrateFullWindow();
+  }, [barsQuery.data?.bars?.length, progressiveBars.hydrateFullWindow]);
+  const prependableBars = usePrependableHistoricalBars({
+    scopeKey: baseBarsScopeKey,
+    timeframe: rollupBaseTimeframe,
+    bars: barsQuery.data?.bars,
+    enabled: Boolean(ticker),
+    fetchOlderBars: useCallback(
+      async ({ from, to, limit }) => {
+        const fromIso = from.toISOString();
+        const toIso = to.toISOString();
+        const baseLimit = expandLocalRollupLimit(limit, tf, rollupBaseTimeframe);
+        const payload = await queryClient.fetchQuery({
+          queryKey: buildBarsPageQueryKey({
+            queryBase: ["trade-equity-bars-prepend", ticker],
+            timeframe: rollupBaseTimeframe,
+            limit: baseLimit,
+            from: fromIso,
+            to: toIso,
+          }),
+          queryFn: () =>
+            measureChartBarsRequest({
+              scopeKey: chartHydrationScopeKey,
+              metric: "prependRequestMs",
+              request: () =>
+                getBarsRequest({
+                  symbol: ticker,
+                  timeframe: rollupBaseTimeframe,
+                  limit: baseLimit,
+                  from: fromIso,
+                  to: toIso,
+                  outsideRth: rollupBaseTimeframe !== "1d",
+                  source: "trades",
+                  allowHistoricalSynthesis: true,
+                }),
+            }),
+          ...BARS_QUERY_DEFAULTS,
+        });
+
+        return payload?.bars || [];
+      },
+      [chartHydrationScopeKey, queryClient, rollupBaseTimeframe, tf, ticker],
+    ),
+  });
   const streamedSourceBars = useBrokerStreamedBars({
     symbol: ticker,
-    timeframe: tf,
-    bars: barsQuery.data?.bars,
+    timeframe: rollupBaseTimeframe,
+    bars: prependableBars.bars,
     enabled: Boolean(stockAggregateStreamingEnabled && ticker),
   });
   const liveBars = useMemo(
     () => buildTradeBarsFromApi(streamedSourceBars),
     [streamedSourceBars],
   );
-  const bars = useMemo(() => liveBars, [liveBars]);
-  const barsStatus = liveBars.length
+  const streamedLiveBars = useHistoricalBarStream({
+    symbol: ticker,
+    timeframe: rollupBaseTimeframe,
+    bars: liveBars,
+    enabled: Boolean(
+      stockAggregateStreamingEnabled && ticker && rollupBaseTimeframe !== "1d"
+    ),
+    outsideRth: rollupBaseTimeframe !== "1d",
+    source: "trades",
+    instrumentationScope: chartHydrationScopeKey,
+  });
+  const bars = useMemo(
+    () => rollupMarketBars(streamedLiveBars, rollupBaseTimeframe, tf),
+    [rollupBaseTimeframe, streamedLiveBars, tf],
+  );
+  const barsStatus = bars.length
     ? "live"
     : barsQuery.isPending
       ? "loading"
       : "empty";
   const markers = useMemo(
     () =>
-      flowEvents.length
-        ? buildTradeFlowMarkersFromEvents(flowEvents, bars.length)
+      effectiveFlowEvents.length
+        ? buildTradeFlowMarkersFromEvents(effectiveFlowEvents, bars.length)
         : [],
-    [bars.length, flowEvents],
+    [bars.length, effectiveFlowEvents],
   );
   const chartMarkers = useMemo(
     () =>
@@ -13966,25 +15463,27 @@ export const TradeEquityPanel = ({
       }),
     [bars, markers, ticker],
   );
-  const chartModel = useMemo(
-    () =>
-      buildResearchChartModel({
-        bars,
-        timeframe: tf,
-        selectedIndicators,
-        indicatorSettings,
-        indicatorRegistry,
-        indicatorMarkers: chartMarkers,
-      }),
-    [
+  const chartModel = useMeasuredChartModel({
+    scopeKey: chartHydrationScopeKey,
+    bars,
+    buildInput: {
       bars,
+      timeframe: tf,
+      selectedIndicators,
+      indicatorSettings,
+      indicatorRegistry,
+      indicatorMarkers: chartMarkers,
+    },
+    deps: [
+      bars,
+      chartHydrationScopeKey,
       chartMarkers,
       indicatorRegistry,
       indicatorSettings,
       selectedIndicators,
       tf,
     ],
-  );
+  });
   const latestBar = bars[bars.length - 1];
   const previousClose =
     bars.length > 1 ? (bars[bars.length - 2]?.c ?? null) : null;
@@ -14020,17 +15519,29 @@ export const TradeEquityPanel = ({
     persistState({ tradeEquityRayReplicaSettings: rayReplicaSettings });
   }, [rayReplicaSettings]);
 
+  const handleVisibleLogicalRangeChange = useCallback(
+    (range) => {
+      progressiveBars.expandForVisibleRange(range, bars.length, {
+        oldestLoadedAtMs: prependableBars.oldestLoadedAtMs,
+        prependOlderBars: prependableBars.prependOlderBars,
+      });
+    },
+    [bars.length, prependableBars, progressiveBars],
+  );
+
   return (
     <ResearchChartFrame
       dataTestId="trade-equity-chart"
       theme={T}
-      themeKey={CURRENT_THEME}
+      themeKey={getCurrentTheme()}
+      surfaceUiStateKey="trade-equity-chart"
       model={chartModel}
       showSurfaceToolbar={false}
       showLegend={false}
       drawings={drawings}
       drawMode={drawMode}
       onAddDrawing={addDrawing}
+      onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
       surfaceTopOverlay={(controls) => (
         <ResearchChartWidgetHeader
           theme={T}
@@ -14046,6 +15557,7 @@ export const TradeEquityPanel = ({
             label: timeframe.tag,
           }))}
           onChangeTimeframe={setTf}
+          onOpenSearch={onOpenSearch}
           onUndo={undo}
           onRedo={redo}
           canUndo={canUndo}
@@ -14121,10 +15633,40 @@ export const TradeChainPanel = ({
   heldContracts = [],
   chainStatus = "empty",
 }) => {
-  const info = ensureTradeTickerInfo(ticker, ticker);
-  const chain = chainRows;
-  const expirationOptions = expirations.length
-    ? expirations
+  const fallback = useMemo(
+    () => ensureTradeTickerInfo(ticker, ticker),
+    [ticker],
+  );
+  const info = useRuntimeTickerSnapshot(ticker, fallback);
+  const chainSnapshot = useTradeOptionChainSnapshot(ticker);
+  const {
+    expirationOptions: snapshotExpirationOptions,
+    chainRows: snapshotChainRows,
+    chainStatus: snapshotChainStatus,
+  } = resolveTradeOptionChainSnapshot(chainSnapshot, contract.exp);
+  const expirationOptions = expirations.length ? expirations : snapshotExpirationOptions;
+  const chain = chainRows.length ? chainRows : snapshotChainRows;
+  const resolvedChainStatus =
+    chainRows.length || chainStatus !== "empty" ? chainStatus : snapshotChainStatus;
+  const atmStrike = useMemo(() => {
+    if (!chain.length) {
+      return null;
+    }
+
+    if (isFiniteNumber(info?.price)) {
+      return chain.reduce(
+        (closest, row) =>
+          Math.abs(row.k - info.price) < Math.abs(closest - info.price)
+            ? row.k
+            : closest,
+        chain[0].k,
+      );
+    }
+
+    return chain.find((row) => row.isAtm)?.k ?? chain[0].k;
+  }, [chain, info?.price]);
+  const fallbackExpirationOptions = expirationOptions.length
+    ? expirationOptions
     : [
         {
           value: contract.exp,
@@ -14132,8 +15674,8 @@ export const TradeChainPanel = ({
           dte: daysToExpiration(contract.exp),
         },
       ];
-  const expInfo = expirationOptions.find((e) => e.value === contract.exp) ||
-    expirationOptions[0] || {
+  const expInfo = fallbackExpirationOptions.find((e) => e.value === contract.exp) ||
+    fallbackExpirationOptions[0] || {
       value: contract.exp,
       label: contract.exp,
       dte: daysToExpiration(contract.exp),
@@ -14189,7 +15731,7 @@ export const TradeChainPanel = ({
             outline: "none",
           }}
         >
-          {expirationOptions.map((ex) => (
+          {fallbackExpirationOptions.map((ex) => (
             <option key={ex.value} value={ex.value}>
               {ex.label} · {ex.dte}d
             </option>
@@ -14207,13 +15749,15 @@ export const TradeChainPanel = ({
         </span>
         <span style={{ flex: 1 }} />
         {(() => {
-          const atmRow = chain.find((r) => r.isAtm);
+          const atmRow =
+            chain.find((row) => row.k === atmStrike) ||
+            chain.find((row) => row.isAtm);
           const impMove =
             atmRow && isFiniteNumber(atmRow.cPrem) && isFiniteNumber(atmRow.pPrem)
               ? (atmRow.cPrem + atmRow.pPrem) * 0.85
               : null;
           const impPct =
-            impMove != null && isFiniteNumber(info.price) && info.price > 0
+            impMove != null && isFiniteNumber(info?.price) && info.price > 0
               ? (impMove / info.price) * 100
               : null;
           return (
@@ -14236,25 +15780,28 @@ export const TradeChainPanel = ({
         <span style={{ fontSize: fs(9), fontFamily: T.mono }}>
           ATM{" "}
           <span style={{ color: T.accent, fontWeight: 700 }}>
-            {chain.find((row) => row.isAtm)?.k ??
-              getAtmStrikeFromPrice(info.price) ??
+            {atmStrike ??
+              getAtmStrikeFromPrice(info?.price) ??
               MISSING_VALUE}
           </span>
         </span>
         <span
           style={{
             fontSize: fs(8),
-            color: chainStatus === "live" ? T.accent : T.textDim,
+            color: resolvedChainStatus === "live" ? T.accent : T.textDim,
             fontFamily: T.mono,
           }}
         >
-          {chainStatus === "live" ? "pan ↔ for Γ Θ V" : `chain ${chainStatus}`}
+          {resolvedChainStatus === "live"
+            ? "pan ↔ for Γ Θ V"
+            : `chain ${resolvedChainStatus}`}
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         {chain.length ? (
           <TradeOptionsChain
             chain={chain}
+            atmStrike={atmStrike}
             selected={{ strike: contract.strike, cp: contract.cp }}
             onSelect={(k, cp) => onSelectContract(k, cp)}
             heldStrikes={heldForTicker}
@@ -14278,8 +15825,18 @@ export const TradeContractDetailPanel = ({
   chainRows = [],
   heldContracts = [],
   chainStatus = "empty",
+  onOpenSearch,
 }) => {
-  const selectedRow = chainRows.find((r) => r.k === contract.strike);
+  const queryClient = useQueryClient();
+  const chainSnapshot = useTradeOptionChainSnapshot(ticker);
+  const {
+    chainRows: snapshotChainRows,
+    chainStatus: snapshotChainStatus,
+  } = resolveTradeOptionChainSnapshot(chainSnapshot, contract.exp);
+  const resolvedChainRows = chainRows.length ? chainRows : snapshotChainRows;
+  const resolvedChainStatus =
+    chainRows.length || chainStatus !== "empty" ? chainStatus : snapshotChainStatus;
+  const selectedRow = resolvedChainRows.find((r) => r.k === contract.strike);
   const contractStrikeLabel = isFiniteNumber(contract.strike)
     ? contract.strike
     : MISSING_VALUE;
@@ -14290,28 +15847,177 @@ export const TradeContractDetailPanel = ({
     : null;
   const contractMeta =
     contract.cp === "C" ? selectedRow?.cContract : selectedRow?.pContract;
+  const liveOptionQuote = useStoredOptionQuoteSnapshot(
+    contractMeta?.providerContractId,
+  );
   const [tf, setTf] = useState("5m");
-  const optionBarsLimit = getChartBarLimit(tf, "option");
+  const rollupBaseTimeframe = useMemo(
+    () =>
+      resolveLocalRollupBaseTimeframe(
+        tf,
+        getChartBarLimit(tf, "option"),
+        "option",
+      ),
+    [tf],
+  );
+  const baseBarsScopeKey = buildChartBarScopeKey(
+    "trade-option-base-bars",
+    contractMeta?.ticker || ticker,
+    contractMeta?.providerContractId || null,
+    rollupBaseTimeframe,
+  );
+  const chartHydrationScopeKey = buildChartBarScopeKey(
+    "trade-option-chart",
+    contractMeta?.ticker || ticker,
+    contractMeta?.providerContractId || null,
+    tf,
+  );
+  const progressiveOptionBars = useProgressiveChartBarLimit({
+    scopeKey: buildChartBarScopeKey(
+      "trade-option-bars",
+      contractMeta?.ticker,
+      contractMeta?.providerContractId,
+    ),
+    timeframe: tf,
+    role: "option",
+    enabled: Boolean(contractMeta?.ticker),
+    warmTargetLimit: useCallback(
+      (limit) =>
+        queryClient.prefetchQuery({
+          queryKey: [
+            "trade-option-bars",
+            contractMeta?.ticker,
+            contractMeta?.providerContractId,
+            rollupBaseTimeframe,
+            expandLocalRollupLimit(limit, tf, rollupBaseTimeframe),
+          ],
+          queryFn: () =>
+            measureChartBarsRequest({
+              scopeKey: chartHydrationScopeKey,
+              metric: "barsRequestMs",
+              request: () =>
+                getBarsRequest({
+                  symbol: contractMeta.ticker,
+                  timeframe: rollupBaseTimeframe,
+                  limit: expandLocalRollupLimit(limit, tf, rollupBaseTimeframe),
+                  assetClass: "option",
+                  providerContractId: contractMeta?.providerContractId,
+                  outsideRth: rollupBaseTimeframe !== "1d",
+                  source: "trades",
+                }),
+            }),
+          ...BARS_QUERY_DEFAULTS,
+        }),
+      [
+        chartHydrationScopeKey,
+        contractMeta?.providerContractId,
+        contractMeta?.ticker,
+        queryClient,
+        rollupBaseTimeframe,
+        tf,
+      ],
+    ),
+  });
+  const baseRequestedLimit = useMemo(
+    () =>
+      expandLocalRollupLimit(
+        progressiveOptionBars.requestedLimit,
+        tf,
+        rollupBaseTimeframe,
+      ),
+    [progressiveOptionBars.requestedLimit, rollupBaseTimeframe, tf],
+  );
   const optionBarsQuery = useQuery({
     queryKey: [
       "trade-option-bars",
       contractMeta?.ticker,
       contractMeta?.providerContractId,
-      tf,
-      optionBarsLimit,
+      rollupBaseTimeframe,
+      baseRequestedLimit,
     ],
     queryFn: () =>
-      getBarsRequest({
-        symbol: contractMeta.ticker,
-        timeframe: tf,
-        limit: optionBarsLimit,
-        assetClass: "option",
-        providerContractId: contractMeta?.providerContractId,
-        outsideRth: tf !== "1d",
-        source: "trades",
+      measureChartBarsRequest({
+        scopeKey: chartHydrationScopeKey,
+        metric: "barsRequestMs",
+        request: () =>
+          getBarsRequest({
+            symbol: contractMeta.ticker,
+            timeframe: rollupBaseTimeframe,
+            limit: baseRequestedLimit,
+            assetClass: "option",
+            providerContractId: contractMeta?.providerContractId,
+            outsideRth: rollupBaseTimeframe !== "1d",
+            source: "trades",
+          }),
       }),
     enabled: Boolean(contractMeta?.ticker),
     ...BARS_QUERY_DEFAULTS,
+  });
+  useEffect(() => {
+    if (!optionBarsQuery.data?.bars?.length) {
+      return;
+    }
+
+    progressiveOptionBars.hydrateFullWindow();
+  }, [
+    optionBarsQuery.data?.bars?.length,
+    progressiveOptionBars.hydrateFullWindow,
+  ]);
+  const prependableBars = usePrependableHistoricalBars({
+    scopeKey: baseBarsScopeKey,
+    timeframe: rollupBaseTimeframe,
+    bars: optionBarsQuery.data?.bars,
+    enabled: Boolean(contractMeta?.ticker),
+    fetchOlderBars: useCallback(
+      async ({ from, to, limit }) => {
+        const fromIso = from.toISOString();
+        const toIso = to.toISOString();
+        const baseLimit = expandLocalRollupLimit(limit, tf, rollupBaseTimeframe);
+        const payload = await queryClient.fetchQuery({
+          queryKey: buildBarsPageQueryKey({
+            queryBase: [
+              "trade-option-bars-prepend",
+              contractMeta?.ticker,
+              contractMeta?.providerContractId || null,
+            ],
+            timeframe: rollupBaseTimeframe,
+            limit: baseLimit,
+            from: fromIso,
+            to: toIso,
+            assetClass: "option",
+            providerContractId: contractMeta?.providerContractId || null,
+          }),
+          queryFn: () =>
+            measureChartBarsRequest({
+              scopeKey: chartHydrationScopeKey,
+              metric: "prependRequestMs",
+              request: () =>
+                getBarsRequest({
+                  symbol: contractMeta.ticker,
+                  timeframe: rollupBaseTimeframe,
+                  limit: baseLimit,
+                  from: fromIso,
+                  to: toIso,
+                  assetClass: "option",
+                  providerContractId: contractMeta?.providerContractId,
+                  outsideRth: rollupBaseTimeframe !== "1d",
+                  source: "trades",
+                }),
+            }),
+          ...BARS_QUERY_DEFAULTS,
+        });
+
+        return payload?.bars || [];
+      },
+      [
+        chartHydrationScopeKey,
+        contractMeta?.providerContractId,
+        contractMeta?.ticker,
+        queryClient,
+        rollupBaseTimeframe,
+        tf,
+      ],
+    ),
   });
   const optionDailyBarsQuery = useQuery({
     queryKey: [
@@ -14321,25 +16027,70 @@ export const TradeContractDetailPanel = ({
       getChartBarLimit("1d", "option"),
     ],
     queryFn: () =>
-      getBarsRequest({
-        symbol: contractMeta.ticker,
-        timeframe: "1d",
-        limit: getChartBarLimit("1d", "option"),
-        assetClass: "option",
-        providerContractId: contractMeta?.providerContractId,
-        outsideRth: false,
-        source: "trades",
+      measureChartBarsRequest({
+        scopeKey: chartHydrationScopeKey,
+        metric: "barsRequestMs",
+        request: () =>
+          getBarsRequest({
+            symbol: contractMeta.ticker,
+            timeframe: "1d",
+            limit: getChartBarLimit("1d", "option"),
+            assetClass: "option",
+            providerContractId: contractMeta?.providerContractId,
+            outsideRth: false,
+            source: "trades",
+          }),
       }),
     enabled: Boolean(contractMeta?.ticker) && tf !== "1d",
     ...BARS_QUERY_DEFAULTS,
   });
-  const liveIntradayBars = buildTradeBarsFromApi(optionBarsQuery.data?.bars);
-  const liveDailyBars = buildTradeBarsFromApi(optionDailyBarsQuery.data?.bars);
+  const baseRequestedBars = useMemo(
+    () => buildTradeBarsFromApi(prependableBars.bars),
+    [prependableBars.bars],
+  );
+  const baseFallbackDailyBars = useMemo(
+    () => buildTradeBarsFromApi(optionDailyBarsQuery.data?.bars),
+    [optionDailyBarsQuery.data?.bars],
+  );
+  const liveIntradayBars = useOptionQuotePatchedBars({
+    providerContractId: contractMeta?.providerContractId,
+    timeframe: rollupBaseTimeframe,
+    bars: baseRequestedBars,
+    enabled: Boolean(contractMeta?.providerContractId),
+    instrumentationScope:
+      rollupBaseTimeframe !== "1d" ? chartHydrationScopeKey : null,
+  });
+  const streamedIntradayBars = useHistoricalBarStream({
+    symbol: contractMeta?.ticker || ticker,
+    timeframe: rollupBaseTimeframe,
+    bars: liveIntradayBars,
+    enabled: Boolean(
+      contractMeta?.providerContractId && rollupBaseTimeframe !== "1d"
+    ),
+    assetClass: "option",
+    providerContractId: contractMeta?.providerContractId,
+    outsideRth: rollupBaseTimeframe !== "1d",
+    source: "trades",
+    instrumentationScope: chartHydrationScopeKey,
+  });
+  const liveDailyBars = useOptionQuotePatchedBars({
+    providerContractId: contractMeta?.providerContractId,
+    timeframe: "1d",
+    bars: baseFallbackDailyBars,
+    enabled: Boolean(contractMeta?.providerContractId) && tf !== "1d",
+  });
   const optBars = useMemo(() => {
-    if (liveIntradayBars.length) return liveIntradayBars;
+    if (streamedIntradayBars.length) {
+      return rollupMarketBars(streamedIntradayBars, rollupBaseTimeframe, tf);
+    }
     if (liveDailyBars.length) return liveDailyBars;
     return [];
-  }, [liveDailyBars, liveIntradayBars]);
+  }, [liveDailyBars, rollupBaseTimeframe, streamedIntradayBars, tf]);
+  const liveContractPrice = isFiniteNumber(liveOptionQuote?.price)
+    ? liveOptionQuote.price
+    : isFiniteNumber(liveOptionQuote?.bid) && isFiniteNumber(liveOptionQuote?.ask)
+      ? (liveOptionQuote.bid + liveOptionQuote.ask) / 2
+      : null;
   const contractColor = contract.cp === "C" ? T.green : T.red;
   const contractStr = `${ticker} ${contractStrikeLabel}${contract.cp} ${contract.exp}`;
   const activeHolding = heldContracts.find(
@@ -14348,8 +16099,8 @@ export const TradeContractDetailPanel = ({
       hp.cp === contract.cp &&
       hp.exp === contract.exp,
   );
-  const hasLiveIntradayBars = liveIntradayBars.length > 0;
-  const hasLiveDailyBars = liveDailyBars.length > 0;
+  const hasLiveIntradayBars = optBars.length > 0 && tf !== "1d";
+  const hasLiveDailyBars = tf === "1d" ? optBars.length > 0 : liveDailyBars.length > 0;
   const resolvedChartTimeframe = hasLiveIntradayBars
     ? tf
     : hasLiveDailyBars
@@ -14358,11 +16109,13 @@ export const TradeContractDetailPanel = ({
   const latestOptionBar = optBars[optBars.length - 1];
   const optionSourceLabel = describeBrokerChartSource(latestOptionBar?.source);
   const sourceLabel = !contractMeta
-    ? chainStatus === "loading"
+    ? resolvedChainStatus === "loading"
       ? "waiting on live chain"
       : "no live contract selected"
     : hasLiveIntradayBars || hasLiveDailyBars
       ? optionSourceLabel || `IBKR ${resolvedChartTimeframe}`
+      : liveContractPrice != null
+        ? "live option quote"
       : optionBarsQuery.isPending || optionDailyBarsQuery.isPending
         ? `loading ${tf}`
         : "no live contract bars";
@@ -14370,9 +16123,30 @@ export const TradeContractDetailPanel = ({
     ? "ibkr contract bars"
     : hasLiveDailyBars
       ? "ibkr daily bars"
+      : liveContractPrice != null
+        ? "live contract quote"
       : optionBarsQuery.isPending || optionDailyBarsQuery.isPending
         ? "loading contract bars"
         : "no live contract bars";
+  const displayPremium =
+    liveContractPrice != null
+      ? liveContractPrice
+      : typeof basePrem === "number"
+        ? basePrem
+        : null;
+  const handleVisibleLogicalRangeChange = useCallback(
+    (range) => {
+      progressiveOptionBars.expandForVisibleRange(
+        range,
+        optBars.length,
+        {
+          oldestLoadedAtMs: prependableBars.oldestLoadedAtMs,
+          prependOlderBars: prependableBars.prependOlderBars,
+        },
+      );
+    },
+    [optBars.length, prependableBars, progressiveOptionBars],
+  );
 
   return (
     <div
@@ -14473,7 +16247,7 @@ export const TradeContractDetailPanel = ({
             color: contractColor,
           }}
         >
-          {typeof basePrem === "number" ? `$${basePrem.toFixed(2)}` : MISSING_VALUE}
+          {displayPremium != null ? `$${displayPremium.toFixed(2)}` : MISSING_VALUE}
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
@@ -14485,12 +16259,19 @@ export const TradeContractDetailPanel = ({
             holding={activeHolding}
             timeframe={resolvedChartTimeframe}
             sourceLabel={sourceLabel}
+            hydrationScopeKey={chartHydrationScopeKey}
             onChangeTimeframe={setTf}
+            onOpenSearch={onOpenSearch}
+            onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
           />
         ) : (
           <DataUnavailableState
             title="No live contract bars"
-            detail="The selected contract has no broker-backed intraday or daily bars yet."
+            detail={
+              resolvedChainStatus === "loading"
+                ? "The selected option chain is still loading for this contract."
+                : "The selected contract has no broker-backed intraday or daily bars yet."
+            }
           />
         )}
       </div>
@@ -14825,23 +16606,29 @@ const NetFlowTimeline = ({ data, height = 130 }) => {
   );
 };
 
-export const TradeOptionsFlowPanel = ({ ticker, flowEvents = [] }) => {
-  const info = ensureTradeTickerInfo(ticker, ticker);
+export const TradeOptionsFlowPanel = ({ ticker, flowEvents }) => {
+  const fallback = useMemo(
+    () => ensureTradeTickerInfo(ticker, ticker),
+    [ticker],
+  );
+  const info = useRuntimeTickerSnapshot(ticker, fallback);
+  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
+  const effectiveFlowEvents = flowEvents?.length ? flowEvents : tradeFlowSnapshot.events;
   const dteData = useMemo(
-    () => buildTradeOptionFlowByDte(flowEvents),
-    [flowEvents],
+    () => buildTradeOptionFlowByDte(effectiveFlowEvents),
+    [effectiveFlowEvents],
   );
   const strikeData = useMemo(
-    () => buildTradeOptionFlowByStrike(flowEvents, info.price),
-    [flowEvents, info.price],
+    () => buildTradeOptionFlowByStrike(effectiveFlowEvents, info?.price),
+    [effectiveFlowEvents, info?.price],
   );
   const timelineData = useMemo(
-    () => buildTradeOptionFlowTimeline(flowEvents),
-    [flowEvents],
+    () => buildTradeOptionFlowTimeline(effectiveFlowEvents),
+    [effectiveFlowEvents],
   );
 
   if (
-    !flowEvents.length ||
+    !effectiveFlowEvents.length ||
     !dteData.length ||
     !strikeData.length ||
     !timelineData.length
@@ -15114,12 +16901,14 @@ export const TradeOptionsFlowPanel = ({ ticker, flowEvents = [] }) => {
 
 // ─── SPOT ORDER FLOW PANEL ───
 // Compact wrapper around the existing OrderFlowDistribution component for use in Trade tab.
-export const TradeSpotFlowPanel = ({ ticker, flowEvents = [] }) => {
+export const TradeSpotFlowPanel = ({ ticker, flowEvents }) => {
+  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
+  const effectiveFlowEvents = flowEvents?.length ? flowEvents : tradeFlowSnapshot.events;
   const tickerFlow = useMemo(
-    () => buildMarketOrderFlowFromEvents(flowEvents),
-    [flowEvents],
+    () => buildMarketOrderFlowFromEvents(effectiveFlowEvents),
+    [effectiveFlowEvents],
   );
-  if (!flowEvents.length) {
+  if (!effectiveFlowEvents.length) {
     return (
       <div
         style={{
@@ -15702,27 +17491,28 @@ const ToastStack = ({ toasts, onDismiss }) => {
 // ─── LIVE-DATA SUBSCRIPTION ISOLATION ───
 // Live quote ticks, sparkline refreshes, and per-minute aggregate store updates
 // used to be subscribed to from the top-level RayAlgoPlatform component, which
-// then bumped a `marketDataVersion` state on every change. That re-rendered the
-// entire ~20k LOC trading terminal tree on every tick.
+// forced broad shell re-renders on every change.
 //
-// MarketDataSubscriptionProvider now owns those subscriptions and exposes a
-// version counter via context. Only the small wrapper components below
-// (HeaderKpiStripContainer, WatchlistContainer) subscribe to the context, so a
-// quote tick re-renders just those panels — not the whole terminal.
-const MarketDataVersionContext = createContext(0);
-const useMarketDataVersion = () => useContext(MarketDataVersionContext);
+// MarketDataSubscriptionProvider now owns those subscriptions and writes into
+// the runtime ticker snapshot store. Header/watchlist containers subscribe to
+// only the symbols they render, so a quote tick re-renders just the affected
+// panels instead of the whole terminal shell.
 
 const MarketDataSubscriptionProvider = ({
   watchlistSymbols,
   activeWatchlistItems,
   quoteSymbols,
   sparklineSymbols,
-  streamedMarketSymbols,
+  streamedQuoteSymbols,
+  streamedAggregateSymbols,
   marketStockAggregateStreamingEnabled,
+  marketScreenActive = false,
   lowPriorityHistoryEnabled = true,
   children,
 }) => {
-  const marketAggregateStoreVersion = useStockMinuteAggregateStoreVersion();
+  const marketAggregateStoreVersion = useStockMinuteAggregateSymbolsVersion(
+    streamedAggregateSymbols,
+  );
   const watchlistSymbolsKey = useMemo(
     () => (watchlistSymbols || []).join(","),
     [watchlistSymbols],
@@ -15745,6 +17535,39 @@ const MarketDataSubscriptionProvider = ({
         .join("|"),
     [activeWatchlistItems],
   );
+  const sparklineHistoryEnabled = Boolean(
+    lowPriorityHistoryEnabled && marketScreenActive && sparklineSymbols.length > 0,
+  );
+  useRuntimeWorkloadFlag(
+    "market:subscription-streams",
+    Boolean(marketStockAggregateStreamingEnabled && streamedQuoteSymbols.length > 0),
+    {
+      kind: "stream",
+      label: "Market runtime streams",
+      detail: `${streamedQuoteSymbols.length}q/${streamedAggregateSymbols.length}a`,
+      priority: 3,
+    },
+  );
+  useRuntimeWorkloadFlag("market:sparklines", sparklineHistoryEnabled, {
+    kind: "poll",
+    label: "Market sparklines",
+    detail: `${sparklineSymbols.length}s`,
+    priority: 6,
+  });
+  useRuntimeWorkloadFlag(
+    "market:performance-baselines",
+    Boolean(
+      lowPriorityHistoryEnabled &&
+        marketScreenActive &&
+        MARKET_PERFORMANCE_SYMBOLS.length > 0,
+    ),
+    {
+      kind: "poll",
+      label: "Market performance baselines",
+      detail: `${MARKET_PERFORMANCE_SYMBOLS.length}s`,
+      priority: 7,
+    },
+  );
   const quotesQuery = useGetQuoteSnapshots(
     { symbols: quoteSymbols.join(",") },
     {
@@ -15756,7 +17579,7 @@ const MarketDataSubscriptionProvider = ({
   );
   const sparklineQuery = useQuery({
     queryKey: ["market-sparklines", sparklineSymbols],
-    enabled: lowPriorityHistoryEnabled && sparklineSymbols.length > 0,
+    enabled: sparklineHistoryEnabled,
     queryFn: async () => {
       const results = await settleWithConcurrency(
         sparklineSymbols,
@@ -15784,7 +17607,10 @@ const MarketDataSubscriptionProvider = ({
   });
   const marketPerformanceQuery = useQuery({
     queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
-    enabled: lowPriorityHistoryEnabled && MARKET_PERFORMANCE_SYMBOLS.length > 0,
+    enabled:
+      lowPriorityHistoryEnabled &&
+      marketScreenActive &&
+      MARKET_PERFORMANCE_SYMBOLS.length > 0,
     queryFn: async () => {
       const results = await settleWithConcurrency(
         MARKET_PERFORMANCE_SYMBOLS,
@@ -15819,19 +17645,17 @@ const MarketDataSubscriptionProvider = ({
   });
 
   useIbkrQuoteSnapshotStream({
-    symbols: streamedMarketSymbols,
+    symbols: streamedQuoteSymbols,
     enabled: Boolean(
-      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
+      marketStockAggregateStreamingEnabled && streamedQuoteSymbols.length > 0,
     ),
   });
   useBrokerStockAggregateStream({
-    symbols: streamedMarketSymbols,
+    symbols: streamedAggregateSymbols,
     enabled: Boolean(
-      marketStockAggregateStreamingEnabled && streamedMarketSymbols.length > 0,
+      marketStockAggregateStreamingEnabled && streamedAggregateSymbols.length > 0,
     ),
   });
-
-  const [marketDataVersion, setMarketDataVersion] = useState(0);
   const marketDataSyncKey = [
     watchlistSymbolsKey,
     activeWatchlistItemsKey,
@@ -15850,47 +17674,21 @@ const MarketDataSubscriptionProvider = ({
         performanceBaselineBySymbol: marketPerformanceQuery.data,
       },
     );
-    setMarketDataVersion((version) => version + 1);
   }, [marketDataSyncKey]);
 
-  return (
-    <MarketDataVersionContext.Provider value={marketDataVersion}>
-      {children}
-    </MarketDataVersionContext.Provider>
-  );
+  return children;
 };
 
 const HeaderKpiStripContainer = ({ onSelect }) => {
-  const version = useMarketDataVersion();
-  const items = useMemo(
-    () =>
-      HEADER_KPI_CONFIG.map(({ symbol, label }, index) => {
-        const fallback = buildFallbackWatchlistItem(symbol, index, label);
-        const snapshot = getRuntimeTickerSnapshot(symbol, fallback) || fallback;
-        return {
-          sym: symbol,
-          label,
-          name: snapshot.name || fallback.name || label,
-          price: snapshot.price,
-          pct: snapshot.pct,
-          spark: snapshot.spark || fallback.spark,
-          sparkBars: snapshot.sparkBars || fallback.sparkBars || [],
-        };
-      }),
-    // version drives recomputation; HEADER_KPI_CONFIG is module-level constant
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version],
-  );
-  return <HeaderKpiStrip items={items} onSelect={onSelect} />;
+  return <HeaderKpiStrip onSelect={onSelect} />;
 };
+const MemoHeaderKpiStripContainer = memo(HeaderKpiStripContainer);
 
 const WatchlistContainer = ({
   activeWatchlist,
   watchlistSymbols,
-  signalStatesBySymbol,
   ...rest
 }) => {
-  const version = useMarketDataVersion();
   const items = useMemo(() => {
     const sourceItems = activeWatchlist?.items?.length
       ? activeWatchlist.items
@@ -15903,43 +17701,53 @@ const WatchlistContainer = ({
         index,
         item.name || symbol,
       );
-      const snapshot = getRuntimeTickerSnapshot(symbol, fallback) || fallback;
       return {
         id: item.id || symbol,
         sym: symbol,
-        name: item.name || snapshot.name || fallback.name || symbol,
-        price: snapshot.price,
-        chg: snapshot.chg,
-        pct: snapshot.pct,
-        spark: snapshot.spark || fallback.spark,
-        sparkBars: snapshot.sparkBars || fallback.sparkBars || [],
-        signalState: signalStatesBySymbol[symbol] || null,
+        name: item.name || fallback.name || symbol,
       };
     });
-    // version drives recomputation
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWatchlist, version, signalStatesBySymbol, watchlistSymbols]);
+  }, [activeWatchlist, watchlistSymbols]);
   return (
     <Watchlist
       activeWatchlistId={activeWatchlist?.id || null}
       items={items}
-      signalStatesBySymbol={signalStatesBySymbol}
       {...rest}
     />
   );
 };
+const MemoWatchlistContainer = memo(WatchlistContainer);
 
 const formatLatencyMetric = (value) => (
   Number.isFinite(value) ? `${Math.round(value)}ms` : "n/a"
 );
 
-const LatencyDebugStrip = () => {
+const formatWorkloadCount = (value) => (Number.isFinite(value) ? value : 0);
+
+const LatencyDebugStrip = ({ screen, mountedScreens }) => {
   const stats = useIbkrLatencyStats();
+  const chartStats = useChartHydrationStats();
+  const workloadStats = useRuntimeWorkloadStats();
   const cells = [
     ["Bridge->API", stats.bridgeToApiMs],
     ["API->React", stats.apiToReactMs],
     ["Total", stats.totalMs],
   ];
+  const chartCells = [
+    ["Bars", chartStats.barsRequestMs],
+    ["Prepend", chartStats.prependRequestMs],
+    ["Model", chartStats.modelBuildMs],
+    ["Paint", chartStats.firstPaintMs],
+    ["Patch", chartStats.livePatchToPaintMs],
+  ];
+  const stream = stats.stream;
+  const mountedCount = SCREENS.filter(({ id }) => mountedScreens?.[id]).length;
+  const activeWorkloadLabels = workloadStats.entries
+    .slice(0, 6)
+    .map((entry) =>
+      entry.detail ? `${entry.label}(${entry.detail})` : entry.label,
+    )
+    .join(" · ");
 
   return (
     <div
@@ -15969,7 +17777,32 @@ const LatencyDebugStrip = () => {
           {formatLatencyMetric(metric.p95)}
         </span>
       ))}
-      <span style={{ color: "#94a3b8" }}>n={stats.sampleCount}</span>
+      {chartCells.map(([label, metric]) => (
+        <span key={label} style={{ whiteSpace: "nowrap", color: "#bfdbfe" }}>
+          {label} p50 {formatLatencyMetric(metric.p50)} p95{" "}
+          {formatLatencyMetric(metric.p95)}
+        </span>
+      ))}
+      <span style={{ color: "#cbd5f5", whiteSpace: "nowrap" }}>
+        Stream c{stream.activeConsumerCount} s{stream.unionSymbolCount} r
+        {stream.reconnectCount} g{stream.streamGapCount}
+      </span>
+      <span style={{ color: "#a7f3d0", whiteSpace: "nowrap" }}>
+        Screens {mountedCount}/{SCREENS.length} vis {screen}
+      </span>
+      <span style={{ color: "#fde68a", whiteSpace: "nowrap" }}>
+        Work p{formatWorkloadCount(workloadStats.kindCounts.poll)} s
+        {formatWorkloadCount(workloadStats.kindCounts.stream)} m
+        {formatWorkloadCount(workloadStats.kindCounts.media)}
+      </span>
+      {activeWorkloadLabels ? (
+        <span style={{ color: "#fcd34d", whiteSpace: "nowrap" }}>
+          {activeWorkloadLabels}
+        </span>
+      ) : null}
+      <span style={{ color: "#94a3b8" }}>
+        n={stats.sampleCount}/{chartStats.sampleCount}
+      </span>
     </div>
   );
 };
@@ -15982,7 +17815,19 @@ export default function RayAlgoPlatform() {
       new URLSearchParams(window.location.search).get("latency") === "1",
     [],
   );
-  const [screen, setScreen] = useState(_initialState.screen || "market");
+  const [screen, setScreen] = useState(() =>
+    _initialState.screen === "unusual"
+      ? "flow"
+      : _initialState.screen || "market",
+  );
+  const [mountedScreens, setMountedScreens] = useState(() =>
+    buildMountedScreenState(
+      _initialState.screen === "unusual"
+        ? "flow"
+        : _initialState.screen || "market",
+    ),
+  );
+  const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
@@ -15994,6 +17839,7 @@ export default function RayAlgoPlatform() {
   const [selectedAccountId, setSelectedAccountId] = useState(
     _initialState.selectedAccountId || null,
   );
+  const screenWarmupStartedRef = useRef(false);
   // Pending sym hand-off to Trade tab — bumped each time a watchlist item is clicked
   // so TradeScreen can react even when the same sym is clicked twice
   const [tradeSymPing, setTradeSymPing] = useState({
@@ -16001,12 +17847,6 @@ export default function RayAlgoPlatform() {
     n: 0,
     contract: null,
   });
-  const [marketClockNow, setMarketClockNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setMarketClockNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   const sessionQuery = useGetSession({
     query: {
@@ -16058,20 +17898,38 @@ export default function RayAlgoPlatform() {
     const unique = [...new Set(apiSymbols.length ? apiSymbols : fallback)];
     return unique.length ? unique : ["SPY"];
   }, [activeWatchlist, watchlistsQuery.data]);
+  const marketScreenWarm = Boolean(mountedScreens.market);
+  const marketScreenActive = screen === "market";
+  const flowScreenActive = screen === "flow";
+  const tradeWarmTicker = useMemo(
+    () =>
+      normalizeTickerSymbol(
+        _initialState.tradeActiveTicker || sym || watchlistSymbols[0] || "SPY",
+      ) || "SPY",
+    [sym, watchlistSymbols],
+  );
+  const preloadCalendarWindow = useMemo(() => {
+    const from = new Date();
+    const to = new Date(from);
+    to.setUTCDate(to.getUTCDate() + 14);
+    return {
+      from: formatIsoDate(from),
+      to: formatIsoDate(to),
+    };
+  }, []);
   const quoteSymbols = useMemo(() => {
     return [
       ...new Set(
         [
           ...watchlistSymbols,
-          ...MARKET_SNAPSHOT_SYMBOLS,
           ...HEADER_KPI_SYMBOLS,
-          sym,
+          ...(marketScreenActive ? MARKET_SNAPSHOT_SYMBOLS : []),
         ].filter(Boolean),
       ),
     ];
-  }, [sym, watchlistSymbols]);
+  }, [marketScreenActive, watchlistSymbols]);
   const sparklineSymbols = useMemo(() => {
-    const indexSymbols = INDICES.map((item) => item.sym);
+    const indexSymbols = marketScreenActive ? INDICES.map((item) => item.sym) : [];
     return [
       ...new Set(
         [...watchlistSymbols, ...indexSymbols, ...HEADER_KPI_SYMBOLS].filter(
@@ -16079,8 +17937,8 @@ export default function RayAlgoPlatform() {
         ),
       ),
     ];
-  }, [watchlistSymbols]);
-  const streamedMarketSymbols = useMemo(
+  }, [marketScreenActive, watchlistSymbols]);
+  const streamedQuoteSymbols = useMemo(
     () => [
       ...new Set(
         [...quoteSymbols, ...sparklineSymbols]
@@ -16089,6 +17947,20 @@ export default function RayAlgoPlatform() {
       ),
     ],
     [quoteSymbols, sparklineSymbols],
+  );
+  const streamedAggregateSymbols = useMemo(
+    () => [
+      ...new Set(
+        [
+          ...watchlistSymbols,
+          ...HEADER_KPI_SYMBOLS,
+          ...(marketScreenActive ? MARKET_SNAPSHOT_SYMBOLS : []),
+        ]
+          .map(normalizeTickerSymbol)
+          .filter(Boolean),
+      ),
+    ],
+    [marketScreenActive, watchlistSymbols],
   );
   const accountsQuery = useListAccounts(
     { mode: sessionQuery.data?.environment || "paper" },
@@ -16488,6 +18360,175 @@ export default function RayAlgoPlatform() {
     session?.ibkrBridge?.selectedAccountId ||
     selectedAccountId ||
     null;
+  const researchConfigured = Boolean(session?.configured?.research);
+
+  useEffect(() => {
+    if (mountedScreens[screen]) {
+      return;
+    }
+    startTransition(() => {
+      setMountedScreens((current) =>
+        current[screen] ? current : { ...current, [screen]: true },
+      );
+    });
+  }, [mountedScreens, screen]);
+
+  useEffect(() => {
+    if (screenWarmupStartedRef.current) {
+      return;
+    }
+    screenWarmupStartedRef.current = true;
+
+    let cancelled = false;
+    const cleanups = [];
+    const queueMount = (screenId) => {
+      if (cancelled) {
+        return;
+      }
+      startTransition(() => {
+        setMountedScreens((current) =>
+          current[screenId] ? current : { ...current, [screenId]: true },
+        );
+      });
+    };
+
+    const warmingTimers = OPERATIONAL_SCREEN_PRELOAD_ORDER.map((screenId, index) =>
+      window.setTimeout(() => {
+        if (screenId !== screen) {
+          queueMount(screenId);
+        }
+      }, 140 * (index + 1)),
+    );
+    cleanups.push(() => warmingTimers.forEach((timerId) => window.clearTimeout(timerId)));
+
+    const cancelIdle = scheduleIdleWork(() => {
+      if (cancelled) {
+        return;
+      }
+      setScreenWarmupPhase("idle-heavy");
+      const heavyTimers = IDLE_HEAVY_SCREEN_PRELOAD_ORDER.map((screenId, index) =>
+        window.setTimeout(() => {
+          queueMount(screenId);
+          if (index === IDLE_HEAVY_SCREEN_PRELOAD_ORDER.length - 1) {
+            setScreenWarmupPhase("ready");
+          }
+        }, index * 180),
+      );
+      cleanups.push(() =>
+        heavyTimers.forEach((timerId) => window.clearTimeout(timerId)),
+      );
+    }, 2_000);
+    cleanups.push(cancelIdle);
+
+    setScreenWarmupPhase("warming");
+
+    return () => {
+      cancelled = true;
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [screen]);
+
+  useEffect(() => {
+    if (!sessionMetadataSettled) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const cancelIdle = scheduleIdleWork(() => {
+      if (cancelled) {
+        return;
+      }
+
+      queryClient.prefetchQuery(
+        getGetNewsQueryOptions(
+          { limit: 6 },
+          {
+            query: {
+              staleTime: 60_000,
+              retry: false,
+            },
+          },
+        ),
+      );
+
+      if (researchConfigured && preloadCalendarWindow.from && preloadCalendarWindow.to) {
+        queryClient.prefetchQuery(
+          getGetResearchEarningsCalendarQueryOptions(
+            preloadCalendarWindow,
+            {
+              query: {
+                staleTime: 300_000,
+                retry: false,
+              },
+            },
+          ),
+        );
+      }
+
+      queryClient.prefetchQuery(
+        getGetQuoteSnapshotsQueryOptions(
+          { symbols: tradeWarmTicker },
+          {
+            query: {
+              staleTime: 60_000,
+              retry: false,
+            },
+          },
+        ),
+      );
+      queryClient.prefetchQuery({
+        queryKey: ["trade-option-chain", tradeWarmTicker],
+        queryFn: () => getOptionChainRequest({ underlying: tradeWarmTicker }),
+        staleTime: 60_000,
+        refetchInterval: false,
+        refetchOnMount: false,
+        retry: 1,
+        gcTime: 5 * 60_000,
+      });
+      queryClient.prefetchQuery({
+        queryKey: ["trade-flow", tradeWarmTicker],
+        queryFn: () =>
+          listFlowEventsRequest({ underlying: tradeWarmTicker, limit: 80 }),
+        staleTime: 10_000,
+        retry: false,
+        gcTime: 5 * 60_000,
+      });
+      queryClient.prefetchQuery(
+        getListBacktestDraftStrategiesQueryOptions({
+          query: {
+            ...QUERY_DEFAULTS,
+            retry: false,
+            gcTime: 5 * 60_000,
+          },
+        }),
+      );
+      queryClient.prefetchQuery(
+        getListAlgoDeploymentsQueryOptions(
+          { mode: environment },
+          {
+            query: {
+              ...QUERY_DEFAULTS,
+              retry: false,
+              gcTime: 5 * 60_000,
+            },
+          },
+        ),
+      );
+      void import("./features/research/PhotonicsObservatory");
+    }, 1_000);
+
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
+  }, [
+    environment,
+    preloadCalendarWindow,
+    queryClient,
+    researchConfigured,
+    sessionMetadataSettled,
+    tradeWarmTicker,
+  ]);
   const positionAlertsQuery = useListPositions(
     { accountId: primaryAccountId, mode: environment },
     {
@@ -16570,6 +18611,14 @@ export default function RayAlgoPlatform() {
     positionAlertsQuery.data,
     primaryAccountId,
   ]);
+  useEffect(() => {
+    publishMarketAlertsSnapshot({
+      items: marketAlertItems,
+      totalAlerts,
+      winAlerts,
+      lossAlerts,
+    });
+  }, [lossAlerts, marketAlertItems, totalAlerts, winAlerts]);
   const signalMonitorParams = useMemo(() => ({ environment }), [environment]);
   const signalMonitorEventsParams = useMemo(
     () => ({ environment, limit: 100 }),
@@ -16596,9 +18645,7 @@ export default function RayAlgoPlatform() {
     {
       query: {
         staleTime: 15_000,
-        refetchInterval: signalMonitorProfile?.enabled
-          ? signalMonitorPollMs
-          : false,
+        refetchInterval: false,
         retry: false,
       },
     },
@@ -16608,11 +18655,19 @@ export default function RayAlgoPlatform() {
     {
       query: {
         staleTime: 15_000,
-        refetchInterval: signalMonitorProfile?.enabled
-          ? signalMonitorPollMs
-          : false,
+        refetchInterval: false,
         retry: false,
       },
+    },
+  );
+  useRuntimeWorkloadFlag(
+    "signal-monitor:evaluate",
+    Boolean(signalMonitorProfile?.enabled && activeWatchlist?.id),
+    {
+      kind: "poll",
+      label: "Signal monitor",
+      detail: `${Math.round(signalMonitorPollMs / 1000)}s`,
+      priority: 4,
     },
   );
   const signalMonitorEvaluationInFlightRef = useRef(false);
@@ -16728,22 +18783,26 @@ export default function RayAlgoPlatform() {
   ]);
   const signalMonitorStates = signalMonitorStateQuery.data?.states || [];
   const signalMonitorEvents = signalMonitorEventsQuery.data?.events || [];
-  const signalStatesBySymbol = useMemo(
-    () =>
-      Object.fromEntries(
-        signalMonitorStates
-          .filter((state) => state?.symbol)
-          .map((state) => [state.symbol.toUpperCase(), state]),
-      ),
-    [signalMonitorStates],
-  );
-  const marketClock = useMemo(
-    () => buildMarketClockState(marketClockNow),
-    [marketClockNow],
-  );
+  useEffect(() => {
+    publishSignalMonitorSnapshot({
+      profile: signalMonitorProfile,
+      states: signalMonitorStates,
+      events: signalMonitorEvents,
+      pending: evaluateSignalMonitorMutation.isPending,
+    });
+  }, [
+    evaluateSignalMonitorMutation.isPending,
+    signalMonitorEvents,
+    signalMonitorProfile,
+    signalMonitorStates,
+  ]);
   // Persist state changes (debounced via useEffect — fires after each commit)
   useEffect(() => {
-    persistState({ screen });
+    const normalizedScreen = screen === "unusual" ? "flow" : screen;
+    persistState({ screen: normalizedScreen });
+    if (screen !== normalizedScreen) {
+      setScreen(normalizedScreen);
+    }
   }, [screen]);
   useEffect(() => {
     persistState({ sym });
@@ -16754,26 +18813,26 @@ export default function RayAlgoPlatform() {
   useEffect(() => {
     persistState({ theme });
   }, [theme]);
-  // Toggle theme: flip module-level CURRENT_THEME so the T proxy resolves to the new palette,
-  // then update React state to force the entire tree to re-render and re-read T.foo
-  const toggleTheme = () => {
+  // Keep the shared token module and React state in sync so T/fs/sp/dim
+  // resolve against the next palette during the same render pass.
+  const toggleTheme = useCallback(() => {
     const next = theme === "dark" ? "light" : "dark";
-    CURRENT_THEME = next;
+    setCurrentTheme(next);
     setTheme(next);
-  };
+  }, [theme]);
 
-  const handleSelectWatchlist = (watchlistId) => {
+  const handleSelectWatchlist = useCallback((watchlistId) => {
     setActiveWatchlistId(watchlistId);
-  };
+  }, []);
 
   // Watchlist sync: clicking a sidebar item updates sym AND signals Trade tab
   // to load it into the active slot
-  const handleSelectSymbol = (newSym) => {
+  const handleSelectSymbol = useCallback((newSym) => {
     setSym(newSym);
     setTradeSymPing((prev) => ({ sym: newSym, n: prev.n + 1, contract: null }));
-  };
+  }, []);
 
-  const handleSignalAction = (ticker, signal) => {
+  const handleSignalAction = useCallback((ticker, signal) => {
     const normalized = normalizeTickerSymbol(ticker);
     if (!normalized) {
       return;
@@ -16798,9 +18857,9 @@ export default function RayAlgoPlatform() {
           : "success",
       duration: 2600,
     });
-  };
+  }, [pushToast]);
 
-  const handleToggleSignalMonitor = () => {
+  const handleToggleSignalMonitor = useCallback(() => {
     updateSignalMonitorProfileMutation.mutate({
       data: {
         environment,
@@ -16808,9 +18867,15 @@ export default function RayAlgoPlatform() {
         watchlistId: activeWatchlist?.id || signalMonitorProfile?.watchlistId || null,
       },
     });
-  };
+  }, [
+    activeWatchlist?.id,
+    environment,
+    signalMonitorProfile?.enabled,
+    signalMonitorProfile?.watchlistId,
+    updateSignalMonitorProfileMutation,
+  ]);
 
-  const handleChangeSignalMonitorTimeframe = (timeframe) => {
+  const handleChangeSignalMonitorTimeframe = useCallback((timeframe) => {
     updateSignalMonitorProfileMutation.mutate({
       data: {
         environment,
@@ -16818,28 +18883,36 @@ export default function RayAlgoPlatform() {
         watchlistId: activeWatchlist?.id || signalMonitorProfile?.watchlistId || null,
       },
     });
-  };
+  }, [
+    activeWatchlist?.id,
+    environment,
+    signalMonitorProfile?.watchlistId,
+    updateSignalMonitorProfileMutation,
+  ]);
+  const handleRunSignalMonitorNow = useCallback(() => {
+    runSignalMonitorEvaluation("incremental");
+  }, [runSignalMonitorEvaluation]);
 
-  const handleCreateWatchlist = (name) => {
+  const handleCreateWatchlist = useCallback((name) => {
     createWatchlistMutation.mutate(name);
-  };
+  }, [createWatchlistMutation]);
 
-  const handleRenameWatchlist = (watchlistId, name) => {
+  const handleRenameWatchlist = useCallback((watchlistId, name) => {
     updateWatchlistMutation.mutate({ watchlistId, body: { name } });
-  };
+  }, [updateWatchlistMutation]);
 
-  const handleDeleteWatchlist = (watchlistId) => {
+  const handleDeleteWatchlist = useCallback((watchlistId) => {
     deleteWatchlistMutation.mutate(watchlistId);
-  };
+  }, [deleteWatchlistMutation]);
 
-  const handleSetDefaultWatchlist = (watchlistId) => {
+  const handleSetDefaultWatchlist = useCallback((watchlistId) => {
     updateWatchlistMutation.mutate({
       watchlistId,
       body: { isDefault: true },
     });
-  };
+  }, [updateWatchlistMutation]);
 
-  const handleAddSymbolToWatchlist = (symbol, name) => {
+  const handleAddSymbolToWatchlist = useCallback((symbol, name) => {
     if (!activeWatchlist?.id) {
       pushToast({
         title: "No active watchlist selected",
@@ -16852,9 +18925,9 @@ export default function RayAlgoPlatform() {
       symbol,
       name,
     });
-  };
+  }, [activeWatchlist?.id, addWatchlistSymbolMutation, pushToast]);
 
-  const handleRemoveSymbolFromWatchlist = (itemId, symbol) => {
+  const handleRemoveSymbolFromWatchlist = useCallback((itemId, symbol) => {
     if (!activeWatchlist?.id) {
       return;
     }
@@ -16863,8 +18936,8 @@ export default function RayAlgoPlatform() {
       itemId,
       symbol,
     });
-  };
-  const handleMoveSymbolInWatchlist = (itemId, direction) => {
+  }, [activeWatchlist?.id, removeWatchlistSymbolMutation]);
+  const handleMoveSymbolInWatchlist = useCallback((itemId, direction) => {
     if (!activeWatchlist?.id || !activeWatchlist.items?.length) {
       return;
     }
@@ -16891,10 +18964,10 @@ export default function RayAlgoPlatform() {
       watchlistId: activeWatchlist.id,
       itemIds: nextIds,
     });
-  };
+  }, [activeWatchlist, reorderWatchlistMutation]);
 
   // Jump to Trade tab from Flow drawer with a contract preloaded
-  const handleJumpToTradeFromFlow = (evt) => {
+  const handleJumpToTradeFromFlow = useCallback((evt) => {
     const ticker = evt.ticker?.toUpperCase?.() || evt.ticker;
     if (!ticker) return;
 
@@ -16910,11 +18983,11 @@ export default function RayAlgoPlatform() {
       },
     }));
     setScreen("trade");
-  };
+  }, []);
 
   // Jump to Trade tab from Research with a ticker preloaded.
   // Research passes a plain ticker string rather than a flow event.
-  const handleJumpToTradeFromResearch = (ticker) => {
+  const handleJumpToTradeFromResearch = useCallback((ticker) => {
     const normalized = ticker?.toUpperCase?.() || ticker;
     if (!normalized) return;
 
@@ -16926,51 +18999,43 @@ export default function RayAlgoPlatform() {
       contract: null,
     }));
     setScreen("trade");
-  };
+  }, []);
 
-  const renderScreen = () => {
-    switch (screen) {
+  const handleAccountJumpToTrade = useCallback((symbol) => {
+    handleSelectSymbol(symbol);
+    setScreen("trade");
+  }, [handleSelectSymbol]);
+
+  const renderScreenById = (screenId) => {
+    switch (screenId) {
       case "market":
         return (
-          <MarketScreen
+          <MemoMarketScreen
             sym={sym}
             onSymClick={handleSelectSymbol}
             symbols={watchlistSymbols}
-            researchConfigured={Boolean(
-              sessionQuery.data?.configured?.research,
-            )}
-            flowScannerEnabled={sessionMetadataSettled}
+            isVisible={marketScreenActive}
+            researchConfigured={researchConfigured}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-            marketNotifications={marketAlertItems}
-            signalEvents={signalMonitorEvents}
-            signalStates={signalMonitorStates}
-            signalMonitorProfile={signalMonitorProfile}
-            signalMonitorPending={evaluateSignalMonitorMutation.isPending}
             onSignalAction={handleSignalAction}
-            onScanNow={() => runSignalMonitorEvaluation("incremental")}
+            onScanNow={handleRunSignalMonitorNow}
             onToggleMonitor={handleToggleSignalMonitor}
             onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
           />
         );
       case "flow":
-        return (
-          <FlowScreen
-            session={session}
-            symbols={watchlistSymbols}
-            onJumpToTrade={handleJumpToTradeFromFlow}
-          />
-        );
       case "unusual":
         return (
-          <UnusualFlowScreen
+          <MemoFlowScreen
             session={session}
             symbols={watchlistSymbols}
+            isVisible={flowScreenActive}
             onJumpToTrade={handleJumpToTradeFromFlow}
           />
         );
       case "trade":
         return (
-          <TradeScreen
+          <MemoTradeScreen
             sym={sym}
             symPing={tradeSymPing}
             session={session}
@@ -16978,60 +19043,58 @@ export default function RayAlgoPlatform() {
             accountId={primaryAccountId}
             brokerConfigured={brokerConfigured}
             brokerAuthenticated={brokerAuthenticated}
+            isVisible={screen === "trade"}
           />
         );
       case "account":
         return (
-          <Suspense fallback={null}>
-            <AccountScreen
-              accounts={accounts}
-              selectedAccountId={primaryAccountId}
-              onSelectTradingAccount={setSelectedAccountId}
-              environment={environment}
-              brokerConfigured={brokerConfigured}
-              brokerAuthenticated={brokerAuthenticated}
-              onJumpToTrade={(symbol) => {
-                handleSelectSymbol(symbol);
-                setScreen("trade");
-              }}
-            />
-          </Suspense>
+          <MemoAccountScreen
+            accounts={accounts}
+            selectedAccountId={primaryAccountId}
+            onSelectTradingAccount={setSelectedAccountId}
+            environment={environment}
+            brokerConfigured={brokerConfigured}
+            brokerAuthenticated={brokerAuthenticated}
+            isVisible={screen === "account"}
+            onJumpToTrade={handleAccountJumpToTrade}
+          />
         );
       case "research":
-        return <ResearchScreen onJumpToTrade={handleJumpToTradeFromResearch} />;
+        return (
+          <MemoResearchScreen
+            isVisible={screen === "research"}
+            onJumpToTrade={handleJumpToTradeFromResearch}
+          />
+        );
       case "algo":
         return (
-          <AlgoScreen
+          <MemoAlgoScreen
             session={session}
             environment={environment}
             accounts={accounts}
             selectedAccountId={primaryAccountId}
+            isVisible={screen === "algo"}
           />
         );
       case "backtest":
         return (
-          <BacktestScreen
+          <MemoBacktestScreen
             watchlists={watchlistsQuery.data?.watchlists || []}
             defaultWatchlistId={defaultWatchlist?.id || null}
+            isVisible={screen === "backtest"}
           />
         );
       default:
         return (
-          <MarketScreen
+          <MemoMarketScreen
             sym={sym}
             onSymClick={handleSelectSymbol}
             symbols={watchlistSymbols}
-            researchConfigured={Boolean(
-              sessionQuery.data?.configured?.research,
-            )}
+            isVisible={marketScreenActive}
+            researchConfigured={researchConfigured}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-            marketNotifications={marketAlertItems}
-            signalEvents={signalMonitorEvents}
-            signalStates={signalMonitorStates}
-            signalMonitorProfile={signalMonitorProfile}
-            signalMonitorPending={evaluateSignalMonitorMutation.isPending}
             onSignalAction={handleSignalAction}
-            onScanNow={() => runSignalMonitorEvaluation("incremental")}
+            onScanNow={handleRunSignalMonitorNow}
             onToggleMonitor={handleToggleSignalMonitor}
             onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
           />
@@ -17055,10 +19118,19 @@ export default function RayAlgoPlatform() {
           activeWatchlistItems={activeWatchlist?.items}
           quoteSymbols={quoteSymbols}
           sparklineSymbols={sparklineSymbols}
-          streamedMarketSymbols={streamedMarketSymbols}
+          streamedQuoteSymbols={streamedQuoteSymbols}
+          streamedAggregateSymbols={streamedAggregateSymbols}
           marketStockAggregateStreamingEnabled={marketStockAggregateStreamingEnabled}
-          lowPriorityHistoryEnabled={sessionMetadataSettled}
+          marketScreenActive={marketScreenActive}
+          lowPriorityHistoryEnabled={
+            sessionMetadataSettled && screenWarmupPhase !== "initial"
+          }
         >
+          <SharedMarketFlowRuntime
+            symbols={watchlistSymbols}
+            enabled={sessionMetadataSettled}
+            intervalMs={marketScreenActive || flowScreenActive ? 10_000 : 30_000}
+          />
           <div
             style={{
               height: "100vh",
@@ -17071,7 +19143,9 @@ export default function RayAlgoPlatform() {
           >
             <style>{FONT_CSS}</style>
             <ToastStack toasts={toasts} onDismiss={dismissToast} />
-            {latencyDebugEnabled && <LatencyDebugStrip />}
+            {latencyDebugEnabled && (
+              <LatencyDebugStrip screen={screen} mountedScreens={mountedScreens} />
+            )}
 
             {/* ══════ TOP ANCHOR BAR ══════ */}
             <div
@@ -17175,11 +19249,10 @@ export default function RayAlgoPlatform() {
 
                 <span style={{ flex: 1, minWidth: 0 }} />
 
-                <HeaderStatusCluster
+                <MemoHeaderStatusCluster
                   session={session}
                   environment={environment}
                   bridgeTone={bridgeTone}
-                  marketClock={marketClock}
                   theme={theme}
                   onToggleTheme={toggleTheme}
                 />
@@ -17196,7 +19269,7 @@ export default function RayAlgoPlatform() {
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <HeaderKpiStripContainer
+                  <MemoHeaderKpiStripContainer
                     onSelect={handleSelectSymbol}
                   />
                 </div>
@@ -17270,7 +19343,7 @@ export default function RayAlgoPlatform() {
                     >
                       ◂
                     </button>
-                    <WatchlistContainer
+                    <MemoWatchlistContainer
                       watchlists={watchlistsQuery.data?.watchlists || []}
                       activeWatchlist={activeWatchlist}
                       watchlistSymbols={watchlistSymbols}
@@ -17285,7 +19358,6 @@ export default function RayAlgoPlatform() {
                       onMoveSymbol={handleMoveSymbolInWatchlist}
                       onRemoveSymbol={handleRemoveSymbolFromWatchlist}
                       onSignalAction={handleSignalAction}
-                      signalStatesBySymbol={signalStatesBySymbol}
                       busy={
                         createWatchlistMutation.isPending ||
                         updateWatchlistMutation.isPending ||
@@ -17308,7 +19380,21 @@ export default function RayAlgoPlatform() {
                   flexDirection: "column",
                 }}
               >
-                {renderScreen()}
+                {SCREENS.map(({ id }) =>
+                  mountedScreens[id] ? (
+                    <div
+                      key={id}
+                      aria-hidden={screen !== id}
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        display: screen === id ? "flex" : "none",
+                      }}
+                    >
+                      {renderScreenById(id)}
+                    </div>
+                  ) : null,
+                )}
               </div>
             </div>
 
@@ -17384,6 +19470,7 @@ export default function RayAlgoPlatform() {
               <span style={{ flex: 1 }} />
               <span style={{ color: T.textMuted }}>v0.1.0</span>
             </div>
+            <BloombergLiveDock />
           </div>
         </MarketDataSubscriptionProvider>
         </AccountSelectionContext.Provider>

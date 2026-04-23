@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, type ComponentType } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
 
@@ -12,6 +12,15 @@ const ChartParityLab = lazy(async () => {
   const mod = await import("../features/charting");
 
   return { default: mod.ChartParityLab };
+});
+
+const TickerSearchLab = lazy(async () => {
+  // @ts-expect-error legacy JSX module has no declaration file in this TS config
+  const mod = (await import("../RayAlgoPlatform.jsx")) as {
+    TickerSearchLab: ComponentType;
+  };
+
+  return { default: mod.TickerSearchLab };
 });
 
 const resolveLabMode = (): string | null => {
@@ -28,7 +37,13 @@ function App() {
   return (
     <AppProviders>
       <Suspense fallback={null}>
-        {labMode === "chart-parity" ? <ChartParityLab /> : <RayAlgoApp />}
+        {labMode === "chart-parity" ? (
+          <ChartParityLab />
+        ) : labMode === "ticker-search" ? (
+          <TickerSearchLab />
+        ) : (
+          <RayAlgoApp />
+        )}
       </Suspense>
     </AppProviders>
   );

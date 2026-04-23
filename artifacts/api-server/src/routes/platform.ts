@@ -7,11 +7,14 @@ import {
   GetNewsResponse,
   GetOptionChainQueryParams,
   GetOptionChainResponse,
+  GetOptionExpirationsQueryParams,
+  GetOptionExpirationsResponse,
   GetQuoteSnapshotsQueryParams,
   GetQuoteSnapshotsResponse,
   SearchUniverseTickersQueryParams,
   SearchUniverseTickersResponse,
   GetSessionResponse,
+  GetFlexHealthResponse,
   ListAccountsQueryParams,
   ListAccountsResponse,
   ListBrokerConnectionsResponse,
@@ -29,10 +32,11 @@ import {
   cancelOrder,
   createWatchlist,
   deleteWatchlist,
-  getBars,
+  getBarsWithDebug,
   getMarketDepth,
   getNews,
-  getOptionChain,
+  getOptionChainWithDebug,
+  getOptionExpirationsWithDebug,
   getQuoteSnapshots,
   getSession,
   listAccounts,
@@ -57,12 +61,16 @@ import {
   fetchExecutionSnapshotPayload,
   fetchMarketDepthSnapshotPayload,
   fetchOptionChainSnapshotPayload,
+  fetchHistoricalBarSnapshotPayload,
+  fetchOptionQuoteSnapshotPayload,
   fetchOrderSnapshotPayload,
   fetchQuoteSnapshotPayload,
   subscribeAccountSnapshots,
   subscribeExecutionSnapshots,
   subscribeMarketDepthSnapshots,
   subscribeOptionChains,
+  subscribeHistoricalBarSnapshots,
+  subscribeOptionQuoteSnapshots,
   subscribeOrderSnapshots,
   subscribeQuoteSnapshots,
 } from "../services/bridge-streams";
@@ -119,6 +127,32 @@ function readOptionalString(value: unknown, maxLength = 160): string | undefined
     return undefined;
   }
   return trimmed.slice(0, maxLength);
+}
+
+function setRequestDebugHeaders(
+  res: Response,
+  debug:
+    | {
+        cacheStatus: "hit" | "miss" | "inflight";
+        totalMs: number;
+        upstreamMs: number | null;
+        gapFilled?: boolean;
+      }
+    | undefined,
+): void {
+  if (!debug) {
+    return;
+  }
+
+  res.setHeader("X-RayAlgo-Cache-Status", debug.cacheStatus);
+  res.setHeader("X-RayAlgo-Request-Ms", String(debug.totalMs));
+
+  if (debug.upstreamMs != null) {
+    res.setHeader("X-RayAlgo-Upstream-Ms", String(debug.upstreamMs));
+  }
+  if (typeof debug.gapFilled === "boolean") {
+    res.setHeader("X-RayAlgo-Gap-Filled", debug.gapFilled ? "1" : "0");
+  }
 }
 
 function parseWatchlistSymbolBody(body: unknown) {
@@ -382,7 +416,7 @@ router.get("/accounts", async (req, res) => {
 });
 
 router.get("/accounts/flex/health", async (_req, res) => {
-  res.json(await getFlexHealth());
+  res.json(GetFlexHealthResponse.parse(await getFlexHealth()));
 });
 
 router.post("/accounts/flex/test", async (_req, res) => {
@@ -663,7 +697,9 @@ router.get("/bars", async (req, res) => {
       ["outsideRth", "allowHistoricalSynthesis"],
     ),
   );
-  const data = GetBarsResponse.parse(await getBars(query));
+  const raw = await getBarsWithDebug(query);
+  setRequestDebugHeaders(res, raw.debug);
+  const data = GetBarsResponse.parse(raw);
 
   res.json(data);
 });
@@ -672,7 +708,20 @@ router.get("/options/chains", async (req, res) => {
   const query = GetOptionChainQueryParams.parse(
     coerceDateQueryFields(req.query as Record<string, unknown>, ["expirationDate"]),
   );
-  const data = GetOptionChainResponse.parse(await getOptionChain(query));
+  const raw = await getOptionChainWithDebug(query);
+  setRequestDebugHeaders(res, raw.debug);
+  const data = GetOptionChainResponse.parse(raw);
+
+  res.json(data);
+});
+
+router.get("/options/expirations", async (req, res) => {
+  const query = GetOptionExpirationsQueryParams.parse(
+    req.query as Record<string, unknown>,
+  );
+  const raw = await getOptionExpirationsWithDebug(query);
+  setRequestDebugHeaders(res, raw.debug);
+  const data = GetOptionExpirationsResponse.parse(raw);
 
   res.json(data);
 });
@@ -788,6 +837,188 @@ router.get("/streams/options/chains", async (req, res) => {
     return subscribeOptionChains(underlyings, (payload) => {
       writeEvent("chains", payload);
     });
+  });
+});
+
+router.get("/streams/options/quotes", async (req, res) => {
+  const rawProviderContractIds = Array.isArray(req.query.contracts)
+    ? req.query.contracts.join(",")
+    : typeof req.query.contracts === "string"
+      ? req.query.contracts
+      : Array.isArray(req.query.providerContractIds)
+        ? req.query.providerContractIds.join(",")
+        : typeof req.query.providerContractIds === "string"
+          ? req.query.providerContractIds
+          : "";
+  const providerContractIds = Array.from(
+    new Set(
+      rawProviderContractIds
+        .split(",")
+        .map((providerContractId) => providerContractId.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!providerContractIds.length) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/invalid-request",
+      title: "Missing contracts",
+      status: 400,
+      detail: "Provide one or more comma-separated option provider contract ids in the contracts query parameter.",
+    });
+    return;
+  }
+
+  const underlying =
+    typeof req.query.underlying === "string" && req.query.underlying.trim()
+      ? req.query.underlying.trim().toUpperCase()
+      : null;
+
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent(
+      "quotes",
+      await fetchOptionQuoteSnapshotPayload({
+        underlying,
+        providerContractIds,
+      }),
+    );
+    await writeEvent("ready", {
+      underlying,
+      providerContractIds,
+      source: "ibkr-bridge",
+    });
+
+    return subscribeOptionQuoteSnapshots(
+      {
+        underlying,
+        providerContractIds,
+      },
+      (payload) => {
+        writeEvent("quotes", payload);
+      },
+    );
+  });
+});
+
+router.get("/streams/bars", async (req, res) => {
+  const symbol =
+    typeof req.query.symbol === "string" && req.query.symbol.trim()
+      ? req.query.symbol.trim().toUpperCase()
+      : "";
+  const timeframe =
+    typeof req.query.timeframe === "string" ? req.query.timeframe : "";
+
+  if (!symbol || !["1m", "5m", "15m", "1h", "1d"].includes(timeframe)) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/invalid-request",
+      title: "Missing bar stream input",
+      status: 400,
+      detail: "Provide symbol and timeframe query parameters for the historical bar stream.",
+    });
+    return;
+  }
+
+  const providerContractId =
+    typeof req.query.providerContractId === "string" &&
+    req.query.providerContractId.trim()
+      ? req.query.providerContractId.trim()
+      : null;
+
+  await startSse(req, res, async ({ writeEvent }) => {
+    let lastBarSignature: string | null = null;
+    const buildBarSignature = (
+      bar: {
+        timestamp: Date | string;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+      } | null,
+    ): string | null => {
+      if (!bar) {
+        return null;
+      }
+
+      const timestamp =
+        bar.timestamp instanceof Date ? bar.timestamp.toISOString() : String(bar.timestamp);
+      return JSON.stringify({
+        timestamp,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+      });
+    };
+    const writeBarPayload = async (payload: Awaited<
+      ReturnType<typeof fetchHistoricalBarSnapshotPayload>
+    >) => {
+      const signature = buildBarSignature(payload.bar);
+      if (!payload.bar || !signature || signature === lastBarSignature) {
+        return;
+      }
+
+      lastBarSignature = signature;
+      await writeEvent("bar", payload);
+    };
+
+    await writeBarPayload(
+      await fetchHistoricalBarSnapshotPayload({
+        symbol,
+        timeframe: timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
+        assetClass:
+          req.query.assetClass === "option"
+            ? "option"
+            : req.query.assetClass === "equity"
+              ? "equity"
+              : undefined,
+        providerContractId,
+        outsideRth:
+          typeof req.query.outsideRth === "string"
+            ? req.query.outsideRth === "true"
+            : undefined,
+        source:
+          req.query.source === "midpoint" || req.query.source === "bid_ask"
+            ? req.query.source
+            : req.query.source === "trades"
+              ? "trades"
+              : undefined,
+      }),
+    );
+    await writeEvent("ready", {
+      symbol,
+      timeframe,
+      providerContractId,
+      source: "ibkr-bridge",
+    });
+
+    return subscribeHistoricalBarSnapshots(
+      {
+        symbol,
+        timeframe: timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
+        assetClass:
+          req.query.assetClass === "option"
+            ? "option"
+            : req.query.assetClass === "equity"
+              ? "equity"
+              : undefined,
+        providerContractId,
+        outsideRth:
+          typeof req.query.outsideRth === "string"
+            ? req.query.outsideRth === "true"
+            : undefined,
+        source:
+          req.query.source === "midpoint" || req.query.source === "bid_ask"
+            ? req.query.source
+            : req.query.source === "trades"
+              ? "trades"
+              : undefined,
+      },
+      (payload) => {
+        void writeBarPayload(payload);
+      },
+    );
   });
 });
 

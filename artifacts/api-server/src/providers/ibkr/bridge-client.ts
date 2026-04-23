@@ -55,6 +55,12 @@ type QuoteStreamPayload = {
   quotes?: Array<Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }>;
 };
 
+type OptionQuoteStreamPayload = QuoteStreamPayload;
+
+type BarStreamPayload = {
+  bar?: Omit<BrokerBarSnapshot, "timestamp"> & { timestamp: string | Date } | null;
+};
+
 type SseMessage = {
   event: string;
   data: string;
@@ -506,6 +512,30 @@ export class IbkrBridgeClient {
     return payload.quotes.map(hydrateQuote);
   }
 
+  async getOptionQuoteSnapshots(input: {
+    underlying?: string | null;
+    providerContractIds: string[];
+  }): Promise<QuoteSnapshot[]> {
+    const normalizedProviderContractIds = Array.from(
+      new Set(
+        input.providerContractIds
+          .map((providerContractId) => providerContractId.trim())
+          .filter(Boolean),
+      ),
+    );
+    if (normalizedProviderContractIds.length === 0) {
+      return [];
+    }
+
+    const payload = await this.request<{
+      quotes: Array<Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }>;
+    }>("/options/quotes", {}, {
+      underlying: input.underlying ?? undefined,
+      contracts: normalizedProviderContractIds.join(","),
+    });
+    return payload.quotes.map(hydrateQuote);
+  }
+
   async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
     const normalizedSymbols = Array.from(
       new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean)),
@@ -607,6 +637,250 @@ export class IbkrBridgeClient {
         response.on("end", () => {
           if (!stopped) {
             onError?.(new Error("IBKR bridge quote stream ended."));
+          }
+        });
+      },
+    );
+
+    request.on("error", (error) => {
+      if (!stopped) {
+        onError?.(error);
+      }
+    });
+
+    request.end();
+
+    return () => {
+      stopped = true;
+      request.destroy();
+    };
+  }
+
+  streamOptionQuoteSnapshots(
+    input: {
+      underlying?: string | null;
+      providerContractIds: string[];
+    },
+    onQuotes: (quotes: QuoteSnapshot[]) => void,
+    onError?: (error: unknown) => void,
+  ): () => void {
+    const normalizedProviderContractIds = Array.from(
+      new Set(
+        input.providerContractIds
+          .map((providerContractId) => providerContractId.trim())
+          .filter(Boolean),
+      ),
+    );
+    const url = this.buildUrl("/streams/options/quotes", {
+      underlying: input.underlying ?? undefined,
+      contracts: normalizedProviderContractIds.join(","),
+    });
+    const requestId = randomUUID();
+    const client = url.protocol === "https:" ? https : http;
+    const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+    let stopped = false;
+    let buffer = "";
+
+    const request = client.request(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Accept: "text/event-stream",
+        },
+        agent,
+      },
+      (response) => {
+        if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on("end", () => {
+            if (stopped) {
+              return;
+            }
+
+            onError?.(new HttpError(
+              response.statusCode ?? 502,
+              `IBKR bridge option quote stream failed with HTTP ${response.statusCode ?? 0}.`,
+              {
+                code: "ibkr_bridge_option_stream_failed",
+                detail: Buffer.concat(chunks).toString("utf8"),
+              },
+            ));
+          });
+          return;
+        }
+
+        logger.info(
+          {
+            requestId,
+            providerContractIds: normalizedProviderContractIds,
+            reusedSocket: request.reusedSocket,
+          },
+          "IBKR bridge option quote stream connected",
+        );
+
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          if (stopped) {
+            return;
+          }
+
+          buffer += chunk;
+          let boundary = findSseBoundary(buffer);
+          while (boundary) {
+            const rawBlock = buffer.slice(0, boundary.index);
+            buffer = buffer.slice(boundary.index + boundary.length);
+            const message = parseSseBlock(rawBlock);
+
+            if (message?.event === "quotes") {
+              try {
+                const payload = JSON.parse(message.data) as OptionQuoteStreamPayload;
+                const quotes = (payload.quotes ?? []).map(hydrateQuote);
+                if (quotes.length) {
+                  onQuotes(quotes);
+                }
+              } catch (error) {
+                logger.warn(
+                  { err: error },
+                  "IBKR bridge option quote stream payload parse failed",
+                );
+              }
+            }
+
+            boundary = findSseBoundary(buffer);
+          }
+        });
+        response.on("end", () => {
+          if (!stopped) {
+            onError?.(new Error("IBKR bridge option quote stream ended."));
+          }
+        });
+      },
+    );
+
+    request.on("error", (error) => {
+      if (!stopped) {
+        onError?.(error);
+      }
+    });
+
+    request.end();
+
+    return () => {
+      stopped = true;
+      request.destroy();
+    };
+  }
+
+  streamHistoricalBars(
+    input: {
+      symbol: string;
+      timeframe: HistoryBarTimeframe;
+      assetClass?: "equity" | "option";
+      providerContractId?: string | null;
+      outsideRth?: boolean;
+      source?: HistoryDataSource;
+    },
+    onBar: (bar: BrokerBarSnapshot) => void,
+    onError?: (error: unknown) => void,
+  ): () => void {
+    const url = this.buildUrl("/streams/bars", {
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      assetClass: input.assetClass,
+      providerContractId: input.providerContractId,
+      outsideRth:
+        typeof input.outsideRth === "boolean" ? String(input.outsideRth) : undefined,
+      source: input.source,
+    });
+    const requestId = randomUUID();
+    const client = url.protocol === "https:" ? https : http;
+    const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+    let stopped = false;
+    let buffer = "";
+
+    const request = client.request(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Accept: "text/event-stream",
+        },
+        agent,
+      },
+      (response) => {
+        if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on("end", () => {
+            if (stopped) {
+              return;
+            }
+
+            onError?.(new HttpError(
+              response.statusCode ?? 502,
+              `IBKR bridge bar stream failed with HTTP ${response.statusCode ?? 0}.`,
+              {
+                code: "ibkr_bridge_bar_stream_failed",
+                detail: Buffer.concat(chunks).toString("utf8"),
+              },
+            ));
+          });
+          return;
+        }
+
+        logger.info(
+          {
+            requestId,
+            symbol: input.symbol,
+            timeframe: input.timeframe,
+            providerContractId: input.providerContractId ?? null,
+            reusedSocket: request.reusedSocket,
+          },
+          "IBKR bridge historical bar stream connected",
+        );
+
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          if (stopped) {
+            return;
+          }
+
+          buffer += chunk;
+          let boundary = findSseBoundary(buffer);
+          while (boundary) {
+            const rawBlock = buffer.slice(0, boundary.index);
+            buffer = buffer.slice(boundary.index + boundary.length);
+            const message = parseSseBlock(rawBlock);
+
+            if (message?.event === "bar") {
+              try {
+                const payload = JSON.parse(message.data) as BarStreamPayload;
+                if (payload.bar) {
+                  onBar({
+                    ...payload.bar,
+                    timestamp:
+                      payload.bar.timestamp instanceof Date
+                        ? payload.bar.timestamp
+                        : new Date(payload.bar.timestamp),
+                  });
+                }
+              } catch (error) {
+                logger.warn({ err: error }, "IBKR bridge bar stream payload parse failed");
+              }
+            }
+
+            boundary = findSseBoundary(buffer);
+          }
+        });
+        response.on("end", () => {
+          if (!stopped) {
+            onError?.(new Error("IBKR bridge bar stream ended."));
           }
         });
       },

@@ -21,6 +21,7 @@ import {
   fetchTranscriptList,
 } from "./lib/researchApi";
 import { useIbkrQuoteSnapshotStream } from "../platform/live-streams";
+import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import * as d3 from "d3";
 import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis, LabelList } from "recharts";
 
@@ -4200,7 +4201,10 @@ function ResearchLoadingState({ theme }) {
   );
 }
 
-export default function PhotonicsObservatory({ onJumpToTrade }) {
+export default function PhotonicsObservatory({
+  onJumpToTrade,
+  isVisible = false,
+}) {
   const [themeId, setThemeId] = useState("ai");
   const {
     data: researchData,
@@ -4223,6 +4227,18 @@ export default function PhotonicsObservatory({ onJumpToTrade }) {
   const [showSettings, setShowSettings] = useState(false);
   const graphRef = useRef();
   const detailRef = useRef();
+  useRuntimeWorkloadFlag("research:stream", isVisible, {
+    kind: "stream",
+    label: "Research live quotes",
+    detail: "theme",
+    priority: 5,
+  });
+  useRuntimeWorkloadFlag("research:refresh", isVisible, {
+    kind: "poll",
+    label: "Research refresh",
+    detail: "300s",
+    priority: 7,
+  });
 
   if (researchDataReady) {
     applyResearchRuntimeData(researchData);
@@ -4320,7 +4336,9 @@ export default function PhotonicsObservatory({ onJumpToTrade }) {
   }, []);
   useIbkrQuoteSnapshotStream({
     symbols: streamedThemeTickers,
-    enabled: Boolean(apiKey && researchDataReady && streamedThemeTickers.length),
+    enabled: Boolean(
+      isVisible && apiKey && researchDataReady && streamedThemeTickers.length,
+    ),
     onQuotes: handleStreamedQuotes,
   });
 
@@ -4423,12 +4441,12 @@ export default function PhotonicsObservatory({ onJumpToTrade }) {
   }, [apiKey, refreshData, researchDataReady]);
 
   useEffect(() => {
-    if (!apiKey || !researchDataReady) return undefined;
+    if (!isVisible || !apiKey || !researchDataReady) return undefined;
     const timer = window.setInterval(() => {
       void refreshData(true);
     }, 300_000);
     return () => window.clearInterval(timer);
-  }, [apiKey, refreshData, researchDataReady]);
+  }, [apiKey, isVisible, refreshData, researchDataReady]);
 
   useEffect(() => {
     if (!researchMetaReady || !researchDataReady) return undefined;

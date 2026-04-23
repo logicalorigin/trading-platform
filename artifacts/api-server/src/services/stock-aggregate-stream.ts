@@ -47,10 +47,12 @@ type MinuteAccumulator = {
 
 const subscribers = new Map<number, Subscriber>();
 const accumulators = new Map<string, MinuteAccumulator>();
+const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 
 let nextSubscriberId = 1;
 let quoteUnsubscribe: (() => void) | null = null;
 let quoteSubscriptionSignature = "";
+let refreshTimer: NodeJS.Timeout | null = null;
 
 function getDesiredSymbols(): string[] {
   return Array.from(
@@ -179,7 +181,17 @@ function handleQuoteSnapshot(payload: BridgeQuoteSnapshotPayload) {
   });
 }
 
+function clearRefreshTimer() {
+  if (!refreshTimer) {
+    return;
+  }
+
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
+}
+
 function refreshQuoteSubscription() {
+  clearRefreshTimer();
   const symbols = getDesiredSymbols();
   const nextSignature = symbols.join(",");
 
@@ -196,6 +208,17 @@ function refreshQuoteSubscription() {
   }
 
   quoteUnsubscribe = subscribeBridgeQuoteSnapshots(symbols, handleQuoteSnapshot);
+}
+
+function scheduleRefreshQuoteSubscription(
+  delayMs = STREAM_RECONFIGURE_DEBOUNCE_MS,
+) {
+  clearRefreshTimer();
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshQuoteSubscription();
+  }, Math.max(0, delayMs));
+  refreshTimer.unref?.();
 }
 
 export function isStockAggregateStreamingAvailable(): boolean {
@@ -217,10 +240,10 @@ export function subscribeStockMinuteAggregates(
     symbols: normalizedSymbols,
     onAggregate,
   });
-  refreshQuoteSubscription();
+  scheduleRefreshQuoteSubscription();
 
   return () => {
     subscribers.delete(subscriberId);
-    refreshQuoteSubscription();
+    scheduleRefreshQuoteSubscription();
   };
 }

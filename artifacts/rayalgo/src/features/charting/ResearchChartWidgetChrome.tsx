@@ -534,7 +534,7 @@ const SettingsMenu = ({
         }
       >
         <DropdownMenuRadioItem value="linear" style={menuItemStyle(theme)}>
-          Auto / Linear
+          Linear
         </DropdownMenuRadioItem>
         <DropdownMenuRadioItem value="log" style={menuItemStyle(theme)}>
           Log
@@ -1182,7 +1182,11 @@ export const ResearchChartWidgetFooter = ({
           <span>Pan: drag</span>
         )}
         <span>Zoom: scroll</span>
-        <span>{dense ? "Scale: A/L/%" : "A / L / % / 100 = price scale"}</span>
+        <span>
+          {dense
+            ? "Scale: Ln/L/%/100 · A auto"
+            : "Ln / L / % / 100 = price mode · A = auto-scale"}
+        </span>
         <div style={{ flex: 1 }} />
         {statusText ? <span>{statusText}</span> : null}
       </div>
@@ -1200,7 +1204,7 @@ export const ResearchChartWidgetFooter = ({
           padding: dense ? 1 : 2,
           fontFamily: theme.mono,
           fontSize: dense ? 8 : 10,
-          zIndex: 5,
+          zIndex: 30,
           pointerEvents: "auto",
           boxShadow: palette.shadow,
         }}
@@ -1208,12 +1212,9 @@ export const ResearchChartWidgetFooter = ({
         {[
           {
             key: "linear",
-            label: "A",
-            title: "Auto / linear scale",
-            onClick: () => {
-              controls.setScaleMode("linear");
-              controls.setAutoScale(true);
-            },
+            label: dense ? "Ln" : "Lin",
+            title: "Linear scale",
+            onClick: () => controls.setScaleMode("linear"),
           },
           {
             key: "log",
@@ -1246,7 +1247,13 @@ export const ResearchChartWidgetFooter = ({
               title={mode.title}
               style={{
                 width:
-                  mode.key === "indexed" ? (dense ? 24 : 28) : dense ? 16 : 20,
+                  mode.key === "indexed" || mode.key === "linear"
+                    ? dense
+                      ? 24
+                      : 28
+                    : dense
+                      ? 16
+                      : 20,
                 height: dense ? 16 : 20,
                 background: active ? theme.accent || theme.text : "transparent",
                 color: active ? "#fff" : theme.textDim || theme.textMuted,
@@ -1272,6 +1279,29 @@ export const ResearchChartWidgetFooter = ({
             margin: "0 2px",
           }}
         />
+
+        <button
+          type="button"
+          onClick={() => controls.setAutoScale((value) => !value)}
+          title="Auto-scale main price pane"
+          style={{
+            width: dense ? 16 : 20,
+            height: dense ? 16 : 20,
+            background: controls.autoScale
+              ? theme.accent || theme.text
+              : "transparent",
+            color: controls.autoScale ? "#fff" : theme.textDim || theme.textMuted,
+            border: "none",
+            borderRadius: 0,
+            cursor: "pointer",
+            fontFamily: theme.mono,
+            fontSize: dense ? 8 : 10,
+            fontWeight: 700,
+            padding: 0,
+          }}
+        >
+          A
+        </button>
 
         <button
           type="button"

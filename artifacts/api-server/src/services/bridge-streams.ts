@@ -1,11 +1,16 @@
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
+import type {
+  HistoryBarTimeframe,
+  HistoryDataSource,
+} from "../providers/ibkr/client";
 import {
   fetchBridgeQuoteSnapshots,
   subscribeBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
 import { recordAccountSnapshots } from "./account";
+import { getOptionChain } from "./platform";
 
 const bridgeClient = new IbkrBridgeClient();
 
@@ -74,52 +79,24 @@ type OptionChainSnapshotPayload = {
   }>;
 };
 
-const OPTION_CHAIN_STREAM_CACHE_TTL_MS = 15_000;
-const optionChainStreamCache = new Map<
-  string,
-  { value: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>; expiresAt: number }
->();
-const optionChainStreamInFlight = new Map<
-  string,
-  Promise<Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>>
->();
+type OptionQuoteSnapshotPayload = {
+  underlying: string | null;
+  quotes: Array<
+    Awaited<ReturnType<IbkrBridgeClient["getOptionQuoteSnapshots"]>>[number] & {
+      source: "ibkr";
+    }
+  >;
+};
 
-async function fetchCachedOptionChain(
-  underlying: string,
-): Promise<Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>> {
-  const key = normalizeSymbol(underlying);
-  const now = Date.now();
-  const cached = optionChainStreamCache.get(key);
-
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-  if (cached) {
-    optionChainStreamCache.delete(key);
-  }
-
-  const inFlight = optionChainStreamInFlight.get(key);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const promise = bridgeClient.getOptionChain({
-    underlying: key,
-    maxExpirations: 1,
-    strikesAroundMoney: 6,
-  }).then((value) => {
-    optionChainStreamCache.set(key, {
-      value,
-      expiresAt: Date.now() + OPTION_CHAIN_STREAM_CACHE_TTL_MS,
-    });
-    return value;
-  }).finally(() => {
-    optionChainStreamInFlight.delete(key);
-  });
-
-  optionChainStreamInFlight.set(key, promise);
-  return promise;
-}
+type HistoricalBarSnapshotPayload = {
+  symbol: string;
+  timeframe: HistoryBarTimeframe;
+  bar:
+    | (Awaited<ReturnType<IbkrBridgeClient["getHistoricalBars"]>>[number] & {
+        source: string;
+      })
+    | null;
+};
 
 export async function fetchQuoteSnapshotPayload(symbols: string[]): Promise<{
   quotes: Array<
@@ -144,10 +121,76 @@ export async function fetchOptionChainSnapshotPayload(
     underlyings: await Promise.all(
       normalizedUnderlyings.map(async (underlying) => ({
         underlying,
-        contracts: await fetchCachedOptionChain(underlying),
+        contracts: (await getOptionChain({ underlying })).contracts,
         updatedAt: new Date().toISOString(),
       })),
     ),
+  };
+}
+
+function normalizeProviderContractIds(providerContractIds: string[]): string[] {
+  return Array.from(
+    new Set(
+      providerContractIds
+        .map((providerContractId) => providerContractId.trim())
+        .filter(Boolean),
+    ),
+  ).sort();
+}
+
+export async function fetchOptionQuoteSnapshotPayload(input: {
+  underlying?: string | null;
+  providerContractIds: string[];
+}): Promise<OptionQuoteSnapshotPayload> {
+  const normalizedProviderContractIds = normalizeProviderContractIds(
+    input.providerContractIds,
+  );
+
+  return {
+    underlying:
+      typeof input.underlying === "string" && input.underlying.trim()
+        ? normalizeSymbol(input.underlying)
+        : null,
+    quotes: (
+      await bridgeClient.getOptionQuoteSnapshots({
+        underlying: input.underlying ?? undefined,
+        providerContractIds: normalizedProviderContractIds,
+      })
+    ).map((quote) => ({
+      ...quote,
+      source: "ibkr" as const,
+    })),
+  };
+}
+
+export async function fetchHistoricalBarSnapshotPayload(input: {
+  symbol: string;
+  timeframe: HistoryBarTimeframe;
+  assetClass?: "equity" | "option";
+  providerContractId?: string | null;
+  outsideRth?: boolean;
+  source?: HistoryDataSource;
+}): Promise<HistoricalBarSnapshotPayload> {
+  const bars = await bridgeClient.getHistoricalBars({
+    symbol: normalizeSymbol(input.symbol),
+    timeframe: input.timeframe,
+    limit: 1,
+    assetClass: input.assetClass,
+    providerContractId: input.providerContractId ?? null,
+    outsideRth: input.outsideRth,
+    source: input.source,
+  });
+
+  return {
+    symbol: normalizeSymbol(input.symbol),
+    timeframe: input.timeframe,
+    bar:
+      bars[bars.length - 1] != null
+        ? {
+            ...bars[bars.length - 1],
+            partial: true,
+          }
+        : null,
   };
 }
 
@@ -254,6 +297,135 @@ export function subscribeOptionChains(
       fetchOptionChainSnapshotPayload(normalizedUnderlyings),
     onSnapshot,
   });
+}
+
+export function subscribeOptionQuoteSnapshots(
+  input: {
+    underlying?: string | null;
+    providerContractIds: string[];
+  },
+  onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
+): Unsubscribe {
+  const normalizedProviderContractIds = normalizeProviderContractIds(
+    input.providerContractIds,
+  );
+
+  if (normalizedProviderContractIds.length === 0) {
+    return () => {};
+  }
+
+  let active = true;
+  let unsubscribe: Unsubscribe = () => {};
+  let reconnectTimer: NodeJS.Timeout | null = null;
+
+  const connect = () => {
+    unsubscribe = bridgeClient.streamOptionQuoteSnapshots(
+      {
+        underlying: input.underlying ?? undefined,
+        providerContractIds: normalizedProviderContractIds,
+      },
+      (quotes) => {
+        onSnapshot({
+          underlying:
+            typeof input.underlying === "string" && input.underlying.trim()
+              ? normalizeSymbol(input.underlying)
+              : null,
+          quotes: quotes.map((quote) => ({
+            ...quote,
+            source: "ibkr" as const,
+          })),
+        });
+      },
+      (error) => {
+        logger.warn({ err: error }, "Bridge option quote stream failed");
+        unsubscribe();
+        if (!active || reconnectTimer) {
+          return;
+        }
+
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (active) {
+            connect();
+          }
+        }, 1_000);
+        reconnectTimer.unref?.();
+      },
+    );
+  };
+
+  connect();
+
+  return () => {
+    active = false;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    unsubscribe();
+  };
+}
+
+export function subscribeHistoricalBarSnapshots(
+  input: {
+    symbol: string;
+    timeframe: HistoryBarTimeframe;
+    assetClass?: "equity" | "option";
+    providerContractId?: string | null;
+    outsideRth?: boolean;
+    source?: HistoryDataSource;
+  },
+  onSnapshot: (payload: HistoricalBarSnapshotPayload) => void,
+): Unsubscribe {
+  let active = true;
+  let unsubscribe: Unsubscribe = () => {};
+  let reconnectTimer: NodeJS.Timeout | null = null;
+
+  const connect = () => {
+    unsubscribe = bridgeClient.streamHistoricalBars(
+      {
+        symbol: normalizeSymbol(input.symbol),
+        timeframe: input.timeframe,
+        assetClass: input.assetClass,
+        providerContractId: input.providerContractId ?? null,
+        outsideRth: input.outsideRth,
+        source: input.source,
+      },
+      (bar) => {
+        onSnapshot({
+          symbol: normalizeSymbol(input.symbol),
+          timeframe: input.timeframe,
+          bar,
+        });
+      },
+      (error) => {
+        logger.warn({ err: error }, "Bridge historical bar stream failed");
+        unsubscribe();
+        if (!active || reconnectTimer) {
+          return;
+        }
+
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (active) {
+            connect();
+          }
+        }, 1_000);
+        reconnectTimer.unref?.();
+      },
+    );
+  };
+
+  connect();
+
+  return () => {
+    active = false;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    unsubscribe();
+  };
 }
 
 export function subscribeOrderSnapshots(

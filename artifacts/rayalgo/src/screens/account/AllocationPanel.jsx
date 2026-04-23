@@ -1,14 +1,5 @@
-import {
-  Bar,
-  BarChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-} from "recharts";
-import { T, dim, fs, sp } from "../../RayAlgoPlatform";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   EmptyState,
   Panel,
@@ -18,14 +9,53 @@ import {
   sectionTitleStyle,
 } from "./accountUtils";
 
-const COLORS = ["#22c55e", "#38bdf8", "#f97316", "#eab308", "#f43f5e", "#a78bfa", "#94a3b8"];
+const getColors = () => [T.blue, T.cyan, T.purple, T.amber, T.green, "#f43f5e", T.textDim];
+
+const DonutLegend = ({ data }) => (
+  <div style={{ display: "grid", gap: sp(5) }}>
+    {data.slice(0, 6).map((item, index) => (
+      <div
+        key={item.label}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto",
+          gap: sp(8),
+          color: T.textSec,
+          fontSize: fs(10),
+          fontFamily: T.sans,
+        }}
+      >
+        <span style={{ display: "flex", alignItems: "center", gap: sp(6), minWidth: 0 }}>
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 2,
+              background: getColors()[index % getColors().length],
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              color: T.textSec,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {item.label}
+          </span>
+        </span>
+        <span style={{ color: T.textDim }}>{formatPercent(item.weightPercent, 1)}</span>
+      </div>
+    ))}
+  </div>
+);
 
 const Donut = ({ title, data, currency }) => (
   <div style={{ minWidth: 0 }}>
-    <div style={{ ...sectionTitleStyle, fontSize: fs(10), marginBottom: sp(8) }}>
-      {title}
-    </div>
-    <div style={{ height: dim(170) }}>
+    <div style={{ ...sectionTitleStyle, fontSize: fs(9), marginBottom: sp(8) }}>{title}</div>
+    <div style={{ height: dim(168) }}>
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -40,17 +70,18 @@ const Donut = ({ title, data, currency }) => (
             isAnimationActive={false}
           >
             {data.map((entry, index) => (
-              <Cell key={entry.label} fill={COLORS[index % COLORS.length]} />
+              <Cell key={entry.label} fill={getColors()[index % getColors().length]} />
             ))}
           </Pie>
           <Tooltip
             formatter={(value, _name, item) => [
               formatMoney(value, currency, true),
-              `${item.payload.label} ${formatPercent(item.payload.weightPercent)}`,
+              `${item.payload.label} ${formatPercent(item.payload.weightPercent, 1)}`,
             ]}
             contentStyle={{
               background: T.bg0,
               border: `1px solid ${T.border}`,
+              borderRadius: dim(5),
               fontSize: fs(10),
               color: T.text,
             }}
@@ -58,55 +89,26 @@ const Donut = ({ title, data, currency }) => (
         </PieChart>
       </ResponsiveContainer>
     </div>
-    <div style={{ display: "grid", gap: 5 }}>
-      {data.slice(0, 5).map((item, index) => (
-        <div
-          key={item.label}
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: sp(8),
-            color: T.textSec,
-            fontSize: fs(10),
-            fontFamily: T.sans,
-          }}
-        >
-          <span>
-            <span
-              style={{
-                display: "inline-block",
-                width: 7,
-                height: 7,
-                background: COLORS[index % COLORS.length],
-                marginRight: 6,
-              }}
-            />
-            {item.label}
-          </span>
-          <span>{formatPercent(item.weightPercent)}</span>
-        </div>
-      ))}
-    </div>
+    <DonutLegend data={data} />
   </div>
 );
 
 export const AllocationPanel = ({ query, currency }) => {
   const exposure = query.data?.exposure;
-  const exposureData = exposure
-    ? [
-        { label: "Gross long", value: exposure.grossLong },
-        { label: "Gross short", value: exposure.grossShort },
-        { label: "Net", value: exposure.netExposure },
-      ]
-    : [];
+  const grossLong = exposure?.grossLong || 0;
+  const grossShort = exposure?.grossShort || 0;
+  const grossTotal = grossLong + grossShort;
+  const netExposure = exposure?.netExposure || 0;
 
   return (
     <Panel
-      title="Allocation"
-      subtitle="Asset class, sector, long/short exposure"
+      title="Allocation & Exposure"
+      subtitle="Asset class, sector, and gross exposure mix"
+      rightRail="Sectors via Polygon reference"
       loading={query.isLoading}
       error={query.error}
-      minHeight={300}
+      onRetry={query.refetch}
+      minHeight={340}
     >
       {!query.data?.assetClass?.length ? (
         <EmptyState
@@ -114,35 +116,82 @@ export const AllocationPanel = ({ query, currency }) => {
           body="Open positions and cash balances from the account stream will populate these allocation charts."
         />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(16) }}>
-          <Donut title="By Asset Class" data={query.data.assetClass} currency={currency} />
-          <Donut title="By Sector" data={query.data.sector || []} currency={currency} />
-          <div style={{ gridColumn: "1 / -1" }}>
-            <div style={{ ...mutedLabelStyle, marginBottom: sp(6) }}>
-              Long / short / net exposure
+        <div style={{ display: "grid", gap: sp(14) }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: sp(12),
+            }}
+          >
+            <Donut title="By Asset Class" data={query.data.assetClass} currency={currency} />
+            <Donut title="By Sector" data={query.data.sector || []} currency={currency} />
+          </div>
+
+          <div
+            style={{
+              borderTop: `1px solid ${T.border}`,
+              paddingTop: sp(8),
+              display: "grid",
+              gap: sp(8),
+            }}
+          >
+            <div style={mutedLabelStyle}>Long / Short / Net</div>
+            <div
+              style={{
+                height: dim(18),
+                borderRadius: dim(4),
+                overflow: "hidden",
+                display: "flex",
+                background: T.bg3,
+              }}
+            >
+              <div
+                style={{
+                  width: grossTotal ? `${(grossLong / grossTotal) * 100}%` : "50%",
+                  background: T.green,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#ffffff",
+                  fontSize: fs(9),
+                  fontFamily: T.mono,
+                  fontWeight: 800,
+                }}
+              >
+                L {formatMoney(grossLong, currency, true)}
+              </div>
+              <div
+                style={{
+                  width: grossTotal ? `${(grossShort / grossTotal) * 100}%` : "50%",
+                  background: T.red,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#ffffff",
+                  fontSize: fs(9),
+                  fontFamily: T.mono,
+                  fontWeight: 800,
+                }}
+              >
+                S {formatMoney(grossShort, currency, true)}
+              </div>
             </div>
-            <div style={{ height: dim(92) }}>
-              <ResponsiveContainer>
-                <BarChart data={exposureData} layout="vertical" margin={{ left: 74, right: 14 }}>
-                  <XAxis type="number" hide />
-                  <Tooltip
-                    formatter={(value) => formatMoney(value, currency, true)}
-                    contentStyle={{
-                      background: T.bg0,
-                      border: `1px solid ${T.border}`,
-                      fontSize: fs(10),
-                    }}
-                  />
-                  <Bar dataKey="value" radius={0} isAnimationActive={false}>
-                    {exposureData.map((entry, index) => (
-                      <Cell
-                        key={entry.label}
-                        fill={index === 1 ? T.red : index === 2 ? T.accent : T.green}
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: sp(8),
+                flexWrap: "wrap",
+                color: T.textDim,
+                fontSize: fs(9),
+                fontFamily: T.mono,
+              }}
+            >
+              <span>Gross {formatMoney(grossTotal, currency, true)}</span>
+              <span style={{ color: netExposure >= 0 ? T.green : T.red, fontWeight: 800 }}>
+                Net {formatMoney(netExposure, currency, true)}
+              </span>
             </div>
           </div>
         </div>

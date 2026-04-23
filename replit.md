@@ -26,6 +26,10 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 - `pnpm --filter @workspace/backtest-worker run dev` — run the background backtest worker locally
 
+Account/Flex persistence note:
+- If `/api/accounts/flex/health` reports `schemaReady: false`, the account UI will fall back to live-only data and FLEX history/cache fields will stay empty until the DB schema is pushed.
+- Run `pnpm --filter @workspace/db run push` to create the missing account/FLEX tables, then verify `/api/accounts/flex/health` shows `schemaReady: true` and an empty `missingTables` list.
+
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
 
 ## Artifacts

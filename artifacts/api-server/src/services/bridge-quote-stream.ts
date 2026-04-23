@@ -21,11 +21,13 @@ const bridgeClient = new IbkrBridgeClient();
 const subscribers = new Map<number, Subscriber>();
 const quoteCacheBySymbol = new Map<string, QuoteSnapshot>();
 const RECONNECT_DELAY_MS = 1_000;
+const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 
 let nextSubscriberId = 1;
 let streamSignature = "";
 let streamUnsubscribe: (() => void) | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
+let refreshTimer: NodeJS.Timeout | null = null;
 
 function normalizeSymbols(symbols: string[]): string[] {
   return Array.from(
@@ -96,7 +98,17 @@ function clearReconnectTimer() {
   reconnectTimer = null;
 }
 
+function clearRefreshTimer() {
+  if (!refreshTimer) {
+    return;
+  }
+
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
+}
+
 function stopStream() {
+  clearRefreshTimer();
   streamUnsubscribe?.();
   streamUnsubscribe = null;
   streamSignature = "";
@@ -126,6 +138,7 @@ function handleStreamError(expectedSignature: string, error: unknown) {
 
 function refreshBridgeQuoteStream() {
   clearReconnectTimer();
+  clearRefreshTimer();
 
   const symbols = getDesiredSymbols();
   const nextSignature = symbols.join(",");
@@ -149,6 +162,17 @@ function refreshBridgeQuoteStream() {
     },
     (error) => handleStreamError(nextSignature, error),
   );
+}
+
+function scheduleRefreshBridgeQuoteStream(
+  delayMs = STREAM_RECONFIGURE_DEBOUNCE_MS,
+) {
+  clearRefreshTimer();
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshBridgeQuoteStream();
+  }, Math.max(0, delayMs));
+  refreshTimer.unref?.();
 }
 
 export function getCurrentBridgeQuoteSnapshots(symbols: string[]): QuoteWithSource[] {
@@ -201,10 +225,10 @@ export function subscribeBridgeQuoteSnapshots(
     onSnapshot({ quotes: cachedQuotes });
   }
 
-  refreshBridgeQuoteStream();
+  scheduleRefreshBridgeQuoteStream();
 
   return () => {
     subscribers.delete(subscriberId);
-    refreshBridgeQuoteStream();
+    scheduleRefreshBridgeQuoteStream();
   };
 }

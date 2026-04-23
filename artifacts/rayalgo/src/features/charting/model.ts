@@ -13,6 +13,21 @@ import type {
   MarketBar,
 } from "./types";
 
+export type ResearchChartModelBuildState = {
+  input: {
+    bars: MarketBar[];
+    dailyBars?: MarketBar[];
+    timeframe: string;
+    selectedIndicators: string[];
+    indicatorSettings: Record<string, Record<string, unknown>>;
+    indicatorMarkers: ChartMarker[];
+    indicatorRegistry: BuildChartModelInput["indicatorRegistry"];
+  };
+  plugins: ReturnType<typeof resolveIndicatorPlugins>;
+  pluginOutputs: IndicatorPluginOutput[];
+  model: ChartModel;
+};
+
 const timeframeToStepMs = (timeframe: string): number =>
   ({
     "1m": 60_000,
@@ -239,33 +254,113 @@ const normalizeMarkers = (
     .filter((marker) => marker.barIndex >= 0 && marker.barIndex < barCount)
     .sort((left, right) => left.time - right.time);
 
-export const buildResearchChartModel = (
-  input: BuildChartModelInput,
-): ChartModel => {
-  const {
-    bars,
-    dailyBars,
-    timeframe,
-    selectedIndicators = [],
-    indicatorSettings = {},
-    indicatorMarkers = [],
-    indicatorRegistry = defaultIndicatorRegistry,
-  } = input;
-  const { chartBars, chartBarRanges } = buildChartBars(bars, timeframe);
-  const plugins = resolveIndicatorPlugins(
-    selectedIndicators,
-    indicatorRegistry,
+const shallowStringArrayEqual = (
+  left: string[],
+  right: string[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const areMarketBarsEquivalent = (
+  left: MarketBar | undefined,
+  right: MarketBar | undefined,
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    resolveEpochMs(left) === resolveEpochMs(right) &&
+    resolveNumber(left.o, left.open) === resolveNumber(right.o, right.open) &&
+    resolveNumber(left.h, left.high) === resolveNumber(right.h, right.high) &&
+    resolveNumber(left.l, left.low) === resolveNumber(right.l, right.low) &&
+    resolveNumber(left.c, left.close) === resolveNumber(right.c, right.close) &&
+    (resolveNumber(left.v, left.volume) ?? 0) ===
+      (resolveNumber(right.v, right.volume) ?? 0) &&
+    (left.source ?? null) === (right.source ?? null)
   );
-  const pluginOutputs = plugins.map((plugin) =>
-    plugin.compute({
-      chartBars,
-      rawBars: bars,
-      dailyBars,
-      settings: indicatorSettings[plugin.id],
-      timeframe,
-      selectedIndicators,
-    }),
-  );
+};
+
+const detectBarMutationMode = (
+  previousBars: MarketBar[],
+  nextBars: MarketBar[],
+): "full" | "tail-patch" | "append" | "prepend" => {
+  if (!previousBars.length || !nextBars.length) {
+    return "full";
+  }
+
+  if (previousBars.length === nextBars.length) {
+    if (previousBars.length === 1) {
+      return areMarketBarsEquivalent(previousBars[0], nextBars[0])
+        ? "full"
+        : "tail-patch";
+    }
+
+    for (let index = 0; index < previousBars.length - 1; index += 1) {
+      if (!areMarketBarsEquivalent(previousBars[index], nextBars[index])) {
+        return "full";
+      }
+    }
+
+    return areMarketBarsEquivalent(
+      previousBars[previousBars.length - 1],
+      nextBars[nextBars.length - 1],
+    )
+      ? "full"
+      : "tail-patch";
+  }
+
+  if (nextBars.length === previousBars.length + 1) {
+    for (let index = 0; index < previousBars.length; index += 1) {
+      if (!areMarketBarsEquivalent(previousBars[index], nextBars[index])) {
+        return "full";
+      }
+    }
+    return "append";
+  }
+
+  if (nextBars.length > previousBars.length) {
+    const offset = nextBars.length - previousBars.length;
+    for (let index = 0; index < previousBars.length; index += 1) {
+      if (!areMarketBarsEquivalent(previousBars[index], nextBars[index + offset])) {
+        return "full";
+      }
+    }
+    return "prepend";
+  }
+
+  return "full";
+};
+
+const buildChartModelFromPluginOutputs = ({
+  chartBars,
+  chartBarRanges,
+  pluginOutputs,
+  indicatorMarkers,
+  timeframe,
+}: {
+  chartBars: ChartBar[];
+  chartBarRanges: ChartBarRange[];
+  pluginOutputs: IndicatorPluginOutput[];
+  indicatorMarkers: ChartMarker[];
+  timeframe: string;
+}): ChartModel => {
   const pluginStudySpecs = normalizeStudyPanes(
     pluginOutputs.flatMap((output) => output.studySpecs || []),
   );
@@ -313,3 +408,89 @@ export const buildResearchChartModel = (
     defaultVisibleLogicalRange: buildDefaultVisibleRange(styledChartBars, timeframe),
   };
 };
+
+export const buildResearchChartModelIncremental = (
+  input: BuildChartModelInput,
+  previousState?: ResearchChartModelBuildState | null,
+): {
+  model: ChartModel;
+  state: ResearchChartModelBuildState;
+} => {
+  const {
+    bars,
+    dailyBars,
+    timeframe,
+    selectedIndicators = [],
+    indicatorSettings = {},
+    indicatorMarkers = [],
+    indicatorRegistry = defaultIndicatorRegistry,
+  } = input;
+  const { chartBars, chartBarRanges } = buildChartBars(bars, timeframe);
+  const plugins = resolveIndicatorPlugins(
+    selectedIndicators,
+    indicatorRegistry,
+  );
+  const canReuseDeferredPluginOutputs = Boolean(
+    previousState &&
+      previousState.input.timeframe === timeframe &&
+      previousState.input.dailyBars === dailyBars &&
+      previousState.input.indicatorSettings === indicatorSettings &&
+      previousState.input.indicatorMarkers === indicatorMarkers &&
+      previousState.input.indicatorRegistry === indicatorRegistry &&
+      shallowStringArrayEqual(
+        previousState.input.selectedIndicators,
+        selectedIndicators,
+      ) &&
+      detectBarMutationMode(previousState.input.bars, bars) === "tail-patch" &&
+      previousState.plugins.length === plugins.length &&
+      previousState.plugins.every((plugin, index) => plugin.id === plugins[index]?.id),
+  );
+
+  const pluginOutputs = plugins.map((plugin, index) => {
+    if (
+      canReuseDeferredPluginOutputs &&
+      plugin.liveUpdateMode === "defer-on-tail-patch"
+    ) {
+      return previousState?.pluginOutputs[index] || {};
+    }
+
+    return plugin.compute({
+      chartBars,
+      rawBars: bars,
+      dailyBars,
+      settings: indicatorSettings[plugin.id],
+      timeframe,
+      selectedIndicators,
+    });
+  });
+
+  const model = buildChartModelFromPluginOutputs({
+    chartBars,
+    chartBarRanges,
+    pluginOutputs,
+    indicatorMarkers,
+    timeframe,
+  });
+
+  return {
+    model,
+    state: {
+      input: {
+        bars,
+        dailyBars,
+        timeframe,
+        selectedIndicators,
+        indicatorSettings,
+        indicatorMarkers,
+        indicatorRegistry,
+      },
+      plugins,
+      pluginOutputs,
+      model,
+    },
+  };
+};
+
+export const buildResearchChartModel = (
+  input: BuildChartModelInput,
+): ChartModel => buildResearchChartModelIncremental(input).model;

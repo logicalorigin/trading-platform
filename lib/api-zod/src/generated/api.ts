@@ -134,12 +134,21 @@ export const GetFlexHealthResponse = zod.object({
   flexConfigured: zod.boolean(),
   flexTokenPresent: zod.boolean(),
   flexQueryIdPresent: zod.boolean(),
+  schemaReady: zod.boolean(),
+  missingTables: zod.array(zod.string()),
+  schemaError: zod.string().nullable(),
   lastSuccessfulRefreshAt: zod.coerce.date().nullable(),
   lastAttemptAt: zod.coerce.date().nullable(),
   lastStatus: zod.string().nullable(),
   lastError: zod.string().nullable(),
   snapshotsRecording: zod.boolean(),
   lastSnapshotAt: zod.coerce.date().nullable(),
+  snapshotCoverageStartAt: zod.coerce.date().nullable(),
+  snapshotCoverageEndAt: zod.coerce.date().nullable(),
+  snapshotPointCount: zod.number(),
+  flexNavCoverageStartDate: zod.coerce.date().nullable(),
+  flexNavCoverageEndDate: zod.coerce.date().nullable(),
+  flexNavRowCount: zod.number(),
 });
 
 /**
@@ -1388,6 +1397,22 @@ export const GetOptionChainResponse = zod.object({
       openInterest: zod.number(),
       volume: zod.number(),
       updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get available option expirations
+ */
+export const GetOptionExpirationsQueryParams = zod.object({
+  underlying: zod.coerce.string(),
+});
+
+export const GetOptionExpirationsResponse = zod.object({
+  underlying: zod.string(),
+  expirations: zod.array(
+    zod.object({
+      expirationDate: zod.coerce.date(),
     }),
   ),
 });

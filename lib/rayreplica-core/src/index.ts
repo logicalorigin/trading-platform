@@ -38,6 +38,9 @@ export type RayReplicaSessionOption =
 export type RayReplicaSignalSettings = {
   timeHorizon: number;
   bosConfirmation: RayReplicaBosConfirmation;
+  chochAtrBuffer: number;
+  chochBodyExpansionAtr: number;
+  chochVolumeGate: number;
   basisLength: number;
   atrLength: number;
   atrSmoothing: number;
@@ -61,6 +64,7 @@ export type RayReplicaSignalSettings = {
   restrictToSelectedSessions: boolean;
   sessions: RayReplicaSessionOption[];
   waitForBarClose: boolean;
+  signalOffsetAtr: number;
 };
 
 export type RayReplicaStructureEventType =
@@ -131,6 +135,9 @@ const clamp = (value: number, min: number, max: number): number =>
 export const DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS: RayReplicaSignalSettings = {
   timeHorizon: 10,
   bosConfirmation: "close",
+  chochAtrBuffer: 0,
+  chochBodyExpansionAtr: 0,
+  chochVolumeGate: 0,
   basisLength: 80,
   atrLength: 14,
   atrSmoothing: 21,
@@ -152,8 +159,9 @@ export const DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS: RayReplicaSignalSettings = {
   volScoreMin: 2,
   volScoreMax: 10,
   restrictToSelectedSessions: false,
-  sessions: ["new_york"],
+  sessions: [],
   waitForBarClose: true,
+  signalOffsetAtr: 1.5,
 };
 
 const RAY_REPLICA_BOS_CONFIRMATION_OPTIONS = ["close", "wicks"] as const;
@@ -271,7 +279,7 @@ export function resolveRayReplicaSignalSettings(
     timeHorizon: resolveIntegerSetting(
       marketStructure.timeHorizon ?? input.timeHorizon,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.timeHorizon,
-      3,
+      2,
       40,
     ),
     bosConfirmation: resolveEnumSetting(
@@ -279,22 +287,51 @@ export function resolveRayReplicaSignalSettings(
       RAY_REPLICA_BOS_CONFIRMATION_OPTIONS,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.bosConfirmation,
     ),
+    chochAtrBuffer: resolveFloatSetting(
+      marketStructure.chochAtrBuffer ??
+        marketStructure.atrBuffer ??
+        input.chochAtrBuffer ??
+        input.atrBuffer,
+      DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.chochAtrBuffer,
+      0,
+      20,
+    ),
+    chochBodyExpansionAtr: resolveFloatSetting(
+      marketStructure.chochBodyExpansionAtr ??
+        marketStructure.bodyExpansionAtr ??
+        marketStructure.bodyExpansion ??
+        input.chochBodyExpansionAtr ??
+        input.bodyExpansionAtr ??
+        input.bodyExpansion,
+      DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.chochBodyExpansionAtr,
+      0,
+      20,
+    ),
+    chochVolumeGate: resolveFloatSetting(
+      marketStructure.chochVolumeGate ??
+        marketStructure.volumeGate ??
+        input.chochVolumeGate ??
+        input.volumeGate,
+      DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.chochVolumeGate,
+      0,
+      20,
+    ),
     basisLength: resolveIntegerSetting(
       bands.basisLength ?? input.basisLength,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.basisLength,
-      5,
+      1,
       240,
     ),
     atrLength: resolveIntegerSetting(
       bands.atrLength ?? input.atrLength,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.atrLength,
-      2,
+      1,
       100,
     ),
     atrSmoothing: resolveIntegerSetting(
       bands.atrSmoothing ?? input.atrSmoothing,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.atrSmoothing,
-      2,
+      1,
       200,
     ),
     volatilityMultiplier: resolveFloatSetting(
@@ -306,25 +343,25 @@ export function resolveRayReplicaSignalSettings(
     shadowLength: resolveIntegerSetting(
       overlays.shadowLength ?? input.shadowLength,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.shadowLength,
-      5,
+      1,
       120,
     ),
     shadowStdDev: resolveFloatSetting(
       overlays.shadowStdDev ?? input.shadowStdDev,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.shadowStdDev,
-      0.25,
-      6,
+      0.001,
+      50,
     ),
     adxLength: resolveIntegerSetting(
       confirmation.adxLength ?? input.adxLength,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.adxLength,
-      2,
+      1,
       100,
     ),
     volumeMaLength: resolveIntegerSetting(
       confirmation.volumeMaLength ?? input.volumeMaLength,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.volumeMaLength,
-      2,
+      1,
       200,
     ),
     mtf1: resolveEnumSetting(
@@ -367,7 +404,7 @@ export function resolveRayReplicaSignalSettings(
     adxMin: resolveFloatSetting(
       confirmation.adxMin ?? input.adxMin,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.adxMin,
-      0,
+      1,
       100,
     ),
     requireVolScoreRange: resolveBooleanSetting(
@@ -394,6 +431,14 @@ export function resolveRayReplicaSignalSettings(
     waitForBarClose: resolveBooleanSetting(
       appearance.waitForBarClose ?? input.waitForBarClose,
       DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.waitForBarClose,
+    ),
+    signalOffsetAtr: resolveFloatSetting(
+      appearance.signalOffsetAtr ??
+        asSettingsRecord(input.risk).signalOffsetAtr ??
+        input.signalOffsetAtr,
+      DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS.signalOffsetAtr,
+      0,
+      20,
     ),
   };
 }
@@ -877,6 +922,10 @@ export function evaluateRayReplicaSignals(input: {
   const atrRaw = computeRayReplicaAtr(chartBars, settings.atrLength);
   const atrSmoothed = computeRayReplicaSma(atrRaw, settings.atrSmoothing);
   const adx = computeRayReplicaAdx(chartBars, settings.adxLength);
+  const volumeSma = computeRayReplicaSma(
+    chartBars.map((bar) => bar.v),
+    settings.volumeMaLength,
+  );
   const volatilityScore = computeRayReplicaVolatilityScore(
     chartBars,
     settings.shadowLength,
@@ -895,6 +944,59 @@ export function evaluateRayReplicaSignals(input: {
   let previousSwingLow = Number.NaN;
   let breakableHigh = Number.NaN;
   let breakableLow = Number.NaN;
+
+  const passesChochFilters = (
+    index: number,
+    direction: RayReplicaDirection,
+    pivotLevel: number,
+  ): boolean => {
+    const currentBar = chartBars[index];
+    if (!currentBar || !Number.isFinite(pivotLevel)) {
+      return false;
+    }
+
+    const currentAtr = atrRaw[index];
+    const atrBuffer =
+      Number.isFinite(currentAtr) && settings.chochAtrBuffer > 0
+        ? currentAtr * settings.chochAtrBuffer
+        : 0;
+    const breakThreshold =
+      direction === "long" ? pivotLevel + atrBuffer : pivotLevel - atrBuffer;
+    const hasBufferedBreak =
+      direction === "long"
+        ? settings.bosConfirmation === "wicks"
+          ? currentBar.h > breakThreshold
+          : currentBar.c > breakThreshold
+        : settings.bosConfirmation === "wicks"
+          ? currentBar.l < breakThreshold
+          : currentBar.c < breakThreshold;
+
+    if (!hasBufferedBreak) {
+      return false;
+    }
+
+    if (settings.chochBodyExpansionAtr > 0) {
+      if (!Number.isFinite(currentAtr)) {
+        return false;
+      }
+      const candleBody = Math.abs(currentBar.c - currentBar.o);
+      if (candleBody < currentAtr * settings.chochBodyExpansionAtr) {
+        return false;
+      }
+    }
+
+    if (settings.chochVolumeGate > 0) {
+      const baselineVolume = volumeSma[index];
+      if (
+        !Number.isFinite(baselineVolume) ||
+        currentBar.v < baselineVolume * settings.chochVolumeGate
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  };
 
   for (let index = 0; index < chartBars.length; index += 1) {
     const currentBar = chartBars[index];
@@ -952,11 +1054,12 @@ export function evaluateRayReplicaSignals(input: {
     ) {
       if (marketStructureDirection === 1) {
         bullishBos = true;
-      } else {
+        breakableHigh = Number.NaN;
+      } else if (passesChochFilters(index, "long", breakableHigh)) {
         bullishChoch = true;
         marketStructureDirection = 1;
+        breakableHigh = Number.NaN;
       }
-      breakableHigh = Number.NaN;
     }
 
     if (
@@ -967,11 +1070,12 @@ export function evaluateRayReplicaSignals(input: {
     ) {
       if (marketStructureDirection === -1) {
         bearishBos = true;
-      } else {
+        breakableLow = Number.NaN;
+      } else if (passesChochFilters(index, "short", breakableLow)) {
         bearishChoch = true;
         marketStructureDirection = -1;
+        breakableLow = Number.NaN;
       }
-      breakableLow = Number.NaN;
     }
 
     regimeDirection[index] =
@@ -1025,9 +1129,13 @@ export function evaluateRayReplicaSignals(input: {
         const signalPrice =
           eventDirection === "long"
             ? currentBar.l -
-              (Number.isFinite(atrRaw[index]) ? atrRaw[index] * 1.5 : 0)
+              (Number.isFinite(atrRaw[index])
+                ? atrRaw[index] * settings.signalOffsetAtr
+                : 0)
             : currentBar.h +
-              (Number.isFinite(atrRaw[index]) ? atrRaw[index] * 1.5 : 0);
+              (Number.isFinite(atrRaw[index])
+                ? atrRaw[index] * settings.signalOffsetAtr
+                : 0);
         signalEvents.push({
           id: `${eventDirection === "long" ? "buy" : "sell"}-${index}-${currentBar.time}`,
           eventType: eventDirection === "long" ? "buy_signal" : "sell_signal",

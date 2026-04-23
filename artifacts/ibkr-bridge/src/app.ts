@@ -317,6 +317,171 @@ app.get("/bars", async (req, res) => {
   });
 });
 
+app.get("/streams/bars", async (req, res, next) => {
+  const timeframe = typeof req.query.timeframe === "string" ? req.query.timeframe : null;
+
+  if (
+    typeof req.query.symbol !== "string" ||
+    !req.query.symbol.trim() ||
+    !timeframe ||
+    !["1m", "5m", "15m", "1h", "1d"].includes(timeframe)
+  ) {
+    res.status(400).json({
+      error: "symbol and timeframe query parameters are required",
+    });
+    return;
+  }
+
+  const input = {
+    symbol: req.query.symbol.trim().toUpperCase(),
+    timeframe: timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
+    assetClass:
+      req.query.assetClass === "option"
+        ? "option"
+        : req.query.assetClass === "equity"
+          ? "equity"
+          : undefined,
+    providerContractId:
+      typeof req.query.providerContractId === "string" &&
+      req.query.providerContractId.trim()
+        ? req.query.providerContractId.trim()
+        : null,
+    outsideRth:
+      typeof req.query.outsideRth === "string"
+        ? req.query.outsideRth === "true"
+        : undefined,
+    source:
+      req.query.source === "midpoint" || req.query.source === "bid_ask"
+        ? req.query.source
+        : req.query.source === "trades"
+          ? "trades"
+          : undefined,
+  } as const;
+
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write("retry: 5000\n\n");
+
+  let cleanedUp = false;
+  let unsubscribe: () => void = () => {};
+  let eventId = 1;
+  let lastBarSignature: string | null = null;
+
+  const writeEvent = (event: string, payload: unknown) => {
+    if (cleanedUp || res.destroyed) {
+      return;
+    }
+
+    res.write(
+      `id: ${eventId}\n` +
+        `event: ${event}\n` +
+        `data: ${JSON.stringify(payload)}\n\n`,
+    );
+    eventId += 1;
+  };
+  const buildBarSignature = (
+    bar: {
+      timestamp: Date | string;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+      [key: string]: unknown;
+    } | null,
+  ): string | null => {
+    if (!bar) {
+      return null;
+    }
+
+    const timestamp =
+      bar.timestamp instanceof Date ? bar.timestamp.toISOString() : String(bar.timestamp);
+    return JSON.stringify({
+      timestamp,
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
+      close: bar.close,
+      volume: bar.volume,
+    });
+  };
+  const writeBarEvent = (
+    bar: {
+      timestamp: Date | string;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+      [key: string]: unknown;
+    } | null,
+  ) => {
+    const signature = buildBarSignature(bar);
+    if (!bar || !signature || signature === lastBarSignature) {
+      return;
+    }
+
+    lastBarSignature = signature;
+    writeEvent("bar", {
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      bar,
+    });
+  };
+
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    unsubscribe();
+  };
+
+  req.on("close", cleanup);
+  req.on("aborted", cleanup);
+
+  try {
+    const initialBars = await ibkrBridgeService.getHistoricalBars({
+      ...input,
+      limit: 1,
+    });
+    const initialBar = initialBars[initialBars.length - 1] ?? null;
+    if (initialBar) {
+      writeBarEvent({
+        ...initialBar,
+        partial: true,
+      });
+    }
+
+    const nextUnsubscribe = await ibkrBridgeService.subscribeHistoricalBarStream(
+      input,
+      (bar) => {
+        writeBarEvent(bar);
+      },
+    );
+
+    if (cleanedUp) {
+      nextUnsubscribe();
+      return;
+    }
+
+    unsubscribe = nextUnsubscribe;
+    writeEvent("ready", {
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      assetClass: input.assetClass ?? "equity",
+      providerContractId: input.providerContractId,
+      source: "ibkr-bridge",
+    });
+  } catch (error) {
+    cleanup();
+    next(error);
+  }
+});
+
 app.get("/options/chains", async (req, res) => {
   if (typeof req.query.underlying !== "string" || !req.query.underlying.trim()) {
     res.status(400).json({
@@ -370,6 +535,156 @@ app.get("/options/chains", async (req, res) => {
   } finally {
     req.off("aborted", abort);
     req.off("close", abort);
+  }
+});
+
+app.get("/options/quotes", async (req, res) => {
+  const rawProviderContractIds = Array.isArray(req.query.contracts)
+    ? req.query.contracts.join(",")
+    : typeof req.query.contracts === "string"
+      ? req.query.contracts
+      : Array.isArray(req.query.providerContractIds)
+        ? req.query.providerContractIds.join(",")
+        : typeof req.query.providerContractIds === "string"
+          ? req.query.providerContractIds
+          : "";
+  const providerContractIds = Array.from(
+    new Set(
+      rawProviderContractIds
+        .split(",")
+        .map((providerContractId) => providerContractId.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!providerContractIds.length) {
+    res.status(400).json({
+      error: "contracts query parameter is required",
+    });
+    return;
+  }
+
+  res.json({
+    underlying:
+      typeof req.query.underlying === "string" && req.query.underlying.trim()
+        ? req.query.underlying.trim().toUpperCase()
+        : null,
+    quotes: await ibkrBridgeService.getOptionQuoteSnapshots({
+      underlying:
+        typeof req.query.underlying === "string" && req.query.underlying.trim()
+          ? req.query.underlying.trim().toUpperCase()
+          : null,
+      providerContractIds,
+    }),
+  });
+});
+
+app.get("/streams/options/quotes", async (req, res, next) => {
+  const rawProviderContractIds = Array.isArray(req.query.contracts)
+    ? req.query.contracts.join(",")
+    : typeof req.query.contracts === "string"
+      ? req.query.contracts
+      : Array.isArray(req.query.providerContractIds)
+        ? req.query.providerContractIds.join(",")
+        : typeof req.query.providerContractIds === "string"
+          ? req.query.providerContractIds
+          : "";
+  const providerContractIds = Array.from(
+    new Set(
+      rawProviderContractIds
+        .split(",")
+        .map((providerContractId) => providerContractId.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!providerContractIds.length) {
+    res.status(400).json({
+      error: "contracts query parameter is required",
+    });
+    return;
+  }
+
+  const underlying =
+    typeof req.query.underlying === "string" && req.query.underlying.trim()
+      ? req.query.underlying.trim().toUpperCase()
+      : null;
+
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write("retry: 5000\n\n");
+
+  let cleanedUp = false;
+  let unsubscribe: () => void = () => {};
+  let eventId = 1;
+
+  const writeEvent = (event: string, payload: unknown) => {
+    if (cleanedUp || res.destroyed) {
+      return;
+    }
+
+    res.write(
+      `id: ${eventId}\n` +
+        `event: ${event}\n` +
+        `data: ${JSON.stringify(payload)}\n\n`,
+    );
+    eventId += 1;
+  };
+
+  const heartbeat = setInterval(() => {
+    if (!cleanedUp && !res.destroyed) {
+      res.write(`: ping ${new Date().toISOString()}\n\n`);
+    }
+  }, 15_000);
+  heartbeat.unref?.();
+
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    clearInterval(heartbeat);
+    unsubscribe();
+    res.end();
+  };
+
+  req.on("close", cleanup);
+  req.on("aborted", cleanup);
+
+  try {
+    writeEvent("quotes", {
+      quotes: await ibkrBridgeService.getOptionQuoteSnapshots({
+        underlying,
+        providerContractIds,
+      }),
+    });
+    const nextUnsubscribe = await ibkrBridgeService.subscribeOptionQuoteStream(
+      {
+        underlying,
+        providerContractIds,
+      },
+      (quote) => {
+        writeEvent("quotes", { quotes: [quote] });
+      },
+    );
+    if (cleanedUp) {
+      nextUnsubscribe();
+      return;
+    }
+
+    unsubscribe = nextUnsubscribe;
+    writeEvent("ready", {
+      underlying,
+      providerContractIds,
+      source: "ibkr-bridge",
+    });
+  } catch (error) {
+    cleanup();
+    next(error);
   }
 });
 

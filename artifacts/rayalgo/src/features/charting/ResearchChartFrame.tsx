@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import {
   ResearchChartSurface,
   type OverlayContent,
+  type VisibleLogicalRange,
 } from "./ResearchChartSurface";
 import type { ChartModel } from "./types";
 
@@ -44,6 +45,7 @@ type ResearchChartFrameProps = {
   theme: ResearchChartTheme;
   themeKey: string;
   model: ChartModel;
+  surfaceUiStateKey?: string;
   compact?: boolean;
   showSurfaceToolbar?: boolean;
   showLegend?: boolean;
@@ -65,12 +67,14 @@ type ResearchChartFrameProps = {
   drawMode?: "horizontal" | "vertical" | "box" | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
   onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
+  onVisibleLogicalRangeChange?: (range: VisibleLogicalRange | null) => void;
 };
 
 export const ResearchChartFrame = ({
   theme,
   themeKey,
   model,
+  surfaceUiStateKey,
   compact = false,
   showSurfaceToolbar = true,
   showLegend = true,
@@ -92,6 +96,7 @@ export const ResearchChartFrame = ({
   drawMode = null,
   onAddDrawing,
   onTradeMarkerSelection,
+  onVisibleLogicalRangeChange,
 }: ResearchChartFrameProps) => (
   <div
     data-testid={dataTestId}
@@ -114,6 +119,7 @@ export const ResearchChartFrame = ({
         dataTestId={dataTestId ? `${dataTestId}-surface` : undefined}
         theme={theme}
         themeKey={themeKey}
+        uiStateKey={surfaceUiStateKey}
         model={model}
         compact={compact}
         showToolbar={showSurfaceToolbar}
@@ -131,6 +137,7 @@ export const ResearchChartFrame = ({
         drawMode={drawMode}
         onAddDrawing={onAddDrawing}
         onTradeMarkerSelection={onTradeMarkerSelection}
+        onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
       />
     </div>
     {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}

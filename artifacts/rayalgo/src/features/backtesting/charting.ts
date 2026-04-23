@@ -311,6 +311,13 @@ export function buildBacktestChartModel(
     indicatorSettings: options.indicatorSettings,
     indicatorRegistry: options.indicatorRegistry,
   });
+  const filteredPayloadTradeOverlays =
+    payload.chartPriceContext === "option" && payload.activeTradeSelectionId
+      ? payload.tradeOverlays.filter(
+          (overlay) =>
+            overlay.tradeSelectionId === payload.activeTradeSelectionId,
+        )
+      : payload.tradeOverlays;
   const payloadIndicatorMarkerPayload = buildIndicatorMarkerPayload(
     payload.indicatorMarkerPayload,
   );
@@ -318,17 +325,23 @@ export function buildBacktestChartModel(
   return {
     chartBars: indicatorModel.chartBars,
     chartBarRanges: payload.chartBarRanges,
-    tradeOverlays: payload.tradeOverlays.map(toTradeOverlay),
-    tradeMarkerGroups: {
-      entryGroups:
-        payload.tradeMarkerGroups.entryGroups.map(toTradeMarkerGroup),
-      exitGroups: payload.tradeMarkerGroups.exitGroups.map(toTradeMarkerGroup),
-      interactionGroups:
-        payload.tradeMarkerGroups.interactionGroups.map(toTradeMarkerGroup),
-      timeToTradeIds: buildTimeToTradeIdsMap(
-        payload.tradeMarkerGroups.timeToTradeIds,
-      ),
-    },
+    tradeOverlays: filteredPayloadTradeOverlays.map(toTradeOverlay),
+    tradeMarkerGroups:
+      payload.chartPriceContext === "option"
+        ? buildTradeMarkerGroups(
+            indicatorModel.chartBars,
+            filteredPayloadTradeOverlays.map(toTradeOverlay),
+          )
+        : {
+            entryGroups:
+              payload.tradeMarkerGroups.entryGroups.map(toTradeMarkerGroup),
+            exitGroups: payload.tradeMarkerGroups.exitGroups.map(toTradeMarkerGroup),
+            interactionGroups:
+              payload.tradeMarkerGroups.interactionGroups.map(toTradeMarkerGroup),
+            timeToTradeIds: buildTimeToTradeIdsMap(
+              payload.tradeMarkerGroups.timeToTradeIds,
+            ),
+          },
     studySpecs: indicatorModel.studySpecs,
     studyVisibility: indicatorModel.studyVisibility,
     studyLowerPaneCount: indicatorModel.studyLowerPaneCount,
@@ -390,6 +403,32 @@ export function buildHydratedBacktestSpotChartModel(
         baseModel.chartBarRanges,
       ),
     }))
+    .map((overlay) => {
+      if (overlay.chartPriceContext !== "option") {
+        return overlay;
+      }
+
+      const entryBarPrice =
+        overlay.entryBarIndex != null
+          ? baseModel.chartBars[overlay.entryBarIndex]?.c
+          : undefined;
+      const exitBarPrice =
+        overlay.exitBarIndex != null
+          ? baseModel.chartBars[overlay.exitBarIndex]?.c
+          : undefined;
+
+      return {
+        ...overlay,
+        entryPrice:
+          overlay.entrySpotPrice ?? entryBarPrice ?? overlay.entryPrice,
+        exitPrice:
+          overlay.exitSpotPrice ?? exitBarPrice ?? overlay.exitPrice,
+        oe: overlay.entrySpotPrice ?? entryBarPrice ?? overlay.oe,
+        ep: overlay.exitSpotPrice ?? exitBarPrice ?? overlay.ep,
+        exitFill:
+          overlay.exitSpotPrice ?? exitBarPrice ?? overlay.exitFill,
+      };
+    })
     .filter(
       (overlay) =>
         overlay.entryBarIndex != null || overlay.exitBarIndex != null,

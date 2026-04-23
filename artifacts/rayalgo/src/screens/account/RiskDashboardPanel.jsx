@@ -1,262 +1,377 @@
-import { T, dim, fs, sp } from "../../RayAlgoPlatform";
+import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   EmptyState,
   Panel,
+  Pill,
   formatMoney,
   formatNumber,
   formatPercent,
   mutedLabelStyle,
   sectionTitleStyle,
+  tableCellStyle,
+  tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
 
-const MiniList = ({ title, rows = [], currency, valueKey = "marketValue" }) => (
-  <div>
-    <div style={{ ...sectionTitleStyle, fontSize: fs(10), marginBottom: sp(8) }}>
-      {title}
+const ratioPercent = (value) =>
+  value == null || Number.isNaN(Number(value))
+    ? "----"
+    : formatPercent(Number(value) * 100, 1);
+
+const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
+  <div
+    title={title}
+    style={{
+      padding: sp("4px 0"),
+      display: "grid",
+      gap: sp(3),
+    }}
+  >
+    <div style={mutedLabelStyle}>{label}</div>
+    <div style={{ color: tone, fontSize: fs(13), fontFamily: T.mono, fontWeight: 900 }}>
+      {value}
     </div>
-    <div style={{ display: "grid", gap: sp(5) }}>
-      {rows.length ? (
-        rows.map((row) => (
-          <div
-            key={`${title}:${row.symbol || row.sector}`}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr auto auto",
-              gap: sp(8),
-              color: T.textSec,
-              fontSize: fs(10),
-              fontFamily: T.sans,
-            }}
-          >
-            <span style={{ color: T.text }}>{row.symbol || row.sector}</span>
-            <span style={{ color: toneForValue(row[valueKey]) }}>
-              {formatMoney(row[valueKey], currency, true)}
-            </span>
-            <span>{formatPercent(row.weightPercent)}</span>
-          </div>
-        ))
-      ) : (
-        <div style={{ color: T.textMuted, fontSize: fs(10) }}>No rows</div>
-      )}
-    </div>
+    {subvalue ? (
+      <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>{subvalue}</div>
+    ) : null}
   </div>
 );
 
-const Gauge = ({ label, value, max = 100 }) => {
-  const pct =
-    value == null || Number.isNaN(Number(value))
-      ? 0
-      : Math.max(0, Math.min(100, (Number(value) / max) * 100));
+const MarginGauge = ({ value }) => {
+  const ratio = Number(value);
+  const pct = Number.isFinite(ratio) ? Math.max(0, Math.min(100, ratio * 100)) : 0;
+  const tone = pct > 50 ? T.green : pct > 25 ? T.amber : T.red;
   return (
-    <div>
-      <div style={mutedLabelStyle}>{label}</div>
+    <div
+      style={{
+        padding: sp("4px 0"),
+        display: "grid",
+        gap: sp(8),
+      }}
+    >
+      <div style={mutedLabelStyle}>Maintenance Cushion</div>
       <div
         style={{
-          height: dim(10),
-          marginTop: sp(6),
-          background: T.bg0,
+          color: tone,
+          fontSize: fs(20),
+          fontFamily: T.mono,
+          fontWeight: 900,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        {ratioPercent(value)}
+      </div>
+      <div
+        style={{
+          height: dim(14),
+          borderRadius: dim(5),
+          overflow: "hidden",
+          background: T.bg3,
           border: `1px solid ${T.border}`,
         }}
       >
         <div
           style={{
-            height: "100%",
             width: `${pct}%`,
-            background: pct > 75 ? T.red : pct > 45 ? T.orange : T.green,
+            height: "100%",
+            background: tone,
           }}
         />
       </div>
-      <div style={{ marginTop: 4, color: T.text, fontSize: fs(11), fontWeight: 800 }}>
-        {value == null ? "----" : formatPercent(value)}
+      <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>
+        IBKR Cushion
       </div>
     </div>
   );
 };
+
+const RankedList = ({ title, rows = [], currency, valueKey, emptyLabel = "No rows" }) => (
+  <div
+    style={{
+      display: "grid",
+      gap: sp(6),
+    }}
+  >
+    <div style={{ ...sectionTitleStyle, fontSize: fs(9) }}>{title}</div>
+    {rows.length ? (
+      rows.map((row) => (
+        <div
+          key={`${title}:${row.symbol || row.sector}`}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto auto",
+            gap: sp(8),
+            alignItems: "center",
+            padding: sp("4px 0"),
+            borderBottom: `1px solid ${T.border}`,
+            fontSize: fs(10),
+            fontFamily: T.sans,
+          }}
+        >
+          <span style={{ color: T.text, minWidth: 0 }}>{row.symbol || row.sector}</span>
+          <span style={{ color: toneForValue(row[valueKey]) }}>
+            {formatMoney(row[valueKey], currency, true)}
+          </span>
+          <span style={{ color: T.textDim }}>
+            {row.weightPercent == null ? "----" : formatPercent(row.weightPercent, 1)}
+          </span>
+        </div>
+      ))
+    ) : (
+      <div style={{ color: T.textMuted, fontSize: fs(10) }}>{emptyLabel}</div>
+    )}
+  </div>
+);
 
 export const RiskDashboardPanel = ({ query, currency }) => {
   const data = query.data;
   const margin = data?.margin || {};
   const greeks = data?.greeks || {};
   const perUnderlying = greeks.perUnderlying || [];
+  const providerFields = margin.providerFields || {};
 
   return (
     <Panel
       title="Risk Dashboard"
-      subtitle="Concentration, margin, leverage, and IBKR-derived portfolio Greeks"
+      subtitle="Margin, concentration, winners and losers, and IBKR-derived portfolio Greeks"
+      rightRail="Greeks from IBKR option snapshots"
       loading={query.isLoading}
       error={query.error}
+      onRetry={query.refetch}
       minHeight={420}
     >
       {!data ? (
         <EmptyState title="Risk unavailable" body="Risk metrics load after account and position streams are connected." />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: sp(16) }}>
-          <div style={{ display: "grid", gap: sp(14) }}>
-            <MiniList
-              title="Top Concentration"
-              rows={data.concentration?.topPositions || []}
-              currency={currency}
-            />
-            <MiniList
-              title="Sector Concentration"
-              rows={data.concentration?.sectors || []}
-              currency={currency}
-              valueKey="value"
-            />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(12) }}>
-              <MiniList
-                title="Biggest Winners"
-                rows={data.winnersLosers?.allTimeWinners || []}
-                currency={currency}
-                valueKey="unrealizedPnl"
-              />
-              <MiniList
-                title="Biggest Losers"
-                rows={data.winnersLosers?.allTimeLosers || []}
-                currency={currency}
-                valueKey="unrealizedPnl"
-              />
-            </div>
-          </div>
-          <div style={{ display: "grid", gap: sp(14) }}>
-            <div
-              title="IBKR fields: InitMarginReq, ExcessLiquidity, MaintMarginReq, Cushion"
-              style={{
-                border: `1px solid ${T.border}`,
-                padding: sp(12),
-                background: "rgba(15,23,42,0.45)",
-              }}
-            >
-              <div style={{ ...sectionTitleStyle, fontSize: fs(10) }}>
-                Portfolio Margin
+        <div style={{ display: "grid", gap: sp(10) }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(260px, 0.8fr) minmax(0, 1.2fr)",
+              gap: sp(12),
+              alignItems: "start",
+            }}
+          >
+            <div style={{ display: "grid", gap: sp(8) }}>
+              <MarginGauge value={margin.maintenanceCushionPercent} />
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: sp("6px 12px"),
+                  paddingTop: sp(6),
+                  borderTop: `1px solid ${T.border}`,
+                }}
+              >
+                <MetricCard
+                  label="Leverage"
+                  value={
+                    margin.leverageRatio == null
+                      ? "----"
+                      : `${formatNumber(margin.leverageRatio, 2)}x`
+                  }
+                />
+                <MetricCard
+                  label="Margin Used"
+                  value={formatMoney(margin.marginUsed, currency, true)}
+                  title={`IBKR field ${providerFields.marginUsed || "InitMarginReq"}`}
+                />
+                <MetricCard
+                  label="Available"
+                  value={formatMoney(margin.marginAvailable, currency, true)}
+                  title={`IBKR field ${providerFields.marginAvailable || "ExcessLiquidity"}`}
+                />
+                <MetricCard
+                  label="Maint Margin"
+                  value={formatMoney(margin.maintenanceMargin, currency, true)}
+                  title={`IBKR field ${providerFields.maintenanceMargin || "MaintMarginReq"}`}
+                />
+                <MetricCard
+                  label="DT Buying Power"
+                  value={formatMoney(margin.dayTradingBuyingPower, currency, true)}
+                  title={`IBKR field ${providerFields.dayTradingBuyingPower || "DayTradingBuyingPower"}`}
+                />
+                <MetricCard
+                  label="SMA"
+                  value={formatMoney(margin.sma, currency, true)}
+                  title={`IBKR field ${providerFields.sma || "SMA"}`}
+                />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(10), marginTop: sp(10) }}>
-                <Gauge label="Maintenance cushion" value={margin.maintenanceCushionPercent} />
-                <Gauge label="Leverage ratio" value={(margin.leverageRatio || 0) * 100} max={300} />
-                <Metric label="Margin used" value={formatMoney(margin.marginUsed, currency, true)} />
-                <Metric label="Available" value={formatMoney(margin.marginAvailable, currency, true)} />
-                <Metric label="DT buying power" value={formatMoney(margin.dayTradingBuyingPower, currency, true)} />
-                <Metric label="SMA" value={formatMoney(margin.sma, currency, true)} />
-              </div>
             </div>
-            <div
-              title={greeks.warning || "IBKR position/quote-derived Greeks"}
-              style={{
-                border: `1px solid ${T.border}`,
-                padding: sp(12),
-                background: "rgba(15,23,42,0.45)",
-              }}
-            >
-              <div style={{ ...sectionTitleStyle, fontSize: fs(10) }}>
-                Portfolio Greeks
+
+            <div style={{ display: "grid", gap: sp(8) }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+                  gap: sp("6px 12px"),
+                  paddingTop: sp(6),
+                  borderTop: `1px solid ${T.border}`,
+                }}
+              >
+                <MetricCard
+                  label="Delta"
+                  value={formatNumber(greeks.delta, 2)}
+                  tone={toneForValue(greeks.delta)}
+                />
+                <MetricCard
+                  label="Beta Delta"
+                  value={formatNumber(greeks.betaWeightedDelta, 2)}
+                  tone={toneForValue(greeks.betaWeightedDelta)}
+                />
+                <MetricCard label="Gamma" value={formatNumber(greeks.gamma, 4)} />
+                <MetricCard label="Theta / Day" value={formatNumber(greeks.theta, 2)} />
+                <MetricCard label="Vega" value={formatNumber(greeks.vega, 2)} />
               </div>
               {greeks.warning ? (
-                <div
-                  style={{
-                    marginTop: sp(8),
-                    color: T.textMuted,
-                    fontSize: fs(10),
-                    lineHeight: 1.45,
-                  }}
-                >
-                  {greeks.warning}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
+                  <Pill tone="amber">{greeks.warning}</Pill>
+                  {greeks.coverage ? (
+                    <Pill tone="cyan">
+                      Matched {greeks.coverage.matchedOptionPositions || 0} /{" "}
+                      {greeks.coverage.optionPositions || 0} option positions
+                    </Pill>
+                  ) : null}
+                </div>
+              ) : greeks.coverage ? (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
+                  <Pill tone="green">
+                    Matched {greeks.coverage.matchedOptionPositions || 0} /{" "}
+                    {greeks.coverage.optionPositions || 0} option positions
+                  </Pill>
                 </div>
               ) : null}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: sp(8), marginTop: sp(10) }}>
-                <Metric label="Δ raw" value={formatNumber(greeks.delta, 2)} />
-                <Metric label="β Δ SPY" value={formatNumber(greeks.betaWeightedDelta, 2)} />
-                <Metric label="Γ" value={formatNumber(greeks.gamma, 4)} />
-                <Metric label="Θ/day" value={formatNumber(greeks.theta, 2)} />
-                <Metric label="Vega" value={formatNumber(greeks.vega, 2)} />
-                <Metric label="Rho" value={greeks.rho ?? "----"} />
-              </div>
-              <div style={{ marginTop: sp(12) }}>
-                <div style={{ ...sectionTitleStyle, fontSize: fs(10), marginBottom: sp(8) }}>
-                  Per Underlying
-                </div>
-                {perUnderlying.length ? (
-                  <div style={{ overflow: "auto", maxHeight: "22vh" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
-                      <thead>
-                        <tr>
-                          {["Underlying", "Exposure", "Δ", "β Δ", "Γ", "Θ", "Vega"].map((label) => (
-                            <th
-                              key={label}
-                              style={{
-                                ...sectionTitleStyle,
-                                fontSize: fs(9),
-                                textAlign: "left",
-                                paddingBottom: sp(6),
-                              }}
-                            >
-                              {label}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {perUnderlying.slice(0, 8).map((row) => (
-                          <tr key={row.underlying}>
-                            <td style={{ padding: sp("5px 0"), color: T.text, fontSize: fs(10), fontWeight: 800 }}>
-                              {row.underlying}
-                            </td>
-                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
-                              {formatMoney(row.exposure, currency, true)}
-                            </td>
-                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
-                              {formatNumber(row.delta, 2)}
-                            </td>
-                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
-                              {formatNumber(row.betaWeightedDelta, 2)}
-                            </td>
-                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
-                              {formatNumber(row.gamma, 4)}
-                            </td>
-                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
-                              {formatNumber(row.theta, 2)}
-                            </td>
-                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
-                              {formatNumber(row.vega, 2)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div style={{ color: T.textMuted, fontSize: fs(10) }}>
-                    No underlying Greek breakdown available.
-                  </div>
-                )}
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: sp(12),
+                  paddingTop: sp(6),
+                  borderTop: `1px solid ${T.border}`,
+                }}
+              >
+                <RankedList
+                  title="Top Concentration"
+                  rows={data.concentration?.topPositions || []}
+                  currency={currency}
+                  valueKey="marketValue"
+                />
+                <RankedList
+                  title="Sector Concentration"
+                  rows={data.concentration?.sectors || []}
+                  currency={currency}
+                  valueKey="value"
+                />
               </div>
             </div>
-            <div>
-              <div style={{ ...sectionTitleStyle, fontSize: fs(10), marginBottom: sp(8) }}>
-                Expiry Notional
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: sp(6) }}>
-                {[
-                  ["This week", data.expiryConcentration?.thisWeek],
-                  ["This month", data.expiryConcentration?.thisMonth],
-                  ["Next 90d", data.expiryConcentration?.next90Days],
-                ].map(([label, value]) => (
-                  <div
-                    key={label}
-                    style={{
-                      padding: sp(8),
-                      minHeight: dim(48),
-                      background: "linear-gradient(135deg, rgba(249,115,22,0.22), rgba(30,41,59,0.55))",
-                      border: `1px solid ${T.border}`,
-                    }}
-                  >
-                    <div style={mutedLabelStyle}>{label}</div>
-                    <div style={{ color: T.text, fontWeight: 900, marginTop: 4 }}>
-                      {formatMoney(value, currency, true)}
-                    </div>
-                  </div>
-                ))}
-              </div>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: sp(12),
+              paddingTop: sp(6),
+              borderTop: `1px solid ${T.border}`,
+            }}
+          >
+            <RankedList
+              title="Today Winners"
+              rows={data.winnersLosers?.todayWinners || []}
+              currency={currency}
+              valueKey="unrealizedPnl"
+            />
+            <RankedList
+              title="Today Losers"
+              rows={data.winnersLosers?.todayLosers || []}
+              currency={currency}
+              valueKey="unrealizedPnl"
+            />
+            <RankedList
+              title="All-Time Winners"
+              rows={data.winnersLosers?.allTimeWinners || []}
+              currency={currency}
+              valueKey="unrealizedPnl"
+            />
+            <RankedList
+              title="All-Time Losers"
+              rows={data.winnersLosers?.allTimeLosers || []}
+              currency={currency}
+              valueKey="unrealizedPnl"
+            />
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.1fr) minmax(260px, 0.9fr)",
+              gap: sp(12),
+              paddingTop: sp(6),
+              borderTop: `1px solid ${T.border}`,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gap: sp(6),
+              }}
+            >
+              <div style={{ ...sectionTitleStyle, fontSize: fs(9) }}>Per Underlying Greeks</div>
+              {perUnderlying.length ? (
+                <div style={{ overflow: "auto", maxHeight: "24vh" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                    <thead>
+                      <tr style={tableHeaderStyle}>
+                        {["Underlying", "Exposure", "Delta", "Beta Delta", "Gamma", "Theta", "Vega"].map((label) => (
+                          <th key={label} style={{ ...tableCellStyle, ...tableHeaderStyle }}>
+                            {label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {perUnderlying.slice(0, 8).map((row) => (
+                        <tr key={row.underlying}>
+                          <td style={{ ...tableCellStyle, color: T.text, fontWeight: 800 }}>
+                            {row.underlying}
+                          </td>
+                          <td style={tableCellStyle}>{formatMoney(row.exposure, currency, true)}</td>
+                          <td style={tableCellStyle}>{formatNumber(row.delta, 2)}</td>
+                          <td style={tableCellStyle}>{formatNumber(row.betaWeightedDelta, 2)}</td>
+                          <td style={tableCellStyle}>{formatNumber(row.gamma, 4)}</td>
+                          <td style={tableCellStyle}>{formatNumber(row.theta, 2)}</td>
+                          <td style={tableCellStyle}>{formatNumber(row.vega, 2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ color: T.textMuted, fontSize: fs(10) }}>
+                  No underlying Greek breakdown available.
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: sp(6),
+              }}
+            >
+              <div style={{ ...sectionTitleStyle, fontSize: fs(9) }}>Expiry Notional</div>
+              {[
+                ["This Week", data.expiryConcentration?.thisWeek],
+                ["This Month", data.expiryConcentration?.thisMonth],
+                ["Next 90d", data.expiryConcentration?.next90Days],
+              ].map(([label, value]) => (
+                <MetricCard
+                  key={label}
+                  label={label}
+                  value={formatMoney(value, currency, true)}
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -264,21 +379,5 @@ export const RiskDashboardPanel = ({ query, currency }) => {
     </Panel>
   );
 };
-
-const Metric = ({ label, value }) => (
-  <div
-    style={{
-      padding: sp(8),
-      minHeight: dim(46),
-      border: `1px solid ${T.border}`,
-      background: T.bg0,
-    }}
-  >
-    <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: T.text, fontSize: fs(12), fontWeight: 900, marginTop: 4 }}>
-      {value}
-    </div>
-  </div>
-);
 
 export default RiskDashboardPanel;

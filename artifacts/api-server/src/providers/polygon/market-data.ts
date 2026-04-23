@@ -126,6 +126,17 @@ export type OptionChainContract = {
   updatedAt: Date;
 };
 
+export type HistoricalOptionContract = {
+  ticker: string;
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: OptionRight;
+  multiplier: number;
+  sharesPerContract: number;
+  providerContractId: string | null;
+};
+
 export type FlowEvent = {
   id: string;
   underlying: string;
@@ -497,6 +508,41 @@ function mapChainContract(
         getNumberPath(day, ["v"]),
       ) ?? 0,
     updatedAt,
+  };
+}
+
+function mapHistoricalOptionContract(
+  underlying: string,
+  result: unknown,
+): HistoricalOptionContract | null {
+  const record = asRecord(result);
+
+  if (!record) {
+    return null;
+  }
+
+  const details = asRecord(record["details"]) ?? record;
+  const ticker = asString(details["ticker"]);
+  const expirationDate = toDate(details["expiration_date"]);
+  const strike = asNumber(details["strike_price"]);
+  const right = normalizeOptionRight(asString(details["contract_type"]));
+  const sharesPerContract = asNumber(details["shares_per_contract"]) ?? 100;
+
+  if (!ticker || !expirationDate || strike === null || !right) {
+    return null;
+  }
+
+  return {
+    ticker,
+    underlying: normalizeSymbol(
+      asString(details["underlying_ticker"]) ?? underlying,
+    ),
+    expirationDate,
+    strike,
+    right,
+    multiplier: sharesPerContract,
+    sharesPerContract,
+    providerContractId: asString(details["provider_contract_id"]),
   };
 }
 
@@ -996,6 +1042,53 @@ export class PolygonMarketDataClient {
     };
   }
 
+  async listUniverseTickersPage(input: {
+    market: UniverseTicker["market"];
+    type?: string;
+    active?: boolean;
+    limit?: number;
+    cursorUrl?: string | null;
+    signal?: AbortSignal;
+  }): Promise<{
+    count: number;
+    results: UniverseTicker[];
+    nextUrl: string | null;
+  }> {
+    const polygonMarket =
+      input.market === "etf"
+        ? "stocks"
+        : input.market === "futures"
+          ? null
+          : input.market;
+    const polygonType =
+      input.market === "etf" ? input.type ?? "ETF" : asString(input.type);
+
+    if (polygonMarket === null) {
+      return { count: 0, results: [], nextUrl: null };
+    }
+
+    const payload = await fetchJson<unknown>(
+      input.cursorUrl
+        ? this.buildUrl(input.cursorUrl)
+        : this.buildUrl("/v3/reference/tickers", {
+            market: polygonMarket,
+            type: polygonType,
+            active: input.active,
+            sort: "ticker",
+            order: "asc",
+            limit: Math.max(1, Math.min(input.limit ?? 1000, 1000)),
+          }),
+      { signal: input.signal },
+    );
+    const record = asRecord(payload);
+
+    return {
+      count: asNumber(record?.["count"]) ?? 0,
+      results: compact(asArray(record?.["results"]).map(mapUniverseTicker)),
+      nextUrl: asString(record?.["next_url"]),
+    };
+  }
+
   private async getTickerLogoUrl(
     ticker: string,
     signal?: AbortSignal,
@@ -1132,6 +1225,63 @@ export class PolygonMarketDataClient {
     }
 
     return contracts;
+  }
+
+  async getHistoricalOptionContracts(input: {
+    underlying: string;
+    asOf?: Date;
+    expirationDateGte?: Date;
+    expirationDateLte?: Date;
+    contractType?: OptionRight;
+    limit?: number;
+  }): Promise<HistoricalOptionContract[]> {
+    const underlying = normalizeSymbol(input.underlying);
+    const fetchContracts = async (
+      expired: boolean,
+    ): Promise<HistoricalOptionContract[]> => {
+      let nextUrl: string | null = this.buildUrl(
+        "/v3/reference/options/contracts",
+        {
+          underlying_ticker: underlying,
+          as_of: input.asOf ? toIsoDateString(input.asOf) : undefined,
+          contract_type: input.contractType,
+          expired,
+          order: "asc",
+          sort: "expiration_date",
+          limit: Math.max(1, Math.min(input.limit ?? 250, 1_000)),
+          "expiration_date.gte": input.expirationDateGte
+            ? toIsoDateString(input.expirationDateGte)
+            : undefined,
+          "expiration_date.lte": input.expirationDateLte
+            ? toIsoDateString(input.expirationDateLte)
+            : undefined,
+        },
+      ).toString();
+      const contracts: HistoricalOptionContract[] = [];
+      let pageCount = 0;
+
+      while (nextUrl && pageCount < 10) {
+        const page = await this.fetchChainPage(nextUrl);
+        contracts.push(
+          ...compact(
+            page.results.map((result) =>
+              mapHistoricalOptionContract(underlying, result),
+            ),
+          ),
+        );
+        nextUrl = page.nextUrl;
+        pageCount += 1;
+      }
+
+      return contracts;
+    };
+
+    const combined = [
+      ...(await fetchContracts(false)),
+      ...(await fetchContracts(true)),
+    ];
+    const byTicker = new Map(combined.map((contract) => [contract.ticker, contract]));
+    return [...byTicker.values()];
   }
 
   async getDerivedFlowEvents(input: {

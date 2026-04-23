@@ -3391,15 +3391,20 @@ export class IbkrClient {
         ]);
     const secTypes = new Set<string>();
 
-    if (selectedMarkets.has("stocks") || selectedMarkets.has("otc")) {
+    const searchesStockLikeMarkets =
+      selectedMarkets.has("stocks") || selectedMarkets.has("otc");
+
+    if (searchesStockLikeMarkets) {
       secTypes.add("STK");
     }
     if (selectedMarkets.has("etf")) {
       // Client Portal commonly exposes ETFs as STK rows whose description
-      // carries the ETF identity. Search both so ETF-only filters still return
-      // the IBKR-tradable contract instead of Polygon-only metadata.
+      // carries the ETF identity. Mixed stock/ETF searches only need STK in
+      // the interactive path; keep the extra ETF secType for ETF-only filters.
       secTypes.add("STK");
-      secTypes.add("ETF");
+      if (!searchesStockLikeMarkets) {
+        secTypes.add("ETF");
+      }
     }
     if (selectedMarkets.has("indices")) secTypes.add("IND");
     if (selectedMarkets.has("futures")) secTypes.add("FUT");
@@ -3511,7 +3516,7 @@ export class IbkrClient {
         })),
       );
       const searchBatches =
-        searchTasks.length <= 1
+        searchTasks.length <= 2
           ? await Promise.all(searchTasks)
           : await collectSettledWithin(
               searchTasks,

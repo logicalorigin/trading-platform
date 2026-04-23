@@ -17,28 +17,32 @@ import {
 import {
   AlgoDraftStrategiesPanel,
 } from "../features/backtesting/BacktestingPanels";
+import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
   Badge,
-  MISSING_VALUE,
   QUERY_DEFAULTS,
-  T,
   bridgeRuntimeMessage,
   bridgeRuntimeTone,
-  dim,
   formatEnumLabel,
   formatEtTime,
   formatRelativeTimeShort,
-  fs,
   parseSymbolUniverseInput,
-  sp,
   useToast,
 } from "../RayAlgoPlatform";
+import {
+  MISSING_VALUE,
+  T,
+  dim,
+  fs,
+  sp,
+} from "../lib/uiTokens";
 
 export const AlgoScreen = ({
   session,
   environment,
   accounts = [],
   selectedAccountId = null,
+  isVisible = false,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -58,9 +62,16 @@ export const AlgoScreen = ({
     selectedAccountId ||
     session?.ibkrBridge?.selectedAccountId ||
     null;
+  useRuntimeWorkloadFlag("algo:deployments", isVisible, {
+    kind: "poll",
+    label: "Algo deployments",
+    detail: "15s",
+    priority: 7,
+  });
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       ...QUERY_DEFAULTS,
+      refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
       retry: false,
     },
   });
@@ -69,6 +80,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
+        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
         retry: false,
       },
     },
@@ -94,6 +106,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
+        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
         retry: false,
       },
     },
@@ -1034,7 +1047,11 @@ export const AlgoScreen = ({
         )}
       </div>
 
-      <AlgoDraftStrategiesPanel theme={T} scale={{ fs, sp, dim }} />
+      <AlgoDraftStrategiesPanel
+        theme={T}
+        scale={{ fs, sp, dim }}
+        isVisible={isVisible}
+      />
     </div>
   );
 };

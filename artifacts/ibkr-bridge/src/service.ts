@@ -226,6 +226,49 @@ export class IbkrBridgeService {
 
     return this.provider.subscribeQuoteStream(symbols, onQuote);
   }
+
+  async getOptionQuoteSnapshots(input: {
+    underlying?: string | null;
+    providerContractIds: string[];
+  }): Promise<QuoteSnapshot[]> {
+    if (!this.provider?.getOptionQuoteSnapshots) {
+      return [];
+    }
+
+    return this.provider.getOptionQuoteSnapshots(input);
+  }
+
+  async subscribeOptionQuoteStream(
+    input: {
+      underlying?: string | null;
+      providerContractIds: string[];
+    },
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void> {
+    if (!this.provider?.subscribeOptionQuoteStream) {
+      return () => {};
+    }
+
+    return this.provider.subscribeOptionQuoteStream(input, onQuote);
+  }
+
+  async subscribeHistoricalBarStream(
+    input: {
+      symbol: string;
+      timeframe: HistoryBarTimeframe;
+      assetClass?: "equity" | "option";
+      providerContractId?: string | null;
+      outsideRth?: boolean;
+      source?: HistoryDataSource;
+    },
+    onBar: (bar: BrokerBarSnapshot) => void,
+  ): Promise<() => void> {
+    if (!this.provider?.subscribeHistoricalBarStream) {
+      return () => {};
+    }
+
+    return this.provider.subscribeHistoricalBarStream(input, onBar);
+  }
 }
 
 export const ibkrBridgeService = new IbkrBridgeService();

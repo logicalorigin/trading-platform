@@ -22,6 +22,17 @@ const MARKET_CASES = [
   { market: "crypto", search: "BTC", ticker: "BTC" },
   { market: "otc", search: "TCEHY", ticker: "TCEHY" },
 ];
+const FAST_BROAD_TICKER_CASES = [
+  { search: "AAPL", ticker: "AAPL", market: "stocks" },
+  { search: "SPY", ticker: "SPY", market: "etf" },
+  { search: "SPX", ticker: "SPX", market: "indices" },
+  { search: "ES", ticker: "ES", market: "futures" },
+  { search: "EUR", ticker: "EUR", market: "fx" },
+  { search: "BTC", ticker: "BTC", market: "crypto" },
+  { search: "TCEHY", ticker: "TCEHY", market: "otc" },
+  { search: "CAR", ticker: "CAR", market: "stocks" },
+  { search: "OPTX", ticker: "OPTX", market: "stocks" },
+];
 
 function stripTrailingSlash(value) {
   return value.replace(/\/+$/, "");
@@ -109,6 +120,21 @@ function assertNoEmbeddedLogos(payload) {
   }
 }
 
+function assertTopTicker(payload, expected) {
+  const [first] = payload.results;
+  assert.ok(first, `expected ${expected.ticker} ${expected.market} to be the top result`);
+  assert.equal(
+    first.ticker,
+    expected.ticker,
+    `expected top ticker ${expected.ticker}; got ${first.ticker}:${first.market}`,
+  );
+  assert.equal(
+    first.market,
+    expected.market,
+    `expected top market ${expected.market}; got ${first.ticker}:${first.market}`,
+  );
+}
+
 test("live IBKR bridge search returns every supported ticker market", { timeout: 180_000 }, async () => {
   for (const testcase of MARKET_CASES) {
     const payload = await searchBridge({
@@ -134,19 +160,17 @@ test("live API search returns every market and preserves IBKR trade context", { 
   }
 });
 
-test("live API ticker search returns CAR and OPTX as fast IBKR-tradable rows", { timeout: 120_000 }, async () => {
-  const cases = [
-    { search: "CAR", ticker: "CAR", params: { search: "CAR", active: true, limit: 12 } },
-    { search: "CAR stocks", ticker: "CAR", params: { search: "CAR", markets: "stocks", active: true, limit: 12 } },
-    { search: "OPTX", ticker: "OPTX", params: { search: "OPTX", active: true, limit: 12 } },
-    { search: "OPTX stocks", ticker: "OPTX", params: { search: "OPTX", markets: "stocks", active: true, limit: 12 } },
-  ];
-
-  for (const testcase of cases) {
-    const { elapsedMs, payload } = await timedSearchApi(testcase.params);
+test("live API ticker search keeps no-filter exact searches fast across the searchable universe", { timeout: 180_000 }, async () => {
+  for (const testcase of FAST_BROAD_TICKER_CASES) {
+    const { elapsedMs, payload } = await timedSearchApi({
+      search: testcase.search,
+      active: true,
+      limit: 12,
+    });
     assertNoEmbeddedLogos(payload);
-    const row = requireTicker(payload, { ticker: testcase.ticker, market: "stocks" });
+    const row = requireTicker(payload, testcase);
     assertIbkrTradable(row);
+    assertTopTicker(payload, testcase);
     assert.ok(
       elapsedMs <= 2_500,
       `${testcase.search} should return first selectable rows within 2500ms; got ${Math.round(elapsedMs)}ms`,
@@ -185,6 +209,7 @@ test("live API ticker search resolves ticker, company name, ISIN, and IBKR conid
     limit: 10,
   });
   requireTicker(companyPayload, { ticker: "AAPL", market: "stocks" });
+  assertTopTicker(companyPayload, { ticker: "AAPL", market: "stocks" });
 
   const isinPayload = await searchApi({
     search: "US0378331005",

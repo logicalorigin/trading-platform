@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type {
   AccountsResponse,
@@ -31,6 +31,31 @@ type OptionChainStreamPayload = {
     updatedAt: string;
   }>;
 };
+
+type LiveOptionQuoteSnapshot = QuoteSnapshot & {
+  openInterest?: number | null;
+  impliedVolatility?: number | null;
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+};
+
+type OptionQuoteStreamPayload = {
+  underlying?: string | null;
+  quotes: LiveOptionQuoteSnapshot[];
+};
+
+const optionQuoteSnapshotsByProviderContractId = new Map<
+  string,
+  LiveOptionQuoteSnapshot
+>();
+const optionQuoteStoreListeners = new Set<() => void>();
+const optionQuoteStoreListenersByProviderContractId = new Map<
+  string,
+  Set<() => void>
+>();
+const optionQuoteStoreVersions = new Map<string, number>();
 
 const normalizeSymbols = (symbols: string[]): string[] =>
   Array.from(
@@ -67,6 +92,214 @@ const parseJsonPayload = <T,>(value: string): T | null => {
   } catch {
     return null;
   }
+};
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const getUpdatedAtTime = (value: string | null | undefined): number | null => {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const areOptionQuoteSnapshotsEquivalent = (
+  left: LiveOptionQuoteSnapshot,
+  right: LiveOptionQuoteSnapshot,
+): boolean =>
+  left.symbol === right.symbol &&
+  left.price === right.price &&
+  left.bid === right.bid &&
+  left.ask === right.ask &&
+  left.bidSize === right.bidSize &&
+  left.askSize === right.askSize &&
+  left.change === right.change &&
+  left.changePercent === right.changePercent &&
+  left.open === right.open &&
+  left.high === right.high &&
+  left.low === right.low &&
+  left.prevClose === right.prevClose &&
+  left.volume === right.volume &&
+  left.openInterest === right.openInterest &&
+  left.impliedVolatility === right.impliedVolatility &&
+  left.delta === right.delta &&
+  left.gamma === right.gamma &&
+  left.theta === right.theta &&
+  left.vega === right.vega &&
+  left.updatedAt === right.updatedAt &&
+  left.source === right.source &&
+  left.transport === right.transport &&
+  left.delayed === right.delayed;
+
+const normalizeProviderContractId = (
+  providerContractId: string | null | undefined,
+): string => providerContractId?.trim?.() || "";
+
+const subscribeToOptionQuoteSnapshot = (
+  providerContractId: string,
+  listener: () => void,
+): (() => void) => {
+  const normalizedProviderContractId = normalizeProviderContractId(providerContractId);
+  if (!normalizedProviderContractId) {
+    return () => {};
+  }
+
+  const listeners =
+    optionQuoteStoreListenersByProviderContractId.get(normalizedProviderContractId) ||
+    new Set();
+  listeners.add(listener);
+  optionQuoteStoreListenersByProviderContractId.set(
+    normalizedProviderContractId,
+    listeners,
+  );
+
+  return () => {
+    const currentListeners =
+      optionQuoteStoreListenersByProviderContractId.get(normalizedProviderContractId);
+    currentListeners?.delete(listener);
+    if (currentListeners && currentListeners.size === 0) {
+      optionQuoteStoreListenersByProviderContractId.delete(
+        normalizedProviderContractId,
+      );
+    }
+  };
+};
+
+const getOptionQuoteSnapshotVersion = (providerContractId: string): number =>
+  optionQuoteStoreVersions.get(normalizeProviderContractId(providerContractId)) ?? 0;
+
+const cacheOptionQuoteSnapshot = (
+  quote: LiveOptionQuoteSnapshot,
+): LiveOptionQuoteSnapshot => {
+  const normalizedProviderContractId = normalizeProviderContractId(
+    quote.providerContractId,
+  );
+  if (!normalizedProviderContractId) {
+    return quote;
+  }
+
+  const currentQuote =
+    optionQuoteSnapshotsByProviderContractId.get(normalizedProviderContractId) || null;
+  const currentUpdatedAt = getUpdatedAtTime(currentQuote?.updatedAt);
+  const nextUpdatedAt = getUpdatedAtTime(quote.updatedAt);
+
+  if (
+    currentQuote &&
+    currentUpdatedAt != null &&
+    nextUpdatedAt != null &&
+    nextUpdatedAt < currentUpdatedAt
+  ) {
+    return currentQuote;
+  }
+
+  const cachedQuote = {
+    ...currentQuote,
+    ...quote,
+    providerContractId: normalizedProviderContractId,
+  };
+
+  if (
+    currentQuote &&
+    areOptionQuoteSnapshotsEquivalent(currentQuote, cachedQuote)
+  ) {
+    return currentQuote;
+  }
+
+  optionQuoteSnapshotsByProviderContractId.set(
+    normalizedProviderContractId,
+    cachedQuote,
+  );
+  optionQuoteStoreVersions.set(
+    normalizedProviderContractId,
+    (optionQuoteStoreVersions.get(normalizedProviderContractId) ?? 0) + 1,
+  );
+  optionQuoteStoreListeners.forEach((listener) => listener());
+  optionQuoteStoreListenersByProviderContractId
+    .get(normalizedProviderContractId)
+    ?.forEach((listener) => listener());
+
+  return cachedQuote;
+};
+
+const seedOptionQuoteSnapshotsFromContracts = (
+  contracts: OptionChainResponse["contracts"],
+) => {
+  (contracts || []).forEach((contract) => {
+    const providerContractId = normalizeProviderContractId(
+      contract.contract?.providerContractId,
+    );
+    if (!providerContractId) {
+      return;
+    }
+
+    cacheOptionQuoteSnapshot({
+      symbol: contract.contract?.ticker || contract.contract?.underlying || "",
+      price:
+        isFiniteNumber(contract.last) && contract.last > 0
+          ? contract.last
+          : isFiniteNumber(contract.mark)
+            ? contract.mark
+            : 0,
+      bid: contract.bid,
+      ask: contract.ask,
+      bidSize: 0,
+      askSize: 0,
+      change: 0,
+      changePercent: 0,
+      open: null,
+      high: null,
+      low: null,
+      prevClose: null,
+      volume: contract.volume ?? null,
+      openInterest: contract.openInterest ?? null,
+      impliedVolatility: contract.impliedVolatility ?? null,
+      delta: contract.delta ?? null,
+      gamma: contract.gamma ?? null,
+      theta: contract.theta ?? null,
+      vega: contract.vega ?? null,
+      providerContractId,
+      source: "ibkr",
+      transport: "client_portal",
+      delayed: false,
+      updatedAt: contract.updatedAt,
+      freshness: undefined,
+      cacheAgeMs: null,
+      latency: null,
+    });
+  });
+};
+
+export const getStoredOptionQuoteSnapshot = (
+  providerContractId?: string | null,
+): LiveOptionQuoteSnapshot | null => {
+  const normalizedProviderContractId = normalizeProviderContractId(
+    providerContractId,
+  );
+  if (!normalizedProviderContractId) {
+    return null;
+  }
+
+  return (
+    optionQuoteSnapshotsByProviderContractId.get(normalizedProviderContractId) || null
+  );
+};
+
+export const useStoredOptionQuoteSnapshot = (
+  providerContractId?: string | null,
+): LiveOptionQuoteSnapshot | null => {
+  const normalizedProviderContractId = normalizeProviderContractId(
+    providerContractId,
+  );
+  useSyncExternalStore(
+    (listener) =>
+      subscribeToOptionQuoteSnapshot(normalizedProviderContractId, listener),
+    () => getOptionQuoteSnapshotVersion(normalizedProviderContractId),
+    () => getOptionQuoteSnapshotVersion(normalizedProviderContractId),
+  );
+
+  return getStoredOptionQuoteSnapshot(normalizedProviderContractId);
 };
 
 const readQueryParams = (queryKey: unknown): Record<string, unknown> | null => {
@@ -140,6 +373,130 @@ const mergeQuotesIntoCache = (
     transport: filteredQuotes[0]?.transport ?? current?.transport ?? null,
     delayed: quotes.some((quote) => quote.delayed),
     fallbackUsed: false,
+  };
+};
+
+const mergeOptionChainContracts = (
+  currentContracts: OptionChainResponse["contracts"] | undefined,
+  nextContracts: OptionChainResponse["contracts"],
+): OptionChainResponse["contracts"] => {
+  const currentByProviderContractId = new Map(
+    (currentContracts || [])
+      .filter((contract) => contract.contract?.providerContractId)
+      .map((contract) => [contract.contract.providerContractId || "", contract]),
+  );
+
+  return nextContracts.map((nextContract) => {
+    const providerContractId = nextContract.contract?.providerContractId;
+    if (!providerContractId) {
+      return nextContract;
+    }
+
+    const currentContract = currentByProviderContractId.get(providerContractId);
+    if (!currentContract) {
+      return nextContract;
+    }
+
+    const currentUpdatedAt = new Date(currentContract.updatedAt).getTime();
+    const nextUpdatedAt = new Date(nextContract.updatedAt).getTime();
+    if (currentUpdatedAt <= nextUpdatedAt) {
+      return nextContract;
+    }
+
+    return {
+      ...nextContract,
+      bid: currentContract.bid,
+      ask: currentContract.ask,
+      last: currentContract.last,
+      mark: currentContract.mark,
+      impliedVolatility: currentContract.impliedVolatility,
+      delta: currentContract.delta,
+      gamma: currentContract.gamma,
+      theta: currentContract.theta,
+      vega: currentContract.vega,
+      volume: currentContract.volume,
+      openInterest: currentContract.openInterest,
+      updatedAt: currentContract.updatedAt,
+    };
+  });
+};
+
+const patchOptionQuotesIntoContracts = (
+  currentContracts: OptionChainResponse["contracts"] | undefined,
+  incomingQuotes: LiveOptionQuoteSnapshot[],
+): OptionChainResponse["contracts"] => {
+  if (!currentContracts?.length || !incomingQuotes.length) {
+    return currentContracts || [];
+  }
+
+  const quotesByProviderContractId = new Map(
+    incomingQuotes
+      .filter((quote) => quote.providerContractId)
+      .map((quote) => [quote.providerContractId || "", quote]),
+  );
+
+  return currentContracts.map((contract) => {
+    const providerContractId = contract.contract?.providerContractId;
+    if (!providerContractId) {
+      return contract;
+    }
+
+    const quote = quotesByProviderContractId.get(providerContractId);
+    if (!quote) {
+      return contract;
+    }
+
+    const bid = isFiniteNumber(quote.bid) ? quote.bid : contract.bid;
+    const ask = isFiniteNumber(quote.ask) ? quote.ask : contract.ask;
+    const last = isFiniteNumber(quote.price) ? quote.price : contract.last;
+    const mark =
+      bid > 0 && ask > 0
+        ? (bid + ask) / 2
+        : isFiniteNumber(last)
+          ? last
+          : contract.mark;
+
+    return {
+      ...contract,
+      bid,
+      ask,
+      last,
+      mark,
+      impliedVolatility: quote.impliedVolatility ?? contract.impliedVolatility,
+      delta: quote.delta ?? contract.delta,
+      gamma: quote.gamma ?? contract.gamma,
+      theta: quote.theta ?? contract.theta,
+      vega: quote.vega ?? contract.vega,
+      volume: quote.volume ?? contract.volume,
+      openInterest: quote.openInterest ?? contract.openInterest,
+      updatedAt: quote.updatedAt,
+    };
+  });
+};
+
+const mergeOptionChainResponse = (
+  current: OptionChainResponse | undefined,
+  nextContracts: OptionChainResponse["contracts"],
+  underlying: string,
+): OptionChainResponse => ({
+  underlying,
+  expirationDate: current?.expirationDate ?? null,
+  contracts: mergeOptionChainContracts(current?.contracts, nextContracts),
+});
+
+const mergeOptionQuotesIntoCache = (
+  current: OptionChainResponse | undefined,
+  incomingQuotes: LiveOptionQuoteSnapshot[],
+  underlying: string,
+): OptionChainResponse | undefined => {
+  if (!current?.contracts?.length) {
+    return current;
+  }
+
+  return {
+    underlying,
+    expirationDate: current.expirationDate ?? null,
+    contracts: patchOptionQuotesIntoContracts(current.contracts, incomingQuotes),
   };
 };
 
@@ -397,14 +754,22 @@ export const useIbkrOptionChainStream = ({
         return;
       }
 
-      queryClient.setQueryData(
-        ["trade-option-chain", normalizedUnderlying],
-        {
-          underlying: normalizedUnderlying,
-          expirationDate: null,
-          contracts: nextUnderlying.contracts || [],
-        } satisfies OptionChainResponse,
-      );
+      seedOptionQuoteSnapshotsFromContracts(nextUnderlying.contracts || []);
+
+      queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["trade-option-chain", normalizedUnderlying] })
+        .forEach((query) => {
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: OptionChainResponse | undefined) =>
+              mergeOptionChainResponse(
+                current,
+                nextUnderlying.contracts || [],
+                normalizedUnderlying,
+              ),
+          );
+        });
     };
 
     source.addEventListener("chains", handleChains as EventListener);
@@ -413,4 +778,89 @@ export const useIbkrOptionChainStream = ({
       source.close();
     };
   }, [enabled, normalizedUnderlying, queryClient, streamUrl]);
+};
+
+export const useIbkrOptionQuoteStream = ({
+  underlying,
+  providerContractIds,
+  enabled = true,
+}: {
+  underlying?: string | null;
+  providerContractIds: string[];
+  enabled?: boolean;
+}) => {
+  const queryClient = useQueryClient();
+  const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
+  const normalizedProviderContractIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          providerContractIds
+            .map((providerContractId) => providerContractId?.trim?.() || "")
+            .filter(Boolean),
+        ),
+      ).sort(),
+    [providerContractIds],
+  );
+  const streamUrl = useMemo(
+    () =>
+      buildStreamUrl("/api/streams/options/quotes", {
+        underlying: normalizedUnderlying || undefined,
+        contracts:
+          normalizedProviderContractIds.length > 0
+            ? normalizedProviderContractIds.join(",")
+            : undefined,
+      }),
+    [normalizedProviderContractIds, normalizedUnderlying],
+  );
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      !normalizedUnderlying ||
+      normalizedProviderContractIds.length === 0 ||
+      !streamUrl ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return;
+    }
+
+    const source = new EventSource(streamUrl);
+    const handleQuotes = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<OptionQuoteStreamPayload>(event.data);
+      if (!payload?.quotes?.length) {
+        return;
+      }
+
+      payload.quotes.forEach(cacheOptionQuoteSnapshot);
+
+      queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["trade-option-chain", normalizedUnderlying] })
+        .forEach((query) => {
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: OptionChainResponse | undefined) =>
+              mergeOptionQuotesIntoCache(
+                current,
+                payload.quotes,
+                normalizedUnderlying,
+              ),
+          );
+        });
+    };
+
+    source.addEventListener("quotes", handleQuotes as EventListener);
+    return () => {
+      source.removeEventListener("quotes", handleQuotes as EventListener);
+      source.close();
+    };
+  }, [
+    enabled,
+    normalizedProviderContractIds,
+    normalizedUnderlying,
+    queryClient,
+    streamUrl,
+  ]);
 };

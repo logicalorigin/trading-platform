@@ -1,10 +1,4 @@
-import {
-  MISSING_VALUE,
-  T,
-  dim,
-  fs,
-  sp,
-} from "../../RayAlgoPlatform";
+import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 
 export const ACCOUNT_RANGES = ["1W", "1M", "3M", "YTD", "1Y", "ALL"];
 
@@ -58,62 +52,416 @@ export const metricTitle = (metric) => {
 };
 
 export const panelStyle = {
-  background: `linear-gradient(145deg, ${T.bg1}, ${T.bg2})`,
-  border: `1px solid ${T.border}`,
-  borderRadius: 0,
-  boxShadow: "0 18px 45px rgba(0,0,0,0.18)",
+  get background() {
+    return T.bg1;
+  },
+  get border() {
+    return `1px solid ${T.border}`;
+  },
+  get borderRadius() {
+    return dim(6);
+  },
+  get boxShadow() {
+    return T.bg0 === "#f5f5f4"
+      ? "0 8px 20px rgba(15,23,42,0.05)"
+      : "0 8px 20px rgba(0,0,0,0.12)";
+  },
 };
 
 export const sectionTitleStyle = {
-  fontSize: fs(11),
-  color: T.text,
-  fontFamily: T.sans,
-  fontWeight: 800,
+  get fontSize() {
+    return fs(10);
+  },
+  get color() {
+    return T.text;
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: 900,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
 };
 
 export const mutedLabelStyle = {
+  get fontSize() {
+    return fs(8);
+  },
+  get color() {
+    return T.textMuted;
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: 800,
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+};
+
+const toneValueMap = () => ({
+  default: { color: T.textDim, border: T.border, bg: T.bg2 },
+  accent: {
+    color: T.accent,
+    border: `${T.accent}44`,
+    bg: T.bg1 === "#ffffff" ? T.bg1 : T.accentDim,
+  },
+  green: {
+    color: T.green,
+    border: `${T.green}44`,
+    bg: T.bg1 === "#ffffff" ? T.bg1 : T.greenBg,
+  },
+  red: {
+    color: T.red,
+    border: `${T.red}44`,
+    bg: T.bg1 === "#ffffff" ? T.bg1 : T.redBg,
+  },
+  amber: {
+    color: T.amber,
+    border: `${T.amber}44`,
+    bg: T.bg1 === "#ffffff" ? T.bg1 : T.amberBg,
+  },
+  cyan: {
+    color: T.cyan,
+    border: `${T.cyan}44`,
+    bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.cyan}18`,
+  },
+  purple: {
+    color: T.purple,
+    border: `${T.purple}44`,
+    bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.purple}18`,
+  },
+});
+
+export const denseButtonStyle = (active = false) => ({
+  height: dim(25),
+  padding: sp("0 9px"),
+  borderRadius: dim(4),
+  border: `1px solid ${active ? T.accent : T.border}`,
+  background: active ? (T.bg1 === "#ffffff" ? T.bg1 : T.accent) : T.bg2,
+  color: active ? (T.bg1 === "#ffffff" ? T.accent : "#ffffff") : T.textSec,
   fontSize: fs(9),
-  color: T.textMuted,
-  fontFamily: T.sans,
+  fontFamily: T.mono,
+  fontWeight: 800,
+  cursor: "pointer",
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+});
+
+export const primaryButtonStyle = {
+  get height() {
+    return dim(28);
+  },
+  get padding() {
+    return sp("0 10px");
+  },
+  get borderRadius() {
+    return dim(4);
+  },
+  border: "none",
+  get background() {
+    return T.accent;
+  },
+  color: "#ffffff",
+  get fontSize() {
+    return fs(9);
+  },
+  get fontFamily() {
+    return T.mono;
+  },
+  fontWeight: 800,
+  cursor: "pointer",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
 };
 
-export const denseButtonStyle = (active = false) => ({
-  height: dim(24),
-  padding: sp("0 8px"),
-  border: `1px solid ${active ? T.accent : T.border}`,
-  background: active ? `${T.accent}22` : T.bg2,
-  color: active ? T.accent : T.textSec,
-  fontSize: fs(10),
-  fontFamily: T.sans,
+export const secondaryButtonStyle = {
+  get height() {
+    return dim(28);
+  },
+  get padding() {
+    return sp("0 10px");
+  },
+  get borderRadius() {
+    return dim(4);
+  },
+  get border() {
+    return `1px solid ${T.border}`;
+  },
+  get background() {
+    return T.bg2;
+  },
+  get color() {
+    return T.textSec;
+  },
+  get fontSize() {
+    return fs(9);
+  },
+  get fontFamily() {
+    return T.mono;
+  },
   fontWeight: 800,
   cursor: "pointer",
-});
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+};
+
+export const ghostButtonStyle = {
+  get height() {
+    return dim(28);
+  },
+  get padding() {
+    return sp("0 10px");
+  },
+  get borderRadius() {
+    return dim(4);
+  },
+  get border() {
+    return `1px solid ${T.border}`;
+  },
+  background: "transparent",
+  get color() {
+    return T.textDim;
+  },
+  get fontSize() {
+    return fs(9);
+  },
+  get fontFamily() {
+    return T.mono;
+  },
+  fontWeight: 800,
+  cursor: "pointer",
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+};
+
+export const controlInputStyle = {
+  get height() {
+    return dim(28);
+  },
+  get padding() {
+    return sp("0 8px");
+  },
+  get borderRadius() {
+    return dim(4);
+  },
+  get border() {
+    return `1px solid ${T.border}`;
+  },
+  get background() {
+    return T.bg0;
+  },
+  get color() {
+    return T.text;
+  },
+  get fontSize() {
+    return fs(9);
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  outline: "none",
+};
+
+export const controlSelectStyle = {
+  get height() {
+    return dim(28);
+  },
+  get padding() {
+    return sp("0 8px");
+  },
+  get borderRadius() {
+    return dim(4);
+  },
+  get border() {
+    return `1px solid ${T.border}`;
+  },
+  get background() {
+    return T.bg0;
+  },
+  get color() {
+    return T.text;
+  },
+  get fontSize() {
+    return fs(9);
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  outline: "none",
+  cursor: "pointer",
+};
 
 export const tableHeaderStyle = {
   position: "sticky",
   top: 0,
   zIndex: 1,
-  background: T.bg1,
-  color: T.textMuted,
-  fontSize: fs(9),
-  fontFamily: T.sans,
-  fontWeight: 800,
-  letterSpacing: "0.06em",
+  get background() {
+    return T.bg2;
+  },
+  get color() {
+    return T.textMuted;
+  },
+  get fontSize() {
+    return fs(8);
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  fontWeight: 900,
+  letterSpacing: "0.08em",
   textTransform: "uppercase",
-  borderBottom: `1px solid ${T.border}`,
+  get borderBottom() {
+    return `1px solid ${T.border}`;
+  },
 };
 
 export const tableCellStyle = {
-  padding: sp("7px 8px"),
-  borderBottom: `1px solid ${T.border}`,
-  fontSize: fs(10),
-  fontFamily: T.sans,
-  color: T.textSec,
+  get padding() {
+    return sp("5px 7px");
+  },
+  get borderBottom() {
+    return `1px solid ${T.border}`;
+  },
+  get fontSize() {
+    return fs(9);
+  },
+  get fontFamily() {
+    return T.sans;
+  },
+  get color() {
+    return T.textSec;
+  },
   whiteSpace: "nowrap",
+  verticalAlign: "top",
+};
+
+export const moveTableFocus = (event) => {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+    return;
+  }
+
+  const row = event.currentTarget;
+  const next =
+    event.key === "ArrowDown" ? row.nextElementSibling : row.previousElementSibling;
+
+  if (next?.focus) {
+    event.preventDefault();
+    next.focus();
+  }
+};
+
+export const Pill = ({ children, tone = "default", title, style }) => {
+  const paletteMap = toneValueMap();
+  const palette = paletteMap[tone] || paletteMap.default;
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(4),
+        minHeight: dim(18),
+        padding: sp("0 6px"),
+        borderRadius: dim(4),
+        border: `1px solid ${palette.border}`,
+        background: palette.bg,
+        color: palette.color,
+        fontSize: fs(8),
+        fontFamily: T.mono,
+        fontWeight: 800,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        ...style,
+      }}
+    >
+      {children}
+    </span>
+  );
+};
+
+export const ToggleGroup = ({ options, value, onChange }) => (
+  <div
+    style={{
+      display: "inline-flex",
+      gap: 1,
+      padding: 2,
+      border: `1px solid ${T.border}`,
+      borderRadius: dim(4),
+      background: T.bg2,
+      flexWrap: "wrap",
+    }}
+  >
+    {options.map((option) => {
+      const item = typeof option === "string" ? { value: option, label: option } : option;
+      const active = item.value === value;
+      return (
+        <button
+          key={item.value}
+          type="button"
+          onClick={() => onChange(item.value)}
+          style={denseButtonStyle(active)}
+        >
+          {item.label}
+        </button>
+      );
+    })}
+  </div>
+);
+
+export const StatTile = ({
+  label,
+  value,
+  subvalue,
+  tone = "default",
+  title,
+  align = "left",
+  compact = false,
+  flat = false,
+  style,
+}) => {
+  const paletteMap = toneValueMap();
+  const palette = paletteMap[tone] || paletteMap.default;
+  return (
+    <div
+      title={title}
+      style={{
+        minWidth: dim(flat ? 0 : compact ? 94 : 116),
+        padding: sp(flat ? (compact ? "1px 6px" : "3px 8px") : compact ? "6px 8px" : "8px 10px"),
+        borderRadius: flat ? 0 : dim(5),
+        border: flat ? "none" : `1px solid ${T.border}`,
+        background: flat ? "transparent" : T.bg2,
+        textAlign: align,
+        ...style,
+      }}
+    >
+      <div style={mutedLabelStyle}>{label}</div>
+      <div
+        style={{
+          marginTop: sp(compact ? 1 : 4),
+          color: palette.color === T.textDim ? T.text : palette.color,
+          fontSize: fs(compact ? 12 : 14),
+          fontFamily: T.mono,
+          fontWeight: 800,
+          lineHeight: 1.1,
+        }}
+      >
+        {value}
+      </div>
+      {subvalue ? (
+        <div
+          style={{
+            marginTop: sp(compact ? 1 : 3),
+            color: T.textDim,
+            fontSize: fs(compact ? 8 : 9),
+            fontFamily: T.mono,
+            lineHeight: 1.3,
+          }}
+        >
+          {subvalue}
+        </div>
+      ) : null}
+    </div>
+  );
 };
 
 export const EmptyState = ({ title, body, action }) => (
@@ -129,7 +477,8 @@ export const EmptyState = ({ title, body, action }) => (
       fontSize: fs(11),
       fontFamily: T.sans,
       border: `1px dashed ${T.border}`,
-      background: "rgba(15,23,42,0.35)",
+      borderRadius: dim(5),
+      background: `${T.bg0}aa`,
     }}
   >
     <div style={{ color: T.text, fontWeight: 800 }}>{title}</div>
@@ -141,11 +490,14 @@ export const EmptyState = ({ title, body, action }) => (
 export const Panel = ({
   title,
   subtitle,
+  rightRail,
   action,
   children,
   loading,
   error,
+  onRetry,
   minHeight = 220,
+  noPad = false,
 }) => (
   <section
     tabIndex={0}
@@ -161,23 +513,46 @@ export const Panel = ({
     <div
       style={{
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "space-between",
         gap: sp(10),
-        padding: sp("10px 12px 8px"),
+        padding: sp("8px 10px 7px"),
         borderBottom: `1px solid ${T.border}`,
+        background: T.bg1,
       }}
     >
-      <div>
+      <div style={{ minWidth: 0, flex: 1 }}>
         <div style={sectionTitleStyle}>{title}</div>
-        {subtitle ? (
-          <div style={{ ...mutedLabelStyle, marginTop: 3 }}>{subtitle}</div>
+        {subtitle || rightRail ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(8),
+              marginTop: sp(3),
+              flexWrap: "wrap",
+            }}
+          >
+            {subtitle ? <div style={mutedLabelStyle}>{subtitle}</div> : <span />}
+            {rightRail ? (
+              <div
+                style={{
+                  color: T.textDim,
+                  fontSize: fs(9),
+                  fontFamily: T.mono,
+                }}
+              >
+                {rightRail}
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
       {action}
     </div>
-    <div style={{ flex: 1, minHeight: 0, padding: sp(12) }}>
-      {loading ? <SkeletonRows /> : error ? <InlineError error={error} /> : children}
+    <div style={{ flex: 1, minHeight: 0, padding: noPad ? 0 : sp(10) }}>
+      {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>
 );
@@ -189,8 +564,8 @@ export const SkeletonRows = ({ rows = 4 }) => (
         key={index}
         style={{
           height: dim(index === 0 ? 42 : 30),
-          background:
-            "linear-gradient(90deg, rgba(30,41,59,0.7), rgba(51,65,85,0.45), rgba(30,41,59,0.7))",
+          borderRadius: dim(4),
+          background: `linear-gradient(90deg, ${T.bg2}, ${T.bg3}, ${T.bg2})`,
           border: `1px solid ${T.border}`,
         }}
       />
@@ -198,19 +573,29 @@ export const SkeletonRows = ({ rows = 4 }) => (
   </div>
 );
 
-export const InlineError = ({ error }) => (
+export const InlineError = ({ error, onRetry }) => (
   <div
     role="alert"
     style={{
       padding: sp(12),
       color: T.red,
-      background: "rgba(239,68,68,0.08)",
+      background: T.redBg,
       border: `1px solid ${T.red}55`,
+      borderRadius: dim(5),
       fontSize: fs(11),
       fontFamily: T.sans,
       lineHeight: 1.5,
     }}
   >
-    {error?.message || "Unable to load this account panel."}
+    <div>{error?.message || "Unable to load this account panel."}</div>
+    {typeof onRetry === "function" ? (
+      <button
+        type="button"
+        onClick={onRetry}
+        style={{ ...secondaryButtonStyle, marginTop: sp(10), color: T.red }}
+      >
+        Retry
+      </button>
+    ) : null}
   </div>
 );

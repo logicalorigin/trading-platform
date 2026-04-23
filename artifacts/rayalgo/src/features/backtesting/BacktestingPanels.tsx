@@ -81,6 +81,7 @@ import {
   formatComparisonBadgeValue,
   mergeStudyPreviewSeries,
 } from "./charting";
+import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 
 type ThemeTokens = {
   bg0: string;
@@ -120,11 +121,13 @@ type BacktestWorkspaceProps = {
   scale: ScaleHelpers;
   watchlists: Watchlist[];
   defaultWatchlistId: string | null;
+  isVisible?: boolean;
 };
 
 type AlgoDraftStrategiesPanelProps = {
   theme: ThemeTokens;
   scale: ScaleHelpers;
+  isVisible?: boolean;
 };
 
 type BannerState = {
@@ -190,7 +193,7 @@ const DEFAULT_BACKTEST_INDICATORS = [
   "ema-21",
   "vwap",
 ];
-const SPOT_HISTORY_LOOKBACK_YEARS = 5;
+const SPOT_HISTORY_LOOKBACK_YEARS = 10;
 const MAX_SPOT_HISTORY_REQUEST_BARS = 50_000;
 const SPOT_HISTORY_REQUEST_HEADROOM_RATIO = 0.95;
 const SPOT_HISTORY_FETCH_CONCURRENCY = 4;
@@ -1177,12 +1180,19 @@ function parseDateInputToUtcMs(
 export function AlgoDraftStrategiesPanel({
   theme,
   scale,
+  isVisible = false,
 }: AlgoDraftStrategiesPanelProps) {
+  useRuntimeWorkloadFlag("backtest:algo-drafts", isVisible, {
+    kind: "poll",
+    label: "Algo draft strategies",
+    detail: "10s",
+    priority: 8,
+  });
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       queryKey: getListBacktestDraftStrategiesQueryKey(),
       staleTime: 5_000,
-      refetchInterval: 10_000,
+      refetchInterval: isVisible ? 10_000 : false,
     },
   });
 
@@ -1238,6 +1248,7 @@ function LegacyBacktestWorkspace({
   scale,
   watchlists,
   defaultWatchlistId,
+  isVisible = false,
 }: BacktestWorkspaceProps) {
   const queryClient = useQueryClient();
   const strategiesQuery = useListBacktestStrategies({
@@ -1250,14 +1261,14 @@ function LegacyBacktestWorkspace({
     query: {
       queryKey: getListBacktestStudiesQueryKey(),
       staleTime: 5_000,
-      refetchInterval: 15_000,
+      refetchInterval: isVisible ? 15_000 : false,
     },
   });
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       queryKey: getListBacktestDraftStrategiesQueryKey(),
       staleTime: 5_000,
-      refetchInterval: 10_000,
+      refetchInterval: isVisible ? 10_000 : false,
     },
   });
 
@@ -1348,7 +1359,7 @@ function LegacyBacktestWorkspace({
         ),
         enabled: Boolean(selectedStudyId),
         staleTime: 2_000,
-        refetchInterval: 5_000,
+        refetchInterval: isVisible ? 5_000 : false,
       },
     },
   );
@@ -1356,7 +1367,7 @@ function LegacyBacktestWorkspace({
     query: {
       queryKey: getListBacktestJobsQueryKey(),
       staleTime: 2_000,
-      refetchInterval: 5_000,
+      refetchInterval: isVisible ? 5_000 : false,
     },
   });
   const runDetailQuery = useGetBacktestRun(selectedRunId || "", {
@@ -1364,8 +1375,10 @@ function LegacyBacktestWorkspace({
       queryKey: getGetBacktestRunQueryKey(selectedRunId || ""),
       enabled: Boolean(selectedRunId),
       staleTime: 2_000,
-      refetchInterval: (query) =>
-        query.state.data?.run.status === "completed" ? false : 5_000,
+      refetchInterval: isVisible
+        ? (query) =>
+            query.state.data?.run.status === "completed" ? false : 5_000
+        : false,
     },
   });
   const runChartQuery = useGetBacktestRunChart(
@@ -1383,7 +1396,9 @@ function LegacyBacktestWorkspace({
         enabled: Boolean(selectedRunId),
         staleTime: 2_000,
         refetchInterval:
-          runDetailQuery.data?.run.status === "completed" ? false : 5_000,
+          isVisible && runDetailQuery.data?.run.status !== "completed"
+            ? 5_000
+            : false,
       },
     },
   );
@@ -1396,7 +1411,7 @@ function LegacyBacktestWorkspace({
         ),
         enabled: Boolean(selectedStudyId),
         staleTime: 2_000,
-        refetchInterval: 5_000,
+        refetchInterval: isVisible ? 5_000 : false,
       },
     },
   );
@@ -4111,7 +4126,14 @@ export function BacktestWorkspace({
   scale,
   watchlists,
   defaultWatchlistId,
+  isVisible = false,
 }: BacktestWorkspaceProps) {
+  useRuntimeWorkloadFlag("backtest:workspace", isVisible, {
+    kind: "poll",
+    label: "Backtest workspace",
+    detail: "5-15s",
+    priority: 8,
+  });
   const queryClient = useQueryClient();
   const strategiesQuery = useListBacktestStrategies({
     query: {
@@ -4123,14 +4145,14 @@ export function BacktestWorkspace({
     query: {
       queryKey: getListBacktestStudiesQueryKey(),
       staleTime: 5_000,
-      refetchInterval: 15_000,
+      refetchInterval: isVisible ? 15_000 : false,
     },
   });
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       queryKey: getListBacktestDraftStrategiesQueryKey(),
       staleTime: 5_000,
-      refetchInterval: 10_000,
+      refetchInterval: isVisible ? 10_000 : false,
     },
   });
   const {
@@ -4258,7 +4280,7 @@ export function BacktestWorkspace({
         ),
         enabled: Boolean(selectedStudyId),
         staleTime: 2_000,
-        refetchInterval: 5_000,
+        refetchInterval: isVisible ? 5_000 : false,
       },
     },
   );
@@ -4266,7 +4288,7 @@ export function BacktestWorkspace({
     query: {
       queryKey: getListBacktestJobsQueryKey(),
       staleTime: 2_000,
-      refetchInterval: 5_000,
+      refetchInterval: isVisible ? 5_000 : false,
     },
   });
   const runDetailQuery = useGetBacktestRun(selectedRunId || "", {
@@ -4274,7 +4296,7 @@ export function BacktestWorkspace({
       queryKey: getGetBacktestRunQueryKey(selectedRunId || ""),
       enabled: Boolean(selectedRunId),
       staleTime: 2_000,
-      refetchInterval: 5_000,
+      refetchInterval: isVisible ? 5_000 : false,
     },
   });
   const runChartQuery = useGetBacktestRunChart(
@@ -4291,7 +4313,7 @@ export function BacktestWorkspace({
         }),
         enabled: Boolean(selectedRunId),
         staleTime: 2_000,
-        refetchInterval: 5_000,
+        refetchInterval: isVisible ? 5_000 : false,
       },
     },
   );
@@ -4304,7 +4326,7 @@ export function BacktestWorkspace({
         ),
         enabled: Boolean(selectedStudyId),
         staleTime: 2_000,
-        refetchInterval: 5_000,
+        refetchInterval: isVisible ? 5_000 : false,
       },
     },
   );
@@ -4526,7 +4548,7 @@ export function BacktestWorkspace({
     ],
     enabled: Boolean(selectedChartSymbol && selectedChartTimeframe),
     staleTime: SPOT_HISTORY_REFRESH_MS,
-    refetchInterval: SPOT_HISTORY_REFRESH_MS,
+    refetchInterval: isVisible ? SPOT_HISTORY_REFRESH_MS : false,
     refetchOnWindowFocus: false,
     queryFn: () =>
       fetchSpotHistoryBars({
@@ -6138,7 +6160,7 @@ export function BacktestWorkspace({
                     }}
                   >
                     {selectedChartSymbol || "No symbol"} ·{" "}
-                    {selectedChartTimeframe || "—"} · 5y lookback
+                    {selectedChartTimeframe || "—"} · {SPOT_HISTORY_LOOKBACK_YEARS}y lookback
                   </div>
                 </div>
                 <div

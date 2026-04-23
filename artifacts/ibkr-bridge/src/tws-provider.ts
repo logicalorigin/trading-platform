@@ -159,9 +159,18 @@ type DepthSubscription = {
   stop(): void;
 };
 
+type BarStreamSubscription = {
+  key: string;
+  listeners: Map<number, (bar: BrokerBarSnapshot) => void>;
+  latestSignature: string | null;
+  latestBar: BrokerBarSnapshot | null;
+  stop(): void;
+};
+
 type QuoteStreamListener = {
   id: number;
   symbols: Set<string>;
+  providerContractIds: Set<string>;
   onQuote: (quote: QuoteSnapshot) => void;
 };
 
@@ -284,6 +293,53 @@ function parseHistoricalBarTime(value: string | undefined): Date | null {
   );
 
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toBrokerBarSnapshotFromHistoricalBar(input: {
+  bar: {
+    time?: string;
+    open?: number | string;
+    high?: number | string;
+    low?: number | string;
+    close?: number | string;
+    volume?: number | string;
+  };
+  providerContractId: string | null;
+  outsideRth: boolean;
+  partial: boolean;
+  delayed: boolean;
+}): BrokerBarSnapshot | null {
+  const timestamp = parseHistoricalBarTime(input.bar.time);
+  const open = asNumber(input.bar.open);
+  const high = asNumber(input.bar.high);
+  const low = asNumber(input.bar.low);
+  const close = asNumber(input.bar.close);
+  const volume = asNumber(input.bar.volume) ?? 0;
+
+  if (
+    !timestamp ||
+    open === null ||
+    high === null ||
+    low === null ||
+    close === null
+  ) {
+    return null;
+  }
+
+  return {
+    timestamp,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    source: "ibkr-history",
+    providerContractId: input.providerContractId,
+    outsideRth: input.outsideRth,
+    partial: input.partial,
+    transport: "tws",
+    delayed: input.delayed,
+  } satisfies BrokerBarSnapshot;
 }
 
 function parseExecutionTime(value: string | undefined): Date {
@@ -753,6 +809,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   private readonly quotesByProviderContractId = new Map<string, QuoteSnapshot>();
   private readonly prewarmQuoteSymbols = new Set<string>();
   private readonly quoteStreamListeners = new Map<number, QuoteStreamListener>();
+  private readonly barStreamSubscriptions = new Map<string, BarStreamSubscription>();
   private readonly depthSubscriptions = new Map<string, DepthSubscription>();
   private readonly depthByKey = new Map<string, BrokerMarketDepthSnapshot>();
   private readonly accountSummaries = new Map<string, SummarySnapshot>();
@@ -923,15 +980,36 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     return quotesBySymbol;
   }
 
+  private collectQuotesByProviderContractId(): Map<string, QuoteSnapshot> {
+    const now = Date.now();
+    const quotesByProviderContractId = new Map<string, QuoteSnapshot>();
+
+    this.quotesByProviderContractId.forEach((quote, providerContractId) => {
+      quotesByProviderContractId.set(providerContractId, {
+        ...quote,
+        ...this.getQuoteFreshness(quote, now),
+      });
+    });
+
+    return quotesByProviderContractId;
+  }
+
   private emitQuote(quote: QuoteSnapshot) {
     const normalizedSymbol = normalizeSymbol(quote.symbol);
+    const providerContractId = asString(quote.providerContractId);
     if (!normalizedSymbol) {
-      return;
+      if (!providerContractId) {
+        return;
+      }
     }
 
     const emittedQuote = this.decorateQuoteForEmit(quote);
     this.quoteStreamListeners.forEach((listener) => {
-      if (listener.symbols.has(normalizedSymbol)) {
+      if (
+        (normalizedSymbol && listener.symbols.has(normalizedSymbol)) ||
+        (providerContractId &&
+          listener.providerContractIds.has(providerContractId))
+      ) {
         listener.onQuote(emittedQuote);
       }
     });
@@ -952,11 +1030,35 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     return desiredSymbols;
   }
 
+  private getDesiredQuoteProviderContractIds(
+    extraProviderContractIds: string[] = [],
+  ): Set<string> {
+    const desiredProviderContractIds = new Set<string>();
+
+    this.quoteStreamListeners.forEach((listener) => {
+      listener.providerContractIds.forEach((providerContractId) =>
+        desiredProviderContractIds.add(providerContractId),
+      );
+    });
+    extraProviderContractIds
+      .map((providerContractId) => providerContractId.trim())
+      .filter(Boolean)
+      .forEach((providerContractId) =>
+        desiredProviderContractIds.add(providerContractId),
+      );
+
+    return desiredProviderContractIds;
+  }
+
   private trimUnusedQuoteSubscriptions() {
     const desiredSymbols = this.getDesiredQuoteSymbols();
+    const desiredProviderContractIds = this.getDesiredQuoteProviderContractIds();
 
     for (const [providerContractId, subscription] of this.quoteSubscriptions) {
-      if (desiredSymbols.has(subscription.symbol)) {
+      if (
+        desiredSymbols.has(subscription.symbol) ||
+        desiredProviderContractIds.has(providerContractId)
+      ) {
         continue;
       }
 
@@ -1347,6 +1449,50 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     return resolved;
   }
 
+  private async resolveOptionContractByProviderContractId(
+    providerContractId: string,
+  ): Promise<CachedOptionContract> {
+    const normalizedProviderContractId = providerContractId.trim();
+    const cached = this.optionContracts.get(normalizedProviderContractId);
+    if (cached && Date.now() - cached.cachedAt < CONTRACT_CACHE_TTL_MS) {
+      return cached;
+    }
+
+    if (!/^\d+$/.test(normalizedProviderContractId)) {
+      throw new HttpError(400, "Option providerContractId must be numeric.", {
+        code: "ibkr_option_contract_invalid_conid",
+      });
+    }
+
+    await this.ensureConnected();
+    const details = await this.api.getContractDetails({
+      conId: Number(normalizedProviderContractId),
+      secType: SecType.OPT,
+      exchange: "SMART",
+    });
+    const match = details[0];
+    const optionContract = match ? toOptionContractMeta(match.contract) : null;
+
+    if (!match || !optionContract) {
+      throw new HttpError(404, "Unable to resolve option contract via TWS.", {
+        code: "ibkr_option_contract_not_found",
+      });
+    }
+
+    const resolved: CachedOptionContract = {
+      contract: match.contract,
+      optionContract,
+      cachedAt: Date.now(),
+    };
+
+    this.optionContracts.set(normalizedProviderContractId, resolved);
+    this.optionContracts.set(
+      `${optionContract.underlying}:${formatOptionExpiry(optionContract.expirationDate)}:${optionContract.strike}:${optionContract.right}`,
+      resolved,
+    );
+    return resolved;
+  }
+
   private async ensureQuoteSubscription(
     resolved: CachedStockContract,
   ): Promise<string> {
@@ -1392,6 +1538,61 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     return providerContractId;
   }
 
+  private async ensureOptionQuoteSubscription(
+    providerContractId: string,
+  ): Promise<string> {
+    const normalizedProviderContractId = providerContractId.trim();
+    if (!normalizedProviderContractId) {
+      throw new HttpError(400, "Option providerContractId is required.", {
+        code: "ibkr_option_quote_missing_conid",
+      });
+    }
+
+    if (this.quoteSubscriptions.has(normalizedProviderContractId)) {
+      return normalizedProviderContractId;
+    }
+
+    const resolved =
+      await this.resolveOptionContractByProviderContractId(
+        normalizedProviderContractId,
+      );
+    const subscription = this.api.getMarketData(
+      {
+        ...resolved.contract,
+        conId: Number(normalizedProviderContractId),
+        exchange: "SMART",
+      },
+      "100,101,106",
+      false,
+      false,
+    ).subscribe({
+      next: (update) => {
+        const quote = this.withBridgeReceivedLatency(
+          toQuoteSnapshot(
+            resolved.optionContract.ticker,
+            normalizedProviderContractId,
+            update.all,
+            this.config.marketDataType,
+          ),
+        );
+        this.quotesByProviderContractId.set(normalizedProviderContractId, quote);
+        this.emitQuote(quote);
+      },
+      error: (error) => {
+        this.recordError(error);
+      },
+    });
+
+    this.quoteSubscriptions.set(normalizedProviderContractId, {
+      contract: resolved.contract,
+      providerContractId: normalizedProviderContractId,
+      symbol: resolved.optionContract.ticker,
+      stop: () => subscription.unsubscribe(),
+    });
+
+    return normalizedProviderContractId;
+  }
+
   private async ensureQuoteSubscriptionsForSymbols(
     symbols: string[],
   ): Promise<Map<string, string>> {
@@ -1409,6 +1610,25 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     }
 
     return providerContractIdsBySymbol;
+  }
+
+  private async ensureOptionQuoteSubscriptionsForProviderContractIds(
+    providerContractIds: string[],
+  ): Promise<string[]> {
+    await this.refreshSession();
+
+    const normalizedProviderContractIds = Array.from(
+      new Set(providerContractIds.map((providerContractId) => providerContractId.trim()).filter(Boolean)),
+    );
+
+    const resolvedProviderContractIds: string[] = [];
+    for (const providerContractId of normalizedProviderContractIds) {
+      resolvedProviderContractIds.push(
+        await this.ensureOptionQuoteSubscription(providerContractId),
+      );
+    }
+
+    return resolvedProviderContractIds;
   }
 
   private async getContractQuoteSnapshot(input: {
@@ -1859,6 +2079,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     this.quoteStreamListeners.set(listenerId, {
       id: listenerId,
       symbols: new Set(normalizedSymbols),
+      providerContractIds: new Set(),
       onQuote,
     });
 
@@ -1892,6 +2113,285 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     };
   }
 
+  async getOptionQuoteSnapshots(input: {
+    underlying?: string | null;
+    providerContractIds: string[];
+  }): Promise<QuoteSnapshot[]> {
+    await this.refreshSession();
+
+    const normalizedProviderContractIds = Array.from(
+      new Set(
+        input.providerContractIds
+          .map((providerContractId) => providerContractId.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    const results: QuoteSnapshot[] = [];
+    for (const providerContractId of normalizedProviderContractIds) {
+      const resolved =
+        await this.resolveOptionContractByProviderContractId(providerContractId);
+      const ensuredProviderContractId =
+        await this.ensureOptionQuoteSubscription(providerContractId);
+      await this.waitForCondition(
+        () => this.quotesByProviderContractId.has(ensuredProviderContractId),
+        400,
+        50,
+      );
+
+      const liveQuote = this.quotesByProviderContractId.get(
+        ensuredProviderContractId,
+      );
+      if (liveQuote) {
+        results.push(this.decorateQuoteForEmit(liveQuote));
+        continue;
+      }
+
+      const fallbackQuote = await this.getContractQuoteSnapshot({
+        contract: {
+          ...resolved.contract,
+          exchange: "SMART",
+        },
+        symbol: resolved.optionContract.ticker,
+        providerContractId: ensuredProviderContractId,
+        genericTickList: "100,101,106",
+      });
+
+      if (fallbackQuote) {
+        this.quotesByProviderContractId.set(
+          ensuredProviderContractId,
+          fallbackQuote,
+        );
+        results.push(this.decorateQuoteForEmit(fallbackQuote));
+      }
+    }
+
+    return results;
+  }
+
+  async subscribeOptionQuoteStream(
+    input: {
+      underlying?: string | null;
+      providerContractIds: string[];
+    },
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void> {
+    const normalizedProviderContractIds = Array.from(
+      new Set(
+        input.providerContractIds
+          .map((providerContractId) => providerContractId.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (normalizedProviderContractIds.length === 0) {
+      return () => {};
+    }
+
+    const listenerId = this.nextQuoteStreamListenerId;
+    this.nextQuoteStreamListenerId += 1;
+    this.quoteStreamListeners.set(listenerId, {
+      id: listenerId,
+      symbols: new Set(),
+      providerContractIds: new Set(normalizedProviderContractIds),
+      onQuote,
+    });
+
+    try {
+      const cachedQuotes = this.collectQuotesByProviderContractId();
+      normalizedProviderContractIds.forEach((providerContractId) => {
+        const quote = cachedQuotes.get(providerContractId);
+        if (quote) {
+          onQuote(this.decorateQuoteForEmit(quote));
+        }
+      });
+
+      await this.ensureOptionQuoteSubscriptionsForProviderContractIds(
+        normalizedProviderContractIds,
+      );
+
+      const nextCachedQuotes = this.collectQuotesByProviderContractId();
+      normalizedProviderContractIds.forEach((providerContractId) => {
+        const quote = nextCachedQuotes.get(providerContractId);
+        if (quote) {
+          onQuote(this.decorateQuoteForEmit(quote));
+        }
+      });
+    } catch (error) {
+      this.quoteStreamListeners.delete(listenerId);
+      this.trimUnusedQuoteSubscriptions();
+      throw error;
+    }
+
+    return () => {
+      this.quoteStreamListeners.delete(listenerId);
+      this.trimUnusedQuoteSubscriptions();
+    };
+  }
+
+  private buildHistoricalBarStreamKey(input: {
+    symbol: string;
+    timeframe: HistoryBarTimeframe;
+    assetClass?: "equity" | "option";
+    providerContractId?: string | null;
+    outsideRth?: boolean;
+    source?: HistoryDataSource;
+  }): string {
+    return JSON.stringify({
+      symbol: normalizeSymbol(input.symbol),
+      timeframe: input.timeframe,
+      assetClass: input.assetClass ?? "equity",
+      providerContractId: input.providerContractId?.trim() || null,
+      outsideRth: input.outsideRth !== false,
+      source: input.source ?? "trades",
+    });
+  }
+
+  private async resolveHistoricalBarContract(input: {
+    symbol: string;
+    assetClass?: "equity" | "option";
+    providerContractId?: string | null;
+  }): Promise<{ contract: Contract; providerContractId: string | null }> {
+    if (input.assetClass === "option") {
+      if (!input.providerContractId) {
+        throw new HttpError(400, "Option providerContractId is required.", {
+          code: "ibkr_option_bars_missing_conid",
+        });
+      }
+
+      return {
+        contract: {
+          conId: Number(input.providerContractId),
+          exchange: "SMART",
+          secType: SecType.OPT,
+        },
+        providerContractId: input.providerContractId,
+      };
+    }
+
+    const resolvedStock = await this.resolveStockContract(input.symbol);
+    return {
+      contract: {
+        ...resolvedStock.contract,
+        conId: resolvedStock.resolved.conid,
+        exchange: "SMART",
+      },
+      providerContractId: resolvedStock.resolved.providerContractId,
+    };
+  }
+
+  async subscribeHistoricalBarStream(
+    input: {
+      symbol: string;
+      timeframe: HistoryBarTimeframe;
+      assetClass?: "equity" | "option";
+      providerContractId?: string | null;
+      outsideRth?: boolean;
+      source?: HistoryDataSource;
+    },
+    onBar: (bar: BrokerBarSnapshot) => void,
+  ): Promise<() => void> {
+    await this.refreshSession();
+
+    const streamKey = this.buildHistoricalBarStreamKey(input);
+    let subscription = this.barStreamSubscriptions.get(streamKey);
+
+    if (!subscription) {
+      const { contract, providerContractId } =
+        await this.resolveHistoricalBarContract(input);
+      const listeners = new Map<number, (bar: BrokerBarSnapshot) => void>();
+      const delayed =
+        this.config.marketDataType === 3 || this.config.marketDataType === 4;
+      const rxSubscription = this.api.getHistoricalDataUpdates(
+        contract,
+        HISTORY_BAR_SIZE[input.timeframe],
+        HISTORY_SOURCE_TO_TWS[input.source ?? "trades"],
+        2,
+      ).subscribe({
+        next: (bars) => {
+          const nextBars = (Array.isArray(bars) ? bars : [bars]) as Array<{
+            time?: string;
+            open?: number | string;
+            high?: number | string;
+            low?: number | string;
+            close?: number | string;
+            volume?: number | string;
+          }>;
+          const latestBar =
+            (compact(
+              nextBars.map((bar) =>
+                toBrokerBarSnapshotFromHistoricalBar({
+                  bar,
+                  providerContractId,
+                  outsideRth: true,
+                  partial: true,
+                  delayed,
+                }),
+              ),
+            ).slice(-1)[0] as BrokerBarSnapshot | undefined) ?? null;
+
+          if (!latestBar) {
+            return;
+          }
+
+          const signature = JSON.stringify({
+            timestamp: latestBar.timestamp.toISOString(),
+            open: latestBar.open,
+            high: latestBar.high,
+            low: latestBar.low,
+            close: latestBar.close,
+            volume: latestBar.volume,
+          });
+
+          if (subscription?.latestSignature === signature) {
+            return;
+          }
+
+          subscription!.latestSignature = signature;
+          subscription!.latestBar = latestBar;
+          subscription!.listeners.forEach((listener) =>
+            listener(latestBar),
+          );
+        },
+        error: (error) => {
+          this.recordError(error);
+        },
+      });
+
+      subscription = {
+        key: streamKey,
+        listeners,
+        latestSignature: null,
+        latestBar: null,
+        stop: () => rxSubscription.unsubscribe(),
+      };
+      this.barStreamSubscriptions.set(streamKey, subscription);
+    }
+
+    const listenerId = this.nextQuoteStreamListenerId;
+    this.nextQuoteStreamListenerId += 1;
+    subscription.listeners.set(listenerId, onBar);
+
+    if (subscription.latestBar) {
+      onBar(subscription.latestBar);
+    }
+
+    return () => {
+      const activeSubscription = this.barStreamSubscriptions.get(streamKey);
+      if (!activeSubscription) {
+        return;
+      }
+
+      activeSubscription.listeners.delete(listenerId);
+      if (activeSubscription.listeners.size > 0) {
+        return;
+      }
+
+      activeSubscription.stop();
+      this.barStreamSubscriptions.delete(streamKey);
+    };
+  }
+
   async getHistoricalBars(input: {
     symbol: string;
     timeframe: HistoryBarTimeframe;
@@ -1905,29 +2405,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   }): Promise<BrokerBarSnapshot[]> {
     await this.refreshSession();
 
-    let contract: Contract | null = null;
-    let providerContractId: string | null = null;
-
-    if (input.assetClass === "option") {
-      if (!input.providerContractId) {
-        return [];
-      }
-
-      contract = {
-        conId: Number(input.providerContractId),
-        exchange: "SMART",
-        secType: SecType.OPT,
-      };
-      providerContractId = input.providerContractId;
-    } else {
-      const resolvedStock = await this.resolveStockContract(input.symbol);
-      contract = {
-        ...resolvedStock.contract,
-        conId: resolvedStock.resolved.conid,
-        exchange: "SMART",
-      };
-      providerContractId = resolvedStock.resolved.providerContractId;
-    }
+    const { contract, providerContractId } =
+      await this.resolveHistoricalBarContract(input);
 
     const requestedBars = resolveRequestedHistoryBars(input);
     const bars = await this.api.getHistoricalData(
@@ -1941,39 +2420,16 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     );
 
     return compact(
-      bars.map((bar) => {
-        const timestamp = parseHistoricalBarTime(bar.time);
-        const open = asNumber(bar.open);
-        const high = asNumber(bar.high);
-        const low = asNumber(bar.low);
-        const close = asNumber(bar.close);
-        const volume = asNumber(bar.volume) ?? 0;
-
-        if (
-          !timestamp ||
-          open === null ||
-          high === null ||
-          low === null ||
-          close === null
-        ) {
-          return null;
-        }
-
-        return {
-          timestamp,
-          open,
-          high,
-          low,
-          close,
-          volume,
-          source: "ibkr-history",
+      bars.map((bar) =>
+        toBrokerBarSnapshotFromHistoricalBar({
+          bar,
           providerContractId,
           outsideRth: Boolean(input.outsideRth),
           partial: false,
-          transport: "tws",
-          delayed: this.config.marketDataType === 3 || this.config.marketDataType === 4,
-        } satisfies BrokerBarSnapshot;
-      }),
+          delayed:
+            this.config.marketDataType === 3 || this.config.marketDataType === 4,
+        }),
+      ),
     )
       .filter((bar) =>
         (!input.from || bar.timestamp >= input.from) &&

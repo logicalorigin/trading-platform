@@ -189,6 +189,7 @@ export type StudySpec = {
   seriesType: "line" | "histogram";
   paneIndex: number;
   paneKey?: string;
+  renderMode?: "default" | "line_breaks";
   options: Record<string, unknown>;
   data: StudyPoint[];
 };
@@ -213,6 +214,7 @@ export type IndicatorPluginOutput = {
 
 export type IndicatorPlugin = {
   id: string;
+  liveUpdateMode?: "recompute" | "defer-on-tail-patch";
   compute(input: IndicatorPluginInput): IndicatorPluginOutput;
 };
 

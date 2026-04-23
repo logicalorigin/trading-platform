@@ -5,7 +5,15 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
+    "ibkr:latency": "tsx ./src/ibkr-latency-bench.ts",
+    "universe:sync": "tsx ./src/sync-universe-catalog.ts",
+    "universe:hydrate:ibkr": "tsx ./src/hydrate-universe-catalog-ibkr.ts",
+    "test:universe-catalog": "node --import tsx --test ./src/universe-catalog-live.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@workspace/db": "workspace:*",
+    "drizzle-orm": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

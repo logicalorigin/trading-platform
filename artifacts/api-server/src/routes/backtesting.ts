@@ -41,6 +41,7 @@ import {
   listBacktestStrategies,
   listBacktestStudies,
   promoteBacktestRun,
+  resolveBacktestOptionContract,
 } from "../services/backtesting";
 
 const router: IRouter = Router();
@@ -91,6 +92,47 @@ router.post("/backtests/runs", async (req, res): Promise<void> => {
   const data = GetBacktestRunResponse.parse(await createBacktestRun(body));
   res.status(201).json(data);
 });
+
+router.post(
+  "/backtests/internal/resolve-option-contract",
+  async (req, res): Promise<void> => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const underlying =
+      typeof body.underlying === "string" ? body.underlying.trim() : "";
+    const occurredAt = new Date(String(body.occurredAt ?? ""));
+    const right = body.right === "put" ? "put" : body.right === "call" ? "call" : null;
+    const spotPrice =
+      typeof body.spotPrice === "number"
+        ? body.spotPrice
+        : Number(body.spotPrice);
+    const contractPresetId =
+      typeof body.contractPresetId === "string" && body.contractPresetId.trim()
+        ? body.contractPresetId.trim()
+        : null;
+
+    if (
+      !underlying ||
+      Number.isNaN(occurredAt.getTime()) ||
+      !right ||
+      !Number.isFinite(spotPrice) ||
+      spotPrice <= 0
+    ) {
+      res.status(400).json({
+        error: "Invalid option-contract resolution request.",
+      });
+      return;
+    }
+
+    const contract = await resolveBacktestOptionContract({
+      underlying,
+      occurredAt,
+      right,
+      spotPrice,
+      contractPresetId,
+    });
+    res.json({ contract });
+  },
+);
 
 router.get("/backtests/runs/:runId", async (req, res): Promise<void> => {
   const params = GetBacktestRunParams.parse(req.params);

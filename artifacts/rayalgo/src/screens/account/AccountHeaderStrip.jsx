@@ -1,200 +1,427 @@
-import { T, dim, fs, sp } from "../../RayAlgoPlatform";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
+  Pill,
+  StatTile,
   formatMoney,
   formatPercent,
   formatSignedMoney,
   metricTitle,
   mutedLabelStyle,
-  toneForValue,
 } from "./accountUtils";
+
+const isPaperAccount = (account) =>
+  /du|paper/i.test(account?.id || "") || /paper/i.test(account?.accountType || "");
 
 const metricValue = (metric, currency, kind = "money") => {
   if (!metric) return "----";
   if (kind === "percent") return formatPercent(metric.value);
+  if (kind === "ratioPercent") {
+    return metric.value == null ? "----" : formatPercent(Number(metric.value) * 100, 1);
+  }
   if (kind === "signedMoney") return formatSignedMoney(metric.value, currency, true);
   return formatMoney(metric.value, metric.currency || currency, true);
 };
 
-const HeaderMetric = ({ label, metric, currency, kind }) => (
-  <div
-    title={metricTitle(metric)}
-    style={{
-      minWidth: dim(112),
-      padding: sp("8px 10px"),
-      border: `1px solid ${T.border}`,
-      background: "rgba(15,23,42,0.72)",
-    }}
-  >
-    <div style={mutedLabelStyle}>{label}</div>
-    <div
-      style={{
-        marginTop: 4,
-        color:
-          kind === "signedMoney" || kind === "percent"
-            ? toneForValue(metric?.value)
-            : T.text,
-        fontSize: fs(14),
-        fontFamily: T.sans,
-        fontWeight: 900,
-      }}
-    >
-      {metricValue(metric, currency, kind)}
+const badgeTone = (type) => {
+  if (/margin/i.test(type || "")) return "cyan";
+  if (/ira/i.test(type || "")) return "purple";
+  if (/cash/i.test(type || "")) return "accent";
+  if (/paper/i.test(type || "")) return "amber";
+  if (/combined/i.test(type || "")) return "purple";
+  return "default";
+};
+
+const AccountSwitcher = ({
+  accountId,
+  onAccountIdChange,
+  accountOptions,
+  currency,
+}) => {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const current =
+    accountId === "combined"
+      ? {
+          id: "combined",
+          displayName: "All accounts",
+          accountType: "combined",
+          live: true,
+        }
+      : accountOptions.find((account) => account.id === accountId) || accountOptions[0];
+  const combinedCount = accountOptions.filter((account) => !isPaperAccount(account)).length;
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (!containerRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  return (
+    <div ref={containerRef} style={{ position: "relative", minWidth: dim(220) }}>
+      <button
+        type="button"
+        onClick={() => setOpen((currentState) => !currentState)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: sp(8),
+          padding: sp("2px 0"),
+          borderRadius: 0,
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          color: T.text,
+        }}
+      >
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 999,
+            background: current?.live === false ? T.amber : T.green,
+            boxShadow:
+              current?.live === false ? "none" : `0 0 10px ${T.green}`,
+            flexShrink: 0,
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <div
+            style={{
+              color: T.text,
+              fontSize: fs(11),
+              fontFamily: T.sans,
+              fontWeight: 900,
+            }}
+          >
+            {current?.displayName || current?.id || "All accounts"}
+          </div>
+          <div
+            style={{
+              marginTop: sp(1),
+              color: T.textDim,
+              fontSize: fs(8),
+              fontFamily: T.mono,
+            }}
+          >
+            {accountId === "combined"
+              ? `${combinedCount} real accounts aggregated`
+              : `${current?.id || "----"} · ${current?.accountType || "account"}`}
+          </div>
+        </div>
+        <span style={{ color: T.textDim, fontSize: fs(9) }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open ? (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: 0,
+            right: 0,
+            zIndex: 20,
+            borderRadius: dim(6),
+            border: `1px solid ${T.border}`,
+            background: T.bg1,
+            boxShadow:
+              T.bg0 === "#f5f5f4"
+                ? "0 18px 45px rgba(15,23,42,0.12)"
+                : "0 18px 45px rgba(0,0,0,0.3)",
+            overflow: "hidden",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              onAccountIdChange("combined");
+              setOpen(false);
+            }}
+            style={{
+              width: "100%",
+              padding: sp("9px 12px"),
+              border: "none",
+              borderBottom: `1px solid ${T.border}`,
+              background: accountId === "combined" ? T.accentDim : "transparent",
+              textAlign: "left",
+              cursor: "pointer",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(8),
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: T.text,
+                    fontSize: fs(11),
+                    fontWeight: 900,
+                  }}
+                >
+                  All accounts
+                </div>
+                <div
+                  style={{
+                    marginTop: sp(2),
+                    color: T.textDim,
+                    fontSize: fs(9),
+                    fontFamily: T.mono,
+                  }}
+                >
+                  {combinedCount} real accounts · base {currency}
+                </div>
+              </div>
+              <Pill tone="purple">Combined</Pill>
+            </div>
+          </button>
+          {accountOptions.map((account) => (
+            <button
+              key={account.id}
+              type="button"
+              onClick={() => {
+                onAccountIdChange(account.id);
+                setOpen(false);
+              }}
+              style={{
+                width: "100%",
+                padding: sp("9px 12px"),
+                border: "none",
+                borderBottom: `1px solid ${T.border}`,
+                background: accountId === account.id ? `${T.accent}18` : "transparent",
+                textAlign: "left",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 999,
+                    background: account.live === false ? T.amber : T.green,
+                    flexShrink: 0,
+                  }}
+                />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      color: T.text,
+                      fontSize: fs(10),
+                      fontWeight: 900,
+                    }}
+                  >
+                    {account.displayName || account.id}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: sp(2),
+                      color: T.textDim,
+                      fontSize: fs(9),
+                      fontFamily: T.mono,
+                    }}
+                  >
+                    {account.id}
+                  </div>
+                </div>
+                <Pill tone={badgeTone(account.accountType)}>{account.accountType || "Account"}</Pill>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
-  </div>
-);
+  );
+};
 
 export const AccountHeaderStrip = ({
   accounts = [],
   accountId,
   onAccountIdChange,
   summary,
-  loading,
+  brokerAuthenticated,
 }) => {
   const metrics = summary?.metrics || {};
   const currency = summary?.currency || accounts[0]?.currency || "USD";
   const pdt = summary?.badges?.pdt;
+  const fx = summary?.fx;
   const pdtRemaining =
     pdt?.dayTradesRemainingThisWeek === Infinity
       ? null
       : pdt?.dayTradesRemainingThisWeek;
+  const accountOptions = useMemo(() => {
+    const merged = new Map();
+    accounts.forEach((account) => {
+      merged.set(account.id, {
+        ...account,
+        id: account.id,
+        displayName: account.displayName || account.name || account.id,
+        accountType: account.accountType,
+        live: true,
+      });
+    });
+    (summary?.accounts || []).forEach((account) => {
+      merged.set(account.id, {
+        ...merged.get(account.id),
+        ...account,
+      });
+    });
+    return Array.from(merged.values());
+  }, [accounts, summary?.accounts]);
+  const accountTypes = summary?.badges?.accountTypes || [];
+  const showPdtBadge = Boolean(pdt?.isPatternDayTrader || pdtRemaining != null);
 
   return (
     <section
       style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(260px, 1.2fr) repeat(7, minmax(104px, auto))",
-        gap: sp(8),
-        alignItems: "stretch",
-        overflowX: "auto",
+        borderBottom: `1px solid ${T.border}`,
+        padding: sp("2px 0 6px"),
+        display: "flex",
+        alignItems: "flex-start",
+        gap: sp(10),
+        flexWrap: "wrap",
       }}
     >
       <div
         style={{
-          padding: sp(10),
-          border: `1px solid ${T.border}`,
-          background:
-            "linear-gradient(135deg, rgba(15,23,42,0.96), rgba(8,47,73,0.65))",
-          minWidth: dim(260),
+          display: "flex",
+          alignItems: "center",
+          gap: sp(4),
+          flexWrap: "wrap",
+          flex: "0 1 auto",
+          minWidth: dim(240),
         }}
       >
-        <div style={mutedLabelStyle}>Account view</div>
-        <select
-          value={accountId}
-          onChange={(event) => onAccountIdChange(event.target.value)}
-          style={{
-            width: "100%",
-            marginTop: sp(6),
-            background: T.bg0,
-            border: `1px solid ${T.border}`,
-            color: T.text,
-            height: dim(30),
-            fontSize: fs(12),
-            fontFamily: T.sans,
-            fontWeight: 800,
-            padding: sp("0 8px"),
-            outline: "none",
-          }}
-        >
-          <option value="combined">All accounts</option>
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.displayName || account.id}
-            </option>
+        <AccountSwitcher
+          accountId={accountId}
+          onAccountIdChange={onAccountIdChange}
+          accountOptions={accountOptions}
+          currency={currency}
+        />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
+          {(accountTypes.length ? accountTypes : ["combined"]).map((badge) => (
+            <Pill key={badge} tone={badgeTone(badge)}>
+              {badge}
+            </Pill>
           ))}
-        </select>
+          <Pill tone={brokerAuthenticated ? "green" : "default"}>
+            {brokerAuthenticated ? "Bridge live" : "Bridge off"}
+          </Pill>
+          {showPdtBadge ? (
+            <Pill tone={pdt?.isPatternDayTrader ? "amber" : "default"} title="Pattern day trader status">
+              PDT
+              {pdt?.isPatternDayTrader ? " Yes" : ""}
+              {pdtRemaining != null ? ` · ${pdtRemaining} left` : ""}
+            </Pill>
+          ) : null}
+        </div>
         <div
           style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: sp(6),
-            marginTop: sp(8),
+            color: T.textDim,
+            fontSize: fs(8),
+            fontFamily: T.mono,
+            lineHeight: 1.3,
+            whiteSpace: "nowrap",
+            paddingLeft: sp(8),
+            borderLeft: `1px solid ${T.border}`,
           }}
         >
-          {(summary?.accounts || accounts).map((account) => (
-            <span
-              key={account.id}
-              title={account.updatedAt ? `Updated ${new Date(account.updatedAt).toLocaleString()}` : account.id}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 5,
-                color: T.textSec,
-                fontSize: fs(9),
-                fontFamily: T.mono,
-                border: `1px solid ${T.border}`,
-                padding: sp("3px 6px"),
-              }}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 999,
-                  background: account.live === false ? T.textMuted : T.green,
-                  boxShadow:
-                    account.live === false
-                      ? "none"
-                      : `0 0 10px ${T.green}`,
-                }}
-              />
-              {account.id}
-            </span>
-          ))}
-          {(summary?.badges?.accountTypes || []).map((badge) => (
-            <span
-              key={badge}
-              style={{
-                color: T.accent,
-                fontSize: fs(9),
-                fontFamily: T.sans,
-                fontWeight: 800,
-                border: `1px solid ${T.accent}55`,
-                padding: sp("3px 6px"),
-              }}
-            >
-              {badge}
-            </span>
-          ))}
-          <span
-            style={{
-              color: pdt?.isPatternDayTrader ? T.orange : T.textMuted,
-              fontSize: fs(9),
-              fontFamily: T.sans,
-              fontWeight: 800,
-              border: `1px solid ${pdt?.isPatternDayTrader ? T.orange : T.border}`,
-              padding: sp("3px 6px"),
-            }}
-          >
-            PDT {pdt?.isPatternDayTrader ? "YES" : "NO"}{" "}
-            {pdtRemaining != null ? `· ${pdtRemaining} left` : ""}
-          </span>
+          Base {fx?.baseCurrency || currency}
+          {fx?.timestamp ? ` · FX ${new Date(fx.timestamp).toLocaleString()}` : ""}
+          {fx?.warning ? ` · ${fx.warning}` : ""}
         </div>
       </div>
 
-      <HeaderMetric label="Net Liq" metric={metrics.netLiquidation} currency={currency} />
-      <HeaderMetric label="Cash" metric={metrics.totalCash} currency={currency} />
-      <HeaderMetric label="Buying Power" metric={metrics.buyingPower} currency={currency} />
-      <HeaderMetric label="Margin Used" metric={metrics.marginUsed} currency={currency} />
-      <HeaderMetric
-        label="Maint Cushion"
-        metric={metrics.maintenanceMarginCushionPercent}
-        currency={currency}
-        kind="percent"
-      />
-      <HeaderMetric
-        label="Day P&L"
-        metric={metrics.dayPnl}
-        currency={currency}
-        kind="signedMoney"
-      />
-      <HeaderMetric
-        label="Total P&L"
-        metric={metrics.totalPnl}
-        currency={currency}
-        kind="signedMoney"
-      />
-      {loading ? null : null}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
+          gap: 0,
+          alignItems: "flex-start",
+          flex: "1 1 760px",
+          minWidth: dim(420),
+          marginLeft: "auto",
+        }}
+      >
+        {[
+          {
+            label: "Net Liq",
+            value: metricValue(metrics.netLiquidation, currency),
+            title: metricTitle(metrics.netLiquidation),
+          },
+          {
+            label: "Cash",
+            value: metricValue(metrics.totalCash, currency),
+            subvalue: metricValue(metrics.settledCash, currency),
+            title: metricTitle(metrics.totalCash),
+          },
+          {
+            label: "Buying Power",
+            value: metricValue(metrics.buyingPower, currency),
+            title: metricTitle(metrics.buyingPower),
+          },
+          {
+            label: "Margin Used",
+            value: metricValue(metrics.marginUsed, currency),
+            subvalue: metrics.maintenanceMargin
+              ? `Maint ${formatMoney(metrics.maintenanceMargin.value, currency, true)}`
+              : null,
+            title: metricTitle(metrics.marginUsed),
+          },
+          {
+            label: "Maint Cushion",
+            value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "ratioPercent"),
+            tone:
+              metrics.maintenanceMarginCushionPercent?.value > 0.5
+                ? "green"
+                : metrics.maintenanceMarginCushionPercent?.value > 0.25
+                  ? "amber"
+                  : "red",
+            title: metricTitle(metrics.maintenanceMarginCushionPercent),
+          },
+          {
+            label: "Day P&L",
+            value: metricValue(metrics.dayPnl, currency, "signedMoney"),
+            subvalue: metrics.dayPnlPercent ? formatPercent(metrics.dayPnlPercent.value) : null,
+            tone: metrics.dayPnl?.value >= 0 ? "green" : "red",
+            title: `${metricTitle(metrics.dayPnl)}\n${metricTitle(metrics.dayPnlPercent)}`,
+            emphasis: true,
+          },
+          {
+            label: "Total P&L",
+            value: metricValue(metrics.totalPnl, currency, "signedMoney"),
+            subvalue: metrics.totalPnlPercent ? formatPercent(metrics.totalPnlPercent.value) : null,
+            tone: metrics.totalPnl?.value >= 0 ? "green" : "red",
+            title: `${metricTitle(metrics.totalPnl)}\n${metricTitle(metrics.totalPnlPercent)}`,
+            emphasis: true,
+          },
+        ].map((metric, index) => (
+          <StatTile
+            key={metric.label}
+            {...metric}
+            align="right"
+            compact
+            flat
+            style={{
+              minWidth: metric.emphasis ? dim(108) : "fit-content",
+              borderLeft: index === 0 ? `1px solid ${T.border}` : `1px solid ${T.border}`,
+              paddingLeft: sp(8),
+              paddingRight: metric.emphasis ? sp(10) : sp(8),
+              paddingTop: metric.emphasis ? sp(2) : sp(1),
+              paddingBottom: metric.emphasis ? sp(2) : sp(1),
+            }}
+          />
+        ))}
+      </div>
     </section>
   );
 };

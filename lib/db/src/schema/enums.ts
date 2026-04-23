@@ -8,6 +8,22 @@ export const brokerProviderEnum = pgEnum("broker_provider", ["ibkr"]);
 export const marketDataProviderEnum = pgEnum("market_data_provider", [
   "polygon",
 ]);
+export const universeMarketEnum = pgEnum("universe_market", [
+  "stocks",
+  "etf",
+  "indices",
+  "futures",
+  "fx",
+  "crypto",
+  "otc",
+]);
+export const universeHydrationStatusEnum = pgEnum("universe_hydration_status", [
+  "pending",
+  "hydrated",
+  "not_found",
+  "ambiguous",
+  "failed",
+]);
 export const connectionTypeEnum = pgEnum("connection_type", [
   "broker",
   "market_data",

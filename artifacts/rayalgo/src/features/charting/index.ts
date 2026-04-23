@@ -1,4 +1,10 @@
 export { ResearchChartSurface } from "./ResearchChartSurface";
+export { useChartHydrationStats } from "./chartHydrationStats";
+export {
+  expandLocalRollupLimit,
+  resolveLocalRollupBaseTimeframe,
+  rollupMarketBars,
+} from "./timeframeRollups";
 export { ResearchMiniChart } from "./ResearchMiniChart";
 export { ResearchSparkline } from "./ResearchSparkline";
 export { ResearchChartFrame } from "./ResearchChartFrame";
@@ -9,7 +15,10 @@ export {
   ResearchChartWidgetSidebar,
 } from "./ResearchChartWidgetChrome";
 export { ChartParityLab } from "./ChartParityLab";
-export { buildResearchChartModel } from "./model";
+export {
+  buildResearchChartModel,
+  buildResearchChartModelIncremental,
+} from "./model";
 export {
   defaultIndicatorCatalog,
   defaultIndicatorRegistry,
@@ -33,9 +42,14 @@ export {
   useIbkrLatencyStats,
   useBrokerStockAggregateStream,
   useMassiveStockAggregateStream,
+  useStockMinuteAggregateSymbolVersion,
+  useStockMinuteAggregateSymbolsVersion,
   useStockMinuteAggregateStoreVersion,
 } from "./useMassiveStockAggregateStream";
 export {
   useBrokerStreamedBars,
+  useHistoricalBarStream,
   useMassiveStreamedStockBars,
+  useOptionQuotePatchedBars,
+  usePrependableHistoricalBars,
 } from "./useMassiveStreamedStockBars";

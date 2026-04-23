@@ -5,9 +5,9 @@ import {
   PhotonicsObservatory,
 } from "../RayAlgoPlatform";
 
-export const ResearchScreen = ({ onJumpToTrade }) => (
+export const ResearchScreen = ({ onJumpToTrade, isVisible = false }) => (
   <Suspense fallback={null}>
-    <PhotonicsObservatory onJumpToTrade={onJumpToTrade} />
+    <PhotonicsObservatory onJumpToTrade={onJumpToTrade} isVisible={isVisible} />
   </Suspense>
 );
 

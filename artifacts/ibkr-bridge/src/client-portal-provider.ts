@@ -31,6 +31,14 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
   private readonly marketDataStream: IbkrMarketDataStream;
   private readonly sessionRefreshTtlMs = 10 * 60_000;
   private readonly optionChainCacheTtlMs = 30_000;
+  private readonly optionQuotePollIntervalMs = Math.max(
+    1_000,
+    Number(process.env["IBKR_BRIDGE_OPTION_QUOTE_POLL_INTERVAL_MS"] ?? "3000"),
+  );
+  private readonly historicalBarPollIntervalMs = Math.max(
+    1_000,
+    Number(process.env["IBKR_BRIDGE_HISTORICAL_BAR_POLL_INTERVAL_MS"] ?? "5000"),
+  );
   private readonly tickleIntervalMs = Number(
     process.env["IBKR_BRIDGE_TICKLE_INTERVAL_MS"] ?? "55000",
   );
@@ -454,5 +462,228 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     return this.withFreshSession(() =>
       this.marketDataStream.subscribeQuotes(symbols, onQuote),
     );
+  }
+
+  private toOptionQuoteSnapshot(contract: OptionChainContract): QuoteSnapshot {
+    const bid = Number.isFinite(contract.bid) ? contract.bid : 0;
+    const ask = Number.isFinite(contract.ask) ? contract.ask : bid;
+    const price = Number.isFinite(contract.last)
+      ? contract.last
+      : bid > 0 && ask > 0
+        ? (bid + ask) / 2
+        : bid;
+
+    return {
+      symbol: contract.contract.ticker,
+      price,
+      bid,
+      ask,
+      bidSize: 0,
+      askSize: 0,
+      change: 0,
+      changePercent: 0,
+      open: null,
+      high: null,
+      low: null,
+      prevClose: null,
+      volume: contract.volume ?? null,
+      openInterest: contract.openInterest ?? null,
+      impliedVolatility: contract.impliedVolatility ?? null,
+      delta: contract.delta ?? null,
+      gamma: contract.gamma ?? null,
+      theta: contract.theta ?? null,
+      vega: contract.vega ?? null,
+      updatedAt: contract.updatedAt,
+      providerContractId: contract.contract.providerContractId ?? null,
+      transport: "client_portal",
+      delayed: this.observedLiveMarketDataAvailable === false,
+    };
+  }
+
+  async getOptionQuoteSnapshots(input: {
+    underlying?: string | null;
+    providerContractIds: string[];
+  }): Promise<QuoteSnapshot[]> {
+    const underlying = input.underlying?.trim().toUpperCase() ?? "";
+    const normalizedProviderContractIds = Array.from(
+      new Set(
+        input.providerContractIds
+          .map((providerContractId) => providerContractId.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (!underlying || normalizedProviderContractIds.length === 0) {
+      return [];
+    }
+
+    const contracts = await this.getOptionChain({ underlying });
+    const contractsByProviderContractId = new Map(
+      contracts
+        .filter((contract) => contract.contract.providerContractId)
+        .map((contract) => [contract.contract.providerContractId ?? "", contract]),
+    );
+
+    return normalizedProviderContractIds.flatMap((providerContractId) => {
+      const contract = contractsByProviderContractId.get(providerContractId);
+      return contract ? [this.toOptionQuoteSnapshot(contract)] : [];
+    });
+  }
+
+  async subscribeOptionQuoteStream(
+    input: {
+      underlying?: string | null;
+      providerContractIds: string[];
+    },
+    onQuote: (quote: QuoteSnapshot) => void,
+  ): Promise<() => void> {
+    const normalizedProviderContractIds = Array.from(
+      new Set(
+        input.providerContractIds
+          .map((providerContractId) => providerContractId.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (!input.underlying?.trim() || normalizedProviderContractIds.length === 0) {
+      return () => {};
+    }
+
+    let active = true;
+    let inFlight = false;
+    const lastSignatureByProviderContractId = new Map<string, string>();
+    const emitQuotes = async () => {
+      if (!active || inFlight) {
+        return;
+      }
+
+      inFlight = true;
+      try {
+        const quotes = await this.getOptionQuoteSnapshots({
+          underlying: input.underlying,
+          providerContractIds: normalizedProviderContractIds,
+        });
+
+        if (!active) {
+          return;
+        }
+
+        quotes.forEach((quote) => {
+          const providerContractId = quote.providerContractId?.trim();
+          if (!providerContractId) {
+            return;
+          }
+
+          const signature = JSON.stringify({
+            price: quote.price,
+            bid: quote.bid,
+            ask: quote.ask,
+            volume: quote.volume,
+            openInterest: quote.openInterest,
+            impliedVolatility: quote.impliedVolatility,
+            delta: quote.delta,
+            gamma: quote.gamma,
+            theta: quote.theta,
+            vega: quote.vega,
+            updatedAt: quote.updatedAt.toISOString(),
+          });
+
+          if (lastSignatureByProviderContractId.get(providerContractId) === signature) {
+            return;
+          }
+
+          lastSignatureByProviderContractId.set(providerContractId, signature);
+          onQuote(quote);
+        });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const timer = setInterval(() => {
+      void emitQuotes();
+    }, this.optionQuotePollIntervalMs);
+    timer.unref?.();
+    void emitQuotes();
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }
+
+  async subscribeHistoricalBarStream(
+    input: {
+      symbol: string;
+      timeframe: HistoryBarTimeframe;
+      assetClass?: "equity" | "option";
+      providerContractId?: string | null;
+      outsideRth?: boolean;
+      source?: HistoryDataSource;
+    },
+    onBar: (bar: BrokerBarSnapshot) => void,
+  ): Promise<() => void> {
+    let active = true;
+    let inFlight = false;
+    let lastSignature = "";
+
+    const emitBar = async () => {
+      if (!active || inFlight) {
+        return;
+      }
+
+      inFlight = true;
+      try {
+        const bars = await this.getHistoricalBars({
+          ...input,
+          limit: Math.max(2, input.timeframe === "1d" ? 1 : 2),
+        });
+
+        if (!active) {
+          return;
+        }
+
+        const latestBar = bars[bars.length - 1];
+        if (!latestBar) {
+          return;
+        }
+
+        const nextBar = {
+          ...latestBar,
+          partial: true,
+        } satisfies BrokerBarSnapshot;
+        const signature = JSON.stringify({
+          timestamp: nextBar.timestamp.toISOString(),
+          open: nextBar.open,
+          high: nextBar.high,
+          low: nextBar.low,
+          close: nextBar.close,
+          volume: nextBar.volume,
+          source: nextBar.source,
+        });
+
+        if (signature === lastSignature) {
+          return;
+        }
+
+        lastSignature = signature;
+        onBar(nextBar);
+      } catch (error) {
+        this.recordError(error);
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const timer = setInterval(() => {
+      void emitBar();
+    }, this.historicalBarPollIntervalMs);
+    timer.unref?.();
+    void emitBar();
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }
 }

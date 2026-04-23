@@ -39,8 +39,21 @@ type StreamConsumer = {
   onAggregate?: (message: BrokerStockAggregateMessage) => void;
 };
 
+type AggregateStreamStats = {
+  activeConsumerCount: number;
+  unionSymbolCount: number;
+  reconnectCount: number;
+  refreshCount: number;
+  eventCount: number;
+  streamGapCount: number;
+  maxGapMs: number;
+  lastEventAtMs: number | null;
+};
+
 const MAX_MINUTE_AGGREGATES_PER_SYMBOL = 2_048;
-const EVENT_SOURCE_RETRY_DELAY_MS = 30_000;
+const EVENT_SOURCE_RETRY_DELAY_MS = 5_000;
+const EVENT_SOURCE_RECONFIGURE_DEBOUNCE_MS = 150;
+const STREAM_GAP_THRESHOLD_MS = 2_500;
 
 const normalizeSymbols = (symbols: string[]): string[] => (
   Array.from(
@@ -75,6 +88,8 @@ const parseAggregateMessage = (payload: string): BrokerStockAggregateMessage | n
 const consumers = new Map<number, StreamConsumer>();
 const minuteCacheBySymbol = new Map<string, Map<number, BrokerStockAggregateMessage>>();
 const storeListeners = new Set<() => void>();
+const symbolStoreListeners = new Map<string, Set<() => void>>();
+const symbolStoreVersions = new Map<string, number>();
 const latencyStoreListeners = new Set<() => void>();
 const latencySamples = {
   bridgeToApiMs: [] as number[],
@@ -82,6 +97,16 @@ const latencySamples = {
   totalMs: [] as number[],
 };
 const MAX_LIVE_LATENCY_SAMPLE_AGE_MS = 10_000;
+const aggregateStreamStats: AggregateStreamStats = {
+  activeConsumerCount: 0,
+  unionSymbolCount: 0,
+  reconnectCount: 0,
+  refreshCount: 0,
+  eventCount: 0,
+  streamGapCount: 0,
+  maxGapMs: 0,
+  lastEventAtMs: null,
+};
 
 let nextConsumerId = 1;
 let storeVersion = 0;
@@ -89,6 +114,7 @@ let latencyStoreVersion = 0;
 let eventSource: EventSource | null = null;
 let eventSourceSignature = "";
 let reconnectTimer: number | null = null;
+let refreshTimer: number | null = null;
 let reconnectBlockedUntil = 0;
 let storeNotifyScheduled = false;
 
@@ -112,6 +138,28 @@ const notifyStoreListeners = () => {
   setTimeout(flushStoreListeners, 0);
 };
 
+const notifySymbolStoreListeners = (symbol: string) => {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  if (!normalizedSymbol) {
+    return;
+  }
+
+  const listeners = symbolStoreListeners.get(normalizedSymbol);
+  if (!listeners?.size) {
+    symbolStoreVersions.set(
+      normalizedSymbol,
+      (symbolStoreVersions.get(normalizedSymbol) ?? 0) + 1,
+    );
+    return;
+  }
+
+  symbolStoreVersions.set(
+    normalizedSymbol,
+    (symbolStoreVersions.get(normalizedSymbol) ?? 0) + 1,
+  );
+  Array.from(listeners).forEach((listener) => listener());
+};
+
 const notifyLatencyStoreListeners = () => {
   latencyStoreVersion += 1;
   Array.from(latencyStoreListeners).forEach((listener) => listener());
@@ -125,6 +173,37 @@ const subscribeToLatencyStore = (listener: () => void): (() => void) => {
 };
 
 const getLatencyStoreSnapshot = (): number => latencyStoreVersion;
+
+const updateAggregateStreamStats = (
+  patch: Partial<AggregateStreamStats>,
+): void => {
+  let changed = false;
+
+  (Object.entries(patch) as Array<
+    [keyof AggregateStreamStats, AggregateStreamStats[keyof AggregateStreamStats]]
+  >).forEach(([key, value]) => {
+    if (value === undefined) {
+      return;
+    }
+    if (aggregateStreamStats[key] === value) {
+      return;
+    }
+
+    aggregateStreamStats[key] = value as never;
+    changed = true;
+  });
+
+  if (changed) {
+    notifyLatencyStoreListeners();
+  }
+};
+
+const syncAggregateConsumerStats = (): void => {
+  updateAggregateStreamStats({
+    activeConsumerCount: consumers.size,
+    unionSymbolCount: getUnionSymbols().length,
+  });
+};
 
 const readTimestampMs = (value: string | null | undefined): number | null => {
   if (!value) {
@@ -164,10 +243,10 @@ const summarizeBucket = (values: number[]) => ({
   p95: percentile(values, 95),
 });
 
-const recordLatencySample = (message: BrokerStockAggregateMessage) => {
+const recordLatencySample = (message: BrokerStockAggregateMessage): boolean => {
   const latency = message.latency;
   if (!latency) {
-    return;
+    return false;
   }
 
   const now = Date.now();
@@ -183,17 +262,22 @@ const recordLatencySample = (message: BrokerStockAggregateMessage) => {
       : null;
   const apiToReactMs =
     apiServerEmittedAt !== null ? now - apiServerEmittedAt : null;
+  let changed = false;
 
   if (bridgeToApiMs !== null && bridgeToApiMs <= MAX_LIVE_LATENCY_SAMPLE_AGE_MS) {
     pushLatencySample(latencySamples.bridgeToApiMs, bridgeToApiMs);
+    changed = true;
   }
   if (apiToReactMs !== null && apiToReactMs <= MAX_LIVE_LATENCY_SAMPLE_AGE_MS) {
     pushLatencySample(latencySamples.apiToReactMs, apiToReactMs);
+    changed = true;
   }
   if (endToEndAgeMs !== null && endToEndAgeMs <= MAX_LIVE_LATENCY_SAMPLE_AGE_MS) {
     pushLatencySample(latencySamples.totalMs, endToEndAgeMs);
+    changed = true;
   }
-  notifyLatencyStoreListeners();
+
+  return changed;
 };
 
 const subscribeToAggregateStore = (listener: () => void): (() => void) => {
@@ -205,6 +289,57 @@ const subscribeToAggregateStore = (listener: () => void): (() => void) => {
 
 const getAggregateStoreSnapshot = (): number => storeVersion;
 
+const subscribeToAggregateStoreForSymbol = (
+  symbol: string,
+  listener: () => void,
+): (() => void) => {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  if (!normalizedSymbol) {
+    return () => {};
+  }
+
+  const listeners = symbolStoreListeners.get(normalizedSymbol) ?? new Set<() => void>();
+  listeners.add(listener);
+  symbolStoreListeners.set(normalizedSymbol, listeners);
+
+  return () => {
+    const currentListeners = symbolStoreListeners.get(normalizedSymbol);
+    if (!currentListeners) {
+      return;
+    }
+
+    currentListeners.delete(listener);
+    if (currentListeners.size === 0) {
+      symbolStoreListeners.delete(normalizedSymbol);
+    }
+  };
+};
+
+const getAggregateStoreSnapshotForSymbol = (symbol: string): number => {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  return normalizedSymbol ? (symbolStoreVersions.get(normalizedSymbol) ?? 0) : 0;
+};
+
+const subscribeToAggregateStoreForSymbols = (
+  symbols: string[],
+  listener: () => void,
+): (() => void) => {
+  const unsubscribeAll = normalizeSymbols(symbols).map((symbol) =>
+    subscribeToAggregateStoreForSymbol(symbol, listener),
+  );
+
+  return () => {
+    unsubscribeAll.forEach((unsubscribe) => unsubscribe());
+  };
+};
+
+const getAggregateStoreSnapshotForSymbols = (symbols: string[]): number => (
+  normalizeSymbols(symbols).reduce(
+    (version, symbol) => version + (symbolStoreVersions.get(symbol) ?? 0),
+    0,
+  )
+);
+
 const clearReconnectTimer = () => {
   if (reconnectTimer == null) {
     return;
@@ -212,6 +347,15 @@ const clearReconnectTimer = () => {
 
   clearTimeout(reconnectTimer);
   reconnectTimer = null;
+};
+
+const clearRefreshTimer = () => {
+  if (refreshTimer == null) {
+    return;
+  }
+
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
 };
 
 const getUnionSymbols = (): string[] => normalizeSymbols(
@@ -227,6 +371,21 @@ const closeEventSource = () => {
   eventSource.close();
   eventSource = null;
   eventSourceSignature = "";
+};
+
+const scheduleRefreshEventSource = (
+  delayMs = EVENT_SOURCE_RECONFIGURE_DEBOUNCE_MS,
+) => {
+  if (typeof window === "undefined") {
+    refreshEventSource();
+    return;
+  }
+
+  clearRefreshTimer();
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null;
+    refreshEventSource();
+  }, Math.max(0, delayMs));
 };
 
 const trimMinuteCache = (cache: Map<number, BrokerStockAggregateMessage>) => {
@@ -278,11 +437,33 @@ const recordAggregate = (message: BrokerStockAggregateMessage) => {
   trimMinuteCache(symbolCache);
   minuteCacheBySymbol.set(symbol, symbolCache);
   notifyStoreListeners();
+  notifySymbolStoreListeners(symbol);
 };
 
 const handleAggregateMessage = (message: BrokerStockAggregateMessage) => {
+  const now = Date.now();
+  const lastEventAtMs = aggregateStreamStats.lastEventAtMs;
+  const gapMs =
+    lastEventAtMs === null
+      ? null
+      : Math.max(0, now - lastEventAtMs);
+  const streamGapCount =
+    gapMs !== null && gapMs > STREAM_GAP_THRESHOLD_MS
+      ? aggregateStreamStats.streamGapCount + 1
+      : aggregateStreamStats.streamGapCount;
+  const maxGapMs =
+    gapMs !== null ? Math.max(aggregateStreamStats.maxGapMs, gapMs) : aggregateStreamStats.maxGapMs;
+  const latencyChanged = recordLatencySample(message);
+
+  aggregateStreamStats.lastEventAtMs = now;
+  aggregateStreamStats.eventCount += 1;
+  aggregateStreamStats.streamGapCount = streamGapCount;
+  aggregateStreamStats.maxGapMs = maxGapMs;
+
   recordAggregate(message);
-  recordLatencySample(message);
+  if (latencyChanged || gapMs !== null) {
+    notifyLatencyStoreListeners();
+  }
 
   consumers.forEach((consumer) => {
     if (!consumer.symbols.has(message.symbol)) {
@@ -297,6 +478,7 @@ const refreshEventSource = () => {
   if (typeof window === "undefined" || typeof window.EventSource === "undefined") {
     reconnectBlockedUntil = 0;
     clearReconnectTimer();
+    clearRefreshTimer();
     closeEventSource();
     return;
   }
@@ -307,6 +489,7 @@ const refreshEventSource = () => {
   if (!signature) {
     reconnectBlockedUntil = 0;
     clearReconnectTimer();
+    clearRefreshTimer();
     closeEventSource();
     return;
   }
@@ -326,6 +509,7 @@ const refreshEventSource = () => {
   }
 
   clearReconnectTimer();
+  clearRefreshTimer();
 
   closeEventSource();
 
@@ -334,10 +518,14 @@ const refreshEventSource = () => {
     return;
   }
 
+  updateAggregateStreamStats({
+    refreshCount: aggregateStreamStats.refreshCount + 1,
+  });
   const source = new EventSource(streamUrl);
   source.onopen = () => {
     reconnectBlockedUntil = 0;
     clearReconnectTimer();
+    clearRefreshTimer();
   };
   const handleAggregate = (event: MessageEvent<string>) => {
     const message = parseAggregateMessage(event.data);
@@ -355,6 +543,9 @@ const refreshEventSource = () => {
     }
 
     reconnectBlockedUntil = Date.now() + EVENT_SOURCE_RETRY_DELAY_MS;
+    updateAggregateStreamStats({
+      reconnectCount: aggregateStreamStats.reconnectCount + 1,
+    });
     closeEventSource();
     refreshEventSource();
   };
@@ -375,11 +566,13 @@ const registerConsumer = (
     symbols: new Set(symbols),
     onAggregate,
   });
-  refreshEventSource();
+  syncAggregateConsumerStats();
+  scheduleRefreshEventSource();
 
   return () => {
     consumers.delete(id);
-    refreshEventSource();
+    syncAggregateConsumerStats();
+    scheduleRefreshEventSource();
   };
 };
 
@@ -401,6 +594,29 @@ export const useStockMinuteAggregateStoreVersion = (): number => (
   )
 );
 
+export const useStockMinuteAggregateSymbolVersion = (symbol: string): number => (
+  useSyncExternalStore(
+    (listener) => subscribeToAggregateStoreForSymbol(symbol, listener),
+    () => getAggregateStoreSnapshotForSymbol(symbol),
+    () => 0,
+  )
+);
+
+export const useStockMinuteAggregateSymbolsVersion = (symbols: string[]): number => {
+  const normalizedSymbols = useMemo(() => normalizeSymbols(symbols), [symbols]);
+  const symbolsSignature = normalizedSymbols.join(",");
+  const stableSymbols = useMemo(
+    () => (symbolsSignature ? symbolsSignature.split(",") : []),
+    [symbolsSignature],
+  );
+
+  return useSyncExternalStore(
+    (listener) => subscribeToAggregateStoreForSymbols(stableSymbols, listener),
+    () => getAggregateStoreSnapshotForSymbols(stableSymbols),
+    () => 0,
+  );
+};
+
 export const useIbkrLatencyStats = () => {
   useSyncExternalStore(
     subscribeToLatencyStore,
@@ -417,6 +633,19 @@ export const useIbkrLatencyStats = () => {
       latencySamples.apiToReactMs.length,
       latencySamples.totalMs.length,
     ),
+    stream: {
+      activeConsumerCount: aggregateStreamStats.activeConsumerCount,
+      unionSymbolCount: aggregateStreamStats.unionSymbolCount,
+      reconnectCount: aggregateStreamStats.reconnectCount,
+      refreshCount: aggregateStreamStats.refreshCount,
+      eventCount: aggregateStreamStats.eventCount,
+      streamGapCount: aggregateStreamStats.streamGapCount,
+      maxGapMs: aggregateStreamStats.maxGapMs,
+      lastEventAgeMs:
+        aggregateStreamStats.lastEventAtMs === null
+          ? null
+          : Math.max(0, Date.now() - aggregateStreamStats.lastEventAtMs),
+    },
   };
 };
 

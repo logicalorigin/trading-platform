@@ -64,6 +64,18 @@ type HoverBar = {
 
 export type BaseSeriesType = "candles" | "bars" | "line" | "area" | "baseline";
 export type ScaleMode = "linear" | "log" | "percentage" | "indexed";
+export type VisibleLogicalRange = {
+  from: number;
+  to: number;
+};
+
+type ChartScalePreferences = {
+  scaleMode?: ScaleMode;
+  autoScale?: boolean;
+  invertScale?: boolean;
+};
+
+const CHART_SCALE_PREFS_STORAGE_PREFIX = "rayalgo:chart-scale-prefs:";
 
 type DrawMode = "horizontal" | "vertical" | "box";
 
@@ -97,6 +109,7 @@ type OverlayShape = {
   labelFill?: string;
   labelBorder?: string;
   labelVariant?: "plain" | "pill";
+  labelSize?: "tiny" | "small" | "normal";
   radius?: number;
   opacity?: number;
 };
@@ -274,6 +287,7 @@ type ResearchChartSurfaceProps = {
   model: ChartModel;
   theme: ResearchChartTheme;
   themeKey: string;
+  uiStateKey?: string;
   dataTestId?: string;
   compact?: boolean;
   showToolbar?: boolean;
@@ -305,6 +319,7 @@ type ResearchChartSurfaceProps = {
   onAddDrawing?: (drawing: ResearchDrawing) => void;
   onAddHorizontalLevel?: (price: number) => void;
   onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
+  onVisibleLogicalRangeChange?: (range: VisibleLogicalRange | null) => void;
 };
 
 const EMPTY_DRAWINGS: ResearchDrawing[] = [];
@@ -320,23 +335,277 @@ type StudyRegistryEntry = {
   paneIndex: number;
   seriesType: StudySpec["seriesType"];
   series: any;
+  data: Array<Record<string, unknown>>;
 };
+
+const seriesDataPointsEqual = (
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+
+  const keys = new Set([
+    ...Object.keys(left),
+    ...Object.keys(right),
+  ]);
+  for (const key of keys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+export const resolveSeriesTailUpdateMode = (
+  previous: Array<Record<string, unknown>>,
+  next: Array<Record<string, unknown>>,
+): "noop" | "patch" | "append" | "reset" => {
+  if (previous === next) {
+    return "noop";
+  }
+
+  if (!next.length) {
+    return previous.length ? "reset" : "noop";
+  }
+
+  if (!previous.length) {
+    return "reset";
+  }
+
+  if (next.length === previous.length) {
+    let tailChanged = false;
+    for (let index = 0; index < previous.length; index += 1) {
+      if (!seriesDataPointsEqual(previous[index], next[index])) {
+        if (index !== previous.length - 1) {
+          return "reset";
+        }
+        tailChanged = true;
+      }
+    }
+
+    return tailChanged ? "patch" : "noop";
+  }
+
+  if (next.length === previous.length + 1) {
+    for (let index = 0; index < previous.length; index += 1) {
+      if (!seriesDataPointsEqual(previous[index], next[index])) {
+        return "reset";
+      }
+    }
+
+    return "append";
+  }
+
+  return "reset";
+};
+
+export const resolveVisibleRangeSyncAction = ({
+  hasStoredRange,
+  hasDefaultRange,
+  initialized,
+  pendingStoredRangeSync,
+}: {
+  hasStoredRange: boolean;
+  hasDefaultRange: boolean;
+  initialized: boolean;
+  pendingStoredRangeSync: boolean;
+}): "stored" | "default" | "fit" | "noop" => {
+  if (hasStoredRange && (pendingStoredRangeSync || !initialized)) {
+    return "stored";
+  }
+
+  if (!initialized && hasDefaultRange) {
+    return "default";
+  }
+
+  if (!initialized) {
+    return "fit";
+  }
+
+  return "noop";
+};
+
+export const sanitizeStoredChartScalePrefs = (
+  value: unknown,
+): ChartScalePreferences => {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const record = value as Record<string, unknown>;
+  const next: ChartScalePreferences = {};
+  if (
+    record.scaleMode === "linear" ||
+    record.scaleMode === "log" ||
+    record.scaleMode === "percentage" ||
+    record.scaleMode === "indexed"
+  ) {
+    next.scaleMode = record.scaleMode;
+  }
+  if (typeof record.autoScale === "boolean") {
+    next.autoScale = record.autoScale;
+  }
+  if (typeof record.invertScale === "boolean") {
+    next.invertScale = record.invertScale;
+  }
+
+  return next;
+};
+
+const buildChartScalePrefsStorageKey = (
+  uiStateKey?: string | null,
+): string | null =>
+  uiStateKey ? `${CHART_SCALE_PREFS_STORAGE_PREFIX}${uiStateKey}` : null;
+
+const readStoredChartScalePrefs = (
+  uiStateKey?: string | null,
+): ChartScalePreferences => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const storageKey = buildChartScalePrefsStorageKey(uiStateKey);
+  if (!storageKey) {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return {};
+    }
+
+    return sanitizeStoredChartScalePrefs(JSON.parse(raw));
+  } catch (_error) {
+    return {};
+  }
+};
+
+const writeStoredChartScalePrefs = (
+  uiStateKey?: string | null,
+  prefs?: ChartScalePreferences,
+): void => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const storageKey = buildChartScalePrefsStorageKey(uiStateKey);
+  if (!storageKey || !prefs) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(prefs));
+  } catch (_error) {}
+};
+
+const syncSeriesData = (
+  series: any,
+  previous: Array<Record<string, unknown>>,
+  next: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> => {
+  const updateMode = resolveSeriesTailUpdateMode(previous, next);
+
+  if (updateMode === "noop") {
+    return previous;
+  }
+
+  if (updateMode === "patch" || updateMode === "append") {
+    const previousPoint = previous[previous.length - 1];
+    const nextPoint = next[next.length - 1];
+    const tailWhitespaceChanged =
+      Boolean(previousPoint) &&
+      Boolean(nextPoint) &&
+      Object.prototype.hasOwnProperty.call(previousPoint, "value") !==
+        Object.prototype.hasOwnProperty.call(nextPoint, "value");
+
+    if (nextPoint && !tailWhitespaceChanged) {
+      series.update(nextPoint);
+      return next;
+    }
+  }
+
+  series.setData(next);
+  return next;
+};
+
+export const expandStudySpecsForRender = (specs: StudySpec[]): StudySpec[] =>
+  specs.flatMap((spec) => {
+    if (spec.renderMode !== "line_breaks" || spec.seriesType !== "line") {
+      return [spec];
+    }
+
+    const segments: StudySpec[] = [];
+    let segmentIndex = 0;
+    let currentSegment: typeof spec.data = [];
+    const flushSegment = () => {
+      if (!currentSegment.length) {
+        return;
+      }
+
+      segments.push({
+        ...spec,
+        key: `${spec.key}::segment:${segmentIndex}`,
+        data: currentSegment,
+      });
+      segmentIndex += 1;
+      currentSegment = [];
+    };
+
+    spec.data.forEach((point) => {
+      if (Number.isFinite(point.value)) {
+        currentSegment.push(point);
+        return;
+      }
+
+      flushSegment();
+    });
+    flushSegment();
+
+    return segments;
+  });
 
 const withAlpha = (color: string, alpha: string): string =>
   /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}${alpha}` : color;
+
+const resolvePriceScaleModeOption = (scaleMode: ScaleMode): PriceScaleMode =>
+  scaleMode === "log"
+    ? PriceScaleMode.Logarithmic
+    : scaleMode === "indexed"
+      ? PriceScaleMode.IndexedTo100
+      : scaleMode === "percentage"
+        ? PriceScaleMode.Percentage
+        : PriceScaleMode.Normal;
+
+const resolveMinBarSpacing = (compact: boolean): number =>
+  compact ? 0.35 : 1.1;
 
 const buildChartOptions = (
   theme: ResearchChartTheme,
   {
     compact = false,
     hideTimeScale = false,
+    showTimeScale = true,
     showRightPriceScale = true,
+    scaleMode = "linear",
+    autoScale = true,
+    invertScale = false,
     enableInteractions = true,
     showAttributionLogo = false,
   }: {
     compact?: boolean;
     hideTimeScale?: boolean;
+    showTimeScale?: boolean;
     showRightPriceScale?: boolean;
+    scaleMode?: ScaleMode;
+    autoScale?: boolean;
+    invertScale?: boolean;
     enableInteractions?: boolean;
     showAttributionLogo?: boolean;
   },
@@ -379,6 +648,9 @@ const buildChartOptions = (
     borderVisible: showRightPriceScale,
     ticksVisible: showRightPriceScale,
     minimumWidth: compact ? 34 : 50,
+    autoScale,
+    invertScale,
+    mode: resolvePriceScaleModeOption(scaleMode),
   },
   leftPriceScale: {
     visible: false,
@@ -386,15 +658,15 @@ const buildChartOptions = (
   },
   timeScale: {
     borderColor: theme.border,
-    borderVisible: !hideTimeScale,
-    visible: !hideTimeScale,
-    timeVisible: !hideTimeScale,
+    borderVisible: !hideTimeScale && showTimeScale,
+    visible: !hideTimeScale && showTimeScale,
+    timeVisible: !hideTimeScale && showTimeScale,
     secondsVisible: false,
-    ticksVisible: !hideTimeScale,
+    ticksVisible: !hideTimeScale && showTimeScale,
     rightOffset: compact ? 1 : 6,
     rightBarStaysOnScroll: true,
     lockVisibleTimeRangeOnResize: true,
-    minBarSpacing: compact ? 0.6 : 5,
+    minBarSpacing: resolveMinBarSpacing(compact),
   },
   handleScroll: enableInteractions
     ? {
@@ -535,6 +807,7 @@ const overlayShapesEqual = (
       leftShape.labelFill !== rightShape.labelFill ||
       leftShape.labelBorder !== rightShape.labelBorder ||
       leftShape.labelVariant !== rightShape.labelVariant ||
+      leftShape.labelSize !== rightShape.labelSize ||
       leftShape.radius !== rightShape.radius ||
       leftShape.opacity !== rightShape.opacity ||
       !numbersClose(leftShape.left, rightShape.left) ||
@@ -548,6 +821,11 @@ const overlayShapesEqual = (
 
   return true;
 };
+
+const resolveOverlayLabelFontSize = (
+  labelSize: OverlayShape["labelSize"],
+): number =>
+  labelSize === "tiny" ? 8 : labelSize === "normal" ? 10 : 9;
 
 const stringArraysEqual = (left: string[], right: string[]): boolean => {
   if (left === right) {
@@ -808,6 +1086,49 @@ const clampVisualAnchor = (
   return clampCoordinate(value, halfSize, viewportSize - halfSize);
 };
 
+const isCoordinateWithinViewport = (
+  value: number,
+  viewportSize: number,
+  padding = 0,
+): boolean =>
+  Number.isFinite(value) && value >= -padding && value <= viewportSize + padding;
+
+const doesRectIntersectViewport = (
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): boolean =>
+  Number.isFinite(left) &&
+  Number.isFinite(top) &&
+  Number.isFinite(width) &&
+  Number.isFinite(height) &&
+  left + width >= 0 &&
+  left <= viewportWidth &&
+  top + height >= 0 &&
+  top <= viewportHeight;
+
+const isMarkerVisibleInLogicalRange = (
+  marker: { barIndex: number },
+  visibleLogicalRange: { from: number; to: number } | null,
+  barCount: number,
+  padding = 1,
+): boolean => {
+  if (
+    !visibleLogicalRange ||
+    !Number.isFinite(visibleLogicalRange.from) ||
+    !Number.isFinite(visibleLogicalRange.to)
+  ) {
+    return true;
+  }
+
+  const from = Math.max(0, Math.floor(visibleLogicalRange.from) - padding);
+  const to = Math.min(barCount - 1, Math.ceil(visibleLogicalRange.to) + padding);
+  return marker.barIndex >= from && marker.barIndex <= to;
+};
+
 const clipSpanToViewport = (
   start: number,
   end: number,
@@ -946,20 +1267,23 @@ const buildWindowOverlays = (
       const tone =
         indicatorWindow.tone ||
         (indicatorWindow.direction === "short" ? "bearish" : "bullish");
+      const meta = indicatorWindow.meta ?? {};
       const fill =
-        tone === "bearish"
+        (meta.fillColor as string | undefined) ||
+        (tone === "bearish"
           ? withAlpha(theme.red, "12")
           : tone === "neutral"
             ? withAlpha(theme.textMuted, "10")
-            : withAlpha(theme.green, "12");
+            : withAlpha(theme.green, "12"));
       const border =
-        tone === "bearish"
+        (meta.borderColor as string | undefined) ||
+        (tone === "bearish"
           ? withAlpha(theme.red, "45")
           : tone === "neutral"
             ? withAlpha(theme.textMuted, "38")
-            : withAlpha(theme.green, "45");
+            : withAlpha(theme.green, "45"));
       const isBackground =
-        (indicatorWindow.meta?.style as string | undefined) === "background";
+        (meta.style as string | undefined) === "background";
 
       result.push({
         id: indicatorWindow.id,
@@ -1092,6 +1416,12 @@ const buildZoneOverlays = (
             ),
           labelVariant:
             meta.labelVariant === "plain" ? "plain" : "pill",
+          labelSize:
+            meta.labelSize === "tiny" ||
+            meta.labelSize === "small" ||
+            meta.labelSize === "normal"
+              ? meta.labelSize
+              : "small",
           opacity: 0.95,
         });
         return result;
@@ -1146,6 +1476,12 @@ const buildZoneOverlays = (
         labelBorder: (meta.labelBorderColor as string | undefined),
         labelVariant:
           meta.labelVariant === "plain" ? "plain" : "pill",
+        labelSize:
+          meta.labelSize === "tiny" ||
+          meta.labelSize === "small" ||
+          meta.labelSize === "normal"
+            ? meta.labelSize
+            : "small",
         radius: resolveFiniteMetaNumber(meta.radius, isFillBand ? 0 : 4),
         opacity: resolveFiniteMetaNumber(meta.opacity, isFillBand ? 0.92 : 1),
       });
@@ -1325,10 +1661,23 @@ const buildTradeMarkerTargets = (
           : yBase + 12;
     const left = x - size / 2;
 
+    if (
+      !doesRectIntersectViewport(
+        left,
+        top,
+        size,
+        size,
+        viewportWidth,
+        viewportHeight,
+      )
+    ) {
+      return result;
+    }
+
     result.push({
       id: group.id,
-      left: clampCoordinate(left, 0, Math.max(0, viewportWidth - size)),
-      top: clampCoordinate(top, 0, Math.max(0, viewportHeight - size)),
+      left,
+      top,
       size,
       label: group.label,
       color:
@@ -1433,56 +1782,76 @@ const buildSelectedTradeOverlays = (
   const entryBadgeWidth = estimateMonoTextWidth(entryText, 10, 7);
   const exitBadgeWidth = estimateMonoTextWidth(exitText, 10, 7);
   const tradeBadgeHeight = 24;
+  const hasVisibleEntryBadge =
+    hasEntryBadge &&
+    isCoordinateWithinViewport(
+      resolvedEntryAnchorX,
+      viewportWidth,
+      entryBadgeWidth / 2,
+    ) &&
+    isCoordinateWithinViewport(
+      resolvedEntryBadgeTop,
+      viewportHeight,
+      tradeBadgeHeight / 2,
+    );
+  const hasVisibleExitBadge =
+    hasExitBadge &&
+    isCoordinateWithinViewport(
+      resolvedExitAnchorX,
+      viewportWidth,
+      exitBadgeWidth / 2,
+    ) &&
+    isCoordinateWithinViewport(
+      resolvedExitBadgeTop,
+      viewportHeight,
+      tradeBadgeHeight / 2,
+    );
   const entryBadge = hasEntryBadge
-    ? {
+    ? hasVisibleEntryBadge
+      ? {
         id: `${activeTrade.tradeSelectionId}-entry`,
-        left: clampVisualAnchor(
-          resolvedEntryAnchorX,
-          entryBadgeWidth / 2,
-          viewportWidth,
-        ),
-        top: clampVisualAnchor(
-          resolvedEntryBadgeTop,
-          tradeBadgeHeight / 2,
-          viewportHeight,
-        ),
+        left: resolvedEntryAnchorX,
+        top: resolvedEntryBadgeTop,
         text: entryText,
         color: withAlpha(theme.amber, "20"),
         borderColor: theme.amber,
       }
+      : null
     : null;
   const exitBadge = hasExitBadge
-    ? {
+    ? hasVisibleExitBadge
+      ? {
         id: `${activeTrade.tradeSelectionId}-exit`,
-        left: clampVisualAnchor(
-          resolvedExitAnchorX,
-          exitBadgeWidth / 2,
-          viewportWidth,
-        ),
-        top: clampVisualAnchor(
-          resolvedExitBadgeTop,
-          tradeBadgeHeight / 2,
-          viewportHeight,
-        ),
+        left: resolvedExitAnchorX,
+        top: resolvedExitBadgeTop,
         text: exitText,
         color: profitable
           ? withAlpha(theme.green, "20")
           : withAlpha(theme.red, "20"),
         borderColor: profitable ? theme.green : theme.red,
       }
+      : null
     : null;
   const connector =
     Number.isFinite(entryAnchorX) &&
     Number.isFinite(entryAnchorY) &&
     Number.isFinite(exitAnchorX) &&
     Number.isFinite(exitAnchorY) &&
-    exitAnchorX >= entryAnchorX
+    exitAnchorX >= entryAnchorX &&
+    doesRectIntersectViewport(
+      Math.min(entryAnchorX, exitAnchorX),
+      Math.min(entryAnchorY, exitAnchorY),
+      Math.max(1, Math.abs(exitAnchorX - entryAnchorX)),
+      Math.max(1, Math.abs(exitAnchorY - entryAnchorY)),
+      viewportWidth,
+      viewportHeight,
+    )
       ? {
           color: profitable ? theme.green : theme.red,
-          x1: clampCoordinate(entryAnchorX, 0, viewportWidth),
-          y1: clampCoordinate(entryAnchorY, 0, viewportHeight),
-          x2: clampCoordinate(exitAnchorX, 0, viewportWidth),
-          y2: clampCoordinate(exitAnchorY, 0, viewportHeight),
+          x1: entryAnchorX,
+          y1: entryAnchorY,
+          x2: exitAnchorX,
+          y2: exitAnchorY,
         }
       : null;
   const thresholdSegments =
@@ -1639,20 +2008,32 @@ const buildIndicatorEventOverlays = (
       const badgeHeight = isSignal ? 24 : isTriangle ? 16 : 18;
       const arrowClearance = meta.arrow ? 6 : 0;
       const badgeClearance = badgeHeight + arrowClearance;
-      const clampedTop =
-        placement === "above"
-          ? clampCoordinate(y, badgeClearance + 8, viewportHeight)
-          : placement === "below"
-            ? clampCoordinate(y, 0, Math.max(0, viewportHeight - badgeClearance - 8))
-            : clampVisualAnchor(y, badgeClearance / 2, viewportHeight);
+      const badgeTop = y;
+
+      if (
+        !doesRectIntersectViewport(
+          x - estimatedWidth / 2,
+          placement === "above"
+            ? badgeTop - (badgeHeight + 8)
+            : placement === "below"
+              ? badgeTop + 8
+              : badgeTop - badgeHeight / 2,
+          estimatedWidth,
+          badgeClearance + 8,
+          viewportWidth,
+          viewportHeight,
+        )
+      ) {
+        return;
+      }
 
       badges.push({
         id: event.id,
         dataTestId:
           (meta.dataTestId as string | undefined) ||
           buildRayReplicaOverlayTestId(event.strategy, "badge", event.eventType),
-        left: clampVisualAnchor(x, estimatedWidth / 2, viewportWidth),
-        top: clampedTop,
+        left: x,
+        top: badgeTop,
         text,
         background: (meta.background as string | undefined) || "#111827",
         borderColor: (meta.borderColor as string | undefined) || "#9ca3af",
@@ -1670,13 +2051,27 @@ const buildIndicatorEventOverlays = (
           ? meta.size
           : 8;
       const visualRadius = size / 2 + 2;
+
+      if (
+        !doesRectIntersectViewport(
+          x - visualRadius,
+          y - visualRadius,
+          visualRadius * 2,
+          visualRadius * 2,
+          viewportWidth,
+          viewportHeight,
+        )
+      ) {
+        return;
+      }
+
       dots.push({
         id: event.id,
         dataTestId:
           (meta.dataTestId as string | undefined) ||
           buildRayReplicaOverlayTestId(event.strategy, "dot", event.eventType),
-        left: clampVisualAnchor(x, visualRadius, viewportWidth),
-        top: clampVisualAnchor(y, visualRadius, viewportHeight),
+        left: x,
+        top: y,
         size,
         color: (meta.color as string | undefined) || "#ffffff",
         borderColor: (meta.borderColor as string | undefined) || "#ffffff",
@@ -1693,9 +2088,10 @@ const syncStudySeries = (
   specs: StudySpec[],
 ): Record<string, StudyRegistryEntry> => {
   const nextRegistry = { ...registry };
-  const nextKeys = new Set(specs.map((spec) => spec.key));
+  const renderSpecs = expandStudySpecsForRender(specs);
+  const nextKeys = new Set(renderSpecs.map((spec) => spec.key));
 
-  specs.forEach((spec) => {
+  renderSpecs.forEach((spec) => {
     const existing = nextRegistry[spec.key];
     const SeriesCtor = SERIES_TYPE_MAP[spec.seriesType];
     const seriesData = spec.data.map((point) => {
@@ -1724,12 +2120,13 @@ const syncStudySeries = (
         series,
         paneIndex: spec.paneIndex,
         seriesType: spec.seriesType,
+        data: seriesData,
       };
       return;
     }
 
     existing.series.applyOptions(spec.options);
-    existing.series.setData(seriesData);
+    existing.data = syncSeriesData(existing.series, existing.data || [], seriesData);
   });
 
   Object.keys(nextRegistry).forEach((key) => {
@@ -1748,6 +2145,7 @@ export const ResearchChartSurface = ({
   model,
   theme,
   themeKey,
+  uiStateKey,
   dataTestId,
   compact = false,
   showToolbar = true,
@@ -1773,6 +2171,7 @@ export const ResearchChartSurface = ({
   onAddDrawing,
   onAddHorizontalLevel,
   onTradeMarkerSelection,
+  onVisibleLogicalRangeChange,
 }: ResearchChartSurfaceProps) => {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1783,10 +2182,27 @@ export const ResearchChartSurface = ({
   const areaSeriesRef = useRef<any>(null);
   const baselineSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
+  const baseSeriesDataRef = useRef<{
+    candles: Array<Record<string, unknown>>;
+    bars: Array<Record<string, unknown>>;
+    line: Array<Record<string, unknown>>;
+    area: Array<Record<string, unknown>>;
+    baseline: Array<Record<string, unknown>>;
+    volume: Array<Record<string, unknown>>;
+  }>({
+    candles: [],
+    bars: [],
+    line: [],
+    area: [],
+    baseline: [],
+    volume: [],
+  });
   const markerApisRef = useRef<any[]>([]);
   const studyRegistryRef = useRef<Record<string, StudyRegistryEntry>>({});
   const visibleLogicalRangeRef = useRef<any>(null);
+  const previousFirstChartBarTimeRef = useRef<number | null>(null);
   const initializedRangeRef = useRef(false);
+  const pendingStoredRangeSyncRef = useRef(true);
   const lastSelectionFocusTokenRef = useRef<number | null>(null);
   const drawingLinesRef = useRef<Record<BaseSeriesType, any[]>>({
     candles: [],
@@ -1802,21 +2218,29 @@ export const ResearchChartSurface = ({
     onAddDrawing,
     onAddHorizontalLevel,
   });
+  const visibleRangeChangeRef = useRef(onVisibleLogicalRangeChange);
+  const hasChartBars = model.chartBars.length > 0;
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
   const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
     defaultBaseSeriesType,
   );
   const [showVolume, setShowVolume] = useState(defaultShowVolume);
-  const [scaleMode, setScaleMode] = useState<ScaleMode>(defaultScaleMode);
+  const [scaleMode, setScaleMode] = useState<ScaleMode>(
+    () => readStoredChartScalePrefs(uiStateKey).scaleMode ?? defaultScaleMode,
+  );
   const [crosshairMode, setCrosshairMode] = useState<"magnet" | "free">(
     "magnet",
   );
   const [showPriceLine, setShowPriceLine] = useState(defaultShowPriceLine);
   const [showGrid, setShowGrid] = useState(true);
   const [showTimeScaleState, setShowTimeScaleState] = useState(!hideTimeScale);
-  const [autoScale, setAutoScale] = useState(true);
-  const [invertScale, setInvertScale] = useState(false);
+  const [autoScale, setAutoScale] = useState(
+    () => readStoredChartScalePrefs(uiStateKey).autoScale ?? true,
+  );
+  const [invertScale, setInvertScale] = useState(
+    () => readStoredChartScalePrefs(uiStateKey).invertScale ?? false,
+  );
   const [overlayRevision, setOverlayRevision] = useState(0);
   const [windowOverlays, setWindowOverlays] = useState<OverlayShape[]>([]);
   const [zoneOverlays, setZoneOverlays] = useState<OverlayShape[]>([]);
@@ -1919,6 +2343,10 @@ export const ResearchChartSurface = ({
   }, [drawMode, onAddDrawing, onAddHorizontalLevel]);
 
   useEffect(() => {
+    visibleRangeChangeRef.current = onVisibleLogicalRangeChange;
+  }, [onVisibleLogicalRangeChange]);
+
+  useEffect(() => {
     if (drawMode !== "box") {
       setPendingBoxAnchor(null);
     }
@@ -1929,6 +2357,41 @@ export const ResearchChartSurface = ({
       setShowTimeScaleState(false);
     }
   }, [hideTimeScale]);
+
+  useEffect(() => {
+    writeStoredChartScalePrefs(uiStateKey, {
+      scaleMode,
+      autoScale,
+      invertScale,
+    });
+  }, [uiStateKey, scaleMode, autoScale, invertScale]);
+
+  useLayoutEffect(() => {
+    const nextFirstChartBarTime = model.chartBars[0]?.time ?? null;
+    const previousFirstChartBarTime = previousFirstChartBarTimeRef.current;
+
+    if (
+      visibleLogicalRangeRef.current &&
+      previousFirstChartBarTime != null &&
+      nextFirstChartBarTime != null &&
+      nextFirstChartBarTime < previousFirstChartBarTime
+    ) {
+      const prependCount = model.chartBars.findIndex(
+        (bar) => bar.time === previousFirstChartBarTime,
+      );
+
+      if (prependCount > 0) {
+        visibleLogicalRangeRef.current = {
+          from: visibleLogicalRangeRef.current.from + prependCount,
+          to: visibleLogicalRangeRef.current.to + prependCount,
+        };
+        pendingStoredRangeSyncRef.current = true;
+        setOverlayRevision((value) => value + 1);
+      }
+    }
+
+    previousFirstChartBarTimeRef.current = nextFirstChartBarTime;
+  }, [model.chartBars]);
 
   useEffect(() => {
     if (!isFullscreen || typeof document === "undefined") {
@@ -1991,7 +2454,7 @@ export const ResearchChartSurface = ({
   }, [baseSeriesType]);
 
   useLayoutEffect(() => {
-    if (!containerRef.current || !model.chartBars.length) {
+    if (!containerRef.current || !hasChartBars) {
       return undefined;
     }
 
@@ -2007,7 +2470,11 @@ export const ResearchChartSurface = ({
         buildChartOptions(theme, {
           compact,
           hideTimeScale,
+          showTimeScale: showTimeScaleState,
           showRightPriceScale,
+          scaleMode,
+          autoScale,
+          invertScale,
           enableInteractions,
           showAttributionLogo,
         }) as any,
@@ -2107,7 +2574,17 @@ export const ResearchChartSurface = ({
       activePriceSeriesRef.current = candleSeries;
 
       handleVisibleRangeChange = (range: any) => {
-        visibleLogicalRangeRef.current = range;
+        const normalizedRange =
+          range &&
+          Number.isFinite(range.from) &&
+          Number.isFinite(range.to)
+            ? {
+                from: range.from,
+                to: range.to,
+              }
+            : null;
+        visibleLogicalRangeRef.current = normalizedRange;
+        visibleRangeChangeRef.current?.(normalizedRange);
         setOverlayRevision((value) => value + 1);
       };
       handleCrosshairMove = (param: any) => {
@@ -2230,6 +2707,14 @@ export const ResearchChartSurface = ({
       areaSeriesRef.current = null;
       baselineSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      baseSeriesDataRef.current = {
+        candles: [],
+        bars: [],
+        line: [],
+        area: [],
+        baseline: [],
+        volume: [],
+      };
       markerApisRef.current = [];
       studyRegistryRef.current = {};
       drawingLinesRef.current = {
@@ -2242,6 +2727,7 @@ export const ResearchChartSurface = ({
       activePriceSeriesRef.current = null;
       visibleLogicalRangeRef.current = null;
       initializedRangeRef.current = false;
+      pendingStoredRangeSyncRef.current = true;
       lastSelectionFocusTokenRef.current = null;
       setWindowOverlays([]);
       setZoneOverlays([]);
@@ -2257,12 +2743,11 @@ export const ResearchChartSurface = ({
   }, [
     compact,
     enableInteractions,
+    hasChartBars,
     hideTimeScale,
     hideCrosshair,
-    model.chartBars.length,
     showAttributionLogo,
     showRightPriceScale,
-    theme,
     themeKey,
   ]);
 
@@ -2291,46 +2776,67 @@ export const ResearchChartSurface = ({
       precision: pricePrecision,
       minMove: 1 / 10 ** pricePrecision,
     } as const;
+    const candleSeriesData = model.chartBars.map((bar) => ({
+      time: bar.time,
+      open: bar.o,
+      high: bar.h,
+      low: bar.l,
+      close: bar.c,
+      color: bar.color,
+      borderColor: bar.borderColor,
+      wickColor: bar.wickColor,
+    }));
+    const barSeriesData = model.chartBars.map((bar) => ({
+      time: bar.time,
+      open: bar.o,
+      high: bar.h,
+      low: bar.l,
+      close: bar.c,
+    }));
     const closeSeriesData = model.chartBars.map((bar) => ({
       time: bar.time,
       value: bar.c,
     }));
+    const volumeSeriesData = showVolume
+      ? model.chartBars.map((bar) => ({
+          time: bar.time,
+          value: bar.v,
+          color:
+            bar.c >= bar.o
+              ? withAlpha(theme.green, "55")
+              : withAlpha(theme.red, "55"),
+        }))
+      : [];
 
-    candleSeries.setData(
-      model.chartBars.map((bar) => ({
-        time: bar.time,
-        open: bar.o,
-        high: bar.h,
-        low: bar.l,
-        close: bar.c,
-        color: bar.color,
-        borderColor: bar.borderColor,
-        wickColor: bar.wickColor,
-      })),
+    baseSeriesDataRef.current.candles = syncSeriesData(
+      candleSeries,
+      baseSeriesDataRef.current.candles,
+      candleSeriesData,
     );
-    barSeries.setData(
-      model.chartBars.map((bar) => ({
-        time: bar.time,
-        open: bar.o,
-        high: bar.h,
-        low: bar.l,
-        close: bar.c,
-      })),
+    baseSeriesDataRef.current.bars = syncSeriesData(
+      barSeries,
+      baseSeriesDataRef.current.bars,
+      barSeriesData,
     );
-    lineSeries.setData(closeSeriesData);
-    areaSeries.setData(closeSeriesData);
-    baselineSeries.setData(closeSeriesData);
-    volumeSeries.setData(
-      showVolume
-        ? model.chartBars.map((bar) => ({
-            time: bar.time,
-            value: bar.v,
-            color:
-              bar.c >= bar.o
-                ? withAlpha(theme.green, "55")
-                : withAlpha(theme.red, "55"),
-          }))
-        : [],
+    baseSeriesDataRef.current.line = syncSeriesData(
+      lineSeries,
+      baseSeriesDataRef.current.line,
+      closeSeriesData,
+    );
+    baseSeriesDataRef.current.area = syncSeriesData(
+      areaSeries,
+      baseSeriesDataRef.current.area,
+      closeSeriesData,
+    );
+    baseSeriesDataRef.current.baseline = syncSeriesData(
+      baselineSeries,
+      baseSeriesDataRef.current.baseline,
+      closeSeriesData,
+    );
+    baseSeriesDataRef.current.volume = syncSeriesData(
+      volumeSeries,
+      baseSeriesDataRef.current.volume,
+      volumeSeriesData,
     );
 
     const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
@@ -2379,7 +2885,7 @@ export const ResearchChartSurface = ({
       lastValueVisible: effectivePriceLineVisibility,
     });
     volumeSeries.applyOptions({ visible: showVolume });
-    chartRef.current.priceScale("right").applyOptions({
+    chartRef.current.priceScale("right", 0).applyOptions({
       autoScale,
       invertScale,
       visible: showRightPriceScale,
@@ -2387,14 +2893,7 @@ export const ResearchChartSurface = ({
       ticksVisible: showRightPriceScale,
       minimumWidth: compact ? 34 : 50,
       textColor: theme.textMuted,
-      mode:
-        scaleMode === "log"
-          ? PriceScaleMode.Logarithmic
-          : scaleMode === "indexed"
-            ? PriceScaleMode.IndexedTo100
-            : scaleMode === "percentage"
-              ? PriceScaleMode.Percentage
-              : PriceScaleMode.Normal,
+      mode: resolvePriceScaleModeOption(scaleMode),
     });
     chartRef.current.applyOptions({
       layout: {
@@ -2462,7 +2961,7 @@ export const ResearchChartSurface = ({
         rightOffset: compact ? 1 : 6,
         rightBarStaysOnScroll: true,
         lockVisibleTimeRangeOnResize: true,
-        minBarSpacing: compact ? 0.35 : 1.1,
+        minBarSpacing: resolveMinBarSpacing(compact),
       },
     });
     activePriceSeriesRef.current =
@@ -2475,29 +2974,10 @@ export const ResearchChartSurface = ({
           baseline: baselineSeries,
         } satisfies Record<BaseSeriesType, any>
       )[baseSeriesType] || candleSeries;
-
-    if (visibleLogicalRangeRef.current) {
-      chartRef.current
-        .timeScale()
-        .setVisibleLogicalRange(visibleLogicalRangeRef.current);
-      return;
-    }
-
-    if (!initializedRangeRef.current && model.defaultVisibleLogicalRange) {
-      chartRef.current
-        .timeScale()
-        .setVisibleLogicalRange(model.defaultVisibleLogicalRange);
-      initializedRangeRef.current = true;
-      return;
-    }
-
-    chartRef.current.timeScale().fitContent();
-    initializedRangeRef.current = true;
   }, [
     baseSeriesType,
     crosshairMode,
     model.chartBars,
-    model.defaultVisibleLogicalRange,
     scaleMode,
     autoScale,
     invertScale,
@@ -2519,6 +2999,43 @@ export const ResearchChartSurface = ({
   ]);
 
   useLayoutEffect(() => {
+    if (!chartRef.current || !hasChartBars) {
+      return;
+    }
+
+    const action = resolveVisibleRangeSyncAction({
+      hasStoredRange: Boolean(visibleLogicalRangeRef.current),
+      hasDefaultRange: Boolean(model.defaultVisibleLogicalRange),
+      initialized: initializedRangeRef.current,
+      pendingStoredRangeSync: pendingStoredRangeSyncRef.current,
+    });
+
+    if (action === "noop") {
+      return;
+    }
+
+    if (action === "stored" && visibleLogicalRangeRef.current) {
+      chartRef.current
+        .timeScale()
+        .setVisibleLogicalRange(visibleLogicalRangeRef.current);
+    } else if (action === "default" && model.defaultVisibleLogicalRange) {
+      chartRef.current
+        .timeScale()
+        .setVisibleLogicalRange(model.defaultVisibleLogicalRange);
+    } else if (action === "fit") {
+      chartRef.current.timeScale().fitContent();
+    }
+
+    initializedRangeRef.current = true;
+    pendingStoredRangeSyncRef.current = false;
+  }, [
+    hasChartBars,
+    model.chartBars.length,
+    model.chartBars[0]?.time,
+    model.defaultVisibleLogicalRange,
+  ]);
+
+  useLayoutEffect(() => {
     if (
       !chartRef.current ||
       !model.selectionFocus?.visibleLogicalRange ||
@@ -2532,6 +3049,7 @@ export const ResearchChartSurface = ({
       .setVisibleLogicalRange(model.selectionFocus.visibleLogicalRange);
     visibleLogicalRangeRef.current = model.selectionFocus.visibleLogicalRange;
     initializedRangeRef.current = true;
+    pendingStoredRangeSyncRef.current = false;
     lastSelectionFocusTokenRef.current = model.selectionFocus.token;
     setOverlayRevision((value) => value + 1);
   }, [model.selectionFocus]);
@@ -2553,19 +3071,34 @@ export const ResearchChartSurface = ({
       return;
     }
 
+    const visibleLogicalRange = visibleLogicalRangeRef.current;
     const markers = [
       ...model.indicatorMarkerPayload.overviewMarkers,
       ...buildTradeMarkers(model, theme),
-    ].map((marker) => ({
-      time: marker.time,
-      position: marker.position,
-      shape: marker.shape,
-      color: marker.color,
-      text: marker.text,
-      size: marker.size,
-    }));
+    ]
+      .filter((marker) =>
+        isMarkerVisibleInLogicalRange(
+          marker,
+          visibleLogicalRange,
+          model.chartBars.length,
+        ),
+      )
+      .map((marker) => ({
+        time: marker.time,
+        position: marker.position,
+        shape: marker.shape,
+        color: marker.color,
+        text: marker.text,
+        size: marker.size,
+      }));
     markerApisRef.current.forEach((markerApi) => markerApi.setMarkers(markers));
-  }, [model.indicatorMarkerPayload, model.tradeMarkerGroups, theme]);
+  }, [
+    model.chartBars.length,
+    model.indicatorMarkerPayload,
+    model.tradeMarkerGroups,
+    overlayRevision,
+    theme,
+  ]);
 
   useLayoutEffect(() => {
     if (
@@ -2936,6 +3469,8 @@ export const ResearchChartSurface = ({
 
     chartRef.current.timeScale().setVisibleLogicalRange(nextRange);
     visibleLogicalRangeRef.current = nextRange;
+    initializedRangeRef.current = true;
+    pendingStoredRangeSyncRef.current = false;
     setOverlayRevision((value) => value + 1);
   };
   const zoomVisibleRange = (factor: number) => {
@@ -3060,7 +3595,6 @@ export const ResearchChartSurface = ({
   const chartInsetTop = topOverlayHeight;
   const chartInsetLeft = resolvedLeftOverlay ? leftOverlayWidth : 0;
   const chartInsetBottom = bottomOverlayHeight;
-  const hasChartBars = model.chartBars.length > 0;
   const isNarrowFrame = rootWidth > 0 && rootWidth < 920;
   const chromeGap = isNarrowFrame ? 6 : 8;
   const topChromeBase = 6 + chartInsetTop;
@@ -3254,7 +3788,7 @@ export const ResearchChartSurface = ({
             top: 0,
             left: 0,
             right: 0,
-            zIndex: 5,
+            zIndex: 20,
             pointerEvents: "auto",
           }}
         >
@@ -3269,7 +3803,7 @@ export const ResearchChartSurface = ({
             left: 0,
             bottom: chartInsetBottom,
             width: leftOverlayWidth,
-            zIndex: 5,
+            zIndex: 20,
             pointerEvents: "auto",
           }}
         >
@@ -3285,7 +3819,7 @@ export const ResearchChartSurface = ({
             top: topChromeBase,
             left: chartInsetLeft + 8,
             right: 8,
-            zIndex: 6,
+            zIndex: 21,
             display: "flex",
             gap: 8,
             rowGap: 8,
@@ -3505,7 +4039,9 @@ export const ResearchChartSurface = ({
                             overlay.labelVariant === "plain"
                               ? "transparent"
                               : overlay.labelFill || withAlpha(theme.bg4, "e6"),
-                          fontSize: 9,
+                          fontSize: resolveOverlayLabelFontSize(
+                            overlay.labelSize,
+                          ),
                           fontFamily: theme.mono,
                           color: overlay.labelColor || "#ffffff",
                           whiteSpace: "nowrap",
@@ -3562,7 +4098,9 @@ export const ResearchChartSurface = ({
                             overlay.labelVariant === "plain"
                               ? "transparent"
                               : overlay.labelFill || withAlpha(theme.bg4, "e6"),
-                          fontSize: 9,
+                          fontSize: resolveOverlayLabelFontSize(
+                            overlay.labelSize,
+                          ),
                           fontFamily: theme.mono,
                           color: overlay.labelColor || theme.text,
                           opacity: 0.92,
@@ -4173,7 +4711,7 @@ export const ResearchChartSurface = ({
             bottom: 0,
             left: 0,
             right: 0,
-            zIndex: 5,
+            zIndex: 20,
             pointerEvents: "auto",
           }}
         >
@@ -4187,7 +4725,7 @@ export const ResearchChartSurface = ({
             position: "absolute",
             top: topChromeBase + toolbarOffset + legendOffset,
             right: 8,
-            zIndex: 7,
+            zIndex: 22,
             background: withAlpha(theme.amber, "18"),
             border: `1px solid ${withAlpha(theme.amber, "66")}`,
             borderRadius: 4,

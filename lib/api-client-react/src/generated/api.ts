@@ -67,6 +67,7 @@ import type {
   GetBarsParams,
   GetNewsParams,
   GetOptionChainParams,
+  GetOptionExpirationsParams,
   GetQuoteSnapshotsParams,
   GetResearchEarningsCalendarParams,
   GetResearchFinancialsParams,
@@ -88,6 +89,7 @@ import type {
   ListSignalMonitorEventsParams,
   NewsResponse,
   OptionChainResponse,
+  OptionExpirationsResponse,
   Order,
   OrderPreview,
   OrdersResponse,
@@ -2846,6 +2848,109 @@ export function useGetOptionChain<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetOptionChainQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get available option expirations
+ */
+export const getGetOptionExpirationsUrl = (
+  params: GetOptionExpirationsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/options/expirations?${stringifiedParams}`
+    : `/api/options/expirations`;
+};
+
+export const getOptionExpirations = async (
+  params: GetOptionExpirationsParams,
+  options?: RequestInit,
+): Promise<OptionExpirationsResponse> => {
+  return customFetch<OptionExpirationsResponse>(
+    getGetOptionExpirationsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetOptionExpirationsQueryKey = (
+  params?: GetOptionExpirationsParams,
+) => {
+  return [`/api/options/expirations`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetOptionExpirationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOptionExpirations>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetOptionExpirationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOptionExpirations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOptionExpirationsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOptionExpirations>>
+  > = ({ signal }) =>
+    getOptionExpirations(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOptionExpirations>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOptionExpirationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOptionExpirations>>
+>;
+export type GetOptionExpirationsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get available option expirations
+ */
+
+export function useGetOptionExpirations<
+  TData = Awaited<ReturnType<typeof getOptionExpirations>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetOptionExpirationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOptionExpirations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOptionExpirationsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

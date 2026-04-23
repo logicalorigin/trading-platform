@@ -757,6 +757,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/OptionChainResponse"
 
+  /options/expirations:
+    get:
+      operationId: getOptionExpirations
+      tags: [market-data]
+      summary: Get available option expirations
+      parameters:
+        - name: underlying
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Option expirations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionExpirationsResponse"
+
   /streams/quotes:
     get:
       operationId: streamQuoteSnapshots
@@ -4080,6 +4099,15 @@ components:
           type: boolean
         flexQueryIdPresent:
           type: boolean
+        schemaReady:
+          type: boolean
+        missingTables:
+          type: array
+          items:
+            type: string
+        schemaError:
+          type: string
+          nullable: true
         lastSuccessfulRefreshAt:
           type: string
           format: date-time
@@ -4100,17 +4128,46 @@ components:
           type: string
           format: date-time
           nullable: true
+        snapshotCoverageStartAt:
+          type: string
+          format: date-time
+          nullable: true
+        snapshotCoverageEndAt:
+          type: string
+          format: date-time
+          nullable: true
+        snapshotPointCount:
+          type: integer
+        flexNavCoverageStartDate:
+          type: string
+          format: date-time
+          nullable: true
+        flexNavCoverageEndDate:
+          type: string
+          format: date-time
+          nullable: true
+        flexNavRowCount:
+          type: integer
       required:
         - bridgeConnected
         - flexConfigured
         - flexTokenPresent
         - flexQueryIdPresent
+        - schemaReady
+        - missingTables
+        - schemaError
         - lastSuccessfulRefreshAt
         - lastAttemptAt
         - lastStatus
         - lastError
         - snapshotsRecording
         - lastSnapshotAt
+        - snapshotCoverageStartAt
+        - snapshotCoverageEndAt
+        - snapshotPointCount
+        - flexNavCoverageStartDate
+        - flexNavCoverageEndDate
+        - flexNavRowCount
 
     FlexTestResponse:
       type: object
@@ -4250,6 +4307,28 @@ components:
         - underlying
         - expirationDate
         - contracts
+
+    OptionExpirationSummary:
+      type: object
+      properties:
+        expirationDate:
+          type: string
+          format: date
+      required:
+        - expirationDate
+
+    OptionExpirationsResponse:
+      type: object
+      properties:
+        underlying:
+          type: string
+        expirations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptionExpirationSummary"
+      required:
+        - underlying
+        - expirations
 
     SseStream:
       type: string

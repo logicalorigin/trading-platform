@@ -1265,12 +1265,21 @@ export interface FlexHealthResponse {
   flexConfigured: boolean;
   flexTokenPresent: boolean;
   flexQueryIdPresent: boolean;
+  schemaReady: boolean;
+  missingTables: string[];
+  schemaError: string | null;
   lastSuccessfulRefreshAt: string | null;
   lastAttemptAt: string | null;
   lastStatus: string | null;
   lastError: string | null;
   snapshotsRecording: boolean;
   lastSnapshotAt: string | null;
+  snapshotCoverageStartAt: string | null;
+  snapshotCoverageEndAt: string | null;
+  snapshotPointCount: number;
+  flexNavCoverageStartDate: string | null;
+  flexNavCoverageEndDate: string | null;
+  flexNavRowCount: number;
 }
 
 export interface FlexTestResponse {
@@ -1322,6 +1331,15 @@ export interface OptionChainResponse {
   underlying: string;
   expirationDate: string | null;
   contracts: OptionChainQuote[];
+}
+
+export interface OptionExpirationSummary {
+  expirationDate: string;
+}
+
+export interface OptionExpirationsResponse {
+  underlying: string;
+  expirations: OptionExpirationSummary[];
 }
 
 export type SseStream = string;
@@ -2535,6 +2553,10 @@ export type GetOptionChainParams = {
   underlying: string;
   expirationDate?: string;
   contractType?: OptionRight;
+};
+
+export type GetOptionExpirationsParams = {
+  underlying: string;
 };
 
 export type StreamQuoteSnapshotsParams = {

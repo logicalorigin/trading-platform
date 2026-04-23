@@ -3,24 +3,32 @@ import {
 } from "@tanstack/react-query";
 import {
   useEffect,
+  useCallback,
   useMemo,
+  memo,
   useState,
 } from "react";
 import {
   getOptionChain as getOptionChainRequest,
   listFlowEvents as listFlowEventsRequest,
+  useGetOptionExpirations,
   useGetQuoteSnapshots,
   useListPositions,
 } from "@workspace/api-client-react";
 import {
-  useIbkrOptionChainStream,
+  useIbkrOptionQuoteStream,
   useIbkrQuoteSnapshotStream,
 } from "../features/platform/live-streams";
 import {
+  getTradeOptionChainSnapshot,
+  publishTradeOptionChainSnapshot,
+  resolveTradeOptionChainSnapshot,
+  useTradeOptionChainSnapshot,
+} from "../features/platform/tradeOptionChainStore";
+import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
+import {
   HEAVY_PAYLOAD_GC_MS,
-  MISSING_VALUE,
   QUERY_DEFAULTS,
-  T,
   TickerTabStrip,
   TickerUniverseSearchPanel,
   TradeChainPanel,
@@ -37,19 +45,396 @@ import {
   bridgeRuntimeMessage,
   buildOptionChainRowsFromApi,
   daysToExpiration,
-  dim,
   ensureTradeTickerInfo,
   formatExpirationLabel,
+  formatIsoDate,
   formatRelativeTimeShort,
-  fs,
   getAtmStrikeFromPrice,
   mapFlowEventToUi,
   parseExpirationValue,
+  publishRuntimeTickerSnapshot,
   persistState,
-  sp,
   usePositions,
   useToast,
 } from "../RayAlgoPlatform";
+import { publishTradeFlowSnapshot } from "../features/platform/tradeFlowStore";
+import {
+  MISSING_VALUE,
+  T,
+  dim,
+  fs,
+  sp,
+} from "../lib/uiTokens";
+
+const OPTION_CHAIN_QUERY_DEFAULTS = {
+  staleTime: 60_000,
+  refetchInterval: false,
+  refetchOnMount: false,
+  retry: 1,
+  gcTime: 60_000,
+};
+
+const buildExpirationOptions = (expirations = []) =>
+  expirations
+    .map((entry) => {
+      const actualDate = parseExpirationValue(entry?.expirationDate);
+      const value = formatExpirationLabel(entry?.expirationDate);
+      return {
+        value,
+        label: value,
+        dte: daysToExpiration(actualDate),
+        actualDate,
+        isoDate: formatIsoDate(actualDate) || entry?.expirationDate || null,
+      };
+    })
+    .filter((entry) => entry.value && entry.value !== MISSING_VALUE)
+    .sort(
+      (left, right) =>
+        (left.actualDate?.getTime?.() ?? 0) - (right.actualDate?.getTime?.() ?? 0),
+    );
+
+const MemoTradeTickerHeader = memo(function MemoTradeTickerHeader(props) {
+  return <TradeTickerHeader {...props} />;
+});
+
+const MemoTradeEquityPanel = memo(function MemoTradeEquityPanel(props) {
+  return <TradeEquityPanel {...props} />;
+});
+
+const MemoTradeChainPanel = memo(function MemoTradeChainPanel(props) {
+  return <TradeChainPanel {...props} />;
+});
+
+const MemoTradeContractDetailPanel = memo(function MemoTradeContractDetailPanel(props) {
+  return <TradeContractDetailPanel {...props} />;
+});
+
+const MemoTradeSpotFlowPanel = memo(function MemoTradeSpotFlowPanel(props) {
+  return <TradeSpotFlowPanel {...props} />;
+});
+
+const MemoTradeOptionsFlowPanel = memo(function MemoTradeOptionsFlowPanel(props) {
+  return <TradeOptionsFlowPanel {...props} />;
+});
+
+const MemoTradeOrderTicket = memo(function MemoTradeOrderTicket(props) {
+  return <TradeOrderTicket {...props} />;
+});
+
+const MemoTradeStrategyGreeksPanel = memo(function MemoTradeStrategyGreeksPanel(props) {
+  return <TradeStrategyGreeksPanel {...props} />;
+});
+
+const MemoTradeL2Panel = memo(function MemoTradeL2Panel(props) {
+  return <TradeL2Panel {...props} />;
+});
+
+const MemoTradePositionsPanel = memo(function MemoTradePositionsPanel(props) {
+  return <TradePositionsPanel {...props} />;
+});
+
+const TradeQuoteRuntime = ({
+  ticker,
+  enabled,
+  stockAggregateStreamingEnabled,
+}) => {
+  const quoteQuery = useGetQuoteSnapshots(
+    { symbols: ticker },
+    {
+      query: {
+        enabled: Boolean(ticker),
+        staleTime: 60_000,
+        retry: false,
+      },
+    },
+  );
+
+  useIbkrQuoteSnapshotStream({
+    symbols: ticker ? [ticker] : [],
+    enabled: Boolean(stockAggregateStreamingEnabled && ticker && enabled),
+  });
+
+  useEffect(() => {
+    const quote = quoteQuery.data?.quotes?.find(
+      (item) => item.symbol?.toUpperCase() === ticker,
+    );
+    if (!quote || !ticker) {
+      return;
+    }
+
+    const currentInfo = ensureTradeTickerInfo(ticker, ticker);
+    publishRuntimeTickerSnapshot(ticker, ticker, {
+      name: currentInfo.name || ticker,
+      price: quote.price ?? currentInfo.price,
+      chg: quote.change ?? currentInfo.chg,
+      pct: quote.changePercent ?? currentInfo.pct,
+      open: quote.open ?? currentInfo.open ?? null,
+      high: quote.high ?? currentInfo.high ?? null,
+      low: quote.low ?? currentInfo.low ?? null,
+      prevClose: quote.prevClose ?? currentInfo.prevClose ?? null,
+      volume: quote.volume ?? currentInfo.volume ?? null,
+      updatedAt: quote.updatedAt ?? currentInfo.updatedAt ?? null,
+    });
+  }, [quoteQuery.data, ticker]);
+
+  return null;
+};
+
+const TradeFlowRuntime = ({
+  ticker,
+  enabled,
+}) => {
+  useRuntimeWorkloadFlag("trade:flow", enabled && Boolean(ticker), {
+    kind: "poll",
+    label: "Trade flow",
+    detail: "10s",
+    priority: 5,
+  });
+
+  const tickerFlowQuery = useQuery({
+    queryKey: ["trade-flow", ticker],
+    queryFn: () =>
+      listFlowEventsRequest({ underlying: ticker, limit: 80 }),
+    enabled: Boolean(ticker),
+    staleTime: 10_000,
+    refetchInterval: enabled ? 10_000 : false,
+    retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
+  });
+
+  useEffect(() => {
+    if (!ticker) {
+      return;
+    }
+
+    const liveEvents =
+      tickerFlowQuery.data?.events?.map(mapFlowEventToUi) || [];
+    const events = liveEvents.length
+      ? liveEvents.sort((left, right) => right.premium - left.premium)
+      : [];
+    const status = events.length
+      ? "live"
+      : tickerFlowQuery.isPending
+        ? "loading"
+        : tickerFlowQuery.isError
+          ? "offline"
+          : "empty";
+
+    publishTradeFlowSnapshot(ticker, {
+      events,
+      status,
+    });
+  }, [
+    ticker,
+    tickerFlowQuery.data,
+    tickerFlowQuery.isError,
+    tickerFlowQuery.isPending,
+  ]);
+
+  return null;
+};
+
+const TradeOptionChainRuntime = ({
+  ticker,
+  expirationValue,
+}) => {
+  const expirationsQuery = useGetOptionExpirations(
+    { underlying: ticker },
+    {
+      query: {
+        enabled: Boolean(ticker),
+        ...OPTION_CHAIN_QUERY_DEFAULTS,
+      },
+    },
+  );
+  const expirationOptions = useMemo(
+    () => buildExpirationOptions(expirationsQuery.data?.expirations || []),
+    [expirationsQuery.data?.expirations],
+  );
+  const activeExpiration = useMemo(() => {
+    if (!expirationOptions.length) {
+      return null;
+    }
+
+    return (
+      expirationOptions.find((option) => option.value === expirationValue) ||
+      expirationOptions[0]
+    );
+  }, [expirationOptions, expirationValue]);
+  const optionChainQuery = useQuery({
+    queryKey: [
+      "trade-option-chain",
+      ticker,
+      activeExpiration?.value || "__empty__",
+    ],
+    queryFn: () =>
+      getOptionChainRequest({
+        underlying: ticker,
+        expirationDate: activeExpiration?.isoDate || undefined,
+      }),
+    enabled: Boolean(ticker && activeExpiration?.isoDate),
+    ...OPTION_CHAIN_QUERY_DEFAULTS,
+  });
+
+  useEffect(() => {
+    if (!ticker) {
+      return;
+    }
+
+    const currentSnapshot = getTradeOptionChainSnapshot(ticker);
+    const filteredRowsByExpiration = Object.fromEntries(
+      Object.entries(currentSnapshot.rowsByExpiration || {}).filter(
+        ([expiration]) =>
+          expirationOptions.some((option) => option.value === expiration),
+      ),
+    );
+
+    if (optionChainQuery.data?.contracts?.length && activeExpiration?.value) {
+      const tickerInfo = ensureTradeTickerInfo(ticker, ticker);
+      const rowsByExpiration = {
+        ...filteredRowsByExpiration,
+        [activeExpiration.value]: buildOptionChainRowsFromApi(
+          optionChainQuery.data.contracts,
+          tickerInfo.price,
+        ),
+      };
+
+      publishTradeOptionChainSnapshot(ticker, {
+        expirationOptions,
+        rowsByExpiration,
+        status: "live",
+      });
+      return;
+    }
+
+    publishTradeOptionChainSnapshot(ticker, {
+      expirationOptions,
+      rowsByExpiration: filteredRowsByExpiration,
+      status:
+        expirationsQuery.isPending ||
+        (Boolean(activeExpiration) && optionChainQuery.isPending)
+        ? "loading"
+        : expirationsQuery.isError || optionChainQuery.isError
+          ? "offline"
+        : "empty",
+    });
+  }, [
+    activeExpiration,
+    expirationOptions,
+    expirationsQuery.isError,
+    expirationsQuery.isPending,
+    optionChainQuery.data,
+    optionChainQuery.isError,
+    optionChainQuery.isPending,
+    ticker,
+  ]);
+
+  return null;
+};
+
+const TradeContractSelectionRuntime = ({
+  ticker,
+  contract,
+  onPatchContract,
+}) => {
+  const chainSnapshot = useTradeOptionChainSnapshot(ticker);
+  const {
+    expirationOptions,
+    resolvedExpiration,
+    chainRows,
+  } = resolveTradeOptionChainSnapshot(chainSnapshot, contract.exp);
+
+  useEffect(() => {
+    if (!expirationOptions.length) {
+      return;
+    }
+    if (expirationOptions.some((option) => option.value === contract.exp)) {
+      return;
+    }
+
+    const nextExpiration = resolvedExpiration || expirationOptions[0];
+    const atmRow = (chainRows || []).find((row) => row.isAtm);
+    onPatchContract({
+      exp: nextExpiration?.value || contract.exp,
+      strike: atmRow?.k ?? contract.strike,
+    });
+  }, [
+    chainRows,
+    contract.exp,
+    contract.strike,
+    expirationOptions,
+    onPatchContract,
+    resolvedExpiration,
+  ]);
+
+  useEffect(() => {
+    if (!chainRows.length) {
+      return;
+    }
+    if (chainRows.some((row) => row.k === contract.strike)) {
+      return;
+    }
+
+    const atmRow =
+      chainRows.find((row) => row.isAtm) ||
+      chainRows[Math.floor(chainRows.length / 2)];
+    onPatchContract({ strike: atmRow?.k ?? contract.strike });
+  }, [chainRows, contract.strike, onPatchContract]);
+
+  return null;
+};
+
+const TradeOptionQuoteRuntime = ({
+  ticker,
+  contract,
+  heldContracts,
+  enabled,
+}) => {
+  const chainSnapshot = useTradeOptionChainSnapshot(ticker);
+  const { chainRows } = resolveTradeOptionChainSnapshot(chainSnapshot, contract.exp);
+
+  const selectedRow = useMemo(
+    () => chainRows.find((row) => row.k === contract.strike) || null,
+    [chainRows, contract.strike],
+  );
+
+  const providerContractIds = useMemo(() => {
+    const collected = new Set();
+
+    chainRows.forEach((row) => {
+      if (row.cContract?.providerContractId) {
+        collected.add(row.cContract.providerContractId);
+      }
+      if (row.pContract?.providerContractId) {
+        collected.add(row.pContract.providerContractId);
+      }
+    });
+
+    const selectedProviderContractId =
+      contract.cp === "C"
+        ? selectedRow?.cContract?.providerContractId
+        : selectedRow?.pContract?.providerContractId;
+    if (selectedProviderContractId) {
+      collected.add(selectedProviderContractId);
+    }
+
+    heldContracts.forEach((holding) => {
+      if (holding.providerContractId) {
+        collected.add(holding.providerContractId);
+      }
+    });
+
+    return Array.from(collected).sort();
+  }, [chainRows, contract.cp, heldContracts, selectedRow]);
+
+  useIbkrOptionQuoteStream({
+    underlying: ticker,
+    providerContractIds,
+    enabled: Boolean(enabled && ticker && providerContractIds.length > 0),
+  });
+
+  return null;
+};
 
 export const TradeScreen = ({
   sym,
@@ -59,6 +444,7 @@ export const TradeScreen = ({
   accountId,
   brokerConfigured,
   brokerAuthenticated,
+  isVisible = false,
 }) => {
   const toast = useToast();
   const positions = usePositions();
@@ -100,9 +486,19 @@ export const TradeScreen = ({
   const [recentTickers, setRecentTickers] = useState(initialRecent);
   const [contracts, setContracts] = useState(initialContracts);
   const [showUniverseSearch, setShowUniverseSearch] = useState(false);
+  const [tradeChainHeatmapEnabled, setTradeChainHeatmapEnabled] = useState(
+    Boolean(_initialState.tradeChainHeatmapEnabled),
+  );
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
+  const tradeLiveStreamsEnabled = isVisible && !showUniverseSearch;
+  useRuntimeWorkloadFlag("trade:streams", tradeLiveStreamsEnabled, {
+    kind: "stream",
+    label: "Trade live streams",
+    detail: activeTicker,
+    priority: 2,
+  });
   const activeTickerInfo = ensureTradeTickerInfo(activeTicker, activeTicker);
   const contract =
     contracts[activeTicker] ||
@@ -113,125 +509,14 @@ export const TradeScreen = ({
         exp: "",
       };
     })();
-  const updateContract = (patch) =>
-    setContracts((c) => ({ ...c, [activeTicker]: { ...contract, ...patch } }));
-  const activeQuoteQuery = useGetQuoteSnapshots(
-    { symbols: activeTicker },
-    {
-      query: {
-        enabled: Boolean(activeTicker),
-        staleTime: 60_000,
-        retry: false,
-      },
-    },
+  const updateContract = useCallback(
+    (patch) =>
+      setContracts((current) => ({
+        ...current,
+        [activeTicker]: { ...contract, ...patch },
+      })),
+    [activeTicker, contract],
   );
-  useIbkrQuoteSnapshotStream({
-    symbols: activeTicker ? [activeTicker] : [],
-    enabled: Boolean(stockAggregateStreamingEnabled && activeTicker),
-  });
-  const optionChainQuery = useQuery({
-    queryKey: ["trade-option-chain", activeTicker],
-    queryFn: () => getOptionChainRequest({ underlying: activeTicker }),
-    ...QUERY_DEFAULTS,
-    refetchInterval: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
-  useIbkrOptionChainStream({
-    underlying: activeTicker,
-    enabled: Boolean(stockAggregateStreamingEnabled && activeTicker),
-  });
-  const expirationOptions = useMemo(() => {
-    if (optionChainQuery.data?.contracts?.length) {
-      const unique = new Map();
-      optionChainQuery.data.contracts.forEach((quote) => {
-        const actualDate = parseExpirationValue(quote.contract?.expirationDate);
-        const value = formatExpirationLabel(quote.contract?.expirationDate);
-        if (!unique.has(value)) {
-          unique.set(value, {
-            value,
-            label: value,
-            dte: daysToExpiration(actualDate),
-            actualDate,
-          });
-        }
-      });
-      return Array.from(unique.values()).sort(
-        (left, right) =>
-          (left.actualDate?.getTime() ?? 0) -
-          (right.actualDate?.getTime() ?? 0),
-      );
-    }
-
-    return [];
-  }, [optionChainQuery.data]);
-  const chainRowsByExpiration = useMemo(() => {
-    if (optionChainQuery.data?.contracts?.length) {
-      const grouped = {};
-      optionChainQuery.data.contracts.forEach((quote) => {
-        const expiration = formatExpirationLabel(
-          quote.contract?.expirationDate,
-        );
-        if (!grouped[expiration]) grouped[expiration] = [];
-        grouped[expiration].push(quote);
-      });
-
-      return Object.fromEntries(
-        Object.entries(grouped).map(([expiration, quotes]) => [
-          expiration,
-          buildOptionChainRowsFromApi(
-            quotes,
-            activeTickerInfo.price,
-          ),
-        ]),
-      );
-    }
-
-    return {};
-  }, [optionChainQuery.data, activeTickerInfo.price]);
-  const activeExpiration = expirationOptions.find(
-    (option) => option.value === contract.exp,
-  ) ||
-    expirationOptions[0] || {
-      value: contract.exp,
-      label: contract.exp,
-      dte: daysToExpiration(contract.exp),
-      actualDate: parseExpirationValue(contract.exp),
-    };
-  const activeChainRows =
-    chainRowsByExpiration[activeExpiration.value] ||
-    chainRowsByExpiration[contract.exp] ||
-    [];
-  const optionChainStatus = optionChainQuery.data?.contracts?.length
-    ? "live"
-    : optionChainQuery.isPending
-      ? "loading"
-      : optionChainQuery.isError
-        ? "offline"
-        : "empty";
-  const tickerFlowQuery = useQuery({
-    queryKey: ["trade-flow", activeTicker],
-    queryFn: () =>
-      listFlowEventsRequest({ underlying: activeTicker, limit: 80 }),
-    staleTime: 10_000,
-    refetchInterval: 10_000,
-    retry: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
-  const tickerFlowEvents = useMemo(() => {
-    const liveEvents =
-      tickerFlowQuery.data?.events?.map(mapFlowEventToUi) || [];
-    if (liveEvents.length) {
-      return liveEvents.sort((left, right) => right.premium - left.premium);
-    }
-    return [];
-  }, [tickerFlowQuery.data, activeTicker]);
-  const tradeFlowStatus = tickerFlowEvents.length
-    ? "live"
-    : tickerFlowQuery.isPending
-      ? "loading"
-      : tickerFlowQuery.isError
-        ? "offline"
-        : "empty";
   const tradePositionsQuery = useListPositions(
     { accountId, mode: environment },
     {
@@ -259,6 +544,7 @@ export const TradeScreen = ({
           strike: position.optionContract.strike,
           cp: position.optionContract.right === "call" ? "C" : "P",
           exp: formatExpirationLabel(position.optionContract.expirationDate),
+          providerContractId: position.optionContract.providerContractId,
           entry: position.averagePrice,
           qty: Math.abs(position.quantity),
           pnl: position.unrealizedPnl,
@@ -275,6 +561,7 @@ export const TradeScreen = ({
         strike: position.strike,
         cp: position.cp,
         exp: position.exp,
+        providerContractId: null,
         entry: position.entry,
         qty: position.qty,
         pnl: null,
@@ -300,30 +587,12 @@ export const TradeScreen = ({
   useEffect(() => {
     persistState({ tradeContracts: contracts });
   }, [contracts]);
-
   useEffect(() => {
-    const quote = activeQuoteQuery.data?.quotes?.find(
-      (item) => item.symbol?.toUpperCase() === activeTicker,
-    );
-    if (!quote) return;
-
-    const tradeInfo = ensureTradeTickerInfo(
-      activeTicker,
-      activeTickerInfo.name || activeTicker,
-    );
-    tradeInfo.price = quote.price ?? tradeInfo.price;
-    tradeInfo.chg = quote.change ?? tradeInfo.chg;
-    tradeInfo.pct = quote.changePercent ?? tradeInfo.pct;
-    tradeInfo.open = quote.open ?? tradeInfo.open ?? null;
-    tradeInfo.high = quote.high ?? tradeInfo.high ?? null;
-    tradeInfo.low = quote.low ?? tradeInfo.low ?? null;
-    tradeInfo.prevClose = quote.prevClose ?? tradeInfo.prevClose ?? null;
-    tradeInfo.volume = quote.volume ?? tradeInfo.volume ?? null;
-    tradeInfo.updatedAt = quote.updatedAt ?? tradeInfo.updatedAt ?? null;
-  }, [activeQuoteQuery.data, activeTicker, activeTickerInfo.name]);
+    persistState({ tradeChainHeatmapEnabled });
+  }, [tradeChainHeatmapEnabled]);
 
   // Helper: focus a ticker, and add to recent strip if not present
-  const focusTicker = (ticker, fallbackName = ticker) => {
+  const focusTicker = useCallback((ticker, fallbackName = ticker) => {
     const normalized = ticker?.toUpperCase?.() || ticker;
     if (!normalized) return;
     ensureTradeTickerInfo(normalized, fallbackName);
@@ -331,15 +600,16 @@ export const TradeScreen = ({
     setRecentTickers((prev) =>
       prev.includes(normalized) ? prev : [...prev, normalized].slice(-8),
     );
-  };
-  const closeTicker = (ticker) => {
+  }, []);
+  const closeTicker = useCallback((ticker) => {
     setRecentTickers((prev) => {
       const filtered = prev.filter((t) => t !== ticker);
       if (ticker === activeTicker && filtered.length > 0)
         setActiveTicker(filtered[0]);
       return filtered;
     });
-  };
+  }, [activeTicker]);
+  const openUniverseSearch = useCallback(() => setShowUniverseSearch(true), []);
 
   // Watchlist sync
   useEffect(() => {
@@ -368,36 +638,14 @@ export const TradeScreen = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symPing && symPing.n]);
 
-  useEffect(() => {
-    if (!expirationOptions.length) return;
-    if (expirationOptions.some((option) => option.value === contract.exp))
-      return;
-
-    const nextExpiration = expirationOptions[0];
-    const atmRow = (chainRowsByExpiration[nextExpiration.value] || []).find(
-      (row) => row.isAtm,
-    );
-    updateContract({
-      exp: nextExpiration.value,
-      strike: atmRow?.k ?? contract.strike,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTicker, expirationOptions, chainRowsByExpiration]);
-
-  useEffect(() => {
-    if (!activeChainRows.length) return;
-    if (activeChainRows.some((row) => row.k === contract.strike)) return;
-
-    const atmRow =
-      activeChainRows.find((row) => row.isAtm) ||
-      activeChainRows[Math.floor(activeChainRows.length / 2)];
-    updateContract({ strike: atmRow?.k ?? contract.strike });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTicker, activeExpiration.value, activeChainRows, contract.strike]);
-
   // Strategy → pick a strike near the desired delta on the active ticker's chain
-  const applyStrategy = (strategy) => {
-    if (!activeChainRows.length) {
+  const applyStrategy = useCallback((strategy) => {
+    const snapshot = getTradeOptionChainSnapshot(activeTicker);
+    const { expirationOptions, chainRows } = resolveTradeOptionChainSnapshot(
+      snapshot,
+      contract.exp,
+    );
+    if (!chainRows.length) {
       toast.push({
         kind: "info",
         title: "Chain still loading",
@@ -405,7 +653,7 @@ export const TradeScreen = ({
       });
       return;
     }
-    const chain = activeChainRows;
+    const chain = chainRows;
     let bestStrike = chain[0].k;
     let bestDist = Infinity;
     for (const row of chain) {
@@ -431,10 +679,41 @@ export const TradeScreen = ({
       cp: strategy.cp,
       exp: targetExpiration,
     });
-  };
+  }, [activeTicker, contract.exp, toast, updateContract]);
 
   // Slot prop adapter for existing components that expect { ticker, strike, cp, exp }
-  const slot = { ticker: activeTicker, ...contract };
+  const slot = useMemo(
+    () => ({ ticker: activeTicker, ...contract }),
+    [activeTicker, contract],
+  );
+  const toggleUniverseSearch = useCallback(
+    () => setShowUniverseSearch((open) => !open),
+    [],
+  );
+  const closeUniverseSearch = useCallback(
+    () => setShowUniverseSearch(false),
+    [],
+  );
+  const handleSelectUniverseTicker = useCallback((result) => {
+    ensureTradeTickerInfo(result.ticker, result.name || result.ticker);
+    focusTicker(result.ticker, result.name || result.ticker);
+    setShowUniverseSearch(false);
+  }, [focusTicker]);
+  const handleSelectContract = useCallback(
+    (strike, cp) => updateContract({ strike, cp }),
+    [updateContract],
+  );
+  const handleChangeExpiration = useCallback(
+    (exp) => updateContract({ exp }),
+    [updateContract],
+  );
+  const handleLoadPosition = useCallback(
+    ({ ticker, strike, cp, exp }) => {
+      focusTicker(ticker);
+      setContracts((current) => ({ ...current, [ticker]: { strike, cp, exp } }));
+    },
+    [focusTicker],
+  );
 
   return (
     <div
@@ -451,16 +730,37 @@ export const TradeScreen = ({
         active={activeTicker}
         onSelect={focusTicker}
         onClose={closeTicker}
-        onAddNew={() => setShowUniverseSearch((open) => !open)}
+        onAddNew={toggleUniverseSearch}
       />
       <TickerUniverseSearchPanel
         open={showUniverseSearch}
-        onClose={() => setShowUniverseSearch(false)}
-        onSelectTicker={(result) => {
-          ensureTradeTickerInfo(result.ticker, result.name || result.ticker);
-          focusTicker(result.ticker, result.name || result.ticker);
-          setShowUniverseSearch(false);
-        }}
+        currentTicker={activeTicker}
+        onClose={closeUniverseSearch}
+        onSelectTicker={handleSelectUniverseTicker}
+      />
+      <TradeQuoteRuntime
+        ticker={activeTicker}
+        enabled={tradeLiveStreamsEnabled}
+        stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+      />
+      <TradeOptionChainRuntime
+        ticker={activeTicker}
+        expirationValue={contract.exp}
+      />
+      <TradeFlowRuntime
+        ticker={activeTicker}
+        enabled={isVisible}
+      />
+      <TradeContractSelectionRuntime
+        ticker={activeTicker}
+        contract={contract}
+        onPatchContract={updateContract}
+      />
+      <TradeOptionQuoteRuntime
+        ticker={activeTicker}
+        contract={contract}
+        heldContracts={heldContracts}
+        enabled={tradeLiveStreamsEnabled}
       />
       {/* Main workspace */}
       <div
@@ -474,11 +774,9 @@ export const TradeScreen = ({
         }}
       >
         {/* Compact ticker header */}
-        <TradeTickerHeader
+        <MemoTradeTickerHeader
           ticker={activeTicker}
-          chainRows={activeChainRows}
-          expiration={activeExpiration}
-          chainStatus={optionChainStatus}
+          expirationValue={contract.exp}
         />
         {brokerConfigured && !brokerAuthenticated && (
           <div
@@ -553,57 +851,51 @@ export const TradeScreen = ({
             </div>
           </div>
         )}
-        {/* Top zone: Equity chart + Options chain side by side */}
+        {/* Top zone: Equity chart + selected contract chart */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.5fr 1fr",
+            gridTemplateColumns: "1.45fr minmax(360px, 1fr)",
             gap: sp(6),
-            height: dim(340),
+            height: dim(300),
             flexShrink: 0,
           }}
         >
-          <TradeEquityPanel
+          <MemoTradeEquityPanel
             ticker={activeTicker}
-            flowEvents={tickerFlowEvents}
             stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+            onOpenSearch={openUniverseSearch}
           />
-          <TradeChainPanel
+          <MemoTradeContractDetailPanel
             ticker={activeTicker}
             contract={contract}
-            chainRows={activeChainRows}
-            expirations={expirationOptions}
             heldContracts={heldContracts}
-            chainStatus={optionChainStatus}
-            onSelectContract={(strike, cp) => updateContract({ strike, cp })}
-            onChangeExp={(exp) => updateContract({ exp })}
+            onOpenSearch={openUniverseSearch}
           />
         </div>
-        {/* Middle zone: Contract chart + Spot flow + Options flow */}
+        {/* Middle zone: options chain + spot flow + options flow */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.2fr 1fr 1.5fr",
+            gridTemplateColumns: "1.55fr 0.95fr 1.2fr",
             gap: sp(6),
-            height: dim(260),
+            height: dim(332),
             flexShrink: 0,
           }}
         >
-          <TradeContractDetailPanel
+          <MemoTradeChainPanel
             ticker={activeTicker}
             contract={contract}
-            chainRows={activeChainRows}
             heldContracts={heldContracts}
-            chainStatus={optionChainStatus}
+            onSelectContract={handleSelectContract}
+            onChangeExp={handleChangeExpiration}
+            heatmapEnabled={tradeChainHeatmapEnabled}
+            onToggleHeatmap={() =>
+              setTradeChainHeatmapEnabled((current) => !current)
+            }
           />
-          <TradeSpotFlowPanel
-            ticker={activeTicker}
-            flowEvents={tickerFlowEvents}
-          />
-          <TradeOptionsFlowPanel
-            ticker={activeTicker}
-            flowEvents={tickerFlowEvents}
-          />
+          <MemoTradeSpotFlowPanel ticker={activeTicker} />
+          <MemoTradeOptionsFlowPanel ticker={activeTicker} />
         </div>
         {/* Bottom zone: Order ticket + Strategy/Greeks + L2/Tape/Flow tabs + Positions */}
         <div
@@ -616,37 +908,30 @@ export const TradeScreen = ({
             flexShrink: 0,
           }}
         >
-          <TradeOrderTicket
+          <MemoTradeOrderTicket
             slot={slot}
-            chainRows={activeChainRows}
-            expiration={activeExpiration}
             accountId={accountId}
             environment={environment}
             brokerConfigured={brokerConfigured}
             brokerAuthenticated={brokerAuthenticated}
           />
-          <TradeStrategyGreeksPanel
+          <MemoTradeStrategyGreeksPanel
             slot={slot}
-            chainRows={activeChainRows}
             onApplyStrategy={applyStrategy}
           />
-          <TradeL2Panel
+          <MemoTradeL2Panel
             slot={slot}
-            chainRows={activeChainRows}
-            flowEvents={tickerFlowEvents}
             accountId={accountId}
             brokerConfigured={brokerConfigured}
             brokerAuthenticated={brokerAuthenticated}
           />
-          <TradePositionsPanel
+          <MemoTradePositionsPanel
             accountId={accountId}
             environment={environment}
             brokerConfigured={brokerConfigured}
             brokerAuthenticated={brokerAuthenticated}
-            onLoadPosition={({ ticker, strike, cp, exp }) => {
-              focusTicker(ticker);
-              setContracts((c) => ({ ...c, [ticker]: { strike, cp, exp } }));
-            }}
+            streamingPaused={showUniverseSearch}
+            onLoadPosition={handleLoadPosition}
           />
         </div>
       </div>
