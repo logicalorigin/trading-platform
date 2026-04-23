@@ -1808,6 +1808,11 @@ const QUERY_DEFAULTS = {
   retry: 2,
   retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
   refetchOnMount: true,
+  // Aggressively reclaim heap held by large payloads (chart bars, snapshots,
+  // option chain). React Query defaults to 5 minutes, which keeps every
+  // historical fetch around for the whole window — not what we want on a
+  // long-running trading session.
+  gcTime: 30_000,
 };
 
 // Bar/chart data is expensive on the upstream broker (each /api/bars call
@@ -1824,6 +1829,11 @@ const BARS_QUERY_DEFAULTS = {
   retry: 1,
   retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
 };
+
+// Even tighter window for the heaviest non-bars payloads (option chains,
+// flow batches, depth, executions). Option chains can be hundreds of KB
+// per underlying, so we want them evicted quickly when the user moves on.
+const HEAVY_PAYLOAD_GC_MS = 15_000;
 
 const clampNumber = (value, min, max) =>
   Math.min(max, Math.max(min, value));
@@ -2370,6 +2380,7 @@ const useLiveMarketFlow = (
   const flowQuery = useQuery({
     queryKey: ["market-flow", liveSymbols, limit, normalizedThreshold ?? null],
     enabled: liveSymbols.length > 0,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
     queryFn: async () => {
       const results = await Promise.allSettled(
         liveSymbols.map((symbol) =>
@@ -12771,6 +12782,7 @@ const TradeL2Panel = ({
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const tapeQuery = useQuery({
     queryKey: [
@@ -12793,6 +12805,7 @@ const TradeL2Panel = ({
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   useEffect(() => {
     if (
@@ -13602,6 +13615,7 @@ const TradePositionsPanel = ({
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   useEffect(() => {
     if (
@@ -17135,6 +17149,7 @@ const TradeScreen = ({
     queryFn: () => getOptionChainRequest({ underlying: activeTicker }),
     ...QUERY_DEFAULTS,
     refetchInterval: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   useIbkrOptionChainStream({
     underlying: activeTicker,
@@ -17215,6 +17230,7 @@ const TradeScreen = ({
     staleTime: 10_000,
     refetchInterval: 10_000,
     retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const tickerFlowEvents = useMemo(() => {
     const liveEvents =
@@ -19190,6 +19206,7 @@ export default function RayAlgoPlatform() {
     },
     ...BARS_QUERY_DEFAULTS,
     retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const marketPerformanceQuery = useQuery({
     queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
@@ -19224,6 +19241,7 @@ export default function RayAlgoPlatform() {
     refetchInterval: false,
     refetchOnMount: false,
     retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
   });
   const accountsQuery = useListAccounts(
     { mode: sessionQuery.data?.environment || "paper" },

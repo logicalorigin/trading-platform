@@ -12,6 +12,41 @@ import {
 
 const DEFAULT_STEP_SECONDS = 60;
 
+// Module-level registry of every live Lightweight Charts instance created from
+// this module. Each component effect registers/unregisters itself so we have
+// a single source of truth for "what charts are alive right now". This lets
+// us proactively dispose orphaned instances when Vite hot-reloads this module
+// in development (the React effect cleanup would otherwise miss any chart
+// captured by the previous module instance).
+const liveChartRegistry = new Set();
+const registerChart = (chart) => {
+  if (chart) liveChartRegistry.add(chart);
+};
+const unregisterChart = (chart) => {
+  if (!chart) return;
+  liveChartRegistry.delete(chart);
+  try {
+    chart.remove();
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn("[rayalgo] chart disposal failed", error);
+    }
+  }
+};
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    liveChartRegistry.forEach((chart) => {
+      try {
+        chart.remove();
+      } catch (error) {
+        // best-effort dispose during hot reload
+      }
+    });
+    liveChartRegistry.clear();
+  });
+}
+
 const withAlpha = (color, alpha) => (
   typeof color === "string" && /^#[0-9a-fA-F]{6}$/.test(color)
     ? `${color}${alpha}`
@@ -172,6 +207,7 @@ export const LightweightMiniChart = ({
         containerRef.current,
         createBaseChartOptions(theme, { compact: true, hideTimeScale: true }),
       );
+      registerChart(chart);
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: theme.green,
@@ -222,16 +258,13 @@ export const LightweightMiniChart = ({
     } catch (error) {
       console.error("LightweightMiniChart init failed", error);
       setChartError(error instanceof Error ? error.message : "chart unavailable");
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
       chart = null;
     }
 
     return () => {
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
+      chart = null;
     };
   }, [bars, bullish, openPrice, stepSeconds, theme, volumeHeight]);
 
@@ -271,6 +304,7 @@ export const LightweightCandleChart = ({
         containerRef.current,
         createBaseChartOptions(theme, { compact: false, hideTimeScale: false }),
       );
+      registerChart(chart);
 
       const candleData = buildCandleSeriesData(bars, stepSeconds);
       const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -359,22 +393,19 @@ export const LightweightCandleChart = ({
     } catch (error) {
       console.error("LightweightCandleChart init failed", error);
       setChartError(error instanceof Error ? error.message : "chart unavailable");
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
       chart = null;
     }
 
     return () => {
       if (chart && handleCrosshairMove) {
-        chart.unsubscribeCrosshairMove(handleCrosshairMove);
+        try { chart.unsubscribeCrosshairMove(handleCrosshairMove); } catch (e) {}
       }
       if (chart && handleClick) {
-        chart.unsubscribeClick(handleClick);
+        try { chart.unsubscribeClick(handleClick); } catch (e) {}
       }
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
+      chart = null;
     };
   }, [bars, drawings, drawMode, markers, onAddHorizontalLevel, stepSeconds, theme, volumeHeight]);
 
@@ -471,6 +502,7 @@ export const LightweightAreaPriceChart = ({
         containerRef.current,
         createBaseChartOptions(theme, { compact: false, hideTimeScale: false }),
       );
+      registerChart(chart);
 
       const areaSeries = chart.addSeries(AreaSeries, {
         lineColor: color,
@@ -506,19 +538,16 @@ export const LightweightAreaPriceChart = ({
     } catch (error) {
       console.error("LightweightAreaPriceChart init failed", error);
       setChartError(error instanceof Error ? error.message : "chart unavailable");
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
       chart = null;
     }
 
     return () => {
       if (chart && handleCrosshairMove) {
-        chart.unsubscribeCrosshairMove(handleCrosshairMove);
+        try { chart.unsubscribeCrosshairMove(handleCrosshairMove); } catch (e) {}
       }
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
+      chart = null;
     };
   }, [baselinePrice, color, points, referencePrice, stepSeconds, theme]);
 

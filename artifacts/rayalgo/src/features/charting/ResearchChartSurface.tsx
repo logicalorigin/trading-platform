@@ -28,6 +28,7 @@ import type {
   IndicatorZone,
   StudySpec,
 } from "./types";
+import { registerChart, unregisterChart } from "./chartLifecycle";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -1771,6 +1772,7 @@ export const ResearchChartSurface = ({
           showAttributionLogo,
         }) as any,
       );
+      registerChart(chart);
       chart.applyOptions({
         crosshair: {
           mode: hideCrosshair ? CrosshairMode.Hidden : CrosshairMode.MagnetOHLC,
@@ -1960,27 +1962,26 @@ export const ResearchChartSurface = ({
       setChartError(
         error instanceof Error ? error.message : "chart unavailable",
       );
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
       chart = null;
     }
 
     return () => {
       if (chart && handleVisibleRangeChange) {
-        chart
-          .timeScale()
-          .unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+        try {
+          chart
+            .timeScale()
+            .unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+        } catch (_e) {}
       }
       if (chart && handleCrosshairMove) {
-        chart.unsubscribeCrosshairMove(handleCrosshairMove);
+        try { chart.unsubscribeCrosshairMove(handleCrosshairMove); } catch (_e) {}
       }
       if (chart && handleClick) {
-        chart.unsubscribeClick(handleClick);
+        try { chart.unsubscribeClick(handleClick); } catch (_e) {}
       }
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
+      chart = null;
 
       chartRef.current = null;
       candleSeriesRef.current = null;

@@ -10,6 +10,7 @@ import {
   LineStyle,
 } from "lightweight-charts";
 import type { ChartModel, StudySpec } from "./types";
+import { registerChart, unregisterChart } from "./chartLifecycle";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -151,6 +152,7 @@ export const LightweightChartReference = ({
           lockVisibleTimeRangeOnResize: true,
         },
       });
+      registerChart(chart);
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: theme.green,
@@ -202,16 +204,13 @@ export const LightweightChartReference = ({
       chart.timeScale().fitContent();
     } catch (error) {
       setChartError(error instanceof Error ? error.message : "reference unavailable");
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
       chart = null;
     }
 
     return () => {
-      if (chart) {
-        chart.remove();
-      }
+      unregisterChart(chart);
+      chart = null;
       registryRef.current = {};
     };
   }, [model, theme]);
