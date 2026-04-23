@@ -2369,7 +2369,13 @@ export const mapFlowEventToUi = (event) => {
 
 export const useLiveMarketFlow = (
   symbols = [],
-  { limit = 16, maxSymbols = 8, unusualThreshold } = {},
+  {
+    limit = 16,
+    maxSymbols = 8,
+    batchSize,
+    unusualThreshold,
+    intervalMs = 10_000,
+  } = {},
 ) => {
   const liveSymbols = useMemo(
     () =>
@@ -2382,17 +2388,77 @@ export const useLiveMarketFlow = (
       ].slice(0, Math.max(1, maxSymbols)),
     [symbols, maxSymbols],
   );
+  const liveSymbolsKey = liveSymbols.join(",");
+  const effectiveBatchSize = Math.max(
+    1,
+    Math.min(batchSize ?? (liveSymbols.length || 1), liveSymbols.length || 1),
+  );
   const normalizedThreshold =
     Number.isFinite(unusualThreshold) && unusualThreshold > 0
       ? unusualThreshold
       : undefined;
-  const flowQuery = useQuery({
-    queryKey: ["market-flow", liveSymbols, limit, normalizedThreshold ?? null],
-    enabled: liveSymbols.length > 0,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-    queryFn: async () => {
+
+  // Rotate through the watchlist in batches so large lists eventually get
+  // covered without slamming IBKR's snapshot rate limit on every poll.
+  const offsetRef = useRef(0);
+  const [scanState, setScanState] = useState({
+    bySymbol: {},
+    isFetching: false,
+    isPending: true,
+    cycle: 0,
+    lastBatch: [],
+    lastError: null,
+  });
+
+  // Reset rotation + cache when the symbol set changes; drop entries for
+  // symbols that are no longer in the watchlist.
+  useEffect(() => {
+    offsetRef.current = 0;
+    setScanState((prev) => {
+      const allowed = new Set(liveSymbols);
+      const bySymbol = {};
+      for (const [symbol, value] of Object.entries(prev.bySymbol)) {
+        if (allowed.has(symbol)) bySymbol[symbol] = value;
+      }
+      return {
+        bySymbol,
+        isFetching: false,
+        isPending: liveSymbols.length > 0,
+        cycle: 0,
+        lastBatch: [],
+        lastError: null,
+      };
+    });
+  }, [liveSymbolsKey]);
+
+  useEffect(() => {
+    if (!liveSymbols.length) return undefined;
+    let cancelled = false;
+    let timer = null;
+    let consecutiveErrorBatches = 0;
+
+    const schedule = (delay) => {
+      if (cancelled) return;
+      timer = setTimeout(runOnce, Math.max(250, delay));
+    };
+
+    const runOnce = async () => {
+      timer = null;
+      const total = liveSymbols.length;
+      const size = Math.min(effectiveBatchSize, total);
+      const start = offsetRef.current % total;
+      const batch = [];
+      for (let i = 0; i < size; i += 1) {
+        batch.push(liveSymbols[(start + i) % total]);
+      }
+      // Advance the offset before awaiting so symbol-set changes don't replay
+      // the same batch.
+      offsetRef.current = (start + size) % Math.max(1, total);
+      setScanState((prev) => ({ ...prev, isFetching: true, lastBatch: batch }));
+
+      const startedAt = Date.now();
       const results = await Promise.allSettled(
-        liveSymbols.map((symbol) =>
+        batch.map((symbol) =>
           listFlowEventsRequest({
             underlying: symbol,
             limit,
@@ -2402,45 +2468,98 @@ export const useLiveMarketFlow = (
           }),
         ),
       );
+      if (cancelled) return;
 
-      const responses = [];
-      const failures = [];
-
-      results.forEach((result, index) => {
-        const symbol = liveSymbols[index];
-        if (result.status === "fulfilled") {
-          responses.push({
-            symbol,
-            events: result.value.events || [],
-            source: result.value.source || null,
-          });
-          return;
+      const now = Date.now();
+      let batchHadError = false;
+      setScanState((prev) => {
+        const allowed = new Set(liveSymbols);
+        const bySymbol = {};
+        for (const [symbol, value] of Object.entries(prev.bySymbol)) {
+          if (allowed.has(symbol)) bySymbol[symbol] = value;
         }
-
-        failures.push({
-          symbol,
-          error:
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason ?? "Flow request failed"),
+        let lastError = null;
+        results.forEach((result, index) => {
+          const symbol = batch[index];
+          if (!allowed.has(symbol)) return;
+          if (result.status === "fulfilled") {
+            bySymbol[symbol] = {
+              events: result.value.events || [],
+              source: result.value.source || null,
+              scannedAt: now,
+              error: null,
+            };
+          } else {
+            batchHadError = true;
+            const message =
+              result.reason instanceof Error
+                ? result.reason.message
+                : String(result.reason ?? "Flow request failed");
+            const existing = bySymbol[symbol] || { events: [], source: null };
+            bySymbol[symbol] = {
+              ...existing,
+              scannedAt: now,
+              error: message,
+            };
+            lastError = message;
+          }
         });
+        return {
+          bySymbol,
+          isFetching: false,
+          isPending: false,
+          cycle: prev.cycle + 1,
+          lastBatch: batch,
+          lastError,
+        };
       });
 
-      return {
-        responses,
-        failures,
-        events: responses.flatMap((response) => response.events || []),
-      };
-    },
-    staleTime: 10_000,
-    refetchInterval: 10_000,
-    retry: false,
-  });
+      // Schedule the next batch *after* this one completes — never overlap
+      // requests, and apply exponential backoff (capped) when batches error so
+      // we don't hammer IBKR if the bridge is struggling.
+      consecutiveErrorBatches = batchHadError ? consecutiveErrorBatches + 1 : 0;
+      const elapsed = Date.now() - startedAt;
+      const baseDelay = Math.max(0, intervalMs - elapsed);
+      const backoff = consecutiveErrorBatches
+        ? Math.min(60_000, intervalMs * 2 ** Math.min(consecutiveErrorBatches - 1, 4))
+        : 0;
+      schedule(baseDelay + backoff);
+    };
 
-  const hasLiveFlow = (flowQuery.data?.events?.length || 0) > 0;
+    runOnce();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [liveSymbolsKey, effectiveBatchSize, normalizedThreshold, limit, intervalMs]);
+
+  const responses = useMemo(
+    () =>
+      Object.entries(scanState.bySymbol).map(([symbol, value]) => ({
+        symbol,
+        events: value.events || [],
+        source: value.source || null,
+        scannedAt: value.scannedAt || null,
+        error: value.error || null,
+      })),
+    [scanState.bySymbol],
+  );
+  const failures = useMemo(
+    () =>
+      responses
+        .filter((response) => response.error)
+        .map((response) => ({ symbol: response.symbol, error: response.error })),
+    [responses],
+  );
+  const aggregatedEvents = useMemo(
+    () => responses.flatMap((response) => response.events || []),
+    [responses],
+  );
+
+  const hasLiveFlow = aggregatedEvents.length > 0;
   const flowEvents = useMemo(() => {
     if (!hasLiveFlow) return [];
-    return (flowQuery.data?.events || [])
+    return aggregatedEvents
       .map(mapFlowEventToUi)
       .sort((left, right) => {
         // Float volume-vs-OI "unusual" events to the top so the notifications
@@ -2454,18 +2573,16 @@ export const useLiveMarketFlow = (
         }
         return right.premium - left.premium;
       });
-  }, [hasLiveFlow, flowQuery.data]);
+  }, [hasLiveFlow, aggregatedEvents]);
   const flowStatus = hasLiveFlow
     ? "live"
-    : flowQuery.isPending
+    : scanState.isPending || (scanState.isFetching && scanState.cycle === 0)
       ? "loading"
-      : flowQuery.isError
+      : failures.length > 0
         ? "offline"
         : "empty";
   const providerSummary = useMemo(() => {
-    const responses = flowQuery.data?.responses || [];
-    const failures = flowQuery.data?.failures || [];
-    const events = flowQuery.data?.events || [];
+    const events = aggregatedEvents;
     const providerSet = new Set(events.map((event) => event.provider).filter(Boolean));
     const fallbackUsed = responses.some((response) =>
       Boolean(response.source?.fallbackUsed),
@@ -2503,7 +2620,7 @@ export const useLiveMarketFlow = (
 
     let label = "No IBKR flow";
     let color = T.textMuted;
-    if (flowQuery.isPending) {
+    if (scanState.isPending || (scanState.isFetching && scanState.cycle === 0)) {
       label = "Loading flow";
       color = T.accent;
     } else if (providerSet.has("ibkr") && providerSet.has("polygon")) {
@@ -2523,6 +2640,22 @@ export const useLiveMarketFlow = (
       color = T.textMuted;
     }
 
+    const lastScannedAt = {};
+    for (const [symbol, value] of Object.entries(scanState.bySymbol)) {
+      if (value.scannedAt) lastScannedAt[symbol] = value.scannedAt;
+    }
+    const scannedSymbols = Object.keys(lastScannedAt);
+    const coverage = {
+      totalSymbols: liveSymbols.length,
+      scannedSymbols: scannedSymbols.length,
+      batchSize: effectiveBatchSize,
+      currentBatch: scanState.lastBatch,
+      cycle: scanState.cycle,
+      isFetching: scanState.isFetching,
+      lastScannedAt,
+      isRotating: liveSymbols.length > effectiveBatchSize,
+    };
+
     return {
       label,
       color,
@@ -2533,8 +2666,16 @@ export const useLiveMarketFlow = (
       providers: Array.from(providerSet),
       appliedUnusualThreshold,
       appliedUnusualThresholdConsistent,
+      coverage,
     };
-  }, [flowQuery.data, flowQuery.isPending]);
+  }, [
+    aggregatedEvents,
+    responses,
+    failures,
+    scanState,
+    liveSymbols.length,
+    effectiveBatchSize,
+  ]);
 
   return {
     hasLiveFlow,
@@ -7127,8 +7268,11 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   );
 };
 
-const UNUSUAL_SCANNER_MAX_SYMBOLS = 30;
+const UNUSUAL_SCANNER_BATCH_SIZE = 30;
 const UNUSUAL_SCANNER_PER_SYMBOL_LIMIT = 25;
+// No upper bound on watchlist size — the rotating batched scanner will cycle
+// through every symbol over multiple polls.
+const UNUSUAL_SCANNER_MAX_WATCHLIST = Number.POSITIVE_INFINITY;
 
 const UNUSUAL_SORT_OPTIONS = [
   { id: "ratio", label: "Vol/OI", numeric: true },
@@ -7173,29 +7317,41 @@ const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
     flowEvents,
   } = useLiveMarketFlow(symbols, {
     limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
-    maxSymbols: UNUSUAL_SCANNER_MAX_SYMBOLS,
+    maxSymbols: UNUSUAL_SCANNER_MAX_WATCHLIST,
+    batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
   });
 
-  const scannedSymbols = useMemo(
-    () =>
-      [
-        ...new Set(
-          (symbols || [])
-            .map((symbol) => symbol?.toUpperCase())
-            .filter(Boolean),
-        ),
-      ].slice(0, UNUSUAL_SCANNER_MAX_SYMBOLS),
-    [symbols],
-  );
-  const totalWatchlistSymbols = useMemo(
-    () =>
-      new Set(
+  const watchlistSymbols = useMemo(
+    () => [
+      ...new Set(
         (symbols || [])
           .map((symbol) => symbol?.toUpperCase())
           .filter(Boolean),
-      ).size,
+      ),
+    ],
     [symbols],
   );
+  const totalWatchlistSymbols = watchlistSymbols.length;
+  const coverage = providerSummary.coverage || {
+    totalSymbols: totalWatchlistSymbols,
+    scannedSymbols: 0,
+    batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
+    currentBatch: [],
+    cycle: 0,
+    isFetching: false,
+    lastScannedAt: {},
+    isRotating: totalWatchlistSymbols > UNUSUAL_SCANNER_BATCH_SIZE,
+  };
+  const oldestScanAt = useMemo(() => {
+    const stamps = Object.values(coverage.lastScannedAt || {});
+    if (!stamps.length) return null;
+    return Math.min(...stamps);
+  }, [coverage.lastScannedAt]);
+  const newestScanAt = useMemo(() => {
+    const stamps = Object.values(coverage.lastScannedAt || {});
+    if (!stamps.length) return null;
+    return Math.max(...stamps);
+  }, [coverage.lastScannedAt]);
 
   const unusualEvents = useMemo(
     () => flowEvents.filter((event) => event.isUnusual),
@@ -7319,8 +7475,34 @@ const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
           {flowDisplayLabel}
         </span>
         <span style={{ marginLeft: sp(8) }}>
-          Scanning {scannedSymbols.length}/{totalWatchlistSymbols || scannedSymbols.length}{" "}
+          Coverage{" "}
+          <span style={{ color: T.text, fontWeight: 700 }}>
+            {coverage.scannedSymbols}/{totalWatchlistSymbols || coverage.scannedSymbols}
+          </span>{" "}
           watchlist symbols
+          {coverage.isRotating ? (
+            <span style={{ marginLeft: sp(6), color: T.textMuted }}>
+              · rotating {coverage.batchSize}/cycle
+              {coverage.currentBatch?.length
+                ? ` · scanning ${coverage.currentBatch[0]}${coverage.currentBatch.length > 1 ? `–${coverage.currentBatch[coverage.currentBatch.length - 1]}` : ""}`
+                : ""}
+            </span>
+          ) : null}
+          {newestScanAt ? (
+            <span
+              style={{ marginLeft: sp(6), color: T.textMuted }}
+              title={
+                oldestScanAt
+                  ? `Oldest scan: ${new Date(oldestScanAt).toLocaleTimeString()} · Newest scan: ${new Date(newestScanAt).toLocaleTimeString()}`
+                  : undefined
+              }
+            >
+              · newest scan {formatRelativeTimeShort(new Date(newestScanAt).toISOString())}
+              {coverage.isRotating && oldestScanAt && oldestScanAt !== newestScanAt
+                ? ` · oldest ${formatRelativeTimeShort(new Date(oldestScanAt).toISOString())}`
+                : ""}
+            </span>
+          ) : null}
         </span>
       </span>
       <span
@@ -7393,6 +7575,91 @@ const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
         }}
       >
         {headerBar}
+
+        {watchlistSymbols.length > 0 ? (
+          <Card style={{ padding: "6px 9px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                gap: sp(8),
+                marginBottom: sp(4),
+              }}
+            >
+              <span
+                style={{
+                  fontSize: fs(8),
+                  color: T.textDim,
+                  fontFamily: T.mono,
+                  letterSpacing: "0.06em",
+                  fontVariant: "all-small-caps",
+                  fontWeight: 700,
+                }}
+              >
+                Symbol Coverage
+              </span>
+              <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>
+                {coverage.scannedSymbols}/{watchlistSymbols.length} scanned
+                {coverage.cycle ? ` · cycle ${coverage.cycle}` : ""}
+              </span>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: sp(4),
+                maxHeight: dim(96),
+                overflowY: "auto",
+              }}
+            >
+              {watchlistSymbols.map((symbol) => {
+                const scannedAt = coverage.lastScannedAt?.[symbol] || null;
+                const inFlight = coverage.currentBatch?.includes(symbol);
+                const stale =
+                  scannedAt &&
+                  oldestScanAt &&
+                  newestScanAt &&
+                  newestScanAt - scannedAt > 60_000;
+                const tone = inFlight
+                  ? T.accent
+                  : !scannedAt
+                    ? T.textMuted
+                    : stale
+                      ? T.amber
+                      : T.text;
+                const labelText = scannedAt
+                  ? formatRelativeTimeShort(new Date(scannedAt).toISOString())
+                  : "pending";
+                const tooltip = scannedAt
+                  ? `${symbol} · last scanned ${new Date(scannedAt).toLocaleTimeString()}`
+                  : `${symbol} · not yet scanned`;
+                return (
+                  <span
+                    key={symbol}
+                    title={tooltip}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: sp(3),
+                      fontSize: fs(8),
+                      fontFamily: T.mono,
+                      padding: sp("1px 5px"),
+                      border: `1px solid ${tone}30`,
+                      background: `${tone}12`,
+                      color: tone,
+                      borderRadius: dim(2),
+                    }}
+                  >
+                    <span style={{ fontWeight: 700 }}>{symbol}</span>
+                    <span style={{ color: T.textMuted }}>·</span>
+                    <span>{inFlight ? "scanning…" : labelText}</span>
+                  </span>
+                );
+              })}
+            </div>
+          </Card>
+        ) : null}
 
         <div
           style={{
