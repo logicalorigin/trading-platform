@@ -379,6 +379,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function createAbortError(signal?: AbortSignal): HttpError {
+  return new HttpError(499, "IBKR request was aborted.", {
+    code: "ibkr_request_aborted",
+    cause: signal?.reason,
+    expose: false,
+  });
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw createAbortError(signal);
+  }
+}
+
 function positiveIntegerOrDefault(value: number | undefined, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fallback;
@@ -1088,10 +1102,13 @@ export class IbkrClient {
       headers.set("Content-Type", "application/json");
     }
 
-    await this.waitForRequestPermit();
-
     const controller = new AbortController();
     const inputSignal = init.signal;
+
+    throwIfAborted(inputSignal ?? undefined);
+    await this.waitForRequestPermit();
+    throwIfAborted(inputSignal ?? undefined);
+
     let didTimeout = false;
     const timeout = setTimeout(() => {
       didTimeout = true;
@@ -1117,6 +1134,10 @@ export class IbkrClient {
           code: "ibkr_request_timeout",
           cause: error,
         });
+      }
+
+      if (inputSignal?.aborted) {
+        throw createAbortError(inputSignal);
       }
 
       throw error;
@@ -1341,13 +1362,28 @@ export class IbkrClient {
 
   private async withOptionChainRequestPermit<T>(
     task: () => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
     while (this.activeOptionChainRequests >= this.optionChainMaxConcurrency) {
+      throwIfAborted(signal);
       await new Promise<void>((resolve) => {
-        this.optionChainWaiters.push(resolve);
+        const waiter = () => {
+          signal?.removeEventListener("abort", abort);
+          resolve();
+        };
+        const abort = () => {
+          const index = this.optionChainWaiters.indexOf(waiter);
+          if (index >= 0) {
+            this.optionChainWaiters.splice(index, 1);
+          }
+          resolve();
+        };
+        signal?.addEventListener("abort", abort, { once: true });
+        this.optionChainWaiters.push(waiter);
       });
     }
 
+    throwIfAborted(signal);
     this.activeOptionChainRequests += 1;
 
     try {
@@ -1366,9 +1402,11 @@ export class IbkrClient {
     {
       secType,
       includeName,
+      signal,
     }: {
       secType?: string;
       includeName?: boolean;
+      signal?: AbortSignal;
     } = {},
   ): Promise<Record<string, unknown>[]> {
     const cacheKey = JSON.stringify({
@@ -1383,7 +1421,7 @@ export class IbkrClient {
 
     const payload = await this.request<unknown>(
       "/iserver/secdef/search",
-      {},
+      { signal },
       compact([
         ["symbol", normalizeSymbol(symbol)] as const,
         secType ? (["secType", secType] as const) : null,
@@ -1405,7 +1443,7 @@ export class IbkrClient {
   private async getCachedOptionStrikes(input: {
     conid: number;
     month: string;
-  }): Promise<number[]> {
+  }, signal?: AbortSignal): Promise<number[]> {
     const cacheKey = `${input.conid}:${input.month}`;
     const cached = readCachedValue(this.optionStrikesCache, cacheKey);
     if (cached) {
@@ -1414,7 +1452,7 @@ export class IbkrClient {
 
     const strikesPayload = await this.request<unknown>(
       "/iserver/secdef/strikes",
-      {},
+      { signal },
       {
         conid: input.conid,
         sectype: "OPT",
@@ -1448,7 +1486,7 @@ export class IbkrClient {
     month: string;
     strike: number;
     right: OptionRight;
-  }): Promise<Record<string, unknown>[]> {
+  }, signal?: AbortSignal): Promise<Record<string, unknown>[]> {
     const cacheKey = `${input.conid}:${input.month}:${input.strike}:${input.right}`;
     const cached = readCachedValue(this.optionInfoCache, cacheKey);
     if (cached) {
@@ -1457,7 +1495,7 @@ export class IbkrClient {
 
     const infoPayload = await this.request<unknown>(
       "/iserver/secdef/info",
-      {},
+      { signal },
       {
         conid: input.conid,
         sectype: "OPT",
@@ -1919,7 +1957,11 @@ export class IbkrClient {
       : executions;
   }
 
-  private async preflightMarketData(conids: number[], fields: readonly string[] = SNAPSHOT_FIELDS): Promise<void> {
+  private async preflightMarketData(
+    conids: number[],
+    fields: readonly string[] = SNAPSHOT_FIELDS,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (conids.length === 0) {
       return;
     }
@@ -1932,7 +1974,7 @@ export class IbkrClient {
     for (const conidBatch of conidBatches) {
       await this.request<unknown>(
         "/iserver/marketdata/snapshot",
-        {},
+        { signal },
         {
           conids: conidBatch.join(","),
           fields: fieldList,
@@ -1945,16 +1987,21 @@ export class IbkrClient {
 
   private async getMarketDataSnapshotMap(
     requests: Array<{ conid: number; symbol: string; assetClass?: AssetClass }>,
+    signal?: AbortSignal,
   ): Promise<Map<string, QuoteSnapshot>> {
     const byConid = new Map<string, QuoteSnapshot>();
     const fields = SNAPSHOT_FIELDS.join(",");
 
-    await this.preflightMarketData(requests.map((request) => request.conid));
+    await this.preflightMarketData(
+      requests.map((request) => request.conid),
+      SNAPSHOT_FIELDS,
+      signal,
+    );
 
     for (const requestBatch of chunk(requests, SNAPSHOT_BATCH_SIZE)) {
       const payload = await this.request<unknown>(
         "/iserver/marketdata/snapshot",
-        {},
+        { signal },
         {
           conids: requestBatch.map((request) => request.conid).join(","),
           fields,
@@ -2184,9 +2231,12 @@ export class IbkrClient {
     contractType?: OptionRight | null;
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
     return this.withOptionChainRequestPermit(async () => {
-      const searchResults = await this.searchSecurities(input.underlying);
+      const signal = input.signal;
+      throwIfAborted(signal);
+      const searchResults = await this.searchSecurities(input.underlying, { signal });
       const normalizedUnderlying = normalizeSymbol(input.underlying);
       const match =
         searchResults.find((result) =>
@@ -2223,13 +2273,16 @@ export class IbkrClient {
         ? months.filter((month) => month === requestedMonth)
         : months.slice(0, maxExpirations);
 
-      const underlyingQuote = (await this.getMarketDataSnapshotMap([
-        {
-          conid: underlyingConid,
-          symbol: normalizedUnderlying,
-          assetClass: "equity",
-        },
-      ])).get(String(underlyingConid));
+      const underlyingQuote = (await this.getMarketDataSnapshotMap(
+        [
+          {
+            conid: underlyingConid,
+            symbol: normalizedUnderlying,
+            assetClass: "equity",
+          },
+        ],
+        signal,
+      )).get(String(underlyingConid));
       const spotPrice = underlyingQuote?.price ?? 0;
       const strikesAroundMoney = positiveIntegerOrDefault(
         input.strikesAroundMoney,
@@ -2247,7 +2300,7 @@ export class IbkrClient {
             const strikes = await this.getCachedOptionStrikes({
               conid: underlyingConid,
               month,
-            });
+            }, signal);
 
             const relevantStrikes =
               spotPrice > 0 && strikes.length > strikesAroundMoney * 2 + 1
@@ -2273,7 +2326,7 @@ export class IbkrClient {
                     month,
                     strike,
                     right,
-                  });
+                  }, signal);
                   const parsedMatches = compact(
                     matches.map((record) => {
                       const optionContract = parseOptionDetails(record);
@@ -2396,7 +2449,7 @@ export class IbkrClient {
       let quoteMap = new Map<string, QuoteSnapshot>();
 
       try {
-        quoteMap = await this.getMarketDataSnapshotMap(quoteRequests);
+        quoteMap = await this.getMarketDataSnapshotMap(quoteRequests, signal);
       } catch {
         // Contract metadata is still useful when IBKR has no live option quote
         // snapshot available or an OPRA snapshot request times out.
@@ -2415,7 +2468,7 @@ export class IbkrClient {
           left.contract.strike - right.contract.strike ||
           left.contract.right.localeCompare(right.contract.right)
         ));
-    });
+    }, input.signal);
   }
 
   private async resolveStockContract(symbol: string): Promise<{

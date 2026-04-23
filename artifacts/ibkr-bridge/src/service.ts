@@ -138,6 +138,7 @@ export class IbkrBridgeService {
     contractType?: "call" | "put" | null;
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
     return this.ensureProvider().getOptionChain(input);
   }

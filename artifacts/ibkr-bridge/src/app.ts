@@ -198,9 +198,14 @@ app.get("/options/chains", async (req, res) => {
     return;
   }
 
-  res.json({
-    underlying: req.query.underlying.trim().toUpperCase(),
-    contracts: await ibkrBridgeService.getOptionChain({
+  const abortController = new AbortController();
+  const abort = () => abortController.abort();
+  req.on("aborted", abort);
+  req.on("close", abort);
+
+  try {
+    const underlying = req.query.underlying.trim().toUpperCase();
+    const contracts = await ibkrBridgeService.getOptionChain({
       underlying: req.query.underlying.trim().toUpperCase(),
       expirationDate:
         typeof req.query.expirationDate === "string" && req.query.expirationDate.trim()
@@ -218,8 +223,27 @@ app.get("/options/chains", async (req, res) => {
         typeof req.query.strikesAroundMoney === "string"
           ? Number(req.query.strikesAroundMoney)
           : undefined,
-    }),
-  });
+      signal: abortController.signal,
+    });
+
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    res.json({
+      underlying,
+      contracts,
+    });
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    throw error;
+  } finally {
+    req.off("aborted", abort);
+    req.off("close", abort);
+  }
 });
 
 app.get("/market-depth", async (req, res) => {

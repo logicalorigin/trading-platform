@@ -1327,7 +1327,7 @@ async function getBarsImpl(input: GetBarsInput) {
 type IbkrOptionChainInput = {
   underlying: string;
   expirationDate?: Date;
-  contractType?: "call" | "put" | null;
+  contractType?: "call" | "put";
   maxExpirations?: number;
   strikesAroundMoney?: number;
 };
@@ -1515,8 +1515,7 @@ async function listFlowEventsUncached(input: {
   // Derive IBKR flow from option-chain snapshots. These are not consolidated
   // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
   // labels them as active/unusual contracts rather than verified sweeps.
-  const ibkrClient = getIbkrClient();
-  let contracts: Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>> = [];
+  let contracts: IbkrOptionChainContracts = [];
   const attemptedProviders: FlowDataProvider[] = ["ibkr"];
   let ibkrError: string | null = null;
   let polygonError: string | null = null;
@@ -1525,7 +1524,7 @@ async function listFlowEventsUncached(input: {
     // Keep coverage tight — IBKR snapshots are rate-limited and the flow
     // panel renders the highest-premium contracts first, so a moderate
     // window around the money is plenty.
-    contracts = await ibkrClient.getOptionChain({
+    contracts = await getCachedIbkrOptionChain({
       underlying: input.underlying,
       maxExpirations: 1,
       strikesAroundMoney: 6,

@@ -112,6 +112,10 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
 
 export class IbkrBridgeClient {
   private readonly config = getIbkrBridgeRuntimeConfig();
+  private readonly requestTimeoutMs = Math.max(
+    1,
+    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "20000"),
+  );
 
   private buildUrl(path: string, params: Record<string, QueryValue> = {}): URL {
     if (!this.config) {
@@ -128,12 +132,40 @@ export class IbkrBridgeClient {
     init: RequestInit = {},
     params: Record<string, QueryValue> = {},
   ): Promise<T> {
+    const controller = new AbortController();
+    const inputSignal = init.signal;
+    let didTimeout = false;
+    const timeout = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, this.requestTimeoutMs);
+    const abortFromInput = () => controller.abort(inputSignal?.reason);
+
+    if (inputSignal?.aborted) {
+      controller.abort(inputSignal.reason);
+    } else {
+      inputSignal?.addEventListener("abort", abortFromInput, { once: true });
+    }
+
     return fetchJson<T>(this.buildUrl(path, params), {
       ...init,
       headers: {
         Accept: "application/json",
         ...(init.headers ? Object.fromEntries(new Headers(init.headers).entries()) : {}),
       },
+      signal: controller.signal,
+    }).catch((error) => {
+      if (didTimeout) {
+        throw new HttpError(504, `IBKR bridge request to ${path} timed out after ${this.requestTimeoutMs}ms.`, {
+          code: "ibkr_bridge_request_timeout",
+          cause: error,
+        });
+      }
+
+      throw error;
+    }).finally(() => {
+      clearTimeout(timeout);
+      inputSignal?.removeEventListener("abort", abortFromInput);
     });
   }
 
@@ -256,8 +288,11 @@ export class IbkrBridgeClient {
     contractType?: "call" | "put";
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
-    const payload = await this.request<{ contracts: OptionChainContract[] }>("/options/chains", {}, {
+    const payload = await this.request<{ contracts: OptionChainContract[] }>("/options/chains", {
+      signal: input.signal,
+    }, {
       underlying: input.underlying,
       expirationDate: input.expirationDate,
       contractType: input.contractType,

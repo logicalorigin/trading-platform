@@ -88,6 +88,7 @@ export interface IbkrBridgeProvider {
     contractType?: "call" | "put" | null;
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    signal?: AbortSignal;
   }): Promise<OptionChainContract[]>;
   getMarketDepth(input: {
     accountId?: string | null;

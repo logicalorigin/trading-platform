@@ -160,6 +160,42 @@ that workflow. Production is unaffected: it runs raw JSON pino without
 `pnpm --filter @workspace/ibkr-bridge run build` before restart since the
 bridge runs the compiled `dist/index.mjs`.
 
+## Vite dev server: single instance per workflow
+
+The rayalgo workflow used to spawn duplicate vite processes that fought over
+port `18747` (the port the Replit preview proxy is pinned to in
+`artifacts/rayalgo/.replit-artifact/artifact.toml`). Symptoms: vite logged
+`Port 18747 is in use, trying another one...` and bound `18748`, while the
+preview pane kept hitting the stale orphan on `18747`. Two fixes prevent the
+recurrence:
+
+1. **`strictPort: true`** on both `server` and `preview` blocks of
+   `artifacts/rayalgo/vite.config.ts` — vite now exits with an error instead of
+   silently falling back to the next port. Failure becomes loud and visible.
+2. **`exec` in the dev scripts** so SIGTERM from `restart_workflow` propagates
+   through the `pnpm` wrapper to the actual node process. Applied to both
+   `artifacts/rayalgo/package.json` (`exec vite ...`) and
+   `artifacts/api-server/package.json` (`exec pnpm run start` and
+   `exec node ... dist/index.mjs`). Without `exec`, the pnpm wrapper would
+   intercept SIGTERM, leave the grandchild node process running as an orphan
+   holding the port, and the next workflow start would EADDRINUSE-fail.
+
+If a workflow restart still fails with `EADDRINUSE`, sweep orphans manually:
+
+```bash
+ps -eo pid,etime,cmd | grep -E "node.*(api-server|ibkr-bridge|vite|rayalgo)" | grep -v grep
+kill -KILL <pids>
+```
+
+`fuser` is unavailable on this NixOS image; use `pkill -KILL -f <pattern>` or
+check `/proc/net/tcp[6]` (look for `:HEX_PORT` where HEX = `printf '%04X' PORT`).
+
+The `ibkr-bridge` runs as a direct `node ... dist/index.mjs` (no pnpm wrapper)
+and currently has no `SIGTERM` handler, so a restart during a long in-flight
+request (e.g. 30-60s `/options/chains` calls) can leave the previous process
+alive past the workflow restart timeout. Adding an explicit shutdown handler
+that calls `server.close()` and `process.exit()` is a known follow-up.
+
 ## Snapshot quote pipeline (gray-screen fix)
 
 The IBKR Client Portal streams *partial* field updates per WebSocket tick and

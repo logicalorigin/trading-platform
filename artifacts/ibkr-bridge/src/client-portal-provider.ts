@@ -266,6 +266,7 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     contractType?: "call" | "put" | null;
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
     await this.refreshSession();
     return this.client.getOptionChain(input);
