@@ -2348,7 +2348,10 @@ const mapFlowEventToUi = (event) => {
   };
 };
 
-const useLiveMarketFlow = (symbols = [], { limit = 16 } = {}) => {
+const useLiveMarketFlow = (
+  symbols = [],
+  { limit = 16, unusualThreshold } = {},
+) => {
   const liveSymbols = useMemo(
     () =>
       [
@@ -2360,13 +2363,23 @@ const useLiveMarketFlow = (symbols = [], { limit = 16 } = {}) => {
       ].slice(0, 8),
     [symbols],
   );
+  const normalizedThreshold =
+    Number.isFinite(unusualThreshold) && unusualThreshold > 0
+      ? unusualThreshold
+      : undefined;
   const flowQuery = useQuery({
-    queryKey: ["market-flow", liveSymbols, limit],
+    queryKey: ["market-flow", liveSymbols, limit, normalizedThreshold ?? null],
     enabled: liveSymbols.length > 0,
     queryFn: async () => {
       const results = await Promise.allSettled(
         liveSymbols.map((symbol) =>
-          listFlowEventsRequest({ underlying: symbol, limit }),
+          listFlowEventsRequest({
+            underlying: symbol,
+            limit,
+            ...(normalizedThreshold !== undefined
+              ? { unusualThreshold: normalizedThreshold }
+              : {}),
+          }),
         ),
       );
 
@@ -6148,6 +6161,14 @@ const MultiChartGrid = ({
   );
 };
 
+const UNUSUAL_THRESHOLD_OPTIONS = [
+  { value: 1, label: "1× OI" },
+  { value: 2, label: "2× OI" },
+  { value: 3, label: "3× OI" },
+  { value: 5, label: "5× OI" },
+  { value: 10, label: "10× OI" },
+];
+
 const MarketActivityPanel = ({
   notifications = [],
   highlightedUnusualFlow = [],
@@ -6162,6 +6183,8 @@ const MarketActivityPanel = ({
   onScanNow,
   onToggleMonitor,
   onChangeMonitorTimeframe,
+  unusualThreshold = 1,
+  onChangeUnusualThreshold,
 }) => {
   const [activityFilter, setActivityFilter] = useState("all");
   const feedItemsRaw = useMemo(
@@ -6441,6 +6464,53 @@ const MarketActivityPanel = ({
         })}
       </div>
 
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(6),
+          marginBottom: sp(6),
+        }}
+      >
+        <span
+          style={{
+            fontSize: fs(8),
+            color: T.textDim,
+            fontFamily: T.mono,
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+          }}
+          title="Volume / open interest ratio at which a print is flagged as unusual."
+        >
+          UOA THRESHOLD
+        </span>
+        <select
+          value={String(unusualThreshold)}
+          onChange={(event) =>
+            onChangeUnusualThreshold?.(Number(event.target.value))
+          }
+          aria-label="Unusual options activity threshold"
+          title="Volume / open interest ratio at which a print is flagged as unusual."
+          style={{
+            background: T.bg2,
+            border: `1px solid ${T.border}`,
+            color: T.textSec,
+            fontFamily: T.mono,
+            fontSize: fs(8),
+            fontWeight: 800,
+            padding: sp("4px 6px"),
+            borderRadius: 0,
+            outline: "none",
+          }}
+        >
+          {UNUSUAL_THRESHOLD_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {feedItems.length ? (
         <div
           style={{
@@ -6573,12 +6643,25 @@ const MarketScreen = ({
       ? clampNumber(_initialState.marketActivityPanelWidth, 320, 720)
       : 420,
   );
+  const [unusualThreshold, setUnusualThreshold] = useState(() => {
+    const stored = _initialState.marketUnusualThreshold;
+    return Number.isFinite(stored) && stored > 0
+      ? clampNumber(stored, 0.1, 100)
+      : 1;
+  });
   useEffect(() => {
     persistState({ marketSectorTf: sectorTf });
   }, [sectorTf]);
   useEffect(() => {
     persistState({ marketActivityPanelWidth: activityPanelWidth });
   }, [activityPanelWidth]);
+  useEffect(() => {
+    persistState({ marketUnusualThreshold: unusualThreshold });
+  }, [unusualThreshold]);
+  const handleChangeUnusualThreshold = useCallback((next) => {
+    if (!Number.isFinite(next) || next <= 0) return;
+    setUnusualThreshold(clampNumber(next, 0.1, 100));
+  }, []);
   const handleStartActivityPanelResize = useCallback(
     (event) => {
       event.preventDefault();
@@ -6599,7 +6682,7 @@ const MarketScreen = ({
     [activityPanelWidth],
   );
   const { putCall, sectorFlow, flowStatus, flowEvents, flowTide } =
-    useLiveMarketFlow(symbols);
+    useLiveMarketFlow(symbols, { unusualThreshold });
   const calendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -6796,6 +6879,8 @@ const MarketScreen = ({
             onScanNow={onScanNow}
             onToggleMonitor={onToggleMonitor}
             onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+            unusualThreshold={unusualThreshold}
+            onChangeUnusualThreshold={handleChangeUnusualThreshold}
           />
         </div>
 

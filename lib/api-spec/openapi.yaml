@@ -594,6 +594,18 @@ paths:
             type: integer
             minimum: 1
             maximum: 1000
+        - name: unusualThreshold
+          in: query
+          required: false
+          description: >-
+            Volume / open-interest ratio at which a print is flagged as
+            unusual. Defaults to 1 (volume meets prior open interest).
+            Higher values (e.g. 2 or 5) restrict the badge to larger
+            multiples favoured by sweep/swing desks.
+          schema:
+            type: number
+            minimum: 0.1
+            maximum: 100
       responses:
         "200":
           description: Options flow

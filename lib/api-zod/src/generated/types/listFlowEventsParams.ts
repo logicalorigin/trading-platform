@@ -13,4 +13,10 @@ export type ListFlowEventsParams = {
    * @maximum 1000
    */
   limit?: number;
+  /**
+   * Volume / open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep/swing desks.
+   * @minimum 0.1
+   * @maximum 100
+   */
+  unusualThreshold?: number;
 };

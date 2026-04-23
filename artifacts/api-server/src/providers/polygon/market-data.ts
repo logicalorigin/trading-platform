@@ -530,7 +530,11 @@ export function computeUnusualMetrics(
   return { unusualScore, isUnusual: ratio >= threshold };
 }
 
-function mapFlowEvent(underlying: string, result: unknown): FlowEvent | null {
+function mapFlowEvent(
+  underlying: string,
+  result: unknown,
+  unusualThreshold?: number,
+): FlowEvent | null {
   const record = asRecord(result);
 
   if (!record) {
@@ -593,7 +597,11 @@ function mapFlowEvent(underlying: string, result: unknown): FlowEvent | null {
     ) ?? new Date();
   const side = inferTradeSide(price, bid, ask);
   const openInterest = asNumber(record["open_interest"]) ?? 0;
-  const { unusualScore, isUnusual } = computeUnusualMetrics(size, openInterest);
+  const { unusualScore, isUnusual } = computeUnusualMetrics(
+    size,
+    openInterest,
+    unusualThreshold,
+  );
 
   return {
     id: `${optionTicker}-${occurredAt.getTime()}`,
@@ -883,6 +891,7 @@ export class PolygonMarketDataClient {
   async getDerivedFlowEvents(input: {
     underlying: string;
     limit?: number;
+    unusualThreshold?: number;
   }): Promise<FlowEvent[]> {
     const underlying = normalizeSymbol(input.underlying);
     const limit = Math.max(1, Math.min(input.limit ?? 50, 250));
@@ -894,7 +903,11 @@ export class PolygonMarketDataClient {
     const payload = await fetchJson<unknown>(url);
     const record = asRecord(payload);
 
-    return compact(asArray(record?.["results"]).map((result) => mapFlowEvent(underlying, result)))
+    return compact(
+      asArray(record?.["results"]).map((result) =>
+        mapFlowEvent(underlying, result, input.unusualThreshold),
+      ),
+    )
       .sort((left, right) => {
         // Float unusual prints (volume > open interest) to the top so the
         // notifications feed and ranked lists surface fresh institutional

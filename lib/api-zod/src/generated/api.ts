@@ -699,9 +699,20 @@ export const StreamStockAggregatesQueryParams = zod.object({
  */
 export const listFlowEventsQueryLimitMax = 1000;
 
+export const listFlowEventsQueryUnusualThresholdMin = 0.1;
+export const listFlowEventsQueryUnusualThresholdMax = 100;
+
 export const ListFlowEventsQueryParams = zod.object({
   underlying: zod.coerce.string().optional(),
   limit: zod.coerce.number().min(1).max(listFlowEventsQueryLimitMax).optional(),
+  unusualThreshold: zod.coerce
+    .number()
+    .min(listFlowEventsQueryUnusualThresholdMin)
+    .max(listFlowEventsQueryUnusualThresholdMax)
+    .optional()
+    .describe(
+      "Volume \/ open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep\/swing desks.",
+    ),
 });
 
 export const ListFlowEventsResponse = zod.object({

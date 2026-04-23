@@ -1360,9 +1360,14 @@ export async function getMarketDepth(input: {
 export async function listFlowEvents(input: {
   underlying?: string;
   limit?: number;
+  unusualThreshold?: number;
 }): Promise<FlowEventsResult> {
   const underlying = normalizeSymbol(input.underlying ?? "");
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+  const unusualThreshold =
+    Number.isFinite(input.unusualThreshold) && (input.unusualThreshold ?? 0) > 0
+      ? Math.min(100, Math.max(0.1, input.unusualThreshold as number))
+      : undefined;
 
   if (!underlying) {
     return {
@@ -1374,7 +1379,7 @@ export async function listFlowEvents(input: {
     };
   }
 
-  const cacheKey = `${underlying}:${limit}`;
+  const cacheKey = `${underlying}:${limit}:${unusualThreshold ?? "default"}`;
   const cached = flowEventsCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
@@ -1391,6 +1396,7 @@ export async function listFlowEvents(input: {
   const request = listFlowEventsUncached({
     underlying,
     limit,
+    unusualThreshold,
   }).then((value) => {
     flowEventsCache.set(cacheKey, {
       value,
@@ -1411,6 +1417,7 @@ export async function listFlowEvents(input: {
 async function listFlowEventsUncached(input: {
   underlying: string;
   limit: number;
+  unusualThreshold?: number;
 }): Promise<FlowEventsResult> {
   // Derive IBKR flow from option-chain snapshots. These are not consolidated
   // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
@@ -1467,6 +1474,7 @@ async function listFlowEventsUncached(input: {
       const { unusualScore, isUnusual } = computeUnusualMetrics(
         size,
         c.openInterest,
+        input.unusualThreshold,
       );
       // Rank by mark-based premium (mark × volume × multiplier) so the
       // ordering is stable even when `last` is stale or zero. The display
@@ -1522,6 +1530,7 @@ async function listFlowEventsUncached(input: {
       const polygonEvents = await getPolygonClient().getDerivedFlowEvents({
         underlying: input.underlying,
         limit: input.limit,
+        unusualThreshold: input.unusualThreshold,
       });
 
       if (polygonEvents.length > 0) {
