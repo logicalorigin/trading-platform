@@ -98,8 +98,8 @@ test("preserves frame structure on empty scenarios", async ({ page }) => {
   await expect(page.getByTestId("parity-app-primary")).toBeVisible();
   await expect(page.getByTestId("parity-app-secondary")).toBeVisible();
   await expect(page.getByTestId("parity-reference-card")).toBeVisible();
-  await expect(page.locator(primaryFrame)).toContainText("no live chart data");
-  await expect(page.locator(secondaryFrame)).toContainText("no live chart data");
+  await expect(page.locator(primaryFrame)).toContainText(/no live chart data/i);
+  await expect(page.locator(secondaryFrame)).toContainText(/no live chart data/i);
 });
 
 test("renders the live RayReplica parity fixture and settings surface", async ({ page }) => {

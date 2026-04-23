@@ -139,6 +139,11 @@ Both the API server and the IBKR Bridge use `pino-http` with a shared
 - `GET /healthz*` under 1s → `silent`
 - everything else → `info`
 
+`responseTime` is computed from a `req._startTime` we stamp in a tiny
+middleware ahead of `pinoHttp`, because `pino-http@10.5.0` does not
+expose `res.responseTime` to `customLogLevel` (and `autoLogging.ignore`
+fires at request start, before status/duration are known).
+
 The dev workflows pin `LOG_LEVEL=warn`:
 
 - IBKR Bridge: prefix on the `.replit` workflow command

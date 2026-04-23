@@ -25,13 +25,18 @@ function isZodError(error: unknown): error is ZodErrorLike {
   );
 }
 
+app.use((req, _res, next) => {
+  (req as { _startTime?: number })._startTime = Date.now();
+  next();
+});
 app.use(
   pinoHttp({
     logger,
     customLogLevel(req, res, err) {
       if (err || res.statusCode >= 500) return "error";
       if (res.statusCode >= 400) return "warn";
-      const responseTime = (res as { responseTime?: number }).responseTime ?? 0;
+      const start = (req as { _startTime?: number })._startTime;
+      const responseTime = start ? Date.now() - start : 0;
       if (responseTime >= 1000) return "warn";
       if (req.url?.startsWith("/healthz")) return "silent";
       return "info";
