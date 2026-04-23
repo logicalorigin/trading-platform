@@ -340,6 +340,8 @@ const HISTORY_RESPONSE_MAX_POINTS = 1_000;
 const SNAPSHOT_BATCH_SIZE = 30;
 const SECURITY_SEARCH_CACHE_TTL_MS = 60_000;
 const OPTION_CHAIN_METADATA_CACHE_TTL_MS = 5 * 60_000;
+const DEFAULT_OPTION_CHAIN_EXPIRATIONS = 1;
+const DEFAULT_OPTION_CHAIN_STRIKES_AROUND_MONEY = 6;
 const HISTORY_SOURCE_TO_IBKR: Record<HistoryDataSource, string> = {
   trades: "Trades",
   midpoint: "Midpoint",
@@ -375,6 +377,14 @@ function chunk<T>(values: T[], size: number): T[][] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function positiveIntegerOrDefault(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
 }
 
 function readCachedValue<T>(
@@ -1018,6 +1028,10 @@ export class IbkrClient {
     1,
     Number(process.env["IBKR_REQUESTS_PER_SECOND"] ?? "8"),
   );
+  private readonly requestTimeoutMs = Math.max(
+    1,
+    Number(process.env["IBKR_REQUEST_TIMEOUT_MS"] ?? "12000"),
+  );
   private activeHistoryRequests = 0;
   private activeOptionChainRequests = 0;
   private readonly historyWaiters: Array<() => void> = [];
@@ -1076,10 +1090,40 @@ export class IbkrClient {
 
     await this.waitForRequestPermit();
 
-    return fetchJson<T>(this.buildUrl(path, params), {
-      ...init,
-      headers,
-    });
+    const controller = new AbortController();
+    const inputSignal = init.signal;
+    let didTimeout = false;
+    const timeout = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, this.requestTimeoutMs);
+    const abortFromInput = () => controller.abort(inputSignal?.reason);
+
+    if (inputSignal?.aborted) {
+      controller.abort(inputSignal.reason);
+    } else {
+      inputSignal?.addEventListener("abort", abortFromInput, { once: true });
+    }
+
+    try {
+      return await fetchJson<T>(this.buildUrl(path, params), {
+        ...init,
+        headers,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (didTimeout) {
+        throw new HttpError(504, `IBKR request to ${path} timed out after ${this.requestTimeoutMs}ms.`, {
+          code: "ibkr_request_timeout",
+          cause: error,
+        });
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      inputSignal?.removeEventListener("abort", abortFromInput);
+    }
   }
 
   private async waitForRequestPermit(): Promise<void> {
@@ -2171,9 +2215,13 @@ export class IbkrClient {
         .filter(Boolean);
 
       const requestedMonth = input.expirationDate ? toIbkrMonthCode(input.expirationDate) : null;
+      const maxExpirations = positiveIntegerOrDefault(
+        input.maxExpirations,
+        DEFAULT_OPTION_CHAIN_EXPIRATIONS,
+      );
       const candidateMonths = requestedMonth
         ? months.filter((month) => month === requestedMonth)
-        : months.slice(0, Math.max(1, input.maxExpirations ?? 3));
+        : months.slice(0, maxExpirations);
 
       const underlyingQuote = (await this.getMarketDataSnapshotMap([
         {
@@ -2183,10 +2231,18 @@ export class IbkrClient {
         },
       ])).get(String(underlyingConid));
       const spotPrice = underlyingQuote?.price ?? 0;
-      const strikesAroundMoney = Math.max(1, input.strikesAroundMoney ?? 12);
-      const contracts: NonNullable<BrokerPositionSnapshot["optionContract"]>[] = [];
+      const strikesAroundMoney = positiveIntegerOrDefault(
+        input.strikesAroundMoney,
+        DEFAULT_OPTION_CHAIN_STRIKES_AROUND_MONEY,
+      );
+      const rights: OptionRight[] = input.contractType
+        ? [input.contractType]
+        : ["call", "put"];
 
-      for (const month of candidateMonths) {
+      const contracts = (
+        await Promise.all(candidateMonths.map(async (month): Promise<
+          NonNullable<BrokerPositionSnapshot["optionContract"]>[]
+        > => {
         const strikes = await this.getCachedOptionStrikes({
           conid: underlyingConid,
           month,
@@ -2206,12 +2262,11 @@ export class IbkrClient {
               })()
             : strikes;
 
-        const rights: OptionRight[] = input.contractType
-          ? [input.contractType]
-          : ["call", "put"];
-
-        for (const strike of relevantStrikes) {
-          for (const right of rights) {
+        const contractGroups = await Promise.all(
+          relevantStrikes.flatMap((strike) =>
+            rights.map(async (right): Promise<
+              NonNullable<BrokerPositionSnapshot["optionContract"]>[]
+            > => {
             const matches = await this.getCachedOptionInfo({
               conid: underlyingConid,
               month,
@@ -2284,10 +2339,14 @@ export class IbkrClient {
                 .values(),
             ).map((candidate) => candidate.optionContract);
 
-            contracts.push(...preferredContracts);
-          }
-        }
-      }
+              return preferredContracts;
+            }),
+          ),
+        );
+
+        return contractGroups.flat();
+        }))
+      ).flat();
 
       const uniqueContracts = Array.from(
         new Map(
@@ -2300,7 +2359,15 @@ export class IbkrClient {
           ? []
           : [{ conid, symbol: contract.ticker, assetClass: "option" as const }];
       });
-      const quoteMap = await this.getMarketDataSnapshotMap(quoteRequests);
+      let quoteMap = new Map<string, QuoteSnapshot>();
+
+      try {
+        quoteMap = await this.getMarketDataSnapshotMap(quoteRequests);
+      } catch {
+        // Contract metadata is still useful when IBKR has no live option quote
+        // snapshot available or an OPRA snapshot request times out.
+        quoteMap = new Map<string, QuoteSnapshot>();
+      }
 
       return uniqueContracts
         .map((contract) => {
