@@ -2468,6 +2468,30 @@ const useLiveMarketFlow = (
     const sourcesBySymbol = Object.fromEntries(
       responses.map((response) => [response.symbol, response.source]),
     );
+    const appliedThresholds = responses
+      .map((response) => response.source?.unusualThreshold)
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const appliedThresholdCounts = new Map();
+    appliedThresholds.forEach((value) => {
+      appliedThresholdCounts.set(
+        value,
+        (appliedThresholdCounts.get(value) || 0) + 1,
+      );
+    });
+    let appliedUnusualThreshold = null;
+    let appliedUnusualThresholdConsistent = true;
+    if (appliedThresholdCounts.size > 0) {
+      let bestValue = null;
+      let bestCount = -1;
+      for (const [value, count] of appliedThresholdCounts) {
+        if (count > bestCount) {
+          bestValue = value;
+          bestCount = count;
+        }
+      }
+      appliedUnusualThreshold = bestValue;
+      appliedUnusualThresholdConsistent = appliedThresholdCounts.size === 1;
+    }
 
     let label = "No IBKR flow";
     let color = T.textMuted;
@@ -2499,6 +2523,8 @@ const useLiveMarketFlow = (
       failures,
       erroredSource,
       providers: Array.from(providerSet),
+      appliedUnusualThreshold,
+      appliedUnusualThresholdConsistent,
     };
   }, [flowQuery.data, flowQuery.isPending]);
 
@@ -6187,6 +6213,8 @@ const MarketActivityPanel = ({
   onChangeMonitorTimeframe,
   unusualThreshold = 1,
   onChangeUnusualThreshold,
+  appliedUnusualThreshold = null,
+  appliedUnusualThresholdConsistent = true,
 }) => {
   const [activityFilter, setActivityFilter] = useState("all");
   const feedItemsRaw = useMemo(
@@ -6511,6 +6539,41 @@ const MarketActivityPanel = ({
             </option>
           ))}
         </select>
+        {Number.isFinite(appliedUnusualThreshold) &&
+        appliedUnusualThreshold > 0 ? (
+          (() => {
+            const requested = Number(unusualThreshold) || 1;
+            const matches =
+              Math.abs(appliedUnusualThreshold - requested) < 0.001 &&
+              appliedUnusualThresholdConsistent;
+            const label = `applied: ${appliedUnusualThreshold % 1 === 0 ? appliedUnusualThreshold.toFixed(0) : appliedUnusualThreshold.toFixed(1)}× OI${appliedUnusualThresholdConsistent ? "" : "*"}`;
+            const tone = matches ? T.textDim : T.amber;
+            return (
+              <span
+                title={
+                  matches
+                    ? "Server confirmed it applied your selected unusual-options threshold."
+                    : appliedUnusualThresholdConsistent
+                      ? "The live feed is using a different threshold than the one you selected."
+                      : "Different symbols returned different applied thresholds; showing the most common one."
+                }
+                style={{
+                  fontSize: fs(8),
+                  color: tone,
+                  fontFamily: T.mono,
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  border: `1px solid ${tone}40`,
+                  background: `${tone}12`,
+                  padding: sp("3px 5px"),
+                  borderRadius: 0,
+                }}
+              >
+                {label}
+              </span>
+            );
+          })()
+        ) : null}
       </div>
 
       {feedItems.length ? (
@@ -6683,7 +6746,7 @@ const MarketScreen = ({
     },
     [activityPanelWidth],
   );
-  const { putCall, sectorFlow, flowStatus, flowEvents, flowTide } =
+  const { putCall, sectorFlow, flowStatus, flowEvents, flowTide, providerSummary: flowProviderSummary } =
     useLiveMarketFlow(symbols, { unusualThreshold });
   const calendarWindow = useMemo(() => {
     const from = new Date();
@@ -6883,6 +6946,10 @@ const MarketScreen = ({
             onChangeMonitorTimeframe={onChangeMonitorTimeframe}
             unusualThreshold={unusualThreshold}
             onChangeUnusualThreshold={handleChangeUnusualThreshold}
+            appliedUnusualThreshold={flowProviderSummary?.appliedUnusualThreshold ?? null}
+            appliedUnusualThresholdConsistent={
+              flowProviderSummary?.appliedUnusualThresholdConsistent ?? true
+            }
           />
         </div>
 

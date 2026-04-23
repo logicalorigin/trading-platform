@@ -2857,6 +2857,9 @@ components:
         fetchedAt:
           type: string
           format: date-time
+        unusualThreshold:
+          type: number
+          description: Volume / open-interest multiplier the server applied when flagging unusual prints. Defaults to 1.
       required:
         - provider
         - status

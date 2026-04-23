@@ -755,6 +755,12 @@ export const ListFlowEventsResponse = zod.object({
     attemptedProviders: zod.array(zod.enum(["ibkr", "polygon"])),
     errorMessage: zod.string().nullable(),
     fetchedAt: zod.coerce.date(),
+    unusualThreshold: zod
+      .number()
+      .optional()
+      .describe(
+        "Volume \/ open-interest multiplier the server applied when flagging unusual prints. Defaults to 1.",
+      ),
   }),
 });
 

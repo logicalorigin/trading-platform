@@ -398,6 +398,7 @@ type FlowEventsSource = {
   attemptedProviders: FlowDataProvider[];
   errorMessage: string | null;
   fetchedAt: Date;
+  unusualThreshold: number;
 };
 
 type FlowEventsResult = {
@@ -418,6 +419,7 @@ function flowSource(input: {
   fallbackUsed?: boolean;
   attemptedProviders?: FlowDataProvider[];
   errorMessage?: string | null;
+  unusualThreshold?: number;
 }): FlowEventsSource {
   return {
     provider: input.provider,
@@ -426,6 +428,11 @@ function flowSource(input: {
     attemptedProviders: input.attemptedProviders ?? [],
     errorMessage: input.errorMessage ?? null,
     fetchedAt: new Date(),
+    unusualThreshold:
+      Number.isFinite(input.unusualThreshold) &&
+      (input.unusualThreshold as number) > 0
+        ? (input.unusualThreshold as number)
+        : 1,
   };
 }
 
@@ -1460,6 +1467,7 @@ export async function listFlowEvents(input: {
       source: flowSource({
         provider: "none",
         status: "empty",
+        unusualThreshold: unusualThreshold ?? 1,
       }),
     };
   }
@@ -1605,6 +1613,7 @@ async function listFlowEventsUncached(input: {
         provider: "ibkr",
         status: "live",
         attemptedProviders,
+        unusualThreshold: input.unusualThreshold ?? 1,
       }),
     };
   }
@@ -1627,6 +1636,7 @@ async function listFlowEventsUncached(input: {
             fallbackUsed: true,
             attemptedProviders,
             errorMessage: ibkrError,
+            unusualThreshold: input.unusualThreshold ?? 1,
           }),
         };
       }
@@ -1644,6 +1654,7 @@ async function listFlowEventsUncached(input: {
       fallbackUsed: attemptedProviders.includes("polygon"),
       attemptedProviders,
       errorMessage,
+      unusualThreshold: input.unusualThreshold ?? 1,
     }),
   };
 }

@@ -17,4 +17,6 @@ export interface FlowEventsSource {
   /** @nullable */
   errorMessage: string | null;
   fetchedAt: Date;
+  /** Volume / open-interest multiplier the server applied when flagging unusual prints. Defaults to 1. */
+  unusualThreshold?: number;
 }
