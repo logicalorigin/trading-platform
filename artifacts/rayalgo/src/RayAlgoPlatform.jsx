@@ -87,7 +87,14 @@ import {
   useIbkrQuoteSnapshotStream,
 } from "./features/platform/live-streams";
 
-const PhotonicsObservatory = lazy(
+import MarketScreen from "./screens/MarketScreen";
+import FlowScreen from "./screens/FlowScreen";
+import TradeScreen from "./screens/TradeScreen";
+import ResearchScreen from "./screens/ResearchScreen";
+import AlgoScreen from "./screens/AlgoScreen";
+import BacktestScreen from "./screens/BacktestScreen";
+
+export const PhotonicsObservatory = lazy(
   () => import("./features/research/PhotonicsObservatory"),
 );
 
@@ -207,7 +214,7 @@ const TYPOGRAPHY = {
 // sandboxed iframes (e.g. Claude.ai artifact preview) where storage is blocked.
 // On Replit and other standalone deployments, persistence works normally.
 const STORAGE_KEY = "rayalgo:state:v1";
-const _initialState = (() => {
+export const _initialState = (() => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return {};
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -216,7 +223,7 @@ const _initialState = (() => {
     return {};
   }
 })();
-const persistState = (patch) => {
+export const persistState = (patch) => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return;
     const current = JSON.parse(
@@ -285,13 +292,13 @@ let CURRENT_SCALE = "m";
 const SCALE_FACTOR = () => SCALE_LEVELS[CURRENT_SCALE];
 
 // fs(n) — scale a font size. Minimum readable size is 10px (matches watchlist price text).
-const fs = (n) => Math.max(10, Math.round(n * SCALE_FACTOR()));
+export const fs = (n) => Math.max(10, Math.round(n * SCALE_FACTOR()));
 
 // dim(n) — scale a fixed dimension (height, width, gap, border-radius, etc.).
-const dim = (n) => Math.round(n * SCALE_FACTOR());
+export const dim = (n) => Math.round(n * SCALE_FACTOR());
 
 // sp(v) — scale a padding/margin/gap value. Accepts either a number or a CSS string like "4px 6px".
-const sp = (v) => {
+export const sp = (v) => {
   if (typeof v === "number") return Math.round(v * SCALE_FACTOR());
   if (typeof v === "string") {
     return v.replace(/(-?\d*\.?\d+)(px|em|rem)?/g, (_, num, unit) => {
@@ -304,7 +311,7 @@ const sp = (v) => {
 // Proxy that reads from the current theme on every property access.
 // This means components doing `T.bg2` get fresh values whenever React re-renders,
 // without any of them needing to import a hook or call useContext.
-const T = new Proxy(
+export const T = new Proxy(
   {},
   {
     get(_target, prop) {
@@ -319,7 +326,7 @@ const ThemeContext = createContext({ theme: "dark", toggle: () => {} });
 
 // Toast notifications — globally accessible via useToast()
 const ToastContext = createContext({ push: () => {}, toasts: [] });
-const useToast = () => useContext(ToastContext);
+export const useToast = () => useContext(ToastContext);
 
 // Local position context. Order-entry simulation has been removed, but a small
 // UI-local store remains for legacy state paths that may still read this context.
@@ -331,7 +338,7 @@ const PositionsContext = createContext({
   updateStops: () => {},
   rollPosition: () => {},
 });
-const usePositions = () => useContext(PositionsContext);
+export const usePositions = () => useContext(PositionsContext);
 
 // ═══════════════════════════════════════════════════════════════════
 // STATIC DATA / GENERATORS
@@ -573,7 +580,7 @@ const TRADE_TICKER_INFO = {
   },
 };
 
-const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
+export const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
   const normalized = symbol.toUpperCase();
   if (!TRADE_TICKER_INFO[normalized]) {
     const hash = hashSymbol(normalized);
@@ -1087,7 +1094,7 @@ const getRuntimeTickerSnapshot = (symbol, fallback = null) => {
   return fallback;
 };
 
-const buildTrackedBreadthSummary = () => {
+export const buildTrackedBreadthSummary = () => {
   const stocks = TREEMAP_DATA.flatMap((sector) => sector.stocks);
   const observedDaily = stocks.filter((stock) => isFiniteNumber(stock.d1));
   const observedFiveDay = stocks.filter((stock) => isFiniteNumber(stock.d5));
@@ -1122,7 +1129,7 @@ const buildTrackedBreadthSummary = () => {
   };
 };
 
-const buildRatesProxySummary = () => {
+export const buildRatesProxySummary = () => {
   const sorted = [...RATES_PROXIES]
     .filter((item) => isFiniteNumber(item.pct))
     .sort((left, right) => right.pct - left.pct);
@@ -1132,7 +1139,7 @@ const buildRatesProxySummary = () => {
   };
 };
 
-const buildOptionChainRowsFromApi = (contracts, spotPrice) => {
+export const buildOptionChainRowsFromApi = (contracts, spotPrice) => {
   const rowsByStrike = new Map();
 
   (contracts || []).forEach((quote) => {
@@ -1266,7 +1273,7 @@ const buildMarketOrderFlowFromEvents = (events) => {
   );
 };
 
-const buildFlowTideFromEvents = (events) => {
+export const buildFlowTideFromEvents = (events) => {
   const startMinutes = 9 * 60 + 30;
   const bucketMinutes = 30;
   const bucketCount = 14;
@@ -1743,7 +1750,7 @@ const SCREENS = [
 // SMALL COMPONENTS
 // ═══════════════════════════════════════════════════════════════════
 
-const Pill = ({ children, active, onClick, color }) => (
+export const Pill = ({ children, active, onClick, color }) => (
   <button
     onClick={onClick}
     style={{
@@ -1764,16 +1771,16 @@ const Pill = ({ children, active, onClick, color }) => (
 );
 
 // Format dollar amount in millions (or thousands if smaller). Module-level so any screen can use it.
-const fmtM = (v) =>
+export const fmtM = (v) =>
   v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${(v / 1e3).toFixed(0)}K`;
-const MISSING_VALUE = "----";
+export const MISSING_VALUE = "----";
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
   if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
   if (Math.abs(value) >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
   return `$${value.toFixed(0)}`;
 };
-const fmtCompactNumber = (value) => {
+export const fmtCompactNumber = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
   if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
   if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
@@ -1782,11 +1789,11 @@ const fmtCompactNumber = (value) => {
 };
 const fmtQuoteVolume = (value) =>
   value == null || Number.isNaN(value) ? MISSING_VALUE : fmtCompactNumber(value);
-const isFiniteNumber = (value) =>
+export const isFiniteNumber = (value) =>
   typeof value === "number" && Number.isFinite(value);
 const formatPriceValue = (value, digits = 2) =>
   isFiniteNumber(value) ? value.toFixed(digits) : MISSING_VALUE;
-const formatQuotePrice = (value) =>
+export const formatQuotePrice = (value) =>
   isFiniteNumber(value)
     ? value < 10
       ? value.toFixed(3)
@@ -1796,14 +1803,14 @@ const formatSignedPrice = (value, digits = 2) =>
   isFiniteNumber(value)
     ? `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`
     : MISSING_VALUE;
-const formatSignedPercent = (value, digits = 2) =>
+export const formatSignedPercent = (value, digits = 2) =>
   isFiniteNumber(value)
     ? `${value >= 0 ? "+" : ""}${value.toFixed(digits)}%`
     : MISSING_VALUE;
-const getAtmStrikeFromPrice = (price, increment = 5) =>
+export const getAtmStrikeFromPrice = (price, increment = 5) =>
   isFiniteNumber(price) ? Math.round(price / increment) * increment : null;
 
-const QUERY_DEFAULTS = {
+export const QUERY_DEFAULTS = {
   staleTime: 15_000,
   refetchInterval: 15_000,
   retry: 2,
@@ -1822,7 +1829,7 @@ const QUERY_DEFAULTS = {
 // don't need React Query to repoll bars on a 15s timer. Use a long
 // staleTime, no automatic refetch interval, and an explicit gcTime so
 // chart caches for inactive symbols/timeframes are evicted from memory.
-const BARS_QUERY_DEFAULTS = {
+export const BARS_QUERY_DEFAULTS = {
   staleTime: 60_000,
   gcTime: 5 * 60_000,
   refetchInterval: false,
@@ -1835,9 +1842,9 @@ const BARS_QUERY_DEFAULTS = {
 // flow batches, depth, executions, dashboard sparkline/baseline batches).
 // Option chains can be hundreds of KB per underlying, so we want them evicted
 // quickly when the user moves on.
-const HEAVY_PAYLOAD_GC_MS = 15_000;
+export const HEAVY_PAYLOAD_GC_MS = 15_000;
 
-const clampNumber = (value, min, max) =>
+export const clampNumber = (value, min, max) =>
   Math.min(max, Math.max(min, value));
 
 const buildApiUrl = (path, params = {}) => {
@@ -1931,7 +1938,7 @@ const getEtClockParts = (value) => {
   return { hour, minute };
 };
 
-const formatEtTime = (value, { seconds = false } = {}) => {
+export const formatEtTime = (value, { seconds = false } = {}) => {
   const date = toDateValue(value);
   if (!date) return MISSING_VALUE;
 
@@ -1944,7 +1951,7 @@ const formatEtTime = (value, { seconds = false } = {}) => {
   });
 };
 
-const formatExpirationLabel = (value) => {
+export const formatExpirationLabel = (value) => {
   if (typeof value === "string" && /^\d{2}\/\d{2}$/.test(value)) return value;
 
   const date = toDateValue(value);
@@ -1953,7 +1960,7 @@ const formatExpirationLabel = (value) => {
   return `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
 };
 
-const parseExpirationValue = (value) => {
+export const parseExpirationValue = (value) => {
   const parsed = toDateValue(value);
   if (parsed) return parsed;
   if (typeof value !== "string") return null;
@@ -1973,7 +1980,7 @@ const parseExpirationValue = (value) => {
   return candidate;
 };
 
-const formatIsoDate = (value) => {
+export const formatIsoDate = (value) => {
   const date = toDateValue(value);
   if (!date) return null;
 
@@ -2001,7 +2008,7 @@ const formatShortDate = (value) => {
   });
 };
 
-const formatRelativeTimeShort = (value) => {
+export const formatRelativeTimeShort = (value) => {
   const date = toDateValue(value);
   if (!date) return MISSING_VALUE;
 
@@ -2021,7 +2028,7 @@ const formatRelativeTimeShort = (value) => {
   return formatShortDate(date);
 };
 
-const formatEnumLabel = (value) =>
+export const formatEnumLabel = (value) =>
   String(value || MISSING_VALUE)
     .replace(/_/g, " ")
     .replace(/\b\w/g, (match) => match.toUpperCase());
@@ -2045,7 +2052,7 @@ const orderStatusColor = (status) => {
   }
 };
 
-const bridgeRuntimeTone = (session) => {
+export const bridgeRuntimeTone = (session) => {
   if (!session?.configured?.ibkr) return { label: "offline", color: T.red };
   if (session?.ibkrBridge?.liveMarketDataAvailable === false) {
     return { label: "delayed", color: T.amber };
@@ -2063,7 +2070,7 @@ const bridgeTransportLabel = (session) =>
     ? "IB Gateway / TWS"
     : "Client Portal";
 
-const bridgeRuntimeMessage = (session) => {
+export const bridgeRuntimeMessage = (session) => {
   if (!session?.configured?.ibkr) {
     return "Interactive Brokers is not configured in this workspace.";
   }
@@ -2211,14 +2218,14 @@ const buildMarketClockState = (now = Date.now()) => {
   };
 };
 
-const parseSymbolUniverseInput = (value) =>
+export const parseSymbolUniverseInput = (value) =>
   String(value || "")
     .split(",")
     .map((symbol) => symbol.trim().toUpperCase())
     .filter(Boolean)
     .filter((symbol, index, values) => values.indexOf(symbol) === index);
 
-const formatCalendarMeta = (dateValue, timeValue) => {
+export const formatCalendarMeta = (dateValue, timeValue) => {
   const dateLabel = formatShortDate(dateValue);
   if (!timeValue) return dateLabel;
 
@@ -2228,7 +2235,7 @@ const formatCalendarMeta = (dateValue, timeValue) => {
   return `${dateLabel} · ${normalized}`;
 };
 
-const mapNewsSentimentToScore = (sentiment) => {
+export const mapNewsSentimentToScore = (sentiment) => {
   const normalized = String(sentiment || "")
     .trim()
     .toLowerCase();
@@ -2238,7 +2245,7 @@ const mapNewsSentimentToScore = (sentiment) => {
   return 0;
 };
 
-const daysToExpiration = (value) => {
+export const daysToExpiration = (value) => {
   const date = parseExpirationValue(value);
   if (!date) return 0;
 
@@ -2269,7 +2276,7 @@ const formatSessionBucketLabel = (minutes) => {
   return `${hour}:${String(minute).padStart(2, "0")}`;
 };
 
-const flowProviderColor = (provider) =>
+export const flowProviderColor = (provider) =>
   provider === "ibkr" ? T.accent : provider === "polygon" ? T.cyan : T.textDim;
 
 const flowEventSourceLabel = (event) => {
@@ -2321,7 +2328,7 @@ const deriveFlowScore = (event, dte) => {
   return Math.max(10, Math.min(99, Math.round(score)));
 };
 
-const mapFlowEventToUi = (event) => {
+export const mapFlowEventToUi = (event) => {
   const dte = daysToExpiration(event.expirationDate);
   const cp = event.right === "call" ? "C" : "P";
   const side = (event.side || "mid").toUpperCase();
@@ -2360,7 +2367,7 @@ const mapFlowEventToUi = (event) => {
   };
 };
 
-const useLiveMarketFlow = (
+export const useLiveMarketFlow = (
   symbols = [],
   { limit = 16, maxSymbols = 8, unusualThreshold } = {},
 ) => {
@@ -2544,7 +2551,7 @@ const useLiveMarketFlow = (
   };
 };
 
-const Badge = ({ children, color = T.textDim }) => (
+export const Badge = ({ children, color = T.textDim }) => (
   <span
     style={{
       display: "inline-block",
@@ -2563,7 +2570,7 @@ const Badge = ({ children, color = T.textDim }) => (
   </span>
 );
 
-const DataUnavailableState = ({
+export const DataUnavailableState = ({
   title = "No live data",
   detail = "This panel is waiting on a live provider response.",
 }) => (
@@ -3979,7 +3986,7 @@ const INDICES = [
   },
 ];
 
-const MACRO_TICKERS = [
+export const MACRO_TICKERS = [
   { sym: "VIXY", price: null, chg: null, pct: null, label: "Volatility" },
   { sym: "IEF", price: null, chg: null, pct: null, label: "Treasuries" },
   { sym: "UUP", price: null, chg: null, pct: null, label: "Dollar" },
@@ -3987,7 +3994,7 @@ const MACRO_TICKERS = [
   { sym: "USO", price: null, chg: null, pct: null, label: "Crude" },
 ];
 
-const RATES_PROXIES = [
+export const RATES_PROXIES = [
   { term: "1-3M", sym: "BIL", price: null, chg: null, pct: null, d5: null },
   {
     term: "1-3Y",
@@ -4002,7 +4009,7 @@ const RATES_PROXIES = [
   { term: "20Y+", sym: "TLT", price: null, chg: null, pct: null, d5: null },
 ];
 
-const SECTORS = [
+export const SECTORS = [
   { name: "Technology", sym: "XLK", chg: null, d5: null },
   { name: "Financials", sym: "XLF", chg: null, d5: null },
   { name: "Healthcare", sym: "XLV", chg: null, d5: null },
@@ -4017,7 +4024,7 @@ const SECTORS = [
 ];
 
 // Finviz-style treemap data: sector → stocks with market cap (billions) and performance
-const TREEMAP_DATA = [
+export const TREEMAP_DATA = [
   {
     sector: "TECHNOLOGY",
     stocks: [
@@ -4155,7 +4162,7 @@ const heatColor = (val) => {
 const heatText = (val) =>
   !isFiniteNumber(val) || Math.abs(val) < 0.1 ? T.textDim : "#ffffff";
 
-const TreemapHeatmap = ({ data, period, onSymClick }) => {
+export const TreemapHeatmap = ({ data, period, onSymClick }) => {
   const VW = 1000,
     VH = 480;
 
@@ -4325,7 +4332,7 @@ const TreemapHeatmap = ({ data, period, onSymClick }) => {
 };
 
 // Sector-level heatmap: just sector ETFs as proportional blocks
-const SectorTreemap = ({ sectors, period }) => {
+export const SectorTreemap = ({ sectors, period }) => {
   const VW = 1000,
     VH = 60;
 
@@ -4531,7 +4538,7 @@ const COND = [
   },
 ];
 
-const Card = ({ children, style = {}, noPad }) => (
+export const Card = ({ children, style = {}, noPad }) => (
   <div
     style={{
       background: T.bg1,
@@ -4546,7 +4553,7 @@ const Card = ({ children, style = {}, noPad }) => (
   </div>
 );
 
-const CardTitle = ({ children, right }) => (
+export const CardTitle = ({ children, right }) => (
   <div
     style={{
       display: "flex",
@@ -4574,7 +4581,7 @@ const CardTitle = ({ children, right }) => (
 // Multi-segment donut showing buy/sell volume by trade size bracket.
 // Segments arranged: top→clockwise: buyXL, buyL, buyM, buyS, sellS, sellM, sellL, sellXL
 // Greens shade darker for larger buy sizes, reds shade darker for larger sells
-const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
+export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
   const totalBuy = flow.buyXL + flow.buyL + flow.buyM + flow.buyS;
   const totalSell = flow.sellXL + flow.sellL + flow.sellM + flow.sellS;
   const total = totalBuy + totalSell || 1;
@@ -4653,7 +4660,7 @@ const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
 // ─── SIZE BUCKET ROW ───
 // Mirrored bar chart row — buy bar grows right-to-left, sell bar grows left-to-right
 // Visual at-a-glance "is XL flow biased buy or sell?"
-const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
+export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
   const buyPct = (buy / maxValue) * 100;
   const sellPct = (sell / maxValue) * 100;
   return (
@@ -4877,7 +4884,7 @@ const DEFAULT_TRADE_EQUITY_STUDIES = [
 ];
 const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
 
-const normalizeTickerSymbol = (value) => value?.trim?.().toUpperCase?.() || "";
+export const normalizeTickerSymbol = (value) => value?.trim?.().toUpperCase?.() || "";
 
 const normalizeIndicatorSelection = (value, fallback = []) => {
   const source = Array.isArray(value) ? value : fallback;
@@ -5826,7 +5833,7 @@ const MiniChartCell = ({
 
 // ─── MULTI CHART GRID ───
 // Configurable grid of mini chart cells. Layout selector + independent ticker ownership per slot.
-const MultiChartGrid = ({
+export const MultiChartGrid = ({
   activeSym,
   onSymClick,
   stockAggregateStreamingEnabled = false,
@@ -6190,7 +6197,7 @@ const MultiChartGrid = ({
   );
 };
 
-const UNUSUAL_THRESHOLD_OPTIONS = [
+export const UNUSUAL_THRESHOLD_OPTIONS = [
   { value: 1, label: "1× OI" },
   { value: 2, label: "2× OI" },
   { value: 3, label: "3× OI" },
@@ -6198,7 +6205,7 @@ const UNUSUAL_THRESHOLD_OPTIONS = [
   { value: 10, label: "10× OI" },
 ];
 
-const MarketActivityPanel = ({
+export const MarketActivityPanel = ({
   notifications = [],
   highlightedUnusualFlow = [],
   signalEvents = [],
@@ -6687,1361 +6694,13 @@ const MarketActivityPanel = ({
   );
 };
 
-const MarketScreen = ({
-  sym,
-  onSymClick,
-  symbols = [],
-  researchConfigured = false,
-  stockAggregateStreamingEnabled = false,
-  marketNotifications = [],
-  signalEvents = [],
-  signalStates = [],
-  signalMonitorProfile = null,
-  signalMonitorPending = false,
-  onSignalAction,
-  onScanNow,
-  onToggleMonitor,
-  onChangeMonitorTimeframe,
-}) => {
-  const [sectorTf, setSectorTf] = useState(_initialState.marketSectorTf || "1d");
-  const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
-    Number.isFinite(_initialState.marketActivityPanelWidth)
-      ? clampNumber(_initialState.marketActivityPanelWidth, 320, 720)
-      : 420,
-  );
-  const [unusualThreshold, setUnusualThreshold] = useState(() => {
-    const stored = _initialState.marketUnusualThreshold;
-    return Number.isFinite(stored) && stored > 0
-      ? clampNumber(stored, 0.1, 100)
-      : 1;
-  });
-  useEffect(() => {
-    persistState({ marketSectorTf: sectorTf });
-  }, [sectorTf]);
-  useEffect(() => {
-    persistState({ marketActivityPanelWidth: activityPanelWidth });
-  }, [activityPanelWidth]);
-  useEffect(() => {
-    persistState({ marketUnusualThreshold: unusualThreshold });
-  }, [unusualThreshold]);
-  const handleChangeUnusualThreshold = useCallback((next) => {
-    if (!Number.isFinite(next) || next <= 0) return;
-    setUnusualThreshold(clampNumber(next, 0.1, 100));
-  }, []);
-  const handleStartActivityPanelResize = useCallback(
-    (event) => {
-      event.preventDefault();
-      const startX = event.clientX;
-      const startWidth = activityPanelWidth;
-      const handlePointerMove = (moveEvent) => {
-        const delta = moveEvent.clientX - startX;
-        setActivityPanelWidth(clampNumber(startWidth - delta, 320, 720));
-      };
-      const handlePointerUp = () => {
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-      };
-
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
-    },
-    [activityPanelWidth],
-  );
-  const { putCall, sectorFlow, flowStatus, flowEvents, flowTide, providerSummary: flowProviderSummary } =
-    useLiveMarketFlow(symbols, { unusualThreshold });
-  const calendarWindow = useMemo(() => {
-    const from = new Date();
-    const to = new Date(from);
-    to.setUTCDate(to.getUTCDate() + 14);
-
-    return {
-      from: formatIsoDate(from),
-      to: formatIsoDate(to),
-    };
-  }, []);
-  const newsQuery = useGetNews(
-    { limit: 6 },
-    {
-      query: {
-        staleTime: 60_000,
-        refetchInterval: 60_000,
-        retry: false,
-      },
-    },
-  );
-  const earningsQuery = useGetResearchEarningsCalendar(calendarWindow, {
-    query: {
-      enabled: Boolean(
-        researchConfigured && calendarWindow.from && calendarWindow.to,
-      ),
-      staleTime: 300_000,
-      refetchInterval: 300_000,
-      retry: false,
-    },
-  });
-  const breadth = buildTrackedBreadthSummary();
-  const ratesSummary = buildRatesProxySummary();
-  const volatilityProxy =
-    MACRO_TICKERS.find((item) => item.sym === "VIXY") || MACRO_TICKERS[0];
-  const putCallBullish = isFiniteNumber(putCall.total) ? putCall.total <= 1 : null;
-  const putCallMarkerPct = isFiniteNumber(putCall.total)
-    ? Math.max(8, Math.min(92, (putCall.total / 2) * 100))
-    : 50;
-  const upPct = isFiniteNumber(breadth.advancePct) ? breadth.advancePct : 0;
-  const downPct = breadth.total ? 100 - upPct : 0;
-  const analysisLeader = breadth.leader;
-  const analysisLaggard = breadth.laggard;
-  const selectedFlowEvents = useMemo(
-    () =>
-      flowEvents.filter(
-        (event) => normalizeTickerSymbol(event.ticker) === normalizeTickerSymbol(sym),
-      ),
-    [flowEvents, sym],
-  );
-  const selectedFlowTide = useMemo(
-    () =>
-      selectedFlowEvents.length
-        ? buildFlowTideFromEvents(selectedFlowEvents)
-        : flowTide,
-    [flowTide, selectedFlowEvents],
-  );
-  const selectedCallPremium = selectedFlowEvents.reduce(
-    (sum, event) => sum + (event.cp === "C" ? event.premium : 0),
-    0,
-  );
-  const selectedPutPremium = selectedFlowEvents.reduce(
-    (sum, event) => sum + (event.cp === "P" ? event.premium : 0),
-    0,
-  );
-  const highlightedUnusualFlow = useMemo(
-    () => flowEvents.slice(0, 12),
-    [flowEvents],
-  );
-  const newsItems = useMemo(() => {
-    const articles = newsQuery.data?.articles || [];
-    return articles.map((article) => ({
-      id: article.id,
-      text: article.title,
-      time: formatRelativeTimeShort(article.publishedAt),
-      tag:
-        article.tickers?.[0] ||
-        article.publisher?.name?.slice(0, 8)?.toUpperCase() ||
-        "NEWS",
-      s: mapNewsSentimentToScore(article.sentiment),
-      articleUrl: article.articleUrl,
-      publisher: article.publisher?.name || null,
-    }));
-  }, [newsQuery.data]);
-  const calendarItems = useMemo(() => {
-    const entries = earningsQuery.data?.entries || [];
-
-    if (!researchConfigured || !entries.length) {
-      return [];
-    }
-
-    const deduped = [];
-    const seen = new Set();
-
-    entries
-      .filter((entry) => entry?.symbol && entry?.date)
-      .sort((left, right) => {
-        const leftValue = left.date
-          ? Date.parse(left.date)
-          : Number.POSITIVE_INFINITY;
-        const rightValue = right.date
-          ? Date.parse(right.date)
-          : Number.POSITIVE_INFINITY;
-        return leftValue - rightValue;
-      })
-      .forEach((entry) => {
-        const key = `${entry.symbol}_${entry.date}_${entry.time || ""}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        deduped.push({
-          id: key,
-          label: `${entry.symbol} earnings`,
-          date: formatCalendarMeta(entry.date, entry.time),
-          type: "earnings",
-        });
-      });
-
-    return deduped.slice(0, 7);
-  }, [earningsQuery.data, researchConfigured]);
-  const newsStatusLabel = newsQuery.data?.articles?.length
-    ? "live · news"
-    : newsQuery.isError
-      ? "offline"
-      : newsQuery.isPending
-        ? "loading"
-        : "empty";
-  const calendarStatusLabel = researchConfigured
-    ? earningsQuery.data?.entries?.length
-      ? "earnings · live"
-      : earningsQuery.isError
-        ? "offline"
-        : earningsQuery.isPending
-          ? "loading"
-          : "empty"
-    : "research off";
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: sp(8),
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
-        {/* ── ROW 1: Chart workspace + activity feed ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: `minmax(0, 1fr) 6px ${activityPanelWidth}px`,
-            gap: 6,
-            alignItems: "start",
-          }}
-        >
-          <MultiChartGrid
-            activeSym={sym}
-            onSymClick={onSymClick}
-            stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-          />
-          <div
-            role="separator"
-            aria-label="Resize activity and notifications panel"
-            onPointerDown={handleStartActivityPanelResize}
-            title="Drag to resize activity panel"
-            style={{
-              alignSelf: "stretch",
-              minHeight: dim(340),
-              cursor: "col-resize",
-              background: `linear-gradient(180deg, transparent, ${T.borderLight}, transparent)`,
-              borderLeft: `1px solid ${T.border}55`,
-              borderRight: `1px solid ${T.border}55`,
-            }}
-          />
-          <MarketActivityPanel
-            notifications={marketNotifications}
-            highlightedUnusualFlow={highlightedUnusualFlow}
-            signalEvents={signalEvents}
-            signalStates={signalStates}
-            signalMonitorProfile={signalMonitorProfile}
-            signalMonitorPending={signalMonitorPending}
-            newsItems={newsItems}
-            calendarItems={calendarItems}
-            onSymClick={onSymClick}
-            onSignalAction={onSignalAction}
-            onScanNow={onScanNow}
-            onToggleMonitor={onToggleMonitor}
-            onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-            unusualThreshold={unusualThreshold}
-            onChangeUnusualThreshold={handleChangeUnusualThreshold}
-            appliedUnusualThreshold={flowProviderSummary?.appliedUnusualThreshold ?? null}
-            appliedUnusualThresholdConsistent={
-              flowProviderSummary?.appliedUnusualThresholdConsistent ?? true
-            }
-          />
-        </div>
-
-        {/* ── ROW 2: Selected ticker premium tide ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr",
-            gap: 6,
-          }}
-        >
-          <Card style={{ padding: "8px 10px" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 6,
-                gap: sp(8),
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(10),
-                    fontWeight: 700,
-                    fontFamily: T.display,
-                    color: T.textSec,
-                  }}
-                >
-                  Premium Tide · {sym}
-                </div>
-                <div
-                  style={{
-                    fontSize: fs(8),
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                    marginTop: 1,
-                  }}
-                >
-                  Intraday premium flow follows the selected ticker
-                </div>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  gap: sp(8),
-                  fontSize: fs(9),
-                  fontFamily: T.mono,
-                  flexWrap: "wrap",
-                  justifyContent: "flex-end",
-                }}
-              >
-                <span style={{ color: T.green }}>
-                  Calls {fmtM(selectedCallPremium)}
-                </span>
-                <span style={{ color: T.red }}>
-                  Puts {fmtM(selectedPutPremium)}
-                </span>
-                <span style={{ color: T.accent, fontWeight: 700 }}>
-                  Net{" "}
-                  {selectedCallPremium - selectedPutPremium >= 0 ? "+" : ""}
-                  {fmtM(Math.abs(selectedCallPremium - selectedPutPremium))}
-                </span>
-              </div>
-            </div>
-            {selectedFlowTide.length ? (
-              <div style={{ height: dim(190), width: "100%" }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={selectedFlowTide}>
-                    <XAxis
-                      dataKey="time"
-                      tick={{ fontSize: fs(9), fill: T.textMuted }}
-                    />
-                    <YAxis
-                      tick={{ fontSize: fs(9), fill: T.textMuted }}
-                      tickFormatter={(value) => `${(value / 1e6).toFixed(1)}M`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: T.bg4,
-                        border: `1px solid ${T.border}`,
-                        borderRadius: 0,
-                        fontSize: fs(10),
-                        fontFamily: T.mono,
-                      }}
-                      formatter={(value) =>
-                        `${value >= 0 ? "+" : ""}$${(value / 1e6).toFixed(2)}M`
-                      }
-                    />
-                    <ReferenceLine
-                      y={0}
-                      stroke={T.textMuted}
-                      strokeDasharray="2 2"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="cumNet"
-                      stroke={T.accent}
-                      strokeWidth={2}
-                      fill={T.accent}
-                      fillOpacity={0.28}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <DataUnavailableState
-                title={`No live flow for ${sym}`}
-                detail="Select another ticker or wait for new options activity."
-              />
-            )}
-          </Card>
-
-          <Card style={{ display: "none" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 6,
-                gap: sp(8),
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(10),
-                    fontWeight: 700,
-                    fontFamily: T.display,
-                    color: T.textSec,
-                  }}
-                >
-                  Unusual Options Activity
-                </div>
-                <div
-                  style={{
-                    fontSize: fs(8),
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                    marginTop: 1,
-                  }}
-                >
-                  Highest premium options activity across the tracked universe
-                </div>
-              </div>
-              <span
-                style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}
-              >
-                {highlightedUnusualFlow.length} events
-              </span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
-              {highlightedUnusualFlow.length ? (
-                highlightedUnusualFlow.map((event) => {
-                  const positive =
-                    event.side === "BUY" ? event.cp === "C" : event.cp === "P";
-                  const tone =
-                    event.side === "BUY"
-                      ? event.cp === "C"
-                        ? T.green
-                        : T.red
-                      : T.textSec;
-                  const selectedTicker = normalizeTickerSymbol(event.ticker) ===
-                    normalizeTickerSymbol(sym);
-                  return (
-                    <button
-                      key={`${event.ticker}-${event.contract}-${event.occurredAt}`}
-                      type="button"
-                      onClick={() => onSymClick?.(event.ticker)}
-                      style={{
-                        width: "100%",
-                        display: "grid",
-                        gridTemplateColumns: "52px 1fr auto",
-                        gap: sp(8),
-                        alignItems: "center",
-                        padding: sp("7px 8px"),
-                        background: selectedTicker ? T.bg3 : T.bg0,
-                        border: `1px solid ${selectedTicker ? T.accent : T.border}`,
-                        borderRadius: 0,
-                        cursor: "pointer",
-                        textAlign: "left",
-                      }}
-                      onMouseEnter={(event) => {
-                        if (selectedTicker) return;
-                        event.currentTarget.style.background = T.bg2;
-                        event.currentTarget.style.borderColor = T.textMuted;
-                      }}
-                      onMouseLeave={(event) => {
-                        if (selectedTicker) return;
-                        event.currentTarget.style.background = T.bg0;
-                        event.currentTarget.style.borderColor = T.border;
-                      }}
-                    >
-                      <span style={{ minWidth: 0 }}>
-                        <span
-                          style={{
-                            display: "block",
-                            fontSize: fs(10),
-                            fontWeight: 700,
-                            fontFamily: T.mono,
-                            color: T.text,
-                          }}
-                        >
-                          {event.ticker}
-                        </span>
-                        <span
-                          style={{
-                            display: "block",
-                            fontSize: fs(8),
-                            fontFamily: T.mono,
-                            color: tone,
-                            marginTop: 1,
-                          }}
-                        >
-                          {event.type}
-                        </span>
-                      </span>
-                      <span style={{ minWidth: 0 }}>
-                        <span
-                          style={{
-                            display: "flex",
-                            gap: sp(4),
-                            alignItems: "center",
-                            fontSize: fs(9),
-                            color: T.textSec,
-                            overflow: "hidden",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          <span
-                            style={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              minWidth: 0,
-                            }}
-                          >
-                            {event.contract}
-                          </span>
-                          {event.isUnusual ? (
-                            <Badge color={T.amber}>
-                              UNUSUAL{" "}
-                              {event.unusualScore > 0
-                                ? `${event.unusualScore.toFixed(
-                                    event.unusualScore >= 10 ? 0 : 1,
-                                  )}×`
-                                : ""}
-                            </Badge>
-                          ) : null}
-                        </span>
-                        <span
-                          style={{
-                            display: "block",
-                            fontSize: fs(8),
-                            color: T.textDim,
-                            fontFamily: T.mono,
-                            marginTop: 1,
-                          }}
-                        >
-                          {formatRelativeTimeShort(event.occurredAt)} ·{" "}
-                          {event.side}
-                          {isFiniteNumber(event.oi) ? ` · OI ${fmtCompactNumber(event.oi)}` : ""}
-                          {isFiniteNumber(event.vol) ? ` · Vol ${fmtCompactNumber(event.vol)}` : ""}
-                        </span>
-                      </span>
-                      <span
-                        style={{
-                          textAlign: "right",
-                          fontSize: fs(9),
-                          fontWeight: 700,
-                          fontFamily: T.mono,
-                          color: positive ? T.green : T.red,
-                        }}
-                      >
-                        {fmtM(event.premium)}
-                      </span>
-                    </button>
-                  );
-                })
-              ) : (
-                <DataUnavailableState
-                  title="No unusual options activity"
-                  detail="Live options flow is currently unavailable for the tracked universe."
-                />
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* ── ROW 4: S&P 500 Equity Heatmap ── */}
-        <Card noPad style={{ overflow: "visible", flexShrink: 0 }}>
-          <div
-            style={{
-              padding: sp("6px 10px"),
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              borderBottom: `1px solid ${T.border}`,
-            }}
-          >
-            <span
-              style={{
-                fontSize: fs(10),
-                fontWeight: 700,
-                fontFamily: T.display,
-                color: T.textSec,
-              }}
-            >
-              S&P 500 Heatmap
-            </span>
-            <div style={{ display: "flex", gap: 2 }}>
-              {["1d", "5d"].map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setSectorTf(v)}
-                  style={{
-                    padding: sp("2px 7px"),
-                    fontSize: fs(8),
-                    fontFamily: T.mono,
-                    fontWeight: 600,
-                    background: sectorTf === v ? T.accentDim : "transparent",
-                    border: `1px solid ${sectorTf === v ? T.accent : "transparent"}`,
-                    borderRadius: 0,
-                    color: sectorTf === v ? T.accent : T.textDim,
-                    cursor: "pointer",
-                  }}
-                >
-                  {v.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-          <TreemapHeatmap
-            data={TREEMAP_DATA}
-            period={sectorTf}
-            onSymClick={onSymClick}
-          />
-        </Card>
-
-        {/* Sector ETF Heatmap */}
-        <SectorTreemap sectors={SECTORS} period={sectorTf} />
-
-        {/* ── ROW 4: P/C + Yield Curve + Breadth ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
-            gap: 6,
-          }}
-        >
-          <Card style={{ padding: "5px 10px" }}>
-            <CardTitle>Put / Call</CardTitle>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: sp(4),
-                marginBottom: 3,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(18),
-                  fontWeight: 800,
-                  fontFamily: T.mono,
-                  color: T.text,
-                }}
-              >
-                {isFiniteNumber(putCall.total)
-                  ? putCall.total.toFixed(2)
-                  : MISSING_VALUE}
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                  color:
-                    putCallBullish == null
-                      ? T.textDim
-                      : putCallBullish
-                        ? T.green
-                        : T.red,
-                }}
-              >
-                {isFiniteNumber(putCall.total)
-                  ? `${putCallBullish ? "▼" : "▲"} ${Math.abs(putCall.total - 1).toFixed(2)}`
-                  : MISSING_VALUE}
-              </span>
-              <span style={{ fontSize: fs(7), color: T.textMuted }}>
-                neutral 1.00
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                height: dim(6),
-                borderRadius: dim(3),
-                overflow: "hidden",
-                marginBottom: 4,
-              }}
-            >
-              <div
-                style={{
-                  flex: 1,
-                  background: `linear-gradient(to right, ${T.red}, ${T.amber})`,
-                }}
-              />
-              <div
-                style={{
-                  flex: 1,
-                  background: `linear-gradient(to right, ${T.amber}, ${T.green})`,
-                }}
-              />
-            </div>
-            <div
-              style={{ position: "relative", height: dim(5), marginTop: -3 }}
-            >
-              {isFiniteNumber(putCall.total) ? (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: `${putCallMarkerPct}%`,
-                    transform: "translateX(-50%)",
-                    borderLeft: "3px solid transparent",
-                    borderRight: "3px solid transparent",
-                    borderBottom: `4px solid ${T.text}`,
-                  }}
-                />
-              ) : null}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginTop: sp(3),
-                fontSize: fs(8),
-                fontFamily: T.mono,
-              }}
-            >
-              <span style={{ color: T.textMuted }}>
-                Eq{" "}
-                <span style={{ color: T.textSec }}>
-                  {isFiniteNumber(putCall.equities)
-                    ? putCall.equities.toFixed(2)
-                    : MISSING_VALUE}
-                </span>
-              </span>
-              <span style={{ color: T.textMuted }}>
-                Idx{" "}
-                <span style={{ color: T.textSec }}>
-                  {isFiniteNumber(putCall.indices)
-                    ? putCall.indices.toFixed(2)
-                    : MISSING_VALUE}
-                </span>
-              </span>
-              <span style={{ color: T.textMuted }}>
-                Tot{" "}
-                <span style={{ color: T.textSec }}>
-                  {isFiniteNumber(putCall.total)
-                    ? putCall.total.toFixed(2)
-                    : MISSING_VALUE}
-                </span>
-              </span>
-            </div>
-          </Card>
-          <Card style={{ padding: "5px 10px" }}>
-            <CardTitle>Rates Proxies</CardTitle>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: sp(3),
-                minHeight: 72,
-              }}
-            >
-              {RATES_PROXIES.map((item) => {
-                const pos = isFiniteNumber(item.pct) ? item.pct >= 0 : null;
-                const width = isFiniteNumber(item.pct)
-                  ? Math.max(6, Math.min(100, Math.abs(item.pct) * 48))
-                  : 0;
-                return (
-                  <div
-                    key={item.sym}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "46px 40px 1fr 40px",
-                      alignItems: "center",
-                      gap: sp(4),
-                      fontSize: fs(7),
-                      fontFamily: T.mono,
-                    }}
-                  >
-                    <span style={{ color: T.textDim }}>{item.term}</span>
-                    <span style={{ color: T.textSec, fontWeight: 600 }}>
-                      {item.sym}
-                    </span>
-                    <div
-                      style={{
-                        height: dim(6),
-                        position: "relative",
-                        background: T.bg3,
-                        borderRadius: dim(3),
-                      }}
-                    >
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          bottom: 0,
-                          left: 0,
-                          width: `${width}%`,
-                          borderRadius: dim(3),
-                          background:
-                            pos == null ? T.textMuted : pos ? T.green : T.red,
-                          opacity: 0.85,
-                        }}
-                      />
-                    </div>
-                    <span
-                      style={{
-                        color:
-                          pos == null ? T.textDim : pos ? T.green : T.red,
-                        textAlign: "right",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {formatSignedPercent(item.pct)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: fs(7),
-                fontFamily: T.mono,
-              }}
-            >
-              <span style={{ color: T.textMuted }}>
-                Lead{" "}
-                <span style={{ color: T.textSec }}>
-                  {ratesSummary.leader?.sym || MISSING_VALUE}
-                </span>
-              </span>
-              <span style={{ color: T.textMuted }}>
-                Lag{" "}
-                <span style={{ color: T.textSec }}>
-                  {ratesSummary.laggard?.sym || MISSING_VALUE}
-                </span>
-              </span>
-            </div>
-          </Card>
-          <Card style={{ padding: "5px 10px" }}>
-            <CardTitle>Breadth</CardTitle>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(4),
-                marginBottom: 3,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontFamily: T.mono,
-                  fontWeight: 800,
-                  color: T.green,
-                }}
-              >
-                {breadth.total ? breadth.advancers : MISSING_VALUE}
-              </span>
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  height: dim(7),
-                  borderRadius: dim(3),
-                  overflow: "hidden",
-                }}
-              >
-                <div style={{ width: `${upPct}%`, background: T.green }} />
-                <div style={{ width: `${downPct}%`, background: T.red }} />
-              </div>
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontFamily: T.mono,
-                  fontWeight: 800,
-                  color: T.red,
-                }}
-              >
-                {breadth.total ? breadth.decliners : MISSING_VALUE}
-              </span>
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: sp(1),
-                fontSize: fs(7),
-                fontFamily: T.mono,
-              }}
-            >
-              {[
-                [
-                  "Up",
-                  breadth.total ? `${upPct.toFixed(0)}%` : MISSING_VALUE,
-                  breadth.total ? T.green : T.textDim,
-                ],
-                [
-                  "5D+",
-                  isFiniteNumber(breadth.positive5dPct)
-                    ? `${breadth.positive5dPct.toFixed(0)}%`
-                    : MISSING_VALUE,
-                  isFiniteNumber(breadth.positive5dPct)
-                    ? breadth.positive5dPct >= 50
-                      ? T.green
-                      : T.amber
-                    : T.textDim,
-                ],
-                [
-                  "Unchg",
-                  breadth.total ? `${breadth.unchanged}` : MISSING_VALUE,
-                  breadth.total ? T.text : T.textDim,
-                ],
-                [
-                  "Sectors+",
-                  breadth.sectorCoverage
-                    ? `${breadth.positiveSectors}/${breadth.sectorCoverage}`
-                    : MISSING_VALUE,
-                  breadth.sectorCoverage
-                    ? breadth.positiveSectors >=
-                      Math.ceil(breadth.sectorCoverage / 2)
-                      ? T.green
-                      : T.amber
-                    : T.textDim,
-                ],
-                [
-                  "Lead",
-                  breadth.leader?.sym || MISSING_VALUE,
-                  isFiniteNumber(breadth.leader?.chg)
-                    ? breadth.leader.chg >= 0
-                      ? T.green
-                      : T.red
-                    : T.textDim,
-                ],
-                [
-                  "Lag",
-                  breadth.laggard?.sym || MISSING_VALUE,
-                  isFiniteNumber(breadth.laggard?.chg)
-                    ? breadth.laggard.chg >= 0
-                      ? T.green
-                      : T.red
-                    : T.textDim,
-                ],
-              ].map(([l, v, c], i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: sp("1px 3px"),
-                    background: i % 2 === 0 ? `${T.bg3}40` : "transparent",
-                    borderRadius: 2,
-                  }}
-                >
-                  <span style={{ color: T.textDim }}>{l}</span>
-                  <span style={{ color: c, fontWeight: 600 }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-
-        {/* ── ROW 4.5: Sector Flow (full width, horizontal layout) — sector rotation read ── */}
-        <Card style={{ padding: "8px 12px", flexShrink: 0 }}>
-          <CardTitle
-            right={
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: flowStatus === "live" ? T.accent : T.textMuted,
-                  fontFamily: T.mono,
-                }}
-              >
-                {flowStatus === "live"
-                  ? "live option premium · today · sector rotation"
-                  : `flow ${flowStatus}`}
-              </span>
-            }
-          >
-            Sector Flow
-          </CardTitle>
-          {sectorFlow.length ? (
-            (() => {
-              const absMax = Math.max(
-                1,
-                ...sectorFlow.map((x) => Math.abs(x.calls - x.puts)),
-              );
-              // Sort by net flow magnitude — strongest signals first
-              const sorted = [...sectorFlow]
-                .map((s) => ({ ...s, net: s.calls - s.puts }))
-                .sort((a, b) => b.net - a.net);
-              const half = Math.ceil(sorted.length / 2);
-              const left = sorted.slice(0, half);
-              const right = sorted.slice(half);
-              const renderBar = (s, i) => {
-                const widthPct = (Math.abs(s.net) / absMax) * 50;
-                const netStr = (s.net >= 0 ? "+" : "-") + fmtM(Math.abs(s.net));
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "85px 1fr 56px",
-                      alignItems: "center",
-                      gap: sp(6),
-                      marginBottom: sp(3),
-                      fontSize: fs(10),
-                      fontFamily: T.mono,
-                    }}
-                  >
-                    <span style={{ color: T.textSec, fontWeight: 600 }}>
-                      {s.sector}
-                    </span>
-                    <div
-                      style={{
-                        position: "relative",
-                        height: dim(10),
-                        background: T.bg3,
-                        borderRadius: dim(2),
-                      }}
-                    >
-                      {/* Center divider */}
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          bottom: 0,
-                          left: "50%",
-                          width: dim(1),
-                          background: T.textMuted,
-                          opacity: 0.4,
-                        }}
-                      />
-                      {/* Direction bar */}
-                      {s.net >= 0 ? (
-                        <div
-                          style={{
-                            position: "absolute",
-                            left: "50%",
-                            top: 0,
-                            bottom: 0,
-                            width: `${widthPct}%`,
-                            background: T.green,
-                            opacity: 0.85,
-                            borderRadius: `0 ${dim(2)}px ${dim(2)}px 0`,
-                          }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            position: "absolute",
-                            right: "50%",
-                            top: 0,
-                            bottom: 0,
-                            width: `${widthPct}%`,
-                            background: T.red,
-                            opacity: 0.85,
-                            borderRadius: `${dim(2)}px 0 0 ${dim(2)}px`,
-                          }}
-                        />
-                      )}
-                    </div>
-                    <span
-                      style={{
-                        color: s.net >= 0 ? T.green : T.red,
-                        fontWeight: 700,
-                        textAlign: "right",
-                      }}
-                    >
-                      {netStr}
-                    </span>
-                  </div>
-                );
-              };
-              return (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: sp(20),
-                  }}
-                >
-                  <div>{left.map(renderBar)}</div>
-                  <div>{right.map(renderBar)}</div>
-                </div>
-              );
-            })()
-          ) : (
-            <DataUnavailableState
-              title="No live sector flow"
-              detail={
-                flowStatus === "loading"
-                  ? "Waiting on live options flow snapshots for the tracked market symbols."
-                  : "Sector rotation is hidden until a live options flow provider returns current data."
-              }
-            />
-          )}
-        </Card>
-
-        {/* ── ROW 5: News + Calendar + AI ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.4fr 0.7fr 1fr",
-            gap: 6,
-          }}
-        >
-          <Card style={{ padding: "6px 10px" }}>
-            <CardTitle
-              right={
-                <span
-                  style={{
-                    fontSize: fs(7),
-                    color:
-                      newsStatusLabel === "live · news"
-                        ? T.accent
-                        : T.textDim,
-                    fontFamily: T.mono,
-                  }}
-                >
-                  {newsStatusLabel}
-                </span>
-              }
-            >
-              News
-            </CardTitle>
-            {newsItems.length ? (
-              newsItems.map((item, index) => (
-                <div
-                  key={item.id}
-                  style={{
-                    display: "flex",
-                    gap: sp(5),
-                    padding: sp("3px 0"),
-                    alignItems: "flex-start",
-                    borderBottom:
-                      index < newsItems.length - 1
-                        ? `1px solid ${T.border}06`
-                        : "none",
-                    cursor: item.articleUrl ? "pointer" : "default",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = T.bg3)
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "transparent")
-                  }
-                  onClick={() => {
-                    if (!item.articleUrl || typeof window === "undefined")
-                      return;
-                    window.open(
-                      item.articleUrl,
-                      "_blank",
-                      "noopener,noreferrer",
-                    );
-                  }}
-                  title={item.publisher || undefined}
-                >
-                  <Badge color={T.accent}>{item.tag}</Badge>
-                  <div
-                    style={{
-                      width: dim(4),
-                      height: dim(4),
-                      borderRadius: "50%",
-                      background:
-                        item.s === 1
-                          ? T.green
-                          : item.s === -1
-                            ? T.red
-                            : T.textDim,
-                      marginTop: sp(4),
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span
-                    style={{
-                      flex: 1,
-                      fontSize: fs(10),
-                      color: T.textSec,
-                      fontFamily: T.sans,
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {item.text}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: fs(8),
-                      color: T.textMuted,
-                      fontFamily: T.mono,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {item.time}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <DataUnavailableState
-                title="No live news feed"
-                detail={
-                  newsStatusLabel === "loading"
-                    ? "Waiting on the live news provider."
-                    : "The news card only shows provider-backed headlines now; no authored fallback feed is rendered."
-                }
-              />
-            )}
-          </Card>
-          <Card style={{ padding: "6px 10px" }}>
-            <CardTitle
-              right={
-                <span
-                  style={{
-                    fontSize: fs(7),
-                    color:
-                      calendarStatusLabel === "earnings · live"
-                        ? T.accent
-                        : T.textDim,
-                    fontFamily: T.mono,
-                  }}
-                >
-                  {calendarStatusLabel}
-                </span>
-              }
-            >
-              Calendar
-            </CardTitle>
-            {calendarItems.length ? (
-              calendarItems.map((ev, i) => {
-                const tc =
-                  ev.type === "fomc" || ev.type === "cpi"
-                    ? T.amber
-                    : ev.type === "earnings"
-                      ? T.green
-                      : ev.type === "holiday"
-                        ? T.red
-                        : T.accent;
-                return (
-                  <div
-                    key={ev.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: sp(4),
-                      padding: sp("3px 0"),
-                      borderBottom:
-                        i < calendarItems.length - 1
-                          ? `1px solid ${T.border}06`
-                          : "none",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: dim(2),
-                        height: dim(16),
-                        borderRadius: dim(1),
-                        background: tc,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: fs(10),
-                          fontWeight: 600,
-                          fontFamily: T.sans,
-                          color: T.text,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {ev.label}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: fs(8),
-                          color: T.textMuted,
-                          fontFamily: T.mono,
-                        }}
-                      >
-                        {ev.date}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <DataUnavailableState
-                title="No live calendar data"
-                detail={
-                  calendarStatusLabel === "loading"
-                    ? "Waiting on the earnings calendar provider."
-                    : researchConfigured
-                      ? "The calendar is empty because no live entries were returned for the current window."
-                      : "Research calendar access is not configured for this environment."
-                }
-              />
-            )}
-          </Card>
-          <Card
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              padding: "6px 10px",
-            }}
-          >
-            <CardTitle right={<Badge color={T.purple}>AI</Badge>}>
-              Analysis
-            </CardTitle>
-            <div
-              style={{
-                flex: 1,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-                color: T.textSec,
-                lineHeight: 1.5,
-                padding: sp("5px 8px"),
-                background: T.bg0,
-                borderRadius: 0,
-                border: `1px solid ${T.border}`,
-              }}
-            >
-              <span
-                style={{
-                  color: !isFiniteNumber(volatilityProxy?.pct)
-                    ? T.textDim
-                    : volatilityProxy.pct <= 0
-                      ? T.green
-                      : T.amber,
-                }}
-              >
-                ▸
-              </span>{" "}
-              {volatilityProxy?.label || "Volatility"} proxy{" "}
-              {isFiniteNumber(volatilityProxy?.pct)
-                ? volatilityProxy.pct >= 0
-                  ? "firming"
-                  : "easing"
-                : "is unavailable"}{" "}
-              at {formatQuotePrice(volatilityProxy?.price)}; flow is strongest
-              in {analysisLeader?.sym || MISSING_VALUE} and weakest in{" "}
-              {analysisLaggard?.sym || MISSING_VALUE}.{"\n\n"}
-              <span
-                style={{
-                  color: !isFiniteNumber(breadth.advancePct)
-                    ? T.textDim
-                    : breadth.advancePct >= 55
-                      ? T.green
-                      : T.amber,
-                }}
-              >
-                ▸
-              </span>{" "}
-              {breadth.total
-                ? `Tracked breadth is ${breadth.advancers}/${breadth.total} green with ${isFiniteNumber(breadth.positive5dPct) ? breadth.positive5dPct.toFixed(0) : MISSING_VALUE}% of names positive over 5 sessions.`
-                : "Tracked breadth is unavailable until broker quotes populate the equity heatmap universe."}
-              {"\n\n"}
-              <span style={{ color: T.accent }}>▸</span> Treasury proxies are
-              led by {ratesSummary.leader?.sym || MISSING_VALUE} and lagged by{" "}
-              {ratesSummary.laggard?.sym || MISSING_VALUE}; keep the tape read anchored to
-              live ETF proxies until direct index and futures entitlements are
-              enabled.
-            </div>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
-};
+// MarketScreen extracted to ./screens/MarketScreen.jsx
 
 // ═══════════════════════════════════════════════════════════════════
 // SCREEN: FLOW (UOA Scanner)
 // ═══════════════════════════════════════════════════════════════════
 
-const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
+export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   const toast = useToast();
   const [alertSet, setAlertSet] = useState(false);
 
@@ -9025,1957 +7684,7 @@ const UnusualFlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
   );
 };
 
-const FlowScreen = ({ onJumpToTrade, session, symbols = [] }) => {
-  // ── Saved scans persisted in localStorage ──
-  const [savedScans, setSavedScans] = useState(
-    _initialState.flowSavedScans || [],
-  );
-  const [activeScanId, setActiveScanId] = useState(
-    _initialState.flowActiveScanId || null,
-  );
-  useEffect(() => {
-    persistState({ flowSavedScans: savedScans });
-  }, [savedScans]);
-
-  const [filter, setFilter] = useState(_initialState.flowFilter || "all");
-  const [minPrem, setMinPrem] = useState(
-    Number.isFinite(_initialState.flowMinPrem) ? _initialState.flowMinPrem : 0,
-  );
-  const [sortBy, setSortBy] = useState(_initialState.flowSortBy || "time");
-  const [selectedEvt, setSelectedEvt] = useState(null); // currently inspected contract
-  useEffect(() => {
-    persistState({
-      flowActiveScanId: activeScanId,
-      flowFilter: filter,
-      flowMinPrem: minPrem,
-      flowSortBy: sortBy,
-    });
-  }, [activeScanId, filter, minPrem, sortBy]);
-  useEffect(() => {
-    if (!activeScanId) {
-      return;
-    }
-    if (!savedScans.some((scan) => scan.id === activeScanId)) {
-      setActiveScanId(null);
-    }
-  }, [activeScanId, savedScans]);
-  const {
-    hasLiveFlow,
-    flowStatus,
-    providerSummary,
-    flowEvents,
-    flowTide,
-    tickerFlow,
-    flowClock,
-    dteBuckets,
-    marketOrderFlow,
-  } = useLiveMarketFlow(symbols);
-
-  // ── CLUSTER DETECTION ──
-  // Group activity by (ticker + strike + cp). Any group with 2+ events = cluster.
-  // We surface cluster size + total premium on each row that's part of a cluster.
-  const clusters = useMemo(() => {
-    const map = {};
-    for (const e of flowEvents) {
-      const key =
-        e.optionTicker ||
-        `${e.ticker}_${e.strike}_${e.cp}_${formatExpirationLabel(e.expirationDate)}`;
-      if (!map[key])
-        map[key] = {
-          count: 0,
-          totalPrem: 0,
-          ids: [],
-          firstTime: e.time,
-          lastTime: e.time,
-        };
-      map[key].count += 1;
-      map[key].totalPrem += e.premium;
-      map[key].ids.push(e.id);
-      if (e.time < map[key].firstTime) map[key].firstTime = e.time;
-      if (e.time > map[key].lastTime) map[key].lastTime = e.time;
-    }
-    return map;
-  }, [flowEvents]);
-  // Build per-event lookup for fast row rendering
-  const clusterFor = (e) => {
-    const key =
-      e.optionTicker ||
-      `${e.ticker}_${e.strike}_${e.cp}_${formatExpirationLabel(e.expirationDate)}`;
-    const c = clusters[key];
-    return c && c.count >= 2 ? c : null;
-  };
-
-  // ── TOP CONTRACTS BY VOLUME, per ticker ──
-  // For each ticker, group live flow events by (strike + cp), sum volume + premium, pick top 3.
-  // Clicking a contract chip opens the Contract Detail Drawer for the biggest event in that group.
-  const topContractsByTicker = useMemo(() => {
-    const byTicker = {};
-    for (const e of flowEvents) {
-      if (!byTicker[e.ticker]) byTicker[e.ticker] = {};
-      const key =
-        e.optionTicker ||
-        `${e.strike}_${e.cp}_${formatExpirationLabel(e.expirationDate)}`;
-      if (!byTicker[e.ticker][key]) {
-        byTicker[e.ticker][key] = {
-          strike: e.strike,
-          cp: e.cp,
-          dte: e.dte,
-          vol: 0,
-          premium: 0,
-          count: 0,
-          biggestEvt: e,
-        };
-      }
-      const g = byTicker[e.ticker][key];
-      g.vol += e.vol;
-      g.premium += e.premium;
-      g.count += 1;
-      if (e.premium > g.biggestEvt.premium) g.biggestEvt = e;
-    }
-    // Convert to sorted-top-3 arrays
-    const result = {};
-    for (const [ticker, contracts] of Object.entries(byTicker)) {
-      result[ticker] = Object.values(contracts)
-        .sort((a, b) => b.vol - a.vol)
-        .slice(0, 3);
-    }
-    return result;
-  }, [flowEvents]);
-
-  // Aggregate stats
-  const totalCallPrem = flowEvents
-    .filter((e) => e.cp === "C")
-    .reduce((a, e) => a + e.premium, 0);
-  const totalPutPrem = flowEvents
-    .filter((e) => e.cp === "P")
-    .reduce((a, e) => a + e.premium, 0);
-  const netPrem = totalCallPrem - totalPutPrem;
-  const goldenCount = flowEvents.filter((e) => e.golden).length;
-  const blockCount = flowEvents.filter((e) => e.type === "BLOCK").length;
-  const sweepCount = flowEvents.filter((e) => e.type === "SWEEP").length;
-  const zeroDteCount = flowEvents.filter((e) => e.dte <= 1).length;
-  const zeroDtePrem = flowEvents
-    .filter((e) => e.dte <= 1)
-    .reduce((a, e) => a + e.premium, 0);
-  const cpRatio = totalCallPrem ? totalPutPrem / totalCallPrem : 0;
-  const mostActive = [...tickerFlow].sort(
-    (a, b) => b.calls + b.puts - (a.calls + a.puts),
-  )[0] || { sym: MISSING_VALUE, calls: 0, puts: 0 };
-
-  // ── SMART MONEY COMPASS ──
-  // Institutional bias = net premium from XL trades (>$250K) on calls vs puts.
-  // Score range -100 (max bearish) to +100 (max bullish).
-  const xlTrades = flowEvents.filter((e) => e.premium >= 250000);
-  const xlCallPrem =
-    xlTrades
-      .filter((e) => e.cp === "C" && e.side === "BUY")
-      .reduce((s, e) => s + e.premium, 0) -
-    xlTrades
-      .filter((e) => e.cp === "C" && e.side === "SELL")
-      .reduce((s, e) => s + e.premium, 0);
-  const xlPutPrem =
-    xlTrades
-      .filter((e) => e.cp === "P" && e.side === "BUY")
-      .reduce((s, e) => s + e.premium, 0) -
-    xlTrades
-      .filter((e) => e.cp === "P" && e.side === "SELL")
-      .reduce((s, e) => s + e.premium, 0);
-  const xlNet = xlCallPrem - xlPutPrem;
-  const xlTotalAbs = Math.abs(xlCallPrem) + Math.abs(xlPutPrem) || 1;
-  const compassScore = Math.round((xlNet / xlTotalAbs) * 100); // -100 to +100
-  const compassVerdict =
-    compassScore >= 50
-      ? "BULLISH"
-      : compassScore >= 20
-        ? "LEAN BULL"
-        : compassScore >= -20
-          ? "NEUTRAL"
-          : compassScore >= -50
-            ? "LEAN BEAR"
-            : "BEARISH";
-  const compassColor =
-    compassScore >= 20 ? T.green : compassScore >= -20 ? T.amber : T.red;
-
-  // Filter + sort
-  let filtered = flowEvents
-    .filter((e) => {
-      if (filter === "calls") return e.cp === "C";
-      if (filter === "puts") return e.cp === "P";
-      if (filter === "golden") return e.golden;
-      if (filter === "sweep") return e.type === "SWEEP";
-      if (filter === "block") return e.type === "BLOCK";
-      if (filter === "cluster") return clusterFor(e) !== null; // new: clusters-only filter
-      return true;
-    })
-    .filter((e) => e.premium >= minPrem);
-  if (sortBy === "premium")
-    filtered = [...filtered].sort((a, b) => b.premium - a.premium);
-  else if (sortBy === "score")
-    filtered = [...filtered].sort((a, b) => b.score - a.score);
-
-  const maxTickerPrem = Math.max(1, ...tickerFlow.map((t) => t.calls + t.puts));
-  const bridgeTone = bridgeRuntimeTone(session);
-  const ibkrLoginRequired =
-    Boolean(session?.configured?.ibkr) &&
-    !session?.ibkrBridge?.authenticated &&
-    !providerSummary.providers.includes("polygon");
-  const flowDisplayLabel =
-    !hasLiveFlow && ibkrLoginRequired
-      ? "IBKR login required"
-      : providerSummary.label === "IBKR snapshot live" &&
-          session?.ibkrBridge?.liveMarketDataAvailable === false
-        ? "IBKR delayed"
-        : providerSummary.label;
-  const flowDisplayColor =
-    !hasLiveFlow && ibkrLoginRequired
-      ? T.amber
-      : flowDisplayLabel === "IBKR delayed"
-        ? T.amber
-        : providerSummary.color;
-  const flowClockActiveBuckets = flowClock.filter((bucket) => bucket.count > 0);
-  const flowClockPeak =
-    flowClockActiveBuckets.reduce(
-      (best, bucket) =>
-        !best || bucket.count > best.count || bucket.prem > best.prem
-          ? bucket
-          : best,
-      null,
-    )?.time || MISSING_VALUE;
-  const flowClockAverage = Math.round(
-    flowEvents.length / Math.max(1, flowClock.length),
-  );
-  const emptyFlowDetail =
-    flowStatus === "loading"
-      ? "Waiting on current options activity snapshots for the tracked symbols."
-      : ibkrLoginRequired
-        ? bridgeRuntimeMessage(session)
-        : providerSummary.erroredSource?.errorMessage
-          ? providerSummary.erroredSource.errorMessage
-          : providerSummary.failures[0]?.error
-            ? providerSummary.failures[0].error
-            : providerSummary.fallbackUsed
-              ? "IBKR returned no active snapshot flow and the Polygon trade fallback was empty."
-              : "IBKR returned no active snapshot flow for the tracked symbols.";
-  const flowHeader = (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: sp(8),
-        padding: sp("2px 2px 0"),
-        fontSize: fs(8),
-        fontFamily: T.mono,
-        color: T.textDim,
-      }}
-    >
-      <span>
-        Flow source ·{" "}
-        <span style={{ color: flowDisplayColor, fontWeight: 700 }}>
-          {flowDisplayLabel}
-        </span>
-      </span>
-      <span
-        title={bridgeRuntimeMessage(session)}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(5),
-          color: bridgeTone.color,
-        }}
-      >
-        <span
-          style={{
-            width: dim(6),
-            height: dim(6),
-            background: bridgeTone.color,
-            display: "inline-block",
-          }}
-        />
-        IBKR {bridgeTone.label.toUpperCase()}
-      </span>
-    </div>
-  );
-
-  if (!flowEvents.length) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100%",
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
-        <div
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: sp(8),
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          {flowHeader}
-          <Card
-            style={{
-              padding: sp(10),
-              minHeight: dim(220),
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <DataUnavailableState
-              title="No live options activity"
-              detail={emptyFlowDetail}
-            />
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
-  // ── SAVED SCAN HELPERS ──
-  const saveCurrentScan = () => {
-    const name = prompt(
-      "Name this scan:",
-      filter === "golden"
-        ? "★ Golden plays"
-        : filter === "block"
-          ? "Block trades"
-          : `${filter} ≥${(minPrem / 1000) | 0}K`,
-    );
-    if (!name) return;
-    const newScan = { id: Date.now(), name, filter, minPrem, sortBy };
-    setSavedScans((s) => [...s, newScan].slice(-8)); // cap at 8
-    setActiveScanId(newScan.id);
-  };
-  const loadScan = (scan) => {
-    setFilter(scan.filter);
-    setMinPrem(scan.minPrem);
-    setSortBy(scan.sortBy);
-    setActiveScanId(scan.id);
-  };
-  const deleteScan = (id) => {
-    setSavedScans((s) => s.filter((x) => x.id !== id));
-    if (activeScanId === id) setActiveScanId(null);
-  };
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        overflow: "hidden",
-        position: "relative",
-      }}
-    >
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: sp(8),
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
-        {flowHeader}
-
-        {/* ── ROW 1: KPI Bar ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            gap: 6,
-          }}
-        >
-          {[
-            {
-              label: "TOTAL PREMIUM",
-              value: fmtM(totalCallPrem + totalPutPrem),
-              sub: `${flowEvents.length} contracts`,
-              color: T.text,
-            },
-            {
-              label: "NET PREMIUM",
-              value: (netPrem >= 0 ? "+" : "") + fmtM(Math.abs(netPrem)),
-              sub: cpRatio < 1 ? "Bullish" : "Bearish",
-              color: netPrem >= 0 ? T.green : T.red,
-            },
-            {
-              label: "P/C RATIO",
-              value: cpRatio.toFixed(2),
-              sub: cpRatio < 0.7 ? "Greed" : cpRatio < 1 ? "Neutral" : "Fear",
-              color: cpRatio < 0.7 ? T.green : cpRatio < 1 ? T.amber : T.red,
-            },
-            {
-              label: "★ GOLDEN SWEEPS",
-              value: goldenCount,
-              sub: "High conv.",
-              color: T.amber,
-            },
-            {
-              label: "⚡ 0DTE",
-              value: zeroDteCount,
-              sub: fmtM(zeroDtePrem),
-              color: T.cyan,
-            },
-            {
-              label: "MOST ACTIVE",
-              value: mostActive.sym,
-              sub: fmtM(mostActive.calls + mostActive.puts),
-              color: T.purple,
-            },
-          ].map((k, i) => (
-            <Card key={i} style={{ padding: "5px 9px" }}>
-              <div
-                style={{
-                  fontSize: fs(7),
-                  fontWeight: 600,
-                  color: T.textDim,
-                  letterSpacing: "0.06em",
-                  fontVariant: "all-small-caps",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  lineHeight: 1,
-                }}
-              >
-                {k.label}
-              </div>
-              <div
-                style={{
-                  fontSize: fs(18),
-                  fontWeight: 800,
-                  fontFamily: T.mono,
-                  color: k.color,
-                  marginTop: sp(2),
-                  lineHeight: 1,
-                }}
-              >
-                {k.value}
-              </div>
-              <div
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.sans,
-                  marginTop: sp(1),
-                  lineHeight: 1,
-                }}
-              >
-                {k.sub}
-              </div>
-            </Card>
-          ))}
-          {/* ── SMART MONEY COMPASS ── institutional bias gauge from XL trades */}
-          <Card style={{ padding: "5px 9px" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(7),
-                  fontWeight: 600,
-                  color: T.textDim,
-                  letterSpacing: "0.06em",
-                  fontVariant: "all-small-caps",
-                  whiteSpace: "nowrap",
-                  lineHeight: 1,
-                }}
-              >
-                SMART MONEY
-              </span>
-              <span
-                style={{
-                  fontSize: fs(7),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                {xlTrades.length} XL
-              </span>
-            </div>
-            {/* Bias gauge: half-circle with needle pointing to institutional direction */}
-            <div
-              style={{
-                position: "relative",
-                width: "100%",
-                height: dim(28),
-                marginTop: sp(2),
-              }}
-            >
-              <svg
-                width="100%"
-                height="100%"
-                viewBox="0 0 100 36"
-                preserveAspectRatio="xMidYMid meet"
-              >
-                {/* Track segments: red (bearish), amber (neutral), green (bullish) */}
-                <path
-                  d="M 8 30 A 28 28 0 0 1 36 6"
-                  fill="none"
-                  stroke={T.red}
-                  strokeWidth="3.5"
-                  opacity="0.65"
-                />
-                <path
-                  d="M 36 6 A 28 28 0 0 1 64 6"
-                  fill="none"
-                  stroke={T.amber}
-                  strokeWidth="3.5"
-                  opacity="0.65"
-                />
-                <path
-                  d="M 64 6 A 28 28 0 0 1 92 30"
-                  fill="none"
-                  stroke={T.green}
-                  strokeWidth="3.5"
-                  opacity="0.65"
-                />
-                {/* Needle: angle in degrees, -90° (left/bearish) to +90° (right/bullish) */}
-                {(() => {
-                  const angle = (compassScore / 100) * 90; // -90 to +90
-                  const rad = ((angle - 90) * Math.PI) / 180;
-                  const cx = 50,
-                    cy = 30,
-                    len = 22;
-                  const x2 = cx + len * Math.cos(rad);
-                  const y2 = cy + len * Math.sin(rad);
-                  return (
-                    <>
-                      <line
-                        x1={cx}
-                        y1={cy}
-                        x2={x2}
-                        y2={y2}
-                        stroke={compassColor}
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                      />
-                      <circle cx={cx} cy={cy} r="2.2" fill={compassColor} />
-                    </>
-                  );
-                })()}
-              </svg>
-            </div>
-            <div
-              style={{
-                fontSize: fs(11),
-                fontWeight: 800,
-                fontFamily: T.display,
-                color: compassColor,
-                marginTop: sp(1),
-                letterSpacing: "0.04em",
-              }}
-            >
-              {compassVerdict}
-            </div>
-            <div
-              style={{
-                fontSize: fs(8),
-                color: T.textDim,
-                fontFamily: T.mono,
-                marginTop: 1,
-              }}
-            >
-              {compassScore >= 0 ? "+" : ""}
-              {compassScore} bias
-            </div>
-          </Card>
-        </div>
-
-        {/* ── ROW 2: Premium Tide + Ticker Flow Leaderboard ── */}
-        <div
-          style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 6 }}
-        >
-          {/* Premium Tide Chart */}
-          <div
-            style={{
-              background: T.bg2,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(6),
-              padding: sp("8px 10px"),
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 6,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.textSec,
-                }}
-              >
-                Premium Tide · Intraday
-              </span>
-              <div
-                style={{
-                  display: "flex",
-                  gap: sp(8),
-                  fontSize: fs(9),
-                  fontFamily: T.mono,
-                }}
-              >
-                <span style={{ color: T.green }}>
-                  ■ Calls {fmtM(totalCallPrem)}
-                </span>
-                <span style={{ color: T.red }}>
-                  ■ Puts {fmtM(totalPutPrem)}
-                </span>
-                <span style={{ color: T.accent, fontWeight: 700 }}>
-                  Net {netPrem >= 0 ? "+" : ""}
-                  {fmtM(Math.abs(netPrem))}
-                </span>
-              </div>
-            </div>
-            <div style={{ height: dim(200), width: "100%" }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={flowTide}>
-                  <XAxis
-                    dataKey="time"
-                    tick={{ fontSize: fs(9), fill: T.textMuted }}
-                  />
-                  <YAxis
-                    tick={{ fontSize: fs(9), fill: T.textMuted }}
-                    tickFormatter={(v) => `${(v / 1e6).toFixed(1)}M`}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: T.bg4,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: dim(6),
-                      fontSize: fs(10),
-                      fontFamily: T.mono,
-                    }}
-                    formatter={(v) =>
-                      `${v >= 0 ? "+" : ""}$${(v / 1e6).toFixed(2)}M`
-                    }
-                  />
-                  <ReferenceLine
-                    y={0}
-                    stroke={T.textMuted}
-                    strokeDasharray="2 2"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="cumNet"
-                    stroke={T.accent}
-                    strokeWidth={2}
-                    fill={T.accent}
-                    fillOpacity={0.4}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Ticker Flow Leaderboard with top contracts per ticker */}
-          <Card style={{ padding: "8px 10px" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 6,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.textSec,
-                }}
-              >
-                Top Tickers by Flow
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                Top 3 contracts · click to inspect
-              </span>
-            </div>
-            {tickerFlow.map((t) => {
-              const total = t.calls + t.puts;
-              const net = t.calls - t.puts;
-              const callPct = (t.calls / total) * 100;
-              const barW = (total / maxTickerPrem) * 100;
-              const topContracts = topContractsByTicker[t.sym] || [];
-              return (
-                <div
-                  key={t.sym}
-                  style={{
-                    marginBottom: sp(6),
-                    paddingBottom: sp(4),
-                    borderBottom: `1px solid ${T.border}30`,
-                  }}
-                >
-                  {/* Ticker row: symbol + net premium */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      fontSize: fs(9),
-                      fontFamily: T.mono,
-                      marginBottom: sp(1),
-                    }}
-                  >
-                    <span style={{ fontWeight: 700, color: T.text }}>
-                      {t.sym}
-                    </span>
-                    <span
-                      style={{
-                        color: net >= 0 ? T.green : T.red,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {net >= 0 ? "+" : "-"}
-                      {fmtM(Math.abs(net))}
-                    </span>
-                  </div>
-                  {/* Call/put ratio bar */}
-                  <div
-                    style={{
-                      display: "flex",
-                      height: dim(8),
-                      borderRadius: dim(2),
-                      overflow: "hidden",
-                      background: T.bg3,
-                      width: `${barW}%`,
-                      marginBottom: sp(3),
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${callPct}%`,
-                        background: T.green,
-                        height: "100%",
-                      }}
-                    />
-                    <div
-                      style={{ flex: 1, background: T.red, height: "100%" }}
-                    />
-                  </div>
-                  {/* Top 3 contracts by volume */}
-                  {topContracts.length > 0 && (
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(3, 1fr)",
-                        gap: sp(3),
-                      }}
-                    >
-                      {topContracts.map((c, i) => {
-                        const cpColor = c.cp === "C" ? T.green : T.red;
-                        const volStr =
-                          c.vol >= 1000
-                            ? `${(c.vol / 1000).toFixed(1)}K`
-                            : `${c.vol}`;
-                        return (
-                          <div
-                            key={i}
-                            onClick={() =>
-                              setSelectedEvt((prev) =>
-                                prev && prev.id === c.biggestEvt.id
-                                  ? null
-                                  : c.biggestEvt,
-                              )
-                            }
-                            title={`${t.sym} ${c.strike}${c.cp} · ${c.count} event${c.count === 1 ? "" : "s"} · ${fmtM(c.premium)} premium · ${volStr} vol`}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: sp(4),
-                              padding: sp("4px 6px"),
-                              background: `${cpColor}08`,
-                              border: `1px solid ${cpColor}30`,
-                              borderLeft: `2px solid ${cpColor}`,
-                              borderRadius: dim(2),
-                              cursor: "pointer",
-                              transition: "background 0.1s, transform 0.1s",
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background = `${cpColor}16`;
-                              e.currentTarget.style.transform =
-                                "translateY(-1px)";
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = `${cpColor}08`;
-                              e.currentTarget.style.transform = "translateY(0)";
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: fs(10),
-                                fontWeight: 800,
-                                fontFamily: T.mono,
-                                color: cpColor,
-                                lineHeight: 1,
-                              }}
-                            >
-                              {c.cp}
-                              {c.strike}
-                            </span>
-                            <div
-                              style={{
-                                flex: 1,
-                                display: "flex",
-                                justifyContent: "space-between",
-                                fontSize: fs(8),
-                                fontFamily: T.mono,
-                                color: T.textDim,
-                                lineHeight: 1,
-                              }}
-                            >
-                              <span>{volStr}</span>
-                              <span>{c.dte}d</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </Card>
-        </div>
-
-        {/* ── ROW 2B: Flow Analytics (Clock + Sector + DTE) ── */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
-            gap: 6,
-          }}
-        >
-          {/* Flow Clock */}
-          <div
-            style={{
-              background: T.bg2,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(6),
-              padding: "6px 10px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 4,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.textSec,
-                }}
-              >
-                Flow Clock
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                Activity by time
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-end",
-                gap: sp(2),
-                height: dim(72),
-                padding: "0 2px",
-              }}
-            >
-              {flowClock.map((bucket, i) => {
-                const maxCount = Math.max(...flowClock.map((b) => b.count), 1);
-                const heightPct = (bucket.count / maxCount) * 100;
-                const color =
-                  bucket.prem > 1500000
-                    ? T.amber
-                    : bucket.prem > 1000000
-                      ? T.accent
-                      : T.textDim;
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "flex-end",
-                      height: "100%",
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: `${heightPct}%`,
-                        background: color,
-                        borderRadius: "2px 2px 0 0",
-                        minHeight: 2,
-                        opacity: 0.85,
-                      }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: fs(7),
-                color: T.textMuted,
-                fontFamily: T.mono,
-                marginTop: sp(2),
-                padding: "0 2px",
-              }}
-            >
-              <span>9:30</span>
-              <span>12:00</span>
-              <span>16:00</span>
-            </div>
-            <div
-              style={{
-                marginTop: sp(2),
-                padding: sp("3px 6px"),
-                background: T.bg3,
-                borderRadius: dim(3),
-                fontSize: fs(8),
-                fontFamily: T.mono,
-                color: T.textDim,
-                display: "flex",
-                justifyContent: "space-between",
-              }}
-            >
-              <span>
-                Peak:{" "}
-                <span style={{ color: T.amber, fontWeight: 600 }}>
-                  {flowClockPeak}
-                </span>
-              </span>
-              <span>
-                Avg:{" "}
-                <span style={{ color: T.textSec, fontWeight: 600 }}>
-                  {flowClockAverage} / 30min
-                </span>
-              </span>
-            </div>
-          </div>
-
-          {/* Order Flow Distribution — moved from Market tab where it was cramped */}
-          <div
-            style={{
-              background: T.bg2,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(6),
-              padding: "6px 10px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 4,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.textSec,
-                }}
-              >
-                Order Flow
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                $M · by trade size
-              </span>
-            </div>
-            {(() => {
-              const buy =
-                marketOrderFlow.buyXL +
-                marketOrderFlow.buyL +
-                marketOrderFlow.buyM +
-                marketOrderFlow.buyS;
-              const sell =
-                marketOrderFlow.sellXL +
-                marketOrderFlow.sellL +
-                marketOrderFlow.sellM +
-                marketOrderFlow.sellS;
-              const buyPct = (buy / (buy + sell)) * 100;
-              const max = Math.max(
-                marketOrderFlow.buyXL,
-                marketOrderFlow.buyL,
-                marketOrderFlow.buyM,
-                marketOrderFlow.buyS,
-                marketOrderFlow.sellXL,
-                marketOrderFlow.sellL,
-                marketOrderFlow.sellM,
-                marketOrderFlow.sellS,
-                1,
-              );
-              return (
-                <>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: sp(8),
-                      marginBottom: sp(2),
-                    }}
-                  >
-                    <OrderFlowDonut
-                      flow={marketOrderFlow}
-                      size={dim(64)}
-                      thickness={dim(10)}
-                    />
-                    <div
-                      style={{
-                        flex: 1,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: sp(2),
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontFamily: T.mono,
-                          fontSize: fs(10),
-                        }}
-                      >
-                        <span style={{ color: T.green, fontWeight: 700 }}>
-                          ${buy.toFixed(0)}M
-                        </span>
-                        <span style={{ color: T.red, fontWeight: 700 }}>
-                          ${sell.toFixed(0)}M
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          height: dim(4),
-                          borderRadius: dim(2),
-                          overflow: "hidden",
-                          background: T.bg3,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${buyPct}%`,
-                            background: T.green,
-                            opacity: 0.85,
-                          }}
-                        />
-                        <div
-                          style={{
-                            width: `${100 - buyPct}%`,
-                            background: T.red,
-                            opacity: 0.85,
-                          }}
-                        />
-                      </div>
-                      <div
-                        style={{
-                          fontSize: fs(8),
-                          color: T.textDim,
-                          fontFamily: T.mono,
-                        }}
-                      >
-                        {buyPct.toFixed(1)}% buy ·{" "}
-                        <span
-                          style={{
-                            color: buy >= sell ? T.green : T.red,
-                            fontWeight: 600,
-                          }}
-                        >
-                          {buy >= sell ? "BULLISH" : "BEARISH"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      borderTop: `1px solid ${T.border}`,
-                      paddingTop: sp(2),
-                    }}
-                  >
-                    <SizeBucketRow
-                      label="XL"
-                      buy={marketOrderFlow.buyXL}
-                      sell={marketOrderFlow.sellXL}
-                      maxValue={max}
-                    />
-                    <SizeBucketRow
-                      label="L"
-                      buy={marketOrderFlow.buyL}
-                      sell={marketOrderFlow.sellL}
-                      maxValue={max}
-                    />
-                    <SizeBucketRow
-                      label="M"
-                      buy={marketOrderFlow.buyM}
-                      sell={marketOrderFlow.sellM}
-                      maxValue={max}
-                    />
-                    <SizeBucketRow
-                      label="S"
-                      buy={marketOrderFlow.buyS}
-                      sell={marketOrderFlow.sellS}
-                      maxValue={max}
-                    />
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-
-          {/* DTE Buckets */}
-          <div
-            style={{
-              background: T.bg2,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(6),
-              padding: "6px 10px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 4,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.textSec,
-                }}
-              >
-                Expiration Buckets
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                C vs P premium
-              </span>
-            </div>
-            <div>
-              {dteBuckets.map((b, i) => {
-                const total = b.calls + b.puts;
-                const callPct = (b.calls / total) * 100;
-                const maxTotal = Math.max(
-                  1,
-                  ...dteBuckets.map((x) => x.calls + x.puts),
-                );
-                const barWidth = (total / maxTotal) * 100;
-                return (
-                  <div key={i} style={{ marginBottom: 2 }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        fontSize: fs(8),
-                        fontFamily: T.mono,
-                        marginBottom: 1,
-                      }}
-                    >
-                      <span style={{ color: T.textSec, fontWeight: 600 }}>
-                        {b.bucket === "0DTE" && (
-                          <span style={{ color: T.amber, marginRight: 3 }}>
-                            ⚡
-                          </span>
-                        )}
-                        {b.bucket}
-                      </span>
-                      <span style={{ color: T.textDim }}>
-                        {b.count} events · {fmtM(total)}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        height: dim(7),
-                        borderRadius: dim(2),
-                        overflow: "hidden",
-                        background: T.bg3,
-                        width: `${barWidth}%`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${callPct}%`,
-                          background: T.green,
-                          opacity: 0.85,
-                        }}
-                      />
-                      <div
-                        style={{ flex: 1, background: T.red, opacity: 0.85 }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* ── ROW 2C: Top Activity Spotlight (hidden when contract detail is up) ── */}
-        {!selectedEvt && (
-          <div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(6),
-                marginBottom: sp(4),
-                padding: "0 2px",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.textSec,
-                  letterSpacing: "0.02em",
-                }}
-              >
-                Top Activity Today
-              </span>
-              <div style={{ flex: 1, height: dim(1), background: T.border }} />
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                sorted by premium
-              </span>
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4, 1fr)",
-                gap: 6,
-              }}
-            >
-              {[...flowEvents]
-                .sort((a, b) => b.premium - a.premium)
-                .slice(0, 4)
-                .map((evt) => {
-                  const sideColor =
-                    evt.side === "BUY"
-                      ? T.green
-                      : evt.side === "SELL"
-                        ? T.red
-                        : T.textDim;
-                  const cpColor = evt.cp === "C" ? T.green : T.red;
-                  const typeColor =
-                    evt.type === "SWEEP"
-                      ? T.amber
-                      : evt.type === "BLOCK"
-                        ? T.accent
-                        : T.purple;
-                  const scoreColor =
-                    evt.score >= 80
-                      ? T.amber
-                      : evt.score >= 60
-                        ? T.green
-                        : T.textDim;
-                  const context =
-                    evt.basis === "snapshot"
-                      ? "Snapshot-derived option activity"
-                      : evt.golden
-                        ? "Golden sweep · High conviction"
-                        : evt.type === "BLOCK"
-                      ? "Institutional block · Off-exchange"
-                      : evt.type === "SWEEP"
-                        ? "Aggressive multi-exchange sweep"
-                        : evt.type === "SPLIT"
-                          ? "Split fill · Multiple prices"
-                          : "Multi-leg strategy";
-                  return (
-                    <div
-                      key={evt.id}
-                      onClick={() =>
-                        setSelectedEvt((prev) =>
-                          prev && prev.id === evt.id ? null : evt,
-                        )
-                      }
-                      style={{
-                        background: T.bg2,
-                        border: `1px solid ${evt.golden ? T.amber : T.border}`,
-                        borderRadius: dim(6),
-                        padding: sp("6px 10px"),
-                        borderLeft: `3px solid ${evt.golden ? T.amber : cpColor}`,
-                        position: "relative",
-                        cursor: "pointer",
-                        transition: "transform 0.1s, box-shadow 0.1s",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.transform = "translateY(-1px)";
-                        e.currentTarget.style.boxShadow = `0 4px 12px ${T.bg0}80`;
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.transform = "translateY(0)";
-                        e.currentTarget.style.boxShadow = "none";
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "flex-start",
-                          marginBottom: 3,
-                        }}
-                      >
-                        <div>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 4,
-                            }}
-                          >
-                            {evt.golden && (
-                              <span
-                                style={{ color: T.amber, fontSize: fs(11) }}
-                              >
-                                ★
-                              </span>
-                            )}
-                            <span
-                              style={{
-                                fontSize: fs(14),
-                                fontWeight: 800,
-                                fontFamily: T.mono,
-                                color: T.text,
-                              }}
-                            >
-                              {evt.ticker}
-                            </span>
-                            <span
-                              style={{
-                                fontSize: fs(11),
-                                fontWeight: 700,
-                                fontFamily: T.mono,
-                                color: cpColor,
-                              }}
-                            >
-                              {evt.cp}
-                              {evt.strike}
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              fontSize: fs(8),
-                              color: T.textDim,
-                              fontFamily: T.mono,
-                              marginTop: 1,
-                            }}
-                          >
-                            exp {evt.dte}d · IV{" "}
-                            {isFiniteNumber(evt.iv)
-                              ? `${(evt.iv * 100).toFixed(1)}%`
-                              : MISSING_VALUE}
-                          </div>
-                        </div>
-                        <Badge color={scoreColor}>{evt.score}</Badge>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: sp(4),
-                          marginBottom: 3,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: fs(18),
-                            fontWeight: 800,
-                            fontFamily: T.mono,
-                            color: evt.premium > 400000 ? T.amber : T.text,
-                          }}
-                        >
-                          {evt.premium >= 1e6
-                            ? `$${(evt.premium / 1e6).toFixed(2)}M`
-                            : `$${(evt.premium / 1e3).toFixed(0)}K`}
-                        </span>
-                        <Badge color={sideColor}>{evt.side}</Badge>
-                        <Badge color={typeColor}>{evt.type}</Badge>
-                        <Badge color={flowProviderColor(evt.provider)}>
-                          {evt.sourceLabel}
-                        </Badge>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: fs(7),
-                          color: T.textDim,
-                          fontFamily: T.mono,
-                          paddingTop: sp(3),
-                          borderTop: `1px solid ${T.border}08`,
-                        }}
-                      >
-                        <span>{evt.time} ET</span>
-                        <span>
-                          Vol {fmtCompactNumber(evt.vol)} / OI{" "}
-                          {fmtCompactNumber(evt.oi)}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: fs(7),
-                          color: T.textMuted,
-                          fontFamily: T.sans,
-                          fontStyle: "italic",
-                          marginTop: 2,
-                        }}
-                      >
-                        {context}
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        )}
-
-        {/* ── ROW 3a: Saved Scans bar (only renders if user has saved any) ── */}
-        {savedScans.length > 0 && (
-          <div
-            style={{
-              display: "flex",
-              gap: sp(4),
-              alignItems: "center",
-              flexWrap: "wrap",
-              padding: "2px 0",
-            }}
-          >
-            <span
-              style={{
-                fontSize: fs(8),
-                fontWeight: 700,
-                color: T.textMuted,
-                letterSpacing: "0.08em",
-                marginRight: 2,
-              }}
-            >
-              SAVED
-            </span>
-            {savedScans.map((scan) => (
-              <div
-                key={scan.id}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: sp(3),
-                  padding: sp("3px 6px 3px 8px"),
-                  borderRadius: 0,
-                  background:
-                    activeScanId === scan.id ? `${T.accent}20` : T.bg2,
-                  border: `1px solid ${activeScanId === scan.id ? T.accent : T.border}`,
-                  cursor: "pointer",
-                  transition:
-                    "background 0.12s ease, border-color 0.12s ease, transform 0.12s ease",
-                }}
-                onClick={() => loadScan(scan)}
-                onMouseEnter={(event) => {
-                  if (activeScanId !== scan.id) {
-                    event.currentTarget.style.background = T.bg3;
-                    event.currentTarget.style.borderColor = T.textMuted;
-                  }
-                  event.currentTarget.style.transform = "translateY(-1px)";
-                }}
-                onMouseLeave={(event) => {
-                  event.currentTarget.style.background =
-                    activeScanId === scan.id ? `${T.accent}20` : T.bg2;
-                  event.currentTarget.style.borderColor =
-                    activeScanId === scan.id ? T.accent : T.border;
-                  event.currentTarget.style.transform = "translateY(0)";
-                }}
-                title={`${scan.name} · ${scan.filter} · min ${scan.minPrem} · sort ${scan.sortBy}`}
-              >
-                <span
-                  style={{
-                    fontSize: fs(9),
-                    fontWeight: 600,
-                    color: activeScanId === scan.id ? T.accent : T.textSec,
-                    fontFamily: T.sans,
-                  }}
-                >
-                  {scan.name}
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteScan(scan.id);
-                  }}
-                  title="Delete scan"
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: T.textMuted,
-                    cursor: "pointer",
-                    fontSize: fs(11),
-                    padding: 0,
-                    lineHeight: 1,
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <span style={{ flex: 1 }} />
-            <span
-              style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}
-            >
-              {savedScans.length} of 8
-            </span>
-          </div>
-        )}
-
-        {/* ── ROW 3: Filter Bar ── */}
-        <div
-          style={{
-            display: "flex",
-            gap: sp(4),
-            alignItems: "center",
-            flexWrap: "wrap",
-            padding: "2px 0",
-          }}
-        >
-          <span
-            style={{
-              fontSize: fs(7),
-              fontWeight: 600,
-              color: T.textDim,
-              letterSpacing: "0.06em",
-              fontVariant: "all-small-caps",
-            }}
-          >
-            Type
-          </span>
-          {[
-            ["all", "All"],
-            ["calls", "Calls"],
-            ["puts", "Puts"],
-            ["golden", "★ Golden"],
-            ["sweep", "Sweep"],
-            ["block", "Block"],
-            ["cluster", "🔁 Cluster"],
-          ].map(([k, l]) => (
-            <Pill
-              key={k}
-              active={filter === k}
-              onClick={() => {
-                setFilter(k);
-                setActiveScanId(null);
-              }}
-              color={
-                k === "golden" ? T.amber : k === "cluster" ? T.cyan : undefined
-              }
-            >
-              {l}
-            </Pill>
-          ))}
-          <div
-            style={{
-              width: dim(1),
-              height: dim(16),
-              background: T.border,
-              margin: "0 2px",
-            }}
-          />
-          <span
-            style={{
-              fontSize: fs(7),
-              fontWeight: 600,
-              color: T.textDim,
-              letterSpacing: "0.06em",
-              fontVariant: "all-small-caps",
-            }}
-          >
-            Min $
-          </span>
-          {[
-            [0, "All"],
-            [50000, "$50K"],
-            [100000, "$100K"],
-            [250000, "$250K"],
-          ].map(([v, l]) => (
-            <Pill
-              key={v}
-              active={minPrem === v}
-              onClick={() => {
-                setMinPrem(v);
-                setActiveScanId(null);
-              }}
-            >
-              {l}
-            </Pill>
-          ))}
-          <div
-            style={{
-              width: dim(1),
-              height: dim(16),
-              background: T.border,
-              margin: "0 2px",
-            }}
-          />
-          <span
-            style={{
-              fontSize: fs(7),
-              fontWeight: 600,
-              color: T.textDim,
-              letterSpacing: "0.06em",
-              fontVariant: "all-small-caps",
-            }}
-          >
-            Sort
-          </span>
-          {[
-            ["time", "Time"],
-            ["premium", "Premium"],
-            ["score", "Score"],
-          ].map(([k, l]) => (
-            <Pill
-              key={k}
-              active={sortBy === k}
-              onClick={() => {
-                setSortBy(k);
-                setActiveScanId(null);
-              }}
-            >
-              {l}
-            </Pill>
-          ))}
-          <div
-            style={{
-              width: dim(1),
-              height: dim(16),
-              background: T.border,
-              margin: "0 2px",
-            }}
-          />
-          <button
-            onClick={saveCurrentScan}
-            title="Save current filter as a named scan"
-            style={{
-              padding: sp("3px 7px"),
-              fontSize: fs(10),
-              fontWeight: 600,
-              fontFamily: T.sans,
-              background: "transparent",
-              color: T.accent,
-              border: `1px solid ${T.accent}`,
-              borderRadius: 0,
-              cursor: "pointer",
-              transition: "background 0.12s ease, color 0.12s ease",
-            }}
-            onMouseEnter={(event) => {
-              event.currentTarget.style.background = `${T.accent}14`;
-            }}
-            onMouseLeave={(event) => {
-              event.currentTarget.style.background = "transparent";
-            }}
-          >
-            + Save
-          </button>
-          <span style={{ flex: 1 }} />
-          <span
-            style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}
-          >
-            {filtered.length} / {flowEvents.length}
-          </span>
-        </div>
-
-        {/* ── ROW 4: Flow Tape (default) or Contract Detail (when a contract is selected) ── */}
-        {selectedEvt ? (
-          <ContractDetailInline
-            evt={selectedEvt}
-            onBack={() => setSelectedEvt(null)}
-            onJumpToTrade={(evt) => {
-              setSelectedEvt(null);
-              onJumpToTrade && onJumpToTrade(evt);
-            }}
-          />
-        ) : (
-          <Card
-            noPad
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              minHeight: 300,
-            }}
-          >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "48px 40px 40px 60px 130px 52px 72px 56px 56px 48px 52px 42px",
-                padding: sp("6px 10px"),
-                fontSize: fs(8),
-                fontWeight: 700,
-                color: T.textMuted,
-                letterSpacing: "0.08em",
-                borderBottom: `1px solid ${T.border}`,
-                gap: sp(3),
-                flexShrink: 0,
-              }}
-            >
-              <span>TIME</span>
-              <span>SIDE</span>
-              <span>TYPE</span>
-              <span>TICK</span>
-              <span>CONTRACT</span>
-              <span style={{ textAlign: "right" }}>DTE</span>
-              <span style={{ textAlign: "right" }}>PREMIUM</span>
-              <span style={{ textAlign: "right" }}>VOL</span>
-              <span style={{ textAlign: "right" }}>OI</span>
-              <span style={{ textAlign: "right" }}>V/OI</span>
-              <span style={{ textAlign: "right" }}>IV</span>
-              <span style={{ textAlign: "center" }}>SCORE</span>
-            </div>
-
-            <div style={{ flex: 1, overflowY: "auto" }}>
-              {filtered.map((evt) => {
-                const sideColor =
-                  evt.side === "BUY"
-                    ? T.green
-                    : evt.side === "SELL"
-                      ? T.red
-                      : T.textDim;
-                const cpColor = evt.cp === "C" ? T.green : T.red;
-                const premStr =
-                  evt.premium >= 1e6
-                    ? `$${(evt.premium / 1e6).toFixed(2)}M`
-                    : `$${(evt.premium / 1e3).toFixed(0)}K`;
-                const voi =
-                  isFiniteNumber(evt.vol) && isFiniteNumber(evt.oi) && evt.oi > 0
-                    ? evt.vol / evt.oi
-                    : null;
-                const scoreColor =
-                  evt.score >= 80
-                    ? T.amber
-                    : evt.score >= 60
-                      ? T.green
-                      : T.textDim;
-                const typeColor =
-                  evt.type === "SWEEP"
-                    ? T.amber
-                    : evt.type === "BLOCK"
-                      ? T.accent
-                      : T.purple;
-                return (
-                  <div
-                    key={evt.id}
-                    onClick={() =>
-                      setSelectedEvt((prev) =>
-                        prev && prev.id === evt.id ? null : evt,
-                      )
-                    }
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "48px 40px 40px 60px 130px 52px 72px 56px 56px 48px 52px 42px",
-                      padding: sp("5px 10px"),
-                      fontSize: fs(10),
-                      fontFamily: T.mono,
-                      gap: sp(3),
-                      alignItems: "center",
-                      borderBottom: `1px solid ${T.border}08`,
-                      background: evt.golden ? `${T.amber}10` : "transparent",
-                      borderLeft: evt.golden
-                        ? `2px solid ${T.amber}`
-                        : "2px solid transparent",
-                      cursor: "pointer",
-                      transition: "background 0.1s",
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = evt.golden
-                        ? `${T.amber}18`
-                        : T.bg3)
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = evt.golden
-                        ? `${T.amber}10`
-                        : "transparent")
-                    }
-                  >
-                    <span style={{ color: T.textDim }}>{evt.time}</span>
-                    <Badge color={sideColor}>{evt.side}</Badge>
-                    <Badge color={typeColor}>{evt.type}</Badge>
-                    <span
-                      style={{
-                        fontWeight: 700,
-                        color: T.text,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 3,
-                      }}
-                    >
-                      {evt.golden && (
-                        <span style={{ color: T.amber, fontSize: fs(10) }}>
-                          ★
-                        </span>
-                      )}
-                      {evt.ticker}
-                    </span>
-                    <span
-                      style={{
-                        color: T.textSec,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: sp(3),
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: cpColor,
-                          fontWeight: 600,
-                          marginRight: 2,
-                        }}
-                      >
-                        {evt.cp}
-                      </span>
-                      {evt.strike}{" "}
-                      <span style={{ color: T.textDim }}>
-                        {formatExpirationLabel(evt.expirationDate)}
-                      </span>
-                      {(() => {
-                        const c = clusterFor(evt);
-                        if (!c) return null;
-                        return (
-                          <span
-                            title={`${c.count} events on this contract today · total $${(c.totalPrem / 1e6).toFixed(2)}M`}
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 1,
-                              padding: sp("0px 4px"),
-                              borderRadius: dim(2),
-                              background: `${T.cyan}20`,
-                              border: `1px solid ${T.cyan}50`,
-                              color: T.cyan,
-                              fontWeight: 700,
-                              fontSize: fs(8),
-                              fontFamily: T.mono,
-                              marginLeft: sp(2),
-                            }}
-                          >
-                            🔁 {c.count}×
-                          </span>
-                        );
-                      })()}
-                      <Badge color={flowProviderColor(evt.provider)}>
-                        {evt.sourceLabel}
-                      </Badge>
-                    </span>
-                    <span style={{ textAlign: "right", color: T.textDim }}>
-                      {evt.dte}d
-                    </span>
-                    <span
-                      style={{
-                        textAlign: "right",
-                        fontWeight: 700,
-                        color:
-                          evt.premium > 250000
-                            ? T.amber
-                            : evt.premium > 100000
-                              ? T.text
-                              : T.textSec,
-                      }}
-                    >
-                      {premStr}
-                    </span>
-                    <span style={{ textAlign: "right", color: T.textSec }}>
-                      {fmtCompactNumber(evt.vol)}
-                    </span>
-                    <span style={{ textAlign: "right", color: T.textDim }}>
-                      {fmtCompactNumber(evt.oi)}
-                    </span>
-                    <span
-                      style={{
-                        textAlign: "right",
-                        color: isFiniteNumber(voi) && voi > 1 ? T.amber : T.textDim,
-                        fontWeight: isFiniteNumber(voi) && voi > 1 ? 600 : 400,
-                      }}
-                    >
-                      {isFiniteNumber(voi) ? voi.toFixed(2) : MISSING_VALUE}
-                    </span>
-                    <span style={{ textAlign: "right", color: T.textDim }}>
-                      {isFiniteNumber(evt.iv)
-                        ? `${(evt.iv * 100).toFixed(1)}%`
-                        : MISSING_VALUE}
-                    </span>
-                    <span style={{ textAlign: "center" }}>
-                      <Badge color={scoreColor}>{evt.score}</Badge>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        )}
-      </div>
-    </div>
-  );
-};
+// FlowScreen extracted to ./screens/FlowScreen.jsx
 
 // ═══════════════════════════════════════════════════════════════════
 // SCREEN: TRADE
@@ -12017,7 +8726,7 @@ const PayoffDiagram = ({
   );
 };
 
-const TradeOrderTicket = ({
+export const TradeOrderTicket = ({
   slot,
   chainRows = [],
   expiration,
@@ -13014,7 +9723,7 @@ const TradeOrderTicket = ({
   );
 };
 
-const TradeStrategyGreeksPanel = ({
+export const TradeStrategyGreeksPanel = ({
   slot,
   chainRows = [],
   onApplyStrategy,
@@ -13365,7 +10074,7 @@ const TradeStrategyGreeksPanel = ({
   );
 };
 
-const TradeL2Panel = ({
+export const TradeL2Panel = ({
   slot,
   chainRows = [],
   flowEvents = [],
@@ -14193,7 +10902,7 @@ const TradeL2Panel = ({
   );
 };
 
-const TradePositionsPanel = ({
+export const TradePositionsPanel = ({
   accountId,
   environment,
   brokerConfigured,
@@ -15695,7 +12404,7 @@ const TradePositionsPanel = ({
   );
 };
 
-const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
+export const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -15979,7 +12688,7 @@ const TickerUniverseSearchPanel = ({ open, onSelectTicker, onClose }) => {
 // ─── TICKER TAB STRIP ───
 // Browser-style horizontal tabs of recently-viewed/pinned tickers.
 // Click to switch the focused ticker. ✕ removes from strip.
-const TickerTabStrip = ({ recent, active, onSelect, onClose, onAddNew }) => {
+export const TickerTabStrip = ({ recent, active, onSelect, onClose, onAddNew }) => {
   return (
     <div
       style={{
@@ -16086,7 +12795,7 @@ const TickerTabStrip = ({ recent, active, onSelect, onClose, onAddNew }) => {
 
 // ─── COMPACT TICKER HEADER ───
 // One row showing ticker + price + key stats. Replaces the wide account strip on Trade tab.
-const TradeTickerHeader = ({
+export const TradeTickerHeader = ({
   ticker,
   chainRows = [],
   expiration,
@@ -16243,7 +12952,7 @@ const EQUITY_CHART_STUDIES = [
   { id: "atr-14", label: "ATR" },
 ];
 
-const TradeEquityPanel = ({
+export const TradeEquityPanel = ({
   ticker,
   flowEvents = [],
   stockAggregateStreamingEnabled = false,
@@ -16486,7 +13195,7 @@ const TradeEquityPanel = ({
 
 // ─── FOCUSED OPTIONS CHAIN PANEL ───
 // Taller chain panel. Header has expiration selector + implied move + ATM strike.
-const TradeChainPanel = ({
+export const TradeChainPanel = ({
   ticker,
   contract,
   chainRows = [],
@@ -16647,7 +13356,7 @@ const TradeChainPanel = ({
 
 // ─── FOCUSED CONTRACT DETAIL PANEL ───
 // Selected contract chart with entry line + HOLDING badge.
-const TradeContractDetailPanel = ({
+export const TradeContractDetailPanel = ({
   ticker,
   contract,
   chainRows = [],
@@ -17200,7 +13909,7 @@ const NetFlowTimeline = ({ data, height = 130 }) => {
   );
 };
 
-const TradeOptionsFlowPanel = ({ ticker, flowEvents = [] }) => {
+export const TradeOptionsFlowPanel = ({ ticker, flowEvents = [] }) => {
   const info = ensureTradeTickerInfo(ticker, ticker);
   const dteData = useMemo(
     () => buildTradeOptionFlowByDte(flowEvents),
@@ -17489,7 +14198,7 @@ const TradeOptionsFlowPanel = ({ ticker, flowEvents = [] }) => {
 
 // ─── SPOT ORDER FLOW PANEL ───
 // Compact wrapper around the existing OrderFlowDistribution component for use in Trade tab.
-const TradeSpotFlowPanel = ({ ticker, flowEvents = [] }) => {
+export const TradeSpotFlowPanel = ({ ticker, flowEvents = [] }) => {
   const tickerFlow = useMemo(
     () => buildMarketOrderFlowFromEvents(flowEvents),
     [flowEvents],
@@ -17691,609 +14400,7 @@ const TradeSpotFlowPanel = ({ ticker, flowEvents = [] }) => {
   );
 };
 
-const TradeScreen = ({
-  sym,
-  symPing,
-  session,
-  environment,
-  accountId,
-  brokerConfigured,
-  brokerAuthenticated,
-}) => {
-  const toast = useToast();
-  const queryClient = useQueryClient();
-  const positions = usePositions();
-  // Initialize from persisted state, falling back to sym prop or sensible defaults
-  const initialTicker = (() => {
-    const persistedActive = _initialState.tradeActiveTicker;
-    if (persistedActive) {
-      ensureTradeTickerInfo(persistedActive, persistedActive);
-      return persistedActive;
-    }
-    if (sym) {
-      ensureTradeTickerInfo(sym, sym);
-      return sym;
-    }
-    return "SPY";
-  })();
-  const initialRecent = (() => {
-    const persistedRecent = _initialState.tradeRecentTickers;
-    if (Array.isArray(persistedRecent) && persistedRecent.length > 0) {
-      const valid = persistedRecent
-        .map((ticker) => {
-          ensureTradeTickerInfo(ticker, ticker);
-          return ticker;
-        })
-        .filter(Boolean);
-      if (valid.length > 0) return valid;
-    }
-    return [initialTicker, "QQQ", "NVDA"].filter(
-      (t, i, a) => a.indexOf(t) === i,
-    );
-  })();
-  const initialContracts = (() => {
-    const persistedContracts = _initialState.tradeContracts;
-    return persistedContracts && typeof persistedContracts === "object"
-      ? persistedContracts
-      : {};
-  })();
-  const [activeTicker, setActiveTicker] = useState(initialTicker);
-  const [recentTickers, setRecentTickers] = useState(initialRecent);
-  const [contracts, setContracts] = useState(initialContracts);
-  const [showUniverseSearch, setShowUniverseSearch] = useState(false);
-  const stockAggregateStreamingEnabled = Boolean(
-    brokerConfigured && brokerAuthenticated,
-  );
-  const activeTickerInfo = ensureTradeTickerInfo(activeTicker, activeTicker);
-  const contract =
-    contracts[activeTicker] ||
-    (() => {
-      return {
-        strike: getAtmStrikeFromPrice(activeTickerInfo.price) ?? null,
-        cp: "C",
-        exp: "",
-      };
-    })();
-  const updateContract = (patch) =>
-    setContracts((c) => ({ ...c, [activeTicker]: { ...contract, ...patch } }));
-  const activeQuoteQuery = useGetQuoteSnapshots(
-    { symbols: activeTicker },
-    {
-      query: {
-        enabled: Boolean(activeTicker),
-        staleTime: 60_000,
-        retry: false,
-      },
-    },
-  );
-  useIbkrQuoteSnapshotStream({
-    symbols: activeTicker ? [activeTicker] : [],
-    enabled: Boolean(stockAggregateStreamingEnabled && activeTicker),
-  });
-  const optionChainQuery = useQuery({
-    queryKey: ["trade-option-chain", activeTicker],
-    queryFn: () => getOptionChainRequest({ underlying: activeTicker }),
-    ...QUERY_DEFAULTS,
-    refetchInterval: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
-  useIbkrOptionChainStream({
-    underlying: activeTicker,
-    enabled: Boolean(stockAggregateStreamingEnabled && activeTicker),
-  });
-  const expirationOptions = useMemo(() => {
-    if (optionChainQuery.data?.contracts?.length) {
-      const unique = new Map();
-      optionChainQuery.data.contracts.forEach((quote) => {
-        const actualDate = parseExpirationValue(quote.contract?.expirationDate);
-        const value = formatExpirationLabel(quote.contract?.expirationDate);
-        if (!unique.has(value)) {
-          unique.set(value, {
-            value,
-            label: value,
-            dte: daysToExpiration(actualDate),
-            actualDate,
-          });
-        }
-      });
-      return Array.from(unique.values()).sort(
-        (left, right) =>
-          (left.actualDate?.getTime() ?? 0) -
-          (right.actualDate?.getTime() ?? 0),
-      );
-    }
-
-    return [];
-  }, [optionChainQuery.data]);
-  const chainRowsByExpiration = useMemo(() => {
-    if (optionChainQuery.data?.contracts?.length) {
-      const grouped = {};
-      optionChainQuery.data.contracts.forEach((quote) => {
-        const expiration = formatExpirationLabel(
-          quote.contract?.expirationDate,
-        );
-        if (!grouped[expiration]) grouped[expiration] = [];
-        grouped[expiration].push(quote);
-      });
-
-      return Object.fromEntries(
-        Object.entries(grouped).map(([expiration, quotes]) => [
-          expiration,
-          buildOptionChainRowsFromApi(
-            quotes,
-            activeTickerInfo.price,
-          ),
-        ]),
-      );
-    }
-
-    return {};
-  }, [optionChainQuery.data, activeTickerInfo.price]);
-  const activeExpiration = expirationOptions.find(
-    (option) => option.value === contract.exp,
-  ) ||
-    expirationOptions[0] || {
-      value: contract.exp,
-      label: contract.exp,
-      dte: daysToExpiration(contract.exp),
-      actualDate: parseExpirationValue(contract.exp),
-    };
-  const activeChainRows =
-    chainRowsByExpiration[activeExpiration.value] ||
-    chainRowsByExpiration[contract.exp] ||
-    [];
-  const optionChainStatus = optionChainQuery.data?.contracts?.length
-    ? "live"
-    : optionChainQuery.isPending
-      ? "loading"
-      : optionChainQuery.isError
-        ? "offline"
-        : "empty";
-  const tickerFlowQuery = useQuery({
-    queryKey: ["trade-flow", activeTicker],
-    queryFn: () =>
-      listFlowEventsRequest({ underlying: activeTicker, limit: 80 }),
-    staleTime: 10_000,
-    refetchInterval: 10_000,
-    retry: false,
-    gcTime: HEAVY_PAYLOAD_GC_MS,
-  });
-  const tickerFlowEvents = useMemo(() => {
-    const liveEvents =
-      tickerFlowQuery.data?.events?.map(mapFlowEventToUi) || [];
-    if (liveEvents.length) {
-      return liveEvents.sort((left, right) => right.premium - left.premium);
-    }
-    return [];
-  }, [tickerFlowQuery.data, activeTicker]);
-  const tradeFlowStatus = tickerFlowEvents.length
-    ? "live"
-    : tickerFlowQuery.isPending
-      ? "loading"
-      : tickerFlowQuery.isError
-        ? "offline"
-        : "empty";
-  const tradePositionsQuery = useListPositions(
-    { accountId, mode: environment },
-    {
-      query: {
-        enabled: Boolean(brokerAuthenticated && accountId),
-        ...QUERY_DEFAULTS,
-        refetchInterval: false,
-      },
-    },
-  );
-  const heldContracts = useMemo(() => {
-    if (brokerConfigured) {
-      if (!brokerAuthenticated || !accountId) {
-        return [];
-      }
-
-      return (tradePositionsQuery.data?.positions || [])
-        .filter(
-          (position) =>
-            position.symbol === activeTicker &&
-            position.assetClass === "option" &&
-            position.optionContract,
-        )
-        .map((position) => ({
-          strike: position.optionContract.strike,
-          cp: position.optionContract.right === "call" ? "C" : "P",
-          exp: formatExpirationLabel(position.optionContract.expirationDate),
-          entry: position.averagePrice,
-          qty: Math.abs(position.quantity),
-          pnl: position.unrealizedPnl,
-          pct: position.unrealizedPnlPercent,
-        }));
-    }
-
-    return positions.positions
-      .filter(
-        (position) =>
-          position.kind === "option" && position.ticker === activeTicker,
-      )
-      .map((position) => ({
-        strike: position.strike,
-        cp: position.cp,
-        exp: position.exp,
-        entry: position.entry,
-        qty: position.qty,
-        pnl: null,
-        pct: null,
-      }));
-  }, [
-    accountId,
-    activeTicker,
-    brokerAuthenticated,
-    brokerConfigured,
-    environment,
-    positions.positions,
-    tradePositionsQuery.data,
-  ]);
-
-  // Persist trade state changes
-  useEffect(() => {
-    persistState({ tradeActiveTicker: activeTicker });
-  }, [activeTicker]);
-  useEffect(() => {
-    persistState({ tradeRecentTickers: recentTickers });
-  }, [recentTickers]);
-  useEffect(() => {
-    persistState({ tradeContracts: contracts });
-  }, [contracts]);
-
-  useEffect(() => {
-    const quote = activeQuoteQuery.data?.quotes?.find(
-      (item) => item.symbol?.toUpperCase() === activeTicker,
-    );
-    if (!quote) return;
-
-    const tradeInfo = ensureTradeTickerInfo(
-      activeTicker,
-      activeTickerInfo.name || activeTicker,
-    );
-    tradeInfo.price = quote.price ?? tradeInfo.price;
-    tradeInfo.chg = quote.change ?? tradeInfo.chg;
-    tradeInfo.pct = quote.changePercent ?? tradeInfo.pct;
-    tradeInfo.open = quote.open ?? tradeInfo.open ?? null;
-    tradeInfo.high = quote.high ?? tradeInfo.high ?? null;
-    tradeInfo.low = quote.low ?? tradeInfo.low ?? null;
-    tradeInfo.prevClose = quote.prevClose ?? tradeInfo.prevClose ?? null;
-    tradeInfo.volume = quote.volume ?? tradeInfo.volume ?? null;
-    tradeInfo.updatedAt = quote.updatedAt ?? tradeInfo.updatedAt ?? null;
-  }, [activeQuoteQuery.data, activeTicker, activeTickerInfo.name]);
-
-  // Helper: focus a ticker, and add to recent strip if not present
-  const focusTicker = (ticker, fallbackName = ticker) => {
-    const normalized = ticker?.toUpperCase?.() || ticker;
-    if (!normalized) return;
-    ensureTradeTickerInfo(normalized, fallbackName);
-    setActiveTicker(normalized);
-    setRecentTickers((prev) =>
-      prev.includes(normalized) ? prev : [...prev, normalized].slice(-8),
-    );
-  };
-  const closeTicker = (ticker) => {
-    setRecentTickers((prev) => {
-      const filtered = prev.filter((t) => t !== ticker);
-      if (ticker === activeTicker && filtered.length > 0)
-        setActiveTicker(filtered[0]);
-      return filtered;
-    });
-  };
-
-  // Watchlist sync
-  useEffect(() => {
-    if (!symPing || symPing.n === 0) return;
-    ensureTradeTickerInfo(symPing.sym, symPing.sym);
-    focusTicker(symPing.sym);
-    if (symPing.contract) {
-      const incoming = symPing.contract;
-      setContracts((current) => {
-        const info = ensureTradeTickerInfo(symPing.sym, symPing.sym);
-        const existing = current[symPing.sym] || {
-          strike: getAtmStrikeFromPrice(info.price) ?? null,
-          cp: "C",
-          exp: incoming.exp || "",
-        };
-
-        return {
-          ...current,
-          [symPing.sym]: {
-            ...existing,
-            ...incoming,
-          },
-        };
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symPing && symPing.n]);
-
-  useEffect(() => {
-    if (!expirationOptions.length) return;
-    if (expirationOptions.some((option) => option.value === contract.exp))
-      return;
-
-    const nextExpiration = expirationOptions[0];
-    const atmRow = (chainRowsByExpiration[nextExpiration.value] || []).find(
-      (row) => row.isAtm,
-    );
-    updateContract({
-      exp: nextExpiration.value,
-      strike: atmRow?.k ?? contract.strike,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTicker, expirationOptions, chainRowsByExpiration]);
-
-  useEffect(() => {
-    if (!activeChainRows.length) return;
-    if (activeChainRows.some((row) => row.k === contract.strike)) return;
-
-    const atmRow =
-      activeChainRows.find((row) => row.isAtm) ||
-      activeChainRows[Math.floor(activeChainRows.length / 2)];
-    updateContract({ strike: atmRow?.k ?? contract.strike });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTicker, activeExpiration.value, activeChainRows, contract.strike]);
-
-  // Strategy → pick a strike near the desired delta on the active ticker's chain
-  const applyStrategy = (strategy) => {
-    if (!activeChainRows.length) {
-      toast.push({
-        kind: "info",
-        title: "Chain still loading",
-        body: "Wait for a live option chain before applying a strategy preset.",
-      });
-      return;
-    }
-    const chain = activeChainRows;
-    let bestStrike = chain[0].k;
-    let bestDist = Infinity;
-    for (const row of chain) {
-      const d = Math.abs(strategy.cp === "C" ? row.cDelta : row.pDelta);
-      const dist = Math.abs(d - strategy.deltaTarget);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestStrike = row.k;
-      }
-    }
-    const targetExpiration = expirationOptions.length
-      ? expirationOptions.reduce(
-          (closest, option) =>
-            Math.abs(option.dte - strategy.dte) <
-            Math.abs(closest.dte - strategy.dte)
-              ? option
-              : closest,
-          expirationOptions[0],
-        ).value
-      : contract.exp;
-    updateContract({
-      strike: bestStrike,
-      cp: strategy.cp,
-      exp: targetExpiration,
-    });
-  };
-
-  // Slot prop adapter for existing components that expect { ticker, strike, cp, exp }
-  const slot = { ticker: activeTicker, ...contract };
-
-  return (
-    <div
-      style={{
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-      }}
-    >
-      {/* Tab strip */}
-      <TickerTabStrip
-        recent={recentTickers}
-        active={activeTicker}
-        onSelect={focusTicker}
-        onClose={closeTicker}
-        onAddNew={() => setShowUniverseSearch((open) => !open)}
-      />
-      <TickerUniverseSearchPanel
-        open={showUniverseSearch}
-        onClose={() => setShowUniverseSearch(false)}
-        onSelectTicker={(result) => {
-          ensureTradeTickerInfo(result.ticker, result.name || result.ticker);
-          focusTicker(result.ticker, result.name || result.ticker);
-          setShowUniverseSearch(false);
-        }}
-      />
-      {/* Main workspace */}
-      <div
-        style={{
-          flex: 1,
-          padding: sp(6),
-          display: "flex",
-          flexDirection: "column",
-          gap: sp(6),
-          overflow: "auto",
-        }}
-      >
-        {/* Compact ticker header */}
-        <TradeTickerHeader
-          ticker={activeTicker}
-          chainRows={activeChainRows}
-          expiration={activeExpiration}
-          chainStatus={optionChainStatus}
-        />
-        {brokerConfigured && !brokerAuthenticated && (
-          <div
-            style={{
-              background: `${T.amber}12`,
-              border: `1px solid ${T.amber}35`,
-              borderRadius: dim(6),
-              padding: sp("8px 10px"),
-              display: "flex",
-              justifyContent: "space-between",
-              gap: sp(12),
-              alignItems: "center",
-              flexWrap: "wrap",
-            }}
-          >
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: sp(2) }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.amber,
-                  letterSpacing: "0.05em",
-                }}
-              >
-                IBKR BRIDGE ACTION REQUIRED
-              </span>
-              <span
-                style={{
-                  fontSize: fs(9),
-                  color: T.textSec,
-                  fontFamily: T.sans,
-                  lineHeight: 1.45,
-                }}
-              >
-                {bridgeRuntimeMessage(session)}
-              </span>
-            </div>
-            <div
-              style={{
-                fontSize: fs(8),
-                color: T.textDim,
-                fontFamily: T.mono,
-                textAlign: "right",
-              }}
-            >
-              {session?.ibkrBridge?.competing
-                ? "competing session detected"
-                : session?.ibkrBridge?.connected
-                  ? "bridge online"
-                  : "bridge offline"}
-              <br />
-              {(session?.ibkrBridge?.transport || "bridge").replace(/_/g, " ")}{" "}
-              {session?.ibkrBridge?.connectionTarget || MISSING_VALUE}
-              {session?.ibkrBridge?.sessionMode
-                ? ` · ${session.ibkrBridge.sessionMode}`
-                : ""}
-              <br />
-              last heartbeat{" "}
-              {formatRelativeTimeShort(session?.ibkrBridge?.lastTickleAt)}
-              {session?.ibkrBridge?.lastRecoveryAttemptAt ? (
-                <>
-                  <br />
-                  recovery{" "}
-                  {formatRelativeTimeShort(
-                    session.ibkrBridge.lastRecoveryAttemptAt,
-                  )}
-                </>
-              ) : null}
-            </div>
-          </div>
-        )}
-        {/* Top zone: Equity chart + Options chain side by side */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.5fr 1fr",
-            gap: sp(6),
-            height: dim(340),
-            flexShrink: 0,
-          }}
-        >
-          <TradeEquityPanel
-            ticker={activeTicker}
-            flowEvents={tickerFlowEvents}
-            stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-          />
-          <TradeChainPanel
-            ticker={activeTicker}
-            contract={contract}
-            chainRows={activeChainRows}
-            expirations={expirationOptions}
-            heldContracts={heldContracts}
-            chainStatus={optionChainStatus}
-            onSelectContract={(strike, cp) => updateContract({ strike, cp })}
-            onChangeExp={(exp) => updateContract({ exp })}
-          />
-        </div>
-        {/* Middle zone: Contract chart + Spot flow + Options flow */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.2fr 1fr 1.5fr",
-            gap: sp(6),
-            height: dim(260),
-            flexShrink: 0,
-          }}
-        >
-          <TradeContractDetailPanel
-            ticker={activeTicker}
-            contract={contract}
-            chainRows={activeChainRows}
-            heldContracts={heldContracts}
-            chainStatus={optionChainStatus}
-          />
-          <TradeSpotFlowPanel
-            ticker={activeTicker}
-            flowEvents={tickerFlowEvents}
-          />
-          <TradeOptionsFlowPanel
-            ticker={activeTicker}
-            flowEvents={tickerFlowEvents}
-          />
-        </div>
-        {/* Bottom zone: Order ticket + Strategy/Greeks + L2/Tape/Flow tabs + Positions */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns:
-              "minmax(260px, 1fr) minmax(280px, 1fr) minmax(280px, 1fr) minmax(360px, 1.4fr)",
-            gap: sp(6),
-            height: dim(290),
-            flexShrink: 0,
-          }}
-        >
-          <TradeOrderTicket
-            slot={slot}
-            chainRows={activeChainRows}
-            expiration={activeExpiration}
-            accountId={accountId}
-            environment={environment}
-            brokerConfigured={brokerConfigured}
-            brokerAuthenticated={brokerAuthenticated}
-          />
-          <TradeStrategyGreeksPanel
-            slot={slot}
-            chainRows={activeChainRows}
-            onApplyStrategy={applyStrategy}
-          />
-          <TradeL2Panel
-            slot={slot}
-            chainRows={activeChainRows}
-            flowEvents={tickerFlowEvents}
-            accountId={accountId}
-            brokerConfigured={brokerConfigured}
-            brokerAuthenticated={brokerAuthenticated}
-          />
-          <TradePositionsPanel
-            accountId={accountId}
-            environment={environment}
-            brokerConfigured={brokerConfigured}
-            brokerAuthenticated={brokerAuthenticated}
-            onLoadPosition={({ ticker, strike, cp, exp }) => {
-              focusTicker(ticker);
-              setContracts((c) => ({ ...c, [ticker]: { strike, cp, exp } }));
-            }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-};
+// TradeScreen extracted to ./screens/TradeScreen.jsx
 
 // ═══════════════════════════════════════════════════════════════════
 // SCREEN: RESEARCH (Photonics Dashboard — Emerging Themes)
@@ -18359,1033 +14466,19 @@ const RESEARCH_THEMES_PLANNED = [
   },
 ];
 
-const ResearchScreen = ({ onJumpToTrade }) => (
-  <Suspense fallback={null}>
-    <PhotonicsObservatory onJumpToTrade={onJumpToTrade} />
-  </Suspense>
-);
+// ResearchScreen extracted to ./screens/ResearchScreen.jsx
 
 // ═══════════════════════════════════════════════════════════════════
 // SCREEN: ALGO (EDGE Algorithm Config)
 // ═══════════════════════════════════════════════════════════════════
 
-const AlgoScreen = ({
-  session,
-  environment,
-  accounts = [],
-  selectedAccountId = null,
-}) => {
-  const toast = useToast();
-  const queryClient = useQueryClient();
-  const [selectedDraftId, setSelectedDraftId] = useState("");
-  const [deploymentName, setDeploymentName] = useState("");
-  const [symbolUniverseInput, setSymbolUniverseInput] = useState("");
-  const [focusedDeploymentId, setFocusedDeploymentId] = useState(null);
-  const brokerConfigured = Boolean(session?.configured?.ibkr);
-  const brokerAuthenticated = Boolean(session?.ibkrBridge?.authenticated);
-  const bridgeTone = bridgeRuntimeTone(session);
-  const activeAccount =
-    accounts.find((account) => account.id === selectedAccountId) ||
-    accounts[0] ||
-    null;
-  const activeAccountId =
-    activeAccount?.id ||
-    selectedAccountId ||
-    session?.ibkrBridge?.selectedAccountId ||
-    null;
-  const draftsQuery = useListBacktestDraftStrategies({
-    query: {
-      ...QUERY_DEFAULTS,
-      retry: false,
-    },
-  });
-  const deploymentsQuery = useListAlgoDeployments(
-    { mode: environment },
-    {
-      query: {
-        ...QUERY_DEFAULTS,
-        retry: false,
-      },
-    },
-  );
-  const deployments = deploymentsQuery.data?.deployments || [];
-  const candidateDrafts = useMemo(() => {
-    const drafts = draftsQuery.data?.drafts || [];
-    const matchingMode = drafts.filter((draft) => draft.mode === environment);
-    return matchingMode.length ? matchingMode : drafts;
-  }, [draftsQuery.data, environment]);
-  const selectedDraft =
-    candidateDrafts.find((draft) => draft.id === selectedDraftId) ||
-    candidateDrafts[0] ||
-    null;
-  const focusedDeployment =
-    deployments.find((deployment) => deployment.id === focusedDeploymentId) ||
-    deployments[0] ||
-    null;
-  const eventsQuery = useListExecutionEvents(
-    focusedDeployment
-      ? { deploymentId: focusedDeployment.id, limit: 20 }
-      : { limit: 20 },
-    {
-      query: {
-        ...QUERY_DEFAULTS,
-        retry: false,
-      },
-    },
-  );
-  const events = eventsQuery.data?.events || [];
-  const enabledDeployments = deployments.filter(
-    (deployment) => deployment.enabled,
-  );
-  const latestEvent = events[0] || null;
-
-  useEffect(() => {
-    if (!candidateDrafts.length) {
-      setSelectedDraftId("");
-      return;
-    }
-
-    if (!candidateDrafts.some((draft) => draft.id === selectedDraftId)) {
-      setSelectedDraftId(candidateDrafts[0].id);
-    }
-  }, [candidateDrafts, selectedDraftId]);
-
-  useEffect(() => {
-    if (!selectedDraft) {
-      setDeploymentName("");
-      setSymbolUniverseInput("");
-      return;
-    }
-
-    setDeploymentName(`${selectedDraft.name} ${environment.toUpperCase()}`);
-    setSymbolUniverseInput(selectedDraft.symbolUniverse.join(", "));
-  }, [selectedDraft?.id, environment]);
-
-  useEffect(() => {
-    if (!deployments.length) {
-      setFocusedDeploymentId(null);
-      return;
-    }
-
-    if (
-      !focusedDeploymentId ||
-      !deployments.some((deployment) => deployment.id === focusedDeploymentId)
-    ) {
-      setFocusedDeploymentId(deployments[0].id);
-    }
-  }, [deployments, focusedDeploymentId]);
-
-  const refreshAlgoQueries = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/algo/deployments"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/algo/events"] });
-  };
-
-  const createDeploymentMutation = useCreateAlgoDeployment({
-    mutation: {
-      onSuccess: (deployment) => {
-        refreshAlgoQueries();
-        setFocusedDeploymentId(deployment.id);
-        toast.push({
-          kind: "success",
-          title: "Deployment created",
-          body: `${deployment.name} · ${deployment.providerAccountId} · ${deployment.mode.toUpperCase()}`,
-        });
-      },
-      onError: (error) => {
-        toast.push({
-          kind: "error",
-          title: "Create failed",
-          body: error?.message || "The deployment could not be created.",
-        });
-      },
-    },
-  });
-  const enableDeploymentMutation = useEnableAlgoDeployment({
-    mutation: {
-      onSuccess: (deployment) => {
-        refreshAlgoQueries();
-        toast.push({
-          kind: "success",
-          title: "Deployment enabled",
-          body: deployment.name,
-        });
-      },
-      onError: (error) => {
-        toast.push({
-          kind: "error",
-          title: "Enable failed",
-          body: error?.message || "The deployment could not be enabled.",
-        });
-      },
-    },
-  });
-  const pauseDeploymentMutation = usePauseAlgoDeployment({
-    mutation: {
-      onSuccess: (deployment) => {
-        refreshAlgoQueries();
-        toast.push({
-          kind: "success",
-          title: "Deployment paused",
-          body: deployment.name,
-        });
-      },
-      onError: (error) => {
-        toast.push({
-          kind: "error",
-          title: "Pause failed",
-          body: error?.message || "The deployment could not be paused.",
-        });
-      },
-    },
-  });
-
-  const handleCreateDeployment = () => {
-    if (!selectedDraft) {
-      toast.push({
-        kind: "warn",
-        title: "No promoted strategy",
-        body: "Promote a completed backtest run before creating a deployment.",
-      });
-      return;
-    }
-
-    if (!brokerConfigured) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR not configured",
-        body: "Broker connectivity must be configured before deploying an algorithm.",
-      });
-      return;
-    }
-
-    if (!brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Authenticate the local bridge before creating a live deployment.",
-      });
-      return;
-    }
-
-    if (!activeAccountId) {
-      toast.push({
-        kind: "warn",
-        title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
-      });
-      return;
-    }
-
-    createDeploymentMutation.mutate({
-      data: {
-        strategyId: selectedDraft.id,
-        name:
-          deploymentName.trim() ||
-          `${selectedDraft.name} ${environment.toUpperCase()}`,
-        providerAccountId: activeAccountId,
-        mode: environment,
-        symbolUniverse: parseSymbolUniverseInput(symbolUniverseInput),
-        config: {
-          sourceDraftId: selectedDraft.id,
-          sourceRunId: selectedDraft.runId,
-          sourceStudyId: selectedDraft.studyId,
-          promotedAt: selectedDraft.promotedAt,
-        },
-      },
-    });
-  };
-
-  const handleToggleDeployment = (deployment) => {
-    if (!brokerAuthenticated) {
-      toast.push({
-        kind: "warn",
-        title: "IBKR login required",
-        body: "Authenticate the local bridge before changing deployment state.",
-      });
-      return;
-    }
-
-    if (deployment.enabled) {
-      pauseDeploymentMutation.mutate({ deploymentId: deployment.id });
-      return;
-    }
-
-    enableDeploymentMutation.mutate({ deploymentId: deployment.id });
-  };
-
-  return (
-    <div
-      style={{
-        padding: sp(12),
-        display: "flex",
-        flexDirection: "column",
-        gap: sp(10),
-        height: "100%",
-        overflowY: "auto",
-      }}
-    >
-      {brokerConfigured && !brokerAuthenticated && (
-        <div
-          style={{
-            background: `${T.amber}12`,
-            border: `1px solid ${T.amber}35`,
-            borderRadius: dim(6),
-            padding: sp("10px 12px"),
-            display: "flex",
-            justifyContent: "space-between",
-            gap: sp(12),
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
-            <span
-              style={{
-                fontSize: fs(11),
-                fontWeight: 700,
-                fontFamily: T.display,
-                color: T.amber,
-                letterSpacing: "0.05em",
-              }}
-            >
-              ALGO DEPLOYMENTS BLOCKED
-            </span>
-            <span
-              style={{
-                fontSize: fs(9),
-                color: T.textSec,
-                fontFamily: T.sans,
-                lineHeight: 1.45,
-              }}
-            >
-              {bridgeRuntimeMessage(session)}
-            </span>
-          </div>
-          <div
-            style={{
-              fontSize: fs(8),
-              color: T.textDim,
-              fontFamily: T.mono,
-              textAlign: "right",
-            }}
-          >
-            bridge {bridgeTone.label}
-            <br />
-            {activeAccountId || "no active account"}
-          </div>
-        </div>
-      )}
-
-      <div
-        style={{
-          background: T.bg2,
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
-          padding: sp("12px 14px"),
-        }}
-      >
-        <div
-          style={{
-            fontSize: fs(12),
-            fontWeight: 700,
-            fontFamily: T.display,
-            color: T.text,
-            marginBottom: 10,
-          }}
-        >
-          Execution Control Plane
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-            gap: sp(8),
-          }}
-        >
-          {[
-            {
-              label: "Promoted Drafts",
-              value: `${draftsQuery.data?.drafts?.length || 0}`,
-              detail: selectedDraft
-                ? `${selectedDraft.name} · ${selectedDraft.mode}`
-                : "awaiting promotion",
-              color: T.accent,
-            },
-            {
-              label: "Deployments",
-              value: `${deployments.length}`,
-              detail: deployments.length
-                ? `${enabledDeployments.length} enabled`
-                : "none created",
-              color: deployments.length ? T.green : T.textDim,
-            },
-            {
-              label: "Bridge",
-              value: bridgeTone.label.toUpperCase(),
-              detail:
-                session?.ibkrBridge?.transport === "tws"
-                  ? `tws ${session?.ibkrBridge?.sessionMode || ""} · ${activeAccountId || "no account"}`
-                  : `${session?.ibkrBridge?.transport || "bridge"} · ${activeAccountId || "no account"}`,
-              color: bridgeTone.color,
-            },
-            {
-              label: "Environment",
-              value: environment.toUpperCase(),
-              detail: session?.marketDataProviders?.live
-                ? `live md ${session.marketDataProviders.live}`
-                : "session loading",
-              color: environment === "live" ? T.red : T.green,
-            },
-            {
-              label: "Latest Event",
-              value: latestEvent
-                ? formatEnumLabel(latestEvent.eventType)
-                : "NONE",
-              detail: latestEvent
-                ? formatRelativeTimeShort(latestEvent.occurredAt)
-                : "no execution events yet",
-              color: latestEvent ? T.cyan : T.textDim,
-            },
-          ].map((metric) => (
-            <div
-              key={metric.label}
-              style={{
-                padding: sp("10px 12px"),
-                borderRadius: dim(6),
-                background: T.bg0,
-                border: `1px solid ${T.border}`,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: sp(4),
-                  marginBottom: 4,
-                }}
-              >
-                <div
-                  style={{
-                    width: dim(6),
-                    height: dim(6),
-                    borderRadius: "50%",
-                    background: metric.color,
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: fs(9),
-                    fontWeight: 700,
-                    fontFamily: T.sans,
-                    color: T.text,
-                  }}
-                >
-                  {metric.label}
-                </span>
-              </div>
-              <div
-                style={{
-                  fontSize: fs(11),
-                  fontWeight: 700,
-                  fontFamily: T.mono,
-                  color: metric.color,
-                  marginBottom: 3,
-                }}
-              >
-                {metric.value}
-              </div>
-              <div
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                {metric.detail}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(320px, 0.95fr) minmax(420px, 1.35fr)",
-          gap: sp(10),
-        }}
-      >
-        <div
-          style={{
-            background: T.bg2,
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(6),
-            padding: sp("12px 14px"),
-            display: "flex",
-            flexDirection: "column",
-            gap: sp(8),
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: sp(8),
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: fs(12),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.text,
-                }}
-              >
-                Create Deployment
-              </div>
-              <div
-                style={{
-                  fontSize: fs(9),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                Promoted strategy -&gt; IBKR execution account
-              </div>
-            </div>
-            <Badge
-              color={
-                brokerAuthenticated
-                  ? T.green
-                  : brokerConfigured
-                    ? T.amber
-                    : T.textDim
-              }
-            >
-              {bridgeTone.label.toUpperCase()}
-            </Badge>
-          </div>
-
-          {!candidateDrafts.length ? (
-            <div
-              style={{
-                padding: sp("18px 10px"),
-                border: `1px dashed ${T.border}`,
-                borderRadius: dim(5),
-                fontSize: fs(10),
-                color: T.textDim,
-                fontFamily: T.sans,
-                lineHeight: 1.5,
-              }}
-            >
-              No promoted draft strategies are available yet. Promote a
-              completed backtest run first, then return here to create an
-              execution deployment.
-            </div>
-          ) : (
-            <>
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(7),
-                    color: T.textMuted,
-                    letterSpacing: "0.08em",
-                    marginBottom: 2,
-                  }}
-                >
-                  PROMOTED STRATEGY
-                </div>
-                <select
-                  value={selectedDraft?.id || ""}
-                  onChange={(event) => setSelectedDraftId(event.target.value)}
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 10px"),
-                    color: T.text,
-                    fontSize: fs(10),
-                    fontFamily: T.mono,
-                    fontWeight: 600,
-                    outline: "none",
-                  }}
-                >
-                  {candidateDrafts.map((draft) => (
-                    <option key={draft.id} value={draft.id}>
-                      {draft.name} · {draft.mode} ·{" "}
-                      {draft.symbolUniverse.length} syms
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(7),
-                    color: T.textMuted,
-                    letterSpacing: "0.08em",
-                    marginBottom: 2,
-                  }}
-                >
-                  DEPLOYMENT NAME
-                </div>
-                <input
-                  value={deploymentName}
-                  onChange={(event) => setDeploymentName(event.target.value)}
-                  placeholder="Deployment name"
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 10px"),
-                    color: T.text,
-                    fontSize: fs(10),
-                    fontFamily: T.sans,
-                    outline: "none",
-                  }}
-                />
-              </div>
-
-              <div>
-                <div
-                  style={{
-                    fontSize: fs(7),
-                    color: T.textMuted,
-                    letterSpacing: "0.08em",
-                    marginBottom: 2,
-                  }}
-                >
-                  SYMBOL UNIVERSE
-                </div>
-                <input
-                  value={symbolUniverseInput}
-                  onChange={(event) =>
-                    setSymbolUniverseInput(event.target.value)
-                  }
-                  placeholder="SPY, QQQ, NVDA"
-                  style={{
-                    width: "100%",
-                    background: T.bg3,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: dim(4),
-                    padding: sp("7px 10px"),
-                    color: T.text,
-                    fontSize: fs(10),
-                    fontFamily: T.mono,
-                    outline: "none",
-                  }}
-                />
-              </div>
-
-              <div
-                style={{
-                  background: T.bg3,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(5),
-                  padding: sp("8px 10px"),
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: sp(4),
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                }}
-              >
-                <div>
-                  <span style={{ color: T.textMuted }}>ACCOUNT</span>{" "}
-                  <span style={{ color: activeAccountId ? T.text : T.amber }}>
-                    {activeAccountId || "waiting"}
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: T.textMuted }}>MODE</span>{" "}
-                  <span
-                    style={{ color: environment === "live" ? T.red : T.green }}
-                  >
-                    {environment.toUpperCase()}
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: T.textMuted }}>RUN</span>{" "}
-                  <span style={{ color: T.textSec }}>
-                    {selectedDraft?.runId
-                      ? selectedDraft.runId.slice(0, 8)
-                      : MISSING_VALUE}
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: T.textMuted }}>PROMOTED</span>{" "}
-                  <span style={{ color: T.textSec }}>
-                    {selectedDraft
-                      ? formatRelativeTimeShort(selectedDraft.promotedAt)
-                      : MISSING_VALUE}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleCreateDeployment}
-                disabled={createDeploymentMutation.isPending}
-                style={{
-                  padding: sp("8px 0"),
-                  background: T.accent,
-                  border: "none",
-                  borderRadius: dim(4),
-                  color: "#fff",
-                  fontSize: fs(10),
-                  fontFamily: T.sans,
-                  fontWeight: 700,
-                  cursor: createDeploymentMutation.isPending
-                    ? "wait"
-                    : "pointer",
-                  opacity: createDeploymentMutation.isPending ? 0.7 : 1,
-                  letterSpacing: "0.04em",
-                }}
-              >
-                {createDeploymentMutation.isPending
-                  ? "CREATING..."
-                  : `CREATE ${environment.toUpperCase()} DEPLOYMENT`}
-              </button>
-            </>
-          )}
-        </div>
-
-        <div
-          style={{
-            background: T.bg2,
-            border: `1px solid ${T.border}`,
-            borderRadius: dim(6),
-            padding: sp("12px 14px"),
-            display: "flex",
-            flexDirection: "column",
-            gap: sp(8),
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: sp(8),
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: fs(12),
-                  fontWeight: 700,
-                  fontFamily: T.display,
-                  color: T.text,
-                }}
-              >
-                Deployments
-              </div>
-              <div
-                style={{
-                  fontSize: fs(9),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                {environment.toUpperCase()} execution profiles
-              </div>
-            </div>
-            <span
-              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}
-            >
-              {enabledDeployments.length}/{deployments.length} enabled
-            </span>
-          </div>
-
-          {!deployments.length ? (
-            <div
-              style={{
-                padding: sp("18px 10px"),
-                border: `1px dashed ${T.border}`,
-                borderRadius: dim(5),
-                fontSize: fs(10),
-                color: T.textDim,
-                fontFamily: T.sans,
-                lineHeight: 1.5,
-              }}
-            >
-              No deployments exist for this environment yet.
-            </div>
-          ) : (
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: sp(6) }}
-            >
-              {deployments.map((deployment) => {
-                const tone = deployment.enabled
-                  ? T.green
-                  : deployment.lastError
-                    ? T.red
-                    : T.textDim;
-                return (
-                  <div
-                    key={deployment.id}
-                    onClick={() => setFocusedDeploymentId(deployment.id)}
-                    style={{
-                      background:
-                        focusedDeployment?.id === deployment.id ? T.bg3 : T.bg0,
-                      border: `1px solid ${focusedDeployment?.id === deployment.id ? T.accent : T.border}`,
-                      borderRadius: dim(5),
-                      padding: sp("10px 12px"),
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: sp(10),
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: sp(4),
-                        minWidth: 0,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: sp(6),
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: fs(10),
-                            fontWeight: 700,
-                            fontFamily: T.sans,
-                            color: T.text,
-                          }}
-                        >
-                          {deployment.name}
-                        </span>
-                        <Badge color={tone}>
-                          {deployment.enabled ? "ENABLED" : "PAUSED"}
-                        </Badge>
-                        <span
-                          style={{
-                            fontSize: fs(8),
-                            color: T.textDim,
-                            fontFamily: T.mono,
-                          }}
-                        >
-                          {deployment.providerAccountId}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(4, minmax(0, auto))",
-                          gap: sp(8),
-                          fontSize: fs(8),
-                          fontFamily: T.mono,
-                          color: T.textSec,
-                        }}
-                      >
-                        <span>
-                          <span style={{ color: T.textMuted }}>SYMS</span>{" "}
-                          {deployment.symbolUniverse.length}
-                        </span>
-                        <span>
-                          <span style={{ color: T.textMuted }}>EVAL</span>{" "}
-                          {formatRelativeTimeShort(deployment.lastEvaluatedAt)}
-                        </span>
-                        <span>
-                          <span style={{ color: T.textMuted }}>SIGNAL</span>{" "}
-                          {formatRelativeTimeShort(deployment.lastSignalAt)}
-                        </span>
-                        <span>
-                          <span style={{ color: T.textMuted }}>UPDATED</span>{" "}
-                          {formatRelativeTimeShort(deployment.updatedAt)}
-                        </span>
-                      </div>
-                      {deployment.lastError && (
-                        <div
-                          style={{
-                            fontSize: fs(8),
-                            color: T.red,
-                            fontFamily: T.sans,
-                            lineHeight: 1.4,
-                          }}
-                        >
-                          {deployment.lastError}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleToggleDeployment(deployment);
-                      }}
-                      disabled={
-                        enableDeploymentMutation.isPending ||
-                        pauseDeploymentMutation.isPending
-                      }
-                      style={{
-                        alignSelf: "center",
-                        padding: sp("6px 10px"),
-                        background: deployment.enabled
-                          ? "transparent"
-                          : T.green,
-                        border: deployment.enabled
-                          ? `1px solid ${T.amber}50`
-                          : "none",
-                        borderRadius: dim(4),
-                        color: deployment.enabled ? T.amber : "#fff",
-                        fontSize: fs(9),
-                        fontFamily: T.sans,
-                        fontWeight: 700,
-                        cursor:
-                          enableDeploymentMutation.isPending ||
-                          pauseDeploymentMutation.isPending
-                            ? "wait"
-                            : "pointer",
-                        whiteSpace: "nowrap",
-                        opacity:
-                          enableDeploymentMutation.isPending ||
-                          pauseDeploymentMutation.isPending
-                            ? 0.7
-                            : 1,
-                      }}
-                    >
-                      {deployment.enabled ? "PAUSE" : "ENABLE"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div
-        style={{
-          background: T.bg2,
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(6),
-          padding: sp("12px 14px"),
-          flex: 1,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            gap: sp(8),
-            marginBottom: sp(8),
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: fs(12),
-                fontWeight: 700,
-                fontFamily: T.display,
-                color: T.text,
-              }}
-            >
-              Execution Events
-            </div>
-            <div
-              style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}
-            >
-              {focusedDeployment
-                ? `filtered to ${focusedDeployment.name}`
-                : "latest automation events"}
-            </div>
-          </div>
-          <span
-            style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}
-          >
-            {events.length} rows
-          </span>
-        </div>
-
-        {!events.length ? (
-          <div
-            style={{
-              padding: sp("18px 10px"),
-              border: `1px dashed ${T.border}`,
-              borderRadius: dim(5),
-              fontSize: fs(10),
-              color: T.textDim,
-              fontFamily: T.sans,
-              lineHeight: 1.5,
-            }}
-          >
-            No execution events have been recorded yet.
-          </div>
-        ) : (
-          events.map((event) => (
-            <div
-              key={event.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "64px 132px 1fr 88px",
-                gap: sp(8),
-                alignItems: "start",
-                padding: sp("8px 0"),
-                borderBottom: `1px solid ${T.border}08`,
-                fontSize: fs(9),
-              }}
-            >
-              <span style={{ color: T.textDim, fontFamily: T.mono }}>
-                {formatEtTime(event.occurredAt)}
-              </span>
-              <span
-                style={{ color: T.accent, fontFamily: T.mono, fontWeight: 700 }}
-              >
-                {formatEnumLabel(event.eventType)}
-              </span>
-              <span
-                style={{
-                  color: T.textSec,
-                  fontFamily: T.sans,
-                  lineHeight: 1.4,
-                }}
-              >
-                {event.summary}
-              </span>
-              <span
-                style={{
-                  color: event.symbol ? T.text : T.textDim,
-                  fontFamily: T.mono,
-                  textAlign: "right",
-                }}
-              >
-                {event.symbol || event.providerAccountId || "system"}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-
-      <AlgoDraftStrategiesPanel theme={T} scale={{ fs, sp, dim }} />
-    </div>
-  );
-};
+// AlgoScreen extracted to ./screens/AlgoScreen.jsx
 
 // ═══════════════════════════════════════════════════════════════════
 // SCREEN: BACKTEST
 // ═══════════════════════════════════════════════════════════════════
 
-const BacktestScreen = ({ watchlists, defaultWatchlistId }) => (
-  <BacktestWorkspace
-    theme={T}
-    scale={{ fs, sp, dim }}
-    watchlists={watchlists}
-    defaultWatchlistId={defaultWatchlistId}
-  />
-);
+// BacktestScreen extracted to ./screens/BacktestScreen.jsx
 
 // ═══════════════════════════════════════════════════════════════════
 // LIVE BROKER CONFIRMATION
