@@ -173,7 +173,7 @@ export const PositionsPanel = ({
                   <td style={tableCellStyle}>
                     {row.betaWeightedDelta == null
                       ? "----"
-                      : formatMoney(row.betaWeightedDelta, currency, true)}
+                      : formatNumber(row.betaWeightedDelta, 2)}
                   </td>
                   <td style={tableCellStyle}>{row.sector}</td>
                 </tr>
