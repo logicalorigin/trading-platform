@@ -1317,18 +1317,103 @@ async function getBarsImpl(input: GetBarsInput) {
   };
 }
 
+type IbkrOptionChainInput = {
+  underlying: string;
+  expirationDate?: Date;
+  contractType?: "call" | "put" | null;
+  maxExpirations?: number;
+  strikesAroundMoney?: number;
+};
+type IbkrOptionChainContracts = Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>;
+
+const OPTION_CHAIN_CACHE_TTL_MS = 15_000;
+const OPTION_CHAIN_CACHE_MAX_ENTRIES = 128;
+const optionChainCache = new Map<
+  string,
+  { value: IbkrOptionChainContracts; expiresAt: number }
+>();
+const optionChainInFlight = new Map<string, Promise<IbkrOptionChainContracts>>();
+
+function pruneOptionChainCache(now: number): void {
+  for (const [key, entry] of optionChainCache) {
+    if (entry.expiresAt <= now) {
+      optionChainCache.delete(key);
+    }
+  }
+
+  if (optionChainCache.size <= OPTION_CHAIN_CACHE_MAX_ENTRIES) {
+    return;
+  }
+
+  const overflow = optionChainCache.size - OPTION_CHAIN_CACHE_MAX_ENTRIES;
+  let removed = 0;
+  for (const key of optionChainCache.keys()) {
+    if (removed >= overflow) break;
+    optionChainCache.delete(key);
+    removed += 1;
+  }
+}
+
+function buildOptionChainCacheKey(input: IbkrOptionChainInput): string {
+  return JSON.stringify({
+    underlying: normalizeSymbol(input.underlying),
+    expirationDate: input.expirationDate
+      ? input.expirationDate.toISOString().slice(0, 10)
+      : null,
+    contractType: input.contractType ?? null,
+    maxExpirations: input.maxExpirations ?? null,
+    strikesAroundMoney: input.strikesAroundMoney ?? null,
+  });
+}
+
+async function getCachedIbkrOptionChain(
+  input: IbkrOptionChainInput,
+): Promise<IbkrOptionChainContracts> {
+  const key = buildOptionChainCacheKey(input);
+  const now = Date.now();
+  const cached = optionChainCache.get(key);
+
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached) {
+    optionChainCache.delete(key);
+  }
+
+  const inFlight = optionChainInFlight.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const promise = (async () => {
+    try {
+      const value = await getIbkrClient().getOptionChain(input);
+      const settledAt = Date.now();
+      optionChainCache.set(key, {
+        value,
+        expiresAt: settledAt + OPTION_CHAIN_CACHE_TTL_MS,
+      });
+      pruneOptionChainCache(settledAt);
+      return value;
+    } finally {
+      optionChainInFlight.delete(key);
+    }
+  })();
+
+  optionChainInFlight.set(key, promise);
+  return promise;
+}
+
 export async function getOptionChain(input: {
   underlying: string;
   expirationDate?: Date;
   contractType?: "call" | "put";
 }) {
-  const bridgeClient = getIbkrClient();
-  const ibkrContracts = await bridgeClient
-    .getOptionChain({
-      ...input,
-      maxExpirations: 1,
-      strikesAroundMoney: 6,
-    })
+  const ibkrContracts = await getCachedIbkrOptionChain({
+    ...input,
+    maxExpirations: 1,
+    strikesAroundMoney: 6,
+  })
     .catch(() => []);
 
   return {

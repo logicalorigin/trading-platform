@@ -2354,8 +2354,40 @@ export class IbkrClient {
         new Map(
           contracts.map((contract) => [contract.providerContractId ?? contract.ticker, contract]),
         ).values(),
-      );
-      const quoteRequests = uniqueContracts.flatMap((contract) => {
+      ).filter((contract) => {
+        if (input.expirationDate) {
+          return true;
+        }
+
+        const today = new Date();
+        const todayUtc = Date.UTC(
+          today.getUTCFullYear(),
+          today.getUTCMonth(),
+          today.getUTCDate(),
+        );
+        return contract.expirationDate.getTime() >= todayUtc;
+      }).sort((left, right) => (
+        left.expirationDate.getTime() - right.expirationDate.getTime() ||
+        left.strike - right.strike ||
+        left.right.localeCompare(right.right)
+      ));
+      const allowedExpirations = input.expirationDate
+        ? null
+        : new Set(
+            Array.from(
+              new Set(
+                uniqueContracts.map((contract) =>
+                  contract.expirationDate.toISOString().slice(0, 10),
+                ),
+              ),
+            ).slice(0, maxExpirations),
+          );
+      const scopedContracts = allowedExpirations
+        ? uniqueContracts.filter((contract) =>
+            allowedExpirations.has(contract.expirationDate.toISOString().slice(0, 10)),
+          )
+        : uniqueContracts;
+      const quoteRequests = scopedContracts.flatMap((contract) => {
         const conid = asNumber(contract.providerContractId);
         return conid === null
           ? []
@@ -2371,7 +2403,7 @@ export class IbkrClient {
         quoteMap = new Map<string, QuoteSnapshot>();
       }
 
-      return uniqueContracts
+      return scopedContracts
         .map((contract) => {
           const quote = contract.providerContractId
             ? quoteMap.get(contract.providerContractId)

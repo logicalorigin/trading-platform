@@ -1830,9 +1830,10 @@ const BARS_QUERY_DEFAULTS = {
   retryDelay: (attempt) => Math.min(1_000 * (attempt + 1), 5_000),
 };
 
-// Even tighter window for the heaviest non-bars payloads (option chains,
-// flow batches, depth, executions). Option chains can be hundreds of KB
-// per underlying, so we want them evicted quickly when the user moves on.
+// Even tighter window for the heaviest non-chart payloads (option chains,
+// flow batches, depth, executions, dashboard sparkline/baseline batches).
+// Option chains can be hundreds of KB per underlying, so we want them evicted
+// quickly when the user moves on.
 const HEAVY_PAYLOAD_GC_MS = 15_000;
 
 const clampNumber = (value, min, max) =>
@@ -19237,7 +19238,6 @@ export default function RayAlgoPlatform() {
       );
     },
     staleTime: 300_000,
-    gcTime: BARS_QUERY_DEFAULTS.gcTime,
     refetchInterval: false,
     refetchOnMount: false,
     retry: false,
