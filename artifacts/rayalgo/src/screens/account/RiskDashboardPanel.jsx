@@ -3,6 +3,7 @@ import {
   EmptyState,
   Panel,
   formatMoney,
+  formatNumber,
   formatPercent,
   mutedLabelStyle,
   sectionTitleStyle,
@@ -77,11 +78,12 @@ export const RiskDashboardPanel = ({ query, currency }) => {
   const data = query.data;
   const margin = data?.margin || {};
   const greeks = data?.greeks || {};
+  const perUnderlying = greeks.perUnderlying || [];
 
   return (
     <Panel
       title="Risk Dashboard"
-      subtitle="Concentration, margin, leverage, and options-aware Greek slots"
+      subtitle="Concentration, margin, leverage, and IBKR-derived portfolio Greeks"
       loading={query.isLoading}
       error={query.error}
       minHeight={420}
@@ -149,13 +151,84 @@ export const RiskDashboardPanel = ({ query, currency }) => {
               <div style={{ ...sectionTitleStyle, fontSize: fs(10) }}>
                 Portfolio Greeks
               </div>
+              {greeks.warning ? (
+                <div
+                  style={{
+                    marginTop: sp(8),
+                    color: T.textMuted,
+                    fontSize: fs(10),
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {greeks.warning}
+                </div>
+              ) : null}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: sp(8), marginTop: sp(10) }}>
-                <Metric label="Δ raw" value={formatMoney(greeks.delta, currency, true)} />
-                <Metric label="β Δ SPY" value={formatMoney(greeks.betaWeightedDelta, currency, true)} />
-                <Metric label="Γ" value={greeks.gamma ?? "----"} />
-                <Metric label="Θ/day" value={greeks.theta ?? "----"} />
-                <Metric label="Vega" value={greeks.vega ?? "----"} />
+                <Metric label="Δ raw" value={formatNumber(greeks.delta, 2)} />
+                <Metric label="β Δ SPY" value={formatNumber(greeks.betaWeightedDelta, 2)} />
+                <Metric label="Γ" value={formatNumber(greeks.gamma, 4)} />
+                <Metric label="Θ/day" value={formatNumber(greeks.theta, 2)} />
+                <Metric label="Vega" value={formatNumber(greeks.vega, 2)} />
                 <Metric label="Rho" value={greeks.rho ?? "----"} />
+              </div>
+              <div style={{ marginTop: sp(12) }}>
+                <div style={{ ...sectionTitleStyle, fontSize: fs(10), marginBottom: sp(8) }}>
+                  Per Underlying
+                </div>
+                {perUnderlying.length ? (
+                  <div style={{ overflow: "auto", maxHeight: "22vh" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
+                      <thead>
+                        <tr>
+                          {["Underlying", "Exposure", "Δ", "β Δ", "Γ", "Θ", "Vega"].map((label) => (
+                            <th
+                              key={label}
+                              style={{
+                                ...sectionTitleStyle,
+                                fontSize: fs(9),
+                                textAlign: "left",
+                                paddingBottom: sp(6),
+                              }}
+                            >
+                              {label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {perUnderlying.slice(0, 8).map((row) => (
+                          <tr key={row.underlying}>
+                            <td style={{ padding: sp("5px 0"), color: T.text, fontSize: fs(10), fontWeight: 800 }}>
+                              {row.underlying}
+                            </td>
+                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
+                              {formatMoney(row.exposure, currency, true)}
+                            </td>
+                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
+                              {formatNumber(row.delta, 2)}
+                            </td>
+                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
+                              {formatNumber(row.betaWeightedDelta, 2)}
+                            </td>
+                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
+                              {formatNumber(row.gamma, 4)}
+                            </td>
+                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
+                              {formatNumber(row.theta, 2)}
+                            </td>
+                            <td style={{ padding: sp("5px 0"), color: T.textSec, fontSize: fs(10) }}>
+                              {formatNumber(row.vega, 2)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div style={{ color: T.textMuted, fontSize: fs(10) }}>
+                    No underlying Greek breakdown available.
+                  </div>
+                )}
               </div>
             </div>
             <div>
