@@ -91,7 +91,7 @@ import {
 import MarketScreen from "./screens/MarketScreen";
 import FlowScreen from "./screens/FlowScreen";
 import TradeScreen from "./screens/TradeScreen";
-import AccountScreen from "./screens/AccountScreen";
+const AccountScreen = lazy(() => import("./screens/AccountScreen"));
 import ResearchScreen from "./screens/ResearchScreen";
 import AlgoScreen from "./screens/AlgoScreen";
 import BacktestScreen from "./screens/BacktestScreen";
@@ -16982,18 +16982,20 @@ export default function RayAlgoPlatform() {
         );
       case "account":
         return (
-          <AccountScreen
-            accounts={accounts}
-            selectedAccountId={primaryAccountId}
-            onSelectTradingAccount={setSelectedAccountId}
-            environment={environment}
-            brokerConfigured={brokerConfigured}
-            brokerAuthenticated={brokerAuthenticated}
-            onJumpToTrade={(symbol) => {
-              handleSelectSymbol(symbol);
-              setScreen("trade");
-            }}
-          />
+          <Suspense fallback={null}>
+            <AccountScreen
+              accounts={accounts}
+              selectedAccountId={primaryAccountId}
+              onSelectTradingAccount={setSelectedAccountId}
+              environment={environment}
+              brokerConfigured={brokerConfigured}
+              brokerAuthenticated={brokerAuthenticated}
+              onJumpToTrade={(symbol) => {
+                handleSelectSymbol(symbol);
+                setScreen("trade");
+              }}
+            />
+          </Suspense>
         );
       case "research":
         return <ResearchScreen onJumpToTrade={handleJumpToTradeFromResearch} />;
