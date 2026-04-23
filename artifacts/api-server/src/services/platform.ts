@@ -1326,8 +1326,8 @@ export async function getOptionChain(input: {
   const ibkrContracts = await bridgeClient
     .getOptionChain({
       ...input,
-      maxExpirations: input.expirationDate ? 1 : 3,
-      strikesAroundMoney: 12,
+      maxExpirations: 1,
+      strikesAroundMoney: 6,
     })
     .catch(() => []);
 
@@ -1434,8 +1434,8 @@ async function listFlowEventsUncached(input: {
     // window around the money is plenty.
     contracts = await ibkrClient.getOptionChain({
       underlying: input.underlying,
-      maxExpirations: 2,
-      strikesAroundMoney: 8,
+      maxExpirations: 1,
+      strikesAroundMoney: 6,
     });
   } catch (error) {
     ibkrError = getErrorMessage(error);

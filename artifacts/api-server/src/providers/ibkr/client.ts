@@ -2240,112 +2240,114 @@ export class IbkrClient {
         : ["call", "put"];
 
       const contracts = (
-        await Promise.all(candidateMonths.map(async (month): Promise<
-          NonNullable<BrokerPositionSnapshot["optionContract"]>[]
-        > => {
-        const strikes = await this.getCachedOptionStrikes({
-          conid: underlyingConid,
-          month,
-        });
-
-        const relevantStrikes =
-          spotPrice > 0 && strikes.length > strikesAroundMoney * 2 + 1
-            ? (() => {
-                const closestIndex = strikes.reduce((bestIndex, strike, index) => (
-                  Math.abs(strike - spotPrice) < Math.abs(strikes[bestIndex] - spotPrice)
-                    ? index
-                    : bestIndex
-                ), 0);
-                const start = Math.max(0, closestIndex - strikesAroundMoney);
-                const end = Math.min(strikes.length, closestIndex + strikesAroundMoney + 1);
-                return strikes.slice(start, end);
-              })()
-            : strikes;
-
-        const contractGroups = await Promise.all(
-          relevantStrikes.flatMap((strike) =>
-            rights.map(async (right): Promise<
-              NonNullable<BrokerPositionSnapshot["optionContract"]>[]
-            > => {
-            const matches = await this.getCachedOptionInfo({
+        await Promise.all(
+          candidateMonths.map(async (month): Promise<
+            NonNullable<BrokerPositionSnapshot["optionContract"]>[]
+          > => {
+            const strikes = await this.getCachedOptionStrikes({
               conid: underlyingConid,
               month,
-              strike,
-              right,
             });
-            const parsedMatches = compact(
-              matches.map((record) => {
-                const optionContract = parseOptionDetails(record);
-                if (!optionContract) {
-                  return null;
-                }
 
-                if (
-                  input.expirationDate &&
-                  optionContract.expirationDate.toISOString().slice(0, 10) !==
-                    input.expirationDate.toISOString().slice(0, 10)
-                ) {
-                  return null;
-                }
+            const relevantStrikes =
+              spotPrice > 0 && strikes.length > strikesAroundMoney * 2 + 1
+                ? (() => {
+                    const closestIndex = strikes.reduce((bestIndex, strike, index) => (
+                      Math.abs(strike - spotPrice) < Math.abs(strikes[bestIndex] - spotPrice)
+                        ? index
+                        : bestIndex
+                    ), 0);
+                    const start = Math.max(0, closestIndex - strikesAroundMoney);
+                    const end = Math.min(strikes.length, closestIndex + strikesAroundMoney + 1);
+                    return strikes.slice(start, end);
+                  })()
+                : strikes;
 
-                return {
-                  record,
-                  optionContract,
-                };
-              }),
+            const contractGroups = await Promise.all(
+              relevantStrikes.flatMap((strike) =>
+                rights.map(async (right): Promise<
+                  NonNullable<BrokerPositionSnapshot["optionContract"]>[]
+                > => {
+                  const matches = await this.getCachedOptionInfo({
+                    conid: underlyingConid,
+                    month,
+                    strike,
+                    right,
+                  });
+                  const parsedMatches = compact(
+                    matches.map((record) => {
+                      const optionContract = parseOptionDetails(record);
+                      if (!optionContract) {
+                        return null;
+                      }
+
+                      if (
+                        input.expirationDate &&
+                        optionContract.expirationDate.toISOString().slice(0, 10) !==
+                          input.expirationDate.toISOString().slice(0, 10)
+                      ) {
+                        return null;
+                      }
+
+                      return {
+                        record,
+                        optionContract,
+                      };
+                    }),
+                  );
+
+                  const preferredContracts = Array.from(
+                    parsedMatches.reduce<
+                      Map<
+                        string,
+                        {
+                          record: Record<string, unknown>;
+                          optionContract: NonNullable<
+                            BrokerPositionSnapshot["optionContract"]
+                          >;
+                        }
+                      >
+                    >((acc, candidate) => {
+                      const expiryKey = candidate.optionContract.expirationDate
+                        .toISOString()
+                        .slice(0, 10);
+                      const existing = acc.get(expiryKey);
+                      const tradingClass = normalizeSymbol(
+                        asString(candidate.record["tradingClass"]) ?? "",
+                      );
+                      const existingTradingClass = normalizeSymbol(
+                        asString(existing?.record["tradingClass"]) ?? "",
+                      );
+                      const candidateScore =
+                        tradingClass === normalizedUnderlying
+                          ? 0
+                          : tradingClass.startsWith(normalizedUnderlying)
+                            ? 1
+                            : 2;
+                      const existingScore =
+                        existingTradingClass === normalizedUnderlying
+                          ? 0
+                          : existingTradingClass.startsWith(normalizedUnderlying)
+                            ? 1
+                            : 2;
+
+                      if (!existing || candidateScore < existingScore) {
+                        acc.set(expiryKey, candidate);
+                      }
+
+                      return acc;
+                    }, new Map())
+                      .values(),
+                  ).map((candidate) => candidate.optionContract);
+
+                  return preferredContracts;
+                }),
+              ),
             );
 
-            const preferredContracts = Array.from(
-              parsedMatches.reduce<
-                Map<
-                  string,
-                  {
-                    record: Record<string, unknown>;
-                    optionContract: NonNullable<
-                      BrokerPositionSnapshot["optionContract"]
-                    >;
-                  }
-                >
-              >((acc, candidate) => {
-                const expiryKey = candidate.optionContract.expirationDate
-                  .toISOString()
-                  .slice(0, 10);
-                const existing = acc.get(expiryKey);
-                const tradingClass = normalizeSymbol(
-                  asString(candidate.record["tradingClass"]) ?? "",
-                );
-                const existingTradingClass = normalizeSymbol(
-                  asString(existing?.record["tradingClass"]) ?? "",
-                );
-                const candidateScore =
-                  tradingClass === normalizedUnderlying
-                    ? 0
-                    : tradingClass.startsWith(normalizedUnderlying)
-                      ? 1
-                      : 2;
-                const existingScore =
-                  existingTradingClass === normalizedUnderlying
-                    ? 0
-                    : existingTradingClass.startsWith(normalizedUnderlying)
-                      ? 1
-                      : 2;
-
-                if (!existing || candidateScore < existingScore) {
-                  acc.set(expiryKey, candidate);
-                }
-
-                return acc;
-              }, new Map())
-                .values(),
-            ).map((candidate) => candidate.optionContract);
-
-              return preferredContracts;
-            }),
-          ),
-        );
-
-        return contractGroups.flat();
-        }))
+            return contractGroups.flat();
+          }),
+        )
       ).flat();
 
       const uniqueContracts = Array.from(
