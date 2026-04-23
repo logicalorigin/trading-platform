@@ -190,6 +190,20 @@ kill -KILL <pids>
 `fuser` is unavailable on this NixOS image; use `pkill -KILL -f <pattern>` or
 check `/proc/net/tcp[6]` (look for `:HEX_PORT` where HEX = `printf '%04X' PORT`).
 
+### `ensurePreviewReachable` removed from rayalgo
+
+`artifacts/rayalgo/.replit-artifact/artifact.toml` no longer sets
+`ensurePreviewReachable = "/"`. With that directive in place the Replit preview
+proxy was health-polling `/` and re-mounting the iframe whenever a probe
+hiccupped (bundling stalls during HMR, slow chunk transforms, etc.), which
+manifested in the browser console as a `[vite] connecting... → connected`
+pair and a fresh `[rayalgo] localStorage audit` mount log roughly every three
+seconds — i.e. ~20 full page reloads/minute that froze the IDE/Chrome. The
+canonical `react-vite` artifact template (`.local/skills/artifacts/artifacts/react-vite/artifact.yaml`)
+does not include the directive; rayalgo now matches. If preview reachability
+gating is ever needed again, prefer raising the proxy's tolerance over
+re-introducing a tight health probe.
+
 The `ibkr-bridge` runs as a direct `node ... dist/index.mjs` (no pnpm wrapper)
 and currently has no `SIGTERM` handler, so a restart during a long in-flight
 request (e.g. 30-60s `/options/chains` calls) can leave the previous process

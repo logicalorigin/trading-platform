@@ -13,7 +13,6 @@ version = "1.0.0"
 name = "web"
 paths = [ "/" ]
 localPort = 18747
-ensurePreviewReachable = "/"
 
 [services.development]
 run = "pnpm --filter @workspace/rayalgo run dev"
