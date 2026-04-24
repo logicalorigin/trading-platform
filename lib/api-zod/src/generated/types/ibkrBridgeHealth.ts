@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from "./environmentMode";
+import type { IbkrBridgeConnectionsHealth } from "./ibkrBridgeConnectionsHealth";
 import type { IbkrBridgeHealthMarketDataMode } from "./ibkrBridgeHealthMarketDataMode";
 import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
 
@@ -36,4 +37,5 @@ export interface IbkrBridgeHealth {
   marketDataMode: IbkrBridgeHealthMarketDataMode;
   /** @nullable */
   liveMarketDataAvailable: boolean | null;
+  connections?: IbkrBridgeConnectionsHealth;
 }

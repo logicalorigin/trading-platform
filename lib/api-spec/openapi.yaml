@@ -1778,6 +1778,92 @@ components:
         - historical
         - research
 
+    IbkrBridgeConnectionHealth:
+      type: object
+      properties:
+        transport:
+          type: string
+          enum:
+            - client_portal
+            - tws
+        role:
+          type: string
+          enum:
+            - account
+            - market_data
+        configured:
+          type: boolean
+        reachable:
+          type: boolean
+        authenticated:
+          type: boolean
+        competing:
+          type: boolean
+        target:
+          type: [string, "null"]
+        mode:
+          oneOf:
+            - $ref: "#/components/schemas/EnvironmentMode"
+            - type: "null"
+        clientId:
+          type: [integer, "null"]
+        selectedAccountId:
+          type: [string, "null"]
+        accounts:
+          type: array
+          items:
+            type: string
+        lastPingMs:
+          type: [integer, "null"]
+        lastPingAt:
+          type: [string, "null"]
+          format: date-time
+        lastTickleAt:
+          type: [string, "null"]
+          format: date-time
+        lastError:
+          type: [string, "null"]
+        marketDataMode:
+          type: [string, "null"]
+          enum:
+            - live
+            - frozen
+            - delayed
+            - delayed_frozen
+            - unknown
+            - null
+        liveMarketDataAvailable:
+          type: [boolean, "null"]
+      required:
+        - transport
+        - role
+        - configured
+        - reachable
+        - authenticated
+        - competing
+        - target
+        - mode
+        - clientId
+        - selectedAccountId
+        - accounts
+        - lastPingMs
+        - lastPingAt
+        - lastTickleAt
+        - lastError
+        - marketDataMode
+        - liveMarketDataAvailable
+
+    IbkrBridgeConnectionsHealth:
+      type: object
+      properties:
+        clientPortal:
+          $ref: "#/components/schemas/IbkrBridgeConnectionHealth"
+        tws:
+          $ref: "#/components/schemas/IbkrBridgeConnectionHealth"
+      required:
+        - clientPortal
+        - tws
+
     IbkrBridgeHealth:
       type: object
       properties:
@@ -1833,6 +1919,8 @@ components:
             - null
         liveMarketDataAvailable:
           type: [boolean, "null"]
+        connections:
+          $ref: "#/components/schemas/IbkrBridgeConnectionsHealth"
       required:
         - configured
         - authenticated

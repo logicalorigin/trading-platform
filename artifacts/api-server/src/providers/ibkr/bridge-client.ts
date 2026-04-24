@@ -177,7 +177,7 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
           tws: hydrateConnectionHealth(raw.connections.tws),
         }
       : undefined,
-    };
+  };
 }
 
 function hydrateConnectionHealth(
@@ -319,13 +319,15 @@ function findSseBoundary(buffer: string): { index: number; length: number } | nu
 
 export class IbkrBridgeClient {
   private readonly config = getIbkrBridgeRuntimeConfig();
-  // Default lowered from 20s → 5s so a dead bridge / dead Cloudflare tunnel
-  // fails fast instead of letting the frontend stack 20s-pending XHRs that
-  // freeze the browser tab when they all resolve at once. Override with
-  // IBKR_BRIDGE_REQUEST_TIMEOUT_MS if a real upstream legitimately needs more.
+  // Default lowered from 20s → 15s. Authenticated IBKR endpoints
+  // (e.g. /iserver/secdef/info, equity-history) legitimately take 5–10s on
+  // first call after session warmup, so 5s was cutting valid traffic. 15s
+  // leaves ~50% headroom over observed max while still bounding tab-freeze
+  // when the upstream is dead (paired with LRU caps + log-size truncation).
+  // Override with IBKR_BRIDGE_REQUEST_TIMEOUT_MS if needed.
   private readonly requestTimeoutMs = Math.max(
     1,
-    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "5000"),
+    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "15000"),
   );
 
   private buildUrl(path: string, params: Record<string, QueryValue> = {}): URL {

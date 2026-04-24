@@ -217,6 +217,71 @@ export interface SessionMarketDataProviders {
   research: (typeof SessionMarketDataProvidersResearch)[keyof typeof SessionMarketDataProvidersResearch];
 }
 
+export type IbkrBridgeConnectionHealthTransport =
+  (typeof IbkrBridgeConnectionHealthTransport)[keyof typeof IbkrBridgeConnectionHealthTransport];
+
+export const IbkrBridgeConnectionHealthTransport = {
+  client_portal: "client_portal",
+  tws: "tws",
+} as const;
+
+export type IbkrBridgeConnectionHealthRole =
+  (typeof IbkrBridgeConnectionHealthRole)[keyof typeof IbkrBridgeConnectionHealthRole];
+
+export const IbkrBridgeConnectionHealthRole = {
+  account: "account",
+  market_data: "market_data",
+} as const;
+
+/**
+ * @nullable
+ */
+export type IbkrBridgeConnectionHealthMarketDataMode =
+  | (typeof IbkrBridgeConnectionHealthMarketDataMode)[keyof typeof IbkrBridgeConnectionHealthMarketDataMode]
+  | null;
+
+export const IbkrBridgeConnectionHealthMarketDataMode = {
+  live: "live",
+  frozen: "frozen",
+  delayed: "delayed",
+  delayed_frozen: "delayed_frozen",
+  unknown: "unknown",
+} as const;
+
+export interface IbkrBridgeConnectionHealth {
+  transport: IbkrBridgeConnectionHealthTransport;
+  role: IbkrBridgeConnectionHealthRole;
+  configured: boolean;
+  reachable: boolean;
+  authenticated: boolean;
+  competing: boolean;
+  /** @nullable */
+  target: string | null;
+  mode: EnvironmentMode | null;
+  /** @nullable */
+  clientId: number | null;
+  /** @nullable */
+  selectedAccountId: string | null;
+  accounts: string[];
+  /** @nullable */
+  lastPingMs: number | null;
+  /** @nullable */
+  lastPingAt: string | null;
+  /** @nullable */
+  lastTickleAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+  /** @nullable */
+  marketDataMode: IbkrBridgeConnectionHealthMarketDataMode;
+  /** @nullable */
+  liveMarketDataAvailable: boolean | null;
+}
+
+export interface IbkrBridgeConnectionsHealth {
+  clientPortal: IbkrBridgeConnectionHealth;
+  tws: IbkrBridgeConnectionHealth;
+}
+
 export type IbkrBridgeHealthTransport =
   (typeof IbkrBridgeHealthTransport)[keyof typeof IbkrBridgeHealthTransport];
 
@@ -268,6 +333,7 @@ export interface IbkrBridgeHealth {
   marketDataMode: IbkrBridgeHealthMarketDataMode;
   /** @nullable */
   liveMarketDataAvailable: boolean | null;
+  connections?: IbkrBridgeConnectionsHealth;
 }
 
 export type SessionInfoConfigured = {

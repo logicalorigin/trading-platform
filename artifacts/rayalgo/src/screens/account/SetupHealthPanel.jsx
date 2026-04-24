@@ -1,5 +1,9 @@
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
+  IbkrConnectionLane,
+  getIbkrConnection,
+} from "../../features/platform/IbkrConnectionStatus";
+import {
   EmptyState,
   Panel,
   Pill,
@@ -49,6 +53,7 @@ const StatusRow = ({ label, ok, detail }) => (
 );
 
 export const SetupHealthPanel = ({
+  session,
   healthQuery,
   testMutation,
   brokerConfigured,
@@ -56,6 +61,8 @@ export const SetupHealthPanel = ({
 }) => {
   const health = healthQuery.data;
   const testResult = testMutation.data;
+  const clientPortalConnection = getIbkrConnection(session, "clientPortal");
+  const twsConnection = getIbkrConnection(session, "tws");
   const formatCoverage = (start, end, count, emptyLabel) => {
     if (!count || !start || !end) {
       return emptyLabel;
@@ -115,6 +122,18 @@ export const SetupHealthPanel = ({
               ok={Boolean(brokerConfigured && brokerAuthenticated)}
               detail={brokerAuthenticated ? "IBKR bridge session authenticated" : "Bridge unavailable or not authenticated"}
             />
+            <div
+              style={{
+                display: "grid",
+                gap: sp(7),
+                padding: sp("6px 0 10px"),
+                borderBottom: `1px solid ${T.border}`,
+              }}
+            >
+              <div style={mutedLabelStyle}>IBKR Connection Lanes</div>
+              <IbkrConnectionLane label="Client Portal" connection={clientPortalConnection} />
+              <IbkrConnectionLane label="TWS Market Data" connection={twsConnection} />
+            </div>
             <StatusRow
               label="Flex configured"
               ok={Boolean(health.flexConfigured)}

@@ -35,6 +35,7 @@ const QUERY_OPTIONS = {
 };
 
 export const AccountScreen = ({
+  session,
   accounts = [],
   selectedAccountId,
   onSelectTradingAccount,
@@ -468,6 +469,7 @@ export const AccountScreen = ({
         >
           <CashFundingPanel query={cashQuery} currency={currency} />
           <SetupHealthPanel
+            session={session}
             healthQuery={healthQuery}
             testMutation={testFlexMutation}
             brokerConfigured={brokerConfigured}

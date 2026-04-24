@@ -111,6 +111,12 @@ import {
   useRuntimeWorkloadStats,
 } from "./features/platform/workloadStats";
 import {
+  IbkrConnectionStatusPair,
+  getIbkrConnection,
+  getIbkrConnectionTone,
+  formatIbkrPingMs,
+} from "./features/platform/IbkrConnectionStatus";
+import {
   buildMarketFlowStoreKey,
   clearMarketFlowSnapshot,
   publishMarketFlowSnapshot,
@@ -182,7 +188,9 @@ input[type=range]{accent-color:#3b82f6}
 @keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.6)}50%{box-shadow:0 0 0 4px rgba(239,68,68,0)}}
 @keyframes premiumFlowSpin{to{transform:rotate(360deg)}}
 @keyframes premiumFlowPulse{0%,100%{opacity:0.38;transform:scale(0.82)}50%{opacity:1;transform:scale(1)}}
+@keyframes ibkrWavePulse{0%,100%{opacity:0.35;transform:scaleY(0.55)}50%{opacity:1;transform:scaleY(1)}}
 @media (prefers-reduced-motion: reduce){[data-premium-flow-glyph]{animation:none!important}}
+@media (prefers-reduced-motion: reduce){[data-ibkr-wave] span{animation:none!important}}
 `;
 
 // ─── PERSISTENCE LAYER ───
@@ -3332,7 +3340,7 @@ const HeaderStatusCluster = ({
     >
       <div
         title={bridgeRuntimeMessage(session)}
-        style={surfaceStyle}
+        style={{ ...surfaceStyle, minWidth: dim(174) }}
         onMouseEnter={(event) => {
           event.currentTarget.style.background = T.bg3;
           event.currentTarget.style.borderColor = T.textMuted;
@@ -3346,43 +3354,30 @@ const HeaderStatusCluster = ({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: sp(6),
+            justifyContent: "space-between",
+            gap: sp(8),
             fontSize: fs(8),
-            fontWeight: 700,
+            fontWeight: 800,
             fontFamily: T.sans,
             color: T.textMuted,
             letterSpacing: "0.08em",
           }}
         >
-          <span
-            style={{
-              width: dim(7),
-              height: dim(7),
-              background: bridgeTone.color,
-              display: "inline-block",
-            }}
-          />
-          IBKR
+          <span>IBKR RELAY</span>
+          <span style={{ color: bridgeTone.color }}>
+            {bridgeTone.label.toUpperCase()}
+          </span>
         </div>
-        <div
-          style={{
-            fontSize: fs(11),
-            fontWeight: 700,
-            fontFamily: T.sans,
-            color: bridgeTone.color,
-          }}
-        >
-          {session?.ibkrBridge?.transport === "tws" ? "TWS" : "CP"} ·{" "}
-          {bridgeTone.label.toUpperCase()}
-        </div>
+        <IbkrConnectionStatusPair session={session} compact />
         <div
           style={{
             fontSize: fs(8),
             color: T.textDim,
             fontFamily: T.sans,
+            whiteSpace: "nowrap",
           }}
         >
-          {environment.toUpperCase()} ·{" "}
+          {environment.toUpperCase()} |{" "}
           {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
         </div>
       </div>
@@ -12964,8 +12959,13 @@ export const TradeL2Panel = ({
     </button>
   );
 
-  const renderBrokerGate = (title, detail) => (
-    <DataUnavailableState title={title} detail={detail} />
+  const renderBrokerGate = (title, detail, loading = false) => (
+    <DataUnavailableState
+      title={title}
+      detail={detail}
+      loading={loading}
+      tone={loading ? T.accent : undefined}
+    />
   );
 
   const renderBookPanel = () => {
@@ -13001,24 +13001,18 @@ export const TradeL2Panel = ({
       return renderBrokerGate(
         "Contract still loading",
         "Wait for the selected option contract to resolve to a broker contract id.",
+        true,
       );
     }
 
     if (depthQuery.isPending && !depthLevels.length) {
       return (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: T.textDim,
-            fontSize: fs(10),
-            fontFamily: T.sans,
-          }}
-        >
-          Loading IBKR depth…
-        </div>
+        <DataUnavailableState
+          title="Loading IBKR depth"
+          detail="Requesting the live contract price ladder from the broker bridge."
+          loading
+          tone={T.accent}
+        />
       );
     }
 
@@ -13227,24 +13221,18 @@ export const TradeL2Panel = ({
       return renderBrokerGate(
         "Contract still loading",
         "Wait for the selected option contract to resolve to a broker contract id.",
+        true,
       );
     }
 
     if (tapeQuery.isPending && !contractExecutions.length) {
       return (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: T.textDim,
-            fontSize: fs(10),
-            fontFamily: T.sans,
-          }}
-        >
-          Loading IBKR fills…
-        </div>
+        <DataUnavailableState
+          title="Loading IBKR fills"
+          detail="Requesting broker executions for the selected option contract."
+          loading
+          tone={T.accent}
+        />
       );
     }
 
@@ -14652,20 +14640,12 @@ export const TradePositionsPanel = ({
               The bridge is authenticated, but no IBKR account is active yet.
             </div>
           ) : executionsQuery.isPending && !executionRows.length ? (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: T.textDim,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-                padding: sp(16),
-              }}
-            >
-              Loading broker fills…
-            </div>
+            <DataUnavailableState
+              title="Loading broker fills"
+              detail="Requesting broker execution history for the active account."
+              loading
+              tone={T.accent}
+            />
           ) : !executionRows.length ? (
             <div
               style={{
@@ -14841,20 +14821,12 @@ export const TradePositionsPanel = ({
               The bridge is authenticated, but no IBKR account is active yet.
             </div>
           ) : ordersQuery.isPending && !liveOrders.length ? (
-            <div
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: T.textDim,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-                padding: sp(16),
-              }}
-            >
-              Loading live orders…
-            </div>
+            <DataUnavailableState
+              title="Loading live orders"
+              detail="Requesting live IBKR orders for the active account."
+              loading
+              tone={T.accent}
+            />
           ) : !liveOrders.length ? (
             <div
               style={{
@@ -16791,11 +16763,31 @@ export const TradeContractDetailPanel = ({
           />
         ) : (
           <DataUnavailableState
-            title="No live contract bars"
+            title={
+              resolvedChainStatus === "loading" ||
+              optionBarsQuery.isPending ||
+              optionDailyBarsQuery.isPending
+                ? "Loading contract bars"
+                : "No live contract bars"
+            }
             detail={
               resolvedChainStatus === "loading"
                 ? "The selected option chain is still loading for this contract."
+                : optionBarsQuery.isPending || optionDailyBarsQuery.isPending
+                  ? "Requesting broker-backed intraday and daily bars for this contract."
                 : "The selected contract has no broker-backed intraday or daily bars yet."
+            }
+            loading={
+              resolvedChainStatus === "loading" ||
+              optionBarsQuery.isPending ||
+              optionDailyBarsQuery.isPending
+            }
+            tone={
+              resolvedChainStatus === "loading" ||
+              optionBarsQuery.isPending ||
+              optionDailyBarsQuery.isPending
+                ? T.accent
+                : undefined
             }
           />
         )}
@@ -18903,6 +18895,10 @@ export default function RayAlgoPlatform() {
     brokerConfigured && brokerAuthenticated,
   );
   const bridgeTone = bridgeRuntimeTone(session);
+  const clientPortalConnection = getIbkrConnection(session, "clientPortal");
+  const twsConnection = getIbkrConnection(session, "tws");
+  const clientPortalTone = getIbkrConnectionTone(clientPortalConnection);
+  const twsTone = getIbkrConnectionTone(twsConnection);
   const primaryAccount =
     accounts.find((account) => account.id === selectedAccountId) ||
     accounts[0] ||
@@ -19589,6 +19585,7 @@ export default function RayAlgoPlatform() {
       case "account":
         return (
           <MemoAccountScreen
+            session={session}
             accounts={accounts}
             selectedAccountId={primaryAccountId}
             onSelectTradingAccount={setSelectedAccountId}
@@ -20014,9 +20011,13 @@ export default function RayAlgoPlatform() {
                 RSCH{" "}
                 {(session?.marketDataProviders?.research || MISSING_VALUE).toUpperCase()}
               </span>
-              <span style={{ color: bridgeTone.color }}>
-                BRIDGE {session?.ibkrBridge?.transport === "tws" ? "TWS" : "CP"} ·{" "}
-                {bridgeTone.label.toUpperCase()}
+              <span style={{ color: clientPortalTone.color }}>
+                CP {clientPortalTone.label.toUpperCase()}{" "}
+                {formatIbkrPingMs(clientPortalConnection?.lastPingMs)}
+              </span>
+              <span style={{ color: twsTone.color }}>
+                TWS {twsTone.label.toUpperCase()}{" "}
+                {formatIbkrPingMs(twsConnection?.lastPingMs)}
               </span>
               <span style={{ flex: 1 }} />
               <span style={{ color: T.textMuted }}>v0.1.0</span>

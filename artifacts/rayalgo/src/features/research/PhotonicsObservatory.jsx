@@ -4152,6 +4152,9 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
 function ResearchLoadingState({ theme }) {
   return (
     <div style={{ animation: "fadeIn 0.2s ease", maxWidth: 760, margin: "24px auto 0" }}>
+      <style>
+        {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
+      </style>
       <div style={{
         background: "#fff",
         border: "1px solid rgba(0,0,0,.06)",
@@ -4167,8 +4170,24 @@ function ResearchLoadingState({ theme }) {
           <div style={{ fontSize: 11, color: theme.accent, letterSpacing: 3, textTransform: "uppercase", fontWeight: 700 }}>
             Research
           </div>
-          <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 28, color: "#111", marginTop: 4 }}>
-            Loading research workspace
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+            <span
+              data-testid="loading-spinner"
+              role="status"
+              aria-label="Loading"
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: "50%",
+                border: "2px solid rgba(0,0,0,.08)",
+                borderTopColor: theme.accent,
+                animation: "researchWorkspaceSpin 820ms linear infinite",
+                flexShrink: 0,
+              }}
+            />
+            <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 28, color: "#111" }}>
+              Loading research workspace
+            </div>
           </div>
           <div style={{ fontSize: 12, color: "#666", marginTop: 6, lineHeight: 1.6, maxWidth: 520 }}>
             The curated universe, graph relationships, and thesis metadata are being loaded into the platform shell. Live market data wiring stays available while the authored research dataset hydrates.

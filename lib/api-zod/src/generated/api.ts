@@ -61,6 +61,66 @@ export const GetSessionResponse = zod.object({
         ])
         .nullable(),
       liveMarketDataAvailable: zod.boolean().nullable(),
+      connections: zod
+        .object({
+          clientPortal: zod.object({
+            transport: zod.enum(["client_portal", "tws"]),
+            role: zod.enum(["account", "market_data"]),
+            configured: zod.boolean(),
+            reachable: zod.boolean(),
+            authenticated: zod.boolean(),
+            competing: zod.boolean(),
+            target: zod.string().nullable(),
+            mode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
+            clientId: zod.number().nullable(),
+            selectedAccountId: zod.string().nullable(),
+            accounts: zod.array(zod.string()),
+            lastPingMs: zod.number().nullable(),
+            lastPingAt: zod.coerce.date().nullable(),
+            lastTickleAt: zod.coerce.date().nullable(),
+            lastError: zod.string().nullable(),
+            marketDataMode: zod
+              .union([
+                zod.literal("live"),
+                zod.literal("frozen"),
+                zod.literal("delayed"),
+                zod.literal("delayed_frozen"),
+                zod.literal("unknown"),
+                zod.literal(null),
+              ])
+              .nullable(),
+            liveMarketDataAvailable: zod.boolean().nullable(),
+          }),
+          tws: zod.object({
+            transport: zod.enum(["client_portal", "tws"]),
+            role: zod.enum(["account", "market_data"]),
+            configured: zod.boolean(),
+            reachable: zod.boolean(),
+            authenticated: zod.boolean(),
+            competing: zod.boolean(),
+            target: zod.string().nullable(),
+            mode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
+            clientId: zod.number().nullable(),
+            selectedAccountId: zod.string().nullable(),
+            accounts: zod.array(zod.string()),
+            lastPingMs: zod.number().nullable(),
+            lastPingAt: zod.coerce.date().nullable(),
+            lastTickleAt: zod.coerce.date().nullable(),
+            lastError: zod.string().nullable(),
+            marketDataMode: zod
+              .union([
+                zod.literal("live"),
+                zod.literal("frozen"),
+                zod.literal("delayed"),
+                zod.literal("delayed_frozen"),
+                zod.literal("unknown"),
+                zod.literal(null),
+              ])
+              .nullable(),
+            liveMarketDataAvailable: zod.boolean().nullable(),
+          }),
+        })
+        .optional(),
     }),
     zod.null(),
   ]),
