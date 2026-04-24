@@ -56,12 +56,23 @@ async function readResponsePayload(response: Response): Promise<unknown> {
   return text;
 }
 
+// Cap how much upstream body text we attach to errors. HTML error pages
+// (e.g. Cloudflare 530 / proxy 502) are often 5–10 KB, and the same body
+// would otherwise be serialized into the error's message + detail + data,
+// flooding the log files (MB/min) and slowing the whole workspace.
+const MAX_ERROR_BODY_CHARS = 300;
+
+function truncateForError(value: string): string {
+  if (value.length <= MAX_ERROR_BODY_CHARS) return value;
+  return `${value.slice(0, MAX_ERROR_BODY_CHARS)}…[truncated ${value.length - MAX_ERROR_BODY_CHARS} chars]`;
+}
+
 function buildErrorMessage(status: number, statusText: string, body: unknown): string {
   const prefix = `HTTP ${status} ${statusText}`;
 
   if (typeof body === "string") {
     const trimmed = body.trim();
-    return trimmed ? `${prefix}: ${trimmed}` : prefix;
+    return trimmed ? `${prefix}: ${truncateForError(trimmed)}` : prefix;
   }
 
   if (body && typeof body === "object") {
@@ -73,7 +84,7 @@ function buildErrorMessage(status: number, statusText: string, body: unknown): s
       record["error"];
 
     if (typeof detail === "string" && detail.trim()) {
-      return `${prefix}: ${detail.trim()}`;
+      return `${prefix}: ${truncateForError(detail.trim())}`;
     }
   }
 
@@ -102,15 +113,24 @@ export async function fetchJson<T>(
   const payload = await readResponsePayload(response);
 
   if (!response.ok) {
+    // Truncate large bodies (HTML error pages from Cloudflare/proxies) to
+    // keep error logs small. Structured JSON payloads pass through as-is in
+    // `data` for callers that need to inspect them.
+    const detailString =
+      typeof payload === "string"
+        ? truncateForError(payload)
+        : payload && typeof payload === "object"
+          ? truncateForError(JSON.stringify(payload))
+          : undefined;
+    const dataForError =
+      typeof payload === "string" && payload.length > MAX_ERROR_BODY_CHARS
+        ? truncateForError(payload)
+        : payload;
+
     throw new HttpError(response.status, buildErrorMessage(response.status, response.statusText, payload), {
       code: "upstream_http_error",
-      detail:
-        typeof payload === "string"
-          ? payload
-          : payload && typeof payload === "object"
-            ? JSON.stringify(payload)
-            : undefined,
-      data: payload,
+      detail: detailString,
+      data: dataForError,
       expose: response.status < 500,
     });
   }
