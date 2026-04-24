@@ -5023,8 +5023,9 @@ const COND = [
   },
 ];
 
-export const Card = ({ children, style = {}, noPad }) => (
+export const Card = ({ children, style = {}, noPad, ...props }) => (
   <div
+    {...props}
     style={{
       background: T.bg1,
       border: `1px solid ${T.border}`,
@@ -7589,6 +7590,7 @@ const MiniChartPremiumFlowIndicator = ({
   flowStatus,
   providerSummary,
   dense = false,
+  compact = false,
 }) => {
   const resolvedSummary = summary || EMPTY_PREMIUM_FLOW_SUMMARY;
   const normalizedSymbol = normalizeTickerSymbol(symbol);
@@ -7621,25 +7623,34 @@ const MiniChartPremiumFlowIndicator = ({
         ? 0
         : Math.min(92, Math.max(8, Math.round(resolvedSummary.callShare * 100)));
   const putPct = hasFlow ? 100 - callPct : 50;
-  const height = dense ? 32 : 40;
+  const height = compact || dense ? 32 : 52;
   const latestLabel = resolvedSummary.latestOccurredAt
     ? formatRelativeTimeShort(resolvedSummary.latestOccurredAt)
     : null;
   const titleDetail = displayState.errorMessage
     ? ` · ${displayState.errorMessage}`
     : "";
+  const compactStatusLabel =
+    statusLabel === "IBKR snapshot live"
+      ? "IBKR live"
+      : statusLabel === "Premium flow"
+        ? "Flow"
+        : statusLabel === "Snapshot prem"
+          ? "Snapshot"
+          : statusLabel;
 
   return (
     <div
       data-chart-control-root
+      data-testid="market-premium-flow-strip"
       style={{
         height,
         flexShrink: 0,
         borderTop: `1px solid ${T.border}`,
         background: T.bg2,
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto",
-        gridTemplateRows: dense ? "1fr 5px" : "1fr 6px 1fr",
+        gridTemplateColumns: compact ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto",
+        gridTemplateRows: dense || compact ? "1fr 5px" : "1fr 6px 1fr",
         gap: dense ? 2 : 3,
         alignItems: "center",
         padding: dense ? "3px 6px" : "4px 8px",
@@ -7692,14 +7703,16 @@ const MiniChartPremiumFlowIndicator = ({
             minWidth: 0,
           }}
         >
-          {statusLabel}
+          {compact ? compactStatusLabel : statusLabel}
         </span>
       </div>
-      <PremiumFlowSparkline
-        timeline={resolvedSummary.timeline}
-        color={tone}
-        dense={dense}
-      />
+      {!compact ? (
+        <PremiumFlowSparkline
+          timeline={resolvedSummary.timeline}
+          color={tone}
+          dense={dense}
+        />
+      ) : null}
       <div
         style={{
           gridColumn: "1 / -1",
@@ -7727,7 +7740,7 @@ const MiniChartPremiumFlowIndicator = ({
           }}
         />
       </div>
-      {!dense ? (
+      {!dense && !compact ? (
         <div
           style={{
             gridColumn: "1 / -1",
@@ -7737,6 +7750,7 @@ const MiniChartPremiumFlowIndicator = ({
             minWidth: 0,
             color: T.textDim,
             fontSize: fs(8),
+            lineHeight: 1.1,
             whiteSpace: "nowrap",
           }}
         >
@@ -7775,6 +7789,7 @@ const MiniChartCell = ({
   onRememberTicker,
   isActive,
   dense = false,
+  compactFlow = false,
   stockAggregateStreamingEnabled = false,
 }) => {
   const queryClient = useQueryClient();
@@ -8301,6 +8316,7 @@ const MiniChartCell = ({
         flowStatus={premiumFlowStatus}
         providerSummary={premiumFlowProviderSummary}
         dense={dense}
+        compact={compactFlow}
       />
       <MiniChartTickerSearch
         open={searchOpen}
@@ -8589,6 +8605,10 @@ export const MultiChartGrid = ({
   );
   const columnWidths = columnWeights.map((weight) => weight * trackAreaWidth);
   const rowHeights = rowWeights.map((weight) => weight * trackAreaHeight);
+  const minRenderedColumnWidth = columnWidths.length
+    ? Math.min(...columnWidths)
+    : 0;
+  const compactPremiumFlow = minRenderedColumnWidth > 0 && minRenderedColumnWidth < dim(240);
   const gridRenderedHeight =
     trackAreaHeight + Math.max(0, renderedRows - 1) * gridGap;
   const verticalDividerOffsets = hasVerticalResizeGap
@@ -8792,17 +8812,31 @@ export const MultiChartGrid = ({
       : `${cfg.count} visible`;
 
   return (
-    <Card noPad style={{ flexShrink: 0, overflow: "visible" }}>
+    <Card
+      noPad
+      data-testid="market-chart-grid"
+      style={{ flexShrink: 0, overflow: "visible" }}
+    >
       <div
         style={{
           padding: sp(denseGrid ? "5px 8px" : "6px 10px"),
           borderBottom: `1px solid ${T.border}`,
           display: "flex",
+          flexWrap: "wrap",
           justifyContent: "space-between",
           alignItems: "center",
+          gap: sp(6),
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(8),
+            minWidth: 0,
+            flex: "1 1 220px",
+          }}
+        >
           <span
             style={{
               fontSize: fs(10),
@@ -8815,13 +8849,29 @@ export const MultiChartGrid = ({
             CHARTS
           </span>
           <span
-            style={{ fontSize: fs(9), color: T.textMuted, fontFamily: T.mono }}
+            style={{
+              fontSize: fs(9),
+              color: T.textMuted,
+              fontFamily: T.mono,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
           >
             {syncTimeframes ? "sync tf" : "independent"} · broker-backed bars ·{" "}
             {focusedLabel}
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: sp(6),
+            flex: "0 1 auto",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
           <button
             type="button"
             onClick={resetGridCardScale}
@@ -8945,6 +8995,7 @@ export const MultiChartGrid = ({
               premiumFlowProviderSummary={chartFlowProviderSummary}
               isActive={slot.ticker === activeSym}
               dense={denseGrid}
+              compactFlow={compactPremiumFlow}
               stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
               onFocus={onSymClick}
               onEnterSoloMode={() => {

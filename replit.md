@@ -274,3 +274,36 @@ Notes:
   user's stale cloudflared tunnel — a Windows-side action, not a
   code change. No retry-backoff was added because it would mask the
   real signal.
+
+## Module-level cache caps (2026-04-24)
+
+Three module-level Maps that previously grew without bound (one entry per
+distinct symbol/contract/ticker the user ever touched in a session) are
+now bounded LRU caches. Without these caps a long session of browsing
+tickers, option chains, and research panels could grow tens of MB of
+JS heap purely in caches that React Query never sees.
+
+- `features/charting/useMassiveStockAggregateStream.ts` —
+  `minuteCacheBySymbol` capped at `MAX_SYMBOLS_IN_MINUTE_CACHE = 64`.
+  On each `recordAggregate`, the symbol is `delete`-then-`set` to move
+  it to most-recently-used; once the outer map exceeds the cap, the
+  oldest symbol that has **no active store listeners** is evicted
+  (active subscriptions are never dropped, so visible charts can't be
+  yanked out from under React).
+- `features/research/lib/researchApi.js` — `histCache`, `fundCache`,
+  `financialsCache`, `secFilingsCache`, `transcriptsCache` each capped
+  via a shared `setLruEntry(cache, key, value, maxSize)` helper at
+  `RESEARCH_CACHE_MAX_ENTRIES = 64`. Same delete-then-set LRU promotion;
+  these caches don't track listeners, so the oldest entry is evicted
+  unconditionally on overflow.
+- `features/platform/live-streams.ts` —
+  `optionQuoteSnapshotsByProviderContractId` capped at
+  `MAX_OPTION_QUOTE_SNAPSHOTS = 1_024`. Listener-aware eviction (same
+  pattern as `minuteCacheBySymbol`) — option contracts a component is
+  still subscribed to are never evicted; `optionQuoteStoreVersions` is
+  kept in sync on eviction.
+
+Per-symbol bounds remain unchanged (e.g. minute-bar inner cap stays
+`MAX_MINUTE_AGGREGATES_PER_SYMBOL = 2_048` — about 1.5 trading days of
+1m bars per symbol). The new caps only affect the *outer* dimension of
+how many distinct keys live in the Map at once.

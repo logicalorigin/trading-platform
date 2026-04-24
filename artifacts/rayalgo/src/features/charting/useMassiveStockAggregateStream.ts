@@ -51,6 +51,7 @@ type AggregateStreamStats = {
 };
 
 const MAX_MINUTE_AGGREGATES_PER_SYMBOL = 2_048;
+const MAX_SYMBOLS_IN_MINUTE_CACHE = 64;
 const EVENT_SOURCE_RETRY_DELAY_MS = 5_000;
 const EVENT_SOURCE_RECONFIGURE_DEBOUNCE_MS = 150;
 const STREAM_GAP_THRESHOLD_MS = 2_500;
@@ -436,7 +437,26 @@ const recordAggregate = (message: BrokerStockAggregateMessage) => {
     symbol,
   });
   trimMinuteCache(symbolCache);
+  // LRU touch: re-insert moves symbol to the most-recently-used position.
+  minuteCacheBySymbol.delete(symbol);
   minuteCacheBySymbol.set(symbol, symbolCache);
+  // Evict the least-recently-updated symbol(s) once the outer map exceeds the cap,
+  // but never evict a symbol that still has active store listeners.
+  while (minuteCacheBySymbol.size > MAX_SYMBOLS_IN_MINUTE_CACHE) {
+    let evicted = false;
+    for (const evictKey of minuteCacheBySymbol.keys()) {
+      const stillSubscribed = (symbolStoreListeners.get(evictKey)?.size ?? 0) > 0;
+      if (stillSubscribed) {
+        continue;
+      }
+      minuteCacheBySymbol.delete(evictKey);
+      evicted = true;
+      break;
+    }
+    if (!evicted) {
+      break;
+    }
+  }
   notifyStoreListeners();
   notifySymbolStoreListeners(symbol);
 };

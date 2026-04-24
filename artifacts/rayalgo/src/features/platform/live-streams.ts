@@ -57,6 +57,10 @@ const optionQuoteStoreListenersByProviderContractId = new Map<
   Set<() => void>
 >();
 const optionQuoteStoreVersions = new Map<string, number>();
+// Hard cap on the in-memory option-quote snapshot cache. An option chain for a
+// single underlying can have ~100 contracts; a cap of 1024 fits ~10 underlyings'
+// worth of chains while protecting against unbounded growth as users browse.
+const MAX_OPTION_QUOTE_SNAPSHOTS = 1_024;
 
 const normalizeSymbols = (symbols: string[]): string[] =>
   Array.from(
@@ -208,10 +212,34 @@ const cacheOptionQuoteSnapshot = (
     return currentQuote;
   }
 
+  // LRU touch: re-insert moves the contract to the most-recently-used position.
+  optionQuoteSnapshotsByProviderContractId.delete(normalizedProviderContractId);
   optionQuoteSnapshotsByProviderContractId.set(
     normalizedProviderContractId,
     cachedQuote,
   );
+  // Evict the oldest snapshots that no longer have any listeners; never drop a
+  // snapshot that a component is actively subscribed to.
+  while (
+    optionQuoteSnapshotsByProviderContractId.size > MAX_OPTION_QUOTE_SNAPSHOTS
+  ) {
+    let evicted = false;
+    for (const evictKey of optionQuoteSnapshotsByProviderContractId.keys()) {
+      const stillSubscribed =
+        (optionQuoteStoreListenersByProviderContractId.get(evictKey)?.size ?? 0) >
+        0;
+      if (stillSubscribed) {
+        continue;
+      }
+      optionQuoteSnapshotsByProviderContractId.delete(evictKey);
+      optionQuoteStoreVersions.delete(evictKey);
+      evicted = true;
+      break;
+    }
+    if (!evicted) {
+      break;
+    }
+  }
   optionQuoteStoreVersions.set(
     normalizedProviderContractId,
     (optionQuoteStoreVersions.get(normalizedProviderContractId) ?? 0) + 1,

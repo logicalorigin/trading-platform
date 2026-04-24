@@ -58,6 +58,23 @@ export async function fetchQuotes(tickers) {
   return results;
 }
 
+// Bounded LRU helper. JS Maps preserve insertion order, so delete+set on write
+// promotes the key to most-recently-used; once the cap is exceeded we drop the
+// oldest entry (the first key in iteration order). Caps prevent these per-ticker
+// research caches from growing unbounded as users browse symbols.
+const setLruEntry = (cache, key, value, maxSize) => {
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, value);
+  while (cache.size > maxSize) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+};
+const RESEARCH_CACHE_MAX_ENTRIES = 64;
+
 // Module-level cache for historical data: Map<ticker, {hist: [...], fetchedAt: ms, days: N}>
 const histCache = new Map();
 const HIST_CACHE_MS = 15 * 60 * 1000; // 15 minutes
@@ -82,7 +99,7 @@ export async function fetchFund(ticker) {
 
     if (!data) return null;
 
-    fundCache.set(ticker, { data, fetchedAt: Date.now() });
+    setLruEntry(fundCache, ticker, { data, fetchedAt: Date.now() }, RESEARCH_CACHE_MAX_ENTRIES);
     return data;
   } catch (e) {
     return null;
@@ -98,7 +115,7 @@ export async function fetchFinancials(ticker) {
     const payload = await getResearchFinancialsRequest({ symbol: ticker });
     const data = payload?.financials || null;
 
-    financialsCache.set(ticker, { data, fetchedAt: Date.now() });
+    setLruEntry(financialsCache, ticker, { data, fetchedAt: Date.now() }, RESEARCH_CACHE_MAX_ENTRIES);
     return data;
   } catch (e) {
     return null;
@@ -187,7 +204,7 @@ export async function fetchSECFilings(ticker) {
     const payload = await getResearchSecFilingsRequest({ symbol: ticker, limit: 25 });
     const filings = Array.isArray(payload?.filings) ? payload.filings : null;
     if (Array.isArray(filings)) {
-      secFilingsCache.set(ticker, { data: filings, fetchedAt: Date.now() });
+      setLruEntry(secFilingsCache, ticker, { data: filings, fetchedAt: Date.now() }, RESEARCH_CACHE_MAX_ENTRIES);
       return filings;
     }
     return null;
@@ -213,7 +230,7 @@ export async function fetchTranscript(ticker, key, quarter, year) {
       year,
     });
     const entry = payload?.transcript || null;
-    if (entry) transcriptsCache.set(cacheKey, { data: entry, fetchedAt: Date.now() });
+    if (entry) setLruEntry(transcriptsCache, cacheKey, { data: entry, fetchedAt: Date.now() }, RESEARCH_CACHE_MAX_ENTRIES);
     return entry;
   } catch(e) {
     return null;
@@ -313,7 +330,7 @@ export async function fetchHist(ticker, periodOrDays) {
         return { status: "nodata", hist: null };
       }
     }
-    histCache.set(cacheKey, { hist, fetchedAt: Date.now(), interval, sourceLabel });
+    setLruEntry(histCache, cacheKey, { hist, fetchedAt: Date.now(), interval, sourceLabel }, RESEARCH_CACHE_MAX_ENTRIES);
     return { status: "live", hist: hist.slice(-barsEstimate), interval, sourceLabel };
   } catch(e) {
     return { status: "error", hist: null };

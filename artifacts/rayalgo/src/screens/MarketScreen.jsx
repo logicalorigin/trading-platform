@@ -400,6 +400,8 @@ export const MarketScreen = ({
         {/* ── ROW 1: Chart workspace + activity feed ── */}
         <div
           ref={marketWorkspaceRef}
+          data-testid="market-workspace"
+          data-activity-layout={stackActivityPanel ? "stacked" : "side-by-side"}
           style={{
             display: "grid",
             gridTemplateColumns: stackActivityPanel
@@ -425,6 +427,7 @@ export const MarketScreen = ({
           {!stackActivityPanel ? (
             <div
               role="separator"
+              data-testid="market-activity-resize-separator"
               aria-label="Resize activity and notifications panel"
               onPointerDown={handleStartActivityPanelResize}
               title="Drag to resize activity panel"
@@ -439,8 +442,10 @@ export const MarketScreen = ({
             />
           ) : null}
           <div
+            data-testid="market-activity-panel"
             style={{
               minWidth: 0,
+              minHeight: 0,
               height: stackActivityPanel ? dim(360) : "100%",
             }}
           >
