@@ -273,9 +273,13 @@ function findSseBoundary(buffer: string): { index: number; length: number } | nu
 
 export class IbkrBridgeClient {
   private readonly config = getIbkrBridgeRuntimeConfig();
+  // Default lowered from 20s → 5s so a dead bridge / dead Cloudflare tunnel
+  // fails fast instead of letting the frontend stack 20s-pending XHRs that
+  // freeze the browser tab when they all resolve at once. Override with
+  // IBKR_BRIDGE_REQUEST_TIMEOUT_MS if a real upstream legitimately needs more.
   private readonly requestTimeoutMs = Math.max(
     1,
-    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "20000"),
+    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "5000"),
   );
 
   private buildUrl(path: string, params: Record<string, QueryValue> = {}): URL {
