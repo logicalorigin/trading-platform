@@ -1,5 +1,6 @@
 { pkgs }: {
   deps = [
+    pkgs.bubblewrap
     pkgs.glib
     pkgs.expat
     pkgs.nspr
