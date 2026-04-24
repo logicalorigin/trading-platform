@@ -1927,8 +1927,10 @@ const SCREENS = [
   { id: "backtest", label: "Backtest", icon: "⏣" },
 ];
 
-const OPERATIONAL_SCREEN_PRELOAD_ORDER = ["trade", "market", "flow", "algo"];
-const IDLE_HEAVY_SCREEN_PRELOAD_ORDER = ["research", "backtest"];
+// Only Trade is preloaded — it's the most likely screen to switch to from
+// the default (Market). Flow / Algo / Research / Backtest mount on first
+// visit. Keeping fewer screens alive cuts long-session memory pressure.
+const OPERATIONAL_SCREEN_PRELOAD_ORDER = ["trade"];
 
 const buildMountedScreenState = (activeScreen) =>
   Object.fromEntries(
@@ -18954,24 +18956,15 @@ export default function RayAlgoPlatform() {
     );
     cleanups.push(() => warmingTimers.forEach((timerId) => window.clearTimeout(timerId)));
 
-    const cancelIdle = scheduleIdleWork(() => {
-      if (cancelled) {
-        return;
+    // Mark the warmup as ready shortly after the last operational preload
+    // fires — `lowPriorityHistoryEnabled` keys off this phase so historical
+    // backfill can start. We no longer auto-mount Research / Backtest.
+    const readyTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setScreenWarmupPhase("ready");
       }
-      setScreenWarmupPhase("idle-heavy");
-      const heavyTimers = IDLE_HEAVY_SCREEN_PRELOAD_ORDER.map((screenId, index) =>
-        window.setTimeout(() => {
-          queueMount(screenId);
-          if (index === IDLE_HEAVY_SCREEN_PRELOAD_ORDER.length - 1) {
-            setScreenWarmupPhase("ready");
-          }
-        }, index * 180),
-      );
-      cleanups.push(() =>
-        heavyTimers.forEach((timerId) => window.clearTimeout(timerId)),
-      );
-    }, 2_000);
-    cleanups.push(cancelIdle);
+    }, 140 * (OPERATIONAL_SCREEN_PRELOAD_ORDER.length + 1));
+    cleanups.push(() => window.clearTimeout(readyTimer));
 
     setScreenWarmupPhase("warming");
 

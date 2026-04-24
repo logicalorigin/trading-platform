@@ -15,6 +15,21 @@ const EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT = Object.freeze({
 });
 
 const storeEntries = new Map();
+const TRADE_OPTION_CHAIN_TICKER_CAP = 8;
+
+const evictOldestUnusedTradeOptionChainEntry = () => {
+  if (storeEntries.size <= TRADE_OPTION_CHAIN_TICKER_CAP) return;
+  for (const [key, value] of storeEntries) {
+    if (!value.listeners || value.listeners.size === 0) {
+      storeEntries.delete(key);
+      return;
+    }
+  }
+  const oldestKey = storeEntries.keys().next().value;
+  if (oldestKey !== undefined) {
+    storeEntries.delete(oldestKey);
+  }
+};
 
 const normalizeTicker = (ticker) => ticker?.trim?.().toUpperCase?.() || "";
 
@@ -37,6 +52,11 @@ const ensureEntry = (ticker) => {
       snapshot: EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT,
       listeners: new Set(),
     });
+    evictOldestUnusedTradeOptionChainEntry();
+  } else {
+    const existing = storeEntries.get(normalizedTicker);
+    storeEntries.delete(normalizedTicker);
+    storeEntries.set(normalizedTicker, existing);
   }
   return storeEntries.get(normalizedTicker);
 };
