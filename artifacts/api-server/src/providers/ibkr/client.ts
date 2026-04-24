@@ -455,6 +455,14 @@ function positiveIntegerOrDefault(value: number | undefined, fallback: number): 
   return Math.max(1, Math.floor(value));
 }
 
+function startOfUtcDay(date = new Date()): number {
+  return Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+  );
+}
+
 async function mapWithConcurrency<T, R>(
   values: T[],
   concurrency: number,
@@ -2667,6 +2675,104 @@ export class IbkrClient {
           left.contract.strike - right.contract.strike ||
           left.contract.right.localeCompare(right.contract.right)
         ));
+    }, input.signal);
+  }
+
+  async getOptionExpirations(input: {
+    underlying: string;
+    maxExpirations?: number;
+    signal?: AbortSignal;
+  }): Promise<Date[]> {
+    return this.withOptionChainRequestPermit(async () => {
+      const signal = input.signal;
+      throwIfAborted(signal);
+      const searchResults = await this.searchSecurities(input.underlying, { signal });
+      const normalizedUnderlying = normalizeSymbol(input.underlying);
+      const match =
+        searchResults.find((result) =>
+          normalizeSymbol(asString(result["symbol"]) ?? "") === normalizedUnderlying,
+        ) ?? searchResults[0];
+
+      if (!match) {
+        throw new HttpError(404, `Unable to resolve IBKR contract for ${input.underlying}.`, {
+          code: "ibkr_contract_not_found",
+        });
+      }
+
+      const underlyingConid = asNumber(match["conid"]);
+      if (underlyingConid === null) {
+        throw new HttpError(502, `IBKR returned an invalid contract identifier for ${input.underlying}.`, {
+          code: "ibkr_invalid_conid",
+        });
+      }
+
+      const optionSection = compact(asArray(match["sections"]).map(asRecord)).find(
+        (section) => asString(section["secType"]) === "OPT",
+      );
+      const months = (asString(optionSection?.["months"]) ?? "")
+        .split(";")
+        .map((month) => month.trim())
+        .filter(Boolean);
+      const maxExpirations = positiveIntegerOrDefault(input.maxExpirations, 256);
+      const candidateMonths = months.slice(0, Math.max(1, maxExpirations));
+      const underlyingQuote = await this.getMarketDataSnapshotMap(
+        [
+          {
+            conid: underlyingConid,
+            symbol: normalizedUnderlying,
+            assetClass: "equity",
+          },
+        ],
+        signal,
+      ).catch(() => new Map<string, QuoteSnapshot>());
+      const spotPrice = underlyingQuote.get(String(underlyingConid))?.price ?? 0;
+      const todayUtc = startOfUtcDay();
+      const expirations = new Map<string, Date>();
+
+      await mapWithConcurrency(
+        candidateMonths,
+        Math.min(OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY, 8),
+        async (month) => {
+          const strikes = await this.getCachedOptionStrikes({
+            conid: underlyingConid,
+            month,
+          }, signal);
+          if (!strikes.length) {
+            return;
+          }
+
+          const closestIndex =
+            spotPrice > 0
+              ? strikes.reduce((bestIndex, strike, index) => (
+                  Math.abs(strike - spotPrice) < Math.abs(strikes[bestIndex] - spotPrice)
+                    ? index
+                    : bestIndex
+                ), 0)
+              : Math.floor(strikes.length / 2);
+          const probeStrike = strikes[closestIndex] ?? strikes[0];
+          const matches = await this.getCachedOptionInfo({
+            conid: underlyingConid,
+            month,
+            strike: probeStrike,
+            right: "call",
+          }, signal);
+
+          matches.forEach((record) => {
+            const optionContract = parseOptionDetails(record);
+            const expirationDate = optionContract?.expirationDate;
+            if (!expirationDate || expirationDate.getTime() < todayUtc) {
+              return;
+            }
+
+            expirations.set(expirationDate.toISOString().slice(0, 10), expirationDate);
+          });
+        },
+        signal,
+      );
+
+      return Array.from(expirations.values())
+        .sort((left, right) => left.getTime() - right.getTime())
+        .slice(0, maxExpirations);
     }, input.signal);
   }
 

@@ -117,6 +117,7 @@ let reconnectTimer: number | null = null;
 let refreshTimer: number | null = null;
 let reconnectBlockedUntil = 0;
 let storeNotifyScheduled = false;
+let streamPaused = false;
 
 const flushStoreListeners = () => {
   storeNotifyScheduled = false;
@@ -475,6 +476,14 @@ const handleAggregateMessage = (message: BrokerStockAggregateMessage) => {
 };
 
 const refreshEventSource = () => {
+  if (streamPaused) {
+    reconnectBlockedUntil = 0;
+    clearReconnectTimer();
+    clearRefreshTimer();
+    closeEventSource();
+    return;
+  }
+
   if (typeof window === "undefined" || typeof window.EventSource === "undefined") {
     reconnectBlockedUntil = 0;
     clearReconnectTimer();
@@ -552,6 +561,23 @@ const refreshEventSource = () => {
 
   eventSource = source;
   eventSourceSignature = signature;
+};
+
+export const setBrokerStockAggregateStreamPaused = (paused: boolean): void => {
+  if (streamPaused === paused) {
+    return;
+  }
+
+  streamPaused = paused;
+  if (streamPaused) {
+    reconnectBlockedUntil = 0;
+    clearReconnectTimer();
+    clearRefreshTimer();
+    closeEventSource();
+    return;
+  }
+
+  scheduleRefreshEventSource(0);
 };
 
 const registerConsumer = (

@@ -538,6 +538,50 @@ app.get("/options/chains", async (req, res) => {
   }
 });
 
+app.get("/options/expirations", async (req, res) => {
+  if (typeof req.query.underlying !== "string" || !req.query.underlying.trim()) {
+    res.status(400).json({
+      error: "underlying query parameter is required",
+    });
+    return;
+  }
+
+  const abortController = new AbortController();
+  const abort = () => abortController.abort();
+  req.on("aborted", abort);
+  req.on("close", abort);
+
+  try {
+    const underlying = req.query.underlying.trim().toUpperCase();
+    const expirations = await ibkrBridgeService.getOptionExpirations({
+      underlying,
+      maxExpirations:
+        typeof req.query.maxExpirations === "string"
+          ? Number(req.query.maxExpirations)
+          : undefined,
+      signal: abortController.signal,
+    });
+
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    res.json({
+      underlying,
+      expirations: expirations.map((expirationDate) => ({ expirationDate })),
+    });
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    throw error;
+  } finally {
+    req.off("aborted", abort);
+    req.off("close", abort);
+  }
+});
+
 app.get("/options/quotes", async (req, res) => {
   const rawProviderContractIds = Array.isArray(req.query.contracts)
     ? req.query.contracts.join(",")

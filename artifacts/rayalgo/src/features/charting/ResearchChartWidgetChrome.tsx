@@ -49,6 +49,7 @@ type WidgetTheme = {
   amber: string;
   accent?: string;
   accentDim?: string;
+  display?: string;
   mono: string;
 };
 
@@ -408,34 +409,50 @@ const legendChipStyle = ({
   whiteSpace: "nowrap",
 });
 
+const chartMenuContentClassName = "chart-widget-menu";
+const chartMenuItemClassName = "chart-widget-menu__item";
+const chartMenuLabelClassName = "chart-widget-menu__label";
+const chartMenuSeparatorClassName = "chart-widget-menu__separator";
+
 const menuContentStyle = (
   theme: WidgetTheme,
   palette: PanelPalette,
   minWidth = 220,
-): CSSProperties => ({
-  minWidth,
-  padding: 4,
-  borderRadius: 0,
-  border: `1px solid ${theme.border}`,
-  background: palette.panel,
-  color: theme.text,
-  boxShadow: palette.shadow || "0 8px 24px rgba(0,0,0,0.2)",
-  fontFamily: theme.mono,
-});
+): CSSProperties =>
+  ({
+    "--chart-menu-accent": theme.accent || "#2962ff",
+    "--chart-menu-active": withAlpha(theme.accent || "#2962ff", "24"),
+    "--chart-menu-bg": palette.panel,
+    "--chart-menu-border": theme.border,
+    "--chart-menu-hover": withAlpha(theme.text, "12"),
+    "--chart-menu-muted": theme.textMuted,
+    "--chart-menu-text": theme.text,
+    "--chart-menu-font": theme.display || "Inter, sans-serif",
+    minWidth,
+    padding: 6,
+    borderRadius: 6,
+    border: `1px solid ${withAlpha(theme.border, "d9")}`,
+    background: palette.panel,
+    color: theme.text,
+    boxShadow:
+      "0 16px 32px rgba(0,0,0,0.36), 0 0 0 1px rgba(255,255,255,0.03)",
+    fontFamily: theme.display || "Inter, sans-serif",
+  } as CSSProperties);
 
 const menuItemStyle = (theme: WidgetTheme): CSSProperties => ({
-  borderRadius: 0,
+  borderRadius: 4,
   color: theme.text,
-  fontFamily: theme.mono,
+  fontFamily: theme.display || "Inter, sans-serif",
   fontSize: 12,
+  fontWeight: 500,
 });
 
 const menuLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   color: theme.textMuted,
-  fontFamily: theme.mono,
-  fontSize: 10,
-  fontWeight: 700,
-  letterSpacing: "0.05em",
+  fontFamily: theme.display || "Inter, sans-serif",
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: 0,
   textTransform: "uppercase",
 });
 
@@ -474,13 +491,18 @@ const SettingsMenu = ({
     </DropdownMenuTrigger>
     <DropdownMenuContent
       align="end"
+      className={chartMenuContentClassName}
       sideOffset={6}
       style={menuContentStyle(theme, palette, 240)}
     >
-      <DropdownMenuLabel style={menuLabelStyle(theme)}>
+      <DropdownMenuLabel
+        className={chartMenuLabelClassName}
+        style={menuLabelStyle(theme)}
+      >
         Display
       </DropdownMenuLabel>
       <DropdownMenuCheckboxItem
+        className={chartMenuItemClassName}
         checked={controls.showVolume}
         onCheckedChange={() => controls.setShowVolume((value) => !value)}
         style={menuItemStyle(theme)}
@@ -488,6 +510,7 @@ const SettingsMenu = ({
         Volume
       </DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem
+        className={chartMenuItemClassName}
         checked={controls.showGrid}
         onCheckedChange={() => controls.setShowGrid((value) => !value)}
         style={menuItemStyle(theme)}
@@ -495,6 +518,7 @@ const SettingsMenu = ({
         Grid
       </DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem
+        className={chartMenuItemClassName}
         checked={controls.showPriceLine}
         onCheckedChange={() => controls.setShowPriceLine((value) => !value)}
         style={menuItemStyle(theme)}
@@ -502,14 +526,18 @@ const SettingsMenu = ({
         Last price line
       </DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem
+        className={chartMenuItemClassName}
         checked={controls.showTimeScale}
         onCheckedChange={() => controls.setShowTimeScale((value) => !value)}
         style={menuItemStyle(theme)}
       >
         Time scale
       </DropdownMenuCheckboxItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuLabel style={menuLabelStyle(theme)}>
+      <DropdownMenuSeparator className={chartMenuSeparatorClassName} />
+      <DropdownMenuLabel
+        className={chartMenuLabelClassName}
+        style={menuLabelStyle(theme)}
+      >
         Crosshair
       </DropdownMenuLabel>
       <DropdownMenuRadioGroup
@@ -518,36 +546,66 @@ const SettingsMenu = ({
           controls.setCrosshairMode(next as "magnet" | "free")
         }
       >
-        <DropdownMenuRadioItem value="magnet" style={menuItemStyle(theme)}>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="magnet"
+          style={menuItemStyle(theme)}
+        >
           Magnet
         </DropdownMenuRadioItem>
-        <DropdownMenuRadioItem value="free" style={menuItemStyle(theme)}>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="free"
+          style={menuItemStyle(theme)}
+        >
           Free
         </DropdownMenuRadioItem>
       </DropdownMenuRadioGroup>
-      <DropdownMenuSeparator />
-      <DropdownMenuLabel style={menuLabelStyle(theme)}>Scale</DropdownMenuLabel>
+      <DropdownMenuSeparator className={chartMenuSeparatorClassName} />
+      <DropdownMenuLabel
+        className={chartMenuLabelClassName}
+        style={menuLabelStyle(theme)}
+      >
+        Scale
+      </DropdownMenuLabel>
       <DropdownMenuRadioGroup
         value={controls.scaleMode}
         onValueChange={(next) =>
           controls.setScaleMode(next as ChartSurfaceControls["scaleMode"])
         }
       >
-        <DropdownMenuRadioItem value="linear" style={menuItemStyle(theme)}>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="linear"
+          style={menuItemStyle(theme)}
+        >
           Linear
         </DropdownMenuRadioItem>
-        <DropdownMenuRadioItem value="log" style={menuItemStyle(theme)}>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="log"
+          style={menuItemStyle(theme)}
+        >
           Log
         </DropdownMenuRadioItem>
-        <DropdownMenuRadioItem value="percentage" style={menuItemStyle(theme)}>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="percentage"
+          style={menuItemStyle(theme)}
+        >
           Percent
         </DropdownMenuRadioItem>
-        <DropdownMenuRadioItem value="indexed" style={menuItemStyle(theme)}>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="indexed"
+          style={menuItemStyle(theme)}
+        >
           Indexed
         </DropdownMenuRadioItem>
       </DropdownMenuRadioGroup>
-      <DropdownMenuSeparator />
+      <DropdownMenuSeparator className={chartMenuSeparatorClassName} />
       <DropdownMenuCheckboxItem
+        className={chartMenuItemClassName}
         checked={controls.autoScale}
         onCheckedChange={() => controls.setAutoScale((value) => !value)}
         style={menuItemStyle(theme)}
@@ -555,17 +613,23 @@ const SettingsMenu = ({
         Auto scale
       </DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem
+        className={chartMenuItemClassName}
         checked={controls.invertScale}
         onCheckedChange={() => controls.setInvertScale((value) => !value)}
         style={menuItemStyle(theme)}
       >
         Invert scale
       </DropdownMenuCheckboxItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem onClick={controls.fit} style={menuItemStyle(theme)}>
+      <DropdownMenuSeparator className={chartMenuSeparatorClassName} />
+      <DropdownMenuItem
+        className={chartMenuItemClassName}
+        onClick={controls.fit}
+        style={menuItemStyle(theme)}
+      >
         Fit content
       </DropdownMenuItem>
       <DropdownMenuItem
+        className={chartMenuItemClassName}
         onClick={controls.realtime}
         style={menuItemStyle(theme)}
       >
@@ -688,7 +752,10 @@ export const ResearchChartWidgetHeader = ({
   );
 
   return (
-    <div style={{ position: "relative", pointerEvents: "none" }}>
+    <div
+      data-chart-control-root
+      style={{ position: "relative", pointerEvents: "none" }}
+    >
       <div
         style={{
           height: headerHeight,
@@ -754,10 +821,14 @@ export const ResearchChartWidgetHeader = ({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
+            className={chartMenuContentClassName}
             sideOffset={6}
             style={menuContentStyle(theme, palette, 160)}
           >
-            <DropdownMenuLabel style={menuLabelStyle(theme)}>
+            <DropdownMenuLabel
+              className={chartMenuLabelClassName}
+              style={menuLabelStyle(theme)}
+            >
               Timeframe
             </DropdownMenuLabel>
             <DropdownMenuRadioGroup
@@ -766,6 +837,7 @@ export const ResearchChartWidgetHeader = ({
             >
               {timeframes.map((option) => (
                 <DropdownMenuRadioItem
+                  className={chartMenuItemClassName}
                   key={option.value}
                   value={option.value}
                   style={menuItemStyle(theme)}
@@ -791,10 +863,14 @@ export const ResearchChartWidgetHeader = ({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
+            className={chartMenuContentClassName}
             sideOffset={6}
             style={menuContentStyle(theme, palette, 210)}
           >
-            <DropdownMenuLabel style={menuLabelStyle(theme)}>
+            <DropdownMenuLabel
+              className={chartMenuLabelClassName}
+              style={menuLabelStyle(theme)}
+            >
               Chart type
             </DropdownMenuLabel>
             <DropdownMenuRadioGroup
@@ -807,6 +883,7 @@ export const ResearchChartWidgetHeader = ({
             >
               {chartTypeOptions.map((option) => (
                 <DropdownMenuRadioItem
+                  className={chartMenuItemClassName}
                   key={option.value}
                   value={option.value}
                   style={menuItemStyle(theme)}
@@ -843,15 +920,20 @@ export const ResearchChartWidgetHeader = ({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
+            className={chartMenuContentClassName}
             sideOffset={6}
             style={menuContentStyle(theme, palette, 220)}
           >
-            <DropdownMenuLabel style={menuLabelStyle(theme)}>
+            <DropdownMenuLabel
+              className={chartMenuLabelClassName}
+              style={menuLabelStyle(theme)}
+            >
               Indicators
             </DropdownMenuLabel>
             {studies.length ? (
               studies.map((study) => (
                 <DropdownMenuCheckboxItem
+                  className={chartMenuItemClassName}
                   key={study.id}
                   checked={selectedStudies.includes(study.id)}
                   onCheckedChange={() => onToggleStudy?.(study.id)}
@@ -861,7 +943,11 @@ export const ResearchChartWidgetHeader = ({
                 </DropdownMenuCheckboxItem>
               ))
             ) : (
-              <DropdownMenuItem disabled style={menuItemStyle(theme)}>
+              <DropdownMenuItem
+                className={chartMenuItemClassName}
+                disabled
+                style={menuItemStyle(theme)}
+              >
                 No indicators available
               </DropdownMenuItem>
             )}
@@ -1158,7 +1244,10 @@ export const ResearchChartWidgetFooter = ({
     .slice(0, 4);
 
   return (
-    <div style={{ position: "relative", pointerEvents: "none" }}>
+    <div
+      data-chart-control-root
+      style={{ position: "relative", pointerEvents: "none" }}
+    >
       <div
         style={{
           height: footerHeight,
@@ -1408,6 +1497,7 @@ export const ResearchChartWidgetSidebar = ({
 
   return (
     <div
+      data-chart-control-root
       style={{
         width: dense ? 30 : 40,
         height: "100%",

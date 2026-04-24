@@ -379,6 +379,16 @@ export class ClientPortalIbkrBridgeProvider implements IbkrBridgeProvider {
     return promise;
   }
 
+  async getOptionExpirations(input: {
+    underlying: string;
+    maxExpirations?: number;
+    signal?: AbortSignal;
+  }): Promise<Date[]> {
+    return this.withFreshSession(() =>
+      this.client.getOptionExpirations(input),
+    );
+  }
+
   async getMarketDepth(input: {
     accountId?: string | null;
     symbol: string;

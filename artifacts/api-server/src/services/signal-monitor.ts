@@ -23,7 +23,13 @@ import { getBars, listWatchlists } from "./platform";
 export type SignalMonitorTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
 type SignalMonitorDirection = "buy" | "sell";
 type SignalMonitorStatus = "ok" | "stale" | "unavailable" | "error" | "unknown";
-type EvaluationMode = "hydrate" | "incremental";
+export type EvaluationMode = "hydrate" | "incremental";
+export type SignalMonitorBarSnapshot =
+  Awaited<ReturnType<typeof getBars>>["bars"][number];
+export type SignalMonitorCompletedBarsSnapshot = {
+  bars: SignalMonitorBarSnapshot[];
+  latestBarAt: Date | null;
+};
 
 type WatchlistRecord = Awaited<ReturnType<typeof listWatchlists>>["watchlists"][number];
 
@@ -42,6 +48,15 @@ const TIMEFRAME_MS: Record<SignalMonitorTimeframe, number> = {
   "1h": 60 * 60_000,
   "1d": 24 * 60 * 60_000,
 };
+const COMPLETED_BAR_SAFETY_MS = 2_000;
+const MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export type SignalMonitorProfileRow = DbSignalMonitorProfile;
 
 function resolveEnvironment(environment?: RuntimeMode): RuntimeMode {
   return environment ?? getRuntimeMode();
@@ -53,7 +68,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function resolveSignalTimeframe(
+export function resolveSignalMonitorTimeframe(
   value: unknown,
   fallback = DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
 ): SignalMonitorTimeframe {
@@ -110,7 +125,7 @@ function profileToResponse(profile: DbSignalMonitorProfile) {
     environment: profile.environment,
     enabled: profile.enabled,
     watchlistId: profile.watchlistId ?? null,
-    timeframe: resolveSignalTimeframe(profile.timeframe),
+    timeframe: resolveSignalMonitorTimeframe(profile.timeframe),
     rayReplicaSettings: asRecord(profile.rayReplicaSettings),
     freshWindowBars: profile.freshWindowBars,
     pollIntervalSeconds: profile.pollIntervalSeconds,
@@ -143,7 +158,7 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     id: state.id,
     profileId: state.profileId,
     symbol: state.symbol,
-    timeframe: resolveSignalTimeframe(state.timeframe),
+    timeframe: resolveSignalMonitorTimeframe(state.timeframe),
     currentSignalDirection: direction,
     currentSignalAt: state.currentSignalAt ?? null,
     currentSignalPrice: numericValueOrNull(state.currentSignalPrice),
@@ -163,7 +178,7 @@ function eventToResponse(event: DbSignalMonitorEvent) {
     profileId: event.profileId,
     environment: event.environment,
     symbol: event.symbol,
-    timeframe: resolveSignalTimeframe(event.timeframe),
+    timeframe: resolveSignalMonitorTimeframe(event.timeframe),
     direction: event.direction as SignalMonitorDirection,
     signalAt: event.signalAt,
     signalPrice: numericValueOrNull(event.signalPrice),
@@ -264,14 +279,24 @@ function resolveWatchlistSymbols(watchlist: WatchlistRecord, maxSymbols: number)
   };
 }
 
-async function resolveMonitorUniverse(profile: DbSignalMonitorProfile) {
-  const hydratedProfile = await ensureProfileWatchlist(profile);
+export async function resolveSignalMonitorProfileUniverse(
+  profile: DbSignalMonitorProfile,
+  options: { ensureWatchlist?: boolean } = {},
+) {
+  const hydratedProfile =
+    options.ensureWatchlist === false
+      ? profile
+      : await ensureProfileWatchlist(profile);
   const { watchlists } = await listWatchlists();
   const watchlist =
-    watchlists.find((candidate) => candidate.id === hydratedProfile.watchlistId) ??
-    watchlists.find((candidate) => candidate.isDefault) ??
-    watchlists[0] ??
-    null;
+    hydratedProfile.watchlistId
+      ? watchlists.find((candidate) => candidate.id === hydratedProfile.watchlistId) ??
+        null
+      : options.ensureWatchlist === false
+        ? null
+        : watchlists.find((candidate) => candidate.isDefault) ??
+          watchlists[0] ??
+          null;
 
   if (!watchlist) {
     return {
@@ -286,6 +311,73 @@ async function resolveMonitorUniverse(profile: DbSignalMonitorProfile) {
     profile: hydratedProfile,
     ...resolveWatchlistSymbols(watchlist, hydratedProfile.maxSymbols),
   };
+}
+
+export function getSignalMonitorTimeframeMs(
+  timeframe: SignalMonitorTimeframe,
+): number {
+  return TIMEFRAME_MS[timeframe];
+}
+
+function marketDateKey(value: Date): string {
+  const parts = MARKET_DATE_FORMATTER.formatToParts(value);
+  const year = parts.find((part) => part.type === "year")?.value ?? "";
+  const month = parts.find((part) => part.type === "month")?.value ?? "";
+  const day = parts.find((part) => part.type === "day")?.value ?? "";
+  return `${year}-${month}-${day}`;
+}
+
+function utcDateKey(value: Date): string {
+  const year = value.getUTCFullYear();
+  const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(value.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dailyBarDateKey(value: Date): string {
+  const marketKey = marketDateKey(value);
+  const utcKey = utcDateKey(value);
+  const isUtcMidnight =
+    value.getUTCHours() === 0 &&
+    value.getUTCMinutes() === 0 &&
+    value.getUTCSeconds() === 0 &&
+    value.getUTCMilliseconds() === 0;
+
+  return isUtcMidnight && utcKey > marketKey ? utcKey : marketKey;
+}
+
+export function isSignalMonitorBarComplete(input: {
+  timestamp: Date;
+  timeframe: SignalMonitorTimeframe;
+  evaluatedAt: Date;
+}): boolean {
+  if (input.timeframe === "1d") {
+    return dailyBarDateKey(input.timestamp) < marketDateKey(input.evaluatedAt);
+  }
+
+  return (
+    input.timestamp.getTime() +
+      TIMEFRAME_MS[input.timeframe] +
+      COMPLETED_BAR_SAFETY_MS <=
+    input.evaluatedAt.getTime()
+  );
+}
+
+function filterCompletedBars(
+  inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
+  timeframe: SignalMonitorTimeframe,
+  evaluatedAt: Date,
+) {
+  return inputBars.filter((bar) => {
+    if (bar.partial === true) {
+      return false;
+    }
+
+    const timestamp = dateOrNull(bar.timestamp);
+    return timestamp
+      ? isSignalMonitorBarComplete({ timestamp, timeframe, evaluatedAt })
+      : false;
+  });
 }
 
 function barsToRayReplicaBars(inputBars: Awaited<ReturnType<typeof getBars>>["bars"]) {
@@ -420,24 +512,55 @@ async function upsertSymbolState(input: {
   return state;
 }
 
-async function evaluateSymbol(input: {
+export async function getLatestCompletedSignalMonitorBarAt(input: {
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  evaluatedAt: Date;
+}): Promise<Date | null> {
+  const completedBars = await loadSignalMonitorCompletedBars({
+    ...input,
+    limit: 3,
+  });
+  return completedBars.latestBarAt;
+}
+
+export async function loadSignalMonitorCompletedBars(input: {
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  evaluatedAt: Date;
+  limit?: number;
+}): Promise<SignalMonitorCompletedBarsSnapshot> {
+  const barsResult = await getBars({
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    limit: input.limit ?? RAY_REPLICA_SIGNAL_WARMUP_BARS,
+    assetClass: "equity",
+    outsideRth: true,
+    source: "trades",
+    allowHistoricalSynthesis: true,
+  });
+  const completedBars = filterCompletedBars(
+    barsResult.bars,
+    input.timeframe,
+    input.evaluatedAt,
+  );
+  const latestBar = completedBars.at(-1);
+  return {
+    bars: completedBars,
+    latestBarAt: latestBar ? dateOrNull(latestBar.timestamp) : null,
+  };
+}
+
+export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
   profile: DbSignalMonitorProfile;
   symbol: string;
   timeframe: SignalMonitorTimeframe;
   mode: EvaluationMode;
   evaluatedAt: Date;
+  completedBars: SignalMonitorBarSnapshot[];
 }) {
   try {
-    const barsResult = await getBars({
-      symbol: input.symbol,
-      timeframe: input.timeframe,
-      limit: RAY_REPLICA_SIGNAL_WARMUP_BARS,
-      assetClass: "equity",
-      outsideRth: true,
-      source: "trades",
-      allowHistoricalSynthesis: true,
-    });
-    const chartBars = barsToRayReplicaBars(barsResult.bars);
+    const chartBars = barsToRayReplicaBars(input.completedBars);
     const latestBar = chartBars.at(-1);
 
     if (!latestBar) {
@@ -538,6 +661,46 @@ async function evaluateSymbol(input: {
   }
 }
 
+export async function evaluateSignalMonitorSymbol(input: {
+  profile: DbSignalMonitorProfile;
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  mode: EvaluationMode;
+  evaluatedAt: Date;
+}) {
+  try {
+    const completedBars = await loadSignalMonitorCompletedBars({
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    });
+
+    return evaluateSignalMonitorSymbolFromCompletedBars({
+      ...input,
+      completedBars: completedBars.bars,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Signal evaluation failed.";
+    return upsertSymbolState({
+      profileId: input.profile.id,
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      direction: null,
+      signalAt: null,
+      signalPrice: null,
+      latestBarAt: null,
+      barsSinceSignal: null,
+      fresh: false,
+      status: "error",
+      evaluatedAt: input.evaluatedAt,
+      lastError: message,
+    });
+  }
+}
+
 async function evaluateSymbolsInBatches(input: {
   profile: DbSignalMonitorProfile;
   symbols: string[];
@@ -557,7 +720,7 @@ async function evaluateSymbolsInBatches(input: {
     const batch = input.symbols.slice(index, index + concurrency);
     const batchStates = await Promise.all(
       batch.map((symbol) =>
-        evaluateSymbol({
+        evaluateSignalMonitorSymbol({
           profile: input.profile,
           symbol,
           timeframe: input.timeframe,
@@ -570,6 +733,89 @@ async function evaluateSymbolsInBatches(input: {
   }
 
   return states;
+}
+
+export async function listEnabledSignalMonitorProfiles(): Promise<
+  DbSignalMonitorProfile[]
+> {
+  return db
+    .select()
+    .from(signalMonitorProfilesTable)
+    .where(eq(signalMonitorProfilesTable.enabled, true));
+}
+
+export async function updateSignalMonitorProfileEvaluationMetadata(input: {
+  profile: DbSignalMonitorProfile;
+  evaluatedAt: Date;
+  states: DbSignalMonitorSymbolState[];
+}): Promise<DbSignalMonitorProfile> {
+  const errorCount = input.states.filter((state) => state.status === "error").length;
+  const lastError =
+    errorCount > 0 && errorCount === input.states.length
+      ? "All signal monitor symbol evaluations failed."
+      : null;
+
+  const [updatedProfile] = await db
+    .update(signalMonitorProfilesTable)
+    .set({
+      lastEvaluatedAt: input.evaluatedAt,
+      lastError,
+      updatedAt: input.evaluatedAt,
+    })
+    .where(eq(signalMonitorProfilesTable.id, input.profile.id))
+    .returning();
+
+  return updatedProfile ?? input.profile;
+}
+
+export async function evaluateSignalMonitorProfileUniverse(input: {
+  profile: DbSignalMonitorProfile;
+  mode?: EvaluationMode;
+  evaluatedAt?: Date;
+  symbols?: string[];
+  ensureWatchlist?: boolean;
+  deactivateMissing?: boolean;
+}) {
+  const evaluatedAt = input.evaluatedAt ?? new Date();
+  const mode = input.mode ?? "incremental";
+  const timeframe = resolveSignalMonitorTimeframe(input.profile.timeframe);
+  const universe = await resolveSignalMonitorProfileUniverse(input.profile, {
+    ensureWatchlist: input.ensureWatchlist,
+  });
+  const requestedSymbols = input.symbols
+    ? new Set(input.symbols.map((symbol) => normalizeSymbol(symbol).toUpperCase()))
+    : null;
+  const symbols = requestedSymbols
+    ? universe.symbols.filter((symbol) => requestedSymbols.has(symbol))
+    : universe.symbols;
+
+  if (input.deactivateMissing !== false) {
+    await db
+      .update(signalMonitorSymbolStatesTable)
+      .set({ active: false, updatedAt: evaluatedAt })
+      .where(eq(signalMonitorSymbolStatesTable.profileId, universe.profile.id));
+  }
+
+  const evaluatedStates = await evaluateSymbolsInBatches({
+    profile: universe.profile,
+    symbols,
+    timeframe,
+    mode,
+    evaluatedAt,
+  });
+  const updatedProfile = await updateSignalMonitorProfileEvaluationMetadata({
+    profile: universe.profile,
+    evaluatedAt,
+    states: evaluatedStates,
+  });
+
+  return {
+    profile: profileToResponse(updatedProfile),
+    states: evaluatedStates.map(stateToResponse),
+    evaluatedAt,
+    truncated: universe.truncated,
+    skippedSymbols: universe.skippedSymbols,
+  };
 }
 
 export async function getSignalMonitorProfile(input: {
@@ -648,7 +894,7 @@ export async function getSignalMonitorState(input: {
 }) {
   const profile = await getOrCreateProfile(resolveEnvironment(input.environment));
   const { profile: hydratedProfile, skippedSymbols, truncated } =
-    await resolveMonitorUniverse(profile);
+    await resolveSignalMonitorProfileUniverse(profile);
   const states = await db
     .select()
     .from(signalMonitorSymbolStatesTable)
@@ -693,44 +939,13 @@ export async function evaluateSignalMonitor(input: {
 
   const evaluatedAt = new Date();
   const mode = input.mode ?? "incremental";
-  const timeframe = resolveSignalTimeframe(profile.timeframe);
-  const universe = await resolveMonitorUniverse(profile);
-
-  await db
-    .update(signalMonitorSymbolStatesTable)
-    .set({ active: false, updatedAt: evaluatedAt })
-    .where(eq(signalMonitorSymbolStatesTable.profileId, universe.profile.id));
-
-  const evaluatedStates = await evaluateSymbolsInBatches({
-    profile: universe.profile,
-    symbols: universe.symbols,
-    timeframe,
+  return evaluateSignalMonitorProfileUniverse({
+    profile,
     mode,
     evaluatedAt,
+    ensureWatchlist: true,
+    deactivateMissing: true,
   });
-  const errorCount = evaluatedStates.filter((state) => state.status === "error").length;
-  const lastError =
-    errorCount > 0 && errorCount === evaluatedStates.length
-      ? "All signal monitor symbol evaluations failed."
-      : null;
-
-  const [updatedProfile] = await db
-    .update(signalMonitorProfilesTable)
-    .set({
-      lastEvaluatedAt: evaluatedAt,
-      lastError,
-      updatedAt: evaluatedAt,
-    })
-    .where(eq(signalMonitorProfilesTable.id, universe.profile.id))
-    .returning();
-
-  return {
-    profile: profileToResponse(updatedProfile ?? universe.profile),
-    states: evaluatedStates.map(stateToResponse),
-    evaluatedAt,
-    truncated: universe.truncated,
-    skippedSymbols: universe.skippedSymbols,
-  };
 }
 
 export async function listSignalMonitorEvents(input: {

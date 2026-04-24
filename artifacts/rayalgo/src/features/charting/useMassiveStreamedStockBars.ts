@@ -6,6 +6,7 @@ import {
   useStockMinuteAggregateSymbolVersion,
 } from "./useMassiveStockAggregateStream";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
+import { usePageVisible } from "../platform/usePageVisible";
 import { markChartLivePatchPending } from "./chartHydrationStats";
 import {
   updateActiveChartBarState,
@@ -821,6 +822,7 @@ export const useHistoricalBarStream = ({
   const [streamedBars, setStreamedBars] = useState<MarketBar[]>(normalizedBaseBars);
   const baseBarsRef = useRef(normalizedBaseBars);
   const lastStreamSignatureRef = useRef<string | null>(null);
+  const pageVisible = usePageVisible();
   const streamUrl = useMemo(
     () =>
       buildHistoricalBarStreamUrl({
@@ -850,6 +852,7 @@ export const useHistoricalBarStream = ({
   useEffect(() => {
     if (
       !enabled ||
+      !pageVisible ||
       !streamUrl ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -894,7 +897,7 @@ export const useHistoricalBarStream = ({
       sourceConnection.removeEventListener("bar", handleBar as EventListener);
       sourceConnection.close();
     };
-  }, [enabled, instrumentationScope, scopeKey, streamUrl]);
+  }, [enabled, instrumentationScope, pageVisible, scopeKey, streamUrl]);
 
   return streamedBars;
 };

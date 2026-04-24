@@ -32,7 +32,7 @@ import { useRuntimeWorkloadFlag } from "./workloadStats";
 const BLOOMBERG_LIVE_URL = "https://www.bloomberg.com/live/us";
 const BLOOMBERG_HLS_URL =
   "https://liveprodusphoenixeast.global.ssl.fastly.net/USPhx-HD/Channel-TX-USPhx-AWS-virginia-1/Source-USPhx-16k-1-s6lk2-BP-07-02-81ykIWnsMsg_live.m3u8";
-const BLOOMBERG_DVR_BUFFER_SECONDS = 300;
+const BLOOMBERG_DVR_BUFFER_SECONDS = 30;
 const BLOOMBERG_LIVE_EDGE_SLACK_SECONDS = 1;
 const BLOOMBERG_HLS_LIVE_SYNC_DURATION_COUNT = 1;
 const BLOOMBERG_HLS_LIVE_MAX_LATENCY_DURATION_COUNT = 3;
@@ -556,7 +556,7 @@ export default function BloombergLiveDock() {
     lastRecoveryAt: 0,
   });
 
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [playerStatus, setPlayerStatus] = useState("loading");
@@ -1436,6 +1436,39 @@ export default function BloombergLiveDock() {
       video.load();
     };
   }, [handleReload, playbackSessionEnabled, reloadKey, startPlayback, syncPlaybackState]);
+
+  useEffect(() => {
+    if (!playbackSessionEnabled) {
+      return undefined;
+    }
+    const hls = hlsRef.current;
+    const video = videoRef.current;
+    if (pageVisible) {
+      if (hls) {
+        try {
+          hls.startLoad(-1);
+        } catch {
+          /* hls already loading */
+        }
+      }
+    } else {
+      if (hls) {
+        try {
+          hls.stopLoad();
+        } catch {
+          /* hls already stopped */
+        }
+      }
+      if (video && !video.paused) {
+        try {
+          video.pause();
+        } catch {
+          /* video element already gone */
+        }
+      }
+    }
+    return undefined;
+  }, [pageVisible, playbackSessionEnabled, reloadKey]);
 
   useEffect(() => {
     if (!playbackSessionEnabled || !playbackSampleIntervalMs) {

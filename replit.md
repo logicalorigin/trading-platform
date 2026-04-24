@@ -236,3 +236,41 @@ fixes were required so `/api/quotes/snapshot` returns real data instead of zeros
    paper accounts and for tickers without recent prints in the snapshot window.
    Change/change% prefer IBKR-supplied fields 82/83 before computing from
    prevClose.
+
+## Bloomberg live dock — Chrome unresponsiveness fix (2026-04-24)
+
+`features/platform/BloombergLiveDock.jsx` shipped on commit `c0548d6`
+mounting unconditionally with `useState(true)`, which auto-imported
+`hls.js`, autoplayed the Bloomberg HD HLS source, and held a 300-second
+DVR buffer in RAM. Within 30–60 minutes the trading-terminal tab OOMed
+and Chrome flagged it unresponsive.
+
+Surgical fix (Task #35) — three edits, frontend-only:
+
+- `useState(true)` → `useState(false)` on the dock's `isOpen` (line 562).
+  The component already had a `!isOpen` early-return rendering a small
+  launcher pill, and `playbackSessionEnabled = isOpen` already gated the
+  HLS init `useEffect`. So the entire HLS pipeline (hls.js import, video
+  element wiring, timers, DVR buffer) is dormant until the user clicks
+  the launcher.
+- `BLOOMBERG_DVR_BUFFER_SECONDS = 300` → `30`. Same constant feeds the
+  Hls config as `maxBufferLength` / `maxMaxBufferLength` /
+  `backBufferLength`, cutting peak resident video data ~10× while
+  retaining enough buffer for jitter and short rewind.
+- New `useEffect` keyed on `[pageVisible, playbackSessionEnabled,
+  reloadKey]` calls `hls.stopLoad()` + `video.pause()` when the tab
+  hides and `hls.startLoad(-1)` when it comes back, so a forgotten-open
+  dock can't keep filling buffer in a background tab.
+
+Notes:
+
+- The five "leaking" stores (`marketFlowStore`, `tradeFlowStore`,
+  `signalMonitorStore`, `tradeOptionChainStore`, `marketAlertsStore`)
+  were a misdiagnosis on closer inspection: each `publish*` REPLACES
+  the snapshot, it doesn't append, so they're bounded by the number
+  of distinct keys (tickers / symbol-set combos) the user touches.
+  No caps are required.
+- The "BRIDGE CP · ERROR" 502 waterfall in api-server logs is the
+  user's stale cloudflared tunnel — a Windows-side action, not a
+  code change. No retry-backoff was added because it would mask the
+  real signal.

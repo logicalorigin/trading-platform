@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type PointerEvent,
   type ReactNode,
   type SetStateAction,
 } from "react";
@@ -338,6 +339,69 @@ type StudyRegistryEntry = {
   data: Array<Record<string, unknown>>;
 };
 
+const resolveSeriesTimeComparable = (time: unknown): number | string | null => {
+  if (typeof time === "number" && Number.isFinite(time)) {
+    return time;
+  }
+  if (typeof time === "string" && time.trim()) {
+    return time;
+  }
+  if (!time || typeof time !== "object") {
+    return null;
+  }
+
+  const record = time as Record<string, unknown>;
+  const year = record.year;
+  const month = record.month;
+  const day = record.day;
+  if (
+    Number.isInteger(year) &&
+    Number.isInteger(month) &&
+    Number.isInteger(day)
+  ) {
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(
+      2,
+      "0",
+    )}-${String(day).padStart(2, "0")}`;
+  }
+
+  try {
+    return JSON.stringify(record);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const seriesTimesEqual = (left: unknown, right: unknown): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  const leftComparable = resolveSeriesTimeComparable(left);
+  const rightComparable = resolveSeriesTimeComparable(right);
+  return (
+    leftComparable !== null &&
+    rightComparable !== null &&
+    leftComparable === rightComparable
+  );
+};
+
+const compareSeriesTimes = (left: unknown, right: unknown): number | null => {
+  const leftComparable = resolveSeriesTimeComparable(left);
+  const rightComparable = resolveSeriesTimeComparable(right);
+  if (leftComparable === null || rightComparable === null) {
+    return null;
+  }
+  if (
+    typeof leftComparable === "number" &&
+    typeof rightComparable === "number"
+  ) {
+    return leftComparable - rightComparable;
+  }
+
+  return String(leftComparable).localeCompare(String(rightComparable));
+};
+
 const seriesDataPointsEqual = (
   left: Record<string, unknown> | undefined,
   right: Record<string, unknown> | undefined,
@@ -354,6 +418,12 @@ const seriesDataPointsEqual = (
     ...Object.keys(right),
   ]);
   for (const key of keys) {
+    if (key === "time") {
+      if (!seriesTimesEqual(left[key], right[key])) {
+        return false;
+      }
+      continue;
+    }
     if (left[key] !== right[key]) {
       return false;
     }
@@ -381,6 +451,9 @@ export const resolveSeriesTailUpdateMode = (
   if (next.length === previous.length) {
     let tailChanged = false;
     for (let index = 0; index < previous.length; index += 1) {
+      if (!seriesTimesEqual(previous[index]?.time, next[index]?.time)) {
+        return "reset";
+      }
       if (!seriesDataPointsEqual(previous[index], next[index])) {
         if (index !== previous.length - 1) {
           return "reset";
@@ -399,10 +472,37 @@ export const resolveSeriesTailUpdateMode = (
       }
     }
 
+    const tailTimeComparison = compareSeriesTimes(
+      next[next.length - 1]?.time,
+      previous[previous.length - 1]?.time,
+    );
+    if (tailTimeComparison === null || tailTimeComparison <= 0) {
+      return "reset";
+    }
+
     return "append";
   }
 
   return "reset";
+};
+
+const canUpdateSeriesTail = (
+  previousPoint: Record<string, unknown> | undefined,
+  nextPoint: Record<string, unknown> | undefined,
+  updateMode: "patch" | "append",
+): boolean => {
+  if (!nextPoint) {
+    return false;
+  }
+  if (updateMode === "patch") {
+    return seriesTimesEqual(previousPoint?.time, nextPoint.time);
+  }
+
+  const tailTimeComparison = compareSeriesTimes(
+    nextPoint.time,
+    previousPoint?.time,
+  );
+  return tailTimeComparison !== null && tailTimeComparison > 0;
 };
 
 export const resolveVisibleRangeSyncAction = ({
@@ -430,6 +530,52 @@ export const resolveVisibleRangeSyncAction = ({
 
   return "noop";
 };
+
+export const DEFAULT_REALTIME_FOLLOW_TOLERANCE = 3;
+
+export const isVisibleRangeNearRealtime = ({
+  visibleRange,
+  barCount,
+  tolerance = DEFAULT_REALTIME_FOLLOW_TOLERANCE,
+}: {
+  visibleRange: VisibleLogicalRange | null | undefined;
+  barCount: number;
+  tolerance?: number;
+}): boolean => {
+  if (
+    !visibleRange ||
+    !Number.isFinite(visibleRange.to) ||
+    !Number.isFinite(barCount) ||
+    barCount <= 0
+  ) {
+    return false;
+  }
+
+  return visibleRange.to >= barCount - 1 - Math.max(0, tolerance);
+};
+
+export const shouldAutoFollowLatestBars = ({
+  realtimeFollow,
+  visibleRange,
+  previousBarCount,
+  nextBarCount,
+  tolerance = DEFAULT_REALTIME_FOLLOW_TOLERANCE,
+}: {
+  realtimeFollow: boolean;
+  visibleRange: VisibleLogicalRange | null | undefined;
+  previousBarCount: number;
+  nextBarCount: number;
+  tolerance?: number;
+}): boolean =>
+  Boolean(
+    realtimeFollow &&
+      nextBarCount >= previousBarCount &&
+      isVisibleRangeNearRealtime({
+        visibleRange,
+        barCount: Math.max(previousBarCount, 1),
+        tolerance,
+      }),
+  );
 
 export const sanitizeStoredChartScalePrefs = (
   value: unknown,
@@ -525,9 +671,20 @@ const syncSeriesData = (
       Object.prototype.hasOwnProperty.call(previousPoint, "value") !==
         Object.prototype.hasOwnProperty.call(nextPoint, "value");
 
-    if (nextPoint && !tailWhitespaceChanged) {
-      series.update(nextPoint);
-      return next;
+    if (
+      nextPoint &&
+      !tailWhitespaceChanged &&
+      canUpdateSeriesTail(previousPoint, nextPoint, updateMode)
+    ) {
+      try {
+        series.update(nextPoint);
+        return next;
+      } catch (_error) {
+        // Timeframe changes and provider backfills can replace the visible
+        // time sequence while preserving array length. Lightweight Charts
+        // rejects tail updates for older/non-comparable times, so recover with
+        // a full reset instead of surfacing a runtime overlay.
+      }
     }
   }
 
@@ -2200,6 +2357,8 @@ export const ResearchChartSurface = ({
   const markerApisRef = useRef<any[]>([]);
   const studyRegistryRef = useRef<Record<string, StudyRegistryEntry>>({});
   const visibleLogicalRangeRef = useRef<any>(null);
+  const realtimeFollowRef = useRef(true);
+  const chartBarCountRef = useRef(model.chartBars.length);
   const previousFirstChartBarTimeRef = useRef<number | null>(null);
   const initializedRangeRef = useRef(false);
   const pendingStoredRangeSyncRef = useRef(true);
@@ -2345,6 +2504,10 @@ export const ResearchChartSurface = ({
   useEffect(() => {
     visibleRangeChangeRef.current = onVisibleLogicalRangeChange;
   }, [onVisibleLogicalRangeChange]);
+
+  useEffect(() => {
+    chartBarCountRef.current = model.chartBars.length;
+  }, [model.chartBars.length]);
 
   useEffect(() => {
     if (drawMode !== "box") {
@@ -2584,6 +2747,10 @@ export const ResearchChartSurface = ({
               }
             : null;
         visibleLogicalRangeRef.current = normalizedRange;
+        realtimeFollowRef.current = isVisibleRangeNearRealtime({
+          visibleRange: normalizedRange,
+          barCount: chartBarCountRef.current,
+        });
         visibleRangeChangeRef.current?.(normalizedRange);
         setOverlayRevision((value) => value + 1);
       };
@@ -2726,6 +2893,7 @@ export const ResearchChartSurface = ({
       };
       activePriceSeriesRef.current = null;
       visibleLogicalRangeRef.current = null;
+      realtimeFollowRef.current = true;
       initializedRangeRef.current = false;
       pendingStoredRangeSyncRef.current = true;
       lastSelectionFocusTokenRef.current = null;
@@ -2807,6 +2975,18 @@ export const ResearchChartSurface = ({
               : withAlpha(theme.red, "55"),
         }))
       : [];
+    const previousBarCount = baseSeriesDataRef.current.candles.length;
+    const nextBarCount = candleSeriesData.length;
+    const visibleRangeBeforeDataSync =
+      visibleLogicalRangeRef.current ||
+      chartRef.current.timeScale().getVisibleLogicalRange?.() ||
+      null;
+    const shouldFollowLatestBars = shouldAutoFollowLatestBars({
+      realtimeFollow: realtimeFollowRef.current,
+      visibleRange: visibleRangeBeforeDataSync,
+      previousBarCount,
+      nextBarCount,
+    });
 
     baseSeriesDataRef.current.candles = syncSeriesData(
       candleSeries,
@@ -2838,6 +3018,19 @@ export const ResearchChartSurface = ({
       baseSeriesDataRef.current.volume,
       volumeSeriesData,
     );
+    if (shouldFollowLatestBars) {
+      chartRef.current.timeScale().scrollToRealTime?.();
+    } else if (
+      initializedRangeRef.current &&
+      visibleRangeBeforeDataSync &&
+      Number.isFinite(visibleRangeBeforeDataSync.from) &&
+      Number.isFinite(visibleRangeBeforeDataSync.to)
+    ) {
+      chartRef.current
+        .timeScale()
+        .setVisibleLogicalRange(visibleRangeBeforeDataSync);
+      visibleLogicalRangeRef.current = visibleRangeBeforeDataSync;
+    }
 
     const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
 
@@ -3469,6 +3662,10 @@ export const ResearchChartSurface = ({
 
     chartRef.current.timeScale().setVisibleLogicalRange(nextRange);
     visibleLogicalRangeRef.current = nextRange;
+    realtimeFollowRef.current = isVisibleRangeNearRealtime({
+      visibleRange: nextRange,
+      barCount: model.chartBars.length,
+    });
     initializedRangeRef.current = true;
     pendingStoredRangeSyncRef.current = false;
     setOverlayRevision((value) => value + 1);
@@ -3515,11 +3712,57 @@ export const ResearchChartSurface = ({
             : "linear",
     );
   };
-  const resetVisibleRange = () =>
+  const resetVisibleRange = () => {
+    realtimeFollowRef.current = true;
+    setAutoScale(true);
+    chartRef.current?.priceScale?.("right", 0)?.setAutoScale?.(true);
     chartRef.current?.timeScale?.().resetTimeScale?.();
-  const fitVisibleRange = () => chartRef.current?.timeScale?.().fitContent?.();
-  const scrollToRealtime = () =>
+  };
+  const fitVisibleRange = () => {
+    realtimeFollowRef.current = true;
+    chartRef.current?.timeScale?.().fitContent?.();
+  };
+  const scrollToRealtime = () => {
+    realtimeFollowRef.current = true;
     chartRef.current?.timeScale?.().scrollToRealTime?.();
+  };
+  const handleRootPointerDownCapture = (
+    event: PointerEvent<HTMLDivElement>,
+  ) => {
+    if (!autoScale || !showRightPriceScale || !chartRef.current) {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (
+      !container ||
+      !(event.target instanceof Node) ||
+      !container.contains(event.target)
+    ) {
+      return;
+    }
+
+    const priceScale = chartRef.current.priceScale?.("right", 0);
+    const priceScaleWidth = priceScale?.width?.() || 0;
+    if (priceScaleWidth <= 0) {
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    const isInsideRightPriceScale =
+      event.clientX >= rect.right - priceScaleWidth &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+
+    if (!isInsideRightPriceScale) {
+      return;
+    }
+
+    realtimeFollowRef.current = false;
+    priceScale.setAutoScale?.(false);
+    setAutoScale(false);
+  };
   const takeSnapshot = () => {
     const canvas = chartRef.current?.takeScreenshot?.(true, !hideCrosshair);
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -3771,6 +4014,7 @@ export const ResearchChartSurface = ({
     <div
       ref={rootRef}
       data-testid={dataTestId}
+      onPointerDownCapture={handleRootPointerDownCapture}
       style={{
         width: isFullscreen ? "100vw" : "100%",
         height: isFullscreen ? "100vh" : "100%",

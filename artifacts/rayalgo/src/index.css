@@ -4,3 +4,91 @@ html, body, #root {
   padding: 0;
   background: #080b12;
 }
+
+.chart-widget-menu {
+  box-sizing: border-box;
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow: auto;
+  backdrop-filter: blur(18px);
+  scrollbar-width: thin;
+  scrollbar-color: var(--chart-menu-border) transparent;
+}
+
+.chart-widget-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chart-widget-menu::-webkit-scrollbar-thumb {
+  background: var(--chart-menu-border);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.chart-widget-menu__label {
+  display: block;
+  padding: 6px 10px 5px;
+  color: var(--chart-menu-muted);
+  line-height: 1.2;
+}
+
+.chart-widget-menu__separator {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--chart-menu-border);
+  opacity: 0.72;
+}
+
+.chart-widget-menu__item {
+  position: relative;
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 0 10px 0 30px;
+  color: var(--chart-menu-text);
+  line-height: 1;
+  outline: none;
+  user-select: none;
+  transition:
+    background-color 90ms ease,
+    color 90ms ease;
+}
+
+.chart-widget-menu__item[data-highlighted] {
+  background: var(--chart-menu-hover);
+}
+
+.chart-widget-menu__item[data-state="checked"] {
+  color: var(--chart-menu-text);
+}
+
+.chart-widget-menu__item[data-state="checked"][data-highlighted] {
+  background: var(--chart-menu-active);
+}
+
+.chart-widget-menu__item[data-disabled] {
+  opacity: 0.45;
+}
+
+.chart-widget-menu__item > span:first-child {
+  position: absolute;
+  left: 10px;
+  display: flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--chart-menu-accent);
+}
+
+.chart-widget-menu__item svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.chart-widget-menu__item > span:first-child svg {
+  fill: currentColor;
+}

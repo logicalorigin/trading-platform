@@ -9,7 +9,7 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "generate:research-theme-datasets": "node --experimental-specifier-resolution=node ./scripts/generateResearchThemeDatasets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:unit": "node --import tsx --test src/features/charting/rayReplicaPineAdapter.test.ts src/features/charting/ResearchChartSurface.test.ts",
+    "test:unit": "node --import tsx --test src/features/charting/rayReplicaPineAdapter.test.ts src/features/charting/ResearchChartSurface.test.ts src/features/platform/tradeOptionChainStore.test.js src/features/platform/premiumFlowIndicator.test.js",
     "test:e2e": "playwright test",
     "test:e2e:replit": "node ./scripts/runPlaywrightInReplit.mjs",
     "test:e2e:list": "playwright test --list"

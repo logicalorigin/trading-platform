@@ -3,6 +3,14 @@ import { useMemo, useSyncExternalStore } from "react";
 const EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT = Object.freeze({
   expirationOptions: Object.freeze([]),
   rowsByExpiration: Object.freeze({}),
+  loadingExpirations: Object.freeze([]),
+  statusByExpiration: Object.freeze({}),
+  loadedExpirationCount: 0,
+  completedExpirationCount: 0,
+  emptyExpirationCount: 0,
+  failedExpirationCount: 0,
+  totalExpirationCount: 0,
+  updatedAt: null,
   status: "empty",
 });
 
@@ -42,10 +50,25 @@ const areExpirationOptionsEquivalent = (left = [], right = []) => {
     const next = right[index];
     if (
       current?.value !== next?.value ||
+      current?.chainKey !== next?.chainKey ||
+      current?.isoDate !== next?.isoDate ||
       current?.label !== next?.label ||
       current?.dte !== next?.dte ||
       normalizeTimestamp(current?.actualDate) !== normalizeTimestamp(next?.actualDate)
     ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const areStringArraysEquivalent = (left = [], right = []) => {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
       return false;
     }
   }
@@ -113,6 +136,34 @@ const areRowsByExpirationEquivalent = (left = {}, right = {}) => {
   return true;
 };
 
+const areStatusMapsEquivalent = (left = {}, right = {}) => {
+  if (left === right) return true;
+
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const normalizeExpirationKey = (expiration) =>
+  expiration?.chainKey || expiration?.isoDate || expiration?.value || null;
+
+const normalizeUpdatedAt = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return normalizeTimestamp(value);
+};
+
 export const publishTradeOptionChainSnapshot = (ticker, nextSnapshot) => {
   const entry = ensureEntry(ticker);
   const normalizedSnapshot = nextSnapshot
@@ -123,6 +174,33 @@ export const publishTradeOptionChainSnapshot = (ticker, nextSnapshot) => {
         rowsByExpiration:
           nextSnapshot.rowsByExpiration ||
           EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.rowsByExpiration,
+        loadingExpirations: Array.isArray(nextSnapshot.loadingExpirations)
+          ? [...nextSnapshot.loadingExpirations].sort()
+          : EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.loadingExpirations,
+        statusByExpiration:
+          nextSnapshot.statusByExpiration ||
+          EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.statusByExpiration,
+        loadedExpirationCount:
+          Number.isFinite(nextSnapshot.loadedExpirationCount)
+            ? nextSnapshot.loadedExpirationCount
+            : 0,
+        completedExpirationCount:
+          Number.isFinite(nextSnapshot.completedExpirationCount)
+            ? nextSnapshot.completedExpirationCount
+            : 0,
+        emptyExpirationCount:
+          Number.isFinite(nextSnapshot.emptyExpirationCount)
+            ? nextSnapshot.emptyExpirationCount
+            : 0,
+        failedExpirationCount:
+          Number.isFinite(nextSnapshot.failedExpirationCount)
+            ? nextSnapshot.failedExpirationCount
+            : 0,
+        totalExpirationCount:
+          Number.isFinite(nextSnapshot.totalExpirationCount)
+            ? nextSnapshot.totalExpirationCount
+            : 0,
+        updatedAt: normalizeUpdatedAt(nextSnapshot.updatedAt),
         status: nextSnapshot.status || "empty",
       }
     : EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT;
@@ -133,6 +211,24 @@ export const publishTradeOptionChainSnapshot = (ticker, nextSnapshot) => {
       entry.snapshot.expirationOptions,
       normalizedSnapshot.expirationOptions,
     ) &&
+    areStringArraysEquivalent(
+      entry.snapshot.loadingExpirations,
+      normalizedSnapshot.loadingExpirations,
+    ) &&
+    areStatusMapsEquivalent(
+      entry.snapshot.statusByExpiration,
+      normalizedSnapshot.statusByExpiration,
+    ) &&
+    entry.snapshot.loadedExpirationCount ===
+      normalizedSnapshot.loadedExpirationCount &&
+    entry.snapshot.completedExpirationCount ===
+      normalizedSnapshot.completedExpirationCount &&
+    entry.snapshot.emptyExpirationCount ===
+      normalizedSnapshot.emptyExpirationCount &&
+    entry.snapshot.failedExpirationCount ===
+      normalizedSnapshot.failedExpirationCount &&
+    entry.snapshot.totalExpirationCount ===
+      normalizedSnapshot.totalExpirationCount &&
     areRowsByExpirationEquivalent(
       entry.snapshot.rowsByExpiration,
       normalizedSnapshot.rowsByExpiration,
@@ -184,19 +280,50 @@ export const resolveTradeOptionChainSnapshot = (
 ) => {
   const expirationOptions = snapshot?.expirationOptions || [];
   const resolvedExpiration =
-    expirationOptions.find((option) => option.value === expirationValue) ||
+    expirationOptions.find(
+      (option) =>
+        option.value === expirationValue ||
+        option.chainKey === expirationValue ||
+        option.isoDate === expirationValue,
+    ) ||
     expirationOptions[0] ||
     null;
+  const resolvedExpirationKey = normalizeExpirationKey(resolvedExpiration);
   const resolvedRows =
+    (resolvedExpiration &&
+      snapshot?.rowsByExpiration?.[resolvedExpirationKey]) ||
     (resolvedExpiration &&
       snapshot?.rowsByExpiration?.[resolvedExpiration.value]) ||
     (expirationValue && snapshot?.rowsByExpiration?.[expirationValue]) ||
     [];
+  const loadingExpirations = snapshot?.loadingExpirations || [];
+  const statusByExpiration = snapshot?.statusByExpiration || {};
+  const resolvedExpirationStatus =
+    (resolvedExpirationKey && statusByExpiration[resolvedExpirationKey]) ||
+    (resolvedExpiration?.value && statusByExpiration[resolvedExpiration.value]) ||
+    "empty";
+  const isResolvedExpirationLoading = Boolean(
+    resolvedExpirationKey &&
+      (loadingExpirations.includes(resolvedExpirationKey) ||
+        resolvedExpirationStatus === "loading") &&
+      !resolvedRows.length,
+  );
 
   return {
     expirationOptions,
     resolvedExpiration,
+    resolvedExpirationKey,
     chainRows: resolvedRows,
     chainStatus: snapshot?.status || "empty",
+    loadingExpirations,
+    statusByExpiration,
+    resolvedExpirationStatus,
+    loadedExpirationCount: snapshot?.loadedExpirationCount || 0,
+    completedExpirationCount: snapshot?.completedExpirationCount || 0,
+    emptyExpirationCount: snapshot?.emptyExpirationCount || 0,
+    failedExpirationCount: snapshot?.failedExpirationCount || 0,
+    totalExpirationCount: snapshot?.totalExpirationCount || expirationOptions.length,
+    updatedAt: snapshot?.updatedAt || null,
+    isResolvedExpirationLoading,
   };
 };

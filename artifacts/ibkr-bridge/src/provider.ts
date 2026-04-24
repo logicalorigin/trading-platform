@@ -90,6 +90,11 @@ export interface IbkrBridgeProvider {
     strikesAroundMoney?: number;
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]>;
+  getOptionExpirations(input: {
+    underlying: string;
+    maxExpirations?: number;
+    signal?: AbortSignal;
+  }): Promise<Date[]>;
   getMarketDepth(input: {
     accountId?: string | null;
     symbol: string;

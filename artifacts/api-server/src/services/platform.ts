@@ -3190,7 +3190,7 @@ type GetOptionChainResultWithDebug = GetOptionChainResult & {
 };
 type GetOptionExpirationsResult = {
   underlying: string;
-  expirations: Date[];
+  expirations: Array<{ expirationDate: Date }>;
 };
 type GetOptionExpirationsResultWithDebug = GetOptionExpirationsResult & {
   debug: RequestDebugMetadata;
@@ -3643,14 +3643,31 @@ type IbkrOptionChainInput = {
   strikesAroundMoney?: number;
 };
 type IbkrOptionChainContracts = Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>;
+type IbkrOptionExpirationsInput = {
+  underlying: string;
+  maxExpirations?: number;
+};
+type IbkrOptionExpirationDates = Awaited<ReturnType<IbkrBridgeClient["getOptionExpirations"]>>;
 
-const OPTION_CHAIN_CACHE_TTL_MS = 15_000;
+const OPTION_CHAIN_CACHE_TTL_MS = 2 * 60_000;
+const OPTION_EXPIRATION_CACHE_TTL_MS = 30 * 60_000;
+const OPTION_EXPIRATION_STALE_TTL_MS = 6 * 60 * 60_000;
 const OPTION_CHAIN_CACHE_MAX_ENTRIES = 128;
+const OPTION_CHAIN_STRIKES_AROUND_MONEY = 6;
 const optionChainCache = new Map<
   string,
   { value: IbkrOptionChainContracts; expiresAt: number }
 >();
 const optionChainInFlight = new Map<string, Promise<IbkrOptionChainContracts>>();
+const optionExpirationCache = new Map<
+  string,
+  {
+    value: IbkrOptionExpirationDates;
+    expiresAt: number;
+    staleExpiresAt: number;
+  }
+>();
+const optionExpirationInFlight = new Map<string, Promise<IbkrOptionExpirationDates>>();
 
 function pruneOptionChainCache(now: number): void {
   for (const [key, entry] of optionChainCache) {
@@ -3658,9 +3675,16 @@ function pruneOptionChainCache(now: number): void {
       optionChainCache.delete(key);
     }
   }
+  for (const [key, entry] of optionExpirationCache) {
+    if (entry.staleExpiresAt <= now) {
+      optionExpirationCache.delete(key);
+    }
+  }
 
   if (optionChainCache.size <= OPTION_CHAIN_CACHE_MAX_ENTRIES) {
-    return;
+    if (optionExpirationCache.size <= OPTION_CHAIN_CACHE_MAX_ENTRIES) {
+      return;
+    }
   }
 
   const overflow = optionChainCache.size - OPTION_CHAIN_CACHE_MAX_ENTRIES;
@@ -3668,6 +3692,15 @@ function pruneOptionChainCache(now: number): void {
   for (const key of optionChainCache.keys()) {
     if (removed >= overflow) break;
     optionChainCache.delete(key);
+    removed += 1;
+  }
+
+  const expirationOverflow =
+    optionExpirationCache.size - OPTION_CHAIN_CACHE_MAX_ENTRIES;
+  removed = 0;
+  for (const key of optionExpirationCache.keys()) {
+    if (removed >= expirationOverflow) break;
+    optionExpirationCache.delete(key);
     removed += 1;
   }
 }
@@ -3681,6 +3714,13 @@ function buildOptionChainCacheKey(input: IbkrOptionChainInput): string {
     contractType: input.contractType ?? null,
     maxExpirations: input.maxExpirations ?? null,
     strikesAroundMoney: input.strikesAroundMoney ?? null,
+  });
+}
+
+function buildOptionExpirationCacheKey(input: IbkrOptionExpirationsInput): string {
+  return JSON.stringify({
+    underlying: normalizeSymbol(input.underlying),
+    maxExpirations: input.maxExpirations ?? null,
   });
 }
 
@@ -3757,24 +3797,111 @@ async function getCachedIbkrOptionChainWithDebug(
   };
 }
 
+async function getCachedIbkrOptionExpirationsWithDebug(
+  input: IbkrOptionExpirationsInput,
+): Promise<{
+  expirations: IbkrOptionExpirationDates;
+  debug: RequestDebugMetadata;
+}> {
+  const key = buildOptionExpirationCacheKey(input);
+  const requestedAt = Date.now();
+  const cached = optionExpirationCache.get(key);
+
+  if (cached && cached.expiresAt > requestedAt) {
+    return {
+      expirations: cached.value,
+      debug: {
+        cacheStatus: "hit",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+      },
+    };
+  }
+
+  const inFlight = optionExpirationInFlight.get(key);
+  if (cached && cached.staleExpiresAt > requestedAt) {
+    if (!inFlight) {
+      refreshOptionExpirationCache(key, input).catch(() => {});
+    }
+    return {
+      expirations: cached.value,
+      debug: {
+        cacheStatus: "hit",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+      },
+    };
+  }
+  if (cached) {
+    optionExpirationCache.delete(key);
+  }
+
+  if (inFlight) {
+    const expirations = await inFlight;
+    return {
+      expirations,
+      debug: {
+        cacheStatus: "inflight",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+      },
+    };
+  }
+
+  const upstreamStartedAt = Date.now();
+  const expirations = await refreshOptionExpirationCache(key, input);
+
+  return {
+    expirations,
+    debug: {
+      cacheStatus: "miss",
+      totalMs: Math.max(0, Date.now() - requestedAt),
+      upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+    },
+  };
+}
+
+function refreshOptionExpirationCache(
+  key: string,
+  input: IbkrOptionExpirationsInput,
+): Promise<IbkrOptionExpirationDates> {
+  const existing = optionExpirationInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = (async () => {
+    try {
+      const value = await getIbkrClient().getOptionExpirations(input);
+      const settledAt = Date.now();
+      optionExpirationCache.set(key, {
+        value,
+        expiresAt: settledAt + OPTION_EXPIRATION_CACHE_TTL_MS,
+        staleExpiresAt: settledAt + OPTION_EXPIRATION_STALE_TTL_MS,
+      });
+      pruneOptionChainCache(settledAt);
+      return value;
+    } finally {
+      optionExpirationInFlight.delete(key);
+    }
+  })();
+
+  optionExpirationInFlight.set(key, promise);
+  return promise;
+}
+
 export async function getOptionChainWithDebug(input: {
   underlying: string;
   expirationDate?: Date;
   contractType?: "call" | "put";
 }): Promise<GetOptionChainResultWithDebug> {
-  const requestedAt = Date.now();
   const optionChain = await getCachedIbkrOptionChainWithDebug({
     ...input,
     maxExpirations: 1,
-    strikesAroundMoney: input.expirationDate ? 1_000 : 6,
-  }).catch(() => ({
-    contracts: [] as IbkrOptionChainContracts,
-    debug: {
-      cacheStatus: "miss" as const,
-      totalMs: Math.max(0, Date.now() - requestedAt),
-      upstreamMs: null,
-    },
-  }));
+    strikesAroundMoney: input.expirationDate
+      ? OPTION_CHAIN_STRIKES_AROUND_MONEY
+      : 6,
+  });
 
   return {
     underlying: normalizeSymbol(input.underlying),
@@ -3796,34 +3923,34 @@ export async function getOptionChain(input: {
 export async function getOptionExpirationsWithDebug(input: {
   underlying: string;
 }): Promise<GetOptionExpirationsResultWithDebug> {
-  const requestedAt = Date.now();
-  const optionChain = await getCachedIbkrOptionChainWithDebug({
+  const optionExpirations = await getCachedIbkrOptionExpirationsWithDebug({
     underlying: input.underlying,
-    contractType: "call",
     maxExpirations: 256,
-    strikesAroundMoney: 1,
-  }).catch(() => ({
-    contracts: [] as IbkrOptionChainContracts,
-    debug: {
-      cacheStatus: "miss" as const,
-      totalMs: Math.max(0, Date.now() - requestedAt),
-      upstreamMs: null,
-    },
-  }));
-
+  });
+  const today = new Date();
+  const todayUtc = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  );
   const expirations = Array.from(
     new Map(
-      optionChain.contracts.map((contract) => {
-        const expirationDate = contract.contract.expirationDate;
-        return [expirationDate.toISOString().slice(0, 10), expirationDate];
-      }),
+      optionExpirations.expirations
+        .filter((expirationDate) => expirationDate.getTime() >= todayUtc)
+        .map((expirationDate) => [
+          expirationDate.toISOString().slice(0, 10),
+          { expirationDate },
+        ]),
     ).values(),
-  ).sort((left, right) => left.getTime() - right.getTime());
+  ).sort(
+    (left, right) =>
+      left.expirationDate.getTime() - right.expirationDate.getTime(),
+  );
 
   return {
     underlying: normalizeSymbol(input.underlying),
     expirations,
-    debug: optionChain.debug,
+    debug: optionExpirations.debug,
   };
 }
 

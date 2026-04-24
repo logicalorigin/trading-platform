@@ -148,6 +148,14 @@ export class IbkrBridgeService {
     return this.ensureProvider().getOptionChain(input);
   }
 
+  getOptionExpirations(input: {
+    underlying: string;
+    maxExpirations?: number;
+    signal?: AbortSignal;
+  }): Promise<Date[]> {
+    return this.ensureProvider().getOptionExpirations(input);
+  }
+
   getMarketDepth(input: {
     accountId?: string | null;
     symbol: string;

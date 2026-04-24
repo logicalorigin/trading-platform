@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 function parseArgs(argv) {
   const args = {
+    master: null,
+    skipMaster: false,
     output: null,
+    overwrite: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -17,6 +20,22 @@ function parseArgs(argv) {
     if (value === "--output") {
       args.output = argv[index + 1] ?? null;
       index += 1;
+      continue;
+    }
+
+    if (value === "--overwrite") {
+      args.overwrite = true;
+      continue;
+    }
+
+    if (value === "--master") {
+      args.master = argv[index + 1] ?? null;
+      index += 1;
+      continue;
+    }
+
+    if (value === "--no-master") {
+      args.skipMaster = true;
       continue;
     }
   }
@@ -150,9 +169,57 @@ function listPriorHandoffs(repoRoot, currentFileName) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
+    .filter((line) =>
+      /^SESSION_HANDOFF_\d{4}-\d{2}-\d{2}_.+\.md$/.test(path.basename(line)),
+    )
     .filter((line) => path.basename(line) !== currentFileName)
     .sort()
     .reverse();
+}
+
+function listRootHandoffFiles(repoRoot) {
+  const files = new Set();
+
+  try {
+    for (const fileName of readdirSync(repoRoot)) {
+      if (/^SESSION_HANDOFF_\d{4}-\d{2}-\d{2}_.+\.md$/.test(fileName)) {
+        files.add(fileName);
+      }
+    }
+  } catch {
+    // Fall back to git-only discovery below.
+  }
+
+  const gitFiles = runGit(repoRoot, [
+    "ls-files",
+    "--others",
+    "--cached",
+    "--exclude-standard",
+    "SESSION_HANDOFF_*.md",
+  ]);
+
+  if (gitFiles && gitFiles !== "Unavailable") {
+    for (const filePath of gitFiles.split("\n")) {
+      const fileName = path.basename(filePath.trim());
+      if (/^SESSION_HANDOFF_\d{4}-\d{2}-\d{2}_.+\.md$/.test(fileName)) {
+        files.add(fileName);
+      }
+    }
+  }
+
+  return [...files].sort().reverse();
+}
+
+function findExistingHandoffForSession(repoRoot, sessionPrefix) {
+  if (!sessionPrefix || sessionPrefix === "unknown") {
+    return null;
+  }
+
+  return (
+    listRootHandoffFiles(repoRoot).find((fileName) =>
+      fileName.endsWith(`_${sessionPrefix}.md`),
+    ) ?? null
+  );
 }
 
 function formatBulletList(values, formatter) {
@@ -191,17 +258,125 @@ function isHighSignalPath(filePath) {
   return true;
 }
 
+function oneLine(value, maxLength = 120) {
+  const normalized = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function tableCell(value) {
+  return oneLine(value || "unknown", 120).replace(/\|/g, "\\|");
+}
+
+function upsertMasterIndexEntry({
+  branch,
+  generatedAt,
+  headSha,
+  masterPath,
+  outputFileName,
+  sessionId,
+  threadTitle,
+}) {
+  const existing = existsSync(masterPath)
+    ? readFileSync(masterPath, "utf8")
+    : null;
+  const existingLine = existing
+    ?.split("\n")
+    .find(
+      (line) =>
+        line.includes(`\`${sessionId}\``) ||
+        line.includes(`\`${outputFileName}\``),
+    );
+  const existingCells = existingLine
+    ?.split("|")
+    .map((cell) => cell.trim());
+  const workstream =
+    existingCells?.[4] && existingCells[4] !== "unknown"
+      ? existingCells[4]
+      : tableCell(threadTitle || "Updated handoff");
+  const status =
+    existingCells?.[7] && existingCells[7] !== "unknown"
+      ? existingCells[7]
+      : "Updated; see handoff";
+  const shortHead =
+    typeof headSha === "string" && headSha.length >= 12
+      ? headSha.slice(0, 12)
+      : headSha || "unknown";
+  const row = [
+    generatedAt,
+    `\`${sessionId}\``,
+    `\`${outputFileName}\``,
+    workstream,
+    tableCell(branch || "unknown"),
+    `\`${shortHead}\``,
+    status,
+  ].join(" | ");
+  const rowLine = `| ${row} |`;
+
+  const header = [
+    "# Session Handoff Master",
+    "",
+    "Index of durable per-session handoff files. Keep detailed notes in the session handoff; keep this file short and discoverable by session ID.",
+    "",
+    "## Sessions",
+    "",
+    "| Last Updated (UTC) | Session ID | Handoff | Workstream | Branch | HEAD | Status |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+  ].join("\n");
+
+  if (!existsSync(masterPath)) {
+    writeFileSync(masterPath, `${header}\n${rowLine}\n`, "utf8");
+    return;
+  }
+
+  const lines = existing.split("\n");
+  const filtered = lines.filter(
+    (line) =>
+      !line.includes(`\`${sessionId}\``) &&
+      !line.includes(`\`${outputFileName}\``),
+  );
+  const separatorIndex = filtered.findIndex((line) =>
+    line.startsWith("| --- |"),
+  );
+
+  if (separatorIndex === -1) {
+    const trimmed = existing.trimEnd();
+    writeFileSync(
+      masterPath,
+      `${trimmed}\n\n${header.split("\n").slice(4).join("\n")}\n${rowLine}\n`,
+      "utf8",
+    );
+    return;
+  }
+
+  filtered.splice(separatorIndex + 1, 0, rowLine);
+  writeFileSync(masterPath, `${filtered.join("\n").trimEnd()}\n`, "utf8");
+}
+
 const args = parseArgs(process.argv.slice(2));
 const repoRoot = resolveRepoRoot(process.cwd());
 const thread = loadCurrentThread(repoRoot);
 const sessionId = typeof thread?.id === "string" ? thread.id : "unknown-session";
 const sessionPrefix = sessionId.slice(0, 8);
 const today = new Date().toISOString().slice(0, 10);
-const defaultFileName = `SESSION_HANDOFF_${today}_${sessionPrefix}.md`;
+const existingSessionFile = args.output
+  ? null
+  : findExistingHandoffForSession(repoRoot, sessionPrefix);
+const defaultFileName =
+  existingSessionFile ?? `SESSION_HANDOFF_${today}_${sessionPrefix}.md`;
 const outputPath = args.output
   ? path.resolve(args.output)
   : path.join(repoRoot, defaultFileName);
 const currentFileName = path.basename(outputPath);
+const masterPath = args.master
+  ? path.resolve(args.master)
+  : path.join(repoRoot, "SESSION_HANDOFF_MASTER.md");
 const recentMessages = loadRecentUserMessages(sessionId);
 const priorHandoffs = listPriorHandoffs(repoRoot, currentFileName);
 const branch = runGit(repoRoot, ["branch", "--show-current"]) || "Unavailable";
@@ -288,5 +463,18 @@ ${diffStat || "Unavailable"}
 2. Replace this item with the next validation or bring-up step.
 `;
 
-writeFileSync(outputPath, markdown, "utf8");
+if (args.overwrite || !existsSync(outputPath)) {
+  writeFileSync(outputPath, markdown, "utf8");
+}
+if (!args.skipMaster) {
+  upsertMasterIndexEntry({
+    branch,
+    generatedAt,
+    headSha,
+    masterPath,
+    outputFileName: currentFileName,
+    sessionId,
+    threadTitle: thread?.title,
+  });
+}
 process.stdout.write(`${outputPath}\n`);

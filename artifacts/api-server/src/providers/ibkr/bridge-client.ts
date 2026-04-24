@@ -61,6 +61,10 @@ type BarStreamPayload = {
   bar?: Omit<BrokerBarSnapshot, "timestamp"> & { timestamp: string | Date } | null;
 };
 
+type OptionExpirationsPayload = {
+  expirations: Array<Date | string | { expirationDate: Date | string }>;
+};
+
 type SseMessage = {
   event: string;
   data: string;
@@ -950,6 +954,49 @@ export class IbkrBridgeClient {
       strikesAroundMoney: input.strikesAroundMoney,
     });
     return payload.contracts.map(hydrateOptionChainContract);
+  }
+
+  async getOptionExpirations(input: {
+    underlying: string;
+    maxExpirations?: number;
+    signal?: AbortSignal;
+  }): Promise<Date[]> {
+    const payload = await this.request<OptionExpirationsPayload>("/options/expirations", {
+      signal: input.signal,
+    }, {
+      underlying: input.underlying,
+      maxExpirations: input.maxExpirations,
+    }).catch(async (error: unknown) => {
+      if (error instanceof HttpError && error.statusCode === 404) {
+        const contracts = await this.getOptionChain({
+          underlying: input.underlying,
+          contractType: "call",
+          maxExpirations: input.maxExpirations,
+          strikesAroundMoney: 1,
+          signal: input.signal,
+        });
+
+        return {
+          expirations: Array.from(
+            new Map(
+              contracts.map((contract) => {
+                const expirationDate = contract.contract.expirationDate;
+                return [expirationDate.toISOString().slice(0, 10), expirationDate];
+              }),
+            ).values(),
+          ),
+        };
+      }
+
+      throw error;
+    });
+    return payload.expirations
+      .map((expiration) =>
+        expiration instanceof Date || typeof expiration === "string"
+          ? toDate(expiration)
+          : toDate(expiration.expirationDate),
+      )
+      .filter((expiration) => !Number.isNaN(expiration.getTime()));
   }
 
   async getMarketDepth(input: {

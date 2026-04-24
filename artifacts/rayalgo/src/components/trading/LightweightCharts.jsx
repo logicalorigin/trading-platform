@@ -164,6 +164,19 @@ const buildVolumeSeriesData = (bars, stepSeconds = 300, colors) => normalizeTime
   };
 });
 
+const normalizeLogicalRange = (range) =>
+  range && Number.isFinite(range.from) && Number.isFinite(range.to)
+    ? { from: range.from, to: range.to }
+    : null;
+
+const isRangeNearRealtime = (range, barCount, tolerance = 3) =>
+  Boolean(
+    range &&
+      Number.isFinite(range.to) &&
+      barCount > 0 &&
+      range.to >= barCount - 1 - tolerance,
+  );
+
 const ChartFallback = ({ theme, message = "chart unavailable" }) => (
   <div
     style={{
@@ -286,6 +299,8 @@ export const LightweightCandleChart = ({
   volumeHeight = 52,
 }) => {
   const containerRef = useRef(null);
+  const visibleLogicalRangeRef = useRef(null);
+  const realtimeFollowRef = useRef(true);
   const [hoverBar, setHoverBar] = useState(null);
   const [chartError, setChartError] = useState(null);
 
@@ -298,6 +313,7 @@ export const LightweightCandleChart = ({
     let chart = null;
     let handleCrosshairMove = null;
     let handleClick = null;
+    let handleVisibleRangeChange = null;
 
     try {
       chart = createChart(
@@ -375,6 +391,14 @@ export const LightweightCandleChart = ({
 
         setHoverBar(seriesData);
       };
+      handleVisibleRangeChange = (range) => {
+        const normalizedRange = normalizeLogicalRange(range);
+        visibleLogicalRangeRef.current = normalizedRange;
+        realtimeFollowRef.current = isRangeNearRealtime(
+          normalizedRange,
+          candleData.length,
+        );
+      };
 
       handleClick = (param) => {
         if (drawMode !== "horizontal" || typeof onAddHorizontalLevel !== "function" || !param.point) {
@@ -387,9 +411,19 @@ export const LightweightCandleChart = ({
         }
       };
 
+      chart
+        .timeScale()
+        .subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       chart.subscribeCrosshairMove(handleCrosshairMove);
       chart.subscribeClick(handleClick);
-      chart.timeScale().fitContent();
+      if (visibleLogicalRangeRef.current && !realtimeFollowRef.current) {
+        chart.timeScale().setVisibleLogicalRange(visibleLogicalRangeRef.current);
+      } else if (visibleLogicalRangeRef.current) {
+        chart.timeScale().setVisibleLogicalRange(visibleLogicalRangeRef.current);
+        chart.timeScale().scrollToRealTime?.();
+      } else {
+        chart.timeScale().fitContent();
+      }
     } catch (error) {
       console.error("LightweightCandleChart init failed", error);
       setChartError(error instanceof Error ? error.message : "chart unavailable");
@@ -398,6 +432,13 @@ export const LightweightCandleChart = ({
     }
 
     return () => {
+      if (chart && handleVisibleRangeChange) {
+        try {
+          chart
+            .timeScale()
+            .unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+        } catch (e) {}
+      }
       if (chart && handleCrosshairMove) {
         try { chart.unsubscribeCrosshairMove(handleCrosshairMove); } catch (e) {}
       }
@@ -486,6 +527,8 @@ export const LightweightAreaPriceChart = ({
   stepSeconds = 300,
 }) => {
   const containerRef = useRef(null);
+  const visibleLogicalRangeRef = useRef(null);
+  const realtimeFollowRef = useRef(true);
   const [hoverValue, setHoverValue] = useState(null);
   const [chartError, setChartError] = useState(null);
 
@@ -497,6 +540,7 @@ export const LightweightAreaPriceChart = ({
     setChartError(null);
     let chart = null;
     let handleCrosshairMove = null;
+    let handleVisibleRangeChange = null;
     try {
       chart = createChart(
         containerRef.current,
@@ -532,9 +576,27 @@ export const LightweightAreaPriceChart = ({
         const seriesData = param.seriesData.get(areaSeries);
         setHoverValue(Number.isFinite(seriesData?.value) ? seriesData.value : null);
       };
+      handleVisibleRangeChange = (range) => {
+        const normalizedRange = normalizeLogicalRange(range);
+        visibleLogicalRangeRef.current = normalizedRange;
+        realtimeFollowRef.current = isRangeNearRealtime(
+          normalizedRange,
+          areaData.length,
+        );
+      };
 
+      chart
+        .timeScale()
+        .subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       chart.subscribeCrosshairMove(handleCrosshairMove);
-      chart.timeScale().fitContent();
+      if (visibleLogicalRangeRef.current && !realtimeFollowRef.current) {
+        chart.timeScale().setVisibleLogicalRange(visibleLogicalRangeRef.current);
+      } else if (visibleLogicalRangeRef.current) {
+        chart.timeScale().setVisibleLogicalRange(visibleLogicalRangeRef.current);
+        chart.timeScale().scrollToRealTime?.();
+      } else {
+        chart.timeScale().fitContent();
+      }
     } catch (error) {
       console.error("LightweightAreaPriceChart init failed", error);
       setChartError(error instanceof Error ? error.message : "chart unavailable");
@@ -543,6 +605,13 @@ export const LightweightAreaPriceChart = ({
     }
 
     return () => {
+      if (chart && handleVisibleRangeChange) {
+        try {
+          chart
+            .timeScale()
+            .unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+        } catch (e) {}
+      }
       if (chart && handleCrosshairMove) {
         try { chart.unsubscribeCrosshairMove(handleCrosshairMove); } catch (e) {}
       }

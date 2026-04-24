@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { usePageVisible } from "./usePageVisible";
 import type {
   AccountsResponse,
   OptionChainResponse,
@@ -510,6 +511,7 @@ export const useIbkrQuoteSnapshotStream = ({
   onQuotes?: (quotes: QuoteSnapshot[]) => void;
 }) => {
   const queryClient = useQueryClient();
+  const pageVisible = usePageVisible();
   const normalizedSymbols = useMemo(() => normalizeSymbols(symbols), [symbols]);
   const streamUrl = useMemo(
     () =>
@@ -522,6 +524,7 @@ export const useIbkrQuoteSnapshotStream = ({
   useEffect(() => {
     if (
       !enabled ||
+      !pageVisible ||
       !streamUrl ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -559,7 +562,7 @@ export const useIbkrQuoteSnapshotStream = ({
       source.removeEventListener("quotes", handleQuotes as EventListener);
       source.close();
     };
-  }, [enabled, onQuotes, queryClient, streamUrl]);
+  }, [enabled, onQuotes, pageVisible, queryClient, streamUrl]);
 };
 
 export const useIbkrAccountSnapshotStream = ({
@@ -724,6 +727,7 @@ export const useIbkrOptionChainStream = ({
   enabled?: boolean;
 }) => {
   const queryClient = useQueryClient();
+  const pageVisible = usePageVisible();
   const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
   const streamUrl = useMemo(
     () =>
@@ -736,6 +740,7 @@ export const useIbkrOptionChainStream = ({
   useEffect(() => {
     if (
       !enabled ||
+      !pageVisible ||
       !normalizedUnderlying ||
       !streamUrl ||
       typeof window === "undefined" ||
@@ -777,7 +782,7 @@ export const useIbkrOptionChainStream = ({
       source.removeEventListener("chains", handleChains as EventListener);
       source.close();
     };
-  }, [enabled, normalizedUnderlying, queryClient, streamUrl]);
+  }, [enabled, normalizedUnderlying, pageVisible, queryClient, streamUrl]);
 };
 
 export const useIbkrOptionQuoteStream = ({
@@ -790,6 +795,7 @@ export const useIbkrOptionQuoteStream = ({
   enabled?: boolean;
 }) => {
   const queryClient = useQueryClient();
+  const pageVisible = usePageVisible();
   const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
   const normalizedProviderContractIds = useMemo(
     () =>
@@ -817,6 +823,7 @@ export const useIbkrOptionQuoteStream = ({
   useEffect(() => {
     if (
       !enabled ||
+      !pageVisible ||
       !normalizedUnderlying ||
       normalizedProviderContractIds.length === 0 ||
       !streamUrl ||
@@ -860,6 +867,7 @@ export const useIbkrOptionQuoteStream = ({
     enabled,
     normalizedProviderContractIds,
     normalizedUnderlying,
+    pageVisible,
     queryClient,
     streamUrl,
   ]);

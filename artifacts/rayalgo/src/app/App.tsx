@@ -31,12 +31,46 @@ const resolveLabMode = (): string | null => {
   return new URLSearchParams(window.location.search).get("lab");
 };
 
+function AppLoadingFallback() {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        background: "#080b12",
+        color: "#94a3b8",
+        fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+      }}
+    >
+      <style>
+        {"@keyframes rayalgoAppSpin { to { transform: rotate(360deg); } }"}
+      </style>
+      <span
+        style={{
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          border: "2px solid #1e293b",
+          borderTopColor: "#3b82f6",
+          animation: "rayalgoAppSpin 900ms linear infinite",
+        }}
+      />
+      <span style={{ fontSize: 11, fontWeight: 700 }}>
+        Loading RayAlgo
+      </span>
+    </div>
+  );
+}
+
 function App() {
   const labMode = resolveLabMode();
 
   return (
     <AppProviders>
-      <Suspense fallback={null}>
+      <Suspense fallback={<AppLoadingFallback />}>
         {labMode === "chart-parity" ? (
           <ChartParityLab />
         ) : labMode === "ticker-search" ? (

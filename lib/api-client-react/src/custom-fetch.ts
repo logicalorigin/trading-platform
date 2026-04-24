@@ -10,6 +10,15 @@ export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
+const HEAVY_GET_PATHS = new Set([
+  "/api/bars",
+  "/api/options/chains",
+  "/api/flow/events",
+]);
+const HEAVY_GET_CONCURRENCY = 3;
+const HEAVY_GET_PRIORITY: Record<string, number> = {
+  "/api/options/chains": 10,
+};
 
 // ---------------------------------------------------------------------------
 // Module-level configuration
@@ -17,6 +26,14 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _heavyActiveCount = 0;
+let _heavySequence = 0;
+const _heavyQueue: Array<{
+  run: () => void;
+  priority: number;
+  sequence: number;
+}> = [];
+const _heavyInFlight = new Map<string, Promise<unknown>>();
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -78,6 +95,34 @@ function resolveUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+function normalizeUrlForDedupe(input: RequestInfo | URL): {
+  pathname: string;
+  normalized: string;
+} | null {
+  try {
+    const url = new URL(resolveUrl(input), "http://custom-fetch.local");
+    const pairs: Array<[string, string]> = [];
+    url.searchParams.forEach((value, key) => {
+      pairs.push([key, value]);
+    });
+    pairs.sort((left, right) => {
+      const keyComparison = left[0].localeCompare(right[0]);
+      return keyComparison || left[1].localeCompare(right[1]);
+    });
+    const params = new URLSearchParams();
+    pairs.forEach(([key, value]) => {
+      params.append(key, value);
+    });
+    const query = params.toString();
+    return {
+      pathname: url.pathname,
+      normalized: query ? `${url.pathname}?${query}` : url.pathname,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function mergeHeaders(...sources: Array<HeadersInit | undefined>): Headers {
   const headers = new Headers();
 
@@ -89,6 +134,169 @@ function mergeHeaders(...sources: Array<HeadersInit | undefined>): Headers {
   }
 
   return headers;
+}
+
+function headersFingerprint(headers: Headers): string {
+  const entries: Array<[string, string]> = [];
+  headers.forEach((value, key) => {
+    entries.push([key, value]);
+  });
+  entries.sort((left, right) => left[0].localeCompare(right[0]));
+  return JSON.stringify(entries);
+}
+
+function requestInitFingerprint(
+  input: RequestInfo | URL,
+  init: RequestInit,
+): Record<string, string | null> {
+  const request = isRequest(input) ? input : null;
+  return {
+    cache: init.cache ?? request?.cache ?? null,
+    credentials: init.credentials ?? request?.credentials ?? null,
+    mode: init.mode ?? request?.mode ?? null,
+    redirect: init.redirect ?? request?.redirect ?? null,
+    referrerPolicy: init.referrerPolicy ?? request?.referrerPolicy ?? null,
+  };
+}
+
+function buildHeavyGetKey(input: {
+  requestInput: RequestInfo | URL;
+  init: RequestInit;
+  method: string;
+  responseType: CustomFetchOptions["responseType"];
+  headers: Headers;
+}): string | null {
+  if (input.method !== "GET") {
+    return null;
+  }
+
+  const normalizedUrl = normalizeUrlForDedupe(input.requestInput);
+  if (!normalizedUrl || !HEAVY_GET_PATHS.has(normalizedUrl.pathname)) {
+    return null;
+  }
+
+  return JSON.stringify({
+    method: input.method,
+    url: normalizedUrl.normalized,
+    responseType: input.responseType ?? "auto",
+    headers: headersFingerprint(input.headers),
+    request: requestInitFingerprint(input.requestInput, input.init),
+  });
+}
+
+function getHeavyGetPriority(input: RequestInfo | URL, method: string): number {
+  if (method !== "GET") {
+    return 0;
+  }
+
+  const normalizedUrl = normalizeUrlForDedupe(input);
+  if (!normalizedUrl) {
+    return 0;
+  }
+
+  return HEAVY_GET_PRIORITY[normalizedUrl.pathname] ?? 0;
+}
+
+function shouldDetachCallerAbort(input: RequestInfo | URL, method: string): boolean {
+  if (method !== "GET") {
+    return false;
+  }
+
+  const normalizedUrl = normalizeUrlForDedupe(input);
+  if (!normalizedUrl) {
+    return false;
+  }
+
+  return normalizedUrl.pathname === "/api/options/chains";
+}
+
+function createAbortError(): Error {
+  if (typeof DOMException !== "undefined") {
+    return new DOMException("The operation was aborted.", "AbortError");
+  }
+
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function waitForCaller<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      signal.removeEventListener("abort", handleAbort);
+    };
+    const handleAbort = () => {
+      cleanup();
+      reject(createAbortError());
+    };
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function takeNextHeavyRequest(): (() => void) | null {
+  if (!_heavyQueue.length) {
+    return null;
+  }
+
+  let nextIndex = 0;
+  for (let index = 1; index < _heavyQueue.length; index += 1) {
+    const current = _heavyQueue[index];
+    const next = _heavyQueue[nextIndex];
+    if (
+      current.priority > next.priority ||
+      (current.priority === next.priority && current.sequence < next.sequence)
+    ) {
+      nextIndex = index;
+    }
+  }
+
+  return _heavyQueue.splice(nextIndex, 1)[0]?.run ?? null;
+}
+
+function runQueuedHeavyRequest<T>(
+  task: () => Promise<T>,
+  priority = 0,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      _heavyActiveCount += 1;
+      task().then(resolve, reject).finally(() => {
+        _heavyActiveCount = Math.max(0, _heavyActiveCount - 1);
+        const next = takeNextHeavyRequest();
+        next?.();
+      });
+    };
+
+    if (_heavyActiveCount < HEAVY_GET_CONCURRENCY) {
+      run();
+      return;
+    }
+
+    _heavyQueue.push({
+      run,
+      priority,
+      sequence: _heavySequence,
+    });
+    _heavySequence += 1;
+  });
 }
 
 function getMediaType(headers: Headers): string | null {
@@ -322,6 +530,39 @@ async function parseSuccessBody(
   }
 }
 
+async function executeFetch<T = unknown>(input: {
+  requestInput: RequestInfo | URL;
+  init: RequestInit;
+  method: string;
+  headers: Headers;
+  responseType: "json" | "text" | "blob" | "auto";
+  requestInfo: { method: string; url: string };
+}): Promise<T> {
+  const response = await fetch(input.requestInput, {
+    ...input.init,
+    method: input.method,
+    headers: input.headers,
+  });
+
+  if (!response.ok) {
+    const errorData = await parseErrorBody(response, input.method);
+    throw new ApiError(response, errorData, input.requestInfo);
+  }
+
+  return (await parseSuccessBody(
+    response,
+    input.responseType,
+    input.requestInfo,
+  )) as T;
+}
+
+export function resetCustomFetchDedupeForTests(): void {
+  _heavyActiveCount = 0;
+  _heavySequence = 0;
+  _heavyQueue.splice(0, _heavyQueue.length);
+  _heavyInFlight.clear();
+}
+
 export async function customFetch<T = unknown>(
   input: RequestInfo | URL,
   options: CustomFetchOptions = {},
@@ -359,13 +600,49 @@ export async function customFetch<T = unknown>(
   }
 
   const requestInfo = { method, url: resolveUrl(input) };
+  const heavyKey = buildHeavyGetKey({
+    requestInput: input,
+    init,
+    method,
+    responseType,
+    headers,
+  });
 
-  const response = await fetch(input, { ...init, method, headers });
+  if (heavyKey) {
+    const callerSignal = init.signal;
+    const existing = _heavyInFlight.get(heavyKey);
+    if (existing) {
+      return waitForCaller(existing as Promise<T>, callerSignal);
+    }
 
-  if (!response.ok) {
-    const errorData = await parseErrorBody(response, method);
-    throw new ApiError(response, errorData, requestInfo);
+    const detachCallerAbort = shouldDetachCallerAbort(input, method);
+    const { signal: _callerSignal, ...initWithoutSignal } = init;
+    const upstreamInit = detachCallerAbort ? initWithoutSignal : init;
+    const priority = getHeavyGetPriority(input, method);
+    const sharedRequest = runQueuedHeavyRequest(() =>
+      executeFetch<T>({
+        requestInput: input,
+        init: upstreamInit,
+        method,
+        headers,
+        responseType,
+        requestInfo,
+      }),
+      priority,
+    ).finally(() => {
+      _heavyInFlight.delete(heavyKey);
+    });
+    _heavyInFlight.set(heavyKey, sharedRequest);
+    sharedRequest.catch(() => {});
+    return waitForCaller(sharedRequest, callerSignal);
   }
 
-  return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+  return executeFetch<T>({
+    requestInput: input,
+    init,
+    method,
+    headers,
+    responseType,
+    requestInfo,
+  });
 }

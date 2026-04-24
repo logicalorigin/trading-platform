@@ -9,6 +9,7 @@ import {
   useMemo,
   useSyncExternalStore,
   lazy,
+  Suspense,
   startTransition,
   useDeferredValue,
 } from "react";
@@ -33,7 +34,6 @@ import {
   getGetNewsQueryOptions,
   getGetQuoteSnapshotsQueryOptions,
   getGetResearchEarningsCalendarQueryOptions,
-  getOptionChain as getOptionChainRequest,
   getGetSignalMonitorProfileQueryKey,
   getGetSignalMonitorStateQueryKey,
   getListAlgoDeploymentsQueryOptions,
@@ -83,6 +83,7 @@ import {
   useBrokerStreamedBars,
   useHistoricalBarStream,
   useIbkrLatencyStats,
+  setBrokerStockAggregateStreamPaused,
   useChartHydrationStats,
   useOptionQuotePatchedBars,
   usePrependableHistoricalBars,
@@ -103,6 +104,7 @@ import {
   useIbkrQuoteSnapshotStream,
   useStoredOptionQuoteSnapshot,
 } from "./features/platform/live-streams";
+import { usePageVisible } from "./features/platform/usePageVisible";
 import BloombergLiveDock from "./features/platform/BloombergLiveDock";
 import {
   useRuntimeWorkloadFlag,
@@ -113,6 +115,11 @@ import {
   clearMarketFlowSnapshot,
   publishMarketFlowSnapshot,
 } from "./features/platform/marketFlowStore";
+import {
+  EMPTY_PREMIUM_FLOW_SUMMARY,
+  buildPremiumFlowBySymbol,
+  resolvePremiumFlowDisplayState,
+} from "./features/platform/premiumFlowIndicator";
 import { publishMarketAlertsSnapshot } from "./features/platform/marketAlertsStore";
 import {
   publishSignalMonitorSnapshot,
@@ -139,14 +146,13 @@ import {
   recordChartHydrationMetric,
 } from "./features/charting/chartHydrationStats";
 
-import MarketScreen from "./screens/MarketScreen";
-import FlowScreen from "./screens/FlowScreen";
-import TradeScreen from "./screens/TradeScreen";
-import AccountScreen from "./screens/AccountScreen";
-import ResearchScreen from "./screens/ResearchScreen";
-import AlgoScreen from "./screens/AlgoScreen";
-import BacktestScreen from "./screens/BacktestScreen";
-
+const MarketScreen = lazy(() => import("./screens/MarketScreen"));
+const FlowScreen = lazy(() => import("./screens/FlowScreen"));
+const TradeScreen = lazy(() => import("./screens/TradeScreen"));
+const AccountScreen = lazy(() => import("./screens/AccountScreen"));
+const ResearchScreen = lazy(() => import("./screens/ResearchScreen"));
+const AlgoScreen = lazy(() => import("./screens/AlgoScreen"));
+const BacktestScreen = lazy(() => import("./screens/BacktestScreen"));
 const MemoMarketScreen = memo(MarketScreen);
 const MemoFlowScreen = memo(FlowScreen);
 const MemoTradeScreen = memo(TradeScreen);
@@ -174,6 +180,9 @@ input[type=range]{accent-color:#3b82f6}
 @keyframes toastSlideOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(20px)}}
 @keyframes pulseAlert{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0.6)}50%{box-shadow:0 0 0 4px rgba(245,158,11,0)}}
 @keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.6)}50%{box-shadow:0 0 0 4px rgba(239,68,68,0)}}
+@keyframes premiumFlowSpin{to{transform:rotate(360deg)}}
+@keyframes premiumFlowPulse{0%,100%{opacity:0.38;transform:scale(0.82)}50%{opacity:1;transform:scale(1)}}
+@media (prefers-reduced-motion: reduce){[data-premium-flow-glyph]{animation:none!important}}
 `;
 
 // ─── PERSISTENCE LAYER ───
@@ -720,7 +729,7 @@ const subscribeToRuntimeTickerSnapshotSymbols = (symbols, listener) => {
   };
 };
 
-const useRuntimeTickerSnapshot = (
+export const useRuntimeTickerSnapshot = (
   symbol,
   fallback = null,
   { subscribe = true } = {},
@@ -2597,6 +2606,7 @@ export const useLiveMarketFlow = (
     batchSize,
     unusualThreshold,
     intervalMs = 10_000,
+    workloadLabel = null,
   } = {},
 ) => {
   const instanceIdRef = useRef(null);
@@ -2630,9 +2640,10 @@ export const useLiveMarketFlow = (
     {
       kind: "poll",
       label:
-        effectiveBatchSize >= 30
+        workloadLabel ||
+        (effectiveBatchSize >= 30
           ? "Flow unusual scanner"
-          : "Flow watchlist base",
+          : "Flow watchlist base"),
       detail: `${liveSymbols.length}s/${effectiveBatchSize}b`,
       priority: effectiveBatchSize >= 30 ? 4 : 3,
     },
@@ -5985,6 +5996,31 @@ const buildInitialMiniChartSlots = (activeSym) => {
   );
 };
 
+const MARKET_CHART_INTERACTIVE_TARGET_SELECTOR = [
+  "a[href]",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "[contenteditable='true']",
+  "[role='button']",
+  "[role='checkbox']",
+  "[role='menu']",
+  "[role='menuitem']",
+  "[role='option']",
+  "[role='radio']",
+  "[role='switch']",
+  "[data-chart-control-root]",
+  "[data-grid-resize-handle]",
+  "[data-radix-popper-content-wrapper]",
+  "[data-testid='ticker-search-popover']",
+].join(",");
+
+const isMarketChartInteractiveTarget = (target) =>
+  typeof Element !== "undefined" &&
+  target instanceof Element &&
+  Boolean(target.closest(MARKET_CHART_INTERACTIVE_TARGET_SELECTOR));
+
 const TICKER_SEARCH_MARKET_FILTERS = [
   { value: "all", label: "All", markets: null },
   { value: "stocks", label: "Stocks", markets: ["stocks"] },
@@ -7445,11 +7481,287 @@ export function TickerSearchLab() {
   );
 }
 
+const PremiumFlowSparkline = ({ timeline = [], color, dense = false }) => {
+  const width = 96;
+  const height = dense ? 14 : 18;
+  const values = (timeline || [])
+    .map((point) => point?.value)
+    .filter((value) => Number.isFinite(value));
+
+  if (values.length < 2) {
+    return (
+      <div
+        aria-hidden="true"
+        style={{
+          width: dense ? dim(56) : dim(76),
+          height,
+          borderBottom: `1px solid ${T.borderLight}`,
+          opacity: 0.5,
+        }}
+      />
+    );
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const step = width / Math.max(values.length - 1, 1);
+  const points = values
+    .map((value, index) => {
+      const x = index * step;
+      const y = height - ((value - min) / range) * Math.max(height - 2, 1) - 1;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      aria-hidden="true"
+      width={dense ? dim(56) : dim(76)}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+};
+
+const formatSignedPremiumFlow = (value) => {
+  const numeric = Number.isFinite(value) ? value : 0;
+  const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
+  return `${sign}${fmtM(Math.abs(numeric))}`;
+};
+
+const PremiumFlowStatusGlyph = ({ state, dense = false, color }) => {
+  const size = dense ? 7 : 8;
+  if (state?.isScanning) {
+    return (
+      <span
+        aria-hidden="true"
+        data-premium-flow-glyph
+        style={{
+          width: size,
+          height: size,
+          flexShrink: 0,
+          border: `1px solid ${T.borderLight}`,
+          borderTopColor: color,
+          borderRightColor: color,
+          borderRadius: "50%",
+          animation: "premiumFlowSpin 760ms linear infinite",
+        }}
+      />
+    );
+  }
+
+  if (state?.isQueued) {
+    return (
+      <span
+        aria-hidden="true"
+        data-premium-flow-glyph
+        style={{
+          width: size,
+          height: size,
+          flexShrink: 0,
+          background: color,
+          borderRadius: "50%",
+          opacity: 0.5,
+          animation: "premiumFlowPulse 1200ms ease-in-out infinite",
+        }}
+      />
+    );
+  }
+
+  return null;
+};
+
+const MiniChartPremiumFlowIndicator = ({
+  symbol,
+  summary,
+  flowStatus,
+  providerSummary,
+  dense = false,
+}) => {
+  const resolvedSummary = summary || EMPTY_PREMIUM_FLOW_SUMMARY;
+  const normalizedSymbol = normalizeTickerSymbol(symbol);
+  const tone =
+    resolvedSummary.direction === "call"
+      ? T.green
+      : resolvedSummary.direction === "put"
+        ? T.red
+        : T.textMuted;
+  const displayState = resolvePremiumFlowDisplayState({
+    symbol: normalizedSymbol,
+    summary: resolvedSummary,
+    flowStatus,
+    providerSummary,
+  });
+  const statusLabel = displayState.label;
+  const statusTone = displayState.isError
+    ? T.red
+    : displayState.isStale
+      ? T.amber
+      : displayState.isScanning
+        ? T.accent
+        : T.textDim;
+  const hasFlow = resolvedSummary.eventCount > 0;
+  const callPct = !hasFlow
+    ? 50
+    : resolvedSummary.puts <= 0
+      ? 100
+      : resolvedSummary.calls <= 0
+        ? 0
+        : Math.min(92, Math.max(8, Math.round(resolvedSummary.callShare * 100)));
+  const putPct = hasFlow ? 100 - callPct : 50;
+  const height = dense ? 32 : 40;
+  const latestLabel = resolvedSummary.latestOccurredAt
+    ? formatRelativeTimeShort(resolvedSummary.latestOccurredAt)
+    : null;
+  const titleDetail = displayState.errorMessage
+    ? ` · ${displayState.errorMessage}`
+    : "";
+
+  return (
+    <div
+      data-chart-control-root
+      style={{
+        height,
+        flexShrink: 0,
+        borderTop: `1px solid ${T.border}`,
+        background: T.bg2,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        gridTemplateRows: dense ? "1fr 5px" : "1fr 6px 1fr",
+        gap: dense ? 2 : 3,
+        alignItems: "center",
+        padding: dense ? "3px 6px" : "4px 8px",
+        fontFamily: T.mono,
+        overflow: "hidden",
+      }}
+      title={`${normalizedSymbol} options premium flow: ${formatSignedPremiumFlow(
+        resolvedSummary.netPremium,
+      )} · ${statusLabel}${titleDetail}`}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(5),
+          minWidth: 0,
+          color: T.textSec,
+          fontSize: fs(dense ? 8 : 9),
+          fontWeight: 800,
+          letterSpacing: "0.04em",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+        }}
+      >
+        <span style={{ color: T.textMuted }}>FLOW</span>
+        <PremiumFlowStatusGlyph
+          state={displayState}
+          dense={dense}
+          color={statusTone}
+        />
+        <span
+          style={{
+            color: tone,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
+          }}
+        >
+          {formatSignedPremiumFlow(resolvedSummary.netPremium)}
+        </span>
+        <span
+          role="status"
+          aria-live="polite"
+          aria-label={`${normalizedSymbol} options premium flow ${statusLabel}`}
+          style={{
+            color: statusTone,
+            fontWeight: 600,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
+          }}
+        >
+          {statusLabel}
+        </span>
+      </div>
+      <PremiumFlowSparkline
+        timeline={resolvedSummary.timeline}
+        color={tone}
+        dense={dense}
+      />
+      <div
+        style={{
+          gridColumn: "1 / -1",
+          display: "flex",
+          height: dense ? 5 : 6,
+          background: T.bg0,
+          borderRadius: 0,
+          overflow: "hidden",
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            width: `${callPct}%`,
+            background: hasFlow ? T.green : T.border,
+            opacity: hasFlow ? 0.78 : 0.45,
+          }}
+        />
+        <span
+          aria-hidden="true"
+          style={{
+            width: `${putPct}%`,
+            background: hasFlow ? T.red : T.borderLight,
+            opacity: hasFlow ? 0.78 : 0.45,
+          }}
+        />
+      </div>
+      {!dense ? (
+        <div
+          style={{
+            gridColumn: "1 / -1",
+            display: "flex",
+            justifyContent: "space-between",
+            gap: sp(6),
+            minWidth: 0,
+            color: T.textDim,
+            fontSize: fs(8),
+            whiteSpace: "nowrap",
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            C {fmtM(resolvedSummary.calls)} / P {fmtM(resolvedSummary.puts)}
+          </span>
+          <span>
+            {resolvedSummary.eventCount} evt
+            {resolvedSummary.unusualCount ? ` / ${resolvedSummary.unusualCount} unusual` : ""}
+            {latestLabel ? ` / ${latestLabel}` : ""}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 // ─── MINI CHART CELL ───
 // Single chart cell for the multi-chart grid. Compact: ticker header, candles, volume strip.
 const MiniChartCell = ({
   slot,
   quote,
+  premiumFlowSummary,
+  premiumFlowStatus,
+  premiumFlowProviderSummary,
   onFocus,
   onEnterSoloMode,
   onChangeTicker,
@@ -7483,6 +7795,7 @@ const MiniChartCell = ({
   const minuteAggregateStoreVersion = useStockMinuteAggregateSymbolVersion(ticker);
   const [searchOpen, setSearchOpen] = useState(false);
   const [drawMode, setDrawMode] = useState(null);
+  const suppressNextFrameClickRef = useRef(false);
   const { drawings, addDrawing, clearDrawings } = useDrawingHistory();
   const fallbackInfo =
     DEFAULT_WATCHLIST_BY_SYMBOL[ticker] ||
@@ -7778,10 +8091,24 @@ const MiniChartCell = ({
       if (event.button != null && event.button !== 0) {
         return;
       }
-      if (
-        event.target instanceof HTMLElement &&
-        event.target.closest("button,input,select,[role='menuitem']")
-      ) {
+      if (isMarketChartInteractiveTarget(event.target)) {
+        return;
+      }
+      suppressNextFrameClickRef.current = true;
+      onFocus(ticker);
+    },
+    [isActive, onFocus, ticker],
+  );
+  const handleFrameClick = useCallback(
+    (event) => {
+      if (suppressNextFrameClickRef.current) {
+        suppressNextFrameClickRef.current = false;
+        return;
+      }
+      if (isActive || typeof onFocus !== "function") {
+        return;
+      }
+      if (isMarketChartInteractiveTarget(event.target)) {
         return;
       }
       onFocus(ticker);
@@ -7790,6 +8117,9 @@ const MiniChartCell = ({
   );
   const handleDoubleClick = useCallback(
     (event) => {
+      if (isMarketChartInteractiveTarget(event.target)) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       onEnterSoloMode?.(ticker);
@@ -7826,139 +8156,151 @@ const MiniChartCell = ({
   return (
     <div
       onPointerDownCapture={handleFramePointerDownCapture}
-      onClick={() => onFocus && onFocus(ticker)}
+      onClick={handleFrameClick}
       onDoubleClick={handleDoubleClick}
       style={{
         position: "relative",
         height: "100%",
         cursor: "pointer",
         transition: "border-color 0.15s",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
       }}
     >
-      <ResearchChartFrame
-        theme={T}
-        themeKey={getCurrentTheme()}
-        surfaceUiStateKey="market-mini-chart"
-        model={chartModel}
-        compact={dense}
-        drawings={drawings}
-        drawMode={drawMode}
-        onAddDrawing={addDrawing}
-        showSurfaceToolbar={false}
-        showLegend={false}
-        hideTimeScale={false}
-        referenceLines={
-          typeof bars[0]?.o === "number"
-            ? [
-                {
-                  price: bars[0].o,
-                  color: T.textMuted,
-                  lineWidth: 1,
-                  axisLabelVisible: false,
-                  title: "",
-                },
-              ]
-            : []
-        }
-        style={{
-          borderColor: isActive ? T.accent : T.border,
-          boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
-        }}
-        onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
-        surfaceTopOverlay={(controls) => (
-          <ResearchChartWidgetHeader
-            theme={T}
-            controls={controls}
-            symbol={ticker}
-            name={fallbackInfo?.name || ticker}
-            price={displayPrice}
-            priceLabel="Spot"
-            changePercent={displayPct}
-            statusLabel={describeBrokerChartStatus(barsStatus, tf)}
-            timeframe={tf}
-            timeframeOptions={MINI_CHART_TIMEFRAMES.map((timeframe) => ({
-              value: timeframe,
-              label: timeframe,
-            }))}
-            onChangeTimeframe={(timeframe) => onChangeTimeframe?.(timeframe)}
-            onOpenSearch={() => setSearchOpen((current) => !current)}
-            dense={dense}
-            studies={availableStudies}
-            selectedStudies={selectedIndicators}
-            studySpecs={chartModel.studySpecs}
-            showSnapshotButton={false}
-            showUndoRedo={false}
-            onFocusChart={() => onFocus?.(ticker)}
-            focusChartActive={isActive}
-            focusChartTitle={`Focus ${ticker} chart`}
-            onEnterSoloMode={() => onEnterSoloMode?.(ticker)}
-            soloChartTitle={`Show ${ticker} in solo layout`}
-            rightSlot={
-              <RayReplicaSettingsMenu
-                theme={T}
-                settings={rayReplicaSettings}
-                onChange={(next) => onChangeRayReplicaSettings?.(next)}
-                dense={dense}
-                disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
-              />
-            }
-            onToggleStudy={(studyId) => {
-              const active = selectedIndicators.includes(studyId);
-              const next = active
-                ? selectedIndicators.filter((value) => value !== studyId)
-                : [...selectedIndicators, studyId];
-              onChangeStudies?.(next);
-            }}
-            meta={{
-              open: latestBar?.o,
-              high: latestBar?.h,
-              low: latestBar?.l,
-              close: latestBar?.c,
-              volume: latestBar?.v,
-              vwap: latestBar?.vwap,
-              sessionVwap: latestBar?.sessionVwap,
-              accumulatedVolume: latestBar?.accumulatedVolume,
-              averageTradeSize: latestBar?.averageTradeSize,
-              timestamp: latestBar?.ts,
-              sourceLabel: chartSourceLabel,
-            }}
-          />
-        )}
-        surfaceTopOverlayHeight={dense ? 28 : 40}
-        surfaceLeftOverlay={(controls) => (
-          <ResearchChartWidgetSidebar
-            theme={T}
-            controls={controls}
-            drawMode={drawMode}
-            drawingCount={drawings.length}
-            onToggleDrawMode={setDrawMode}
-            onClearDrawings={() => {
-              clearDrawings();
-              setDrawMode(null);
-            }}
-            dense={dense}
-          />
-        )}
-        surfaceLeftOverlayWidth={dense ? 28 : 40}
-        surfaceBottomOverlay={(controls) => (
-          <ResearchChartWidgetFooter
-            theme={T}
-            controls={controls}
-            studies={availableStudies}
-            selectedStudies={selectedIndicators}
-            studySpecs={chartModel.studySpecs}
-            onToggleStudy={(studyId) => {
-              const active = selectedIndicators.includes(studyId);
-              const next = active
-                ? selectedIndicators.filter((value) => value !== studyId)
-                : [...selectedIndicators, studyId];
-              onChangeStudies?.(next);
-            }}
-            dense={dense}
-            statusText={`${describeBrokerChartStatus(barsStatus, tf)}  ${chartSourceLabel}`}
-          />
-        )}
-        surfaceBottomOverlayHeight={dense ? 14 : 22}
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <ResearchChartFrame
+          theme={T}
+          themeKey={getCurrentTheme()}
+          surfaceUiStateKey="market-mini-chart"
+          model={chartModel}
+          compact={dense}
+          drawings={drawings}
+          drawMode={drawMode}
+          onAddDrawing={addDrawing}
+          showSurfaceToolbar={false}
+          showLegend={false}
+          hideTimeScale={false}
+          referenceLines={
+            typeof bars[0]?.o === "number"
+              ? [
+                  {
+                    price: bars[0].o,
+                    color: T.textMuted,
+                    lineWidth: 1,
+                    axisLabelVisible: false,
+                    title: "",
+                  },
+                ]
+              : []
+          }
+          style={{
+            borderColor: isActive ? T.accent : T.border,
+            boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
+          }}
+          onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
+          surfaceTopOverlay={(controls) => (
+            <ResearchChartWidgetHeader
+              theme={T}
+              controls={controls}
+              symbol={ticker}
+              name={fallbackInfo?.name || ticker}
+              price={displayPrice}
+              priceLabel="Spot"
+              changePercent={displayPct}
+              statusLabel={describeBrokerChartStatus(barsStatus, tf)}
+              timeframe={tf}
+              timeframeOptions={MINI_CHART_TIMEFRAMES.map((timeframe) => ({
+                value: timeframe,
+                label: timeframe,
+              }))}
+              onChangeTimeframe={(timeframe) => onChangeTimeframe?.(timeframe)}
+              onOpenSearch={() => setSearchOpen((current) => !current)}
+              dense={dense}
+              studies={availableStudies}
+              selectedStudies={selectedIndicators}
+              studySpecs={chartModel.studySpecs}
+              showSnapshotButton={false}
+              showUndoRedo={false}
+              onFocusChart={() => onFocus?.(ticker)}
+              focusChartActive={isActive}
+              focusChartTitle={`Focus ${ticker} chart`}
+              onEnterSoloMode={() => onEnterSoloMode?.(ticker)}
+              soloChartTitle={`Show ${ticker} in solo layout`}
+              rightSlot={
+                <RayReplicaSettingsMenu
+                  theme={T}
+                  settings={rayReplicaSettings}
+                  onChange={(next) => onChangeRayReplicaSettings?.(next)}
+                  dense={dense}
+                  disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+                />
+              }
+              onToggleStudy={(studyId) => {
+                const active = selectedIndicators.includes(studyId);
+                const next = active
+                  ? selectedIndicators.filter((value) => value !== studyId)
+                  : [...selectedIndicators, studyId];
+                onChangeStudies?.(next);
+              }}
+              meta={{
+                open: latestBar?.o,
+                high: latestBar?.h,
+                low: latestBar?.l,
+                close: latestBar?.c,
+                volume: latestBar?.v,
+                vwap: latestBar?.vwap,
+                sessionVwap: latestBar?.sessionVwap,
+                accumulatedVolume: latestBar?.accumulatedVolume,
+                averageTradeSize: latestBar?.averageTradeSize,
+                timestamp: latestBar?.ts,
+                sourceLabel: chartSourceLabel,
+              }}
+            />
+          )}
+          surfaceTopOverlayHeight={dense ? 28 : 40}
+          surfaceLeftOverlay={(controls) => (
+            <ResearchChartWidgetSidebar
+              theme={T}
+              controls={controls}
+              drawMode={drawMode}
+              drawingCount={drawings.length}
+              onToggleDrawMode={setDrawMode}
+              onClearDrawings={() => {
+                clearDrawings();
+                setDrawMode(null);
+              }}
+              dense={dense}
+            />
+          )}
+          surfaceLeftOverlayWidth={dense ? 28 : 40}
+          surfaceBottomOverlay={(controls) => (
+            <ResearchChartWidgetFooter
+              theme={T}
+              controls={controls}
+              studies={availableStudies}
+              selectedStudies={selectedIndicators}
+              studySpecs={chartModel.studySpecs}
+              onToggleStudy={(studyId) => {
+                const active = selectedIndicators.includes(studyId);
+                const next = active
+                  ? selectedIndicators.filter((value) => value !== studyId)
+                  : [...selectedIndicators, studyId];
+                onChangeStudies?.(next);
+              }}
+              dense={dense}
+              statusText={`${describeBrokerChartStatus(barsStatus, tf)}  ${chartSourceLabel}`}
+            />
+          )}
+          surfaceBottomOverlayHeight={dense ? 14 : 22}
+        />
+      </div>
+      <MiniChartPremiumFlowIndicator
+        symbol={ticker}
+        summary={premiumFlowSummary}
+        flowStatus={premiumFlowStatus}
+        providerSummary={premiumFlowProviderSummary}
+        dense={dense}
       />
       <MiniChartTickerSearch
         open={searchOpen}
@@ -7991,6 +8333,8 @@ export const MultiChartGrid = ({
   watchlistSymbols = [],
   popularTickers = [],
   stockAggregateStreamingEnabled = false,
+  isVisible = false,
+  unusualThreshold,
 }) => {
   const queryClient = useQueryClient();
   const gridBodyRef = useRef(null);
@@ -8104,6 +8448,23 @@ export const MultiChartGrid = ({
         ),
       ),
     [visibleSlotEntries],
+  );
+  const {
+    flowStatus: chartFlowStatus,
+    providerSummary: chartFlowProviderSummary,
+    flowEvents: chartFlowEvents,
+  } = useLiveMarketFlow(streamedSymbols, {
+    enabled: Boolean(isVisible && streamedSymbols.length),
+    limit: 16,
+    maxSymbols: MAX_MULTI_CHART_SLOTS,
+    batchSize: MAX_MULTI_CHART_SLOTS,
+    intervalMs: 10_000,
+    unusualThreshold,
+    workloadLabel: "Chart premium flow",
+  });
+  const premiumFlowBySymbol = useMemo(
+    () => buildPremiumFlowBySymbol(chartFlowEvents, streamedSymbols),
+    [chartFlowEvents, streamedSymbols],
   );
   const gridQuotesQuery = useGetQuoteSnapshots(
     quoteSymbols ? { symbols: quoteSymbols } : undefined,
@@ -8579,6 +8940,9 @@ export const MultiChartGrid = ({
               key={`market-chart-slot-${index}`}
               slot={slot}
               quote={quotesBySymbol[slot.ticker]}
+              premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}
+              premiumFlowStatus={chartFlowStatus}
+              premiumFlowProviderSummary={chartFlowProviderSummary}
               isActive={slot.ticker === activeSym}
               dense={denseGrid}
               stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
@@ -8886,6 +9250,7 @@ export const MarketActivityPanel = ({
   signalStates = [],
   signalMonitorProfile = null,
   signalMonitorPending = false,
+  watchlists = [],
   newsItems = [],
   calendarItems = [],
   onSymClick,
@@ -8893,6 +9258,7 @@ export const MarketActivityPanel = ({
   onScanNow,
   onToggleMonitor,
   onChangeMonitorTimeframe,
+  onChangeMonitorWatchlist,
   unusualThreshold = 1,
   onChangeUnusualThreshold,
   appliedUnusualThreshold = null,
@@ -9031,6 +9397,10 @@ export const MarketActivityPanel = ({
     : signalMonitorProfile?.enabled
       ? `${freshSignalCount} FRESH`
       : "PAUSED";
+  const monitorWatchlistId = signalMonitorProfile?.watchlistId || "";
+  const monitorWatchlistKnown = watchlists.some(
+    (watchlist) => watchlist.id === monitorWatchlistId,
+  );
 
   useEffect(() => {
     if (
@@ -9140,6 +9510,57 @@ export const MarketActivityPanel = ({
         >
           {signalMonitorPending ? "SCAN..." : "SCAN"}
         </button>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "auto minmax(0, 1fr)",
+          gap: sp(6),
+          alignItems: "center",
+          marginBottom: sp(6),
+        }}
+      >
+        <span
+          style={{
+            color: T.textDim,
+            fontFamily: T.mono,
+            fontSize: fs(8),
+            fontWeight: 800,
+            letterSpacing: "0.06em",
+            whiteSpace: "nowrap",
+          }}
+        >
+          WATCHLIST
+        </span>
+        <select
+          value={monitorWatchlistId}
+          onChange={(event) =>
+            onChangeMonitorWatchlist?.(event.target.value || null)
+          }
+          disabled={!watchlists.length}
+          style={{
+            minWidth: 0,
+            background: T.bg2,
+            border: `1px solid ${T.border}`,
+            color: T.textSec,
+            fontFamily: T.mono,
+            fontSize: fs(8),
+            fontWeight: 800,
+            padding: sp("5px 4px"),
+            borderRadius: 0,
+            outline: "none",
+          }}
+        >
+          <option value="">DEFAULT</option>
+          {monitorWatchlistId && !monitorWatchlistKnown ? (
+            <option value={monitorWatchlistId}>CURRENT</option>
+          ) : null}
+          {watchlists.map((watchlist) => (
+            <option key={watchlist.id} value={watchlist.id}>
+              {watchlist.name || watchlist.id}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div
@@ -12250,8 +12671,10 @@ export const TradeL2Panel = ({
   accountId,
   brokerConfigured,
   brokerAuthenticated,
+  streamingPaused = false,
 }) => {
   const queryClient = useQueryClient();
+  const pageVisible = usePageVisible();
   const tradeFlowSnapshot = useTradeFlowSnapshot(slot.ticker);
   const effectiveFlowEvents = flowEvents?.length ? flowEvents : tradeFlowSnapshot.events;
   const chainSnapshot = useTradeOptionChainSnapshot(slot.ticker);
@@ -12289,7 +12712,10 @@ export const TradeL2Panel = ({
         exchange: "SMART",
       }),
     enabled: Boolean(
-      brokerAuthenticated && accountId && selectedContractMeta?.providerContractId,
+      brokerAuthenticated &&
+        accountId &&
+        selectedContractMeta?.providerContractId &&
+        !streamingPaused,
     ),
     staleTime: 5_000,
     refetchInterval: false,
@@ -12312,7 +12738,10 @@ export const TradeL2Panel = ({
         limit: 24,
       }),
     enabled: Boolean(
-      brokerAuthenticated && accountId && selectedContractMeta?.providerContractId,
+      brokerAuthenticated &&
+        accountId &&
+        selectedContractMeta?.providerContractId &&
+        !streamingPaused,
     ),
     staleTime: 5_000,
     refetchInterval: false,
@@ -12324,6 +12753,8 @@ export const TradeL2Panel = ({
       !brokerAuthenticated ||
       !accountId ||
       !selectedContractMeta?.providerContractId ||
+      streamingPaused ||
+      !pageVisible ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
     ) {
@@ -12361,8 +12792,10 @@ export const TradeL2Panel = ({
   }, [
     accountId,
     brokerAuthenticated,
+    pageVisible,
     queryClient,
     selectedContractMeta?.providerContractId,
+    streamingPaused,
     slot.ticker,
   ]);
   useEffect(() => {
@@ -12370,6 +12803,7 @@ export const TradeL2Panel = ({
       !brokerAuthenticated ||
       !accountId ||
       !selectedContractMeta?.providerContractId ||
+      streamingPaused ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
     ) {
@@ -12409,6 +12843,7 @@ export const TradeL2Panel = ({
     brokerAuthenticated,
     queryClient,
     selectedContractMeta?.providerContractId,
+    streamingPaused,
     slot.ticker,
   ]);
   const depthLevels = depthQuery.data?.depth?.levels || [];
@@ -15231,6 +15666,7 @@ const EQUITY_CHART_STUDIES = [
 export const TradeEquityPanel = ({
   ticker,
   flowEvents,
+  historicalDataEnabled = true,
   stockAggregateStreamingEnabled = false,
   onOpenSearch,
 }) => {
@@ -15281,7 +15717,7 @@ export const TradeEquityPanel = ({
     scopeKey: buildChartBarScopeKey("trade-equity-bars", ticker),
     timeframe: tf,
     role: "primary",
-    enabled: Boolean(ticker),
+    enabled: Boolean(historicalDataEnabled && ticker),
     warmTargetLimit: useCallback(
       (limit) =>
         queryClient.prefetchQuery({
@@ -15340,6 +15776,7 @@ export const TradeEquityPanel = ({
             allowHistoricalSynthesis: true,
           }),
       }),
+    enabled: Boolean(historicalDataEnabled && ticker),
     ...BARS_QUERY_DEFAULTS,
   });
   useEffect(() => {
@@ -15353,7 +15790,7 @@ export const TradeEquityPanel = ({
     scopeKey: baseBarsScopeKey,
     timeframe: rollupBaseTimeframe,
     bars: barsQuery.data?.bars,
-    enabled: Boolean(ticker),
+    enabled: Boolean(historicalDataEnabled && ticker),
     fetchOlderBars: useCallback(
       async ({ from, to, limit }) => {
         const fromIso = from.toISOString();
@@ -15825,6 +16262,7 @@ export const TradeContractDetailPanel = ({
   chainRows = [],
   heldContracts = [],
   chainStatus = "empty",
+  liveDataEnabled = true,
   onOpenSearch,
 }) => {
   const queryClient = useQueryClient();
@@ -15880,7 +16318,7 @@ export const TradeContractDetailPanel = ({
     ),
     timeframe: tf,
     role: "option",
-    enabled: Boolean(contractMeta?.ticker),
+    enabled: Boolean(liveDataEnabled && contractMeta?.ticker),
     warmTargetLimit: useCallback(
       (limit) =>
         queryClient.prefetchQuery({
@@ -15950,7 +16388,7 @@ export const TradeContractDetailPanel = ({
             source: "trades",
           }),
       }),
-    enabled: Boolean(contractMeta?.ticker),
+    enabled: Boolean(liveDataEnabled && contractMeta?.ticker),
     ...BARS_QUERY_DEFAULTS,
   });
   useEffect(() => {
@@ -15967,7 +16405,7 @@ export const TradeContractDetailPanel = ({
     scopeKey: baseBarsScopeKey,
     timeframe: rollupBaseTimeframe,
     bars: optionBarsQuery.data?.bars,
-    enabled: Boolean(contractMeta?.ticker),
+    enabled: Boolean(liveDataEnabled && contractMeta?.ticker),
     fetchOlderBars: useCallback(
       async ({ from, to, limit }) => {
         const fromIso = from.toISOString();
@@ -16041,7 +16479,7 @@ export const TradeContractDetailPanel = ({
             source: "trades",
           }),
       }),
-    enabled: Boolean(contractMeta?.ticker) && tf !== "1d",
+    enabled: Boolean(liveDataEnabled && contractMeta?.ticker) && tf !== "1d",
     ...BARS_QUERY_DEFAULTS,
   });
   const baseRequestedBars = useMemo(
@@ -16056,7 +16494,7 @@ export const TradeContractDetailPanel = ({
     providerContractId: contractMeta?.providerContractId,
     timeframe: rollupBaseTimeframe,
     bars: baseRequestedBars,
-    enabled: Boolean(contractMeta?.providerContractId),
+    enabled: Boolean(liveDataEnabled && contractMeta?.providerContractId),
     instrumentationScope:
       rollupBaseTimeframe !== "1d" ? chartHydrationScopeKey : null,
   });
@@ -16065,7 +16503,9 @@ export const TradeContractDetailPanel = ({
     timeframe: rollupBaseTimeframe,
     bars: liveIntradayBars,
     enabled: Boolean(
-      contractMeta?.providerContractId && rollupBaseTimeframe !== "1d"
+      liveDataEnabled &&
+        contractMeta?.providerContractId &&
+        rollupBaseTimeframe !== "1d"
     ),
     assetClass: "option",
     providerContractId: contractMeta?.providerContractId,
@@ -16077,7 +16517,8 @@ export const TradeContractDetailPanel = ({
     providerContractId: contractMeta?.providerContractId,
     timeframe: "1d",
     bars: baseFallbackDailyBars,
-    enabled: Boolean(contractMeta?.providerContractId) && tf !== "1d",
+    enabled: Boolean(liveDataEnabled && contractMeta?.providerContractId) &&
+      tf !== "1d",
   });
   const optBars = useMemo(() => {
     if (streamedIntradayBars.length) {
@@ -17510,6 +17951,7 @@ const MarketDataSubscriptionProvider = ({
   lowPriorityHistoryEnabled = true,
   children,
 }) => {
+  const pageVisible = usePageVisible();
   const marketAggregateStoreVersion = useStockMinuteAggregateSymbolsVersion(
     streamedAggregateSymbols,
   );
@@ -17540,7 +17982,11 @@ const MarketDataSubscriptionProvider = ({
   );
   useRuntimeWorkloadFlag(
     "market:subscription-streams",
-    Boolean(marketStockAggregateStreamingEnabled && streamedQuoteSymbols.length > 0),
+    Boolean(
+      pageVisible &&
+        marketStockAggregateStreamingEnabled &&
+        streamedQuoteSymbols.length > 0,
+    ),
     {
       kind: "stream",
       label: "Market runtime streams",
@@ -17809,6 +18255,8 @@ const LatencyDebugStrip = ({ screen, mountedScreens }) => {
 
 export default function RayAlgoPlatform() {
   const queryClient = useQueryClient();
+  const pageVisible = usePageVisible();
+  const previousPageVisibleRef = useRef(pageVisible);
   const latencyDebugEnabled = useMemo(
     () =>
       typeof window !== "undefined" &&
@@ -17865,6 +18313,10 @@ export default function RayAlgoPlatform() {
       retry: false,
     },
   });
+  const watchlists = useMemo(
+    () => watchlistsQuery.data?.watchlists || [],
+    [watchlistsQuery.data],
+  );
   const defaultWatchlist = useMemo(() => {
     if (!watchlistsQuery.data?.watchlists?.length) return null;
     return (
@@ -17907,6 +18359,19 @@ export default function RayAlgoPlatform() {
         _initialState.tradeActiveTicker || sym || watchlistSymbols[0] || "SPY",
       ) || "SPY",
     [sym, watchlistSymbols],
+  );
+  const tradeWarmChainSnapshot = useTradeOptionChainSnapshot(tradeWarmTicker, {
+    subscribe: screen === "trade",
+  });
+  const tradeBackgroundWarmupReady = Boolean(
+    screen !== "trade" ||
+      (tradeWarmChainSnapshot.updatedAt &&
+        (tradeWarmChainSnapshot.totalExpirationCount > 0
+          ? tradeWarmChainSnapshot.completedExpirationCount >=
+            tradeWarmChainSnapshot.totalExpirationCount
+          : tradeWarmChainSnapshot.status === "live" ||
+            tradeWarmChainSnapshot.status === "empty" ||
+            tradeWarmChainSnapshot.status === "offline")),
   );
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
@@ -17975,13 +18440,16 @@ export default function RayAlgoPlatform() {
   const accounts = accountsQuery.data?.accounts || [];
   const marketStockAggregateStreamingEnabled = Boolean(
     sessionQuery.data?.configured?.ibkr &&
-      sessionQuery.data?.ibkrBridge?.authenticated,
+      sessionQuery.data?.ibkrBridge?.authenticated &&
+      marketScreenActive,
   );
   useIbkrAccountSnapshotStream({
     accountId:
       selectedAccountId ?? sessionQuery.data?.ibkrBridge?.selectedAccountId ?? null,
     mode: sessionQuery.data?.environment || "paper",
-    enabled: Boolean(sessionQuery.data?.ibkrBridge?.authenticated),
+    enabled: Boolean(
+      sessionQuery.data?.ibkrBridge?.authenticated && screen === "account",
+    ),
   });
 
   useEffect(() => {
@@ -18363,6 +18831,36 @@ export default function RayAlgoPlatform() {
   const researchConfigured = Boolean(session?.configured?.research);
 
   useEffect(() => {
+    setBrokerStockAggregateStreamPaused(!pageVisible);
+    return () => {
+      setBrokerStockAggregateStreamPaused(false);
+    };
+  }, [pageVisible]);
+
+  useEffect(() => {
+    const wasPageVisible = previousPageVisibleRef.current;
+    previousPageVisibleRef.current = pageVisible;
+    if (wasPageVisible || !pageVisible) {
+      return;
+    }
+
+    queryClient.invalidateQueries({ queryKey: ["/api/bars"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/options/chains"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/flow/events"] });
+    queryClient.invalidateQueries({ queryKey: ["market-sparklines"] });
+    queryClient.invalidateQueries({ queryKey: ["market-performance-baselines"] });
+    queryClient.invalidateQueries({ queryKey: ["trade-market-depth"] });
+    queryClient.invalidateQueries({ queryKey: ["trade-option-chain"] });
+    queryClient.invalidateQueries({
+      queryKey: getGetSignalMonitorStateQueryKey({ environment }),
+    });
+    queryClient.invalidateQueries({
+      queryKey: getListSignalMonitorEventsQueryKey({ environment, limit: 100 }),
+    });
+  }, [environment, pageVisible, queryClient]);
+
+  useEffect(() => {
     if (mountedScreens[screen]) {
       return;
     }
@@ -18374,6 +18872,10 @@ export default function RayAlgoPlatform() {
   }, [mountedScreens, screen]);
 
   useEffect(() => {
+    if (!tradeBackgroundWarmupReady) {
+      return;
+    }
+
     if (screenWarmupStartedRef.current) {
       return;
     }
@@ -18426,7 +18928,7 @@ export default function RayAlgoPlatform() {
       cancelled = true;
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [screen]);
+  }, [screen, tradeBackgroundWarmupReady]);
 
   useEffect(() => {
     if (!sessionMetadataSettled) {
@@ -18476,23 +18978,6 @@ export default function RayAlgoPlatform() {
           },
         ),
       );
-      queryClient.prefetchQuery({
-        queryKey: ["trade-option-chain", tradeWarmTicker],
-        queryFn: () => getOptionChainRequest({ underlying: tradeWarmTicker }),
-        staleTime: 60_000,
-        refetchInterval: false,
-        refetchOnMount: false,
-        retry: 1,
-        gcTime: 5 * 60_000,
-      });
-      queryClient.prefetchQuery({
-        queryKey: ["trade-flow", tradeWarmTicker],
-        queryFn: () =>
-          listFlowEventsRequest({ underlying: tradeWarmTicker, limit: 80 }),
-        staleTime: 10_000,
-        retry: false,
-        gcTime: 5 * 60_000,
-      });
       queryClient.prefetchQuery(
         getListBacktestDraftStrategiesQueryOptions({
           query: {
@@ -18645,7 +19130,7 @@ export default function RayAlgoPlatform() {
     {
       query: {
         staleTime: 15_000,
-        refetchInterval: false,
+        refetchInterval: pageVisible ? signalMonitorPollMs : false,
         retry: false,
       },
     },
@@ -18655,17 +19140,17 @@ export default function RayAlgoPlatform() {
     {
       query: {
         staleTime: 15_000,
-        refetchInterval: false,
+        refetchInterval: pageVisible ? signalMonitorPollMs : false,
         retry: false,
       },
     },
   );
   useRuntimeWorkloadFlag(
-    "signal-monitor:evaluate",
-    Boolean(signalMonitorProfile?.enabled && activeWatchlist?.id),
+    "signal-monitor:display",
+    Boolean(pageVisible && signalMonitorProfile?.enabled),
     {
       kind: "poll",
-      label: "Signal monitor",
+      label: "Signal display",
       detail: `${Math.round(signalMonitorPollMs / 1000)}s`,
       priority: 4,
     },
@@ -18725,7 +19210,7 @@ export default function RayAlgoPlatform() {
   });
   const runSignalMonitorEvaluation = useCallback(
     (mode = "incremental") => {
-      if (!activeWatchlist?.id || signalMonitorEvaluationInFlightRef.current) {
+      if (signalMonitorEvaluationInFlightRef.current) {
         return;
       }
       signalMonitorEvaluationInFlightRef.current = true;
@@ -18733,54 +19218,11 @@ export default function RayAlgoPlatform() {
         data: {
           environment,
           mode,
-          watchlistId: activeWatchlist.id,
         },
       });
     },
-    [activeWatchlist?.id, environment, evaluateSignalMonitorMutation.mutate],
+    [environment, evaluateSignalMonitorMutation.mutate],
   );
-  useEffect(() => {
-    if (!activeWatchlist?.id || !signalMonitorProfile) {
-      return;
-    }
-    if (signalMonitorProfile.watchlistId === activeWatchlist.id) {
-      return;
-    }
-    if (updateSignalMonitorProfileMutation.isPending) {
-      return;
-    }
-
-    updateSignalMonitorProfileMutation.mutate({
-      data: {
-        environment,
-        watchlistId: activeWatchlist.id,
-      },
-    });
-  }, [
-    activeWatchlist?.id,
-    environment,
-    signalMonitorProfile,
-    updateSignalMonitorProfileMutation.isPending,
-    updateSignalMonitorProfileMutation.mutate,
-  ]);
-  useEffect(() => {
-    if (!activeWatchlist?.id || !signalMonitorProfile?.enabled) {
-      return undefined;
-    }
-
-    runSignalMonitorEvaluation("incremental");
-    const timer = window.setInterval(
-      () => runSignalMonitorEvaluation("incremental"),
-      signalMonitorPollMs,
-    );
-    return () => window.clearInterval(timer);
-  }, [
-    activeWatchlist?.id,
-    runSignalMonitorEvaluation,
-    signalMonitorPollMs,
-    signalMonitorProfile?.enabled,
-    signalMonitorProfile?.timeframe,
-  ]);
   const signalMonitorStates = signalMonitorStateQuery.data?.states || [];
   const signalMonitorEvents = signalMonitorEventsQuery.data?.events || [];
   useEffect(() => {
@@ -18831,6 +19273,13 @@ export default function RayAlgoPlatform() {
     setSym(newSym);
     setTradeSymPing((prev) => ({ sym: newSym, n: prev.n + 1, contract: null }));
   }, []);
+  const handleFocusMarketChart = useCallback((newSym) => {
+    const normalized = normalizeTickerSymbol(newSym);
+    if (!normalized) {
+      return;
+    }
+    setSym(normalized);
+  }, []);
 
   const handleSignalAction = useCallback((ticker, signal) => {
     const normalized = normalizeTickerSymbol(ticker);
@@ -18864,14 +19313,11 @@ export default function RayAlgoPlatform() {
       data: {
         environment,
         enabled: !signalMonitorProfile?.enabled,
-        watchlistId: activeWatchlist?.id || signalMonitorProfile?.watchlistId || null,
       },
     });
   }, [
-    activeWatchlist?.id,
     environment,
     signalMonitorProfile?.enabled,
-    signalMonitorProfile?.watchlistId,
     updateSignalMonitorProfileMutation,
   ]);
 
@@ -18880,13 +19326,21 @@ export default function RayAlgoPlatform() {
       data: {
         environment,
         timeframe,
-        watchlistId: activeWatchlist?.id || signalMonitorProfile?.watchlistId || null,
       },
     });
   }, [
-    activeWatchlist?.id,
     environment,
-    signalMonitorProfile?.watchlistId,
+    updateSignalMonitorProfileMutation,
+  ]);
+  const handleChangeSignalMonitorWatchlist = useCallback((watchlistId) => {
+    updateSignalMonitorProfileMutation.mutate({
+      data: {
+        environment,
+        watchlistId: watchlistId || null,
+      },
+    });
+  }, [
+    environment,
     updateSignalMonitorProfileMutation,
   ]);
   const handleRunSignalMonitorNow = useCallback(() => {
@@ -19013,25 +19467,36 @@ export default function RayAlgoPlatform() {
           <MemoMarketScreen
             sym={sym}
             onSymClick={handleSelectSymbol}
+            onChartFocus={handleFocusMarketChart}
             symbols={watchlistSymbols}
             isVisible={marketScreenActive}
             researchConfigured={researchConfigured}
-            stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+            stockAggregateStreamingEnabled={
+              stockAggregateStreamingEnabled && marketScreenActive
+            }
             onSignalAction={handleSignalAction}
             onScanNow={handleRunSignalMonitorNow}
             onToggleMonitor={handleToggleSignalMonitor}
             onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
+            onChangeMonitorWatchlist={handleChangeSignalMonitorWatchlist}
+            watchlists={watchlists}
           />
         );
       case "flow":
       case "unusual":
         return (
-          <MemoFlowScreen
-            session={session}
-            symbols={watchlistSymbols}
-            isVisible={flowScreenActive}
-            onJumpToTrade={handleJumpToTradeFromFlow}
-          />
+          <Suspense
+            fallback={
+              <div style={{ height: "100%", background: T.bg0 }} />
+            }
+          >
+            <MemoFlowScreen
+              session={session}
+              symbols={watchlistSymbols}
+              isVisible={flowScreenActive}
+              onJumpToTrade={handleJumpToTradeFromFlow}
+            />
+          </Suspense>
         );
       case "trade":
         return (
@@ -19089,14 +19554,19 @@ export default function RayAlgoPlatform() {
           <MemoMarketScreen
             sym={sym}
             onSymClick={handleSelectSymbol}
+            onChartFocus={handleFocusMarketChart}
             symbols={watchlistSymbols}
             isVisible={marketScreenActive}
             researchConfigured={researchConfigured}
-            stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+            stockAggregateStreamingEnabled={
+              stockAggregateStreamingEnabled && marketScreenActive
+            }
             onSignalAction={handleSignalAction}
             onScanNow={handleRunSignalMonitorNow}
             onToggleMonitor={handleToggleSignalMonitor}
             onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
+            onChangeMonitorWatchlist={handleChangeSignalMonitorWatchlist}
+            watchlists={watchlists}
           />
         );
     }
@@ -19391,7 +19861,13 @@ export default function RayAlgoPlatform() {
                         display: screen === id ? "flex" : "none",
                       }}
                     >
-                      {renderScreenById(id)}
+                      <Suspense
+                        fallback={
+                          <div style={{ height: "100%", background: T.bg0 }} />
+                        }
+                      >
+                        {renderScreenById(id)}
+                      </Suspense>
                     </div>
                   ) : null,
                 )}

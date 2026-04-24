@@ -263,6 +263,31 @@ function resolveRequestedHistoryBars(input: {
   );
 }
 
+function startOfUtcDay(date = new Date()): number {
+  return Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+  );
+}
+
+function normalizeFutureExpirationDates(
+  expirations: Array<Date | null>,
+  maxExpirations: number,
+): Date[] {
+  const todayUtc = startOfUtcDay();
+  return Array.from(
+    new Map(
+      expirations
+        .filter((expiration): expiration is Date => Boolean(expiration))
+        .filter((expiration) => expiration.getTime() >= todayUtc)
+        .map((expiration) => [expiration.toISOString().slice(0, 10), expiration]),
+    ).values(),
+  )
+    .sort((left, right) => left.getTime() - right.getTime())
+    .slice(0, Math.max(1, maxExpirations));
+}
+
 function parseHistoricalBarTime(value: string | undefined): Date | null {
   if (!value) {
     return null;
@@ -2470,9 +2495,11 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     const requestedExpiration = input.expirationDate
       ? input.expirationDate.toISOString().slice(0, 10)
       : null;
+    const todayUtc = startOfUtcDay();
     const expirations = parameterSet.expirations
       .map((expiration) => toDate(expiration))
       .filter((expiration): expiration is Date => Boolean(expiration))
+      .filter((expiration) => expiration.getTime() >= todayUtc)
       .filter((expiration) =>
         requestedExpiration
           ? expiration.toISOString().slice(0, 10) === requestedExpiration
@@ -2576,6 +2603,27 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         left.contract.right.localeCompare(right.contract.right)
       );
     });
+  }
+
+  async getOptionExpirations(input: {
+    underlying: string;
+    maxExpirations?: number;
+  }): Promise<Date[]> {
+    await this.refreshSession();
+    const resolvedUnderlying = await this.resolveStockContract(input.underlying);
+    const optionParams = await this.api.getSecDefOptParams(
+      resolvedUnderlying.resolved.symbol,
+      "",
+      SecType.STK,
+      resolvedUnderlying.resolved.conid,
+    );
+
+    return normalizeFutureExpirationDates(
+      optionParams.flatMap((parameterSet) =>
+        parameterSet.expirations.map((expiration) => toDate(expiration)),
+      ),
+      input.maxExpirations ?? 256,
+    );
   }
 
   async getMarketDepth(input: {
