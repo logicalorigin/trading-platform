@@ -41,6 +41,35 @@ export type BridgeHealth = {
   liveMarketDataAvailable: boolean | null;
 };
 
+export type BridgeConnectionHealth = {
+  transport: Extract<IbkrTransport, "client_portal" | "tws">;
+  role: "account" | "market_data";
+  configured: boolean;
+  reachable: boolean;
+  authenticated: boolean;
+  competing: boolean;
+  target: string | null;
+  mode: RuntimeMode | null;
+  clientId: number | null;
+  selectedAccountId: string | null;
+  accounts: string[];
+  lastPingMs: number | null;
+  lastPingAt: Date | null;
+  lastTickleAt: Date | null;
+  lastError: string | null;
+  marketDataMode: IbkrMarketDataMode | null;
+  liveMarketDataAvailable: boolean | null;
+};
+
+export type BridgeConnectionsHealth = {
+  clientPortal: BridgeConnectionHealth;
+  tws: BridgeConnectionHealth;
+};
+
+export type BridgeHealthResponse = BridgeHealth & {
+  connections: BridgeConnectionsHealth;
+};
+
 export interface IbkrBridgeProvider {
   refreshSession(): Promise<SessionStatusSnapshot | null>;
   tickle(): Promise<void>;

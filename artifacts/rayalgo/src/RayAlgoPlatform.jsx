@@ -2988,9 +2988,28 @@ export const Badge = ({ children, color = T.textDim }) => (
   </span>
 );
 
+export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
+  <span
+    data-testid="loading-spinner"
+    role="status"
+    aria-label="Loading"
+    style={{
+      width: dim(size),
+      height: dim(size),
+      borderRadius: "50%",
+      border: `2px solid ${T.border}`,
+      borderTopColor: color,
+      animation: "premiumFlowSpin 820ms linear infinite",
+      flexShrink: 0,
+    }}
+  />
+);
+
 export const DataUnavailableState = ({
   title = "No live data",
   detail = "This panel is waiting on a live provider response.",
+  loading = false,
+  tone,
 }) => (
   <div
     style={{
@@ -3010,11 +3029,22 @@ export const DataUnavailableState = ({
     }}
   >
     <div style={{ maxWidth: dim(260) }}>
+      {loading ? (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: sp(8),
+          }}
+        >
+          <LoadingSpinner color={tone || T.accent} />
+        </div>
+      ) : null}
       <div
         style={{
           fontSize: fs(10),
           fontWeight: 700,
-          color: T.textSec,
+          color: tone || T.textSec,
           letterSpacing: "0.04em",
         }}
       >
@@ -16644,6 +16674,7 @@ export const TradeContractDetailPanel = ({
 
   return (
     <div
+      data-testid="trade-contract-chart-panel"
       style={{
         background: T.bg2,
         border: `1px solid ${T.border}`,

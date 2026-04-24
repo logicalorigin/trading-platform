@@ -1205,8 +1205,9 @@ export const TradeScreen = ({
             </div>
           </div>
         )}
-        {/* Top zone: Equity chart + options chain */}
+        {/* Top zone: Equity chart + selected contract chart */}
         <div
+          data-testid="trade-top-zone"
           style={{
             display: "grid",
             gridTemplateColumns: "1.45fr minmax(360px, 1fr)",
@@ -1223,6 +1224,25 @@ export const TradeScreen = ({
             }
             onOpenSearch={openUniverseSearch}
           />
+          <MemoTradeContractDetailPanel
+            ticker={activeTicker}
+            contract={contract}
+            heldContracts={heldContracts}
+            liveDataEnabled={tradeLiveStreamsEnabled}
+            onOpenSearch={openUniverseSearch}
+          />
+        </div>
+        {/* Middle zone: options chain + spot flow + options flow */}
+        <div
+          data-testid="trade-middle-zone"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.55fr 0.95fr 1.2fr",
+            gap: sp(6),
+            height: dim(300),
+            flexShrink: 0,
+          }}
+        >
           <MemoTradeChainPanel
             ticker={activeTicker}
             contract={contract}
@@ -1234,24 +1254,6 @@ export const TradeScreen = ({
             onToggleHeatmap={() =>
               setTradeChainHeatmapEnabled((current) => !current)
             }
-          />
-        </div>
-        {/* Middle zone: selected contract chart + spot flow + options flow */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.55fr 0.95fr 1.2fr",
-            gap: sp(6),
-            height: dim(300),
-            flexShrink: 0,
-          }}
-        >
-          <MemoTradeContractDetailPanel
-            ticker={activeTicker}
-            contract={contract}
-            heldContracts={heldContracts}
-            liveDataEnabled={tradeLiveStreamsEnabled}
-            onOpenSearch={openUniverseSearch}
           />
           <MemoTradeSpotFlowPanel ticker={activeTicker} />
           <MemoTradeOptionsFlowPanel ticker={activeTicker} />

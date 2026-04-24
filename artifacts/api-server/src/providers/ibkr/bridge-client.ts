@@ -49,6 +49,36 @@ type BridgeHealthSnapshot = {
     | "unknown"
     | null;
   liveMarketDataAvailable: boolean | null;
+  connections?: {
+    clientPortal: BridgeConnectionHealthSnapshot;
+    tws: BridgeConnectionHealthSnapshot;
+  };
+};
+
+type BridgeConnectionHealthSnapshot = {
+  transport: "client_portal" | "tws";
+  role: "account" | "market_data";
+  configured: boolean;
+  reachable: boolean;
+  authenticated: boolean;
+  competing: boolean;
+  target: string | null;
+  mode: RuntimeMode | null;
+  clientId: number | null;
+  selectedAccountId: string | null;
+  accounts: string[];
+  lastPingMs: number | null;
+  lastPingAt: Date | null;
+  lastTickleAt: Date | null;
+  lastError: string | null;
+  marketDataMode:
+    | "live"
+    | "frozen"
+    | "delayed"
+    | "delayed_frozen"
+    | "unknown"
+    | null;
+  liveMarketDataAvailable: boolean | null;
 };
 
 type QuoteStreamPayload = {
@@ -141,7 +171,23 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
     lastRecoveryAttemptAt: raw.lastRecoveryAttemptAt
       ? toDate(raw.lastRecoveryAttemptAt)
       : null,
+    connections: raw.connections
+      ? {
+          clientPortal: hydrateConnectionHealth(raw.connections.clientPortal),
+          tws: hydrateConnectionHealth(raw.connections.tws),
+        }
+      : undefined,
     };
+}
+
+function hydrateConnectionHealth(
+  raw: BridgeConnectionHealthSnapshot,
+): BridgeConnectionHealthSnapshot {
+  return {
+    ...raw,
+    lastPingAt: raw.lastPingAt ? toDate(raw.lastPingAt) : null,
+    lastTickleAt: raw.lastTickleAt ? toDate(raw.lastTickleAt) : null,
+  };
 }
 
 function hydrateLatency(

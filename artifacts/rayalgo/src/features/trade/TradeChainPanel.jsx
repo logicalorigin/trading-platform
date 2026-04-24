@@ -204,6 +204,9 @@ const ChainStatePanel = ({
     </style>
     {loading ? (
       <span
+        data-testid="loading-spinner"
+        role="status"
+        aria-label="Loading"
         style={{
           width: dim(18),
           height: dim(18),
@@ -596,6 +599,7 @@ export const TradeChainPanel = ({
 
   return (
     <div
+      data-testid="trade-options-chain-panel"
       style={{
         background: T.bg2,
         border: `1px solid ${T.border}`,

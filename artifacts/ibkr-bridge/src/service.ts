@@ -1,5 +1,8 @@
+import { performance } from "node:perf_hooks";
 import {
   getIbkrBridgeProviderRuntimeConfig,
+  getIbkrRuntimeConfig,
+  getIbkrTwsRuntimeConfig,
   type RuntimeMode,
 } from "../../api-server/src/lib/runtime";
 import type {
@@ -19,16 +22,30 @@ import type {
   SessionStatusSnapshot,
 } from "../../api-server/src/providers/ibkr/client";
 import { ClientPortalIbkrBridgeProvider } from "./client-portal-provider";
-import type { BridgeHealth, IbkrBridgeProvider } from "./provider";
+import type {
+  BridgeConnectionHealth,
+  BridgeConnectionsHealth,
+  BridgeHealth,
+  BridgeHealthResponse,
+  IbkrBridgeProvider,
+} from "./provider";
 import { TwsIbkrBridgeProvider } from "./tws-provider";
 
 export class IbkrBridgeService {
   private readonly runtime = getIbkrBridgeProviderRuntimeConfig();
+  private readonly clientPortalConfig = getIbkrRuntimeConfig();
+  private readonly twsConfig = getIbkrTwsRuntimeConfig();
+  private readonly clientPortalProvider = this.clientPortalConfig
+    ? new ClientPortalIbkrBridgeProvider(this.clientPortalConfig)
+    : null;
+  private readonly twsProvider = this.twsConfig
+    ? new TwsIbkrBridgeProvider(this.twsConfig)
+    : null;
   private readonly provider: IbkrBridgeProvider | null = this.runtime
     ? this.runtime.transport === "tws"
-      ? new TwsIbkrBridgeProvider(this.runtime.config)
+      ? this.twsProvider
       : this.runtime.transport === "client_portal"
-        ? new ClientPortalIbkrBridgeProvider(this.runtime.config)
+        ? this.clientPortalProvider
         : null
     : null;
 
@@ -56,33 +73,175 @@ export class IbkrBridgeService {
     await this.provider.tickle();
   }
 
-  async getHealth(): Promise<BridgeHealth> {
-    if (!this.provider) {
-      return {
-        configured: false,
-        authenticated: false,
-        connected: false,
-        competing: false,
-        selectedAccountId: null,
-        accounts: [],
-        lastTickleAt: null,
-        lastError:
-          this.runtime?.transport === "ibx"
-            ? "IBX transport is recognized, but the bridge provider is not implemented yet."
-            : null,
-        lastRecoveryAttemptAt: null,
-        lastRecoveryError: null,
-        updatedAt: new Date(),
-        transport: this.runtime?.transport ?? "client_portal",
-        connectionTarget: null,
-        sessionMode: null,
-        clientId: null,
-        marketDataMode: null,
-        liveMarketDataAvailable: null,
-      };
+  private buildUnconfiguredHealth(): BridgeHealth {
+    return {
+      configured: false,
+      authenticated: false,
+      connected: false,
+      competing: false,
+      selectedAccountId: null,
+      accounts: [],
+      lastTickleAt: null,
+      lastError:
+        this.runtime?.transport === "ibx"
+          ? "IBX transport is recognized, but the bridge provider is not implemented yet."
+          : null,
+      lastRecoveryAttemptAt: null,
+      lastRecoveryError: null,
+      updatedAt: new Date(),
+      transport: this.runtime?.transport ?? "client_portal",
+      connectionTarget: null,
+      sessionMode: null,
+      clientId: null,
+      marketDataMode: null,
+      liveMarketDataAvailable: null,
+    };
+  }
+
+  private buildUnconfiguredConnection(
+    transport: BridgeConnectionHealth["transport"],
+    role: BridgeConnectionHealth["role"],
+    target: string | null,
+    mode: RuntimeMode | null,
+    clientId: number | null,
+  ): BridgeConnectionHealth {
+    return {
+      transport,
+      role,
+      configured: false,
+      reachable: false,
+      authenticated: false,
+      competing: false,
+      target,
+      mode,
+      clientId,
+      selectedAccountId: null,
+      accounts: [],
+      lastPingMs: null,
+      lastPingAt: null,
+      lastTickleAt: null,
+      lastError: null,
+      marketDataMode: null,
+      liveMarketDataAvailable: null,
+    };
+  }
+
+  private mapConnectionHealth(
+    health: BridgeHealth,
+    role: BridgeConnectionHealth["role"],
+    lastPingMs: number,
+    lastPingAt: Date,
+  ): BridgeConnectionHealth {
+    const transport =
+      health.transport === "tws" ? "tws" : "client_portal";
+
+    return {
+      transport,
+      role,
+      configured: health.configured,
+      reachable: health.connected,
+      authenticated: health.authenticated,
+      competing: health.competing,
+      target: health.connectionTarget,
+      mode: health.sessionMode,
+      clientId: health.clientId,
+      selectedAccountId: health.selectedAccountId,
+      accounts: health.accounts,
+      lastPingMs,
+      lastPingAt,
+      lastTickleAt: health.lastTickleAt,
+      lastError: health.lastError,
+      marketDataMode: health.marketDataMode,
+      liveMarketDataAvailable: health.liveMarketDataAvailable,
+    };
+  }
+
+  private async probeConnection(
+    provider: IbkrBridgeProvider | null,
+    fallback: BridgeConnectionHealth,
+  ): Promise<{ health: BridgeHealth | null; connection: BridgeConnectionHealth }> {
+    if (!provider) {
+      return { health: null, connection: fallback };
     }
 
-    return this.provider.getHealth();
+    const startedAt = performance.now();
+    const lastPingAt = new Date();
+
+    try {
+      const health = await provider.getHealth();
+      const lastPingMs = Math.max(0, Math.round(performance.now() - startedAt));
+
+      return {
+        health,
+        connection: this.mapConnectionHealth(
+          health,
+          fallback.role,
+          lastPingMs,
+          lastPingAt,
+        ),
+      };
+    } catch (error) {
+      const lastPingMs = Math.max(0, Math.round(performance.now() - startedAt));
+      const lastError =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unknown IBKR connection health error.";
+
+      return {
+        health: null,
+        connection: {
+          ...fallback,
+          configured: true,
+          lastPingMs,
+          lastPingAt,
+          lastError,
+        },
+      };
+    }
+  }
+
+  async getHealth(): Promise<BridgeHealthResponse> {
+    const clientPortalFallback = this.buildUnconfiguredConnection(
+      "client_portal",
+      "account",
+      this.clientPortalConfig?.baseUrl ?? null,
+      null,
+      null,
+    );
+    const twsFallback = this.buildUnconfiguredConnection(
+      "tws",
+      "market_data",
+      this.twsConfig ? `${this.twsConfig.host}:${this.twsConfig.port}` : null,
+      this.twsConfig?.mode ?? null,
+      this.twsConfig?.clientId ?? null,
+    );
+
+    const [clientPortalProbe, twsProbe] = await Promise.all([
+      this.probeConnection(this.clientPortalProvider, {
+        ...clientPortalFallback,
+        configured: Boolean(this.clientPortalProvider),
+      }),
+      this.probeConnection(this.twsProvider, {
+        ...twsFallback,
+        configured: Boolean(this.twsProvider),
+      }),
+    ]);
+
+    const connections: BridgeConnectionsHealth = {
+      clientPortal: clientPortalProbe.connection,
+      tws: twsProbe.connection,
+    };
+    const activeHealth =
+      this.runtime?.transport === "tws"
+        ? twsProbe.health
+        : this.runtime?.transport === "client_portal"
+          ? clientPortalProbe.health
+          : null;
+
+    return {
+      ...(activeHealth ?? this.buildUnconfiguredHealth()),
+      connections,
+    };
   }
 
   listAccounts(mode: RuntimeMode) {

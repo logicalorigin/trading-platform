@@ -1046,11 +1046,11 @@ function OpsStrip({ co, color }) {
   );
 }
 
-// Schema-pending placeholder for null data sections
-function DataPending({ label }) {
+function DataNotReported({ label }) {
   return (
-    <div style={{ padding: "12px 14px", background: "rgba(0,0,0,.01)", border: "1px dashed rgba(0,0,0,.08)", borderRadius: 6, textAlign: "center" }}>
-      <span style={{ fontSize: 10, color: "#bbb", fontStyle: "italic" }}>{label}</span>
+    <div style={{ padding: "10px 12px", background: "rgba(0,0,0,.018)", border: "1px solid rgba(0,0,0,.05)", borderRadius: 6 }}>
+      <span style={{ fontSize: 10, color: "#999", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" }}>Not reported</span>
+      <span style={{ display: "block", marginTop: 3, fontSize: 11, color: "#777", lineHeight: 1.45 }}>{label}</span>
     </div>
   );
 }
@@ -2094,7 +2094,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
             {co.rs && co.rs.length > 0 ? (
               <StackedBar data={co.rs} color={vc.c} height={22} />
             ) : (
-              <DataPending label="Segment breakdown pending — will show revenue mix by product line / business unit" />
+              <DataNotReported label="Revenue mix by product line or business unit is not available for this company." />
             )}
           </div>
 
@@ -2104,7 +2104,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
             {co.geo && co.geo.length > 0 ? (
               <StackedBar data={co.geo} color={vc.c} height={22} />
             ) : (
-              <DataPending label="Geographic revenue mix pending — critical for tariff and China exposure" />
+              <DataNotReported label="Geographic revenue mix is not available for this company." />
             )}
           </div>
 
@@ -2124,7 +2124,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
                 </div>
               </div>
             ) : (
-              <DataPending label="Named customer concentration pending — will include top 3–5 named customers with revenue %" />
+              <DataNotReported label="Named customer concentration is not available for this company." />
             )}
           </div>
 
@@ -2210,7 +2210,7 @@ function BusinessTab({ co, vc, live, sup, cust, onSelect, liveData, liveHist, ap
             {co.cp && co.cp.length > 0 ? (
               <PeerTable co={co} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onSelect={onSelect} accent={vc.c} />
             ) : (
-              <DataPending label="Named direct competitors pending — will include cross-references to in-universe tickers where applicable" />
+              <DataNotReported label="Named direct competitors are not available for this company." />
             )}
           </div>
     </>
