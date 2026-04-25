@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { sanitizeHistogramPoint } from "../../features/charting/histogramSafety";
 import {
   AreaSeries,
   CandlestickSeries,
@@ -247,13 +248,13 @@ export const LightweightMiniChart = ({
       volumeSeries.setData(normalizeTimeline(bars, stepSeconds).map((bar) => {
         const open = Number(bar?.o ?? bar?.open ?? bar?.close ?? 0);
         const close = Number(bar?.c ?? bar?.close ?? open);
-        return {
+        return sanitizeHistogramPoint({
           time: bar.time,
           value: Number(bar?.v ?? bar?.volume ?? 0),
           color: close >= open
             ? withAlpha(theme.green, "55")
             : withAlpha(theme.red, "55"),
-        };
+        });
       }));
 
       if (Number.isFinite(openPrice)) {

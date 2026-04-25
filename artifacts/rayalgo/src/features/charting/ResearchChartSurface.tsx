@@ -30,6 +30,10 @@ import type {
   StudySpec,
 } from "./types";
 import { registerChart, unregisterChart } from "./chartLifecycle";
+import {
+  HISTOGRAM_VALUE_DISPLAY_CAP,
+  sanitizeHistogramPoint,
+} from "./histogramSafety";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -2255,6 +2259,14 @@ const syncStudySeries = (
       if (!Number.isFinite(point.value)) {
         return { time: point.time };
       }
+      // Histogram series will throw an assertion error and crash the entire
+      // chart if any value exceeds the lightweight-charts magnitude cap.
+      if (
+        spec.seriesType === "histogram" &&
+        Math.abs(point.value as number) > HISTOGRAM_VALUE_DISPLAY_CAP
+      ) {
+        return { time: point.time };
+      }
 
       return point.color
         ? { time: point.time, value: point.value, color: point.color }
@@ -2966,14 +2978,16 @@ export const ResearchChartSurface = ({
       value: bar.c,
     }));
     const volumeSeriesData = showVolume
-      ? model.chartBars.map((bar) => ({
-          time: bar.time,
-          value: bar.v,
-          color:
-            bar.c >= bar.o
-              ? withAlpha(theme.green, "55")
-              : withAlpha(theme.red, "55"),
-        }))
+      ? model.chartBars.map((bar) =>
+          sanitizeHistogramPoint({
+            time: bar.time,
+            value: bar.v,
+            color:
+              bar.c >= bar.o
+                ? withAlpha(theme.green, "55")
+                : withAlpha(theme.red, "55"),
+          }),
+        )
       : [];
     const previousBarCount = baseSeriesDataRef.current.candles.length;
     const nextBarCount = candleSeriesData.length;

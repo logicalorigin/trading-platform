@@ -11,6 +11,10 @@ import {
 } from "lightweight-charts";
 import type { ChartModel, StudySpec } from "./types";
 import { registerChart, unregisterChart } from "./chartLifecycle";
+import {
+  HISTOGRAM_VALUE_DISPLAY_CAP,
+  sanitizeHistogramPoint,
+} from "./histogramSafety";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -59,6 +63,12 @@ const syncStudySeries = (
     const SeriesCtor = SERIES_TYPE_MAP[spec.seriesType];
     const seriesData = spec.data.map((point) => {
       if (!Number.isFinite(point.value)) {
+        return { time: point.time };
+      }
+      if (
+        spec.seriesType === "histogram" &&
+        Math.abs(point.value as number) > HISTOGRAM_VALUE_DISPLAY_CAP
+      ) {
         return { time: point.time };
       }
 
@@ -185,7 +195,7 @@ export const LightweightChartReference = ({
         wickColor: bar.wickColor,
         borderColor: bar.borderColor,
       })));
-      volumeSeries.setData(model.chartBars.map((bar) => ({
+      volumeSeries.setData(model.chartBars.map((bar) => sanitizeHistogramPoint({
         time: bar.time,
         value: bar.v,
         color: bar.c >= bar.o ? withAlpha(theme.green, "55") : withAlpha(theme.red, "55"),
