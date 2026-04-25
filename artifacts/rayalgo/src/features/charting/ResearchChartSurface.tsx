@@ -4458,6 +4458,13 @@ export const ResearchChartSurface = ({
                 const isSignal = overlay.variant === "signal";
                 const isTriangle = overlay.variant === "triangle";
                 const isStructure = overlay.variant === "structure";
+                const isSwing = overlay.variant === "swing";
+                const swingTextColor =
+                  overlay.text === "HH" || overlay.text === "LH"
+                    ? theme.red
+                    : overlay.text === "HL" || overlay.text === "LL"
+                      ? theme.green
+                      : overlay.textColor;
                 const placementTransform =
                   overlay.placement === "above"
                     ? "translate(-50%, calc(-100% - 8px))"
@@ -4465,7 +4472,7 @@ export const ResearchChartSurface = ({
                       ? "translate(-50%, 8px)"
                       : "translate(-50%, -50%)";
                 const arrowElement =
-                  overlay.arrow === "up" ? (
+                  !isSwing && overlay.arrow === "up" ? (
                     <div
                       style={{
                         position: "absolute",
@@ -4479,7 +4486,7 @@ export const ResearchChartSurface = ({
                         borderBottom: `6px solid ${overlay.background}`,
                       }}
                     />
-                  ) : overlay.arrow === "down" ? (
+                  ) : !isSwing && overlay.arrow === "down" ? (
                     <div
                       style={{
                         position: "absolute",
@@ -4510,28 +4517,35 @@ export const ResearchChartSurface = ({
                       style={{
                         position: "relative",
                         padding:
-                          isSignal
+                          isSwing
+                            ? "0"
+                            : isSignal
                             ? "4px 10px"
                             : isTriangle
                               ? "0"
                               : isStructure
                                 ? "2px 7px"
                                 : "2px 8px",
-                        borderRadius: isSignal ? 999 : 8,
-                        border: isTriangle
+                        borderRadius: isSwing ? 0 : isSignal ? 999 : 8,
+                        border: isSwing || isTriangle
                           ? "none"
                           : `1px solid ${overlay.borderColor}`,
-                        background: isTriangle ? "transparent" : overlay.background,
-                        color: isTriangle ? overlay.background : overlay.textColor,
-                        fontSize: isSignal ? 10 : isTriangle ? 12 : 9,
+                        background:
+                          isSwing || isTriangle ? "transparent" : overlay.background,
+                        color: isSwing
+                          ? swingTextColor
+                          : isTriangle
+                            ? overlay.background
+                            : overlay.textColor,
+                        fontSize: isSignal ? 10 : isTriangle ? 12 : isSwing ? 10 : 9,
                         fontFamily: theme.mono,
-                        fontWeight: 700,
+                        fontWeight: isSwing ? 800 : 700,
                         whiteSpace: "nowrap",
-                        boxShadow: isTriangle
+                        boxShadow: isSwing || isTriangle
                           ? "none"
                           : `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
                         letterSpacing:
-                          isSignal || isStructure ? "0.04em" : "normal",
+                          isSignal || isStructure || isSwing ? "0.04em" : "normal",
                       }}
                     >
                       {overlay.text}

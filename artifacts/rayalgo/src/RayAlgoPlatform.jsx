@@ -3157,14 +3157,15 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
       onClick={() => onSelect?.(symbol)}
       title={`${label} proxy · ${symbol}`}
       style={{
-        minWidth: dim(132),
-        padding: sp("5px 10px"),
+        flex: "1 1 82px",
+        minWidth: dim(78),
+        minHeight: dim(32),
+        padding: sp("3px 6px"),
         display: "flex",
         alignItems: "center",
-        gap: sp(8),
-        background: "transparent",
-        border: "none",
-        borderLeft: index === 0 ? "none" : `1px solid ${T.border}`,
+        gap: sp(5),
+        background: T.bg1,
+        border: `1px solid ${T.border}`,
         borderRadius: 0,
         color: T.text,
         cursor: "pointer",
@@ -3184,7 +3185,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           textAlign: "left",
           display: "flex",
           flexDirection: "column",
-          gap: 1,
+          gap: 0,
         }}
       >
         <span
@@ -3203,9 +3204,11 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
               color: T.textMuted,
               fontFamily: T.sans,
               fontWeight: 700,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.05em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
             {label}
@@ -3218,7 +3221,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
               color: T.textMuted,
               fontFamily: T.sans,
               lineHeight: 1.1,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.05em",
               flexShrink: 0,
             }}
           >
@@ -3236,7 +3239,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           <span
             style={{
               display: "block",
-              fontSize: fs(12),
+              fontSize: fs(10),
               fontWeight: 700,
               fontFamily: T.sans,
               color: T.text,
@@ -3270,8 +3273,8 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
               : snapshot?.spark || fallback.spark
           }
           positive={positive}
-          width={46}
-          height={16}
+          width={34}
+          height={13}
         />
       </span>
     </button>
@@ -3280,12 +3283,14 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
 
 const HeaderKpiStrip = ({ onSelect }) => (
   <div
+    data-testid="platform-header-kpis"
     style={{
       display: "flex",
       alignItems: "stretch",
-      gap: 0,
+      gap: sp(3),
       minWidth: 0,
-      overflowX: "auto",
+      width: "100%",
+      overflow: "hidden",
     }}
   >
     {HEADER_KPI_CONFIG.map(({ symbol, label }, index) => (
@@ -5358,10 +5363,10 @@ const MULTI_CHART_LAYOUT_CARD_WIDTH = {
 };
 
 const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
-  "1x1": 450,
-  "2x2": 275,
-  "2x3": 252,
-  "3x3": 248,
+  "1x1": 540,
+  "2x2": 330,
+  "2x3": 302,
+  "3x3": 298,
 };
 
 const MARKET_GRID_TRACK_SESSION_KEY = "rayalgo:market-grid-track-sizes";
@@ -7823,6 +7828,7 @@ const MiniChartCell = ({
   const { studies: availableStudies, indicatorRegistry } =
     useIndicatorLibrary();
   const ticker = slot?.ticker || WATCHLIST[0]?.sym || "SPY";
+  const signalState = useSignalMonitorStateForSymbol(ticker);
   const slotMarket = slot?.market || "stocks";
   const tf = MINI_CHART_TIMEFRAMES.includes(slot?.tf) ? slot.tf : "15m";
   const selectedIndicators = normalizeMiniChartStudies(slot?.studies);
@@ -8194,6 +8200,13 @@ const MiniChartCell = ({
     },
     [onRememberTicker],
   );
+  const signalDirection = signalState?.currentSignalDirection;
+  const hasSignalBorder =
+    signalState?.fresh &&
+    signalState?.status === "ok" &&
+    (signalDirection === "buy" || signalDirection === "sell");
+  const signalBorderColor =
+    signalDirection === "buy" ? T.green : signalDirection === "sell" ? T.red : T.border;
 
   return (
     <div
@@ -8203,11 +8216,16 @@ const MiniChartCell = ({
       style={{
         position: "relative",
         height: "100%",
+        boxSizing: "border-box",
+        border: `1px solid ${hasSignalBorder ? signalBorderColor : "transparent"}`,
         cursor: "pointer",
-        transition: "border-color 0.15s",
+        transition: "border-color 0.15s, box-shadow 0.15s",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        boxShadow: hasSignalBorder
+          ? `0 0 0 1px ${signalBorderColor}55, 0 0 18px ${signalBorderColor}30`
+          : "none",
       }}
     >
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>

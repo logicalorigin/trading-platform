@@ -1212,7 +1212,7 @@ export const TradeScreen = ({
             display: "grid",
             gridTemplateColumns: "1.45fr minmax(360px, 1fr)",
             gap: sp(6),
-            height: dim(332),
+            height: dim(398),
             flexShrink: 0,
           }}
         >
@@ -1239,7 +1239,7 @@ export const TradeScreen = ({
             display: "grid",
             gridTemplateColumns: "1.55fr 0.95fr 1.2fr",
             gap: sp(6),
-            height: dim(300),
+            height: dim(360),
             flexShrink: 0,
           }}
         >
@@ -1265,7 +1265,7 @@ export const TradeScreen = ({
             gridTemplateColumns:
               "minmax(260px, 1fr) minmax(280px, 1fr) minmax(280px, 1fr) minmax(360px, 1.4fr)",
             gap: sp(6),
-            height: dim(290),
+            height: dim(348),
             flexShrink: 0,
           }}
         >
