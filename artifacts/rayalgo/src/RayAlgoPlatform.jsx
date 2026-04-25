@@ -3157,8 +3157,8 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
       onClick={() => onSelect?.(symbol)}
       title={`${label} proxy · ${symbol}`}
       style={{
-        flex: "1 1 82px",
-        minWidth: dim(78),
+        flex: "1 1 68px",
+        minWidth: dim(64),
         minHeight: dim(32),
         padding: sp("3px 6px"),
         display: "flex",
@@ -3323,29 +3323,46 @@ const HeaderStatusCluster = ({
   );
   const surfaceStyle = {
     display: "flex",
-    flexDirection: "column",
+    alignItems: "center",
     gap: 2,
-    minWidth: dim(130),
-    padding: sp("7px 10px"),
+    minHeight: dim(32),
+    padding: sp("3px 7px"),
     background: T.bg1,
     border: `1px solid ${T.border}`,
     borderRadius: 0,
     transition: "background 0.12s ease, border-color 0.12s ease",
   };
+  const microLabelStyle = {
+    fontSize: fs(7),
+    fontWeight: 800,
+    fontFamily: T.sans,
+    color: T.textMuted,
+    letterSpacing: "0.06em",
+    whiteSpace: "nowrap",
+  };
 
   return (
     <div
+      data-testid="platform-header-status"
       style={{
         display: "flex",
         alignItems: "stretch",
         justifyContent: "flex-end",
-        gap: sp(6),
-        flexWrap: "wrap",
+        gap: sp(4),
+        flexWrap: "nowrap",
+        minWidth: 0,
       }}
     >
       <div
         title={bridgeRuntimeMessage(session)}
-        style={{ ...surfaceStyle, minWidth: dim(174) }}
+        style={{
+          ...surfaceStyle,
+          alignItems: "stretch",
+          flexDirection: "column",
+          justifyContent: "center",
+          minWidth: dim(164),
+          gap: sp(2),
+        }}
         onMouseEnter={(event) => {
           event.currentTarget.style.background = T.bg3;
           event.currentTarget.style.borderColor = T.textMuted;
@@ -3360,36 +3377,42 @@ const HeaderStatusCluster = ({
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: sp(8),
-            fontSize: fs(8),
-            fontWeight: 800,
-            fontFamily: T.sans,
-            color: T.textMuted,
-            letterSpacing: "0.08em",
+            gap: sp(6),
           }}
         >
-          <span>IBKR RELAY</span>
-          <span style={{ color: bridgeTone.color }}>
+          <span style={microLabelStyle}>IBKR</span>
+          <span
+            style={{
+              ...microLabelStyle,
+              color: bridgeTone.color,
+            }}
+          >
             {bridgeTone.label.toUpperCase()}
+          </span>
+          <span
+            style={{
+              ...microLabelStyle,
+              color: T.textDim,
+              marginLeft: "auto",
+            }}
+          >
+            {environment.toUpperCase()} |{" "}
+            {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
           </span>
         </div>
         <IbkrConnectionStatusPair session={session} compact />
-        <div
-          style={{
-            fontSize: fs(8),
-            color: T.textDim,
-            fontFamily: T.sans,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {environment.toUpperCase()} |{" "}
-          {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
-        </div>
       </div>
 
       <div
         title={`${marketClock.dateLabel} · ${marketClock.label}`}
-        style={surfaceStyle}
+        style={{
+          ...surfaceStyle,
+          flexDirection: "column",
+          alignItems: "flex-start",
+          justifyContent: "center",
+          minWidth: dim(92),
+          gap: 0,
+        }}
         onMouseEnter={(event) => {
           event.currentTarget.style.background = T.bg3;
           event.currentTarget.style.borderColor = T.textMuted;
@@ -3401,21 +3424,18 @@ const HeaderStatusCluster = ({
       >
         <div
           style={{
-            fontSize: fs(8),
-            fontWeight: 700,
-            fontFamily: T.sans,
-            color: T.textMuted,
-            letterSpacing: "0.08em",
+            ...microLabelStyle,
           }}
         >
-          MARKET CLOCK
+          MARKET
         </div>
         <div
           style={{
-            fontSize: fs(12),
+            fontSize: fs(10),
             fontWeight: 700,
             fontFamily: T.sans,
             color: T.text,
+            lineHeight: 1.1,
           }}
         >
           {marketClock.timeLabel}
@@ -3426,10 +3446,11 @@ const HeaderStatusCluster = ({
             color: marketClock.color,
             fontFamily: T.sans,
             fontWeight: 700,
+            lineHeight: 1.1,
+            whiteSpace: "nowrap",
           }}
         >
-          {marketClock.label.toUpperCase()} · {marketClock.action.toUpperCase()}{" "}
-          {marketClock.timerLabel}
+          {marketClock.label.toUpperCase()} {marketClock.timerLabel}
         </div>
       </div>
 
@@ -3440,14 +3461,15 @@ const HeaderStatusCluster = ({
           theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
         }
         style={{
-          minWidth: dim(56),
-          padding: sp("7px 10px"),
+          width: dim(30),
+          minHeight: dim(32),
+          padding: 0,
           background: T.bg1,
           border: `1px solid ${T.border}`,
           borderRadius: 0,
           color: T.textSec,
           cursor: "pointer",
-          fontSize: fs(13),
+          fontSize: fs(12),
           lineHeight: 1,
           fontFamily: T.sans,
           fontWeight: 700,
@@ -3477,27 +3499,34 @@ const HeaderAccountStrip = ({
   onSelectAccount,
 }) => {
   const metricSurfaceStyle = {
-    minWidth: dim(104),
-    padding: sp("7px 10px"),
+    minWidth: dim(62),
+    minHeight: dim(32),
+    padding: sp("3px 7px"),
     background: T.bg1,
     border: `1px solid ${T.border}`,
     borderRadius: 0,
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+    gap: 0,
     transition: "background 0.12s ease, border-color 0.12s ease",
   };
 
   return (
     <div
+      data-testid="platform-header-account"
       style={{
         display: "flex",
         alignItems: "stretch",
         justifyContent: "flex-end",
-        gap: sp(6),
-        flexWrap: "wrap",
+        gap: sp(4),
+        flexWrap: "nowrap",
+        minWidth: 0,
       }}
     >
       <div
         title="Active broker account for trading, orders, and portfolio views"
-        style={{ ...metricSurfaceStyle, minWidth: dim(138) }}
+        style={{ ...metricSurfaceStyle, minWidth: dim(84) }}
         onMouseEnter={(event) => {
           event.currentTarget.style.background = T.bg3;
           event.currentTarget.style.borderColor = T.textMuted;
@@ -3512,9 +3541,9 @@ const HeaderAccountStrip = ({
             fontSize: fs(8),
             color: T.textMuted,
             fontWeight: 700,
-            letterSpacing: "0.08em",
+            letterSpacing: "0.06em",
             fontFamily: T.sans,
-            marginBottom: 2,
+            lineHeight: 1.05,
           }}
         >
           ACCOUNT
@@ -3528,7 +3557,7 @@ const HeaderAccountStrip = ({
               background: "transparent",
               border: "none",
               color: T.text,
-              fontSize: fs(11),
+              fontSize: fs(10),
               fontFamily: T.sans,
               fontWeight: 700,
               outline: "none",
@@ -3544,10 +3573,11 @@ const HeaderAccountStrip = ({
         ) : (
           <div
             style={{
-              fontSize: fs(11),
+              fontSize: fs(10),
               fontFamily: T.sans,
               fontWeight: 700,
               color: T.textDim,
+              lineHeight: 1.1,
             }}
           >
             {primaryAccountId || MISSING_VALUE}
@@ -3596,19 +3626,22 @@ const HeaderAccountStrip = ({
               fontSize: fs(8),
               color: T.textMuted,
               fontWeight: 700,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.06em",
               fontFamily: T.sans,
-              marginBottom: 2,
+              lineHeight: 1.05,
+              whiteSpace: "nowrap",
             }}
           >
             {metric.label}
           </div>
           <div
             style={{
-              fontSize: fs(11),
+              fontSize: fs(10),
               fontFamily: T.sans,
               fontWeight: 700,
               color: metric.color,
+              lineHeight: 1.1,
+              whiteSpace: "nowrap",
             }}
           >
             {metric.value}
@@ -19709,136 +19742,141 @@ export default function RayAlgoPlatform() {
 
             {/* ══════ TOP ANCHOR BAR ══════ */}
             <div
+              data-testid="platform-compact-header"
               style={{
                 display: "flex",
-                flexDirection: "column",
+                alignItems: "stretch",
+                gap: sp(6),
+                padding: sp("4px 8px"),
+                minWidth: 0,
+                flexWrap: "wrap",
                 background: T.bg1,
                 borderBottom: `1px solid ${T.border}`,
                 flexShrink: 0,
               }}
             >
               <div
+                data-testid="platform-screen-nav"
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: sp(12),
-                  padding: sp("8px 12px"),
-                  borderBottom: `1px solid ${T.border}`,
+                  gap: sp(2),
+                  minWidth: 0,
+                  flexWrap: "nowrap",
                 }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 1,
-                    minWidth: 0,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  {SCREENS.map((s) => {
-                    const isTradeTab = s.id === "trade";
-                    const hasAlerts = isTradeTab && totalAlerts > 0;
-                    const alertColor = lossAlerts > winAlerts ? T.red : T.amber;
-                    const pulseAnim = hasAlerts
-                      ? lossAlerts > winAlerts
-                        ? "pulseAlertLoss 1.8s ease-in-out infinite"
-                        : "pulseAlert 1.8s ease-in-out infinite"
-                      : "none";
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => setScreen(s.id)}
-                        style={{
-                          padding: sp("6px 14px"),
-                          fontSize: fs(11),
-                          fontWeight: 600,
-                          fontFamily: T.sans,
-                          background: screen === s.id ? T.bg3 : "transparent",
-                          border: `1px solid ${screen === s.id ? T.accent : T.border}`,
-                          borderRadius: 0,
-                          cursor: "pointer",
-                          color: screen === s.id ? T.text : T.textDim,
-                          transition:
-                            "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
-                          animation: pulseAnim,
-                          position: "relative",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (screen === s.id) return;
-                          e.currentTarget.style.color = T.textSec;
-                          e.currentTarget.style.background = T.bg2;
-                          e.currentTarget.style.borderColor = T.textMuted;
-                        }}
-                        onMouseLeave={(e) => {
-                          if (screen === s.id) return;
-                          e.currentTarget.style.color = T.textDim;
-                          e.currentTarget.style.background = "transparent";
-                          e.currentTarget.style.borderColor = T.border;
-                        }}
-                        title={
-                          hasAlerts
-                            ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
-                            : undefined
-                        }
-                      >
-                        <span style={{ marginRight: sp(4), fontSize: fs(10) }}>
-                          {s.icon}
+                {SCREENS.map((s) => {
+                  const isTradeTab = s.id === "trade";
+                  const hasAlerts = isTradeTab && totalAlerts > 0;
+                  const alertColor = lossAlerts > winAlerts ? T.red : T.amber;
+                  const pulseAnim = hasAlerts
+                    ? lossAlerts > winAlerts
+                      ? "pulseAlertLoss 1.8s ease-in-out infinite"
+                      : "pulseAlert 1.8s ease-in-out infinite"
+                    : "none";
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => setScreen(s.id)}
+                      style={{
+                        padding: sp("4px 8px"),
+                        minHeight: dim(32),
+                        fontSize: fs(10),
+                        fontWeight: 700,
+                        fontFamily: T.sans,
+                        background: screen === s.id ? T.bg3 : "transparent",
+                        border: `1px solid ${screen === s.id ? T.accent : T.border}`,
+                        borderRadius: 0,
+                        cursor: "pointer",
+                        color: screen === s.id ? T.text : T.textDim,
+                        transition:
+                          "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
+                        animation: pulseAnim,
+                        position: "relative",
+                        whiteSpace: "nowrap",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (screen === s.id) return;
+                        e.currentTarget.style.color = T.textSec;
+                        e.currentTarget.style.background = T.bg2;
+                        e.currentTarget.style.borderColor = T.textMuted;
+                      }}
+                      onMouseLeave={(e) => {
+                        if (screen === s.id) return;
+                        e.currentTarget.style.color = T.textDim;
+                        e.currentTarget.style.background = "transparent";
+                        e.currentTarget.style.borderColor = T.border;
+                      }}
+                      title={
+                        hasAlerts
+                          ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
+                          : undefined
+                      }
+                    >
+                      <span style={{ marginRight: sp(3), fontSize: fs(9) }}>
+                        {s.icon}
+                      </span>
+                      {s.label}
+                      {hasAlerts && (
+                        <span
+                          style={{
+                            marginLeft: sp(3),
+                            padding: sp("0px 4px"),
+                            borderRadius: 0,
+                            background: alertColor,
+                            color: "#fff",
+                            fontSize: fs(8),
+                            fontWeight: 800,
+                            fontFamily: T.sans,
+                            letterSpacing: "0.04em",
+                            verticalAlign: "middle",
+                          }}
+                        >
+                          {totalAlerts}
                         </span>
-                        {s.label}
-                        {hasAlerts && (
-                          <span
-                            style={{
-                              marginLeft: sp(4),
-                              padding: sp("1px 5px"),
-                              borderRadius: 0,
-                              background: alertColor,
-                              color: "#fff",
-                              fontSize: fs(8),
-                              fontWeight: 800,
-                              fontFamily: T.sans,
-                              letterSpacing: "0.04em",
-                              verticalAlign: "middle",
-                            }}
-                          >
-                            {totalAlerts}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
 
-                <span style={{ flex: 1, minWidth: 0 }} />
+              <div
+                style={{
+                  flex: "1 1 360px",
+                  minWidth: dim(340),
+                  display: "flex",
+                  alignItems: "stretch",
+                }}
+              >
+                <MemoHeaderKpiStripContainer
+                  onSelect={handleSelectSymbol}
+                />
+              </div>
 
+              <div
+                data-testid="platform-header-controls"
+                style={{
+                  display: "flex",
+                  alignItems: "stretch",
+                  justifyContent: "flex-end",
+                  gap: sp(4),
+                  minWidth: 0,
+                  flexWrap: "nowrap",
+                  marginLeft: "auto",
+                }}
+              >
+                <HeaderAccountStrip
+                  accounts={accounts}
+                  primaryAccountId={primaryAccountId}
+                  primaryAccount={primaryAccount}
+                  onSelectAccount={setSelectedAccountId}
+                />
                 <MemoHeaderStatusCluster
                   session={session}
                   environment={environment}
                   bridgeTone={bridgeTone}
                   theme={theme}
                   onToggleTheme={toggleTheme}
-                />
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "stretch",
-                  gap: sp(12),
-                  padding: sp("8px 12px"),
-                  flexWrap: "wrap",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <MemoHeaderKpiStripContainer
-                    onSelect={handleSelectSymbol}
-                  />
-                </div>
-
-                <HeaderAccountStrip
-                  accounts={accounts}
-                  primaryAccountId={primaryAccountId}
-                  primaryAccount={primaryAccount}
-                  onSelectAccount={setSelectedAccountId}
                 />
               </div>
             </div>
