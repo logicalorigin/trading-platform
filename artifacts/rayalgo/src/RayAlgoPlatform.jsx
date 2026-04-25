@@ -111,10 +111,8 @@ import {
   useRuntimeWorkloadStats,
 } from "./features/platform/workloadStats";
 import {
-  IbkrConnectionStatusPair,
   getIbkrConnection,
   getIbkrConnectionTone,
-  formatIbkrPingMs,
 } from "./features/platform/IbkrConnectionStatus";
 import {
   buildMarketFlowStoreKey,
@@ -3321,6 +3319,10 @@ const HeaderStatusCluster = ({
     () => buildMarketClockState(marketClockNow),
     [marketClockNow],
   );
+  const clientPortalTone = getIbkrConnectionTone(
+    getIbkrConnection(session, "clientPortal"),
+  );
+  const gatewayTone = getIbkrConnectionTone(getIbkrConnection(session, "tws"));
   const surfaceStyle = {
     display: "flex",
     alignItems: "center",
@@ -3358,10 +3360,10 @@ const HeaderStatusCluster = ({
         style={{
           ...surfaceStyle,
           alignItems: "stretch",
-          flexDirection: "column",
+          flexDirection: "row",
           justifyContent: "center",
-          minWidth: dim(164),
-          gap: sp(2),
+          minWidth: dim(230),
+          gap: sp(7),
         }}
         onMouseEnter={(event) => {
           event.currentTarget.style.background = T.bg3;
@@ -3372,15 +3374,15 @@ const HeaderStatusCluster = ({
           event.currentTarget.style.borderColor = T.border;
         }}
       >
-        <div
+        <span style={microLabelStyle}>IBKR</span>
+        <span
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: sp(6),
+            gap: sp(3),
+            minWidth: 0,
           }}
         >
-          <span style={microLabelStyle}>IBKR</span>
           <span
             style={{
               ...microLabelStyle,
@@ -3389,18 +3391,17 @@ const HeaderStatusCluster = ({
           >
             {bridgeTone.label.toUpperCase()}
           </span>
-          <span
-            style={{
-              ...microLabelStyle,
-              color: T.textDim,
-              marginLeft: "auto",
-            }}
-          >
-            {environment.toUpperCase()} |{" "}
-            {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
-          </span>
-        </div>
-        <IbkrConnectionStatusPair session={session} compact />
+        </span>
+        <span style={{ ...microLabelStyle, color: clientPortalTone.color }}>
+          CP {clientPortalTone.label.toUpperCase()}
+        </span>
+        <span style={{ ...microLabelStyle, color: gatewayTone.color }}>
+          GW {gatewayTone.label.toUpperCase()}
+        </span>
+        <span style={{ ...microLabelStyle, color: T.textDim }}>
+          {environment.toUpperCase()} |{" "}
+          {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
+        </span>
       </div>
 
       <div
@@ -18946,10 +18947,6 @@ export default function RayAlgoPlatform() {
     brokerConfigured && brokerAuthenticated,
   );
   const bridgeTone = bridgeRuntimeTone(session);
-  const clientPortalConnection = getIbkrConnection(session, "clientPortal");
-  const twsConnection = getIbkrConnection(session, "tws");
-  const clientPortalTone = getIbkrConnectionTone(clientPortalConnection);
-  const twsTone = getIbkrConnectionTone(twsConnection);
   const primaryAccount =
     accounts.find((account) => account.id === selectedAccountId) ||
     accounts[0] ||
@@ -19842,8 +19839,8 @@ export default function RayAlgoPlatform() {
 
               <div
                 style={{
-                  flex: "1 1 360px",
-                  minWidth: dim(340),
+                  flex: "1 1 300px",
+                  minWidth: dim(300),
                   display: "flex",
                   alignItems: "stretch",
                 }}
@@ -20009,6 +20006,7 @@ export default function RayAlgoPlatform() {
 
             {/* ══════ STATUS BAR ══════ */}
             <div
+              data-testid="platform-bottom-status"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -20022,37 +20020,11 @@ export default function RayAlgoPlatform() {
                 gap: sp(12),
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <div
-                  style={{
-                    width: dim(6),
-                    height: dim(6),
-                    borderRadius: "50%",
-                    background: environment === "live" ? T.red : T.green,
-                  }}
-                />
-                <span
-                  style={{
-                    color: environment === "live" ? T.red : T.green,
-                    fontWeight: 600,
-                  }}
-                >
-                  {environment.toUpperCase()}
-                </span>
-              </div>
               <span style={{ color: T.textMuted }}>
                 WL {(activeWatchlist?.name || "Core").toUpperCase()}
               </span>
               <span style={{ color: T.textMuted }}>
                 SYM {sym}
-              </span>
-              <span
-                style={{ color: session?.configured?.ibkr ? T.green : T.red }}
-              >
-                {session?.ibkrBridge?.liveMarketDataAvailable === false
-                  ? "DELAYED"
-                  : "LIVE"}{" "}
-                {(session?.marketDataProviders?.live || MISSING_VALUE).toUpperCase()}
               </span>
               <span
                 style={{
@@ -20071,14 +20043,6 @@ export default function RayAlgoPlatform() {
               >
                 RSCH{" "}
                 {(session?.marketDataProviders?.research || MISSING_VALUE).toUpperCase()}
-              </span>
-              <span style={{ color: clientPortalTone.color }}>
-                CP {clientPortalTone.label.toUpperCase()}{" "}
-                {formatIbkrPingMs(clientPortalConnection?.lastPingMs)}
-              </span>
-              <span style={{ color: twsTone.color }}>
-                IB GATEWAY {twsTone.label.toUpperCase()}{" "}
-                {formatIbkrPingMs(twsConnection?.lastPingMs)}
               </span>
               <span style={{ flex: 1 }} />
               <span style={{ color: T.textMuted }}>v0.1.0</span>

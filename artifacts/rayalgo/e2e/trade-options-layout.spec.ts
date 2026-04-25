@@ -208,6 +208,44 @@ async function expectActiveScreenFillsHost(page: Page, screen: "trade" | "flow" 
   expect(metrics.rightGap).toBeLessThanOrEqual(1);
 }
 
+async function expectCompactPlatformHeader(page: Page) {
+  const header = page.getByTestId("platform-compact-header");
+  await expect(header).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("platform-screen-nav")).toBeVisible();
+  await expect(page.getByTestId("platform-header-kpis")).toBeVisible();
+  await expect(page.getByTestId("platform-header-account")).toBeVisible();
+  await expect(page.getByTestId("platform-header-status")).toBeVisible();
+
+  await expect(page.getByTestId("platform-header-kpis").locator("button")).toHaveCount(5);
+  await expect(page.getByTestId("platform-header-account").getByText("Net Liq")).toBeVisible();
+  await expect(page.getByTestId("platform-header-account").getByText("Buying Power")).toBeVisible();
+  await expect(page.getByTestId("platform-header-account").getByText("Cash")).toBeVisible();
+
+  const metrics = await header.evaluate((element) => {
+    const headerBox = element.getBoundingClientRect();
+    const rows = Array.from(element.children).map((child) => {
+      const childBox = child.getBoundingClientRect();
+      return {
+        top: Math.round(childBox.top - headerBox.top),
+        bottom: Math.round(childBox.bottom - headerBox.top),
+      };
+    });
+
+    return {
+      height: headerBox.height,
+      rowSpread: Math.max(...rows.map((row) => row.top)) - Math.min(...rows.map((row) => row.top)),
+      childrenInside: rows.every((row) => row.bottom <= headerBox.height + 1),
+    };
+  });
+
+  expect(metrics.height).toBeLessThanOrEqual(60);
+  expect(metrics.rowSpread).toBeLessThanOrEqual(6);
+  expect(metrics.childrenInside).toBe(true);
+
+  const bottomStatusText = await page.getByTestId("platform-bottom-status").innerText();
+  expect(bottomStatusText).not.toMatch(/\b(PAPER|LIVE|DELAYED|CP|IB GATEWAY)\b/);
+}
+
 test("Trade swaps contract chart above options chain and removes placeholder copy", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await mockTradeApi(page);
@@ -234,6 +272,14 @@ test("Trade swaps contract chart above options chain and removes placeholder cop
 
   const bodyText = await page.locator("body").innerText();
   expect(bodyText).not.toMatch(/spaceholder|schema-pending|placeholder panel|under construction|Coming Soon/i);
+});
+
+test("Platform header is a compact single band with market KPIs and account data", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockTradeApi(page);
+  await openPlatformScreen(page, "trade");
+
+  await expectCompactPlatformHeader(page);
 });
 
 test("Trade, Flow, and Research pages fill the available viewport width", async ({ browser }) => {
