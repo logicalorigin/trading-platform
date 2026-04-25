@@ -107,7 +107,7 @@ async function mockTradeApi(page: Page, { delayChainMs = 0 } = {}) {
       };
     } else if (url.pathname === "/api/options/chains") {
       if (delayChainMs > 0) {
-        await page.waitForTimeout(delayChainMs);
+        await new Promise((resolve) => setTimeout(resolve, delayChainMs));
       }
       const expirationDate = url.searchParams.get("expirationDate") || expirations[0];
       body = {
@@ -187,7 +187,9 @@ test("Trade swaps contract chart above options chain and removes placeholder cop
   expect(chainBox!.y + chainBox!.height).toBeLessThanOrEqual(middleBox!.y + middleBox!.height + 1);
 
   await expect(page.getByTestId("trade-options-chain-panel").getByText("OPTIONS CHAIN")).toBeVisible();
-  await expect(page.getByTestId("trade-contract-chart-panel").getByText("CONTRACT")).toBeVisible();
+  await expect(
+    page.getByTestId("trade-contract-chart-panel").getByText("CONTRACT", { exact: true }),
+  ).toBeVisible();
 
   const bodyText = await page.locator("body").innerText();
   expect(bodyText).not.toMatch(/spaceholder|schema-pending|placeholder panel|under construction|Coming Soon/i);

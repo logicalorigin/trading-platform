@@ -4675,18 +4675,8 @@ export default function PhotonicsObservatory({
             <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6, marginBottom: 18 }}>
               {currentTheme.subtitle}
             </div>
-            <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, padding: "16px 20px", boxShadow: "0 1px 3px rgba(0,0,0,.03)", display: "inline-block" }}>
-              <div style={{ fontSize: 10, color: currentTheme.accent, letterSpacing: 2, textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Coming Soon</div>
-              <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5, maxWidth: 400 }}>
-                This thesis is under construction. The universe, supply chain relationships, value stream, and macro exposure panels are being curated. Company coverage will land in an upcoming release.
-              </div>
-              <div style={{ marginTop: 12, display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>
-                {(currentTheme.macro || []).map(m => (
-                  <span key={m.k} style={{ fontSize: 10, color: "#888", background: "rgba(0,0,0,.03)", padding: "2px 8px", borderRadius: 10 }}>
-                    {m.n}
-                  </span>
-                ))}
-              </div>
+            <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6, maxWidth: 420, margin: "0 auto 18px" }}>
+              No covered companies are available for this thesis in the current research dataset.
             </div>
             <div style={{ marginTop: 16 }}>
               <button onClick={() => setThemeId("ai")} style={{

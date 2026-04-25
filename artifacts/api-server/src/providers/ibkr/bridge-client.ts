@@ -319,15 +319,15 @@ function findSseBoundary(buffer: string): { index: number; length: number } | nu
 
 export class IbkrBridgeClient {
   private readonly config = getIbkrBridgeRuntimeConfig();
-  // Default lowered from 20s → 15s. Authenticated IBKR endpoints
-  // (e.g. /iserver/secdef/info, equity-history) legitimately take 5–10s on
-  // first call after session warmup, so 5s was cutting valid traffic. 15s
-  // leaves ~50% headroom over observed max while still bounding tab-freeze
-  // when the upstream is dead (paired with LRU caps + log-size truncation).
-  // Override with IBKR_BRIDGE_REQUEST_TIMEOUT_MS if needed.
+  // Default 0 = disabled. Hydration paths fan out many parallel CPG calls
+  // that legitimately tail-latency past 30s during warmup; any finite cap
+  // was cutting valid traffic. Tab-freeze risk is bounded by LRU caches +
+  // truncated error logs landed earlier this session, plus the input
+  // AbortSignal from the original caller is still honored. Set
+  // IBKR_BRIDGE_REQUEST_TIMEOUT_MS to a positive number to re-enable.
   private readonly requestTimeoutMs = Math.max(
-    1,
-    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "15000"),
+    0,
+    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "0"),
   );
 
   private buildUrl(path: string, params: Record<string, QueryValue> = {}): URL {
@@ -348,10 +348,13 @@ export class IbkrBridgeClient {
     const controller = new AbortController();
     const inputSignal = init.signal;
     let didTimeout = false;
-    const timeout = setTimeout(() => {
-      didTimeout = true;
-      controller.abort();
-    }, this.requestTimeoutMs);
+    const timeout =
+      this.requestTimeoutMs > 0
+        ? setTimeout(() => {
+            didTimeout = true;
+            controller.abort();
+          }, this.requestTimeoutMs)
+        : null;
     const abortFromInput = () => controller.abort(inputSignal?.reason);
 
     if (inputSignal?.aborted) {
@@ -377,7 +380,9 @@ export class IbkrBridgeClient {
 
       throw error;
     }).finally(() => {
-      clearTimeout(timeout);
+      if (timeout !== null) {
+        clearTimeout(timeout);
+      }
       inputSignal?.removeEventListener("abort", abortFromInput);
     });
   }
