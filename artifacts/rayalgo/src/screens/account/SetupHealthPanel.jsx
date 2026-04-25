@@ -132,7 +132,7 @@ export const SetupHealthPanel = ({
             >
               <div style={mutedLabelStyle}>IBKR Connection Lanes</div>
               <IbkrConnectionLane label="Client Portal" connection={clientPortalConnection} />
-              <IbkrConnectionLane label="TWS Market Data" connection={twsConnection} />
+              <IbkrConnectionLane label="IB Gateway Market Data" connection={twsConnection} />
             </div>
             <StatusRow
               label="Flex configured"

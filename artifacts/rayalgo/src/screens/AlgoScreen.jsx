@@ -402,7 +402,7 @@ export const AlgoScreen = ({
               value: bridgeTone.label.toUpperCase(),
               detail:
                 session?.ibkrBridge?.transport === "tws"
-                  ? `tws ${session?.ibkrBridge?.sessionMode || ""} · ${activeAccountId || "no account"}`
+                  ? `IB Gateway ${session?.ibkrBridge?.sessionMode || ""} · ${activeAccountId || "no account"}`
                   : `${session?.ibkrBridge?.transport || "bridge"} · ${activeAccountId || "no account"}`,
               color: bridgeTone.color,
             },

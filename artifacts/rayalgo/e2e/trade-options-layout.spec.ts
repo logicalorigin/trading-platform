@@ -167,6 +167,47 @@ async function openTrade(page: Page) {
   await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
 }
 
+async function openPlatformScreen(page: Page, screen: "trade" | "flow" | "research") {
+  await page.addInitScript((initialScreen) => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "rayalgo:state:v1",
+      JSON.stringify({
+        screen: initialScreen,
+        sym: "SPY",
+        theme: "dark",
+        sidebarCollapsed: true,
+        tradeActiveTicker: "SPY",
+        tradeContracts: {
+          SPY: { strike: 500, cp: "C", exp: "" },
+        },
+      }),
+    );
+  }, screen);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId(`screen-host-${screen}`)).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+async function expectActiveScreenFillsHost(page: Page, screen: "trade" | "flow" | "research") {
+  const metrics = await page.getByTestId(`screen-host-${screen}`).evaluate((host) => {
+    const hostBox = host.getBoundingClientRect();
+    const childBox = host.firstElementChild?.getBoundingClientRect();
+
+    return {
+      hostWidth: hostBox.width,
+      childWidth: childBox?.width ?? 0,
+      rightGap: childBox ? hostBox.right - childBox.right : Number.POSITIVE_INFINITY,
+    };
+  });
+
+  expect(metrics.hostWidth).toBeGreaterThan(1000);
+  expect(metrics.childWidth).toBeGreaterThan(metrics.hostWidth - 1);
+  expect(metrics.rightGap).toBeLessThanOrEqual(1);
+}
+
 test("Trade swaps contract chart above options chain and removes placeholder copy", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await mockTradeApi(page);
@@ -193,6 +234,19 @@ test("Trade swaps contract chart above options chain and removes placeholder cop
 
   const bodyText = await page.locator("body").innerText();
   expect(bodyText).not.toMatch(/spaceholder|schema-pending|placeholder panel|under construction|Coming Soon/i);
+});
+
+test("Trade, Flow, and Research pages fill the available viewport width", async ({ browser }) => {
+  for (const screen of ["trade", "flow", "research"] as const) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    try {
+      await mockTradeApi(page);
+      await openPlatformScreen(page, screen);
+      await expectActiveScreenFillsHost(page, screen);
+    } finally {
+      await page.close();
+    }
+  }
 });
 
 test("Trade option chain loading state shows a spinner while chain request is pending", async ({

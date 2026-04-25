@@ -2305,7 +2305,7 @@ export const bridgeRuntimeTone = (session) => {
 
 const bridgeTransportLabel = (session) =>
   session?.ibkrBridge?.transport === "tws"
-    ? "IB Gateway / TWS"
+    ? "IB Gateway"
     : "Client Portal";
 
 export const bridgeRuntimeMessage = (session) => {
@@ -19917,6 +19917,7 @@ export default function RayAlgoPlatform() {
               <div
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   overflow: "hidden",
                   display: "flex",
                   flexDirection: "column",
@@ -19926,11 +19927,15 @@ export default function RayAlgoPlatform() {
                   mountedScreens[id] ? (
                     <div
                       key={id}
+                      data-testid={`screen-host-${id}`}
                       aria-hidden={screen !== id}
                       style={{
                         flex: 1,
+                        width: "100%",
+                        minWidth: 0,
                         minHeight: 0,
                         display: screen === id ? "flex" : "none",
+                        flexDirection: "column",
                       }}
                     >
                       <Suspense
@@ -20016,7 +20021,7 @@ export default function RayAlgoPlatform() {
                 {formatIbkrPingMs(clientPortalConnection?.lastPingMs)}
               </span>
               <span style={{ color: twsTone.color }}>
-                TWS {twsTone.label.toUpperCase()}{" "}
+                IB GATEWAY {twsTone.label.toUpperCase()}{" "}
                 {formatIbkrPingMs(twsConnection?.lastPingMs)}
               </span>
               <span style={{ flex: 1 }} />

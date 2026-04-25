@@ -271,7 +271,7 @@ export const IbkrConnectionStatusPair = ({
         connection={clientPortal}
         compact={compact}
       />
-      <IbkrConnectionLane label="TWS" connection={tws} compact={compact} />
+      <IbkrConnectionLane label="IB Gateway" connection={tws} compact={compact} />
     </div>
   );
 };
