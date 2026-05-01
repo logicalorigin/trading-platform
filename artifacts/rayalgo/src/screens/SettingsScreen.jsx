@@ -78,7 +78,6 @@ const SETTINGS_TABS = [
 ];
 
 const SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
-const MARKET_SECTOR_TIMEFRAMES = ["1d", "5d"];
 const FLOW_FILTERS = ["all", "calls", "puts", "unusual", "golden", "sweep", "block", "cluster"];
 const FLOW_SORT_OPTIONS = ["time", "premium", "score", "ratio", "ticker"];
 const FLOW_DENSITY_OPTIONS = ["compact", "comfortable"];
@@ -1751,7 +1750,6 @@ function WorkspaceDefaultsPanel() {
             type="button"
             onClick={() =>
               workspace.resetKeys([
-                "marketSectorTf",
                 "marketActivityPanelWidth",
                 "marketUnusualThreshold",
                 "flowFilter",
@@ -1791,12 +1789,6 @@ function WorkspaceDefaultsPanel() {
             value={headerPreset}
             onChange={(value) => workspace.patch({ headerBroadcastSpeedPreset: resolveHeaderBroadcastSpeedPreset(value) })}
             options={Object.entries(HEADER_BROADCAST_SPEED_PRESETS).map(([value, config]) => ({ value, label: config.label }))}
-          />
-          <SelectField
-            label="Market Sector TF"
-            value={MARKET_SECTOR_TIMEFRAMES.includes(state.marketSectorTf) ? state.marketSectorTf : "1d"}
-            onChange={(value) => workspace.patch({ marketSectorTf: value })}
-            options={MARKET_SECTOR_TIMEFRAMES}
           />
           <NumberField
             label="Market Activity Width"
@@ -1911,7 +1903,7 @@ function WorkspaceDefaultsPanel() {
           <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center", marginTop: sp(18) }}>
             <input
               type="checkbox"
-              checked={state.flowShowUnusualScanner === true}
+              checked={state.flowShowUnusualScanner !== false}
               onChange={(event) => workspace.patch({ flowShowUnusualScanner: event.target.checked })}
             />
             Show Flow scanner by default

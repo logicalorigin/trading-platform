@@ -1,7 +1,9 @@
 export { ResearchChartSurface } from "./ResearchChartSurface";
 export {
+  clearChartHydrationScope,
   getChartHydrationStatsSnapshot,
   recordChartBarScopeState,
+  recordChartHydrationMetric,
   sanitizeChartHydrationStatsForDiagnostics,
   useChartHydrationStats,
 } from "./chartHydrationStats";

@@ -12,7 +12,11 @@ export type FlowEventsSourceScannerCoverage = {
   /** @minimum 0 */
   targetSize?: number;
   /** @minimum 0 */
+  activeTargetSize?: number;
+  /** @minimum 0 */
   selectedSymbols?: number;
+  /** @minimum 0 */
+  selectedShortfall?: number;
   /** @nullable */
   rankedAt?: Date | null;
   /** @nullable */
@@ -25,9 +29,20 @@ export type FlowEventsSourceScannerCoverage = {
   cooldownCount?: number;
   /** @minimum 0 */
   scannedSymbols?: number;
+  /** @minimum 0 */
+  cycleScannedSymbols?: number;
   currentBatch?: string[];
   /** @nullable */
   lastScanAt?: Date | null;
   /** @nullable */
   degradedReason?: string | null;
+  /** @minimum 0 */
+  radarSelectedSymbols?: number;
+  /** @nullable, @minimum 0 */
+  radarEstimatedCycleMs?: number | null;
+  /** @minimum 0 */
+  radarBatchSize?: number;
+  /** @minimum 0 */
+  radarIntervalMs?: number;
+  promotedSymbols?: string[];
 };

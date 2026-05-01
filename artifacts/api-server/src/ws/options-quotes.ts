@@ -5,6 +5,7 @@ import {
   fetchOptionQuoteSnapshotPayload,
   subscribeOptionQuoteSnapshots,
 } from "../services/bridge-streams";
+import type { MarketDataIntent } from "../services/market-data-admission";
 
 const OPTION_QUOTES_WS_PATH = "/api/ws/options/quotes";
 const OPTION_QUOTES_WS_EMERGENCY_MAX_SUBSCRIPTIONS = Math.max(
@@ -26,6 +27,9 @@ type SubscribeMessage = {
   type?: unknown;
   underlying?: unknown;
   providerContractIds?: unknown;
+  owner?: unknown;
+  intent?: unknown;
+  requiresGreeks?: unknown;
 };
 
 function normalizeProviderContractIds(value: unknown): string[] {
@@ -57,6 +61,28 @@ function normalizeUnderlying(value: unknown): string | null {
   return typeof value === "string" && value.trim()
     ? value.trim().toUpperCase()
     : null;
+}
+
+function normalizeOwner(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, 120)
+    : undefined;
+}
+
+function normalizeIntent(value: unknown): MarketDataIntent {
+  return value === "execution-live" ||
+    value === "visible-live" ||
+    value === "automation-live" ||
+    value === "flow-scanner-live" ||
+    value === "convenience-live" ||
+    value === "delayed-ok" ||
+    value === "historical"
+    ? value
+    : "visible-live";
+}
+
+function normalizeRequiresGreeks(value: unknown): boolean {
+  return typeof value === "boolean" ? value : true;
 }
 
 function parseMessage(raw: RawData): SubscribeMessage | null {
@@ -244,7 +270,16 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       const providerContractIds = requestedProviderContractIds;
       const rejectedCount = 0;
       const underlying = normalizeUnderlying(message.underlying);
-      const subscriptionKey = JSON.stringify({ underlying, providerContractIds });
+      const owner = normalizeOwner(message.owner);
+      const intent = normalizeIntent(message.intent);
+      const requiresGreeks = normalizeRequiresGreeks(message.requiresGreeks);
+      const subscriptionKey = JSON.stringify({
+        underlying,
+        providerContractIds,
+        owner,
+        intent,
+        requiresGreeks,
+      });
       if (subscriptionKey === currentSubscriptionKey) {
         sendJson(socket, {
           type: "ready",
@@ -271,6 +306,9 @@ export function attachOptionQuoteWebSocket(server: Server): void {
           {
             underlying,
             providerContractIds,
+            owner,
+            intent,
+            requiresGreeks,
           },
           (payload) => {
             enqueueQuotes(payload);
@@ -300,6 +338,9 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       fetchOptionQuoteSnapshotPayload({
         underlying,
         providerContractIds,
+        owner,
+        intent,
+        requiresGreeks,
       })
         .then((payload) => {
           sendStatus({

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ACTIVE_OPTION_QUOTE_LINE_BUDGET,
+  BACKGROUND_OPTION_QUOTE_LINE_BUDGET,
   buildTradeOptionProviderContractIdPlan,
+  resolveOptionQuoteLineBudget,
   selectRotatingProviderContractIds,
 } from "./optionQuoteHydrationPlan.js";
 
@@ -29,6 +32,38 @@ test("buildTradeOptionProviderContractIdPlan includes the full selected expirati
     "P110",
     "P95",
   ]);
+});
+
+test("buildTradeOptionProviderContractIdPlan prioritizes visible rows before tail rotation", () => {
+  const providerContractIds = buildTradeOptionProviderContractIdPlan({
+    chainRows: [row(90), row(95), row(100), row(105), row(110)],
+    visibleRows: [row(110), row(90)],
+    contract: { strike: 100, cp: "C" },
+    heldContracts: [],
+  });
+
+  assert.deepEqual(providerContractIds.slice(0, 5), [
+    "C100",
+    "C110",
+    "P110",
+    "C90",
+    "P90",
+  ]);
+});
+
+test("resolveOptionQuoteLineBudget reserves more lines for active trade pages", () => {
+  assert.equal(
+    resolveOptionQuoteLineBudget({ active: true }),
+    ACTIVE_OPTION_QUOTE_LINE_BUDGET,
+  );
+  assert.equal(
+    resolveOptionQuoteLineBudget({ active: false }),
+    BACKGROUND_OPTION_QUOTE_LINE_BUDGET,
+  );
+  assert.equal(
+    resolveOptionQuoteLineBudget({ active: true, configuredLimit: 80 }),
+    80,
+  );
 });
 
 test("selectRotatingProviderContractIds pins priority ids and rotates the rest within budget", () => {
@@ -60,4 +95,15 @@ test("selectRotatingProviderContractIds pins priority ids and rotates the rest w
   ]);
   assert.equal(first.pendingProviderContractIds.length, 6);
   assert.equal(second.pendingProviderContractIds.length, 6);
+});
+
+test("selectRotatingProviderContractIds can disable background quote lines", () => {
+  const providerContractIds = ["id-0", "id-1"];
+  const plan = selectRotatingProviderContractIds({
+    providerContractIds,
+    lineBudget: 0,
+  });
+
+  assert.deepEqual(plan.activeProviderContractIds, []);
+  assert.deepEqual(plan.pendingProviderContractIds, providerContractIds);
 });

@@ -59,11 +59,19 @@ import {
   type OptionsFlowScannerRequest,
 } from "./options-flow-scanner";
 import {
+  createOptionsFlowRadarScanner,
+  type OptionsFlowRadarCoverage,
+} from "./options-flow-radar-scanner";
+import {
   createFlowUniverseManager,
   getFlowScannerIntervalMs,
   type FlowUniverseCoverage,
   type FlowUniverseMode,
 } from "./flow-universe";
+import {
+  fetchNasdaqListedDirectory,
+  parseNasdaqListedDirectory,
+} from "./nasdaq-symbol-directory";
 import {
   fetchBridgeQuoteSnapshots,
   getBridgeQuoteStreamDiagnostics,
@@ -863,6 +871,14 @@ type FlowEventsSource = {
   ibkrHydratedExpirationCount?: number;
   ibkrContractCount?: number;
   ibkrQualifiedContractCount?: number;
+  ibkrCandidateExpirationCount?: number;
+  ibkrMetadataContractCount?: number;
+  ibkrLiveCandidateCount?: number;
+  ibkrAcceptedQuoteCount?: number;
+  ibkrRejectedQuoteCount?: number;
+  ibkrReturnedQuoteCount?: number;
+  ibkrMissingQuoteCount?: number;
+  ibkrFilteredEventCount?: number;
   scannerCoverage?: FlowUniverseCoverage;
 };
 
@@ -951,23 +967,31 @@ function flowEventMatchesFilters(
     unusualScore?: unknown;
     premium?: unknown;
     expirationDate?: unknown;
+    side?: unknown;
   };
+  const premium = Number(row.premium ?? 0);
+  const expirationDate =
+    row.expirationDate instanceof Date
+      ? row.expirationDate
+      : new Date(String(row.expirationDate ?? ""));
+  const dte = getExpirationDte(expirationDate);
+  const side = String(row.side ?? "").toLowerCase();
+  const matchesUnusualScope =
+    Boolean(row.isUnusual) ||
+    Number(row.unusualScore) >= (unusualThreshold ?? 1) ||
+    premium >= 250_000 ||
+    (side === "buy" && premium >= 100_000) ||
+    (dte !== null && dte <= 1 && premium >= 50_000);
   if (
     filters.scope === "unusual" &&
-    !row.isUnusual &&
-    !(Number(row.unusualScore) >= (unusualThreshold ?? 1))
+    !matchesUnusualScope
   ) {
     return false;
   }
-  if (filters.minPremium > 0 && Number(row.premium ?? 0) < filters.minPremium) {
+  if (filters.minPremium > 0 && premium < filters.minPremium) {
     return false;
   }
   if (filters.maxDte !== null) {
-    const expirationDate =
-      row.expirationDate instanceof Date
-        ? row.expirationDate
-        : new Date(String(row.expirationDate ?? ""));
-    const dte = getExpirationDte(expirationDate);
     if (dte === null || dte > filters.maxDte) {
       return false;
     }
@@ -1011,6 +1035,14 @@ function flowSource(input: {
   ibkrHydratedExpirationCount?: number;
   ibkrContractCount?: number;
   ibkrQualifiedContractCount?: number;
+  ibkrCandidateExpirationCount?: number;
+  ibkrMetadataContractCount?: number;
+  ibkrLiveCandidateCount?: number;
+  ibkrAcceptedQuoteCount?: number;
+  ibkrRejectedQuoteCount?: number;
+  ibkrReturnedQuoteCount?: number;
+  ibkrMissingQuoteCount?: number;
+  ibkrFilteredEventCount?: number;
   scannerCoverage?: FlowUniverseCoverage;
 }): FlowEventsSource {
   return {
@@ -1031,7 +1063,15 @@ function flowSource(input: {
     ibkrHydratedExpirationCount: input.ibkrHydratedExpirationCount,
     ibkrContractCount: input.ibkrContractCount,
     ibkrQualifiedContractCount: input.ibkrQualifiedContractCount,
-    scannerCoverage: input.scannerCoverage ?? flowUniverseManager.getCoverage(),
+    ibkrCandidateExpirationCount: input.ibkrCandidateExpirationCount,
+    ibkrMetadataContractCount: input.ibkrMetadataContractCount,
+    ibkrLiveCandidateCount: input.ibkrLiveCandidateCount,
+    ibkrAcceptedQuoteCount: input.ibkrAcceptedQuoteCount,
+    ibkrRejectedQuoteCount: input.ibkrRejectedQuoteCount,
+    ibkrReturnedQuoteCount: input.ibkrReturnedQuoteCount,
+    ibkrMissingQuoteCount: input.ibkrMissingQuoteCount,
+    ibkrFilteredEventCount: input.ibkrFilteredEventCount,
+    scannerCoverage: input.scannerCoverage ?? getOptionsFlowUniverseCoverage(),
   };
 }
 
@@ -7224,9 +7264,37 @@ const OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME = readPositiveNumberEnv(
   "OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME",
   25_000_000,
 );
+const OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_ENABLED = readBooleanEnv(
+  "OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_ENABLED",
+  true,
+);
+const OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_TTL_MS = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_TTL_MS",
+  24 * 60 * 60_000,
+);
 const OPTIONS_FLOW_SCANNER_ALWAYS_ON = readBooleanEnv(
   "OPTIONS_FLOW_SCANNER_ALWAYS_ON",
   true,
+);
+const OPTIONS_FLOW_RADAR_ENABLED = readBooleanEnv(
+  "OPTIONS_FLOW_RADAR_ENABLED",
+  true,
+);
+const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_RADAR_BATCH_SIZE",
+  30,
+);
+const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_RADAR_DEEP_CANDIDATES",
+  3,
+);
+const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
+  "OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES",
+  1,
+);
+const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
+  10,
 );
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
@@ -7264,6 +7332,11 @@ export type OptionsFlowRuntimeConfig = {
   universeMinPrice: number;
   universeMinDollarVolume: number;
   scannerAlwaysOn: boolean;
+  radarEnabled: boolean;
+  radarBatchSize: number;
+  radarDeepCandidateCount: number;
+  radarFallbackDeepCandidateCount: number;
+  radarDeepLineBudget: number;
   scannerBatchSize: number;
   scannerConcurrency: number;
   scannerLimit: number;
@@ -7290,6 +7363,11 @@ const OPTIONS_FLOW_DEFAULT_CONFIG: OptionsFlowRuntimeConfig = {
   universeMinPrice: OPTIONS_FLOW_UNIVERSE_MIN_PRICE,
   universeMinDollarVolume: OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME,
   scannerAlwaysOn: OPTIONS_FLOW_SCANNER_ALWAYS_ON,
+  radarEnabled: OPTIONS_FLOW_RADAR_ENABLED,
+  radarBatchSize: OPTIONS_FLOW_RADAR_BATCH_SIZE,
+  radarDeepCandidateCount: OPTIONS_FLOW_RADAR_DEEP_CANDIDATES,
+  radarFallbackDeepCandidateCount: OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES,
+  radarDeepLineBudget: OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET,
   scannerBatchSize: OPTIONS_FLOW_SCANNER_BATCH_SIZE,
   scannerConcurrency: OPTIONS_FLOW_SCANNER_CONCURRENCY,
   scannerLimit: OPTIONS_FLOW_SCANNER_LIMIT,
@@ -7396,6 +7474,42 @@ export function resetOptionsFlowRuntimeOverrides(
   }
 }
 const initialOptionsFlowConfig = getOptionsFlowRuntimeConfig();
+let flowUniverseNasdaqFallbackCache: {
+  includeEtfs: boolean;
+  expiresAt: number;
+  symbols: string[];
+} | null = null;
+
+async function fetchFlowUniverseNasdaqFallbackSymbols(): Promise<string[]> {
+  if (!OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_ENABLED) {
+    return [];
+  }
+
+  const includeEtfs = getOptionsFlowRuntimeConfig().universeMarkets.includes("etf");
+  const current = Date.now();
+  if (
+    flowUniverseNasdaqFallbackCache &&
+    flowUniverseNasdaqFallbackCache.includeEtfs === includeEtfs &&
+    flowUniverseNasdaqFallbackCache.expiresAt > current
+  ) {
+    return flowUniverseNasdaqFallbackCache.symbols;
+  }
+
+  const parsed = parseNasdaqListedDirectory(await fetchNasdaqListedDirectory(), {
+    includeEtfs,
+    includeTestIssues: false,
+    includeNonCommonStock: false,
+    normalFinancialStatusOnly: true,
+  });
+  const symbols = [...new Set(parsed.records.map((record) => record.symbol))];
+  flowUniverseNasdaqFallbackCache = {
+    includeEtfs,
+    expiresAt: current + OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_TTL_MS,
+    symbols,
+  };
+  return symbols;
+}
+
 const flowUniverseManager = createFlowUniverseManager({
   db,
   mode: initialOptionsFlowConfig.universeMode,
@@ -7408,6 +7522,7 @@ const flowUniverseManager = createFlowUniverseManager({
   minPrice: initialOptionsFlowConfig.universeMinPrice,
   minDollarVolume: initialOptionsFlowConfig.universeMinDollarVolume,
   fallbackSymbols: BUILT_IN_SYMBOLS,
+  fetchFallbackSymbols: fetchFlowUniverseNasdaqFallbackSymbols,
   fetchLiquiditySnapshots: async (symbols) => {
     if (!getPolygonRuntimeConfig()) {
       return [];
@@ -7444,13 +7559,14 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
         }
       : null;
   },
-  fetchSymbol: ({ symbol, limit, unusualThreshold }) =>
+  fetchSymbol: ({ symbol, limit, unusualThreshold, lineBudget }) =>
     listFlowEventsUncached({
       underlying: symbol,
       limit,
       filters: normalizeFlowEventsFilters({ scope: "all" }),
       unusualThreshold,
       allowPolygonFallback: false,
+      lineBudget,
     }),
   onBatch: (symbols) => {
     flowUniverseManager.noteBatch(symbols);
@@ -7468,6 +7584,41 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
     }),
   onError: (error, context) => {
     logger.warn({ err: error, ...context }, "Options flow scanner error");
+  },
+});
+const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
+  normalizeSymbol,
+  fetchBatch: async (symbols) => {
+    if (isBridgeWorkBackedOff("quotes")) {
+      throw new Error("quotes-bridge-work-backed-off");
+    }
+    const quotes = await runBridgeWork("quotes", () =>
+      getIbkrClient().getOptionActivitySnapshots([...symbols]),
+    );
+    return {
+      quotes,
+      source: {
+        provider: "ibkr",
+        status: "live",
+      },
+    };
+  },
+  onBatch: (symbols) => {
+    flowUniverseManager.noteBatch(symbols);
+  },
+  onPromotions: async (symbols) => {
+    const config = getOptionsFlowRuntimeConfig();
+    const deepLineBudget = Math.max(
+      1,
+      Math.min(config.radarDeepLineBudget, config.scannerLineBudget),
+    );
+    await optionsFlowScanner.requestScan(symbols, {
+      limit: Math.min(config.scannerLimit, deepLineBudget),
+      lineBudget: deepLineBudget,
+    });
+  },
+  onError: (error, context) => {
+    logger.warn({ err: error, ...context }, "Options flow radar scanner error");
   },
 });
 
@@ -7502,6 +7653,21 @@ export function getOptionsFlowLaneSourceSymbols(): {
   return { builtInSymbols, flowUniverseSymbols };
 }
 
+export function getOptionsFlowRadarIntervalMs(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): number {
+  return Math.max(1_000, config.scannerIntervalMs);
+}
+
+export function getOptionsFlowDeepScannerIntervalMs(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): number {
+  return getFlowScannerIntervalMs({
+    baseIntervalMs: config.scannerIntervalMs,
+    alwaysOn: config.scannerAlwaysOn,
+  });
+}
+
 export function startOptionsFlowScanner(): void {
   const config = getOptionsFlowRuntimeConfig();
   if (optionsFlowScannerStarted || !config.scannerEnabled) {
@@ -7516,27 +7682,50 @@ export function startOptionsFlowScanner(): void {
   }
 
   optionsFlowScanner.setMaxConcurrency(config.scannerConcurrency);
-  optionsFlowScanner.startRotation({
-    symbols: resolveScannerSymbols,
-    request: { limit: Math.min(config.scannerLimit, config.scannerLineBudget) },
-    intervalMs: () =>
-      getFlowScannerIntervalMs({
-        baseIntervalMs: getOptionsFlowRuntimeConfig().scannerIntervalMs,
-        alwaysOn: getOptionsFlowRuntimeConfig().scannerAlwaysOn,
-      }),
-    batchSize: () =>
-      Math.max(
-        1,
-        Math.min(
-          getOptionsFlowRuntimeConfig().scannerBatchSize,
-          getOptionsFlowRuntimeConfig().scannerLineBudget,
+  const resolveRadarIntervalMs = () => getOptionsFlowRadarIntervalMs();
+  const resolveDeepIntervalMs = () => getOptionsFlowDeepScannerIntervalMs();
+  if (config.radarEnabled) {
+    optionsFlowRadarScanner.startRotation({
+      symbols: resolveScannerSymbols,
+      intervalMs: resolveRadarIntervalMs,
+      batchSize: () =>
+        Math.max(
+          1,
+          Math.min(
+            getOptionsFlowRuntimeConfig().radarBatchSize,
+            getOptionsFlowRuntimeConfig().scannerLineBudget,
+          ),
         ),
-      ),
-  });
+      promoteCount: () => getOptionsFlowRuntimeConfig().radarDeepCandidateCount,
+      fallbackPromoteCount: () =>
+        getOptionsFlowRuntimeConfig().radarFallbackDeepCandidateCount,
+    });
+  } else {
+    optionsFlowScanner.startRotation({
+      symbols: resolveScannerSymbols,
+      request: {
+        limit: Math.min(config.scannerLimit, config.scannerLineBudget),
+        lineBudget: config.scannerLineBudget,
+      },
+      intervalMs: resolveDeepIntervalMs,
+      batchSize: () =>
+        Math.max(
+          1,
+          Math.min(
+            getOptionsFlowRuntimeConfig().scannerBatchSize,
+            getOptionsFlowRuntimeConfig().scannerLineBudget,
+          ),
+        ),
+    });
+  }
   optionsFlowScannerStarted = true;
   logger.info(
     {
       symbols: initialSymbols.length,
+      radarEnabled: config.radarEnabled,
+      radarBatchSize: config.radarBatchSize,
+      radarDeepCandidateCount: config.radarDeepCandidateCount,
+      radarDeepLineBudget: config.radarDeepLineBudget,
       batchSize: config.scannerBatchSize,
       concurrency: config.scannerConcurrency,
       lineBudget: config.scannerLineBudget,
@@ -7551,12 +7740,51 @@ export function startOptionsFlowScanner(): void {
 }
 
 export function stopOptionsFlowScanner(): void {
+  optionsFlowRadarScanner.stop();
   optionsFlowScanner.stop();
   optionsFlowScannerStarted = false;
 }
 
 export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
-  return flowUniverseManager.getCoverage();
+  const coverage = flowUniverseManager.getCoverage();
+  const radarCoverage: OptionsFlowRadarCoverage = optionsFlowRadarScanner.getCoverage();
+  if (!radarCoverage.enabled && !radarCoverage.lastScanAt) {
+    return coverage;
+  }
+  const activeTargetSize = Math.max(
+    coverage.activeTargetSize,
+    coverage.selectedSymbols,
+    radarCoverage.selectedSymbols,
+  );
+  const selectedShortfall = Math.max(0, coverage.targetSize - activeTargetSize);
+  const cycleScannedSymbols = Math.max(
+    coverage.cycleScannedSymbols,
+    coverage.scannedSymbols,
+    radarCoverage.scannedSymbols,
+  );
+  return {
+    ...coverage,
+    activeTargetSize,
+    selectedSymbols: activeTargetSize,
+    selectedShortfall,
+    scannedSymbols: cycleScannedSymbols,
+    cycleScannedSymbols,
+    currentBatch: radarCoverage.currentBatch.length
+      ? radarCoverage.currentBatch
+      : coverage.currentBatch,
+    lastScanAt: radarCoverage.lastScanAt ?? coverage.lastScanAt,
+    degradedReason:
+      coverage.degradedReason ??
+      (selectedShortfall > 0
+        ? `Universe fill short: ${activeTargetSize}/${coverage.targetSize}`
+        : null) ??
+      radarCoverage.degradedReason,
+    radarSelectedSymbols: radarCoverage.selectedSymbols,
+    radarEstimatedCycleMs: radarCoverage.estimatedCycleMs,
+    radarBatchSize: radarCoverage.batchSize,
+    radarIntervalMs: radarCoverage.intervalMs,
+    promotedSymbols: radarCoverage.promotedSymbols,
+  };
 }
 
 export function getOptionsFlowUniverse() {
@@ -7581,6 +7809,7 @@ export async function __runOptionsFlowScannerOnceForTests(
       ),
     ),
     unusualThreshold: input.unusualThreshold,
+    lineBudget: input.lineBudget,
   });
 }
 
@@ -7638,6 +7867,7 @@ export function __resetOptionChainCachesForTests(input?: {
   flowEventsCache.clear();
   flowEventsInFlight.clear();
   if (input?.resetFlowScanner !== false) {
+    optionsFlowRadarScanner.reset();
     optionsFlowScanner.reset();
     optionsFlowScannerStarted = false;
     flowUniverseManager.reset();
@@ -9964,11 +10194,13 @@ export async function listFlowEvents(input: {
   const scannerRequest = {
     limit: Math.max(limit, getOptionsFlowRuntimeConfig().scannerLimit),
     unusualThreshold,
+    lineBudget: getOptionsFlowRuntimeConfig().scannerLineBudget,
   };
   const scannerSnapshot = getOptionsFlowRuntimeConfig().scannerEnabled
     ? optionsFlowScanner.getSnapshot(underlying, {
         limit: scannerRequest.limit,
         unusualThreshold,
+        lineBudget: scannerRequest.lineBudget,
       })
     : null;
   if (scannerSnapshot?.freshness === "fresh") {
@@ -10032,6 +10264,7 @@ export async function listFlowEvents(input: {
         limit,
         filters,
         unusualThreshold,
+        lineBudget: scannerRequest.lineBudget,
       }).catch(() => {});
     }
     return cached.value;
@@ -10069,6 +10302,7 @@ export async function listFlowEvents(input: {
     limit,
     filters,
     unusualThreshold,
+    lineBudget: scannerRequest.lineBudget,
   });
   if (!blocking) {
     return deferredFlowEventsResult({
@@ -10090,6 +10324,7 @@ function refreshFlowEventsCache(
     limit: number;
     filters: FlowEventsFilters;
     unusualThreshold?: number;
+    lineBudget?: number;
   },
 ): Promise<FlowEventsResult> {
   const existing = flowEventsInFlight.get(cacheKey);
@@ -10114,6 +10349,7 @@ function refreshFlowEventsCache(
         {
           limit: input.limit,
           unusualThreshold: input.unusualThreshold,
+          lineBudget: input.lineBudget,
         },
         value,
       );
@@ -10141,6 +10377,7 @@ async function listFlowEventsUncached(input: {
   filters: FlowEventsFilters;
   unusualThreshold?: number;
   allowPolygonFallback?: boolean;
+  lineBudget?: number;
 }): Promise<FlowEventsResult> {
   // Derive IBKR flow from option-chain snapshots. These are not consolidated
   // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
@@ -10154,7 +10391,30 @@ async function listFlowEventsUncached(input: {
   let ibkrHydratedExpirationCount = 0;
   let ibkrContractCount = 0;
   let ibkrQualifiedContractCount = 0;
+  let ibkrCandidateExpirationCount = 0;
+  let ibkrMetadataContractCount = 0;
+  let ibkrLiveCandidateCount = 0;
+  let ibkrAcceptedQuoteCount = 0;
+  let ibkrRejectedQuoteCount = 0;
+  let ibkrReturnedQuoteCount = 0;
+  let ibkrMissingQuoteCount = 0;
+  let ibkrFilteredEventCount = 0;
   let polygonError: string | null = null;
+
+  const ibkrSourceDiagnostics = () => ({
+    ibkrExpirationCount,
+    ibkrHydratedExpirationCount,
+    ibkrContractCount,
+    ibkrQualifiedContractCount,
+    ibkrCandidateExpirationCount,
+    ibkrMetadataContractCount,
+    ibkrLiveCandidateCount,
+    ibkrAcceptedQuoteCount,
+    ibkrRejectedQuoteCount,
+    ibkrReturnedQuoteCount,
+    ibkrMissingQuoteCount,
+    ibkrFilteredEventCount,
+  });
 
   if (input.allowPolygonFallback !== false && getPolygonRuntimeConfig()) {
     attemptedProviders.push("polygon");
@@ -10191,6 +10451,7 @@ async function listFlowEventsUncached(input: {
             unusualThreshold: input.unusualThreshold ?? 1,
             ibkrStatus,
             ibkrReason: "options_flow_polygon_first",
+            ...ibkrSourceDiagnostics(),
           }),
         };
       }
@@ -10211,11 +10472,12 @@ async function listFlowEventsUncached(input: {
       expirations: expirationsResult.expirations,
       maxDte: input.filters.maxDte,
     });
+    ibkrCandidateExpirationCount = candidateExpirations.length;
 
     if (candidateExpirations.length > 0) {
       const lineBudget = Math.max(
         1,
-        getOptionsFlowRuntimeConfig().scannerLineBudget,
+        input.lineBudget ?? getOptionsFlowRuntimeConfig().scannerLineBudget,
       );
       const metadataSelection = buildFlowScannerMetadataSelection({
         lineBudget,
@@ -10229,10 +10491,12 @@ async function listFlowEventsUncached(input: {
         allowDelayedSnapshotHydration: false,
       });
       const metadataContracts = batch.results.flatMap((result) => result.contracts);
+      ibkrMetadataContractCount = metadataContracts.length;
       const liveCandidateContracts = selectFlowScannerLiveCandidateContracts(
         metadataContracts,
         lineBudget,
       );
+      ibkrLiveCandidateCount = liveCandidateContracts.length;
       const liveCandidateProviderContractIds = liveCandidateContracts
         .map((contract) => contract.contract.providerContractId)
         .filter((providerContractId): providerContractId is string =>
@@ -10257,6 +10521,11 @@ async function listFlowEventsUncached(input: {
               return null;
             })
           : null;
+      ibkrAcceptedQuoteCount = quotePayload?.debug?.acceptedCount ?? 0;
+      ibkrRejectedQuoteCount = quotePayload?.debug?.rejectedCount ?? 0;
+      ibkrReturnedQuoteCount =
+        quotePayload?.debug?.returnedCount ?? quotePayload?.quotes.length ?? 0;
+      ibkrMissingQuoteCount = quotePayload?.debug?.missingProviderContractIds.length ?? 0;
       const admittedProviderContractIds = new Set(
         quotePayload?.debug?.acceptedProviderContractIds ?? [],
       );
@@ -10354,13 +10623,13 @@ async function listFlowEventsUncached(input: {
   if (!ibkrReason && contracts.length > 0 && ibkrQualifiedContractCount === 0) {
     ibkrReason = "options_flow_no_volume_candidates";
   }
+  const ibkrUnderlyingPrice = readOptionChainUnderlyingPrice(contracts);
 
   // IBKR snapshots now include OPRA volume (field 7762) and option open
   // interest (field 7638), so flow events can rank by real traded premium.
   // Require both a marked contract and non-zero day volume to filter out the
   // inactive long tail.
-  const events = qualifiedContracts
-    .map((c) => {
+  const candidateEvents = qualifiedContracts.map((c) => {
       const mark = c.mark ?? 0;
       const mid = ((c.bid ?? 0) + (c.ask ?? 0)) / 2;
       const side: "buy" | "sell" | "unknown" =
@@ -10389,6 +10658,34 @@ async function listFlowEventsUncached(input: {
         c.openInterest ?? 0,
         input.unusualThreshold,
       );
+      const underlyingPrice =
+        typeof c.underlyingPrice === "number" &&
+        Number.isFinite(c.underlyingPrice) &&
+        c.underlyingPrice > 0
+          ? c.underlyingPrice
+          : ibkrUnderlyingPrice;
+      const distancePercent =
+        underlyingPrice !== null && underlyingPrice > 0
+          ? ((c.contract.strike - underlyingPrice) / underlyingPrice) * 100
+          : null;
+      const atmBand =
+        underlyingPrice !== null && underlyingPrice > 0
+          ? Math.max(0.01, underlyingPrice * 0.0025)
+          : null;
+      const absoluteDistance =
+        underlyingPrice !== null ? Math.abs(c.contract.strike - underlyingPrice) : null;
+      const moneyness =
+        underlyingPrice === null || atmBand === null || absoluteDistance === null
+          ? null
+          : absoluteDistance <= atmBand
+            ? "ATM"
+            : c.contract.right === "call"
+              ? c.contract.strike < underlyingPrice
+                ? "ITM"
+                : "OTM"
+              : c.contract.strike > underlyingPrice
+                ? "ITM"
+                : "OTM";
       // Rank by mark-based premium (mark × volume × multiplier) so the
       // ordering is stable even when `last` is stale or zero. The display
       // `price` still prefers the last field when available.
@@ -10417,9 +10714,9 @@ async function listFlowEventsUncached(input: {
         gamma: c.gamma,
         theta: c.theta,
         vega: c.vega,
-        underlyingPrice: null,
-        moneyness: null,
-        distancePercent: null,
+        underlyingPrice,
+        moneyness,
+        distancePercent,
         confidence: "snapshot_activity" as const,
         sourceBasis: "snapshot_activity" as const,
         exchange: "IBKR",
@@ -10430,10 +10727,12 @@ async function listFlowEventsUncached(input: {
         unusualScore,
         isUnusual,
       };
-    })
-    .filter((event) =>
-      flowEventMatchesFilters(event, input.filters, input.unusualThreshold),
-    )
+    });
+  const filteredEvents = candidateEvents.filter((event) =>
+    flowEventMatchesFilters(event, input.filters, input.unusualThreshold),
+  );
+  ibkrFilteredEventCount = candidateEvents.length - filteredEvents.length;
+  const events = filteredEvents
     // Surface unusual contracts (volume > open interest) above routine flow,
     // then fall back to premium so the highest-conviction events win ties.
     .sort((a, b) => {
@@ -10455,10 +10754,7 @@ async function listFlowEventsUncached(input: {
         unusualThreshold: input.unusualThreshold ?? 1,
         ibkrStatus,
         ibkrReason,
-        ibkrExpirationCount,
-        ibkrHydratedExpirationCount,
-        ibkrContractCount,
-        ibkrQualifiedContractCount,
+        ...ibkrSourceDiagnostics(),
       }),
     };
   }
@@ -10500,10 +10796,7 @@ async function listFlowEventsUncached(input: {
             unusualThreshold: input.unusualThreshold ?? 1,
             ibkrStatus,
             ibkrReason,
-            ibkrExpirationCount,
-            ibkrHydratedExpirationCount,
-            ibkrContractCount,
-            ibkrQualifiedContractCount,
+            ...ibkrSourceDiagnostics(),
           }),
         };
       }
@@ -10524,10 +10817,7 @@ async function listFlowEventsUncached(input: {
       unusualThreshold: input.unusualThreshold ?? 1,
       ibkrStatus,
       ibkrReason,
-      ibkrExpirationCount,
-      ibkrHydratedExpirationCount,
-      ibkrContractCount,
-      ibkrQualifiedContractCount,
+      ...ibkrSourceDiagnostics(),
     }),
   };
 }

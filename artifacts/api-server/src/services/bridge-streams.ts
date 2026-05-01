@@ -29,6 +29,10 @@ import {
   subscribeBridgeOptionQuoteSnapshots,
   type OptionQuoteSnapshotPayload,
 } from "./bridge-option-quote-stream";
+import type {
+  MarketDataFallbackProvider,
+  MarketDataIntent,
+} from "./market-data-admission";
 import { recordAccountSnapshots } from "./account";
 import { getOptionChain } from "./platform";
 
@@ -182,6 +186,11 @@ export async function fetchOptionChainSnapshotPayload(
 export async function fetchOptionQuoteSnapshotPayload(input: {
   underlying?: string | null;
   providerContractIds: string[];
+  owner?: string;
+  intent?: MarketDataIntent;
+  ttlMs?: number;
+  fallbackProvider?: MarketDataFallbackProvider;
+  requiresGreeks?: boolean;
 }): Promise<OptionQuoteSnapshotPayload> {
   return fetchBridgeOptionQuoteSnapshots(input);
 }
@@ -396,6 +405,10 @@ export function subscribeOptionQuoteSnapshots(
   input: {
     underlying?: string | null;
     providerContractIds: string[];
+    owner?: string;
+    intent?: MarketDataIntent;
+    fallbackProvider?: MarketDataFallbackProvider;
+    requiresGreeks?: boolean;
   },
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
 ): Unsubscribe {

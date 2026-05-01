@@ -105,6 +105,91 @@ test("flow universe skips symbols under cooldown", () => {
   assert.deepEqual(selected, ["MSFT"]);
 });
 
+test("flow universe backfills short ranked candidates from fallback symbols", () => {
+  const selected = rankFlowUniverseCandidates({
+    targetSize: 5,
+    now: new Date("2026-05-01T14:30:00.000Z"),
+    pinnedSymbols: ["SPY"],
+    fallbackSymbols: ["AAPL", "NVDA", "MSFT", "META", "TSLA"],
+    candidates: [
+      {
+        symbol: "NVDA",
+        market: "stocks",
+        price: 900,
+        volume: 20_000_000,
+        dollarVolume: 18_000_000_000,
+        liquidityRank: 2,
+        flowScore: 8,
+        previousSessionFlowScore: 0,
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+      {
+        symbol: "AAPL",
+        market: "stocks",
+        price: 200,
+        volume: 25_000_000,
+        dollarVolume: 5_000_000_000,
+        liquidityRank: 3,
+        flowScore: 0,
+        previousSessionFlowScore: 2,
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+    ],
+  });
+
+  assert.deepEqual(selected, ["SPY", "NVDA", "AAPL", "MSFT", "META"]);
+});
+
+test("flow universe cooldowns are skipped during fallback fill", () => {
+  const selected = rankFlowUniverseCandidates({
+    targetSize: 3,
+    now: new Date("2026-05-01T14:30:00.000Z"),
+    fallbackSymbols: ["TSLA", "MSFT", "META"],
+    candidates: [
+      {
+        symbol: "TSLA",
+        market: "stocks",
+        price: 200,
+        volume: 10_000_000,
+        dollarVolume: 2_000_000_000,
+        liquidityRank: 1,
+        flowScore: 100,
+        previousSessionFlowScore: 100,
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: new Date("2026-05-01T14:45:00.000Z"),
+      },
+      {
+        symbol: "AAPL",
+        market: "stocks",
+        price: 200,
+        volume: 25_000_000,
+        dollarVolume: 5_000_000_000,
+        liquidityRank: 3,
+        flowScore: 1,
+        previousSessionFlowScore: 0,
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+    ],
+  });
+
+  assert.deepEqual(selected, ["AAPL", "MSFT", "META"]);
+});
+
 test("flow universe dedupes duplicate candidate symbols before selection", () => {
   const selected = rankFlowUniverseCandidates({
     targetSize: 3,

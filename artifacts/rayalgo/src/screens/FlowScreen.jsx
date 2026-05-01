@@ -45,6 +45,13 @@ import {
   _initialState,
   bridgeRuntimeMessage,
   bridgeRuntimeTone,
+  buildDteBucketsFromEvents,
+  buildFlowClockFromEvents,
+  buildFlowTideFromEvents,
+  buildMarketOrderFlowFromEvents,
+  buildPutCallSummaryFromEvents,
+  buildSectorFlowFromEvents,
+  buildTickerFlowFromEvents,
   flowProviderColor,
   fmtCompactNumber,
   fmtM,
@@ -114,7 +121,7 @@ const FLOW_TAPE_OPTIONAL_COLUMNS = Object.freeze([
   { id: "ratio", label: "V/OI", toggleLabel: "V/OI", width: "50px" },
   { id: "dte", label: "DTE", toggleLabel: "DTE", width: "42px" },
   { id: "iv", label: "IV", toggleLabel: "IV", width: "52px" },
-  { id: "spot", label: "SPOT", toggleLabel: "Spot", width: "62px", defaultVisible: false },
+  { id: "spot", label: "SPOT", toggleLabel: "Spot", width: "62px" },
   { id: "moneyness", label: "MNY", toggleLabel: "Mny", width: "54px", defaultVisible: false },
   { id: "distance", label: "DIST", toggleLabel: "Dist", width: "54px", defaultVisible: false },
   { id: "delta", label: "DELTA", toggleLabel: "Delta", width: "56px", defaultVisible: false },
@@ -148,6 +155,30 @@ const FLOW_FIXED_COLUMNS = Object.freeze([
   { id: "mark", label: "MARK", width: "62px" },
   { id: "actions", label: "ACTIONS", width: "76px" },
 ]);
+
+const getMergedFlowEventKey = (event) =>
+  event?.id ||
+  [
+    event?.ticker || event?.underlying || event?.symbol || "",
+    event?.optionTicker || "",
+    event?.strike ?? "",
+    event?.cp || event?.right || "",
+    event?.expirationDate || event?.exp || "",
+    event?.occurredAt || event?.time || "",
+    event?.premium ?? "",
+  ].join("|");
+
+const mergeFlowEventFeeds = (...feeds) => {
+  const mergedByKey = new Map();
+  feeds.flat().forEach((event) => {
+    if (!event) return;
+    const key = getMergedFlowEventKey(event);
+    if (!mergedByKey.has(key)) {
+      mergedByKey.set(key, event);
+    }
+  });
+  return Array.from(mergedByKey.values());
+};
 const RIGHT_ALIGNED_FLOW_COLUMNS = new Set([
   "actions",
   "ask",
@@ -490,9 +521,15 @@ const resolveFlowQuality = ({
 }) => {
   const totalSymbols = Math.max(
     0,
-    coverage?.totalSymbols || watchlistSymbols.length || 0,
+    coverage?.activeTargetSize ||
+      coverage?.totalSymbols ||
+      watchlistSymbols.length ||
+      0,
   );
-  const scannedSymbols = Math.max(0, coverage?.scannedSymbols || 0);
+  const scannedSymbols = Math.max(
+    0,
+    coverage?.cycleScannedSymbols ?? coverage?.scannedSymbols ?? 0,
+  );
   const coverageRatio = totalSymbols > 0 ? scannedSymbols / totalSymbols : 0;
   const newestAgeMs = newestScanAt ? Date.now() - newestScanAt : null;
   const oldestAgeMs = oldestScanAt ? Date.now() - oldestScanAt : null;
@@ -691,7 +728,7 @@ const FlowOverviewPanel = ({
     Boolean(_initialState.flowLivePaused),
   );
   const [showUnusualScanner, setShowUnusualScanner] = useState(
-    Boolean(_initialState.flowShowUnusualScanner),
+    _initialState.flowShowUnusualScanner !== false,
   );
   const [filtersOpen, setFiltersOpen] = useState(
     _initialState.flowFiltersOpen !== false,
@@ -872,7 +909,7 @@ const FlowOverviewPanel = ({
     return () => clearTimeout(timeoutId);
   }, [activateNews, isVisible]);
 
-  const liveFlowSnapshot = useMarketFlowSnapshot(symbols, {
+  const sharedFlowSnapshot = useMarketFlowSnapshot(symbols, {
     subscribe: isVisible && !livePaused,
   });
   const flowScannerControl = useFlowScannerControlState({
@@ -881,6 +918,46 @@ const FlowOverviewPanel = ({
   const flowScannerEnabled = Boolean(flowScannerControl.enabled);
   const flowScannerPanelVisible = showUnusualScanner || flowScannerEnabled;
   const flowScannerOwnerActive = Boolean(flowScannerControl.ownerActive);
+  const broadScanSnapshotActive = flowScannerEnabled && flowScannerOwnerActive;
+  const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
+    BROAD_MARKET_FLOW_STORE_KEY,
+    { subscribe: isVisible && !livePaused && broadScanSnapshotActive },
+  );
+  const liveFlowSnapshot = useMemo(() => {
+    if (!broadScanSnapshotActive) {
+      return sharedFlowSnapshot;
+    }
+    const flowEvents = mergeFlowEventFeeds(
+      broadFlowSnapshot.flowEvents || [],
+      sharedFlowSnapshot.flowEvents || [],
+    );
+    const providerSummary =
+      broadFlowSnapshot.providerSummary || sharedFlowSnapshot.providerSummary;
+    const flowStatus = flowEvents.length
+      ? "live"
+      : broadFlowSnapshot.flowStatus || sharedFlowSnapshot.flowStatus;
+
+    return {
+      ...sharedFlowSnapshot,
+      hasLiveFlow: flowEvents.length > 0,
+      flowStatus,
+      providerSummary,
+      flowEvents,
+      flowTide: buildFlowTideFromEvents(flowEvents),
+      tickerFlow: buildTickerFlowFromEvents(flowEvents),
+      flowClock: buildFlowClockFromEvents(flowEvents),
+      sectorFlow: buildSectorFlowFromEvents(flowEvents),
+      dteBuckets: buildDteBucketsFromEvents(flowEvents),
+      marketOrderFlow: buildMarketOrderFlowFromEvents(flowEvents),
+      putCall: buildPutCallSummaryFromEvents(flowEvents),
+    };
+  }, [
+    broadFlowSnapshot.flowEvents,
+    broadFlowSnapshot.flowStatus,
+    broadFlowSnapshot.providerSummary,
+    broadScanSnapshotActive,
+    sharedFlowSnapshot,
+  ]);
   const flowScannerTone = flowScannerEnabled
     ? flowScannerOwnerActive
       ? T.green
@@ -933,6 +1010,7 @@ const FlowOverviewPanel = ({
   const coverage = providerSummary.coverage || {
     totalSymbols: watchlistSymbols.length,
     scannedSymbols: 0,
+    cycleScannedSymbols: 0,
     batchSize: watchlistSymbols.length,
     currentBatch: [],
     cycle: 0,
@@ -941,9 +1019,18 @@ const FlowOverviewPanel = ({
     isRotating: false,
   };
   const totalCoverageSymbols =
-    coverage.targetSize || coverage.totalSymbols || watchlistSymbols.length || 0;
+    coverage.activeTargetSize ||
+    coverage.totalSymbols ||
+    watchlistSymbols.length ||
+    0;
+  const intendedCoverageSymbols =
+    coverage.targetSize || totalCoverageSymbols;
+  const selectedCoverageSymbols =
+    coverage.selectedSymbols || totalCoverageSymbols;
+  const scannedCoverageSymbols =
+    coverage.cycleScannedSymbols ?? coverage.scannedSymbols ?? 0;
   const coverageModeLabel =
-    coverage.mode === "market"
+    coverage.mode === "market" || coverage.mode === "hybrid"
       ? "market-wide"
       : "watchlist";
   const oldestScanAt = useMemo(() => {
@@ -2943,13 +3030,16 @@ const FlowOverviewPanel = ({
           {flowDisplayLabel}
         </span>
         <span style={{ marginLeft: sp(8) }}>
-          Coverage{" "}
+          Cycle{" "}
           <span style={{ color: T.text, fontWeight: 700 }}>
-            {coverage.scannedSymbols}/{totalCoverageSymbols || coverage.scannedSymbols}
+            {scannedCoverageSymbols}/{totalCoverageSymbols || scannedCoverageSymbols}
           </span>
           {coverage.isRotating
             ? ` · rotating ${coverage.batchSize}/cycle`
             : ` · full ${coverageModeLabel}`}
+          {intendedCoverageSymbols > selectedCoverageSymbols
+            ? ` · selected ${selectedCoverageSymbols}/${intendedCoverageSymbols}`
+            : ""}
           {coverage.cooldownCount ? ` · ${coverage.cooldownCount} cooldown` : ""}
           {newestScanAt
             ? ` · latest ${formatRelativeTimeShort(
@@ -3033,7 +3123,7 @@ const FlowOverviewPanel = ({
         }}
       >
         <span style={{ color: T.textSec, whiteSpace: "nowrap" }}>
-          {coverage.scannedSymbols}/{totalCoverageSymbols || coverage.scannedSymbols} scanned
+          {scannedCoverageSymbols}/{totalCoverageSymbols || scannedCoverageSymbols} cycle
         </span>
         <div
           style={{
@@ -5449,6 +5539,7 @@ const FlowOverviewPanel = ({
         {unusualScannerLauncher}
         {flowScannerPanelVisible ? (
           <UnusualScannerSection
+            formatFlowAppTime={formatFlowAppTime}
             onJumpToTrade={onJumpToTrade}
             session={session}
             symbols={symbols}
@@ -5461,11 +5552,20 @@ const FlowOverviewPanel = ({
 };
 
 const UnusualScannerSection = ({
+  formatFlowAppTime: formatFlowAppTimeProp,
   onJumpToTrade,
   session,
   symbols = [],
   scannerConfig = DEFAULT_FLOW_SCANNER_CONFIG,
 }) => {
+  const { preferences: scannerUserPreferences } = useUserPreferences();
+  const formatScannerAppTime = useCallback(
+    (value) =>
+      typeof formatFlowAppTimeProp === "function"
+        ? formatFlowAppTimeProp(value)
+        : formatAppTimeForPreferences(value, scannerUserPreferences),
+    [formatFlowAppTimeProp, scannerUserPreferences],
+  );
   const [sortBy, setSortBy] = useState(
     () =>
       _initialState.flowUnusualSortBy || _initialState.unusualSortBy || "ratio",
@@ -5514,6 +5614,7 @@ const UnusualScannerSection = ({
   const coverage = providerSummary.coverage || {
     totalSymbols: totalWatchlistSymbols,
     scannedSymbols: 0,
+    cycleScannedSymbols: 0,
     batchSize: scannerConfig.batchSize,
     currentBatch: [],
     cycle: 0,
@@ -5522,9 +5623,18 @@ const UnusualScannerSection = ({
     isRotating: totalWatchlistSymbols > scannerConfig.batchSize,
   };
   const totalCoverageSymbols =
-    coverage.targetSize || coverage.totalSymbols || totalWatchlistSymbols || 0;
+    coverage.activeTargetSize ||
+    coverage.totalSymbols ||
+    totalWatchlistSymbols ||
+    0;
+  const intendedCoverageSymbols =
+    coverage.targetSize || totalCoverageSymbols;
+  const selectedCoverageSymbols =
+    coverage.selectedSymbols || totalCoverageSymbols;
+  const scannedCoverageSymbols =
+    coverage.cycleScannedSymbols ?? coverage.scannedSymbols ?? 0;
   const coverageModeLabel =
-    coverage.mode === "market"
+    coverage.mode === "market" || coverage.mode === "hybrid"
       ? "market-wide"
       : "watchlist";
   const oldestScanAt = useMemo(() => {
@@ -5660,11 +5770,16 @@ const UnusualScannerSection = ({
           {flowDisplayLabel}
         </span>
         <span style={{ marginLeft: sp(8) }}>
-          Coverage{" "}
+          Cycle{" "}
           <span style={{ color: T.text, fontWeight: 700 }}>
-            {coverage.scannedSymbols}/{totalCoverageSymbols || coverage.scannedSymbols}
+            {scannedCoverageSymbols}/{totalCoverageSymbols || scannedCoverageSymbols}
           </span>{" "}
           {coverageModeLabel} symbols
+          {intendedCoverageSymbols > selectedCoverageSymbols ? (
+            <span style={{ marginLeft: sp(6), color: T.textMuted }}>
+              · selected {selectedCoverageSymbols}/{intendedCoverageSymbols}
+            </span>
+          ) : null}
           {coverage.isRotating ? (
             <span style={{ marginLeft: sp(6), color: T.textMuted }}>
               · rotating {coverage.batchSize}/cycle
@@ -5678,7 +5793,7 @@ const UnusualScannerSection = ({
               style={{ marginLeft: sp(6), color: T.textMuted }}
               title={
                 oldestScanAt
-                  ? `Oldest scan: ${formatFlowAppTime(oldestScanAt)} · Newest scan: ${formatFlowAppTime(newestScanAt)}`
+                  ? `Oldest scan: ${formatScannerAppTime(oldestScanAt)} · Newest scan: ${formatScannerAppTime(newestScanAt)}`
                   : undefined
               }
             >
@@ -5798,7 +5913,7 @@ const UnusualScannerSection = ({
               Symbol Coverage
             </span>
             <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>
-              {coverage.scannedSymbols}/{totalCoverageSymbols || watchlistSymbols.length} scanned
+              {scannedCoverageSymbols}/{totalCoverageSymbols || watchlistSymbols.length} cycle
               {coverage.cycle ? ` · cycle ${coverage.cycle}` : ""}
             </span>
           </div>
@@ -5830,7 +5945,7 @@ const UnusualScannerSection = ({
                 ? formatRelativeTimeShort(new Date(scannedAt).toISOString())
                 : "pending";
               const tooltip = scannedAt
-                ? `${symbol} · last scanned ${formatFlowAppTime(scannedAt)}`
+                ? `${symbol} · last scanned ${formatScannerAppTime(scannedAt)}`
                 : `${symbol} · not yet scanned`;
               return (
                 <span

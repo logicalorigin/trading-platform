@@ -123,3 +123,23 @@ test("compareFlowEvents sorts flow mark and out-of-money percent", () => {
     [near, far],
   );
 });
+
+test("compareFlowEvents sorts spot price", () => {
+  const lowSpot = flowEvent({
+    ticker: "AAPL",
+    spot: 185,
+    occurredAt: "2026-04-29T14:00:00.000Z",
+  });
+  const highSpot = flowEvent({
+    ticker: "SPY",
+    spot: 515,
+    occurredAt: "2026-04-29T14:10:00.000Z",
+  });
+
+  assert.deepEqual(
+    [lowSpot, highSpot].sort((left, right) =>
+      compareFlowEvents(left, right, "spot", "desc"),
+    ),
+    [highSpot, lowSpot],
+  );
+});

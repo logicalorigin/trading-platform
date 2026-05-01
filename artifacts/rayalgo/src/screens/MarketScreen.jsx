@@ -25,9 +25,6 @@ import {
   MultiChartGrid,
   RATES_PROXIES,
   SECTORS,
-  SectorTreemap,
-  TREEMAP_DATA,
-  TreemapHeatmap,
   _initialState,
   buildRatesProxySummary,
   buildTrackedBreadthSummary,
@@ -36,7 +33,6 @@ import {
   fmtM,
   formatCalendarMeta,
   formatIsoDate,
-  formatQuotePrice,
   formatRelativeTimeShort,
   formatSignedPercent,
   isFiniteNumber,
@@ -49,12 +45,12 @@ import {
   T,
   dim,
   fs,
+  getCurrentTheme,
   sp,
 } from "../lib/uiTokens";
 import {
   joinMotionClasses,
   motionRowStyle,
-  motionVars,
 } from "../lib/motion";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 
@@ -118,6 +114,107 @@ class MarketPanelErrorBoundary extends Component {
     );
   }
 }
+
+const TRADINGVIEW_HEATMAP_SCRIPT =
+  "https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js";
+
+const TradingViewStockHeatmapWidget = memo(function TradingViewStockHeatmapWidget() {
+  const containerRef = useRef(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const colorTheme = getCurrentTheme() === "light" ? "light" : "dark";
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    setLoadFailed(false);
+    container.innerHTML = "";
+
+    const widgetMount = document.createElement("div");
+    widgetMount.className = "tradingview-widget-container__widget";
+    widgetMount.style.height = "calc(100% - 16px)";
+    widgetMount.style.width = "100%";
+
+    const copyright = document.createElement("div");
+    copyright.className = "tradingview-widget-copyright";
+    copyright.style.cssText = [
+      `color: ${T.textDim}`,
+      `font: 700 ${fs(8)}px ${T.mono}`,
+      "height: 16px",
+      "line-height: 16px",
+      "padding: 0 8px",
+      "text-transform: uppercase",
+    ].join(";");
+    copyright.innerHTML =
+      '<a href="https://www.tradingview.com/heatmap/stock/" rel="noopener nofollow" target="_blank" style="color: inherit; text-decoration: none;">Stock Heatmap</a> by TradingView';
+
+    const script = document.createElement("script");
+    script.src = TRADINGVIEW_HEATMAP_SCRIPT;
+    script.type = "text/javascript";
+    script.async = true;
+    script.onerror = () => setLoadFailed(true);
+    script.innerHTML = JSON.stringify({
+      exchanges: [],
+      dataSource: "SPX500",
+      grouping: "sector",
+      blockSize: "market_cap_basic",
+      blockColor: "change",
+      locale: "en",
+      symbolUrl: "",
+      colorTheme,
+      hasTopBar: false,
+      isDataSetEnabled: false,
+      isZoomEnabled: true,
+      hasSymbolTooltip: true,
+      width: "100%",
+      height: "100%",
+    });
+
+    container.appendChild(widgetMount);
+    container.appendChild(copyright);
+    container.appendChild(script);
+
+    return () => {
+      container.innerHTML = "";
+    };
+  }, [colorTheme]);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        height: dim(236),
+        minHeight: dim(220),
+        background: T.bg0,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        ref={containerRef}
+        className="tradingview-widget-container"
+        style={{ height: "100%", width: "100%" }}
+      />
+      {loadFailed && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: sp(16),
+            background: T.bg1,
+          }}
+        >
+          <DataUnavailableState
+            title="TradingView heatmap unavailable"
+            detail="The external heatmap widget could not be loaded from TradingView."
+          />
+        </div>
+      )}
+    </div>
+  );
+});
 
 const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer({
   isVisible,
@@ -187,7 +284,6 @@ export const MarketScreen = ({
 }) => {
   const marketWorkspaceRef = useRef(null);
   const [marketWorkspaceWidth, setMarketWorkspaceWidth] = useState(0);
-  const [sectorTf, setSectorTf] = useState(_initialState.marketSectorTf || "1d");
   const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
     Number.isFinite(_initialState.marketActivityPanelWidth)
       ? clampNumber(_initialState.marketActivityPanelWidth, 320, 720)
@@ -199,9 +295,6 @@ export const MarketScreen = ({
       ? clampNumber(stored, 0.1, 100)
       : 1;
   });
-  useEffect(() => {
-    persistState({ marketSectorTf: sectorTf });
-  }, [sectorTf]);
   useEffect(() => {
     persistState({ marketActivityPanelWidth: activityPanelWidth });
   }, [activityPanelWidth]);
@@ -356,19 +449,14 @@ export const MarketScreen = ({
   const volatilityProxy =
     MACRO_TICKERS.find((item) => item.sym === "VIXY") || MACRO_TICKERS[0];
   const putCallBullish = isFiniteNumber(putCall.total) ? putCall.total <= 1 : null;
-  const putCallMarkerPct = isFiniteNumber(putCall.total)
-    ? Math.max(8, Math.min(92, (putCall.total / 2) * 100))
-    : 50;
   const upPct = isFiniteNumber(breadth.advancePct) ? breadth.advancePct : 0;
   const downPct = breadth.total ? 100 - upPct : 0;
-  const analysisLeader = breadth.leader;
-  const analysisLaggard = breadth.laggard;
   const stackActivityPanel =
     marketWorkspaceWidth > 0 &&
     marketWorkspaceWidth < activityPanelWidth + dim(760) + dim(24);
   const highlightedUnusualFlow = useMemo(
     () =>
-      flowEvents
+      (Array.isArray(flowEvents) ? flowEvents : [])
         .filter((event) => {
           if (!event.isUnusual) {
             return false;
@@ -456,6 +544,75 @@ export const MarketScreen = ({
           ? "loading"
       : "empty"
     : "research off";
+  const marketModuleGridTemplate =
+    marketWorkspaceWidth > 0 && marketWorkspaceWidth < dim(1060)
+      ? "minmax(0, 1fr)"
+      : "minmax(0, 1.35fr) minmax(300px, 0.8fr)";
+  const marketDetailGridTemplate =
+    marketWorkspaceWidth > 0 && marketWorkspaceWidth < dim(1180)
+      ? "repeat(2, minmax(0, 1fr))"
+      : "repeat(4, minmax(0, 1fr))";
+  const marketMovers = (() => {
+    const rows = [
+      ...SECTORS.map((item) => ({ ...item, group: "Sector ETF" })),
+      ...MACRO_TICKERS.map((item) => ({ ...item, group: item.label || "Macro" })),
+      ...RATES_PROXIES.map((item) => ({ ...item, group: item.label || "Rates" })),
+    ]
+      .map((item) => ({
+        sym: item.sym,
+        group: item.group || item.name || item.label || "Market",
+        change: item.pct ?? item.chg,
+      }))
+      .filter((item) => isFiniteNumber(item.change));
+
+    return {
+      leaders: [...rows].sort((left, right) => right.change - left.change).slice(0, 5),
+      laggards: [...rows].sort((left, right) => left.change - right.change).slice(0, 5),
+    };
+  })();
+  const strongestSectorFlow = sectorFlow.length
+    ? [...sectorFlow]
+        .map((sector) => ({ ...sector, net: sector.calls - sector.puts }))
+        .sort((left, right) => Math.abs(right.net) - Math.abs(left.net))[0]
+    : null;
+  const marketPulseItems = [
+    {
+      label: "Breadth",
+      value: breadth.total ? `${breadth.advancers}/${breadth.total}` : MISSING_VALUE,
+      sub: isFiniteNumber(breadth.advancePct)
+        ? `${breadth.advancePct.toFixed(0)}% advancing`
+        : "quotes pending",
+      tone: isFiniteNumber(breadth.advancePct)
+        ? breadth.advancePct >= 55
+          ? T.green
+          : breadth.advancePct <= 45
+            ? T.red
+            : T.amber
+        : T.textDim,
+    },
+    {
+      label: "Put / Call",
+      value: isFiniteNumber(putCall.total) ? putCall.total.toFixed(2) : MISSING_VALUE,
+      sub: putCallBullish == null ? "neutral unavailable" : putCallBullish ? "call skew" : "put skew",
+      tone: putCallBullish == null ? T.textDim : putCallBullish ? T.green : T.red,
+    },
+    {
+      label: "Vol proxy",
+      value: volatilityProxy?.sym || MISSING_VALUE,
+      sub: formatSignedPercent(volatilityProxy?.pct),
+      tone: !isFiniteNumber(volatilityProxy?.pct)
+        ? T.textDim
+        : volatilityProxy.pct <= 0
+          ? T.green
+          : T.amber,
+    },
+    {
+      label: "Sector flow",
+      value: strongestSectorFlow?.sector || MISSING_VALUE,
+      sub: strongestSectorFlow ? `${strongestSectorFlow.net >= 0 ? "+" : "-"}${fmtM(Math.abs(strongestSectorFlow.net))}` : "flow pending",
+      tone: !strongestSectorFlow ? T.textDim : strongestSectorFlow.net >= 0 ? T.green : T.red,
+    },
+  ];
 
   if (!isVisible) {
     return (
@@ -543,7 +700,9 @@ export const MarketScreen = ({
             style={{
               minWidth: 0,
               minHeight: 0,
-              height: stackActivityPanel ? dim(360) : "100%",
+              height: stackActivityPanel ? dim(360) : "min(100%, calc(100vh - 122px))",
+              position: stackActivityPanel ? "relative" : "sticky",
+              top: stackActivityPanel ? undefined : sp(8),
             }}
           >
             <MarketPanelErrorBoundary
@@ -569,197 +728,250 @@ export const MarketScreen = ({
           </div>
         </div>
 
-        {/* ── ROW 4: S&P 500 Equity Heatmap ── */}
-        <Card className="ra-panel-enter" noPad style={{ overflow: "visible", flexShrink: 0 }}>
-          <div
-            style={{
-              padding: sp("6px 10px"),
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              borderBottom: `1px solid ${T.border}`,
-            }}
-          >
-            <span
-              style={{
-                fontSize: fs(10),
-                fontWeight: 700,
-                fontFamily: T.display,
-                color: T.textSec,
-              }}
-            >
-              S&P 500 Heatmap
-            </span>
-            <div style={{ display: "flex", gap: 2 }}>
-              {["1d", "5d"].map((v) => (
-                <button
-                  key={v}
-                  className={joinMotionClasses(
-                    "ra-interactive",
-                    sectorTf === v && "ra-focus-rail",
-                  )}
-                  onClick={() => setSectorTf(v)}
-                  style={{
-                    ...motionVars({ accent: T.accent }),
-                    padding: sp("2px 7px"),
-                    fontSize: fs(8),
-                    fontFamily: T.mono,
-                    fontWeight: 600,
-                    background: sectorTf === v ? T.accentDim : "transparent",
-                    border: `1px solid ${sectorTf === v ? T.accent : "transparent"}`,
-                    borderRadius: 0,
-                    color: sectorTf === v ? T.accent : T.textDim,
-                    cursor: "pointer",
-                  }}
-                >
-                  {v.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-          <TreemapHeatmap
-            data={TREEMAP_DATA}
-            period={sectorTf}
-            onSymClick={onSymClick}
-          />
-        </Card>
-
-        {/* Sector ETF Heatmap */}
-        <SectorTreemap sectors={SECTORS} period={sectorTf} />
-
-        {/* ── ROW 4: P/C + Yield Curve + Breadth ── */}
+        {/* Market intelligence: TradingView heatmap, pulse, flow, leadership */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            gridTemplateColumns: marketModuleGridTemplate,
             gap: 6,
+            alignItems: "start",
           }}
         >
-          <Card className="ra-panel-enter" style={{ padding: "5px 10px" }}>
-            <CardTitle>Put / Call</CardTitle>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: sp(4),
-                marginBottom: 3,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(18),
-                  fontWeight: 800,
-                  fontFamily: T.mono,
-                  color: T.text,
-                }}
-              >
-                {isFiniteNumber(putCall.total)
-                  ? putCall.total.toFixed(2)
-                  : MISSING_VALUE}
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                  color:
-                    putCallBullish == null
-                      ? T.textDim
-                      : putCallBullish
-                        ? T.green
-                        : T.red,
-                }}
-              >
-                {isFiniteNumber(putCall.total)
-                  ? `${putCallBullish ? "▼" : "▲"} ${Math.abs(putCall.total - 1).toFixed(2)}`
-                  : MISSING_VALUE}
-              </span>
-              <span style={{ fontSize: fs(7), color: T.textMuted }}>
-                neutral 1.00
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                height: dim(6),
-                borderRadius: dim(3),
-                overflow: "hidden",
-                marginBottom: 4,
-              }}
-            >
-              <div
-                style={{
-                  flex: 1,
-                  background: `linear-gradient(to right, ${T.red}, ${T.amber})`,
-                }}
-              />
-              <div
-                style={{
-                  flex: 1,
-                  background: `linear-gradient(to right, ${T.amber}, ${T.green})`,
-                }}
-              />
-            </div>
-            <div
-              style={{ position: "relative", height: dim(5), marginTop: -3 }}
-            >
-              {isFiniteNumber(putCall.total) ? (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: `${putCallMarkerPct}%`,
-                    transform: "translateX(-50%)",
-                    borderLeft: "3px solid transparent",
-                    borderRight: "3px solid transparent",
-                    borderBottom: `4px solid ${T.text}`,
-                  }}
-                />
-              ) : null}
-            </div>
+          <Card className="ra-panel-enter" noPad data-testid="market-compact-heatmap">
             <div
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                marginTop: sp(3),
-                fontSize: fs(8),
-                fontFamily: T.mono,
+                alignItems: "center",
+                padding: sp("6px 10px"),
+                borderBottom: `1px solid ${T.border}`,
               }}
             >
-              <span style={{ color: T.textMuted }}>
-                Eq{" "}
-                <span style={{ color: T.textSec }}>
-                  {isFiniteNumber(putCall.equities)
-                    ? putCall.equities.toFixed(2)
-                    : MISSING_VALUE}
-                </span>
-              </span>
-              <span style={{ color: T.textMuted }}>
-                Idx{" "}
-                <span style={{ color: T.textSec }}>
-                  {isFiniteNumber(putCall.indices)
-                    ? putCall.indices.toFixed(2)
-                    : MISSING_VALUE}
-                </span>
-              </span>
-              <span style={{ color: T.textMuted }}>
-                Tot{" "}
-                <span style={{ color: T.textSec }}>
-                  {isFiniteNumber(putCall.total)
-                    ? putCall.total.toFixed(2)
-                    : MISSING_VALUE}
-                </span>
-              </span>
+              <CardTitle>Market Heat</CardTitle>
             </div>
-          </Card>
-          <Card style={{ padding: "5px 10px" }}>
-            <CardTitle>Rates Proxies</CardTitle>
+            <TradingViewStockHeatmapWidget />
             <div
               style={{
                 display: "flex",
-                flexDirection: "column",
-                gap: sp(3),
-                minHeight: 72,
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: sp(8),
+                padding: sp("5px 10px 7px"),
+                color: T.textDim,
+                fontFamily: T.mono,
+                fontSize: fs(8),
               }}
             >
+              <span>TradingView SPX500 heatmap</span>
+              <span>external widget</span>
+            </div>
+          </Card>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                minHeight: dim(18),
+                color: T.textDim,
+                fontFamily: T.mono,
+                fontSize: fs(8),
+                fontWeight: 800,
+                textTransform: "uppercase",
+              }}
+            >
+              <span>Market Pulse</span>
+              <span>breadth · skew · vol · flow</span>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: marketDetailGridTemplate,
+                gap: 6,
+              }}
+            >
+              {marketPulseItems.map((item) => (
+                <Card key={item.label} style={{ padding: "7px 9px", minHeight: dim(74) }}>
+                  <div
+                    style={{
+                      color: T.textDim,
+                      fontFamily: T.mono,
+                      fontSize: fs(8),
+                      fontWeight: 800,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {item.label}
+                  </div>
+                  <div
+                    style={{
+                      color: item.tone,
+                      fontFamily: T.mono,
+                      fontSize: fs(15),
+                      fontWeight: 900,
+                      marginTop: sp(4),
+                    }}
+                  >
+                    {item.value}
+                  </div>
+                  <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(2) }}>
+                    {item.sub}
+                  </div>
+                </Card>
+              ))}
+            </div>
+
+            <Card className="ra-panel-enter" style={{ padding: "8px 10px" }}>
+              <CardTitle
+                right={
+                  <span
+                    style={{
+                      color: flowStatus === "live" ? T.accent : T.textMuted,
+                      fontFamily: T.mono,
+                      fontSize: fs(8),
+                    }}
+                  >
+                    {flowStatus === "live" ? "option premium" : `flow ${flowStatus}`}
+                  </span>
+                }
+              >
+                Sector Flow
+              </CardTitle>
+              {sectorFlow.length ? (
+                (() => {
+                  const absMax = Math.max(
+                    1,
+                    ...sectorFlow.map((sector) => Math.abs(sector.calls - sector.puts)),
+                  );
+                  return (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(10) }}>
+                      {[...sectorFlow]
+                        .map((sector) => ({ ...sector, net: sector.calls - sector.puts }))
+                        .sort((left, right) => Math.abs(right.net) - Math.abs(left.net))
+                        .slice(0, 10)
+                        .map((sector, index) => {
+                          const widthPct = (Math.abs(sector.net) / absMax) * 50;
+                          return (
+                            <button
+                              key={sector.sector}
+                              type="button"
+                              onClick={() => {
+                                const match = SECTORS.find((item) =>
+                                  item.name?.toLowerCase?.().includes(sector.sector.toLowerCase()),
+                                );
+                                if (match?.sym) onSymClick?.(match.sym);
+                              }}
+                              className="ra-row-enter ra-interactive"
+                              style={{
+                                ...motionRowStyle(index, 10, 100),
+                                display: "grid",
+                                gridTemplateColumns: "82px minmax(0, 1fr) 56px",
+                                gap: sp(6),
+                                alignItems: "center",
+                                border: "none",
+                                background: "transparent",
+                                padding: sp("2px 0"),
+                                cursor: "pointer",
+                              }}
+                            >
+                              <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, textAlign: "left" }}>
+                                {sector.sector}
+                              </span>
+                              <span style={{ position: "relative", height: dim(8), background: T.bg3 }}>
+                                <span style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: dim(1), background: T.borderLight }} />
+                                <span
+                                  style={{
+                                    position: "absolute",
+                                    top: 0,
+                                    bottom: 0,
+                                    left: sector.net >= 0 ? "50%" : undefined,
+                                    right: sector.net < 0 ? "50%" : undefined,
+                                    width: `${widthPct}%`,
+                                    background: sector.net >= 0 ? T.green : T.red,
+                                  }}
+                                />
+                              </span>
+                              <span style={{ color: sector.net >= 0 ? T.green : T.red, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, textAlign: "right" }}>
+                                {sector.net >= 0 ? "+" : "-"}
+                                {fmtM(Math.abs(sector.net))}
+                              </span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  );
+                })()
+              ) : (
+                <DataUnavailableState
+                  title="No live sector flow"
+                  detail={
+                    flowStatus === "loading"
+                      ? "Waiting on live options flow snapshots for the tracked market symbols."
+                      : "Sector rotation is hidden until a live options flow provider returns current data."
+                  }
+                />
+              )}
+            </Card>
+
+            <Card className="ra-panel-enter" style={{ padding: "8px 10px" }}>
+              <CardTitle>Leadership / Weakness</CardTitle>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(10) }}>
+                {[
+                  ["Leaders", marketMovers.leaders, T.green],
+                  ["Laggards", marketMovers.laggards, T.red],
+                ].map(([label, rows, color]) => (
+                  <div key={label} style={{ minWidth: 0 }}>
+                    <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, marginBottom: sp(3) }}>
+                      {label.toUpperCase()}
+                    </div>
+                    {rows.map((row, index) => (
+                      <button
+                        key={`${label}_${row.sym}_${index}`}
+                        type="button"
+                        onClick={() => onSymClick?.(row.sym)}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "58px minmax(0, 1fr) 48px",
+                          gap: sp(5),
+                          width: "100%",
+                          border: "none",
+                          borderTop: index ? `1px solid ${T.border}55` : "none",
+                          background: "transparent",
+                          padding: sp("4px 0"),
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        <span style={{ color, fontFamily: T.mono, fontSize: fs(9), fontWeight: 900 }}>{row.sym}</span>
+                        <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {row.group}
+                        </span>
+                        <span style={{ color, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, textAlign: "right" }}>
+                          {formatSignedPercent(row.change)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              marketWorkspaceWidth > 0 && marketWorkspaceWidth < dim(1080)
+                ? "minmax(0, 1fr)"
+                : "minmax(0, 1.2fr) minmax(260px, 0.7fr) minmax(300px, 0.9fr)",
+            gap: 6,
+          }}
+        >
+          <Card style={{ padding: "7px 10px" }}>
+            <CardTitle>Rates Proxies</CardTitle>
+            <div style={{ display: "grid", gap: sp(4) }}>
               {RATES_PROXIES.map((item, index) => {
                 const pos = isFiniteNumber(item.pct) ? item.pct >= 0 : null;
                 const width = isFiniteNumber(item.pct)
@@ -770,30 +982,19 @@ export const MarketScreen = ({
                     key={item.sym}
                     className="ra-row-enter"
                     style={{
-                      ...motionRowStyle(index, 14, 90),
+                      ...motionRowStyle(index, 10, 90),
                       display: "grid",
-                      gridTemplateColumns: "46px 62px 1fr 40px",
+                      gridTemplateColumns: "46px 72px minmax(0, 1fr) 44px",
                       alignItems: "center",
-                      gap: sp(4),
-                      fontSize: fs(7),
+                      gap: sp(5),
+                      fontSize: fs(8),
                       fontFamily: T.mono,
                     }}
                   >
                     <span style={{ color: T.textDim }}>{item.term}</span>
-                    <MarketIdentityInline
-                      ticker={item.sym}
-                      size={12}
-                      showChips={false}
-                    />
-                    <div
-                      style={{
-                        height: dim(6),
-                        position: "relative",
-                        background: T.bg3,
-                        borderRadius: dim(3),
-                      }}
-                    >
-                      <div
+                    <MarketIdentityInline ticker={item.sym} size={12} showChips={false} />
+                    <span style={{ height: dim(6), position: "relative", background: T.bg3 }}>
+                      <span
                         className="ra-bar-fill"
                         style={{
                           position: "absolute",
@@ -801,320 +1002,90 @@ export const MarketScreen = ({
                           bottom: 0,
                           left: 0,
                           width: `${width}%`,
-                          borderRadius: dim(3),
-                          background:
-                            pos == null ? T.textMuted : pos ? T.green : T.red,
+                          background: pos == null ? T.textMuted : pos ? T.green : T.red,
                           opacity: 0.85,
                         }}
                       />
-                    </div>
-                    <span
-                      style={{
-                        color:
-                          pos == null ? T.textDim : pos ? T.green : T.red,
-                        textAlign: "right",
-                        fontWeight: 700,
-                      }}
-                    >
+                    </span>
+                    <span style={{ color: pos == null ? T.textDim : pos ? T.green : T.red, textAlign: "right", fontWeight: 800 }}>
                       {formatSignedPercent(item.pct)}
                     </span>
                   </div>
                 );
               })}
             </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: fs(7),
-                fontFamily: T.mono,
-              }}
-            >
-              <span style={{ color: T.textMuted }}>
-                Lead{" "}
-                <span style={{ color: T.textSec }}>
-                  {ratesSummary.leader?.sym || MISSING_VALUE}
-                </span>
-              </span>
-              <span style={{ color: T.textMuted }}>
-                Lag{" "}
-                <span style={{ color: T.textSec }}>
-                  {ratesSummary.laggard?.sym || MISSING_VALUE}
-                </span>
-              </span>
-            </div>
           </Card>
-          <Card style={{ padding: "5px 10px" }}>
+          <Card style={{ padding: "7px 10px" }}>
             <CardTitle>Breadth</CardTitle>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(4),
-                marginBottom: 3,
-              }}
-            >
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontFamily: T.mono,
-                  fontWeight: 800,
-                  color: T.green,
-                }}
-              >
+            <div style={{ display: "flex", alignItems: "center", gap: sp(6), marginBottom: sp(6) }}>
+              <span style={{ color: T.green, fontFamily: T.mono, fontSize: fs(12), fontWeight: 900 }}>
                 {breadth.total ? breadth.advancers : MISSING_VALUE}
               </span>
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  height: dim(7),
-                  borderRadius: dim(3),
-                  overflow: "hidden",
-                }}
-              >
-                <div style={{ width: `${upPct}%`, background: T.green }} />
-                <div style={{ width: `${downPct}%`, background: T.red }} />
-              </div>
-              <span
-                style={{
-                  fontSize: fs(10),
-                  fontFamily: T.mono,
-                  fontWeight: 800,
-                  color: T.red,
-                }}
-              >
+              <span style={{ flex: 1, display: "flex", height: dim(8), background: T.bg3, overflow: "hidden" }}>
+                <span style={{ width: `${upPct}%`, background: T.green }} />
+                <span style={{ width: `${downPct}%`, background: T.red }} />
+              </span>
+              <span style={{ color: T.red, fontFamily: T.mono, fontSize: fs(12), fontWeight: 900 }}>
                 {breadth.total ? breadth.decliners : MISSING_VALUE}
               </span>
             </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: sp(1),
-                fontSize: fs(7),
-                fontFamily: T.mono,
-              }}
-            >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(3), fontFamily: T.mono, fontSize: fs(8) }}>
               {[
-                [
-                  "Up",
-                  breadth.total ? `${upPct.toFixed(0)}%` : MISSING_VALUE,
-                  breadth.total ? T.green : T.textDim,
-                ],
-                [
-                  "5D+",
-                  isFiniteNumber(breadth.positive5dPct)
-                    ? `${breadth.positive5dPct.toFixed(0)}%`
-                    : MISSING_VALUE,
-                  isFiniteNumber(breadth.positive5dPct)
-                    ? breadth.positive5dPct >= 50
-                      ? T.green
-                      : T.amber
-                    : T.textDim,
-                ],
-                [
-                  "Unchg",
-                  breadth.total ? `${breadth.unchanged}` : MISSING_VALUE,
-                  breadth.total ? T.text : T.textDim,
-                ],
-                [
-                  "Sectors+",
-                  breadth.sectorCoverage
-                    ? `${breadth.positiveSectors}/${breadth.sectorCoverage}`
-                    : MISSING_VALUE,
-                  breadth.sectorCoverage
-                    ? breadth.positiveSectors >=
-                      Math.ceil(breadth.sectorCoverage / 2)
-                      ? T.green
-                      : T.amber
-                    : T.textDim,
-                ],
-                [
-                  "Lead",
-                  breadth.leader?.sym || MISSING_VALUE,
-                  isFiniteNumber(breadth.leader?.chg)
-                    ? breadth.leader.chg >= 0
-                      ? T.green
-                      : T.red
-                    : T.textDim,
-                ],
-                [
-                  "Lag",
-                  breadth.laggard?.sym || MISSING_VALUE,
-                  isFiniteNumber(breadth.laggard?.chg)
-                    ? breadth.laggard.chg >= 0
-                      ? T.green
-                      : T.red
-                    : T.textDim,
-                ],
-              ].map(([l, v, c], i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: sp("1px 3px"),
-                    background: i % 2 === 0 ? `${T.bg3}40` : "transparent",
-                    borderRadius: 2,
-                  }}
-                >
-                  <span style={{ color: T.textDim }}>{l}</span>
-                  <span style={{ color: c, fontWeight: 600 }}>{v}</span>
+                ["5D+", isFiniteNumber(breadth.positive5dPct) ? `${breadth.positive5dPct.toFixed(0)}%` : MISSING_VALUE],
+                ["Sectors+", breadth.sectorCoverage ? `${breadth.positiveSectors}/${breadth.sectorCoverage}` : MISSING_VALUE],
+                ["Lead", breadth.leader?.sym || MISSING_VALUE],
+                ["Lag", breadth.laggard?.sym || MISSING_VALUE],
+              ].map(([label, value]) => (
+                <div key={label} style={{ display: "flex", justifyContent: "space-between", background: `${T.bg3}55`, padding: sp("3px 5px") }}>
+                  <span style={{ color: T.textDim }}>{label}</span>
+                  <span style={{ color: T.textSec, fontWeight: 800 }}>{value}</span>
                 </div>
               ))}
             </div>
           </Card>
-        </div>
-
-        {/* ── ROW 4.5: Sector Flow (full width, horizontal layout) — sector rotation read ── */}
-        <Card className="ra-panel-enter" style={{ padding: "8px 12px", flexShrink: 0 }}>
-          <CardTitle
-            right={
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: flowStatus === "live" ? T.accent : T.textMuted,
-                  fontFamily: T.mono,
-                }}
-              >
-                {flowStatus === "live"
-                  ? "live option premium · today · sector rotation"
-                  : `flow ${flowStatus}`}
-              </span>
-            }
+          <Card
+            className="ra-panel-enter"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              padding: "7px 10px",
+            }}
           >
-            Sector Flow
-          </CardTitle>
-          {sectorFlow.length ? (
-            (() => {
-              const absMax = Math.max(
-                1,
-                ...sectorFlow.map((x) => Math.abs(x.calls - x.puts)),
-              );
-              // Sort by net flow magnitude — strongest signals first
-              const sorted = [...sectorFlow]
-                .map((s) => ({ ...s, net: s.calls - s.puts }))
-                .sort((a, b) => b.net - a.net);
-              const half = Math.ceil(sorted.length / 2);
-              const left = sorted.slice(0, half);
-              const right = sorted.slice(half);
-              const renderBar = (s, i) => {
-                const widthPct = (Math.abs(s.net) / absMax) * 50;
-                const netStr = (s.net >= 0 ? "+" : "-") + fmtM(Math.abs(s.net));
-                return (
-                  <div
-                    key={i}
-                    className="ra-row-enter"
-                    style={{
-                      ...motionRowStyle(i, 12, 100),
-                      display: "grid",
-                      gridTemplateColumns: "85px 1fr 56px",
-                      alignItems: "center",
-                      gap: sp(6),
-                      marginBottom: sp(3),
-                      fontSize: fs(10),
-                      fontFamily: T.mono,
-                    }}
-                  >
-                    <span style={{ color: T.textSec, fontWeight: 600 }}>
-                      {s.sector}
-                    </span>
-                    <div
-                      style={{
-                        position: "relative",
-                        height: dim(10),
-                        background: T.bg3,
-                        borderRadius: dim(2),
-                      }}
-                    >
-                      {/* Center divider */}
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          bottom: 0,
-                          left: "50%",
-                          width: dim(1),
-                          background: T.textMuted,
-                          opacity: 0.4,
-                        }}
-                      />
-                      {/* Direction bar */}
-                      {s.net >= 0 ? (
-                        <div
-                          className="ra-bar-fill"
-                          data-direction="right"
-                          style={{
-                            position: "absolute",
-                            left: "50%",
-                            top: 0,
-                            bottom: 0,
-                            width: `${widthPct}%`,
-                            background: T.green,
-                            opacity: 0.85,
-                            borderRadius: `0 ${dim(2)}px ${dim(2)}px 0`,
-                          }}
-                        />
-                      ) : (
-                        <div
-                          className="ra-bar-fill"
-                          data-direction="left"
-                          style={{
-                            position: "absolute",
-                            right: "50%",
-                            top: 0,
-                            bottom: 0,
-                            width: `${widthPct}%`,
-                            background: T.red,
-                            opacity: 0.85,
-                            borderRadius: `${dim(2)}px 0 0 ${dim(2)}px`,
-                          }}
-                        />
-                      )}
-                    </div>
-                    <span
-                      style={{
-                        color: s.net >= 0 ? T.green : T.red,
-                        fontWeight: 700,
-                        textAlign: "right",
-                      }}
-                    >
-                      {netStr}
-                    </span>
-                  </div>
-                );
-              };
-              return (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: sp(20),
-                  }}
-                >
-                  <div>{left.map(renderBar)}</div>
-                  <div>{right.map(renderBar)}</div>
-                </div>
-              );
-            })()
-          ) : (
-            <DataUnavailableState
-              title="No live sector flow"
-              detail={
-                flowStatus === "loading"
-                  ? "Waiting on live options flow snapshots for the tracked market symbols."
-                  : "Sector rotation is hidden until a live options flow provider returns current data."
-              }
-            />
-          )}
-        </Card>
+            <CardTitle right={<Badge color={T.purple}>REGIME</Badge>}>
+              Market Read
+            </CardTitle>
+            <div
+              style={{
+                flex: 1,
+                fontSize: fs(10),
+                fontFamily: T.sans,
+                color: T.textSec,
+                lineHeight: 1.45,
+                padding: sp("6px 8px"),
+                background: T.bg0,
+                border: `1px solid ${T.border}`,
+              }}
+            >
+              <span style={{ color: marketPulseItems[0].tone }}>▸</span>{" "}
+              Breadth is {breadth.total ? `${breadth.advancers}/${breadth.total}` : "unavailable"} with{" "}
+              {isFiniteNumber(breadth.positive5dPct) ? `${breadth.positive5dPct.toFixed(0)}%` : MISSING_VALUE} positive over five sessions.{"\n"}
+              <span style={{ color: marketPulseItems[1].tone }}>▸</span>{" "}
+              Put/call is {isFiniteNumber(putCall.total) ? putCall.total.toFixed(2) : MISSING_VALUE};{" "}
+              {putCallBullish == null ? "skew unavailable" : putCallBullish ? "risk appetite is firmer" : "protection demand is elevated"}.{"\n"}
+              <span style={{ color: marketPulseItems[2].tone }}>▸</span>{" "}
+              Vol/rates proxies: {volatilityProxy?.sym || MISSING_VALUE} {formatSignedPercent(volatilityProxy?.pct)}, rates led by {ratesSummary.leader?.sym || MISSING_VALUE}.
+            </div>
+          </Card>
+        </div>
 
         {/* ── ROW 5: News + Calendar + AI ── */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.4fr 0.7fr 1fr",
+            gridTemplateColumns:
+              marketWorkspaceWidth > 0 && marketWorkspaceWidth < dim(980)
+                ? "minmax(0, 1fr)"
+                : "minmax(0, 1.4fr) minmax(260px, 0.7fr)",
             gap: 6,
           }}
         >
@@ -1317,72 +1288,6 @@ export const MarketScreen = ({
                 }
               />
             )}
-          </Card>
-          <Card
-            className="ra-panel-enter"
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              padding: "6px 10px",
-            }}
-          >
-            <CardTitle right={<Badge color={T.purple}>AI</Badge>}>
-              Analysis
-            </CardTitle>
-            <div
-              style={{
-                flex: 1,
-                fontSize: fs(10),
-                fontFamily: T.sans,
-                color: T.textSec,
-                lineHeight: 1.5,
-                padding: sp("5px 8px"),
-                background: T.bg0,
-                borderRadius: 0,
-                border: `1px solid ${T.border}`,
-              }}
-            >
-              <span
-                style={{
-                  color: !isFiniteNumber(volatilityProxy?.pct)
-                    ? T.textDim
-                    : volatilityProxy.pct <= 0
-                      ? T.green
-                      : T.amber,
-                }}
-              >
-                ▸
-              </span>{" "}
-              {volatilityProxy?.label || "Volatility"} proxy{" "}
-              {isFiniteNumber(volatilityProxy?.pct)
-                ? volatilityProxy.pct >= 0
-                  ? "firming"
-                  : "easing"
-                : "is unavailable"}{" "}
-              at {formatQuotePrice(volatilityProxy?.price)}; flow is strongest
-              in {analysisLeader?.sym || MISSING_VALUE} and weakest in{" "}
-              {analysisLaggard?.sym || MISSING_VALUE}.{"\n\n"}
-              <span
-                style={{
-                  color: !isFiniteNumber(breadth.advancePct)
-                    ? T.textDim
-                    : breadth.advancePct >= 55
-                      ? T.green
-                      : T.amber,
-                }}
-              >
-                ▸
-              </span>{" "}
-              {breadth.total
-                ? `Tracked breadth is ${breadth.advancers}/${breadth.total} green with ${isFiniteNumber(breadth.positive5dPct) ? breadth.positive5dPct.toFixed(0) : MISSING_VALUE}% of names positive over 5 sessions.`
-                : "Tracked breadth is unavailable until broker quotes populate the equity heatmap universe."}
-              {"\n\n"}
-              <span style={{ color: T.accent }}>▸</span> Treasury proxies are
-              led by {ratesSummary.leader?.sym || MISSING_VALUE} and lagged by{" "}
-              {ratesSummary.laggard?.sym || MISSING_VALUE}; keep the tape read anchored to
-              live ETF proxies until direct index and futures entitlements are
-              enabled.
-            </div>
           </Card>
         </div>
       </div>

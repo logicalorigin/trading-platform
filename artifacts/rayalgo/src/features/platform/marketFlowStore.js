@@ -62,6 +62,7 @@ export const BROAD_MARKET_FLOW_STORE_KEY = "__broad_market_flow__";
 const storeEntries = new Map();
 const flowScannerControlListeners = new Set();
 let flowScannerControlVersion = 0;
+const DEFAULT_FLOW_SCANNER_ENABLED = true;
 
 const readPersistedFlowScannerConfig = () => {
   try {
@@ -95,7 +96,7 @@ const persistFlowScannerConfig = (config) => {
 };
 
 let flowScannerControlState = {
-  enabled: false,
+  enabled: DEFAULT_FLOW_SCANNER_ENABLED,
   ownerActive: false,
   config: readPersistedFlowScannerConfig(),
 };
@@ -252,7 +253,7 @@ export const resetMarketFlowStoreForTests = () => {
 
 export const resetFlowScannerControlForTests = () => {
   flowScannerControlState = {
-    enabled: false,
+    enabled: DEFAULT_FLOW_SCANNER_ENABLED,
     ownerActive: false,
     config: normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG),
   };

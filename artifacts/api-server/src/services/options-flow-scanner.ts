@@ -23,6 +23,7 @@ export type OptionsFlowScannerFetchResult<TEvent> = {
 export type OptionsFlowScannerRequest = {
   limit: number;
   unusualThreshold?: number;
+  lineBudget?: number;
 };
 
 export type OptionsFlowScannerSnapshot<TEvent> = {
@@ -49,6 +50,7 @@ export type OptionsFlowScannerOptions<TEvent> = {
     symbol: string;
     limit: number;
     unusualThreshold?: number;
+    lineBudget?: number;
   }) => Promise<OptionsFlowScannerFetchResult<TEvent>>;
   getTransport: () => Promise<OptionsFlowScannerTransportStatus | null>;
   normalizeSymbol?: (symbol: string) => string;
@@ -79,6 +81,7 @@ type StoredSnapshot<TEvent> = {
   status: string;
   error: string | null;
   requestedLimit: number;
+  requestedLineBudget: number | null;
 };
 
 type QueuedScan = {
@@ -106,6 +109,12 @@ function normalizeThreshold(value: number | undefined): number | undefined {
 
 function keyFor(symbol: string, unusualThreshold: number | undefined): string {
   return `${symbol}:${normalizeThreshold(unusualThreshold) ?? "default"}`;
+}
+
+function normalizeLineBudget(value: number | undefined): number | null {
+  return Number.isFinite(value) && (value ?? 0) > 0
+    ? Math.floor(value as number)
+    : null;
 }
 
 function uniqueSymbols(
@@ -201,6 +210,7 @@ export function createOptionsFlowScanner<TEvent>(
         symbol,
         limit: request.limit,
         unusualThreshold: normalizeThreshold(request.unusualThreshold),
+        lineBudget: normalizeLineBudget(request.lineBudget) ?? undefined,
       });
       const settledAt = now();
       storeSnapshot(symbol, request, result, transport, scanStartedAt, settledAt);
@@ -224,6 +234,7 @@ export function createOptionsFlowScanner<TEvent>(
         status: "error",
         error: message,
         requestedLimit: request.limit,
+        requestedLineBudget: normalizeLineBudget(request.lineBudget),
       });
       options.onError?.(error, { symbol, phase: "fetch" });
       await options.onResult?.({ symbol, failed: true, error: message });
@@ -252,6 +263,7 @@ export function createOptionsFlowScanner<TEvent>(
       status: source?.status ?? (result.events.length ? "live" : "empty"),
       error: source?.errorMessage ?? null,
       requestedLimit: request.limit,
+      requestedLineBudget: normalizeLineBudget(request.lineBudget),
     });
   }
 
@@ -321,7 +333,7 @@ export function createOptionsFlowScanner<TEvent>(
     queued.clear();
     const grouped = new Map<string, QueuedScan[]>();
     for (const item of batch) {
-      const groupKey = `${item.request.limit}:${normalizeThreshold(item.request.unusualThreshold) ?? "default"}`;
+      const groupKey = `${item.request.limit}:${normalizeThreshold(item.request.unusualThreshold) ?? "default"}:${normalizeLineBudget(item.request.lineBudget) ?? "default"}`;
       const group = grouped.get(groupKey) ?? [];
       group.push(item);
       grouped.set(groupKey, group);
@@ -389,6 +401,14 @@ export function createOptionsFlowScanner<TEvent>(
     if (
       snapshot.requestedLimit < request.limit &&
       snapshot.events.length >= snapshot.requestedLimit
+    ) {
+      return null;
+    }
+    const requestedLineBudget = normalizeLineBudget(request.lineBudget);
+    if (
+      requestedLineBudget !== null &&
+      snapshot.requestedLineBudget !== null &&
+      snapshot.requestedLineBudget < requestedLineBudget
     ) {
       return null;
     }

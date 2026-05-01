@@ -878,6 +878,16 @@ export class IbkrBridgeClient {
     return payload.quotes.map(hydrateQuote);
   }
 
+  async getOptionActivitySnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
+    const bridgeSymbols = normalizeBridgeStockSymbols(symbols);
+    const payload = await this.request<{
+      quotes: Array<
+        Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }
+      >;
+    }>("/quotes/option-activity", {}, { symbols: bridgeSymbols.join(",") });
+    return payload.quotes.map(hydrateQuote);
+  }
+
   async getOptionQuoteSnapshots(input: {
     underlying?: string | null;
     providerContractIds: string[];

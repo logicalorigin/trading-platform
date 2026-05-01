@@ -2098,11 +2098,25 @@ export const listFlowEventsResponseSourceIbkrQualifiedContractCountMin = 0;
 
 export const listFlowEventsResponseSourceScannerCoverageTargetSizeMin = 0;
 
+export const listFlowEventsResponseSourceScannerCoverageActiveTargetSizeMin = 0;
+
 export const listFlowEventsResponseSourceScannerCoverageSelectedSymbolsMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageSelectedShortfallMin = 0;
 
 export const listFlowEventsResponseSourceScannerCoverageCooldownCountMin = 0;
 
 export const listFlowEventsResponseSourceScannerCoverageScannedSymbolsMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageCycleScannedSymbolsMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageRadarSelectedSymbolsMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageRadarEstimatedCycleMsMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageRadarBatchSizeMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageRadarIntervalMsMin = 0;
 
 
 
@@ -2159,10 +2173,20 @@ export const ListFlowEventsResponse = zod.object({
   "ibkrHydratedExpirationCount": zod.number().min(listFlowEventsResponseSourceIbkrHydratedExpirationCountMin).optional(),
   "ibkrContractCount": zod.number().min(listFlowEventsResponseSourceIbkrContractCountMin).optional(),
   "ibkrQualifiedContractCount": zod.number().min(listFlowEventsResponseSourceIbkrQualifiedContractCountMin).optional(),
+  "ibkrCandidateExpirationCount": zod.number().min(0).optional(),
+  "ibkrMetadataContractCount": zod.number().min(0).optional(),
+  "ibkrLiveCandidateCount": zod.number().min(0).optional(),
+  "ibkrAcceptedQuoteCount": zod.number().min(0).optional(),
+  "ibkrRejectedQuoteCount": zod.number().min(0).optional(),
+  "ibkrReturnedQuoteCount": zod.number().min(0).optional(),
+  "ibkrMissingQuoteCount": zod.number().min(0).optional(),
+  "ibkrFilteredEventCount": zod.number().min(0).optional(),
   "scannerCoverage": zod.object({
   "mode": zod.enum(['watchlist', 'market', 'hybrid']).optional(),
   "targetSize": zod.number().min(listFlowEventsResponseSourceScannerCoverageTargetSizeMin).optional(),
+  "activeTargetSize": zod.number().min(listFlowEventsResponseSourceScannerCoverageActiveTargetSizeMin).optional(),
   "selectedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageSelectedSymbolsMin).optional(),
+  "selectedShortfall": zod.number().min(listFlowEventsResponseSourceScannerCoverageSelectedShortfallMin).optional(),
   "rankedAt": zod.coerce.date().nullish(),
   "lastRefreshAt": zod.coerce.date().nullish(),
   "lastGoodAt": zod.coerce.date().nullish(),
@@ -2170,9 +2194,15 @@ export const ListFlowEventsResponse = zod.object({
   "fallbackUsed": zod.boolean().optional(),
   "cooldownCount": zod.number().min(listFlowEventsResponseSourceScannerCoverageCooldownCountMin).optional(),
   "scannedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageScannedSymbolsMin).optional(),
+  "cycleScannedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageCycleScannedSymbolsMin).optional(),
   "currentBatch": zod.array(zod.string()).optional(),
   "lastScanAt": zod.coerce.date().nullish(),
-  "degradedReason": zod.string().nullish()
+  "degradedReason": zod.string().nullish(),
+  "radarSelectedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarSelectedSymbolsMin).optional(),
+  "radarEstimatedCycleMs": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarEstimatedCycleMsMin).nullish(),
+  "radarBatchSize": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarBatchSizeMin).optional(),
+  "radarIntervalMs": zod.number().min(listFlowEventsResponseSourceScannerCoverageRadarIntervalMsMin).optional(),
+  "promotedSymbols": zod.array(zod.string()).optional()
 }).optional()
 })
 })
@@ -2183,11 +2213,25 @@ export const ListFlowEventsResponse = zod.object({
  */
 export const getFlowUniverseResponseCoverageTargetSizeMin = 0;
 
+export const getFlowUniverseResponseCoverageActiveTargetSizeMin = 0;
+
 export const getFlowUniverseResponseCoverageSelectedSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageSelectedShortfallMin = 0;
 
 export const getFlowUniverseResponseCoverageCooldownCountMin = 0;
 
 export const getFlowUniverseResponseCoverageScannedSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageCycleScannedSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageRadarSelectedSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageRadarEstimatedCycleMsMin = 0;
+
+export const getFlowUniverseResponseCoverageRadarBatchSizeMin = 0;
+
+export const getFlowUniverseResponseCoverageRadarIntervalMsMin = 0;
 
 
 
@@ -2195,7 +2239,9 @@ export const GetFlowUniverseResponse = zod.object({
   "coverage": zod.object({
   "mode": zod.enum(['watchlist', 'market', 'hybrid']).optional(),
   "targetSize": zod.number().min(getFlowUniverseResponseCoverageTargetSizeMin).optional(),
+  "activeTargetSize": zod.number().min(getFlowUniverseResponseCoverageActiveTargetSizeMin).optional(),
   "selectedSymbols": zod.number().min(getFlowUniverseResponseCoverageSelectedSymbolsMin).optional(),
+  "selectedShortfall": zod.number().min(getFlowUniverseResponseCoverageSelectedShortfallMin).optional(),
   "rankedAt": zod.coerce.date().nullish(),
   "lastRefreshAt": zod.coerce.date().nullish(),
   "lastGoodAt": zod.coerce.date().nullish(),
@@ -2203,9 +2249,15 @@ export const GetFlowUniverseResponse = zod.object({
   "fallbackUsed": zod.boolean().optional(),
   "cooldownCount": zod.number().min(getFlowUniverseResponseCoverageCooldownCountMin).optional(),
   "scannedSymbols": zod.number().min(getFlowUniverseResponseCoverageScannedSymbolsMin).optional(),
+  "cycleScannedSymbols": zod.number().min(getFlowUniverseResponseCoverageCycleScannedSymbolsMin).optional(),
   "currentBatch": zod.array(zod.string()).optional(),
   "lastScanAt": zod.coerce.date().nullish(),
-  "degradedReason": zod.string().nullish()
+  "degradedReason": zod.string().nullish(),
+  "radarSelectedSymbols": zod.number().min(getFlowUniverseResponseCoverageRadarSelectedSymbolsMin).optional(),
+  "radarEstimatedCycleMs": zod.number().min(getFlowUniverseResponseCoverageRadarEstimatedCycleMsMin).nullish(),
+  "radarBatchSize": zod.number().min(getFlowUniverseResponseCoverageRadarBatchSizeMin).optional(),
+  "radarIntervalMs": zod.number().min(getFlowUniverseResponseCoverageRadarIntervalMsMin).optional(),
+  "promotedSymbols": zod.array(zod.string()).optional()
 }),
   "symbols": zod.array(zod.string()),
   "sources": zod.object({

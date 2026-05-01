@@ -71,6 +71,11 @@ type ResearchChartFrameProps = {
   drawings?: ResearchDrawing[];
   referenceLines?: ReferenceLine[];
   chartEvents?: ChartEvent[];
+  emptyState?: {
+    title?: string | null;
+    detail?: string | null;
+    eyebrow?: string | null;
+  } | null;
   drawMode?: "horizontal" | "vertical" | "box" | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
   onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
@@ -106,6 +111,7 @@ export const ResearchChartFrame = ({
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
   chartEvents = EMPTY_CHART_EVENTS,
+  emptyState = null,
   drawMode = null,
   onAddDrawing,
   onTradeMarkerSelection,
@@ -153,6 +159,7 @@ export const ResearchChartFrame = ({
         drawings={drawings}
         referenceLines={referenceLines}
         chartEvents={chartEvents}
+        emptyState={emptyState}
         drawMode={drawMode}
         onAddDrawing={onAddDrawing}
         onTradeMarkerSelection={onTradeMarkerSelection}

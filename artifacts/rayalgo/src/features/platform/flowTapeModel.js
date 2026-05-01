@@ -11,6 +11,7 @@ export const FLOW_SORT_DEFAULT_DIRECTIONS = Object.freeze({
   right: "asc",
   score: "desc",
   size: "desc",
+  spot: "desc",
   strike: "asc",
   ticker: "asc",
   time: "desc",

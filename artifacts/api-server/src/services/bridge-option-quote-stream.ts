@@ -153,6 +153,10 @@ function chunkValues<T>(values: T[], chunkSize: number): T[][] {
   return chunks;
 }
 
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
 function readTimestampMs(value: unknown): number | null {
   if (value instanceof Date) {
     const timestamp = value.getTime();
@@ -665,6 +669,29 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
         )
       ).flat();
       freshQuotes.forEach(cacheQuote);
+      const missingAfterHydration = hydrateProviderContractIds.filter(
+        (providerContractId) =>
+          !quoteCacheByProviderContractId.has(providerContractId),
+      );
+      if (missingAfterHydration.length > 0) {
+        await delayMs(750);
+        const retryQuotes = (
+          await Promise.all(
+            chunkValues(
+              missingAfterHydration,
+              OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
+            ).map((providerContractIds) =>
+              runBridgeWork("options", () =>
+                bridgeClient.getOptionQuoteSnapshots({
+                  underlying,
+                  providerContractIds,
+                }),
+              ),
+            ),
+          )
+        ).flat();
+        retryQuotes.forEach(cacheQuote);
+      }
     }
   } catch (error) {
     lastError = readErrorMessage(error);
@@ -712,6 +739,10 @@ export function subscribeBridgeOptionQuoteSnapshots(
   input: {
     underlying?: string | null;
     providerContractIds: string[];
+    owner?: string;
+    intent?: MarketDataIntent;
+    fallbackProvider?: MarketDataFallbackProvider;
+    requiresGreeks?: boolean;
   },
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
 ): () => void {
@@ -725,18 +756,19 @@ export function subscribeBridgeOptionQuoteSnapshots(
   const underlying = normalizeUnderlying(input.underlying);
   const subscriberId = nextSubscriberId;
   nextSubscriberId += 1;
-  const owner = `bridge-option-quote-stream:${subscriberId}`;
+  const owner =
+    input.owner?.trim() || `bridge-option-quote-stream:${subscriberId}`;
   const admission = admitMarketDataLeases({
     owner,
-    intent: "visible-live",
+    intent: input.intent ?? "visible-live",
     requests: normalizedProviderContractIds.map((providerContractId) => ({
       assetClass: "option" as const,
       symbol: underlying,
       underlying,
       providerContractId,
-      requiresGreeks: true,
+      requiresGreeks: input.requiresGreeks ?? true,
     })),
-    fallbackProvider: "polygon",
+    fallbackProvider: input.fallbackProvider ?? "polygon",
   });
   const admittedProviderContractIds = admission.admitted
     .map((lease) => lease.providerContractId)

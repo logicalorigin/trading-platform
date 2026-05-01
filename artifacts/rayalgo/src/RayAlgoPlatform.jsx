@@ -29,7 +29,6 @@ import {
   ReferenceLine,
   ComposedChart,
 } from "recharts";
-import * as d3 from "d3";
 import {
   Activity,
   AlertTriangle,
@@ -1620,20 +1619,6 @@ const syncRuntimeMarketData = (
     item.d5 = d5 ?? null;
   });
 
-  TREEMAP_DATA.forEach((sector) => {
-    sector.stocks.forEach((stock) => {
-      const normalized = stock.sym.toUpperCase();
-      const quote = quoteBySymbol[normalized];
-      const currentPrice =
-        quote?.price ?? TRADE_TICKER_INFO[normalized]?.price ?? null;
-      const baseline = performanceBaselineBySymbol[normalized] ?? null;
-      const d5 = computeTrailingReturnPercent(currentPrice, baseline);
-
-      stock.d1 = quote?.changePercent ?? null;
-      stock.d5 = d5 ?? null;
-    });
-  });
-
   if (changedSymbols.size > 0) {
     notifyRuntimeTickerSnapshotSymbols(Array.from(changedSymbols));
   }
@@ -1667,15 +1652,25 @@ const getRuntimeTickerSnapshot = (symbol, fallback = null) => {
 };
 
 export const buildTrackedBreadthSummary = () => {
-  const stocks = TREEMAP_DATA.flatMap((sector) => sector.stocks);
-  const observedDaily = stocks.filter((stock) => isFiniteNumber(stock.d1));
-  const observedFiveDay = stocks.filter((stock) => isFiniteNumber(stock.d5));
+  const trackedSymbols = new Set();
+  const trackedRows = [...WATCHLIST, ...INDICES, ...MACRO_TICKERS, ...SECTORS]
+    .filter((item) => {
+      const symbol = item?.sym?.toUpperCase();
+      if (!symbol || trackedSymbols.has(symbol)) return false;
+      trackedSymbols.add(symbol);
+      return true;
+    });
+  const observedDaily = trackedRows.filter((item) => isFiniteNumber(item.pct ?? item.chg));
+  const observedFiveDay = [...SECTORS, ...RATES_PROXIES].filter((item) =>
+    isFiniteNumber(item.d5),
+  );
   const observedSectors = SECTORS.filter((sector) => isFiniteNumber(sector.chg));
   const total = observedDaily.length;
-  const advancers = observedDaily.filter((stock) => stock.d1 > 0).length;
-  const decliners = observedDaily.filter((stock) => stock.d1 < 0).length;
-  const unchanged = observedDaily.filter((stock) => stock.d1 === 0).length;
-  const positive5d = observedFiveDay.filter((stock) => stock.d5 > 0).length;
+  const getDailyChange = (item) => item.pct ?? item.chg;
+  const advancers = observedDaily.filter((item) => getDailyChange(item) > 0).length;
+  const decliners = observedDaily.filter((item) => getDailyChange(item) < 0).length;
+  const unchanged = observedDaily.filter((item) => getDailyChange(item) === 0).length;
+  const positive5d = observedFiveDay.filter((item) => item.d5 > 0).length;
   const positiveSectors = observedSectors.filter((sector) => sector.chg > 0).length;
   const sortedSectors = [...observedSectors].sort(
     (left, right) => right.chg - left.chg,
@@ -1842,7 +1837,7 @@ export const buildOptionChainRowsFromApi = (contracts, spotPrice) => {
   return rows.map((row) => ({ ...row, isAtm: row.k === atmStrike }));
 };
 
-const buildMarketOrderFlowFromEvents = (events) => {
+export const buildMarketOrderFlowFromEvents = (events) => {
   const totals = {
     buyXL: 0,
     buyL: 0,
@@ -1916,7 +1911,7 @@ export const buildFlowTideFromEvents = (events) => {
   });
 };
 
-const buildTickerFlowFromEvents = (events) => {
+export const buildTickerFlowFromEvents = (events) => {
   const grouped = new Map();
 
   (events || []).forEach((evt) => {
@@ -1953,7 +1948,7 @@ const buildTickerFlowFromEvents = (events) => {
     .sort((left, right) => right.calls + right.puts - (left.calls + left.puts));
 };
 
-const buildFlowClockFromEvents = (events) => {
+export const buildFlowClockFromEvents = (events) => {
   const startMinutes = 9 * 60 + 30;
   const bucketMinutes = 30;
   const bucketCount = 14;
@@ -1993,7 +1988,7 @@ const FLOW_SECTOR_BY_SYMBOL = {
   IWM: "Index",
 };
 
-const buildSectorFlowFromEvents = (events) => {
+export const buildSectorFlowFromEvents = (events) => {
   const grouped = new Map();
 
   (events || []).forEach((evt) => {
@@ -2010,7 +2005,7 @@ const buildSectorFlowFromEvents = (events) => {
   );
 };
 
-const buildDteBucketsFromEvents = (events) => {
+export const buildDteBucketsFromEvents = (events) => {
   const buckets = [
     { bucket: "0DTE", calls: 0, puts: 0, count: 0, match: (dte) => dte <= 0 },
     {
@@ -2051,7 +2046,7 @@ const buildDteBucketsFromEvents = (events) => {
 
 const FLOW_INDEX_SYMBOLS = new Set(["SPY", "QQQ", "IWM", "DIA"]);
 
-const buildPutCallSummaryFromEvents = (events) => {
+export const buildPutCallSummaryFromEvents = (events) => {
   const totals = {
     equities: { calls: 0, puts: 0 },
     indices: { calls: 0, puts: 0 },
@@ -3789,12 +3784,26 @@ export const useLiveMarketFlow = (
       ? Math.max(...scannedAtValues)
       : null;
     const coverageSource = scannerCoverage || marketUniverseCoverage;
+    const selectedCoverageSymbols =
+      coverageSource?.selectedSymbols || liveSymbols.length;
+    const activeCoverageTarget =
+      coverageSource?.activeTargetSize ||
+      selectedCoverageSymbols ||
+      coverageSource?.targetSize ||
+      liveSymbols.length;
+    const intendedCoverageTarget =
+      coverageSource?.targetSize || activeCoverageTarget;
+    const cycleScannedSymbols =
+      coverageSource?.cycleScannedSymbols ??
+      coverageSource?.scannedSymbols ??
+      0;
     const coverage = {
-      totalSymbols: coverageSource?.targetSize || liveSymbols.length,
+      totalSymbols: activeCoverageTarget,
       scannedSymbols: Math.max(
         scannedSymbols.length,
-        coverageSource?.scannedSymbols || 0,
+        cycleScannedSymbols,
       ),
+      cycleScannedSymbols: Math.max(scannedSymbols.length, cycleScannedSymbols),
       batchSize: effectiveBatchSize,
       currentBatch: coverageSource?.currentBatch?.length
         ? coverageSource.currentBatch
@@ -3802,16 +3811,23 @@ export const useLiveMarketFlow = (
       cycle: scanState.cycle,
       isFetching: scanState.isFetching,
       lastScannedAt,
-      isRotating:
-        (coverageSource?.selectedSymbols || liveSymbols.length) >
-        effectiveBatchSize,
+      isRotating: activeCoverageTarget > effectiveBatchSize,
       mode: coverageSource?.mode || effectiveScannerConfig.mode,
-      selectedSymbols: coverageSource?.selectedSymbols || liveSymbols.length,
-      targetSize: coverageSource?.targetSize || liveSymbols.length,
+      selectedSymbols: selectedCoverageSymbols,
+      activeTargetSize: activeCoverageTarget,
+      targetSize: intendedCoverageTarget,
+      selectedShortfall:
+        coverageSource?.selectedShortfall ??
+        Math.max(0, intendedCoverageTarget - selectedCoverageSymbols),
       cooldownCount: coverageSource?.cooldownCount || 0,
       stale: Boolean(coverageSource?.stale),
       fallbackUsed: Boolean(coverageSource?.fallbackUsed),
       degradedReason: coverageSource?.degradedReason || null,
+      radarSelectedSymbols: coverageSource?.radarSelectedSymbols || null,
+      radarEstimatedCycleMs: coverageSource?.radarEstimatedCycleMs || null,
+      radarBatchSize: coverageSource?.radarBatchSize || null,
+      radarIntervalMs: coverageSource?.radarIntervalMs || null,
+      promotedSymbols: coverageSource?.promotedSymbols || [],
       rankedAt: coverageSource?.rankedAt || null,
       lastRefreshAt: coverageSource?.lastRefreshAt || null,
       lastGoodAt: coverageSource?.lastGoodAt || null,
@@ -4635,7 +4651,7 @@ const HeaderBroadcastScrollerStack = memo(({
       : broadScanSnapshotActive
         ? "Flow scan active"
         : broadScanEnabled
-          ? "Open Flow page to run scan"
+          ? "Flow scan waiting for app visibility"
         : "Start Flow scan";
   const signalScanTone = signalHasError
     ? T.red
@@ -7628,110 +7644,12 @@ export const SECTORS = [
   { name: "Real Estate", sym: "XLRE", chg: null, d5: null },
 ];
 
-// Finviz-style treemap data: sector → stocks with market cap (billions) and performance
-export const TREEMAP_DATA = [
-  {
-    sector: "TECHNOLOGY",
-    stocks: [
-      { sym: "MSFT", cap: 3100, d1: null, d5: null },
-      { sym: "AAPL", cap: 2900, d1: null, d5: null },
-      { sym: "NVDA", cap: 2800, d1: null, d5: null },
-      { sym: "AVGO", cap: 680, d1: null, d5: null },
-      { sym: "ORCL", cap: 420, d1: null, d5: null },
-      { sym: "CRM", cap: 310, d1: null, d5: null },
-      { sym: "AMD", cap: 260, d1: null, d5: null },
-      { sym: "QCOM", cap: 210, d1: null, d5: null },
-      { sym: "INTC", cap: 120, d1: null, d5: null },
-      { sym: "IBM", cap: 195, d1: null, d5: null },
-    ],
-  },
-  {
-    sector: "COMM SVCS",
-    stocks: [
-      { sym: "GOOGL", cap: 2100, d1: null, d5: null },
-      { sym: "META", cap: 1500, d1: null, d5: null },
-      { sym: "NFLX", cap: 380, d1: null, d5: null },
-      { sym: "TMUS", cap: 280, d1: null, d5: null },
-      { sym: "DIS", cap: 200, d1: null, d5: null },
-      { sym: "VZ", cap: 175, d1: null, d5: null },
-    ],
-  },
-  {
-    sector: "CONS DISC",
-    stocks: [
-      { sym: "AMZN", cap: 2000, d1: null, d5: null },
-      { sym: "TSLA", cap: 800, d1: null, d5: null },
-      { sym: "HD", cap: 380, d1: null, d5: null },
-      { sym: "MCD", cap: 210, d1: null, d5: null },
-      { sym: "NKE", cap: 120, d1: null, d5: null },
-      { sym: "SBUX", cap: 110, d1: null, d5: null },
-    ],
-  },
-  {
-    sector: "FINANCIAL",
-    stocks: [
-      { sym: "BRK.B", cap: 880, d1: null, d5: null },
-      { sym: "JPM", cap: 620, d1: null, d5: null },
-      { sym: "V", cap: 580, d1: null, d5: null },
-      { sym: "MA", cap: 440, d1: null, d5: null },
-      { sym: "BAC", cap: 310, d1: null, d5: null },
-      { sym: "GS", cap: 160, d1: null, d5: null },
-    ],
-  },
-  {
-    sector: "HEALTHCARE",
-    stocks: [
-      { sym: "LLY", cap: 750, d1: null, d5: null },
-      { sym: "UNH", cap: 520, d1: null, d5: null },
-      { sym: "JNJ", cap: 380, d1: null, d5: null },
-      { sym: "ABBV", cap: 340, d1: null, d5: null },
-      { sym: "MRK", cap: 280, d1: null, d5: null },
-      { sym: "ABT", cap: 200, d1: null, d5: null },
-    ],
-  },
-  {
-    sector: "INDUSTRIAL",
-    stocks: [
-      { sym: "GE", cap: 200, d1: null, d5: null },
-      { sym: "CAT", cap: 180, d1: null, d5: null },
-      { sym: "RTX", cap: 155, d1: null, d5: null },
-      { sym: "UNP", cap: 145, d1: null, d5: null },
-      { sym: "BA", cap: 130, d1: null, d5: null },
-      { sym: "HON", cap: 140, d1: null, d5: null },
-    ],
-  },
-  {
-    sector: "ENERGY",
-    stocks: [
-      { sym: "XOM", cap: 480, d1: null, d5: null },
-      { sym: "CVX", cap: 290, d1: null, d5: null },
-      { sym: "COP", cap: 130, d1: null, d5: null },
-      { sym: "SLB", cap: 65, d1: null, d5: null },
-    ],
-  },
-  {
-    sector: "STAPLES",
-    stocks: [
-      { sym: "WMT", cap: 580, d1: null, d5: null },
-      { sym: "PG", cap: 380, d1: null, d5: null },
-      { sym: "COST", cap: 340, d1: null, d5: null },
-      { sym: "KO", cap: 260, d1: null, d5: null },
-    ],
-  },
-];
-
-const TREEMAP_SYMBOLS = [
-  ...new Set(
-    TREEMAP_DATA.flatMap((sector) => sector.stocks.map((stock) => stock.sym)),
-  ),
-];
 const MARKET_SNAPSHOT_SYMBOLS = [
   ...new Set([
     ...INDICES.map((item) => item.sym),
     ...MACRO_TICKERS.map((item) => item.sym),
     ...RATES_PROXIES.map((item) => item.sym),
     ...SECTORS.map((item) => item.sym),
-    ...TREEMAP_SYMBOLS,
   ]),
 ];
 const MARKET_PERFORMANCE_SYMBOLS = [
@@ -7739,309 +7657,8 @@ const MARKET_PERFORMANCE_SYMBOLS = [
     ...MACRO_TICKERS.map((item) => item.sym),
     ...RATES_PROXIES.map((item) => item.sym),
     ...SECTORS.map((item) => item.sym),
-    ...TREEMAP_SYMBOLS,
   ]),
 ];
-
-// TreemapHeatmap — SVG-rendered, D3-powered, Finviz-quality
-// Drop-in replacement for the current broken treemap
-
-// Color scale matching Finviz: deep green → neutral → deep red
-// Green/red colors stay saturated in both themes (they're vivid against any bg)
-// Neutral cell + text adapt via T proxy
-const heatColor = (val) => {
-  if (!isFiniteNumber(val)) return T.bg3;
-  if (val >= 3) return "#1a7a3c";
-  if (val >= 2) return "#228b45";
-  if (val >= 1) return "#2f9c51";
-  if (val >= 0.5) return "#4ea866";
-  if (val >= 0.1) return "#6fb481";
-  if (val > -0.1) return T.bg3; // theme-aware neutral cell
-  if (val >= -0.5) return "#b36a6a";
-  if (val >= -1) return "#b55050";
-  if (val >= -2) return "#b03838";
-  if (val >= -3) return "#982828";
-  return "#7d1f1f";
-};
-// Neutral cells use theme-aware muted text; saturated cells always use white
-const heatText = (val) =>
-  !isFiniteNumber(val) || Math.abs(val) < 0.1 ? T.textDim : "#ffffff";
-
-export const TreemapHeatmap = ({ data, period, onSymClick }) => {
-  const VW = 1000,
-    VH = 480;
-
-  // Build D3 hierarchy
-  const root = useMemo(() => {
-    const hierarchy = d3
-      .hierarchy({
-        name: "root",
-        children: data.map((s) => ({
-          name: s.sector,
-          children: s.stocks.map((st) => ({
-            name: st.sym,
-            value: st.cap,
-            chg: period === "1d" ? st.d1 : st.d5,
-          })),
-        })),
-      })
-      .sum((d) => d.value)
-      .sort((a, b) => b.value - a.value);
-
-    d3
-      .treemap()
-      .size([VW, VH])
-      .paddingOuter(3)
-      .paddingTop(20)
-      .paddingInner(2)
-      .round(true)
-      .tile(d3.treemapSquarify.ratio(1.2))(hierarchy);
-
-    return hierarchy;
-  }, [data, period]);
-
-  const sectors = root.children || [];
-
-  return (
-    <svg
-      width="100%"
-      viewBox={`0 0 ${VW} ${VH}`}
-      preserveAspectRatio="xMidYMid meet"
-      style={{
-        display: "block",
-        borderRadius: 0,
-        aspectRatio: `${VW} / ${VH}`,
-      }}
-    >
-      {/* Background */}
-      <rect width={VW} height={VH} fill={T.bg1} rx="0" />
-
-      {sectors.map((sector, si) => {
-        const sx = sector.x0,
-          sy = sector.y0;
-        const sw = sector.x1 - sector.x0,
-          sh = sector.y1 - sector.y0;
-
-        return (
-          <g key={si}>
-            {/* Sector background with thin border */}
-            <rect
-              x={sx}
-              y={sy}
-              width={sw}
-              height={sh}
-              fill="none"
-              stroke={T.border}
-              strokeWidth="1"
-              rx="0"
-            />
-
-            {/* Sector label bar */}
-            <rect x={sx} y={sy} width={sw} height={18} fill={T.bg2} rx="0" />
-            <text
-              x={sx + 6}
-              y={sy + 12}
-              style={{
-                fontSize: fs(10),
-                fontWeight: 700,
-                fontFamily: T.sans,
-                fill: T.textSec,
-                letterSpacing: "0.06em",
-              }}
-            >
-              {sector.data.name}
-            </text>
-
-            {/* Stock cells */}
-            {(sector.children || []).map((leaf, li) => {
-              const lx = leaf.x0,
-                ly = leaf.y0;
-              const lw = leaf.x1 - leaf.x0,
-                lh = leaf.y1 - leaf.y0;
-              const val = leaf.data.chg;
-              const bg = heatColor(val);
-              const tc = heatText(val);
-
-              // Adaptive font sizes based on cell pixel dimensions
-              const symSize =
-                lw > 90 ? 14 : lw > 60 ? 12 : lw > 40 ? 10 : lw > 25 ? 8 : 0;
-              const pctSize = lw > 60 ? 11 : lw > 40 ? 9 : lw > 25 ? 7 : 0;
-              const showSym = symSize > 0 && lh > 18;
-              const showPct = pctSize > 0 && lh > 28;
-              const cx = lx + lw / 2;
-              const cy = ly + lh / 2;
-
-              return (
-                <g
-                  key={li}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => onSymClick && onSymClick(leaf.data.name)}
-                >
-                  <rect
-                    x={lx}
-                    y={ly}
-                    width={lw}
-                    height={lh}
-                    fill={bg}
-                    rx="0"
-                    onMouseEnter={(e) =>
-                      e.target.setAttribute("opacity", "0.8")
-                    }
-                    onMouseLeave={(e) => e.target.setAttribute("opacity", "1")}
-                  />
-                  {showSym && (
-                    <text
-                      x={cx}
-                      y={showPct ? cy - 2 : cy + 1}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      style={{
-                        fontSize: symSize,
-                        fontWeight: 800,
-                        fontFamily: T.mono,
-                        fill: tc,
-                        pointerEvents: "none",
-                      }}
-                    >
-                      {leaf.data.name}
-                    </text>
-                  )}
-                  {showPct && (
-                    <text
-                      x={cx}
-                      y={cy + symSize * 0.6 + 2}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      style={{
-                        fontSize: pctSize,
-                        fontWeight: 600,
-                        fontFamily: T.mono,
-                        fill: tc,
-                        opacity: 0.85,
-                        pointerEvents: "none",
-                      }}
-                    >
-                      {isFiniteNumber(val)
-                        ? `${val >= 0 ? "+" : ""}${val.toFixed(2)}%`
-                        : MISSING_VALUE}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-          </g>
-        );
-      })}
-    </svg>
-  );
-};
-
-// Sector-level heatmap: just sector ETFs as proportional blocks
-export const SectorTreemap = ({ sectors, period }) => {
-  const VW = 1000,
-    VH = 60;
-
-  const root = useMemo(() => {
-    const weights = {
-      XLK: 30,
-      XLF: 13,
-      XLV: 12,
-      XLY: 10,
-      XLC: 9,
-      XLI: 9,
-      XLP: 6,
-      XLE: 4,
-      XLRE: 3,
-      XLU: 2,
-      XLB: 2,
-    };
-    const hierarchy = d3
-      .hierarchy({
-        name: "root",
-        children: sectors.map((s) => ({
-          name: s.sym,
-          fullName: s.name,
-          value: weights[s.sym] || 3,
-          chg: period === "1d" ? s.chg : s.d5,
-        })),
-      })
-      .sum((d) => d.value)
-      .sort((a, b) => b.value - a.value);
-
-    d3.treemap().size([VW, VH]).padding(1).round(true).tile(d3.treemapSquarify)(
-      hierarchy,
-    );
-
-    return hierarchy;
-  }, [sectors, period]);
-
-  return (
-    <svg
-      width="100%"
-      viewBox={`0 0 ${VW} ${VH}`}
-      style={{ display: "block", borderRadius: 0 }}
-    >
-      <rect width={VW} height={VH} fill={T.bg1} rx="0" />
-      {(root.children || []).map((leaf, i) => {
-        const lx = leaf.x0,
-          ly = leaf.y0;
-        const lw = leaf.x1 - leaf.x0,
-          lh = leaf.y1 - leaf.y0;
-        const val = leaf.data.chg;
-        const bg = heatColor(val);
-        const cx = lx + lw / 2,
-          cy = ly + lh / 2;
-        return (
-          <g key={i} style={{ cursor: "pointer" }}>
-            <rect
-              x={lx}
-              y={ly}
-              width={lw}
-              height={lh}
-              fill={bg}
-              rx="0"
-              onMouseEnter={(e) => e.target.setAttribute("opacity", "0.8")}
-              onMouseLeave={(e) => e.target.setAttribute("opacity", "1")}
-            />
-            <text
-              x={cx}
-              y={cy - 4}
-              textAnchor="middle"
-              dominantBaseline="central"
-              style={{
-                fontSize: lw > 80 ? 10 : 8,
-                fontWeight: 700,
-                fontFamily: T.mono,
-                fill: heatText(val),
-                pointerEvents: "none",
-              }}
-            >
-              {leaf.data.name}
-            </text>
-            <text
-              x={cx}
-              y={cy + 8}
-              textAnchor="middle"
-              dominantBaseline="central"
-              style={{
-                fontSize: lw > 80 ? 9 : 7,
-                fontWeight: 600,
-                fontFamily: T.mono,
-                fill: heatText(val),
-                opacity: 0.8,
-                pointerEvents: "none",
-              }}
-            >
-              {isFiniteNumber(val)
-                ? `${val >= 0 ? "+" : ""}${val.toFixed(2)}%`
-                : MISSING_VALUE}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-};
 
 const NEWS = [
   {
@@ -8453,10 +8070,10 @@ const MULTI_CHART_LAYOUT_CARD_WIDTH = {
 };
 
 const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
-  "1x1": 540,
-  "2x2": 330,
-  "2x3": 302,
-  "3x3": 298,
+  "1x1": 720,
+  "2x2": 410,
+  "2x3": 380,
+  "3x3": 340,
 };
 
 const MARKET_GRID_TRACK_SESSION_KEY = "rayalgo:market-grid-track-sizes";
@@ -8487,7 +8104,21 @@ const normalizeMarketGridTrackWeights = (weights, count) => {
 const normalizeMarketGridTrackLayoutState = (value, cols, rows) => ({
   cols: normalizeMarketGridTrackWeights(value?.cols, cols),
   rows: normalizeMarketGridTrackWeights(value?.rows, rows),
+  rowHeights: Array.isArray(value?.rowHeights) ? value.rowHeights : null,
 });
+
+const normalizeMarketGridTrackPixels = (values, count, fallbackPx, minPx) => {
+  const safeCount = Math.max(1, count || 1);
+  const safeFallback = Math.max(minPx, fallbackPx || minPx);
+  if (!Array.isArray(values) || values.length !== safeCount) {
+    return Array.from({ length: safeCount }, () => safeFallback);
+  }
+  return values.map((value) =>
+    Number.isFinite(value) && value > 0
+      ? Math.max(minPx, value)
+      : safeFallback,
+  );
+};
 
 const readMarketGridTrackSession = () => {
   try {
@@ -8559,6 +8190,25 @@ const resizeMarketGridTrackWeights = (
   return normalizeMarketGridTrackWeights(
     nextTrackPx.map((value) => value / totalTrackPx),
     weights.length,
+  );
+};
+
+const resizeMarketGridRowPixels = (
+  rowHeights,
+  dividerIndex,
+  deltaPx,
+  minRowHeight,
+) => {
+  if (
+    !Array.isArray(rowHeights) ||
+    dividerIndex <= 0 ||
+    dividerIndex >= rowHeights.length
+  ) {
+    return rowHeights;
+  }
+  const rowIndex = dividerIndex - 1;
+  return rowHeights.map((height, index) =>
+    index === rowIndex ? Math.max(minRowHeight, height + deltaPx) : height,
   );
 };
 
@@ -9301,8 +8951,14 @@ const normalizeTickerSearchResultForStorage = (result) => {
     compositeFigi: result.compositeFigi || null,
     shareClassFigi: result.shareClassFigi || null,
     lastUpdatedAt: result.lastUpdatedAt || null,
-    provider: result.provider || result.tradeProvider || result.providers[0] || null,
-    providers: [...new Set(result.providers.filter(Boolean))],
+    provider:
+      result.provider ||
+      result.tradeProvider ||
+      (Array.isArray(result.providers) ? result.providers[0] : null) ||
+      null,
+    providers: [
+      ...new Set((Array.isArray(result.providers) ? result.providers : []).filter(Boolean)),
+    ],
     tradeProvider: result.tradeProvider || null,
     dataProviderPreference: result.dataProviderPreference || result.provider || null,
     providerContractId: result.providerContractId || null,
@@ -12056,6 +11712,13 @@ const MiniChartCell = ({
               : []
           }
           chartEvents={chartEvents}
+          emptyState={{
+            title: describeBrokerChartStatus(barsStatus, tf),
+            detail:
+              barsStatus === "loading"
+                ? `${ticker} ${tf} bars are loading from the broker feed.`
+                : `${ticker} ${tf} has no hydrated bars for the current provider/timeframe.`,
+          }}
           style={{
             borderColor: isActive ? T.accent : T.border,
             boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
@@ -12540,17 +12203,19 @@ export const MultiChartGrid = ({
     0,
     effectiveGridWidth - Math.max(0, renderedCols - 1) * gridGap,
   );
-  const trackAreaHeight = Math.max(0, baseCellHeight * renderedRows);
   const columnWeights = normalizeMarketGridTrackWeights(
     layoutTrackState.cols,
     renderedCols,
   );
-  const rowWeights = normalizeMarketGridTrackWeights(
-    layoutTrackState.rows,
+  const minRowHeight = Math.max(dim(denseGrid ? 150 : 180), baseCellHeight * 0.46);
+  const rowHeights = normalizeMarketGridTrackPixels(
+    layoutTrackState.rowHeights,
     renderedRows,
+    baseCellHeight,
+    minRowHeight,
   );
+  const trackAreaHeight = rowHeights.reduce((sum, height) => sum + height, 0);
   const columnWidths = columnWeights.map((weight) => weight * trackAreaWidth);
-  const rowHeights = rowWeights.map((weight) => weight * trackAreaHeight);
   const minRenderedColumnWidth = columnWidths.length
     ? Math.min(...columnWidths)
     : 0;
@@ -12597,26 +12262,24 @@ export const MultiChartGrid = ({
   const gridResizeHoverColor = "rgba(196, 203, 210, 0.74)";
   const gridScaleResetDisabled = useMemo(() => {
     const defaultColumnWeights = buildEqualTrackWeights(renderedCols);
-    const defaultRowWeights = buildEqualTrackWeights(renderedRows);
+    const defaultRowHeights = Array.from({ length: renderedRows }, () => baseCellHeight);
     const columnsMatch =
       columnWeights.length === defaultColumnWeights.length &&
       columnWeights.every(
         (value, index) => Math.abs(value - defaultColumnWeights[index]) < 0.001,
       );
     const rowsMatch =
-      rowWeights.length === defaultRowWeights.length &&
-      rowHeights.length === defaultRowWeights.length &&
-      rowWeights.every(
-        (value, index) => Math.abs(value - defaultRowWeights[index]) < 0.001,
-      );
+      rowHeights.length === defaultRowHeights.length &&
+      rowHeights.every((value, index) => Math.abs(value - defaultRowHeights[index]) < 1);
     return columnsMatch && rowsMatch;
-  }, [columnWeights, renderedCols, renderedRows, rowHeights.length, rowWeights]);
+  }, [baseCellHeight, columnWeights, renderedCols, renderedRows, rowHeights]);
   const resetGridCardScale = useCallback(() => {
     setLayoutTrackState({
       cols: buildEqualTrackWeights(renderedCols),
       rows: buildEqualTrackWeights(renderedRows),
+      rowHeights: Array.from({ length: renderedRows }, () => baseCellHeight),
     });
-  }, [renderedCols, renderedRows, setLayoutTrackState]);
+  }, [baseCellHeight, renderedCols, renderedRows, setLayoutTrackState]);
   const resetGridChartViews = useCallback(() => {
     setChartViewportSnapshots({});
     setChartViewportResetRevision((revision) => revision + 1);
@@ -12662,9 +12325,8 @@ export const MultiChartGrid = ({
       const startX = event.clientX;
       const startY = event.clientY;
       const startColumnWeights = [...columnWeights];
-      const startRowWeights = [...rowWeights];
+      const startRowHeights = [...rowHeights];
       const minColumnWidth = Math.max(dim(denseGrid ? 140 : 170), baseCardMinWidth * 0.36);
-      const minRowHeight = Math.max(dim(denseGrid ? 120 : 140), baseCellHeight * 0.5);
       let lastClientX = startX;
       let lastClientY = startY;
       const handlePointerMove = (moveEvent) => {
@@ -12674,7 +12336,8 @@ export const MultiChartGrid = ({
         const deltaY = moveEvent.clientY - startY;
         const nextLayoutState = {
           cols: startColumnWeights,
-          rows: startRowWeights,
+          rows: buildEqualTrackWeights(renderedRows),
+          rowHeights: startRowHeights,
         };
 
         if (
@@ -12696,11 +12359,10 @@ export const MultiChartGrid = ({
           Number.isFinite(rowGapIndex) &&
           trackAreaHeight > 0
         ) {
-          nextLayoutState.rows = resizeMarketGridTrackWeights(
-            startRowWeights,
+          nextLayoutState.rowHeights = resizeMarketGridRowPixels(
+            startRowHeights,
             rowGapIndex,
             deltaY,
-            trackAreaHeight,
             minRowHeight,
           );
         }
@@ -12734,8 +12396,10 @@ export const MultiChartGrid = ({
       baseCardMinWidth,
       baseCellHeight,
       columnWeights,
-      rowWeights,
+      renderedRows,
+      rowHeights,
       denseGrid,
+      minRowHeight,
       setLayoutTrackState,
       trackAreaHeight,
       trackAreaWidth,
@@ -15659,7 +15323,7 @@ const TradeOptionChart = ({
   contract,
   holding,
   timeframe = "5m",
-  sourceLabel = "no live chart data",
+  sourceLabel = "Option chart unavailable",
   hydrationScopeKey,
   onChangeTimeframe,
   onOpenSearch,
@@ -15787,6 +15451,11 @@ const TradeOptionChart = ({
         selectedStudies: selectedIndicators,
       }}
       onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
+      emptyState={{
+        eyebrow: "Option feed",
+        title: sourceLabel || "Option chart unavailable",
+        detail: `${contract || "Selected option"} ${timeframe} bars are not hydrated for the current provider/timeframe.`,
+      }}
       surfaceTopOverlay={(controls) => (
         <ResearchChartWidgetHeader
           theme={T}
@@ -22825,6 +22494,9 @@ export const TradeEquityPanel = ({
       }),
     enabled: Boolean(historicalDataEnabled && ticker),
     ...BARS_QUERY_DEFAULTS,
+    staleTime: 30_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   useEffect(() => {
     if (!barsQuery.data?.bars?.length) {
@@ -23181,6 +22853,9 @@ export const TradeEquityPanel = ({
     previousClose !== 0
       ? (displayChange / previousClose) * 100
       : null;
+  const equityChartName = ticker ? `${ticker} spot` : "Spot chart";
+  const equityChartStatus = describeBrokerChartStatus(barsStatus, tf);
+  const equityChartSource = describeBrokerChartSource(latestBar?.source);
   const callFlows = markers.filter((m) => m.cp === "C").length;
   const putFlows = markers.filter((m) => m.cp === "P").length;
   const toggleIndicator = (indicatorId) => {
@@ -23245,9 +22920,9 @@ export const TradeEquityPanel = ({
       showLegend
       legend={{
         symbol: ticker,
-        name: "Equity chart",
+        name: equityChartName,
         timeframe: tf,
-        statusLabel: describeBrokerChartStatus(barsStatus, tf),
+        statusLabel: equityChartStatus,
         priceLabel: "Spot",
         price: displayPrice,
         changePercent: displayPct,
@@ -23262,7 +22937,7 @@ export const TradeEquityPanel = ({
           accumulatedVolume: latestBar?.accumulatedVolume,
           averageTradeSize: latestBar?.averageTradeSize,
           timestamp: latestBar?.ts,
-          sourceLabel: describeBrokerChartSource(latestBar?.source),
+          sourceLabel: equityChartSource,
         },
         studies: availableStudies,
         selectedStudies: selectedIndicators,
@@ -23272,15 +22947,20 @@ export const TradeEquityPanel = ({
       drawMode={drawMode}
       onAddDrawing={addDrawing}
       onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
+      emptyState={{
+        eyebrow: "Spot feed",
+        title: equityChartStatus,
+        detail: `${ticker || "Selected symbol"} ${tf} spot bars are not hydrated for the broker feed yet.`,
+      }}
       surfaceTopOverlay={(controls) => (
         <ResearchChartWidgetHeader
           theme={T}
           controls={controls}
           symbol={ticker}
-          name="Equity chart"
+          name={equityChartName}
           price={displayPrice}
           changePercent={displayPct}
-          statusLabel={describeBrokerChartStatus(barsStatus, tf)}
+          statusLabel={equityChartStatus}
           timeframe={tf}
           showInlineLegend={false}
           timeframeOptions={TRADE_TIMEFRAMES.map((timeframe) => ({
@@ -23323,7 +23003,7 @@ export const TradeEquityPanel = ({
             accumulatedVolume: latestBar?.accumulatedVolume,
             averageTradeSize: latestBar?.averageTradeSize,
             timestamp: latestBar?.ts,
-            sourceLabel: describeBrokerChartSource(latestBar?.source),
+            sourceLabel: equityChartSource,
           }}
         />
       )}
@@ -23350,7 +23030,7 @@ export const TradeEquityPanel = ({
           selectedStudies={selectedIndicators}
           studySpecs={chartModel.studySpecs}
           onToggleStudy={toggleIndicator}
-          statusText={`${describeBrokerChartStatus(barsStatus, tf)}  C ${callFlows}  P ${putFlows}  UOA amber`}
+          statusText={`${equityChartStatus}  C ${callFlows}  P ${putFlows}  UOA amber`}
         />
       )}
       surfaceBottomOverlayHeight={spotChartFrameLayout.surfaceBottomOverlayHeight}
@@ -25609,7 +25289,10 @@ export default function RayAlgoPlatform() {
           />
           <BroadFlowScannerRuntime
             symbols={runtimeWatchlistSymbols}
-            enabled={sessionMetadataSettled && pageVisible}
+            enabled={
+              sessionMetadataSettled &&
+              pageVisible
+            }
           />
           <div
             style={{

@@ -2,13 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_FLOW_SCANNER_CONFIG,
   FLOW_SCANNER_MODE,
   FLOW_SCANNER_SCOPE,
+  UNUSUAL_SCANNER_BATCH_SIZE,
+  UNUSUAL_SCANNER_INTERVAL_MS,
   buildFlowScannerSymbols,
   filterFlowScannerEvents,
   normalizeFlowScannerConfig,
   runFlowScannerBatch,
 } from "./marketFlowScannerConfig.js";
+
+test("default flow scanner covers 500 symbols inside five minutes", () => {
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols, 500);
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.batchSize, UNUSUAL_SCANNER_BATCH_SIZE);
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.intervalMs, UNUSUAL_SCANNER_INTERVAL_MS);
+  assert.ok(
+    Math.ceil(
+      DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols / DEFAULT_FLOW_SCANNER_CONFIG.batchSize,
+    ) *
+      DEFAULT_FLOW_SCANNER_CONFIG.intervalMs <=
+      300_000,
+  );
+});
 
 test("normalizeFlowScannerConfig applies defaults and clamps capacity settings", () => {
   assert.deepEqual(

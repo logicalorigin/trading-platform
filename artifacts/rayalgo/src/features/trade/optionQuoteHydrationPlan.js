@@ -1,10 +1,13 @@
-export const DEFAULT_OPTION_QUOTE_LINE_BUDGET = 80;
+export const ACTIVE_OPTION_QUOTE_LINE_BUDGET = 96;
+export const BACKGROUND_OPTION_QUOTE_LINE_BUDGET = 24;
+export const DEFAULT_OPTION_QUOTE_LINE_BUDGET = ACTIVE_OPTION_QUOTE_LINE_BUDGET;
 export const DEFAULT_OPTION_QUOTE_ROTATION_MS = 3_000;
 
 export const buildTradeOptionProviderContractIdPlan = ({
   chainRows = [],
   contract = {},
   heldContracts = [],
+  visibleRows = [],
 }) => {
   const collected = [];
   const seen = new Set();
@@ -26,6 +29,11 @@ export const buildTradeOptionProviderContractIdPlan = ({
 
   heldContracts.forEach((holding) => {
     pushProviderContractId(holding.providerContractId);
+  });
+
+  visibleRows.forEach((row) => {
+    pushProviderContractId(row.cContract?.providerContractId);
+    pushProviderContractId(row.pContract?.providerContractId);
   });
 
   const centerStrike =
@@ -52,12 +60,41 @@ export const buildTradeOptionProviderContractIdPlan = ({
   return collected;
 };
 
+export const resolveOptionQuoteLineBudget = ({
+  active = true,
+  configuredLimit = null,
+} = {}) => {
+  const baseBudget = active
+    ? ACTIVE_OPTION_QUOTE_LINE_BUDGET
+    : BACKGROUND_OPTION_QUOTE_LINE_BUDGET;
+  const normalizedConfiguredLimit =
+    Number.isFinite(configuredLimit) && configuredLimit > 0
+      ? Math.floor(configuredLimit)
+      : null;
+
+  return Math.max(
+    0,
+    normalizedConfiguredLimit == null
+      ? baseBudget
+      : Math.min(baseBudget, normalizedConfiguredLimit),
+  );
+};
+
 export const selectRotatingProviderContractIds = ({
   providerContractIds = [],
   lineBudget = DEFAULT_OPTION_QUOTE_LINE_BUDGET,
   rotationIndex = 0,
 }) => {
-  const normalizedBudget = Math.max(1, Math.floor(lineBudget));
+  const normalizedBudget = Math.max(0, Math.floor(lineBudget));
+  if (normalizedBudget <= 0) {
+    return {
+      activeProviderContractIds: [],
+      pinnedProviderContractIds: [],
+      rotatingProviderContractIds: providerContractIds,
+      pendingProviderContractIds: providerContractIds,
+    };
+  }
+
   if (providerContractIds.length <= normalizedBudget) {
     return {
       activeProviderContractIds: providerContractIds,

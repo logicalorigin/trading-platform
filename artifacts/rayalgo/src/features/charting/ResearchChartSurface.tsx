@@ -907,6 +907,11 @@ type ResearchChartSurfaceProps = {
     axisLabelVisible?: boolean;
   }>;
   chartEvents?: ChartEvent[];
+  emptyState?: {
+    title?: string | null;
+    detail?: string | null;
+    eyebrow?: string | null;
+  } | null;
   drawMode?: DrawMode | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
   onAddHorizontalLevel?: (price: number) => void;
@@ -1133,6 +1138,151 @@ const USER_VIEWPORT_INTENT_WINDOW_MS = 750;
 const PROGRAMMATIC_VIEWPORT_INTENT_WINDOW_MS = 750;
 const PLOT_RESIZE_VIEWPORT_INTENT_WINDOW_MS = 500;
 const CHART_PLOT_PAN_MOVE_TOLERANCE = 6;
+
+type ChartPlotPanState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startRange: VisibleLogicalRange;
+  plotWidth: number;
+  active: boolean;
+};
+
+export const isPointInsideRect = ({
+  x,
+  y,
+  rect,
+}: {
+  x: number;
+  y: number;
+  rect: Pick<DOMRect, "left" | "right" | "top" | "bottom">;
+}): boolean =>
+  x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+
+export const isPointInsideRightPriceScale = ({
+  x,
+  y,
+  rect,
+  priceScaleWidth,
+}: {
+  x: number;
+  y: number;
+  rect: Pick<DOMRect, "left" | "right" | "top" | "bottom">;
+  priceScaleWidth: number;
+}): boolean =>
+  priceScaleWidth > 0 &&
+  x >= rect.right - priceScaleWidth &&
+  x <= rect.right &&
+  y >= rect.top &&
+  y <= rect.bottom;
+
+export const resolveChartPlotPanStart = ({
+  pointerId,
+  startX,
+  startY,
+  currentRange,
+  plotWidth,
+  enabled,
+  drawMode,
+  button,
+  insidePlot,
+  insideRightPriceScale,
+}: {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  currentRange: VisibleLogicalRange | null | undefined;
+  plotWidth: number;
+  enabled: boolean;
+  drawMode: DrawMode | null | undefined;
+  button: number;
+  insidePlot: boolean;
+  insideRightPriceScale: boolean;
+}): ChartPlotPanState | null => {
+  if (
+    !enabled ||
+    drawMode ||
+    button !== 0 ||
+    !insidePlot ||
+    insideRightPriceScale
+  ) {
+    return null;
+  }
+
+  const startRange = resolveViewportVisibleLogicalRange(currentRange);
+  if (!startRange) {
+    return null;
+  }
+
+  return {
+    pointerId,
+    startX,
+    startY,
+    startRange,
+    plotWidth: Math.max(1, plotWidth),
+    active: false,
+  };
+};
+
+export const resolveChartPlotPanRange = ({
+  pan,
+  clientX,
+  clientY,
+  moveTolerance = CHART_PLOT_PAN_MOVE_TOLERANCE,
+}: {
+  pan: ChartPlotPanState | null | undefined;
+  clientX: number;
+  clientY: number;
+  moveTolerance?: number;
+}): { pan: ChartPlotPanState; visibleRange: VisibleLogicalRange } | null => {
+  if (!pan) {
+    return null;
+  }
+
+  const deltaX = clientX - pan.startX;
+  const deltaY = clientY - pan.startY;
+  if (!pan.active && Math.hypot(deltaX, deltaY) <= moveTolerance) {
+    return null;
+  }
+
+  const span = Math.max(1, pan.startRange.to - pan.startRange.from);
+  const barsDelta = -(deltaX / Math.max(1, pan.plotWidth)) * span;
+  return {
+    pan: {
+      ...pan,
+      active: true,
+    },
+    visibleRange: {
+      from: pan.startRange.from + barsDelta,
+      to: pan.startRange.to + barsDelta,
+    },
+  };
+};
+
+export const resolveZoomedVisibleRange = ({
+  currentRange,
+  factor,
+  minimumHalfRange = 4,
+}: {
+  currentRange: VisibleLogicalRange | null | undefined;
+  factor: number;
+  minimumHalfRange?: number;
+}): VisibleLogicalRange | null => {
+  const range = resolveViewportVisibleLogicalRange(currentRange);
+  if (!range || !Number.isFinite(factor) || factor <= 0) {
+    return null;
+  }
+
+  const center = (range.from + range.to) / 2;
+  const halfRange = Math.max(
+    minimumHalfRange,
+    ((range.to - range.from) / 2) * factor,
+  );
+  return {
+    from: center - halfRange,
+    to: center + halfRange,
+  };
+};
 
 export const isVisibleRangeNearRealtime = ({
   visibleRange,
@@ -1649,7 +1799,7 @@ const buildChartOptions = (
     preferences: UserPreferences;
   },
 ) => ({
-  autoSize: true,
+  autoSize: false,
   layout: {
     background: { type: ColorType.Solid, color: theme.bg2 },
     textColor: theme.textMuted,
@@ -1719,7 +1869,7 @@ const buildChartOptions = (
   handleScroll: enableInteractions
     ? {
         mouseWheel: true,
-        pressedMouseMove: true,
+        pressedMouseMove: false,
         horzTouchDrag: true,
         vertTouchDrag: true,
       }
@@ -3647,6 +3797,7 @@ export const ResearchChartSurface = ({
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
   chartEvents = EMPTY_CHART_EVENTS,
+  emptyState = null,
   drawMode = null,
   onAddDrawing,
   onAddHorizontalLevel,
@@ -3730,14 +3881,11 @@ export const ResearchChartSurface = ({
   const lastUserViewportIntentAtRef = useRef(0);
   const viewportPointerActiveRef = useRef(false);
   const lastPlotResizeAtRef = useRef(0);
-  const plotPanRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    startRange: VisibleLogicalRange;
-    plotWidth: number;
-    active: boolean;
-  } | null>(null);
+  const plotPanRef = useRef<ChartPlotPanState | null>(null);
+  const lastPlotPanVisibleRangeRef = useRef<VisibleLogicalRange | null>(null);
+  const plotPanWindowCleanupRef = useRef<(() => void) | null>(null);
+  const plotMousePanWindowCleanupRef = useRef<(() => void) | null>(null);
+  const lastLocalUserViewportAtRef = useRef(0);
   const initialChartPreferencesRef = useRef<UserPreferences["chart"] | null>(
     null,
   );
@@ -3853,6 +4001,9 @@ export const ResearchChartSurface = ({
   const [tradeThresholdOverlays, setTradeThresholdOverlays] = useState<
     TradeThresholdOverlay[]
   >([]);
+  const [viewportUserTouched, setViewportUserTouched] = useState(
+    Boolean(effectiveViewportSnapshot?.userTouched),
+  );
   const [selectedTradeConnector, setSelectedTradeConnector] =
     useState<TradeConnectorOverlay | null>(null);
   const [selectedTradeEntryBadge, setSelectedTradeEntryBadge] =
@@ -3942,6 +4093,16 @@ export const ResearchChartSurface = ({
       onAddHorizontalLevel,
     };
   }, [drawMode, onAddDrawing, onAddHorizontalLevel]);
+
+  useEffect(
+    () => () => {
+      plotPanWindowCleanupRef.current?.();
+      plotPanWindowCleanupRef.current = null;
+      plotMousePanWindowCleanupRef.current?.();
+      plotMousePanWindowCleanupRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     visibleRangeChangeRef.current = onVisibleLogicalRangeChange;
@@ -4156,10 +4317,12 @@ export const ResearchChartSurface = ({
         autoHydrationViewportRef.current = false;
         programmaticVisibleRangeSignatureRef.current = null;
         lastProgrammaticViewportIntentAtRef.current = 0;
+        lastLocalUserViewportAtRef.current = Date.now();
+        setViewportUserTouched(true);
       }
       if (source === "programmatic") {
         lastPublishedVisibleRangeSignatureRef.current = signature;
-      } else if (shouldPublish) {
+      } else if (shouldPublish || source === "user") {
         lastPublishedVisibleRangeSignatureRef.current = signature;
         visibleRangeChangeRef.current?.(visibleRange);
         publishViewportSnapshot(
@@ -4211,12 +4374,18 @@ export const ResearchChartSurface = ({
     setScaleMode(effectiveViewportSnapshot.scaleMode);
     setAutoScale(effectiveViewportSnapshot.autoScale);
     setInvertScale(effectiveViewportSnapshot.invertScale);
+    setViewportUserTouched(Boolean(effectiveViewportSnapshot.userTouched));
   }, [
     effectiveViewportSnapshot?.autoScale,
     effectiveViewportSnapshot?.identityKey,
     effectiveViewportSnapshot?.invertScale,
     effectiveViewportSnapshot?.scaleMode,
+    effectiveViewportSnapshot?.userTouched,
   ]);
+
+  useEffect(() => {
+    setViewportUserTouched(Boolean(effectiveViewportSnapshot?.userTouched));
+  }, [rangeIdentityKey, effectiveViewportSnapshot?.identityKey]);
 
   useEffect(() => {
     if (!rangeIdentityKeyRef.current) {
@@ -4963,7 +5132,7 @@ export const ResearchChartSurface = ({
       handleScroll: enableInteractions
         ? {
             mouseWheel: true,
-            pressedMouseMove: true,
+            pressedMouseMove: false,
             horzTouchDrag: true,
             vertTouchDrag: true,
           }
@@ -5549,7 +5718,9 @@ export const ResearchChartSurface = ({
       !effectiveViewportSnapshot?.userTouched ||
       effectiveViewportSnapshot.identityKey !== rangeIdentityKeyRef.current ||
       viewportPointerActiveRef.current ||
-      plotPanRef.current
+      plotPanRef.current ||
+      ((effectiveViewportSnapshot.updatedAt || 0) <
+        lastLocalUserViewportAtRef.current)
     ) {
       return;
     }
@@ -5585,6 +5756,16 @@ export const ResearchChartSurface = ({
     plotSize.width,
     setProgrammaticVisibleLogicalRange,
   ]);
+  useLayoutEffect(() => {
+    if (!chartRef.current || !plotSize.width || !plotSize.height) {
+      return;
+    }
+
+    chartRef.current.resize?.(plotSize.width, plotSize.height);
+    if (autoScale && showRightPriceScale) {
+      chartRef.current.priceScale?.("right", 0)?.setAutoScale?.(true);
+    }
+  }, [autoScale, plotSize.height, plotSize.width, showRightPriceScale]);
   const displayDeltaBase =
     displayBar?.previousClose ?? displayBar?.open ?? null;
   const displayDelta =
@@ -5665,6 +5846,17 @@ export const ResearchChartSurface = ({
     legend?.statusLabel && /live|open|stream|massive|ibkr/i.test(legend.statusLabel)
       ? theme.green
       : theme.textMuted;
+  const emptyStateEyebrow = emptyState?.eyebrow || "Chart feed";
+  const emptyStateTitle =
+    emptyState?.title ||
+    legend?.statusLabel ||
+    legendSourceLabel ||
+    "Chart data unavailable";
+  const emptyStateDetail =
+    emptyState?.detail ||
+    (legend?.symbol
+      ? `${legend.symbol} ${legend?.timeframe || ""} bars are not hydrated yet. Controls remain available while the feed reconnects or the symbol changes.`
+      : "Chart bars are not hydrated yet. Controls remain available while the feed reconnects or the symbol changes.");
   const legendDetailMode = userPreferences.chart.statusLineDetail;
   const legendMinimal = legendDetailMode === "minimal";
   const legendCompactMode = compact || legendDetailMode === "compact";
@@ -5693,19 +5885,7 @@ export const ResearchChartSurface = ({
     const currentRange =
       visibleLogicalRangeRef.current ||
       chartRef.current?.timeScale?.().getVisibleLogicalRange?.();
-    if (!currentRange) {
-      return;
-    }
-
-    const center = (currentRange.from + currentRange.to) / 2;
-    const halfRange = Math.max(
-      4,
-      ((currentRange.to - currentRange.from) / 2) * factor,
-    );
-    setAdjustedVisibleRange({
-      from: center - halfRange,
-      to: center + halfRange,
-    });
+    setAdjustedVisibleRange(resolveZoomedVisibleRange({ currentRange, factor }));
   };
   const panVisibleRange = (barsDelta: number) => {
     const currentRange =
@@ -5762,6 +5942,7 @@ export const ResearchChartSurface = ({
     );
   };
   const clearRememberedViewport = (nextVisibleRange: VisibleLogicalRange | null = null) => {
+    setViewportUserTouched(false);
     publishViewportSnapshot(
       buildViewportSnapshot({
         visibleRange: nextVisibleRange,
@@ -5813,6 +5994,48 @@ export const ResearchChartSurface = ({
       clientY: event.clientY,
     });
   };
+  const movePlotPanToPoint = (
+    clientX: number,
+    clientY: number,
+    event?: { preventDefault?: () => void; stopPropagation?: () => void },
+  ) => {
+    const pan = plotPanRef.current;
+    if (!pan) {
+      return false;
+    }
+
+    const next = resolveChartPlotPanRange({
+      pan,
+      clientX,
+      clientY,
+    });
+    if (!next) {
+      return false;
+    }
+
+    plotPanRef.current = next.pan;
+    lastPlotPanVisibleRangeRef.current = next.visibleRange;
+    event?.preventDefault?.();
+    setAdjustedVisibleRange(next.visibleRange);
+    return true;
+  };
+  const reapplyFinalPlotPanRange = () => {
+    const finalRange = lastPlotPanVisibleRangeRef.current;
+    if (!finalRange || typeof window === "undefined") {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      setAdjustedVisibleRange(finalRange);
+    });
+  };
+  const cleanupPlotPanWindowListeners = () => {
+    plotPanWindowCleanupRef.current?.();
+    plotPanWindowCleanupRef.current = null;
+  };
+  const cleanupPlotMousePanWindowListeners = () => {
+    plotMousePanWindowCleanupRef.current?.();
+    plotMousePanWindowCleanupRef.current = null;
+  };
   const handleRootPointerDownCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
@@ -5822,6 +6045,8 @@ export const ResearchChartSurface = ({
     });
 
     plotPanRef.current = null;
+    lastPlotPanVisibleRangeRef.current = null;
+    cleanupPlotPanWindowListeners();
 
     const container = containerRef.current;
     if (!container || !chartRef.current) {
@@ -5829,52 +6054,76 @@ export const ResearchChartSurface = ({
     }
 
     const rect = container.getBoundingClientRect();
-    const isInsidePlot =
-      event.clientX >= rect.left &&
-      event.clientX <= rect.right &&
-      event.clientY >= rect.top &&
-      event.clientY <= rect.bottom;
+    const isInsidePlot = isPointInsideRect({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+    });
     if (!isInsidePlot) {
       return;
     }
 
     const priceScale = chartRef.current.priceScale?.("right", 0);
     const priceScaleWidth = priceScale?.width?.() || 0;
-    const isInsideRightPriceScale =
-      priceScaleWidth > 0 &&
-      event.clientX >= rect.right - priceScaleWidth &&
-      event.clientX <= rect.right &&
-      event.clientY >= rect.top &&
-      event.clientY <= rect.bottom;
-
-    if (
-      enableInteractions &&
-      !drawMode &&
-      event.button === 0 &&
-      !isInsideRightPriceScale
-    ) {
-      const currentRange = resolveViewportVisibleLogicalRange(
-        visibleLogicalRangeRef.current ||
-          chartRef.current.timeScale?.().getVisibleLogicalRange?.(),
-      );
-      if (currentRange) {
-        plotPanRef.current = {
-          pointerId: event.pointerId,
-          startX: event.clientX,
-          startY: event.clientY,
-          startRange: currentRange,
-          plotWidth: Math.max(1, rect.width - Math.max(0, priceScaleWidth)),
-          active: false,
-        };
-      }
+    const isInsidePriceScale = isPointInsideRightPriceScale({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+      priceScaleWidth,
+    });
+    const currentRange =
+      visibleLogicalRangeRef.current ||
+      chartRef.current.timeScale?.().getVisibleLogicalRange?.();
+    plotPanRef.current = resolveChartPlotPanStart({
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      currentRange,
+      plotWidth: rect.width - Math.max(0, priceScaleWidth),
+      enabled: enableInteractions,
+      drawMode,
+      button: event.button,
+      insidePlot: isInsidePlot,
+      insideRightPriceScale: isInsidePriceScale,
+    });
+    if (plotPanRef.current && event.currentTarget.setPointerCapture) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch (_error) {}
+    }
+    if (plotPanRef.current && typeof window !== "undefined") {
+      const pointerId = event.pointerId;
+      const handleWindowPointerMove = (moveEvent: globalThis.PointerEvent) => {
+        if (plotPanRef.current?.pointerId !== pointerId) {
+          return;
+        }
+        movePlotPanToPoint(moveEvent.clientX, moveEvent.clientY, moveEvent);
+      };
+      const handleWindowPointerEnd = (endEvent: globalThis.PointerEvent) => {
+        if (plotPanRef.current?.pointerId === pointerId && plotPanRef.current.active) {
+          endEvent.preventDefault();
+          endEvent.stopPropagation();
+          reapplyFinalPlotPanRange();
+        }
+        plotPanRef.current = null;
+        cleanupPlotPanWindowListeners();
+      };
+      window.addEventListener("pointermove", handleWindowPointerMove, true);
+      window.addEventListener("pointerup", handleWindowPointerEnd, true);
+      window.addEventListener("pointercancel", handleWindowPointerEnd, true);
+      plotPanWindowCleanupRef.current = () => {
+        window.removeEventListener("pointermove", handleWindowPointerMove, true);
+        window.removeEventListener("pointerup", handleWindowPointerEnd, true);
+        window.removeEventListener("pointercancel", handleWindowPointerEnd, true);
+      };
     }
 
-    if (!autoScale || !showRightPriceScale || !isInsideRightPriceScale) {
+    if (!autoScale || !showRightPriceScale || !isInsidePriceScale) {
       return;
     }
 
     realtimeFollowRef.current = false;
-    priceScale.setAutoScale?.(false);
+    priceScale?.setAutoScale?.(false);
     setAutoScale(false);
   };
   const handleRootPointerMoveCapture = (
@@ -5885,28 +6134,7 @@ export const ResearchChartSurface = ({
       return;
     }
 
-    const deltaX = event.clientX - pan.startX;
-    const deltaY = event.clientY - pan.startY;
-    if (
-      !pan.active &&
-      Math.hypot(deltaX, deltaY) <= CHART_PLOT_PAN_MOVE_TOLERANCE
-    ) {
-      return;
-    }
-
-    plotPanRef.current = {
-      ...pan,
-      active: true,
-    };
-    event.preventDefault();
-    event.stopPropagation();
-
-    const span = Math.max(1, pan.startRange.to - pan.startRange.from);
-    const barsDelta = -(deltaX / pan.plotWidth) * span;
-    setAdjustedVisibleRange({
-      from: pan.startRange.from + barsDelta,
-      to: pan.startRange.to + barsDelta,
-    });
+    movePlotPanToPoint(event.clientX, event.clientY, event);
   };
   const handleRootPointerUpCapture = (
     event: PointerEvent<HTMLDivElement>,
@@ -5915,29 +6143,39 @@ export const ResearchChartSurface = ({
       if (plotPanRef.current.active) {
         event.preventDefault();
         event.stopPropagation();
+        reapplyFinalPlotPanRange();
+      }
+      if (event.currentTarget.releasePointerCapture) {
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch (_error) {}
       }
       plotPanRef.current = null;
+      cleanupPlotPanWindowListeners();
     }
   };
   const handleRootPointerCancelCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
     if (plotPanRef.current?.pointerId === event.pointerId) {
+      if (event.currentTarget.releasePointerCapture) {
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch (_error) {}
+      }
       plotPanRef.current = null;
+      cleanupPlotPanWindowListeners();
     }
   };
-  const handleRootMouseDownCapture = (event: MouseEvent<HTMLDivElement>) => {
+  const beginMousePlotPan = (event: MouseEvent<HTMLDivElement>) => {
     markUserViewportIntent(event.target, "pointer", {
       clientX: event.clientX,
       clientY: event.clientY,
     });
 
-    if (
-      !enableInteractions ||
-      drawMode ||
-      event.button !== 0 ||
-      !chartRef.current
-    ) {
+    cleanupPlotMousePanWindowListeners();
+    lastPlotPanVisibleRangeRef.current = null;
+    if (plotPanRef.current || !chartRef.current) {
       return;
     }
 
@@ -5949,187 +6187,89 @@ export const ResearchChartSurface = ({
     const rect = container.getBoundingClientRect();
     const priceScaleWidth =
       chartRef.current.priceScale?.("right", 0)?.width?.() || 0;
-    const isInsidePlot =
-      event.clientX >= rect.left &&
-      event.clientX <= rect.right &&
-      event.clientY >= rect.top &&
-      event.clientY <= rect.bottom;
-    const isInsideRightPriceScale =
-      priceScaleWidth > 0 &&
-      event.clientX >= rect.right - priceScaleWidth &&
-      event.clientX <= rect.right &&
-      event.clientY >= rect.top &&
-      event.clientY <= rect.bottom;
-    if (!isInsidePlot || isInsideRightPriceScale) {
-      return;
-    }
-
-    const currentRange = resolveViewportVisibleLogicalRange(
+    const insidePlot = isPointInsideRect({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+    });
+    const insideRightPriceScale = isPointInsideRightPriceScale({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+      priceScaleWidth,
+    });
+    const currentRange =
       visibleLogicalRangeRef.current ||
-        chartRef.current.timeScale?.().getVisibleLogicalRange?.(),
-    );
-    if (!currentRange) {
-      return;
-    }
+      chartRef.current.timeScale?.().getVisibleLogicalRange?.();
 
-    plotPanRef.current = {
+    plotPanRef.current = resolveChartPlotPanStart({
       pointerId: -1,
       startX: event.clientX,
       startY: event.clientY,
-      startRange: currentRange,
-      plotWidth: Math.max(1, rect.width - Math.max(0, priceScaleWidth)),
-      active: false,
-    };
+      currentRange,
+      plotWidth: rect.width - Math.max(0, priceScaleWidth),
+      enabled: enableInteractions,
+      drawMode,
+      button: event.button,
+      insidePlot,
+      insideRightPriceScale,
+    });
+    if (plotPanRef.current && typeof window !== "undefined") {
+      const handleWindowMouseMove = (moveEvent: globalThis.MouseEvent) => {
+        if (plotPanRef.current?.pointerId !== -1) {
+          return;
+        }
+        movePlotPanToPoint(moveEvent.clientX, moveEvent.clientY, moveEvent);
+      };
+      const handleWindowMouseEnd = (endEvent: globalThis.MouseEvent) => {
+        if (plotPanRef.current?.pointerId === -1 && plotPanRef.current.active) {
+          endEvent.preventDefault();
+          endEvent.stopPropagation();
+          reapplyFinalPlotPanRange();
+        }
+        plotPanRef.current = null;
+        cleanupPlotMousePanWindowListeners();
+      };
+      window.addEventListener("mousemove", handleWindowMouseMove, true);
+      window.addEventListener("mouseup", handleWindowMouseEnd, true);
+      plotMousePanWindowCleanupRef.current = () => {
+        window.removeEventListener("mousemove", handleWindowMouseMove, true);
+        window.removeEventListener("mouseup", handleWindowMouseEnd, true);
+      };
+    }
   };
-  const handleRootMouseMoveCapture = (event: MouseEvent<HTMLDivElement>) => {
+  const moveMousePlotPan = (event: MouseEvent<HTMLDivElement>) => {
     const pan = plotPanRef.current;
     if (!pan || pan.pointerId !== -1) {
       return;
     }
 
-    const deltaX = event.clientX - pan.startX;
-    const deltaY = event.clientY - pan.startY;
-    if (
-      !pan.active &&
-      Math.hypot(deltaX, deltaY) <= CHART_PLOT_PAN_MOVE_TOLERANCE
-    ) {
+    const next = resolveChartPlotPanRange({
+      pan,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+    if (!next) {
       return;
     }
 
-    plotPanRef.current = {
-      ...pan,
-      active: true,
-    };
+    plotPanRef.current = next.pan;
     event.preventDefault();
     event.stopPropagation();
-
-    const span = Math.max(1, pan.startRange.to - pan.startRange.from);
-    const barsDelta = -(deltaX / pan.plotWidth) * span;
-    setAdjustedVisibleRange({
-      from: pan.startRange.from + barsDelta,
-      to: pan.startRange.to + barsDelta,
-    });
+    setAdjustedVisibleRange(next.visibleRange);
   };
-  const handleRootMouseUpCapture = (event: MouseEvent<HTMLDivElement>) => {
-    if (plotPanRef.current?.pointerId === -1) {
-      if (plotPanRef.current.active) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      plotPanRef.current = null;
+  const endMousePlotPan = (event: MouseEvent<HTMLDivElement>) => {
+    if (plotPanRef.current?.pointerId !== -1) {
+      return;
     }
-  };
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return undefined;
-    }
-
-    const beginNativeMousePan = (event: globalThis.MouseEvent) => {
-      markUserViewportIntent(event.target, "pointer", {
-        clientX: event.clientX,
-        clientY: event.clientY,
-      });
-
-      if (
-        !enableInteractions ||
-        drawMode ||
-        event.button !== 0 ||
-        !chartRef.current
-      ) {
-        return;
-      }
-
-      const container = containerRef.current;
-      if (!container) {
-        return;
-      }
-
-      const rect = container.getBoundingClientRect();
-      const priceScaleWidth =
-        chartRef.current.priceScale?.("right", 0)?.width?.() || 0;
-      const isInsidePlot =
-        event.clientX >= rect.left &&
-        event.clientX <= rect.right &&
-        event.clientY >= rect.top &&
-        event.clientY <= rect.bottom;
-      const isInsideRightPriceScale =
-        priceScaleWidth > 0 &&
-        event.clientX >= rect.right - priceScaleWidth &&
-        event.clientX <= rect.right &&
-        event.clientY >= rect.top &&
-        event.clientY <= rect.bottom;
-      if (!isInsidePlot || isInsideRightPriceScale) {
-        return;
-      }
-
-      const currentRange = resolveViewportVisibleLogicalRange(
-        visibleLogicalRangeRef.current ||
-          chartRef.current.timeScale?.().getVisibleLogicalRange?.(),
-      );
-      if (!currentRange) {
-        return;
-      }
-
-      plotPanRef.current = {
-        pointerId: -1,
-        startX: event.clientX,
-        startY: event.clientY,
-        startRange: currentRange,
-        plotWidth: Math.max(1, rect.width - Math.max(0, priceScaleWidth)),
-        active: false,
-      };
-    };
-
-    const moveNativeMousePan = (event: globalThis.MouseEvent) => {
-      const pan = plotPanRef.current;
-      if (!pan || pan.pointerId !== -1) {
-        return;
-      }
-
-      const deltaX = event.clientX - pan.startX;
-      const deltaY = event.clientY - pan.startY;
-      if (
-        !pan.active &&
-        Math.hypot(deltaX, deltaY) <= CHART_PLOT_PAN_MOVE_TOLERANCE
-      ) {
-        return;
-      }
-
-      plotPanRef.current = {
-        ...pan,
-        active: true,
-      };
+    if (plotPanRef.current.active) {
       event.preventDefault();
       event.stopPropagation();
-
-      const span = Math.max(1, pan.startRange.to - pan.startRange.from);
-      const barsDelta = -(deltaX / pan.plotWidth) * span;
-      setAdjustedVisibleRange({
-        from: pan.startRange.from + barsDelta,
-        to: pan.startRange.to + barsDelta,
-      });
-    };
-
-    const endNativeMousePan = (event: globalThis.MouseEvent) => {
-      if (plotPanRef.current?.pointerId !== -1) {
-        return;
-      }
-      if (plotPanRef.current.active) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-      plotPanRef.current = null;
-    };
-
-    document.addEventListener("mousedown", beginNativeMousePan, true);
-    document.addEventListener("mousemove", moveNativeMousePan, true);
-    document.addEventListener("mouseup", endNativeMousePan, true);
-    return () => {
-      document.removeEventListener("mousedown", beginNativeMousePan, true);
-      document.removeEventListener("mousemove", moveNativeMousePan, true);
-      document.removeEventListener("mouseup", endNativeMousePan, true);
-    };
-  }, [drawMode, enableInteractions, markUserViewportIntent]);
+      reapplyFinalPlotPanRange();
+    }
+    plotPanRef.current = null;
+    cleanupPlotMousePanWindowListeners();
+  };
   const takeSnapshot = () => {
     const canvas = chartRef.current?.takeScreenshot?.(true, !hideCrosshair);
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -6446,7 +6586,7 @@ export const ResearchChartSurface = ({
       ? effectiveViewportSnapshot
       : null;
   const activeViewportRangeSignature = buildVisibleRangeSignature(
-    activeViewportSnapshot?.visibleLogicalRange ?? visibleLogicalRangeRef.current,
+    visibleLogicalRangeRef.current ?? activeViewportSnapshot?.visibleLogicalRange,
   );
 
   return (
@@ -6455,17 +6595,19 @@ export const ResearchChartSurface = ({
       data-testid={dataTestId}
       data-chart-range-identity={rangeIdentityKey || undefined}
       data-chart-viewport-user-touched={
-        activeViewportSnapshot?.userTouched ? "true" : "false"
+        activeViewportSnapshot?.userTouched || viewportUserTouched
+          ? "true"
+          : "false"
       }
       data-chart-visible-logical-range={activeViewportRangeSignature}
       onPointerDownCapture={handleRootPointerDownCapture}
       onPointerMoveCapture={handleRootPointerMoveCapture}
       onPointerUpCapture={handleRootPointerUpCapture}
       onPointerCancelCapture={handleRootPointerCancelCapture}
-      onMouseDownCapture={handleRootMouseDownCapture}
-      onMouseMoveCapture={handleRootMouseMoveCapture}
-      onMouseUpCapture={handleRootMouseUpCapture}
-      onMouseLeave={handleRootMouseUpCapture}
+      onMouseDownCapture={beginMousePlotPan}
+      onMouseMoveCapture={moveMousePlotPan}
+      onMouseUpCapture={endMousePlotPan}
+      onMouseLeave={endMousePlotPan}
       onWheelCapture={handleRootWheelCapture}
       style={{
         width: isFullscreen ? "100vw" : "100%",
@@ -7390,7 +7532,7 @@ export const ResearchChartSurface = ({
                 textTransform: "uppercase",
               }}
             >
-              Chart feed
+              {emptyStateEyebrow}
             </div>
             <div
               style={{
@@ -7400,7 +7542,7 @@ export const ResearchChartSurface = ({
                 lineHeight: 1.5,
               }}
             >
-              No live chart data available.
+              {emptyStateTitle}
             </div>
             <div
               style={{
@@ -7411,8 +7553,7 @@ export const ResearchChartSurface = ({
                 lineHeight: 1.5,
               }}
             >
-              Chart controls remain available while the stream reconnects or a
-              symbol is selected.
+              {emptyStateDetail}
             </div>
           </div>
         </div>

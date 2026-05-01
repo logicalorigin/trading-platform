@@ -207,6 +207,10 @@ const optionsFlowBounds: Partial<
   universeRefreshMs: { min: 60_000, max: 3_600_000, unit: "ms" },
   universeMinPrice: { min: 0.01, max: 1_000 },
   universeMinDollarVolume: { min: 0, max: 1_000_000_000 },
+  radarBatchSize: { min: 1, max: 100 },
+  radarDeepCandidateCount: { min: 1, max: 20 },
+  radarFallbackDeepCandidateCount: { min: 0, max: 20 },
+  radarDeepLineBudget: { min: 1, max: 40 },
   scannerBatchSize: { min: 1, max: 100 },
   scannerConcurrency: { min: 1, max: 8 },
   scannerLimit: { min: 1, max: 500 },
@@ -385,7 +389,11 @@ function buildOptionsFlowControls(): LaneControl[] {
   (Object.keys(snapshot.defaults) as Array<keyof OptionsFlowRuntimeConfig>).forEach(
     (key) => {
       const source = controlSource(snapshot.sources[key], "default");
-      if (key === "scannerEnabled" || key === "scannerAlwaysOn") {
+      if (
+        key === "scannerEnabled" ||
+        key === "scannerAlwaysOn" ||
+        key === "radarEnabled"
+      ) {
         controls.push({
           id: `api.flow.${key}`,
           label: formatLabel(key),
@@ -786,7 +794,11 @@ function normalizeFlowOverride(
   key: keyof OptionsFlowRuntimeConfig,
   value: unknown,
 ): OptionsFlowRuntimeConfig[keyof OptionsFlowRuntimeConfig] {
-  if (key === "scannerEnabled" || key === "scannerAlwaysOn") {
+  if (
+    key === "scannerEnabled" ||
+    key === "scannerAlwaysOn" ||
+    key === "radarEnabled"
+  ) {
     return readBoolean(value);
   }
   if (key === "universeMode") {

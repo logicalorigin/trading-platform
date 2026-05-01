@@ -5,6 +5,7 @@ import {
   useBrokerStockAggregateStream,
   useStockMinuteAggregateSymbolVersion,
 } from "./useMassiveStockAggregateStream";
+import type { BrokerStockAggregateMessage } from "./useMassiveStockAggregateStream";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
 import { usePageVisible } from "../platform/usePageVisible";
 import {
@@ -352,6 +353,42 @@ const parseHistoricalBarStreamPayload = (
   }
 };
 
+const isHistoricalBarStreamPayloadForUrl = (
+  url: string,
+  payload: HistoricalBarStreamPayload | null | undefined,
+): boolean => {
+  if (!payload) {
+    return false;
+  }
+
+  let params: URLSearchParams;
+  try {
+    params = new URL(url, "http://rayalgo.local").searchParams;
+  } catch {
+    return true;
+  }
+
+  const requestedSymbol = params.get("symbol")?.trim().toUpperCase() || "";
+  const payloadSymbol = payload.symbol?.trim?.().toUpperCase?.() || "";
+  if (requestedSymbol && payloadSymbol && requestedSymbol !== payloadSymbol) {
+    return false;
+  }
+
+  const requestedTimeframe = normalizeChartTimeframe(params.get("timeframe") || "");
+  const payloadTimeframe = payload.timeframe
+    ? normalizeChartTimeframe(payload.timeframe)
+    : "";
+  if (
+    requestedTimeframe &&
+    payloadTimeframe &&
+    requestedTimeframe !== payloadTimeframe
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
 const notifyLiveBarStreamStatus = (
   entry: LiveBarStreamEntry,
   status: LiveBarStreamStatus,
@@ -418,7 +455,7 @@ const startLiveBarStreamEntry = (entry: LiveBarStreamEntry): void => {
   };
   const handleBar = (event: MessageEvent<string>) => {
     const payload = parseHistoricalBarStreamPayload(event.data);
-    if (!payload?.bar) {
+    if (!payload?.bar || !isHistoricalBarStreamPayloadForUrl(entry.url, payload)) {
       return;
     }
 
@@ -544,10 +581,66 @@ const weightedAverage = (
   return Number((total / totalWeight).toFixed(6));
 };
 
+const resolveUtcDateKey = (timeMs: number): string =>
+  new Date(timeMs).toISOString().slice(0, 10);
+
+const buildBarFromMinuteAggregateBucket = (
+  ordered: BrokerStockAggregateMessage[],
+  timestampMs: number,
+): MarketBar | null => {
+  if (!ordered.length) {
+    return null;
+  }
+
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  const volume = ordered.reduce((sum, minute) => sum + minute.volume, 0);
+  const vwap = weightedAverage(
+    ordered.map((minute) => ({
+      value: minute.vwap,
+      weight: minute.volume,
+    })),
+  );
+  const averageTradeSize = weightedAverage(
+    ordered.map((minute) => ({
+      value: minute.averageTradeSize,
+      weight: minute.volume,
+    })),
+  );
+
+  return {
+    timestamp: new Date(timestampMs),
+    time: timestampMs,
+    ts: new Date(timestampMs).toISOString(),
+    open: first.open,
+    high: ordered.reduce((max, minute) => Math.max(max, minute.high), first.high),
+    low: ordered.reduce((min, minute) => Math.min(min, minute.low), first.low),
+    close: last.close,
+    volume,
+    vwap,
+    sessionVwap: last.sessionVwap ?? undefined,
+    accumulatedVolume: last.accumulatedVolume ?? undefined,
+    averageTradeSize,
+    source: last.source,
+  };
+};
+
 const mergeBarsWithMinuteAggregates = (
   symbol: string,
   timeframe: string,
   bars: MarketBar[],
+): MarketBar[] => {
+  return mergeBarsWithMinuteAggregateList(
+    timeframe,
+    bars,
+    getStoredBrokerMinuteAggregates(symbol),
+  );
+};
+
+const mergeBarsWithMinuteAggregateList = (
+  timeframe: string,
+  bars: MarketBar[],
+  minuteAggregates: BrokerStockAggregateMessage[],
 ): MarketBar[] => {
   const normalizedBars = normalizeBaseBars(bars, timeframe);
   if (!MINUTE_AGGREGATE_PATCH_TIMEFRAMES.has(timeframe)) {
@@ -559,7 +652,6 @@ const mergeBarsWithMinuteAggregates = (
     return normalizedBars;
   }
 
-  const minuteAggregates = getStoredBrokerMinuteAggregates(symbol);
   if (!minuteAggregates.length) {
     return normalizedBars;
   }
@@ -568,15 +660,37 @@ const mergeBarsWithMinuteAggregates = (
   // within its session window, rather than re-bucketing (which would mis-align with
   // IBKR's session-day boundary, typically 04:00 UTC).
   if (isDailyTimeframe(timeframe)) {
-    if (!normalizedBars.length) {
-      return normalizedBars;
-    }
-    const lastBar = normalizedBars[normalizedBars.length - 1];
+    const lastBar = normalizedBars[normalizedBars.length - 1] ?? null;
     const lastStartMs =
-      resolveTimestampMs(lastBar.timestamp) ?? resolveTimestampMs(lastBar.time);
-    if (lastStartMs == null) {
+      lastBar
+        ? resolveTimestampMs(lastBar.timestamp) ?? resolveTimestampMs(lastBar.time)
+        : null;
+    const latestAggregate = minuteAggregates[minuteAggregates.length - 1];
+    if (!latestAggregate) {
       return normalizedBars;
     }
+
+    if (
+      lastStartMs == null ||
+      resolveUtcDateKey(latestAggregate.startMs) !== resolveUtcDateKey(lastStartMs)
+    ) {
+      const liveDateKey = resolveUtcDateKey(latestAggregate.startMs);
+      const liveSessionAggregates = minuteAggregates
+        .filter((aggregate) => resolveUtcDateKey(aggregate.startMs) === liveDateKey)
+        .slice()
+        .sort((left, right) => left.startMs - right.startMs);
+      const liveSessionStartMs = Date.parse(`${liveDateKey}T00:00:00.000Z`);
+      const liveSessionBar = buildBarFromMinuteAggregateBucket(
+        liveSessionAggregates,
+        Number.isFinite(liveSessionStartMs)
+          ? liveSessionStartMs
+          : liveSessionAggregates[0]?.startMs,
+      );
+      return liveSessionBar
+        ? mergePatchedBars(normalizedBars, [liveSessionBar], timeframe)
+        : normalizedBars;
+    }
+
     const liveSinceLast = minuteAggregates.filter(
       (aggregate) => aggregate.startMs >= lastStartMs,
     );
@@ -618,7 +732,7 @@ const mergeBarsWithMinuteAggregates = (
     mergedByStart.set(startMs, bar);
   });
 
-  const bucketedMinutes = new Map<number, ReturnType<typeof getStoredBrokerMinuteAggregates>>();
+  const bucketedMinutes = new Map<number, BrokerStockAggregateMessage[]>();
   minuteAggregates.forEach((aggregate) => {
     const bucketStartMs = Math.floor(aggregate.startMs / stepMs) * stepMs;
     const bucket = bucketedMinutes.get(bucketStartMs) || [];
@@ -1514,10 +1628,14 @@ export const useMassiveStreamedStockBars = useBrokerStreamedBars;
 
 export const __chartStreamingTestInternals = {
   capBarsToRecentLimit,
+  buildBarFromMinuteAggregateBucket,
+  mergeBarsWithMinuteAggregateList,
+  mergeBarsWithMinuteAggregates,
   mergeAndCapPatchedBars,
   normalizeHistoricalBarsPayload,
   normalizeBaseBars,
   patchBarsWithHistoricalBarStream,
+  isHistoricalBarStreamPayloadForUrl,
   resolvePrependLookbackMs,
   resolvePatchedBarLimit,
 };

@@ -462,7 +462,6 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
   });
 
   const flowHost = page.getByTestId("screen-host-flow");
-  await flowHost.getByRole("button", { name: "Start Flow scan" }).click();
   await expect(flowHost.getByRole("button", { name: "Stop Flow scan" })).toBeVisible();
   await expect
     .poll(() => broadScanRequests.length, { timeout: 15_000 })
@@ -484,6 +483,31 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
   await expect(
     page.getByTestId("screen-host-flow").getByRole("button", { name: "Stop Flow scan" }),
   ).toBeVisible();
+});
+
+test("Flow tape includes broad scanner feed events", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockFlowApi(page);
+  await openFlowWithState(page, {
+    flowScannerConfig: {
+      mode: "market",
+      scope: "unusual",
+      maxSymbols: 8,
+      batchSize: 8,
+      intervalMs: 2_500,
+      concurrency: 2,
+      limit: 25,
+      unusualThreshold: 1,
+      minPremium: 0,
+      maxDte: null,
+    },
+  });
+
+  const flowHost = page.getByTestId("screen-host-flow");
+  await expect(flowHost.getByRole("button", { name: "Stop Flow scan" })).toBeVisible();
+  await expect(
+    page.getByTestId("flow-tape-row").filter({ hasText: "DIA" }).first(),
+  ).toBeVisible({ timeout: 15_000 });
 });
 
 test("Header Flow settings share linked filters with the Flow page", async ({

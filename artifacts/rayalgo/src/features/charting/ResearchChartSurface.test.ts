@@ -12,6 +12,8 @@ import {
   normalizeVisibleLogicalRange,
   readStoredChartViewportSnapshot,
   resolveAutoHydrationVisibleRange,
+  resolveChartPlotPanRange,
+  resolveChartPlotPanStart,
   resolveDashboardStripAnchorStyle,
   resolveDashboardStripTier,
   resolveEffectiveChartViewportSnapshot,
@@ -21,6 +23,7 @@ import {
   resolveViewportRestoreState,
   resolveViewportVisibleLogicalRange,
   resolveSeriesTailUpdateMode,
+  resolveZoomedVisibleRange,
   sanitizeStoredChartScalePrefs,
   shouldAutoFollowLatestBars,
   writeStoredChartViewportSnapshot,
@@ -569,6 +572,120 @@ test("ResearchChartSurface preserves finite viewport ranges outside loaded bars"
   assert.equal(
     resolveViewportVisibleLogicalRange({ from: Number.NaN, to: 50 }),
     null,
+  );
+});
+
+test("ResearchChartSurface starts plot panning only for valid plot drags", () => {
+  const start = resolveChartPlotPanStart({
+    pointerId: 7,
+    startX: 120,
+    startY: 80,
+    currentRange: { from: 20, to: 80 },
+    plotWidth: 600,
+    enabled: true,
+    drawMode: null,
+    button: 0,
+    insidePlot: true,
+    insideRightPriceScale: false,
+  });
+
+  assert.deepEqual(start, {
+    pointerId: 7,
+    startX: 120,
+    startY: 80,
+    startRange: { from: 20, to: 80 },
+    plotWidth: 600,
+    active: false,
+  });
+
+  assert.equal(
+    resolveChartPlotPanStart({
+      pointerId: 7,
+      startX: 120,
+      startY: 80,
+      currentRange: { from: 20, to: 80 },
+      plotWidth: 600,
+      enabled: true,
+      drawMode: "horizontal",
+      button: 0,
+      insidePlot: true,
+      insideRightPriceScale: false,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveChartPlotPanStart({
+      pointerId: 7,
+      startX: 120,
+      startY: 80,
+      currentRange: { from: 20, to: 80 },
+      plotWidth: 600,
+      enabled: true,
+      drawMode: null,
+      button: 0,
+      insidePlot: true,
+      insideRightPriceScale: true,
+    }),
+    null,
+  );
+});
+
+test("ResearchChartSurface converts plot drag distance into one logical range update", () => {
+  const pan = resolveChartPlotPanStart({
+    pointerId: 3,
+    startX: 100,
+    startY: 50,
+    currentRange: { from: 20, to: 80 },
+    plotWidth: 600,
+    enabled: true,
+    drawMode: null,
+    button: 0,
+    insidePlot: true,
+    insideRightPriceScale: false,
+  });
+
+  assert.equal(
+    resolveChartPlotPanRange({
+      pan,
+      clientX: 103,
+      clientY: 50,
+      moveTolerance: 6,
+    }),
+    null,
+  );
+
+  const next = resolveChartPlotPanRange({
+    pan,
+    clientX: 160,
+    clientY: 50,
+    moveTolerance: 6,
+  });
+
+  assert.deepEqual(next?.visibleRange, { from: 14, to: 74 });
+  assert.equal(next?.pan.active, true);
+});
+
+test("ResearchChartSurface zooms around the current viewport center", () => {
+  assert.deepEqual(
+    resolveZoomedVisibleRange({
+      currentRange: { from: 20, to: 80 },
+      factor: 0.8,
+    }),
+    { from: 26, to: 74 },
+  );
+  assert.deepEqual(
+    resolveZoomedVisibleRange({
+      currentRange: { from: 20, to: 80 },
+      factor: 1.25,
+    }),
+    { from: 12.5, to: 87.5 },
+  );
+  assert.deepEqual(
+    resolveZoomedVisibleRange({
+      currentRange: { from: 48, to: 50 },
+      factor: 0.5,
+    }),
+    { from: 45, to: 53 },
   );
 });
 

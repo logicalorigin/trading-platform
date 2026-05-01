@@ -1546,7 +1546,11 @@ export type FlowEventsSourceScannerCoverage = {
   /** @minimum 0 */
   targetSize?: number;
   /** @minimum 0 */
+  activeTargetSize?: number;
+  /** @minimum 0 */
   selectedSymbols?: number;
+  /** @minimum 0 */
+  selectedShortfall?: number;
   /** @nullable */
   rankedAt?: string | null;
   /** @nullable */
@@ -1559,11 +1563,22 @@ export type FlowEventsSourceScannerCoverage = {
   cooldownCount?: number;
   /** @minimum 0 */
   scannedSymbols?: number;
+  /** @minimum 0 */
+  cycleScannedSymbols?: number;
   currentBatch?: string[];
   /** @nullable */
   lastScanAt?: string | null;
   /** @nullable */
   degradedReason?: string | null;
+  /** @minimum 0 */
+  radarSelectedSymbols?: number;
+  /** @nullable, @minimum 0 */
+  radarEstimatedCycleMs?: number | null;
+  /** @minimum 0 */
+  radarBatchSize?: number;
+  /** @minimum 0 */
+  radarIntervalMs?: number;
+  promotedSymbols?: string[];
 };
 
 export interface FlowEventsSource {
@@ -1587,6 +1602,22 @@ export interface FlowEventsSource {
   ibkrContractCount?: number;
   /** @minimum 0 */
   ibkrQualifiedContractCount?: number;
+  /** @minimum 0 */
+  ibkrCandidateExpirationCount?: number;
+  /** @minimum 0 */
+  ibkrMetadataContractCount?: number;
+  /** @minimum 0 */
+  ibkrLiveCandidateCount?: number;
+  /** @minimum 0 */
+  ibkrAcceptedQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrRejectedQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrReturnedQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrMissingQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrFilteredEventCount?: number;
   scannerCoverage?: FlowEventsSourceScannerCoverage;
 }
 
@@ -2422,7 +2453,11 @@ export interface FlowUniverseCoverage {
   /** @minimum 0 */
   targetSize?: number;
   /** @minimum 0 */
+  activeTargetSize?: number;
+  /** @minimum 0 */
   selectedSymbols?: number;
+  /** @minimum 0 */
+  selectedShortfall?: number;
   /** @nullable */
   rankedAt?: string | null;
   /** @nullable */
@@ -2435,11 +2470,22 @@ export interface FlowUniverseCoverage {
   cooldownCount?: number;
   /** @minimum 0 */
   scannedSymbols?: number;
+  /** @minimum 0 */
+  cycleScannedSymbols?: number;
   currentBatch?: string[];
   /** @nullable */
   lastScanAt?: string | null;
   /** @nullable */
   degradedReason?: string | null;
+  /** @minimum 0 */
+  radarSelectedSymbols?: number;
+  /** @nullable, @minimum 0 */
+  radarEstimatedCycleMs?: number | null;
+  /** @minimum 0 */
+  radarBatchSize?: number;
+  /** @minimum 0 */
+  radarIntervalMs?: number;
+  promotedSymbols?: string[];
 }
 
 export interface FlowUniverseSources {

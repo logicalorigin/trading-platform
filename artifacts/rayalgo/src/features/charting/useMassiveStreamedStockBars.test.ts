@@ -111,6 +111,108 @@ test("5m patched bar merging dedupes timestamps within the same interval", () =>
   assert.equal(patched[0]?.close, 101);
 });
 
+test("daily live aggregate patch appends a missing current-session bar", () => {
+  const dailyBars = [
+    {
+      timestamp: "2026-04-29T04:00:00.000Z",
+      open: 100,
+      high: 103,
+      low: 99,
+      close: 102,
+      volume: 1_000,
+      source: "ibkr-history",
+    },
+  ];
+  const patched = __chartStreamingTestInternals.mergeBarsWithMinuteAggregateList(
+    "1d",
+    dailyBars,
+    [
+      {
+        eventType: "stock-aggregate",
+        symbol: "SPY",
+        open: 103,
+        high: 104,
+        low: 102.5,
+        close: 103.5,
+        volume: 100,
+        accumulatedVolume: 100,
+        vwap: 103.3,
+        sessionVwap: 103.3,
+        officialOpen: 103,
+        averageTradeSize: 10,
+        startMs: Date.parse("2026-04-30T13:30:00.000Z"),
+        endMs: Date.parse("2026-04-30T13:31:00.000Z"),
+        delayed: false,
+        source: "ibkr-websocket-derived",
+      },
+      {
+        eventType: "stock-aggregate",
+        symbol: "SPY",
+        open: 103.5,
+        high: 105,
+        low: 103.25,
+        close: 104.75,
+        volume: 150,
+        accumulatedVolume: 250,
+        vwap: 104,
+        sessionVwap: 103.75,
+        officialOpen: 103,
+        averageTradeSize: 12,
+        startMs: Date.parse("2026-04-30T13:31:00.000Z"),
+        endMs: Date.parse("2026-04-30T13:32:00.000Z"),
+        delayed: false,
+        source: "ibkr-websocket-derived",
+      },
+    ],
+  );
+
+  assert.equal(patched.length, 2);
+  assert.equal(patched[0]?.ts?.startsWith("2026-04-29"), true);
+  assert.equal(patched[1]?.ts?.startsWith("2026-04-30"), true);
+  assert.equal(patched[1]?.open, 103);
+  assert.equal(patched[1]?.high, 105);
+  assert.equal(patched[1]?.low, 102.5);
+  assert.equal(patched[1]?.close, 104.75);
+  assert.equal(patched[1]?.volume, 250);
+});
+
+test("historical bar streams reject stale payloads for prior symbols or intervals", () => {
+  const url = "/api/streams/bars?symbol=SPY&timeframe=5m&source=trades";
+  const bar = {
+    timestamp: "2026-04-27T13:30:00.000Z",
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100.5,
+    volume: 1_000,
+  };
+
+  assert.equal(
+    __chartStreamingTestInternals.isHistoricalBarStreamPayloadForUrl(url, {
+      symbol: "SPY",
+      timeframe: "5m",
+      bar,
+    }),
+    true,
+  );
+  assert.equal(
+    __chartStreamingTestInternals.isHistoricalBarStreamPayloadForUrl(url, {
+      symbol: "QQQ",
+      timeframe: "5m",
+      bar,
+    }),
+    false,
+  );
+  assert.equal(
+    __chartStreamingTestInternals.isHistoricalBarStreamPayloadForUrl(url, {
+      symbol: "SPY",
+      timeframe: "1m",
+      bar,
+    }),
+    false,
+  );
+});
+
 test("prepend lookback spans sparse intraday calendar gaps", () => {
   const lookbackMs = __chartStreamingTestInternals.resolvePrependLookbackMs(
     "5s",

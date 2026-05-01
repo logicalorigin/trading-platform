@@ -165,6 +165,10 @@ export type QuoteSnapshot = {
   prevClose: number | null;
   volume: number | null;
   openInterest: number | null;
+  optionCallVolume?: number | null;
+  optionPutVolume?: number | null;
+  optionCallOpenInterest?: number | null;
+  optionPutOpenInterest?: number | null;
   impliedVolatility: number | null;
   delta: number | null;
   gamma: number | null;

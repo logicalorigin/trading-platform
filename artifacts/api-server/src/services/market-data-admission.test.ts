@@ -45,14 +45,14 @@ test("uses a 200-line IBKR budget with a 15-line reserve by default", () => {
   assert.equal(budget.maxLines, 200);
   assert.equal(budget.reserveLines, 15);
   assert.equal(budget.usableLines, 185);
-  assert.equal(budget.automationLineCap, 35);
-  assert.equal(budget.flowScannerLineCap, 45);
+  assert.equal(budget.automationLineCap, 25);
+  assert.equal(budget.flowScannerLineCap, 30);
   assert.deepEqual(budget.poolLineCaps, {
     execution: 12,
-    visible: 70,
-    automation: 35,
-    "flow-scanner": 45,
-    convenience: 23,
+    visible: 118,
+    automation: 25,
+    "flow-scanner": 30,
+    convenience: 0,
   });
 });
 

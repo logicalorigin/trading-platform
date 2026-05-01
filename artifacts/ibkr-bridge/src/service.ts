@@ -322,6 +322,14 @@ export class IbkrBridgeService {
     return this.ensureProvider().getQuoteSnapshots(symbols);
   }
 
+  getOptionActivitySnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
+    const provider = this.ensureProvider();
+    if (!provider.getOptionActivitySnapshots) {
+      return Promise.resolve([]);
+    }
+    return provider.getOptionActivitySnapshots(symbols);
+  }
+
   getHistoricalBars(input: {
     symbol: string;
     timeframe: HistoryBarTimeframe;

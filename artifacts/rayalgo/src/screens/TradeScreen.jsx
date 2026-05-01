@@ -29,12 +29,15 @@ import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
-  buildResearchChartModel,
+  buildResearchChartModelIncremental,
+  clearChartHydrationScope,
   getChartBarLimit,
   getChartTimeframeOptions,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
   flowEventsToChartEvents,
+  recordChartBarScopeState,
+  recordChartHydrationMetric,
   resolveRayReplicaRuntimeSettings,
   resolveSpotChartFrameLayout,
   useDrawingHistory,
@@ -96,9 +99,10 @@ import {
   shouldHydrateActiveFullCoverage,
 } from "../features/trade/optionChainLoadingPlan";
 import {
-  DEFAULT_OPTION_QUOTE_LINE_BUDGET,
+  ACTIVE_OPTION_QUOTE_LINE_BUDGET,
   DEFAULT_OPTION_QUOTE_ROTATION_MS,
   buildTradeOptionProviderContractIdPlan,
+  resolveOptionQuoteLineBudget,
   selectRotatingProviderContractIds,
 } from "../features/trade/optionQuoteHydrationPlan";
 import {
@@ -146,6 +150,67 @@ const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
 const TRADE_OPTION_CHART_FRAME_LAYOUT = resolveSpotChartFrameLayout(false);
 const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
 export const TRADE_RECENT_TICKER_LIMIT = 16;
+
+const useInstrumentedChartModel = ({ scopeKey, bars, buildInput, deps }) => {
+  const initialHydrationStartedAtRef = useRef(nowMs());
+  const hasRecordedFirstPaintRef = useRef(false);
+  const previousBuildStateRef = useRef(null);
+
+  useEffect(() => {
+    initialHydrationStartedAtRef.current = nowMs();
+    hasRecordedFirstPaintRef.current = false;
+    previousBuildStateRef.current = null;
+    clearChartHydrationScope(scopeKey);
+  }, [scopeKey]);
+
+  const chartModel = useMemo(() => {
+    const startedAt = nowMs();
+    const nextResult = buildResearchChartModelIncremental(
+      buildInput,
+      previousBuildStateRef.current,
+    );
+    previousBuildStateRef.current = nextResult.state;
+    recordChartHydrationMetric("modelBuildMs", nowMs() - startedAt, scopeKey);
+    return nextResult.model;
+  }, deps);
+
+  const latestBarSignature = useMemo(() => {
+    const lastBar = bars[bars.length - 1];
+    if (!lastBar) return "empty";
+    return [
+      bars.length,
+      lastBar.timestamp ?? lastBar.time ?? lastBar.ts ?? "",
+      lastBar.close ?? lastBar.c ?? "",
+      lastBar.volume ?? lastBar.v ?? "",
+    ].join("|");
+  }, [bars]);
+
+  useEffect(() => {
+    if (!chartModel.chartBars.length) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      if (cancelled || hasRecordedFirstPaintRef.current) {
+        return;
+      }
+      recordChartHydrationMetric(
+        "firstPaintMs",
+        nowMs() - initialHydrationStartedAtRef.current,
+        scopeKey,
+      );
+      hasRecordedFirstPaintRef.current = true;
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [chartModel.chartBars.length, latestBarSignature, scopeKey]);
+
+  return chartModel;
+};
 
 const normalizeIndicatorSelection = (value, fallback = []) => {
   const source = Array.isArray(value) ? value : fallback;
@@ -334,6 +399,9 @@ const nowMs = () =>
   typeof performance !== "undefined" && typeof performance.now === "function"
     ? performance.now()
     : Date.now();
+
+const buildTradeChainRowsSignature = (rows = []) =>
+  rows.map((row) => row?.k).filter((value) => value != null).join("|");
 
 const formatOptionExpirationIsoDate = (value, actualDate) => {
   if (typeof value === "string") {
@@ -677,11 +745,27 @@ const TradeContractDetailPanel = ({
     providerContractId,
   ]);
   const {
+    baseBars,
+    baseTimeframe: optionChartBaseTimeframe,
     chartProviderContractId,
     displayBars,
+    hasExhaustedOlderHistory,
     identityKey: optionContractScopeKey,
+    isPrependingOlder,
+    loadedBarCount,
+    oldestLoadedAtMs,
+    olderHistoryCursor,
+    olderHistoryExhaustionReason,
+    olderHistoryNextBeforeMs,
+    olderHistoryPageCount,
+    olderHistoryProvider,
+    olderHistoryProviderCursor,
+    olderHistoryProviderNextUrl,
+    olderHistoryProviderPageCount,
+    olderHistoryProviderPageLimitReached,
     prewarmTimeframe: prewarmFavoriteTimeframe,
     query: optionBarsQuery,
+    streamedBars,
   } = useOptionChartBars({
     scope: "trade-contract",
     underlying: ticker,
@@ -756,27 +840,39 @@ const TradeContractDetailPanel = ({
   useEffect(() => {
     persistState({ tradeOptionRayReplicaSettings: rayReplicaSettings });
   }, [rayReplicaSettings]);
-  const chartModel = useMemo(
-    () =>
-      buildResearchChartModel({
-        bars: displayBars,
-        timeframe: optionChartTimeframe,
-        defaultVisibleBarCount: getChartBarLimit(
-          optionChartTimeframe,
-          "option",
-        ),
-        selectedIndicators,
-        indicatorSettings,
-        indicatorRegistry,
-      }),
-    [
+  const chartModel = useInstrumentedChartModel({
+    scopeKey:
+      optionContractScopeKey ||
+      [
+        "trade-contract-option",
+        ticker || "__missing__",
+        optionExpirationIso || "__missing__",
+        optionRight || "__missing__",
+        Number.isFinite(contract.strike) ? contract.strike : "__missing__",
+        optionChartTimeframe,
+      ].join("::"),
+    bars: displayBars,
+    buildInput: {
+      bars: displayBars,
+      timeframe: optionChartTimeframe,
+      defaultVisibleBarCount: getChartBarLimit(optionChartTimeframe, "option"),
+      selectedIndicators,
+      indicatorSettings,
+      indicatorRegistry,
+    },
+    deps: [
       displayBars,
+      optionContractScopeKey,
+      ticker,
+      optionExpirationIso,
+      optionRight,
+      contract.strike,
       indicatorRegistry,
       indicatorSettings,
       optionChartTimeframe,
       selectedIndicators,
     ],
-  );
+  });
   const chartEvents = useMemo(
     () => flowEventsToChartEvents(tradeFlowSnapshot.events || [], ticker),
     [ticker, tradeFlowSnapshot.events],
@@ -857,6 +953,60 @@ const TradeContractDetailPanel = ({
   });
 
   useEffect(() => {
+    recordChartBarScopeState(optionContractScopeKey, {
+      timeframe: optionChartTimeframe,
+      role: "option",
+      requestedLimit: optionBarsLimit,
+      initialLimit: getInitialChartBarLimit(optionChartTimeframe, "option"),
+      targetLimit: getChartBarLimit(optionChartTimeframe, "option"),
+      maxLimit: getMaxChartBarLimit(optionChartTimeframe, "option"),
+      hydratedBaseCount: baseBars.length,
+      renderedBarCount: displayBars.length,
+      livePatchedBarCount: Math.max(0, streamedBars.length - baseBars.length),
+      oldestLoadedAt: oldestLoadedAtMs
+        ? new Date(oldestLoadedAtMs).toISOString()
+        : null,
+      isPrependingOlder,
+      hasExhaustedOlderHistory,
+      olderHistoryNextBeforeAt: olderHistoryNextBeforeMs
+        ? new Date(olderHistoryNextBeforeMs).toISOString()
+        : null,
+      emptyOlderHistoryWindowCount: 0,
+      olderHistoryPageCount,
+      olderHistoryProvider,
+      olderHistoryExhaustionReason,
+      olderHistoryProviderCursor,
+      olderHistoryProviderNextUrl,
+      olderHistoryProviderPageCount,
+      olderHistoryProviderPageLimitReached,
+      olderHistoryCursor,
+      baseTimeframe: optionChartBaseTimeframe,
+      chartHydrationStatus: statusLabel,
+    });
+  }, [
+    baseBars.length,
+    displayBars.length,
+    hasExhaustedOlderHistory,
+    isPrependingOlder,
+    oldestLoadedAtMs,
+    optionBarsLimit,
+    optionChartBaseTimeframe,
+    optionChartTimeframe,
+    optionContractScopeKey,
+    olderHistoryCursor,
+    olderHistoryExhaustionReason,
+    olderHistoryNextBeforeMs,
+    olderHistoryPageCount,
+    olderHistoryProvider,
+    olderHistoryProviderCursor,
+    olderHistoryProviderNextUrl,
+    olderHistoryProviderPageCount,
+    olderHistoryProviderPageLimitReached,
+    statusLabel,
+    streamedBars.length,
+  ]);
+
+  useEffect(() => {
     if (!ticker || !optionIdentityReady) {
       return;
     }
@@ -888,7 +1038,7 @@ const TradeContractDetailPanel = ({
         style={{
           height: "100%",
           display: "grid",
-          gridTemplateRows: "auto auto 1fr auto",
+          gridTemplateRows: "auto minmax(0, 1fr) auto",
           gap: sp(8),
           minHeight: 0,
         }}
@@ -944,7 +1094,7 @@ const TradeContractDetailPanel = ({
             </div>
           ))}
         </div>
-        <div style={{ position: "relative", minHeight: 0 }}>
+        <div style={{ position: "relative", minHeight: 0, height: "100%" }}>
           <ResearchChartFrame
             dataTestId="trade-contract-option-chart"
             theme={T}
@@ -1526,7 +1676,7 @@ const TradeOptionChainRuntime = ({
   );
   const [enabledBatchChunkCount, setEnabledBatchChunkCount] = useState(0);
   useEffect(() => {
-    setEnabledBatchChunkCount(batchExpirationChunks.length > 0 ? 1 : 0);
+    setEnabledBatchChunkCount(0);
   }, [
     activeChainKey,
     batchExpirationChunkSignature,
@@ -1584,6 +1734,38 @@ const TradeOptionChainRuntime = ({
     ),
     ...OPTION_CHAIN_QUERY_DEFAULTS,
   });
+  useEffect(() => {
+    if (
+      !enabled ||
+      background ||
+      batchExpirationChunks.length === 0 ||
+      enabledBatchChunkCount > 0
+    ) {
+      return undefined;
+    }
+
+    if (
+      activeOptionChainQuery.isSuccess ||
+      activeOptionChainQuery.isError ||
+      activeOptionChainQuery.fetchStatus === "idle"
+    ) {
+      setEnabledBatchChunkCount(1);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setEnabledBatchChunkCount(1);
+    }, 1_500);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeOptionChainQuery.fetchStatus,
+    activeOptionChainQuery.isError,
+    activeOptionChainQuery.isSuccess,
+    background,
+    batchExpirationChunks.length,
+    enabled,
+    enabledBatchChunkCount,
+  ]);
   const batchOptionChainQueries = useQueries({
     queries: batchExpirationChunks.map((chunk, index) => {
       const chainKeys = chunk.map(getExpirationChainKey).filter(Boolean);
@@ -2141,6 +2323,7 @@ const TradeOptionQuoteRuntime = ({
   contract,
   heldContracts,
   enabled,
+  visibleRows = [],
 }) => {
   const chainSnapshot = useTradeOptionChainSnapshot(ticker);
   const { chainRows } = resolveTradeOptionChainSnapshot(
@@ -2154,8 +2337,9 @@ const TradeOptionQuoteRuntime = ({
         chainRows,
         contract,
         heldContracts,
+        visibleRows,
       }),
-    [chainRows, contract, heldContracts],
+    [chainRows, contract, heldContracts, visibleRows],
   );
   const providerContractIdSignature = providerContractIds.join("\u001f");
   const [rotationIndex, setRotationIndex] = useState(0);
@@ -2166,15 +2350,53 @@ const TradeOptionQuoteRuntime = ({
     () =>
       selectRotatingProviderContractIds({
         providerContractIds,
+        lineBudget: resolveOptionQuoteLineBudget({
+          active: enabled,
+          configuredLimit: ACTIVE_OPTION_QUOTE_LINE_BUDGET,
+        }),
         rotationIndex,
       }),
-    [providerContractIds, rotationIndex],
+    [enabled, providerContractIds, rotationIndex],
   );
+  const executionProviderContractIds = useMemo(() => {
+    const selectedProviderContractId =
+      providerContractIds.length > 0 ? providerContractIds[0] : null;
+    const executionIds = new Set();
+    if (selectedProviderContractId) {
+      executionIds.add(selectedProviderContractId);
+    }
+    heldContracts.forEach((holding) => {
+      const providerContractId = String(holding?.providerContractId || "").trim();
+      if (providerContractId) {
+        executionIds.add(providerContractId);
+      }
+    });
+    return quoteSubscriptionPlan.activeProviderContractIds.filter(
+      (providerContractId) => executionIds.has(providerContractId),
+    );
+  }, [
+    heldContracts,
+    providerContractIds,
+    quoteSubscriptionPlan.activeProviderContractIds,
+  ]);
+  const visibleProviderContractIds = useMemo(() => {
+    const executionSet = new Set(executionProviderContractIds);
+    return quoteSubscriptionPlan.activeProviderContractIds.filter(
+      (providerContractId) => !executionSet.has(providerContractId),
+    );
+  }, [
+    executionProviderContractIds,
+    quoteSubscriptionPlan.activeProviderContractIds,
+  ]);
 
   useEffect(() => {
+    const lineBudget = resolveOptionQuoteLineBudget({
+      active: enabled,
+      configuredLimit: ACTIVE_OPTION_QUOTE_LINE_BUDGET,
+    });
     if (
       !enabled ||
-      providerContractIds.length <= DEFAULT_OPTION_QUOTE_LINE_BUDGET
+      providerContractIds.length <= lineBudget
     ) {
       return;
     }
@@ -2200,12 +2422,17 @@ const TradeOptionQuoteRuntime = ({
       rotatingQuoteSubscriptions:
         quoteSubscriptionPlan.rotatingProviderContractIds.length,
       quoteMode:
-        providerContractIds.length > DEFAULT_OPTION_QUOTE_LINE_BUDGET
+        providerContractIds.length >
+        resolveOptionQuoteLineBudget({
+          active: enabled,
+          configuredLimit: ACTIVE_OPTION_QUOTE_LINE_BUDGET,
+        })
           ? "websocket-rotating-full-expiration"
           : "websocket-full-expiration",
     });
   }, [
     contract.exp,
+    enabled,
     providerContractIds.length,
     quoteSubscriptionPlan.activeProviderContractIds.length,
     quoteSubscriptionPlan.pendingProviderContractIds.length,
@@ -2216,12 +2443,28 @@ const TradeOptionQuoteRuntime = ({
 
   useIbkrOptionQuoteStream({
     underlying: ticker,
-    providerContractIds: quoteSubscriptionPlan.activeProviderContractIds,
+    providerContractIds: executionProviderContractIds,
     enabled: Boolean(
       enabled &&
         ticker &&
-        quoteSubscriptionPlan.activeProviderContractIds.length > 0,
+        executionProviderContractIds.length > 0,
     ),
+    owner: `trade-option-execution:${ticker || "unknown"}`,
+    intent: "execution-live",
+    requiresGreeks: true,
+  });
+
+  useIbkrOptionQuoteStream({
+    underlying: ticker,
+    providerContractIds: visibleProviderContractIds,
+    enabled: Boolean(
+      enabled &&
+        ticker &&
+        visibleProviderContractIds.length > 0,
+    ),
+    owner: `trade-option-visible:${ticker || "unknown"}`,
+    intent: "visible-live",
+    requiresGreeks: true,
   });
 
   return null;
@@ -2297,6 +2540,7 @@ export const TradeScreen = ({
   const [tradeChainHeatmapEnabled, setTradeChainHeatmapEnabled] = useState(
     Boolean(_initialState.tradeChainHeatmapEnabled),
   );
+  const [visibleOptionChainRows, setVisibleOptionChainRows] = useState([]);
   const [expandedOptionChainKeysByTicker, setExpandedOptionChainKeysByTicker] =
     useState({});
   const stockAggregateStreamingEnabled = Boolean(
@@ -2421,6 +2665,15 @@ export const TradeScreen = ({
     positions.positions,
     tradePositionsQuery.data,
   ]);
+  const handleVisibleOptionChainRowsChange = useCallback((rows) => {
+    const nextRows = Array.isArray(rows) ? rows : [];
+    setVisibleOptionChainRows((current) =>
+      buildTradeChainRowsSignature(current) ===
+      buildTradeChainRowsSignature(nextRows)
+        ? current
+        : nextRows,
+    );
+  }, []);
 
   // Persist trade state changes
   useEffect(() => {
@@ -2441,6 +2694,9 @@ export const TradeScreen = ({
   useEffect(() => {
     persistState({ tradeChainHeatmapEnabled });
   }, [tradeChainHeatmapEnabled]);
+  useEffect(() => {
+    setVisibleOptionChainRows([]);
+  }, [activeTicker, contract.exp]);
   useEffect(() => {
     if (typeof activeWorkspace.chainHeatmapEnabled === "boolean") {
       setTradeChainHeatmapEnabled(activeWorkspace.chainHeatmapEnabled);
@@ -2837,6 +3093,7 @@ export const TradeScreen = ({
         contract={contract}
         heldContracts={heldContracts}
         enabled={tradeBrokerStreamingEnabled}
+        visibleRows={visibleOptionChainRows}
       />
       {/* Main workspace */}
       <div
@@ -3030,6 +3287,7 @@ export const TradeScreen = ({
                 return next;
               })
             }
+            onVisibleRowsChange={handleVisibleOptionChainRowsChange}
           />
           <MemoTradeSpotFlowPanel ticker={activeTicker} />
           <MemoTradeOptionsFlowPanel ticker={activeTicker} />

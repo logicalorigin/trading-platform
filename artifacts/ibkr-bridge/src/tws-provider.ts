@@ -1632,18 +1632,25 @@ export function toQuoteSnapshot(
   const open = getTickValue(ticks, TickType.OPEN, TickType.DELAYED_OPEN);
   const high = getTickValue(ticks, TickType.HIGH, TickType.DELAYED_HIGH);
   const low = getTickValue(ticks, TickType.LOW, TickType.DELAYED_LOW);
-  const volume = getTickValue(
-    ticks,
-    TickType.OPTION_CALL_VOLUME,
-    TickType.OPTION_PUT_VOLUME,
-    TickType.VOLUME,
-    TickType.DELAYED_VOLUME,
-  );
-  const openInterest = getTickValue(
+  const optionCallVolume = getTickValue(ticks, TickType.OPTION_CALL_VOLUME);
+  const optionPutVolume = getTickValue(ticks, TickType.OPTION_PUT_VOLUME);
+  const optionCallOpenInterest = getTickValue(
     ticks,
     TickType.OPTION_CALL_OPEN_INTEREST,
+  );
+  const optionPutOpenInterest = getTickValue(
+    ticks,
     TickType.OPTION_PUT_OPEN_INTEREST,
-    TickType.OPEN_INTEREST,
+  );
+  const volume = firstDefined(
+    optionCallVolume,
+    optionPutVolume,
+    getTickValue(ticks, TickType.VOLUME, TickType.DELAYED_VOLUME),
+  );
+  const openInterest = firstDefined(
+    optionCallOpenInterest,
+    optionPutOpenInterest,
+    getTickValue(ticks, TickType.OPEN_INTEREST),
   );
   const impliedVolatility = getOptionComputationValue(ticks, "iv");
   const delta = getOptionComputationValue(ticks, "delta");
@@ -1674,6 +1681,10 @@ export function toQuoteSnapshot(
     prevClose,
     volume,
     openInterest,
+    optionCallVolume,
+    optionPutVolume,
+    optionCallOpenInterest,
+    optionPutOpenInterest,
     impliedVolatility,
     delta,
     gamma,
@@ -4251,6 +4262,47 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     return results;
   }
 
+  async getOptionActivitySnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
+    return runBridgeLane(
+      "market-subscriptions",
+      async () => {
+        await this.refreshSession();
+
+        const normalizedSymbols = Array.from(
+          new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+        );
+
+        const snapshots = await Promise.all(
+          normalizedSymbols.map(async (symbol) => {
+            const resolved = await this.resolveStockContract(symbol);
+            return this.getContractQuoteStreamSample({
+              contract: {
+                ...resolved.contract,
+                conId: resolved.resolved.conid,
+                exchange: "SMART",
+              },
+              symbol,
+              providerContractId: resolved.resolved.providerContractId,
+              // 100 = option volume, 101 = option open interest, 106 =
+              // implied volatility. Sampling the underlying with these generic
+              // ticks gives the broad radar enough activity data without
+              // hydrating every option contract in the chain.
+              genericTickList: "100,101,106",
+            });
+          }),
+        );
+
+        return compact(snapshots);
+      },
+      {
+        timeoutMs: Math.min(
+          20_000,
+          Math.max(6_000, this.genericTickSampleMs + symbols.length * 100),
+        ),
+      },
+    );
+  }
+
   async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
     const normalizedSymbols = Array.from(
       new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
@@ -4373,7 +4425,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       if (liveProviderContractIds.has(ensuredProviderContractId)) {
         await this.waitForCondition(
           () => this.quotesByProviderContractId.has(ensuredProviderContractId),
-          400,
+          Math.max(1_000, this.genericTickSampleMs * 2),
           50,
         );
 
@@ -4393,6 +4445,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         },
         symbol: resolved.optionContract.ticker,
         providerContractId: ensuredProviderContractId,
+        genericTickList: "100,101,106",
       });
 
       if (fallbackQuote) {

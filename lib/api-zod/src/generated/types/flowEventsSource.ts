@@ -32,5 +32,21 @@ export interface FlowEventsSource {
   ibkrContractCount?: number;
   /** @minimum 0 */
   ibkrQualifiedContractCount?: number;
+  /** @minimum 0 */
+  ibkrCandidateExpirationCount?: number;
+  /** @minimum 0 */
+  ibkrMetadataContractCount?: number;
+  /** @minimum 0 */
+  ibkrLiveCandidateCount?: number;
+  /** @minimum 0 */
+  ibkrAcceptedQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrRejectedQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrReturnedQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrMissingQuoteCount?: number;
+  /** @minimum 0 */
+  ibkrFilteredEventCount?: number;
   scannerCoverage?: FlowEventsSourceScannerCoverage;
 }

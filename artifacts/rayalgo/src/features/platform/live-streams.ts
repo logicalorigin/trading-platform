@@ -111,6 +111,15 @@ type OptionQuoteWebSocketPayload = OptionQuoteStreamPayload & {
   missingProviderContractIds?: string[];
 };
 
+type OptionQuoteStreamIntent =
+  | "execution-live"
+  | "visible-live"
+  | "automation-live"
+  | "flow-scanner-live"
+  | "convenience-live"
+  | "delayed-ok"
+  | "historical";
+
 const optionQuoteSnapshotsByProviderContractId = new Map<
   string,
   LiveOptionQuoteSnapshot
@@ -1781,10 +1790,16 @@ export const useIbkrOptionQuoteStream = ({
   underlying,
   providerContractIds,
   enabled = true,
+  owner,
+  intent = "visible-live",
+  requiresGreeks = true,
 }: {
   underlying?: string | null;
   providerContractIds: string[];
   enabled?: boolean;
+  owner?: string | null;
+  intent?: OptionQuoteStreamIntent;
+  requiresGreeks?: boolean;
 }) => {
   const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
@@ -1804,6 +1819,7 @@ export const useIbkrOptionQuoteStream = ({
       ),
     [providerContractIdSignature],
   );
+  const normalizedOwner = owner?.trim?.() || "";
   const webSocketUrl = useMemo(
     () =>
       OPTION_QUOTE_WEBSOCKET_ENABLED
@@ -2050,6 +2066,9 @@ export const useIbkrOptionQuoteStream = ({
             type: "subscribe",
             underlying: normalizedUnderlying,
             providerContractIds: normalizedProviderContractIds,
+            owner: normalizedOwner || undefined,
+            intent,
+            requiresGreeks,
           }),
         );
       });
@@ -2146,10 +2165,13 @@ export const useIbkrOptionQuoteStream = ({
     };
   }, [
     enabled,
+    intent,
     normalizedProviderContractIds,
     normalizedUnderlying,
+    normalizedOwner,
     pageVisible,
     queryClient,
+    requiresGreeks,
     webSocketUrl,
   ]);
 };

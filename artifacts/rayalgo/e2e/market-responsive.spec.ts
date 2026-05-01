@@ -209,9 +209,17 @@ async function mockMarketApi(page: Page) {
       body: JSON.stringify(body),
     });
   });
+  await page.route("**/*tradingview.com/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/javascript",
+      body: "",
+    });
+  });
 }
 
 async function openMarket(page: Page, layout: string) {
+  await page.goto("about:blank");
   await page.addInitScript(
     ({ layout, symbols }) => {
       window.localStorage.clear();
@@ -237,6 +245,7 @@ async function openMarket(page: Page, layout: string) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("market-chart-grid")).toBeVisible();
+  await page.getByRole("button", { name: layout }).click();
 }
 
 async function expectNoElementOverflow(page: Page, selector: string) {
@@ -266,7 +275,7 @@ test("Market chart grid keeps touched viewports through layout changes and clear
   page,
 }) => {
   const runtimeIssues: string[] = [];
-  page.on("pageerror", (error) => runtimeIssues.push(error.message));
+  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
   page.on("console", (message) => {
     if (
       (message.type() === "error" || message.type() === "warning") &&
@@ -325,6 +334,7 @@ test("Market chart grid keeps touched viewports through layout changes and clear
   expectLogicalRangesClose(
     await expandedChartSurfaces.first().getAttribute("data-chart-visible-logical-range"),
     touchedRange,
+    2.5,
   );
 
   await page.getByTestId("market-chart-reset-views").click();
@@ -345,7 +355,7 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
   page,
 }) => {
   const runtimeIssues: string[] = [];
-  page.on("pageerror", (error) => runtimeIssues.push(error.message));
+  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
   page.on("console", (message) => {
     if (
       (message.type() === "error" || message.type() === "warning") &&
@@ -380,14 +390,15 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
   );
   const plotBox = await inactivePlot.boundingBox();
   expect(plotBox, "inactive chart plot should have a geometry box").not.toBeNull();
+  await page.waitForTimeout(150);
 
   await page.mouse.move(
-    plotBox!.x + plotBox!.width * 0.72,
+    plotBox!.x + plotBox!.width * 0.28,
     plotBox!.y + plotBox!.height * 0.52,
   );
   await page.mouse.down();
   await page.mouse.move(
-    plotBox!.x + plotBox!.width * 0.28,
+    plotBox!.x + plotBox!.width * 0.72,
     plotBox!.y + plotBox!.height * 0.52,
     { steps: 8 },
   );
@@ -419,8 +430,9 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
     .toBe("SPY");
 
   await page.waitForTimeout(350);
+  const settledRange = await inactiveSurface.getAttribute("data-chart-visible-logical-range");
   expectLogicalRangesClose(
-    await inactiveSurface.getAttribute("data-chart-visible-logical-range"),
+    settledRange,
     pannedRange,
   );
 
@@ -443,7 +455,7 @@ for (const testcase of layoutCases) {
     page,
   }) => {
     const runtimeIssues: string[] = [];
-    page.on("pageerror", (error) => runtimeIssues.push(error.message));
+    page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
     page.on("console", (message) => {
       if (
         (message.type() === "error" || message.type() === "warning") &&

@@ -526,6 +526,7 @@ export const TradeChainPanel = ({
   chainStatus = "empty",
   heatmapEnabled = false,
   onToggleHeatmap,
+  onVisibleRowsChange,
 }) => {
   const fallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
@@ -671,6 +672,9 @@ export const TradeChainPanel = ({
     visibleStartIndex + visibleRowCount,
   );
   const visibleChain = chain.slice(visibleStartIndex, visibleEndIndex);
+  useEffect(() => {
+    onVisibleRowsChange?.(visibleChain);
+  }, [onVisibleRowsChange, visibleChain]);
   const topPadding = visibleStartIndex * ROW_HEIGHT;
   const bottomPadding = Math.max(0, (chain.length - visibleEndIndex) * ROW_HEIGHT);
   const atmRow =

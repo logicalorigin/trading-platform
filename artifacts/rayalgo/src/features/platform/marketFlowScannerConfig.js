@@ -28,8 +28,8 @@ export const DEFAULT_FLOW_SCANNER_CONFIG = Object.freeze({
   mode: FLOW_SCANNER_MODE.market,
   scope: FLOW_SCANNER_SCOPE.unusual,
   maxSymbols: 500,
-  batchSize: 12,
-  intervalMs: 30_000,
+  batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
+  intervalMs: UNUSUAL_SCANNER_INTERVAL_MS,
   concurrency: 2,
   limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
   unusualThreshold: 1,
@@ -167,14 +167,27 @@ export const filterFlowScannerEvents = (
 ) => {
   const resolved = normalizeFlowScannerConfig(config);
   return (events || []).filter((event) => {
+    const premium = Number(event?.premium || 0);
+    const dte = Number(event?.dte);
+    const side = String(event?.side || "").toUpperCase();
+    const type = String(event?.type || "").toUpperCase();
+    const score = Number(event?.unusualScore);
+    const matchesUnusualScope =
+      Boolean(event?.isUnusual) ||
+      (Number.isFinite(score) && score >= resolved.unusualThreshold) ||
+      Boolean(event?.golden) ||
+      type === "SWEEP" ||
+      type === "BLOCK" ||
+      premium >= 250_000 ||
+      (side === "BUY" && premium >= 100_000) ||
+      (Number.isFinite(dte) && dte <= 1 && premium >= 50_000);
     if (
       resolved.scope === FLOW_SCANNER_SCOPE.unusual &&
-      !event?.isUnusual &&
-      !(Number(event?.unusualScore) >= resolved.unusualThreshold)
+      !matchesUnusualScope
     ) {
       return false;
     }
-    if (resolved.minPremium > 0 && Number(event?.premium || 0) < resolved.minPremium) {
+    if (resolved.minPremium > 0 && premium < resolved.minPremium) {
       return false;
     }
     if (resolved.maxDte !== null) {

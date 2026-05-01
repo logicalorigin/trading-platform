@@ -254,6 +254,10 @@ test("header broadcast scrollers render and open Trade from tape items", async (
   await expect(page.getByTestId("header-broadcast-scrollers")).toBeVisible({
     timeout: 30_000,
   });
+  await expect(page.getByTestId("header-unusual-broad-toggle")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await expect(page.getByTestId("header-signal-tape")).toContainText("BUY");
   await expect(page.getByTitle("SPY BUY 15m")).toBeVisible();
   await expect(page.getByTestId("header-unusual-tape")).toContainText("QQQ", {

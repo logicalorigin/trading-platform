@@ -400,6 +400,30 @@ async function openTrade(page: Page) {
   await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
 }
 
+async function dragPanChart(page: Page, chartTestId: string) {
+  const surface = page.getByTestId(`${chartTestId}-surface`);
+  await surface.scrollIntoViewIfNeeded();
+  await expect(surface).toHaveAttribute(
+    "data-chart-visible-logical-range",
+    /^(?!none$).+/,
+    { timeout: 10_000 },
+  );
+  const before = await surface.getAttribute("data-chart-visible-logical-range");
+  const plot = surface.locator("[data-chart-plot-root]");
+  const box = await plot.boundingBox();
+  expect(box, `${chartTestId} plot should have a geometry box`).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width * 0.55, box!.y + box!.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width * 0.35, box!.y + box!.height * 0.5, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  await expect(surface).toHaveAttribute("data-chart-viewport-user-touched", "true");
+  await expect
+    .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
+    .not.toBe(before);
+}
+
 async function openPlatformScreen(
   page: Page,
   screen: "trade" | "flow" | "research",
@@ -1327,6 +1351,17 @@ test("Trade option chain selects a hydrated conid and renders option chart bars"
       )
       .toBe(true);
   }
+});
+
+test("Trade spot and option charts drag-pan through the shared chart frame", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockTradeApi(page);
+  await openTrade(page);
+
+  await dragPanChart(page, "trade-equity-chart");
+  await dragPanChart(page, "trade-contract-option-chart");
 });
 
 test("Trade option chain keeps rows visible while selected chain refreshes", async ({

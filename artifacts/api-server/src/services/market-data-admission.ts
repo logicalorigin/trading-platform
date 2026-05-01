@@ -138,10 +138,10 @@ const DEFAULT_MAX_LINES = 200;
 const DEFAULT_RESERVE_LINES = 15;
 const DEFAULT_POOL_LINE_CAPS: Record<MarketDataPoolId, number> = {
   execution: 12,
-  visible: 70,
-  automation: 35,
-  "flow-scanner": 45,
-  convenience: 23,
+  visible: 118,
+  automation: 25,
+  "flow-scanner": 30,
+  convenience: 0,
 };
 
 const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {

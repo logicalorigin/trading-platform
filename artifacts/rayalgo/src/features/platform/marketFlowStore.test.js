@@ -74,6 +74,8 @@ test("marketFlowStore caps unused market-flow snapshots", () => {
 test("flow scanner control state normalizes and shares scanner settings", () => {
   resetFlowScannerControlForTests();
 
+  assert.equal(getFlowScannerControlState().enabled, true);
+
   setFlowScannerControlState({
     enabled: true,
     ownerActive: true,

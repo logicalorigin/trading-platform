@@ -4617,6 +4617,30 @@ components:
         ibkrQualifiedContractCount:
           type: integer
           minimum: 0
+        ibkrCandidateExpirationCount:
+          type: integer
+          minimum: 0
+        ibkrMetadataContractCount:
+          type: integer
+          minimum: 0
+        ibkrLiveCandidateCount:
+          type: integer
+          minimum: 0
+        ibkrAcceptedQuoteCount:
+          type: integer
+          minimum: 0
+        ibkrRejectedQuoteCount:
+          type: integer
+          minimum: 0
+        ibkrReturnedQuoteCount:
+          type: integer
+          minimum: 0
+        ibkrMissingQuoteCount:
+          type: integer
+          minimum: 0
+        ibkrFilteredEventCount:
+          type: integer
+          minimum: 0
         scannerCoverage:
           type: object
           properties:
@@ -4626,7 +4650,13 @@ components:
             targetSize:
               type: integer
               minimum: 0
+            activeTargetSize:
+              type: integer
+              minimum: 0
             selectedSymbols:
+              type: integer
+              minimum: 0
+            selectedShortfall:
               type: integer
               minimum: 0
             rankedAt:
@@ -4648,6 +4678,9 @@ components:
             scannedSymbols:
               type: integer
               minimum: 0
+            cycleScannedSymbols:
+              type: integer
+              minimum: 0
             currentBatch:
               type: array
               items:
@@ -4657,6 +4690,22 @@ components:
               format: date-time
             degradedReason:
               type: [string, "null"]
+            radarSelectedSymbols:
+              type: integer
+              minimum: 0
+            radarEstimatedCycleMs:
+              type: [integer, "null"]
+              minimum: 0
+            radarBatchSize:
+              type: integer
+              minimum: 0
+            radarIntervalMs:
+              type: integer
+              minimum: 0
+            promotedSymbols:
+              type: array
+              items:
+                type: string
       required:
         - provider
         - status
@@ -6407,7 +6456,13 @@ components:
         targetSize:
           type: integer
           minimum: 0
+        activeTargetSize:
+          type: integer
+          minimum: 0
         selectedSymbols:
+          type: integer
+          minimum: 0
+        selectedShortfall:
           type: integer
           minimum: 0
         rankedAt:
@@ -6429,6 +6484,9 @@ components:
         scannedSymbols:
           type: integer
           minimum: 0
+        cycleScannedSymbols:
+          type: integer
+          minimum: 0
         currentBatch:
           type: array
           items:
@@ -6438,6 +6496,22 @@ components:
           format: date-time
         degradedReason:
           type: [string, "null"]
+        radarSelectedSymbols:
+          type: integer
+          minimum: 0
+        radarEstimatedCycleMs:
+          type: [integer, "null"]
+          minimum: 0
+        radarBatchSize:
+          type: integer
+          minimum: 0
+        radarIntervalMs:
+          type: integer
+          minimum: 0
+        promotedSymbols:
+          type: array
+          items:
+            type: string
 
     FlowUniverseSources:
       type: object

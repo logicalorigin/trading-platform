@@ -380,6 +380,30 @@ app.get("/quotes/snapshot", async (req, res) => {
   });
 });
 
+app.get("/quotes/option-activity", async (req, res) => {
+  const rawSymbols = Array.isArray(req.query.symbols)
+    ? req.query.symbols.join(",")
+    : typeof req.query.symbols === "string"
+      ? req.query.symbols
+      : "";
+  const symbols = rawSymbols
+    .split(",")
+    .map((symbol) => symbol.trim())
+    .filter(Boolean);
+
+  if (!ibkrBridgeService.getOptionActivitySnapshots) {
+    res.status(501).json({
+      code: "option_activity_not_supported",
+      message: "The active IBKR bridge does not support option activity snapshots.",
+    });
+    return;
+  }
+
+  res.json({
+    quotes: await ibkrBridgeService.getOptionActivitySnapshots(symbols),
+  });
+});
+
 app.post("/quotes/prewarm", async (req, res) => {
   const body = req.body as { symbols?: unknown };
   const rawSymbols = Array.isArray(body.symbols)

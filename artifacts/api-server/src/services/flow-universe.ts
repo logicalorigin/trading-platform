@@ -9,7 +9,9 @@ export type FlowUniverseMode = "watchlist" | "market" | "hybrid";
 export type FlowUniverseCoverage = {
   mode: FlowUniverseMode;
   targetSize: number;
+  activeTargetSize: number;
   selectedSymbols: number;
+  selectedShortfall: number;
   rankedAt: Date | null;
   lastRefreshAt: Date | null;
   lastGoodAt: Date | null;
@@ -17,9 +19,15 @@ export type FlowUniverseCoverage = {
   fallbackUsed: boolean;
   cooldownCount: number;
   scannedSymbols: number;
+  cycleScannedSymbols: number;
   currentBatch: string[];
   lastScanAt: Date | null;
   degradedReason: string | null;
+  radarSelectedSymbols?: number;
+  radarEstimatedCycleMs?: number | null;
+  radarBatchSize?: number;
+  radarIntervalMs?: number;
+  promotedSymbols?: string[];
 };
 
 export type FlowUniverseObservation = {
@@ -49,6 +57,7 @@ type FlowUniverseManagerOptions = {
   minPrice: number;
   minDollarVolume: number;
   fallbackSymbols: readonly string[];
+  fetchFallbackSymbols?: () => Promise<readonly string[]>;
   fetchLiquiditySnapshots?: (
     symbols: readonly string[],
   ) => Promise<FlowUniverseLiquiditySnapshot[]>;
@@ -209,6 +218,7 @@ export function getFlowScannerIntervalMs(input: {
 export function rankFlowUniverseCandidates(input: {
   candidates: readonly RankingCandidate[];
   pinnedSymbols?: readonly string[];
+  fallbackSymbols?: readonly string[];
   targetSize: number;
   now?: Date;
 }): string[] {
@@ -221,13 +231,25 @@ export function rankFlowUniverseCandidates(input: {
   const selected: string[] = [];
   const seen = new Set<string>();
 
-  for (const symbol of pinned) {
+  const appendSymbol = (symbolInput: string): boolean => {
+    if (selected.length >= targetSize) {
+      return false;
+    }
+    const symbol = normalizeSymbol(symbolInput);
+    if (!symbol || seen.has(symbol)) {
+      return false;
+    }
     const candidate = candidateBySymbol.get(symbol);
     if (candidate?.cooldownUntil && candidate.cooldownUntil > now) {
-      continue;
+      return false;
     }
     selected.push(symbol);
     seen.add(symbol);
+    return true;
+  };
+
+  for (const symbol of pinned) {
+    appendSymbol(symbol);
   }
 
   const sorted = [...input.candidates]
@@ -254,9 +276,12 @@ export function rankFlowUniverseCandidates(input: {
 
   for (const candidate of sorted) {
     if (selected.length >= targetSize) break;
-    if (seen.has(candidate.symbol)) continue;
-    selected.push(candidate.symbol);
-    seen.add(candidate.symbol);
+    appendSymbol(candidate.symbol);
+  }
+
+  for (const symbol of uniqueSymbols(input.fallbackSymbols ?? [])) {
+    if (selected.length >= targetSize) break;
+    appendSymbol(symbol);
   }
 
   return selected.slice(0, targetSize);
@@ -280,6 +305,12 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   let scannedSymbols = new Set<string>();
   let currentBatch: string[] = [];
   let lastScanAt: Date | null = null;
+
+  function shortfallReason(selectedCount: number, targetSize = runtimeOptions.targetSize) {
+    return selectedCount < targetSize
+      ? `Universe fill short: ${selectedCount}/${targetSize}`
+      : null;
+  }
 
   async function loadCatalogCandidates(): Promise<RankingCandidate[]> {
     const rows = await runtimeOptions.db
@@ -318,6 +349,69 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       selectedAt: null,
       lastScannedAt: null,
       cooldownUntil: null,
+    }));
+  }
+
+  async function loadBroadCatalogCandidates(): Promise<RankingCandidate[]> {
+    const rows = await runtimeOptions.db
+      .select({
+        symbol: universeCatalogListingsTable.normalizedTicker,
+        market: universeCatalogListingsTable.market,
+        price: flowUniverseRankingsTable.price,
+        volume: flowUniverseRankingsTable.volume,
+        dollarVolume: flowUniverseRankingsTable.dollarVolume,
+        liquidityRank: flowUniverseRankingsTable.liquidityRank,
+        flowScore: flowUniverseRankingsTable.flowScore,
+        previousSessionFlowScore:
+          flowUniverseRankingsTable.previousSessionFlowScore,
+        rankedAt: flowUniverseRankingsTable.rankedAt,
+        selected: flowUniverseRankingsTable.selected,
+        selectedAt: flowUniverseRankingsTable.selectedAt,
+        lastScannedAt: flowUniverseRankingsTable.lastScannedAt,
+        cooldownUntil: flowUniverseRankingsTable.cooldownUntil,
+      })
+      .from(universeCatalogListingsTable)
+      .leftJoin(
+        flowUniverseRankingsTable,
+        eq(
+          flowUniverseRankingsTable.symbol,
+          universeCatalogListingsTable.normalizedTicker,
+        ),
+      )
+      .where(
+        and(
+          eq(universeCatalogListingsTable.active, true),
+          inArray(
+            universeCatalogListingsTable.market,
+            [...runtimeOptions.markets] as Array<"stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc">,
+          ),
+          sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
+          sql`(${flowUniverseRankingsTable.price} is null or ${flowUniverseRankingsTable.price} >= ${runtimeOptions.minPrice.toString()})`,
+          sql`(${flowUniverseRankingsTable.dollarVolume} is null or ${flowUniverseRankingsTable.dollarVolume} >= ${runtimeOptions.minDollarVolume.toString()})`,
+        ),
+      )
+      .orderBy(
+        desc(flowUniverseRankingsTable.previousSessionFlowScore),
+        desc(flowUniverseRankingsTable.flowScore),
+        desc(flowUniverseRankingsTable.dollarVolume),
+        asc(universeCatalogListingsTable.normalizedTicker),
+      )
+      .limit(Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100));
+
+    return rows.map((row) => ({
+      symbol: row.symbol,
+      market: row.market,
+      price: toNumber(row.price),
+      volume: toNumber(row.volume),
+      dollarVolume: toNumber(row.dollarVolume),
+      liquidityRank: row.liquidityRank ?? null,
+      flowScore: toNumber(row.flowScore) ?? 0,
+      previousSessionFlowScore: toNumber(row.previousSessionFlowScore) ?? 0,
+      rankedAt: row.rankedAt ?? null,
+      selected: Boolean(row.selected),
+      selectedAt: row.selectedAt ?? null,
+      lastScannedAt: row.lastScannedAt ?? null,
+      cooldownUntil: row.cooldownUntil ?? null,
     }));
   }
 
@@ -370,7 +464,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         )
         .limit(Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100));
 
-      return rows.map((row) => ({
+      const strictCandidates = rows.map((row) => ({
         symbol: row.symbol,
         market: row.market,
         price: toNumber(row.price),
@@ -385,6 +479,15 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         lastScannedAt: row.lastScannedAt ?? null,
         cooldownUntil: row.cooldownUntil ?? null,
       }));
+      if (strictCandidates.length >= runtimeOptions.targetSize) {
+        return strictCandidates;
+      }
+      const seen = new Set(strictCandidates.map((candidate) => candidate.symbol));
+      const broadCandidates = await loadBroadCatalogCandidates();
+      return [
+        ...strictCandidates,
+        ...broadCandidates.filter((candidate) => !seen.has(candidate.symbol)),
+      ];
     } catch (error) {
       if (isMissingFlowUniverseRankingsTableError(error)) {
         return loadCatalogCandidates();
@@ -568,14 +671,47 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       if (await refreshLiquidityRankings(candidates, refreshedAt)) {
         candidates = await loadCandidates();
       }
+      const selectionNow = now();
+      const pinnedSymbols =
+        runtimeOptions.mode === "hybrid"
+          ? input.pinnedSymbols ?? runtimeOptions.fallbackSymbols
+          : [];
+      const eligibleCandidateSymbols = new Set(
+        [
+          ...uniqueSymbols(pinnedSymbols),
+          ...candidates
+            .filter(
+              (candidate) =>
+                !candidate.cooldownUntil || candidate.cooldownUntil <= selectionNow,
+            )
+            .map((candidate) => normalizeSymbol(candidate.symbol))
+            .filter(Boolean),
+        ],
+      );
+      let fallbackFillSymbols = runtimeOptions.fallbackSymbols;
+      let fallbackFillError: string | null = null;
+      if (
+        eligibleCandidateSymbols.size < runtimeOptions.targetSize &&
+        runtimeOptions.fetchFallbackSymbols
+      ) {
+        try {
+          fallbackFillSymbols = uniqueSymbols([
+            ...(await runtimeOptions.fetchFallbackSymbols()),
+            ...runtimeOptions.fallbackSymbols,
+          ]);
+        } catch (error) {
+          fallbackFillError =
+            error instanceof Error
+              ? error.message
+              : "Flow universe fallback symbol fetch failed.";
+        }
+      }
       const selected = rankFlowUniverseCandidates({
         candidates,
-        pinnedSymbols:
-          runtimeOptions.mode === "hybrid"
-            ? input.pinnedSymbols ?? runtimeOptions.fallbackSymbols
-            : [],
+        pinnedSymbols,
+        fallbackSymbols: fallbackFillSymbols,
         targetSize: runtimeOptions.targetSize,
-        now: now(),
+        now: selectionNow,
       });
 
       if (!selected.length) {
@@ -595,7 +731,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       cooldownCount = candidates.filter(
         (candidate) => candidate.cooldownUntil && candidate.cooldownUntil > refreshedAt,
       ).length;
-      degradedReason = null;
+      degradedReason =
+        shortfallReason(selected.length) ??
+        (fallbackFillError
+          ? `Fallback universe fill skipped: ${fallbackFillError}`
+          : null);
       return selectedSymbols;
     } catch (error) {
       degradedReason =
@@ -603,6 +743,8 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       selectedSymbols = lastGoodSymbols.length
         ? lastGoodSymbols
         : uniqueSymbols(runtimeOptions.fallbackSymbols);
+      degradedReason =
+        shortfallReason(selectedSymbols.length) ?? degradedReason;
       return selectedSymbols;
     }
   }
@@ -679,7 +821,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     return {
       mode: runtimeOptions.mode,
       targetSize: runtimeOptions.targetSize,
+      activeTargetSize: selectedSymbols.length,
       selectedSymbols: selectedSymbols.length,
+      selectedShortfall: Math.max(0, runtimeOptions.targetSize - selectedSymbols.length),
       rankedAt,
       lastRefreshAt,
       lastGoodAt,
@@ -690,6 +834,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       fallbackUsed: Boolean(degradedReason),
       cooldownCount,
       scannedSymbols: scannedSymbols.size,
+      cycleScannedSymbols: scannedSymbols.size,
       currentBatch,
       lastScanAt,
       degradedReason,
