@@ -1,6 +1,8 @@
 import {
   useEffect,
+  useCallback,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -12,8 +14,25 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import {
+  Columns3,
+  Copy,
+  ExternalLink,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pin,
+  PinOff,
+  Play,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useGetNews } from "@workspace/api-client-react";
-import { useMarketFlowSnapshot } from "../features/platform/marketFlowStore";
+import {
+  BROAD_MARKET_FLOW_STORE_KEY,
+  setFlowScannerControlState,
+  useFlowScannerControlState,
+  useMarketFlowSnapshot,
+  useMarketFlowSnapshotForStoreKey,
+} from "../features/platform/marketFlowStore";
 import {
   Badge,
   Card,
@@ -35,7 +54,6 @@ import {
   mapNewsSentimentToScore,
   normalizeTickerSymbol,
   persistState,
-  useLiveMarketFlow,
 } from "../RayAlgoPlatform";
 import {
   MISSING_VALUE,
@@ -44,11 +62,36 @@ import {
   fs,
   sp,
 } from "../lib/uiTokens";
+import { formatAppTimeForPreferences, getAppTimeZoneLabel } from "../lib/timeZone";
+import {
+  joinMotionClasses,
+  motionRowStyle,
+  motionVars,
+} from "../lib/motion";
+import {
+  DEFAULT_FLOW_SCANNER_CONFIG,
+} from "../features/platform/marketFlowScannerConfig";
+import { useUserPreferences } from "../features/preferences/useUserPreferences";
+import {
+  FLOW_BUILT_IN_PRESETS,
+  FLOW_MIN_PREMIUM_OPTIONS,
+  FLOW_TAPE_FILTER_OPTIONS,
+  buildFlowTapePresetPatch,
+  getFlowBuiltInPreset,
+  setFlowTapeFilterState,
+  useFlowTapeFilterState,
+} from "../features/platform/flowFilterStore";
+import { MarketIdentityInline } from "../features/platform/marketIdentity";
+import {
+  classifyFlowSentiment,
+  compareFlowEvents,
+  formatFlowTradeAge,
+  getDefaultFlowSortDir,
+  normalizeFlowSortBy,
+  normalizeFlowSortDir,
+  summarizeFlowSentiment,
+} from "../features/platform/flowTapeModel";
 
-const UNUSUAL_SCANNER_BATCH_SIZE = 30;
-const UNUSUAL_SCANNER_PER_SYMBOL_LIMIT = 25;
-const UNUSUAL_SCANNER_MAX_WATCHLIST = Number.POSITIVE_INFINITY;
-const UNUSUAL_SCANNER_INTERVAL_MS = 15_000;
 const UNUSUAL_SORT_OPTIONS = [
   { id: "ratio", label: "Vol/OI", numeric: true },
   { id: "premium", label: "Premium", numeric: true },
@@ -57,20 +100,184 @@ const UNUSUAL_SORT_OPTIONS = [
 ];
 const FLOW_ROWS_OPTIONS = [24, 40, 60, 100];
 const FLOW_TAPE_OPTIONAL_COLUMNS = Object.freeze([
-  { id: "side", label: "SIDE", toggleLabel: "Side", width: "62px" },
-  { id: "execution", label: "EXEC", toggleLabel: "Exec", width: "68px" },
-  { id: "type", label: "TYPE", toggleLabel: "Type", width: "72px" },
-  { id: "premium", label: "PREMIUM", toggleLabel: "Prem", width: "88px" },
-  { id: "size", label: "SIZE", toggleLabel: "Size", width: "64px" },
-  { id: "oi", label: "OI", toggleLabel: "OI", width: "64px" },
-  { id: "ratio", label: "V/OI", toggleLabel: "V/OI", width: "60px" },
-  { id: "dte", label: "DTE", toggleLabel: "DTE", width: "56px" },
-  { id: "iv", label: "IV", toggleLabel: "IV", width: "62px" },
-  { id: "score", label: "SCORE", toggleLabel: "Score", width: "54px" },
+  { id: "side", label: "SIDE", toggleLabel: "Side", width: "56px" },
+  { id: "execution", label: "EXEC", toggleLabel: "Exec", width: "56px" },
+  { id: "type", label: "TYPE", toggleLabel: "Type", width: "70px" },
+  { id: "fill", label: "FILL", toggleLabel: "Fill", width: "78px" },
+  { id: "bidAsk", label: "BID/ASK", toggleLabel: "Bid/Ask", width: "118px" },
+  { id: "bid", label: "BID", toggleLabel: "Bid", width: "58px", defaultVisible: false },
+  { id: "ask", label: "ASK", toggleLabel: "Ask", width: "58px", defaultVisible: false },
+  { id: "spread", label: "SPREAD", toggleLabel: "Spread", width: "78px", defaultVisible: false },
+  { id: "premium", label: "PREMIUM", toggleLabel: "Prem", width: "76px" },
+  { id: "size", label: "SIZE", toggleLabel: "Size", width: "50px" },
+  { id: "oi", label: "OI", toggleLabel: "OI", width: "50px" },
+  { id: "ratio", label: "V/OI", toggleLabel: "V/OI", width: "50px" },
+  { id: "dte", label: "DTE", toggleLabel: "DTE", width: "42px" },
+  { id: "iv", label: "IV", toggleLabel: "IV", width: "52px" },
+  { id: "spot", label: "SPOT", toggleLabel: "Spot", width: "62px", defaultVisible: false },
+  { id: "moneyness", label: "MNY", toggleLabel: "Mny", width: "54px", defaultVisible: false },
+  { id: "distance", label: "DIST", toggleLabel: "Dist", width: "54px", defaultVisible: false },
+  { id: "delta", label: "DELTA", toggleLabel: "Delta", width: "56px", defaultVisible: false },
+  { id: "gamma", label: "GAMMA", toggleLabel: "Gamma", width: "56px", defaultVisible: false },
+  { id: "theta", label: "THETA", toggleLabel: "Theta", width: "56px", defaultVisible: false },
+  { id: "vega", label: "VEGA", toggleLabel: "Vega", width: "54px", defaultVisible: false },
+  { id: "sourceBasis", label: "SOURCE", toggleLabel: "Source", width: "82px", defaultVisible: false },
+  { id: "confidence", label: "CONF", toggleLabel: "Conf", width: "78px", defaultVisible: false },
+  { id: "score", label: "SCORE", toggleLabel: "Score", width: "48px" },
 ]);
-const DEFAULT_FLOW_VISIBLE_COLUMNS = FLOW_TAPE_OPTIONAL_COLUMNS.map(
+const DEFAULT_FLOW_VISIBLE_COLUMNS = FLOW_TAPE_OPTIONAL_COLUMNS.filter(
+  (column) => column.defaultVisible !== false,
+).map((column) => column.id);
+const HAS_PERSISTED_FLOW_FILTERS_OPEN = Object.prototype.hasOwnProperty.call(
+  _initialState,
+  "flowFiltersOpen",
+);
+const FLOW_COLUMN_BY_ID = new Map(
+  FLOW_TAPE_OPTIONAL_COLUMNS.map((column) => [column.id, column]),
+);
+const DEFAULT_FLOW_COLUMN_ORDER = FLOW_TAPE_OPTIONAL_COLUMNS.map(
   (column) => column.id,
 );
+const FLOW_FIXED_COLUMNS = Object.freeze([
+  { id: "time", label: "AGE", width: "58px" },
+  { id: "ticker", label: "TICK", width: "62px" },
+  { id: "right", label: "C/P", width: "34px" },
+  { id: "expiration", label: "EXP", width: "62px" },
+  { id: "strike", label: "STRIKE", width: "64px" },
+  { id: "otmPercent", label: "% OTM", width: "58px" },
+  { id: "mark", label: "MARK", width: "62px" },
+  { id: "actions", label: "ACTIONS", width: "76px" },
+]);
+const RIGHT_ALIGNED_FLOW_COLUMNS = new Set([
+  "actions",
+  "ask",
+  "bid",
+  "bidAsk",
+  "delta",
+  "distance",
+  "dte",
+  "fill",
+  "gamma",
+  "iv",
+  "mark",
+  "moneyness",
+  "oi",
+  "otmPercent",
+  "premium",
+  "ratio",
+  "size",
+  "spot",
+  "spread",
+  "strike",
+  "theta",
+  "vega",
+]);
+const CENTER_ALIGNED_FLOW_COLUMNS = new Set([
+  "actions",
+  "execution",
+  "right",
+  "score",
+  "side",
+  "sourceBasis",
+  "type",
+]);
+const FLOW_SORTABLE_COLUMNS = new Set([
+  "confidence",
+  "delta",
+  "distance",
+  "dte",
+  "expiration",
+  "gamma",
+  "iv",
+  "mark",
+  "moneyness",
+  "oi",
+  "otmPercent",
+  "premium",
+  "ratio",
+  "right",
+  "score",
+  "size",
+  "spot",
+  "strike",
+  "ticker",
+  "time",
+  "theta",
+  "vega",
+]);
+
+const FLOW_COLUMN_ALIASES = Object.freeze({
+  price: ["fill"],
+});
+
+const expandFlowColumnIds = (value, { replaceRawBidAsk = false } = {}) => {
+  if (!Array.isArray(value)) return [];
+  const expanded = [];
+  let insertedBidAsk = false;
+  value.forEach((columnId) => {
+    if (
+      replaceRawBidAsk &&
+      ["bid", "ask", "spread"].includes(columnId)
+    ) {
+      if (!insertedBidAsk) {
+        expanded.push("bidAsk");
+        insertedBidAsk = true;
+      }
+      return;
+    }
+    if (FLOW_COLUMN_BY_ID.has(columnId)) {
+      expanded.push(columnId);
+      return;
+    }
+    expanded.push(...(FLOW_COLUMN_ALIASES[columnId] || []));
+  });
+  return expanded;
+};
+
+const normalizeFlowColumnOrder = (value) => {
+  const seen = new Set();
+  const ordered = expandFlowColumnIds(value, {
+    replaceRawBidAsk: !Array.isArray(value) || !value.includes("bidAsk"),
+  }).filter((columnId) => {
+    if (!FLOW_COLUMN_BY_ID.has(columnId) || seen.has(columnId)) return false;
+    seen.add(columnId);
+    return true;
+  });
+  return [
+    ...ordered,
+    ...DEFAULT_FLOW_COLUMN_ORDER.filter((columnId) => !seen.has(columnId)),
+  ];
+};
+
+const normalizeFlowVisibleColumns = (value) => {
+  const columns = Array.isArray(value)
+    ? expandFlowColumnIds(value, {
+        replaceRawBidAsk: !value.includes("bidAsk"),
+      }).filter((columnId) => FLOW_COLUMN_BY_ID.has(columnId))
+    : DEFAULT_FLOW_VISIBLE_COLUMNS;
+  const visible = columns.length
+    ? Array.from(new Set(columns))
+    : DEFAULT_FLOW_VISIBLE_COLUMNS;
+  if (visible.includes("bidAsk")) return visible;
+  const fillIndex = visible.indexOf("fill");
+  if (fillIndex < 0) return ["bidAsk", ...visible];
+  return [
+    ...visible.slice(0, fillIndex + 1),
+    "bidAsk",
+    ...visible.slice(fillIndex + 1),
+  ];
+};
+
+const getFlowContractLabel = (event) => {
+  if (!event) return "";
+  const expiration = formatExpirationLabel(event.expirationDate);
+  return [
+    event.optionTicker,
+    `${event.ticker} ${expiration} ${event.strike}${event.cp}`,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+};
 
 const parseTickerTokens = (value) =>
   Array.from(
@@ -81,6 +288,282 @@ const parseTickerTokens = (value) =>
         .filter(Boolean),
     ),
   );
+
+const FLOW_PRESET_COLORS = Object.freeze({
+  "ask-calls": T.green,
+  "bid-puts": T.red,
+  "zero-dte": T.amber,
+  "premium-50k": T.text,
+  "premium-250k": T.amber,
+  "vol-oi": T.cyan,
+  sweeps: T.amber,
+  blocks: T.accent,
+  repeats: T.cyan,
+  golden: T.amber,
+});
+
+const flowPresetMatches = (presetId, event, clusterFor) => {
+  if (!presetId) return true;
+  if (presetId === "ask-calls") {
+    return event.cp === "C" && event.side === "BUY";
+  }
+  if (presetId === "bid-puts") {
+    return event.cp === "P" && event.side === "SELL";
+  }
+  if (presetId === "zero-dte") {
+    return Number.isFinite(event.dte) && event.dte <= 1;
+  }
+  if (presetId === "premium-50k") {
+    return event.premium >= 50_000;
+  }
+  if (presetId === "premium-250k") {
+    return event.premium >= 250_000;
+  }
+  if (presetId === "vol-oi") {
+    return Boolean(event.isUnusual) || (event.unusualScore || 0) >= 1;
+  }
+  if (presetId === "sweeps") return event.type === "SWEEP";
+  if (presetId === "blocks") return event.type === "BLOCK";
+  if (presetId === "repeats") return clusterFor(event) !== null;
+  if (presetId === "golden") return Boolean(event.golden);
+  return true;
+};
+
+const getFlowSourceBasisMeta = (value) => {
+  if (value === "confirmed_trade") {
+    return { label: "TRADE", detail: "Confirmed trade", color: T.green };
+  }
+  if (value === "snapshot_activity") {
+    return { label: "SNAP", detail: "Snapshot activity", color: T.accent };
+  }
+  if (value === "fallback_estimate") {
+    return { label: "FALLBK", detail: "Fallback estimate", color: T.amber };
+  }
+  return { label: "N/A", detail: "Unavailable", color: T.textDim };
+};
+
+const formatOptionPrice = (value) =>
+  isFiniteNumber(value) ? value.toFixed(value < 10 ? 2 : 1) : MISSING_VALUE;
+
+const formatGreekValue = (value) =>
+  isFiniteNumber(value) ? value.toFixed(2) : MISSING_VALUE;
+
+const formatSignedPercent = (value, digits = 1) =>
+  isFiniteNumber(value)
+    ? `${value >= 0 ? "+" : ""}${value.toFixed(digits)}%`
+    : MISSING_VALUE;
+
+const resolveFlowMark = (event) => {
+  if (isFiniteNumber(event?.mark)) return event.mark;
+  if (isFiniteNumber(event?.bid) && isFiniteNumber(event?.ask) && event.ask > 0) {
+    return (event.bid + event.ask) / 2;
+  }
+  return null;
+};
+
+const resolveFlowOtmPercent = (event) => {
+  const spot = Number(event?.spot);
+  const strike = Number(event?.strike);
+  const right = String(event?.cp || "").toUpperCase();
+  if (
+    !Number.isFinite(spot) ||
+    spot <= 0 ||
+    !Number.isFinite(strike) ||
+    strike <= 0
+  ) {
+    return null;
+  }
+  if (right === "C") {
+    return Math.max(0, ((strike - spot) / spot) * 100);
+  }
+  if (right === "P") {
+    return Math.max(0, ((spot - strike) / spot) * 100);
+  }
+  return null;
+};
+
+const resolveFlowFillSpreadMeta = (event) => {
+  const fill = isFiniteNumber(event?.premiumPrice)
+    ? event.premiumPrice
+    : isFiniteNumber(event?.price)
+      ? event.price
+      : null;
+  const bid = isFiniteNumber(event?.bid) ? event.bid : null;
+  const ask = isFiniteNumber(event?.ask) ? event.ask : null;
+
+  if (!isFiniteNumber(fill) || !isFiniteNumber(bid) || !isFiniteNumber(ask)) {
+    return {
+      fill,
+      bid,
+      ask,
+      spread: null,
+      spreadPct: null,
+      label: "N/A",
+      shortLabel: "N/A",
+      color: T.textDim,
+      crossed: false,
+    };
+  }
+
+  if (ask < bid) {
+    return {
+      fill,
+      bid,
+      ask,
+      spread: ask - bid,
+      spreadPct: null,
+      label: "Crossed market",
+      shortLabel: "X",
+      color: T.amber,
+      crossed: true,
+    };
+  }
+
+  const spread = ask - bid;
+  const mid = (bid + ask) / 2;
+  const spreadPct = mid > 0 ? (spread / mid) * 100 : null;
+  if (spread <= 0) {
+    return {
+      fill,
+      bid,
+      ask,
+      spread,
+      spreadPct,
+      label: "Locked market",
+      shortLabel: "LOCK",
+      color: T.textDim,
+      crossed: false,
+    };
+  }
+
+  const position = (fill - bid) / spread;
+  if (position < 0) {
+    return {
+      fill,
+      bid,
+      ask,
+      spread,
+      spreadPct,
+      label: "Below bid",
+      shortLabel: "BID-",
+      color: T.red,
+      crossed: false,
+    };
+  }
+  if (position <= 0.1) {
+    return { fill, bid, ask, spread, spreadPct, label: "At bid", shortLabel: "BID", color: T.red, crossed: false };
+  }
+  if (position <= 0.4) {
+    return { fill, bid, ask, spread, spreadPct, label: "Bid side", shortLabel: "BID", color: T.red, crossed: false };
+  }
+  if (position <= 0.6) {
+    return { fill, bid, ask, spread, spreadPct, label: "Mid", shortLabel: "MID", color: T.textDim, crossed: false };
+  }
+  if (position <= 0.9) {
+    return { fill, bid, ask, spread, spreadPct, label: "Ask side", shortLabel: "ASK", color: event?.cp === "P" ? T.red : T.green, crossed: false };
+  }
+  if (position <= 1) {
+    return { fill, bid, ask, spread, spreadPct, label: "At ask", shortLabel: "ASK", color: event?.cp === "P" ? T.red : T.green, crossed: false };
+  }
+  return {
+    fill,
+    bid,
+    ask,
+    spread,
+    spreadPct,
+    label: "Above ask",
+    shortLabel: "ASK+",
+    color: event?.cp === "P" ? T.red : T.green,
+    crossed: false,
+  };
+};
+
+const resolveFlowQuality = ({
+  flowStatus,
+  hasLiveFlow,
+  providerSummary,
+  coverage,
+  watchlistSymbols,
+  newestScanAt,
+  oldestScanAt,
+  livePaused,
+}) => {
+  const totalSymbols = Math.max(
+    0,
+    coverage?.totalSymbols || watchlistSymbols.length || 0,
+  );
+  const scannedSymbols = Math.max(0, coverage?.scannedSymbols || 0);
+  const coverageRatio = totalSymbols > 0 ? scannedSymbols / totalSymbols : 0;
+  const newestAgeMs = newestScanAt ? Date.now() - newestScanAt : null;
+  const oldestAgeMs = oldestScanAt ? Date.now() - oldestScanAt : null;
+  const failures = providerSummary?.failures || [];
+  const hasSourceError =
+    flowStatus === "offline" ||
+    Boolean(providerSummary?.erroredSource) ||
+    failures.length > 0;
+  const sourceLabel = providerSummary?.label || "Flow source";
+
+  if (hasSourceError) {
+    return {
+      label: "Degraded",
+      color: T.red,
+      ratio: coverageRatio,
+      detail:
+        providerSummary?.erroredSource?.errorMessage ||
+        failures[0]?.error ||
+        "Flow provider returned an error.",
+      newestAgeMs,
+      oldestAgeMs,
+    };
+  }
+
+  if (livePaused || (newestAgeMs !== null && newestAgeMs > 120_000)) {
+    return {
+      label: "Stale",
+      color: T.amber,
+      ratio: coverageRatio,
+      detail: livePaused
+        ? "Tape is paused on the last captured snapshot."
+        : "Latest scan is older than the active freshness window.",
+      newestAgeMs,
+      oldestAgeMs,
+    };
+  }
+
+  if (hasLiveFlow && (coverageRatio >= 0.95 || !totalSymbols)) {
+    return {
+      label: "Full",
+      color: T.green,
+      ratio: 1,
+      detail: `${sourceLabel} covering the active watchlist.`,
+      newestAgeMs,
+      oldestAgeMs,
+    };
+  }
+
+  if (hasLiveFlow && coverageRatio >= 0.5) {
+    return {
+      label: "Partial",
+      color: T.accent,
+      ratio: coverageRatio,
+      detail: "Watchlist rotation is still filling in coverage.",
+      newestAgeMs,
+      oldestAgeMs,
+    };
+  }
+
+  return {
+    label: "Thin",
+    color: flowStatus === "loading" ? T.accent : T.textDim,
+    ratio: coverageRatio,
+    detail:
+      flowStatus === "loading"
+        ? "Initial scan is still warming up."
+        : "Provider returned limited current options activity.",
+    newestAgeMs,
+    oldestAgeMs,
+  };
+};
 
 const getFlowExecutionMeta = (event) => {
   const normalizedSide = String(event?.side || "").toUpperCase();
@@ -105,6 +588,7 @@ const FlowLoadingBlock = ({
   style = {},
 }) => (
   <div
+    className="ra-skeleton"
     style={{
       width,
       height,
@@ -122,6 +606,7 @@ const FlowPlaceholderCard = ({
   dense = false,
 }) => (
   <Card
+    className="ra-panel-enter"
     style={{
       padding: "8px 10px",
       display: "flex",
@@ -164,24 +649,36 @@ const FlowOverviewPanel = ({
   symbols = [],
   isVisible = false,
 }) => {
+  const { preferences: userPreferences } = useUserPreferences();
+  const appTimeZoneLabel = getAppTimeZoneLabel(userPreferences);
+  const formatFlowAppTime = useCallback(
+    (value) => formatAppTimeForPreferences(value, userPreferences),
+    [userPreferences],
+  );
   const [savedScans, setSavedScans] = useState(
     _initialState.flowSavedScans || [],
   );
   const [activeScanId, setActiveScanId] = useState(
     _initialState.flowActiveScanId || null,
   );
-  const [filter, setFilter] = useState(_initialState.flowFilter || "all");
-  const [minPrem, setMinPrem] = useState(
-    Number.isFinite(_initialState.flowMinPrem) ? _initialState.flowMinPrem : 0,
+  const flowTapeFilters = useFlowTapeFilterState();
+  const {
+    activeFlowPresetId,
+    filter,
+    minPrem,
+    includeQuery,
+    excludeQuery,
+  } = flowTapeFilters;
+  const [sortBy, setSortBy] = useState(() =>
+    normalizeFlowSortBy(_initialState.flowSortBy),
   );
-  const [sortBy, setSortBy] = useState(_initialState.flowSortBy || "time");
+  const [sortDir, setSortDir] = useState(() =>
+    normalizeFlowSortDir(
+      _initialState.flowSortDir,
+      normalizeFlowSortBy(_initialState.flowSortBy),
+    ),
+  );
   const [selectedEvt, setSelectedEvt] = useState(null);
-  const [includeQuery, setIncludeQuery] = useState(
-    _initialState.flowIncludeQuery || "",
-  );
-  const [excludeQuery, setExcludeQuery] = useState(
-    _initialState.flowExcludeQuery || "",
-  );
   const [density, setDensity] = useState(
     _initialState.flowDensity || "compact",
   );
@@ -196,17 +693,47 @@ const FlowOverviewPanel = ({
   const [showUnusualScanner, setShowUnusualScanner] = useState(
     Boolean(_initialState.flowShowUnusualScanner),
   );
+  const [filtersOpen, setFiltersOpen] = useState(
+    _initialState.flowFiltersOpen !== false,
+  );
+  const [columnsOpen, setColumnsOpen] = useState(
+    Boolean(_initialState.flowColumnsOpen),
+  );
+  const [pinnedEventId, setPinnedEventId] = useState(
+    _initialState.flowPinnedEventId || null,
+  );
+  const [copiedEventId, setCopiedEventId] = useState(null);
+  const [flowNowMs, setFlowNowMs] = useState(() => Date.now());
   const [showDeferredPanels, setShowDeferredPanels] = useState(false);
   const [activateNews, setActivateNews] = useState(false);
   const [pausedSnapshot, setPausedSnapshot] = useState(null);
-  const [visibleColumns, setVisibleColumns] = useState(() =>
-    Array.isArray(_initialState.flowVisibleColumns) &&
-    _initialState.flowVisibleColumns.length
-      ? _initialState.flowVisibleColumns.filter((columnId) =>
-          DEFAULT_FLOW_VISIBLE_COLUMNS.includes(columnId),
-        )
-      : DEFAULT_FLOW_VISIBLE_COLUMNS,
+  const flowContentRef = useRef(null);
+  const copyStatusTimerRef = useRef(null);
+  const [flowContentWidth, setFlowContentWidth] = useState(0);
+  const [columnOrder, setColumnOrder] = useState(() =>
+    normalizeFlowColumnOrder(_initialState.flowColumnOrder),
   );
+  const [visibleColumns, setVisibleColumns] = useState(() =>
+    normalizeFlowVisibleColumns(_initialState.flowVisibleColumns),
+  );
+
+  useEffect(() => {
+    const handleWorkspaceSettings = (event) => {
+      const state = event?.detail || {};
+      if (state.flowDensity === "compact" || state.flowDensity === "comfortable") {
+        setDensity(state.flowDensity);
+      }
+      if (FLOW_ROWS_OPTIONS.includes(Number(state.flowRowsPerPage))) {
+        setRowsPerPage(Number(state.flowRowsPerPage));
+      }
+    };
+    window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
+    return () =>
+      window.removeEventListener(
+        "rayalgo:workspace-settings-updated",
+        handleWorkspaceSettings,
+      );
+  }, []);
 
   useEffect(() => {
     persistState({ flowSavedScans: savedScans });
@@ -215,30 +742,41 @@ const FlowOverviewPanel = ({
   useEffect(() => {
     persistState({
       flowActiveScanId: activeScanId,
-      flowFilter: filter,
-      flowMinPrem: minPrem,
       flowSortBy: sortBy,
-      flowIncludeQuery: includeQuery,
-      flowExcludeQuery: excludeQuery,
+      flowSortDir: sortDir,
       flowDensity: density,
+      flowFiltersOpen: filtersOpen,
+      flowColumnsOpen: columnsOpen,
       flowRowsPerPage: rowsPerPage,
       flowLivePaused: livePaused,
       flowShowUnusualScanner: showUnusualScanner,
+      flowColumnOrder: columnOrder,
       flowVisibleColumns: visibleColumns,
+      flowPinnedEventId: pinnedEventId,
     });
   }, [
     activeScanId,
+    columnOrder,
+    columnsOpen,
     density,
-    excludeQuery,
-    filter,
-    includeQuery,
+    filtersOpen,
     livePaused,
-    minPrem,
+    pinnedEventId,
     rowsPerPage,
     showUnusualScanner,
     sortBy,
+    sortDir,
     visibleColumns,
   ]);
+
+  useEffect(
+    () => () => {
+      if (copyStatusTimerRef.current) {
+        clearTimeout(copyStatusTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!activeScanId) return;
@@ -246,6 +784,34 @@ const FlowOverviewPanel = ({
       setActiveScanId(null);
     }
   }, [activeScanId, savedScans]);
+
+  useEffect(() => {
+    if (!activeScanId) return;
+    const activeScan = savedScans.find((scan) => scan.id === activeScanId);
+    if (!activeScan) return;
+    const scanMatchesFilters =
+      (activeScan.activeFlowPresetId || null) === (activeFlowPresetId || null) &&
+      (activeScan.filter || "all") === filter &&
+      (Number.isFinite(activeScan.minPrem) ? activeScan.minPrem : 0) === minPrem &&
+      (activeScan.includeQuery || "") === includeQuery &&
+      (activeScan.excludeQuery || "") === excludeQuery;
+    if (!scanMatchesFilters) {
+      setActiveScanId(null);
+    }
+  }, [
+    activeFlowPresetId,
+    activeScanId,
+    excludeQuery,
+    filter,
+    includeQuery,
+    minPrem,
+    savedScans,
+  ]);
+
+  useEffect(() => {
+    setColumnOrder((current) => normalizeFlowColumnOrder(current));
+    setVisibleColumns((current) => normalizeFlowVisibleColumns(current));
+  }, []);
 
   useEffect(() => {
     if (!isVisible || showDeferredPanels) return undefined;
@@ -259,6 +825,48 @@ const FlowOverviewPanel = ({
   }, [isVisible, showDeferredPanels]);
 
   useEffect(() => {
+    const element = flowContentRef.current;
+    if (!element || !isVisible) {
+      return undefined;
+    }
+
+    let frameId = 0;
+    const measure = (width) => {
+      const nextWidth = Math.round(
+        Number.isFinite(width) ? width : element.clientWidth || 0,
+      );
+      setFlowContentWidth((current) =>
+        current === nextWidth ? current : nextWidth,
+      );
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => measure();
+      window.addEventListener("resize", handleResize);
+      return () => {
+        window.removeEventListener("resize", handleResize);
+      };
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        measure(entry?.contentRect?.width);
+      });
+    });
+
+    observer.observe(element);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      observer.disconnect();
+    };
+  }, [isVisible]);
+
+  useEffect(() => {
     if (!isVisible || activateNews) return undefined;
     const timeoutId = setTimeout(() => setActivateNews(true), 450);
     return () => clearTimeout(timeoutId);
@@ -267,13 +875,29 @@ const FlowOverviewPanel = ({
   const liveFlowSnapshot = useMarketFlowSnapshot(symbols, {
     subscribe: isVisible && !livePaused,
   });
+  const flowScannerControl = useFlowScannerControlState({
+    subscribe: isVisible,
+  });
+  const flowScannerEnabled = Boolean(flowScannerControl.enabled);
+  const flowScannerPanelVisible = showUnusualScanner || flowScannerEnabled;
+  const flowScannerOwnerActive = Boolean(flowScannerControl.ownerActive);
+  const flowScannerTone = flowScannerEnabled
+    ? flowScannerOwnerActive
+      ? T.green
+      : T.amber
+    : T.accent;
+  const toggleFlowScanner = useCallback(() => {
+    const nextEnabled = !flowScannerEnabled;
+    setShowUnusualScanner(nextEnabled);
+    setFlowScannerControlState({ enabled: nextEnabled });
+  }, [flowScannerEnabled]);
   const flowSnapshot =
     livePaused && pausedSnapshot ? pausedSnapshot : liveFlowSnapshot;
   const {
     hasLiveFlow,
     flowStatus,
     providerSummary,
-    flowEvents,
+    flowEvents: rawFlowEvents = [],
     flowTide,
     tickerFlow,
     flowClock,
@@ -281,6 +905,22 @@ const FlowOverviewPanel = ({
     dteBuckets,
     marketOrderFlow,
   } = flowSnapshot;
+
+  const flowEvents = useMemo(
+    () =>
+      rawFlowEvents.map((event) => ({
+        ...event,
+        mark: resolveFlowMark(event),
+        otmPercent: resolveFlowOtmPercent(event),
+      })),
+    [rawFlowEvents],
+  );
+
+  useEffect(() => {
+    if (!isVisible || !flowEvents.length) return undefined;
+    const intervalId = setInterval(() => setFlowNowMs(Date.now()), 1000);
+    return () => clearInterval(intervalId);
+  }, [flowEvents.length, isVisible]);
 
   const watchlistSymbols = useMemo(
     () =>
@@ -300,6 +940,12 @@ const FlowOverviewPanel = ({
     lastScannedAt: {},
     isRotating: false,
   };
+  const totalCoverageSymbols =
+    coverage.targetSize || coverage.totalSymbols || watchlistSymbols.length || 0;
+  const coverageModeLabel =
+    coverage.mode === "market"
+      ? "market-wide"
+      : "watchlist";
   const oldestScanAt = useMemo(() => {
     const timestamps = Object.values(coverage.lastScannedAt || {});
     return timestamps.length ? Math.min(...timestamps) : null;
@@ -308,6 +954,29 @@ const FlowOverviewPanel = ({
     const timestamps = Object.values(coverage.lastScannedAt || {});
     return timestamps.length ? Math.max(...timestamps) : null;
   }, [coverage.lastScannedAt]);
+  const flowQuality = useMemo(
+    () =>
+      resolveFlowQuality({
+        flowStatus,
+        hasLiveFlow,
+        providerSummary,
+        coverage,
+        watchlistSymbols,
+        newestScanAt,
+        oldestScanAt,
+        livePaused,
+      }),
+    [
+      coverage,
+      flowStatus,
+      hasLiveFlow,
+      livePaused,
+      newestScanAt,
+      oldestScanAt,
+      providerSummary,
+      watchlistSymbols,
+    ],
+  );
 
   const newsQuery = useGetNews(
     { limit: 12 },
@@ -346,6 +1015,7 @@ const FlowOverviewPanel = ({
   const excludeTokens = useMemo(() => parseTickerTokens(excludeQuery), [
     excludeQuery,
   ]);
+  const activeBuiltInPreset = getFlowBuiltInPreset(activeFlowPresetId);
 
   const clusters = useMemo(() => {
     const map = {};
@@ -395,6 +1065,7 @@ const FlowOverviewPanel = ({
         )}`;
       if (!groupedByTicker[event.ticker][key]) {
         groupedByTicker[event.ticker][key] = {
+          key,
           strike: event.strike,
           cp: event.cp,
           dte: event.dte,
@@ -436,31 +1107,18 @@ const FlowOverviewPanel = ({
         if (filter === "cluster") return clusterFor(event) !== null;
         return true;
       })
+      .filter((event) =>
+        flowPresetMatches(activeFlowPresetId, event, clusterFor),
+      )
       .filter((event) => event.premium >= minPrem);
 
-    if (sortBy === "premium") {
-      events = [...events].sort((left, right) => right.premium - left.premium);
-    } else if (sortBy === "score") {
-      events = [...events].sort((left, right) => right.score - left.score);
-    } else if (sortBy === "ratio") {
-      events = [...events].sort(
-        (left, right) =>
-          (right.unusualScore || 0) - (left.unusualScore || 0) ||
-          right.premium - left.premium,
-      );
-    } else if (sortBy === "ticker") {
-      events = [...events].sort((left, right) =>
-        String(left.ticker || "").localeCompare(String(right.ticker || "")),
-      );
-    } else {
-      events = [...events].sort(
-        (left, right) =>
-          Date.parse(right.occurredAt || 0) - Date.parse(left.occurredAt || 0),
-      );
-    }
+    events = [...events].sort((left, right) =>
+      compareFlowEvents(left, right, sortBy, sortDir),
+    );
 
     return events;
   }, [
+    activeFlowPresetId,
     clusterFor,
     excludeTokens,
     filter,
@@ -468,19 +1126,63 @@ const FlowOverviewPanel = ({
     includeTokens,
     minPrem,
     sortBy,
+    sortDir,
   ]);
 
   const visibleFlowRows = filtered.slice(0, rowsPerPage);
   const denseRows = density === "compact";
-  const tapeColumns = [
-    { id: "time", label: "TIME", width: "56px" },
-    { id: "ticker", label: "TICK", width: "66px" },
-    { id: "contract", label: "CONTRACT", width: "minmax(170px, 1.8fr)" },
-    ...FLOW_TAPE_OPTIONAL_COLUMNS.filter((column) =>
-      visibleColumns.includes(column.id),
-    ),
-  ];
+  const orderedOptionalColumns = columnOrder
+    .map((columnId) => FLOW_COLUMN_BY_ID.get(columnId))
+    .filter((column) => column && visibleColumns.includes(column.id));
+  const tapeColumns = [...FLOW_FIXED_COLUMNS, ...orderedOptionalColumns];
   const tapeGridTemplate = tapeColumns.map((column) => column.width).join(" ");
+  const tapeTableMinWidth = dim(
+    472 +
+      orderedOptionalColumns.reduce((sum, column) => {
+        const width = Number.parseInt(column.width, 10);
+        return sum + (Number.isFinite(width) ? width : 72);
+      }, 0),
+  );
+  const isMobileFlowLayout = flowContentWidth > 0 && flowContentWidth < 760;
+  const isNarrowFlowLayout = flowContentWidth > 0 && flowContentWidth < 980;
+  const showInlineFilterPanel = filtersOpen && !isNarrowFlowLayout;
+  const showOverlayFilterPanel = filtersOpen && isNarrowFlowLayout;
+  const showContextRail = flowContentWidth >= 1280;
+  const flowMainGridTemplate = [
+    showInlineFilterPanel ? "minmax(238px, 260px)" : null,
+    "minmax(0, 1fr)",
+    showContextRail ? "minmax(318px, 0.44fr)" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const summaryGridTemplate = isMobileFlowLayout
+    ? "repeat(2, minmax(0, 1fr))"
+    : flowContentWidth < 1120
+      ? "repeat(3, minmax(0, 1fr))"
+      : "repeat(6, minmax(0, 1fr))";
+  const insightGridTemplate = isNarrowFlowLayout
+    ? "minmax(0, 1fr)"
+    : "minmax(0, 1.6fr) minmax(300px, 1fr)";
+  const metricGridTemplate = isNarrowFlowLayout
+    ? "minmax(0, 1fr)"
+    : "repeat(3, minmax(0, 1fr))";
+  const pinnedEvent = useMemo(
+    () =>
+      flowEvents.find((event) => event.id === pinnedEventId) ||
+      filtered.find((event) => event.id === pinnedEventId) ||
+      null,
+    [filtered, flowEvents, pinnedEventId],
+  );
+  const flowSentimentSummary = useMemo(
+    () => summarizeFlowSentiment(filtered),
+    [filtered],
+  );
+
+  useEffect(() => {
+    if (isNarrowFlowLayout && !HAS_PERSISTED_FLOW_FILTERS_OPEN) {
+      setFiltersOpen(false);
+    }
+  }, [isNarrowFlowLayout]);
 
   const totalCallPrem = flowEvents
     .filter((event) => event.cp === "C")
@@ -736,6 +1438,64 @@ const FlowOverviewPanel = ({
       .slice(0, 5);
   }, [selectedTickerEvents, showDeferredPanels]);
 
+  const expiryConcentration = useMemo(() => {
+    if (!showDeferredPanels) return [];
+    const grouped = new Map();
+    selectedTickerEvents.forEach((event) => {
+      const label = formatExpirationLabel(event.expirationDate);
+      const entry = grouped.get(label) || {
+        label,
+        premium: 0,
+        count: 0,
+        calls: 0,
+        puts: 0,
+        dte: event.dte,
+      };
+      entry.premium += event.premium;
+      entry.count += 1;
+      if (event.cp === "C") entry.calls += event.premium;
+      if (event.cp === "P") entry.puts += event.premium;
+      entry.dte = Math.min(entry.dte, event.dte);
+      grouped.set(label, entry);
+    });
+    return Array.from(grouped.values())
+      .sort((left, right) => right.premium - left.premium)
+      .slice(0, 4);
+  }, [selectedTickerEvents, showDeferredPanels]);
+
+  const selectedTickerSideSplit = useMemo(() => {
+    const stats = {
+      askPremium: 0,
+      bidPremium: 0,
+      midPremium: 0,
+      askCount: 0,
+      bidCount: 0,
+      midCount: 0,
+    };
+    selectedTickerEvents.forEach((event) => {
+      if (event.side === "BUY") {
+        stats.askPremium += event.premium;
+        stats.askCount += 1;
+      } else if (event.side === "SELL") {
+        stats.bidPremium += event.premium;
+        stats.bidCount += 1;
+      } else {
+        stats.midPremium += event.premium;
+        stats.midCount += 1;
+      }
+    });
+    return stats;
+  }, [selectedTickerEvents]);
+
+  const repeatPrints = useMemo(
+    () =>
+      selectedTickerEvents
+        .map((event) => ({ event, cluster: clusterFor(event) }))
+        .filter((entry) => entry.cluster)
+        .slice(0, 4),
+    [clusterFor, selectedTickerEvents],
+  );
+
   const signalQueue = useMemo(
     () =>
       !showDeferredPanels
@@ -820,6 +1580,68 @@ const FlowOverviewPanel = ({
     setLivePaused(true);
   };
 
+  const handleCopyContract = async (event, contractEvent) => {
+    event.stopPropagation();
+    const contractLabel = getFlowContractLabel(contractEvent);
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(contractLabel);
+      }
+      setCopiedEventId(contractEvent.id);
+      if (copyStatusTimerRef.current) {
+        clearTimeout(copyStatusTimerRef.current);
+      }
+      copyStatusTimerRef.current = setTimeout(() => {
+        setCopiedEventId(null);
+      }, 1400);
+    } catch (_error) {
+      setCopiedEventId(contractEvent.id);
+    }
+  };
+
+  const handleTogglePinned = (event, contractEvent) => {
+    event.stopPropagation();
+    setPinnedEventId((current) =>
+      current === contractEvent.id ? null : contractEvent.id,
+    );
+  };
+
+  const updateFlowTapeFilters = useCallback((patch, { clearPreset = true } = {}) => {
+    setActiveScanId(null);
+    setFlowTapeFilterState({
+      ...patch,
+      ...(clearPreset ? { activeFlowPresetId: null } : {}),
+    });
+  }, []);
+
+  const markScannerEdited = () => {
+    setActiveScanId(null);
+    setFlowTapeFilterState({ activeFlowPresetId: null });
+  };
+
+  const applyFlowSort = (columnId) => {
+    if (!FLOW_SORTABLE_COLUMNS.has(columnId)) return;
+    const nextSortBy = normalizeFlowSortBy(columnId);
+    if (sortBy === nextSortBy) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(nextSortBy);
+      setSortDir(getDefaultFlowSortDir(nextSortBy));
+    }
+    markScannerEdited();
+  };
+
+  const applyBuiltInPreset = (preset) => {
+    if (!preset) return;
+    setActiveScanId(null);
+    setFlowTapeFilterState(buildFlowTapePresetPatch(preset.id, flowTapeFilters));
+    if (preset.sortBy) {
+      const nextSortBy = normalizeFlowSortBy(preset.sortBy);
+      setSortBy(nextSortBy);
+      setSortDir(getDefaultFlowSortDir(nextSortBy));
+    }
+  };
+
   const toggleColumn = (columnId) => {
     setVisibleColumns((current) => {
       if (current.includes(columnId)) {
@@ -827,12 +1649,28 @@ const FlowOverviewPanel = ({
           ? current.filter((id) => id !== columnId)
           : current;
       }
-      return [
-        ...FLOW_TAPE_OPTIONAL_COLUMNS.map((column) => column.id).filter(
-          (id) => current.includes(id) || id === columnId,
-        ),
-      ];
+      return columnOrder.filter((id) => current.includes(id) || id === columnId);
     });
+    setActiveScanId(null);
+  };
+
+  const moveColumn = (columnId, direction) => {
+    setColumnOrder((current) => {
+      const next = normalizeFlowColumnOrder(current);
+      const index = next.indexOf(columnId);
+      const swapIndex = index + direction;
+      if (index < 0 || swapIndex < 0 || swapIndex >= next.length) {
+        return next;
+      }
+      [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+      return next;
+    });
+    setActiveScanId(null);
+  };
+
+  const resetColumns = () => {
+    setColumnOrder(DEFAULT_FLOW_COLUMN_ORDER);
+    setVisibleColumns(DEFAULT_FLOW_VISIBLE_COLUMNS);
     setActiveScanId(null);
   };
 
@@ -851,13 +1689,16 @@ const FlowOverviewPanel = ({
     const newScan = {
       id: Date.now(),
       name,
+      activeFlowPresetId,
       filter,
       minPrem,
       sortBy,
+      sortDir,
       includeQuery,
       excludeQuery,
       density,
       rowsPerPage,
+      columnOrder,
       visibleColumns,
     };
     setSavedScans((current) => [...current, newScan].slice(-8));
@@ -865,22 +1706,22 @@ const FlowOverviewPanel = ({
   };
 
   const loadScan = (scan) => {
-    setFilter(scan.filter || "all");
-    setMinPrem(Number.isFinite(scan.minPrem) ? scan.minPrem : 0);
-    setSortBy(scan.sortBy || "time");
-    setIncludeQuery(scan.includeQuery || "");
-    setExcludeQuery(scan.excludeQuery || "");
+    setFlowTapeFilterState({
+      activeFlowPresetId: scan.activeFlowPresetId || null,
+      filter: scan.filter || "all",
+      minPrem: Number.isFinite(scan.minPrem) ? scan.minPrem : 0,
+      includeQuery: scan.includeQuery || "",
+      excludeQuery: scan.excludeQuery || "",
+    });
+    const nextSortBy = normalizeFlowSortBy(scan.sortBy);
+    setSortBy(nextSortBy);
+    setSortDir(normalizeFlowSortDir(scan.sortDir, nextSortBy));
     setDensity(scan.density || "compact");
     setRowsPerPage(
       Number.isFinite(scan.rowsPerPage) ? scan.rowsPerPage : rowsPerPage,
     );
-    setVisibleColumns(
-      Array.isArray(scan.visibleColumns) && scan.visibleColumns.length
-        ? scan.visibleColumns.filter((columnId) =>
-            DEFAULT_FLOW_VISIBLE_COLUMNS.includes(columnId),
-          )
-        : DEFAULT_FLOW_VISIBLE_COLUMNS,
-    );
+    setColumnOrder(normalizeFlowColumnOrder(scan.columnOrder));
+    setVisibleColumns(normalizeFlowVisibleColumns(scan.visibleColumns));
     setActiveScanId(scan.id);
   };
 
@@ -911,27 +1752,48 @@ const FlowOverviewPanel = ({
       event.premium >= 1e6
         ? `$${(event.premium / 1e6).toFixed(2)}M`
         : `$${(event.premium / 1e3).toFixed(0)}K`;
+    const sourceBasisMeta = getFlowSourceBasisMeta(event.sourceBasis);
+    const fillSpreadMeta = resolveFlowFillSpreadMeta(event);
 
     if (columnId === "time") {
-      return <span style={{ color: T.textDim }}>{event.time}</span>;
-    }
-    if (columnId === "ticker") {
+      const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
+      const occurredAt = event.occurredAt ? formatFlowAppTime(event.occurredAt) : event.time;
+      const ageMs = Math.max(0, flowNowMs - (Date.parse(event.occurredAt || "") || flowNowMs));
+      const ageColor = ageMs < 60_000 ? T.green : ageMs < 300_000 ? T.textSec : T.textDim;
       return (
         <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(3),
-            fontWeight: 700,
-            color: T.text,
-          }}
+          title={occurredAt ? `${occurredAt} ${appTimeZoneLabel}` : undefined}
+          style={{ color: ageColor, fontWeight: ageMs < 60_000 ? 700 : 500 }}
         >
-          {event.golden ? <span style={{ color: T.amber }}>★</span> : null}
-          {event.ticker}
+          {ageLabel}
         </span>
       );
     }
-    if (columnId === "contract") {
+    if (columnId === "ticker") {
+      return (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+          {event.golden ? <span style={{ color: T.amber }}>★</span> : null}
+          <MarketIdentityInline
+            ticker={event.ticker}
+            size={14}
+            showChips={false}
+          />
+        </span>
+      );
+    }
+    if (columnId === "expiration") {
+      return (
+        <span title={event.expirationDate || undefined} style={{ color: T.textDim }}>
+          {formatExpirationLabel(event.expirationDate)}
+        </span>
+      );
+    }
+    if (columnId === "right") {
+      return (
+        <Badge color={cpColor}>{event.cp || MISSING_VALUE}</Badge>
+      );
+    }
+    if (columnId === "strike") {
       return (
         <div
           style={{
@@ -939,23 +1801,20 @@ const FlowOverviewPanel = ({
             display: "flex",
             alignItems: "center",
             gap: sp(4),
-            flexWrap: denseRows ? "nowrap" : "wrap",
+            justifyContent: "flex-end",
+            flexWrap: "nowrap",
           }}
         >
           <span
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: sp(3),
               minWidth: 0,
               color: T.textSec,
+              fontWeight: 700,
             }}
           >
-            <span style={{ color: cpColor, fontWeight: 700 }}>{event.cp}</span>
-            <span style={{ fontWeight: 600 }}>{event.strike}</span>
-            <span style={{ color: T.textDim }}>
-              {formatExpirationLabel(event.expirationDate)}
-            </span>
+            {event.strike}
           </span>
           {cluster ? (
             <span
@@ -973,12 +1832,9 @@ const FlowOverviewPanel = ({
                 fontWeight: 700,
               }}
             >
-              🔁 {cluster.count}
+              R{cluster.count}
             </span>
           ) : null}
-          <Badge color={flowProviderColor(event.provider)}>
-            {event.sourceLabel}
-          </Badge>
         </div>
       );
     }
@@ -1006,6 +1862,157 @@ const FlowOverviewPanel = ({
           }}
         >
           {premiumLabel}
+        </span>
+      );
+    }
+    if (columnId === "fill") {
+      return (
+        <span
+          title={fillSpreadMeta.label}
+          style={{ textAlign: "right", color: fillSpreadMeta.color }}
+        >
+          {isFiniteNumber(fillSpreadMeta.fill)
+            ? `${formatOptionPrice(fillSpreadMeta.fill)} ${fillSpreadMeta.shortLabel}`
+            : MISSING_VALUE}
+        </span>
+      );
+    }
+    if (columnId === "mark") {
+      return (
+        <span
+          title={
+            isFiniteNumber(event.mark)
+              ? "Option mark"
+              : "Option mark unavailable"
+          }
+          style={{ textAlign: "right", color: T.textSec, fontWeight: 650 }}
+        >
+          {formatOptionPrice(event.mark)}
+        </span>
+      );
+    }
+    if (columnId === "bidAsk") {
+      const bid = fillSpreadMeta.bid;
+      const ask = fillSpreadMeta.ask;
+      const fill = fillSpreadMeta.fill;
+      const hasRange =
+        isFiniteNumber(bid) &&
+        isFiniteNumber(ask) &&
+        ask > bid &&
+        isFiniteNumber(fill);
+      const fillPosition = hasRange
+        ? Math.max(0, Math.min(100, ((fill - bid) / (ask - bid)) * 100))
+        : null;
+      return (
+        <div
+          title={
+            fillSpreadMeta.crossed
+              ? "Crossed NBBO"
+              : hasRange
+                ? `${formatOptionPrice(bid)} bid · ${formatOptionPrice(fill)} fill · ${formatOptionPrice(ask)} ask`
+                : "Bid/ask unavailable"
+          }
+          style={{
+            width: "100%",
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: sp(2),
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(4),
+              fontSize: fs(8),
+              lineHeight: 1,
+            }}
+          >
+            <span style={{ color: T.red, fontWeight: 700 }}>
+              B {formatOptionPrice(bid)}
+            </span>
+            <span style={{ color: event.cp === "P" ? T.red : T.green, fontWeight: 700 }}>
+              A {formatOptionPrice(ask)}
+            </span>
+          </div>
+          <div
+            style={{
+              position: "relative",
+              height: dim(7),
+              borderRadius: dim(2),
+              overflow: "hidden",
+              border: `1px solid ${T.border}`,
+              background: T.bg1,
+            }}
+          >
+            <span
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: `linear-gradient(90deg, ${T.red}55 0%, ${T.textDim}45 50%, ${event.cp === "P" ? T.red : T.green}66 100%)`,
+              }}
+            />
+            {fillPosition !== null ? (
+              <span
+                style={{
+                  position: "absolute",
+                  top: dim(-1),
+                  left: `${fillPosition}%`,
+                  width: dim(4),
+                  height: dim(9),
+                  transform: "translateX(-50%)",
+                  borderRadius: dim(1),
+                  background: fillSpreadMeta.color,
+                  boxShadow: `0 0 0 1px ${T.bg0}`,
+                }}
+              />
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+    if (columnId === "bid") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {formatOptionPrice(event.bid)}
+        </span>
+      );
+    }
+    if (columnId === "ask") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {formatOptionPrice(event.ask)}
+        </span>
+      );
+    }
+    if (columnId === "spread") {
+      return (
+        <span
+          title={
+            fillSpreadMeta.crossed
+              ? "Crossed market"
+              : isFiniteNumber(fillSpreadMeta.spreadPct)
+                ? `${fillSpreadMeta.spreadPct.toFixed(1)}% of midpoint`
+                : undefined
+          }
+          style={{
+            textAlign: "right",
+            color:
+              fillSpreadMeta.crossed ||
+              (isFiniteNumber(fillSpreadMeta.spreadPct) &&
+                fillSpreadMeta.spreadPct > 10)
+                ? T.amber
+                : T.textDim,
+          }}
+        >
+          {fillSpreadMeta.crossed
+            ? "CROSSED"
+            : isFiniteNumber(fillSpreadMeta.spread) &&
+                isFiniteNumber(fillSpreadMeta.spreadPct)
+              ? `${fillSpreadMeta.spread.toFixed(2)}/${fillSpreadMeta.spreadPct.toFixed(1)}%`
+              : MISSING_VALUE}
         </span>
       );
     }
@@ -1052,11 +2059,183 @@ const FlowOverviewPanel = ({
         </span>
       );
     }
+    if (columnId === "spot") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {isFiniteNumber(event.spot) ? event.spot.toFixed(2) : MISSING_VALUE}
+        </span>
+      );
+    }
+    if (columnId === "otmPercent") {
+      const isAtOrInTheMoney =
+        isFiniteNumber(event.otmPercent) && event.otmPercent === 0;
+      return (
+        <span
+          title={
+            isFiniteNumber(event.otmPercent)
+              ? isAtOrInTheMoney
+                ? "At or in the money"
+                : `${event.otmPercent.toFixed(2)}% out of the money`
+              : "Moneyness unavailable"
+          }
+          style={{
+            textAlign: "right",
+            color: isAtOrInTheMoney ? T.green : T.amber,
+            fontWeight: 700,
+          }}
+        >
+          {isFiniteNumber(event.otmPercent)
+            ? `${event.otmPercent.toFixed(1)}%`
+            : MISSING_VALUE}
+        </span>
+      );
+    }
+    if (columnId === "moneyness") {
+      const color =
+        event.moneyness === "ITM"
+          ? T.green
+          : event.moneyness === "ATM"
+            ? T.amber
+            : event.moneyness === "OTM"
+              ? T.textSec
+              : T.textDim;
+      return (
+        <span style={{ textAlign: "right", color, fontWeight: 700 }}>
+          {event.moneyness && event.moneyness !== "UNKNOWN"
+            ? event.moneyness
+            : MISSING_VALUE}
+        </span>
+      );
+    }
+    if (columnId === "distance") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {formatSignedPercent(event.distancePercent)}
+        </span>
+      );
+    }
+    if (columnId === "delta") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {formatGreekValue(event.delta)}
+        </span>
+      );
+    }
+    if (columnId === "gamma") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {formatGreekValue(event.gamma)}
+        </span>
+      );
+    }
+    if (columnId === "theta") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {formatGreekValue(event.theta)}
+        </span>
+      );
+    }
+    if (columnId === "vega") {
+      return (
+        <span style={{ textAlign: "right", color: T.textDim }}>
+          {formatGreekValue(event.vega)}
+        </span>
+      );
+    }
+    if (columnId === "sourceBasis") {
+      return (
+        <Badge color={sourceBasisMeta.color}>{sourceBasisMeta.label}</Badge>
+      );
+    }
+    if (columnId === "confidence") {
+      const confidenceMeta = getFlowSourceBasisMeta(event.confidence);
+      return (
+        <Badge color={confidenceMeta.color}>{confidenceMeta.label}</Badge>
+      );
+    }
     if (columnId === "score") {
       return (
         <span style={{ textAlign: "center" }}>
           <Badge color={scoreColor}>{event.score}</Badge>
         </span>
+      );
+    }
+    if (columnId === "actions") {
+      const isPinned = pinnedEventId === event.id;
+      const copied = copiedEventId === event.id;
+      return (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: sp(2),
+          }}
+        >
+          <button
+            type="button"
+            title={isPinned ? "Unpin row" : "Pin row"}
+            aria-label={isPinned ? "Unpin flow row" : "Pin flow row"}
+            onClick={(clickEvent) => handleTogglePinned(clickEvent, event)}
+            style={{
+              width: dim(22),
+              height: dim(22),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `1px solid ${isPinned ? T.amber : T.border}`,
+              background: isPinned ? `${T.amber}18` : T.bg2,
+              color: isPinned ? T.amber : T.textDim,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
+          </button>
+          <button
+            type="button"
+            title={copied ? "Copied" : "Copy contract"}
+            aria-label="Copy flow contract"
+            onClick={(clickEvent) => handleCopyContract(clickEvent, event)}
+            style={{
+              width: dim(22),
+              height: dim(22),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `1px solid ${copied ? T.green : T.border}`,
+              background: copied ? `${T.green}18` : T.bg2,
+              color: copied ? T.green : T.textDim,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            <Copy size={12} />
+          </button>
+          <button
+            type="button"
+            title="Open in Trade"
+            aria-label="Open flow row in Trade"
+            onClick={(clickEvent) => {
+              clickEvent.stopPropagation();
+              onJumpToTrade?.(event);
+            }}
+            style={{
+              width: dim(22),
+              height: dim(22),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `1px solid ${T.border}`,
+              background: T.bg2,
+              color: T.textDim,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            <ExternalLink size={12} />
+          </button>
+        </div>
       );
     }
     return null;
@@ -1073,8 +2252,629 @@ const FlowOverviewPanel = ({
     borderRadius: dim(3),
   });
 
+  const panelLabelStyle = {
+    fontSize: fs(8),
+    color: T.textDim,
+    fontFamily: T.mono,
+    fontWeight: 700,
+    letterSpacing: "0.05em",
+  };
+
+  const toolButtonStyle = (active, accent = T.accent) => ({
+    ...toolbarChipStyle(active, accent),
+    minHeight: dim(28),
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: sp(5),
+    padding: sp("4px 8px"),
+  });
+
+  const getTapeCellAlignment = (columnId) => {
+    if (RIGHT_ALIGNED_FLOW_COLUMNS.has(columnId)) return "right";
+    if (CENTER_ALIGNED_FLOW_COLUMNS.has(columnId)) return "center";
+    return "left";
+  };
+
+  const getTapeCellStyle = (columnId) => {
+    const alignment = getTapeCellAlignment(columnId);
+    return {
+      minWidth: 0,
+      display: "flex",
+      alignItems: "center",
+      justifyContent:
+        alignment === "right"
+          ? "flex-end"
+          : alignment === "center"
+            ? "center"
+            : "flex-start",
+      overflow: "hidden",
+      whiteSpace: "nowrap",
+      textAlign: alignment,
+    };
+  };
+
+  const getTapeHeaderCellStyle = (column) => {
+    const active = normalizeFlowSortBy(column.id) === sortBy;
+    const sortable = FLOW_SORTABLE_COLUMNS.has(column.id);
+    return {
+      ...getTapeCellStyle(column.id),
+      gap: sp(3),
+      padding: 0,
+      border: "none",
+      background: "transparent",
+      color: active ? T.text : T.textMuted,
+      cursor: sortable ? "pointer" : "default",
+      font: "inherit",
+      fontWeight: active ? 800 : 700,
+      letterSpacing: "0.08em",
+    };
+  };
+
+  const filterPanel = (
+    <Card
+      data-testid="flow-filter-panel"
+      className="ra-panel-enter"
+      style={{
+        padding: "8px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(8),
+        height: showInlineFilterPanel ? "fit-content" : "auto",
+        maxHeight: showOverlayFilterPanel ? "calc(100vh - 132px)" : undefined,
+        overflowY: showOverlayFilterPanel ? "auto" : "visible",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: sp(6),
+        }}
+      >
+        <span style={{ fontSize: fs(11), fontWeight: 800, color: T.text }}>
+          Filters
+        </span>
+        <button
+          type="button"
+          onClick={() => setFiltersOpen(false)}
+          style={toolButtonStyle(false, T.textDim)}
+          aria-label="Collapse Flow filters"
+          title="Collapse filters"
+        >
+          <PanelLeftClose size={13} />
+        </button>
+      </div>
+
+      <label
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: sp(3),
+          fontSize: fs(8),
+          color: T.textDim,
+          fontFamily: T.mono,
+        }}
+      >
+        Include tickers
+        <input
+          data-testid="flow-include-input"
+          value={includeQuery}
+          onChange={(event) => {
+            updateFlowTapeFilters({ includeQuery: event.target.value });
+          }}
+          placeholder="SPY, QQQ, NVDA"
+          style={{
+            width: "100%",
+            padding: sp("6px 8px"),
+            background: T.bg1,
+            border: `1px solid ${T.border}`,
+            color: T.text,
+            fontFamily: T.mono,
+            fontSize: fs(10),
+          }}
+        />
+      </label>
+
+      <label
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: sp(3),
+          fontSize: fs(8),
+          color: T.textDim,
+          fontFamily: T.mono,
+        }}
+      >
+        Exclude tickers
+        <input
+          data-testid="flow-exclude-input"
+          value={excludeQuery}
+          onChange={(event) => {
+            updateFlowTapeFilters({ excludeQuery: event.target.value });
+          }}
+          placeholder="AAPL, TSLA"
+          style={{
+            width: "100%",
+            padding: sp("6px 8px"),
+            background: T.bg1,
+            border: `1px solid ${T.border}`,
+            color: T.text,
+            fontFamily: T.mono,
+            fontSize: fs(10),
+          }}
+        />
+      </label>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
+        <span style={panelLabelStyle}>FLOW</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+          {FLOW_TAPE_FILTER_OPTIONS.map(({ id: key, label }) => (
+            <Pill
+              key={key}
+              active={filter === key}
+              onClick={() => {
+                updateFlowTapeFilters({ filter: key });
+              }}
+              color={
+                key === "golden" ? T.amber : key === "cluster" ? T.cyan : undefined
+              }
+            >
+              {label}
+            </Pill>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
+        <span style={panelLabelStyle}>MIN PREMIUM</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+          {FLOW_MIN_PREMIUM_OPTIONS.map(({ value, label }) => (
+            <Pill
+              key={value}
+              active={minPrem === value}
+              onClick={() => {
+                updateFlowTapeFilters({ minPrem: value });
+              }}
+            >
+              {label}
+            </Pill>
+          ))}
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: sp(8),
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
+          <span style={panelLabelStyle}>DENSITY</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+            {[
+              ["compact", "Compact"],
+              ["comfortable", "Comfort"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  setDensity(value);
+                  markScannerEdited();
+                }}
+                style={toolbarChipStyle(density === value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
+          <span style={panelLabelStyle}>ROWS</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+            {FLOW_ROWS_OPTIONS.map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  setRowsPerPage(value);
+                  markScannerEdited();
+                }}
+                style={toolbarChipStyle(rowsPerPage === value)}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={saveCurrentScan}
+          style={{
+            ...toolButtonStyle(false),
+            color: T.accent,
+            borderColor: T.accent,
+          }}
+        >
+          Save preset
+        </button>
+        <button
+          type="button"
+          onClick={handleToggleLivePaused}
+          style={toolButtonStyle(livePaused, livePaused ? T.amber : T.green)}
+        >
+          {livePaused ? <Play size={13} /> : null}
+          {livePaused ? "Resume" : "Pause"}
+        </button>
+      </div>
+
+      {savedScans.length ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
+          <span style={panelLabelStyle}>PRESETS</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
+            {savedScans.map((scan) => (
+              <div
+                key={scan.id}
+                onClick={() => loadScan(scan)}
+                title={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: sp(3),
+                  padding: sp("3px 7px"),
+                  borderRadius: dim(3),
+                  border: `1px solid ${
+                    activeScanId === scan.id ? T.accent : T.border
+                  }`,
+                  background:
+                    activeScanId === scan.id ? `${T.accent}18` : T.bg1,
+                  cursor: "pointer",
+                  fontSize: fs(8),
+                  fontFamily: T.mono,
+                  color: activeScanId === scan.id ? T.accent : T.textSec,
+                }}
+              >
+                <span>{scan.name}</span>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deleteScan(scan.id);
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: T.textMuted,
+                    cursor: "pointer",
+                    fontSize: fs(10),
+                    padding: 0,
+                    lineHeight: 1,
+                  }}
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+
+  const columnDrawer = columnsOpen ? (
+    <Card
+      data-testid="flow-column-drawer"
+      className="ra-popover-enter"
+      style={{
+        position: "absolute",
+        top: dim(62),
+        right: dim(8),
+        width: isMobileFlowLayout ? "calc(100% - 16px)" : dim(310),
+        zIndex: 20,
+        padding: "8px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(7),
+        boxShadow: `0 18px 48px ${T.bg0}cc`,
+        maxHeight: "calc(100vh - 128px)",
+        overflowY: "auto",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: sp(6),
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: sp(1) }}>
+          <span style={{ fontSize: fs(11), fontWeight: 800, color: T.text }}>
+            Columns
+          </span>
+          <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+            Show, hide, and order the tape fields.
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setColumnsOpen(false)}
+          style={toolButtonStyle(false, T.textDim)}
+          aria-label="Close Flow column drawer"
+          title="Close columns"
+        >
+          x
+        </button>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
+        {columnOrder.map((columnId, index) => {
+          const column = FLOW_COLUMN_BY_ID.get(columnId);
+          if (!column) return null;
+          const checked = visibleColumns.includes(columnId);
+          return (
+            <div
+              key={columnId}
+              data-testid={`flow-column-row-${columnId}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto auto",
+                gap: sp(4),
+                alignItems: "center",
+                padding: sp("5px 6px"),
+                border: `1px solid ${checked ? T.borderLight : T.border}`,
+                background: checked ? T.bg1 : T.bg0,
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(6),
+                  minWidth: 0,
+                  fontSize: fs(9),
+                  color: checked ? T.text : T.textDim,
+                  fontFamily: T.mono,
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleColumn(columnId)}
+                />
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {column.toggleLabel}
+                </span>
+              </label>
+              <button
+                type="button"
+                disabled={index === 0}
+                onClick={() => moveColumn(columnId, -1)}
+                style={{
+                  ...toolbarChipStyle(false, T.textDim),
+                  opacity: index === 0 ? 0.45 : 1,
+                }}
+              >
+                Up
+              </button>
+              <button
+                type="button"
+                disabled={index === columnOrder.length - 1}
+                onClick={() => moveColumn(columnId, 1)}
+                style={{
+                  ...toolbarChipStyle(false, T.textDim),
+                  opacity: index === columnOrder.length - 1 ? 0.45 : 1,
+                }}
+              >
+                Down
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={resetColumns}
+        style={{
+          ...toolButtonStyle(false, T.textDim),
+          alignSelf: "flex-start",
+        }}
+      >
+        Reset columns
+      </button>
+    </Card>
+  ) : null;
+
+  const renderFlowMobileCard = (event, index = 0) => {
+    const selected = selectedEvt?.id === event.id;
+    const pinned = pinnedEventId === event.id;
+    const executionMeta = getFlowExecutionMeta(event);
+    const premiumLabel =
+      event.premium >= 1e6
+        ? `$${(event.premium / 1e6).toFixed(2)}M`
+        : `$${(event.premium / 1e3).toFixed(0)}K`;
+    const fillSpreadMeta = resolveFlowFillSpreadMeta(event);
+    const sentiment = classifyFlowSentiment(event);
+    const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
+    const occurredAt = event.occurredAt ? formatFlowAppTime(event.occurredAt) : event.time;
+    const sentimentColor =
+      sentiment === "bull" ? T.green : sentiment === "bear" ? T.red : T.textDim;
+    return (
+      <div
+        key={event.id}
+        data-testid="flow-row-card"
+        role="button"
+        tabIndex={0}
+        onClick={() =>
+          setSelectedEvt((previous) =>
+            previous?.id === event.id ? null : event,
+          )
+        }
+        onDoubleClick={() => onJumpToTrade?.(event)}
+        onKeyDown={(keyEvent) => {
+          if (keyEvent.key === "Enter") {
+            setSelectedEvt((previous) =>
+              previous?.id === event.id ? null : event,
+            );
+          }
+        }}
+        className={joinMotionClasses(
+          "ra-row-enter",
+          "ra-interactive",
+          (selected || pinned) && "ra-focus-rail",
+        )}
+        style={{
+          ...motionRowStyle(index, 10, 140),
+          ...motionVars({
+            accent: selected
+              ? T.accent
+              : pinned || event.golden
+                ? T.amber
+                : executionMeta.color,
+          }),
+          padding: sp("8px 9px"),
+          borderBottom: `1px solid ${T.border}55`,
+          borderLeft: selected
+            ? `2px solid ${T.accent}`
+            : pinned
+              ? `2px solid ${T.amber}`
+              : event.golden
+                ? `2px solid ${T.amber}`
+                : "2px solid transparent",
+          background: selected
+            ? `${T.accent}12`
+            : pinned
+              ? `${T.amber}10`
+              : event.golden
+                ? `${T.amber}0f`
+                : "transparent",
+          display: "flex",
+          flexDirection: "column",
+          gap: sp(6),
+          cursor: "pointer",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: sp(8),
+          }}
+        >
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <span
+              style={{
+                fontSize: fs(12),
+                fontWeight: 800,
+                color: T.text,
+                fontFamily: T.mono,
+              }}
+            >
+              {event.ticker}{" "}
+              <span style={{ color: event.cp === "C" ? T.green : T.red }}>
+                {event.cp}
+                {event.strike}
+              </span>
+            </span>
+            <span
+              style={{
+                fontSize: fs(9),
+                color: T.textDim,
+                fontFamily: T.mono,
+              }}
+            >
+              {formatExpirationLabel(event.expirationDate)} · {ageLabel} · {occurredAt} {appTimeZoneLabel}
+            </span>
+          </div>
+          <span
+            style={{
+              fontSize: fs(12),
+              color: event.premium >= 250000 ? T.amber : T.text,
+              fontFamily: T.mono,
+              fontWeight: 800,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {premiumLabel}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+          <Badge color={executionMeta.color}>{executionMeta.label}</Badge>
+          <Badge color={event.type === "SWEEP" ? T.amber : T.accent}>
+            {event.type}
+          </Badge>
+          <Badge color={flowProviderColor(event.provider)}>
+            {event.sourceLabel}
+          </Badge>
+          <Badge color={sentimentColor}>
+            {sentiment === "bull"
+              ? "BULL"
+              : sentiment === "bear"
+                ? "BEAR"
+                : "NEUTRAL"}
+          </Badge>
+          {event.isUnusual ? <Badge color={T.cyan}>VOL/OI</Badge> : null}
+          {pinned ? <Badge color={T.amber}>PINNED</Badge> : null}
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: sp(5),
+            fontSize: fs(8),
+            color: T.textDim,
+            fontFamily: T.mono,
+          }}
+        >
+          <span>Size {fmtCompactNumber(event.vol)}</span>
+          <span>OI {fmtCompactNumber(event.oi)}</span>
+          <span>DTE {Number.isFinite(event.dte) ? `${event.dte}d` : MISSING_VALUE}</span>
+          <span>Score {event.score}</span>
+        </div>
+        <div
+          data-testid="flow-mobile-fill-spread"
+          style={{
+            fontSize: fs(8),
+            color: T.textDim,
+            fontFamily: T.mono,
+          }}
+        >
+          Fill{" "}
+          <span style={{ color: fillSpreadMeta.color, fontWeight: 700 }}>
+            {formatOptionPrice(fillSpreadMeta.fill)} {fillSpreadMeta.shortLabel}
+          </span>{" "}
+          · Bid/Ask {formatOptionPrice(fillSpreadMeta.bid)}/
+          {formatOptionPrice(fillSpreadMeta.ask)} · Sprd{" "}
+          {fillSpreadMeta.crossed
+            ? "CROSSED"
+            : isFiniteNumber(fillSpreadMeta.spreadPct)
+              ? `${fillSpreadMeta.spreadPct.toFixed(1)}%`
+              : MISSING_VALUE}
+        </div>
+        {renderTapeCell("actions", event)}
+      </div>
+    );
+  };
+
   const unusualScannerLauncher = (
     <Card
+      className={flowScannerEnabled ? "ra-scan-sweep" : "ra-panel-enter"}
       style={{
         padding: "8px 10px",
         display: "flex",
@@ -1093,7 +2893,7 @@ const FlowOverviewPanel = ({
             color: T.textSec,
           }}
         >
-          Unusual Flow Scanner
+          Flow Scanner
         </span>
         <span
           style={{
@@ -1102,23 +2902,23 @@ const FlowOverviewPanel = ({
             fontFamily: T.mono,
           }}
         >
-          This scanner runs a second broad-watchlist flow sweep. It is kept off on first load so the main Flow page opens from the shared snapshot instead of waiting on another heavy pass.
+          Runs the broader Flow universe sweep across the workspace. The header radio tower controls the same scanner and shows its published results.
         </span>
       </div>
       <button
         type="button"
-        onClick={() => setShowUnusualScanner((current) => !current)}
+        onClick={toggleFlowScanner}
         style={{
           ...toolbarChipStyle(
-            showUnusualScanner,
-            showUnusualScanner ? T.amber : T.accent,
+            flowScannerEnabled,
+            flowScannerTone,
           ),
           minWidth: dim(150),
-          color: showUnusualScanner ? T.amber : T.accent,
-          borderColor: showUnusualScanner ? T.amber : T.accent,
+          color: flowScannerTone,
+          borderColor: flowScannerTone,
         }}
       >
-        {showUnusualScanner ? "Hide unusual scan" : "Load unusual scan"}
+        {flowScannerEnabled ? "Stop Flow scan" : "Start Flow scan"}
       </button>
     </Card>
   );
@@ -1130,6 +2930,7 @@ const FlowOverviewPanel = ({
         justifyContent: "space-between",
         alignItems: "center",
         gap: sp(8),
+        flexWrap: "wrap",
         padding: sp("2px 2px 0"),
         fontSize: fs(8),
         fontFamily: T.mono,
@@ -1144,12 +2945,12 @@ const FlowOverviewPanel = ({
         <span style={{ marginLeft: sp(8) }}>
           Coverage{" "}
           <span style={{ color: T.text, fontWeight: 700 }}>
-            {coverage.scannedSymbols}/
-            {watchlistSymbols.length || coverage.scannedSymbols}
+            {coverage.scannedSymbols}/{totalCoverageSymbols || coverage.scannedSymbols}
           </span>
           {coverage.isRotating
             ? ` · rotating ${coverage.batchSize}/cycle`
-            : " · full watchlist"}
+            : ` · full ${coverageModeLabel}`}
+          {coverage.cooldownCount ? ` · ${coverage.cooldownCount} cooldown` : ""}
           {newestScanAt
             ? ` · latest ${formatRelativeTimeShort(
                 new Date(newestScanAt).toISOString(),
@@ -1178,8 +2979,168 @@ const FlowOverviewPanel = ({
       </span>
     </div>
   );
+  const flowQualityBar = (
+    <div
+      data-testid="flow-quality-bar"
+      role="status"
+      aria-label={`Flow quality ${flowQuality.label}`}
+      title={[
+        flowQuality.detail,
+        newestScanAt ? `Newest ${formatFlowAppTime(newestScanAt)}` : null,
+        oldestScanAt && oldestScanAt !== newestScanAt
+          ? `Oldest ${formatFlowAppTime(oldestScanAt)}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+      style={{
+        display: "grid",
+        gridTemplateColumns: isMobileFlowLayout
+          ? "minmax(0, 1fr)"
+          : "minmax(120px, 0.34fr) minmax(180px, 1fr) auto",
+        gap: sp(8),
+        alignItems: "center",
+        padding: sp("7px 9px"),
+        border: `1px solid ${flowQuality.color}35`,
+        background: `${flowQuality.color}0f`,
+        fontFamily: T.mono,
+        fontSize: fs(8),
+        color: T.textDim,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
+        <span
+          style={{
+            width: dim(7),
+            height: dim(7),
+            background: flowQuality.color,
+            display: "inline-block",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ color: flowQuality.color, fontWeight: 800 }}>
+          {flowQuality.label.toUpperCase()}
+        </span>
+        <span style={{ color: T.textMuted }}>QUALITY</span>
+      </div>
+      <div
+        style={{
+          minWidth: 0,
+          display: "grid",
+          gridTemplateColumns: "minmax(86px, 0.24fr) minmax(0, 1fr)",
+          gap: sp(8),
+          alignItems: "center",
+        }}
+      >
+        <span style={{ color: T.textSec, whiteSpace: "nowrap" }}>
+          {coverage.scannedSymbols}/{totalCoverageSymbols || coverage.scannedSymbols} scanned
+        </span>
+        <div
+          style={{
+            height: dim(6),
+            background: T.bg3,
+            overflow: "hidden",
+            border: `1px solid ${T.border}`,
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.max(3, Math.min(100, flowQuality.ratio * 100))}%`,
+              height: "100%",
+              background: flowQuality.color,
+            }}
+          />
+        </div>
+      </div>
+      <span
+        style={{
+          color: T.textDim,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {flowQuality.detail}
+      </span>
+    </div>
+  );
+
+  const flowPresetBar = (
+    <div
+      data-testid="flow-preset-bar"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: sp(5),
+        flexWrap: "wrap",
+        padding: sp("0 2px"),
+      }}
+    >
+      <span
+        style={{
+          fontSize: fs(8),
+          color: T.textDim,
+          fontFamily: T.mono,
+          fontWeight: 800,
+        }}
+      >
+        PRESET SCANS
+      </span>
+      {FLOW_BUILT_IN_PRESETS.map((preset) => {
+        const active = activeFlowPresetId === preset.id;
+        const presetColor = FLOW_PRESET_COLORS[preset.id] || T.accent;
+        return (
+          <button
+            key={preset.id}
+            type="button"
+            data-testid={`flow-built-in-preset-${preset.id}`}
+            onClick={() => applyBuiltInPreset(preset)}
+            style={{
+              padding: sp("4px 8px"),
+              border: `1px solid ${active ? presetColor : T.border}`,
+              background: active ? `${presetColor}18` : T.bg2,
+              color: active ? presetColor : T.textSec,
+              fontSize: fs(8),
+              fontFamily: T.mono,
+              fontWeight: active ? 800 : 600,
+              cursor: "pointer",
+            }}
+          >
+            {preset.label}
+          </button>
+        );
+      })}
+      {activeFlowPresetId ? (
+        <button
+          type="button"
+          onClick={() => updateFlowTapeFilters({ activeFlowPresetId: null }, { clearPreset: false })}
+          style={{
+            padding: sp("4px 8px"),
+            border: `1px solid ${T.border}`,
+            background: T.bg1,
+            color: T.textDim,
+            fontSize: fs(8),
+            fontFamily: T.mono,
+            cursor: "pointer",
+          }}
+        >
+          Clear
+        </button>
+      ) : null}
+    </div>
+  );
   const isFlowLoadingShell = flowStatus === "loading" && !flowEvents.length;
   const shouldRenderDeferredPanels = showDeferredPanels && !isFlowLoadingShell;
+
+  if (!isVisible) {
+    return (
+      <div
+        data-testid="flow-screen-suspended"
+        style={{ display: "none" }}
+      />
+    );
+  }
 
   return (
     <div
@@ -1192,18 +3153,179 @@ const FlowOverviewPanel = ({
       }}
     >
       <div
+        ref={flowContentRef}
         style={{
           flex: 1,
           overflowY: "auto",
           padding: sp(8),
-          display: "flex",
-          flexDirection: "column",
+          display: "grid",
+          gridAutoRows: "max-content",
+          alignContent: "start",
           gap: 6,
+          minWidth: 0,
         }}
       >
         {flowHeader}
 
-        <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
+        <Card
+          data-testid="flow-top-toolbar"
+          style={{
+            padding: "8px 10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(10),
+            flexWrap: "wrap",
+            position: "sticky",
+            top: 0,
+            zIndex: 30,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: sp(10),
+              minWidth: 0,
+              flex: "1 1 360px",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
+              <span
+                style={{
+                  fontSize: fs(12),
+                  fontWeight: 800,
+                  fontFamily: T.display,
+                  color: T.text,
+                }}
+              >
+                Flow Scanner
+              </span>
+              <span
+                style={{
+                  fontSize: fs(8),
+                  color: T.textDim,
+                  fontFamily: T.mono,
+                }}
+              >
+                {filtered.length} / {flowEvents.length} shown ·{" "}
+                {visibleColumns.length} columns · {density}
+                {activeBuiltInPreset ? ` · ${activeBuiltInPreset.label}` : ""}
+              </span>
+            </div>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(4),
+                padding: sp("2px 6px"),
+                borderRadius: dim(3),
+                border: `1px solid ${feedStateColor}30`,
+                background: `${feedStateColor}12`,
+                color: feedStateColor,
+                fontSize: fs(8),
+                fontFamily: T.mono,
+                fontWeight: 700,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {feedStateLabel}
+            </span>
+            {pinnedEvent ? (
+              <button
+                type="button"
+                data-testid="flow-pinned-row"
+                onClick={() => setSelectedEvt(pinnedEvent)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: sp(5),
+                  minWidth: 0,
+                  maxWidth: isMobileFlowLayout ? "100%" : dim(260),
+                  padding: sp("3px 7px"),
+                  border: `1px solid ${T.amber}35`,
+                  background: `${T.amber}12`,
+                  color: T.amber,
+                  fontSize: fs(8),
+                  fontFamily: T.mono,
+                  cursor: "pointer",
+                }}
+                title={getFlowContractLabel(pinnedEvent)}
+              >
+                <Pin size={12} />
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {pinnedEvent.ticker} {pinnedEvent.cp}
+                  {pinnedEvent.strike} · {fmtM(pinnedEvent.premium)}
+                </span>
+              </button>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: sp(5),
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
+            <button
+              type="button"
+              data-testid="flow-filter-toggle"
+              onClick={() => setFiltersOpen((current) => !current)}
+              style={toolButtonStyle(filtersOpen)}
+              aria-label={filtersOpen ? "Hide Flow filters" : "Show Flow filters"}
+              title={filtersOpen ? "Hide filters" : "Show filters"}
+            >
+              {filtersOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+              Filters
+            </button>
+            <button
+              type="button"
+              data-testid="flow-column-toggle"
+              onClick={() => setColumnsOpen((current) => !current)}
+              style={toolButtonStyle(columnsOpen)}
+              aria-label="Configure Flow columns"
+              title="Configure columns"
+            >
+              <Columns3 size={14} />
+              Columns
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleLivePaused}
+              style={toolButtonStyle(livePaused, livePaused ? T.amber : T.green)}
+            >
+              {livePaused ? <Play size={14} /> : <SlidersHorizontal size={14} />}
+              {livePaused ? "Resume" : "Pause"}
+            </button>
+          </div>
+        </Card>
+
+        {showOverlayFilterPanel ? (
+          <div
+            style={{
+              position: "absolute",
+              top: dim(62),
+              left: dim(8),
+              right: dim(8),
+              zIndex: 18,
+              boxShadow: `0 18px 48px ${T.bg0}cc`,
+            }}
+          >
+            {filterPanel}
+          </div>
+        ) : null}
+        {columnDrawer}
+
+        <Card style={{ display: "none" }}>
           <div
             style={{
               display: "flex",
@@ -1288,8 +3410,7 @@ const FlowOverviewPanel = ({
               <input
                 value={includeQuery}
                 onChange={(event) => {
-                  setIncludeQuery(event.target.value);
-                  setActiveScanId(null);
+                  updateFlowTapeFilters({ includeQuery: event.target.value });
                 }}
                 placeholder="SPY, QQQ, NVDA"
                 style={{
@@ -1317,8 +3438,7 @@ const FlowOverviewPanel = ({
               <input
                 value={excludeQuery}
                 onChange={(event) => {
-                  setExcludeQuery(event.target.value);
-                  setActiveScanId(null);
+                  updateFlowTapeFilters({ excludeQuery: event.target.value });
                 }}
                 placeholder="AAPL, TSLA"
                 style={{
@@ -1367,22 +3487,12 @@ const FlowOverviewPanel = ({
             <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
               FLOW
             </span>
-            {[
-              ["all", "All"],
-              ["calls", "Calls"],
-              ["puts", "Puts"],
-              ["unusual", "Unusual"],
-              ["golden", "Golden"],
-              ["sweep", "Sweep"],
-              ["block", "Block"],
-              ["cluster", "Repeat"],
-            ].map(([key, label]) => (
+            {FLOW_TAPE_FILTER_OPTIONS.map(({ id: key, label }) => (
               <Pill
                 key={key}
                 active={filter === key}
                 onClick={() => {
-                  setFilter(key);
-                  setActiveScanId(null);
+                  updateFlowTapeFilters({ filter: key });
                 }}
                 color={key === "golden" ? T.amber : key === "cluster" ? T.cyan : undefined}
               >
@@ -1392,39 +3502,12 @@ const FlowOverviewPanel = ({
             <span style={{ marginLeft: sp(8), fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
               MIN
             </span>
-            {[
-              [0, "All"],
-              [50000, "$50K"],
-              [100000, "$100K"],
-              [250000, "$250K"],
-            ].map(([value, label]) => (
+            {FLOW_MIN_PREMIUM_OPTIONS.map(({ value, label }) => (
               <Pill
                 key={value}
                 active={minPrem === value}
                 onClick={() => {
-                  setMinPrem(value);
-                  setActiveScanId(null);
-                }}
-              >
-                {label}
-              </Pill>
-            ))}
-            <span style={{ marginLeft: sp(8), fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-              SORT
-            </span>
-            {[
-              ["time", "Time"],
-              ["premium", "Premium"],
-              ["score", "Score"],
-              ["ratio", "V/OI"],
-              ["ticker", "Ticker"],
-            ].map(([key, label]) => (
-              <Pill
-                key={key}
-                active={sortBy === key}
-                onClick={() => {
-                  setSortBy(key);
-                  setActiveScanId(null);
+                  updateFlowTapeFilters({ minPrem: value });
                 }}
               >
                 {label}
@@ -1495,7 +3578,7 @@ const FlowOverviewPanel = ({
                 <div
                   key={scan.id}
                   onClick={() => loadScan(scan)}
-                  title={`${scan.name} · ${scan.filter} · ${scan.sortBy}`}
+                  title={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -1535,15 +3618,29 @@ const FlowOverviewPanel = ({
           ) : null}
         </Card>
 
+        {flowQualityBar}
+        {flowPresetBar}
+
         <div
+          data-testid="flow-main-layout"
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1.9fr) minmax(300px, 0.95fr)",
+            gridTemplateColumns: flowMainGridTemplate,
             gap: 6,
             alignItems: "start",
+            position: "relative",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+          {showInlineFilterPanel ? filterPanel : null}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              minWidth: 0,
+              gridColumn: showContextRail ? "auto" : "1 / -1",
+            }}
+          >
             {selectedEvt ? (
               <ContractDetailInline
                 evt={selectedEvt}
@@ -1608,199 +3705,407 @@ const FlowOverviewPanel = ({
                   }}
                 >
                   <span>
-                    Bull premium{" "}
+                    Bull{" "}
                     <span style={{ color: T.green, fontWeight: 700 }}>
-                      {fmtM(totalCallPrem)}
+                      {fmtM(flowSentimentSummary.bullPremium)}
                     </span>
                   </span>
                   <span>
-                    Bear premium{" "}
+                    Bear{" "}
                     <span style={{ color: T.red, fontWeight: 700 }}>
-                      {fmtM(totalPutPrem)}
+                      {fmtM(flowSentimentSummary.bearPremium)}
                     </span>
                   </span>
                   <span>
-                    Unusual{" "}
-                    <span style={{ color: T.amber, fontWeight: 700 }}>
-                      {flowEvents.filter((event) => event.isUnusual).length}
+                    Net{" "}
+                    <span
+                      style={{
+                        color:
+                          flowSentimentSummary.netPremium > 0
+                            ? T.green
+                            : flowSentimentSummary.netPremium < 0
+                              ? T.red
+                              : T.textDim,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {fmtM(flowSentimentSummary.netPremium)}
                     </span>
                   </span>
+                </div>
+                <div
+                  data-testid="flow-sentiment-bar"
+                  style={{
+                    flexBasis: "100%",
+                    display: "grid",
+                    gridTemplateColumns: isMobileFlowLayout
+                      ? "minmax(0, 1fr)"
+                      : "minmax(180px, 0.45fr) minmax(0, 1fr)",
+                    gap: sp(8),
+                    alignItems: "center",
+                  }}
+                >
+                  <div
+                    title={`${flowSentimentSummary.bullCount} bull · ${flowSentimentSummary.bearCount} bear · ${flowSentimentSummary.neutralCount} neutral`}
+                    style={{
+                      height: dim(8),
+                      display: "flex",
+                      overflow: "hidden",
+                      borderRadius: dim(2),
+                      border: `1px solid ${T.border}`,
+                      background: T.bg1,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: `${Math.round(flowSentimentSummary.bullShare * 100)}%`,
+                        minWidth:
+                          flowSentimentSummary.bullPremium > 0 ? dim(3) : 0,
+                        background: T.green,
+                      }}
+                    />
+                    <span
+                      style={{
+                        width: `${Math.round(flowSentimentSummary.neutralShare * 100)}%`,
+                        minWidth:
+                          flowSentimentSummary.neutralPremium > 0 ? dim(3) : 0,
+                        background: `${T.textDim}80`,
+                      }}
+                    />
+                    <span
+                      style={{
+                        width: `${Math.round(flowSentimentSummary.bearShare * 100)}%`,
+                        minWidth:
+                          flowSentimentSummary.bearPremium > 0 ? dim(3) : 0,
+                        background: T.red,
+                      }}
+                    />
+                  </div>
+                  {isMobileFlowLayout ? (
+                    <div
+                      data-testid="flow-mobile-sort-controls"
+                      style={{
+                        display: "flex",
+                        gap: sp(4),
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                      }}
+                    >
+                      {[
+                        ["time", "Age"],
+                        ["premium", "Prem"],
+                        ["ticker", "Tick"],
+                        ["expiration", "Exp"],
+                        ["strike", "Strike"],
+                      ].map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => applyFlowSort(key)}
+                          style={toolbarChipStyle(sortBy === key)}
+                        >
+                          {label}
+                          {sortBy === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: sp(8),
+                        flexWrap: "wrap",
+                        justifyContent: "flex-end",
+                        fontSize: fs(8),
+                        fontFamily: T.mono,
+                        color: T.textDim,
+                      }}
+                    >
+                      <span>Neutral {fmtM(flowSentimentSummary.neutralPremium)}</span>
+                      <span>{filtered.length} filtered prints</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <>
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowX: isMobileFlowLayout ? "hidden" : "auto",
+                  overflowY: "hidden",
+                }}
+              >
                 <div
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: tapeGridTemplate,
-                    padding: sp("6px 10px"),
-                    fontSize: fs(8),
-                    fontWeight: 700,
-                    color: T.textMuted,
-                    letterSpacing: "0.08em",
-                    borderBottom: `1px solid ${T.border}`,
-                    gap: sp(4),
-                    flexShrink: 0,
-                    fontFamily: T.mono,
+                    minWidth: isMobileFlowLayout ? 0 : tapeTableMinWidth,
+                    height: "100%",
+                    display: "flex",
+                    flexDirection: "column",
                   }}
                 >
-                  {tapeColumns.map((column) => (
-                    <span
-                      key={column.id}
-                      style={{
-                        textAlign:
-                          column.id === "premium" ||
-                          column.id === "size" ||
-                          column.id === "oi" ||
-                          column.id === "ratio" ||
-                          column.id === "dte" ||
-                          column.id === "iv"
-                            ? "right"
-                            : column.id === "score"
-                              ? "center"
-                              : "left",
-                      }}
-                    >
-                      {column.label}
-                    </span>
-                  ))}
-                </div>
-
-                {isFlowLoadingShell ? (
-                  <div style={{ flex: 1, overflowY: "auto" }}>
-                    {Array.from({ length: rowsPerPage }).map((_, rowIndex) => (
+                  {isMobileFlowLayout ? (
+                    isFlowLoadingShell ? (
+                      <div style={{ flex: 1, overflowY: "auto", padding: sp(8) }}>
+                        {Array.from({ length: Math.min(rowsPerPage, 12) }).map(
+                          (_, rowIndex) => (
+                            <FlowPlaceholderCard
+                              key={`flow_mobile_placeholder_${rowIndex}`}
+                              title="Loading print"
+                              rows={3}
+                              dense
+                            />
+                          ),
+                        )}
+                      </div>
+                    ) : filtered.length ? (
+                      <>
+                        <div
+                          data-testid="flow-mobile-card-list"
+                          style={{ flex: 1, overflowY: "auto" }}
+                        >
+                          {visibleFlowRows.map((event, index) =>
+                            renderFlowMobileCard(event, index),
+                          )}
+                        </div>
+                        {filtered.length > rowsPerPage ? (
+                          <div
+                            style={{
+                              padding: sp("6px 10px"),
+                              borderTop: `1px solid ${T.border}`,
+                              fontSize: fs(8),
+                              color: T.textDim,
+                              fontFamily: T.mono,
+                            }}
+                          >
+                            Showing the first {rowsPerPage} matching prints.
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <div style={{ padding: sp(12) }}>
+                        <DataUnavailableState
+                          title={
+                            flowEvents.length
+                              ? "No prints match this scanner"
+                              : "No live options activity"
+                          }
+                          detail={
+                            flowEvents.length
+                              ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
+                              : emptyFlowDetail
+                          }
+                        />
+                      </div>
+                    )
+                  ) : (
+                    <>
                       <div
-                        key={`tape_placeholder_${rowIndex}`}
+                        data-testid="flow-tape-header"
                         style={{
                           display: "grid",
                           gridTemplateColumns: tapeGridTemplate,
-                          padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
-                          gap: sp(4),
-                          alignItems: "center",
-                          borderBottom: `1px solid ${T.border}15`,
+                          padding: sp("6px 10px"),
+                          fontSize: fs(8),
+                          fontWeight: 700,
+                          color: T.textMuted,
+                          letterSpacing: "0.08em",
+                          borderBottom: `1px solid ${T.border}`,
+                          columnGap: sp(2),
+                          flexShrink: 0,
+                          fontFamily: T.mono,
                         }}
                       >
-                        {tapeColumns.map((column, columnIndex) => (
-                          <FlowLoadingBlock
-                            key={`${column.id}_${rowIndex}`}
-                            width={
-                              column.id === "contract"
-                                ? columnIndex % 2 === 0
-                                  ? "92%"
-                                  : "78%"
-                                : "70%"
-                            }
-                            height={denseRows ? dim(11) : dim(14)}
-                            style={{
-                              justifySelf:
-                                column.id === "premium" ||
-                                column.id === "size" ||
-                                column.id === "oi" ||
-                                column.id === "ratio" ||
-                                column.id === "dte" ||
-                                column.id === "iv"
-                                  ? "end"
-                                  : column.id === "score"
-                                    ? "center"
-                                    : "start",
-                            }}
-                          />
-                        ))}
+                        {tapeColumns.map((column) => {
+                          const sortable = FLOW_SORTABLE_COLUMNS.has(column.id);
+                          const activeSort = normalizeFlowSortBy(column.id) === sortBy;
+                          return (
+                            <button
+                              key={column.id}
+                              type="button"
+                              data-testid={`flow-tape-header-${column.id}`}
+                              disabled={!sortable}
+                              aria-sort={
+                                activeSort
+                                  ? sortDir === "asc"
+                                    ? "ascending"
+                                    : "descending"
+                                  : "none"
+                              }
+                              onClick={() => applyFlowSort(column.id)}
+                              style={getTapeHeaderCellStyle(column)}
+                            >
+                              <span>{column.label}</span>
+                              {activeSort ? (
+                                <span aria-hidden="true">
+                                  {sortDir === "asc" ? "▲" : "▼"}
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
                       </div>
-                    ))}
-                  </div>
-                ) : filtered.length ? (
-                <>
-                  <div style={{ flex: 1, overflowY: "auto" }}>
-                    {visibleFlowRows.map((event) => {
-                      const selected = selectedEvt?.id === event.id;
-                      return (
-                        <div
-                          key={event.id}
-                          onClick={() =>
-                            setSelectedEvt((previous) =>
-                              previous?.id === event.id ? null : event,
-                            )
-                          }
-                          onDoubleClick={() => onJumpToTrade?.(event)}
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: tapeGridTemplate,
-                            padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
-                            fontSize: denseRows ? fs(9) : fs(10),
-                            fontFamily: T.mono,
-                            gap: sp(4),
-                            alignItems: "center",
-                            borderBottom: `1px solid ${T.border}15`,
-                            background: selected
-                              ? `${T.accent}12`
-                              : event.golden
-                                ? `${T.amber}0f`
-                                : "transparent",
-                            borderLeft: selected
-                              ? `2px solid ${T.accent}`
-                              : event.golden
-                                ? `2px solid ${T.amber}`
-                                : "2px solid transparent",
-                            cursor: "pointer",
-                          }}
-                          onMouseEnter={(entry) => {
-                            if (!selected) {
-                              entry.currentTarget.style.background = event.golden
-                                ? `${T.amber}18`
-                                : T.bg2;
-                            }
-                          }}
-                          onMouseLeave={(entry) => {
-                            entry.currentTarget.style.background = selected
-                              ? `${T.accent}12`
-                              : event.golden
-                                ? `${T.amber}0f`
-                                : "transparent";
-                          }}
-                        >
-                          {tapeColumns.map((column) => (
-                            <div key={`${event.id}_${column.id}`} style={{ minWidth: 0 }}>
-                              {renderTapeCell(column.id, event)}
+
+                      {isFlowLoadingShell ? (
+                        <div style={{ flex: 1, overflowY: "auto" }}>
+                          {Array.from({ length: rowsPerPage }).map((_, rowIndex) => (
+                            <div
+                              key={`tape_placeholder_${rowIndex}`}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: tapeGridTemplate,
+                                padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
+                                columnGap: sp(2),
+                                alignItems: "center",
+                                borderBottom: `1px solid ${T.border}15`,
+                              }}
+                            >
+                              {tapeColumns.map((column, columnIndex) => (
+                                <FlowLoadingBlock
+                                  key={`${column.id}_${rowIndex}`}
+                                  width={
+                                    column.id === "strike"
+                                      ? columnIndex % 2 === 0
+                                        ? "92%"
+                                        : "78%"
+                                      : "70%"
+                                  }
+                                  height={denseRows ? dim(11) : dim(14)}
+                                  style={{
+                                    justifySelf:
+                                      getTapeCellAlignment(column.id) === "right"
+                                        ? "end"
+                                        : getTapeCellAlignment(column.id) === "center"
+                                          ? "center"
+                                          : "start",
+                                  }}
+                                />
+                              ))}
                             </div>
                           ))}
                         </div>
-                      );
-                    })}
-                  </div>
+                      ) : filtered.length ? (
+                        <>
+                          <div style={{ flex: 1, overflowY: "auto" }}>
+                            {visibleFlowRows.map((event, index) => {
+                              const selected = selectedEvt?.id === event.id;
+                              const pinned = pinnedEventId === event.id;
+                              const executionMeta = getFlowExecutionMeta(event);
+                              return (
+                                <div
+                                  key={event.id}
+                                  data-testid="flow-tape-row"
+                                  className={joinMotionClasses(
+                                    "ra-row-enter",
+                                    "ra-interactive",
+                                    (selected || pinned) && "ra-focus-rail",
+                                  )}
+                                  onClick={() =>
+                                    setSelectedEvt((previous) =>
+                                      previous?.id === event.id ? null : event,
+                                    )
+                                  }
+                                  onDoubleClick={() => onJumpToTrade?.(event)}
+                                  style={{
+                                    ...motionRowStyle(index, 7, 120),
+                                    ...motionVars({
+                                      accent: selected
+                                        ? T.accent
+                                        : pinned || event.golden
+                                          ? T.amber
+                                          : executionMeta.color,
+                                    }),
+                                    display: "grid",
+                                    gridTemplateColumns: tapeGridTemplate,
+                                    padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
+                                    fontSize: denseRows ? fs(9) : fs(10),
+                                    fontFamily: T.mono,
+                                    columnGap: sp(2),
+                                    alignItems: "center",
+                                    borderBottom: `1px solid ${T.border}15`,
+                                    background: selected
+                                      ? `${T.accent}12`
+                                      : pinned
+                                        ? `${T.amber}10`
+                                        : event.golden
+                                          ? `${T.amber}0f`
+                                          : "transparent",
+                                    borderLeft: selected
+                                      ? `2px solid ${T.accent}`
+                                      : pinned
+                                        ? `2px solid ${T.amber}`
+                                        : event.golden
+                                          ? `2px solid ${T.amber}`
+                                          : "2px solid transparent",
+                                    cursor: "pointer",
+                                  }}
+                                  onMouseEnter={(entry) => {
+                                    if (!selected) {
+                                      entry.currentTarget.style.background = pinned
+                                        ? `${T.amber}18`
+                                        : event.golden
+                                          ? `${T.amber}18`
+                                          : T.bg2;
+                                    }
+                                  }}
+                                  onMouseLeave={(entry) => {
+                                    entry.currentTarget.style.background = selected
+                                      ? `${T.accent}12`
+                                      : pinned
+                                        ? `${T.amber}10`
+                                        : event.golden
+                                          ? `${T.amber}0f`
+                                          : "transparent";
+                                  }}
+                                >
+                                  {tapeColumns.map((column) => (
+                                    <div
+                                      key={`${event.id}_${column.id}`}
+                                      style={getTapeCellStyle(column.id)}
+                                    >
+                                      {renderTapeCell(column.id, event)}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                          </div>
 
-                  {filtered.length > rowsPerPage ? (
-                    <div
-                      style={{
-                        padding: sp("6px 10px"),
-                        borderTop: `1px solid ${T.border}`,
-                        fontSize: fs(8),
-                        color: T.textDim,
-                        fontFamily: T.mono,
-                      }}
-                    >
-                      Showing the first {rowsPerPage} matching prints. Narrow the scanner
-                      or increase row count to inspect more.
-                    </div>
-                  ) : null}
-                </>
-                ) : (
-                <div style={{ padding: sp(12) }}>
-                  <DataUnavailableState
-                    title={
-                      flowEvents.length
-                        ? "No prints match this scanner"
-                        : "No live options activity"
-                    }
-                    detail={
-                      flowEvents.length
-                        ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
-                        : emptyFlowDetail
-                    }
-                  />
+                          {filtered.length > rowsPerPage ? (
+                            <div
+                              style={{
+                                padding: sp("6px 10px"),
+                                borderTop: `1px solid ${T.border}`,
+                                fontSize: fs(8),
+                                color: T.textDim,
+                                fontFamily: T.mono,
+                              }}
+                            >
+                              Showing the first {rowsPerPage} matching prints. Narrow the scanner
+                              or increase row count to inspect more.
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div style={{ padding: sp(12) }}>
+                          <DataUnavailableState
+                            title={
+                              flowEvents.length
+                                ? "No prints match this scanner"
+                                : "No live options activity"
+                            }
+                            detail={
+                              flowEvents.length
+                                ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
+                                : emptyFlowDetail
+                            }
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-                )}
-              </>
+              </div>
             </Card>
           </div>
 
@@ -1810,15 +4115,24 @@ const FlowOverviewPanel = ({
                 <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
               <CardTitle
                 right={
-                  <span
-                    style={{
-                      fontSize: fs(8),
-                      color: T.textDim,
-                      fontFamily: T.mono,
-                    }}
-                  >
-                    {activeTicker || "No ticker"}
-                  </span>
+                  activeTicker ? (
+                    <MarketIdentityInline
+                      ticker={activeTicker}
+                      size={14}
+                      showChips={false}
+                      style={{ fontSize: fs(8) }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        fontSize: fs(8),
+                        color: T.textDim,
+                        fontFamily: T.mono,
+                      }}
+                    >
+                      No ticker
+                    </span>
+                  )
                 }
               >
                 Signal Context
@@ -1960,9 +4274,194 @@ const FlowOverviewPanel = ({
                   ) : null}
                 </Card>
 
+                <Card
+                  data-testid="flow-ticker-lens"
+                  style={{
+                    padding: "8px 10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: sp(6),
+                  }}
+                >
+                  <CardTitle
+                    right={
+                      <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                        {selectedTickerEvents.length} rows
+                      </span>
+                    }
+                  >
+                    Ticker Flow Lens
+                  </CardTitle>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: sp(6),
+                    }}
+                  >
+                    {[
+                      {
+                        label: "Ask premium",
+                        value: fmtM(selectedTickerSideSplit.askPremium),
+                        sub: `${selectedTickerSideSplit.askCount} prints`,
+                        color: T.green,
+                      },
+                      {
+                        label: "Bid premium",
+                        value: fmtM(selectedTickerSideSplit.bidPremium),
+                        sub: `${selectedTickerSideSplit.bidCount} prints`,
+                        color: T.red,
+                      },
+                      {
+                        label: "Call premium",
+                        value: fmtM(selectedCallPremium),
+                        sub: `${selectedTickerEvents.filter((event) => event.cp === "C").length} calls`,
+                        color: T.green,
+                      },
+                      {
+                        label: "Put premium",
+                        value: fmtM(selectedPutPremium),
+                        sub: `${selectedTickerEvents.filter((event) => event.cp === "P").length} puts`,
+                        color: T.red,
+                      },
+                    ].map((metric) => (
+                      <div
+                        key={metric.label}
+                        style={{
+                          padding: sp("6px 7px"),
+                          background: T.bg1,
+                          border: `1px solid ${T.border}`,
+                        }}
+                      >
+                        <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>
+                          {metric.label.toUpperCase()}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: fs(11),
+                            fontWeight: 800,
+                            fontFamily: T.mono,
+                            color: metric.color,
+                            marginTop: sp(1),
+                          }}
+                        >
+                          {metric.value}
+                        </div>
+                        <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                          {metric.sub}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
+                    {expiryConcentration.length ? (
+                      expiryConcentration.map((expiry) => {
+                        const total = expiry.calls + expiry.puts || 1;
+                        const callPct = (expiry.calls / total) * 100;
+                        return (
+                          <button
+                            key={`lens_exp_${expiry.label}`}
+                            type="button"
+                            onClick={() => {
+                              const match = selectedTickerEvents.find(
+                                (event) =>
+                                  formatExpirationLabel(event.expirationDate) ===
+                                  expiry.label,
+                              );
+                              if (match) setSelectedEvt(match);
+                            }}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "54px minmax(0, 1fr) auto",
+                              gap: sp(6),
+                              alignItems: "center",
+                              background: T.bg1,
+                              border: `1px solid ${T.border}`,
+                              padding: sp("5px 6px"),
+                              cursor: "pointer",
+                            }}
+                          >
+                            <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800 }}>
+                              {expiry.label}
+                            </span>
+                            <span style={{ display: "flex", height: dim(6), background: T.bg3, overflow: "hidden" }}>
+                              <span style={{ width: `${callPct}%`, background: T.green }} />
+                              <span style={{ flex: 1, background: T.red }} />
+                            </span>
+                            <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+                              {fmtM(expiry.premium)}
+                            </span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+                        No expiry ladder for the selected ticker yet.
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(5) }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: sp(3) }}>
+                      <span style={panelLabelStyle}>TOP STRIKES</span>
+                      {strikeConcentration.slice(0, 3).map((strike) => (
+                        <button
+                          key={`lens_strike_${strike.key}`}
+                          type="button"
+                          onClick={() => setSelectedEvt(strike.event)}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: sp(4),
+                            background: T.bg1,
+                            border: `1px solid ${T.border}`,
+                            color: T.textDim,
+                            fontFamily: T.mono,
+                            fontSize: fs(8),
+                            padding: sp("4px 5px"),
+                            cursor: "pointer",
+                          }}
+                        >
+                          <span style={{ color: strike.event.cp === "C" ? T.green : T.red }}>
+                            {strike.label}
+                          </span>
+                          <span>{fmtM(strike.premium)}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: sp(3) }}>
+                      <span style={panelLabelStyle}>TOP CONTRACTS</span>
+                      {(topContractsByTicker[activeTicker] || []).slice(0, 3).map((contract) => (
+                        <button
+                          key={`lens_contract_${activeTicker}_${contract.key}`}
+                          type="button"
+                          onClick={() => setSelectedEvt(contract.biggestEvt)}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: sp(4),
+                            background: T.bg1,
+                            border: `1px solid ${T.border}`,
+                            color: T.textDim,
+                            fontFamily: T.mono,
+                            fontSize: fs(8),
+                            padding: sp("4px 5px"),
+                            cursor: "pointer",
+                          }}
+                        >
+                          <span style={{ color: contract.cp === "C" ? T.green : T.red }}>
+                            {contract.cp}
+                            {contract.strike}
+                          </span>
+                          <span>{contract.count}x</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </Card>
+
                 <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
               <CardTitle>Execution Stats</CardTitle>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: sp(6) }}>
+              <div style={{ display: "grid", gridTemplateColumns: metricGridTemplate, gap: sp(6) }}>
                 {[
                   { label: "Ask / buy", value: executionStats.askCount, sub: fmtM(executionStats.askPrem), color: T.green },
                   { label: "Bid / sell", value: executionStats.bidCount, sub: fmtM(executionStats.bidPrem), color: T.red },
@@ -2233,7 +4732,7 @@ const FlowOverviewPanel = ({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                gridTemplateColumns: summaryGridTemplate,
                 gap: 6,
               }}
             >
@@ -2278,7 +4777,7 @@ const FlowOverviewPanel = ({
               ))}
             </div>
             <div
-              style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 6 }}
+              style={{ display: "grid", gridTemplateColumns: insightGridTemplate, gap: 6 }}
             >
               <div
                 style={{
@@ -2418,9 +4917,11 @@ const FlowOverviewPanel = ({
                           marginBottom: sp(1),
                         }}
                       >
-                        <span style={{ fontWeight: 700, color: T.text }}>
-                          {ticker.sym}
-                        </span>
+                        <MarketIdentityInline
+                          ticker={ticker.sym}
+                          size={14}
+                          showChips={false}
+                        />
                         <span
                           style={{
                             color: net >= 0 ? T.green : T.red,
@@ -2455,7 +4956,9 @@ const FlowOverviewPanel = ({
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "repeat(3, 1fr)",
+                            gridTemplateColumns: isMobileFlowLayout
+                              ? "minmax(0, 1fr)"
+                              : "repeat(3, 1fr)",
                             gap: sp(3),
                           }}
                         >
@@ -2467,7 +4970,7 @@ const FlowOverviewPanel = ({
                                 : `${contract.vol}`;
                             return (
                               <div
-                                key={`${ticker.sym}_${contract.cp}_${contract.strike}`}
+                                key={`${ticker.sym}_${contract.key}`}
                                 onClick={() => setSelectedEvt(contract.biggestEvt)}
                                 title={`${ticker.sym} ${contract.strike}${contract.cp} · ${fmtM(contract.premium)}`}
                                 style={{
@@ -2519,7 +5022,7 @@ const FlowOverviewPanel = ({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr",
+                gridTemplateColumns: metricGridTemplate,
                 gap: 6,
               }}
             >
@@ -2917,7 +5420,7 @@ const FlowOverviewPanel = ({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                gridTemplateColumns: summaryGridTemplate,
                 gap: 6,
               }}
             >
@@ -2925,14 +5428,14 @@ const FlowOverviewPanel = ({
                 <FlowPlaceholderCard key={`summary_${index}`} title="Loading" rows={2} dense />
               ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: insightGridTemplate, gap: 6 }}>
               <FlowPlaceholderCard title="Premium Tide" rows={6} />
               <FlowPlaceholderCard title="Ticker Leaders" rows={6} />
             </div>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr",
+                gridTemplateColumns: metricGridTemplate,
                 gap: 6,
               }}
             >
@@ -2944,12 +5447,12 @@ const FlowOverviewPanel = ({
         )}
 
         {unusualScannerLauncher}
-        {showUnusualScanner ? (
+        {flowScannerPanelVisible ? (
           <UnusualScannerSection
             onJumpToTrade={onJumpToTrade}
             session={session}
             symbols={symbols}
-            isVisible={isVisible}
+            scannerConfig={flowScannerControl.config}
           />
         ) : null}
       </div>
@@ -2961,7 +5464,7 @@ const UnusualScannerSection = ({
   onJumpToTrade,
   session,
   symbols = [],
-  isVisible = false,
+  scannerConfig = DEFAULT_FLOW_SCANNER_CONFIG,
 }) => {
   const [sortBy, setSortBy] = useState(
     () =>
@@ -2986,18 +5489,15 @@ const UnusualScannerSection = ({
     });
   }, [sideFilter, sortBy, sortDir]);
 
+  const liveFlowSnapshot = useMarketFlowSnapshotForStoreKey(
+    BROAD_MARKET_FLOW_STORE_KEY,
+  );
   const {
     hasLiveFlow,
     flowStatus,
     providerSummary,
     flowEvents,
-  } = useLiveMarketFlow(symbols, {
-    enabled: Boolean(session) && isVisible,
-    limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
-    maxSymbols: UNUSUAL_SCANNER_MAX_WATCHLIST,
-    batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
-    intervalMs: UNUSUAL_SCANNER_INTERVAL_MS,
-  });
+  } = liveFlowSnapshot;
 
   const watchlistSymbols = useMemo(
     () =>
@@ -3014,13 +5514,19 @@ const UnusualScannerSection = ({
   const coverage = providerSummary.coverage || {
     totalSymbols: totalWatchlistSymbols,
     scannedSymbols: 0,
-    batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
+    batchSize: scannerConfig.batchSize,
     currentBatch: [],
     cycle: 0,
     isFetching: false,
     lastScannedAt: {},
-    isRotating: totalWatchlistSymbols > UNUSUAL_SCANNER_BATCH_SIZE,
+    isRotating: totalWatchlistSymbols > scannerConfig.batchSize,
   };
+  const totalCoverageSymbols =
+    coverage.targetSize || coverage.totalSymbols || totalWatchlistSymbols || 0;
+  const coverageModeLabel =
+    coverage.mode === "market"
+      ? "market-wide"
+      : "watchlist";
   const oldestScanAt = useMemo(() => {
     const stamps = Object.values(coverage.lastScannedAt || {});
     if (!stamps.length) return null;
@@ -3126,14 +5632,14 @@ const UnusualScannerSection = ({
 
   const emptyDetail =
     flowStatus === "loading"
-      ? "Scanning the watchlist for contracts where today's volume already exceeds open interest."
+      ? "Scanning the configured Flow universe for contracts where today's volume already exceeds open interest."
       : ibkrLoginRequired
         ? bridgeRuntimeMessage(session)
         : providerSummary.failures[0]?.error
           ? providerSummary.failures[0].error
           : !flowEvents.length
-            ? "No live options flow returned for the watchlist symbols yet."
-            : "No contracts in the current watchlist have volume above open interest right now.";
+            ? "No live options flow returned for the configured Flow universe yet."
+            : "No contracts in the configured Flow universe have volume above open interest right now.";
 
   const headerBar = (
     <div
@@ -3156,9 +5662,9 @@ const UnusualScannerSection = ({
         <span style={{ marginLeft: sp(8) }}>
           Coverage{" "}
           <span style={{ color: T.text, fontWeight: 700 }}>
-            {coverage.scannedSymbols}/{totalWatchlistSymbols || coverage.scannedSymbols}
+            {coverage.scannedSymbols}/{totalCoverageSymbols || coverage.scannedSymbols}
           </span>{" "}
-          watchlist symbols
+          {coverageModeLabel} symbols
           {coverage.isRotating ? (
             <span style={{ marginLeft: sp(6), color: T.textMuted }}>
               · rotating {coverage.batchSize}/cycle
@@ -3172,7 +5678,7 @@ const UnusualScannerSection = ({
               style={{ marginLeft: sp(6), color: T.textMuted }}
               title={
                 oldestScanAt
-                  ? `Oldest scan: ${new Date(oldestScanAt).toLocaleTimeString()} · Newest scan: ${new Date(newestScanAt).toLocaleTimeString()}`
+                  ? `Oldest scan: ${formatFlowAppTime(oldestScanAt)} · Newest scan: ${formatFlowAppTime(newestScanAt)}`
                   : undefined
               }
             >
@@ -3236,13 +5742,13 @@ const UnusualScannerSection = ({
   return (
     <>
       <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: sp(6),
-        padding: "0 2px",
-      }}
-    >
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(6),
+          padding: "0 2px",
+        }}
+      >
         <span
           style={{
             fontSize: fs(10),
@@ -3252,7 +5758,7 @@ const UnusualScannerSection = ({
             letterSpacing: "0.02em",
           }}
         >
-          Unusual Flow Scanner
+          Flow Scanner
         </span>
         <div style={{ flex: 1, height: dim(1), background: T.border }} />
         <span
@@ -3262,7 +5768,7 @@ const UnusualScannerSection = ({
             fontFamily: T.mono,
           }}
         >
-          broad watchlist rotation
+          {coverageModeLabel} rotation
         </span>
       </div>
 
@@ -3292,7 +5798,7 @@ const UnusualScannerSection = ({
               Symbol Coverage
             </span>
             <span style={{ fontSize: fs(8), color: T.textMuted, fontFamily: T.mono }}>
-              {coverage.scannedSymbols}/{watchlistSymbols.length} scanned
+              {coverage.scannedSymbols}/{totalCoverageSymbols || watchlistSymbols.length} scanned
               {coverage.cycle ? ` · cycle ${coverage.cycle}` : ""}
             </span>
           </div>
@@ -3324,7 +5830,7 @@ const UnusualScannerSection = ({
                 ? formatRelativeTimeShort(new Date(scannedAt).toISOString())
                 : "pending";
               const tooltip = scannedAt
-                ? `${symbol} · last scanned ${new Date(scannedAt).toLocaleTimeString()}`
+                ? `${symbol} · last scanned ${formatFlowAppTime(scannedAt)}`
                 : `${symbol} · not yet scanned`;
               return (
                 <span
@@ -3418,7 +5924,7 @@ const UnusualScannerSection = ({
             </span>
           }
         >
-          Unusual Flow Scanner
+          Flow Scanner
         </CardTitle>
 
         <div
@@ -3569,7 +6075,11 @@ const UnusualScannerSection = ({
                     }}
                     title="Open underlying chart and option chain"
                   >
-                    <span style={{ fontWeight: 800 }}>{event.ticker}</span>
+                    <MarketIdentityInline
+                      ticker={event.ticker}
+                      size={14}
+                      showChips={false}
+                    />
                     <span
                       style={{
                         minWidth: 0,

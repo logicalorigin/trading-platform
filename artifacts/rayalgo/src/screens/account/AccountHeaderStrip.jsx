@@ -1,29 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { formatAppDateTime } from "../../lib/timeZone";
 import {
   Pill,
-  StatTile,
-  formatMoney,
-  formatPercent,
-  formatSignedMoney,
+  formatAccountMoney,
+  formatAccountPercent,
+  formatAccountSignedMoney,
   metricTitle,
-  mutedLabelStyle,
 } from "./accountUtils";
 
 const isPaperAccount = (account) =>
   /du|paper/i.test(account?.id || "") || /paper/i.test(account?.accountType || "");
 
-const metricValue = (metric, currency, kind = "money") => {
+const isShadowAccount = (account) =>
+  /shadow/i.test(account?.id || "") || /shadow/i.test(account?.accountType || "");
+
+const metricValue = (metric, currency, kind = "money", maskValues = false) => {
   if (!metric) return "----";
-  if (kind === "percent") return formatPercent(metric.value);
+  if (kind === "percent") return formatAccountPercent(metric.value, 2, maskValues);
   if (kind === "ratioPercent") {
-    return metric.value == null ? "----" : formatPercent(Number(metric.value) * 100, 1);
+    return metric.value == null
+      ? "----"
+      : formatAccountPercent(Number(metric.value) * 100, 1, maskValues);
   }
-  if (kind === "signedMoney") return formatSignedMoney(metric.value, currency, true);
-  return formatMoney(metric.value, metric.currency || currency, true);
+  if (kind === "signedMoney") {
+    return formatAccountSignedMoney(metric.value, currency, true, maskValues);
+  }
+  return formatAccountMoney(metric.value, metric.currency || currency, true, maskValues);
 };
 
 const badgeTone = (type) => {
+  if (/shadow/i.test(type || "")) return "pink";
   if (/margin/i.test(type || "")) return "cyan";
   if (/ira/i.test(type || "")) return "purple";
   if (/cash/i.test(type || "")) return "accent";
@@ -32,16 +39,60 @@ const badgeTone = (type) => {
   return "default";
 };
 
+const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) => (
+  <div
+    title={title}
+    style={{
+      display: "inline-flex",
+      alignItems: "baseline",
+      gap: sp(3),
+      minHeight: dim(20),
+      minWidth: 0,
+      padding: sp("0 5px"),
+      borderLeft: `1px solid ${T.border}`,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+    }}
+  >
+    <span
+      style={{
+        color: T.textMuted,
+        fontSize: fs(6),
+        fontFamily: T.sans,
+        fontWeight: 900,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        flexShrink: 0,
+      }}
+    >
+      {label}
+    </span>
+    <span
+      style={{
+        color: tone,
+        fontSize: fs(strong ? 10 : 9),
+        fontFamily: T.mono,
+        fontWeight: 900,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {value}
+    </span>
+  </div>
+);
+
 const AccountSwitcher = ({
   accountId,
   onAccountIdChange,
   accountOptions,
   currency,
+  showCombined = true,
 }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
   const current =
-    accountId === "combined"
+    showCombined && accountId === "combined"
       ? {
           id: "combined",
           displayName: "All accounts",
@@ -50,6 +101,15 @@ const AccountSwitcher = ({
         }
       : accountOptions.find((account) => account.id === accountId) || accountOptions[0];
   const combinedCount = accountOptions.filter((account) => !isPaperAccount(account)).length;
+  const statusColor = isShadowAccount(current)
+    ? T.pink
+    : current?.live === false
+      ? T.amber
+      : T.green;
+  const currentDetail =
+    showCombined && accountId === "combined"
+      ? `${combinedCount} real · ${currency}`
+      : `${current?.id || "----"} · ${current?.accountType || "account"}`;
 
   useEffect(() => {
     const handlePointerDown = (event) => {
@@ -63,7 +123,7 @@ const AccountSwitcher = ({
   }, []);
 
   return (
-    <div ref={containerRef} style={{ position: "relative", minWidth: dim(220) }}>
+    <div ref={containerRef} style={{ position: "relative", minWidth: dim(154) }}>
       <button
         type="button"
         onClick={() => setOpen((currentState) => !currentState)}
@@ -71,8 +131,8 @@ const AccountSwitcher = ({
           width: "100%",
           display: "flex",
           alignItems: "center",
-          gap: sp(8),
-          padding: sp("2px 0"),
+          gap: sp(5),
+          padding: sp("1px 0"),
           borderRadius: 0,
           border: "none",
           background: "transparent",
@@ -82,43 +142,58 @@ const AccountSwitcher = ({
       >
         <span
           style={{
-            width: 8,
-            height: 8,
+            width: 7,
+            height: 7,
             borderRadius: 999,
-            background: current?.live === false ? T.amber : T.green,
+            background: statusColor,
             boxShadow:
-              current?.live === false ? "none" : `0 0 10px ${T.green}`,
+              current?.live === false && !isShadowAccount(current)
+                ? "none"
+                : `0 0 10px ${statusColor}`,
             flexShrink: 0,
           }}
         />
-        <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textAlign: "left",
+            display: "flex",
+            alignItems: "baseline",
+            gap: sp(5),
+          }}
+        >
           <div
             style={{
               color: T.text,
-              fontSize: fs(11),
+              fontSize: fs(9),
               fontFamily: T.sans,
               fontWeight: 900,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
             {current?.displayName || current?.id || "All accounts"}
           </div>
-          <div
+          <span
             style={{
-              marginTop: sp(1),
               color: T.textDim,
-              fontSize: fs(8),
+              fontSize: fs(7),
               fontFamily: T.mono,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
-            {accountId === "combined"
-              ? `${combinedCount} real accounts aggregated`
-              : `${current?.id || "----"} · ${current?.accountType || "account"}`}
-          </div>
+            {currentDetail}
+          </span>
         </div>
-        <span style={{ color: T.textDim, fontSize: fs(9) }}>{open ? "▴" : "▾"}</span>
+        <span style={{ color: T.textDim, fontSize: fs(8) }}>{open ? "▴" : "▾"}</span>
       </button>
       {open ? (
         <div
+          className="ra-popover-enter"
           style={{
             position: "absolute",
             top: "calc(100% + 6px)",
@@ -135,15 +210,17 @@ const AccountSwitcher = ({
             overflow: "hidden",
           }}
         >
-          <button
+          {showCombined ? (
+            <button
             type="button"
+            className={accountId === "combined" ? "ra-focus-rail ra-interactive" : "ra-interactive"}
             onClick={() => {
               onAccountIdChange("combined");
               setOpen(false);
             }}
             style={{
               width: "100%",
-              padding: sp("9px 12px"),
+              padding: sp("7px 9px"),
               border: "none",
               borderBottom: `1px solid ${T.border}`,
               background: accountId === "combined" ? T.accentDim : "transparent",
@@ -163,7 +240,7 @@ const AccountSwitcher = ({
                 <div
                   style={{
                     color: T.text,
-                    fontSize: fs(11),
+                    fontSize: fs(10),
                     fontWeight: 900,
                   }}
                 >
@@ -173,7 +250,7 @@ const AccountSwitcher = ({
                   style={{
                     marginTop: sp(2),
                     color: T.textDim,
-                    fontSize: fs(9),
+                    fontSize: fs(8),
                     fontFamily: T.mono,
                   }}
                 >
@@ -183,17 +260,19 @@ const AccountSwitcher = ({
               <Pill tone="purple">Combined</Pill>
             </div>
           </button>
+          ) : null}
           {accountOptions.map((account) => (
             <button
               key={account.id}
               type="button"
+              className={accountId === account.id ? "ra-focus-rail ra-interactive" : "ra-interactive"}
               onClick={() => {
                 onAccountIdChange(account.id);
                 setOpen(false);
               }}
               style={{
                 width: "100%",
-                padding: sp("9px 12px"),
+                padding: sp("7px 9px"),
                 border: "none",
                 borderBottom: `1px solid ${T.border}`,
                 background: accountId === account.id ? `${T.accent}18` : "transparent",
@@ -203,11 +282,16 @@ const AccountSwitcher = ({
             >
               <div style={{ display: "flex", alignItems: "center", gap: sp(8) }}>
                 <span
+                  className={account.live === false ? undefined : "ra-status-pulse"}
                   style={{
                     width: 6,
                     height: 6,
                     borderRadius: 999,
-                    background: account.live === false ? T.amber : T.green,
+                    background: isShadowAccount(account)
+                      ? T.pink
+                      : account.live === false
+                        ? T.amber
+                        : T.green,
                     flexShrink: 0,
                   }}
                 />
@@ -215,7 +299,7 @@ const AccountSwitcher = ({
                   <div
                     style={{
                       color: T.text,
-                      fontSize: fs(10),
+                      fontSize: fs(9),
                       fontWeight: 900,
                     }}
                   >
@@ -225,7 +309,7 @@ const AccountSwitcher = ({
                     style={{
                       marginTop: sp(2),
                       color: T.textDim,
-                      fontSize: fs(9),
+                      fontSize: fs(8),
                       fontFamily: T.mono,
                     }}
                   >
@@ -248,6 +332,9 @@ export const AccountHeaderStrip = ({
   onAccountIdChange,
   summary,
   brokerAuthenticated,
+  showCombined = true,
+  maskValues = false,
+  sectionControl,
 }) => {
   const metrics = summary?.metrics || {};
   const currency = summary?.currency || accounts[0]?.currency || "USD";
@@ -283,10 +370,10 @@ export const AccountHeaderStrip = ({
     <section
       style={{
         borderBottom: `1px solid ${T.border}`,
-        padding: sp("2px 0 6px"),
+        padding: sp("0 0 2px"),
         display: "flex",
-        alignItems: "flex-start",
-        gap: sp(10),
+        alignItems: "center",
+        gap: sp(4),
         flexWrap: "wrap",
       }}
     >
@@ -294,19 +381,21 @@ export const AccountHeaderStrip = ({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: sp(4),
+          gap: sp(3),
           flexWrap: "wrap",
           flex: "0 1 auto",
-          minWidth: dim(240),
+          minWidth: dim(285),
         }}
       >
+        {sectionControl}
         <AccountSwitcher
           accountId={accountId}
           onAccountIdChange={onAccountIdChange}
           accountOptions={accountOptions}
           currency={currency}
+          showCombined={showCombined}
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(2) }}>
           {(accountTypes.length ? accountTypes : ["combined"]).map((badge) => (
             <Pill key={badge} tone={badgeTone(badge)}>
               {badge}
@@ -322,21 +411,18 @@ export const AccountHeaderStrip = ({
               {pdtRemaining != null ? ` · ${pdtRemaining} left` : ""}
             </Pill>
           ) : null}
-        </div>
-        <div
-          style={{
-            color: T.textDim,
-            fontSize: fs(8),
-            fontFamily: T.mono,
-            lineHeight: 1.3,
-            whiteSpace: "nowrap",
-            paddingLeft: sp(8),
-            borderLeft: `1px solid ${T.border}`,
-          }}
-        >
-          Base {fx?.baseCurrency || currency}
-          {fx?.timestamp ? ` · FX ${new Date(fx.timestamp).toLocaleString()}` : ""}
-          {fx?.warning ? ` · ${fx.warning}` : ""}
+          <Pill
+            tone={fx?.warning ? "amber" : "default"}
+            title={[
+              `Base ${fx?.baseCurrency || currency}`,
+              fx?.timestamp ? `FX ${formatAppDateTime(fx.timestamp)}` : null,
+              fx?.warning || null,
+            ]
+              .filter(Boolean)
+              .join("\n")}
+          >
+            Base {fx?.baseCurrency || currency}
+          </Pill>
         </div>
       </div>
 
@@ -347,78 +433,74 @@ export const AccountHeaderStrip = ({
           justifyContent: "flex-end",
           gap: 0,
           alignItems: "flex-start",
-          flex: "1 1 760px",
-          minWidth: dim(420),
+          flex: "1 1 560px",
+          minWidth: dim(280),
           marginLeft: "auto",
         }}
       >
         {[
           {
-            label: "Net Liq",
-            value: metricValue(metrics.netLiquidation, currency),
+            label: "Net",
+            value: metricValue(metrics.netLiquidation, currency, "money", maskValues),
             title: metricTitle(metrics.netLiquidation),
+            strong: true,
           },
           {
             label: "Cash",
-            value: metricValue(metrics.totalCash, currency),
-            subvalue: metricValue(metrics.settledCash, currency),
-            title: metricTitle(metrics.totalCash),
+            value: metricValue(metrics.totalCash, currency, "money", maskValues),
+            title: `${metricTitle(metrics.totalCash)}\nSettled: ${metricValue(metrics.settledCash, currency, "money", maskValues)}`,
           },
           {
-            label: "Buying Power",
-            value: metricValue(metrics.buyingPower, currency),
+            label: "BP",
+            value: metricValue(metrics.buyingPower, currency, "money", maskValues),
             title: metricTitle(metrics.buyingPower),
           },
           {
-            label: "Margin Used",
-            value: metricValue(metrics.marginUsed, currency),
-            subvalue: metrics.maintenanceMargin
-              ? `Maint ${formatMoney(metrics.maintenanceMargin.value, currency, true)}`
-              : null,
-            title: metricTitle(metrics.marginUsed),
+            label: "Margin",
+            value: metricValue(metrics.marginUsed, currency, "money", maskValues),
+            title: `${metricTitle(metrics.marginUsed)}${
+              metrics.maintenanceMargin
+                ? `\nMaintenance: ${formatAccountMoney(metrics.maintenanceMargin.value, currency, true, maskValues)}`
+                : ""
+            }`,
           },
           {
-            label: "Maint Cushion",
-            value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "ratioPercent"),
+            label: "Cushion",
+            value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "ratioPercent", maskValues),
             tone:
               metrics.maintenanceMarginCushionPercent?.value > 0.5
-                ? "green"
+                ? T.green
                 : metrics.maintenanceMarginCushionPercent?.value > 0.25
-                  ? "amber"
-                  : "red",
+                  ? T.amber
+                  : T.red,
             title: metricTitle(metrics.maintenanceMarginCushionPercent),
           },
           {
-            label: "Day P&L",
-            value: metricValue(metrics.dayPnl, currency, "signedMoney"),
-            subvalue: metrics.dayPnlPercent ? formatPercent(metrics.dayPnlPercent.value) : null,
-            tone: metrics.dayPnl?.value >= 0 ? "green" : "red",
-            title: `${metricTitle(metrics.dayPnl)}\n${metricTitle(metrics.dayPnlPercent)}`,
-            emphasis: true,
+            label: "Day",
+            value: metricValue(metrics.dayPnl, currency, "signedMoney", maskValues),
+            tone: metrics.dayPnl?.value >= 0 ? T.green : T.red,
+            title: `${metricTitle(metrics.dayPnl)}\n${metricTitle(metrics.dayPnlPercent)}${
+              metrics.dayPnlPercent
+                ? `\nPercent: ${formatAccountPercent(metrics.dayPnlPercent.value, 2, maskValues)}`
+                : ""
+            }`,
+            strong: true,
           },
           {
-            label: "Total P&L",
-            value: metricValue(metrics.totalPnl, currency, "signedMoney"),
-            subvalue: metrics.totalPnlPercent ? formatPercent(metrics.totalPnlPercent.value) : null,
-            tone: metrics.totalPnl?.value >= 0 ? "green" : "red",
-            title: `${metricTitle(metrics.totalPnl)}\n${metricTitle(metrics.totalPnlPercent)}`,
-            emphasis: true,
+            label: "Total",
+            value: metricValue(metrics.totalPnl, currency, "signedMoney", maskValues),
+            tone: metrics.totalPnl?.value >= 0 ? T.green : T.red,
+            title: `${metricTitle(metrics.totalPnl)}\n${metricTitle(metrics.totalPnlPercent)}${
+              metrics.totalPnlPercent
+                ? `\nPercent: ${formatAccountPercent(metrics.totalPnlPercent.value, 2, maskValues)}`
+                : ""
+            }`,
+            strong: true,
           },
-        ].map((metric, index) => (
-          <StatTile
+        ].map((metric) => (
+          <HeaderMetric
             key={metric.label}
             {...metric}
-            align="right"
-            compact
-            flat
-            style={{
-              minWidth: metric.emphasis ? dim(108) : "fit-content",
-              borderLeft: index === 0 ? `1px solid ${T.border}` : `1px solid ${T.border}`,
-              paddingLeft: sp(8),
-              paddingRight: metric.emphasis ? sp(10) : sp(8),
-              paddingTop: metric.emphasis ? sp(2) : sp(1),
-              paddingBottom: metric.emphasis ? sp(2) : sp(1),
-            }}
           />
         ))}
       </div>

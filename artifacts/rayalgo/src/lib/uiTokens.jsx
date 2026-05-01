@@ -28,6 +28,7 @@ export const THEMES = {
     blue: "#3b82f6",
     purple: "#8b5cf6",
     cyan: "#06b6d4",
+    pink: "#ec4899",
   },
   light: {
     bg0: "#f5f5f4",
@@ -56,6 +57,7 @@ export const THEMES = {
     blue: "#2563eb",
     purple: "#7c3aed",
     cyan: "#0891b2",
+    pink: "#db2777",
   },
 };
 
@@ -72,6 +74,11 @@ export const SCALE_LEVELS = {
   m: 1.0,
   l: 1.12,
   xl: 1.25,
+};
+
+export const DENSITY_LEVELS = {
+  compact: 1.0,
+  comfortable: 1.14,
 };
 
 const readStoredUiState = () => {
@@ -101,7 +108,18 @@ let CURRENT_SCALE =
     ? persistedUiState.scale
     : "m";
 
+let CURRENT_DENSITY =
+  typeof persistedUiState.userPreferences?.appearance?.density === "string" &&
+  Object.prototype.hasOwnProperty.call(
+    DENSITY_LEVELS,
+    persistedUiState.userPreferences.appearance.density,
+  )
+    ? persistedUiState.userPreferences.appearance.density
+    : "compact";
+
 const SCALE_FACTOR = () => SCALE_LEVELS[CURRENT_SCALE] ?? SCALE_LEVELS.m;
+const DENSITY_FACTOR = () =>
+  DENSITY_LEVELS[CURRENT_DENSITY] ?? DENSITY_LEVELS.compact;
 
 export const getCurrentTheme = () => CURRENT_THEME;
 
@@ -127,18 +145,33 @@ export const setCurrentScale = (nextScale) => {
   return CURRENT_SCALE;
 };
 
+export const getCurrentDensity = () => CURRENT_DENSITY;
+
+export const setCurrentDensity = (nextDensity) => {
+  CURRENT_DENSITY =
+    typeof nextDensity === "string" &&
+    Object.prototype.hasOwnProperty.call(DENSITY_LEVELS, nextDensity)
+      ? nextDensity
+      : "compact";
+
+  return CURRENT_DENSITY;
+};
+
 export const fs = (n) => Math.max(10, Math.round(n * SCALE_FACTOR()));
 
 export const dim = (n) => Math.round(n * SCALE_FACTOR());
 
 export const sp = (value) => {
   if (typeof value === "number") {
-    return Math.round(value * SCALE_FACTOR());
+    return Math.round(value * SCALE_FACTOR() * DENSITY_FACTOR());
   }
 
   if (typeof value === "string") {
     return value.replace(/(-?\d*\.?\d+)(px|em|rem)?/g, (_, num, unit) => {
-      return Math.round(parseFloat(num) * SCALE_FACTOR()) + (unit || "px");
+      return (
+        Math.round(parseFloat(num) * SCALE_FACTOR() * DENSITY_FACTOR()) +
+        (unit || "px")
+      );
     });
   }
 

@@ -1,8 +1,7 @@
 // Shared registry for live Lightweight Charts instances created by the
-// research / sparkline chart components. The goal is the same as the
-// equivalent helper in components/trading/LightweightCharts.jsx: ensure
-// charts are always disposed (including across Vite hot reloads) so we
-// don't leak GPU/canvas resources or DOM listeners over a long session.
+// research / sparkline chart components. Charts are always disposed
+// (including across Vite hot reloads) so we don't leak GPU/canvas resources
+// or DOM listeners over a long session.
 
 type DisposableChart = { remove: () => void };
 

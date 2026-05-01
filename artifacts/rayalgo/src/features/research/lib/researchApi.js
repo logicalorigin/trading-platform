@@ -269,6 +269,7 @@ export function resolveHistSourceLabel(bars) {
   if (sources.has("ibkr+massive-gap-fill")) return "IBKR + GAP";
   if (sources.has("ibkr-history")) return "IBKR";
   if (sources.has("ibkr-websocket-derived")) return "IBKR WS";
+  if (sources.has("polygon-delayed-websocket")) return "DELAYED WS";
   return sources.size ? "BROKER" : "";
 }
 

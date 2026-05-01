@@ -22,6 +22,11 @@ import {
 } from "./lib/researchApi";
 import { useIbkrQuoteSnapshotStream } from "../platform/live-streams";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
+import { useUserPreferences } from "../preferences/useUserPreferences";
+import {
+  formatAppDateForPreferences,
+  formatAppTimeForPreferences,
+} from "../../lib/timeZone";
 import * as d3 from "d3";
 import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis, LabelList } from "recharts";
 
@@ -1155,7 +1160,9 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
       const dt = iso ? new Date(iso) : new Date(full);
       // Smarter label formatting based on period
       if (pricePeriod === "5Y") label = dt.getFullYear().toString();
-      else if (pricePeriod === "1Y" || pricePeriod === "YTD" || pricePeriod === "6M") label = dt.toLocaleString("en-US", { month: "short" });
+      else if (pricePeriod === "1Y" || pricePeriod === "YTD" || pricePeriod === "6M") {
+        label = formatAppDateForPreferences(dt, userPreferences, { month: "short" }, "");
+      }
       else if (pricePeriod === "3M") label = (dt.getMonth() + 1) + "/" + dt.getDate();
       else if (pricePeriod === "1M") {
         // Intraday 1-hour bars — show date for first bar of each day
@@ -1163,7 +1170,9 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
         else label = "";
       } else if (pricePeriod === "1W") {
         // Intraday 15-min bars — show weekday for first bar of each day
-        if (i === 0 || base[i-1]?.fullDate !== d.fullDate) label = dt.toLocaleString("en-US", { weekday: "short" });
+        if (i === 0 || base[i-1]?.fullDate !== d.fullDate) {
+          label = formatAppDateForPreferences(dt, userPreferences, { weekday: "short" }, "");
+        }
         else label = "";
       } else label = (dt.getMonth() + 1) + "/" + dt.getDate();
       return { ...d, date: label, fullDate: full, isoDT: iso };
@@ -1181,7 +1190,7 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
       }
     }
     return enriched;
-  }, [histInterval, liveHist, price, pricePeriod]);
+  }, [histInterval, liveHist, price, pricePeriod, userPreferences]);
 
   const startPrice = priceHistory[0]?.price ?? price ?? null;
   const endPrice = priceHistory[priceHistory.length - 1]?.price ?? price ?? null;
@@ -1227,8 +1236,8 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
     const dt = d.isoDT ? new Date(d.isoDT) : d.fullDate ? new Date(d.fullDate) : null;
     const dateLabel = dt
       ? (isIntraday
-          ? dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + "  " + dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-          : dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }))
+          ? `${formatAppDateForPreferences(dt, userPreferences, { weekday: "short", month: "short", day: "numeric" }, "")}  ${formatAppTimeForPreferences(dt, userPreferences, { hour: "numeric", minute: "2-digit" }, "")}`
+          : formatAppDateForPreferences(dt, userPreferences, { weekday: "short", month: "short", day: "numeric", year: "numeric" }, ""))
       : d.date;
     // Tighter price formatting: 2 decimals always; prices >$1000 show no decimals
     const priceStr = d.price >= 1000 ? "$" + d.price.toFixed(0) : "$" + d.price.toFixed(2);
@@ -2322,6 +2331,7 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
 }
 
 function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, onJumpToTrade }) {
+  const { preferences: userPreferences } = useUserPreferences();
   const [scenarioAdj, setScenarioAdj] = useState(null);
   const [detailTab, setDetailTab] = useState("overview");
   const [focalFund, setFocalFund] = useState(null); // live TTM fundamentals for focal co
@@ -4151,7 +4161,7 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
 
 function ResearchLoadingState({ theme }) {
   return (
-    <div style={{ animation: "fadeIn 0.2s ease", maxWidth: 760, margin: "24px auto 0" }}>
+    <div className="ra-panel-enter" style={{ animation: "fadeIn 0.2s ease", maxWidth: 760, margin: "24px auto 0" }}>
       <style>
         {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
       </style>
@@ -4175,6 +4185,7 @@ function ResearchLoadingState({ theme }) {
               data-testid="loading-spinner"
               role="status"
               aria-label="Loading"
+              className="ra-status-pulse"
               style={{
                 width: 20,
                 height: 20,
@@ -4484,7 +4495,7 @@ export default function PhotonicsObservatory({
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];
 
   return (
-    <div className="photonics-research-root" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
+    <div className="photonics-research-root ra-panel-enter" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
       <style>{`
         .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: 0; }
         .photonics-research-root { font-family: Arial, Helvetica, sans-serif; }
@@ -4508,8 +4519,10 @@ export default function PhotonicsObservatory({
         .photonics-research-root input[type=range] { -webkit-appearance: none; background: rgba(0,0,0,.06); border-radius: 3px; height: 3px; }
         .photonics-research-root input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,.15); border: 2px solid rgba(205,162,78,.4); }
         .photonics-research-root input[type=range]::-webkit-slider-thumb:hover { border-color: rgba(205,162,78,.8); }
-        .photonics-research-root button { transition: all 0.12s ease; }
+        .photonics-research-root button { transition: transform 0.12s ease, border-color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease; }
+        .photonics-research-root button:hover { transform: translateY(-1px); }
         .photonics-research-root button:active { transform: scale(0.97); }
+        .photonics-research-root button:focus-visible { outline: 2px solid rgba(205,162,78,.45); outline-offset: 2px; }
         .photonics-research-root ::selection { background: rgba(205,162,78,.15); color: #111; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -4687,7 +4700,7 @@ export default function PhotonicsObservatory({
           </div>
         ) : (<>
         {view === "graph" && (
-          <div style={{ animation: "fadeIn 0.3s ease" }}>
+          <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
             <div ref={graphRef}><Graph cos={cos} sel={sel} onSel={setSel} vFilter={vf} searchQuery={q} theme={currentTheme} liveData={liveData} liveFund={liveFund} /></div>
             {selCo ? (
               <div ref={detailRef}>
@@ -4719,14 +4732,14 @@ export default function PhotonicsObservatory({
         )}
 
         {view === "comps" && (
-          <div style={{ animation: "fadeIn 0.3s ease" }}>
+          <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
             <Comps cos={cos} sel={sel} onSel={setSel} />
             {selCo && <div ref={detailRef} style={{ marginTop: 12 }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>
         )}
 
         {view === "macro" && (
-          <div style={{ animation: "fadeIn 0.3s ease" }}>
+          <div className="ra-panel-enter" style={{ animation: "fadeIn 0.3s ease" }}>
             <Heatmap cos={cos} sel={sel} onSel={setSel} onFilterVertical={setVf} theme={currentTheme} />
             {selCo && <div ref={detailRef} style={{ marginTop: 12 }}><Detail co={selCo} onClose={() => setSel(null)} onSelect={setSel} liveData={liveData} liveHist={liveHist} apiKey={apiKey} onJumpToTrade={onJumpToTrade} /></div>}
           </div>

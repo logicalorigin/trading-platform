@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { buildResearchChartModel } from "./model";
 import { ResearchChartSurface } from "./ResearchChartSurface";
+import { getChartBarLimit } from "./timeframes";
 import type { ChartMarker, IndicatorRegistry, MarketBar } from "./types";
+import type { ChartEvent } from "./chartEvents";
 
 type BaseSeriesType = "candles" | "bars" | "line" | "area" | "baseline";
 
@@ -31,6 +33,7 @@ type ResearchMiniChartProps = {
   openPrice?: number | null;
   defaultBaseSeriesType?: BaseSeriesType;
   defaultShowVolume?: boolean;
+  chartEvents?: ChartEvent[];
 };
 
 export const ResearchMiniChart = ({
@@ -45,12 +48,14 @@ export const ResearchMiniChart = ({
   openPrice = null,
   defaultBaseSeriesType = "candles",
   defaultShowVolume = true,
+  chartEvents = [],
 }: ResearchMiniChartProps) => {
   const model = useMemo(
     () =>
       buildResearchChartModel({
         bars,
         timeframe,
+        defaultVisibleBarCount: getChartBarLimit(timeframe, "mini"),
         selectedIndicators,
         indicatorSettings,
         indicatorRegistry,
@@ -87,6 +92,7 @@ export const ResearchMiniChart = ({
       theme={theme}
       themeKey={themeKey}
       referenceLines={referenceLines}
+      chartEvents={chartEvents}
       compact
       showToolbar={false}
       showLegend={false}

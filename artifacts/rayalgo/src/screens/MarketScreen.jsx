@@ -1,4 +1,5 @@
 import {
+  Component,
   useCallback,
   useEffect,
   memo,
@@ -50,10 +51,73 @@ import {
   fs,
   sp,
 } from "../lib/uiTokens";
+import {
+  joinMotionClasses,
+  motionRowStyle,
+  motionVars,
+} from "../lib/motion";
+import { MarketIdentityInline } from "../features/platform/marketIdentity";
 
 const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
   return <MultiChartGrid {...props} />;
 });
+
+class MarketPanelErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("Market panel render failed", {
+      panel: this.props.label,
+      error,
+      componentStack: info?.componentStack,
+    });
+  }
+
+  componentDidUpdate(previousProps) {
+    if (
+      this.state.error &&
+      previousProps.resetKey !== this.props.resetKey
+    ) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (!this.state.error) {
+      return this.props.children;
+    }
+
+    return (
+      <div
+        role="status"
+        data-testid={`market-${this.props.label || "panel"}-fallback`}
+        className="ra-panel-enter"
+        style={{
+          minHeight: dim(340),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: sp(16),
+          border: `1px solid ${T.border}`,
+          background: T.bg2,
+          color: T.textSec,
+          fontSize: fs(11),
+          fontFamily: T.mono,
+          textAlign: "center",
+        }}
+      >
+        Market panel unavailable. Switch tabs or change symbol to retry.
+      </div>
+    );
+  }
+}
 
 const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer({
   isVisible,
@@ -109,6 +173,8 @@ export const MarketScreen = ({
   onSymClick,
   onChartFocus,
   symbols = [],
+  flowSymbols = symbols,
+  signalSuggestionSymbols = [],
   isVisible = false,
   researchConfigured = false,
   stockAggregateStreamingEnabled = false,
@@ -187,6 +253,10 @@ export const MarketScreen = ({
     if (!Number.isFinite(next) || next <= 0) return;
     setUnusualThreshold(clampNumber(next, 0.1, 100));
   }, []);
+  const marketChartResetKey = useMemo(
+    () => `${sym || ""}:${symbols.join(",")}:${isVisible ? "visible" : "hidden"}`,
+    [isVisible, sym, symbols],
+  );
   const handleStartActivityPanelResize = useCallback(
     (event) => {
       event.preventDefault();
@@ -206,7 +276,7 @@ export const MarketScreen = ({
     },
     [activityPanelWidth],
   );
-  const flowSnapshot = useMarketFlowSnapshot(symbols, {
+  const flowSnapshot = useMarketFlowSnapshot(flowSymbols, {
     subscribe: isVisible,
   });
   const {
@@ -219,7 +289,7 @@ export const MarketScreen = ({
   const popularTickers = useMemo(() => {
     const bySymbol = new Map();
     for (const event of flowEvents || []) {
-      const symbol = event?.underlying?.toUpperCase?.();
+      const symbol = (event?.ticker || event?.underlying)?.toUpperCase?.();
       if (!symbol) continue;
       const current = bySymbol.get(symbol) || { symbol, count: 0, premium: 0 };
       current.count += 1;
@@ -249,6 +319,7 @@ export const MarketScreen = ({
     { limit: 6 },
     {
       query: {
+        enabled: isVisible,
         staleTime: 60_000,
         refetchInterval: isVisible ? 60_000 : false,
         retry: false,
@@ -258,7 +329,10 @@ export const MarketScreen = ({
   const earningsQuery = useGetResearchEarningsCalendar(calendarWindow, {
     query: {
       enabled: Boolean(
-        researchConfigured && calendarWindow.from && calendarWindow.to,
+        isVisible &&
+          researchConfigured &&
+          calendarWindow.from &&
+          calendarWindow.to,
       ),
       staleTime: 300_000,
       refetchInterval: isVisible ? 300_000 : false,
@@ -317,6 +391,7 @@ export const MarketScreen = ({
       id: article.id,
       text: article.title,
       time: formatRelativeTimeShort(article.publishedAt),
+      publishedAt: article.publishedAt,
       tag:
         article.tickers?.[0] ||
         article.publisher?.name?.slice(0, 8)?.toUpperCase() ||
@@ -354,7 +429,11 @@ export const MarketScreen = ({
         deduped.push({
           id: key,
           label: `${entry.symbol} earnings`,
+          symbol: entry.symbol,
           date: formatCalendarMeta(entry.date, entry.time),
+          dateTime: /^\d/.test(String(entry.time || ""))
+            ? `${entry.date}T${entry.time}`
+            : entry.date,
           type: "earnings",
         });
       });
@@ -375,11 +454,21 @@ export const MarketScreen = ({
         ? "offline"
         : earningsQuery.isPending
           ? "loading"
-          : "empty"
+      : "empty"
     : "research off";
+
+  if (!isVisible) {
+    return (
+      <div
+        data-testid="market-screen-suspended"
+        style={{ display: "none" }}
+      />
+    );
+  }
 
   return (
     <div
+      className="ra-panel-enter"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -412,15 +501,21 @@ export const MarketScreen = ({
           }}
         >
           {isVisible ? (
-            <MemoMultiChartGrid
-              activeSym={sym}
-              onSymClick={onChartFocus || onSymClick}
-              watchlistSymbols={symbols}
-              popularTickers={stablePopularTickers}
-              stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-              isVisible={isVisible}
-              unusualThreshold={chartFlowUnusualThreshold}
-            />
+            <MarketPanelErrorBoundary
+              label="chart-grid"
+              resetKey={marketChartResetKey}
+            >
+              <MemoMultiChartGrid
+                activeSym={sym}
+                onSymClick={onChartFocus || onSymClick}
+                watchlistSymbols={symbols}
+                popularTickers={stablePopularTickers}
+                signalSuggestionSymbols={signalSuggestionSymbols}
+                stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+                isVisible={isVisible}
+                unusualThreshold={chartFlowUnusualThreshold}
+              />
+            </MarketPanelErrorBoundary>
           ) : (
             <div style={{ minHeight: dim(340) }} />
           )}
@@ -429,6 +524,8 @@ export const MarketScreen = ({
               role="separator"
               data-testid="market-activity-resize-separator"
               aria-label="Resize activity and notifications panel"
+              tabIndex={0}
+              className="ra-resize-handle"
               onPointerDown={handleStartActivityPanelResize}
               title="Drag to resize activity panel"
               style={{
@@ -449,26 +546,31 @@ export const MarketScreen = ({
               height: stackActivityPanel ? dim(360) : "100%",
             }}
           >
-            <MarketActivityPanelContainer
-              isVisible={isVisible}
-              highlightedUnusualFlow={highlightedUnusualFlow}
-              newsItems={newsItems}
-              calendarItems={calendarItems}
-              onSymClick={onSymClick}
-              onSignalAction={onSignalAction}
-              onScanNow={onScanNow}
-              onToggleMonitor={onToggleMonitor}
-              onChangeMonitorTimeframe={onChangeMonitorTimeframe}
-              onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-              watchlists={watchlists}
-              unusualThreshold={unusualThreshold}
-              onChangeUnusualThreshold={handleChangeUnusualThreshold}
-            />
+            <MarketPanelErrorBoundary
+              label="activity-panel"
+              resetKey={marketChartResetKey}
+            >
+              <MarketActivityPanelContainer
+                isVisible={isVisible}
+                highlightedUnusualFlow={highlightedUnusualFlow}
+                newsItems={newsItems}
+                calendarItems={calendarItems}
+                onSymClick={onSymClick}
+                onSignalAction={onSignalAction}
+                onScanNow={onScanNow}
+                onToggleMonitor={onToggleMonitor}
+                onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+                onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+                watchlists={watchlists}
+                unusualThreshold={unusualThreshold}
+                onChangeUnusualThreshold={handleChangeUnusualThreshold}
+              />
+            </MarketPanelErrorBoundary>
           </div>
         </div>
 
         {/* ── ROW 4: S&P 500 Equity Heatmap ── */}
-        <Card noPad style={{ overflow: "visible", flexShrink: 0 }}>
+        <Card className="ra-panel-enter" noPad style={{ overflow: "visible", flexShrink: 0 }}>
           <div
             style={{
               padding: sp("6px 10px"),
@@ -492,8 +594,13 @@ export const MarketScreen = ({
               {["1d", "5d"].map((v) => (
                 <button
                   key={v}
+                  className={joinMotionClasses(
+                    "ra-interactive",
+                    sectorTf === v && "ra-focus-rail",
+                  )}
                   onClick={() => setSectorTf(v)}
                   style={{
+                    ...motionVars({ accent: T.accent }),
                     padding: sp("2px 7px"),
                     fontSize: fs(8),
                     fontFamily: T.mono,
@@ -528,7 +635,7 @@ export const MarketScreen = ({
             gap: 6,
           }}
         >
-          <Card style={{ padding: "5px 10px" }}>
+          <Card className="ra-panel-enter" style={{ padding: "5px 10px" }}>
             <CardTitle>Put / Call</CardTitle>
             <div
               style={{
@@ -653,7 +760,7 @@ export const MarketScreen = ({
                 minHeight: 72,
               }}
             >
-              {RATES_PROXIES.map((item) => {
+              {RATES_PROXIES.map((item, index) => {
                 const pos = isFiniteNumber(item.pct) ? item.pct >= 0 : null;
                 const width = isFiniteNumber(item.pct)
                   ? Math.max(6, Math.min(100, Math.abs(item.pct) * 48))
@@ -661,9 +768,11 @@ export const MarketScreen = ({
                 return (
                   <div
                     key={item.sym}
+                    className="ra-row-enter"
                     style={{
+                      ...motionRowStyle(index, 14, 90),
                       display: "grid",
-                      gridTemplateColumns: "46px 40px 1fr 40px",
+                      gridTemplateColumns: "46px 62px 1fr 40px",
                       alignItems: "center",
                       gap: sp(4),
                       fontSize: fs(7),
@@ -671,9 +780,11 @@ export const MarketScreen = ({
                     }}
                   >
                     <span style={{ color: T.textDim }}>{item.term}</span>
-                    <span style={{ color: T.textSec, fontWeight: 600 }}>
-                      {item.sym}
-                    </span>
+                    <MarketIdentityInline
+                      ticker={item.sym}
+                      size={12}
+                      showChips={false}
+                    />
                     <div
                       style={{
                         height: dim(6),
@@ -683,6 +794,7 @@ export const MarketScreen = ({
                       }}
                     >
                       <div
+                        className="ra-bar-fill"
                         style={{
                           position: "absolute",
                           top: 0,
@@ -856,7 +968,7 @@ export const MarketScreen = ({
         </div>
 
         {/* ── ROW 4.5: Sector Flow (full width, horizontal layout) — sector rotation read ── */}
-        <Card style={{ padding: "8px 12px", flexShrink: 0 }}>
+        <Card className="ra-panel-enter" style={{ padding: "8px 12px", flexShrink: 0 }}>
           <CardTitle
             right={
               <span
@@ -893,7 +1005,9 @@ export const MarketScreen = ({
                 return (
                   <div
                     key={i}
+                    className="ra-row-enter"
                     style={{
+                      ...motionRowStyle(i, 12, 100),
                       display: "grid",
                       gridTemplateColumns: "85px 1fr 56px",
                       alignItems: "center",
@@ -929,6 +1043,8 @@ export const MarketScreen = ({
                       {/* Direction bar */}
                       {s.net >= 0 ? (
                         <div
+                          className="ra-bar-fill"
+                          data-direction="right"
                           style={{
                             position: "absolute",
                             left: "50%",
@@ -942,6 +1058,8 @@ export const MarketScreen = ({
                         />
                       ) : (
                         <div
+                          className="ra-bar-fill"
+                          data-direction="left"
                           style={{
                             position: "absolute",
                             right: "50%",
@@ -1000,7 +1118,7 @@ export const MarketScreen = ({
             gap: 6,
           }}
         >
-          <Card style={{ padding: "6px 10px" }}>
+          <Card className="ra-panel-enter" style={{ padding: "6px 10px" }}>
             <CardTitle
               right={
                 <span
@@ -1023,7 +1141,12 @@ export const MarketScreen = ({
               newsItems.map((item, index) => (
                 <div
                   key={item.id}
+                  className={joinMotionClasses(
+                    "ra-row-enter",
+                    item.articleUrl && "ra-interactive",
+                  )}
                   style={{
+                    ...motionRowStyle(index, 10, 120),
                     display: "flex",
                     gap: sp(5),
                     padding: sp("3px 0"),
@@ -1101,7 +1224,7 @@ export const MarketScreen = ({
               />
             )}
           </Card>
-          <Card style={{ padding: "6px 10px" }}>
+          <Card className="ra-panel-enter" style={{ padding: "6px 10px" }}>
             <CardTitle
               right={
                 <span
@@ -1133,7 +1256,9 @@ export const MarketScreen = ({
                 return (
                   <div
                     key={ev.id}
+                    className="ra-row-enter"
                     style={{
+                      ...motionRowStyle(i, 10, 120),
                       display: "flex",
                       alignItems: "center",
                       gap: sp(4),
@@ -1194,6 +1319,7 @@ export const MarketScreen = ({
             )}
           </Card>
           <Card
+            className="ra-panel-enter"
             style={{
               display: "flex",
               flexDirection: "column",

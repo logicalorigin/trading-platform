@@ -4,6 +4,16 @@ import type { MarketBar } from "./types";
 type ActiveChartBarState = {
   historicalBars: MarketBar[];
   hasExhaustedOlderHistory: boolean;
+  olderHistoryNextBeforeMs: number | null;
+  emptyOlderHistoryWindowCount: number;
+  olderHistoryPageCount: number;
+  olderHistoryProvider: string | null;
+  olderHistoryExhaustionReason: string | null;
+  olderHistoryProviderCursor: string | null;
+  olderHistoryProviderNextUrl: string | null;
+  olderHistoryProviderPageCount: number | null;
+  olderHistoryProviderPageLimitReached: boolean;
+  olderHistoryCursor: string | null;
   updatedAt: number;
   version: number;
 };
@@ -13,12 +23,22 @@ type ActiveChartBarEntry = {
   listeners: Set<() => void>;
 };
 
-const MAX_ACTIVE_CHART_BAR_SCOPES = 24;
+export const MAX_ACTIVE_CHART_BAR_SCOPES = 16;
 const activeChartBarEntries = new Map<string, ActiveChartBarEntry>();
 
 const EMPTY_ACTIVE_CHART_BAR_STATE: ActiveChartBarState = {
   historicalBars: [],
   hasExhaustedOlderHistory: false,
+  olderHistoryNextBeforeMs: null,
+  emptyOlderHistoryWindowCount: 0,
+  olderHistoryPageCount: 0,
+  olderHistoryProvider: null,
+  olderHistoryExhaustionReason: null,
+  olderHistoryProviderCursor: null,
+  olderHistoryProviderNextUrl: null,
+  olderHistoryProviderPageCount: null,
+  olderHistoryProviderPageLimitReached: false,
+  olderHistoryCursor: null,
   updatedAt: 0,
   version: 0,
 };
@@ -34,6 +54,7 @@ const ensureActiveChartBarEntry = (scopeKey: string): ActiveChartBarEntry => {
     listeners: new Set(),
   };
   activeChartBarEntries.set(scopeKey, created);
+  pruneInactiveChartBarEntries();
   return created;
 };
 
@@ -124,6 +145,7 @@ const subscribeToActiveChartBarState = (
   entry.listeners.add(listener);
   return () => {
     entry.listeners.delete(listener);
+    pruneInactiveChartBarEntries();
   };
 };
 
@@ -148,4 +170,11 @@ export const useActiveChartBarState = (
   );
 
   return getActiveChartBarStateSnapshot(normalizedScopeKey);
+};
+
+export const getActiveChartBarStoreEntryCount = () =>
+  activeChartBarEntries.size;
+
+export const resetActiveChartBarStoreForTests = () => {
+  activeChartBarEntries.clear();
 };

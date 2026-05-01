@@ -1,3 +1,21 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+:root {
+  --ra-motion-micro: 90ms;
+  --ra-motion-fast: 140ms;
+  --ra-motion-standard: 190ms;
+  --ra-motion-slow: 260ms;
+  --ra-motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ra-motion-enter: cubic-bezier(0, 0, 0.2, 1);
+  --ra-motion-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ra-motion-accent: #3b82f6;
+  --ra-motion-up: #10b981;
+  --ra-motion-down: #ef4444;
+  --ra-motion-warn: #f59e0b;
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -91,4 +109,401 @@ html, body, #root {
 
 .chart-widget-menu__item > span:first-child svg {
   fill: currentColor;
+}
+
+@keyframes raRowEnter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes raPanelEnter {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes raPopoverEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes raValueFlashUp {
+  0% {
+    background-color: rgba(16, 185, 129, 0);
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0);
+  }
+  22% {
+    background-color: rgba(16, 185, 129, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.32);
+  }
+  100% {
+    background-color: rgba(16, 185, 129, 0);
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes raValueFlashDown {
+  0% {
+    background-color: rgba(239, 68, 68, 0);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0);
+  }
+  22% {
+    background-color: rgba(239, 68, 68, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.32);
+  }
+  100% {
+    background-color: rgba(239, 68, 68, 0);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0);
+  }
+}
+
+@keyframes raStatusPulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes raFocusRail {
+  from {
+    transform: scaleY(0.35);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes raScanSweep {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes raSkeletonShimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes raSparkDraw {
+  from {
+    stroke-dashoffset: var(--ra-spark-length, 420);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes raBarGrow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.ra-panel-enter {
+  animation: raPanelEnter var(--ra-motion-standard) var(--ra-motion-enter) both;
+  will-change: opacity, transform;
+}
+
+.ra-account-overview-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 0.78fr)
+    minmax(250px, 0.98fr)
+    minmax(270px, 1.08fr)
+    minmax(390px, 1.42fr);
+  gap: 5px;
+  align-items: stretch;
+}
+
+.ra-account-overview-cell {
+  min-width: 0;
+}
+
+.ra-account-overview-cell > section {
+  height: 100%;
+}
+
+.ra-account-detail-grid,
+.ra-account-support-grid {
+  display: grid;
+  gap: 5px;
+  align-items: start;
+}
+
+.ra-account-detail-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+}
+
+.ra-account-support-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+}
+
+.ra-popover-enter {
+  animation: raPopoverEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
+  transform-origin: top right;
+  will-change: opacity, transform;
+}
+
+.ra-row-enter {
+  animation: raRowEnter var(--ra-motion-standard) var(--ra-motion-enter) both;
+  will-change: opacity, transform;
+}
+
+.ra-value-flash-up {
+  animation: raValueFlashUp 620ms var(--ra-motion-enter) both;
+}
+
+.ra-value-flash-down {
+  animation: raValueFlashDown 620ms var(--ra-motion-enter) both;
+}
+
+.ra-status-pulse {
+  animation: raStatusPulse 1450ms var(--ra-motion-ease) infinite;
+  transform-origin: center;
+}
+
+.ra-focus-rail {
+  position: relative;
+}
+
+.ra-focus-rail::before {
+  position: absolute;
+  inset: 5px auto 5px 0;
+  width: 2px;
+  content: "";
+  background: var(--ra-motion-accent);
+  border-radius: 999px;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ra-motion-accent) 45%, transparent);
+  animation: raFocusRail var(--ra-motion-fast) var(--ra-motion-enter) both;
+}
+
+.ra-scan-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.ra-scan-sweep::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ra-motion-accent) 18%, transparent),
+    transparent
+  );
+  transform: translateX(-120%);
+  animation: raScanSweep 1450ms var(--ra-motion-ease) infinite;
+}
+
+.ra-skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.ra-skeleton::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.09),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: raSkeletonShimmer 1450ms var(--ra-motion-ease) infinite;
+}
+
+.ra-interactive {
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    border-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease),
+    color var(--ra-motion-fast) var(--ra-motion-ease),
+    opacity var(--ra-motion-fast) var(--ra-motion-ease),
+    transform var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-interactive:hover {
+  transform: translateY(-1px);
+}
+
+.ra-table-row {
+  outline: none;
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-table-row:hover,
+.ra-table-row:focus-visible {
+  background: color-mix(in srgb, var(--ra-motion-accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--ra-motion-accent);
+}
+
+.ra-hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.ra-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.ra-sparkline polyline,
+.ra-sparkline path {
+  stroke-dasharray: var(--ra-spark-length, 420);
+  stroke-dashoffset: var(--ra-spark-length, 420);
+  animation: raSparkDraw var(--ra-motion-slow) var(--ra-motion-enter) both;
+}
+
+.ra-bar-fill {
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: raBarGrow var(--ra-motion-slow) var(--ra-motion-enter) both;
+}
+
+.ra-bar-fill[data-direction="left"] {
+  transform-origin: right center;
+}
+
+.ra-resize-handle {
+  position: relative;
+  transition:
+    background-color var(--ra-motion-fast) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-resize-handle::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 44px;
+  content: "";
+  background: var(--ra-motion-accent);
+  border-radius: 999px;
+  opacity: 0;
+  transform: translate(-50%, -50%) scaleY(0.5);
+  transition:
+    opacity var(--ra-motion-fast) var(--ra-motion-ease),
+    transform var(--ra-motion-fast) var(--ra-motion-ease);
+}
+
+.ra-resize-handle:hover::after,
+.ra-resize-handle:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, -50%) scaleY(1);
+}
+
+@media (max-width: 1420px) {
+  .ra-account-overview-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .ra-account-overview-grid,
+  .ra-account-detail-grid,
+  .ra-account-support-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-panel-enter,
+  .ra-popover-enter,
+  .ra-row-enter,
+  .ra-value-flash-up,
+  .ra-value-flash-down,
+  .ra-status-pulse,
+  .ra-focus-rail::before,
+  .ra-scan-sweep::after,
+  .ra-skeleton::after,
+  .ra-sparkline polyline,
+  .ra-sparkline path,
+  .ra-bar-fill {
+    animation: none !important;
+  }
+
+  .ra-interactive {
+    transition-duration: 1ms !important;
+  }
+
+  .ra-interactive:hover {
+    transform: none;
+  }
+
+  .ra-sparkline polyline,
+  .ra-sparkline path {
+    stroke-dashoffset: 0 !important;
+  }
+
+  .ra-bar-fill {
+    transform: none !important;
+  }
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-panel-enter,
+html[data-rayalgo-reduced-motion="on"] .ra-popover-enter,
+html[data-rayalgo-reduced-motion="on"] .ra-row-enter,
+html[data-rayalgo-reduced-motion="on"] .ra-value-flash-up,
+html[data-rayalgo-reduced-motion="on"] .ra-value-flash-down,
+html[data-rayalgo-reduced-motion="on"] .ra-status-pulse,
+html[data-rayalgo-reduced-motion="on"] .ra-focus-rail::before,
+html[data-rayalgo-reduced-motion="on"] .ra-scan-sweep::after,
+html[data-rayalgo-reduced-motion="on"] .ra-skeleton::after,
+html[data-rayalgo-reduced-motion="on"] .ra-sparkline polyline,
+html[data-rayalgo-reduced-motion="on"] .ra-sparkline path,
+html[data-rayalgo-reduced-motion="on"] .ra-bar-fill {
+  animation: none !important;
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-interactive {
+  transition-duration: 1ms !important;
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-interactive:hover,
+html[data-rayalgo-reduced-motion="on"] .ra-bar-fill {
+  transform: none !important;
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-sparkline polyline,
+html[data-rayalgo-reduced-motion="on"] .ra-sparkline path {
+  stroke-dashoffset: 0 !important;
 }

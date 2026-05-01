@@ -30,8 +30,31 @@ import {
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 
 const BLOOMBERG_LIVE_URL = "https://www.bloomberg.com/live/us";
-const BLOOMBERG_HLS_URL =
-  "https://liveprodusphoenixeast.global.ssl.fastly.net/USPhx-HD/Channel-TX-USPhx-AWS-virginia-1/Source-USPhx-16k-1-s6lk2-BP-07-02-81ykIWnsMsg_live.m3u8";
+const BLOOMBERG_HLS_SOURCES = [
+  {
+    id: "phoenix-us",
+    label: "U.S. BTV+",
+    url: "https://www.bloomberg.com/media-manifest/streams/phoenix-us.m3u8",
+  },
+  {
+    id: "us",
+    label: "U.S. BTV",
+    url: "https://www.bloomberg.com/media-manifest/streams/us.m3u8",
+  },
+];
+const BLOOMBERG_SOURCE_MODE_AUTO = "auto";
+const BLOOMBERG_SOURCE_MODE_MANUAL = "manual";
+const BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY =
+  "rayalgo:bloomberg:lastGoodSource:v1";
+const BLOOMBERG_LAST_GOOD_SOURCE_TTL_MS = 24 * 60 * 60 * 1000;
+const BLOOMBERG_SOURCE_COOLDOWN_MS = 5 * 60 * 1000;
+const BLOOMBERG_WATCHDOG_INTERVAL_MS = 3_000;
+const BLOOMBERG_WATCHDOG_STALL_MS = 10_000;
+const BLOOMBERG_WATCHDOG_EMPTY_BUFFER_MS = 8_000;
+const BLOOMBERG_WATCHDOG_RELOAD_LIMIT = 1;
+const BLOOMBERG_DIAGNOSTICS_GLOBAL =
+  "__RAYALGO_BLOOMBERG_DIAGNOSTICS__";
+const BLOOMBERG_DOCK_Z_INDEX = 10020;
 const BLOOMBERG_DVR_BUFFER_SECONDS = 30;
 const BLOOMBERG_LIVE_EDGE_SLACK_SECONDS = 1;
 const BLOOMBERG_HLS_LIVE_SYNC_DURATION_COUNT = 1;
@@ -46,8 +69,167 @@ const BLOOMBERG_SEEK_STEP_SECONDS = 10;
 const BLOOMBERG_PLAYBACK_RATES = [1, 1.25, 1.5, 2];
 const BLOOMBERG_SCRUB_STEPS = 1000;
 const BLOOMBERG_DEFAULT_VOLUME = 1;
+const BLOOMBERG_STARTUP_TIMEOUT_MS = 12_000;
+const BLOOMBERG_STARTUP_MANIFEST_FAILURE_LIMIT = 2;
+const BLOOMBERG_STARTUP_FRAGMENT_FAILURE_LIMIT = 3;
 
 const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const getBloombergSourceAt = (index) =>
+  BLOOMBERG_HLS_SOURCES[index] ?? BLOOMBERG_HLS_SOURCES[0];
+
+const getBloombergSourceIndexById = (sourceId) =>
+  BLOOMBERG_HLS_SOURCES.findIndex((source) => source.id === sourceId);
+
+const getBloombergHost = (url) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+};
+
+const getConfiguredWindowNumber = (name, fallback) => {
+  const configured =
+    typeof window === "undefined" ? NaN : Number(window[name]);
+  return Number.isFinite(configured) && configured > 0 ? configured : fallback;
+};
+
+const readLastGoodBloombergSource = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const sourceIndex = getBloombergSourceIndexById(parsed?.sourceId);
+    if (sourceIndex < 0) return null;
+    if (
+      !Number.isFinite(parsed?.storedAt) ||
+      Date.now() - parsed.storedAt > BLOOMBERG_LAST_GOOD_SOURCE_TTL_MS
+    ) {
+      window.localStorage.removeItem(BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY);
+      return null;
+    }
+    return {
+      sourceId: parsed.sourceId,
+      sourceIndex,
+      label: getBloombergSourceAt(sourceIndex).label,
+      storedAt: parsed.storedAt,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const getInitialBloombergSourceIndex = () => {
+  const lastGood = readLastGoodBloombergSource();
+  return lastGood?.sourceIndex ?? 0;
+};
+
+const rememberLastGoodBloombergSource = (source) => {
+  if (typeof window === "undefined" || !source?.id) return;
+  try {
+    window.localStorage.setItem(
+      BLOOMBERG_LAST_GOOD_SOURCE_STORAGE_KEY,
+      JSON.stringify({
+        sourceId: source.id,
+        label: source.label,
+        storedAt: Date.now(),
+      }),
+    );
+  } catch {
+    /* Storage can be unavailable in private contexts. */
+  }
+};
+
+const createBloombergWatchdogState = () => ({
+  lastCurrentTime: 0,
+  lastAdvancedAt: 0,
+  emptyBufferSince: 0,
+  startLoadAttempts: 0,
+  mediaRecoverAttempts: 0,
+  reloadAttempts: 0,
+});
+
+const serializeBloombergCounterMap = (map) =>
+  Object.fromEntries(Array.from(map.entries()));
+
+const serializeBloombergCooldowns = (map) => {
+  const now = Date.now();
+  return Object.fromEntries(
+    Array.from(map.entries()).map(([sourceId, expiresAt]) => [
+      sourceId,
+      Math.max(0, expiresAt - now),
+    ]),
+  );
+};
+
+const classifyBloombergError = (detail, data = {}) => {
+  const normalized = String(detail || data.details || data.type || "")
+    .toLowerCase();
+
+  if (normalized.includes("manifest") || normalized.includes("playlist")) {
+    return "manifest";
+  }
+  if (
+    normalized.includes("frag") ||
+    normalized.includes("segment") ||
+    normalized.includes("level") ||
+    normalized.includes("buffer")
+  ) {
+    return "segments";
+  }
+  if (normalized.includes("autoplay")) return "autoplay";
+  if (normalized.includes("stall")) return "stall";
+  if (data.type && String(data.type).toLowerCase().includes("media")) {
+    return "media";
+  }
+  return "network";
+};
+
+const formatBloombergError = (kind, detail) => {
+  const suffix = detail ? ` (${detail})` : "";
+  if (kind === "manifest") return `Bloomberg playlist failed${suffix}.`;
+  if (kind === "segments") return `Bloomberg video segments failed${suffix}.`;
+  if (kind === "media") return `Browser media recovery failed${suffix}.`;
+  if (kind === "autoplay") return `Browser autoplay blocked playback${suffix}.`;
+  if (kind === "stall") return `Bloomberg playback stalled${suffix}.`;
+  return `Bloomberg stream failed${suffix}.`;
+};
+
+const createBloombergDiagnosticsSnapshot = ({
+  sourceIndex = 0,
+  mode = BLOOMBERG_SOURCE_MODE_AUTO,
+  status = "loading",
+} = {}) => {
+  const source = getBloombergSourceAt(sourceIndex);
+  return {
+    mode,
+    status,
+    activeSourceId: source.id,
+    activeSourceLabel: source.label,
+    activeSourceHost: getBloombergHost(source.url),
+    variantHost: "",
+    lastManifestAt: null,
+    lastPlayableAt: null,
+    lastErrorAt: null,
+    lastErrorKind: "",
+    lastErrorDetail: "",
+    failoverCount: 0,
+    watchdogRecoveries: 0,
+    sourceReloads: 0,
+    hlsRecoveries: {
+      fatal: 0,
+      media: 0,
+      network: 0,
+      parsing: 0,
+    },
+    sourceFailures: {},
+    sourceCooldowns: {},
+    lastGoodSourceId: readLastGoodBloombergSource()?.sourceId ?? null,
+    updatedAt: Date.now(),
+  };
+};
 
 const RoundIconButton = ({
   icon: Icon,
@@ -323,6 +505,7 @@ const MenuPanel = ({
       ...(top != null ? { top } : {}),
       ...(bottom != null ? { bottom } : {}),
       minWidth: dim(252),
+      maxHeight: dim(176),
       padding: sp(8),
       borderRadius: dim(16),
       border: "1px solid rgba(148, 163, 184, 0.16)",
@@ -334,8 +517,9 @@ const MenuPanel = ({
       display: "flex",
       flexDirection: "column",
       gap: sp(6),
-      zIndex: 6,
-      overflow: "hidden",
+      zIndex: BLOOMBERG_DOCK_Z_INDEX + 1,
+      overflowX: "hidden",
+      overflowY: "auto",
     }}
   >
     {children}
@@ -535,6 +719,36 @@ const MenuSpeedButton = ({
   );
 };
 
+const MenuInfoRow = ({ label, value, tone = T.textSec }) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: sp(10),
+      padding: sp("2px 10px"),
+      minHeight: dim(20),
+      fontFamily: T.mono,
+      fontSize: fs(7),
+    }}
+  >
+    <span style={{ color: T.textDim }}>{label}</span>
+    <span
+      style={{
+        color: tone,
+        fontWeight: 700,
+        maxWidth: dim(142),
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        textAlign: "right",
+      }}
+    >
+      {value || "n/a"}
+    </span>
+  </div>
+);
+
 export default function BloombergLiveDock() {
   const panelRef = useRef(null);
   const videoRef = useRef(null);
@@ -548,6 +762,10 @@ export default function BloombergLiveDock() {
   const volumeRef = useRef(BLOOMBERG_DEFAULT_VOLUME);
   const transportRateRef = useRef(1);
   const followLiveEdgeRef = useRef(true);
+  const wasPlayingBeforeHiddenRef = useRef(false);
+  const sourceCooldownsRef = useRef(new Map());
+  const sourceFailureCountsRef = useRef(new Map());
+  const watchdogRef = useRef(createBloombergWatchdogState());
   const recoveryRef = useRef({
     fatalRecoveries: 0,
     mediaRecoveries: 0,
@@ -555,6 +773,7 @@ export default function BloombergLiveDock() {
     networkRecoveries: 0,
     lastRecoveryAt: 0,
   });
+  const diagnosticsRef = useRef(createBloombergDiagnosticsSnapshot());
 
   const [isOpen, setIsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -568,6 +787,17 @@ export default function BloombergLiveDock() {
   const [volume, setVolume] = useState(BLOOMBERG_DEFAULT_VOLUME);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [streamSourceMode, setStreamSourceMode] = useState(
+    BLOOMBERG_SOURCE_MODE_AUTO,
+  );
+  const [streamSourceIndex, setStreamSourceIndex] = useState(
+    getInitialBloombergSourceIndex,
+  );
+  const [streamDiagnostics, setStreamDiagnostics] = useState(() =>
+    createBloombergDiagnosticsSnapshot({
+      sourceIndex: getInitialBloombergSourceIndex(),
+    }),
+  );
   const [pageVisible, setPageVisible] = useState(
     () => typeof document === "undefined" || !document.hidden,
   );
@@ -602,6 +832,44 @@ export default function BloombergLiveDock() {
     });
   }, []);
 
+  const publishDiagnostics = useCallback((patch = {}) => {
+    const next = {
+      ...diagnosticsRef.current,
+      ...patch,
+      updatedAt: Date.now(),
+    };
+    diagnosticsRef.current = next;
+    setStreamDiagnostics(next);
+  }, []);
+
+  const resolveAutoStreamSourceIndex = useCallback(({
+    skipIndex = null,
+    allowCooled = false,
+    fallbackToCooled = true,
+  } = {}) => {
+    const now = Date.now();
+    const orderedIndexes = [];
+    const lastGood = readLastGoodBloombergSource();
+
+    if (lastGood && lastGood.sourceIndex !== skipIndex) {
+      orderedIndexes.push(lastGood.sourceIndex);
+    }
+
+    BLOOMBERG_HLS_SOURCES.forEach((_source, index) => {
+      if (index !== skipIndex && !orderedIndexes.includes(index)) {
+        orderedIndexes.push(index);
+      }
+    });
+
+    const availableIndex = orderedIndexes.find((index) => {
+      const source = getBloombergSourceAt(index);
+      const cooldownUntil = sourceCooldownsRef.current.get(source.id) || 0;
+      return allowCooled || cooldownUntil <= now;
+    });
+
+    return availableIndex ?? (fallbackToCooled ? orderedIndexes[0] ?? 0 : null);
+  }, []);
+
   const clearHideControlsTimer = useCallback(() => {
     if (hideControlsTimerRef.current) {
       window.clearTimeout(hideControlsTimerRef.current);
@@ -623,6 +891,45 @@ export default function BloombergLiveDock() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const getDiagnostics = () => ({
+      ...diagnosticsRef.current,
+      sourceCooldowns: serializeBloombergCooldowns(sourceCooldownsRef.current),
+      sourceFailures: serializeBloombergCounterMap(sourceFailureCountsRef.current),
+    });
+
+    window[BLOOMBERG_DIAGNOSTICS_GLOBAL] = getDiagnostics;
+    return () => {
+      if (window[BLOOMBERG_DIAGNOSTICS_GLOBAL] === getDiagnostics) {
+        delete window[BLOOMBERG_DIAGNOSTICS_GLOBAL];
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const activeSource = getBloombergSourceAt(streamSourceIndex);
+    publishDiagnostics({
+      mode: streamSourceMode,
+      status: playerStatus,
+      activeSourceId: activeSource.id,
+      activeSourceLabel: activeSource.label,
+      activeSourceHost: getBloombergHost(activeSource.url),
+      errorDetail,
+      sourceCooldowns: serializeBloombergCooldowns(sourceCooldownsRef.current),
+      sourceFailures: serializeBloombergCounterMap(sourceFailureCountsRef.current),
+    });
+  }, [
+    errorDetail,
+    playerStatus,
+    publishDiagnostics,
+    streamSourceIndex,
+    streamSourceMode,
+  ]);
 
   const revealControls = useCallback(() => {
     clearHideControlsTimer();
@@ -735,17 +1042,178 @@ export default function BloombergLiveDock() {
     return false;
   }, [ensureAudioGraph, syncAudioGain, syncPlaybackState]);
 
-  const handleReload = useCallback(() => {
+  const handleReload = useCallback(({
+    sourceIndex = streamSourceIndex,
+    sourceMode = streamSourceMode,
+  } = {}) => {
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    watchdogRef.current = createBloombergWatchdogState();
+    setStreamSourceMode(sourceMode);
+    setStreamSourceIndex(sourceIndex);
     setPlayerStatus("loading");
     setErrorDetail("");
     setAudioBlocked(false);
     setTransportRate(1);
     setReloadKey((current) => current + 1);
-  }, []);
+    publishDiagnostics({
+      status: "loading",
+      mode: sourceMode,
+      activeSourceId: getBloombergSourceAt(sourceIndex).id,
+      activeSourceLabel: getBloombergSourceAt(sourceIndex).label,
+      activeSourceHost: getBloombergHost(getBloombergSourceAt(sourceIndex).url),
+      sourceReloads: (diagnosticsRef.current.sourceReloads || 0) + 1,
+      lastErrorDetail: "",
+      lastErrorKind: "",
+    });
+  }, [publishDiagnostics, streamSourceIndex, streamSourceMode]);
+
+  const handleStreamFailover = useCallback((detail, kind = "network") => {
+    const currentSource = getBloombergSourceAt(streamSourceIndex);
+    const now = Date.now();
+    const cooldownMs = getConfiguredWindowNumber(
+      "__RAYALGO_BLOOMBERG_SOURCE_COOLDOWN_MS__",
+      BLOOMBERG_SOURCE_COOLDOWN_MS,
+    );
+    const failureCount =
+      (sourceFailureCountsRef.current.get(currentSource.id) || 0) + 1;
+
+    sourceFailureCountsRef.current.set(currentSource.id, failureCount);
+    sourceCooldownsRef.current.set(currentSource.id, now + cooldownMs);
+    const nextIndex = resolveAutoStreamSourceIndex({
+      skipIndex: streamSourceIndex,
+      fallbackToCooled: false,
+    });
+
+    if (nextIndex == null || nextIndex === streamSourceIndex) {
+      publishDiagnostics({
+        status: "error",
+        lastErrorAt: now,
+        lastErrorKind: kind,
+        lastErrorDetail: detail || "",
+        sourceFailures: serializeBloombergCounterMap(sourceFailureCountsRef.current),
+        sourceCooldowns: serializeBloombergCooldowns(sourceCooldownsRef.current),
+      });
+      return false;
+    }
+
+    const nextSource = getBloombergSourceAt(nextIndex);
+    watchdogRef.current = createBloombergWatchdogState();
+    setPlayerStatus("loading");
+    setErrorDetail(
+      detail
+        ? `${detail} · trying ${nextSource.label}`
+        : `Trying ${nextSource.label}.`,
+    );
+    setAudioBlocked(false);
+    setTransportRate(1);
+    setStreamSourceMode(BLOOMBERG_SOURCE_MODE_AUTO);
+    setStreamSourceIndex(nextIndex);
+    setReloadKey((current) => current + 1);
+    publishDiagnostics({
+      mode: BLOOMBERG_SOURCE_MODE_AUTO,
+      status: "loading",
+      activeSourceId: nextSource.id,
+      activeSourceLabel: nextSource.label,
+      activeSourceHost: getBloombergHost(nextSource.url),
+      lastErrorAt: now,
+      lastErrorKind: kind,
+      lastErrorDetail: detail || "",
+      failoverCount: (diagnosticsRef.current.failoverCount || 0) + 1,
+      sourceFailures: serializeBloombergCounterMap(sourceFailureCountsRef.current),
+      sourceCooldowns: serializeBloombergCooldowns(sourceCooldownsRef.current),
+    });
+    return true;
+  }, [resolveAutoStreamSourceIndex, streamSourceIndex]);
+
+  const handleSelectAutoStreamSource = useCallback(() => {
+    const sourceIndex = resolveAutoStreamSourceIndex();
+    handleReload({
+      sourceIndex,
+      sourceMode: BLOOMBERG_SOURCE_MODE_AUTO,
+    });
+  }, [handleReload, resolveAutoStreamSourceIndex]);
+
+  const handleSelectManualStreamSource = useCallback((sourceIndex) => {
+    handleReload({
+      sourceIndex,
+      sourceMode: BLOOMBERG_SOURCE_MODE_MANUAL,
+    });
+  }, [handleReload]);
+
+  const handleWatchdogRecovery = useCallback((detail, kind = "stall") => {
+    const hls = hlsRef.current;
+    const watchdog = watchdogRef.current;
+    const now = Date.now();
+
+    watchdog.lastAdvancedAt = now;
+    watchdog.emptyBufferSince = 0;
+    publishDiagnostics({
+      status: "loading",
+      watchdogRecoveries: (diagnosticsRef.current.watchdogRecoveries || 0) + 1,
+      lastErrorAt: now,
+      lastErrorKind: kind,
+      lastErrorDetail: detail,
+    });
+
+    if (hls && watchdog.startLoadAttempts < 1) {
+      watchdog.startLoadAttempts += 1;
+      setPlayerStatus("loading");
+      setErrorDetail(`${detail} · restarting live load`);
+      try {
+        hls.startLoad(-1);
+        return;
+      } catch {
+        /* fall through to the next recovery tier */
+      }
+    }
+
+    if (
+      hls &&
+      watchdog.mediaRecoverAttempts < 1 &&
+      typeof hls.recoverMediaError === "function"
+    ) {
+      watchdog.mediaRecoverAttempts += 1;
+      setPlayerStatus("loading");
+      setErrorDetail(`${detail} · recovering media`);
+      try {
+        hls.recoverMediaError();
+        return;
+      } catch {
+        /* fall through to source reload */
+      }
+    }
+
+    if (watchdog.reloadAttempts < BLOOMBERG_WATCHDOG_RELOAD_LIMIT) {
+      watchdog.reloadAttempts += 1;
+      setPlayerStatus("loading");
+      setErrorDetail(`${detail} · reloading source`);
+      handleReload({
+        sourceIndex: streamSourceIndex,
+        sourceMode: streamSourceMode,
+      });
+      return;
+    }
+
+    if (!handleStreamFailover(detail, kind)) {
+      setPlayerStatus("error");
+      setErrorDetail(formatBloombergError(kind, detail));
+      publishDiagnostics({
+        status: "error",
+        lastErrorAt: Date.now(),
+        lastErrorKind: kind,
+        lastErrorDetail: detail,
+      });
+    }
+  }, [
+    handleReload,
+    handleStreamFailover,
+    publishDiagnostics,
+    streamSourceIndex,
+    streamSourceMode,
+  ]);
 
   const handleOpenBloombergLive = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -1179,10 +1647,21 @@ export default function BloombergLiveDock() {
 
     const video = videoRef.current;
     if (!video) return undefined;
+    const streamSource =
+      BLOOMBERG_HLS_SOURCES[streamSourceIndex] ?? BLOOMBERG_HLS_SOURCES[0];
 
     let hls = null;
     let disposed = false;
+    let startupTimeout = null;
+    const startupState = {
+      manifestSeen: false,
+      playableSeen: false,
+      manifestFailures: 0,
+      fragmentFailures: 0,
+      lastError: "",
+    };
 
+    watchdogRef.current = createBloombergWatchdogState();
     recoveryRef.current = {
       fatalRecoveries: 0,
       mediaRecoveries: 0,
@@ -1190,22 +1669,86 @@ export default function BloombergLiveDock() {
       networkRecoveries: 0,
       lastRecoveryAt: 0,
     };
+    publishDiagnostics({
+      mode: streamSourceMode,
+      status: "loading",
+      activeSourceId: streamSource.id,
+      activeSourceLabel: streamSource.label,
+      activeSourceHost: getBloombergHost(streamSource.url),
+      variantHost: "",
+    });
 
     const markLoading = () => {
       if (disposed) return;
       setPlayerStatus((current) => (current === "error" ? current : "loading"));
     };
+    const getStartupTimeoutMs = () => {
+      return getConfiguredWindowNumber(
+        "__RAYALGO_BLOOMBERG_STARTUP_TIMEOUT_MS__",
+        BLOOMBERG_STARTUP_TIMEOUT_MS,
+      );
+    };
+    const clearStartupTimeout = () => {
+      if (startupTimeout == null) return;
+      window.clearTimeout(startupTimeout);
+      startupTimeout = null;
+    };
+    const markManifestSeen = (manifestUrl = streamSource.url) => {
+      startupState.manifestSeen = true;
+      publishDiagnostics({
+        lastManifestAt: Date.now(),
+        activeSourceId: streamSource.id,
+        activeSourceLabel: streamSource.label,
+        activeSourceHost: getBloombergHost(streamSource.url),
+        variantHost: getBloombergHost(manifestUrl || streamSource.url),
+      });
+    };
+    const markPlayableSeen = () => {
+      if (startupState.playableSeen) return;
+      startupState.playableSeen = true;
+      clearStartupTimeout();
+      rememberLastGoodBloombergSource(streamSource);
+      watchdogRef.current.lastCurrentTime = video.currentTime || 0;
+      watchdogRef.current.lastAdvancedAt = Date.now();
+      publishDiagnostics({
+        status: "live",
+        lastPlayableAt: Date.now(),
+        lastGoodSourceId: streamSource.id,
+        lastErrorKind: "",
+        lastErrorDetail: "",
+      });
+    };
     const markLive = () => {
       if (disposed) return;
       setPlayerStatus("live");
       setErrorDetail("");
+      publishDiagnostics({
+        status: "live",
+        lastErrorKind: "",
+        lastErrorDetail: "",
+      });
     };
-    const markError = (detail) => {
+    const markError = (detail, kind = classifyBloombergError(detail)) => {
       if (disposed) return;
+      clearStartupTimeout();
       setPlayerStatus("error");
-      setErrorDetail(detail || "Playback failed.");
+      setErrorDetail(formatBloombergError(kind, detail || "Playback failed"));
+      publishDiagnostics({
+        status: "error",
+        lastErrorAt: Date.now(),
+        lastErrorKind: kind,
+        lastErrorDetail: detail || "",
+        sourceFailures: serializeBloombergCounterMap(sourceFailureCountsRef.current),
+        sourceCooldowns: serializeBloombergCooldowns(sourceCooldownsRef.current),
+      });
+    };
+    const markStartupFailed = (detail, data = {}) => {
+      const kind = classifyBloombergError(detail, data);
+      if (handleStreamFailover(detail, kind)) return;
+      markError(detail, kind);
     };
     const handleLoadedData = () => {
+      markPlayableSeen();
       video.defaultPlaybackRate = 1;
       video.playbackRate = 1;
       markLive();
@@ -1213,6 +1756,7 @@ export default function BloombergLiveDock() {
       void startPlayback();
     };
     const handlePlaying = () => {
+      markPlayableSeen();
       video.defaultPlaybackRate = 1;
       video.playbackRate = 1;
       markLive();
@@ -1237,15 +1781,24 @@ export default function BloombergLiveDock() {
         setTransportRate(1);
         markLoading();
         setErrorDetail(`${detail} · resetting live stream`);
+        publishDiagnostics({
+          status: "loading",
+          lastErrorAt: Date.now(),
+          lastErrorKind: "media",
+          lastErrorDetail: detail,
+        });
         setTimeout(() => {
           if (disposed) return;
-          handleReload();
+          handleReload({
+            sourceIndex: streamSourceIndex,
+            sourceMode: streamSourceMode,
+          });
         }, 250);
         syncPlaybackState();
         return;
       }
 
-      markError(detail);
+      markError(detail, "media");
       syncPlaybackState();
     };
     const noteRecovery = (kind) => {
@@ -1256,6 +1809,14 @@ export default function BloombergLiveDock() {
       if (kind === "media") recovery.mediaRecoveries += 1;
       if (kind === "parsing") recovery.parsingRecoveries += 1;
       if (kind === "network") recovery.networkRecoveries += 1;
+      publishDiagnostics({
+        hlsRecoveries: {
+          fatal: recovery.fatalRecoveries,
+          media: recovery.mediaRecoveries,
+          network: recovery.networkRecoveries,
+          parsing: recovery.parsingRecoveries,
+        },
+      });
     };
     const maybeReloadAfterRepeatedRecovery = (detail, threshold) => {
       const recovery = recoveryRef.current;
@@ -1273,20 +1834,53 @@ export default function BloombergLiveDock() {
         return false;
       }
 
-      markError(detail || "Repeated playback recovery failed.");
-      setTimeout(() => {
-        if (disposed) return;
-        handleReload();
-      }, 250);
+      if (watchdogRef.current.reloadAttempts < BLOOMBERG_WATCHDOG_RELOAD_LIMIT) {
+        watchdogRef.current.reloadAttempts += 1;
+        setPlayerStatus("loading");
+        setErrorDetail(
+          `${detail || "Repeated playback recovery failed"} · reloading source`,
+        );
+        publishDiagnostics({
+          status: "loading",
+          sourceReloads: (diagnosticsRef.current.sourceReloads || 0) + 1,
+          lastErrorAt: Date.now(),
+          lastErrorKind: classifyBloombergError(detail),
+          lastErrorDetail: detail || "Repeated playback recovery failed.",
+        });
+        setTimeout(() => {
+          if (disposed) return;
+          handleReload({
+            sourceIndex: streamSourceIndex,
+            sourceMode: streamSourceMode,
+          });
+        }, 250);
+        return true;
+      }
+
+      const kind = classifyBloombergError(detail);
+      if (handleStreamFailover(detail || "Repeated playback recovery failed.", kind)) {
+        return true;
+      }
+      markError(detail || "Repeated playback recovery failed.", kind);
       return true;
     };
+    const handleProgress = () => {
+      if (video.readyState >= 2 || video.buffered.length) {
+        markPlayableSeen();
+      }
+      syncPlaybackState();
+    };
+    const isManifestStartupError = (detail) =>
+      !startupState.manifestSeen && String(detail).toLowerCase().includes("manifest");
+    const isFragmentStartupError = (detail) =>
+      !startupState.playableSeen && String(detail).toLowerCase().includes("frag");
 
     video.addEventListener("loadeddata", handleLoadedData);
     video.addEventListener("playing", handlePlaying);
     video.addEventListener("waiting", handleWaiting);
     video.addEventListener("error", handleVideoError);
     video.addEventListener("timeupdate", syncPlaybackState);
-    video.addEventListener("progress", syncPlaybackState);
+    video.addEventListener("progress", handleProgress);
     video.addEventListener("ratechange", syncPlaybackState);
     video.addEventListener("play", syncPlaybackState);
     video.addEventListener("pause", syncPlaybackState);
@@ -1306,6 +1900,16 @@ export default function BloombergLiveDock() {
     setErrorDetail("");
     setTransportRate(1);
     syncPlaybackState();
+    startupTimeout = window.setTimeout(() => {
+      if (disposed || startupState.playableSeen) return;
+      markStartupFailed(
+        startupState.lastError
+          ? `${startupState.lastError} · unable to reach Bloomberg stream`
+          : startupState.manifestSeen
+            ? "Timed out waiting for Bloomberg video segments."
+            : "Timed out reaching Bloomberg stream.",
+      );
+    }, getStartupTimeoutMs());
 
     const userAgent =
       typeof navigator === "undefined" ? "" : navigator.userAgent || "";
@@ -1321,7 +1925,8 @@ export default function BloombergLiveDock() {
           !/Chrome|Chromium|Edg|OPR|SamsungBrowser|Brave/.test(userAgent)));
 
     if (prefersNativeHls) {
-      video.src = BLOOMBERG_HLS_URL;
+      video.addEventListener("loadedmetadata", markManifestSeen, { once: true });
+      video.src = streamSource.url;
       video.load();
       void startPlayback();
     } else {
@@ -1329,7 +1934,7 @@ export default function BloombergLiveDock() {
         .then(({ default: Hls }) => {
           if (disposed) return;
           if (!Hls.isSupported()) {
-            markError("This browser does not support HLS playback.");
+            markError("This browser does not support HLS playback.", "media");
             return;
           }
 
@@ -1345,18 +1950,32 @@ export default function BloombergLiveDock() {
           });
           hlsRef.current = hls;
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            markLive();
+            markManifestSeen(streamSource.url);
             syncPlaybackState();
             void startPlayback();
           });
-          hls.on(Hls.Events.LEVEL_LOADED, () => {
-            markLive();
+          hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+            markManifestSeen(data?.details?.url || data?.url || streamSource.url);
             syncPlaybackState();
+          });
+          hls.on(Hls.Events.FRAG_LOADING, (_event, data) => {
+            const fragmentUrl = data?.frag?.url;
+            if (!fragmentUrl) return;
+            publishDiagnostics({
+              variantHost: getBloombergHost(fragmentUrl),
+            });
           });
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (disposed) return;
 
             const detail = data.details || data.type || "unknown";
+            const kind = classifyBloombergError(detail, data);
+            startupState.lastError = detail;
+            publishDiagnostics({
+              lastErrorAt: Date.now(),
+              lastErrorKind: kind,
+              lastErrorDetail: detail,
+            });
 
             if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
               markLoading();
@@ -1389,6 +2008,26 @@ export default function BloombergLiveDock() {
 
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
               noteRecovery("network");
+              if (isManifestStartupError(detail)) {
+                startupState.manifestFailures += 1;
+                if (
+                  startupState.manifestFailures >=
+                  BLOOMBERG_STARTUP_MANIFEST_FAILURE_LIMIT
+                ) {
+                  markStartupFailed(`${detail} · unable to reach Bloomberg stream`, data);
+                  return;
+                }
+              }
+              if (isFragmentStartupError(detail)) {
+                startupState.fragmentFailures += 1;
+                if (
+                  startupState.fragmentFailures >=
+                  BLOOMBERG_STARTUP_FRAGMENT_FAILURE_LIMIT
+                ) {
+                  markStartupFailed(`${detail} · no playable video segments loaded`, data);
+                  return;
+                }
+              }
               if (maybeReloadAfterRepeatedRecovery(detail, 6)) return;
               markLoading();
               setErrorDetail(`${detail} · retrying network`);
@@ -1399,18 +2038,18 @@ export default function BloombergLiveDock() {
             if (data.fatal) {
               noteRecovery("fatal");
               if (maybeReloadAfterRepeatedRecovery(detail, 3)) return;
-              markError(detail || "Fatal HLS playback error.");
-              setTimeout(() => {
-                if (disposed) return;
-                handleReload();
-              }, 250);
+              const fatalKind = classifyBloombergError(detail, data);
+              if (handleStreamFailover(detail || "Fatal HLS playback error.", fatalKind)) {
+                return;
+              }
+              markError(detail || "Fatal HLS playback error.", fatalKind);
             }
           });
-          hls.loadSource(BLOOMBERG_HLS_URL);
+          hls.loadSource(streamSource.url);
           hls.attachMedia(video);
         })
         .catch(() => {
-          markError("Unable to load HLS playback support.");
+          markError("Unable to load HLS playback support.", "media");
         });
     }
 
@@ -1421,12 +2060,14 @@ export default function BloombergLiveDock() {
       video.removeEventListener("waiting", handleWaiting);
       video.removeEventListener("error", handleVideoError);
       video.removeEventListener("timeupdate", syncPlaybackState);
-      video.removeEventListener("progress", syncPlaybackState);
+      video.removeEventListener("progress", handleProgress);
       video.removeEventListener("ratechange", syncPlaybackState);
       video.removeEventListener("play", syncPlaybackState);
       video.removeEventListener("pause", syncPlaybackState);
       video.removeEventListener("volumechange", syncPlaybackState);
       video.removeEventListener("seeked", syncPlaybackState);
+      video.removeEventListener("loadedmetadata", markManifestSeen);
+      clearStartupTimeout();
       if (hls) {
         hls.destroy();
       }
@@ -1435,7 +2076,97 @@ export default function BloombergLiveDock() {
       video.removeAttribute("src");
       video.load();
     };
-  }, [handleReload, playbackSessionEnabled, reloadKey, startPlayback, syncPlaybackState]);
+  }, [
+    handleReload,
+    handleStreamFailover,
+    playbackSessionEnabled,
+    publishDiagnostics,
+    reloadKey,
+    startPlayback,
+    streamSourceIndex,
+    streamSourceMode,
+    syncPlaybackState,
+  ]);
+
+  useEffect(() => {
+    if (
+      !playbackSessionEnabled ||
+      !pageVisible ||
+      playerStatus === "error"
+    ) {
+      return undefined;
+    }
+
+    const intervalMs = getConfiguredWindowNumber(
+      "__RAYALGO_BLOOMBERG_WATCHDOG_INTERVAL_MS__",
+      BLOOMBERG_WATCHDOG_INTERVAL_MS,
+    );
+    const stallMs = getConfiguredWindowNumber(
+      "__RAYALGO_BLOOMBERG_WATCHDOG_STALL_MS__",
+      BLOOMBERG_WATCHDOG_STALL_MS,
+    );
+    const emptyBufferMs = getConfiguredWindowNumber(
+      "__RAYALGO_BLOOMBERG_WATCHDOG_EMPTY_BUFFER_MS__",
+      BLOOMBERG_WATCHDOG_EMPTY_BUFFER_MS,
+    );
+
+    const timer = window.setInterval(() => {
+      const video = videoRef.current;
+      if (!video || video.paused || video.seeking || transportRateRef.current > 1) {
+        watchdogRef.current.lastCurrentTime = video?.currentTime || 0;
+        watchdogRef.current.lastAdvancedAt = Date.now();
+        watchdogRef.current.emptyBufferSince = 0;
+        return;
+      }
+
+      if (playerStatus !== "live") {
+        return;
+      }
+
+      const now = Date.now();
+      const watchdog = watchdogRef.current;
+      const currentTime = video.currentTime || 0;
+      const hasBuffer = video.buffered.length > 0;
+
+      if (!watchdog.lastAdvancedAt) {
+        watchdog.lastAdvancedAt = now;
+        watchdog.lastCurrentTime = currentTime;
+      }
+
+      if (currentTime > watchdog.lastCurrentTime + 0.2) {
+        watchdog.lastCurrentTime = currentTime;
+        watchdog.lastAdvancedAt = now;
+        watchdog.emptyBufferSince = 0;
+        return;
+      }
+
+      if (!hasBuffer) {
+        if (!watchdog.emptyBufferSince) {
+          watchdog.emptyBufferSince = now;
+          return;
+        }
+        if (now - watchdog.emptyBufferSince >= emptyBufferMs) {
+          handleWatchdogRecovery("Live buffer empty", "segments");
+        }
+        return;
+      }
+
+      watchdog.emptyBufferSince = 0;
+      if (now - watchdog.lastAdvancedAt >= stallMs) {
+        handleWatchdogRecovery("Live playback stalled", "stall");
+      }
+    }, intervalMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    handleWatchdogRecovery,
+    pageVisible,
+    playbackSessionEnabled,
+    playerStatus,
+    reloadKey,
+  ]);
 
   useEffect(() => {
     if (!playbackSessionEnabled) {
@@ -1451,6 +2182,16 @@ export default function BloombergLiveDock() {
           /* hls already loading */
         }
       }
+      if (
+        video &&
+        wasPlayingBeforeHiddenRef.current &&
+        playerStatus !== "error" &&
+        (video.readyState >= 2 || video.currentSrc)
+      ) {
+        wasPlayingBeforeHiddenRef.current = false;
+        void startPlayback();
+        syncPlaybackState();
+      }
     } else {
       if (hls) {
         try {
@@ -1459,6 +2200,9 @@ export default function BloombergLiveDock() {
           /* hls already stopped */
         }
       }
+      wasPlayingBeforeHiddenRef.current = Boolean(
+        video && (!video.paused || playerStatus === "loading"),
+      );
       if (video && !video.paused) {
         try {
           video.pause();
@@ -1468,7 +2212,14 @@ export default function BloombergLiveDock() {
       }
     }
     return undefined;
-  }, [pageVisible, playbackSessionEnabled, reloadKey]);
+  }, [
+    pageVisible,
+    playbackSessionEnabled,
+    playerStatus,
+    reloadKey,
+    startPlayback,
+    syncPlaybackState,
+  ]);
 
   useEffect(() => {
     if (!playbackSessionEnabled || !playbackSampleIntervalMs) {
@@ -1674,6 +2425,18 @@ export default function BloombergLiveDock() {
         )
       : BLOOMBERG_SCRUB_STEPS;
   const expandedChromeVisible = controlsVisible || shouldForceControlsVisible;
+  const activeStreamSource = getBloombergSourceAt(streamSourceIndex);
+  const streamErrorTone =
+    streamDiagnostics.lastErrorKind || playerStatus === "error" ? T.red : T.textSec;
+  const streamHealthLabel =
+    playerStatus === "live"
+      ? playbackState.paused
+        ? "paused"
+        : "live"
+      : playerStatus;
+  const streamRetryLabel = `${streamDiagnostics.failoverCount || 0}/${
+    streamDiagnostics.watchdogRecoveries || 0
+  }`;
 
   if (!isOpen) {
     return (
@@ -1682,7 +2445,7 @@ export default function BloombergLiveDock() {
           position: "fixed",
           right: sp(14),
           bottom: sp(34),
-          zIndex: 1200,
+          zIndex: BLOOMBERG_DOCK_Z_INDEX,
         }}
       >
         <button
@@ -1737,7 +2500,7 @@ export default function BloombergLiveDock() {
         position: "fixed",
         right: sp(14),
         bottom: sp(34),
-        zIndex: 1200,
+        zIndex: BLOOMBERG_DOCK_Z_INDEX,
         width: collapsed
           ? `min(${dim(320)}px, calc(100vw - ${dim(18)}px))`
           : `min(${dim(420)}px, calc(100vw - ${dim(18)}px))`,
@@ -2210,6 +2973,61 @@ export default function BloombergLiveDock() {
                         </MenuActionButton>
                         <MenuDivider />
                         <MenuSectionLabel>Stream</MenuSectionLabel>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                            gap: sp(6),
+                            padding: sp("0 10px"),
+                          }}
+                        >
+                          <MenuSpeedButton
+                            onClick={handleSelectAutoStreamSource}
+                            active={streamSourceMode === BLOOMBERG_SOURCE_MODE_AUTO}
+                            title="Use automatic Bloomberg source selection"
+                            ariaLabel="Use automatic Bloomberg source selection"
+                          >
+                            AUTO
+                          </MenuSpeedButton>
+                          {BLOOMBERG_HLS_SOURCES.map((source, index) => (
+                            <MenuSpeedButton
+                              key={source.id}
+                              onClick={() => handleSelectManualStreamSource(index)}
+                              active={
+                                streamSourceMode === BLOOMBERG_SOURCE_MODE_MANUAL &&
+                                activeStreamSource.id === source.id
+                              }
+                              title={`Select ${source.label} Bloomberg source`}
+                              ariaLabel={`Select ${source.label} Bloomberg source`}
+                            >
+                              {source.label.replace("U.S. ", "")}
+                            </MenuSpeedButton>
+                          ))}
+                        </div>
+                        <div style={{ paddingTop: sp(4) }}>
+                          <MenuInfoRow
+                            label="Source"
+                            value={`${activeStreamSource.label} · ${streamSourceMode}`}
+                          />
+                          <MenuInfoRow
+                            label="CDN"
+                            value={
+                              streamDiagnostics.variantHost ||
+                              streamDiagnostics.activeSourceHost
+                            }
+                          />
+                          <MenuInfoRow label="State" value={streamHealthLabel} />
+                          <MenuInfoRow label="Retry"
+                            value={streamRetryLabel}
+                          />
+                          {streamDiagnostics.lastErrorKind ? (
+                            <MenuInfoRow
+                              label="Error"
+                              value={streamDiagnostics.lastErrorKind}
+                              tone={streamErrorTone}
+                            />
+                          ) : null}
+                        </div>
                         <MenuActionButton
                           onClick={() => {
                             handleReload();
@@ -2273,7 +3091,7 @@ export default function BloombergLiveDock() {
                 }}
               >
                 {playerStatus === "error"
-                  ? "Live playback failed. Reload the stream or open Bloomberg directly."
+                  ? "Unable to reach Bloomberg stream. Reload or open Bloomberg directly."
                   : audioBlocked
                     ? "Audio autoplay was blocked. Click anywhere in the app or use Play With Audio to restore sound."
                     : "Connecting to Bloomberg live stream..."}

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   daysToExpiration,
   ensureTradeTickerInfo,
@@ -11,6 +11,7 @@ import {
   resolveTradeOptionChainSnapshot,
   useTradeOptionChainSnapshot,
 } from "../platform/tradeOptionChainStore";
+import { MarketIdentityInline } from "../platform/marketIdentity";
 import {
   MISSING_VALUE,
   T,
@@ -18,10 +19,16 @@ import {
   fs,
   sp,
 } from "../../lib/uiTokens";
+import {
+  joinMotionClasses,
+  motionRowStyle,
+  motionVars,
+} from "../../lib/motion";
 
 const ROW_HEIGHT = 24;
 const HEADER_HEIGHT = 28;
 const STRIKE_WIDTH = 78;
+const VIRTUAL_OVERSCAN_ROWS = 12;
 
 const CALL_COLUMNS = [
   { key: "cBid", label: "Call Bid", type: "price", width: 92 },
@@ -89,6 +96,32 @@ const formatCellValue = (row, column, held) => {
   }
   return formatGreek(value);
 };
+
+const normalizeFreshness = (value, fallback = "metadata") => {
+  if (
+    value === "live" ||
+    value === "delayed" ||
+    value === "frozen" ||
+    value === "delayed_frozen" ||
+    value === "stale" ||
+    value === "metadata" ||
+    value === "unavailable" ||
+    value === "pending"
+  ) {
+    return value;
+  }
+  return fallback;
+};
+
+const formatFreshnessLabel = (value) => {
+  const freshness = normalizeFreshness(value, "unavailable");
+  return freshness === "delayed_frozen"
+    ? "delayed frozen"
+    : freshness;
+};
+
+const getRowSideFreshness = (row, side) =>
+  normalizeFreshness(row?.[side === "C" ? "cFreshness" : "pFreshness"]);
 
 const hexToRgb = (value) => {
   const normalized = String(value || "").replace("#", "");
@@ -184,6 +217,7 @@ const ChainStatePanel = ({
   tone = T.textSec,
 }) => (
   <div
+    className={loading ? "ra-scan-sweep" : "ra-panel-enter"}
     style={{
       width: "100%",
       height: "100%",
@@ -252,6 +286,29 @@ const ChainStatePanel = ({
   </div>
 );
 
+const ChainRefreshSpinner = () => (
+  <>
+    <style>
+      {"@keyframes tradeChainSpin { to { transform: rotate(360deg); } }"}
+    </style>
+    <span
+      data-testid="chain-refreshing-spinner"
+      role="status"
+      aria-label="Refreshing option chain"
+      className="ra-status-pulse"
+      style={{
+        width: dim(12),
+        height: dim(12),
+        borderRadius: "50%",
+        border: `2px solid ${T.border}`,
+        borderTopColor: T.amber,
+        animation: "tradeChainSpin 900ms linear infinite",
+        flexShrink: 0,
+      }}
+    />
+  </>
+);
+
 const ChainSide = ({
   side,
   chain,
@@ -262,6 +319,8 @@ const ChainSide = ({
   heatmapModel,
   atmStrike,
   onSelect,
+  topPadding = 0,
+  bottomPadding = 0,
 }) => {
   const sideColor = side === "C" ? T.green : T.red;
   const gridTemplateColumns = buildColumnGrid(columns);
@@ -303,7 +362,10 @@ const ChainSide = ({
             </span>
           ))}
         </div>
-        {chain.map((row) => {
+        {topPadding > 0 ? (
+          <div aria-hidden="true" style={{ height: dim(topPadding) }} />
+        ) : null}
+        {chain.map((row, rowIndex) => {
           const held = heldContracts.some(
             (holding) => holding.strike === row.k && holding.cp === side,
           );
@@ -326,8 +388,17 @@ const ChainSide = ({
           return (
             <div
               key={`${side}:${row.k}`}
+              className={joinMotionClasses(
+                "ra-row-enter",
+                "ra-interactive",
+                (selectedSide || isAtmRow) && "ra-focus-rail",
+              )}
               onClick={() => onSelect(row.k, side)}
               style={{
+                ...motionRowStyle(rowIndex, 5, 90),
+                ...motionVars({
+                  accent: selectedSide ? sideColor : isAtmRow ? T.amber : sideColor,
+                }),
                 display: "grid",
                 gridTemplateColumns,
                 minHeight: dim(ROW_HEIGHT),
@@ -341,6 +412,9 @@ const ChainSide = ({
               {columns.map((column) => (
                 <span
                   key={column.key}
+                  title={`${column.label} / ${formatFreshnessLabel(
+                    getRowSideFreshness(row, side),
+                  )}`}
                   style={{
                     padding: sp("0 6px"),
                     color:
@@ -363,12 +437,20 @@ const ChainSide = ({
             </div>
           );
         })}
+        {bottomPadding > 0 ? (
+          <div aria-hidden="true" style={{ height: dim(bottomPadding) }} />
+        ) : null}
       </div>
     </div>
   );
 };
 
-const StrikeColumn = ({ chain, atmStrike }) => (
+const StrikeColumn = ({
+  chain,
+  atmStrike,
+  topPadding = 0,
+  bottomPadding = 0,
+}) => (
   <div
     style={{
       width: dim(STRIKE_WIDTH),
@@ -397,6 +479,9 @@ const StrikeColumn = ({ chain, atmStrike }) => (
     >
       Strike
     </div>
+    {topPadding > 0 ? (
+      <div aria-hidden="true" style={{ height: dim(topPadding) }} />
+    ) : null}
     {chain.map((row) => {
       const isAtmRow = isFiniteNumber(atmStrike)
         ? row.k === atmStrike
@@ -421,6 +506,9 @@ const StrikeColumn = ({ chain, atmStrike }) => (
         </div>
       );
     })}
+    {bottomPadding > 0 ? (
+      <div aria-hidden="true" style={{ height: dim(bottomPadding) }} />
+    ) : null}
   </div>
 );
 
@@ -432,6 +520,8 @@ export const TradeChainPanel = ({
   onSelectContract,
   onChangeExp,
   onRetryExpiration,
+  onExpandExpiration,
+  expandedExpirationKeys = [],
   heldContracts = [],
   chainStatus = "empty",
   heatmapEnabled = false,
@@ -442,6 +532,10 @@ export const TradeChainPanel = ({
     [ticker],
   );
   const info = useRuntimeTickerSnapshot(ticker, fallback);
+  const identityItem = useMemo(
+    () => ({ ticker, name: info?.name || ticker }),
+    [info?.name, ticker],
+  );
   const chainSnapshot = useTradeOptionChainSnapshot(ticker);
   const {
     expirationOptions: snapshotExpirationOptions,
@@ -455,11 +549,16 @@ export const TradeChainPanel = ({
     totalExpirationCount,
     resolvedExpirationStatus,
     isResolvedExpirationLoading,
+    isResolvedExpirationRefreshing,
+    isResolvedExpirationStale,
   } = resolveTradeOptionChainSnapshot(chainSnapshot, contract.exp);
   const expirationOptions = expirations.length
     ? expirations
     : snapshotExpirationOptions;
   const chain = chainRows.length ? chainRows : snapshotChainRows;
+  const scrollRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const resolvedChainStatus =
     chainRows.length || chainStatus !== "empty" ? chainStatus : snapshotChainStatus;
   const atmStrike = useMemo(() => {
@@ -504,6 +603,76 @@ export const TradeChainPanel = ({
     () => buildHeatmapModel(chain, atmStrike),
     [atmStrike, chain],
   );
+  const selectedCenterStrike = contract.strike ?? atmStrike;
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || !chain.length) {
+      return;
+    }
+
+    const updateViewportHeight = () => {
+      setViewportHeight(element.clientHeight || 0);
+    };
+    updateViewportHeight();
+
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(updateViewportHeight);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", updateViewportHeight);
+      return () => window.removeEventListener("resize", updateViewportHeight);
+    }
+    return undefined;
+  }, [chain.length]);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || !chain.length) {
+      return;
+    }
+
+    const selectedIndex = chain.findIndex((row) => row.k === selectedCenterStrike);
+    const atmIndex = chain.findIndex((row) =>
+      isFiniteNumber(atmStrike) ? row.k === atmStrike : row.isAtm,
+    );
+    const targetIndex = selectedIndex >= 0 ? selectedIndex : atmIndex;
+    if (targetIndex < 0) {
+      return;
+    }
+
+    const rowTop = HEADER_HEIGHT + targetIndex * ROW_HEIGHT;
+    const rowBottom = rowTop + ROW_HEIGHT;
+    const visibleTop = element.scrollTop;
+    const visibleBottom = visibleTop + element.clientHeight;
+    if (rowTop >= visibleTop && rowBottom <= visibleBottom) {
+      return;
+    }
+
+    element.scrollTop = Math.max(
+      0,
+      rowTop - Math.max(ROW_HEIGHT * 6, (element.clientHeight - ROW_HEIGHT) / 2),
+    );
+    setScrollTop(element.scrollTop);
+  }, [atmStrike, chain.length, expInfo?.value, selectedCenterStrike]);
+  const rowScrollTop = Math.max(0, scrollTop - HEADER_HEIGHT);
+  const visibleStartIndex = Math.max(
+    0,
+    Math.floor(rowScrollTop / ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS,
+  );
+  const visibleRowCount = Math.max(
+    1,
+    Math.ceil(Math.max(0, viewportHeight - HEADER_HEIGHT) / ROW_HEIGHT) +
+      VIRTUAL_OVERSCAN_ROWS * 2,
+  );
+  const visibleEndIndex = Math.min(
+    chain.length,
+    visibleStartIndex + visibleRowCount,
+  );
+  const visibleChain = chain.slice(visibleStartIndex, visibleEndIndex);
+  const topPadding = visibleStartIndex * ROW_HEIGHT;
+  const bottomPadding = Math.max(0, (chain.length - visibleEndIndex) * ROW_HEIGHT);
   const atmRow =
     chain.find((row) => row.k === atmStrike) ||
     chain.find((row) => row.isAtm);
@@ -529,6 +698,25 @@ export const TradeChainPanel = ({
   const selectedExpirationStatus = chain.length
     ? "loaded"
     : resolvedExpirationStatus || "empty";
+  const selectedExpirationKey =
+    expInfo?.chainKey || expInfo?.isoDate || expInfo?.value || null;
+  const selectedExpirationExpanded = Boolean(
+    selectedExpirationKey && expandedExpirationKeys.includes(selectedExpirationKey),
+  );
+  const selectedChainRow =
+    chain.find((row) => row.k === contract?.strike) ||
+    chain.find((row) => row.isAtm) ||
+    null;
+  const selectedDataFreshness = getRowSideFreshness(
+    selectedChainRow,
+    contract?.cp === "P" ? "P" : "C",
+  );
+  const canExpandSelectedExpiration = Boolean(
+    chain.length &&
+      selectedExpirationStatus === "loaded" &&
+      !selectedExpirationExpanded &&
+      onExpandExpiration,
+  );
   const showLoading =
     !chain.length &&
     (selectedExpirationStatus === "loading" ||
@@ -538,7 +726,27 @@ export const TradeChainPanel = ({
         completedExpirationCount === 0));
   let statusLabel = progressDetail;
   let statusColor = T.textDim;
-  if (resolvedChainStatus === "live") {
+  if (isResolvedExpirationRefreshing && isResolvedExpirationStale) {
+    statusLabel = "refreshing stale";
+    statusColor = T.amber;
+  } else if (isResolvedExpirationRefreshing) {
+    statusLabel = "refreshing";
+    statusColor = T.amber;
+  } else if (isResolvedExpirationStale) {
+    statusLabel = "stale chain";
+    statusColor = T.amber;
+  } else if (
+    chain.length &&
+    selectedDataFreshness &&
+    selectedDataFreshness !== "live"
+  ) {
+    statusLabel = `${formatFreshnessLabel(selectedDataFreshness)} data`;
+    statusColor =
+      selectedDataFreshness === "metadata" ||
+      selectedDataFreshness === "unavailable"
+        ? T.textDim
+        : T.amber;
+  } else if (resolvedChainStatus === "live") {
     statusLabel = "live";
     statusColor = T.accent;
   } else if (selectedExpirationStatus === "failed") {
@@ -600,6 +808,7 @@ export const TradeChainPanel = ({
   return (
     <div
       data-testid="trade-options-chain-panel"
+      className="ra-panel-enter"
       style={{
         background: T.bg2,
         border: `1px solid ${T.border}`,
@@ -620,6 +829,12 @@ export const TradeChainPanel = ({
           flexShrink: 0,
         }}
       >
+        <MarketIdentityInline
+          item={identityItem}
+          size={16}
+          showChips={false}
+          style={{ minWidth: 0 }}
+        />
         <span
           style={{
             fontSize: fs(10),
@@ -677,6 +892,27 @@ export const TradeChainPanel = ({
           Heatmap
         </label>
         <span style={{ flex: 1 }} />
+        {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
+        {canExpandSelectedExpiration ? (
+          <button
+            type="button"
+            onClick={() => onExpandExpiration(expInfo)}
+            style={{
+              border: `1px solid ${T.border}`,
+              background: T.bg3,
+              color: T.textSec,
+              borderRadius: dim(3),
+              padding: sp("2px 6px"),
+              fontSize: fs(8),
+              fontFamily: T.mono,
+              fontWeight: 800,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Expand
+          </button>
+        ) : null}
         <span style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textDim }}>
           IMP{" "}
           <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 700 }}>
@@ -691,6 +927,7 @@ export const TradeChainPanel = ({
           </span>
         </span>
         <span
+          className={isResolvedExpirationRefreshing || showLoading ? "ra-status-pulse" : undefined}
           style={{
             fontSize: fs(8),
             color: statusColor,
@@ -704,6 +941,8 @@ export const TradeChainPanel = ({
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         {chain.length ? (
           <div
+            ref={scrollRef}
+            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
             style={{
               height: "100%",
               overflowY: "auto",
@@ -716,7 +955,7 @@ export const TradeChainPanel = ({
           >
             <ChainSide
               side="C"
-              chain={chain}
+              chain={visibleChain}
               columns={CALL_COLUMNS}
               selected={{ strike: contract.strike, cp: contract.cp }}
               heldContracts={heldForExpiration}
@@ -724,11 +963,18 @@ export const TradeChainPanel = ({
               heatmapModel={heatmapModel}
               atmStrike={atmStrike}
               onSelect={onSelectContract}
+              topPadding={topPadding}
+              bottomPadding={bottomPadding}
             />
-            <StrikeColumn chain={chain} atmStrike={atmStrike} />
+            <StrikeColumn
+              chain={visibleChain}
+              atmStrike={atmStrike}
+              topPadding={topPadding}
+              bottomPadding={bottomPadding}
+            />
             <ChainSide
               side="P"
-              chain={chain}
+              chain={visibleChain}
               columns={PUT_COLUMNS}
               selected={{ strike: contract.strike, cp: contract.cp }}
               heldContracts={heldForExpiration}
@@ -736,6 +982,8 @@ export const TradeChainPanel = ({
               heatmapModel={heatmapModel}
               atmStrike={atmStrike}
               onSelect={onSelectContract}
+              topPadding={topPadding}
+              bottomPadding={bottomPadding}
             />
           </div>
         ) : (

@@ -1,13 +1,14 @@
 import { Fragment, useMemo, useState } from "react";
+import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   EmptyState,
   Panel,
   Pill,
   ToggleGroup,
-  formatMoney,
+  formatAccountMoney,
+  formatAccountPercent,
   formatNumber,
-  formatPercent,
   moveTableFocus,
   mutedLabelStyle,
   secondaryButtonStyle,
@@ -15,12 +16,20 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
+import { isOpenPositionRow } from "./accountPositionRows.js";
 
 const ASSET_FILTERS = [
   { value: "all", label: "All" },
   { value: "Stocks", label: "Stock" },
   { value: "ETF", label: "ETF" },
   { value: "Options", label: "Option" },
+];
+
+const SOURCE_FILTERS = [
+  { value: "all", label: "All Sources" },
+  { value: "manual", label: "Manual" },
+  { value: "automation", label: "Automation" },
+  { value: "mixed", label: "Mixed" },
 ];
 
 const headerCellStyle = (active) => ({
@@ -57,16 +66,28 @@ const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
 
 const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 
+const marketForAssetClass = (assetClass) =>
+  String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
+
 export const PositionsPanel = ({
   query,
   currency,
   assetFilter,
   onAssetFilterChange,
+  sourceFilter = "all",
+  onSourceFilterChange,
   onJumpToChart,
+  rightRail = "IBKR positions + lots",
+  emptyBody = "Positions from the IBKR account stream will appear here. Tax lots fill in from the local ledger as fills are observed.",
+  maskValues = false,
 }) => {
   const [sort, setSort] = useState({ id: "marketValue", dir: "desc" });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const rows = query.data?.positions || [];
+  const rows = (query.data?.positions || [])
+    .filter(isOpenPositionRow)
+    .filter((row) =>
+      sourceFilter === "all" ? true : row.sourceType === sourceFilter,
+    );
   const sortedRows = useMemo(() => {
     const copy = [...rows];
     copy.sort((a, b) => {
@@ -102,24 +123,35 @@ export const PositionsPanel = ({
   return (
     <Panel
       title={`Current Positions · ${rows.length}`}
-      rightRail="IBKR positions + lots"
+      rightRail={rightRail}
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
-      minHeight={440}
+      minHeight={rows.length ? 176 : 238}
       noPad
-      action={<ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />}
+      action={
+        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+          <ToggleGroup options={ASSET_FILTERS} value={assetFilter} onChange={onAssetFilterChange} />
+          {onSourceFilterChange ? (
+            <ToggleGroup
+              options={SOURCE_FILTERS}
+              value={sourceFilter}
+              onChange={onSourceFilterChange}
+            />
+          ) : null}
+        </div>
+      }
     >
       {!rows.length ? (
-        <div style={{ padding: sp(12) }}>
+        <div style={{ padding: sp(7) }}>
           <EmptyState
             title="No open positions"
-            body="Positions from the IBKR account stream will appear here. Tax lots fill in from the local ledger as fills are observed."
+            body={emptyBody}
           />
         </div>
       ) : (
-        <div style={{ overflow: "auto", maxHeight: "56vh" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1320 }}>
+        <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: "34vh" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1160 }}>
             <thead>
               <tr style={tableHeaderStyle}>
                 {[
@@ -160,8 +192,8 @@ export const PositionsPanel = ({
                     }}
                     onClick={() => toggleExpanded(row.id)}
                   >
-                    <td style={{ ...tableCellStyle, minWidth: 180 }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: sp(8) }}>
+                    <td style={{ ...tableCellStyle, minWidth: 164 }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: sp(6) }}>
                         <button
                           type="button"
                           onClick={(event) => {
@@ -170,8 +202,8 @@ export const PositionsPanel = ({
                           }}
                           aria-expanded={expandedRows.has(row.id)}
                           style={{
-                            width: 18,
-                            height: 18,
+                            width: 16,
+                            height: 16,
                             border: `1px solid ${T.border}`,
                             borderRadius: dim(4),
                             background: T.bg0,
@@ -196,13 +228,24 @@ export const PositionsPanel = ({
                               padding: 0,
                               background: "transparent",
                               color: T.text,
-                              fontSize: fs(11),
+                              fontSize: fs(10),
                               fontWeight: 900,
                               cursor: "pointer",
                               textAlign: "left",
                             }}
                           >
-                            {row.symbol}
+                            <MarketIdentityInline
+                              item={{
+                                ticker: row.symbol,
+                                name: row.description || row.symbol,
+                                market: marketForAssetClass(row.assetClass),
+                                sector: row.sector || null,
+                              }}
+                              size={14}
+                              showMark={false}
+                              showChips
+                              style={{ maxWidth: dim(148) }}
+                            />
                           </button>
                           <div
                             style={{
@@ -227,28 +270,28 @@ export const PositionsPanel = ({
                       {formatNumber(row.quantity, 4)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                      {formatMoney(row.averageCost, currency)}
+                      {formatAccountMoney(row.averageCost, currency, false, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: T.text }}>
-                      {formatMoney(row.mark, currency)}
+                      {formatAccountMoney(row.mark, currency, false, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.dayChangePercent) }}>
-                      {formatPercent(row.dayChangePercent)}
+                      {formatAccountPercent(row.dayChangePercent, 2, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.dayChange) }}>
-                      {formatMoney(row.dayChange, currency)}
+                      {formatAccountMoney(row.dayChange, currency, false, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnl), fontWeight: 800 }}>
-                      {formatMoney(row.unrealizedPnl, currency)}
+                      {formatAccountMoney(row.unrealizedPnl, currency, false, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnlPercent) }}>
-                      {formatPercent(row.unrealizedPnlPercent)}
+                      {formatAccountPercent(row.unrealizedPnlPercent, 2, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: T.text }}>
-                      {formatMoney(row.marketValue, currency)}
+                      {formatAccountMoney(row.marketValue, currency, false, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                      {formatPercent(row.weightPercent)}
+                      {formatAccountPercent(row.weightPercent, 2, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right" }}>
                       {formatNumber(row.betaWeightedDelta, 2)}
@@ -260,33 +303,51 @@ export const PositionsPanel = ({
                         colSpan={11}
                         style={{
                           ...tableCellStyle,
-                          padding: sp("9px 12px 12px 32px"),
+                          padding: sp("6px 8px 7px 24px"),
                           whiteSpace: "normal",
                           background: `${T.bg2}cc`,
                         }}
                       >
-                        <div style={{ display: "grid", gap: sp(10) }}>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
+                        <div style={{ display: "grid", gap: sp(6) }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
                             {(row.accounts || []).map((accountId) => (
                               <Pill key={`${row.id}:${accountId}`} tone="cyan">
                                 {accountId}
                               </Pill>
                             ))}
                             {row.assetClass ? <Pill tone="purple">{row.assetClass}</Pill> : null}
+                            {row.sourceType ? (
+                              <Pill
+                                tone={
+                                  row.sourceType === "automation"
+                                    ? "pink"
+                                    : row.sourceType === "mixed"
+                                      ? "amber"
+                                      : "default"
+                                }
+                              >
+                                {row.strategyLabel || row.sourceType}
+                              </Pill>
+                            ) : null}
+                            {row.attributionStatus && row.attributionStatus !== "attributed" ? (
+                              <Pill tone={row.attributionStatus === "mixed" ? "amber" : "default"}>
+                                {row.attributionStatus}
+                              </Pill>
+                            ) : null}
                           </div>
 
                           <div
                             style={{
                               display: "grid",
                               gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 0.9fr) auto",
-                              gap: sp(12),
+                              gap: sp(8),
                               alignItems: "start",
                             }}
                           >
                             <div>
-                              <div style={{ ...mutedLabelStyle, marginBottom: sp(6) }}>Tax Lots</div>
+                              <div style={{ ...mutedLabelStyle, marginBottom: sp(4) }}>Tax Lots</div>
                               {row.lots?.length ? (
-                                <div style={{ overflow: "auto" }}>
+                                <div className="ra-hide-scrollbar" style={{ overflow: "auto" }}>
                                   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
                                     <thead>
                                       <tr>
@@ -311,10 +372,10 @@ export const PositionsPanel = ({
                                             {formatNumber(lot.quantity, 4)}
                                           </td>
                                           <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                                            {formatMoney(lot.averageCost, currency)}
+                                            {formatAccountMoney(lot.averageCost, currency, false, maskValues)}
                                           </td>
                                           <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                                            {formatMoney(lot.marketValue, currency)}
+                                            {formatAccountMoney(lot.marketValue, currency, false, maskValues)}
                                           </td>
                                           <td
                                             style={{
@@ -323,7 +384,7 @@ export const PositionsPanel = ({
                                               color: toneForValue(lot.unrealizedPnl),
                                             }}
                                           >
-                                            {formatMoney(lot.unrealizedPnl, currency)}
+                                            {formatAccountMoney(lot.unrealizedPnl, currency, false, maskValues)}
                                           </td>
                                         </tr>
                                       ))}
@@ -338,15 +399,53 @@ export const PositionsPanel = ({
                             </div>
 
                             <div>
-                              <div style={{ ...mutedLabelStyle, marginBottom: sp(6) }}>Open Orders</div>
+                              <div style={{ ...mutedLabelStyle, marginBottom: sp(4) }}>Source Attribution</div>
+                              {row.sourceAttribution?.length ? (
+                                <div style={{ display: "grid", gap: sp(3), marginBottom: sp(6) }}>
+                                  {row.sourceAttribution.slice(0, 6).map((source, index) => (
+                                    <div
+                                      key={`${row.id}:source:${source.candidateId || index}`}
+                                      style={{
+                                        borderBottom: `1px solid ${T.border}`,
+                                        padding: sp("3px 0"),
+                                        display: "grid",
+                                        gap: sp(3),
+                                      }}
+                                    >
+                                      <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
+                                        <Pill tone={source.sourceType === "automation" ? "pink" : "default"}>
+                                          {source.strategyLabel || source.sourceType}
+                                        </Pill>
+                                        <Pill tone="cyan">
+                                          Qty {formatNumber(source.quantity, 3)}
+                                        </Pill>
+                                      </div>
+                                      <div
+                                        style={{
+                                          color: T.textDim,
+                                          fontSize: fs(9),
+                                          fontFamily: T.mono,
+                                        }}
+                                      >
+                                        {source.deploymentName || source.candidateId || source.sourceEventId || "Manual ledger fill"}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                  <div style={{ color: T.textMuted, fontSize: fs(10), marginBottom: sp(8) }}>
+                                  Source attribution is unavailable for this position.
+                                </div>
+                              )}
+                              <div style={{ ...mutedLabelStyle, marginBottom: sp(4) }}>Open Orders</div>
                               {row.openOrders?.length ? (
-                                <div style={{ display: "grid", gap: sp(4) }}>
+                                <div style={{ display: "grid", gap: sp(3) }}>
                                   {row.openOrders.slice(0, 6).map((order) => (
                                     <div
                                       key={order.id}
                                       style={{
                                         borderBottom: `1px solid ${T.border}`,
-                                        padding: sp("4px 0"),
+                                        padding: sp("3px 0"),
                                         display: "grid",
                                         gap: sp(3),
                                       }}
@@ -368,9 +467,9 @@ export const PositionsPanel = ({
                                       >
                                         {formatNumber(order.quantity, 2)} @{" "}
                                         {order.limitPrice != null
-                                          ? formatMoney(order.limitPrice, currency)
+                                          ? formatAccountMoney(order.limitPrice, currency, false, maskValues)
                                           : order.stopPrice != null
-                                            ? formatMoney(order.stopPrice, currency)
+                                            ? formatAccountMoney(order.stopPrice, currency, false, maskValues)
                                             : "Market"}
                                       </div>
                                       <div
@@ -392,7 +491,7 @@ export const PositionsPanel = ({
                               )}
                             </div>
 
-                            <div style={{ display: "grid", gap: sp(8), minWidth: dim(108) }}>
+                            <div style={{ display: "grid", gap: sp(6), minWidth: dim(100) }}>
                               <button
                                 type="button"
                                 onClick={() => onJumpToChart?.(row.symbol)}
@@ -422,7 +521,7 @@ export const PositionsPanel = ({
                   Totals
                 </td>
                 <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(totalDayChange), fontWeight: 800 }}>
-                  {formatMoney(totalDayChange, currency)}
+                  {formatAccountMoney(totalDayChange, currency, false, maskValues)}
                 </td>
                 <td
                   style={{
@@ -432,18 +531,18 @@ export const PositionsPanel = ({
                     fontWeight: 800,
                   }}
                 >
-                  {formatMoney(query.data?.totals?.unrealizedPnl, currency)}
+                  {formatAccountMoney(query.data?.totals?.unrealizedPnl, currency, false, maskValues)}
                 </td>
                 <td />
                 <td style={{ ...tableCellStyle, textAlign: "right", color: T.text, fontWeight: 800 }}>
-                  {formatMoney(query.data?.totals?.netExposure, currency, true)}
+                  {formatAccountMoney(query.data?.totals?.netExposure, currency, true, maskValues)}
                 </td>
                 <td style={{ ...tableCellStyle, textAlign: "right", fontWeight: 800 }}>
-                  {formatPercent(query.data?.totals?.weightPercent)}
+                  {formatAccountPercent(query.data?.totals?.weightPercent, 2, maskValues)}
                 </td>
                 <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                  Long {formatMoney(query.data?.totals?.grossLong, currency, true)} · Short{" "}
-                  {formatMoney(query.data?.totals?.grossShort, currency, true)}
+                  Long {formatAccountMoney(query.data?.totals?.grossLong, currency, true, maskValues)} · Short{" "}
+                  {formatAccountMoney(query.data?.totals?.grossShort, currency, true, maskValues)}
                 </td>
               </tr>
             </tfoot>

@@ -2,7 +2,6 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   DEFAULT_RAY_REPLICA_SETTINGS,
-  RAY_REPLICA_DASHBOARD_POSITION_OPTIONS,
   RAY_REPLICA_DASHBOARD_SIZE_OPTIONS,
   RAY_REPLICA_LABEL_SIZE_OPTIONS,
   RAY_REPLICA_LINE_STYLE_OPTIONS,
@@ -313,12 +312,6 @@ const styleEntryStyle = (theme: WidgetTheme): CSSProperties => ({
 
 const formatNumber = (value: number) =>
   Number.isFinite(value) ? value.toString() : "";
-
-const positionLabel = (value: RayReplicaRuntimeSettings["dashboardPosition"]) =>
-  value
-    .split("-")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 
 const titleCase = (value: string) =>
   value.charAt(0).toUpperCase() + value.slice(1);
@@ -1019,29 +1012,11 @@ export function RayReplicaSettingsMenu({
               </Row>
             </Section>
 
-            <Section theme={theme} title="11. Info Panel">
-              <Row theme={theme} label="Show Info Panel">
+            <Section theme={theme} title="11. Info Strip">
+              <Row theme={theme} label="Show Info Strip">
                 <input type="checkbox" checked={settings.showDashboard} onChange={() => toggle("showDashboard")} style={checkboxStyle(theme)} />
               </Row>
-              <Row theme={theme} label="Panel Position">
-                <select
-                  value={settings.dashboardPosition}
-                  onChange={(event) =>
-                    update({
-                      dashboardPosition:
-                        event.target.value as RayReplicaRuntimeSettings["dashboardPosition"],
-                    })
-                  }
-                  style={inputStyle(theme)}
-                >
-                  {RAY_REPLICA_DASHBOARD_POSITION_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {positionLabel(value)}
-                    </option>
-                  ))}
-                </select>
-              </Row>
-              <Row theme={theme} label="Panel Size">
+              <Row theme={theme} label="Strip Size">
                 <select
                   value={settings.dashboardSize}
                   onChange={(event) =>

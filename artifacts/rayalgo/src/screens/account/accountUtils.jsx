@@ -1,6 +1,6 @@
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
-
-export const ACCOUNT_RANGES = ["1W", "1M", "3M", "YTD", "1Y", "ALL"];
+import { formatAppDateTime } from "../../lib/timeZone";
+export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
 
 export const formatMoney = (value, currency = "USD", compact = false) => {
   if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
@@ -16,6 +16,18 @@ export const formatMoney = (value, currency = "USD", compact = false) => {
     maximumFractionDigits: Math.abs(numeric) >= 100 ? 0 : 2,
   })}`;
 };
+
+export const ACCOUNT_VALUE_MASK = "****";
+
+export const maskAccountValue = (value, maskValues = false) =>
+  maskValues ? ACCOUNT_VALUE_MASK : value;
+
+export const formatAccountMoney = (
+  value,
+  currency = "USD",
+  compact = false,
+  maskValues = false,
+) => (maskValues ? ACCOUNT_VALUE_MASK : formatMoney(value, currency, compact));
 
 export const formatNumber = (value, digits = 2) => {
   if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
@@ -36,6 +48,19 @@ export const formatSignedMoney = (value, currency = "USD", compact = false) => {
   return `${numeric >= 0 ? "+" : "-"}${formatted}`;
 };
 
+export const formatAccountSignedMoney = (
+  value,
+  currency = "USD",
+  compact = false,
+  maskValues = false,
+) => (maskValues ? ACCOUNT_VALUE_MASK : formatSignedMoney(value, currency, compact));
+
+export const formatAccountPercent = (
+  value,
+  digits = 2,
+  maskValues = false,
+) => (maskValues ? ACCOUNT_VALUE_MASK : formatPercent(value, digits));
+
 export const toneForValue = (value) => {
   if (value == null || Number.isNaN(Number(value))) return T.textDim;
   return Number(value) >= 0 ? T.green : T.red;
@@ -46,7 +71,7 @@ export const metricTitle = (metric) => {
   const parts = [
     metric.source ? `Source: ${metric.source}` : null,
     metric.field ? `Field: ${metric.field}` : null,
-    metric.updatedAt ? `Updated: ${new Date(metric.updatedAt).toLocaleString()}` : null,
+    metric.updatedAt ? `Updated: ${formatAppDateTime(metric.updatedAt)}` : null,
   ].filter(Boolean);
   return parts.join("\n") || "Provider field unavailable";
 };
@@ -70,7 +95,7 @@ export const panelStyle = {
 
 export const sectionTitleStyle = {
   get fontSize() {
-    return fs(10);
+    return fs(9);
   },
   get color() {
     return T.text;
@@ -85,7 +110,7 @@ export const sectionTitleStyle = {
 
 export const mutedLabelStyle = {
   get fontSize() {
-    return fs(8);
+    return fs(7);
   },
   get color() {
     return T.textMuted;
@@ -130,16 +155,21 @@ const toneValueMap = () => ({
     border: `${T.purple}44`,
     bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.purple}18`,
   },
+  pink: {
+    color: T.pink,
+    border: `${T.pink}44`,
+    bg: T.bg1 === "#ffffff" ? T.bg1 : `${T.pink}18`,
+  },
 });
 
 export const denseButtonStyle = (active = false) => ({
-  height: dim(25),
-  padding: sp("0 9px"),
+  height: dim(21),
+  padding: sp("0 6px"),
   borderRadius: dim(4),
   border: `1px solid ${active ? T.accent : T.border}`,
   background: active ? (T.bg1 === "#ffffff" ? T.bg1 : T.accent) : T.bg2,
   color: active ? (T.bg1 === "#ffffff" ? T.accent : "#ffffff") : T.textSec,
-  fontSize: fs(9),
+  fontSize: fs(8),
   fontFamily: T.mono,
   fontWeight: 800,
   cursor: "pointer",
@@ -149,10 +179,10 @@ export const denseButtonStyle = (active = false) => ({
 
 export const primaryButtonStyle = {
   get height() {
-    return dim(28);
+    return dim(22);
   },
   get padding() {
-    return sp("0 10px");
+    return sp("0 8px");
   },
   get borderRadius() {
     return dim(4);
@@ -163,7 +193,7 @@ export const primaryButtonStyle = {
   },
   color: "#ffffff",
   get fontSize() {
-    return fs(9);
+    return fs(8);
   },
   get fontFamily() {
     return T.mono;
@@ -176,10 +206,10 @@ export const primaryButtonStyle = {
 
 export const secondaryButtonStyle = {
   get height() {
-    return dim(28);
+    return dim(22);
   },
   get padding() {
-    return sp("0 10px");
+    return sp("0 8px");
   },
   get borderRadius() {
     return dim(4);
@@ -194,7 +224,7 @@ export const secondaryButtonStyle = {
     return T.textSec;
   },
   get fontSize() {
-    return fs(9);
+    return fs(8);
   },
   get fontFamily() {
     return T.mono;
@@ -207,10 +237,10 @@ export const secondaryButtonStyle = {
 
 export const ghostButtonStyle = {
   get height() {
-    return dim(28);
+    return dim(22);
   },
   get padding() {
-    return sp("0 10px");
+    return sp("0 8px");
   },
   get borderRadius() {
     return dim(4);
@@ -223,7 +253,7 @@ export const ghostButtonStyle = {
     return T.textDim;
   },
   get fontSize() {
-    return fs(9);
+    return fs(8);
   },
   get fontFamily() {
     return T.mono;
@@ -236,10 +266,10 @@ export const ghostButtonStyle = {
 
 export const controlInputStyle = {
   get height() {
-    return dim(28);
+    return dim(22);
   },
   get padding() {
-    return sp("0 8px");
+    return sp("0 7px");
   },
   get borderRadius() {
     return dim(4);
@@ -254,7 +284,7 @@ export const controlInputStyle = {
     return T.text;
   },
   get fontSize() {
-    return fs(9);
+    return fs(8);
   },
   get fontFamily() {
     return T.sans;
@@ -264,10 +294,10 @@ export const controlInputStyle = {
 
 export const controlSelectStyle = {
   get height() {
-    return dim(28);
+    return dim(22);
   },
   get padding() {
-    return sp("0 8px");
+    return sp("0 7px");
   },
   get borderRadius() {
     return dim(4);
@@ -282,7 +312,7 @@ export const controlSelectStyle = {
     return T.text;
   },
   get fontSize() {
-    return fs(9);
+    return fs(8);
   },
   get fontFamily() {
     return T.sans;
@@ -302,7 +332,7 @@ export const tableHeaderStyle = {
     return T.textMuted;
   },
   get fontSize() {
-    return fs(8);
+    return fs(7);
   },
   get fontFamily() {
     return T.sans;
@@ -317,13 +347,13 @@ export const tableHeaderStyle = {
 
 export const tableCellStyle = {
   get padding() {
-    return sp("5px 7px");
+    return sp("3px 5px");
   },
   get borderBottom() {
     return `1px solid ${T.border}`;
   },
   get fontSize() {
-    return fs(9);
+    return fs(8);
   },
   get fontFamily() {
     return T.sans;
@@ -360,13 +390,13 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         display: "inline-flex",
         alignItems: "center",
         gap: sp(4),
-        minHeight: dim(18),
-        padding: sp("0 6px"),
+        minHeight: dim(15),
+        padding: sp("0 4px"),
         borderRadius: dim(4),
         border: `1px solid ${palette.border}`,
         background: palette.bg,
         color: palette.color,
-        fontSize: fs(8),
+        fontSize: fs(7),
         fontFamily: T.mono,
         fontWeight: 800,
         letterSpacing: "0.08em",
@@ -398,6 +428,7 @@ export const ToggleGroup = ({ options, value, onChange }) => (
         <button
           key={item.value}
           type="button"
+          className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
           onClick={() => onChange(item.value)}
           style={denseButtonStyle(active)}
         >
@@ -417,6 +448,7 @@ export const StatTile = ({
   align = "left",
   compact = false,
   flat = false,
+  className,
   style,
 }) => {
   const paletteMap = toneValueMap();
@@ -424,9 +456,10 @@ export const StatTile = ({
   return (
     <div
       title={title}
+      className={className || (flat ? undefined : "ra-panel-enter")}
       style={{
-        minWidth: dim(flat ? 0 : compact ? 94 : 116),
-        padding: sp(flat ? (compact ? "1px 6px" : "3px 8px") : compact ? "6px 8px" : "8px 10px"),
+        minWidth: dim(flat ? 0 : compact ? 86 : 108),
+        padding: sp(flat ? (compact ? "1px 5px" : "2px 7px") : compact ? "5px 7px" : "7px 9px"),
         borderRadius: flat ? 0 : dim(5),
         border: flat ? "none" : `1px solid ${T.border}`,
         background: flat ? "transparent" : T.bg2,
@@ -439,7 +472,7 @@ export const StatTile = ({
         style={{
           marginTop: sp(compact ? 1 : 4),
           color: palette.color === T.textDim ? T.text : palette.color,
-          fontSize: fs(compact ? 12 : 14),
+          fontSize: fs(compact ? 11 : 13),
           fontFamily: T.mono,
           fontWeight: 800,
           lineHeight: 1.1,
@@ -466,15 +499,16 @@ export const StatTile = ({
 
 export const EmptyState = ({ title, body, action }) => (
   <div
+    className="ra-panel-enter"
     style={{
-      minHeight: dim(120),
+      minHeight: dim(72),
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
-      gap: sp(8),
-      padding: sp(16),
+      gap: sp(5),
+      padding: sp(8),
       color: T.textDim,
-      fontSize: fs(11),
+      fontSize: fs(10),
       fontFamily: T.sans,
       border: `1px dashed ${T.border}`,
       borderRadius: dim(5),
@@ -496,11 +530,13 @@ export const Panel = ({
   loading,
   error,
   onRetry,
-  minHeight = 220,
+  minHeight = 180,
   noPad = false,
+  className,
 }) => (
   <section
     tabIndex={0}
+    className={className || "ra-panel-enter"}
     style={{
       ...panelStyle,
       minHeight: dim(minHeight),
@@ -513,10 +549,10 @@ export const Panel = ({
     <div
       style={{
         display: "flex",
-        alignItems: "flex-start",
+        alignItems: "center",
         justifyContent: "space-between",
-        gap: sp(10),
-        padding: sp("8px 10px 7px"),
+        gap: sp(5),
+        padding: sp("4px 6px 3px"),
         borderBottom: `1px solid ${T.border}`,
         background: T.bg1,
       }}
@@ -529,8 +565,8 @@ export const Panel = ({
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              gap: sp(8),
-              marginTop: sp(3),
+              gap: sp(5),
+              marginTop: sp(1),
               flexWrap: "wrap",
             }}
           >
@@ -539,8 +575,9 @@ export const Panel = ({
               <div
                 style={{
                   color: T.textDim,
-                  fontSize: fs(9),
+                  fontSize: fs(7),
                   fontFamily: T.mono,
+                  fontWeight: 800,
                 }}
               >
                 {rightRail}
@@ -551,19 +588,20 @@ export const Panel = ({
       </div>
       {action}
     </div>
-    <div style={{ flex: 1, minHeight: 0, padding: noPad ? 0 : sp(10) }}>
+    <div style={{ flex: 1, minHeight: 0, padding: noPad ? 0 : sp(6) }}>
       {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>
 );
 
 export const SkeletonRows = ({ rows = 4 }) => (
-  <div style={{ display: "grid", gap: sp(8) }}>
+  <div style={{ display: "grid", gap: sp(6) }}>
     {Array.from({ length: rows }).map((_, index) => (
       <div
         key={index}
+        className="ra-skeleton"
         style={{
-          height: dim(index === 0 ? 42 : 30),
+          height: dim(index === 0 ? 34 : 24),
           borderRadius: dim(4),
           background: `linear-gradient(90deg, ${T.bg2}, ${T.bg3}, ${T.bg2})`,
           border: `1px solid ${T.border}`,
@@ -577,12 +615,12 @@ export const InlineError = ({ error, onRetry }) => (
   <div
     role="alert"
     style={{
-      padding: sp(12),
+      padding: sp(10),
       color: T.red,
       background: T.redBg,
       border: `1px solid ${T.red}55`,
       borderRadius: dim(5),
-      fontSize: fs(11),
+      fontSize: fs(10),
       fontFamily: T.sans,
       lineHeight: 1.5,
     }}
@@ -591,6 +629,7 @@ export const InlineError = ({ error, onRetry }) => (
     {typeof onRetry === "function" ? (
       <button
         type="button"
+        className="ra-interactive"
         onClick={onRetry}
         style={{ ...secondaryButtonStyle, marginTop: sp(10), color: T.red }}
       >

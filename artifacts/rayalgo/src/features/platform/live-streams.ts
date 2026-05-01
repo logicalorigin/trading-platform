@@ -1,8 +1,21 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { getOptionQuoteSnapshots } from "@workspace/api-client-react";
 import { usePageVisible } from "./usePageVisible";
+import {
+  recordOptionHydrationMetric,
+  setOptionHydrationDiagnostics,
+} from "./optionHydrationDiagnostics";
 import type {
+  AccountAllocationResponse,
+  AccountOrdersResponse,
+  AccountPositionsResponse,
+  AccountRiskResponse,
+  AccountSummaryResponse,
+  AccountEquityHistoryResponse,
+  AccountEquityPoint,
   AccountsResponse,
+  BrokerAccount,
   OptionChainResponse,
   OrdersResponse,
   PositionsResponse,
@@ -19,6 +32,31 @@ type QuoteStreamPayload = {
 type AccountStreamPayload = {
   accounts: AccountsResponse["accounts"];
   positions: PositionsResponse["positions"];
+};
+
+type LiveAccountEquityHistoryResponse = AccountEquityHistoryResponse & {
+  asOf?: string | null;
+  latestSnapshotAt?: string | null;
+  isStale?: boolean;
+  staleReason?: string | null;
+  terminalPointSource?:
+    | "live_account_summary"
+    | "persisted_snapshot"
+    | "flex"
+    | "shadow_ledger"
+    | null;
+  liveTerminalIncluded?: boolean;
+};
+
+type ShadowAccountStreamPayload = {
+  summary: AccountSummaryResponse;
+  positions: AccountPositionsResponse;
+  workingOrders: AccountOrdersResponse;
+  historyOrders: AccountOrdersResponse;
+  allocation: AccountAllocationResponse;
+  risk: AccountRiskResponse;
+  equityHistory?: unknown;
+  updatedAt: string;
 };
 
 type OrderStreamPayload = {
@@ -42,9 +80,35 @@ type LiveOptionQuoteSnapshot = QuoteSnapshot & {
   vega?: number | null;
 };
 
+const hasUsableOptionQuoteData = (quote: LiveOptionQuoteSnapshot): boolean =>
+  (isFiniteNumber(quote.bid) && quote.bid > 0) ||
+  (isFiniteNumber(quote.ask) && quote.ask > 0) ||
+  (isFiniteNumber(quote.price) && quote.price > 0) ||
+  (isFiniteNumber(quote.volume) && quote.volume > 0) ||
+  (isFiniteNumber(quote.openInterest) && quote.openInterest > 0) ||
+  isFiniteNumber(quote.impliedVolatility) ||
+  isFiniteNumber(quote.delta) ||
+  isFiniteNumber(quote.gamma) ||
+  isFiniteNumber(quote.theta) ||
+  isFiniteNumber(quote.vega);
+
 type OptionQuoteStreamPayload = {
   underlying?: string | null;
   quotes: LiveOptionQuoteSnapshot[];
+};
+
+type OptionQuoteWebSocketPayload = OptionQuoteStreamPayload & {
+  type?: string;
+  error?: string;
+  requestedCount?: number;
+  acceptedCount?: number;
+  rejectedCount?: number;
+  returnedCount?: number;
+  bufferedAmount?: number;
+  degraded?: boolean;
+  providerMode?: string | null;
+  liveMarketDataAvailable?: boolean | null;
+  missingProviderContractIds?: string[];
 };
 
 const optionQuoteSnapshotsByProviderContractId = new Map<
@@ -57,10 +121,24 @@ const optionQuoteStoreListenersByProviderContractId = new Map<
   Set<() => void>
 >();
 const optionQuoteStoreVersions = new Map<string, number>();
+const pendingOptionQuoteNotifications = new Set<string>();
+let optionQuoteNotifyScheduled = false;
 // Hard cap on the in-memory option-quote snapshot cache. An option chain for a
 // single underlying can have ~100 contracts; a cap of 1024 fits ~10 underlyings'
 // worth of chains while protecting against unbounded growth as users browse.
 const MAX_OPTION_QUOTE_SNAPSHOTS = 1_024;
+const OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE = 100;
+const OPTION_QUOTE_WEBSOCKET_ENABLED = true;
+const OPTION_QUOTE_WEBSOCKET_STALL_MS = 15_000;
+
+export const getOptionQuoteSnapshotCacheSize = (): number =>
+  optionQuoteSnapshotsByProviderContractId.size;
+
+export const getOptionQuoteSnapshotListenerCount = (): number =>
+  Array.from(optionQuoteStoreListenersByProviderContractId.values()).reduce(
+    (sum, listeners) => sum + listeners.size,
+    optionQuoteStoreListeners.size,
+  );
 
 const normalizeSymbols = (symbols: string[]): string[] =>
   Array.from(
@@ -89,6 +167,16 @@ const buildStreamUrl = (
   }
 
   return `${path}?${query}`;
+};
+
+const buildWebSocketUrl = (path: string): string | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(path, window.location.href);
+  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
 };
 
 const parseJsonPayload = <T,>(value: string): T | null => {
@@ -136,7 +224,11 @@ const areOptionQuoteSnapshotsEquivalent = (
   left.updatedAt === right.updatedAt &&
   left.source === right.source &&
   left.transport === right.transport &&
-  left.delayed === right.delayed;
+  left.delayed === right.delayed &&
+  left.freshness === right.freshness &&
+  left.marketDataMode === right.marketDataMode &&
+  left.dataUpdatedAt === right.dataUpdatedAt &&
+  left.ageMs === right.ageMs;
 
 const normalizeProviderContractId = (
   providerContractId: string | null | undefined,
@@ -174,6 +266,39 @@ const subscribeToOptionQuoteSnapshot = (
 
 const getOptionQuoteSnapshotVersion = (providerContractId: string): number =>
   optionQuoteStoreVersions.get(normalizeProviderContractId(providerContractId)) ?? 0;
+
+const flushOptionQuoteNotifications = () => {
+  optionQuoteNotifyScheduled = false;
+  const providerContractIds = Array.from(pendingOptionQuoteNotifications);
+  pendingOptionQuoteNotifications.clear();
+
+  providerContractIds.forEach((providerContractId) => {
+    optionQuoteStoreVersions.set(
+      providerContractId,
+      (optionQuoteStoreVersions.get(providerContractId) ?? 0) + 1,
+    );
+  });
+  optionQuoteStoreListeners.forEach((listener) => listener());
+  providerContractIds.forEach((providerContractId) => {
+    optionQuoteStoreListenersByProviderContractId
+      .get(providerContractId)
+      ?.forEach((listener) => listener());
+  });
+};
+
+const scheduleOptionQuoteNotification = (providerContractId: string) => {
+  pendingOptionQuoteNotifications.add(providerContractId);
+  if (optionQuoteNotifyScheduled) {
+    return;
+  }
+
+  optionQuoteNotifyScheduled = true;
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(flushOptionQuoteNotifications);
+    return;
+  }
+  setTimeout(flushOptionQuoteNotifications, 0);
+};
 
 const cacheOptionQuoteSnapshot = (
   quote: LiveOptionQuoteSnapshot,
@@ -240,14 +365,7 @@ const cacheOptionQuoteSnapshot = (
       break;
     }
   }
-  optionQuoteStoreVersions.set(
-    normalizedProviderContractId,
-    (optionQuoteStoreVersions.get(normalizedProviderContractId) ?? 0) + 1,
-  );
-  optionQuoteStoreListeners.forEach((listener) => listener());
-  optionQuoteStoreListenersByProviderContractId
-    .get(normalizedProviderContractId)
-    ?.forEach((listener) => listener());
+  scheduleOptionQuoteNotification(normalizedProviderContractId);
 
   return cachedQuote;
 };
@@ -262,6 +380,14 @@ const seedOptionQuoteSnapshotsFromContracts = (
     if (!providerContractId) {
       return;
     }
+    const hasQuoteData =
+      (isFiniteNumber(contract.bid) && contract.bid > 0) ||
+      (isFiniteNumber(contract.ask) && contract.ask > 0) ||
+      (isFiniteNumber(contract.last) && contract.last > 0) ||
+      (isFiniteNumber(contract.mark) && contract.mark > 0);
+    if (contract.quoteFreshness === "metadata" && !hasQuoteData) {
+      return;
+    }
 
     cacheOptionQuoteSnapshot({
       symbol: contract.contract?.ticker || contract.contract?.underlying || "",
@@ -271,8 +397,8 @@ const seedOptionQuoteSnapshotsFromContracts = (
           : isFiniteNumber(contract.mark)
             ? contract.mark
             : 0,
-      bid: contract.bid,
-      ask: contract.ask,
+      bid: contract.bid ?? 0,
+      ask: contract.ask ?? 0,
       bidSize: 0,
       askSize: 0,
       change: 0,
@@ -290,11 +416,16 @@ const seedOptionQuoteSnapshotsFromContracts = (
       vega: contract.vega ?? null,
       providerContractId,
       source: "ibkr",
-      transport: "client_portal",
-      delayed: false,
-      updatedAt: contract.updatedAt,
-      freshness: undefined,
-      cacheAgeMs: null,
+      transport: "tws",
+      delayed:
+        contract.quoteFreshness === "delayed" ||
+        contract.quoteFreshness === "delayed_frozen",
+      updatedAt: contract.quoteUpdatedAt || contract.updatedAt,
+      freshness: contract.quoteFreshness,
+      marketDataMode: contract.marketDataMode,
+      dataUpdatedAt: contract.dataUpdatedAt || contract.quoteUpdatedAt || null,
+      ageMs: contract.ageMs ?? null,
+      cacheAgeMs: contract.ageMs ?? null,
       latency: null,
     });
   });
@@ -350,6 +481,98 @@ const readSymbolsParam = (queryKey: unknown): string[] => {
   return normalizeSymbols(rawSymbols.split(","));
 };
 
+const readQuoteTimestampMs = (value: unknown): number | null => {
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    const timestamp = Date.parse(String(value));
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  return null;
+};
+
+const readQuoteReceivedAtMs = (quote: QuoteSnapshot | undefined): number | null => {
+  const latency = quote?.latency;
+  return readQuoteTimestampMs(
+    latency && typeof latency === "object"
+      ? latency.apiServerReceivedAt ?? latency.apiServerEmittedAt
+      : null,
+  );
+};
+
+export const isQuoteSnapshotAtLeastAsFresh = (
+  incoming: QuoteSnapshot,
+  current: QuoteSnapshot | undefined,
+): boolean => {
+  if (!current) {
+    return true;
+  }
+
+  const incomingUpdatedAt = readQuoteTimestampMs(incoming.updatedAt);
+  const currentUpdatedAt = readQuoteTimestampMs(current.updatedAt);
+
+  if (incomingUpdatedAt !== null && currentUpdatedAt !== null) {
+    if (incomingUpdatedAt > currentUpdatedAt) {
+      return true;
+    }
+    if (incomingUpdatedAt < currentUpdatedAt) {
+      return false;
+    }
+  } else if (incomingUpdatedAt === null && currentUpdatedAt !== null) {
+    return false;
+  } else if (incomingUpdatedAt !== null && currentUpdatedAt === null) {
+    return true;
+  }
+
+  const incomingReceivedAt = readQuoteReceivedAtMs(incoming);
+  const currentReceivedAt = readQuoteReceivedAtMs(current);
+  return (
+    currentReceivedAt === null ||
+    incomingReceivedAt === null ||
+    incomingReceivedAt >= currentReceivedAt
+  );
+};
+
+const collectLatestCachedQuotesBySymbol = (
+  queryClient: ReturnType<typeof useQueryClient>,
+): Map<string, QuoteSnapshot> => {
+  const latestBySymbol = new Map<string, QuoteSnapshot>();
+  queryClient
+    .getQueryCache()
+    .findAll({ queryKey: ["/api/quotes/snapshot"] })
+    .forEach((query) => {
+      const data = query.state.data as QuoteSnapshotsResponse | undefined;
+      (data?.quotes || []).forEach((quote) => {
+        const symbol = quote.symbol?.toUpperCase?.();
+        if (!symbol) {
+          return;
+        }
+        const current = latestBySymbol.get(symbol);
+        if (isQuoteSnapshotAtLeastAsFresh(quote, current)) {
+          latestBySymbol.set(symbol, quote);
+        }
+      });
+    });
+  return latestBySymbol;
+};
+
+const filterAcceptedQuoteSnapshots = (
+  incomingQuotes: QuoteSnapshot[],
+  latestBySymbol: Map<string, QuoteSnapshot>,
+): QuoteSnapshot[] => (
+  incomingQuotes.filter((quote) => {
+    const symbol = quote.symbol?.toUpperCase?.();
+    if (!symbol) {
+      return false;
+    }
+    return isQuoteSnapshotAtLeastAsFresh(quote, latestBySymbol.get(symbol));
+  })
+);
+
 const matchesMode = (
   params: Record<string, unknown> | null,
   mode: StreamMode,
@@ -359,7 +582,606 @@ const matchesMode = (
   return !requestedMode || requestedMode === mode;
 };
 
-const mergeQuotesIntoCache = (
+const queryKeyPath = (queryKey: unknown): string | null =>
+  Array.isArray(queryKey) && typeof queryKey[0] === "string"
+    ? queryKey[0]
+    : null;
+
+const accountScopedPrefix = (accountId: string): string =>
+  `/api/accounts/${accountId}`;
+
+const invalidateAccountScopedQueries = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  accountIds: string[],
+  mode: StreamMode,
+  resourceNames?: Set<string>,
+) => {
+  const normalizedAccountIds = Array.from(
+    new Set(accountIds.map((accountId) => accountId?.trim?.()).filter(Boolean)),
+  );
+
+  if (!normalizedAccountIds.length) {
+    return;
+  }
+
+  queryClient.invalidateQueries({
+    predicate: (query) => {
+      const path = queryKeyPath(query.queryKey);
+      if (!path) {
+        return false;
+      }
+
+      const matchedAccountId = normalizedAccountIds.find((accountId) =>
+        path.startsWith(`${accountScopedPrefix(accountId)}/`),
+      );
+      if (!matchedAccountId) {
+        return false;
+      }
+
+      if (!matchesMode(readQueryParams(query.queryKey), mode)) {
+        return false;
+      }
+
+      if (!resourceNames?.size) {
+        return true;
+      }
+
+      const resourceName = path.slice(
+        `${accountScopedPrefix(matchedAccountId)}/`.length,
+      );
+      return resourceNames.has(resourceName);
+    },
+  });
+};
+
+export const invalidateVisibleAccountDerivedQueries = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  accountIds: string[],
+  mode: StreamMode,
+  options: { includeEquityHistory?: boolean } = {},
+) => {
+  const includeEquityHistory = options.includeEquityHistory ?? true;
+  invalidateAccountScopedQueries(
+    queryClient,
+    accountIds,
+    mode,
+    new Set([
+      "summary",
+      "positions",
+      "orders",
+      "allocation",
+      "risk",
+      "cash-activity",
+      "closed-trades",
+      ...(includeEquityHistory ? ["equity-history"] : []),
+    ]),
+  );
+};
+
+const accountIdsFromAccountPayload = (
+  accounts: AccountsResponse["accounts"],
+  requestedAccountId?: string | null,
+): string[] => [
+  "combined",
+  ...(requestedAccountId ? [requestedAccountId] : []),
+  ...accounts.map((account) => account.id).filter(Boolean),
+];
+
+const ACCOUNT_HISTORY_RANGES = [
+  "1D",
+  "1W",
+  "1M",
+  "3M",
+  "6M",
+  "YTD",
+  "1Y",
+  "ALL",
+] as const;
+
+type AccountHistoryRangeValue = (typeof ACCOUNT_HISTORY_RANGES)[number];
+
+const normalizeAccountHistoryRange = (
+  value: unknown,
+): AccountHistoryRangeValue | null =>
+  typeof value === "string" &&
+  ACCOUNT_HISTORY_RANGES.includes(value as AccountHistoryRangeValue)
+    ? (value as AccountHistoryRangeValue)
+    : null;
+
+const accountHistoryRangeStartMs = (
+  range: AccountHistoryRangeValue,
+  nowMs: number,
+): number | null => {
+  const start = new Date(nowMs);
+  switch (range) {
+    case "1D":
+      return nowMs - 24 * 60 * 60_000;
+    case "1W":
+      start.setUTCDate(start.getUTCDate() - 7);
+      return start.getTime();
+    case "1M":
+      start.setUTCMonth(start.getUTCMonth() - 1);
+      return start.getTime();
+    case "3M":
+      start.setUTCMonth(start.getUTCMonth() - 3);
+      return start.getTime();
+    case "6M":
+      start.setUTCMonth(start.getUTCMonth() - 6);
+      return start.getTime();
+    case "YTD":
+      return Date.UTC(start.getUTCFullYear(), 0, 1);
+    case "1Y":
+      start.setUTCFullYear(start.getUTCFullYear() - 1);
+      return start.getTime();
+    case "ALL":
+      return null;
+  }
+};
+
+const parseAccountTimestampMs = (value: unknown): number | null => {
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const timestamp = Date.parse(String(value));
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  return null;
+};
+
+const accountsForScopedAccountId = (
+  accounts: AccountsResponse["accounts"],
+  accountId: string,
+): AccountsResponse["accounts"] =>
+  accountId === "combined"
+    ? accounts
+    : accounts.filter(
+        (account) =>
+          account.id === accountId || account.providerAccountId === accountId,
+      );
+
+const sumAccountField = (
+  accounts: AccountsResponse["accounts"],
+  field: keyof BrokerAccount,
+): number | null => {
+  const values = accounts
+    .map((account) => account[field])
+    .filter((value): value is number => isFiniteNumber(value));
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+};
+
+const latestAccountUpdatedAtMs = (
+  accounts: AccountsResponse["accounts"],
+): number | null =>
+  accounts.reduce<number | null>((latest, account) => {
+    const timestamp = parseAccountTimestampMs(account.updatedAt);
+    if (timestamp === null) {
+      return latest;
+    }
+    return latest === null ? timestamp : Math.max(latest, timestamp);
+  }, null);
+
+const accountIdFromScopedPath = (
+  path: string | null,
+  resourceName: string,
+): string | null => {
+  const match = path?.match(/^\/api\/accounts\/([^/]+)\/([^/]+)$/);
+  return match?.[2] === resourceName ? decodeURIComponent(match[1] || "") : null;
+};
+
+const pointTimestampMs = (point: Pick<AccountEquityPoint, "timestamp">): number | null =>
+  parseAccountTimestampMs(point.timestamp);
+
+const recomputeEquityReturns = (
+  points: AccountEquityPoint[],
+): AccountEquityPoint[] => {
+  const externalTransferAmount = (point: AccountEquityPoint): number =>
+    (isFiniteNumber(point.deposits) ? point.deposits : 0) -
+    (isFiniteNumber(point.withdrawals) ? point.withdrawals : 0);
+  const firstPoint = points[0] ?? null;
+  const firstPointTransfer = firstPoint ? externalTransferAmount(firstPoint) : 0;
+  const initialPreviousNav = firstPoint
+    ? firstPointTransfer > 0
+      ? Math.max(0, firstPoint.netLiquidation - firstPointTransfer)
+      : firstPoint.netLiquidation - firstPointTransfer
+    : null;
+  const baseline =
+    initialPreviousNav !== null && Math.abs(initialPreviousNav) > 0
+      ? initialPreviousNav
+      : (points.find((point) => Math.abs(Number(point.netLiquidation)) > 0)
+          ?.netLiquidation ??
+        firstPoint?.netLiquidation ??
+        0);
+  let previousNav: number | null = initialPreviousNav;
+  let cumulativePnl = 0;
+  let capitalBase = Math.max(
+    Math.abs(baseline),
+    Math.abs(firstPoint?.netLiquidation ?? 0),
+  );
+
+  return points.map((point, index) => {
+    const transfer = externalTransferAmount(point);
+    if (index > 0 && transfer > 0) {
+      capitalBase += transfer;
+    }
+    const pnlDelta =
+      previousNav === null ? 0 : point.netLiquidation - previousNav - transfer;
+    cumulativePnl += pnlDelta;
+    previousNav = point.netLiquidation;
+
+    return {
+      ...point,
+      returnPercent: capitalBase ? (cumulativePnl / capitalBase) * 100 : 0,
+    };
+  });
+};
+
+const upsertLiveEquityTerminalPoint = (
+  current: LiveAccountEquityHistoryResponse | undefined,
+  payload: AccountStreamPayload,
+  accountId: string,
+  requestedRange: AccountHistoryRangeValue,
+): LiveAccountEquityHistoryResponse | undefined => {
+  if (!current || current.range !== requestedRange) {
+    return current;
+  }
+
+  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  if (!scopedAccounts.length) {
+    return current;
+  }
+
+  const netLiquidation = sumAccountField(scopedAccounts, "netLiquidation");
+  const timestampMs = latestAccountUpdatedAtMs(scopedAccounts);
+  if (netLiquidation === null || timestampMs === null) {
+    return current;
+  }
+
+  const rangeStartMs = accountHistoryRangeStartMs(requestedRange, timestampMs);
+  if (rangeStartMs !== null && timestampMs < rangeStartMs) {
+    return current;
+  }
+
+  const timestamp = new Date(timestampMs).toISOString();
+  const existingPoints = current.points || [];
+  const exactMatchIndex = existingPoints.findIndex(
+    (point) => pointTimestampMs(point) === timestampMs,
+  );
+  const lastPoint = existingPoints[existingPoints.length - 1] ?? null;
+  const lastPointTimestampMs = lastPoint ? pointTimestampMs(lastPoint) : null;
+  if (
+    exactMatchIndex < 0 &&
+    lastPointTimestampMs !== null &&
+    timestampMs < lastPointTimestampMs
+  ) {
+    return current;
+  }
+
+  const currency = scopedAccounts[0]?.currency || current.currency || "USD";
+  const previousTerminal =
+    exactMatchIndex >= 0
+      ? existingPoints[exactMatchIndex]
+      : lastPoint?.source === "IBKR_ACCOUNT_SUMMARY"
+        ? lastPoint
+        : null;
+  const livePoint: AccountEquityPoint = {
+    timestamp,
+    netLiquidation,
+    currency,
+    source: "IBKR_ACCOUNT_SUMMARY",
+    deposits: previousTerminal?.deposits ?? 0,
+    withdrawals: previousTerminal?.withdrawals ?? 0,
+    dividends: previousTerminal?.dividends ?? 0,
+    fees: previousTerminal?.fees ?? 0,
+    returnPercent: previousTerminal?.returnPercent ?? 0,
+    benchmarkPercent: previousTerminal?.benchmarkPercent ?? null,
+  };
+
+  const withoutPreviousTerminal = existingPoints.filter((point, index) => {
+    if (exactMatchIndex >= 0) {
+      return index !== exactMatchIndex;
+    }
+    return point !== previousTerminal;
+  });
+  const nextPoints = recomputeEquityReturns(
+    [...withoutPreviousTerminal, livePoint]
+      .filter((point) => {
+        const pointMs = pointTimestampMs(point);
+        return (
+          pointMs !== null &&
+          (rangeStartMs === null || pointMs >= rangeStartMs)
+        );
+      })
+      .sort((left, right) => {
+        const leftMs = pointTimestampMs(left) ?? 0;
+        const rightMs = pointTimestampMs(right) ?? 0;
+        return leftMs - rightMs;
+      }),
+  );
+
+  return {
+    ...current,
+    currency,
+    asOf: timestamp,
+    isStale: false,
+    staleReason: null,
+    terminalPointSource: "live_account_summary",
+    liveTerminalIncluded: true,
+    points: nextPoints,
+  };
+};
+
+const patchAccountSummaryFromStream = (
+  current: AccountSummaryResponse | undefined,
+  payload: AccountStreamPayload,
+  accountId: string,
+): AccountSummaryResponse | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  if (!scopedAccounts.length) {
+    return current;
+  }
+
+  const timestampMs = latestAccountUpdatedAtMs(scopedAccounts);
+  const updatedAt = timestampMs ? new Date(timestampMs).toISOString() : current.updatedAt;
+  const currency = scopedAccounts[0]?.currency || current.currency;
+  const netLiquidation = sumAccountField(scopedAccounts, "netLiquidation");
+  const totalCash = sumAccountField(scopedAccounts, "cash");
+  const buyingPower = sumAccountField(scopedAccounts, "buyingPower");
+
+  return {
+    ...current,
+    currency,
+    updatedAt,
+    metrics: {
+      ...current.metrics,
+      ...(netLiquidation !== null
+        ? {
+            netLiquidation: {
+              ...(current.metrics.netLiquidation || {}),
+              value: netLiquidation,
+              currency,
+              source: "IBKR_ACCOUNT_SUMMARY",
+              field: "netLiquidation",
+              updatedAt,
+            },
+          }
+        : {}),
+      ...(totalCash !== null
+        ? {
+            totalCash: {
+              ...(current.metrics.totalCash || {}),
+              value: totalCash,
+              currency,
+              source: "IBKR_ACCOUNT_SUMMARY",
+              field: "cash",
+              updatedAt,
+            },
+          }
+        : {}),
+      ...(buyingPower !== null
+        ? {
+            buyingPower: {
+              ...(current.metrics.buyingPower || {}),
+              value: buyingPower,
+              currency,
+              source: "IBKR_ACCOUNT_SUMMARY",
+              field: "buyingPower",
+              updatedAt,
+            },
+          }
+        : {}),
+    },
+  };
+};
+
+const filterPositionsForQuery = (
+  positions: PositionsResponse["positions"],
+  queryKey: unknown,
+): PositionsResponse["positions"] => {
+  const params = readQueryParams(queryKey);
+  const requestedAccountId =
+    typeof params?.accountId === "string" ? params.accountId : null;
+  return positions.filter(
+    (position) => {
+      const quantity = Number(position.quantity);
+      return (
+        (!Number.isFinite(quantity) || Math.abs(quantity) > 1e-9) &&
+        (!requestedAccountId || position.accountId === requestedAccountId)
+      );
+    },
+  );
+};
+
+const filterOrdersForQuery = (
+  orders: OrdersResponse["orders"],
+  queryKey: unknown,
+): OrdersResponse["orders"] => {
+  const params = readQueryParams(queryKey);
+  const requestedAccountId =
+    typeof params?.accountId === "string" ? params.accountId : null;
+  const requestedStatus =
+    typeof params?.status === "string" ? params.status : null;
+  return orders.filter((order) => {
+    if (requestedAccountId && order.accountId !== requestedAccountId) {
+      return false;
+    }
+    if (requestedStatus && order.status !== requestedStatus) {
+      return false;
+    }
+    return true;
+  });
+};
+
+const shadowPositionsForQuery = (
+  positionsResponse: AccountPositionsResponse,
+  queryKey: unknown,
+): AccountPositionsResponse => {
+  const params = readQueryParams(queryKey);
+  const requestedAssetClass =
+    typeof params?.assetClass === "string" ? params.assetClass : null;
+  const openPositions = positionsResponse.positions.filter((position) => {
+    const quantity = Number(position.quantity);
+    return !Number.isFinite(quantity) || Math.abs(quantity) > 1e-9;
+  });
+  if (!requestedAssetClass || requestedAssetClass === "all") {
+    return {
+      ...positionsResponse,
+      positions: openPositions,
+    };
+  }
+
+  return {
+    ...positionsResponse,
+    positions: openPositions.filter(
+      (position) =>
+        String(position.assetClass || "").toLowerCase() ===
+        requestedAssetClass.toLowerCase(),
+    ),
+  };
+};
+
+const shadowOrdersForQuery = (
+  payload: ShadowAccountStreamPayload,
+  queryKey: unknown,
+): AccountOrdersResponse => {
+  const params = readQueryParams(queryKey);
+  return params?.tab === "history" ? payload.historyOrders : payload.workingOrders;
+};
+
+export const applyShadowAccountPayloadToCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: ShadowAccountStreamPayload,
+) => {
+  queryClient
+    .getQueryCache()
+    .findAll({
+      predicate: (query) => {
+        const path = queryKeyPath(query.queryKey);
+        return Boolean(path?.startsWith("/api/accounts/shadow/"));
+      },
+    })
+    .forEach((query) => {
+      if (!matchesMode(readQueryParams(query.queryKey), "paper")) {
+        return;
+      }
+
+      const path = queryKeyPath(query.queryKey);
+      if (path === "/api/accounts/shadow/summary") {
+        queryClient.setQueryData(query.queryKey, payload.summary);
+      } else if (path === "/api/accounts/shadow/positions") {
+        queryClient.setQueryData(
+          query.queryKey,
+          shadowPositionsForQuery(payload.positions, query.queryKey),
+        );
+      } else if (path === "/api/accounts/shadow/orders") {
+        queryClient.setQueryData(
+          query.queryKey,
+          shadowOrdersForQuery(payload, query.queryKey),
+        );
+      } else if (path === "/api/accounts/shadow/allocation") {
+        queryClient.setQueryData(query.queryKey, payload.allocation);
+      } else if (path === "/api/accounts/shadow/risk") {
+        queryClient.setQueryData(query.queryKey, payload.risk);
+      }
+    });
+
+  invalidateVisibleAccountDerivedQueries(queryClient, ["shadow"], "paper");
+};
+
+export const applyIbkrAccountPayloadToCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  payload: AccountStreamPayload,
+  input: { accountId?: string | null; mode: StreamMode },
+) => {
+  queryClient
+    .getQueryCache()
+    .findAll({ queryKey: ["/api/accounts"] })
+    .forEach((query) => {
+      const params = readQueryParams(query.queryKey);
+      if (!matchesMode(params, input.mode)) {
+        return;
+      }
+
+      queryClient.setQueryData(query.queryKey, {
+        accounts: payload.accounts,
+      } satisfies AccountsResponse);
+    });
+
+  queryClient
+    .getQueryCache()
+    .findAll({ queryKey: ["/api/positions"] })
+    .forEach((query) => {
+      const params = readQueryParams(query.queryKey);
+      if (!matchesMode(params, input.mode)) {
+        return;
+      }
+
+      queryClient.setQueryData(query.queryKey, {
+        positions: filterPositionsForQuery(payload.positions, query.queryKey),
+      } satisfies PositionsResponse);
+    });
+
+  queryClient
+    .getQueryCache()
+    .findAll({
+      predicate: (query) => {
+        const path = queryKeyPath(query.queryKey);
+        return Boolean(path?.startsWith("/api/accounts/"));
+      },
+    })
+    .forEach((query) => {
+      const params = readQueryParams(query.queryKey);
+      if (!matchesMode(params, input.mode)) {
+        return;
+      }
+
+      const path = queryKeyPath(query.queryKey);
+      const summaryAccountId = accountIdFromScopedPath(path, "summary");
+      if (summaryAccountId) {
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountSummaryResponse | undefined) =>
+            patchAccountSummaryFromStream(current, payload, summaryAccountId),
+        );
+        return;
+      }
+
+      const equityAccountId = accountIdFromScopedPath(path, "equity-history");
+      if (!equityAccountId) {
+        return;
+      }
+
+      const range = normalizeAccountHistoryRange(params?.range);
+      if (!range) {
+        return;
+      }
+
+      queryClient.setQueryData(
+        query.queryKey,
+        (current: LiveAccountEquityHistoryResponse | undefined) =>
+          upsertLiveEquityTerminalPoint(
+            current,
+            payload,
+            equityAccountId,
+            range,
+          ),
+      );
+    });
+
+  invalidateVisibleAccountDerivedQueries(
+    queryClient,
+    accountIdsFromAccountPayload(payload.accounts, input.accountId),
+    input.mode,
+    { includeEquityHistory: false },
+  );
+};
+
+export const mergeQuotesIntoCache = (
   current: QuoteSnapshotsResponse | undefined,
   incomingQuotes: QuoteSnapshot[],
   requestedSymbols: string[],
@@ -380,8 +1202,13 @@ const mergeQuotesIntoCache = (
   const currentBySymbol = new Map(
     (current?.quotes || []).map((quote) => [quote.symbol.toUpperCase(), quote]),
   );
+  const acceptedQuotes: QuoteSnapshot[] = [];
   filteredQuotes.forEach((quote) => {
-    currentBySymbol.set(quote.symbol.toUpperCase(), quote);
+    const symbol = quote.symbol.toUpperCase();
+    if (isQuoteSnapshotAtLeastAsFresh(quote, currentBySymbol.get(symbol))) {
+      currentBySymbol.set(symbol, quote);
+      acceptedQuotes.push(quote);
+    }
   });
 
   const quotes = requestedSymbols.length
@@ -399,13 +1226,13 @@ const mergeQuotesIntoCache = (
       fallbackUsed: false,
     }),
     quotes,
-    transport: filteredQuotes[0]?.transport ?? current?.transport ?? null,
+    transport: acceptedQuotes[0]?.transport ?? current?.transport ?? null,
     delayed: quotes.some((quote) => quote.delayed),
     fallbackUsed: false,
   };
 };
 
-const mergeOptionChainContracts = (
+export const mergeOptionChainContracts = (
   currentContracts: OptionChainResponse["contracts"] | undefined,
   nextContracts: OptionChainResponse["contracts"],
 ): OptionChainResponse["contracts"] => {
@@ -415,7 +1242,15 @@ const mergeOptionChainContracts = (
       .map((contract) => [contract.contract.providerContractId || "", contract]),
   );
 
-  return nextContracts.map((nextContract) => {
+  const nextProviderContractIds = new Set(
+    nextContracts
+      .map((contract) => contract.contract?.providerContractId)
+      .filter((providerContractId): providerContractId is string =>
+        Boolean(providerContractId),
+      ),
+  );
+
+  const mergedContracts = nextContracts.map((nextContract) => {
     const providerContractId = nextContract.contract?.providerContractId;
     if (!providerContractId) {
       return nextContract;
@@ -448,9 +1283,25 @@ const mergeOptionChainContracts = (
       updatedAt: currentContract.updatedAt,
     };
   });
+
+  (currentContracts || []).forEach((currentContract) => {
+    const providerContractId = currentContract.contract?.providerContractId;
+    if (!providerContractId || nextProviderContractIds.has(providerContractId)) {
+      return;
+    }
+    mergedContracts.push(currentContract);
+  });
+
+  return mergedContracts.sort(
+    (left, right) =>
+      new Date(left.contract.expirationDate).getTime() -
+        new Date(right.contract.expirationDate).getTime() ||
+      left.contract.strike - right.contract.strike ||
+      left.contract.right.localeCompare(right.contract.right),
+  );
 };
 
-const patchOptionQuotesIntoContracts = (
+export const patchOptionQuotesIntoContracts = (
   currentContracts: OptionChainResponse["contracts"] | undefined,
   incomingQuotes: LiveOptionQuoteSnapshot[],
 ): OptionChainResponse["contracts"] => {
@@ -461,16 +1312,22 @@ const patchOptionQuotesIntoContracts = (
   const quotesByProviderContractId = new Map(
     incomingQuotes
       .filter((quote) => quote.providerContractId)
-      .map((quote) => [quote.providerContractId || "", quote]),
+      .map((quote) => [
+        normalizeProviderContractId(quote.providerContractId),
+        quote,
+      ]),
   );
 
-  return currentContracts.map((contract) => {
+  let changed = false;
+  const nextContracts = currentContracts.map((contract) => {
     const providerContractId = contract.contract?.providerContractId;
     if (!providerContractId) {
       return contract;
     }
 
-    const quote = quotesByProviderContractId.get(providerContractId);
+    const quote = quotesByProviderContractId.get(
+      normalizeProviderContractId(providerContractId),
+    );
     if (!quote) {
       return contract;
     }
@@ -479,11 +1336,47 @@ const patchOptionQuotesIntoContracts = (
     const ask = isFiniteNumber(quote.ask) ? quote.ask : contract.ask;
     const last = isFiniteNumber(quote.price) ? quote.price : contract.last;
     const mark =
-      bid > 0 && ask > 0
+      bid != null && ask != null && bid > 0 && ask > 0
         ? (bid + ask) / 2
         : isFiniteNumber(last)
-          ? last
-          : contract.mark;
+        ? last
+        : contract.mark;
+    const updatedAt = quote.updatedAt ?? contract.updatedAt;
+    const quoteHasUsableData = hasUsableOptionQuoteData(quote);
+    const quoteFreshness =
+      quote.freshness ??
+      (quoteHasUsableData ? "live" : contract.quoteFreshness);
+    const marketDataMode = quote.marketDataMode ?? contract.marketDataMode ?? null;
+    const quoteUpdatedAt =
+      quote.dataUpdatedAt ?? quote.updatedAt ?? contract.quoteUpdatedAt ?? null;
+    const dataUpdatedAt =
+      quote.dataUpdatedAt ?? quote.updatedAt ?? contract.dataUpdatedAt ?? null;
+    const ageMs = quote.ageMs ?? contract.ageMs ?? null;
+
+    if (
+      contract.bid === bid &&
+      contract.ask === ask &&
+      contract.last === last &&
+      contract.mark === mark &&
+      contract.impliedVolatility ===
+        (quote.impliedVolatility ?? contract.impliedVolatility) &&
+      contract.delta === (quote.delta ?? contract.delta) &&
+      contract.gamma === (quote.gamma ?? contract.gamma) &&
+      contract.theta === (quote.theta ?? contract.theta) &&
+      contract.vega === (quote.vega ?? contract.vega) &&
+      contract.volume === (quote.volume ?? contract.volume) &&
+      contract.openInterest === (quote.openInterest ?? contract.openInterest) &&
+      contract.updatedAt === updatedAt &&
+      contract.quoteFreshness === quoteFreshness &&
+      contract.marketDataMode === marketDataMode &&
+      contract.quoteUpdatedAt === quoteUpdatedAt &&
+      contract.dataUpdatedAt === dataUpdatedAt &&
+      contract.ageMs === ageMs
+    ) {
+      return contract;
+    }
+
+    changed = true;
 
     return {
       ...contract,
@@ -498,20 +1391,59 @@ const patchOptionQuotesIntoContracts = (
       vega: quote.vega ?? contract.vega,
       volume: quote.volume ?? contract.volume,
       openInterest: quote.openInterest ?? contract.openInterest,
-      updatedAt: quote.updatedAt,
+      updatedAt,
+      quoteFreshness,
+      marketDataMode,
+      quoteUpdatedAt,
+      dataUpdatedAt,
+      ageMs,
     };
   });
+
+  return changed ? nextContracts : currentContracts;
 };
 
 const mergeOptionChainResponse = (
   current: OptionChainResponse | undefined,
   nextContracts: OptionChainResponse["contracts"],
   underlying: string,
+  expirationDate: string | null = null,
 ): OptionChainResponse => ({
   underlying,
-  expirationDate: current?.expirationDate ?? null,
+  expirationDate: current?.expirationDate ?? expirationDate,
   contracts: mergeOptionChainContracts(current?.contracts, nextContracts),
 });
+
+export const getOptionChainContractExpirationKey = (
+  contract: OptionChainResponse["contracts"][number],
+): string | null => {
+  const expirationDate = contract?.contract?.expirationDate;
+  if (typeof expirationDate !== "string" || !expirationDate.trim()) {
+    return null;
+  }
+
+  const match = expirationDate.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+};
+
+export const groupOptionChainContractsByExpiration = (
+  contracts: OptionChainResponse["contracts"],
+): Map<string, OptionChainResponse["contracts"]> => {
+  const contractsByExpiration = new Map<string, OptionChainResponse["contracts"]>();
+
+  (contracts || []).forEach((contract) => {
+    const expirationKey = getOptionChainContractExpirationKey(contract);
+    if (!expirationKey) {
+      return;
+    }
+
+    const current = contractsByExpiration.get(expirationKey) || [];
+    current.push(contract);
+    contractsByExpiration.set(expirationKey, current);
+  });
+
+  return contractsByExpiration;
+};
 
 const mergeOptionQuotesIntoCache = (
   current: OptionChainResponse | undefined,
@@ -522,10 +1454,18 @@ const mergeOptionQuotesIntoCache = (
     return current;
   }
 
+  const contracts = patchOptionQuotesIntoContracts(
+    current.contracts,
+    incomingQuotes,
+  );
+  if (contracts === current.contracts) {
+    return current;
+  }
+
   return {
     underlying,
     expirationDate: current.expirationDate ?? null,
-    contracts: patchOptionQuotesIntoContracts(current.contracts, incomingQuotes),
+    contracts,
   };
 };
 
@@ -567,7 +1507,16 @@ export const useIbkrQuoteSnapshotStream = ({
         return;
       }
 
-      onQuotes?.(payload.quotes);
+      const latestBySymbol = collectLatestCachedQuotesBySymbol(queryClient);
+      const acceptedQuotes = filterAcceptedQuoteSnapshots(
+        payload.quotes,
+        latestBySymbol,
+      );
+      if (!acceptedQuotes.length) {
+        return;
+      }
+
+      onQuotes?.(acceptedQuotes);
 
       queryClient
         .getQueryCache()
@@ -578,7 +1527,7 @@ export const useIbkrQuoteSnapshotStream = ({
             (current: QuoteSnapshotsResponse | undefined) =>
               mergeQuotesIntoCache(
                 current,
-                payload.quotes,
+                acceptedQuotes,
                 readSymbolsParam(query.queryKey),
               ),
           );
@@ -629,41 +1578,7 @@ export const useIbkrAccountSnapshotStream = ({
         return;
       }
 
-      queryClient
-        .getQueryCache()
-        .findAll({ queryKey: ["/api/accounts"] })
-        .forEach((query) => {
-          const params = readQueryParams(query.queryKey);
-          if (!matchesMode(params, mode)) {
-            return;
-          }
-
-          queryClient.setQueryData(query.queryKey, {
-            accounts: payload.accounts,
-          } satisfies AccountsResponse);
-        });
-
-      queryClient
-        .getQueryCache()
-        .findAll({ queryKey: ["/api/positions"] })
-        .forEach((query) => {
-          const params = readQueryParams(query.queryKey);
-          if (!matchesMode(params, mode)) {
-            return;
-          }
-
-          const requestedAccountId =
-            typeof params?.accountId === "string" ? params.accountId : null;
-          const positions = requestedAccountId
-            ? payload.positions.filter(
-                (position) => position.accountId === requestedAccountId,
-              )
-            : payload.positions;
-
-          queryClient.setQueryData(query.queryKey, {
-            positions,
-          } satisfies PositionsResponse);
-        });
+      applyIbkrAccountPayloadToCache(queryClient, payload, { accountId, mode });
     };
 
     source.addEventListener("accounts", handleAccounts as EventListener);
@@ -671,7 +1586,46 @@ export const useIbkrAccountSnapshotStream = ({
       source.removeEventListener("accounts", handleAccounts as EventListener);
       source.close();
     };
-  }, [enabled, mode, queryClient, streamUrl]);
+  }, [accountId, enabled, mode, queryClient, streamUrl]);
+};
+
+export const useShadowAccountSnapshotStream = ({
+  enabled = true,
+}: {
+  enabled?: boolean;
+} = {}) => {
+  const queryClient = useQueryClient();
+  const streamUrl = useMemo(
+    () => buildStreamUrl("/api/streams/accounts/shadow", {}),
+    [],
+  );
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      !streamUrl ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return;
+    }
+
+    const source = new EventSource(streamUrl);
+    const handleAccounts = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<ShadowAccountStreamPayload>(event.data);
+      if (!payload) {
+        return;
+      }
+
+      applyShadowAccountPayloadToCache(queryClient, payload);
+    };
+
+    source.addEventListener("accounts", handleAccounts as EventListener);
+    return () => {
+      source.removeEventListener("accounts", handleAccounts as EventListener);
+      source.close();
+    };
+  }, [enabled, queryClient, streamUrl]);
 };
 
 export const useIbkrOrderSnapshotStream = ({
@@ -719,24 +1673,21 @@ export const useIbkrOrderSnapshotStream = ({
             return;
           }
 
-          const requestedAccountId =
-            typeof params?.accountId === "string" ? params.accountId : null;
-          const requestedStatus =
-            typeof params?.status === "string" ? params.status : null;
-          const orders = payload.orders.filter((order) => {
-            if (requestedAccountId && order.accountId !== requestedAccountId) {
-              return false;
-            }
-            if (requestedStatus && order.status !== requestedStatus) {
-              return false;
-            }
-            return true;
-          });
-
           queryClient.setQueryData(query.queryKey, {
-            orders,
+            orders: filterOrdersForQuery(payload.orders, query.queryKey),
           } satisfies OrdersResponse);
         });
+
+      invalidateAccountScopedQueries(
+        queryClient,
+        [
+          "combined",
+          ...(accountId ? [accountId] : []),
+          ...payload.orders.map((order) => order.accountId).filter(Boolean),
+        ],
+        mode,
+        new Set(["orders", "positions", "summary", "risk"]),
+      );
     };
 
     source.addEventListener("orders", handleOrders as EventListener);
@@ -787,22 +1738,35 @@ export const useIbkrOptionChainStream = ({
         return;
       }
 
-      seedOptionQuoteSnapshotsFromContracts(nextUnderlying.contracts || []);
+      const contracts = nextUnderlying.contracts || [];
+      seedOptionQuoteSnapshotsFromContracts(contracts);
 
-      queryClient
-        .getQueryCache()
-        .findAll({ queryKey: ["trade-option-chain", normalizedUnderlying] })
-        .forEach((query) => {
-          queryClient.setQueryData(
-            query.queryKey,
-            (current: OptionChainResponse | undefined) =>
-              mergeOptionChainResponse(
-                current,
-                nextUnderlying.contracts || [],
-                normalizedUnderlying,
-              ),
-          );
-        });
+      groupOptionChainContractsByExpiration(contracts).forEach(
+        (expirationContracts, expirationKey) => {
+          const fallbackQueryKey = [
+            "trade-option-chain",
+            normalizedUnderlying,
+            expirationKey,
+          ];
+          const matchingQueries = queryClient
+            .getQueryCache()
+            .findAll({ queryKey: fallbackQueryKey });
+          const nextResponse = (current: OptionChainResponse | undefined) =>
+            mergeOptionChainResponse(
+              current,
+              expirationContracts,
+              normalizedUnderlying,
+              `${expirationKey}T00:00:00.000Z`,
+            );
+
+          matchingQueries.forEach((query) => {
+            queryClient.setQueryData(query.queryKey, nextResponse);
+          });
+          if (!matchingQueries.length) {
+            queryClient.setQueryData(fallbackQueryKey, nextResponse);
+          }
+        },
+      );
     };
 
     source.addEventListener("chains", handleChains as EventListener);
@@ -825,27 +1789,27 @@ export const useIbkrOptionQuoteStream = ({
   const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
   const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
+  const providerContractIdSignature = providerContractIds
+    .map((providerContractId) => providerContractId?.trim?.() || "")
+    .filter(Boolean)
+    .join("\u001f");
   const normalizedProviderContractIds = useMemo(
     () =>
       Array.from(
         new Set(
-          providerContractIds
-            .map((providerContractId) => providerContractId?.trim?.() || "")
-            .filter(Boolean),
+          providerContractIdSignature
+            ? providerContractIdSignature.split("\u001f")
+            : [],
         ),
-      ).sort(),
-    [providerContractIds],
+      ),
+    [providerContractIdSignature],
   );
-  const streamUrl = useMemo(
+  const webSocketUrl = useMemo(
     () =>
-      buildStreamUrl("/api/streams/options/quotes", {
-        underlying: normalizedUnderlying || undefined,
-        contracts:
-          normalizedProviderContractIds.length > 0
-            ? normalizedProviderContractIds.join(",")
-            : undefined,
-      }),
-    [normalizedProviderContractIds, normalizedUnderlying],
+      OPTION_QUOTE_WEBSOCKET_ENABLED
+        ? buildWebSocketUrl("/api/ws/options/quotes")
+        : null,
+    [],
   );
 
   useEffect(() => {
@@ -854,21 +1818,39 @@ export const useIbkrOptionQuoteStream = ({
       !pageVisible ||
       !normalizedUnderlying ||
       normalizedProviderContractIds.length === 0 ||
-      !streamUrl ||
-      typeof window === "undefined" ||
-      typeof window.EventSource === "undefined"
+      typeof window === "undefined"
     ) {
       return;
     }
 
-    const source = new EventSource(streamUrl);
-    const handleQuotes = (event: MessageEvent<string>) => {
-      const payload = parseJsonPayload<OptionQuoteStreamPayload>(event.data);
-      if (!payload?.quotes?.length) {
+    let closed = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let restFallbackTimer: ReturnType<typeof setInterval> | null = null;
+    let stallTimer: ReturnType<typeof setInterval> | null = null;
+    let quoteFlushFrame: number | null = null;
+    let quoteFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    const queuedQuotesByProviderContractId = new Map<
+      string,
+      LiveOptionQuoteSnapshot
+    >();
+    let firstQuoteStartedAt = Date.now();
+    let firstQuoteRecorded = false;
+    let lastWebSocketMessageAt = Date.now();
+
+    const applyQuotesNow = (quotes: LiveOptionQuoteSnapshot[]) => {
+      if (!quotes.length) {
         return;
       }
+      if (!firstQuoteRecorded) {
+        firstQuoteRecorded = true;
+        recordOptionHydrationMetric(
+          "firstQuoteMs",
+          Math.max(0, Date.now() - firstQuoteStartedAt),
+        );
+      }
 
-      payload.quotes.forEach(cacheOptionQuoteSnapshot);
+      quotes.forEach(cacheOptionQuoteSnapshot);
 
       queryClient
         .getQueryCache()
@@ -879,17 +1861,288 @@ export const useIbkrOptionQuoteStream = ({
             (current: OptionChainResponse | undefined) =>
               mergeOptionQuotesIntoCache(
                 current,
-                payload.quotes,
+                quotes,
                 normalizedUnderlying,
               ),
           );
         });
     };
 
-    source.addEventListener("quotes", handleQuotes as EventListener);
+    const flushQueuedQuotes = () => {
+      quoteFlushFrame = null;
+      quoteFlushTimer = null;
+      if (closed) {
+        queuedQuotesByProviderContractId.clear();
+        return;
+      }
+
+      const quotes = Array.from(queuedQuotesByProviderContractId.values());
+      queuedQuotesByProviderContractId.clear();
+      applyQuotesNow(quotes);
+    };
+
+    const scheduleQueuedQuoteFlush = () => {
+      if (quoteFlushFrame !== null || quoteFlushTimer !== null) {
+        return;
+      }
+      if (typeof window.requestAnimationFrame === "function") {
+        quoteFlushFrame = window.requestAnimationFrame(flushQueuedQuotes);
+        return;
+      }
+      quoteFlushTimer = setTimeout(flushQueuedQuotes, 0);
+    };
+
+    const queueQuotes = (quotes: LiveOptionQuoteSnapshot[]) => {
+      quotes.forEach((quote) => {
+        const providerContractId = normalizeProviderContractId(
+          quote.providerContractId,
+        );
+        if (!providerContractId) {
+          return;
+        }
+        queuedQuotesByProviderContractId.set(providerContractId, quote);
+      });
+      if (queuedQuotesByProviderContractId.size) {
+        scheduleQueuedQuoteFlush();
+      }
+    };
+
+    const stopRestFallback = () => {
+      if (restFallbackTimer) {
+        clearInterval(restFallbackTimer);
+        restFallbackTimer = null;
+      }
+    };
+
+    const stopStallWatchdog = () => {
+      if (stallTimer) {
+        clearInterval(stallTimer);
+        stallTimer = null;
+      }
+    };
+
+    const startRestFallback = () => {
+      if (closed || restFallbackTimer) {
+        return;
+      }
+      let fallbackCursor = 0;
+      const nextFallbackProviderContractIds = () => {
+        if (
+          normalizedProviderContractIds.length <=
+          OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE
+        ) {
+          return normalizedProviderContractIds;
+        }
+
+        const start = fallbackCursor % normalizedProviderContractIds.length;
+        const end = start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE;
+        const batch =
+          end <= normalizedProviderContractIds.length
+            ? normalizedProviderContractIds.slice(start, end)
+            : [
+                ...normalizedProviderContractIds.slice(start),
+                ...normalizedProviderContractIds.slice(
+                  0,
+                  end - normalizedProviderContractIds.length,
+                ),
+              ];
+        fallbackCursor =
+          (start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE) %
+          normalizedProviderContractIds.length;
+        return batch;
+      };
+      setOptionHydrationDiagnostics({
+        quoteMode: "rest-fallback",
+        fallbackMode: "rest-rotating",
+        requestedQuotes: normalizedProviderContractIds.length,
+        acceptedQuotes: normalizedProviderContractIds.length,
+        rejectedQuotes: 0,
+      });
+
+      const poll = async () => {
+        const fallbackProviderContractIds = nextFallbackProviderContractIds();
+        if (closed || fallbackProviderContractIds.length === 0) {
+          return;
+        }
+        const startedAt = Date.now();
+        try {
+          const payload = await getOptionQuoteSnapshots({
+            underlying: normalizedUnderlying,
+            providerContractIds: fallbackProviderContractIds,
+          });
+          recordOptionHydrationMetric(
+            "quoteSnapshotMs",
+            Math.max(0, Date.now() - startedAt),
+          );
+          setOptionHydrationDiagnostics({
+            providerMode: payload.debug?.providerMode ?? undefined,
+            returnedQuotes: payload.debug?.returnedCount ?? payload.quotes.length,
+            requestedQuotes: normalizedProviderContractIds.length,
+            acceptedQuotes: normalizedProviderContractIds.length,
+            rejectedQuotes: 0,
+          });
+          queueQuotes(payload.quotes as LiveOptionQuoteSnapshot[]);
+        } catch {
+          setOptionHydrationDiagnostics({
+            quoteMode: "rest-fallback-error",
+            fallbackMode: "rest-rotating",
+          });
+        }
+      };
+
+      void poll();
+      restFallbackTimer = setInterval(() => {
+        void poll();
+      }, 3_000);
+    };
+
+    const startWebSocket = () => {
+      if (
+        closed ||
+        !webSocketUrl ||
+        typeof window.WebSocket === "undefined"
+      ) {
+        startRestFallback();
+        return;
+      }
+
+      let ready = false;
+      let fallbackStarted = false;
+      firstQuoteStartedAt = Date.now();
+      lastWebSocketMessageAt = Date.now();
+      setOptionHydrationDiagnostics({
+        wsState: "connecting",
+        quoteMode: "websocket",
+        fallbackMode: null,
+        requestedQuotes: normalizedProviderContractIds.length,
+      });
+      socket = new WebSocket(webSocketUrl);
+      stopStallWatchdog();
+      stallTimer = setInterval(() => {
+        if (closed || !ready || fallbackStarted) {
+          return;
+        }
+        const ageMs = Date.now() - lastWebSocketMessageAt;
+        if (ageMs < OPTION_QUOTE_WEBSOCKET_STALL_MS) {
+          return;
+        }
+        setOptionHydrationDiagnostics({
+          wsState: "stalled",
+          quoteMode: "websocket-stalled",
+          degraded: true,
+        });
+        socket?.close();
+      }, Math.max(1_000, Math.floor(OPTION_QUOTE_WEBSOCKET_STALL_MS / 2)));
+
+      const fallbackToRest = () => {
+        if (closed || fallbackStarted) {
+          return;
+        }
+        fallbackStarted = true;
+        socket?.close();
+        startRestFallback();
+      };
+
+      socket.addEventListener("open", () => {
+        setOptionHydrationDiagnostics({ wsState: "open" });
+        socket?.send(
+          JSON.stringify({
+            type: "subscribe",
+            underlying: normalizedUnderlying,
+            providerContractIds: normalizedProviderContractIds,
+          }),
+        );
+      });
+
+      socket.addEventListener("message", (event: MessageEvent<string>) => {
+        lastWebSocketMessageAt = Date.now();
+        const payload = parseJsonPayload<OptionQuoteWebSocketPayload>(event.data);
+        if (!payload) {
+          return;
+        }
+        if (payload.type === "ready") {
+          ready = true;
+          setOptionHydrationDiagnostics({
+            wsState: "ready",
+            requestedQuotes:
+              payload.requestedCount ?? normalizedProviderContractIds.length,
+            acceptedQuotes:
+              payload.acceptedCount ?? normalizedProviderContractIds.length,
+            rejectedQuotes: payload.rejectedCount ?? 0,
+          });
+          return;
+        }
+        if (payload.type === "status") {
+          setOptionHydrationDiagnostics({
+            wsState: ready ? "ready" : "connecting",
+            providerMode: payload.providerMode ?? undefined,
+            requestedQuotes:
+              payload.requestedCount ?? normalizedProviderContractIds.length,
+            acceptedQuotes: payload.acceptedCount,
+            rejectedQuotes: payload.rejectedCount,
+            returnedQuotes: payload.returnedCount,
+            bufferedAmount: payload.bufferedAmount,
+            degraded: payload.degraded,
+          });
+          return;
+        }
+        if (payload.type === "heartbeat") {
+          setOptionHydrationDiagnostics({
+            bufferedAmount: payload.bufferedAmount,
+            degraded: payload.degraded,
+          });
+          return;
+        }
+        if (payload.type === "quotes" && payload.quotes?.length) {
+          queueQuotes(payload.quotes);
+          return;
+        }
+        if (payload.type === "error" && !ready) {
+          fallbackToRest();
+        }
+      });
+
+      socket.addEventListener("error", () => {
+        if (!ready) {
+          fallbackToRest();
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        stopStallWatchdog();
+        if (closed || fallbackStarted) {
+          return;
+        }
+        if (!ready) {
+          fallbackToRest();
+          return;
+        }
+
+        setOptionHydrationDiagnostics({ wsState: "reconnecting" });
+        reconnectTimer = setTimeout(startWebSocket, 1_000);
+      });
+    };
+
+    startWebSocket();
+
     return () => {
-      source.removeEventListener("quotes", handleQuotes as EventListener);
-      source.close();
+      closed = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      stopRestFallback();
+      stopStallWatchdog();
+      if (quoteFlushFrame !== null) {
+        window.cancelAnimationFrame(quoteFlushFrame);
+        quoteFlushFrame = null;
+      }
+      if (quoteFlushTimer !== null) {
+        clearTimeout(quoteFlushTimer);
+        quoteFlushTimer = null;
+      }
+      queuedQuotesByProviderContractId.clear();
+      socket?.close();
     };
   }, [
     enabled,
@@ -897,6 +2150,6 @@ export const useIbkrOptionQuoteStream = ({
     normalizedUnderlying,
     pageVisible,
     queryClient,
-    streamUrl,
+    webSocketUrl,
   ]);
 };

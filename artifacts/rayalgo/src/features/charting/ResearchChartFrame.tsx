@@ -1,10 +1,13 @@
 import type { CSSProperties, ReactNode } from "react";
 import {
   ResearchChartSurface,
+  type ChartViewportSnapshot,
+  type ChartLegendMetadata,
   type OverlayContent,
   type VisibleLogicalRange,
 } from "./ResearchChartSurface";
 import type { ChartModel } from "./types";
+import type { ChartEvent } from "./chartEvents";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -40,15 +43,18 @@ type ReferenceLine = {
 
 const EMPTY_DRAWINGS: ResearchDrawing[] = [];
 const EMPTY_REFERENCE_LINES: ReferenceLine[] = [];
+const EMPTY_CHART_EVENTS: ChartEvent[] = [];
 
 type ResearchChartFrameProps = {
   theme: ResearchChartTheme;
   themeKey: string;
   model: ChartModel;
   surfaceUiStateKey?: string;
+  rangeIdentityKey?: string | null;
   compact?: boolean;
   showSurfaceToolbar?: boolean;
   showLegend?: boolean;
+  legend?: ChartLegendMetadata | null;
   hideTimeScale?: boolean;
   dataTestId?: string;
   style?: CSSProperties;
@@ -64,10 +70,14 @@ type ResearchChartFrameProps = {
   hideCrosshair?: boolean;
   drawings?: ResearchDrawing[];
   referenceLines?: ReferenceLine[];
+  chartEvents?: ChartEvent[];
   drawMode?: "horizontal" | "vertical" | "box" | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
   onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
   onVisibleLogicalRangeChange?: (range: VisibleLogicalRange | null) => void;
+  viewportSnapshot?: ChartViewportSnapshot | null;
+  onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
+  persistScalePrefs?: boolean;
 };
 
 export const ResearchChartFrame = ({
@@ -75,9 +85,11 @@ export const ResearchChartFrame = ({
   themeKey,
   model,
   surfaceUiStateKey,
+  rangeIdentityKey,
   compact = false,
   showSurfaceToolbar = true,
   showLegend = true,
+  legend = null,
   hideTimeScale = false,
   dataTestId,
   style,
@@ -93,10 +105,14 @@ export const ResearchChartFrame = ({
   hideCrosshair = false,
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
+  chartEvents = EMPTY_CHART_EVENTS,
   drawMode = null,
   onAddDrawing,
   onTradeMarkerSelection,
   onVisibleLogicalRangeChange,
+  viewportSnapshot,
+  onViewportSnapshotChange,
+  persistScalePrefs,
 }: ResearchChartFrameProps) => (
   <div
     data-testid={dataTestId}
@@ -120,10 +136,12 @@ export const ResearchChartFrame = ({
         theme={theme}
         themeKey={themeKey}
         uiStateKey={surfaceUiStateKey}
+        rangeIdentityKey={rangeIdentityKey}
         model={model}
         compact={compact}
         showToolbar={showSurfaceToolbar}
         showLegend={showLegend}
+        legend={legend}
         hideTimeScale={hideTimeScale}
         hideCrosshair={hideCrosshair}
         topOverlay={surfaceTopOverlay}
@@ -134,10 +152,14 @@ export const ResearchChartFrame = ({
         bottomOverlayHeight={surfaceBottomOverlayHeight}
         drawings={drawings}
         referenceLines={referenceLines}
+        chartEvents={chartEvents}
         drawMode={drawMode}
         onAddDrawing={onAddDrawing}
         onTradeMarkerSelection={onTradeMarkerSelection}
         onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
+        viewportSnapshot={viewportSnapshot}
+        onViewportSnapshotChange={onViewportSnapshotChange}
+        persistScalePrefs={persistScalePrefs}
       />
     </div>
     {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}

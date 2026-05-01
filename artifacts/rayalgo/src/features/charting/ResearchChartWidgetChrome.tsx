@@ -18,6 +18,7 @@ import {
   Ruler,
   Search,
   Settings,
+  Star,
   Square,
   Trash2,
   Undo2,
@@ -33,6 +34,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  formatPreferenceDateTime,
+  type UserPreferences,
+} from "../preferences/userPreferenceModel";
+import { useUserPreferences } from "../preferences/useUserPreferences";
 import type { ChartSurfaceControls } from "./ResearchChartSurface";
 import type { StudySpec } from "./types";
 
@@ -90,10 +101,17 @@ type ResearchChartWidgetHeaderProps = {
   statusLabel?: string | null;
   timeframe: string;
   timeframeOptions: TimeframeOption[];
+  favoriteTimeframes?: string[];
   onChangeTimeframe?: (next: string) => void;
+  onToggleFavoriteTimeframe?: (next: string) => void;
+  onPrewarmTimeframe?: (next: string) => void;
   onOpenSearch?: () => void;
+  searchOpen?: boolean;
+  onSearchOpenChange?: (open: boolean) => void;
+  searchContent?: ReactNode;
   dense?: boolean;
   meta?: OhlcvMeta | null;
+  showInlineLegend?: boolean;
   studies?: StudyOption[];
   selectedStudies?: string[];
   studySpecs?: StudySpec[];
@@ -112,6 +130,7 @@ type ResearchChartWidgetHeaderProps = {
   onEnterSoloMode?: () => void;
   soloChartTitle?: string;
   rightSlot?: ReactNode;
+  identitySlot?: ReactNode;
 };
 
 type ResearchChartWidgetFooterProps = {
@@ -237,25 +256,19 @@ const formatVolume = (value: number | null | undefined): string => {
   return `${Math.round(value)}`;
 };
 
-const formatTimestamp = (value: string | null | undefined): string => {
-  if (!value) {
-    return "";
-  }
-
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "America/New_York",
-  }).format(new Date(parsed));
-};
+const formatTimestamp = (
+  value: string | null | undefined,
+  preferences: UserPreferences,
+): string =>
+  value
+    ? formatPreferenceDateTime(value, {
+        preferences,
+        context: "chart",
+        monthStyle: "short",
+        dayStyle: "numeric",
+        fallback: value,
+      })
+    : "";
 
 const specBelongsToStudy = (specKey: string, studyId: string): boolean =>
   specKey === studyId || specKey.startsWith(`${studyId}-`);
@@ -286,15 +299,7 @@ const dedupeTimeframes = (options: TimeframeOption[]): TimeframeOption[] => {
 };
 
 const commonTimeframes = (options: TimeframeOption[]): TimeframeOption[] =>
-  dedupeTimeframes([
-    ...options,
-    { value: "1m", label: "1m" },
-    { value: "5m", label: "5m" },
-    { value: "15m", label: "15m" },
-    { value: "1h", label: "1h" },
-    { value: "1D", label: "1D" },
-    { value: "1W", label: "1W" },
-  ]);
+  dedupeTimeframes(options);
 
 const iconStyle = (dense = false): CSSProperties => ({
   width: dense ? 10 : 13,
@@ -650,10 +655,17 @@ export const ResearchChartWidgetHeader = ({
   statusLabel,
   timeframe,
   timeframeOptions,
+  favoriteTimeframes,
   onChangeTimeframe,
+  onToggleFavoriteTimeframe,
+  onPrewarmTimeframe,
   onOpenSearch,
+  searchOpen,
+  onSearchOpenChange,
+  searchContent,
   dense = false,
   meta = null,
+  showInlineLegend = true,
   studies = [],
   selectedStudies = [],
   studySpecs = [],
@@ -672,13 +684,26 @@ export const ResearchChartWidgetHeader = ({
   onEnterSoloMode,
   soloChartTitle = "Expand chart",
   rightSlot = null,
+  identitySlot = null,
 }: ResearchChartWidgetHeaderProps) => {
+  const { preferences: userPreferences } = useUserPreferences();
   const palette = getPanelPalette(theme);
   const headerHeight = dense ? 28 : 40;
   const timeframes = commonTimeframes(timeframeOptions);
-  const favoriteTimeframes = timeframes.slice(0, dense ? 3 : 5);
+  const favoriteTimeframeLookup = useMemo(
+    () => new Set(favoriteTimeframes || []),
+    [favoriteTimeframes],
+  );
+  const renderedFavoriteTimeframes = useMemo(() => {
+    const selected = timeframes.filter((option) =>
+      favoriteTimeframeLookup.has(option.value),
+    );
+    return selected.length ? selected : timeframes.slice(0, dense ? 3 : 5);
+  }, [dense, favoriteTimeframeLookup, timeframes]);
   const resolvedChartType = resolveChartType(controls.baseSeriesType);
-  const canSearch = typeof onOpenSearch === "function";
+  const hasAnchoredSearch =
+    typeof onSearchOpenChange === "function" && searchContent != null;
+  const canSearch = typeof onOpenSearch === "function" || hasAnchoredSearch;
   const activeBar = controls.activeBar;
   const resolvedMeta = {
     open: activeBar?.open ?? meta?.open ?? null,
@@ -696,6 +721,8 @@ export const ResearchChartWidgetHeader = ({
     sourceLabel:
       activeBar?.source === "ibkr-websocket-derived"
         ? "WS"
+        : activeBar?.source === "polygon-delayed-websocket"
+          ? "DELAYED WS"
         : activeBar?.source === "ibkr+massive-gap-fill"
           ? "IBKR + GAP"
           : activeBar?.source === "ibkr-history"
@@ -770,31 +797,69 @@ export const ResearchChartWidgetHeader = ({
           pointerEvents: "auto",
         }}
       >
-        <button
-          type="button"
-          data-testid={canSearch ? "chart-symbol-search-button" : undefined}
-          onClick={canSearch ? onOpenSearch : undefined}
-          style={{
-            ...barButtonStyle({ theme, palette, dense }),
-            color: theme.text,
-            cursor: canSearch ? "pointer" : "default",
-          }}
-          title={canSearch ? `Search ${symbol}` : symbol}
-        >
-          {canSearch ? <Search style={iconStyle(dense)} /> : null}
-          <span style={{ fontWeight: 700 }}>{symbol}</span>
-          {canSearch ? <ChevronDown style={iconStyle(dense)} /> : null}
-        </button>
+        {hasAnchoredSearch ? (
+          <Popover open={Boolean(searchOpen)} onOpenChange={onSearchOpenChange}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                data-testid="chart-symbol-search-button"
+                style={{
+                  ...barButtonStyle({ theme, palette, dense }),
+                  color: theme.text,
+                  cursor: "pointer",
+                }}
+                title={`Search ${symbol}`}
+              >
+                {identitySlot ?? <Search style={iconStyle(dense)} />}
+                <span style={{ fontWeight: 700 }}>{symbol}</span>
+                <ChevronDown style={iconStyle(dense)} />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              sideOffset={6}
+              style={{
+                width: dense ? 380 : 430,
+                maxWidth: "calc(100vw - 24px)",
+                padding: 0,
+                borderRadius: 0,
+                border: "none",
+                background: "transparent",
+                boxShadow: "none",
+              }}
+            >
+              {searchContent}
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <button
+            type="button"
+            data-testid={canSearch ? "chart-symbol-search-button" : undefined}
+            onClick={canSearch ? onOpenSearch : undefined}
+            style={{
+              ...barButtonStyle({ theme, palette, dense }),
+              color: theme.text,
+              cursor: canSearch ? "pointer" : "default",
+            }}
+            title={canSearch ? `Search ${symbol}` : symbol}
+          >
+            {identitySlot ?? (canSearch ? <Search style={iconStyle(dense)} /> : null)}
+            <span style={{ fontWeight: 700 }}>{symbol}</span>
+            {canSearch ? <ChevronDown style={iconStyle(dense)} /> : null}
+          </button>
+        )}
 
         <div style={dividerStyle(theme, dense)} />
 
-        {favoriteTimeframes.map((option) => {
+        {renderedFavoriteTimeframes.map((option) => {
           const active = option.value === timeframe;
           return (
             <button
               key={option.value}
               type="button"
               onClick={() => onChangeTimeframe?.(option.value)}
+              onFocus={() => onPrewarmTimeframe?.(option.value)}
+              onMouseEnter={() => onPrewarmTimeframe?.(option.value)}
               style={barButtonStyle({
                 theme,
                 palette,
@@ -831,21 +896,63 @@ export const ResearchChartWidgetHeader = ({
             >
               Timeframe
             </DropdownMenuLabel>
-            <DropdownMenuRadioGroup
-              value={timeframe}
-              onValueChange={(next) => onChangeTimeframe?.(next)}
-            >
-              {timeframes.map((option) => (
-                <DropdownMenuRadioItem
+            {timeframes.map((option) => {
+              const active = option.value === timeframe;
+              const favorite = favoriteTimeframeLookup.has(option.value);
+              return (
+                <DropdownMenuItem
                   className={chartMenuItemClassName}
                   key={option.value}
-                  value={option.value}
-                  style={menuItemStyle(theme)}
+                  onFocus={() => onPrewarmTimeframe?.(option.value)}
+                  onMouseEnter={() => onPrewarmTimeframe?.(option.value)}
+                  onSelect={() => onChangeTimeframe?.(option.value)}
+                  style={{
+                    ...menuItemStyle(theme),
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    background: active ? withAlpha(theme.accent || theme.text, "20") : undefined,
+                    fontWeight: active ? 700 : 500,
+                  }}
                 >
-                  {option.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
+                  <button
+                    type="button"
+                    aria-label={
+                      favorite
+                        ? `Remove ${option.label} favorite`
+                        : `Favorite ${option.label}`
+                    }
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onToggleFavoriteTimeframe?.(option.value);
+                    }}
+                    style={{
+                      width: 18,
+                      height: 18,
+                      border: "none",
+                      background: "transparent",
+                      color: favorite ? theme.amber : theme.textMuted,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      padding: 0,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Star
+                      style={{
+                        width: 13,
+                        height: 13,
+                        fill: favorite ? "currentColor" : "none",
+                      }}
+                    />
+                  </button>
+                  <span style={{ flex: 1 }}>{option.label}</span>
+                </DropdownMenuItem>
+              );
+            })}
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -1062,19 +1169,20 @@ export const ResearchChartWidgetHeader = ({
         {rightSlot}
       </div>
 
-      <div
-        style={{
-          position: "absolute",
-          top: headerHeight + 6,
-          left: dense ? 8 : 12,
-          right: 12,
-          display: "flex",
-          flexDirection: "column",
-          gap: dense ? 2 : 3,
-          pointerEvents: "none",
-          maxWidth: "calc(100% - 104px)",
-        }}
-      >
+      {showInlineLegend ? (
+        <div
+          style={{
+            position: "absolute",
+            top: headerHeight + 6,
+            left: dense ? 8 : 12,
+            right: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: dense ? 2 : 3,
+            pointerEvents: "none",
+            maxWidth: "calc(100% - 104px)",
+          }}
+        >
         <div
           style={{
             display: "flex",
@@ -1165,7 +1273,7 @@ export const ResearchChartWidgetHeader = ({
           {!dense && (resolvedMeta.timestamp || resolvedMeta.sourceLabel) ? (
             <span style={legendChipStyle({ theme, palette, dense })}>
               {[
-                formatTimestamp(resolvedMeta.timestamp),
+                formatTimestamp(resolvedMeta.timestamp, userPreferences),
                 resolvedMeta.sourceLabel,
               ]
                 .filter(Boolean)
@@ -1210,7 +1318,8 @@ export const ResearchChartWidgetHeader = ({
             ))}
           </div>
         ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -1242,6 +1351,52 @@ export const ResearchChartWidgetFooter = ({
     )
     .map((studyId) => studyLookup.get(studyId) || studyId)
     .slice(0, 4);
+  const scaleModes = [
+    {
+      key: "linear",
+      label: dense ? "Ln" : "Lin",
+      title: "Linear scale",
+      onClick: () => controls.setScaleMode("linear"),
+    },
+    {
+      key: "log",
+      label: "L",
+      title: "Log scale",
+      onClick: () => controls.setScaleMode("log"),
+    },
+    {
+      key: "percentage",
+      label: "%",
+      title: "Percent scale",
+      onClick: () => controls.setScaleMode("percentage"),
+    },
+    {
+      key: "indexed",
+      label: "100",
+      title: "Indexed scale",
+      onClick: () => controls.setScaleMode("indexed"),
+    },
+  ];
+  const scaleButtonHeight = dense ? 14 : 18;
+  const scaleButtonStyle = ({
+    active = false,
+    wide = false,
+  }: {
+    active?: boolean;
+    wide?: boolean;
+  }): CSSProperties => ({
+    width: wide ? (dense ? 22 : 26) : dense ? 16 : 20,
+    height: scaleButtonHeight,
+    background: active ? theme.accent || theme.text : "transparent",
+    color: active ? "#fff" : theme.textDim || theme.textMuted,
+    border: "none",
+    borderRadius: 0,
+    cursor: "pointer",
+    fontFamily: theme.mono,
+    fontSize: dense ? 8 : 10,
+    fontWeight: 700,
+    padding: 0,
+  });
 
   return (
     <div
@@ -1256,7 +1411,7 @@ export const ResearchChartWidgetFooter = ({
           display: "flex",
           alignItems: "center",
           padding: dense ? "0 8px" : "0 10px",
-          gap: dense ? 8 : 14,
+          gap: dense ? 6 : 10,
           fontFamily: theme.mono,
           fontSize: dense ? 9 : 10,
           color: theme.textMuted,
@@ -1266,156 +1421,106 @@ export const ResearchChartWidgetFooter = ({
         }}
       >
         {activeLabels.length ? (
-          <span>{activeLabels.join(" · ")}</span>
+          <span
+            title={activeLabels.join(" · ")}
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {activeLabels.join(" · ")}
+          </span>
         ) : (
-          <span>Pan: drag</span>
+          <span style={{ flexShrink: 0 }}>{dense ? "Pan" : "Pan drag"}</span>
         )}
-        <span>Zoom: scroll</span>
-        <span>
-          {dense
-            ? "Scale: Ln/L/%/100 · A auto"
-            : "Ln / L / % / 100 = price mode · A = auto-scale"}
-        </span>
+        {dense ? null : <span style={{ flexShrink: 0 }}>Zoom scroll</span>}
         <div style={{ flex: 1 }} />
-        {statusText ? <span>{statusText}</span> : null}
-      </div>
-
-      <div
-        style={{
-          position: "absolute",
-          right: dense ? 44 : 58,
-          bottom: footerHeight + (dense ? 4 : 6),
-          display: "flex",
-          gap: 2,
-          background: palette.panel,
-          border: `1px solid ${theme.border}`,
-          borderRadius: 0,
-          padding: dense ? 1 : 2,
-          fontFamily: theme.mono,
-          fontSize: dense ? 8 : 10,
-          zIndex: 30,
-          pointerEvents: "auto",
-          boxShadow: palette.shadow,
-        }}
-      >
-        {[
-          {
-            key: "linear",
-            label: dense ? "Ln" : "Lin",
-            title: "Linear scale",
-            onClick: () => controls.setScaleMode("linear"),
-          },
-          {
-            key: "log",
-            label: "L",
-            title: "Log scale",
-            onClick: () => controls.setScaleMode("log"),
-          },
-          {
-            key: "percentage",
-            label: "%",
-            title: "Percent scale",
-            onClick: () => controls.setScaleMode("percentage"),
-          },
-          {
-            key: "indexed",
-            label: "100",
-            title: "Indexed scale",
-            onClick: () => controls.setScaleMode("indexed"),
-          },
-        ].map((mode) => {
-          const active =
-            mode.key === "linear"
-              ? controls.scaleMode === "linear"
-              : controls.scaleMode === mode.key;
-          return (
-            <button
-              key={mode.key}
-              type="button"
-              onClick={mode.onClick}
-              title={mode.title}
-              style={{
-                width:
-                  mode.key === "indexed" || mode.key === "linear"
-                    ? dense
-                      ? 24
-                      : 28
-                    : dense
-                      ? 16
-                      : 20,
-                height: dense ? 16 : 20,
-                background: active ? theme.accent || theme.text : "transparent",
-                color: active ? "#fff" : theme.textDim || theme.textMuted,
-                border: "none",
-                borderRadius: 0,
-                cursor: "pointer",
-                fontFamily: theme.mono,
-                fontSize: dense ? 8 : 10,
-                fontWeight: 700,
-                padding: 0,
-              }}
-            >
-              {mode.label}
-            </button>
-          );
-        })}
-
+        {statusText ? (
+          <span
+            title={statusText}
+            style={{
+              minWidth: 0,
+              maxWidth: dense ? 90 : 180,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              flexShrink: 1,
+            }}
+          >
+            {statusText}
+          </span>
+        ) : null}
         <div
+          data-chart-footer-scale-controls
           style={{
-            width: 1,
-            alignSelf: "stretch",
-            background: theme.border,
-            margin: "0 2px",
-          }}
-        />
-
-        <button
-          type="button"
-          onClick={() => controls.setAutoScale((value) => !value)}
-          title="Auto-scale main price pane"
-          style={{
-            width: dense ? 16 : 20,
             height: dense ? 16 : 20,
-            background: controls.autoScale
-              ? theme.accent || theme.text
-              : "transparent",
-            color: controls.autoScale ? "#fff" : theme.textDim || theme.textMuted,
-            border: "none",
-            borderRadius: 0,
-            cursor: "pointer",
-            fontFamily: theme.mono,
-            fontSize: dense ? 8 : 10,
-            fontWeight: 700,
-            padding: 0,
-          }}
-        >
-          A
-        </button>
-
-        <button
-          type="button"
-          onClick={() => controls.setInvertScale((value) => !value)}
-          title="Invert scale"
-          style={{
-            width: dense ? 16 : 20,
-            height: dense ? 16 : 20,
-            background: controls.invertScale
-              ? theme.accent || theme.text
-              : "transparent",
-            color: controls.invertScale
-              ? "#fff"
-              : theme.textDim || theme.textMuted,
-            border: "none",
-            borderRadius: 0,
-            cursor: "pointer",
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
+            gap: 1,
+            background: palette.panel,
+            border: `1px solid ${theme.border}`,
+            borderRadius: 0,
+            boxSizing: "border-box",
             padding: 0,
+            fontFamily: theme.mono,
+            fontSize: dense ? 8 : 10,
+            pointerEvents: "auto",
+            flexShrink: 0,
           }}
         >
-          <ArrowUpDown style={iconStyle(true)} />
-        </button>
+          {scaleModes.map((mode) => {
+            const active =
+              mode.key === "linear"
+                ? controls.scaleMode === "linear"
+                : controls.scaleMode === mode.key;
+            return (
+              <button
+                key={mode.key}
+                type="button"
+                onClick={mode.onClick}
+                title={mode.title}
+                style={scaleButtonStyle({
+                  active,
+                  wide: mode.key === "indexed" || mode.key === "linear",
+                })}
+              >
+                {mode.label}
+              </button>
+            );
+          })}
+
+          <div
+            style={{
+              width: 1,
+              alignSelf: "stretch",
+              background: theme.border,
+              margin: "0 1px",
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() => controls.setAutoScale((value) => !value)}
+            title="Auto-scale main price pane"
+            style={scaleButtonStyle({ active: controls.autoScale })}
+          >
+            A
+          </button>
+
+          <button
+            type="button"
+            onClick={() => controls.setInvertScale((value) => !value)}
+            title="Invert scale"
+            style={{
+              ...scaleButtonStyle({ active: controls.invertScale }),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <ArrowUpDown style={iconStyle(true)} />
+          </button>
+        </div>
       </div>
     </div>
   );

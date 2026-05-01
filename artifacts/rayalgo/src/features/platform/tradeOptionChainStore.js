@@ -4,7 +4,10 @@ const EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT = Object.freeze({
   expirationOptions: Object.freeze([]),
   rowsByExpiration: Object.freeze({}),
   loadingExpirations: Object.freeze([]),
+  refreshingExpirations: Object.freeze([]),
+  staleExpirations: Object.freeze([]),
   statusByExpiration: Object.freeze({}),
+  coverageByExpiration: Object.freeze({}),
   loadedExpirationCount: 0,
   completedExpirationCount: 0,
   emptyExpirationCount: 0,
@@ -15,23 +18,27 @@ const EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT = Object.freeze({
 });
 
 const storeEntries = new Map();
-const TRADE_OPTION_CHAIN_TICKER_CAP = 8;
+export const TRADE_OPTION_CHAIN_STORE_ENTRY_CAP = 8;
 
 const evictOldestUnusedTradeOptionChainEntry = () => {
-  if (storeEntries.size <= TRADE_OPTION_CHAIN_TICKER_CAP) return;
+  if (storeEntries.size <= TRADE_OPTION_CHAIN_STORE_ENTRY_CAP) return;
   for (const [key, value] of storeEntries) {
     if (!value.listeners || value.listeners.size === 0) {
       storeEntries.delete(key);
       return;
     }
   }
-  const oldestKey = storeEntries.keys().next().value;
-  if (oldestKey !== undefined) {
-    storeEntries.delete(oldestKey);
-  }
 };
 
 const normalizeTicker = (ticker) => ticker?.trim?.().toUpperCase?.() || "";
+
+const deleteEntryIfUnused = (ticker) => {
+  const normalizedTicker = normalizeTicker(ticker) || "__empty__";
+  const entry = storeEntries.get(normalizedTicker);
+  if (entry && entry.listeners.size === 0) {
+    storeEntries.delete(normalizedTicker);
+  }
+};
 
 const normalizeTimestamp = (value) => {
   if (value instanceof Date) {
@@ -74,7 +81,8 @@ const areExpirationOptionsEquivalent = (left = [], right = []) => {
       current?.isoDate !== next?.isoDate ||
       current?.label !== next?.label ||
       current?.dte !== next?.dte ||
-      normalizeTimestamp(current?.actualDate) !== normalizeTimestamp(next?.actualDate)
+      normalizeTimestamp(current?.actualDate) !==
+        normalizeTimestamp(next?.actualDate)
     ) {
       return false;
     }
@@ -105,8 +113,10 @@ const areChainRowsEquivalent = (left = [], right = []) => {
     const next = right[index];
     if (
       current?.k !== next?.k ||
-      current?.cContract?.providerContractId !== next?.cContract?.providerContractId ||
-      current?.pContract?.providerContractId !== next?.pContract?.providerContractId ||
+      current?.cContract?.providerContractId !==
+        next?.cContract?.providerContractId ||
+      current?.pContract?.providerContractId !==
+        next?.pContract?.providerContractId ||
       current?.cPrem !== next?.cPrem ||
       current?.cBid !== next?.cBid ||
       current?.cAsk !== next?.cAsk ||
@@ -117,6 +127,10 @@ const areChainRowsEquivalent = (left = [], right = []) => {
       current?.cGamma !== next?.cGamma ||
       current?.cTheta !== next?.cTheta ||
       current?.cVega !== next?.cVega ||
+      current?.cFreshness !== next?.cFreshness ||
+      current?.cMarketDataMode !== next?.cMarketDataMode ||
+      normalizeTimestamp(current?.cQuoteUpdatedAt) !==
+        normalizeTimestamp(next?.cQuoteUpdatedAt) ||
       current?.pPrem !== next?.pPrem ||
       current?.pBid !== next?.pBid ||
       current?.pAsk !== next?.pAsk ||
@@ -126,7 +140,11 @@ const areChainRowsEquivalent = (left = [], right = []) => {
       current?.pDelta !== next?.pDelta ||
       current?.pGamma !== next?.pGamma ||
       current?.pTheta !== next?.pTheta ||
-      current?.pVega !== next?.pVega
+      current?.pVega !== next?.pVega ||
+      current?.pFreshness !== next?.pFreshness ||
+      current?.pMarketDataMode !== next?.pMarketDataMode ||
+      normalizeTimestamp(current?.pQuoteUpdatedAt) !==
+        normalizeTimestamp(next?.pQuoteUpdatedAt)
     ) {
       return false;
     }
@@ -197,29 +215,39 @@ export const publishTradeOptionChainSnapshot = (ticker, nextSnapshot) => {
         loadingExpirations: Array.isArray(nextSnapshot.loadingExpirations)
           ? [...nextSnapshot.loadingExpirations].sort()
           : EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.loadingExpirations,
+        refreshingExpirations: Array.isArray(nextSnapshot.refreshingExpirations)
+          ? [...nextSnapshot.refreshingExpirations].sort()
+          : EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.refreshingExpirations,
+        staleExpirations: Array.isArray(nextSnapshot.staleExpirations)
+          ? [...nextSnapshot.staleExpirations].sort()
+          : EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.staleExpirations,
         statusByExpiration:
           nextSnapshot.statusByExpiration ||
           EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.statusByExpiration,
-        loadedExpirationCount:
-          Number.isFinite(nextSnapshot.loadedExpirationCount)
-            ? nextSnapshot.loadedExpirationCount
-            : 0,
-        completedExpirationCount:
-          Number.isFinite(nextSnapshot.completedExpirationCount)
-            ? nextSnapshot.completedExpirationCount
-            : 0,
-        emptyExpirationCount:
-          Number.isFinite(nextSnapshot.emptyExpirationCount)
-            ? nextSnapshot.emptyExpirationCount
-            : 0,
-        failedExpirationCount:
-          Number.isFinite(nextSnapshot.failedExpirationCount)
-            ? nextSnapshot.failedExpirationCount
-            : 0,
-        totalExpirationCount:
-          Number.isFinite(nextSnapshot.totalExpirationCount)
-            ? nextSnapshot.totalExpirationCount
-            : 0,
+        coverageByExpiration:
+          nextSnapshot.coverageByExpiration ||
+          EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT.coverageByExpiration,
+        loadedExpirationCount: Number.isFinite(
+          nextSnapshot.loadedExpirationCount,
+        )
+          ? nextSnapshot.loadedExpirationCount
+          : 0,
+        completedExpirationCount: Number.isFinite(
+          nextSnapshot.completedExpirationCount,
+        )
+          ? nextSnapshot.completedExpirationCount
+          : 0,
+        emptyExpirationCount: Number.isFinite(nextSnapshot.emptyExpirationCount)
+          ? nextSnapshot.emptyExpirationCount
+          : 0,
+        failedExpirationCount: Number.isFinite(
+          nextSnapshot.failedExpirationCount,
+        )
+          ? nextSnapshot.failedExpirationCount
+          : 0,
+        totalExpirationCount: Number.isFinite(nextSnapshot.totalExpirationCount)
+          ? nextSnapshot.totalExpirationCount
+          : 0,
         updatedAt: normalizeUpdatedAt(nextSnapshot.updatedAt),
         status: nextSnapshot.status || "empty",
       }
@@ -235,9 +263,21 @@ export const publishTradeOptionChainSnapshot = (ticker, nextSnapshot) => {
       entry.snapshot.loadingExpirations,
       normalizedSnapshot.loadingExpirations,
     ) &&
+    areStringArraysEquivalent(
+      entry.snapshot.refreshingExpirations,
+      normalizedSnapshot.refreshingExpirations,
+    ) &&
+    areStringArraysEquivalent(
+      entry.snapshot.staleExpirations,
+      normalizedSnapshot.staleExpirations,
+    ) &&
     areStatusMapsEquivalent(
       entry.snapshot.statusByExpiration,
       normalizedSnapshot.statusByExpiration,
+    ) &&
+    areStatusMapsEquivalent(
+      entry.snapshot.coverageByExpiration,
+      normalizedSnapshot.coverageByExpiration,
     ) &&
     entry.snapshot.loadedExpirationCount ===
       normalizedSnapshot.loadedExpirationCount &&
@@ -265,15 +305,43 @@ export const publishTradeOptionChainSnapshot = (ticker, nextSnapshot) => {
 export const getTradeOptionChainSnapshot = (ticker) =>
   ensureEntry(ticker).snapshot || EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT;
 
+export const clearTradeOptionChainSnapshot = (ticker) => {
+  const normalizedTicker = normalizeTicker(ticker) || "__empty__";
+  const entry = storeEntries.get(normalizedTicker);
+  if (!entry) {
+    return;
+  }
+  if (entry.snapshot === EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT) {
+    deleteEntryIfUnused(normalizedTicker);
+    return;
+  }
+  entry.snapshot = EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT;
+  entry.version += 1;
+  entry.listeners.forEach((listener) => listener());
+  deleteEntryIfUnused(normalizedTicker);
+};
+
+export const getTradeOptionChainStoreEntryCount = () => storeEntries.size;
+
+export const resetTradeOptionChainStoreForTests = () => {
+  storeEntries.clear();
+};
+
 const subscribeToTradeOptionChainSnapshot = (ticker, listener) => {
   const entry = ensureEntry(ticker);
   entry.listeners.add(listener);
   return () => {
     entry.listeners.delete(listener);
+    if (entry.snapshot === EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT) {
+      deleteEntryIfUnused(ticker);
+    } else {
+      evictOldestUnusedTradeOptionChainEntry();
+    }
   };
 };
 
-const getTradeOptionChainSnapshotVersion = (ticker) => ensureEntry(ticker).version;
+const getTradeOptionChainSnapshotVersion = (ticker) =>
+  ensureEntry(ticker).version;
 
 export const useTradeOptionChainSnapshot = (
   ticker,
@@ -283,7 +351,8 @@ export const useTradeOptionChainSnapshot = (
 
   useSyncExternalStore(
     subscribe && normalizedTicker
-      ? (listener) => subscribeToTradeOptionChainSnapshot(normalizedTicker, listener)
+      ? (listener) =>
+          subscribeToTradeOptionChainSnapshot(normalizedTicker, listener)
       : () => () => {},
     subscribe && normalizedTicker
       ? () => getTradeOptionChainSnapshotVersion(normalizedTicker)
@@ -294,10 +363,7 @@ export const useTradeOptionChainSnapshot = (
   return getTradeOptionChainSnapshot(normalizedTicker);
 };
 
-export const resolveTradeOptionChainSnapshot = (
-  snapshot,
-  expirationValue,
-) => {
+export const resolveTradeOptionChainSnapshot = (snapshot, expirationValue) => {
   const expirationOptions = snapshot?.expirationOptions || [];
   const resolvedExpiration =
     expirationOptions.find(
@@ -317,16 +383,27 @@ export const resolveTradeOptionChainSnapshot = (
     (expirationValue && snapshot?.rowsByExpiration?.[expirationValue]) ||
     [];
   const loadingExpirations = snapshot?.loadingExpirations || [];
+  const refreshingExpirations = snapshot?.refreshingExpirations || [];
+  const staleExpirations = snapshot?.staleExpirations || [];
   const statusByExpiration = snapshot?.statusByExpiration || {};
+  const coverageByExpiration = snapshot?.coverageByExpiration || {};
   const resolvedExpirationStatus =
     (resolvedExpirationKey && statusByExpiration[resolvedExpirationKey]) ||
-    (resolvedExpiration?.value && statusByExpiration[resolvedExpiration.value]) ||
+    (resolvedExpiration?.value &&
+      statusByExpiration[resolvedExpiration.value]) ||
     "empty";
   const isResolvedExpirationLoading = Boolean(
     resolvedExpirationKey &&
       (loadingExpirations.includes(resolvedExpirationKey) ||
         resolvedExpirationStatus === "loading") &&
       !resolvedRows.length,
+  );
+  const isResolvedExpirationRefreshing = Boolean(
+    resolvedExpirationKey &&
+      refreshingExpirations.includes(resolvedExpirationKey),
+  );
+  const isResolvedExpirationStale = Boolean(
+    resolvedExpirationKey && staleExpirations.includes(resolvedExpirationKey),
   );
 
   return {
@@ -336,14 +413,25 @@ export const resolveTradeOptionChainSnapshot = (
     chainRows: resolvedRows,
     chainStatus: snapshot?.status || "empty",
     loadingExpirations,
+    refreshingExpirations,
+    staleExpirations,
     statusByExpiration,
+    coverageByExpiration,
     resolvedExpirationStatus,
+    resolvedExpirationCoverage:
+      (resolvedExpirationKey && coverageByExpiration[resolvedExpirationKey]) ||
+      (resolvedExpiration?.value &&
+        coverageByExpiration[resolvedExpiration.value]) ||
+      null,
     loadedExpirationCount: snapshot?.loadedExpirationCount || 0,
     completedExpirationCount: snapshot?.completedExpirationCount || 0,
     emptyExpirationCount: snapshot?.emptyExpirationCount || 0,
     failedExpirationCount: snapshot?.failedExpirationCount || 0,
-    totalExpirationCount: snapshot?.totalExpirationCount || expirationOptions.length,
+    totalExpirationCount:
+      snapshot?.totalExpirationCount || expirationOptions.length,
     updatedAt: snapshot?.updatedAt || null,
     isResolvedExpirationLoading,
+    isResolvedExpirationRefreshing,
+    isResolvedExpirationStale,
   };
 };

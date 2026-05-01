@@ -11,21 +11,131 @@ import {
   YAxis,
 } from "recharts";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { formatAppDate, formatAppDateTime, formatAppTime } from "../../lib/timeZone";
 import {
   ACCOUNT_RANGES,
   EmptyState,
   Panel,
   Pill,
   ToggleGroup,
-  formatMoney,
-  formatPercent,
-  formatSignedMoney,
+  formatAccountMoney,
+  formatAccountPercent,
+  formatAccountSignedMoney,
 } from "./accountUtils";
+import {
+  buildPaddedValueDomain,
+  buildTransferAdjustedPnlSeries,
+  joinBenchmarkPercentSeries,
+  mapEquityEventsToPoints,
+  normalizeEquityPointSeries,
+} from "./equityCurveData";
 
-const ChartTooltip = ({ active, payload, label, currency, benchmarks }) => {
+const EQUITY_CHART_MODES = [
+  { value: "nav", label: "NAV" },
+  { value: "pnl", label: "P&L" },
+];
+
+const FlatToggle = ({ options, value, onChange, compact = false }) => (
+  <div
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 1,
+      padding: 1,
+      border: `1px solid ${T.border}`,
+      borderRadius: dim(4),
+      background: T.bg0,
+      minWidth: 0,
+      overflow: "hidden",
+    }}
+  >
+    {options.map((option) => {
+      const item = typeof option === "string" ? { value: option, label: option } : option;
+      const active = item.value === value;
+      return (
+        <button
+          key={item.value}
+          type="button"
+          className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
+          onClick={() => onChange(item.value)}
+          style={{
+            border: "none",
+            borderRadius: dim(3),
+            background: active ? T.accent : "transparent",
+            color: active ? "#ffffff" : T.textMuted,
+            height: dim(compact ? 18 : 20),
+            padding: sp(compact ? "0 5px" : "0 7px"),
+            fontSize: fs(compact ? 7 : 8),
+            fontFamily: T.mono,
+            fontWeight: 900,
+            cursor: "pointer",
+            letterSpacing: 0,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {item.label}
+        </button>
+      );
+    })}
+  </div>
+);
+
+const FlatChip = ({
+  active,
+  disabled = false,
+  color = T.accent,
+  children,
+  onClick,
+  title,
+}) => (
+  <button
+    type="button"
+    title={title}
+    disabled={disabled}
+    onClick={onClick}
+    className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
+    style={{
+      height: dim(20),
+      borderRadius: dim(4),
+      border: `1px solid ${active ? color : T.border}`,
+      background: active ? `${color}1f` : "transparent",
+      color: disabled ? T.textDim : active ? color : T.textMuted,
+      padding: sp("0 6px"),
+      fontSize: fs(8),
+      fontFamily: T.mono,
+      fontWeight: 900,
+      cursor: disabled ? "default" : "pointer",
+      opacity: disabled ? 0.45 : 1,
+      letterSpacing: 0,
+      whiteSpace: "nowrap",
+    }}
+  >
+    {children}
+  </button>
+);
+
+const ChartTooltip = ({
+  active,
+  payload,
+  label,
+  currency,
+  benchmarks,
+  maskValues = false,
+  range,
+  chartMode,
+}) => {
   if (!active || !payload?.length) return null;
-  const nav = payload.find((item) => item.dataKey === "netLiquidation")?.value;
-  const ret = payload.find((item) => item.dataKey === "returnPercent")?.value;
+  const activePoint = payload.find((item) => item?.payload?.timestampMs != null)?.payload;
+  const nav =
+    payload.find((item) => item.dataKey === "netLiquidation")?.value ??
+    activePoint?.netLiquidation;
+  const pnl =
+    payload.find((item) => item.dataKey === "cumulativePnl")?.value ??
+    activePoint?.cumulativePnl;
+  const ret =
+    payload.find((item) => item.dataKey === "returnPercent")?.value ??
+    activePoint?.returnPercent;
+  const tooltipTimestamp = activePoint?.timestampMs ?? label;
   const benchmarkItems = benchmarks
     .map((benchmark) => {
       const item = payload.find((entry) => entry.dataKey === benchmark.dataKey);
@@ -50,12 +160,24 @@ const ChartTooltip = ({ active, payload, label, currency, benchmarks }) => {
         fontFamily: T.sans,
       }}
     >
-      <div style={{ color: T.textMuted }}>{new Date(label).toLocaleString()}</div>
-      <div style={{ marginTop: sp(4), fontWeight: 900 }}>{formatMoney(nav, currency)}</div>
-      <div style={{ marginTop: sp(2), color: toneColor(ret) }}>{formatPercent(ret)}</div>
+      <div style={{ color: T.textMuted }}>
+        {range === "1D"
+          ? formatAxisTick(tooltipTimestamp, range)
+          : formatAppDateTime(tooltipTimestamp)}
+      </div>
+      <div style={{ marginTop: sp(4), fontWeight: 900 }}>
+        {chartMode === "pnl"
+          ? formatAccountSignedMoney(pnl, currency, false, maskValues)
+          : formatAccountMoney(nav, currency, false, maskValues)}
+      </div>
+      <div style={{ marginTop: sp(2), color: toneColor(ret) }}>
+        {chartMode === "pnl"
+          ? `NAV ${formatAccountMoney(nav, currency, true, maskValues)}`
+          : formatAccountPercent(ret, 2, maskValues)}
+      </div>
       {benchmarkItems.map((benchmark) => (
         <div key={benchmark.label} style={{ marginTop: sp(2), color: benchmark.color }}>
-          {benchmark.label} {formatPercent(benchmark.value)}
+          {benchmark.label} {formatAccountPercent(benchmark.value, 2, maskValues)}
         </div>
       ))}
     </div>
@@ -69,14 +191,60 @@ const toneColor = (value) =>
       ? T.green
       : T.red;
 
+const finiteNumber = (value) => {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const externalTransferAmount = (point) =>
+  (finiteNumber(point?.deposits) ?? 0) - (finiteNumber(point?.withdrawals) ?? 0);
+
+const transferAdjustedPnl = (points) => {
+  const firstPoint = points[0] || null;
+  const firstNav = finiteNumber(firstPoint?.netLiquidation);
+  if (firstNav == null) return null;
+  const firstTransfer = externalTransferAmount(firstPoint);
+  let previousNav =
+    firstTransfer > 0 ? Math.max(0, firstNav - firstTransfer) : firstNav - firstTransfer;
+  let total = 0;
+
+  points.forEach((point) => {
+    const currentNav = finiteNumber(point?.netLiquidation);
+    if (currentNav == null) return;
+    total += currentNav - previousNav - externalTransferAmount(point);
+    previousNav = currentNav;
+  });
+
+  return total;
+};
+
+const formatAxisTick = (value, range) =>
+  range === "1D"
+    ? formatAppTime(value, {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : formatAppDate(value, {
+        month: "short",
+        day: "numeric",
+      });
+
 export const EquityCurvePanel = ({
   query,
   benchmarkQueries,
   range,
   onRangeChange,
   currency,
+  accentColor = T.green,
+  rightRail,
+  sourceLabel = "Flex",
+  maskValues = false,
+  currentNetLiquidation = null,
+  compact = false,
 }) => {
   const [showEvents, setShowEvents] = useState(true);
+  const [chartMode, setChartMode] = useState("nav");
   const [visibleBenchmarks, setVisibleBenchmarks] = useState({
     SPY: true,
     QQQ: false,
@@ -108,46 +276,45 @@ export const EquityCurvePanel = ({
       query: benchmarkQueries?.DJIA,
     },
   ];
-  const benchmarkPointMaps = useMemo(
-    () =>
-      benchmarks.reduce((accumulator, benchmark) => {
-        accumulator[benchmark.key] = new Map(
-          (benchmark.query?.data?.points || []).map((point) => [
-            point.timestamp,
-            point.benchmarkPercent,
-          ]),
+  const queryRangeMatches = !query.data || query.data.range === range;
+  const chartData = queryRangeMatches ? query.data : null;
+  const data = useMemo(
+    () => {
+      const equityPoints = normalizeEquityPointSeries(chartData?.points || []);
+      const pnlValues = buildTransferAdjustedPnlSeries(equityPoints);
+      const benchmarkValues = benchmarks.reduce((accumulator, benchmark) => {
+        accumulator[benchmark.key] = joinBenchmarkPercentSeries(
+          equityPoints,
+          benchmark.query?.data?.range === range
+            ? benchmark.query?.data?.points || []
+            : [],
+          range,
         );
         return accumulator;
-      }, {}),
+      }, {});
+      return equityPoints.map((point, index) => ({
+        ...point,
+        cumulativePnl: pnlValues[index] ?? null,
+        benchmarkSpyPercent: benchmarkValues.SPY?.[index] ?? null,
+        benchmarkQqqPercent: benchmarkValues.QQQ?.[index] ?? null,
+        benchmarkDjiaPercent: benchmarkValues.DJIA?.[index] ?? null,
+      }));
+    },
     [
       benchmarkQueries?.DJIA?.data?.points,
+      benchmarkQueries?.DJIA?.data?.range,
       benchmarkQueries?.QQQ?.data?.points,
+      benchmarkQueries?.QQQ?.data?.range,
       benchmarkQueries?.SPY?.data?.points,
+      benchmarkQueries?.SPY?.data?.range,
+      chartData?.points,
+      range,
     ],
   );
-  const data = useMemo(
-    () =>
-      (query.data?.points || []).map((point) => ({
-        ...point,
-        timestampMs: new Date(point.timestamp).getTime(),
-        benchmarkSpyPercent: benchmarkPointMaps.SPY?.get(point.timestamp) ?? null,
-        benchmarkQqqPercent: benchmarkPointMaps.QQQ?.get(point.timestamp) ?? null,
-        benchmarkDjiaPercent: benchmarkPointMaps.DJIA?.get(point.timestamp) ?? null,
-      })),
-    [benchmarkPointMaps, query.data?.points],
+  const events = useMemo(
+    () => mapEquityEventsToPoints(chartData?.events || [], data, range).slice(-12),
+    [chartData?.events, data, range],
   );
-  const events = (query.data?.events || [])
-    .map((event) => {
-      const point = data.find((candidate) => candidate.timestamp === event.timestamp);
-      return point
-        ? {
-            ...event,
-            netLiquidation: point.netLiquidation,
-          }
-        : null;
-    })
-    .filter(Boolean)
-    .slice(-12);
   const lastPoint = data[data.length - 1] || null;
   const firstPoint = data[0] || null;
   const minNav = data.length
@@ -156,30 +323,70 @@ export const EquityCurvePanel = ({
   const maxNav = data.length
     ? Math.max(...data.map((point) => point.netLiquidation))
     : null;
-  const delta = useMemo(() => {
-    if (!firstPoint || !lastPoint) return null;
-    return lastPoint.netLiquidation - firstPoint.netLiquidation;
-  }, [firstPoint, lastPoint]);
-  const deltaPercent =
-    delta != null && firstPoint?.netLiquidation
-      ? (delta / firstPoint.netLiquidation) * 100
-      : null;
+  const minPnl = data.length
+    ? Math.min(...data.map((point) => point.cumulativePnl ?? 0))
+    : null;
+  const maxPnl = data.length
+    ? Math.max(...data.map((point) => point.cumulativePnl ?? 0))
+    : null;
+  const delta = useMemo(() => transferAdjustedPnl(data), [data]);
+  const deltaPercent = finiteNumber(lastPoint?.returnPercent);
+  const headlineNetLiquidation =
+    currentNetLiquidation != null && Number.isFinite(Number(currentNetLiquidation))
+      ? Number(currentNetLiquidation)
+      : lastPoint?.netLiquidation;
   const availableBenchmarks = benchmarks.filter((benchmark) =>
     data.some((point) => point[benchmark.dataKey] != null),
   );
   const hasPoints = data.length > 0;
+  const chartDataKey = chartMode === "pnl" ? "cumulativePnl" : "netLiquidation";
+  const leftAxisDomain = useMemo(
+    () =>
+      buildPaddedValueDomain(
+        data.map((point) => point[chartDataKey]),
+        {
+          paddingRatio: 0.08,
+          minPadding: chartMode === "pnl" ? 1 : 5,
+          floor: chartMode === "pnl" ? null : 0,
+        },
+      ),
+    [chartDataKey, chartMode, data],
+  );
+  const rightAxisDomain = useMemo(
+    () =>
+      buildPaddedValueDomain(
+        data.flatMap((point) =>
+          benchmarks
+            .filter((benchmark) => visibleBenchmarks[benchmark.key])
+            .map((benchmark) => point[benchmark.dataKey]),
+        ),
+        { paddingRatio: 0.12, minPadding: 1 },
+      ),
+    [data, visibleBenchmarks],
+  );
+  const headlineValue =
+    chartMode === "pnl" ? delta : headlineNetLiquidation;
+  const loadingRangeData = !queryRangeMatches && Boolean(query.isFetching || query.isPending);
+  const equityFillId = useMemo(
+    () => `accountEquityFill-${String(accentColor).replace(/[^a-z0-9]/gi, "")}`,
+    [accentColor],
+  );
 
   return (
     <Panel
       title="Equity Curve"
-      rightRail={query.data?.flexConfigured ? "Flex + snapshots" : "Snapshots"}
-      loading={query.isPending && !hasPoints}
+      rightRail={rightRail ?? (chartData?.flexConfigured ? "Flex + snapshots" : "Snapshots")}
+      loading={(query.isPending && !hasPoints) || loadingRangeData}
       error={query.error}
       onRetry={query.refetch}
-      minHeight={340}
-      action={<ToggleGroup options={ACCOUNT_RANGES} value={range} onChange={onRangeChange} />}
+      minHeight={compact ? 246 : 256}
+      action={
+        compact ? null : (
+          <ToggleGroup options={ACCOUNT_RANGES} value={range} onChange={onRangeChange} />
+        )
+      }
     >
-      {!hasPoints && !query.data?.flexConfigured ? (
+      {!hasPoints && !chartData?.flexConfigured ? (
         <EmptyState
           title="No equity history yet"
           body="Recorded account snapshots have not populated yet. Flex is only required for full lifetime NAV, deposits, withdrawals, dividends, fees, and trade history."
@@ -190,8 +397,8 @@ export const EquityCurvePanel = ({
           body="The Flex job is configured, but no NAV rows or recorded snapshots were returned yet. Run Test Flex Token, confirm account snapshots are recording, or wait for the next refresh."
         />
       ) : (
-        <div style={{ display: "grid", gap: sp(8) }}>
-          {!query.data?.flexConfigured ? (
+        <div style={{ display: "grid", gap: sp(compact ? 3 : 5) }}>
+          {!chartData?.flexConfigured ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
               <Pill tone="amber">
                 Flex not configured
@@ -204,126 +411,195 @@ export const EquityCurvePanel = ({
           <div
             style={{
               display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: sp(8),
               flexWrap: "wrap",
+              gap: sp(compact ? 4 : 6),
+              alignItems: "center",
+              justifyContent: "space-between",
+              minWidth: 0,
             }}
           >
-            <div>
+            <div
+              style={{
+                minWidth: 0,
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "baseline",
+                gap: sp("2px 6px"),
+              }}
+            >
               <div
                 style={{
                   color: T.text,
-                  fontSize: fs(17),
+                  fontSize: fs(compact ? 16 : 15),
                   fontFamily: T.mono,
                   fontWeight: 900,
-                  letterSpacing: "-0.02em",
+                  letterSpacing: 0,
+                  lineHeight: 1,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                 }}
               >
-                {formatMoney(lastPoint?.netLiquidation, currency)}
+                {chartMode === "pnl"
+                  ? formatAccountSignedMoney(headlineValue, currency, false, maskValues)
+                  : formatAccountMoney(headlineValue, currency, false, maskValues)}
               </div>
               <div
                 style={{
-                  marginTop: sp(2),
-                  color: toneColor(delta),
-                  fontSize: fs(9),
+                  color: toneColor(deltaPercent ?? delta),
+                  fontSize: fs(compact ? 8 : 9),
                   fontFamily: T.mono,
                   fontWeight: 800,
+                  lineHeight: 1.25,
+                  whiteSpace: "nowrap",
                 }}
               >
-                {formatSignedMoney(delta, currency, true)} · {formatPercent(deltaPercent)}
+                {chartMode === "pnl" ? (
+                  <>
+                    NAV {formatAccountMoney(headlineNetLiquidation, currency, true, maskValues)} ·{" "}
+                    {formatAccountPercent(deltaPercent, 2, maskValues)}
+                  </>
+                ) : (
+                  <>
+                    {formatAccountSignedMoney(delta, currency, true, maskValues)} ·{" "}
+                    {formatAccountPercent(deltaPercent, 2, maskValues)}
+                  </>
+                )}
               </div>
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4), justifyContent: "flex-end" }}>
-              <Pill tone={showEvents ? "green" : "default"}>
-                <label style={{ cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={showEvents}
-                    onChange={(event) => setShowEvents(event.target.checked)}
-                    style={{ marginRight: 6 }}
-                  />
-                  Events
-                </label>
-              </Pill>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: sp(3),
+                justifyContent: compact ? "flex-start" : "flex-end",
+                alignItems: "center",
+              }}
+            >
+              <FlatToggle
+                options={EQUITY_CHART_MODES}
+                value={chartMode}
+                onChange={setChartMode}
+                compact={compact}
+              />
+              <FlatChip
+                active={showEvents}
+                color={T.green}
+                onClick={() => setShowEvents((current) => !current)}
+                title="Show deposits, withdrawals, dividends, and cash events on the chart"
+              >
+                Events
+              </FlatChip>
               {benchmarks.map((benchmark) => {
                 const available = availableBenchmarks.some(
                   (item) => item.key === benchmark.key,
                 );
                 return (
-                  <Pill
+                  <FlatChip
                     key={benchmark.key}
-                    tone={visibleBenchmarks[benchmark.key] && available ? benchmark.tone : "default"}
+                    active={Boolean(visibleBenchmarks[benchmark.key]) && available}
+                    disabled={!available}
+                    color={benchmark.color}
+                    onClick={() => {
+                      if (!available) return;
+                      setVisibleBenchmarks((current) => ({
+                        ...current,
+                        [benchmark.key]: !current[benchmark.key],
+                      }));
+                    }}
                   >
-                    <label style={{ cursor: available ? "pointer" : "default" }}>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(visibleBenchmarks[benchmark.key])}
-                        disabled={!available}
-                        onChange={() =>
-                          setVisibleBenchmarks((current) => ({
-                            ...current,
-                            [benchmark.key]: !current[benchmark.key],
-                          }))
-                        }
-                        style={{ marginRight: 6 }}
-                      />
-                      {benchmark.label}
-                    </label>
-                  </Pill>
+                    {benchmark.label}
+                  </FlatChip>
                 );
               })}
-              <Pill tone="cyan">
-                {lastPoint ? new Date(lastPoint.timestamp).toLocaleDateString() : "----"}
-              </Pill>
             </div>
           </div>
 
-          <div style={{ width: "100%", height: dim(222) }}>
+          {compact ? (
+            <div
+              style={{
+                minWidth: 0,
+                overflowX: "auto",
+                paddingBottom: 1,
+              }}
+              className="ra-hide-scrollbar"
+            >
+              <FlatToggle
+                options={ACCOUNT_RANGES}
+                value={range}
+                onChange={onRangeChange}
+                compact
+              />
+            </div>
+          ) : null}
+
+          <div style={{ width: "100%", height: dim(compact ? 148 : 158) }}>
             <ResponsiveContainer>
-              <ComposedChart data={data} margin={{ top: 8, right: 14, bottom: 0, left: 0 }}>
+              <ComposedChart
+                data={data}
+                margin={{
+                  top: compact ? 2 : 8,
+                  right: compact ? 2 : 12,
+                  bottom: 0,
+                  left: compact ? -8 : 0,
+                }}
+              >
                 <defs>
-                  <linearGradient id="accountEquityFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={T.green} stopOpacity={0.28} />
-                    <stop offset="100%" stopColor={T.green} stopOpacity={0.02} />
+                  <linearGradient id={equityFillId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={accentColor} stopOpacity={0.28} />
+                    <stop offset="100%" stopColor={accentColor} stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
                 <XAxis
-                  dataKey="timestamp"
-                  tick={{ fill: T.textMuted, fontSize: fs(9) }}
-                  tickFormatter={(value) =>
-                    new Date(value).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })
-                  }
-                  minTickGap={28}
+                  dataKey="timestampMs"
+                  type="number"
+                  scale="time"
+                  domain={["dataMin", "dataMax"]}
+                  tick={{ fill: T.textMuted, fontSize: fs(compact ? 8 : 9) }}
+                  tickFormatter={(value) => formatAxisTick(value, range)}
+                  minTickGap={compact ? 42 : 28}
                   stroke={T.border}
                 />
                 <YAxis
                   yAxisId="left"
-                  tick={{ fill: T.textMuted, fontSize: fs(9) }}
-                  tickFormatter={(value) => formatMoney(value, currency, true)}
-                  width={64}
+                  domain={leftAxisDomain}
+                  tick={{ fill: T.textMuted, fontSize: fs(compact ? 8 : 9) }}
+                  tickFormatter={(value) =>
+                    chartMode === "pnl"
+                      ? formatAccountSignedMoney(value, currency, true, maskValues)
+                      : formatAccountMoney(value, currency, true, maskValues)
+                  }
+                  width={compact ? 48 : 64}
                   stroke={T.border}
                 />
                 <YAxis
                   yAxisId="right"
                   orientation="right"
-                  tick={{ fill: T.textMuted, fontSize: fs(9) }}
+                  domain={rightAxisDomain}
+                  tick={{ fill: T.textMuted, fontSize: fs(compact ? 8 : 9) }}
                   tickFormatter={(value) => `${value.toFixed(0)}%`}
-                  width={42}
+                  width={compact ? 28 : 42}
                   stroke={T.border}
                 />
-                <Tooltip content={<ChartTooltip currency={currency} benchmarks={benchmarks} />} />
+                <Tooltip
+                  content={
+                    <ChartTooltip
+                      currency={currency}
+                      benchmarks={benchmarks}
+                      maskValues={maskValues}
+                      range={range}
+                      chartMode={chartMode}
+                    />
+                  }
+                />
                 <Area
                   yAxisId="left"
                   type="monotone"
-                  dataKey="netLiquidation"
-                  stroke={T.green}
-                  fill="url(#accountEquityFill)"
-                  strokeWidth={2}
+                  dataKey={chartDataKey}
+                  stroke={accentColor}
+                  fill={`url(#${equityFillId})`}
+                  strokeWidth={compact ? 2.25 : 2}
                   dot={false}
                   isAnimationActive={false}
                 />
@@ -336,7 +612,7 @@ export const EquityCurvePanel = ({
                       type="monotone"
                       dataKey={benchmark.dataKey}
                       stroke={benchmark.color}
-                      strokeWidth={1.5}
+                      strokeWidth={compact ? 1.25 : 1.5}
                       dot={false}
                       connectNulls
                       isAnimationActive={false}
@@ -345,21 +621,23 @@ export const EquityCurvePanel = ({
                 )}
                 {showEvents
                   ? events.map((event) => (
-                      <ReferenceDot
-                        key={`${event.timestamp}:${event.type}`}
-                        yAxisId="left"
-                        x={event.timestamp}
-                        y={event.netLiquidation}
-                        r={3}
-                        fill={
-                          event.type === "withdrawal"
-                            ? T.red
-                            : event.type === "dividend"
-                              ? T.accent
-                              : T.green
-                        }
-                        stroke="none"
-                      />
+                      (chartMode !== "pnl" || event.cumulativePnl != null) ? (
+                        <ReferenceDot
+                          key={`${event.timestamp}:${event.type}`}
+                          yAxisId="left"
+                          x={event.timestampMs}
+                          y={chartMode === "pnl" ? event.cumulativePnl : event.netLiquidation}
+                          r={3}
+                          fill={
+                            event.type === "withdrawal"
+                              ? T.red
+                              : event.type === "dividend"
+                                ? T.accent
+                                : T.green
+                          }
+                          stroke="none"
+                        />
+                      ) : null
                     ))
                   : null}
               </ComposedChart>
@@ -370,23 +648,36 @@ export const EquityCurvePanel = ({
             style={{
               display: "flex",
               justifyContent: "space-between",
-              gap: sp(10),
+              gap: sp(compact ? 3 : 6),
               flexWrap: "wrap",
               color: T.textDim,
-              fontSize: fs(8),
+              fontSize: fs(compact ? 7 : 8),
               fontFamily: T.mono,
+              lineHeight: 1.25,
             }}
           >
             <span>
-              {firstPoint ? new Date(firstPoint.timestamp).toLocaleDateString() : "----"}
+              {formatAppDate(firstPoint?.timestamp)}
               {" -> "}
-              {lastPoint ? new Date(lastPoint.timestamp).toLocaleDateString() : "----"}
+              {formatAppDate(lastPoint?.timestamp)}
             </span>
-            <span>H {formatMoney(maxNav, currency, true)} · L {formatMoney(minNav, currency, true)}</span>
             <span>
-              Flex{" "}
-              {query.data?.lastFlexRefreshAt
-                ? new Date(query.data.lastFlexRefreshAt).toLocaleDateString()
+              {chartMode === "pnl" ? (
+                <>
+                  H {formatAccountSignedMoney(maxPnl, currency, true, maskValues)} · L{" "}
+                  {formatAccountSignedMoney(minPnl, currency, true, maskValues)}
+                </>
+              ) : (
+                <>
+                  H {formatAccountMoney(maxNav, currency, true, maskValues)} · L{" "}
+                  {formatAccountMoney(minNav, currency, true, maskValues)}
+                </>
+              )}
+            </span>
+            <span>
+              {sourceLabel}{" "}
+              {chartData?.lastFlexRefreshAt
+                ? formatAppDate(chartData.lastFlexRefreshAt)
                 : "----"}
             </span>
             <span>
@@ -396,26 +687,6 @@ export const EquityCurvePanel = ({
                 : "n/a"}
             </span>
           </div>
-
-          {events.length ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
-              {events.slice(-6).map((event) => (
-                <Pill
-                  key={`${event.timestamp}:${event.type}:pill`}
-                  tone={
-                    event.type === "withdrawal"
-                      ? "red"
-                      : event.type === "dividend"
-                        ? "accent"
-                        : "green"
-                  }
-                  title={new Date(event.timestamp).toLocaleString()}
-                >
-                  {event.type} {formatMoney(event.amount, event.currency || currency, true)}
-                </Pill>
-              ))}
-            </div>
-          ) : null}
         </div>
       )}
     </Panel>

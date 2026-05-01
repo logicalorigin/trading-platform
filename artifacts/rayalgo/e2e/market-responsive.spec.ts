@@ -29,6 +29,27 @@ function isIgnorableConsoleMessage(message: ConsoleMessage) {
   );
 }
 
+function parseLogicalRangeSignature(signature: string | null) {
+  if (!signature || signature === "none") {
+    return null;
+  }
+  const [from, to] = signature.split(":").map(Number);
+  return Number.isFinite(from) && Number.isFinite(to) ? { from, to } : null;
+}
+
+function expectLogicalRangesClose(
+  actualSignature: string | null,
+  expectedSignature: string | null,
+  tolerance = 0.001,
+) {
+  const actual = parseLogicalRangeSignature(actualSignature);
+  const expected = parseLogicalRangeSignature(expectedSignature);
+  expect(actual, `actual logical range ${actualSignature}`).not.toBeNull();
+  expect(expected, `expected logical range ${expectedSignature}`).not.toBeNull();
+  expect(Math.abs(actual!.from - expected!.from)).toBeLessThanOrEqual(tolerance);
+  expect(Math.abs(actual!.to - expected!.to)).toBeLessThanOrEqual(tolerance);
+}
+
 function makeBars(symbol: string) {
   const now = Date.now();
   const base = basePrices[symbol] ?? 100;
@@ -105,18 +126,34 @@ async function mockMarketApi(page: Page) {
 
     if (url.pathname === "/api/session") {
       body = {
-        configured: { ibkr: false, research: false },
-        ibkrBridge: {
-          authenticated: false,
-          liveMarketDataAvailable: false,
-          transport: "client-portal",
-        },
         environment: "paper",
-        marketDataProviders: {},
+        brokerProvider: "ibkr",
+        marketDataProvider: "ibkr",
+        marketDataProviders: {
+          live: "ibkr",
+          historical: "ibkr",
+          research: "fmp",
+        },
+        configured: { polygon: false, ibkr: false, research: false },
+        ibkrBridge: null,
+        timestamp: new Date().toISOString(),
       };
     } else if (url.pathname === "/api/watchlists") {
       body = {
-        watchlists: [{ id: "default", name: "Default", symbols: marketSymbols }],
+        watchlists: [
+          {
+            id: "default",
+            name: "Default",
+            isDefault: true,
+            items: marketSymbols.map((symbol, index) => ({
+              id: `default-${symbol}`,
+              symbol,
+              name: symbol,
+              sortOrder: index,
+              addedAt: new Date().toISOString(),
+            })),
+          },
+        ],
       };
     } else if (url.pathname === "/api/quotes/snapshot") {
       const requested = (url.searchParams.get("symbols") || "")
@@ -224,6 +261,182 @@ async function expectNoElementOverflow(page: Page, selector: string) {
     expect(entry.overflowY, `${entry.text} should not overflow vertically`).toBe(false);
   });
 }
+
+test("Market chart grid keeps touched viewports through layout changes and clears them on reset", async ({
+  page,
+}) => {
+  const runtimeIssues: string[] = [];
+  page.on("pageerror", (error) => runtimeIssues.push(error.message));
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning") &&
+      !isIgnorableConsoleMessage(message)
+    ) {
+      runtimeIssues.push(message.text());
+    }
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockMarketApi(page);
+  await openMarket(page, "2x2");
+
+  const chartSurfaces = page.locator(
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid-slot"]',
+  );
+  await expect(chartSurfaces).toHaveCount(4);
+  const firstSurface = chartSurfaces.first();
+  await expect(firstSurface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "false",
+  );
+
+  const firstPlot = firstSurface.locator("[data-chart-plot-root]");
+  const firstBox = await firstPlot.boundingBox();
+  expect(firstBox, "first chart plot should have a geometry box").not.toBeNull();
+  await page.mouse.move(
+    firstBox!.x + firstBox!.width / 2,
+    firstBox!.y + firstBox!.height / 2,
+  );
+  await page.mouse.wheel(0, -500);
+  await expect(firstSurface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "true",
+    { timeout: 10_000 },
+  );
+  const touchedRange = await firstSurface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
+  expect(touchedRange).not.toBe("none");
+
+  await page.getByRole("button", { name: "3x3" }).click();
+  const expandedChartSurfaces = page.locator(
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid-slot"]',
+  );
+  await expect(expandedChartSurfaces).toHaveCount(9);
+  await expect(expandedChartSurfaces.first()).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "true",
+  );
+  await expect
+    .poll(() =>
+      expandedChartSurfaces.first().getAttribute("data-chart-visible-logical-range"),
+    )
+    .not.toBe("none");
+  expectLogicalRangesClose(
+    await expandedChartSurfaces.first().getAttribute("data-chart-visible-logical-range"),
+    touchedRange,
+  );
+
+  await page.getByTestId("market-chart-reset-views").click();
+  await expect(expandedChartSurfaces.first()).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "false",
+  );
+  const touchedFlags = await expandedChartSurfaces.evaluateAll((elements) =>
+    elements.map((element) =>
+      element.getAttribute("data-chart-viewport-user-touched"),
+    ),
+  );
+  expect(touchedFlags).toEqual(Array(9).fill("false"));
+  expect(runtimeIssues, "Market chart viewport test should not emit runtime issues").toEqual([]);
+});
+
+test("Market chart grid drag-pans inactive plots without selecting or snapping them", async ({
+  page,
+}) => {
+  const runtimeIssues: string[] = [];
+  page.on("pageerror", (error) => runtimeIssues.push(error.message));
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning") &&
+      !isIgnorableConsoleMessage(message)
+    ) {
+      runtimeIssues.push(message.text());
+    }
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockMarketApi(page);
+  await openMarket(page, "2x2");
+
+  const chartSurfaces = page.locator(
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid-slot"]',
+  );
+  await expect(chartSurfaces).toHaveCount(4);
+  const inactiveSurface = chartSurfaces.nth(1);
+  const inactivePlot = inactiveSurface.locator("[data-chart-plot-root]");
+  await expect(inactiveSurface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "false",
+  );
+  await expect
+    .poll(() =>
+      inactiveSurface.getAttribute("data-chart-visible-logical-range"),
+    )
+    .not.toBe("none");
+
+  const beforeRange = await inactiveSurface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
+  const plotBox = await inactivePlot.boundingBox();
+  expect(plotBox, "inactive chart plot should have a geometry box").not.toBeNull();
+
+  await page.mouse.move(
+    plotBox!.x + plotBox!.width * 0.72,
+    plotBox!.y + plotBox!.height * 0.52,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    plotBox!.x + plotBox!.width * 0.28,
+    plotBox!.y + plotBox!.height * 0.52,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+
+  await expect(inactiveSurface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "true",
+    { timeout: 10_000 },
+  );
+  await expect
+    .poll(() =>
+      inactiveSurface.getAttribute("data-chart-visible-logical-range"),
+    )
+    .not.toBe(beforeRange);
+  const pannedRange = await inactiveSurface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return state.sym || null;
+      }),
+    )
+    .toBe("SPY");
+
+  await page.waitForTimeout(350);
+  expectLogicalRangesClose(
+    await inactiveSurface.getAttribute("data-chart-visible-logical-range"),
+    pannedRange,
+  );
+
+  await inactivePlot.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return state.sym || null;
+      }),
+    )
+    .toBe("QQQ");
+  expect(runtimeIssues, "Market chart drag-pan test should not emit runtime issues").toEqual([]);
+});
 
 for (const testcase of layoutCases) {
   test(`Market ${testcase.layout} is stable at ${testcase.width}x${testcase.height}`, async ({

@@ -18,6 +18,10 @@ export type MarketBar = {
   accumulatedVolume?: number;
   averageTradeSize?: number;
   source?: string;
+  freshness?: string;
+  marketDataMode?: string | null;
+  dataUpdatedAt?: number | string | Date | null;
+  studyFallback?: boolean;
 };
 
 export type ChartBarStyle = {
@@ -253,6 +257,7 @@ export type BuildChartModelInput = {
   bars: MarketBar[];
   dailyBars?: MarketBar[];
   timeframe: string;
+  defaultVisibleBarCount?: number;
   selectedIndicators?: string[];
   indicatorSettings?: Record<string, Record<string, unknown>>;
   indicatorMarkers?: ChartMarker[];

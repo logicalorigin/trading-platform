@@ -1,4 +1,9 @@
 import { useMemo, useSyncExternalStore } from "react";
+import { RAYALGO_STORAGE_KEY } from "../../lib/uiTokens";
+import {
+  DEFAULT_FLOW_SCANNER_CONFIG,
+  normalizeFlowScannerConfig,
+} from "./marketFlowScannerConfig.js";
 
 const EMPTY_PROVIDER_SUMMARY = Object.freeze({
   label: "Loading flow",
@@ -51,7 +56,99 @@ export const EMPTY_MARKET_FLOW_SNAPSHOT = Object.freeze({
   }),
 });
 
+export const MARKET_FLOW_STORE_ENTRY_CAP = 8;
+export const BROAD_MARKET_FLOW_STORE_KEY = "__broad_market_flow__";
+
 const storeEntries = new Map();
+const flowScannerControlListeners = new Set();
+let flowScannerControlVersion = 0;
+
+const readPersistedFlowScannerConfig = () => {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG);
+    }
+    const raw = window.localStorage.getItem(RAYALGO_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return normalizeFlowScannerConfig(
+      parsed.flowScannerConfig || DEFAULT_FLOW_SCANNER_CONFIG,
+    );
+  } catch (_error) {
+    return normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG);
+  }
+};
+
+const persistFlowScannerConfig = (config) => {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    const current = JSON.parse(
+      window.localStorage.getItem(RAYALGO_STORAGE_KEY) || "{}",
+    );
+    window.localStorage.setItem(
+      RAYALGO_STORAGE_KEY,
+      JSON.stringify({
+        ...current,
+        flowScannerConfig: normalizeFlowScannerConfig(config),
+      }),
+    );
+  } catch (_error) {}
+};
+
+let flowScannerControlState = {
+  enabled: false,
+  ownerActive: false,
+  config: readPersistedFlowScannerConfig(),
+};
+
+const getFlowScannerControlVersion = () => flowScannerControlVersion;
+
+const subscribeToFlowScannerControlState = (listener) => {
+  flowScannerControlListeners.add(listener);
+  return () => {
+    flowScannerControlListeners.delete(listener);
+  };
+};
+
+const notifyFlowScannerControlListeners = () => {
+  flowScannerControlVersion += 1;
+  flowScannerControlListeners.forEach((listener) => listener());
+};
+
+export const getFlowScannerControlState = () => flowScannerControlState;
+
+export const setFlowScannerControlState = (
+  patch = {},
+  { persistConfig = true } = {},
+) => {
+  const current = flowScannerControlState;
+  const hasConfigPatch = Object.prototype.hasOwnProperty.call(patch, "config");
+  const config = hasConfigPatch
+    ? normalizeFlowScannerConfig({
+        ...current.config,
+        ...(patch.config || {}),
+      })
+    : current.config;
+  const next = {
+    enabled: Object.prototype.hasOwnProperty.call(patch, "enabled")
+      ? Boolean(patch.enabled)
+      : current.enabled,
+    ownerActive: Object.prototype.hasOwnProperty.call(patch, "ownerActive")
+      ? Boolean(patch.ownerActive)
+      : current.ownerActive,
+    config,
+  };
+
+  if (JSON.stringify(next) === JSON.stringify(current)) {
+    return current;
+  }
+
+  flowScannerControlState = next;
+  if (persistConfig && hasConfigPatch) {
+    persistFlowScannerConfig(next.config);
+  }
+  notifyFlowScannerControlListeners();
+  return next;
+};
 
 const normalizeSymbols = (symbols = []) =>
   Array.from(
@@ -65,14 +162,39 @@ const normalizeSymbols = (symbols = []) =>
 export const buildMarketFlowStoreKey = (symbols = []) =>
   normalizeSymbols(symbols).join(",");
 
+const normalizeStoreKey = (storeKey) => storeKey || "__empty__";
+
+const evictOldestUnusedMarketFlowEntry = () => {
+  if (storeEntries.size <= MARKET_FLOW_STORE_ENTRY_CAP) return;
+  for (const [key, value] of storeEntries) {
+    if (!value.listeners || value.listeners.size === 0) {
+      storeEntries.delete(key);
+      return;
+    }
+  }
+};
+
+const deleteEntryIfUnused = (storeKey) => {
+  const normalizedKey = normalizeStoreKey(storeKey);
+  const entry = storeEntries.get(normalizedKey);
+  if (entry && entry.listeners.size === 0) {
+    storeEntries.delete(normalizedKey);
+  }
+};
+
 const ensureEntry = (storeKey) => {
-  const normalizedKey = storeKey || "__empty__";
+  const normalizedKey = normalizeStoreKey(storeKey);
   if (!storeEntries.has(normalizedKey)) {
     storeEntries.set(normalizedKey, {
       version: 0,
       snapshot: EMPTY_MARKET_FLOW_SNAPSHOT,
       listeners: new Set(),
     });
+    evictOldestUnusedMarketFlowEntry();
+  } else {
+    const existing = storeEntries.get(normalizedKey);
+    storeEntries.delete(normalizedKey);
+    storeEntries.set(normalizedKey, existing);
   }
   return storeEntries.get(normalizedKey);
 };
@@ -90,11 +212,13 @@ export const publishMarketFlowSnapshot = (storeKey, snapshot) => {
 export const clearMarketFlowSnapshot = (storeKey) => {
   const entry = ensureEntry(storeKey);
   if (entry.snapshot === EMPTY_MARKET_FLOW_SNAPSHOT) {
+    deleteEntryIfUnused(storeKey);
     return;
   }
   entry.snapshot = EMPTY_MARKET_FLOW_SNAPSHOT;
   entry.version += 1;
   entry.listeners.forEach((listener) => listener());
+  deleteEntryIfUnused(storeKey);
 };
 
 const subscribeToMarketFlowSnapshot = (storeKey, listener) => {
@@ -102,21 +226,53 @@ const subscribeToMarketFlowSnapshot = (storeKey, listener) => {
   entry.listeners.add(listener);
   return () => {
     entry.listeners.delete(listener);
+    if (entry.snapshot === EMPTY_MARKET_FLOW_SNAPSHOT) {
+      deleteEntryIfUnused(storeKey);
+    } else {
+      evictOldestUnusedMarketFlowEntry();
+    }
   };
 };
 
 const getMarketFlowSnapshotVersion = (storeKey) =>
-  ensureEntry(storeKey).version;
+  storeEntries.get(normalizeStoreKey(storeKey))?.version ?? 0;
 
 const getMarketFlowSnapshot = (storeKey) =>
-  ensureEntry(storeKey).snapshot || EMPTY_MARKET_FLOW_SNAPSHOT;
+  storeEntries.get(normalizeStoreKey(storeKey))?.snapshot ||
+  EMPTY_MARKET_FLOW_SNAPSHOT;
 
-export const useMarketFlowSnapshot = (
-  symbols = [],
+export const getMarketFlowStoreEntryCount = () => storeEntries.size;
+
+export const getMarketFlowSnapshotForStoreKey = (storeKey) =>
+  getMarketFlowSnapshot(storeKey);
+
+export const resetMarketFlowStoreForTests = () => {
+  storeEntries.clear();
+};
+
+export const resetFlowScannerControlForTests = () => {
+  flowScannerControlState = {
+    enabled: false,
+    ownerActive: false,
+    config: normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG),
+  };
+  notifyFlowScannerControlListeners();
+};
+
+export const useFlowScannerControlState = ({ subscribe = true } = {}) => {
+  useSyncExternalStore(
+    subscribe ? subscribeToFlowScannerControlState : () => () => {},
+    subscribe ? getFlowScannerControlVersion : () => 0,
+    () => 0,
+  );
+
+  return getFlowScannerControlState();
+};
+
+export const useMarketFlowSnapshotForStoreKey = (
+  storeKey,
   { subscribe = true } = {},
 ) => {
-  const storeKey = useMemo(() => buildMarketFlowStoreKey(symbols), [symbols]);
-
   useSyncExternalStore(
     subscribe
       ? (listener) => subscribeToMarketFlowSnapshot(storeKey, listener)
@@ -128,4 +284,12 @@ export const useMarketFlowSnapshot = (
   );
 
   return getMarketFlowSnapshot(storeKey);
+};
+
+export const useMarketFlowSnapshot = (
+  symbols = [],
+  { subscribe = true } = {},
+) => {
+  const storeKey = useMemo(() => buildMarketFlowStoreKey(symbols), [symbols]);
+  return useMarketFlowSnapshotForStoreKey(storeKey, { subscribe });
 };

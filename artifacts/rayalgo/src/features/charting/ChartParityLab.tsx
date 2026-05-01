@@ -533,9 +533,33 @@ export const ChartParityLab = () => {
               dataTestId="parity-app-primary"
               theme={THEME}
               themeKey="chart-parity-lab"
+              rangeIdentityKey={`chart-parity:${scenario.id}:primary:${appPrimary.timeframe}`}
               model={primaryModel}
               showSurfaceToolbar={false}
-              showLegend={false}
+              showLegend
+              legend={{
+                symbol: "RAYA",
+                name: "shared frame primary",
+                timeframe: appPrimary.timeframe,
+                statusLabel: `fixture ${appPrimary.timeframe}`,
+                price: primaryLastBar?.c ?? null,
+                changePercent: null,
+                meta: {
+                  open: primaryLastBar?.o,
+                  high: primaryLastBar?.h,
+                  low: primaryLastBar?.l,
+                  close: primaryLastBar?.c,
+                  volume: primaryLastBar?.v,
+                  vwap: primaryLastBar?.vwap,
+                  sessionVwap: primaryLastBar?.sessionVwap,
+                  accumulatedVolume: primaryLastBar?.accumulatedVolume,
+                  averageTradeSize: primaryLastBar?.averageTradeSize,
+                  timestamp: primaryLastBar?.ts,
+                  sourceLabel: primaryLastBar?.source || "FIXTURE",
+                },
+                studies: scenarioStudies,
+                selectedStudies: appPrimary.selectedIndicators,
+              }}
               drawings={appPrimary.drawings}
               drawMode={appPrimary.drawMode}
               onAddDrawing={appPrimary.addDrawing}
@@ -549,6 +573,7 @@ export const ChartParityLab = () => {
                   changePercent={null}
                   statusLabel={`fixture ${appPrimary.timeframe}`}
                   timeframe={appPrimary.timeframe}
+                  showInlineLegend={false}
                   timeframeOptions={FRAME_TIMEFRAMES}
                   onChangeTimeframe={appPrimary.setTimeframe}
                   onUndo={appPrimary.undo}
@@ -607,9 +632,33 @@ export const ChartParityLab = () => {
               dataTestId="parity-app-secondary"
               theme={THEME}
               themeKey="chart-parity-lab"
+              rangeIdentityKey={`chart-parity:${scenario.id}:secondary:${appSecondary.timeframe}`}
               model={secondaryModel}
               showSurfaceToolbar={false}
-              showLegend={false}
+              showLegend
+              legend={{
+                symbol: "RAYB",
+                name: "shared frame secondary",
+                timeframe: appSecondary.timeframe,
+                statusLabel: `fixture ${appSecondary.timeframe}`,
+                price: secondaryLastBar?.c ?? null,
+                changePercent: null,
+                meta: {
+                  open: secondaryLastBar?.o,
+                  high: secondaryLastBar?.h,
+                  low: secondaryLastBar?.l,
+                  close: secondaryLastBar?.c,
+                  volume: secondaryLastBar?.v,
+                  vwap: secondaryLastBar?.vwap,
+                  sessionVwap: secondaryLastBar?.sessionVwap,
+                  accumulatedVolume: secondaryLastBar?.accumulatedVolume,
+                  averageTradeSize: secondaryLastBar?.averageTradeSize,
+                  timestamp: secondaryLastBar?.ts,
+                  sourceLabel: secondaryLastBar?.source || "FIXTURE",
+                },
+                studies: scenarioStudies,
+                selectedStudies: appSecondary.selectedIndicators,
+              }}
               drawings={appSecondary.drawings}
               drawMode={appSecondary.drawMode}
               onAddDrawing={appSecondary.addDrawing}
@@ -623,6 +672,7 @@ export const ChartParityLab = () => {
                   changePercent={null}
                   statusLabel={`fixture ${appSecondary.timeframe}`}
                   timeframe={appSecondary.timeframe}
+                  showInlineLegend={false}
                   timeframeOptions={FRAME_TIMEFRAMES}
                   onChangeTimeframe={appSecondary.setTimeframe}
                   onUndo={appSecondary.undo}

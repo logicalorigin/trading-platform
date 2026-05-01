@@ -78,10 +78,7 @@ export const useRuntimeWorkloadFlag = (key, active, meta = {}) => {
   }, [active, key, serializedMeta]);
 };
 
-export const useRuntimeWorkloadStats = () => {
-  const version = useSyncExternalStore(subscribe, getSnapshot, () => 0);
-
-  return useMemo(() => {
+export const getRuntimeWorkloadStats = () => {
     const entries = Array.from(workloadEntries.values())
       .map((entry) => normalizeMeta(entry))
       .sort((left, right) => {
@@ -106,5 +103,10 @@ export const useRuntimeWorkloadStats = () => {
       kindCounts,
       entries,
     };
-  }, [version]);
+};
+
+export const useRuntimeWorkloadStats = () => {
+  const version = useSyncExternalStore(subscribe, getSnapshot, () => 0);
+
+  return useMemo(() => getRuntimeWorkloadStats(), [version]);
 };

@@ -7,11 +7,24 @@ import {
 } from "./useMassiveStockAggregateStream";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
 import { usePageVisible } from "../platform/usePageVisible";
-import { markChartLivePatchPending } from "./chartHydrationStats";
+import {
+  markChartLivePatchPending,
+  recordChartHydrationCounter,
+} from "./chartHydrationStats";
+import type {
+  ChartBarsHistoryPage,
+  ChartBarsPagePayload,
+} from "./chartBarsPayloads";
 import {
   updateActiveChartBarState,
   useActiveChartBarState,
 } from "./activeChartBarStore";
+import {
+  getChartBarLimit,
+  getChartTimeframeStepMs,
+  normalizeChartTimeframe,
+} from "./timeframes";
+import { normalizeTimeframeBucketStartMs } from "./timeframeRollups";
 
 type UseBrokerStreamedBarsInput = {
   symbol: string;
@@ -38,6 +51,8 @@ type UseHistoricalBarStreamInput = {
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
   instrumentationScope?: string | null;
+  fetchLatestBars?: () => Promise<MarketBar[] | null | undefined>;
+  streamPriority?: number;
 };
 
 type UsePrependableHistoricalBarsInput = {
@@ -49,7 +64,9 @@ type UsePrependableHistoricalBarsInput = {
     from: Date;
     to: Date;
     limit: number;
-  }) => Promise<MarketBar[] | null | undefined>;
+    historyCursor?: string | null;
+    preferCursor?: boolean;
+  }) => Promise<ChartBarsPagePayload | null | undefined>;
 };
 
 type LiveOptionQuoteLike = {
@@ -57,6 +74,9 @@ type LiveOptionQuoteLike = {
   bid?: number | null;
   ask?: number | null;
   updatedAt?: string | Date | null;
+  freshness?: string | null;
+  marketDataMode?: string | null;
+  dataUpdatedAt?: string | Date | null;
 };
 
 type HistoricalBarStreamSnapshot = {
@@ -68,6 +88,9 @@ type HistoricalBarStreamSnapshot = {
   volume: number;
   source?: string;
   providerContractId?: string | null;
+  freshness?: string;
+  marketDataMode?: string | null;
+  dataUpdatedAt?: string | Date | null;
 };
 
 type HistoricalBarStreamPayload = {
@@ -76,17 +99,74 @@ type HistoricalBarStreamPayload = {
   bar?: HistoricalBarStreamSnapshot | null;
 };
 
-const STREAM_SUPPORTED_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "1d"]);
+export type LiveBarStreamStatus =
+  | "connecting"
+  | "live"
+  | "stale"
+  | "reconnecting"
+  | "fallback"
+  | "deferred"
+  | "unsupported"
+  | "error";
+
+type LiveBarStreamListener = {
+  priority: number;
+  onBar: (bar: HistoricalBarStreamSnapshot) => void;
+  onStatus: (status: LiveBarStreamStatus) => void;
+};
+
+type LiveBarStreamEntry = {
+  url: string;
+  source: EventSource | null;
+  listeners: Map<number, LiveBarStreamListener>;
+  status: LiveBarStreamStatus;
+  lastSignalAt: number;
+  staleTimer: number | null;
+  reconnectTimer: number | null;
+};
+
+const HISTORICAL_BAR_STREAM_TIMEFRAMES = new Set(["5s", "1m", "5m", "15m", "1h", "1d"]);
+const MINUTE_AGGREGATE_PATCH_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "1d"]);
+const LIVE_BAR_STREAM_STALE_MS = 45_000;
+const LIVE_BAR_STREAM_RECONNECT_MS = 5_000;
+const LIVE_BAR_FALLBACK_DELAYS_MS = [0, 15_000, 30_000, 60_000] as const;
+const LIVE_BAR_STREAM_MAX_CONNECTIONS = 64;
+const INTRADAY_PREPEND_MIN_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1_000;
+const EMPTY_OLDER_HISTORY_WINDOW_EXHAUSTION_LIMIT = 120;
+
+const liveBarStreamEntries = new Map<string, LiveBarStreamEntry>();
+let nextLiveBarStreamListenerId = 1;
 
 const timeframeToStepMs = (timeframe: string): number => (
-  ({
-    "1m": 60_000,
-    "5m": 300_000,
-    "15m": 900_000,
-    "1h": 3_600_000,
-    "1d": 86_400_000,
-  }[timeframe] || 0)
+  getChartTimeframeStepMs(normalizeChartTimeframe(timeframe)) || 0
 );
+
+const FALLBACK_PATCHED_BAR_LIMIT = 500;
+const LIVE_PATCH_EXTRA_BAR_LIMIT = 500;
+
+const resolvePatchedBarLimit = (
+  timeframe: string,
+  baseBars: MarketBar[],
+): number => {
+  const targetLimit =
+    getChartBarLimit(normalizeChartTimeframe(timeframe)) ||
+    FALLBACK_PATCHED_BAR_LIMIT;
+  const hydratedLimit = baseBars.length
+    ? baseBars.length + Math.min(LIVE_PATCH_EXTRA_BAR_LIMIT, targetLimit)
+    : 0;
+
+  return Math.max(targetLimit, hydratedLimit, 1);
+};
+
+const capBarsToRecentLimit = (
+  bars: MarketBar[],
+  limit: number,
+): MarketBar[] => {
+  if (bars.length <= limit) {
+    return bars;
+  }
+  return bars.slice(bars.length - limit);
+};
 
 // For 1d, IBKR timestamps daily bars at the trading-day boundary (typically 04:00 UTC = ET midnight).
 // We don't re-bucket — instead we patch the last historical daily bar's OHLCV using all live
@@ -109,6 +189,43 @@ const resolveTimestampMs = (value: MarketBar["timestamp"] | MarketBar["time"]): 
   }
 
   return null;
+};
+
+const resolveHistoryPageTimeMs = (
+  value: ChartBarsHistoryPage[keyof ChartBarsHistoryPage] | undefined,
+): number | null => {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const normalizeHistoricalBarsPayload = (
+  payload: ChartBarsPagePayload | null | undefined,
+): ChartBarsPagePayload => {
+  return {
+    bars: Array.isArray(payload?.bars) ? payload.bars : [],
+    historyPage: payload?.historyPage ?? null,
+  };
+};
+
+const resolvePrependLookbackMs = (
+  timeframe: string,
+  pageSize: number,
+): number => {
+  const stepMs = timeframeToStepMs(timeframe);
+  const pageWindowMs = Math.max(stepMs, stepMs * Math.max(1, pageSize));
+  if (!stepMs) {
+    return 0;
+  }
+  if (normalizeChartTimeframe(timeframe) === "1d") {
+    return pageWindowMs;
+  }
+  return Math.max(pageWindowMs * 3, INTRADAY_PREPEND_MIN_LOOKBACK_MS);
 };
 
 const resolveQuoteUpdatedAtMs = (
@@ -155,18 +272,25 @@ const resolveLiveQuotePrice = (quote: LiveOptionQuoteLike | null): number | null
   return null;
 };
 
-const normalizeBaseBars = (bars: MarketBar[]): MarketBar[] => (
-  bars
+const normalizeBaseBars = (
+  bars: MarketBar[] | null | undefined,
+  timeframe?: string,
+): MarketBar[] => (
+  (Array.isArray(bars) ? bars : [])
     .reduce<Array<MarketBar & { _startMs: number }>>((result, bar) => {
-      const startMs = resolveTimestampMs(bar.timestamp) ?? resolveTimestampMs(bar.time);
-      if (startMs == null) {
+      const rawStartMs = resolveTimestampMs(bar.timestamp) ?? resolveTimestampMs(bar.time);
+      if (rawStartMs == null) {
         return result;
       }
+      const startMs = timeframe
+        ? normalizeTimeframeBucketStartMs(rawStartMs, timeframe)
+        : rawStartMs;
 
       result.push({
         ...bar,
         timestamp: new Date(startMs),
-        ts: typeof bar.ts === "string" ? bar.ts : new Date(startMs).toISOString(),
+        time: startMs,
+        ts: new Date(startMs).toISOString(),
         open: bar.open ?? bar.o,
         high: bar.high ?? bar.h,
         low: bar.low ?? bar.l,
@@ -188,13 +312,18 @@ const buildHistoricalBarStreamUrl = (input: {
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
 }): string | null => {
-  if (!input.symbol || !input.timeframe) {
+  const normalizedTimeframe = normalizeChartTimeframe(input.timeframe);
+  if (
+    !input.symbol ||
+    !normalizedTimeframe ||
+    !HISTORICAL_BAR_STREAM_TIMEFRAMES.has(normalizedTimeframe)
+  ) {
     return null;
   }
 
   const params = new URLSearchParams({
     symbol: input.symbol.trim().toUpperCase(),
-    timeframe: input.timeframe,
+    timeframe: normalizedTimeframe,
   });
 
   if (input.assetClass) {
@@ -223,6 +352,185 @@ const parseHistoricalBarStreamPayload = (
   }
 };
 
+const notifyLiveBarStreamStatus = (
+  entry: LiveBarStreamEntry,
+  status: LiveBarStreamStatus,
+): void => {
+  if (entry.status === status) {
+    return;
+  }
+
+  entry.status = status;
+  entry.listeners.forEach((listener) => listener.onStatus(status));
+};
+
+const touchLiveBarStream = (entry: LiveBarStreamEntry): void => {
+  entry.lastSignalAt = Date.now();
+  notifyLiveBarStreamStatus(entry, "live");
+};
+
+const stopLiveBarStreamEntry = (entry: LiveBarStreamEntry): void => {
+  if (entry.source) {
+    entry.source.close();
+    entry.source = null;
+  }
+  if (entry.staleTimer != null) {
+    window.clearInterval(entry.staleTimer);
+    entry.staleTimer = null;
+  }
+  if (entry.reconnectTimer != null) {
+    window.clearTimeout(entry.reconnectTimer);
+    entry.reconnectTimer = null;
+  }
+};
+
+const startLiveBarStreamEntry = (entry: LiveBarStreamEntry): void => {
+  if (entry.source || typeof window === "undefined" || typeof window.EventSource === "undefined") {
+    return;
+  }
+
+  const activeConnectionCount = Array.from(liveBarStreamEntries.values()).filter(
+    (candidate) => candidate.source && candidate !== entry,
+  ).length;
+  if (activeConnectionCount >= LIVE_BAR_STREAM_MAX_CONNECTIONS) {
+    notifyLiveBarStreamStatus(entry, "deferred");
+    return;
+  }
+
+  notifyLiveBarStreamStatus(entry, "connecting");
+  entry.lastSignalAt = Date.now();
+
+  const stream = new EventSource(entry.url);
+  entry.source = stream;
+
+  stream.onopen = () => {
+    touchLiveBarStream(entry);
+  };
+
+  const handleReady = () => {
+    touchLiveBarStream(entry);
+  };
+  const handleHeartbeat = () => {
+    touchLiveBarStream(entry);
+  };
+  const handleStreamError = () => {
+    notifyLiveBarStreamStatus(entry, "error");
+  };
+  const handleBar = (event: MessageEvent<string>) => {
+    const payload = parseHistoricalBarStreamPayload(event.data);
+    if (!payload?.bar) {
+      return;
+    }
+
+    touchLiveBarStream(entry);
+    entry.listeners.forEach((listener) => listener.onBar(payload.bar!));
+  };
+
+  stream.addEventListener("ready", handleReady as EventListener);
+  stream.addEventListener("heartbeat", handleHeartbeat as EventListener);
+  stream.addEventListener("stream-error", handleStreamError as EventListener);
+  stream.addEventListener("bar", handleBar as EventListener);
+  stream.onerror = () => {
+    notifyLiveBarStreamStatus(
+      entry,
+      stream.readyState === EventSource.CLOSED ? "error" : "reconnecting",
+    );
+
+    if (stream.readyState !== EventSource.CLOSED || entry.reconnectTimer != null) {
+      return;
+    }
+
+    entry.source = null;
+    entry.reconnectTimer = window.setTimeout(() => {
+      entry.reconnectTimer = null;
+      if (entry.listeners.size) {
+        startLiveBarStreamEntry(entry);
+      }
+    }, LIVE_BAR_STREAM_RECONNECT_MS);
+  };
+
+  entry.staleTimer = window.setInterval(() => {
+    if (!entry.listeners.size) {
+      return;
+    }
+    if (Date.now() - entry.lastSignalAt > LIVE_BAR_STREAM_STALE_MS) {
+      notifyLiveBarStreamStatus(entry, "stale");
+      if (entry.reconnectTimer != null) {
+        return;
+      }
+      if (entry.source) {
+        entry.source.close();
+        entry.source = null;
+      }
+      notifyLiveBarStreamStatus(entry, "reconnecting");
+      entry.reconnectTimer = window.setTimeout(() => {
+        entry.reconnectTimer = null;
+        if (entry.listeners.size) {
+          startLiveBarStreamEntry(entry);
+        }
+      }, LIVE_BAR_STREAM_RECONNECT_MS);
+    }
+  }, 5_000);
+};
+
+const subscribeLiveBarStream = (
+  url: string,
+  listener: LiveBarStreamListener,
+): (() => void) => {
+  if (typeof window === "undefined" || typeof window.EventSource === "undefined") {
+    listener.onStatus("unsupported");
+    return () => {};
+  }
+
+  let entry = liveBarStreamEntries.get(url);
+  if (!entry) {
+    entry = {
+      url,
+      source: null,
+      listeners: new Map(),
+      status: "connecting",
+      lastSignalAt: Date.now(),
+      staleTimer: null,
+      reconnectTimer: null,
+    };
+    liveBarStreamEntries.set(url, entry);
+  }
+
+  const listenerId = nextLiveBarStreamListenerId;
+  nextLiveBarStreamListenerId += 1;
+  entry.listeners.set(listenerId, listener);
+  listener.onStatus(entry.status);
+  startLiveBarStreamEntry(entry);
+
+  return () => {
+    const activeEntry = liveBarStreamEntries.get(url);
+    if (!activeEntry) {
+      return;
+    }
+
+    activeEntry.listeners.delete(listenerId);
+    if (activeEntry.listeners.size > 0) {
+      return;
+    }
+
+    stopLiveBarStreamEntry(activeEntry);
+    liveBarStreamEntries.delete(url);
+    Array.from(liveBarStreamEntries.values())
+      .filter((entry) => entry.status === "deferred" && entry.listeners.size > 0)
+      .sort((left, right) => {
+        const leftPriority = Math.max(
+          ...Array.from(left.listeners.values()).map((item) => item.priority),
+        );
+        const rightPriority = Math.max(
+          ...Array.from(right.listeners.values()).map((item) => item.priority),
+        );
+        return rightPriority - leftPriority;
+      })
+      .slice(0, 1)
+      .forEach(startLiveBarStreamEntry);
+  };
+};
+
 const weightedAverage = (
   values: Array<{ value: number | null; weight: number }>,
 ): number | undefined => {
@@ -241,8 +549,8 @@ const mergeBarsWithMinuteAggregates = (
   timeframe: string,
   bars: MarketBar[],
 ): MarketBar[] => {
-  const normalizedBars = normalizeBaseBars(bars);
-  if (!STREAM_SUPPORTED_TIMEFRAMES.has(timeframe)) {
+  const normalizedBars = normalizeBaseBars(bars, timeframe);
+  if (!MINUTE_AGGREGATE_PATCH_TIMEFRAMES.has(timeframe)) {
     return normalizedBars;
   }
 
@@ -295,7 +603,7 @@ const mergeBarsWithMinuteAggregates = (
           : (lastBar.volume ?? lastBar.v ?? 0) + liveVolume,
       sessionVwap: last.sessionVwap ?? lastBar.sessionVwap,
       accumulatedVolume: last.accumulatedVolume ?? lastBar.accumulatedVolume,
-      source: "ibkr-websocket-derived",
+      source: last.source,
     };
     return [...normalizedBars.slice(0, -1), patchedLast];
   }
@@ -352,7 +660,7 @@ const mergeBarsWithMinuteAggregates = (
       sessionVwap: last.sessionVwap ?? undefined,
       accumulatedVolume: last.accumulatedVolume ?? undefined,
       averageTradeSize,
-      source: "ibkr-websocket-derived",
+      source: last.source,
     });
   });
 
@@ -364,17 +672,18 @@ const mergeBarsWithMinuteAggregates = (
 const mergePatchedBars = (
   baseBars: MarketBar[],
   patchedBars: MarketBar[],
+  timeframe?: string,
 ): MarketBar[] => {
   const mergedByTime = new Map<number, MarketBar>();
 
-  baseBars.forEach((bar) => {
+  normalizeBaseBars(baseBars, timeframe).forEach((bar) => {
     const timeMs = resolveTimestampMs(bar.timestamp) ?? resolveTimestampMs(bar.time);
     if (timeMs != null) {
       mergedByTime.set(timeMs, bar);
     }
   });
 
-  patchedBars.forEach((bar) => {
+  normalizeBaseBars(patchedBars, timeframe).forEach((bar) => {
     const timeMs = resolveTimestampMs(bar.timestamp) ?? resolveTimestampMs(bar.time);
     if (timeMs != null) {
       mergedByTime.set(timeMs, bar);
@@ -385,6 +694,16 @@ const mergePatchedBars = (
     .sort((left, right) => left[0] - right[0])
     .map(([, bar]) => bar);
 };
+
+const mergeAndCapPatchedBars = (
+  baseBars: MarketBar[],
+  patchedBars: MarketBar[],
+  limit: number,
+  timeframe?: string,
+): MarketBar[] => capBarsToRecentLimit(
+  mergePatchedBars(baseBars, patchedBars, timeframe),
+  limit,
+);
 
 const areBarsEquivalent = (
   left: MarketBar[],
@@ -412,7 +731,10 @@ const areBarsEquivalent = (
       (current.low ?? current.l ?? null) !== (next.low ?? next.l ?? null) ||
       (current.close ?? current.c ?? null) !== (next.close ?? next.c ?? null) ||
       (current.volume ?? current.v ?? null) !== (next.volume ?? next.v ?? null) ||
-      (current.source ?? null) !== (next.source ?? null)
+      (current.source ?? null) !== (next.source ?? null) ||
+      (current.freshness ?? null) !== (next.freshness ?? null) ||
+      (current.marketDataMode ?? null) !== (next.marketDataMode ?? null) ||
+      (current.dataUpdatedAt ?? null) !== (next.dataUpdatedAt ?? null)
     ) {
       return false;
     }
@@ -424,30 +746,32 @@ const areBarsEquivalent = (
 const patchBarsWithHistoricalBarStream = (
   bars: MarketBar[],
   nextBar: HistoricalBarStreamSnapshot | null | undefined,
+  timeframe: string,
 ): MarketBar[] => {
-  const normalizedBars = normalizeBaseBars(bars);
+  const normalizedBars = normalizeBaseBars(bars, timeframe);
   if (!nextBar) {
     return normalizedBars;
   }
 
-  const timeMs = resolveTimestampMs(nextBar.timestamp);
-  if (timeMs == null) {
+  const rawTimeMs = resolveTimestampMs(nextBar.timestamp);
+  if (rawTimeMs == null) {
     return normalizedBars;
   }
+  const timeMs = normalizeTimeframeBucketStartMs(rawTimeMs, timeframe);
 
   const patchedBar: MarketBar = {
     timestamp: new Date(timeMs),
     time: timeMs,
-    ts:
-      typeof nextBar.timestamp === "string"
-        ? nextBar.timestamp
-        : new Date(timeMs).toISOString(),
+    ts: new Date(timeMs).toISOString(),
     open: nextBar.open,
     high: nextBar.high,
     low: nextBar.low,
     close: nextBar.close,
     volume: nextBar.volume,
     source: nextBar.source ?? "ibkr-history",
+    freshness: nextBar.freshness,
+    marketDataMode: nextBar.marketDataMode,
+    dataUpdatedAt: nextBar.dataUpdatedAt,
   };
 
   const existingIndex = normalizedBars.findIndex((bar) => {
@@ -469,7 +793,7 @@ const patchBarsWithHistoricalBarStream = (
     return nextBars;
   }
 
-  return mergePatchedBars(normalizedBars, [patchedBar]);
+  return mergePatchedBars(normalizedBars, [patchedBar], timeframe);
 };
 
 const patchBarsWithLiveQuote = (
@@ -477,7 +801,7 @@ const patchBarsWithLiveQuote = (
   timeframe: string,
   quote: LiveOptionQuoteLike | null,
 ): MarketBar[] => {
-  const normalizedBars = normalizeBaseBars(bars);
+  const normalizedBars = normalizeBaseBars(bars, timeframe);
   const quotePrice = resolveLiveQuotePrice(quote);
   const quoteUpdatedAtMs = resolveQuoteUpdatedAtMs(quote?.updatedAt);
   const stepMs = timeframeToStepMs(timeframe);
@@ -509,6 +833,9 @@ const patchBarsWithLiveQuote = (
       close: quotePrice,
       c: quotePrice,
       source: "ibkr-option-quote-derived",
+      freshness: quote?.freshness ?? lastBar.freshness,
+      marketDataMode: quote?.marketDataMode ?? lastBar.marketDataMode,
+      dataUpdatedAt: quote?.dataUpdatedAt ?? quote?.updatedAt ?? lastBar.dataUpdatedAt,
       ts: new Date(lastBarStartMs).toISOString(),
     };
     return nextBars;
@@ -526,6 +853,9 @@ const patchBarsWithLiveQuote = (
     close: quotePrice,
     volume: lastBar.volume ?? lastBar.v ?? 0,
     source: "ibkr-option-quote-derived",
+    freshness: quote?.freshness ?? lastBar.freshness,
+    marketDataMode: quote?.marketDataMode ?? lastBar.marketDataMode,
+    dataUpdatedAt: quote?.dataUpdatedAt ?? quote?.updatedAt ?? lastBar.dataUpdatedAt,
   });
   return nextBars;
 };
@@ -543,10 +873,20 @@ export const usePrependableHistoricalBars = ({
   loadedBarCount: number;
   isPrependingOlder: boolean;
   hasExhaustedOlderHistory: boolean;
+  olderHistoryNextBeforeMs: number | null;
+  emptyOlderHistoryWindowCount: number;
+  olderHistoryPageCount: number;
+  olderHistoryProvider: string | null;
+  olderHistoryExhaustionReason: string | null;
+  olderHistoryProviderCursor: string | null;
+  olderHistoryProviderNextUrl: string | null;
+  olderHistoryProviderPageCount: number | null;
+  olderHistoryProviderPageLimitReached: boolean;
+  olderHistoryCursor: string | null;
 } => {
   const normalizedBaseBars = useMemo(
-    () => normalizeBaseBars(bars || []),
-    [bars],
+    () => normalizeBaseBars(bars || [], timeframe),
+    [bars, timeframe],
   );
   const sharedState = useActiveChartBarState(scopeKey);
   const [isPrependingOlder, setIsPrependingOlder] = useState(false);
@@ -566,7 +906,7 @@ export const usePrependableHistoricalBars = ({
 
     updateActiveChartBarState(scopeKey, (current) => {
       const mergedHistoricalBars = current.historicalBars.length
-        ? mergePatchedBars(current.historicalBars, normalizedBaseBars)
+        ? mergePatchedBars(current.historicalBars, normalizedBaseBars, timeframe)
         : normalizedBaseBars;
 
       if (areBarsEquivalent(current.historicalBars, mergedHistoricalBars)) {
@@ -578,7 +918,7 @@ export const usePrependableHistoricalBars = ({
         historicalBars: mergedHistoricalBars,
       };
     });
-  }, [enabled, normalizedBaseBars, scopeKey]);
+  }, [enabled, normalizedBaseBars, scopeKey, timeframe]);
 
   const mergedBars = useMemo(() => {
     if (!sharedState.historicalBars.length) {
@@ -587,8 +927,8 @@ export const usePrependableHistoricalBars = ({
     if (!normalizedBaseBars.length) {
       return sharedState.historicalBars;
     }
-    return mergePatchedBars(normalizedBaseBars, sharedState.historicalBars);
-  }, [normalizedBaseBars, sharedState.historicalBars]);
+    return mergePatchedBars(normalizedBaseBars, sharedState.historicalBars, timeframe);
+  }, [normalizedBaseBars, sharedState.historicalBars, timeframe]);
   const oldestLoadedAtMs = useMemo(
     () =>
       mergedBars.length
@@ -617,24 +957,50 @@ export const usePrependableHistoricalBars = ({
       }
 
       const requestedPageSize = Math.max(1, Math.ceil(input?.pageSize ?? 0));
-      const prependKey = `${scopeKey}::${oldestMs}::${requestedPageSize}`;
+      const requestToMs = Math.max(
+        0,
+        sharedState.olderHistoryNextBeforeMs ?? oldestMs - 1,
+      );
+      const historyCursor =
+        sharedState.olderHistoryProviderPageLimitReached
+          ? sharedState.olderHistoryCursor
+          : null;
+      if (requestToMs <= 0 && !historyCursor) {
+        updateActiveChartBarState(scopeKey, (current) => ({
+          ...current,
+          hasExhaustedOlderHistory: true,
+          olderHistoryExhaustionReason: "reached-history-start",
+        }));
+        return 0;
+      }
+
+      const prependKey = `${scopeKey}::${requestToMs}::${requestedPageSize}::${historyCursor ?? ""}`;
       if (inFlightOlderKeyRef.current === prependKey) {
         return 0;
       }
 
-      const toMs = Math.max(0, oldestMs - 1);
-      const fromMs = Math.max(0, oldestMs - stepMs * requestedPageSize);
+      const toMs = requestToMs;
+      const lookbackMs = resolvePrependLookbackMs(timeframe, requestedPageSize);
+      const fromMs = Math.max(0, toMs - lookbackMs);
       inFlightOlderKeyRef.current = prependKey;
       setIsPrependingOlder(true);
+      recordChartHydrationCounter("olderPageFetch", scopeKey);
+      if (historyCursor) {
+        recordChartHydrationCounter("historyCursorPage", scopeKey);
+      }
 
       try {
-        const olderBars = normalizeBaseBars(
-          (await fetchOlderBars({
+        const olderPayload = normalizeHistoricalBarsPayload(
+          await fetchOlderBars({
             from: new Date(fromMs),
             to: new Date(toMs),
             limit: requestedPageSize,
-          })) || [],
+            historyCursor,
+            preferCursor: Boolean(historyCursor),
+          }),
         );
+        const olderBars = normalizeBaseBars(olderPayload.bars, timeframe);
+        const historyPage = olderPayload.historyPage;
 
         if (activeScopeKeyRef.current !== scopeKey) {
           return 0;
@@ -654,19 +1020,108 @@ export const usePrependableHistoricalBars = ({
               addedCount += 1;
             }
           });
+          const oldestOlderMs = olderBars.length
+            ? resolveTimestampMs(olderBars[0]?.timestamp) ??
+              resolveTimestampMs(olderBars[0]?.time)
+            : null;
+          const historyNextBeforeMs = resolveHistoryPageTimeMs(
+            historyPage?.nextBefore,
+          );
+          const nextEmptyWindowCount = olderBars.length
+            ? 0
+            : current.emptyOlderHistoryWindowCount + 1;
+          const providerExhausted = Boolean(historyPage?.exhaustedBefore);
+          const providerCursor =
+            historyPage?.providerCursor ?? historyPage?.providerNextUrl ?? null;
+          const providerNextUrl = historyPage?.providerNextUrl ?? null;
+          const providerPageCount =
+            typeof historyPage?.providerPageCount === "number"
+              ? historyPage.providerPageCount
+              : current.olderHistoryProviderPageCount;
+          const providerPageLimitReached = Boolean(
+            historyPage?.providerPageLimitReached,
+          );
+          const nextHistoryCursor =
+            typeof historyPage?.historyCursor === "string" &&
+            historyPage.historyCursor.trim()
+              ? historyPage.historyCursor.trim()
+              : null;
+          const exhaustedByEmptyWindows =
+            !olderBars.length &&
+            nextEmptyWindowCount >= EMPTY_OLDER_HISTORY_WINDOW_EXHAUSTION_LIMIT;
 
           const mergedHistoricalBars = addedCount
-            ? mergePatchedBars(current.historicalBars, olderBars)
+            ? mergePatchedBars(current.historicalBars, olderBars, timeframe)
             : current.historicalBars;
+          const oldestMergedMs = mergedHistoricalBars.length
+            ? resolveTimestampMs(mergedHistoricalBars[0]?.timestamp) ??
+              resolveTimestampMs(mergedHistoricalBars[0]?.time)
+            : oldestOlderMs;
+          const fallbackNextBeforeMs =
+            oldestMergedMs != null
+              ? Math.max(0, oldestMergedMs - 1)
+              : fromMs > 0
+                ? Math.max(0, fromMs - stepMs)
+                : null;
+          const candidateNextBeforeMs = [
+            historyNextBeforeMs,
+            fallbackNextBeforeMs,
+          ].filter(
+            (value): value is number => value != null && value < toMs,
+          );
+          const windowNextBeforeMs = candidateNextBeforeMs.length
+            ? Math.min(...candidateNextBeforeMs)
+            : null;
+          const canContinueProviderCursor = Boolean(nextHistoryCursor);
+          const nextBeforeMs = canContinueProviderCursor
+            ? current.olderHistoryNextBeforeMs ?? toMs
+            : windowNextBeforeMs;
+          const cursorAdvanced =
+            canContinueProviderCursor ||
+            (nextBeforeMs != null && nextBeforeMs < toMs);
+          const exhaustedByDuplicateWindow =
+            olderBars.length > 0 && addedCount === 0 && !cursorAdvanced;
+          const exhaustedAtStart =
+            fromMs <= 0 && !olderBars.length && !canContinueProviderCursor;
           const hasExhaustedOlderHistory =
             current.hasExhaustedOlderHistory ||
-            !olderBars.length ||
-            olderBars.length < requestedPageSize ||
-            addedCount === 0;
+            providerExhausted ||
+            exhaustedByEmptyWindows ||
+            exhaustedByDuplicateWindow ||
+            exhaustedAtStart;
+          const olderHistoryExhaustionReason = hasExhaustedOlderHistory
+            ? providerExhausted
+              ? "provider-exhausted"
+              : exhaustedByEmptyWindows
+                ? "empty-window-budget"
+                : exhaustedByDuplicateWindow
+                  ? "duplicate-window"
+                  : exhaustedAtStart
+                    ? "reached-history-start"
+                    : current.olderHistoryExhaustionReason
+            : null;
+          const olderHistoryProvider =
+            historyPage?.provider ?? current.olderHistoryProvider ?? null;
+          if (providerCursor) {
+            recordChartHydrationCounter("providerCursorPage", scopeKey);
+          }
+          if (exhaustedByDuplicateWindow) {
+            recordChartHydrationCounter("olderPageDuplicate", scopeKey);
+          }
 
           if (
             mergedHistoricalBars === current.historicalBars &&
-            hasExhaustedOlderHistory === current.hasExhaustedOlderHistory
+            hasExhaustedOlderHistory === current.hasExhaustedOlderHistory &&
+            nextBeforeMs === current.olderHistoryNextBeforeMs &&
+            nextEmptyWindowCount === current.emptyOlderHistoryWindowCount &&
+            olderHistoryProvider === current.olderHistoryProvider &&
+            olderHistoryExhaustionReason === current.olderHistoryExhaustionReason &&
+            providerCursor === current.olderHistoryProviderCursor &&
+            providerNextUrl === current.olderHistoryProviderNextUrl &&
+            providerPageCount === current.olderHistoryProviderPageCount &&
+            providerPageLimitReached ===
+              current.olderHistoryProviderPageLimitReached &&
+            nextHistoryCursor === current.olderHistoryCursor
           ) {
             return current;
           }
@@ -675,6 +1130,18 @@ export const usePrependableHistoricalBars = ({
             ...current,
             historicalBars: mergedHistoricalBars,
             hasExhaustedOlderHistory,
+            olderHistoryNextBeforeMs: hasExhaustedOlderHistory
+              ? current.olderHistoryNextBeforeMs
+              : nextBeforeMs,
+            emptyOlderHistoryWindowCount: nextEmptyWindowCount,
+            olderHistoryPageCount: current.olderHistoryPageCount + 1,
+            olderHistoryProvider,
+            olderHistoryExhaustionReason,
+            olderHistoryProviderCursor: providerCursor,
+            olderHistoryProviderNextUrl: providerNextUrl,
+            olderHistoryProviderPageCount: providerPageCount,
+            olderHistoryProviderPageLimitReached: providerPageLimitReached,
+            olderHistoryCursor: nextHistoryCursor,
           };
         });
 
@@ -695,6 +1162,9 @@ export const usePrependableHistoricalBars = ({
       mergedBars.length,
       oldestLoadedAtMs,
       sharedState.hasExhaustedOlderHistory,
+      sharedState.olderHistoryNextBeforeMs,
+      sharedState.olderHistoryCursor,
+      sharedState.olderHistoryProviderPageLimitReached,
       scopeKey,
       timeframe,
     ],
@@ -707,6 +1177,17 @@ export const usePrependableHistoricalBars = ({
     loadedBarCount: mergedBars.length,
     isPrependingOlder,
     hasExhaustedOlderHistory: sharedState.hasExhaustedOlderHistory,
+    olderHistoryNextBeforeMs: sharedState.olderHistoryNextBeforeMs,
+    emptyOlderHistoryWindowCount: sharedState.emptyOlderHistoryWindowCount,
+    olderHistoryPageCount: sharedState.olderHistoryPageCount,
+    olderHistoryProvider: sharedState.olderHistoryProvider,
+    olderHistoryExhaustionReason: sharedState.olderHistoryExhaustionReason,
+    olderHistoryProviderCursor: sharedState.olderHistoryProviderCursor,
+    olderHistoryProviderNextUrl: sharedState.olderHistoryProviderNextUrl,
+    olderHistoryProviderPageCount: sharedState.olderHistoryProviderPageCount,
+    olderHistoryProviderPageLimitReached:
+      sharedState.olderHistoryProviderPageLimitReached,
+    olderHistoryCursor: sharedState.olderHistoryCursor,
   };
 };
 
@@ -718,7 +1199,7 @@ export const useBrokerStreamedBars = ({
 }: UseBrokerStreamedBarsInput): MarketBar[] => {
   useBrokerStockAggregateStream({
     symbols: symbol ? [symbol] : [],
-    enabled: Boolean(enabled && symbol && STREAM_SUPPORTED_TIMEFRAMES.has(timeframe)),
+    enabled: Boolean(enabled && symbol && MINUTE_AGGREGATE_PATCH_TIMEFRAMES.has(timeframe)),
   });
 
   const symbolAggregateVersion = useStockMinuteAggregateSymbolVersion(symbol);
@@ -738,13 +1219,17 @@ export const useOptionQuotePatchedBars = ({
 }: UseOptionQuotePatchedBarsInput): MarketBar[] => {
   const liveQuote = useStoredOptionQuoteSnapshot(providerContractId);
   const normalizedBaseBars = useMemo(
-    () => normalizeBaseBars(bars || []),
-    [bars],
+    () => normalizeBaseBars(bars || [], timeframe),
+    [bars, timeframe],
   );
   const scopeKey = `${providerContractId?.trim?.() || ""}:${timeframe}`;
   const [patchedBars, setPatchedBars] = useState<MarketBar[]>(normalizedBaseBars);
   const baseBarsRef = useRef(normalizedBaseBars);
   const lastAppliedQuoteSignatureRef = useRef<string | null>(null);
+  const patchedBarLimit = useMemo(
+    () => resolvePatchedBarLimit(timeframe, normalizedBaseBars),
+    [normalizedBaseBars, timeframe],
+  );
   const quoteSignature = [
     resolveQuoteUpdatedAtMs(liveQuote?.updatedAt) ?? "",
     liveQuote?.price ?? "",
@@ -757,13 +1242,24 @@ export const useOptionQuotePatchedBars = ({
   }, [normalizedBaseBars]);
 
   useEffect(() => {
-    setPatchedBars(normalizedBaseBars);
+    setPatchedBars((current) => {
+      const next = capBarsToRecentLimit(normalizedBaseBars, patchedBarLimit);
+      return areBarsEquivalent(current, next) ? current : next;
+    });
     lastAppliedQuoteSignatureRef.current = quoteSignature;
   }, [scopeKey]);
 
   useEffect(() => {
-    setPatchedBars((current) => mergePatchedBars(normalizedBaseBars, current));
-  }, [normalizedBaseBars]);
+    setPatchedBars((current) => {
+      const next = mergeAndCapPatchedBars(
+        normalizedBaseBars,
+        current,
+        patchedBarLimit,
+        timeframe,
+      );
+      return areBarsEquivalent(current, next) ? current : next;
+    });
+  }, [normalizedBaseBars, patchedBarLimit, timeframe]);
 
   useEffect(() => {
     if (!enabled || !providerContractId || !liveQuote) {
@@ -776,17 +1272,21 @@ export const useOptionQuotePatchedBars = ({
 
     lastAppliedQuoteSignatureRef.current = quoteSignature;
     markChartLivePatchPending(instrumentationScope);
-    setPatchedBars((current) =>
-      patchBarsWithLiveQuote(
-        current.length ? current : baseBarsRef.current,
-        timeframe,
-        liveQuote,
-      ),
-    );
+    setPatchedBars((current) => {
+      const next = capBarsToRecentLimit(
+        patchBarsWithLiveQuote(
+          current.length ? current : baseBarsRef.current,
+          timeframe,
+          liveQuote,
+        ),
+        patchedBarLimit,
+      );
+      return areBarsEquivalent(current, next) ? current : next;
+    });
   }, [
     enabled,
     liveQuote,
-    normalizedBaseBars,
+    patchedBarLimit,
     providerContractId,
     quoteSignature,
     timeframe,
@@ -806,10 +1306,12 @@ export const useHistoricalBarStream = ({
   outsideRth,
   source,
   instrumentationScope,
+  fetchLatestBars,
+  streamPriority = 0,
 }: UseHistoricalBarStreamInput): MarketBar[] => {
   const normalizedBaseBars = useMemo(
-    () => normalizeBaseBars(bars || []),
-    [bars],
+    () => normalizeBaseBars(bars || [], timeframe),
+    [bars, timeframe],
   );
   const scopeKey = [
     symbol?.trim?.().toUpperCase?.() || "",
@@ -821,8 +1323,13 @@ export const useHistoricalBarStream = ({
   ].join("::");
   const [streamedBars, setStreamedBars] = useState<MarketBar[]>(normalizedBaseBars);
   const baseBarsRef = useRef(normalizedBaseBars);
+  const fetchLatestBarsRef = useRef(fetchLatestBars);
   const lastStreamSignatureRef = useRef<string | null>(null);
   const pageVisible = usePageVisible();
+  const streamedBarLimit = useMemo(
+    () => resolvePatchedBarLimit(timeframe, normalizedBaseBars),
+    [normalizedBaseBars, timeframe],
+  );
   const streamUrl = useMemo(
     () =>
       buildHistoricalBarStreamUrl({
@@ -841,42 +1348,56 @@ export const useHistoricalBarStream = ({
   }, [normalizedBaseBars]);
 
   useEffect(() => {
-    setStreamedBars(normalizedBaseBars);
+    fetchLatestBarsRef.current = fetchLatestBars;
+  }, [fetchLatestBars]);
+
+  useEffect(() => {
+    setStreamedBars((current) => {
+      const next = capBarsToRecentLimit(normalizedBaseBars, streamedBarLimit);
+      return areBarsEquivalent(current, next) ? current : next;
+    });
     lastStreamSignatureRef.current = null;
-  }, [scopeKey]);
+  }, [scopeKey, normalizedBaseBars, streamedBarLimit]);
 
   useEffect(() => {
-    setStreamedBars((current) => mergePatchedBars(normalizedBaseBars, current));
-  }, [normalizedBaseBars]);
+    setStreamedBars((current) => {
+      const next = mergeAndCapPatchedBars(
+        normalizedBaseBars,
+        current,
+        streamedBarLimit,
+        timeframe,
+      );
+      return areBarsEquivalent(current, next) ? current : next;
+    });
+  }, [normalizedBaseBars, streamedBarLimit, timeframe]);
 
   useEffect(() => {
-    if (
-      !enabled ||
-      !pageVisible ||
-      !streamUrl ||
-      typeof window === "undefined" ||
-      typeof window.EventSource === "undefined"
-    ) {
+    if (!enabled || !pageVisible || !streamUrl || typeof window === "undefined") {
       return;
     }
 
-    const sourceConnection = new EventSource(streamUrl);
-    const handleBar = (event: MessageEvent<string>) => {
-      const payload = parseHistoricalBarStreamPayload(event.data);
-      if (!payload?.bar) {
+    let active = true;
+    let fallbackTimer: number | null = null;
+    let fallbackInFlight = false;
+    let fallbackAttempt = 0;
+    let streamIsLive = false;
+
+    const clearFallbackTimer = () => {
+      if (fallbackTimer == null) {
         return;
       }
+      window.clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    };
 
+    const applyStreamBar = (bar: HistoricalBarStreamSnapshot) => {
       const nextSignature = JSON.stringify({
-        timestamp:
-          payload.bar.timestamp instanceof Date
-            ? payload.bar.timestamp.toISOString()
-            : String(payload.bar.timestamp),
-        open: payload.bar.open,
-        high: payload.bar.high,
-        low: payload.bar.low,
-        close: payload.bar.close,
-        volume: payload.bar.volume,
+        timestamp: bar.timestamp instanceof Date ? bar.timestamp.toISOString() : String(bar.timestamp),
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
       });
       if (nextSignature === lastStreamSignatureRef.current) {
         return;
@@ -884,22 +1405,119 @@ export const useHistoricalBarStream = ({
       lastStreamSignatureRef.current = nextSignature;
 
       markChartLivePatchPending(instrumentationScope);
-      setStreamedBars((current) =>
-        patchBarsWithHistoricalBarStream(
-          current.length ? current : baseBarsRef.current,
-          payload.bar,
-        ),
-      );
+      setStreamedBars((current) => {
+        const next = capBarsToRecentLimit(
+          patchBarsWithHistoricalBarStream(
+            current.length ? current : baseBarsRef.current,
+            bar,
+            timeframe,
+          ),
+          streamedBarLimit,
+        );
+        return areBarsEquivalent(current, next) ? current : next;
+      });
     };
 
-    sourceConnection.addEventListener("bar", handleBar as EventListener);
-    return () => {
-      sourceConnection.removeEventListener("bar", handleBar as EventListener);
-      sourceConnection.close();
+    const scheduleFallback = (delayMs?: number) => {
+      if (!active || fallbackTimer != null || fallbackInFlight || !fetchLatestBarsRef.current) {
+        return;
+      }
+
+      const delay =
+        typeof delayMs === "number"
+          ? delayMs
+          : LIVE_BAR_FALLBACK_DELAYS_MS[
+              Math.min(fallbackAttempt, LIVE_BAR_FALLBACK_DELAYS_MS.length - 1)
+            ];
+      fallbackTimer = window.setTimeout(() => {
+        fallbackTimer = null;
+        void runFallback();
+      }, delay);
     };
-  }, [enabled, instrumentationScope, pageVisible, scopeKey, streamUrl]);
+
+    const runFallback = async () => {
+      if (!active || fallbackInFlight || !fetchLatestBarsRef.current) {
+        return;
+      }
+
+      fallbackInFlight = true;
+      try {
+        recordChartHydrationCounter("liveFallbackFetch", instrumentationScope);
+        const bars = normalizeBaseBars(
+          await fetchLatestBarsRef.current(),
+          timeframe,
+        );
+        if (!active || !bars.length) {
+          return;
+        }
+
+        markChartLivePatchPending(instrumentationScope);
+        setStreamedBars((current) => {
+          const next = mergeAndCapPatchedBars(
+            current.length ? current : baseBarsRef.current,
+            bars,
+            streamedBarLimit,
+            timeframe,
+          );
+          return areBarsEquivalent(current, next) ? current : next;
+        });
+      } finally {
+        fallbackInFlight = false;
+        fallbackAttempt += 1;
+        if (active && !streamIsLive) {
+          scheduleFallback();
+        }
+      }
+    };
+
+    const unsubscribe = subscribeLiveBarStream(streamUrl, {
+      priority: streamPriority,
+      onBar: (bar) => {
+        fallbackAttempt = 0;
+        clearFallbackTimer();
+        applyStreamBar(bar);
+      },
+      onStatus: (status) => {
+        streamIsLive = status === "live";
+        if (status === "live" || status === "connecting") {
+          if (status === "live") {
+            fallbackAttempt = 0;
+          }
+          clearFallbackTimer();
+          return;
+        }
+
+        scheduleFallback(0);
+      },
+    });
+
+    return () => {
+      active = false;
+      clearFallbackTimer();
+      unsubscribe();
+    };
+  }, [
+    enabled,
+    instrumentationScope,
+    pageVisible,
+    scopeKey,
+    streamUrl,
+    streamPriority,
+    streamedBarLimit,
+    timeframe,
+  ]);
 
   return streamedBars;
 };
 
 export const useMassiveStreamedStockBars = useBrokerStreamedBars;
+
+export const __chartStreamingTestInternals = {
+  capBarsToRecentLimit,
+  mergeAndCapPatchedBars,
+  normalizeHistoricalBarsPayload,
+  normalizeBaseBars,
+  patchBarsWithHistoricalBarStream,
+  resolvePrependLookbackMs,
+  resolvePatchedBarLimit,
+};

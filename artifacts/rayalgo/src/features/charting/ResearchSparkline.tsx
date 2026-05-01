@@ -6,6 +6,7 @@ import {
   RAY_REPLICA_PINE_SCRIPT_KEY,
 } from "./rayReplicaPineAdapter";
 import type { MarketBar } from "./types";
+import type { ChartEvent } from "./chartEvents";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -25,12 +26,14 @@ type ResearchSparklineProps = {
   bars?: MarketBar[] | null;
   theme: ResearchChartTheme;
   themeKey: string;
+  chartEvents?: ChartEvent[];
 };
 
 export const ResearchSparkline = ({
   bars = [],
   theme,
   themeKey,
+  chartEvents = [],
 }: ResearchSparklineProps) => {
   const { indicatorRegistry } = useIndicatorLibrary();
   const sparkBars = useMemo(
@@ -66,6 +69,7 @@ export const ResearchSparkline = ({
       indicatorRegistry={indicatorRegistry}
       defaultBaseSeriesType="line"
       defaultShowVolume={false}
+      chartEvents={chartEvents}
     />
   );
 };

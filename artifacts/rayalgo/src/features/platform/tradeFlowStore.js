@@ -6,23 +6,27 @@ const EMPTY_TRADE_FLOW_SNAPSHOT = Object.freeze({
 });
 
 const tradeFlowEntries = new Map();
-const TRADE_FLOW_TICKER_CAP = 16;
+export const TRADE_FLOW_STORE_ENTRY_CAP = 16;
 
 const evictOldestUnusedTradeFlowEntry = () => {
-  if (tradeFlowEntries.size <= TRADE_FLOW_TICKER_CAP) return;
+  if (tradeFlowEntries.size <= TRADE_FLOW_STORE_ENTRY_CAP) return;
   for (const [key, value] of tradeFlowEntries) {
     if (!value.listeners || value.listeners.size === 0) {
       tradeFlowEntries.delete(key);
       return;
     }
   }
-  const oldestKey = tradeFlowEntries.keys().next().value;
-  if (oldestKey !== undefined) {
-    tradeFlowEntries.delete(oldestKey);
-  }
 };
 
 const normalizeTicker = (ticker) => ticker?.trim?.().toUpperCase?.() || "";
+
+const deleteEntryIfUnused = (ticker) => {
+  const normalizedTicker = normalizeTicker(ticker) || "__empty__";
+  const entry = tradeFlowEntries.get(normalizedTicker);
+  if (entry && entry.listeners.size === 0) {
+    tradeFlowEntries.delete(normalizedTicker);
+  }
+};
 
 const ensureEntry = (ticker) => {
   const normalizedTicker = normalizeTicker(ticker) || "__empty__";
@@ -88,11 +92,32 @@ export const publishTradeFlowSnapshot = (ticker, nextSnapshot) => {
   entry.listeners.forEach((listener) => listener());
 };
 
+export const clearTradeFlowSnapshot = (ticker) => {
+  const normalizedTicker = normalizeTicker(ticker) || "__empty__";
+  const entry = tradeFlowEntries.get(normalizedTicker);
+  if (!entry) {
+    return;
+  }
+  if (entry.snapshot === EMPTY_TRADE_FLOW_SNAPSHOT) {
+    deleteEntryIfUnused(normalizedTicker);
+    return;
+  }
+  entry.snapshot = EMPTY_TRADE_FLOW_SNAPSHOT;
+  entry.version += 1;
+  entry.listeners.forEach((listener) => listener());
+  deleteEntryIfUnused(normalizedTicker);
+};
+
 const subscribeToTradeFlowSnapshot = (ticker, listener) => {
   const entry = ensureEntry(ticker);
   entry.listeners.add(listener);
   return () => {
     entry.listeners.delete(listener);
+    if (entry.snapshot === EMPTY_TRADE_FLOW_SNAPSHOT) {
+      deleteEntryIfUnused(ticker);
+    } else {
+      evictOldestUnusedTradeFlowEntry();
+    }
   };
 };
 
@@ -100,6 +125,12 @@ const getTradeFlowSnapshotVersion = (ticker) => ensureEntry(ticker).version;
 
 const getTradeFlowSnapshot = (ticker) =>
   ensureEntry(ticker).snapshot || EMPTY_TRADE_FLOW_SNAPSHOT;
+
+export const getTradeFlowStoreEntryCount = () => tradeFlowEntries.size;
+
+export const resetTradeFlowStoreForTests = () => {
+  tradeFlowEntries.clear();
+};
 
 export const useTradeFlowSnapshot = (
   ticker,

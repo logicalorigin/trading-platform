@@ -16,7 +16,7 @@ export type BrokerStockAggregateMessage = {
   startMs: number;
   endMs: number;
   delayed: boolean;
-  source: "ibkr-websocket-derived";
+  source: "ibkr-websocket-derived" | "polygon-delayed-websocket";
   latency?: {
     bridgeReceivedAt?: string | null;
     bridgeEmittedAt?: string | null;
@@ -46,6 +46,7 @@ type AggregateStreamStats = {
   refreshCount: number;
   eventCount: number;
   streamGapCount: number;
+  stallReconnectCount: number;
   maxGapMs: number;
   lastEventAtMs: number | null;
 };
@@ -55,6 +56,7 @@ const MAX_SYMBOLS_IN_MINUTE_CACHE = 64;
 const EVENT_SOURCE_RETRY_DELAY_MS = 5_000;
 const EVENT_SOURCE_RECONFIGURE_DEBOUNCE_MS = 150;
 const STREAM_GAP_THRESHOLD_MS = 2_500;
+const EVENT_SOURCE_STALL_MS = 10_000;
 
 const normalizeSymbols = (symbols: string[]): string[] => (
   Array.from(
@@ -105,6 +107,7 @@ const aggregateStreamStats: AggregateStreamStats = {
   refreshCount: 0,
   eventCount: 0,
   streamGapCount: 0,
+  stallReconnectCount: 0,
   maxGapMs: 0,
   lastEventAtMs: null,
 };
@@ -116,9 +119,14 @@ let eventSource: EventSource | null = null;
 let eventSourceSignature = "";
 let reconnectTimer: number | null = null;
 let refreshTimer: number | null = null;
+let stallTimer: number | null = null;
 let reconnectBlockedUntil = 0;
+let eventSourceOpenedAtMs: number | null = null;
+let eventSourceLastSignalAtMs: number | null = null;
 let storeNotifyScheduled = false;
+let symbolStoreNotifyScheduled = false;
 let streamPaused = false;
+const pendingSymbolNotifications = new Set<string>();
 
 const flushStoreListeners = () => {
   storeNotifyScheduled = false;
@@ -140,26 +148,42 @@ const notifyStoreListeners = () => {
   setTimeout(flushStoreListeners, 0);
 };
 
+const flushSymbolStoreListeners = () => {
+  symbolStoreNotifyScheduled = false;
+  const symbols = Array.from(pendingSymbolNotifications);
+  pendingSymbolNotifications.clear();
+
+  symbols.forEach((normalizedSymbol) => {
+    const listeners = symbolStoreListeners.get(normalizedSymbol);
+    symbolStoreVersions.set(
+      normalizedSymbol,
+      (symbolStoreVersions.get(normalizedSymbol) ?? 0) + 1,
+    );
+    if (!listeners?.size) {
+      return;
+    }
+    Array.from(listeners).forEach((listener) => listener());
+  });
+};
+
 const notifySymbolStoreListeners = (symbol: string) => {
   const normalizedSymbol = symbol.trim().toUpperCase();
   if (!normalizedSymbol) {
     return;
   }
 
-  const listeners = symbolStoreListeners.get(normalizedSymbol);
-  if (!listeners?.size) {
-    symbolStoreVersions.set(
-      normalizedSymbol,
-      (symbolStoreVersions.get(normalizedSymbol) ?? 0) + 1,
-    );
+  pendingSymbolNotifications.add(normalizedSymbol);
+  if (symbolStoreNotifyScheduled) {
     return;
   }
 
-  symbolStoreVersions.set(
-    normalizedSymbol,
-    (symbolStoreVersions.get(normalizedSymbol) ?? 0) + 1,
-  );
-  Array.from(listeners).forEach((listener) => listener());
+  symbolStoreNotifyScheduled = true;
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(flushSymbolStoreListeners);
+    return;
+  }
+
+  setTimeout(flushSymbolStoreListeners, 0);
 };
 
 const notifyLatencyStoreListeners = () => {
@@ -360,11 +384,43 @@ const clearRefreshTimer = () => {
   refreshTimer = null;
 };
 
+const clearStallTimer = () => {
+  if (stallTimer == null) {
+    return;
+  }
+
+  clearInterval(stallTimer);
+  stallTimer = null;
+};
+
 const getUnionSymbols = (): string[] => normalizeSymbols(
   Array.from(consumers.values()).flatMap((consumer) => Array.from(consumer.symbols)),
 );
 
+export const getBrokerStockAggregateDebugStats = () => ({
+  activeConsumerCount: consumers.size,
+  unionSymbolCount: getUnionSymbols().length,
+  minuteCacheSymbolCount: minuteCacheBySymbol.size,
+  minuteCacheBarCount: Array.from(minuteCacheBySymbol.values()).reduce(
+    (sum, cache) => sum + cache.size,
+    0,
+  ),
+  symbolListenerCount: Array.from(symbolStoreListeners.values()).reduce(
+    (sum, listeners) => sum + listeners.size,
+    0,
+  ),
+  storeListenerCount: storeListeners.size,
+  reconnectCount: aggregateStreamStats.reconnectCount,
+  refreshCount: aggregateStreamStats.refreshCount,
+  eventCount: aggregateStreamStats.eventCount,
+  streamGapCount: aggregateStreamStats.streamGapCount,
+  stallReconnectCount: aggregateStreamStats.stallReconnectCount,
+});
+
 const closeEventSource = () => {
+  clearStallTimer();
+  eventSourceOpenedAtMs = null;
+  eventSourceLastSignalAtMs = null;
   if (!eventSource) {
     eventSourceSignature = "";
     return;
@@ -373,6 +429,34 @@ const closeEventSource = () => {
   eventSource.close();
   eventSource = null;
   eventSourceSignature = "";
+};
+
+const startStallTimer = () => {
+  clearStallTimer();
+  if (typeof window === "undefined") {
+    return;
+  }
+  stallTimer = window.setInterval(() => {
+    if (!eventSource || streamPaused || !eventSourceSignature) {
+      return;
+    }
+    const lastSignalAt = eventSourceLastSignalAtMs ?? eventSourceOpenedAtMs;
+    if (lastSignalAt == null) {
+      return;
+    }
+    const ageMs = Date.now() - lastSignalAt;
+    if (ageMs < EVENT_SOURCE_STALL_MS) {
+      return;
+    }
+
+    reconnectBlockedUntil = Date.now() + EVENT_SOURCE_RETRY_DELAY_MS;
+    updateAggregateStreamStats({
+      reconnectCount: aggregateStreamStats.reconnectCount + 1,
+      stallReconnectCount: aggregateStreamStats.stallReconnectCount + 1,
+    });
+    closeEventSource();
+    refreshEventSource();
+  }, Math.max(1_000, Math.floor(EVENT_SOURCE_STALL_MS / 2)));
 };
 
 const scheduleRefreshEventSource = (
@@ -555,6 +639,13 @@ const refreshEventSource = () => {
     reconnectBlockedUntil = 0;
     clearReconnectTimer();
     clearRefreshTimer();
+    const now = Date.now();
+    eventSourceOpenedAtMs = now;
+    eventSourceLastSignalAtMs = now;
+    startStallTimer();
+  };
+  const markStreamSignal = () => {
+    eventSourceLastSignalAtMs = Date.now();
   };
   const handleAggregate = (event: MessageEvent<string>) => {
     const message = parseAggregateMessage(event.data);
@@ -562,10 +653,13 @@ const refreshEventSource = () => {
       return;
     }
 
+    markStreamSignal();
     handleAggregateMessage(message);
   };
 
+  source.addEventListener("ready", markStreamSignal as EventListener);
   source.addEventListener("aggregate", handleAggregate as EventListener);
+  source.addEventListener("stream-status", markStreamSignal as EventListener);
   source.onerror = () => {
     if (source.readyState !== EventSource.CLOSED || eventSource !== source) {
       return;
@@ -686,6 +780,7 @@ export const useIbkrLatencyStats = () => {
       refreshCount: aggregateStreamStats.refreshCount,
       eventCount: aggregateStreamStats.eventCount,
       streamGapCount: aggregateStreamStats.streamGapCount,
+      stallReconnectCount: aggregateStreamStats.stallReconnectCount,
       maxGapMs: aggregateStreamStats.maxGapMs,
       lastEventAgeMs:
         aggregateStreamStats.lastEventAtMs === null

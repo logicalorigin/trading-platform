@@ -26,4 +26,6 @@ export function useRuntimeWorkloadFlag(
   meta?: RuntimeWorkloadEntry,
 ): void;
 
+export function getRuntimeWorkloadStats(): RuntimeWorkloadStats;
+
 export function useRuntimeWorkloadStats(): RuntimeWorkloadStats;

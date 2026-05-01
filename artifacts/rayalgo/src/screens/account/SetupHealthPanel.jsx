@@ -1,4 +1,5 @@
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   IbkrConnectionLane,
   getIbkrConnection,
@@ -18,16 +19,16 @@ const StatusRow = ({ label, ok, detail }) => (
     style={{
       display: "grid",
       gridTemplateColumns: "auto 1fr",
-      gap: sp(8),
+      gap: sp(5),
       alignItems: "start",
-      padding: sp("6px 0"),
+      padding: sp("3px 0"),
       borderBottom: `1px solid ${T.border}`,
     }}
   >
     <span
       style={{
-        width: 8,
-        height: 8,
+        width: 7,
+        height: 7,
         borderRadius: 999,
         background: ok ? T.green : T.amber,
         boxShadow: ok ? `0 0 8px ${T.green}` : "none",
@@ -35,12 +36,12 @@ const StatusRow = ({ label, ok, detail }) => (
       }}
     />
     <div style={{ minWidth: 0 }}>
-      <div style={{ color: T.text, fontSize: fs(10), fontWeight: 800 }}>{label}</div>
+      <div style={{ color: T.text, fontSize: fs(8), fontWeight: 800 }}>{label}</div>
       <div
         style={{
-          marginTop: sp(3),
+          marginTop: sp(2),
           color: T.textDim,
-          fontSize: fs(9),
+          fontSize: fs(8),
           fontFamily: T.mono,
           lineHeight: 1.4,
           whiteSpace: "normal",
@@ -61,13 +62,12 @@ export const SetupHealthPanel = ({
 }) => {
   const health = healthQuery.data;
   const testResult = testMutation.data;
-  const clientPortalConnection = getIbkrConnection(session, "clientPortal");
   const twsConnection = getIbkrConnection(session, "tws");
   const formatCoverage = (start, end, count, emptyLabel) => {
     if (!count || !start || !end) {
       return emptyLabel;
     }
-    return `${new Date(start).toLocaleDateString()} -> ${new Date(end).toLocaleDateString()} · ${count.toLocaleString()} rows`;
+    return `${formatAppDate(start)} -> ${formatAppDate(end)} · ${count.toLocaleString()} rows`;
   };
   const schemaMissingDetail = health?.missingTables?.length
     ? `Missing tables: ${health.missingTables.join(", ")}`
@@ -81,9 +81,9 @@ export const SetupHealthPanel = ({
       loading={healthQuery.isLoading}
       error={healthQuery.error}
       onRetry={healthQuery.refetch}
-      minHeight={320}
+      minHeight={218}
       action={
-        <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap", justifyContent: "flex-end" }}>
           <button
             type="button"
             onClick={() => healthQuery.refetch()}
@@ -115,8 +115,8 @@ export const SetupHealthPanel = ({
       {!health ? (
         <EmptyState title="Health unavailable" body="Server-side account health will appear once the Account API responds." />
       ) : (
-        <div style={{ display: "grid", gap: sp(10) }}>
-          <div style={{ display: "grid", gap: sp(8) }}>
+        <div style={{ display: "grid", gap: sp(5) }}>
+          <div style={{ display: "grid", gap: sp(4) }}>
             <StatusRow
               label="Bridge connected"
               ok={Boolean(brokerConfigured && brokerAuthenticated)}
@@ -125,14 +125,13 @@ export const SetupHealthPanel = ({
             <div
               style={{
                 display: "grid",
-                gap: sp(7),
-                padding: sp("6px 0 10px"),
+                gap: sp(4),
+                padding: sp("3px 0 5px"),
                 borderBottom: `1px solid ${T.border}`,
               }}
             >
               <div style={mutedLabelStyle}>IBKR Connection Lanes</div>
-              <IbkrConnectionLane label="Client Portal" connection={clientPortalConnection} />
-              <IbkrConnectionLane label="IB Gateway Market Data" connection={twsConnection} />
+              <IbkrConnectionLane label="IB Gateway" connection={twsConnection} />
             </div>
             <StatusRow
               label="Flex configured"
@@ -153,7 +152,7 @@ export const SetupHealthPanel = ({
               ok={Boolean(health.snapshotsRecording)}
               detail={
                 health.lastSnapshotAt
-                  ? `Last snapshot ${new Date(health.lastSnapshotAt).toLocaleString()} · coverage ${formatCoverage(health.snapshotCoverageStartAt, health.snapshotCoverageEndAt, health.snapshotPointCount, "none")}`
+                  ? `Last snapshot ${formatAppDateTime(health.lastSnapshotAt)} · coverage ${formatCoverage(health.snapshotCoverageStartAt, health.snapshotCoverageEndAt, health.snapshotPointCount, "none")}`
                   : "No balance snapshots recorded yet"
               }
             />
@@ -162,7 +161,7 @@ export const SetupHealthPanel = ({
               ok={Boolean(health.lastSuccessfulRefreshAt)}
               detail={
                 health.lastSuccessfulRefreshAt
-                  ? new Date(health.lastSuccessfulRefreshAt).toLocaleString()
+                  ? formatAppDateTime(health.lastSuccessfulRefreshAt)
                   : health.lastError || "No successful Flex refresh yet"
               }
             />
@@ -182,12 +181,12 @@ export const SetupHealthPanel = ({
             <div
               style={{
                 borderTop: `1px solid ${T.border}`,
-                paddingTop: sp(8),
+                paddingTop: sp(5),
                 display: "grid",
-                gap: sp(5),
+                gap: sp(3),
                 color: T.textSec,
                 fontSize: fs(10),
-                lineHeight: 1.45,
+                lineHeight: 1.35,
               }}
             >
               <div style={{ ...mutedLabelStyle, color: T.amber }}>Schema Action</div>
@@ -204,15 +203,15 @@ export const SetupHealthPanel = ({
             <div
               style={{
                 borderTop: `1px solid ${T.border}`,
-                paddingTop: sp(8),
+                paddingTop: sp(5),
                 display: "grid",
-                gap: sp(6),
+                gap: sp(5),
               }}
             >
               <div style={mutedLabelStyle}>Latest Flex Attempt</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: sp(6) }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
                 <Pill tone="default">
-                  Attempt {health.lastAttemptAt ? new Date(health.lastAttemptAt).toLocaleString() : "----"}
+                  Attempt {formatAppDateTime(health.lastAttemptAt)}
                 </Pill>
                 <Pill tone={health.lastStatus === "ok" ? "green" : "amber"}>
                   Status {health.lastStatus || "----"}

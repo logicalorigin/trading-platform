@@ -12,12 +12,14 @@ import type {
   IndicatorPluginOutput,
   MarketBar,
 } from "./types";
+import { getChartTimeframeStepMs, normalizeChartTimeframe } from "./timeframes";
 
 export type ResearchChartModelBuildState = {
   input: {
     bars: MarketBar[];
     dailyBars?: MarketBar[];
     timeframe: string;
+    defaultVisibleBarCount?: number;
     selectedIndicators: string[];
     indicatorSettings: Record<string, Record<string, unknown>>;
     indicatorMarkers: ChartMarker[];
@@ -29,14 +31,7 @@ export type ResearchChartModelBuildState = {
 };
 
 const timeframeToStepMs = (timeframe: string): number =>
-  ({
-    "1m": 60_000,
-    "5m": 300_000,
-    "15m": 900_000,
-    "1h": 3_600_000,
-    "1d": 86_400_000,
-    "1D": 86_400_000,
-  })[timeframe] || 300_000;
+  getChartTimeframeStepMs(normalizeChartTimeframe(timeframe)) || 300_000;
 
 const resolveTimestampValueMs = (
   value: MarketBar["time"] | MarketBar["timestamp"],
@@ -95,8 +90,10 @@ const buildChartBars = (
   timeframe: string,
 ): { chartBars: ChartBar[]; chartBarRanges: ChartBarRange[] } => {
   const fallbackStepMs = timeframeToStepMs(timeframe);
-  const normalizedBars = rawBars.reduce<Array<ChartBar & { startMs: number }>>(
-    (bars, rawBar) => {
+  const normalizedByChartTime = rawBars.reduce<
+    Map<number, ChartBar & { startMs: number; inputIndex: number }>
+  >(
+    (bars, rawBar, inputIndex) => {
       const startMs = resolveEpochMs(rawBar);
       const open = resolveNumber(rawBar.o, rawBar.open);
       const high = resolveNumber(rawBar.h, rawBar.high);
@@ -114,9 +111,11 @@ const buildChartBars = (
       }
 
       const isoTimestamp = rawBar.ts || new Date(startMs).toISOString();
-      bars.push({
+      const chartTime = Math.floor(startMs / 1000);
+      bars.set(chartTime, {
         startMs,
-        time: Math.floor(startMs / 1000),
+        inputIndex,
+        time: chartTime,
         ts: isoTimestamp,
         date: rawBar.date || isoTimestamp.slice(0, 10),
         o: open,
@@ -132,10 +131,16 @@ const buildChartBars = (
       });
       return bars;
     },
-    [],
+    new Map(),
   );
 
-  const chartBars = normalizedBars.map(({ startMs: _startMs, ...bar }) => bar);
+  const normalizedBars = Array.from(normalizedByChartTime.values()).sort(
+    (left, right) =>
+      left.time - right.time || left.startMs - right.startMs || left.inputIndex - right.inputIndex,
+  );
+  const chartBars = normalizedBars.map(
+    ({ startMs: _startMs, inputIndex: _inputIndex, ...bar }) => bar,
+  );
   const chartBarRanges = normalizedBars.map((bar, index) => {
     const nextBar = normalizedBars[index + 1];
     return {
@@ -225,10 +230,16 @@ const resolveLowerPaneCount = (
 
 const defaultVisibleBarsForTimeframe = (timeframe: string): number =>
   ({
+    "5s": 720,
+    "15s": 620,
+    "30s": 560,
     "1m": 720,
+    "2m": 680,
     "5m": 620,
     "15m": 520,
+    "30m": 460,
     "1h": 420,
+    "4h": 360,
     "1d": 260,
     "1D": 260,
   })[timeframe] || 360;
@@ -236,13 +247,20 @@ const defaultVisibleBarsForTimeframe = (timeframe: string): number =>
 const buildDefaultVisibleRange = (
   chartBars: ChartBar[],
   timeframe: string,
+  defaultVisibleBarCount?: number,
 ): { from: number; to: number } | null => {
   if (!chartBars.length) {
     return null;
   }
 
+  const visibleBarCount =
+    typeof defaultVisibleBarCount === "number" &&
+    Number.isFinite(defaultVisibleBarCount) &&
+    defaultVisibleBarCount > 0
+      ? Math.ceil(defaultVisibleBarCount)
+      : defaultVisibleBarsForTimeframe(timeframe);
   const to = chartBars.length - 1;
-  const from = Math.max(0, to - defaultVisibleBarsForTimeframe(timeframe));
+  const from = Math.max(0, to - visibleBarCount + 1);
   return { from, to };
 };
 
@@ -354,12 +372,14 @@ const buildChartModelFromPluginOutputs = ({
   pluginOutputs,
   indicatorMarkers,
   timeframe,
+  defaultVisibleBarCount,
 }: {
   chartBars: ChartBar[];
   chartBarRanges: ChartBarRange[];
   pluginOutputs: IndicatorPluginOutput[];
   indicatorMarkers: ChartMarker[];
   timeframe: string;
+  defaultVisibleBarCount?: number;
 }): ChartModel => {
   const pluginStudySpecs = normalizeStudyPanes(
     pluginOutputs.flatMap((output) => output.studySpecs || []),
@@ -405,7 +425,11 @@ const buildChartModelFromPluginOutputs = ({
     },
     activeTradeSelectionId: null,
     selectionFocus: null,
-    defaultVisibleLogicalRange: buildDefaultVisibleRange(styledChartBars, timeframe),
+    defaultVisibleLogicalRange: buildDefaultVisibleRange(
+      styledChartBars,
+      timeframe,
+      defaultVisibleBarCount,
+    ),
   };
 };
 
@@ -420,6 +444,7 @@ export const buildResearchChartModelIncremental = (
     bars,
     dailyBars,
     timeframe,
+    defaultVisibleBarCount,
     selectedIndicators = [],
     indicatorSettings = {},
     indicatorMarkers = [],
@@ -433,6 +458,7 @@ export const buildResearchChartModelIncremental = (
   const canReuseDeferredPluginOutputs = Boolean(
     previousState &&
       previousState.input.timeframe === timeframe &&
+      previousState.input.defaultVisibleBarCount === defaultVisibleBarCount &&
       previousState.input.dailyBars === dailyBars &&
       previousState.input.indicatorSettings === indicatorSettings &&
       previousState.input.indicatorMarkers === indicatorMarkers &&
@@ -470,6 +496,7 @@ export const buildResearchChartModelIncremental = (
     pluginOutputs,
     indicatorMarkers,
     timeframe,
+    defaultVisibleBarCount,
   });
 
   return {
@@ -479,6 +506,7 @@ export const buildResearchChartModelIncremental = (
         bars,
         dailyBars,
         timeframe,
+        defaultVisibleBarCount,
         selectedIndicators,
         indicatorSettings,
         indicatorMarkers,

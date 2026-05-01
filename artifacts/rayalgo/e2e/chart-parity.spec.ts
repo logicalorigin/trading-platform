@@ -133,7 +133,9 @@ test("renders the live RayReplica parity fixture and settings surface", async ({
   await expect(primary).toContainText("RayReplica");
   await expect(page.getByTitle("Tune RayReplica overlay settings")).toBeVisible();
   await expect(primary.getByTestId("rayreplica-dashboard-panel")).toBeVisible();
-  await expect(primary.getByText("RAYALGO DASHBOARD")).toBeVisible();
+  await expect(
+    primary.getByTestId("rayreplica-dashboard-panel").getByText(/^(RA|RayAlgo)$/),
+  ).toBeVisible();
   await expect(primary.getByTestId("rayreplica-badge-swing-label").first()).toBeVisible();
   await expect(primary.locator('[data-testid="rayreplica-dot-bull-break"], [data-testid="rayreplica-dot-bear-break"]').first()).toBeVisible();
   await expect(primary.getByTestId("rayreplica-zone-order-block").first()).toBeVisible();
@@ -146,10 +148,16 @@ test("renders the live RayReplica parity fixture and settings surface", async ({
   await expect(page.getByText("Structure").first()).toBeVisible();
   await expect(page.getByText("Confirm").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Structure On" }).click();
-  await expect(primary.locator('[data-testid="rayreplica-dot-bull-break"], [data-testid="rayreplica-dot-bear-break"]')).toHaveCount(0);
-  await page.getByRole("button", { name: "Structure Off" }).click();
-  await expect(primary.locator('[data-testid="rayreplica-dot-bull-break"], [data-testid="rayreplica-dot-bear-break"]').first()).toBeVisible();
+  const structureZones = primary.locator(
+    '[data-testid="rayreplica-zone-bos"], [data-testid="rayreplica-zone-choch"]',
+  );
+  await expect(structureZones.first()).toBeVisible();
+  await page.getByLabel("Show BOS").click();
+  await page.getByLabel("Show CHOCH").click();
+  await expect(structureZones).toHaveCount(0);
+  await page.getByLabel("Show BOS").click();
+  await page.getByLabel("Show CHOCH").click();
+  await expect(structureZones.first()).toBeVisible();
 });
 
 test("keeps RayReplica dashboard inside the narrow chart frame", async ({ page }) => {
@@ -182,23 +190,72 @@ test("keeps RayReplica overlays inside the narrow chart plot area", async ({ pag
   const plotBox = await primary
     .getByTestId("parity-app-primary-surface-plot")
     .boundingBox();
+  const surfaceBox = await primary
+    .getByTestId("parity-app-primary-surface")
+    .boundingBox();
   const overlayLayerBox = await primary
     .getByTestId("parity-app-primary-surface-overlay-layer")
     .boundingBox();
+  const dashboardBox = await primary
+    .getByTestId("rayreplica-dashboard-panel")
+    .boundingBox();
+  const footerScaleControlsBox = await primary
+    .locator("[data-chart-footer-scale-controls]")
+    .boundingBox();
 
+  expect(surfaceBox, "primary chart surface should have a bounding box").not.toBeNull();
   expect(plotBox, "primary chart plot should have a bounding box").not.toBeNull();
   expect(overlayLayerBox, "primary overlay layer should have a bounding box").not.toBeNull();
+  expect(dashboardBox, "RayReplica dashboard should have a bounding box").not.toBeNull();
+  expect(
+    footerScaleControlsBox,
+    "footer scale controls should have a bounding box",
+  ).not.toBeNull();
 
-  if (!plotBox || !overlayLayerBox) {
+  if (
+    !surfaceBox ||
+    !plotBox ||
+    !overlayLayerBox ||
+    !dashboardBox ||
+    !footerScaleControlsBox
+  ) {
     return;
   }
 
+  expect(
+    Math.abs(plotBox.y - surfaceBox.y),
+    "chart plot should start at the surface top so top chart data overlays it",
+  ).toBeLessThanOrEqual(1.5);
+  expect(
+    Math.abs(plotBox.y + plotBox.height - dashboardBox.y),
+    "chart plot should end where the RayReplica dashboard starts",
+  ).toBeLessThanOrEqual(1.5);
   expectBoxInsidePlot(overlayLayerBox, plotBox, "RayReplica overlay layer");
+  expect(
+    Math.abs(overlayLayerBox.y - plotBox.y),
+    "RayReplica overlay layer should start at the drawable chart pane top",
+  ).toBeLessThanOrEqual(1.5);
+  expect(
+    plotBox.y + plotBox.height - (overlayLayerBox.y + overlayLayerBox.height),
+    "RayReplica overlay layer should stop above the time axis",
+  ).toBeGreaterThanOrEqual(6);
+
+  expect(
+    dashboardBox.y,
+    "RayReplica dashboard strip should sit below the chart plot",
+  ).toBeGreaterThanOrEqual(plotBox.y + plotBox.height - 1.5);
+  expect(
+    dashboardBox.y + dashboardBox.height,
+    "RayReplica dashboard strip should remain inside the chart frame",
+  ).toBeLessThanOrEqual(surfaceBox.y + surfaceBox.height + 1.5);
+  expect(
+    footerScaleControlsBox.y,
+    "footer scale controls should sit below the RayReplica dashboard strip",
+  ).toBeGreaterThanOrEqual(dashboardBox.y + dashboardBox.height - 1.5);
 
   const overlayBoxes = await primary
     .locator(
       [
-        '[data-testid="rayreplica-dashboard-panel"]',
         '[data-testid^="rayreplica-badge-"]',
         '[data-testid^="rayreplica-dot-"]',
         '[data-testid^="rayreplica-zone-"]',
@@ -221,6 +278,23 @@ test("keeps RayReplica overlays inside the narrow chart plot area", async ({ pag
   expect(overlayBoxes.length, "RayReplica overlays should render").toBeGreaterThan(0);
 
   overlayBoxes.forEach((box) => {
-    expectBoxInsidePlot(box, plotBox, box.testId);
+    expectBoxInsidePlot(box, overlayLayerBox, box.testId);
+  });
+
+  const windowBoxes = overlayBoxes.filter((box) =>
+    box.testId.startsWith("rayreplica-window-"),
+  );
+  expect(windowBoxes.length, "RayReplica background windows should render").toBeGreaterThan(0);
+  windowBoxes.forEach((box) => {
+    expect(
+      Math.abs(box.y - plotBox.y),
+      "RayReplica background shading should start at the chart plot top",
+    ).toBeLessThanOrEqual(1.5);
+    expect(
+      Math.abs(
+        box.y + box.height - (overlayLayerBox.y + overlayLayerBox.height),
+      ),
+      "RayReplica background shading should stop at the drawable pane lower bound",
+    ).toBeLessThanOrEqual(1.5);
   });
 });

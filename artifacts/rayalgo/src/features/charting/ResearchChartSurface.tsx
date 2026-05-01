@@ -1,13 +1,16 @@
 import {
   useEffect,
   useLayoutEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
   type Dispatch,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
   type SetStateAction,
+  type WheelEvent,
 } from "react";
 import {
   AreaSeries,
@@ -29,11 +32,25 @@ import type {
   IndicatorZone,
   StudySpec,
 } from "./types";
+import type { ChartEvent } from "./chartEvents";
+import {
+  buildFlowChartBuckets,
+  buildFlowTooltipModel,
+  type FlowChartBucket,
+  type FlowTooltipModel,
+} from "./flowChartEvents";
 import { registerChart, unregisterChart } from "./chartLifecycle";
+import { resolveUsEquityMarketSession } from "./marketSession";
 import {
   HISTOGRAM_VALUE_DISPLAY_CAP,
   sanitizeHistogramPoint,
 } from "./histogramSafety";
+import {
+  formatPreferenceDateTime,
+  resolvePreferenceTimeZone,
+  type UserPreferences,
+} from "../preferences/userPreferenceModel";
+import { useUserPreferences } from "../preferences/useUserPreferences";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -74,10 +91,184 @@ export type VisibleLogicalRange = {
   to: number;
 };
 
+export const normalizeVisibleLogicalRange = (
+  range: unknown,
+): VisibleLogicalRange | null => {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+
+  const record = range as { from?: unknown; to?: unknown };
+  if (!Number.isFinite(record.from) || !Number.isFinite(record.to)) {
+    return null;
+  }
+
+  return {
+    from: record.from as number,
+    to: record.to as number,
+  };
+};
+
+export const buildVisibleRangeSignature = (
+  range: VisibleLogicalRange | null | undefined,
+): string => {
+  const visibleRange = normalizeVisibleLogicalRange(range);
+  return visibleRange ? `${visibleRange.from}:${visibleRange.to}` : "none";
+};
+
+export const resolveVisibleRangePublishDecision = ({
+  lastSignature,
+  visibleRange,
+}: {
+  lastSignature: string | null;
+  visibleRange: VisibleLogicalRange | null | undefined;
+}): {
+  signature: string;
+  shouldPublish: boolean;
+} => {
+  const signature = buildVisibleRangeSignature(visibleRange);
+  return {
+    signature,
+    shouldPublish: lastSignature !== signature,
+  };
+};
+
+export const resolveVisibleRangeChangeSource = ({
+  initialized,
+  nextSignature,
+  programmaticSignature,
+  hasRecentProgrammaticIntent = false,
+  hasRecentUserViewportIntent = false,
+}: {
+  initialized: boolean;
+  nextSignature: string;
+  programmaticSignature: string | null;
+  hasRecentProgrammaticIntent?: boolean;
+  hasRecentUserViewportIntent?: boolean;
+}): "programmatic" | "user" => {
+  if (hasRecentUserViewportIntent) {
+    return "user";
+  }
+
+  if (
+    (programmaticSignature === nextSignature &&
+      (hasRecentProgrammaticIntent || !initialized)) ||
+    hasRecentProgrammaticIntent
+  ) {
+    return "programmatic";
+  }
+
+  if (initialized) {
+    return "user";
+  }
+
+  return "programmatic";
+};
+
 type ChartScalePreferences = {
   scaleMode?: ScaleMode;
   autoScale?: boolean;
   invertScale?: boolean;
+};
+
+export type ChartViewportSnapshot = {
+  identityKey: string;
+  visibleLogicalRange: VisibleLogicalRange | null;
+  userTouched: boolean;
+  realtimeFollow: boolean;
+  scaleMode: ScaleMode;
+  autoScale: boolean;
+  invertScale: boolean;
+  updatedAt: number;
+};
+
+const STORED_CHART_VIEWPORT_SNAPSHOT_LIMIT = 96;
+const storedChartViewportSnapshots = new Map<string, ChartViewportSnapshot>();
+
+export const readStoredChartViewportSnapshot = (
+  identityKey?: string | null,
+): ChartViewportSnapshot | null => {
+  if (!identityKey) {
+    return null;
+  }
+
+  return storedChartViewportSnapshots.get(identityKey) ?? null;
+};
+
+export const writeStoredChartViewportSnapshot = (
+  snapshot: ChartViewportSnapshot | null | undefined,
+): void => {
+  if (!snapshot?.identityKey) {
+    return;
+  }
+
+  storedChartViewportSnapshots.delete(snapshot.identityKey);
+  storedChartViewportSnapshots.set(snapshot.identityKey, snapshot);
+
+  while (storedChartViewportSnapshots.size > STORED_CHART_VIEWPORT_SNAPSHOT_LIMIT) {
+    const oldestKey = storedChartViewportSnapshots.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    storedChartViewportSnapshots.delete(oldestKey);
+  }
+};
+
+export const clearStoredChartViewportSnapshot = (
+  identityKey?: string | null,
+): void => {
+  if (!identityKey) {
+    return;
+  }
+  storedChartViewportSnapshots.delete(identityKey);
+};
+
+export const resolveEffectiveChartViewportSnapshot = ({
+  identityKey,
+  viewportSnapshot,
+  useStoredFallback,
+}: {
+  identityKey: string | null;
+  viewportSnapshot?: ChartViewportSnapshot | null;
+  useStoredFallback: boolean;
+}): ChartViewportSnapshot | null => {
+  if (identityKey && viewportSnapshot?.identityKey === identityKey) {
+    return viewportSnapshot;
+  }
+
+  return useStoredFallback ? readStoredChartViewportSnapshot(identityKey) : null;
+};
+
+export type ChartLegendOhlcvMeta = {
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  close?: number | null;
+  volume?: number | null;
+  vwap?: number | null;
+  sessionVwap?: number | null;
+  accumulatedVolume?: number | null;
+  averageTradeSize?: number | null;
+  timestamp?: string | null;
+  sourceLabel?: string | null;
+};
+
+export type ChartLegendStudyOption = {
+  id: string;
+  label: string;
+};
+
+export type ChartLegendMetadata = {
+  symbol?: string | null;
+  name?: string | null;
+  timeframe?: string | null;
+  statusLabel?: string | null;
+  priceLabel?: string | null;
+  price?: number | null;
+  changePercent?: number | null;
+  meta?: ChartLegendOhlcvMeta | null;
+  studies?: ChartLegendStudyOption[];
+  selectedStudies?: string[];
 };
 
 const CHART_SCALE_PREFS_STORAGE_PREFIX = "rayalgo:chart-scale-prefs:";
@@ -164,6 +355,45 @@ type IndicatorDotOverlay = {
   borderColor: string;
 };
 
+type ChartEventOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  label: string;
+  title: string;
+  tone: "bullish" | "bearish" | "neutral";
+  placement: "bar" | "timescale";
+  count?: number;
+  flowBucket?: FlowChartBucket;
+  tooltip?: FlowTooltipModel;
+};
+
+type FlowVolumeOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  title: string;
+  tone: "bullish" | "bearish" | "neutral";
+  flowBucket: FlowChartBucket;
+  tooltip: FlowTooltipModel;
+};
+
+type FlowTooltipState = {
+  id: string;
+  left: number;
+  top: number;
+  model: FlowTooltipModel;
+};
+
+export type ChartLegendStudyItem = {
+  id: string;
+  label: string;
+  colors: string[];
+  values: number[];
+};
+
 type IndicatorDashboardOverlay = {
   id: string;
   dataTestId?: string;
@@ -179,6 +409,7 @@ type IndicatorDashboardOverlay = {
 };
 
 const RAY_REPLICA_STRATEGY_KEY = "rayalgo-replica-smc-pro-v3";
+const VOLUME_SCALE_TOP_MARGIN = 0.78;
 
 const toDataTestIdSegment = (value: string): string =>
   value
@@ -195,41 +426,394 @@ const buildRayReplicaOverlayTestId = (
     ? `rayreplica-${category}-${toDataTestIdSegment(value)}`
     : undefined;
 
+export type IndicatorDashboardStripTier = "micro" | "compact" | "full";
+
+export const resolveDashboardStripTier = (
+  plotWidth: number,
+  compact: boolean,
+): IndicatorDashboardStripTier => {
+  if (Number.isFinite(plotWidth) && plotWidth > 0) {
+    if (plotWidth <= 360) {
+      return "micro";
+    }
+    if (plotWidth <= 520) {
+      return "compact";
+    }
+    return "full";
+  }
+
+  return compact ? "micro" : "full";
+};
+
 function resolveDashboardDensity(
   size: IndicatorDashboardOverlay["size"],
   compact: boolean,
+  tier: IndicatorDashboardStripTier,
 ) {
+  if (tier === "micro") {
+    return {
+      maxWidth: "calc(100% - 16px)",
+      height: 20,
+      padding: "2px 5px",
+      segmentPadding: "0",
+      titleSize: 8,
+      subtitleSize: 8,
+      bodySize: 8,
+      detailSize: 8,
+      gap: 4,
+      segmentMaxWidth: 52,
+    };
+  }
+
+  if (tier === "compact") {
+    return {
+      maxWidth: "calc(100% - 18px)",
+      height: 22,
+      padding: "3px 6px",
+      segmentPadding: "0 1px",
+      titleSize: 8,
+      subtitleSize: 8,
+      bodySize: 8,
+      detailSize: 8,
+      gap: 5,
+      segmentMaxWidth: 96,
+    };
+  }
+
   if (compact) {
     return {
-      width: 184,
-      padding: "8px 9px 7px",
+      maxWidth: "calc(100% - 16px)",
+      height: 22,
+      padding: "3px 6px",
+      segmentPadding: "0 1px",
       titleSize: 8,
       subtitleSize: 7,
       bodySize: 8,
       detailSize: 7,
+      gap: 5,
+      segmentMaxWidth: 104,
     };
   }
 
   if (size === "expanded" || size === "large" || size === "normal") {
     return {
-      width: 236,
-      padding: "11px 12px 10px",
+      maxWidth: "min(860px, calc(100% - 24px))",
+      height: 26,
+      padding: "4px 7px",
+      segmentPadding: "0 2px",
       titleSize: 10,
       subtitleSize: 9,
       bodySize: 10,
       detailSize: 9,
+      gap: 7,
+      segmentMaxWidth: 160,
     };
   }
 
   return {
-    width: 192,
-    padding: "8px 9px 7px",
+    maxWidth: "min(760px, calc(100% - 24px))",
+    height: 24,
+    padding: "3px 6px",
+    segmentPadding: "0 2px",
     titleSize: 8,
     subtitleSize: 7,
     bodySize: 8,
     detailSize: 7,
+    gap: 6,
+    segmentMaxWidth: 132,
   };
 }
+
+export type IndicatorDashboardStripSegment = {
+  key: string;
+  kind: "title" | "subtitle" | "trend" | "row" | "mtf";
+  label?: string;
+  value: string;
+  color?: string;
+  detail?: string;
+  title?: string;
+};
+
+const normalizeDashboardStripText = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
+
+const formatDashboardTitle = (value: string): string => {
+  const normalized = value.replace(/\s+dashboard$/i, "").trim();
+  if (/^rayalgo$/i.test(normalized)) {
+    return "RayAlgo";
+  }
+  if (/^rayreplica$/i.test(normalized)) {
+    return "RayReplica";
+  }
+  return normalized || value;
+};
+
+const formatDashboardTimeframeLabel = (value: string): string => {
+  const normalized = value.replace(/\s+trend$/i, "").trim();
+  const upper = normalized.toUpperCase();
+  const minuteMatch = upper.match(/^(\d+)M$/);
+  if (minuteMatch) {
+    return `${minuteMatch[1]}m`;
+  }
+  const hourMatch = upper.match(/^H(\d+)$/);
+  if (hourMatch) {
+    return `${hourMatch[1]}h`;
+  }
+  const trailingHourMatch = upper.match(/^(\d+)H$/);
+  if (trailingHourMatch) {
+    return `${trailingHourMatch[1]}h`;
+  }
+  const dayMatch = upper.match(/^D(\d*)$/);
+  if (dayMatch) {
+    return `${dayMatch[1] || "1"}d`;
+  }
+  const trailingDayMatch = upper.match(/^(\d+)D$/);
+  if (trailingDayMatch) {
+    return `${trailingDayMatch[1]}d`;
+  }
+  const weekMatch = upper.match(/^W(\d*)$/);
+  if (weekMatch) {
+    return `${weekMatch[1] || "1"}w`;
+  }
+  const trailingWeekMatch = upper.match(/^(\d+)W$/);
+  if (trailingWeekMatch) {
+    return `${trailingWeekMatch[1]}w`;
+  }
+  return normalized || value;
+};
+
+const compactTrendValue = (value: string): string => {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "BULLISH" || normalized === "BULL") {
+    return "BULL";
+  }
+  if (normalized === "BEARISH" || normalized === "BEAR") {
+    return "BEAR";
+  }
+  return normalized || value;
+};
+
+const compactDirectionValue = (value: string): string => {
+  const normalized = compactTrendValue(value);
+  if (normalized === "BULL") {
+    return "B";
+  }
+  if (normalized === "BEAR") {
+    return "S";
+  }
+  return normalized.slice(0, 1) || value.slice(0, 1).toUpperCase();
+};
+
+const compactStrengthValue = (value: string): string => {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "STRONG") {
+    return "STR";
+  }
+  if (normalized === "WEAK") {
+    return "WEAK";
+  }
+  return normalized || value;
+};
+
+const compactTrendAgeValue = (value: string): string => {
+  const match = value.trim().match(/^([a-z]+)\s*\((\d+)\)/i);
+  if (!match) {
+    return value.trim().toUpperCase();
+  }
+
+  return `${match[1].charAt(0).toUpperCase()}${match[2]}`;
+};
+
+const compactVolatilityValue = (value: string): string => {
+  const match = value.trim().match(/^([^/]+)\s*\/\s*10$/);
+  if (!match) {
+    return value.trim().toUpperCase();
+  }
+
+  return `V${match[1].trim() || "--"}`;
+};
+
+const compactSessionValue = (value: string): string => {
+  const normalized = value.trim().toLowerCase();
+  const upper = value.trim().toUpperCase();
+  if (upper === "PRE" || upper === "RTH" || upper === "AFT" || upper === "CLSD") {
+    return upper;
+  }
+  if (normalized === "new york") {
+    return "NY";
+  }
+  if (normalized === "london") {
+    return "LDN";
+  }
+  if (normalized === "tokyo") {
+    return "TKY";
+  }
+  if (normalized === "sydney") {
+    return "SYD";
+  }
+  if (normalized === "closed") {
+    return "CLSD";
+  }
+
+  const initials = value
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
+  return initials || value.trim().slice(0, 4).toUpperCase();
+};
+
+const formatDashboardRowForTier = (
+  row: { label: string; value: string; color?: string; detail?: string },
+  tier: IndicatorDashboardStripTier,
+) => {
+  const label = normalizeDashboardStripText(row.label);
+  const value = normalizeDashboardStripText(row.value);
+  const detail = normalizeDashboardStripText(row.detail);
+  const upperLabel = label.toUpperCase();
+
+  if (upperLabel === "STRENGTH") {
+    return {
+      label: "",
+      value:
+        tier === "full"
+          ? value.trim().toUpperCase()
+          : compactStrengthValue(value),
+      detail: "",
+    };
+  }
+
+  if (upperLabel === "TREND AGE") {
+    return {
+      label: "",
+      value: compactTrendAgeValue(value),
+      detail: "",
+    };
+  }
+
+  if (upperLabel === "VOLATILITY") {
+    return {
+      label: "",
+      value: compactVolatilityValue(value),
+      detail: "",
+    };
+  }
+
+  if (upperLabel === "SESSION") {
+    return {
+      label: "",
+      value: compactSessionValue(value),
+      detail: "",
+    };
+  }
+
+  return {
+    label: tier === "micro" ? "" : label,
+    value,
+    detail: tier === "full" ? detail : "",
+  };
+};
+
+export const buildIndicatorDashboardStripSegments = (dashboard: {
+  id: string;
+  title: string;
+  subtitle?: string;
+  trendLabel: string;
+  trendValue: string;
+  trendColor: string;
+  rows: Array<{ label: string; value: string; color?: string; detail?: string }>;
+  mtf: Array<{ label: string; value: string; color: string; detail?: string }>;
+}, tier: IndicatorDashboardStripTier = "full"): IndicatorDashboardStripSegment[] => {
+  const segments: IndicatorDashboardStripSegment[] = [];
+  const title = normalizeDashboardStripText(dashboard.title);
+  const trendLabel = normalizeDashboardStripText(dashboard.trendLabel);
+  const trendValue = normalizeDashboardStripText(dashboard.trendValue);
+  const shortTrendValue = compactTrendValue(trendValue);
+
+  if (title) {
+    segments.push({
+      key: `${dashboard.id}-title`,
+      kind: "title",
+      value: tier === "full" ? formatDashboardTitle(title) : "RA",
+      title,
+    });
+  }
+
+  if (trendLabel || trendValue) {
+    const formattedTrendLabel = formatDashboardTimeframeLabel(trendLabel);
+    segments.push({
+      key: `${dashboard.id}-trend`,
+      kind: "trend",
+      label: formattedTrendLabel,
+      value: shortTrendValue,
+      color: dashboard.trendColor,
+      title: [trendLabel, trendValue].filter(Boolean).join(" "),
+    });
+  }
+
+  dashboard.rows.forEach((row, index) => {
+    const rawLabel = normalizeDashboardStripText(row.label);
+    if (tier === "micro" && rawLabel.toUpperCase() !== "SESSION") {
+      return;
+    }
+    const formatted = formatDashboardRowForTier(row, tier);
+    const label = formatted.label;
+    const value = formatted.value;
+    const detail = formatted.detail;
+    const fullTitle = [
+      normalizeDashboardStripText(row.label),
+      normalizeDashboardStripText(row.value),
+      normalizeDashboardStripText(row.detail),
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (!label && !value && !detail) {
+      return;
+    }
+    segments.push({
+      key: `${dashboard.id}-row-${index}-${label || value || "item"}`,
+      kind: "row",
+      label,
+      value,
+      color: row.color,
+      detail,
+      title: fullTitle,
+    });
+  });
+
+  dashboard.mtf.forEach((item, index) => {
+    const label = formatDashboardTimeframeLabel(
+      normalizeDashboardStripText(item.label),
+    );
+    const value = normalizeDashboardStripText(item.value);
+    const detail = normalizeDashboardStripText(item.detail);
+    const formattedValue = compactDirectionValue(value);
+    const formattedLabel = label;
+    if (!formattedLabel && !formattedValue && !detail) {
+      return;
+    }
+    segments.push({
+      key: `${dashboard.id}-mtf-${index}-${label || value || "item"}`,
+      kind: "mtf",
+      label: formattedLabel,
+      value: formattedValue,
+      color: item.color,
+      detail: tier === "full" ? detail : "",
+      title: [label, value, detail].filter(Boolean).join(" "),
+    });
+  });
+
+  return segments;
+};
+
+export const resolveDashboardStripAnchorStyle = (
+  compact: boolean,
+  bottomOffset = 0,
+  leftOffset = 0,
+) => ({
+  left: leftOffset + (compact ? 4 : 8),
+  right: compact ? 4 : 8,
+  bottom: bottomOffset + (compact ? 2 : 3),
+});
 
 type TradeThresholdOverlay = {
   id: string;
@@ -293,10 +877,12 @@ type ResearchChartSurfaceProps = {
   theme: ResearchChartTheme;
   themeKey: string;
   uiStateKey?: string;
+  rangeIdentityKey?: string | null;
   dataTestId?: string;
   compact?: boolean;
   showToolbar?: boolean;
   showLegend?: boolean;
+  legend?: ChartLegendMetadata | null;
   hideTimeScale?: boolean;
   showRightPriceScale?: boolean;
   enableInteractions?: boolean;
@@ -320,11 +906,15 @@ type ResearchChartSurfaceProps = {
     lineWidth?: number;
     axisLabelVisible?: boolean;
   }>;
+  chartEvents?: ChartEvent[];
   drawMode?: DrawMode | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
   onAddHorizontalLevel?: (price: number) => void;
   onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
   onVisibleLogicalRangeChange?: (range: VisibleLogicalRange | null) => void;
+  viewportSnapshot?: ChartViewportSnapshot | null;
+  onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
+  persistScalePrefs?: boolean;
 };
 
 const EMPTY_DRAWINGS: ResearchDrawing[] = [];
@@ -335,6 +925,9 @@ const EMPTY_REFERENCE_LINES: Array<{
   lineWidth?: number;
   axisLabelVisible?: boolean;
 }> = [];
+const EMPTY_CHART_EVENTS: ChartEvent[] = [];
+const EMPTY_LEGEND_STUDIES: ChartLegendStudyOption[] = [];
+const EMPTY_SELECTED_LEGEND_STUDIES: string[] = [];
 
 type StudyRegistryEntry = {
   paneIndex: number;
@@ -536,6 +1129,10 @@ export const resolveVisibleRangeSyncAction = ({
 };
 
 export const DEFAULT_REALTIME_FOLLOW_TOLERANCE = 3;
+const USER_VIEWPORT_INTENT_WINDOW_MS = 750;
+const PROGRAMMATIC_VIEWPORT_INTENT_WINDOW_MS = 750;
+const PLOT_RESIZE_VIEWPORT_INTENT_WINDOW_MS = 500;
+const CHART_PLOT_PAN_MOVE_TOLERANCE = 6;
 
 export const isVisibleRangeNearRealtime = ({
   visibleRange,
@@ -556,6 +1153,141 @@ export const isVisibleRangeNearRealtime = ({
   }
 
   return visibleRange.to >= barCount - 1 - Math.max(0, tolerance);
+};
+
+export const resolveVisibleRangePublishState = ({
+  range,
+  barCount,
+  source = "programmatic",
+}: {
+  range: unknown;
+  barCount: number;
+  source?: "programmatic" | "user";
+}): {
+  visibleRange: VisibleLogicalRange | null;
+  realtimeFollow: boolean;
+} => {
+  const visibleRange = normalizeVisibleLogicalRange(range);
+  return {
+    visibleRange,
+    realtimeFollow:
+      source === "user"
+        ? false
+        : isVisibleRangeNearRealtime({
+            visibleRange,
+            barCount,
+          }),
+  };
+};
+
+export const clampVisibleLogicalRangeToBarCount = (
+  visibleRange: VisibleLogicalRange | null | undefined,
+  barCount: number,
+): VisibleLogicalRange | null => {
+  if (
+    !visibleRange ||
+    !Number.isFinite(visibleRange.from) ||
+    !Number.isFinite(visibleRange.to) ||
+    !Number.isFinite(barCount) ||
+    barCount <= 0
+  ) {
+    return null;
+  }
+
+  const from = Math.min(visibleRange.from, visibleRange.to);
+  const to = Math.max(visibleRange.from, visibleRange.to);
+  if (to < 0 || from > barCount - 1) {
+    return null;
+  }
+
+  return {
+    from: Math.max(0, from),
+    to: Math.min(barCount - 1, to),
+  };
+};
+
+export const resolveViewportVisibleLogicalRange = (
+  visibleRange: VisibleLogicalRange | null | undefined,
+): VisibleLogicalRange | null => {
+  const normalizedRange = normalizeVisibleLogicalRange(visibleRange);
+  if (!normalizedRange) {
+    return null;
+  }
+
+  return {
+    from: Math.min(normalizedRange.from, normalizedRange.to),
+    to: Math.max(normalizedRange.from, normalizedRange.to),
+  };
+};
+
+export const resolveViewportRestoreState = ({
+  identityKey,
+  viewportSnapshot,
+  storedScalePrefs = {},
+  defaultScaleMode,
+  barCount: _barCount,
+}: {
+  identityKey: string | null;
+  viewportSnapshot?: ChartViewportSnapshot | null;
+  storedScalePrefs?: ChartScalePreferences;
+  defaultScaleMode: ScaleMode;
+  barCount: number;
+}): {
+  matchingSnapshot: ChartViewportSnapshot | null;
+  visibleLogicalRange: VisibleLogicalRange | null;
+  realtimeFollow: boolean;
+  autoHydration: boolean;
+  scaleMode: ScaleMode;
+  autoScale: boolean;
+  invertScale: boolean;
+} => {
+  const matchingSnapshot =
+    identityKey && viewportSnapshot?.identityKey === identityKey
+      ? viewportSnapshot
+      : null;
+  const visibleLogicalRange =
+    matchingSnapshot?.userTouched
+      ? resolveViewportVisibleLogicalRange(matchingSnapshot.visibleLogicalRange)
+      : null;
+
+  return {
+    matchingSnapshot,
+    visibleLogicalRange,
+    realtimeFollow: matchingSnapshot?.realtimeFollow ?? true,
+    autoHydration: !visibleLogicalRange,
+    scaleMode:
+      matchingSnapshot?.scaleMode ??
+      storedScalePrefs.scaleMode ??
+      defaultScaleMode,
+    autoScale: matchingSnapshot?.autoScale ?? storedScalePrefs.autoScale ?? true,
+    invertScale:
+      matchingSnapshot?.invertScale ?? storedScalePrefs.invertScale ?? false,
+  };
+};
+
+export const resolveAutoHydrationVisibleRange = ({
+  barCount,
+  defaultVisibleRange,
+}: {
+  barCount: number;
+  defaultVisibleRange: VisibleLogicalRange | null | undefined;
+}): VisibleLogicalRange | null => {
+  const visibleRange = normalizeVisibleLogicalRange(defaultVisibleRange);
+  if (
+    !visibleRange ||
+    !Number.isFinite(barCount) ||
+    barCount <= 0 ||
+    visibleRange.to < visibleRange.from
+  ) {
+    return null;
+  }
+
+  const to = Math.max(0, Math.floor(barCount) - 1);
+  const span = Math.max(0, visibleRange.to - visibleRange.from);
+  return {
+    from: Math.max(0, to - span),
+    to,
+  };
 };
 
 export const shouldAutoFollowLatestBars = ({
@@ -747,6 +1479,146 @@ const resolvePriceScaleModeOption = (scaleMode: ScaleMode): PriceScaleMode =>
 const resolveMinBarSpacing = (compact: boolean): number =>
   compact ? 0.35 : 1.1;
 
+const resolvePreferenceScaleMode = (
+  value: UserPreferences["chart"]["priceScaleMode"] | undefined,
+  fallback: ScaleMode = "linear",
+): ScaleMode =>
+  value === "log"
+    ? "log"
+    : value === "percent"
+      ? "percentage"
+      : value === "indexed"
+        ? "indexed"
+        : fallback;
+
+const resolvePreferenceRightOffset = (
+  bars: number,
+  compact: boolean,
+): number => {
+  const normalized = Number.isFinite(Number(bars))
+    ? Math.max(0, Math.min(200, Number(bars)))
+    : 6;
+  return compact ? Math.min(4, Math.max(1, normalized)) : normalized;
+};
+
+const chartTimeToDate = (value: unknown): Date | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value * 1000);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : new Date(parsed);
+  }
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as { year?: unknown; month?: unknown; day?: unknown };
+  const year = Number(record.year);
+  const month = Number(record.month);
+  const day = Number(record.day);
+  if (
+    Number.isInteger(year) &&
+    Number.isInteger(month) &&
+    Number.isInteger(day)
+  ) {
+    return new Date(Date.UTC(year, month - 1, day, 12));
+  }
+  return null;
+};
+
+const resolvePreferenceHourCycle = (
+  preferences: UserPreferences,
+): Intl.DateTimeFormatOptions["hourCycle"] | undefined =>
+  preferences.time.hourCycle === "auto" ? undefined : preferences.time.hourCycle;
+
+const formatChartAxisTimestamp = (
+  value: unknown,
+  preferences: UserPreferences,
+  fallback = "",
+): string => {
+  const date = chartTimeToDate(value);
+  if (!date) return fallback;
+  return formatPreferenceDateTime(date, {
+    preferences,
+    context: "chart",
+    includeDate: true,
+    includeTime: true,
+    monthStyle: "short",
+    dayStyle: "numeric",
+    fallback,
+  });
+};
+
+const isCalendarTickMark = (tickMarkType: unknown): boolean => {
+  if (typeof tickMarkType === "number") {
+    return tickMarkType <= 2;
+  }
+  const normalized = String(tickMarkType || "").toLowerCase();
+  return (
+    normalized.includes("year") ||
+    normalized.includes("month") ||
+    normalized.includes("day")
+  );
+};
+
+const isMonthTickMark = (tickMarkType: unknown): boolean => {
+  if (tickMarkType === 1) {
+    return true;
+  }
+  return String(tickMarkType || "").toLowerCase().includes("month");
+};
+
+const isYearTickMark = (tickMarkType: unknown): boolean => {
+  if (tickMarkType === 0) {
+    return true;
+  }
+  return String(tickMarkType || "").toLowerCase().includes("year");
+};
+
+const formatChartTickMark = (
+  value: unknown,
+  tickMarkType: unknown,
+  _locale: string | undefined,
+  preferences: UserPreferences,
+): string => {
+  const date = chartTimeToDate(value);
+  if (!date) return "";
+  const hourCycle = resolvePreferenceHourCycle(preferences);
+  const timeZone = resolvePreferenceTimeZone(preferences, "chart");
+  const common: Intl.DateTimeFormatOptions = {
+    timeZone,
+    ...(hourCycle ? { hourCycle } : {}),
+  };
+
+  if (isYearTickMark(tickMarkType)) {
+    return new Intl.DateTimeFormat("en-US", {
+      ...common,
+      year: "numeric",
+    }).format(date);
+  }
+  if (isMonthTickMark(tickMarkType)) {
+    return new Intl.DateTimeFormat("en-US", {
+      ...common,
+      month: "short",
+      year: "2-digit",
+    }).format(date);
+  }
+  if (isCalendarTickMark(tickMarkType)) {
+    return new Intl.DateTimeFormat("en-US", {
+      ...common,
+      month: preferences.time.dateFormat === "ymd" ? "2-digit" : "short",
+      day: "numeric",
+    }).format(date);
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    ...common,
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(preferences.time.showSeconds ? { second: "2-digit" } : {}),
+  }).format(date);
+};
+
 const buildChartOptions = (
   theme: ResearchChartTheme,
   {
@@ -759,6 +1631,9 @@ const buildChartOptions = (
     invertScale = false,
     enableInteractions = true,
     showAttributionLogo = false,
+    secondsVisible = false,
+    rightOffset,
+    preferences,
   }: {
     compact?: boolean;
     hideTimeScale?: boolean;
@@ -769,6 +1644,9 @@ const buildChartOptions = (
     invertScale?: boolean;
     enableInteractions?: boolean;
     showAttributionLogo?: boolean;
+    secondsVisible?: boolean;
+    rightOffset?: number;
+    preferences: UserPreferences;
   },
 ) => ({
   autoSize: true,
@@ -778,6 +1656,10 @@ const buildChartOptions = (
     fontFamily: theme.mono,
     fontSize: compact ? 8 : 11,
     attributionLogo: showAttributionLogo,
+  },
+  localization: {
+    timeFormatter: (value: unknown) =>
+      formatChartAxisTimestamp(value, preferences, ""),
   },
   grid: {
     vertLines: { color: withAlpha(theme.border, "30"), visible: true },
@@ -822,12 +1704,17 @@ const buildChartOptions = (
     borderVisible: !hideTimeScale && showTimeScale,
     visible: !hideTimeScale && showTimeScale,
     timeVisible: !hideTimeScale && showTimeScale,
-    secondsVisible: false,
+    secondsVisible,
     ticksVisible: !hideTimeScale && showTimeScale,
-    rightOffset: compact ? 1 : 6,
-    rightBarStaysOnScroll: true,
+    rightOffset: rightOffset ?? (compact ? 1 : 6),
+    rightBarStaysOnScroll: false,
     lockVisibleTimeRangeOnResize: true,
     minBarSpacing: resolveMinBarSpacing(compact),
+    tickMarkFormatter: (
+      value: unknown,
+      tickMarkType: unknown,
+      locale: string | undefined,
+    ) => formatChartTickMark(value, tickMarkType, locale, preferences),
   },
   handleScroll: enableInteractions
     ? {
@@ -861,6 +1748,98 @@ const SERIES_TYPE_MAP = {
   typeof LineSeries | typeof HistogramSeries
 >;
 
+const specBelongsToLegendStudy = (specKey: string, studyId: string): boolean =>
+  specKey === studyId || specKey.startsWith(`${studyId}-`);
+
+const isGuideStudySpec = (spec: StudySpec): boolean =>
+  /(?:^|-)guide-|(?:^|-)zero$/.test(spec.key);
+
+const resolveStudySpecColor = (spec: StudySpec): string | null => {
+  const optionColor = spec.options?.color;
+  if (typeof optionColor === "string" && optionColor.trim()) {
+    return optionColor;
+  }
+
+  const pointColor = spec.data.find(
+    (point) => typeof point.color === "string" && point.color.trim(),
+  )?.color;
+  return typeof pointColor === "string" && pointColor.trim()
+    ? pointColor
+    : null;
+};
+
+const resolveStudySpecValueAtTime = (
+  spec: StudySpec,
+  time: number | null | undefined,
+): number | null => {
+  if (typeof time !== "number" || !Number.isFinite(time)) {
+    return null;
+  }
+
+  const point = spec.data.find(
+    (item) =>
+      item.time === time &&
+      typeof item.value === "number" &&
+      Number.isFinite(item.value),
+  );
+
+  return typeof point?.value === "number" && Number.isFinite(point.value)
+    ? point.value
+    : null;
+};
+
+export const buildChartLegendStudyItems = ({
+  studySpecs,
+  studies = [],
+  selectedStudies = [],
+  time,
+  fallbackColor,
+}: {
+  studySpecs: StudySpec[];
+  studies?: ChartLegendStudyOption[];
+  selectedStudies?: string[];
+  time: number | null | undefined;
+  fallbackColor: string;
+}): ChartLegendStudyItem[] => {
+  const studyLabelById = new Map(studies.map((study) => [study.id, study.label]));
+
+  return selectedStudies.reduce<ChartLegendStudyItem[]>((items, studyId) => {
+    const visibleSpecs = studySpecs.filter(
+      (spec) =>
+        specBelongsToLegendStudy(spec.key, studyId) &&
+        !isGuideStudySpec(spec) &&
+        spec.options?.visible !== false &&
+        spec.data.length > 0,
+    );
+    if (!visibleSpecs.length) {
+      return items;
+    }
+
+    const colors = Array.from(
+      new Set(
+        visibleSpecs
+          .map(resolveStudySpecColor)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const values = Array.from(
+      new Set(
+        visibleSpecs
+          .map((spec) => resolveStudySpecValueAtTime(spec, time))
+          .filter((value): value is number => typeof value === "number"),
+      ),
+    );
+
+    items.push({
+      id: studyId,
+      label: studyLabelById.get(studyId) || studyId,
+      colors: colors.length ? colors : [fallbackColor],
+      values,
+    });
+    return items;
+  }, []);
+};
+
 const formatCompactNumber = (value: number): string => {
   if (!Number.isFinite(value)) {
     return "0";
@@ -872,21 +1851,17 @@ const formatCompactNumber = (value: number): string => {
   }).format(value);
 };
 
-const formatLegendTimestamp = (value: string): string => {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "America/New_York",
-  }).format(new Date(parsed));
-};
+const formatLegendTimestamp = (
+  value: string,
+  preferences: UserPreferences,
+): string =>
+  formatPreferenceDateTime(value, {
+    preferences,
+    context: "chart",
+    monthStyle: "2-digit",
+    dayStyle: "2-digit",
+    fallback: value,
+  });
 
 const formatLegendNumber = (
   value: number | null | undefined,
@@ -897,6 +1872,53 @@ const formatLegendNumber = (
   }
 
   return value.toFixed(digits);
+};
+
+const formatLegendSignedNumber = (
+  value: number | null | undefined,
+  digits = 2,
+): string => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
+};
+
+const formatLegendPercent = (value: number | null | undefined): string => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+};
+
+const formatLegendStudyValue = (value: number): string => {
+  const digits = Math.min(4, Math.max(2, countValueDecimals(value)));
+  return formatLegendNumber(value, digits);
+};
+
+const formatLegendSourceLabel = (
+  source: string | null | undefined,
+  fallback?: string | null,
+): string | null => {
+  if (source === "ibkr-websocket-derived") {
+    return "STREAM";
+  }
+  if (source === "polygon-delayed-websocket") {
+    return "DELAYED STREAM";
+  }
+  if (source === "ibkr+massive-gap-fill") {
+    return "IBKR + GAP";
+  }
+  if (source === "ibkr-history") {
+    return "IBKR";
+  }
+  if (source) {
+    return fallback || "REST";
+  }
+
+  return fallback || null;
 };
 
 const countValueDecimals = (value: number): number => {
@@ -1245,6 +2267,43 @@ const clampVisualAnchor = (
   }
 
   return clampCoordinate(value, halfSize, viewportSize - halfSize);
+};
+
+export const clampOverlayRectPosition = ({
+  left,
+  top,
+  width,
+  height,
+  viewportWidth,
+  viewportHeight,
+}: {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}): { left: number; top: number } => ({
+  left: clampCoordinate(left, 0, Math.max(0, viewportWidth - width)),
+  top: clampCoordinate(top, 0, Math.max(0, viewportHeight - height)),
+});
+
+const resolveChartDrawableWidth = (chart: any, fallbackWidth: number): number => {
+  const timeScaleWidth = chart?.timeScale?.()?.width?.();
+  if (!Number.isFinite(timeScaleWidth) || timeScaleWidth <= 0) {
+    return Math.max(0, fallbackWidth);
+  }
+
+  return Math.max(0, Math.min(fallbackWidth, timeScaleWidth));
+};
+
+const resolveChartDrawableHeight = (chart: any, fallbackHeight: number): number => {
+  const timeScaleHeight = chart?.timeScale?.()?.height?.();
+  if (!Number.isFinite(timeScaleHeight) || timeScaleHeight < 0) {
+    return Math.max(0, fallbackHeight);
+  }
+
+  return Math.max(0, fallbackHeight - timeScaleHeight);
 };
 
 const isCoordinateWithinViewport = (
@@ -1835,10 +2894,19 @@ const buildTradeMarkerTargets = (
       return result;
     }
 
-    result.push({
-      id: group.id,
+    const clampedPosition = clampOverlayRectPosition({
       left,
       top,
+      width: size,
+      height: size,
+      viewportWidth,
+      viewportHeight,
+    });
+
+    result.push({
+      id: group.id,
+      left: clampedPosition.left,
+      top: clampedPosition.top,
       size,
       label: group.label,
       color:
@@ -1859,6 +2927,196 @@ const buildTradeMarkerTargets = (
             : theme.green,
       kind: group.kind,
       tradeSelectionIds: group.tradeSelectionIds,
+    });
+    return result;
+  }, []);
+};
+
+const buildChartEventOverlays = (
+  chart: any,
+  series: any,
+  model: ChartModel,
+  events: ChartEvent[],
+  viewportWidth: number,
+  viewportHeight: number,
+): ChartEventOverlay[] => {
+  if (!chart || !series || !events.length || !viewportWidth || !viewportHeight) {
+    return [];
+  }
+
+  const barByTime = new Map(model.chartBars.map((bar) => [bar.time, bar]));
+  return events.reduce<ChartEventOverlay[]>((result, event) => {
+    const parsed = Date.parse(event.time);
+    if (!Number.isFinite(parsed)) {
+      return result;
+    }
+
+    const time = Math.floor(parsed / 1000);
+    const x = chart.timeScale().timeToCoordinate(time);
+    if (!Number.isFinite(x)) {
+      return result;
+    }
+
+    const bar = barByTime.get(time);
+    const label = event.label || (event.eventType === "earnings" ? "E" : "F");
+    const size = event.placement === "timescale" ? 18 : 22;
+    const anchorTop =
+      event.placement === "timescale"
+        ? viewportHeight - size / 2
+        : Number.isFinite(bar?.h)
+          ? (series.priceToCoordinate?.(bar?.h) ?? 24) - size
+          : size / 2;
+    const left = clampVisualAnchor(x, size / 2, viewportWidth);
+    const top = clampVisualAnchor(anchorTop, size / 2, viewportHeight);
+
+    if (!doesRectIntersectViewport(left - size / 2, top - size / 2, size, size, viewportWidth, viewportHeight)) {
+      return result;
+    }
+
+    result.push({
+      id: event.id,
+      left,
+      top,
+      label,
+      title: event.summary || label,
+      tone: event.bias,
+      placement: event.placement,
+    });
+    return result;
+  }, []);
+};
+
+const buildFlowChartEventOverlays = (
+  chart: any,
+  series: any,
+  model: ChartModel,
+  buckets: FlowChartBucket[],
+  viewportWidth: number,
+  viewportHeight: number,
+): ChartEventOverlay[] => {
+  if (!chart || !series || !buckets.length || !viewportWidth || !viewportHeight) {
+    return [];
+  }
+
+  return buckets.reduce<ChartEventOverlay[]>((result, bucket) => {
+    const x = chart.timeScale().timeToCoordinate(bucket.time);
+    if (!Number.isFinite(x)) {
+      return result;
+    }
+
+    const bar = model.chartBars[bucket.barIndex];
+    const size = 24;
+    const anchorTop = Number.isFinite(bar?.h)
+      ? (series.priceToCoordinate?.(bar?.h) ?? 24) - size
+      : size / 2;
+    const left = clampVisualAnchor(x, size / 2, viewportWidth);
+    const top = clampVisualAnchor(anchorTop, size / 2, viewportHeight);
+
+    if (
+      !doesRectIntersectViewport(
+        left - size / 2,
+        top - size / 2,
+        size,
+        size,
+        viewportWidth,
+        viewportHeight,
+      )
+    ) {
+      return result;
+    }
+
+    const tooltip = buildFlowTooltipModel(bucket);
+    const right = String(
+      bucket.topEvent.metadata?.cp || bucket.topEvent.metadata?.right || "",
+    )
+      .trim()
+      .toUpperCase()
+      .slice(0, 1);
+
+    result.push({
+      id: bucket.id,
+      left,
+      top,
+      label: bucket.count > 1 ? String(Math.min(bucket.count, 9)) : right || "F",
+      title: `${tooltip.title}: ${tooltip.summary}`,
+      tone: bucket.bias,
+      placement: "bar",
+      count: bucket.count,
+      flowBucket: bucket,
+      tooltip,
+    });
+    return result;
+  }, []);
+};
+
+const estimateBarOverlayWidth = (
+  chart: any,
+  bars: ChartModel["chartBars"],
+  index: number,
+): number => {
+  const currentX = chart.timeScale().timeToCoordinate(bars[index]?.time);
+  const previousX =
+    index > 0 ? chart.timeScale().timeToCoordinate(bars[index - 1]?.time) : null;
+  const nextX =
+    index < bars.length - 1
+      ? chart.timeScale().timeToCoordinate(bars[index + 1]?.time)
+      : null;
+  const distances = [previousX, nextX]
+    .map((x) =>
+      Number.isFinite(x) && Number.isFinite(currentX)
+        ? Math.abs(Number(x) - Number(currentX))
+        : null,
+    )
+    .filter((value): value is number => typeof value === "number" && value > 0);
+  const width = distances.length ? Math.min(...distances) * 0.62 : 6;
+  return clampCoordinate(width, 3, 14);
+};
+
+const buildFlowVolumeOverlays = (
+  chart: any,
+  model: ChartModel,
+  buckets: FlowChartBucket[],
+  viewportWidth: number,
+  viewportHeight: number,
+): FlowVolumeOverlay[] => {
+  if (!chart || !buckets.length || !viewportWidth || !viewportHeight) {
+    return [];
+  }
+
+  const volumeTop = viewportHeight * VOLUME_SCALE_TOP_MARGIN;
+  const volumeHeight = Math.max(18, viewportHeight - volumeTop);
+  const volumeBottom = viewportHeight - 1;
+
+  return buckets.reduce<FlowVolumeOverlay[]>((result, bucket) => {
+    const x = chart.timeScale().timeToCoordinate(bucket.time);
+    if (!Number.isFinite(x)) {
+      return result;
+    }
+
+    const width = estimateBarOverlayWidth(chart, model.chartBars, bucket.barIndex);
+    const height = clampCoordinate(
+      volumeHeight * bucket.volumeSegmentRatio,
+      4,
+      Math.max(4, volumeHeight * 0.58),
+    );
+    const left = Number(x) - width / 2;
+    const top = volumeBottom - height;
+
+    if (!doesRectIntersectViewport(left, top, width, height, viewportWidth, viewportHeight)) {
+      return result;
+    }
+
+    const tooltip = buildFlowTooltipModel(bucket);
+    result.push({
+      id: `flow-volume:${bucket.id}`,
+      left,
+      top,
+      width,
+      height,
+      title: `${tooltip.title}: ${tooltip.summary}`,
+      tone: bucket.bias,
+      flowBucket: bucket,
+      tooltip,
     });
     return result;
   }, []);
@@ -2171,16 +3429,20 @@ const buildIndicatorEventOverlays = (
       const badgeClearance = badgeHeight + arrowClearance;
       const badgeTop = y;
 
+      const rectTop =
+        placement === "above"
+          ? badgeTop - (badgeHeight + 8)
+          : placement === "below"
+            ? badgeTop + 8
+            : badgeTop - badgeHeight / 2;
+      const rectHeight = badgeClearance + 8;
+
       if (
         !doesRectIntersectViewport(
           x - estimatedWidth / 2,
-          placement === "above"
-            ? badgeTop - (badgeHeight + 8)
-            : placement === "below"
-              ? badgeTop + 8
-              : badgeTop - badgeHeight / 2,
+          rectTop,
           estimatedWidth,
-          badgeClearance + 8,
+          rectHeight,
           viewportWidth,
           viewportHeight,
         )
@@ -2188,13 +3450,29 @@ const buildIndicatorEventOverlays = (
         return;
       }
 
+      const clampedPosition = clampOverlayRectPosition({
+        left: x - estimatedWidth / 2,
+        top: rectTop,
+        width: estimatedWidth,
+        height: rectHeight,
+        viewportWidth,
+        viewportHeight,
+      });
+      const clampedLeft = clampedPosition.left + estimatedWidth / 2;
+      const clampedTop =
+        placement === "above"
+          ? clampedPosition.top + badgeHeight + 8
+          : placement === "below"
+            ? clampedPosition.top - 8
+            : clampedPosition.top + badgeHeight / 2;
+
       badges.push({
         id: event.id,
         dataTestId:
           (meta.dataTestId as string | undefined) ||
           buildRayReplicaOverlayTestId(event.strategy, "badge", event.eventType),
-        left: x,
-        top: badgeTop,
+        left: clampedLeft,
+        top: clampedTop,
         text,
         background: (meta.background as string | undefined) || "#111827",
         borderColor: (meta.borderColor as string | undefined) || "#9ca3af",
@@ -2231,8 +3509,8 @@ const buildIndicatorEventOverlays = (
         dataTestId:
           (meta.dataTestId as string | undefined) ||
           buildRayReplicaOverlayTestId(event.strategy, "dot", event.eventType),
-        left: x,
-        top: y,
+        left: clampVisualAnchor(x, visualRadius, viewportWidth),
+        top: clampVisualAnchor(y, visualRadius, viewportHeight),
         size,
         color: (meta.color as string | undefined) || "#ffffff",
         borderColor: (meta.borderColor as string | undefined) || "#ffffff",
@@ -2310,15 +3588,47 @@ const syncStudySeries = (
   return nextRegistry;
 };
 
+const applyChartPaneStretchFactors = (
+  chart: any,
+  {
+    compact,
+    lowerPaneCount,
+  }: {
+    compact: boolean;
+    lowerPaneCount: number;
+  },
+) => {
+  const panes = typeof chart?.panes === "function" ? chart.panes() : [];
+  if (!Array.isArray(panes) || panes.length <= 1) {
+    return;
+  }
+
+  const pricePaneStretch = compact ? 3.2 : 4.6;
+  const lowerPaneStretch = compact ? 0.85 : 1.15;
+  panes.forEach((pane: any, index: number) => {
+    const stretch =
+      index === 0
+        ? pricePaneStretch
+        : lowerPaneCount > 1
+          ? lowerPaneStretch
+          : compact
+            ? 1
+            : 1.25;
+    pane?.setStretchFactor?.(stretch);
+  });
+};
+
 export const ResearchChartSurface = ({
   model,
   theme,
   themeKey,
   uiStateKey,
+  rangeIdentityKey = null,
   dataTestId,
   compact = false,
   showToolbar = true,
   showLegend = true,
+  legend = null,
   hideTimeScale = false,
   showRightPriceScale = true,
   enableInteractions = true,
@@ -2336,12 +3646,28 @@ export const ResearchChartSurface = ({
   defaultScaleMode = "linear",
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
+  chartEvents = EMPTY_CHART_EVENTS,
   drawMode = null,
   onAddDrawing,
   onAddHorizontalLevel,
   onTradeMarkerSelection,
   onVisibleLogicalRangeChange,
+  viewportSnapshot = null,
+  onViewportSnapshotChange,
+  persistScalePrefs = true,
 }: ResearchChartSurfaceProps) => {
+  const { preferences: userPreferences } = useUserPreferences();
+  const persistLocalChartState =
+    persistScalePrefs && userPreferences.privacy.persistChartViewports;
+  const keepStoredChartViewport =
+    persistLocalChartState && userPreferences.chart.keepTimeZoom;
+  const viewportSnapshotControlled =
+    typeof onViewportSnapshotChange === "function";
+  const effectiveViewportSnapshot = resolveEffectiveChartViewportSnapshot({
+    identityKey: rangeIdentityKey ?? null,
+    viewportSnapshot,
+    useStoredFallback: !viewportSnapshotControlled && keepStoredChartViewport,
+  });
   const rootRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<any>(null);
@@ -2371,6 +3697,11 @@ export const ResearchChartSurface = ({
   const visibleLogicalRangeRef = useRef<any>(null);
   const realtimeFollowRef = useRef(true);
   const chartBarCountRef = useRef(model.chartBars.length);
+  const rangeIdentityKeyRef = useRef<string | null>(null);
+  const lastPublishedVisibleRangeSignatureRef = useRef<string | null>(null);
+  const programmaticVisibleRangeSignatureRef = useRef<string | null>(null);
+  const lastProgrammaticViewportIntentAtRef = useRef(0);
+  const autoHydrationViewportRef = useRef(true);
   const previousFirstChartBarTimeRef = useRef<number | null>(null);
   const initializedRangeRef = useRef(false);
   const pendingStoredRangeSyncRef = useRef(true);
@@ -2384,40 +3715,117 @@ export const ResearchChartSurface = ({
   });
   const activePriceSeriesRef = useRef<any>(null);
   const barLookupRef = useRef<Map<number, HoverBar>>(new Map());
+  const scalePrefsRef = useRef({
+    scaleMode: defaultScaleMode,
+    autoScale: true,
+    invertScale: false,
+  });
   const interactionRef = useRef({
     drawMode,
     onAddDrawing,
     onAddHorizontalLevel,
   });
   const visibleRangeChangeRef = useRef(onVisibleLogicalRangeChange);
+  const viewportSnapshotChangeRef = useRef(onViewportSnapshotChange);
+  const lastUserViewportIntentAtRef = useRef(0);
+  const viewportPointerActiveRef = useRef(false);
+  const lastPlotResizeAtRef = useRef(0);
+  const plotPanRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startRange: VisibleLogicalRange;
+    plotWidth: number;
+    active: boolean;
+  } | null>(null);
+  const initialChartPreferencesRef = useRef<UserPreferences["chart"] | null>(
+    null,
+  );
+  if (initialChartPreferencesRef.current === null) {
+    initialChartPreferencesRef.current = userPreferences.chart;
+  }
+  const initialChartPreferences = initialChartPreferencesRef.current;
   const hasChartBars = model.chartBars.length > 0;
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
   const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
     defaultBaseSeriesType,
   );
-  const [showVolume, setShowVolume] = useState(defaultShowVolume);
+  const [showVolume, setShowVolume] = useState(
+    defaultShowVolume && initialChartPreferences.showVolume,
+  );
   const [scaleMode, setScaleMode] = useState<ScaleMode>(
-    () => readStoredChartScalePrefs(uiStateKey).scaleMode ?? defaultScaleMode,
+    () =>
+      effectiveViewportSnapshot?.scaleMode ??
+      (persistLocalChartState
+        ? readStoredChartScalePrefs(uiStateKey).scaleMode
+        : undefined) ??
+      resolvePreferenceScaleMode(initialChartPreferences.priceScaleMode, defaultScaleMode),
   );
   const [crosshairMode, setCrosshairMode] = useState<"magnet" | "free">(
-    "magnet",
+    initialChartPreferences.crosshairMode,
   );
   const [showPriceLine, setShowPriceLine] = useState(defaultShowPriceLine);
-  const [showGrid, setShowGrid] = useState(true);
-  const [showTimeScaleState, setShowTimeScaleState] = useState(!hideTimeScale);
+  const [showGrid, setShowGrid] = useState(initialChartPreferences.showGrid);
+  const [showTimeScaleState, setShowTimeScaleState] = useState(
+    !hideTimeScale && initialChartPreferences.showTimeScale,
+  );
   const [autoScale, setAutoScale] = useState(
-    () => readStoredChartScalePrefs(uiStateKey).autoScale ?? true,
+    () =>
+      effectiveViewportSnapshot?.autoScale ??
+      (persistLocalChartState
+        ? readStoredChartScalePrefs(uiStateKey).autoScale
+        : undefined) ??
+      true,
   );
   const [invertScale, setInvertScale] = useState(
-    () => readStoredChartScalePrefs(uiStateKey).invertScale ?? false,
+    () =>
+      effectiveViewportSnapshot?.invertScale ??
+      (persistLocalChartState
+        ? readStoredChartScalePrefs(uiStateKey).invertScale
+        : undefined) ??
+      false,
   );
+  scalePrefsRef.current = {
+    scaleMode,
+    autoScale,
+    invertScale,
+  };
+  useEffect(() => {
+    const chartPreferences = userPreferences.chart;
+    setShowVolume(defaultShowVolume && chartPreferences.showVolume);
+    setShowGrid(chartPreferences.showGrid);
+    setShowTimeScaleState(!hideTimeScale && chartPreferences.showTimeScale);
+    setCrosshairMode(chartPreferences.crosshairMode);
+    setScaleMode(resolvePreferenceScaleMode(chartPreferences.priceScaleMode, defaultScaleMode));
+  }, [
+    defaultScaleMode,
+    defaultShowVolume,
+    hideTimeScale,
+    userPreferences.chart.crosshairMode,
+    userPreferences.chart.priceScaleMode,
+    userPreferences.chart.showGrid,
+    userPreferences.chart.showTimeScale,
+    userPreferences.chart.showVolume,
+  ]);
   const [overlayRevision, setOverlayRevision] = useState(0);
   const [windowOverlays, setWindowOverlays] = useState<OverlayShape[]>([]);
   const [zoneOverlays, setZoneOverlays] = useState<OverlayShape[]>([]);
   const [verticalDrawingOverlays, setVerticalDrawingOverlays] = useState<
     OverlayShape[]
   >([]);
+  const chartTimeScaleRightOffset = resolvePreferenceRightOffset(
+    userPreferences.chart.futureExpansionBars,
+    compact,
+  );
+  const visibleChartEvents = userPreferences.trading.showExecutionMarkers
+    ? chartEvents
+    : EMPTY_CHART_EVENTS;
+  const flowChartBuckets = useMemo(
+    () => buildFlowChartBuckets(visibleChartEvents, model),
+    [visibleChartEvents, model],
+  );
+  const showTradePositionOverlays = userPreferences.trading.showPositionLines;
   const [boxDrawingOverlays, setBoxDrawingOverlays] = useState<OverlayShape[]>(
     [],
   );
@@ -2430,8 +3838,18 @@ export const ResearchChartSurface = ({
   const [indicatorDotOverlays, setIndicatorDotOverlays] = useState<
     IndicatorDotOverlay[]
   >([]);
+  const [chartEventOverlays, setChartEventOverlays] = useState<
+    ChartEventOverlay[]
+  >([]);
+  const [flowVolumeOverlays, setFlowVolumeOverlays] = useState<
+    FlowVolumeOverlay[]
+  >([]);
+  const [flowTooltip, setFlowTooltip] = useState<FlowTooltipState | null>(null);
   const [indicatorDashboardOverlay, setIndicatorDashboardOverlay] =
     useState<IndicatorDashboardOverlay | null>(null);
+  const [dashboardSessionNowMs, setDashboardSessionNowMs] = useState(() =>
+    Date.now(),
+  );
   const [tradeThresholdOverlays, setTradeThresholdOverlays] = useState<
     TradeThresholdOverlay[]
   >([]);
@@ -2506,6 +3924,18 @@ export const ResearchChartSurface = ({
   };
 
   useEffect(() => {
+    if (!indicatorDashboardOverlay) {
+      return undefined;
+    }
+
+    setDashboardSessionNowMs(Date.now());
+    const interval = setInterval(() => {
+      setDashboardSessionNowMs(Date.now());
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [Boolean(indicatorDashboardOverlay)]);
+
+  useEffect(() => {
     interactionRef.current = {
       drawMode,
       onAddDrawing,
@@ -2518,8 +3948,300 @@ export const ResearchChartSurface = ({
   }, [onVisibleLogicalRangeChange]);
 
   useEffect(() => {
+    viewportSnapshotChangeRef.current = onViewportSnapshotChange;
+  }, [onViewportSnapshotChange]);
+
+  useEffect(() => {
     chartBarCountRef.current = model.chartBars.length;
   }, [model.chartBars.length]);
+
+  useEffect(() => {
+    scalePrefsRef.current = {
+      scaleMode,
+      autoScale,
+      invertScale,
+    };
+  }, [autoScale, invertScale, scaleMode]);
+
+  const buildViewportSnapshot = useCallback(
+    ({
+      visibleRange,
+      userTouched,
+      realtimeFollow,
+    }: {
+      visibleRange: VisibleLogicalRange | null;
+      userTouched: boolean;
+      realtimeFollow: boolean;
+    }): ChartViewportSnapshot | null => {
+      const identityKey = rangeIdentityKeyRef.current;
+      if (!identityKey) return null;
+      return {
+        identityKey,
+        visibleLogicalRange: visibleRange,
+        userTouched,
+        realtimeFollow,
+        scaleMode: scalePrefsRef.current.scaleMode,
+        autoScale: scalePrefsRef.current.autoScale,
+        invertScale: scalePrefsRef.current.invertScale,
+        updatedAt: Date.now(),
+      };
+    },
+    [],
+  );
+
+  const publishViewportSnapshot = useCallback(
+    (snapshot: ChartViewportSnapshot | null) => {
+      if (snapshot) {
+        if (viewportSnapshotChangeRef.current) {
+          viewportSnapshotChangeRef.current(snapshot);
+        } else if (keepStoredChartViewport) {
+          writeStoredChartViewportSnapshot(snapshot);
+        }
+      }
+    },
+    [keepStoredChartViewport],
+  );
+
+  const clearUserViewportIntent = useCallback(() => {
+    lastUserViewportIntentAtRef.current = 0;
+    viewportPointerActiveRef.current = false;
+  }, []);
+
+  const markUserViewportIntent = useCallback(
+    (
+      target: EventTarget | null,
+      mode: "pointer" | "wheel",
+      point?: { clientX: number; clientY: number },
+    ) => {
+      const container = containerRef.current;
+      if (!container) {
+        return false;
+      }
+      const targetInside =
+        target instanceof Node && container.contains(target);
+      const rect = container.getBoundingClientRect();
+      const pointInside =
+        point &&
+        point.clientX >= rect.left &&
+        point.clientX <= rect.right &&
+        point.clientY >= rect.top &&
+        point.clientY <= rect.bottom;
+      if (!targetInside && !pointInside) {
+        return false;
+      }
+
+      lastUserViewportIntentAtRef.current = Date.now();
+      if (mode === "pointer") {
+        viewportPointerActiveRef.current = true;
+      }
+      return true;
+    },
+    [],
+  );
+
+  const hasRecentUserViewportIntent = useCallback(
+    () =>
+      viewportPointerActiveRef.current ||
+      Date.now() - lastUserViewportIntentAtRef.current <=
+        USER_VIEWPORT_INTENT_WINDOW_MS,
+    [],
+  );
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return undefined;
+    }
+
+    const handleNativeWheel = (event: globalThis.WheelEvent) => {
+      markUserViewportIntent(event.target, "wheel", {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    };
+    const handleNativePointerDown = (event: globalThis.PointerEvent) => {
+      markUserViewportIntent(event.target, "pointer", {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    };
+
+    root.addEventListener("wheel", handleNativeWheel, {
+      capture: true,
+      passive: true,
+    });
+    root.addEventListener("pointerdown", handleNativePointerDown, true);
+    return () => {
+      root.removeEventListener("wheel", handleNativeWheel, true);
+      root.removeEventListener("pointerdown", handleNativePointerDown, true);
+    };
+  }, [markUserViewportIntent]);
+
+  const markProgrammaticViewportIntent = useCallback(
+    (signature: string | null = null) => {
+      programmaticVisibleRangeSignatureRef.current = signature;
+      lastProgrammaticViewportIntentAtRef.current = Date.now();
+    },
+    [],
+  );
+
+  const hasRecentProgrammaticViewportIntent = useCallback(
+    () =>
+      Date.now() - lastProgrammaticViewportIntentAtRef.current <=
+      PROGRAMMATIC_VIEWPORT_INTENT_WINDOW_MS,
+    [],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const handleWindowPointerDown = (event: globalThis.PointerEvent) => {
+      const container = containerRef.current;
+      if (
+        container &&
+        event.target instanceof Node &&
+        container.contains(event.target)
+      ) {
+        return;
+      }
+      clearUserViewportIntent();
+    };
+    const clearPointerActive = () => {
+      viewportPointerActiveRef.current = false;
+    };
+
+    window.addEventListener("pointerdown", handleWindowPointerDown, true);
+    window.addEventListener("pointerup", clearPointerActive, true);
+    window.addEventListener("pointercancel", clearPointerActive, true);
+    window.addEventListener("blur", clearUserViewportIntent);
+    return () => {
+      window.removeEventListener("pointerdown", handleWindowPointerDown, true);
+      window.removeEventListener("pointerup", clearPointerActive, true);
+      window.removeEventListener("pointercancel", clearPointerActive, true);
+      window.removeEventListener("blur", clearUserViewportIntent);
+    };
+  }, [clearUserViewportIntent]);
+
+  const publishVisibleLogicalRange = useCallback(
+    (
+      range: unknown,
+      options: {
+        markInitialized?: boolean;
+        source?: "programmatic" | "user";
+      } = {},
+    ): VisibleLogicalRange | null => {
+      const source = options.source || "user";
+      const { visibleRange, realtimeFollow } = resolveVisibleRangePublishState({
+        range,
+        barCount: chartBarCountRef.current,
+        source,
+      });
+      const previousSignature = buildVisibleRangeSignature(
+        visibleLogicalRangeRef.current,
+      );
+      const { signature, shouldPublish } = resolveVisibleRangePublishDecision({
+        lastSignature: lastPublishedVisibleRangeSignatureRef.current,
+        visibleRange,
+      });
+
+      visibleLogicalRangeRef.current = visibleRange;
+      realtimeFollowRef.current = realtimeFollow;
+      if (options.markInitialized) {
+        initializedRangeRef.current = true;
+        pendingStoredRangeSyncRef.current = false;
+      }
+      if (source === "user") {
+        autoHydrationViewportRef.current = false;
+        programmaticVisibleRangeSignatureRef.current = null;
+        lastProgrammaticViewportIntentAtRef.current = 0;
+      }
+      if (source === "programmatic") {
+        lastPublishedVisibleRangeSignatureRef.current = signature;
+      } else if (shouldPublish) {
+        lastPublishedVisibleRangeSignatureRef.current = signature;
+        visibleRangeChangeRef.current?.(visibleRange);
+        publishViewportSnapshot(
+          buildViewportSnapshot({
+            visibleRange,
+            userTouched: true,
+            realtimeFollow,
+          }),
+        );
+      }
+      if (
+        previousSignature !== signature ||
+        (source === "user" && shouldPublish)
+      ) {
+        setOverlayRevision((value) => value + 1);
+      }
+      return visibleRange;
+    },
+    [buildViewportSnapshot, publishViewportSnapshot],
+  );
+
+  const setProgrammaticVisibleLogicalRange = useCallback(
+    (
+      nextRange: VisibleLogicalRange | null | undefined,
+      options: { markInitialized?: boolean } = {},
+    ): VisibleLogicalRange | null => {
+      const visibleRange = normalizeVisibleLogicalRange(nextRange);
+      if (!chartRef.current || !visibleRange) {
+        return null;
+      }
+
+      markProgrammaticViewportIntent(buildVisibleRangeSignature(visibleRange));
+      chartRef.current.timeScale().setVisibleLogicalRange(visibleRange);
+      return publishVisibleLogicalRange(visibleRange, {
+        ...options,
+        source: "programmatic",
+      });
+    },
+    [markProgrammaticViewportIntent, publishVisibleLogicalRange],
+  );
+
+  useEffect(() => {
+    if (
+      !effectiveViewportSnapshot ||
+      effectiveViewportSnapshot.identityKey !== rangeIdentityKeyRef.current
+    ) {
+      return;
+    }
+    setScaleMode(effectiveViewportSnapshot.scaleMode);
+    setAutoScale(effectiveViewportSnapshot.autoScale);
+    setInvertScale(effectiveViewportSnapshot.invertScale);
+  }, [
+    effectiveViewportSnapshot?.autoScale,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.invertScale,
+    effectiveViewportSnapshot?.scaleMode,
+  ]);
+
+  useEffect(() => {
+    if (!rangeIdentityKeyRef.current) {
+      return;
+    }
+    publishViewportSnapshot(
+      buildViewportSnapshot({
+        visibleRange: normalizeVisibleLogicalRange(visibleLogicalRangeRef.current),
+        userTouched: Boolean(
+          effectiveViewportSnapshot?.identityKey === rangeIdentityKeyRef.current &&
+            effectiveViewportSnapshot.userTouched,
+        ),
+        realtimeFollow: realtimeFollowRef.current,
+      }),
+    );
+  }, [
+    autoScale,
+    buildViewportSnapshot,
+    invertScale,
+    publishViewportSnapshot,
+    rangeIdentityKey,
+    scaleMode,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.userTouched,
+  ]);
 
   useEffect(() => {
     if (drawMode !== "box") {
@@ -2534,12 +4256,84 @@ export const ResearchChartSurface = ({
   }, [hideTimeScale]);
 
   useEffect(() => {
+    if (!persistLocalChartState) {
+      return;
+    }
     writeStoredChartScalePrefs(uiStateKey, {
       scaleMode,
       autoScale,
       invertScale,
     });
-  }, [uiStateKey, scaleMode, autoScale, invertScale]);
+  }, [persistLocalChartState, uiStateKey, scaleMode, autoScale, invertScale]);
+
+  useLayoutEffect(() => {
+    const nextRangeIdentityKey = rangeIdentityKey ?? null;
+    if (rangeIdentityKeyRef.current === nextRangeIdentityKey) {
+      return;
+    }
+
+    const restoreState = resolveViewportRestoreState({
+      identityKey: nextRangeIdentityKey,
+      viewportSnapshot: effectiveViewportSnapshot,
+      storedScalePrefs: persistLocalChartState
+        ? readStoredChartScalePrefs(uiStateKey)
+        : {},
+      defaultScaleMode,
+      barCount: model.chartBars.length,
+    });
+    const matchingStoredRange = restoreState.visibleLogicalRange;
+
+    rangeIdentityKeyRef.current = nextRangeIdentityKey;
+    visibleLogicalRangeRef.current = matchingStoredRange;
+    realtimeFollowRef.current = restoreState.realtimeFollow;
+    lastPublishedVisibleRangeSignatureRef.current = null;
+    programmaticVisibleRangeSignatureRef.current = null;
+    lastProgrammaticViewportIntentAtRef.current = 0;
+    clearUserViewportIntent();
+    autoHydrationViewportRef.current = restoreState.autoHydration;
+    initializedRangeRef.current = false;
+    pendingStoredRangeSyncRef.current = true;
+    previousFirstChartBarTimeRef.current = model.chartBars[0]?.time ?? null;
+    lastSelectionFocusTokenRef.current = null;
+    setScaleMode(restoreState.scaleMode);
+    setAutoScale(restoreState.autoScale);
+    setInvertScale(restoreState.invertScale);
+
+    if (!chartRef.current || !hasChartBars) {
+      return;
+    }
+
+    chartRef.current
+      .priceScale?.("right", 0)
+      ?.setAutoScale?.(restoreState.autoScale);
+    if (matchingStoredRange) {
+      setProgrammaticVisibleLogicalRange(matchingStoredRange, {
+        markInitialized: true,
+      });
+    } else if (model.defaultVisibleLogicalRange) {
+      setProgrammaticVisibleLogicalRange(model.defaultVisibleLogicalRange, {
+        markInitialized: true,
+      });
+    } else {
+      markProgrammaticViewportIntent();
+      chartRef.current.timeScale().fitContent();
+      initializedRangeRef.current = true;
+      pendingStoredRangeSyncRef.current = false;
+      setOverlayRevision((value) => value + 1);
+    }
+  }, [
+    hasChartBars,
+    clearUserViewportIntent,
+    defaultScaleMode,
+    markProgrammaticViewportIntent,
+    model.chartBars,
+    model.defaultVisibleLogicalRange,
+    persistLocalChartState,
+    rangeIdentityKey,
+    setProgrammaticVisibleLogicalRange,
+    uiStateKey,
+    effectiveViewportSnapshot,
+  ]);
 
   useLayoutEffect(() => {
     const nextFirstChartBarTime = model.chartBars[0]?.time ?? null;
@@ -2652,6 +4446,9 @@ export const ResearchChartSurface = ({
           invertScale,
           enableInteractions,
           showAttributionLogo,
+          secondsVisible: userPreferences.time.showSeconds,
+          rightOffset: chartTimeScaleRightOffset,
+          preferences: userPreferences,
         }) as any,
       );
       registerChart(chart);
@@ -2729,7 +4526,7 @@ export const ResearchChartSurface = ({
       });
 
       volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.78, bottom: 0 },
+        scaleMargins: { top: VOLUME_SCALE_TOP_MARGIN, bottom: 0 },
       });
 
       markerApisRef.current = [
@@ -2749,22 +4546,22 @@ export const ResearchChartSurface = ({
       activePriceSeriesRef.current = candleSeries;
 
       handleVisibleRangeChange = (range: any) => {
-        const normalizedRange =
-          range &&
-          Number.isFinite(range.from) &&
-          Number.isFinite(range.to)
-            ? {
-                from: range.from,
-                to: range.to,
-              }
-            : null;
-        visibleLogicalRangeRef.current = normalizedRange;
-        realtimeFollowRef.current = isVisibleRangeNearRealtime({
-          visibleRange: normalizedRange,
-          barCount: chartBarCountRef.current,
+        const signature = buildVisibleRangeSignature(
+          normalizeVisibleLogicalRange(range),
+        );
+        const resizeIntent =
+          !viewportPointerActiveRef.current &&
+          Date.now() - lastPlotResizeAtRef.current <=
+            PLOT_RESIZE_VIEWPORT_INTENT_WINDOW_MS;
+        const userIntent = hasRecentUserViewportIntent() && !resizeIntent;
+        const source = resolveVisibleRangeChangeSource({
+          initialized: initializedRangeRef.current,
+          nextSignature: signature,
+          programmaticSignature: programmaticVisibleRangeSignatureRef.current,
+          hasRecentProgrammaticIntent: hasRecentProgrammaticViewportIntent(),
+          hasRecentUserViewportIntent: userIntent,
         });
-        visibleRangeChangeRef.current?.(normalizedRange);
-        setOverlayRevision((value) => value + 1);
+        publishVisibleLogicalRange(range, { source });
       };
       handleCrosshairMove = (param: any) => {
         const rawTime = param?.time;
@@ -2782,6 +4579,7 @@ export const ResearchChartSurface = ({
           return;
         }
 
+        autoHydrationViewportRef.current = false;
         const timeValue = chart.timeScale().coordinateToTime(param.point.x);
         const price = activePriceSeriesRef.current?.coordinateToPrice?.(
           param.point.y,
@@ -2906,6 +4704,8 @@ export const ResearchChartSurface = ({
       activePriceSeriesRef.current = null;
       visibleLogicalRangeRef.current = null;
       realtimeFollowRef.current = true;
+      programmaticVisibleRangeSignatureRef.current = null;
+      lastProgrammaticViewportIntentAtRef.current = 0;
       initializedRangeRef.current = false;
       pendingStoredRangeSyncRef.current = true;
       lastSelectionFocusTokenRef.current = null;
@@ -2991,16 +4791,28 @@ export const ResearchChartSurface = ({
       : [];
     const previousBarCount = baseSeriesDataRef.current.candles.length;
     const nextBarCount = candleSeriesData.length;
-    const visibleRangeBeforeDataSync =
+    const rawVisibleRangeBeforeDataSync =
       visibleLogicalRangeRef.current ||
       chartRef.current.timeScale().getVisibleLogicalRange?.() ||
       null;
+    const visibleRangeBeforeDataSync = resolveViewportVisibleLogicalRange(
+      rawVisibleRangeBeforeDataSync,
+    );
+    if (rawVisibleRangeBeforeDataSync && !visibleRangeBeforeDataSync) {
+      visibleLogicalRangeRef.current = null;
+    }
     const shouldFollowLatestBars = shouldAutoFollowLatestBars({
       realtimeFollow: realtimeFollowRef.current,
       visibleRange: visibleRangeBeforeDataSync,
       previousBarCount,
       nextBarCount,
     });
+    const autoHydrationVisibleRange = autoHydrationViewportRef.current
+      ? resolveAutoHydrationVisibleRange({
+          barCount: nextBarCount,
+          defaultVisibleRange: model.defaultVisibleLogicalRange,
+        })
+      : null;
 
     baseSeriesDataRef.current.candles = syncSeriesData(
       candleSeries,
@@ -3032,7 +4844,12 @@ export const ResearchChartSurface = ({
       baseSeriesDataRef.current.volume,
       volumeSeriesData,
     );
-    if (shouldFollowLatestBars) {
+    if (autoHydrationVisibleRange) {
+      setProgrammaticVisibleLogicalRange(autoHydrationVisibleRange, {
+        markInitialized: true,
+      });
+    } else if (shouldFollowLatestBars) {
+      markProgrammaticViewportIntent();
       chartRef.current.timeScale().scrollToRealTime?.();
     } else if (
       initializedRangeRef.current &&
@@ -3040,10 +4857,13 @@ export const ResearchChartSurface = ({
       Number.isFinite(visibleRangeBeforeDataSync.from) &&
       Number.isFinite(visibleRangeBeforeDataSync.to)
     ) {
-      chartRef.current
-        .timeScale()
-        .setVisibleLogicalRange(visibleRangeBeforeDataSync);
-      visibleLogicalRangeRef.current = visibleRangeBeforeDataSync;
+      setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync);
+    } else if (
+      initializedRangeRef.current &&
+      model.defaultVisibleLogicalRange &&
+      nextBarCount > 0
+    ) {
+      setProgrammaticVisibleLogicalRange(model.defaultVisibleLogicalRange);
     }
 
     const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
@@ -3109,6 +4929,10 @@ export const ResearchChartSurface = ({
         fontFamily: theme.mono,
         fontSize: compact ? 8 : 11,
       },
+      localization: {
+        timeFormatter: (value: unknown) =>
+          formatChartAxisTimestamp(value, userPreferences, ""),
+      },
       grid: {
         vertLines: { color: withAlpha(theme.border, "30"), visible: showGrid },
         horzLines: { color: withAlpha(theme.border, "50"), visible: showGrid },
@@ -3163,12 +4987,17 @@ export const ResearchChartSurface = ({
         borderVisible: !hideTimeScale && showTimeScaleState,
         visible: !hideTimeScale && showTimeScaleState,
         timeVisible: !hideTimeScale && showTimeScaleState,
-        secondsVisible: false,
+        secondsVisible: userPreferences.time.showSeconds,
         ticksVisible: !hideTimeScale && showTimeScaleState,
-        rightOffset: compact ? 1 : 6,
-        rightBarStaysOnScroll: true,
+        rightOffset: chartTimeScaleRightOffset,
+        rightBarStaysOnScroll: false,
         lockVisibleTimeRangeOnResize: true,
         minBarSpacing: resolveMinBarSpacing(compact),
+        tickMarkFormatter: (
+          value: unknown,
+          tickMarkType: unknown,
+          locale: string | undefined,
+        ) => formatChartTickMark(value, tickMarkType, locale, userPreferences),
       },
     });
     activePriceSeriesRef.current =
@@ -3195,14 +5024,19 @@ export const ResearchChartSurface = ({
     showPriceLine,
     showRightPriceScale,
     showTimeScaleState,
+    chartTimeScaleRightOffset,
     compact,
     hideTimeScale,
+    userPreferences,
     theme.border,
     theme.accent,
     theme.green,
     theme.red,
     theme.text,
     theme.textMuted,
+    model.defaultVisibleLogicalRange,
+    markProgrammaticViewportIntent,
+    setProgrammaticVisibleLogicalRange,
   ]);
 
   useLayoutEffect(() => {
@@ -3210,8 +5044,15 @@ export const ResearchChartSurface = ({
       return;
     }
 
+    const storedVisibleRange = resolveViewportVisibleLogicalRange(
+      visibleLogicalRangeRef.current,
+    );
+    if (visibleLogicalRangeRef.current && !storedVisibleRange) {
+      visibleLogicalRangeRef.current = null;
+    }
+
     const action = resolveVisibleRangeSyncAction({
-      hasStoredRange: Boolean(visibleLogicalRangeRef.current),
+      hasStoredRange: Boolean(storedVisibleRange),
       hasDefaultRange: Boolean(model.defaultVisibleLogicalRange),
       initialized: initializedRangeRef.current,
       pendingStoredRangeSync: pendingStoredRangeSyncRef.current,
@@ -3221,15 +5062,18 @@ export const ResearchChartSurface = ({
       return;
     }
 
-    if (action === "stored" && visibleLogicalRangeRef.current) {
-      chartRef.current
-        .timeScale()
-        .setVisibleLogicalRange(visibleLogicalRangeRef.current);
+    if (action === "stored" && storedVisibleRange) {
+      setProgrammaticVisibleLogicalRange(storedVisibleRange);
     } else if (action === "default" && model.defaultVisibleLogicalRange) {
-      chartRef.current
-        .timeScale()
-        .setVisibleLogicalRange(model.defaultVisibleLogicalRange);
+      const nextDefaultRange = autoHydrationViewportRef.current
+        ? resolveAutoHydrationVisibleRange({
+            barCount: model.chartBars.length,
+            defaultVisibleRange: model.defaultVisibleLogicalRange,
+          })
+        : model.defaultVisibleLogicalRange;
+      setProgrammaticVisibleLogicalRange(nextDefaultRange);
     } else if (action === "fit") {
+      markProgrammaticViewportIntent();
       chartRef.current.timeScale().fitContent();
     }
 
@@ -3240,6 +5084,8 @@ export const ResearchChartSurface = ({
     model.chartBars.length,
     model.chartBars[0]?.time,
     model.defaultVisibleLogicalRange,
+    markProgrammaticViewportIntent,
+    setProgrammaticVisibleLogicalRange,
   ]);
 
   useLayoutEffect(() => {
@@ -3251,15 +5097,13 @@ export const ResearchChartSurface = ({
       return;
     }
 
-    chartRef.current
-      .timeScale()
-      .setVisibleLogicalRange(model.selectionFocus.visibleLogicalRange);
-    visibleLogicalRangeRef.current = model.selectionFocus.visibleLogicalRange;
+    autoHydrationViewportRef.current = false;
+    setProgrammaticVisibleLogicalRange(model.selectionFocus.visibleLogicalRange);
     initializedRangeRef.current = true;
     pendingStoredRangeSyncRef.current = false;
     lastSelectionFocusTokenRef.current = model.selectionFocus.token;
     setOverlayRevision((value) => value + 1);
-  }, [model.selectionFocus]);
+  }, [model.selectionFocus, setProgrammaticVisibleLogicalRange]);
 
   useLayoutEffect(() => {
     if (!chartRef.current) {
@@ -3271,7 +5115,12 @@ export const ResearchChartSurface = ({
       studyRegistryRef.current,
       model.studySpecs,
     );
-  }, [model.studySpecs]);
+    applyChartPaneStretchFactors(chartRef.current, {
+      compact,
+      lowerPaneCount: model.studyLowerPaneCount,
+    });
+    setOverlayRevision((value) => value + 1);
+  }, [compact, model.studyLowerPaneCount, model.studySpecs]);
 
   useLayoutEffect(() => {
     if (!markerApisRef.current.length) {
@@ -3279,6 +5128,7 @@ export const ResearchChartSurface = ({
     }
 
     const visibleLogicalRange = visibleLogicalRangeRef.current;
+    const chart = chartRef.current;
     const markers = [
       ...model.indicatorMarkerPayload.overviewMarkers,
       ...buildTradeMarkers(model, theme),
@@ -3290,6 +5140,24 @@ export const ResearchChartSurface = ({
           model.chartBars.length,
         ),
       )
+      .filter((marker) => {
+        if (!chart || !plotSize.width || !plotSize.height) {
+          return true;
+        }
+
+        const x = chart.timeScale().timeToCoordinate(marker.time);
+        if (!Number.isFinite(x)) {
+          return false;
+        }
+
+        const drawableWidth = resolveChartDrawableWidth(chart, plotSize.width);
+        const textWidth = marker.text
+          ? estimateMonoTextWidth(marker.text, compact ? 8 : 10, 2)
+          : 0;
+        const rightPadding = Math.max(24, textWidth + 16);
+
+        return x >= 14 && x <= drawableWidth - rightPadding;
+      })
       .map((marker) => ({
         time: marker.time,
         position: marker.position,
@@ -3303,7 +5171,10 @@ export const ResearchChartSurface = ({
     model.chartBars.length,
     model.indicatorMarkerPayload,
     model.tradeMarkerGroups,
+    compact,
     overlayRevision,
+    plotSize.height,
+    plotSize.width,
     theme,
   ]);
 
@@ -3406,6 +5277,9 @@ export const ResearchChartSurface = ({
       syncTradeMarkerTargetsState([]);
       syncIndicatorBadgeOverlaysState([]);
       syncIndicatorDotOverlaysState([]);
+      setChartEventOverlays([]);
+      setFlowVolumeOverlays([]);
+      setFlowTooltip(null);
       syncIndicatorDashboardOverlayState(null);
       syncTradeThresholdOverlaysState([]);
       syncSelectedTradeConnectorState(null);
@@ -3414,8 +5288,14 @@ export const ResearchChartSurface = ({
       return;
     }
 
-    const viewportHeight = containerRef.current.clientHeight;
-    const viewportWidth = containerRef.current.clientWidth;
+    const viewportWidth = resolveChartDrawableWidth(
+      chartRef.current,
+      containerRef.current.clientWidth,
+    );
+    const viewportHeight = resolveChartDrawableHeight(
+      chartRef.current,
+      containerRef.current.clientHeight,
+    );
     syncOverlayState(
       setWindowOverlays,
       buildWindowOverlays(
@@ -3458,14 +5338,16 @@ export const ResearchChartSurface = ({
       ),
     );
     syncTradeMarkerTargetsState(
-      buildTradeMarkerTargets(
-        chartRef.current,
-        activePriceSeriesRef.current,
-        model,
-        theme,
-        viewportWidth,
-        viewportHeight,
-      ),
+      showTradePositionOverlays
+        ? buildTradeMarkerTargets(
+            chartRef.current,
+            activePriceSeriesRef.current,
+            model,
+            theme,
+            viewportWidth,
+            viewportHeight,
+          )
+        : [],
     );
     const indicatorEventOverlays = buildIndicatorEventOverlays(
       chartRef.current,
@@ -3476,15 +5358,54 @@ export const ResearchChartSurface = ({
     );
     syncIndicatorBadgeOverlaysState(indicatorEventOverlays.badges);
     syncIndicatorDotOverlaysState(indicatorEventOverlays.dots);
-    syncIndicatorDashboardOverlayState(indicatorEventOverlays.dashboard);
-    const selectedTradeOverlays = buildSelectedTradeOverlays(
-      chartRef.current,
-      activePriceSeriesRef.current,
-      model,
-      theme,
-      viewportWidth,
-      viewportHeight,
+    const nonFlowChartEvents = visibleChartEvents.filter(
+      (event) => event.eventType !== "unusual_flow",
     );
+    setChartEventOverlays([
+      ...buildChartEventOverlays(
+        chartRef.current,
+        activePriceSeriesRef.current,
+        model,
+        nonFlowChartEvents,
+        viewportWidth,
+        viewportHeight,
+      ),
+      ...buildFlowChartEventOverlays(
+        chartRef.current,
+        activePriceSeriesRef.current,
+        model,
+        flowChartBuckets,
+        viewportWidth,
+        viewportHeight,
+      ),
+    ]);
+    setFlowVolumeOverlays(
+      showVolume
+        ? buildFlowVolumeOverlays(
+            chartRef.current,
+            model,
+            flowChartBuckets,
+            viewportWidth,
+            viewportHeight,
+          )
+        : [],
+    );
+    syncIndicatorDashboardOverlayState(indicatorEventOverlays.dashboard);
+    const selectedTradeOverlays = showTradePositionOverlays
+      ? buildSelectedTradeOverlays(
+          chartRef.current,
+          activePriceSeriesRef.current,
+          model,
+          theme,
+          viewportWidth,
+          viewportHeight,
+        )
+      : {
+          entryBadge: null,
+          exitBadge: null,
+          connector: null,
+          thresholdSegments: [],
+        };
     syncTradeThresholdOverlaysState(selectedTradeOverlays.thresholdSegments);
     syncSelectedTradeConnectorState(selectedTradeOverlays.connector);
     syncSelectedTradeEntryBadgeState(selectedTradeOverlays.entryBadge);
@@ -3492,6 +5413,7 @@ export const ResearchChartSurface = ({
   }, [
     baseSeriesType,
     drawings,
+    flowChartBuckets,
     model.chartBars,
     model.activeTradeSelectionId,
     model.indicatorEvents,
@@ -3505,6 +5427,8 @@ export const ResearchChartSurface = ({
     rootWidth,
     scaleMode,
     showVolume,
+    showTradePositionOverlays,
+    visibleChartEvents,
     theme.amber,
     theme.green,
     theme.red,
@@ -3541,10 +5465,10 @@ export const ResearchChartSurface = ({
         close: lastBar.c,
       };
     })();
-  useLayoutEffect(() => {
-    if (typeof ResizeObserver === "undefined") {
-      return undefined;
-    }
+	  useLayoutEffect(() => {
+	    if (typeof ResizeObserver === "undefined") {
+	      return undefined;
+	    }
 
     const observers: ResizeObserver[] = [];
     const watchHeight = (
@@ -3595,11 +5519,14 @@ export const ResearchChartSurface = ({
         const nextWidth = Math.ceil(rect.width);
         const nextHeight = Math.ceil(rect.height);
 
-        setPlotSize((current) =>
-          current.width === nextWidth && current.height === nextHeight
-            ? current
-            : { width: nextWidth, height: nextHeight },
-        );
+        setPlotSize((current) => {
+          if (current.width === nextWidth && current.height === nextHeight) {
+            return current;
+          }
+
+          lastPlotResizeAtRef.current = Date.now();
+          return { width: nextWidth, height: nextHeight };
+        });
       };
       updatePlotSize();
 
@@ -3616,6 +5543,48 @@ export const ResearchChartSurface = ({
       observers.forEach((observer) => observer.disconnect());
     };
   }, [showToolbar, showLegend, Boolean(displayBar), drawMode]);
+  useLayoutEffect(() => {
+    if (
+      !chartRef.current ||
+      !effectiveViewportSnapshot?.userTouched ||
+      effectiveViewportSnapshot.identityKey !== rangeIdentityKeyRef.current ||
+      viewportPointerActiveRef.current ||
+      plotPanRef.current
+    ) {
+      return;
+    }
+
+    const snapshotRange = resolveViewportVisibleLogicalRange(
+      effectiveViewportSnapshot.visibleLogicalRange,
+    );
+    if (!snapshotRange) {
+      return;
+    }
+
+    const currentRange = resolveViewportVisibleLogicalRange(
+      chartRef.current.timeScale().getVisibleLogicalRange?.() ||
+        visibleLogicalRangeRef.current,
+    );
+    if (
+      buildVisibleRangeSignature(currentRange) ===
+      buildVisibleRangeSignature(snapshotRange)
+    ) {
+      return;
+    }
+
+    setProgrammaticVisibleLogicalRange(snapshotRange, {
+      markInitialized: true,
+    });
+  }, [
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.updatedAt,
+    effectiveViewportSnapshot?.userTouched,
+    effectiveViewportSnapshot?.visibleLogicalRange?.from,
+    effectiveViewportSnapshot?.visibleLogicalRange?.to,
+    plotSize.height,
+    plotSize.width,
+    setProgrammaticVisibleLogicalRange,
+  ]);
   const displayDeltaBase =
     displayBar?.previousClose ?? displayBar?.open ?? null;
   const displayDelta =
@@ -3667,6 +5636,44 @@ export const ResearchChartSurface = ({
       ? value.toFixed(pricePrecision)
       : "—";
   const deltaColor = (displayDeltaValue ?? 0) >= 0 ? theme.green : theme.red;
+  const legendStudies = legend?.studies || EMPTY_LEGEND_STUDIES;
+  const selectedLegendStudies =
+    legend?.selectedStudies || EMPTY_SELECTED_LEGEND_STUDIES;
+  const legendStudyItems = useMemo(
+    () =>
+      buildChartLegendStudyItems({
+        studySpecs: model.studySpecs,
+        studies: legendStudies,
+        selectedStudies: selectedLegendStudies,
+        time: displayBar?.time,
+        fallbackColor: theme.accent || theme.text,
+      }),
+    [
+      displayBar?.time,
+      legendStudies,
+      model.studySpecs,
+      selectedLegendStudies,
+      theme.accent,
+      theme.text,
+    ],
+  );
+  const legendSourceLabel = formatLegendSourceLabel(
+    displayBar?.source,
+    legend?.meta?.sourceLabel,
+  );
+  const legendStatusColor =
+    legend?.statusLabel && /live|open|stream|massive|ibkr/i.test(legend.statusLabel)
+      ? theme.green
+      : theme.textMuted;
+  const legendDetailMode = userPreferences.chart.statusLineDetail;
+  const legendMinimal = legendDetailMode === "minimal";
+  const legendCompactMode = compact || legendDetailMode === "compact";
+  const legendName = legendCompactMode || legendMinimal ? null : legend?.name;
+  const legendDeltaPct = displayDeltaPct ?? legend?.changePercent ?? null;
+  const legendShowOhlc = userPreferences.chart.showOhlc && !legendMinimal;
+  const legendShowVolume = userPreferences.chart.showVolume && !legendMinimal;
+  const legendShowStudies =
+    userPreferences.chart.showIndicatorValues && !legendMinimal;
   const setAdjustedVisibleRange = (
     nextRange: { from: number; to: number } | null,
   ) => {
@@ -3674,15 +5681,13 @@ export const ResearchChartSurface = ({
       return;
     }
 
+    autoHydrationViewportRef.current = false;
+    programmaticVisibleRangeSignatureRef.current = null;
     chartRef.current.timeScale().setVisibleLogicalRange(nextRange);
-    visibleLogicalRangeRef.current = nextRange;
-    realtimeFollowRef.current = isVisibleRangeNearRealtime({
-      visibleRange: nextRange,
-      barCount: model.chartBars.length,
+    publishVisibleLogicalRange(nextRange, {
+      markInitialized: true,
+      source: "user",
     });
-    initializedRangeRef.current = true;
-    pendingStoredRangeSyncRef.current = false;
-    setOverlayRevision((value) => value + 1);
   };
   const zoomVisibleRange = (factor: number) => {
     const currentRange =
@@ -3715,6 +5720,36 @@ export const ResearchChartSurface = ({
       to: currentRange.to + barsDelta,
     });
   };
+  const showFlowTooltip = useCallback(
+    ({
+      id,
+      left,
+      top,
+      model: tooltipModel,
+    }: {
+      id: string;
+      left: number;
+      top: number;
+      model: FlowTooltipModel;
+    }) => {
+      setFlowTooltip({
+        id,
+        left: clampCoordinate(left + 12, 8, Math.max(8, plotSize.width - 292)),
+        top: clampCoordinate(top - 12, 8, Math.max(8, plotSize.height - 174)),
+        model: tooltipModel,
+      });
+    },
+    [plotSize.height, plotSize.width],
+  );
+  const hideFlowTooltip = useCallback((id: string) => {
+    setFlowTooltip((current) => (current?.id === id ? null : current));
+  }, []);
+  const copyFlowContract = useCallback((contract: string) => {
+    if (!contract || typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+    void navigator.clipboard.writeText(contract);
+  }, []);
   const cycleScaleMode = () => {
     setScaleMode((value) =>
       value === "linear"
@@ -3726,50 +5761,115 @@ export const ResearchChartSurface = ({
             : "linear",
     );
   };
+  const clearRememberedViewport = (nextVisibleRange: VisibleLogicalRange | null = null) => {
+    publishViewportSnapshot(
+      buildViewportSnapshot({
+        visibleRange: nextVisibleRange,
+        userTouched: false,
+        realtimeFollow: true,
+      }),
+    );
+  };
   const resetVisibleRange = () => {
+    const nextDefaultRange = resolveAutoHydrationVisibleRange({
+      barCount: model.chartBars.length,
+      defaultVisibleRange: model.defaultVisibleLogicalRange,
+    });
+    autoHydrationViewportRef.current = true;
     realtimeFollowRef.current = true;
+    visibleLogicalRangeRef.current = nextDefaultRange;
+    pendingStoredRangeSyncRef.current = true;
     setAutoScale(true);
     chartRef.current?.priceScale?.("right", 0)?.setAutoScale?.(true);
-    chartRef.current?.timeScale?.().resetTimeScale?.();
+    if (nextDefaultRange) {
+      setProgrammaticVisibleLogicalRange(nextDefaultRange, {
+        markInitialized: true,
+      });
+    } else {
+      markProgrammaticViewportIntent();
+      chartRef.current?.timeScale?.().resetTimeScale?.();
+    }
+    clearRememberedViewport(nextDefaultRange);
   };
   const fitVisibleRange = () => {
-    realtimeFollowRef.current = true;
+    autoHydrationViewportRef.current = false;
+    realtimeFollowRef.current = false;
+    programmaticVisibleRangeSignatureRef.current = null;
+    markProgrammaticViewportIntent();
     chartRef.current?.timeScale?.().fitContent?.();
   };
   const scrollToRealtime = () => {
+    autoHydrationViewportRef.current = true;
     realtimeFollowRef.current = true;
+    visibleLogicalRangeRef.current = null;
+    pendingStoredRangeSyncRef.current = true;
+    markProgrammaticViewportIntent();
     chartRef.current?.timeScale?.().scrollToRealTime?.();
+    clearRememberedViewport(null);
+  };
+  const handleRootWheelCapture = (event: WheelEvent<HTMLDivElement>) => {
+    markUserViewportIntent(event.target, "wheel", {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
   };
   const handleRootPointerDownCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
-    if (!autoScale || !showRightPriceScale || !chartRef.current) {
+    markUserViewportIntent(event.target, "pointer", {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+
+    plotPanRef.current = null;
+
+    const container = containerRef.current;
+    if (!container || !chartRef.current) {
       return;
     }
 
-    const container = containerRef.current;
-    if (
-      !container ||
-      !(event.target instanceof Node) ||
-      !container.contains(event.target)
-    ) {
+    const rect = container.getBoundingClientRect();
+    const isInsidePlot =
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    if (!isInsidePlot) {
       return;
     }
 
     const priceScale = chartRef.current.priceScale?.("right", 0);
     const priceScaleWidth = priceScale?.width?.() || 0;
-    if (priceScaleWidth <= 0) {
-      return;
-    }
-
-    const rect = container.getBoundingClientRect();
     const isInsideRightPriceScale =
+      priceScaleWidth > 0 &&
       event.clientX >= rect.right - priceScaleWidth &&
       event.clientX <= rect.right &&
       event.clientY >= rect.top &&
       event.clientY <= rect.bottom;
 
-    if (!isInsideRightPriceScale) {
+    if (
+      enableInteractions &&
+      !drawMode &&
+      event.button === 0 &&
+      !isInsideRightPriceScale
+    ) {
+      const currentRange = resolveViewportVisibleLogicalRange(
+        visibleLogicalRangeRef.current ||
+          chartRef.current.timeScale?.().getVisibleLogicalRange?.(),
+      );
+      if (currentRange) {
+        plotPanRef.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          startRange: currentRange,
+          plotWidth: Math.max(1, rect.width - Math.max(0, priceScaleWidth)),
+          active: false,
+        };
+      }
+    }
+
+    if (!autoScale || !showRightPriceScale || !isInsideRightPriceScale) {
       return;
     }
 
@@ -3777,6 +5877,259 @@ export const ResearchChartSurface = ({
     priceScale.setAutoScale?.(false);
     setAutoScale(false);
   };
+  const handleRootPointerMoveCapture = (
+    event: PointerEvent<HTMLDivElement>,
+  ) => {
+    const pan = plotPanRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - pan.startX;
+    const deltaY = event.clientY - pan.startY;
+    if (
+      !pan.active &&
+      Math.hypot(deltaX, deltaY) <= CHART_PLOT_PAN_MOVE_TOLERANCE
+    ) {
+      return;
+    }
+
+    plotPanRef.current = {
+      ...pan,
+      active: true,
+    };
+    event.preventDefault();
+    event.stopPropagation();
+
+    const span = Math.max(1, pan.startRange.to - pan.startRange.from);
+    const barsDelta = -(deltaX / pan.plotWidth) * span;
+    setAdjustedVisibleRange({
+      from: pan.startRange.from + barsDelta,
+      to: pan.startRange.to + barsDelta,
+    });
+  };
+  const handleRootPointerUpCapture = (
+    event: PointerEvent<HTMLDivElement>,
+  ) => {
+    if (plotPanRef.current?.pointerId === event.pointerId) {
+      if (plotPanRef.current.active) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      plotPanRef.current = null;
+    }
+  };
+  const handleRootPointerCancelCapture = (
+    event: PointerEvent<HTMLDivElement>,
+  ) => {
+    if (plotPanRef.current?.pointerId === event.pointerId) {
+      plotPanRef.current = null;
+    }
+  };
+  const handleRootMouseDownCapture = (event: MouseEvent<HTMLDivElement>) => {
+    markUserViewportIntent(event.target, "pointer", {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+
+    if (
+      !enableInteractions ||
+      drawMode ||
+      event.button !== 0 ||
+      !chartRef.current
+    ) {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    const priceScaleWidth =
+      chartRef.current.priceScale?.("right", 0)?.width?.() || 0;
+    const isInsidePlot =
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    const isInsideRightPriceScale =
+      priceScaleWidth > 0 &&
+      event.clientX >= rect.right - priceScaleWidth &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    if (!isInsidePlot || isInsideRightPriceScale) {
+      return;
+    }
+
+    const currentRange = resolveViewportVisibleLogicalRange(
+      visibleLogicalRangeRef.current ||
+        chartRef.current.timeScale?.().getVisibleLogicalRange?.(),
+    );
+    if (!currentRange) {
+      return;
+    }
+
+    plotPanRef.current = {
+      pointerId: -1,
+      startX: event.clientX,
+      startY: event.clientY,
+      startRange: currentRange,
+      plotWidth: Math.max(1, rect.width - Math.max(0, priceScaleWidth)),
+      active: false,
+    };
+  };
+  const handleRootMouseMoveCapture = (event: MouseEvent<HTMLDivElement>) => {
+    const pan = plotPanRef.current;
+    if (!pan || pan.pointerId !== -1) {
+      return;
+    }
+
+    const deltaX = event.clientX - pan.startX;
+    const deltaY = event.clientY - pan.startY;
+    if (
+      !pan.active &&
+      Math.hypot(deltaX, deltaY) <= CHART_PLOT_PAN_MOVE_TOLERANCE
+    ) {
+      return;
+    }
+
+    plotPanRef.current = {
+      ...pan,
+      active: true,
+    };
+    event.preventDefault();
+    event.stopPropagation();
+
+    const span = Math.max(1, pan.startRange.to - pan.startRange.from);
+    const barsDelta = -(deltaX / pan.plotWidth) * span;
+    setAdjustedVisibleRange({
+      from: pan.startRange.from + barsDelta,
+      to: pan.startRange.to + barsDelta,
+    });
+  };
+  const handleRootMouseUpCapture = (event: MouseEvent<HTMLDivElement>) => {
+    if (plotPanRef.current?.pointerId === -1) {
+      if (plotPanRef.current.active) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      plotPanRef.current = null;
+    }
+  };
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+
+    const beginNativeMousePan = (event: globalThis.MouseEvent) => {
+      markUserViewportIntent(event.target, "pointer", {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+
+      if (
+        !enableInteractions ||
+        drawMode ||
+        event.button !== 0 ||
+        !chartRef.current
+      ) {
+        return;
+      }
+
+      const container = containerRef.current;
+      if (!container) {
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const priceScaleWidth =
+        chartRef.current.priceScale?.("right", 0)?.width?.() || 0;
+      const isInsidePlot =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom;
+      const isInsideRightPriceScale =
+        priceScaleWidth > 0 &&
+        event.clientX >= rect.right - priceScaleWidth &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom;
+      if (!isInsidePlot || isInsideRightPriceScale) {
+        return;
+      }
+
+      const currentRange = resolveViewportVisibleLogicalRange(
+        visibleLogicalRangeRef.current ||
+          chartRef.current.timeScale?.().getVisibleLogicalRange?.(),
+      );
+      if (!currentRange) {
+        return;
+      }
+
+      plotPanRef.current = {
+        pointerId: -1,
+        startX: event.clientX,
+        startY: event.clientY,
+        startRange: currentRange,
+        plotWidth: Math.max(1, rect.width - Math.max(0, priceScaleWidth)),
+        active: false,
+      };
+    };
+
+    const moveNativeMousePan = (event: globalThis.MouseEvent) => {
+      const pan = plotPanRef.current;
+      if (!pan || pan.pointerId !== -1) {
+        return;
+      }
+
+      const deltaX = event.clientX - pan.startX;
+      const deltaY = event.clientY - pan.startY;
+      if (
+        !pan.active &&
+        Math.hypot(deltaX, deltaY) <= CHART_PLOT_PAN_MOVE_TOLERANCE
+      ) {
+        return;
+      }
+
+      plotPanRef.current = {
+        ...pan,
+        active: true,
+      };
+      event.preventDefault();
+      event.stopPropagation();
+
+      const span = Math.max(1, pan.startRange.to - pan.startRange.from);
+      const barsDelta = -(deltaX / pan.plotWidth) * span;
+      setAdjustedVisibleRange({
+        from: pan.startRange.from + barsDelta,
+        to: pan.startRange.to + barsDelta,
+      });
+    };
+
+    const endNativeMousePan = (event: globalThis.MouseEvent) => {
+      if (plotPanRef.current?.pointerId !== -1) {
+        return;
+      }
+      if (plotPanRef.current.active) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      plotPanRef.current = null;
+    };
+
+    document.addEventListener("mousedown", beginNativeMousePan, true);
+    document.addEventListener("mousemove", moveNativeMousePan, true);
+    document.addEventListener("mouseup", endNativeMousePan, true);
+    return () => {
+      document.removeEventListener("mousedown", beginNativeMousePan, true);
+      document.removeEventListener("mousemove", moveNativeMousePan, true);
+      document.removeEventListener("mouseup", endNativeMousePan, true);
+    };
+  }, [drawMode, enableInteractions, markUserViewportIntent]);
   const takeSnapshot = () => {
     const canvas = chartRef.current?.takeScreenshot?.(true, !hideCrosshair);
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -3849,12 +6202,9 @@ export const ResearchChartSurface = ({
     typeof bottomOverlay === "function"
       ? bottomOverlay(surfaceControls)
       : bottomOverlay;
-  const chartInsetTop = topOverlayHeight;
-  const chartInsetLeft = resolvedLeftOverlay ? leftOverlayWidth : 0;
-  const chartInsetBottom = bottomOverlayHeight;
   const isNarrowFrame = rootWidth > 0 && rootWidth < 920;
   const chromeGap = isNarrowFrame ? 6 : 8;
-  const topChromeBase = 6 + chartInsetTop;
+  const topChromeBase = topOverlayHeight + 6;
   const effectiveToolbarHeight =
     showToolbar && toolbarHeight > 0
       ? toolbarHeight
@@ -3874,13 +6224,81 @@ export const ResearchChartSurface = ({
         : 0;
   const legendOffset =
     showLegend && displayBar ? effectiveLegendHeight + chromeGap : 0;
-  const effectiveDrawModeHintHeight =
-    drawMode && drawModeHintHeight > 0 ? drawModeHintHeight : drawMode ? 30 : 0;
-  const topChromeClearance =
-    12 +
-    toolbarOffset +
-    legendOffset +
-    (drawMode ? effectiveDrawModeHintHeight + chromeGap : 0);
+  const chartInsetTop = 0;
+  const chartInsetLeft = resolvedLeftOverlay ? leftOverlayWidth : 0;
+  const drawablePlotWidth = resolveChartDrawableWidth(
+    chartRef.current,
+    plotSize.width,
+  );
+  const drawablePlotHeight = resolveChartDrawableHeight(
+    chartRef.current,
+    plotSize.height,
+  );
+  const dashboardMarketSession = resolveUsEquityMarketSession(
+    dashboardSessionNowMs,
+  );
+  const dashboardOverlayForDisplay = indicatorDashboardOverlay &&
+    userPreferences.chart.rayAlgoDashboard !== "hidden"
+    ? {
+        ...indicatorDashboardOverlay,
+        rows: (() => {
+          let hasSessionRow = false;
+          const rows = indicatorDashboardOverlay.rows.map((row) => {
+            if (normalizeDashboardStripText(row.label).toUpperCase() !== "SESSION") {
+              return row;
+            }
+            hasSessionRow = true;
+            return {
+              ...row,
+              value: dashboardMarketSession.label,
+              detail: dashboardMarketSession.title,
+              color: dashboardMarketSession.open ? theme.green : theme.textMuted,
+            };
+          });
+          return hasSessionRow
+            ? rows
+            : [
+                ...rows,
+                {
+                  label: "SESSION",
+                  value: dashboardMarketSession.label,
+                  detail: dashboardMarketSession.title,
+                  color: dashboardMarketSession.open ? theme.green : theme.textMuted,
+                },
+              ];
+        })(),
+      }
+    : null;
+  const dashboardTier = dashboardOverlayForDisplay
+    ? userPreferences.chart.rayAlgoDashboard === "full"
+      ? "full"
+      : userPreferences.chart.rayAlgoDashboard === "compact"
+        ? "compact"
+        : resolveDashboardStripTier(plotSize.width, compact)
+    : "full";
+  const dashboardDensity = dashboardOverlayForDisplay
+    ? resolveDashboardDensity(
+        dashboardOverlayForDisplay.size,
+        compact,
+        dashboardTier,
+      )
+    : null;
+  const dashboardSegments = dashboardOverlayForDisplay
+    ? buildIndicatorDashboardStripSegments(
+        dashboardOverlayForDisplay,
+        dashboardTier,
+      )
+    : [];
+  const dashboardStripGap = dashboardOverlayForDisplay ? (compact ? 2 : 3) : 0;
+  const dashboardStripReservedHeight = dashboardDensity
+    ? dashboardDensity.height + dashboardStripGap
+    : 0;
+  const dashboardBottomOffset =
+    dashboardOverlayForDisplay && resolvedBottomOverlay ? bottomOverlayHeight : 0;
+  const chartInsetBottom = dashboardStripReservedHeight + dashboardBottomOffset;
+  const leftOverlayInsetTop = resolvedTopOverlay ? topOverlayHeight : 0;
+  const leftOverlayInsetBottom =
+    chartInsetBottom || (resolvedBottomOverlay ? bottomOverlayHeight : 0);
   const toolbarGroups = [
     {
       key: "display",
@@ -4023,12 +6441,32 @@ export const ResearchChartSurface = ({
       ],
     },
   ];
+  const activeViewportSnapshot =
+    effectiveViewportSnapshot?.identityKey === (rangeIdentityKey ?? null)
+      ? effectiveViewportSnapshot
+      : null;
+  const activeViewportRangeSignature = buildVisibleRangeSignature(
+    activeViewportSnapshot?.visibleLogicalRange ?? visibleLogicalRangeRef.current,
+  );
 
   return (
     <div
       ref={rootRef}
       data-testid={dataTestId}
+      data-chart-range-identity={rangeIdentityKey || undefined}
+      data-chart-viewport-user-touched={
+        activeViewportSnapshot?.userTouched ? "true" : "false"
+      }
+      data-chart-visible-logical-range={activeViewportRangeSignature}
       onPointerDownCapture={handleRootPointerDownCapture}
+      onPointerMoveCapture={handleRootPointerMoveCapture}
+      onPointerUpCapture={handleRootPointerUpCapture}
+      onPointerCancelCapture={handleRootPointerCancelCapture}
+      onMouseDownCapture={handleRootMouseDownCapture}
+      onMouseMoveCapture={handleRootMouseMoveCapture}
+      onMouseUpCapture={handleRootMouseUpCapture}
+      onMouseLeave={handleRootMouseUpCapture}
+      onWheelCapture={handleRootWheelCapture}
       style={{
         width: isFullscreen ? "100vw" : "100%",
         height: isFullscreen ? "100vh" : "100%",
@@ -4057,9 +6495,9 @@ export const ResearchChartSurface = ({
         <div
           style={{
             position: "absolute",
-            top: chartInsetTop,
+            top: leftOverlayInsetTop,
             left: 0,
-            bottom: chartInsetBottom,
+            bottom: leftOverlayInsetBottom,
             width: leftOverlayWidth,
             zIndex: 20,
             pointerEvents: "auto",
@@ -4179,6 +6617,7 @@ export const ResearchChartSurface = ({
         <>
           <div
             ref={containerRef}
+            data-chart-plot-root
             data-testid={dataTestId ? `${dataTestId}-plot` : undefined}
             style={{
               position: "absolute",
@@ -4195,7 +6634,6 @@ export const ResearchChartSurface = ({
           boxDrawingOverlays.length ||
           indicatorBadgeOverlays.length ||
           indicatorDotOverlays.length ||
-          indicatorDashboardOverlay ||
           tradeThresholdOverlays.length ||
           tradeMarkerTargets.length ||
           selectedTradeConnector ||
@@ -4208,8 +6646,8 @@ export const ResearchChartSurface = ({
                 position: "absolute",
                 top: chartInsetTop,
                 left: chartInsetLeft,
-                right: 0,
-                bottom: chartInsetBottom,
+                width: drawablePlotWidth || "100%",
+                height: drawablePlotHeight || "100%",
                 pointerEvents: "none",
                 overflow: "hidden",
                 zIndex: 5,
@@ -4454,6 +6892,281 @@ export const ResearchChartSurface = ({
                   }}
                 />
               ))}
+              {flowVolumeOverlays.map((overlay) => {
+                const toneColor =
+                  overlay.tone === "bullish"
+                    ? theme.green
+                    : overlay.tone === "bearish"
+                      ? theme.red
+                      : theme.textMuted;
+                return (
+                  <div
+                    key={overlay.id}
+                    aria-label={overlay.title}
+                    data-testid={
+                      dataTestId ? `${dataTestId}-flow-volume` : undefined
+                    }
+                    onPointerEnter={() =>
+                      showFlowTooltip({
+                        id: overlay.id,
+                        left: overlay.left + overlay.width,
+                        top: overlay.top,
+                        model: overlay.tooltip,
+                      })
+                    }
+                    onPointerLeave={() => hideFlowTooltip(overlay.id)}
+                    onFocus={() =>
+                      showFlowTooltip({
+                        id: overlay.id,
+                        left: overlay.left + overlay.width,
+                        top: overlay.top,
+                        model: overlay.tooltip,
+                      })
+                    }
+                    onBlur={() => hideFlowTooltip(overlay.id)}
+                    tabIndex={0}
+                    style={{
+                      position: "absolute",
+                      left: overlay.left,
+                      top: overlay.top,
+                      width: overlay.width,
+                      height: overlay.height,
+                      minWidth: 3,
+                      minHeight: 4,
+                      borderRadius: 2,
+                      background: withAlpha(theme.amber, "d8"),
+                      border: `1px solid ${withAlpha(toneColor, "a8")}`,
+                      boxSizing: "border-box",
+                      boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "aa")}`,
+                      pointerEvents: "auto",
+                      cursor: "help",
+                    }}
+                  />
+                );
+              })}
+              {chartEventOverlays.map((overlay) => {
+                const color =
+                  overlay.tone === "bullish"
+                    ? theme.green
+                    : overlay.tone === "bearish"
+                      ? theme.red
+                      : overlay.placement === "timescale"
+                        ? theme.amber
+                        : theme.accent || theme.text;
+                return (
+                  <div
+                    key={`chart-event-${overlay.id}`}
+                    title={overlay.title}
+                    aria-label={overlay.title}
+                    data-testid={
+                      dataTestId ? `${dataTestId}-chart-event` : undefined
+                    }
+                    onPointerEnter={
+                      overlay.tooltip
+                        ? () =>
+                            showFlowTooltip({
+                              id: overlay.id,
+                              left: overlay.left,
+                              top: overlay.top,
+                              model: overlay.tooltip as FlowTooltipModel,
+                            })
+                        : undefined
+                    }
+                    onPointerLeave={
+                      overlay.tooltip
+                        ? () => hideFlowTooltip(overlay.id)
+                        : undefined
+                    }
+                    onFocus={
+                      overlay.tooltip
+                        ? () =>
+                            showFlowTooltip({
+                              id: overlay.id,
+                              left: overlay.left,
+                              top: overlay.top,
+                              model: overlay.tooltip as FlowTooltipModel,
+                            })
+                        : undefined
+                    }
+                    onBlur={
+                      overlay.tooltip
+                        ? () => hideFlowTooltip(overlay.id)
+                        : undefined
+                    }
+                    tabIndex={overlay.tooltip ? 0 : undefined}
+                    style={{
+                      position: "absolute",
+                      left: overlay.left,
+                      top: overlay.top,
+                      width: overlay.placement === "timescale" ? 18 : 22,
+                      height: overlay.placement === "timescale" ? 18 : 22,
+                      transform: "translate(-50%, -50%)",
+                      borderRadius: 999,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxSizing: "border-box",
+                      background: withAlpha(color, "22"),
+                      border: `1px solid ${withAlpha(color, "dd")}`,
+                      color,
+                      fontFamily: theme.mono,
+                      fontSize: overlay.placement === "timescale" ? 9 : 8,
+                      fontWeight: 900,
+                      lineHeight: 1,
+                      boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
+                      pointerEvents: "auto",
+                      cursor: overlay.tooltip ? "help" : "default",
+                    }}
+                  >
+                    {overlay.label.slice(0, overlay.placement === "timescale" ? 2 : 4)}
+                  </div>
+                );
+              })}
+              {flowTooltip ? (
+                <div
+                  data-testid={dataTestId ? `${dataTestId}-flow-tooltip` : undefined}
+                  onPointerEnter={() => setFlowTooltip(flowTooltip)}
+                  style={{
+                    position: "absolute",
+                    left: flowTooltip.left,
+                    top: flowTooltip.top,
+                    width: 280,
+                    maxWidth: "calc(100% - 16px)",
+                    borderRadius: 8,
+                    padding: "10px 11px",
+                    boxSizing: "border-box",
+                    background: withAlpha(theme.bg3, "f4"),
+                    border: `1px solid ${withAlpha(theme.amber, "8c")}`,
+                    boxShadow: `0 14px 32px ${withAlpha(theme.bg4, "80")}`,
+                    color: theme.text,
+                    pointerEvents: "auto",
+                    zIndex: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      alignItems: "baseline",
+                      marginBottom: 7,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 800,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {flowTooltip.model.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontFamily: theme.mono,
+                        color: theme.amber,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {flowTooltip.model.premium}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: "6px 10px",
+                      fontSize: 10,
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    <div>
+                      <span style={{ color: theme.textMuted }}>Mix </span>
+                      {flowTooltip.model.callPutMix}
+                    </div>
+                    <div>
+                      <span style={{ color: theme.textMuted }}>Sent </span>
+                      {flowTooltip.model.sentiment}
+                    </div>
+                    <div>
+                      <span style={{ color: theme.textMuted }}>Contracts </span>
+                      {flowTooltip.model.contracts}
+                    </div>
+                    <div>
+                      <span style={{ color: theme.textMuted }}>Events </span>
+                      {flowTooltip.model.eventCount}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 10,
+                      lineHeight: 1.35,
+                      color: theme.text,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    <span style={{ color: theme.textMuted }}>Top </span>
+                    {flowTooltip.model.topContract}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontFamily: theme.mono,
+                        color: theme.amber,
+                      }}
+                    >
+                      {flowTooltip.model.intensity}
+                    </span>
+                    {flowTooltip.model.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        style={{
+                          fontSize: 9,
+                          fontFamily: theme.mono,
+                          color: theme.text,
+                          padding: "2px 5px",
+                          borderRadius: 999,
+                          border: `1px solid ${withAlpha(theme.border, "90")}`,
+                          background: withAlpha(theme.bg4, "90"),
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                    {flowTooltip.model.topContract ? (
+                      <button
+                        type="button"
+                        onClick={() => copyFlowContract(flowTooltip.model.topContract)}
+                        style={{
+                          marginLeft: "auto",
+                          border: `1px solid ${withAlpha(theme.border, "a0")}`,
+                          background: withAlpha(theme.bg4, "cc"),
+                          color: theme.text,
+                          borderRadius: 6,
+                          padding: "3px 7px",
+                          fontSize: 10,
+                          fontFamily: theme.mono,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Copy
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               {indicatorBadgeOverlays.map((overlay) => {
                 const isSignal = overlay.variant === "signal";
                 const isTriangle = overlay.variant === "triangle";
@@ -4554,162 +7267,6 @@ export const ResearchChartSurface = ({
                   </div>
                 );
               })}
-              {indicatorDashboardOverlay ? (
-                <div
-                  data-testid={indicatorDashboardOverlay.dataTestId}
-                  style={{
-                    position: "absolute",
-                    ...(indicatorDashboardOverlay.position.includes("top")
-                      ? { top: topChromeClearance }
-                      : { bottom: compact ? 42 : 36 }),
-                    ...(indicatorDashboardOverlay.position.includes("left")
-                      ? { left: 12 }
-                      : { right: compact ? 54 : 62 }),
-                    ...(() => {
-                      const density = resolveDashboardDensity(
-                        indicatorDashboardOverlay.size,
-                        compact,
-                      );
-
-                      return {
-                        width: density.width,
-                        padding: density.padding,
-                      };
-                    })(),
-                    background: withAlpha("#000000", "b3"),
-                    border: `1px solid ${withAlpha("#9ca3af", "66")}`,
-                    borderRadius: 0,
-                    boxSizing: "border-box",
-                    color: "#ffffff",
-                    boxShadow: "none",
-                    maxWidth: indicatorDashboardOverlay.position.includes("left")
-                      ? "calc(100% - 24px)"
-                      : `calc(100% - ${(compact ? 54 : 62) + 12}px)`,
-                    zIndex: 6,
-                  }}
-                >
-                  <div
-                    style={{
-                      marginBottom: 6,
-                      padding: "2px 6px",
-                      borderRadius: 0,
-                      background: withAlpha("#6b7280", "80"),
-                      fontSize: resolveDashboardDensity(
-                        indicatorDashboardOverlay.size,
-                        compact,
-                      ).titleSize,
-                      fontFamily: theme.mono,
-                      fontWeight: 700,
-                      textAlign: "center",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    {indicatorDashboardOverlay.title}
-                  </div>
-                  {indicatorDashboardOverlay.subtitle ? (
-                    <div
-                      style={{
-                        marginBottom: 8,
-                        color: "#9ca3af",
-                        fontFamily: theme.mono,
-                        fontSize: resolveDashboardDensity(
-                          indicatorDashboardOverlay.size,
-                          compact,
-                        ).subtitleSize,
-                        lineHeight: 1.35,
-                        letterSpacing: "0.02em",
-                      }}
-                    >
-                      {indicatorDashboardOverlay.subtitle}
-                    </div>
-                  ) : null}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr auto",
-                      rowGap: 3,
-                      columnGap: 8,
-                      fontSize: resolveDashboardDensity(
-                        indicatorDashboardOverlay.size,
-                        compact,
-                      ).bodySize,
-                      fontFamily: theme.mono,
-                    }}
-                  >
-                    <div style={{ color: "#9ca3af" }}>
-                      {indicatorDashboardOverlay.trendLabel}
-                    </div>
-                    <div style={{ color: indicatorDashboardOverlay.trendColor }}>
-                      {indicatorDashboardOverlay.trendValue}
-                    </div>
-                    {indicatorDashboardOverlay.rows.map((row) => (
-                      <div
-                        key={`${indicatorDashboardOverlay.id}-${row.label}`}
-                        style={{ display: "contents" }}
-                      >
-                        <div style={{ color: "#9ca3af" }}>{row.label}</div>
-                        <div style={{ color: row.color || "#ffffff" }}>
-                          {row.value}
-                        </div>
-                        {row.detail ? (
-                          <div
-                            style={{
-                              gridColumn: "1 / -1",
-                              color: "#6b7280",
-                              fontSize: resolveDashboardDensity(
-                                indicatorDashboardOverlay.size,
-                                compact,
-                              ).detailSize,
-                              lineHeight: 1.3,
-                              marginTop: -1,
-                              marginBottom: 2,
-                            }}
-                          >
-                            {row.detail}
-                          </div>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                  {indicatorDashboardOverlay.mtf.length ? (
-                    <div
-                      style={{
-                        marginTop: 8,
-                        display: "grid",
-                        gridTemplateColumns: `repeat(${indicatorDashboardOverlay.mtf.length}, 1fr)`,
-                        gap: 6,
-                        textAlign: "center",
-                        fontFamily: theme.mono,
-                        fontSize: resolveDashboardDensity(
-                          indicatorDashboardOverlay.size,
-                          compact,
-                        ).bodySize,
-                      }}
-                    >
-                      {indicatorDashboardOverlay.mtf.map((item) => (
-                        <div key={`${indicatorDashboardOverlay.id}-${item.label}`}>
-                          <div style={{ color: "#9ca3af" }}>{item.label}</div>
-                          <div style={{ color: item.color }}>{item.value}</div>
-                          {item.detail ? (
-                            <div
-                              style={{
-                                color: "#6b7280",
-                                fontSize: resolveDashboardDensity(
-                                  indicatorDashboardOverlay.size,
-                                  compact,
-                                ).detailSize,
-                                marginTop: 1,
-                              }}
-                            >
-                              {item.detail}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
               {selectedTradeConnector ? (
                 <svg
                   width="100%"
@@ -4860,6 +7417,128 @@ export const ResearchChartSurface = ({
           </div>
         </div>
       )}
+      {dashboardOverlayForDisplay && dashboardDensity ? (
+        <div
+          data-testid={dashboardOverlayForDisplay.dataTestId}
+          data-dashboard-strip-tier={dashboardTier}
+          data-dashboard-strip-placement="below-time-axis"
+          aria-label={`${dashboardOverlayForDisplay.title} strip`}
+          style={{
+            position: "absolute",
+            ...resolveDashboardStripAnchorStyle(
+              compact,
+              bottomOverlayHeight,
+              chartInsetLeft,
+            ),
+            height: dashboardDensity.height,
+            maxWidth: dashboardDensity.maxWidth,
+            padding: dashboardDensity.padding,
+            background: withAlpha("#05070a", "d9"),
+            border: `1px solid ${withAlpha("#9ca3af", "66")}`,
+            borderRadius: 0,
+            boxSizing: "border-box",
+            color: "#ffffff",
+            boxShadow: "none",
+            zIndex: 19,
+            display: "flex",
+            flexWrap: "nowrap",
+            alignItems: "center",
+            gap: dashboardDensity.gap,
+            overflow: "hidden",
+            fontFamily: theme.mono,
+            lineHeight: 1,
+            pointerEvents: "auto",
+          }}
+        >
+          {dashboardSegments.map((segment, index) => {
+            const isTitle = segment.kind === "title";
+            const isSubtitle = segment.kind === "subtitle";
+            const segmentColor = segment.color || "#ffffff";
+            return (
+              <div
+                key={segment.key}
+                title={
+                  segment.title ||
+                  [segment.label, segment.value, segment.detail]
+                    .filter(Boolean)
+                    .join(" ")
+                }
+                style={{
+                  minWidth: 0,
+                  maxWidth: dashboardDensity.segmentMaxWidth,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: dashboardTier === "micro" ? 2 : 3,
+                  padding: dashboardDensity.segmentPadding,
+                  ...(index > 0 ? { paddingLeft: dashboardDensity.gap } : {}),
+                  boxSizing: "border-box",
+                  background:
+                    dashboardTier === "micro"
+                      ? "transparent"
+                      : isTitle
+                        ? withAlpha("#6b7280", "54")
+                        : "transparent",
+                  border: "none",
+                  borderLeft:
+                    index > 0
+                      ? `1px solid ${withAlpha("#9ca3af", "4d")}`
+                      : "none",
+                  color: "#ffffff",
+                  fontSize: isTitle
+                    ? dashboardDensity.titleSize
+                    : isSubtitle
+                      ? dashboardDensity.subtitleSize
+                      : dashboardDensity.bodySize,
+                  fontWeight: isTitle ? 800 : 700,
+                  lineHeight: 1,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  letterSpacing: 0,
+                  flexShrink: dashboardTier === "micro" ? 0 : 1,
+                }}
+              >
+                {segment.label ? (
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      color: "#9ca3af",
+                      fontWeight: 700,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {segment.label}
+                  </span>
+                ) : null}
+                <span
+                  style={{
+                    minWidth: 0,
+                    color: isSubtitle ? "#cbd5e1" : segmentColor,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {segment.value}
+                </span>
+                {segment.detail ? (
+                  <span
+                    style={{
+                      minWidth: 0,
+                      color: "#6b7280",
+                      fontSize: dashboardDensity.detailSize,
+                      fontWeight: 600,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {segment.detail}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
       {showLegend && displayBar && (
         <div
           ref={legendRef}
@@ -4869,111 +7548,167 @@ export const ResearchChartSurface = ({
             top: topChromeBase + toolbarOffset,
             left: 8 + chartInsetLeft,
             right: 12,
-            background: withAlpha(theme.bg2, "d6"),
-            border: `1px solid ${withAlpha(theme.border, "9c")}`,
-            padding: "5px 8px",
-            fontSize: 10,
+            zIndex: 18,
+            fontSize: compact ? 10 : 11,
             fontFamily: theme.mono,
             color: theme.textMuted,
             display: "flex",
-            alignItems: "center",
-            gap: 10,
-            flexWrap: "wrap",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            gap: compact ? 2 : 3,
             pointerEvents: "none",
-            backdropFilter: "blur(12px)",
-            boxShadow: `0 10px 24px ${withAlpha(theme.bg4, "34")}`,
+            lineHeight: 1.18,
+            textShadow: `0 1px 2px ${withAlpha(theme.bg4, "e6")}`,
+            maxWidth: `calc(100% - ${chartInsetLeft + 16}px)`,
           }}
         >
-          <span>{formatLegendTimestamp(displayBar.ts)}</span>
-          <span>
-            O{" "}
-            <span style={{ color: theme.text }}>
-              {formatPrice(displayBar.open)}
-            </span>
-          </span>
-          <span>
-            H{" "}
-            <span style={{ color: theme.green }}>
-              {formatPrice(displayBar.high)}
-            </span>
-          </span>
-          <span>
-            L{" "}
-            <span style={{ color: theme.red }}>
-              {formatPrice(displayBar.low)}
-            </span>
-          </span>
-          <span>
-            C{" "}
-            <span style={{ color: theme.text, fontWeight: 700 }}>
-              {formatPrice(displayBar.close)}
-            </span>
-          </span>
-          <span>
-            Δ{" "}
-            <span style={{ color: deltaColor }}>
-              {displayDeltaValue != null
-                ? `${displayDeltaValue >= 0 ? "+" : ""}${displayDeltaValue.toFixed(pricePrecision)}`
-                : "—"}
-            </span>
-          </span>
-          <span>
-            %{" "}
-            <span style={{ color: deltaColor }}>
-              {displayDeltaPct != null
-                ? `${displayDeltaPct >= 0 ? "+" : ""}${displayDeltaPct.toFixed(2)}%`
-                : "—"}
-            </span>
-          </span>
-          <span>
-            V{" "}
-            <span style={{ color: theme.text }}>
-              {formatCompactNumber(displayBar.volume)}
-            </span>
-          </span>
-          {displayBar.vwap != null ? (
-            <span>
-              VWAP{" "}
-              <span style={{ color: theme.text }}>
-                {formatPrice(displayBar.vwap)}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: compact ? 5 : 7,
+              flexWrap: "wrap",
+              color: theme.textMuted,
+              whiteSpace: "normal",
+            }}
+          >
+            {legend?.symbol ? (
+              <span style={{ color: theme.text, fontWeight: 800 }}>
+                {legend.symbol}
               </span>
+            ) : null}
+            {legendName ? (
+              <span style={{ color: theme.textMuted }}>{legendName}</span>
+            ) : null}
+            {legend?.timeframe ? (
+              <span style={{ color: theme.textMuted }}>{legend.timeframe}</span>
+            ) : null}
+            {legend?.statusLabel ? (
+              <span style={{ color: legendStatusColor }}>{legend.statusLabel}</span>
+            ) : null}
+            <span style={{ color: theme.textMuted }}>
+              {formatLegendTimestamp(displayBar.ts, userPreferences)}
             </span>
-          ) : null}
-          {displayBar.sessionVwap != null ? (
-            <span>
-              SVWAP{" "}
-              <span style={{ color: theme.text }}>
-                {formatPrice(displayBar.sessionVwap)}
+          </div>
+          {legendShowOhlc ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: legendCompactMode ? 6 : 8,
+                flexWrap: "wrap",
+                color: theme.textMuted,
+                whiteSpace: "normal",
+              }}
+            >
+              <span>
+                O <span style={{ color: theme.text }}>{formatPrice(displayBar.open)}</span>
               </span>
-            </span>
-          ) : null}
-          {displayBar.accumulatedVolume != null ? (
-            <span>
-              AV{" "}
-              <span style={{ color: theme.text }}>
-                {formatCompactNumber(displayBar.accumulatedVolume)}
+              <span>
+                H <span style={{ color: theme.green }}>{formatPrice(displayBar.high)}</span>
               </span>
-            </span>
-          ) : null}
-          {displayBar.averageTradeSize != null ? (
-            <span>
-              ASZ{" "}
-              <span style={{ color: theme.text }}>
-                {formatLegendNumber(displayBar.averageTradeSize, 0)}
+              <span>
+                L <span style={{ color: theme.red }}>{formatPrice(displayBar.low)}</span>
               </span>
-            </span>
+              <span>
+                C{" "}
+                <span style={{ color: theme.text }}>
+                  {formatPrice(displayBar.close)}
+                </span>
+              </span>
+              <span style={{ color: deltaColor }}>
+                {formatLegendSignedNumber(displayDeltaValue, pricePrecision)}
+              </span>
+              <span style={{ color: deltaColor }}>
+                {formatLegendPercent(legendDeltaPct)}
+              </span>
+              {legendShowVolume ? (
+                <span>
+                  Vol{" "}
+                  <span style={{ color: theme.text }}>
+                    {formatCompactNumber(displayBar.volume)}
+                  </span>
+                </span>
+              ) : null}
+              {!legendCompactMode && displayBar.vwap != null ? (
+                <span>
+                  VWAP <span style={{ color: theme.text }}>{formatPrice(displayBar.vwap)}</span>
+                </span>
+              ) : null}
+              {!legendCompactMode && displayBar.sessionVwap != null ? (
+                <span>
+                  SVWAP{" "}
+                  <span style={{ color: theme.text }}>
+                    {formatPrice(displayBar.sessionVwap)}
+                  </span>
+                </span>
+              ) : null}
+              {!legendCompactMode && displayBar.accumulatedVolume != null ? (
+                <span>
+                  AV{" "}
+                  <span style={{ color: theme.text }}>
+                    {formatCompactNumber(displayBar.accumulatedVolume)}
+                  </span>
+                </span>
+              ) : null}
+              {!legendCompactMode && displayBar.averageTradeSize != null ? (
+                <span>
+                  ASZ{" "}
+                  <span style={{ color: theme.text }}>
+                    {formatLegendNumber(displayBar.averageTradeSize, 0)}
+                  </span>
+                </span>
+              ) : null}
+              {!legendCompactMode && legendSourceLabel ? (
+                <span style={{ color: theme.textMuted }}>{legendSourceLabel}</span>
+              ) : null}
+            </div>
           ) : null}
-          {displayBar.source ? (
-            <span>
-              {displayBar.source === "ibkr-websocket-derived"
-                ? "STREAM"
-                : displayBar.source === "ibkr+massive-gap-fill"
-                  ? "IBKR + GAP"
-                  : displayBar.source === "ibkr-history"
-                    ? "IBKR"
-                    : "REST"}
-            </span>
-          ) : null}
+          {legendShowStudies
+            ? legendStudyItems.map((study) => (
+                <div
+                  key={`legend-study-${study.id}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: compact ? 5 : 7,
+                    flexWrap: "wrap",
+                    color: theme.textMuted,
+                    whiteSpace: "normal",
+                  }}
+                >
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 3,
+                    }}
+                  >
+                    {study.colors.slice(0, compact ? 2 : 4).map((color, index) => (
+                      <span
+                        key={`${study.id}-${color}-${index}`}
+                        style={{
+                          width: compact ? 6 : 7,
+                          height: compact ? 6 : 7,
+                          borderRadius: 999,
+                          background: color,
+                          boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
+                        }}
+                      />
+                    ))}
+                  </span>
+                  <span style={{ color: theme.textMuted }}>{study.label}</span>
+                  {study.values.slice(0, compact ? 1 : 3).map((value, index) => (
+                    <span
+                      key={`${study.id}-value-${index}`}
+                      style={{ color: theme.text }}
+                    >
+                      {formatLegendStudyValue(value)}
+                    </span>
+                  ))}
+                </div>
+              ))
+            : null}
         </div>
       )}
       {resolvedBottomOverlay ? (

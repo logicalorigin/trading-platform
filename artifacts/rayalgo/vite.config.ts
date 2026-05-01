@@ -45,6 +45,28 @@ const getNodeModulePackageName = (id: string): string | null => {
   return packagePath[0] ?? null;
 };
 
+const isolationMode = process.env.RAYALGO_CROSS_ORIGIN_ISOLATION || "report-only";
+const coopPolicy = process.env.RAYALGO_COOP_POLICY || "same-origin";
+const coepPolicy = process.env.RAYALGO_COEP_POLICY || "require-corp";
+const isolationHeaders =
+  isolationMode === "off"
+    ? {}
+    : isolationMode.startsWith("enforce")
+      ? {
+          "Cross-Origin-Opener-Policy": coopPolicy,
+          "Cross-Origin-Embedder-Policy":
+            isolationMode === "enforce-credentialless"
+              ? "credentialless"
+              : coepPolicy,
+          "Cross-Origin-Resource-Policy": "same-origin",
+          "Reporting-Endpoints": 'rayalgo="/api/diagnostics/browser-reports"',
+        }
+      : {
+          "Cross-Origin-Opener-Policy-Report-Only": `${coopPolicy}; report-to="rayalgo"`,
+          "Cross-Origin-Embedder-Policy-Report-Only": `${coepPolicy}; report-to="rayalgo"`,
+          "Reporting-Endpoints": 'rayalgo="/api/diagnostics/browser-reports"',
+        };
+
 export default defineConfig({
   base: basePath,
   plugins: [
@@ -164,10 +186,13 @@ export default defineConfig({
     strictPort: true,
     host: "0.0.0.0",
     allowedHosts: true,
+    headers: isolationHeaders,
     proxy: {
       "/api": {
         target: process.env.VITE_PROXY_API_TARGET || "http://127.0.0.1:8080",
         changeOrigin: true,
+        xfwd: true,
+        ws: true,
       },
     },
     fs: {
@@ -180,5 +205,6 @@ export default defineConfig({
     strictPort: true,
     host: "0.0.0.0",
     allowedHosts: true,
+    headers: isolationHeaders,
   },
 });

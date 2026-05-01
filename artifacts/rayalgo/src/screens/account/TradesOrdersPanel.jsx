@@ -1,4 +1,6 @@
+import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
   Panel,
@@ -6,9 +8,9 @@ import {
   ToggleGroup,
   controlInputStyle,
   controlSelectStyle,
-  formatMoney,
+  formatAccountMoney,
+  formatAccountPercent,
   formatNumber,
-  formatPercent,
   moveTableFocus,
   mutedLabelStyle,
   secondaryButtonStyle,
@@ -20,17 +22,29 @@ import {
 const SummaryCard = ({ label, value, tone = T.text }) => (
   <div
     style={{
-      padding: sp("4px 0"),
+      padding: sp("3px 0"),
       display: "grid",
-      gap: sp(3),
+      gap: sp(1),
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(12), fontFamily: T.mono, fontWeight: 900 }}>
+    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.mono, fontWeight: 900 }}>
       {value}
     </div>
   </div>
 );
+
+const marketForAssetClass = (assetClass) =>
+  String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
+
+const SOURCE_FILTERS = [
+  { value: "all", label: "All Sources" },
+  { value: "manual", label: "Manual" },
+  { value: "automation", label: "Automation" },
+];
+
+const sourceTone = (sourceType) =>
+  sourceType === "automation" ? "pink" : sourceType === "mixed" ? "amber" : "default";
 
 export const OrdersPanel = ({
   query,
@@ -39,36 +53,55 @@ export const OrdersPanel = ({
   currency,
   onCancelOrder,
   cancelPending,
-}) => (
+  cancelDisabled = false,
+  cancelDisabledReason = "IB Gateway must be connected before trading.",
+  sourceFilter = "all",
+  onSourceFilterChange,
+  emptyBody = "Working orders update from the IBKR order stream. Historical rows appear as orders reach a terminal status.",
+  maskValues = false,
+}) => {
+  const orders = (query.data?.orders || []).filter((order) =>
+    sourceFilter === "all" ? true : order.sourceType === sourceFilter,
+  );
+  return (
   <Panel
     title="Orders"
     rightRail={`Showing ${tab}`}
     loading={query.isLoading}
     error={query.error}
     onRetry={query.refetch}
-    minHeight={320}
+    minHeight={220}
     noPad
     action={
-      <ToggleGroup
-        options={[
-          { value: "working", label: "Working" },
-          { value: "history", label: "History" },
-        ]}
-        value={tab}
-        onChange={onTabChange}
-      />
+      <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+        <ToggleGroup
+          options={[
+            { value: "working", label: "Working" },
+            { value: "history", label: "History" },
+          ]}
+          value={tab}
+          onChange={onTabChange}
+        />
+        {onSourceFilterChange ? (
+          <ToggleGroup
+            options={SOURCE_FILTERS}
+            value={sourceFilter}
+            onChange={onSourceFilterChange}
+          />
+        ) : null}
+      </div>
     }
   >
-    {!query.data?.orders?.length ? (
-      <div style={{ padding: sp(12) }}>
+    {!orders.length ? (
+      <div style={{ padding: sp(7) }}>
         <EmptyState
           title={`No ${tab} orders`}
-          body="Working orders update from the IBKR order stream. Historical rows appear as orders reach a terminal status."
+          body={emptyBody}
         />
       </div>
     ) : (
-      <div style={{ overflow: "auto", maxHeight: 390 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1040 }}>
+      <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 248 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 940 }}>
           <thead>
             <tr style={tableHeaderStyle}>
               {(tab === "working"
@@ -81,9 +114,25 @@ export const OrdersPanel = ({
             </tr>
           </thead>
           <tbody>
-            {query.data.orders.map((order) => (
-              <tr key={order.id} tabIndex={0} onKeyDown={moveTableFocus}>
-                <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>{order.symbol}</td>
+            {orders.map((order) => (
+              <tr
+                key={order.id}
+                className="ra-table-row"
+                tabIndex={0}
+                onKeyDown={moveTableFocus}
+              >
+                <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
+                  <MarketIdentityInline
+                    item={{
+                      ticker: order.symbol,
+                      market: marketForAssetClass(order.assetClass),
+                    }}
+                    size={14}
+                    showMark={false}
+                    showChips
+                    style={{ maxWidth: dim(126) }}
+                  />
+                </td>
                 <td style={tableCellStyle}>
                   <Pill tone={/buy|long/i.test(order.side) ? "green" : "red"}>{order.side}</Pill>
                 </td>
@@ -95,10 +144,12 @@ export const OrdersPanel = ({
                   <>
                     <td style={tableCellStyle}>
                       {order.limitPrice != null
-                        ? formatMoney(order.limitPrice, currency)
+                        ? formatAccountMoney(order.limitPrice, currency, false, maskValues)
                         : "----"}{" "}
                       /{" "}
-                      {order.stopPrice != null ? formatMoney(order.stopPrice, currency) : "----"}
+                      {order.stopPrice != null
+                        ? formatAccountMoney(order.stopPrice, currency, false, maskValues)
+                        : "----"}
                     </td>
                     <td style={tableCellStyle}>{order.timeInForce}</td>
                     <td style={tableCellStyle}>
@@ -107,23 +158,30 @@ export const OrdersPanel = ({
                       </Pill>
                     </td>
                     <td style={tableCellStyle}>
-                      {order.placedAt ? new Date(order.placedAt).toLocaleString() : "----"}
+                      {formatAppDateTime(order.placedAt)}
                     </td>
                     <td style={tableCellStyle}>
-                      {order.averageFillPrice != null ? formatMoney(order.averageFillPrice, currency) : "----"}
+                      {order.averageFillPrice != null
+                        ? formatAccountMoney(order.averageFillPrice, currency, false, maskValues)
+                        : "----"}
                     </td>
                     <td style={tableCellStyle}>
                       <button
                         type="button"
-                        disabled={cancelPending}
+                        className="ra-interactive"
+                        disabled={cancelPending || cancelDisabled}
+                        title={cancelDisabled ? cancelDisabledReason : "Cancel order"}
                         onClick={() => onCancelOrder(order)}
                         style={{
                           ...secondaryButtonStyle,
                           color: T.red,
-                          height: dim(24),
-                          padding: sp("0 8px"),
-                          opacity: cancelPending ? 0.55 : 1,
-                          cursor: cancelPending ? "not-allowed" : "pointer",
+                          height: dim(20),
+                          padding: sp("0 7px"),
+                          opacity: cancelPending || cancelDisabled ? 0.55 : 1,
+                          cursor:
+                            cancelPending || cancelDisabled
+                              ? "not-allowed"
+                              : "pointer",
                         }}
                       >
                         Cancel
@@ -133,21 +191,39 @@ export const OrdersPanel = ({
                 ) : (
                   <>
                     <td style={tableCellStyle}>
-                      {order.placedAt ? new Date(order.placedAt).toLocaleString() : "----"}
+                      {formatAppDateTime(order.placedAt)}
                     </td>
                     <td style={tableCellStyle}>
-                      {order.filledAt ? new Date(order.filledAt).toLocaleString() : "----"}
+                      {formatAppDateTime(order.filledAt)}
                     </td>
                     <td style={tableCellStyle}>
-                      {order.averageFillPrice != null ? formatMoney(order.averageFillPrice, currency) : "----"}
+                      {order.averageFillPrice != null
+                        ? formatAccountMoney(order.averageFillPrice, currency, false, maskValues)
+                        : "----"}
                     </td>
                     <td style={tableCellStyle}>
-                      {order.commission != null ? formatMoney(order.commission, currency) : "----"}
+                      {order.commission != null
+                        ? formatAccountMoney(order.commission, currency, false, maskValues)
+                        : "----"}
                     </td>
                     <td style={tableCellStyle}>
-                      <Pill tone={order.status === "filled" ? "green" : "default"}>{order.status}</Pill>
+                      <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+                        <Pill tone={order.status === "filled" ? "green" : "default"}>{order.status}</Pill>
+                        {order.sourceType ? (
+                          <Pill tone={sourceTone(order.sourceType)}>
+                            {order.strategyLabel || order.sourceType}
+                          </Pill>
+                        ) : null}
+                      </div>
                     </td>
-                    <td style={tableCellStyle}>{order.source}</td>
+                    <td style={tableCellStyle}>
+                      {order.strategyLabel || order.source}
+                      {order.candidateId ? (
+                        <div style={{ color: T.textDim, fontSize: fs(8), marginTop: 2 }}>
+                          {order.deploymentName || order.candidateId}
+                        </div>
+                      ) : null}
+                    </td>
                   </>
                 )}
               </tr>
@@ -157,7 +233,8 @@ export const OrdersPanel = ({
       </div>
     )}
   </Panel>
-);
+  );
+};
 
 export const ClosedTradesPanel = ({
   query,
@@ -165,8 +242,15 @@ export const ClosedTradesPanel = ({
   filters,
   onFiltersChange,
   onResetFilters,
+  sourceFiltersEnabled = false,
+  emptyBody = "Recent IBKR executions are shown live. Older lifetime trades appear after the Flex refresh imports the Trades section.",
+  maskValues = false,
 }) => {
-  const rows = query.data?.trades || [];
+  const rows = (query.data?.trades || []).filter((trade) =>
+    !sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
+      ? true
+      : trade.sourceType === filters.sourceType,
+  );
   return (
     <Panel
       title={`Closed Trades · ${rows.length}`}
@@ -174,11 +258,11 @@ export const ClosedTradesPanel = ({
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
-      minHeight={360}
+      minHeight={266}
     >
-      <div style={{ display: "grid", gap: sp(10) }}>
-        <div style={{ display: "grid", gap: sp(6) }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8), flexWrap: "wrap" }}>
+      <div style={{ display: "grid", gap: sp(6) }}>
+        <div style={{ display: "grid", gap: sp(4) }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: sp(4), flexWrap: "wrap" }}>
             <ToggleGroup
               options={[
                 { value: "all", label: "All" },
@@ -188,6 +272,13 @@ export const ClosedTradesPanel = ({
               value={filters.pnlSign}
               onChange={(value) => onFiltersChange({ pnlSign: value })}
             />
+            {sourceFiltersEnabled ? (
+              <ToggleGroup
+                options={SOURCE_FILTERS}
+                value={filters.sourceType || "all"}
+                onChange={(value) => onFiltersChange({ sourceType: value })}
+              />
+            ) : null}
             <button type="button" onClick={onResetFilters} style={secondaryButtonStyle}>
               Reset
             </button>
@@ -195,8 +286,8 @@ export const ClosedTradesPanel = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(110px, 0.85fr) minmax(110px, 0.9fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr) minmax(0, 1.6fr)",
-              gap: sp(6),
+              gridTemplateColumns: "minmax(92px, 0.8fr) minmax(96px, 0.85fr) minmax(108px, 0.75fr) minmax(108px, 0.75fr) minmax(0, 1.6fr)",
+              gap: sp(4),
               alignItems: "center",
             }}
           >
@@ -232,8 +323,8 @@ export const ClosedTradesPanel = ({
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: sp("6px 12px"),
-                paddingLeft: sp(8),
+                gap: sp("3px 8px"),
+                paddingLeft: sp(5),
                 borderLeft: `1px solid ${T.border}`,
               }}
             >
@@ -247,12 +338,12 @@ export const ClosedTradesPanel = ({
               />
               <SummaryCard
                 label="P&L"
-                value={formatMoney(query.data?.summary?.realizedPnl, currency, true)}
+                value={formatAccountMoney(query.data?.summary?.realizedPnl, currency, true, maskValues)}
                 tone={toneForValue(query.data?.summary?.realizedPnl)}
               />
               <SummaryCard
                 label="Comms"
-                value={formatMoney(query.data?.summary?.commissions, currency, true)}
+                value={formatAccountMoney(query.data?.summary?.commissions, currency, true, maskValues)}
               />
             </div>
           </div>
@@ -261,11 +352,11 @@ export const ClosedTradesPanel = ({
         {!rows.length ? (
           <EmptyState
             title="No closed trades in this window"
-            body="Recent IBKR executions are shown live. Older lifetime trades appear after the Flex refresh imports the Trades section."
+            body={emptyBody}
           />
         ) : (
-          <div style={{ overflow: "auto", maxHeight: 420 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1180 }}>
+          <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 278 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1040 }}>
               <thead>
                 <tr style={tableHeaderStyle}>
                   {[
@@ -287,30 +378,52 @@ export const ClosedTradesPanel = ({
               </thead>
               <tbody>
                 {rows.map((trade) => (
-                  <tr key={`${trade.source}:${trade.id}`} tabIndex={0} onKeyDown={moveTableFocus}>
-                    <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>{trade.symbol}</td>
+                  <tr
+                    key={`${trade.source}:${trade.id}`}
+                    className="ra-table-row"
+                    tabIndex={0}
+                    onKeyDown={moveTableFocus}
+                  >
+                    <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
+                      <MarketIdentityInline
+                        item={{
+                          ticker: trade.symbol,
+                          market: marketForAssetClass(trade.assetClass),
+                        }}
+                        size={14}
+                        showMark={false}
+                        showChips
+                        style={{ maxWidth: dim(126) }}
+                      />
+                    </td>
                     <td style={tableCellStyle}>
                       <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>
                     </td>
                     <td style={tableCellStyle}>{formatNumber(trade.quantity, 3)}</td>
                     <td style={tableCellStyle}>
-                      {trade.openDate ? new Date(trade.openDate).toLocaleDateString() : "----"}
+                      {formatAppDate(trade.openDate)}
                     </td>
                     <td style={tableCellStyle}>
-                      {trade.closeDate ? new Date(trade.closeDate).toLocaleDateString() : "----"}
+                      {formatAppDate(trade.closeDate)}
                     </td>
                     <td style={tableCellStyle}>
-                      {trade.avgOpen != null ? formatMoney(trade.avgOpen, currency) : "----"}
+                      {trade.avgOpen != null
+                        ? formatAccountMoney(trade.avgOpen, currency, false, maskValues)
+                        : "----"}
                       {" / "}
-                      {trade.avgClose != null ? formatMoney(trade.avgClose, currency) : "----"}
+                      {trade.avgClose != null
+                        ? formatAccountMoney(trade.avgClose, currency, false, maskValues)
+                        : "----"}
                     </td>
                     <td style={{ ...tableCellStyle, color: toneForValue(trade.realizedPnl) }}>
-                      {formatMoney(trade.realizedPnl, trade.currency || currency)}{" "}
-                      {trade.realizedPnlPercent != null ? `/ ${formatPercent(trade.realizedPnlPercent)}` : ""}
+                      {formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}{" "}
+                      {trade.realizedPnlPercent != null
+                        ? `/ ${formatAccountPercent(trade.realizedPnlPercent, 2, maskValues)}`
+                        : ""}
                       {trade.commissions != null ? (
                         <span style={{ color: T.textDim }}>
                           {" · "}
-                          {formatMoney(trade.commissions, currency)}
+                          {formatAccountMoney(trade.commissions, currency, false, maskValues)}
                         </span>
                       ) : null}
                     </td>
@@ -320,9 +433,21 @@ export const ClosedTradesPanel = ({
                         : "----"}
                     </td>
                     <td style={tableCellStyle}>
-                      <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
-                        {trade.source}
-                      </Pill>
+                      <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+                        <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
+                          {trade.source}
+                        </Pill>
+                        {trade.sourceType ? (
+                          <Pill tone={sourceTone(trade.sourceType)}>
+                            {trade.strategyLabel || trade.sourceType}
+                          </Pill>
+                        ) : null}
+                      </div>
+                      {trade.candidateId ? (
+                        <div style={{ color: T.textDim, fontSize: fs(8), marginTop: 2 }}>
+                          {trade.deploymentName || trade.candidateId}
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

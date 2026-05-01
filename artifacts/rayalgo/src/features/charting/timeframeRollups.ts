@@ -1,27 +1,40 @@
 import type { MarketBar } from "./types";
+import {
+  getChartBaseTimeframe,
+  getChartTimeframeStepMs,
+  normalizeChartTimeframe,
+} from "./timeframes";
 
 const TIMEFRAME_STEP_MS: Record<string, number> = {
+  "1s": 1_000,
+  "5s": 5_000,
+  "15s": 15_000,
+  "30s": 30_000,
   "1m": 60_000,
+  "2m": 2 * 60_000,
   "5m": 5 * 60_000,
   "15m": 15 * 60_000,
+  "30m": 30 * 60_000,
   "1h": 60 * 60_000,
+  "4h": 4 * 60 * 60_000,
   "1d": 24 * 60 * 60_000,
   "1D": 24 * 60 * 60_000,
 };
 
-const LOCAL_ROLLUP_BASE_THRESHOLDS: Record<"mini" | "primary" | "option", number> = {
-  mini: 4_800,
-  primary: 12_000,
-  option: 6_000,
-};
-
-const LOCAL_ROLLUP_BASE_CANDIDATES = ["1m", "5m", "15m"] as const;
-
-const normalizeTimeframe = (timeframe: string): string =>
-  timeframe === "1D" ? "1d" : timeframe;
-
 const resolveTimeframeStepMs = (timeframe: string): number =>
-  TIMEFRAME_STEP_MS[normalizeTimeframe(timeframe)] || 0;
+  getChartTimeframeStepMs(timeframe) || TIMEFRAME_STEP_MS[normalizeChartTimeframe(timeframe)] || 0;
+
+export const normalizeTimeframeBucketStartMs = (
+  timeMs: number,
+  timeframe: string,
+): number => {
+  const stepMs = resolveTimeframeStepMs(timeframe);
+  if (!Number.isFinite(timeMs) || !stepMs || stepMs >= TIMEFRAME_STEP_MS["1d"]) {
+    return timeMs;
+  }
+
+  return Math.floor(timeMs / stepMs) * stepMs;
+};
 
 const resolveBarTimestampMs = (bar: MarketBar): number | null => {
   const value = bar.timestamp ?? bar.time ?? bar.ts;
@@ -73,32 +86,22 @@ export const resolveLocalRollupBaseTimeframe = (
   targetLimit: number,
   role: "mini" | "primary" | "option" = "primary",
 ): string => {
-  const normalizedTimeframe = normalizeTimeframe(timeframe);
+  const normalizedTimeframe = normalizeChartTimeframe(timeframe);
   const targetStepMs = resolveTimeframeStepMs(normalizedTimeframe);
   if (!targetStepMs || normalizedTimeframe === "1d") {
     return normalizedTimeframe;
   }
-  if (normalizedTimeframe === "1m") {
-    return "1m";
+  const preferredBaseTimeframe = getChartBaseTimeframe(normalizedTimeframe);
+  if (preferredBaseTimeframe === normalizedTimeframe) {
+    return normalizedTimeframe;
   }
 
-  const threshold = LOCAL_ROLLUP_BASE_THRESHOLDS[role];
-  for (const candidate of LOCAL_ROLLUP_BASE_CANDIDATES) {
-    const candidateStepMs = resolveTimeframeStepMs(candidate);
-    if (!candidateStepMs || candidateStepMs >= targetStepMs) {
-      continue;
-    }
-    if (targetStepMs % candidateStepMs !== 0) {
-      continue;
-    }
-
-    const requiredBaseBars = Math.ceil((targetLimit * targetStepMs) / candidateStepMs);
-    if (requiredBaseBars <= threshold) {
-      return candidate;
-    }
+  const baseStepMs = resolveTimeframeStepMs(preferredBaseTimeframe);
+  if (!baseStepMs || baseStepMs >= targetStepMs || targetStepMs % baseStepMs !== 0) {
+    return normalizedTimeframe;
   }
 
-  return normalizedTimeframe;
+  return preferredBaseTimeframe;
 };
 
 export const expandLocalRollupLimit = (
@@ -155,16 +158,29 @@ export const rollupMarketBars = (
       (total, bar) => total + (resolveFiniteNumber(bar.v, bar.volume) ?? 0),
       0,
     );
+    const open = resolveFiniteNumber(firstBar.o, firstBar.open) ?? 0;
+    const resolvedHigh = Number.isFinite(high)
+      ? high
+      : resolveFiniteNumber(lastBar.h, lastBar.high) ?? 0;
+    const resolvedLow = Number.isFinite(low)
+      ? low
+      : resolveFiniteNumber(lastBar.l, lastBar.low) ?? 0;
+    const close = resolveFiniteNumber(lastBar.c, lastBar.close) ?? 0;
 
     rolledBars.push({
       time: currentBucketStartMs,
       timestamp: currentBucketStartMs,
       ts: new Date(currentBucketStartMs).toISOString(),
-      o: resolveFiniteNumber(firstBar.o, firstBar.open) ?? 0,
-      h: Number.isFinite(high) ? high : resolveFiniteNumber(lastBar.h, lastBar.high) ?? 0,
-      l: Number.isFinite(low) ? low : resolveFiniteNumber(lastBar.l, lastBar.low) ?? 0,
-      c: resolveFiniteNumber(lastBar.c, lastBar.close) ?? 0,
+      o: open,
+      h: resolvedHigh,
+      l: resolvedLow,
+      c: close,
+      open,
+      high: resolvedHigh,
+      low: resolvedLow,
+      close,
       v: volume,
+      volume,
       vwap: weightedAverage(
         currentBucket.map((bar) => ({
           value: resolveFiniteNumber(bar.vwap),
@@ -184,6 +200,10 @@ export const rollupMarketBars = (
         typeof lastBar.source === "string" && lastBar.source
           ? `${lastBar.source}:rollup`
           : "rollup",
+      freshness: lastBar.freshness,
+      marketDataMode: lastBar.marketDataMode,
+      dataUpdatedAt: lastBar.dataUpdatedAt,
+      studyFallback: lastBar.studyFallback,
     });
   };
 

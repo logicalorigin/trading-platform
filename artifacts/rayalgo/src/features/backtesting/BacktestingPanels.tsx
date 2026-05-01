@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -82,6 +83,12 @@ import {
   mergeStudyPreviewSeries,
 } from "./charting";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
+import { useUserPreferences } from "../preferences/useUserPreferences";
+import {
+  formatAppDateTimeForPreferences,
+  formatAppTimeForPreferences,
+} from "../../lib/timeZone";
+import type { UserPreferences } from "../preferences/userPreferenceModel";
 
 type ThemeTokens = {
   bg0: string;
@@ -169,16 +176,6 @@ const compactFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-const hourFormatter = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-});
 const newYorkSessionFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
   weekday: "short",
@@ -218,8 +215,60 @@ type SpotHistoryBarsResponse = {
   }>;
 };
 
+type AdvancedMetricsView = {
+  sortinoRatio?: number | null;
+  calmarRatio?: number | null;
+  probabilisticSharpeRatio?: number | null;
+  deflatedSharpeRatio?: number | null;
+  monteCarlo?: {
+    p05ReturnPercent?: number | null;
+    probabilityOfLossPercent?: number | null;
+  } | null;
+};
+
+type ValidationMetricsView = {
+  trialCount?: number | null;
+  oosWindowCount?: number | null;
+  warnings?: string[] | null;
+};
+
+type DataQualityMetricsView = {
+  sourcePolicy?: string | null;
+  primarySource?: string | null;
+  coveragePercent?: number | null;
+  ibkrRecentCutoffMinutes?: number | null;
+};
+
+type BenchmarkMetricsView = {
+  symbol: string;
+  totalReturnPercent?: number | null;
+  beta?: number | null;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asAdvancedMetrics(value: unknown): AdvancedMetricsView | null {
+  return isRecord(value) ? (value as AdvancedMetricsView) : null;
+}
+
+function asValidationMetrics(value: unknown): ValidationMetricsView | null {
+  return isRecord(value) ? (value as ValidationMetricsView) : null;
+}
+
+function asDataQualityMetrics(value: unknown): DataQualityMetricsView | null {
+  return isRecord(value) ? (value as DataQualityMetricsView) : null;
+}
+
+function asBenchmarkMetrics(value: unknown): BenchmarkMetricsView[] {
+  return Array.isArray(value) ? (value as BenchmarkMetricsView[]) : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -272,7 +321,10 @@ function formatNumber(value: number | null | undefined, digits = 2): string {
   return value.toFixed(digits);
 }
 
-function formatDateTime(value: string | null | undefined): string {
+function formatDateTime(
+  value: string | null | undefined,
+  preferences: UserPreferences,
+): string {
   if (!value) {
     return "—";
   }
@@ -282,7 +334,24 @@ function formatDateTime(value: string | null | undefined): string {
     return "—";
   }
 
-  return dateTimeFormatter.format(parsed);
+  return formatAppDateTimeForPreferences(
+    parsed,
+    preferences,
+    {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    },
+    "—",
+  );
+}
+
+function formatHour(value: string | null | undefined, preferences: UserPreferences): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return formatAppTimeForPreferences(parsed, preferences, { hour: "numeric" }, "—");
 }
 
 function formatDateInputValue(offsetDays: number): string {
@@ -873,7 +942,7 @@ function SectionCard({
   style?: CSSProperties;
 }) {
   return (
-    <div style={{ ...cardStyle(theme, scale), ...style }}>
+    <div className="ra-panel-enter" style={{ ...cardStyle(theme, scale), ...style }}>
       <div
         style={{
           display: "flex",
@@ -910,6 +979,9 @@ function StatusBadge({
   scale: ScaleHelpers;
 }) {
   const color = getStatusColor(status, theme);
+  const activeStatus = ["queued", "running", "processing", "pending"].includes(
+    status,
+  );
 
   return (
     <span
@@ -929,6 +1001,7 @@ function StatusBadge({
       }}
     >
       <span
+        className={activeStatus ? "ra-status-pulse" : undefined}
         style={{
           width: scale.dim(6),
           height: scale.dim(6),
@@ -956,6 +1029,7 @@ function MetricCard({
 }) {
   return (
     <div
+      className="ra-panel-enter"
       style={{
         background: theme.bg0,
         border: `1px solid ${theme.border}`,
@@ -991,11 +1065,13 @@ function DraftStrategiesList({
   theme,
   scale,
   compact = false,
+  formatDateTimeLabel,
 }: {
   drafts: BacktestDraftStrategy[];
   theme: ThemeTokens;
   scale: ScaleHelpers;
   compact?: boolean;
+  formatDateTimeLabel: (value: string | null | undefined) => string;
 }) {
   if (drafts.length === 0) {
     return (
@@ -1102,7 +1178,7 @@ function DraftStrategiesList({
             {!compact ? (
               <MetricCard
                 label="Promoted"
-                value={formatDateTime(draft.promotedAt)}
+                value={formatDateTimeLabel(draft.promotedAt)}
                 accent={theme.text}
                 theme={theme}
                 scale={scale}
@@ -1182,6 +1258,11 @@ export function AlgoDraftStrategiesPanel({
   scale,
   isVisible = false,
 }: AlgoDraftStrategiesPanelProps) {
+  const { preferences: userPreferences } = useUserPreferences();
+  const formatBacktestDateTime = useCallback(
+    (value: string | null | undefined) => formatDateTime(value, userPreferences),
+    [userPreferences],
+  );
   useRuntimeWorkloadFlag("backtest:algo-drafts", isVisible, {
     kind: "poll",
     label: "Algo draft strategies",
@@ -1237,2889 +1318,13 @@ export function AlgoDraftStrategiesPanel({
         drafts={(draftsQuery.data?.drafts ?? []).slice(0, 3)}
         theme={theme}
         scale={scale}
+        formatDateTimeLabel={formatBacktestDateTime}
         compact
       />
     </div>
   );
 }
 
-function LegacyBacktestWorkspace({
-  theme,
-  scale,
-  watchlists,
-  defaultWatchlistId,
-  isVisible = false,
-}: BacktestWorkspaceProps) {
-  const queryClient = useQueryClient();
-  const strategiesQuery = useListBacktestStrategies({
-    query: {
-      queryKey: getListBacktestStrategiesQueryKey(),
-      staleTime: 30_000,
-    },
-  });
-  const studiesQuery = useListBacktestStudies({
-    query: {
-      queryKey: getListBacktestStudiesQueryKey(),
-      staleTime: 5_000,
-      refetchInterval: isVisible ? 15_000 : false,
-    },
-  });
-  const draftsQuery = useListBacktestDraftStrategies({
-    query: {
-      queryKey: getListBacktestDraftStrategiesQueryKey(),
-      staleTime: 5_000,
-      refetchInterval: isVisible ? 10_000 : false,
-    },
-  });
-
-  const [banner, setBanner] = useState<BannerState>(null);
-  const [selectedStudyId, setSelectedStudyId] = useState("");
-  const [selectedRunId, setSelectedRunId] = useState("");
-  const [strategyKey, setStrategyKey] = useState("");
-  const [studyName, setStudyName] = useState("SMA Crossover Study");
-  const [universeMode, setUniverseMode] = useState<"watchlist" | "symbols">(
-    "watchlist",
-  );
-  const [watchlistId, setWatchlistId] = useState(defaultWatchlistId ?? "");
-  const [symbolsText, setSymbolsText] = useState("");
-  const [timeframe, setTimeframe] = useState<BarTimeframe>("1d");
-  const [directionMode, setDirectionMode] =
-    useState<BacktestDirectionMode>("long_only");
-  const [parameters, setParameters] = useState<Record<string, ScalarParameter>>(
-    {},
-  );
-  const [startsOn, setStartsOn] = useState(formatDateInputValue(-365));
-  const [endsOn, setEndsOn] = useState(formatDateInputValue(0));
-  const [portfolioRules, setPortfolioRules] = useState({
-    initialCapital: 25_000,
-    positionSizePercent: 12,
-    maxConcurrentPositions: 4,
-    maxGrossExposurePercent: 100,
-  });
-  const [executionProfile, setExecutionProfile] = useState({
-    commissionBps: 1,
-    slippageBps: 3,
-  });
-  const [optimizerMode, setOptimizerMode] =
-    useState<BacktestOptimizerMode>("grid");
-  const [randomCandidateBudget, setRandomCandidateBudget] = useState(24);
-  const [walkForwardTrainingMonths, setWalkForwardTrainingMonths] =
-    useState(24);
-  const [walkForwardTestMonths, setWalkForwardTestMonths] = useState(6);
-  const [walkForwardStepMonths, setWalkForwardStepMonths] = useState(6);
-  const [runNameDraft, setRunNameDraft] = useState("");
-  const [displayMode, setDisplayMode] = useState<BacktestDisplayMode>("spot");
-  const [selectedRunChartSymbol, setSelectedRunChartSymbol] = useState("");
-  const [selectedTradeSelectionId, setSelectedTradeSelectionId] = useState<
-    string | null
-  >(null);
-  const [pendingTradeSelectionIds, setPendingTradeSelectionIds] = useState<
-    string[]
-  >([]);
-  const [tradeSearchText, setTradeSearchText] = useState("");
-  const [tradeSymbolFilter, setTradeSymbolFilter] = useState("all");
-  const [tradeSideFilter, setTradeSideFilter] = useState<
-    "all" | "long" | "short"
-  >("all");
-  const [tradeOutcomeFilter, setTradeOutcomeFilter] =
-    useState<TradeOutcomeFilter>("all");
-  const [tradeExitReasonFilter, setTradeExitReasonFilter] = useState("all");
-  const [tradeDateFrom, setTradeDateFrom] = useState("");
-  const [tradeDateTo, setTradeDateTo] = useState("");
-  const [promotionName, setPromotionName] = useState("");
-  const [promotionNotes, setPromotionNotes] = useState("");
-
-  const deferredSymbolsText = useDeferredValue(symbolsText);
-  const parsedSymbols = useMemo(
-    () => parseSymbolList(deferredSymbolsText),
-    [deferredSymbolsText],
-  );
-
-  const studies = studiesQuery.data?.studies ?? [];
-  const strategies = strategiesQuery.data?.strategies ?? [];
-  const selectedStudy =
-    studies.find((study) => study.id === selectedStudyId) ?? null;
-  const selectedStrategy =
-    strategies.find((strategy) => getStrategyKey(strategy) === strategyKey) ??
-    null;
-  const selectedStudyStrategy = selectedStudy
-    ? (strategies.find(
-        (strategy) =>
-          strategy.strategyId === selectedStudy.strategyId &&
-          strategy.version === selectedStudy.strategyVersion,
-      ) ?? null)
-    : null;
-
-  const runsQuery = useListBacktestRuns(
-    selectedStudyId ? { studyId: selectedStudyId } : undefined,
-    {
-      query: {
-        queryKey: getListBacktestRunsQueryKey(
-          selectedStudyId ? { studyId: selectedStudyId } : undefined,
-        ),
-        enabled: Boolean(selectedStudyId),
-        staleTime: 2_000,
-        refetchInterval: isVisible ? 5_000 : false,
-      },
-    },
-  );
-  const jobsQuery = useListBacktestJobs({
-    query: {
-      queryKey: getListBacktestJobsQueryKey(),
-      staleTime: 2_000,
-      refetchInterval: isVisible ? 5_000 : false,
-    },
-  });
-  const runDetailQuery = useGetBacktestRun(selectedRunId || "", {
-    query: {
-      queryKey: getGetBacktestRunQueryKey(selectedRunId || ""),
-      enabled: Boolean(selectedRunId),
-      staleTime: 2_000,
-      refetchInterval: isVisible
-        ? (query) =>
-            query.state.data?.run.status === "completed" ? false : 5_000
-        : false,
-    },
-  });
-  const runChartQuery = useGetBacktestRunChart(
-    selectedRunId || "",
-    {
-      symbol: selectedRunChartSymbol || undefined,
-      selectedTradeId: selectedTradeSelectionId || undefined,
-    },
-    {
-      query: {
-        queryKey: getGetBacktestRunChartQueryKey(selectedRunId || "", {
-          symbol: selectedRunChartSymbol || undefined,
-          selectedTradeId: selectedTradeSelectionId || undefined,
-        }),
-        enabled: Boolean(selectedRunId),
-        staleTime: 2_000,
-        refetchInterval:
-          isVisible && runDetailQuery.data?.run.status !== "completed"
-            ? 5_000
-            : false,
-      },
-    },
-  );
-  const studyPreviewQuery = useGetBacktestStudyPreviewChart(
-    selectedStudyId || "",
-    {
-      query: {
-        queryKey: getGetBacktestStudyPreviewChartQueryKey(
-          selectedStudyId || "",
-        ),
-        enabled: Boolean(selectedStudyId),
-        staleTime: 2_000,
-        refetchInterval: isVisible ? 5_000 : false,
-      },
-    },
-  );
-
-  const createStudyMutation = useCreateBacktestStudy();
-  const createRunMutation = useCreateBacktestRun();
-  const createSweepMutation = useCreateBacktestSweep();
-  const promoteRunMutation = usePromoteBacktestRun();
-  const cancelJobMutation = useCancelBacktestJob();
-
-  const runs = runsQuery.data?.runs ?? [];
-  const jobs = jobsQuery.data?.jobs ?? [];
-  const runDetail = runDetailQuery.data ?? null;
-  const runChart = runChartQuery.data ?? null;
-  const runChartModel = useMemo(
-    () => (runChart ? buildBacktestChartModel(runChart) : null),
-    [runChart],
-  );
-  const previewChart = studyPreviewQuery.data ?? null;
-  const derivedSweepDimensions = selectedStudy
-    ? deriveSweepDimensions(selectedStudyStrategy, selectedStudy.parameters)
-    : [];
-  const activeJobs = jobs.filter((job) =>
-    [
-      "queued",
-      "preparing_data",
-      "running",
-      "aggregating",
-      "cancel_requested",
-    ].includes(job.status),
-  );
-  const completedRuns = runs.filter((run) => run.status === "completed");
-  const mergedPreviewSeries = useMemo(
-    () =>
-      previewChart
-        ? mergeStudyPreviewSeries(
-            previewChart.latestSeries,
-            previewChart.bestSeries,
-          )
-        : [],
-    [previewChart],
-  );
-  const activeTradeOverlay = useMemo(() => {
-    if (!runChartModel) {
-      return null;
-    }
-
-    return (
-      runChartModel.tradeOverlays.find(
-        (trade) =>
-          trade.tradeSelectionId === runChartModel.activeTradeSelectionId,
-      ) ?? null
-    );
-  }, [runChartModel]);
-  const pendingTradeOptions = useMemo(() => {
-    if (!runChart) {
-      return [];
-    }
-
-    const overlaysById = new Map(
-      runChart.tradeOverlays.map((trade) => [trade.tradeSelectionId, trade]),
-    );
-
-    return pendingTradeSelectionIds
-      .map((tradeSelectionId) => overlaysById.get(tradeSelectionId))
-      .filter((trade): trade is BacktestTradeOverlay => Boolean(trade));
-  }, [pendingTradeSelectionIds, runChart]);
-  const activeTradeSelectionId =
-    runChart?.activeTradeSelectionId ?? selectedTradeSelectionId;
-  const tradeRows = useMemo<TradeExplorerRow[]>(() => {
-    if (!runDetail) {
-      return [];
-    }
-
-    return runDetail.trades.map((trade) => ({
-      ...trade,
-      tradeSelectionId: buildRunTradeSelectionId(runDetail.run.id, trade),
-      outcome: resolveTradeOutcome(trade),
-      entryAtMs: Date.parse(trade.entryAt),
-      exitAtMs: Date.parse(trade.exitAt),
-    }));
-  }, [runDetail]);
-  const selectedTradeRecord = useMemo(() => {
-    if (!activeTradeSelectionId) {
-      return null;
-    }
-
-    return (
-      tradeRows.find(
-        (trade) => trade.tradeSelectionId === activeTradeSelectionId,
-      ) ?? null
-    );
-  }, [activeTradeSelectionId, tradeRows]);
-  const selectedTradeDiagnostics = selectedTradeRecord?.diagnostics ?? null;
-  const selectedTradeExitConsequences =
-    selectedTradeDiagnostics?.exitConsequences ?? null;
-  void selectedTradeDiagnostics;
-  void selectedTradeExitConsequences;
-  const tradeSymbolOptions = useMemo(
-    () => [...new Set(tradeRows.map((trade) => trade.symbol))].sort(),
-    [tradeRows],
-  );
-  const tradeExitReasonOptions = useMemo(
-    () => [...new Set(tradeRows.map((trade) => trade.exitReason))].sort(),
-    [tradeRows],
-  );
-  const filteredTradeRows = useMemo(() => {
-    const query = tradeSearchText.trim().toLowerCase();
-    const minEntryAt = parseDateInputToUtcMs(tradeDateFrom, "start");
-    const maxExitAt = parseDateInputToUtcMs(tradeDateTo, "end");
-
-    return tradeRows.filter((trade) => {
-      if (tradeSymbolFilter !== "all" && trade.symbol !== tradeSymbolFilter) {
-        return false;
-      }
-
-      if (tradeSideFilter !== "all" && trade.side !== tradeSideFilter) {
-        return false;
-      }
-
-      if (
-        tradeOutcomeFilter !== "all" &&
-        trade.outcome !== tradeOutcomeFilter
-      ) {
-        return false;
-      }
-
-      if (
-        tradeExitReasonFilter !== "all" &&
-        trade.exitReason !== tradeExitReasonFilter
-      ) {
-        return false;
-      }
-
-      if (minEntryAt != null && trade.entryAtMs < minEntryAt) {
-        return false;
-      }
-
-      if (maxExitAt != null && trade.exitAtMs > maxExitAt) {
-        return false;
-      }
-
-      if (!query) {
-        return true;
-      }
-
-      const haystack = [
-        trade.symbol,
-        trade.side,
-        trade.exitReason,
-        trade.tradeSelectionId,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(query);
-    });
-  }, [
-    tradeDateFrom,
-    tradeDateTo,
-    tradeExitReasonFilter,
-    tradeOutcomeFilter,
-    tradeRows,
-    tradeSearchText,
-    tradeSideFilter,
-    tradeSymbolFilter,
-  ]);
-  const optionModeSupported =
-    runChart?.chartPriceContext === "option" ||
-    runChart?.tradeOverlays.some(
-      (trade) =>
-        trade.chartPriceContext === "option" ||
-        trade.pricingMode === "options" ||
-        trade.pricingMode === "option_history",
-    ) ||
-    false;
-  const exitReasonBreakdown = useMemo(() => {
-    const counts = new Map<
-      string,
-      { reason: string; count: number; netPnl: number }
-    >();
-
-    filteredTradeRows.forEach((trade) => {
-      const current = counts.get(trade.exitReason) ?? {
-        reason: trade.exitReason,
-        count: 0,
-        netPnl: 0,
-      };
-      current.count += 1;
-      current.netPnl += trade.netPnl;
-      counts.set(trade.exitReason, current);
-    });
-
-    return [...counts.values()].sort(
-      (left, right) => right.count - left.count || right.netPnl - left.netPnl,
-    );
-  }, [filteredTradeRows]);
-  const symbolPerformance = useMemo(() => {
-    const rows = new Map<
-      string,
-      { symbol: string; netPnl: number; tradeCount: number; winRate: number }
-    >();
-
-    filteredTradeRows.forEach((trade) => {
-      const current = rows.get(trade.symbol) ?? {
-        symbol: trade.symbol,
-        netPnl: 0,
-        tradeCount: 0,
-        winRate: 0,
-      };
-      current.netPnl += trade.netPnl;
-      current.tradeCount += 1;
-      current.winRate += trade.outcome === "winner" ? 1 : 0;
-      rows.set(trade.symbol, current);
-    });
-
-    return [...rows.values()]
-      .map((entry) => ({
-        ...entry,
-        winRate:
-          entry.tradeCount > 0 ? (entry.winRate / entry.tradeCount) * 100 : 0,
-      }))
-      .sort((left, right) => right.netPnl - left.netPnl)
-      .slice(0, 8);
-  }, [filteredTradeRows]);
-  const runVsBestComparisons = useMemo(() => {
-    const selectedMetrics = runDetail?.run.metrics ?? null;
-    const bestMetrics = previewChart?.bestCompletedRun?.metrics ?? null;
-
-    return [
-      {
-        id: "return",
-        label: "Return",
-        selected: metricFromMetrics(selectedMetrics, "totalReturnPercent"),
-        best: metricFromMetrics(bestMetrics, "totalReturnPercent"),
-        format: "percent" as const,
-      },
-      {
-        id: "sharpe",
-        label: "Sharpe",
-        selected: metricFromMetrics(selectedMetrics, "sharpeRatio"),
-        best: metricFromMetrics(bestMetrics, "sharpeRatio"),
-        format: "number" as const,
-      },
-      {
-        id: "drawdown",
-        label: "Max DD",
-        selected: metricFromMetrics(selectedMetrics, "maxDrawdownPercent"),
-        best: metricFromMetrics(bestMetrics, "maxDrawdownPercent"),
-        format: "percent" as const,
-      },
-      {
-        id: "winrate",
-        label: "Win Rate",
-        selected: metricFromMetrics(selectedMetrics, "winRatePercent"),
-        best: metricFromMetrics(bestMetrics, "winRatePercent"),
-        format: "percent" as const,
-      },
-    ];
-  }, [previewChart?.bestCompletedRun?.metrics, runDetail?.run.metrics]);
-  const filteredTradeNetPnl = filteredTradeRows.reduce(
-    (sum, trade) => sum + trade.netPnl,
-    0,
-  );
-  const filteredTradeCommission = filteredTradeRows.reduce(
-    (sum, trade) => sum + trade.commissionPaid,
-    0,
-  );
-  const tradeExpectancy =
-    tradeRows.length > 0
-      ? tradeRows.reduce((sum, trade) => sum + trade.netPnl, 0) /
-        tradeRows.length
-      : null;
-  const filteredTradeExpectancy =
-    filteredTradeRows.length > 0
-      ? filteredTradeNetPnl / filteredTradeRows.length
-      : null;
-  const filteredTradeAverageBarsHeld =
-    filteredTradeRows.length > 0
-      ? filteredTradeRows.reduce((sum, trade) => sum + trade.barsHeld, 0) /
-        filteredTradeRows.length
-      : null;
-
-  useEffect(() => {
-    if (!watchlistId && defaultWatchlistId) {
-      setWatchlistId(defaultWatchlistId);
-      return;
-    }
-
-    if (!watchlistId && watchlists[0]?.id) {
-      setWatchlistId(watchlists[0].id);
-    }
-  }, [defaultWatchlistId, watchlistId, watchlists]);
-
-  useEffect(() => {
-    if (strategies.length === 0 || strategyKey) {
-      return;
-    }
-
-    const initialStrategy =
-      strategies.find((strategy) => strategy.status === "runnable") ??
-      strategies[0];
-    if (!initialStrategy) {
-      return;
-    }
-
-    setStrategyKey(getStrategyKey(initialStrategy));
-    setParameters(defaultParametersForStrategy(initialStrategy));
-    setTimeframe(initialStrategy.supportedTimeframes[0] ?? "1d");
-    setDirectionMode(initialStrategy.directionMode);
-    setStudyName(`${initialStrategy.label} Study`);
-  }, [strategies, strategyKey]);
-
-  useEffect(() => {
-    if (studies.length === 0) {
-      setSelectedStudyId("");
-      return;
-    }
-
-    const hasSelection = studies.some((study) => study.id === selectedStudyId);
-    if (!hasSelection) {
-      setSelectedStudyId(studies[0].id);
-    }
-  }, [selectedStudyId, studies]);
-
-  useEffect(() => {
-    if (runs.length === 0) {
-      setSelectedRunId("");
-      return;
-    }
-
-    const hasSelection = runs.some((run) => run.id === selectedRunId);
-    if (!hasSelection) {
-      setSelectedRunId(runs[0].id);
-    }
-  }, [runs, selectedRunId]);
-
-  useEffect(() => {
-    setSelectedRunChartSymbol("");
-    setSelectedTradeSelectionId(null);
-    setPendingTradeSelectionIds([]);
-  }, [selectedRunId]);
-
-  useEffect(() => {
-    if (!selectedStudy) {
-      return;
-    }
-
-    setRunNameDraft(`${selectedStudy.name} Run`);
-  }, [selectedStudy?.id]);
-
-  useEffect(() => {
-    if (!runDetail?.run) {
-      return;
-    }
-
-    setPromotionName(`${runDetail.run.name} Draft`);
-  }, [runDetail?.run.id]);
-
-  async function refreshBacktestQueries(): Promise<void> {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["/api/backtests/studies"] }),
-      queryClient.invalidateQueries({ queryKey: ["/api/backtests/runs"] }),
-      queryClient.invalidateQueries({ queryKey: ["/api/backtests/jobs"] }),
-      queryClient.invalidateQueries({ queryKey: ["/api/backtests/drafts"] }),
-      queryClient.invalidateQueries({ queryKey: ["/api/backtests/sweeps"] }),
-      queryClient.invalidateQueries({
-        predicate: (query) => {
-          const key = query.queryKey[0];
-          return (
-            typeof key === "string" &&
-            (key.startsWith("/api/backtests/studies/") ||
-              key.startsWith("/api/backtests/runs/"))
-          );
-        },
-      }),
-    ]);
-  }
-
-  function handleRunChartSymbolChange(nextSymbol: string): void {
-    setSelectedRunChartSymbol(nextSymbol);
-    setSelectedTradeSelectionId(null);
-    setPendingTradeSelectionIds([]);
-  }
-
-  function handleTradeSelection(
-    tradeSelectionId: string | null,
-    symbol?: string | null,
-  ): void {
-    if (symbol) {
-      setSelectedRunChartSymbol(symbol.toUpperCase());
-    }
-
-    setSelectedTradeSelectionId(tradeSelectionId);
-    setPendingTradeSelectionIds([]);
-  }
-
-  function handleTradeMarkerSelection(tradeSelectionIds: string[]): void {
-    if (tradeSelectionIds.length <= 1) {
-      handleTradeSelection(tradeSelectionIds[0] ?? null);
-      return;
-    }
-
-    setPendingTradeSelectionIds(tradeSelectionIds);
-  }
-
-  function applyStrategySelection(
-    nextStrategy: BacktestStrategyCatalogItem,
-  ): void {
-    setStrategyKey(getStrategyKey(nextStrategy));
-    setParameters(defaultParametersForStrategy(nextStrategy));
-    setTimeframe(
-      nextStrategy.supportedTimeframes.includes(timeframe)
-        ? timeframe
-        : (nextStrategy.supportedTimeframes[0] ?? "1d"),
-    );
-    setDirectionMode(nextStrategy.directionMode);
-    setStudyName(`${nextStrategy.label} Study`);
-  }
-
-  async function handleCreateStudy(): Promise<void> {
-    if (!selectedStrategy) {
-      setBanner({
-        kind: "error",
-        title: "Strategy required",
-        detail: "Pick a backtest strategy before saving the study.",
-      });
-      return;
-    }
-
-    if (startsOn > endsOn) {
-      setBanner({
-        kind: "error",
-        title: "Invalid study window",
-        detail: "The end date must be on or after the start date.",
-      });
-      return;
-    }
-
-    if (universeMode === "symbols" && parsedSymbols.length === 0) {
-      setBanner({
-        kind: "error",
-        title: "Universe required",
-        detail: "Enter at least one ticker or choose a watchlist universe.",
-      });
-      return;
-    }
-
-    if (universeMode === "watchlist" && !watchlistId) {
-      setBanner({
-        kind: "error",
-        title: "Watchlist required",
-        detail: "Choose a watchlist before saving the study.",
-      });
-      return;
-    }
-
-    try {
-      const createdStudy = await createStudyMutation.mutateAsync({
-        data: {
-          name: studyName.trim(),
-          strategyId: selectedStrategy.strategyId,
-          strategyVersion: selectedStrategy.version,
-          directionMode,
-          watchlistId: universeMode === "watchlist" ? watchlistId : null,
-          symbols: universeMode === "symbols" ? parsedSymbols : [],
-          timeframe,
-          startsAt: toStartOfDayIso(startsOn),
-          endsAt: toEndOfDayIso(endsOn),
-          parameters,
-          portfolioRules,
-          executionProfile,
-          optimizerMode,
-          optimizerConfig: {
-            randomCandidateBudget,
-            walkForwardTrainingMonths,
-            walkForwardTestMonths,
-            walkForwardStepMonths,
-          },
-        },
-      });
-
-      setSelectedStudyId(createdStudy.id);
-      setBanner({
-        kind: "success",
-        title: "Study saved",
-        detail: `${createdStudy.name} is ready for queued runs and sweeps.`,
-      });
-      await refreshBacktestQueries();
-    } catch (error) {
-      setBanner({
-        kind: "error",
-        title: "Study creation failed",
-        detail: safeErrorMessage(error),
-      });
-    }
-  }
-
-  async function handleQueueRun(): Promise<void> {
-    if (!selectedStudy) {
-      return;
-    }
-
-    try {
-      const createdRun = await createRunMutation.mutateAsync({
-        data: {
-          studyId: selectedStudy.id,
-          name: runNameDraft.trim() || null,
-          parameters: null,
-        },
-      });
-
-      setSelectedRunId(createdRun.run.id);
-      setBanner({
-        kind: "success",
-        title: "Run queued",
-        detail: `${createdRun.run.name} is waiting for the worker.`,
-      });
-      await refreshBacktestQueries();
-    } catch (error) {
-      setBanner({
-        kind: "error",
-        title: "Run queue failed",
-        detail: safeErrorMessage(error),
-      });
-    }
-  }
-
-  async function handleQueueSweep(): Promise<void> {
-    if (!selectedStudy) {
-      return;
-    }
-
-    if (derivedSweepDimensions.length === 0) {
-      setBanner({
-        kind: "error",
-        title: "Sweep dimensions unavailable",
-        detail:
-          "The selected study does not expose enough parameter range to derive a sweep.",
-      });
-      return;
-    }
-
-    try {
-      const optimizerConfig = isRecord(selectedStudy.optimizerConfig)
-        ? selectedStudy.optimizerConfig
-        : {};
-      const createdSweep = await createSweepMutation.mutateAsync({
-        data: {
-          studyId: selectedStudy.id,
-          mode: selectedStudy.optimizerMode,
-          baseParameters: selectedStudy.parameters,
-          dimensions: derivedSweepDimensions,
-          randomCandidateBudget: numberFromUnknown(
-            optimizerConfig.randomCandidateBudget,
-            24,
-          ),
-          walkForwardTrainingMonths: numberFromUnknown(
-            optimizerConfig.walkForwardTrainingMonths,
-            24,
-          ),
-          walkForwardTestMonths: numberFromUnknown(
-            optimizerConfig.walkForwardTestMonths,
-            6,
-          ),
-          walkForwardStepMonths: numberFromUnknown(
-            optimizerConfig.walkForwardStepMonths,
-            6,
-          ),
-        },
-      });
-
-      setBanner({
-        kind: "success",
-        title: "Sweep queued",
-        detail: `${createdSweep.mode} sweep accepted for ${selectedStudy.name}.`,
-      });
-      await refreshBacktestQueries();
-    } catch (error) {
-      setBanner({
-        kind: "error",
-        title: "Sweep queue failed",
-        detail: safeErrorMessage(error),
-      });
-    }
-  }
-
-  async function handlePromoteRun(): Promise<void> {
-    if (!runDetail || runDetail.run.status !== "completed") {
-      return;
-    }
-
-    try {
-      const draft = await promoteRunMutation.mutateAsync({
-        runId: runDetail.run.id,
-        data: {
-          name: promotionName.trim(),
-          notes: promotionNotes.trim() || null,
-        },
-      });
-
-      setBanner({
-        kind: "success",
-        title: "Run promoted",
-        detail: `${draft.name} is now visible in the Algo draft queue.`,
-      });
-      await refreshBacktestQueries();
-    } catch (error) {
-      setBanner({
-        kind: "error",
-        title: "Promotion failed",
-        detail: safeErrorMessage(error),
-      });
-    }
-  }
-
-  async function handleCancelJob(jobId: string): Promise<void> {
-    try {
-      await cancelJobMutation.mutateAsync({ jobId });
-      setBanner({
-        kind: "info",
-        title: "Cancellation requested",
-        detail: "The worker will stop the job at the next safe checkpoint.",
-      });
-      await refreshBacktestQueries();
-    } catch (error) {
-      setBanner({
-        kind: "error",
-        title: "Cancel failed",
-        detail: safeErrorMessage(error),
-      });
-    }
-  }
-
-  const headlineMetrics =
-    runDetail?.run.metrics ?? completedRuns[0]?.metrics ?? null;
-
-  return (
-    <div
-      style={{
-        padding: scale.sp(12),
-        display: "flex",
-        flexDirection: "column",
-        gap: scale.sp(10),
-        height: "100%",
-        overflowY: "auto",
-      }}
-    >
-      {banner ? (
-        <div
-          onClick={() => setBanner(null)}
-          style={{
-            ...cardStyle(theme, scale),
-            borderColor: getBannerColor(banner.kind, theme),
-            borderLeft: `4px solid ${getBannerColor(banner.kind, theme)}`,
-            cursor: "pointer",
-          }}
-        >
-          <div
-            style={{
-              fontSize: scale.fs(11),
-              fontWeight: 700,
-              color: theme.text,
-            }}
-          >
-            {banner.title}
-          </div>
-          <div
-            style={{
-              fontSize: scale.fs(10),
-              color: theme.textSec,
-              marginTop: scale.sp(4),
-            }}
-          >
-            {banner.detail}
-          </div>
-        </div>
-      ) : null}
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-          gap: scale.sp(10),
-          alignItems: "start",
-        }}
-      >
-        <SectionCard title="Build Study" theme={theme} scale={scale}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: scale.sp(8),
-            }}
-          >
-            <div style={{ gridColumn: "1 / -1" }}>
-              <div style={fieldLabelStyle(theme, scale)}>Strategy</div>
-              <select
-                value={strategyKey}
-                onChange={(event) => {
-                  const next = strategies.find(
-                    (strategy) =>
-                      getStrategyKey(strategy) === event.target.value,
-                  );
-                  if (next) {
-                    applyStrategySelection(next);
-                  }
-                }}
-                style={inputStyle(theme, scale)}
-              >
-                {strategies.map((strategy) => (
-                  <option
-                    key={getStrategyKey(strategy)}
-                    value={getStrategyKey(strategy)}
-                  >
-                    {strategy.label} · {strategy.version} · {strategy.status}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ gridColumn: "1 / -1" }}>
-              <div style={fieldLabelStyle(theme, scale)}>Study Name</div>
-              <input
-                value={studyName}
-                onChange={(event) => setStudyName(event.target.value)}
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Timeframe</div>
-              <select
-                value={timeframe}
-                onChange={(event) =>
-                  setTimeframe(event.target.value as BarTimeframe)
-                }
-                style={inputStyle(theme, scale)}
-              >
-                {(selectedStrategy?.supportedTimeframes ?? ["1d"]).map(
-                  (value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ),
-                )}
-              </select>
-            </div>
-
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Direction</div>
-              <select
-                value={directionMode}
-                onChange={(event) =>
-                  setDirectionMode(event.target.value as BacktestDirectionMode)
-                }
-                style={inputStyle(theme, scale)}
-              >
-                <option value="long_only">long_only</option>
-                <option value="long_short">long_short</option>
-              </select>
-            </div>
-
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Start</div>
-              <input
-                type="date"
-                value={startsOn}
-                onChange={(event) => setStartsOn(event.target.value)}
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>End</div>
-              <input
-                type="date"
-                value={endsOn}
-                onChange={(event) => setEndsOn(event.target.value)}
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginTop: scale.sp(10) }}>
-            <div style={fieldLabelStyle(theme, scale)}>Universe</div>
-            <div
-              style={{
-                display: "flex",
-                gap: scale.sp(8),
-                marginBottom: scale.sp(8),
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setUniverseMode("watchlist")}
-                style={buttonStyle(
-                  theme,
-                  scale,
-                  universeMode === "watchlist" ? "primary" : "secondary",
-                )}
-              >
-                Watchlist
-              </button>
-              <button
-                type="button"
-                onClick={() => setUniverseMode("symbols")}
-                style={buttonStyle(
-                  theme,
-                  scale,
-                  universeMode === "symbols" ? "primary" : "secondary",
-                )}
-              >
-                Manual Symbols
-              </button>
-            </div>
-            {universeMode === "watchlist" ? (
-              <select
-                value={watchlistId}
-                onChange={(event) => setWatchlistId(event.target.value)}
-                style={inputStyle(theme, scale)}
-              >
-                {watchlists.map((watchlist) => (
-                  <option key={watchlist.id} value={watchlist.id}>
-                    {watchlist.name} · {watchlist.items.length} symbols
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div>
-                <textarea
-                  value={symbolsText}
-                  onChange={(event) => setSymbolsText(event.target.value)}
-                  rows={3}
-                  placeholder="SPY, QQQ, IWM"
-                  style={{ ...inputStyle(theme, scale), resize: "vertical" }}
-                />
-                <div
-                  style={{
-                    marginTop: scale.sp(6),
-                    fontSize: scale.fs(9),
-                    color: theme.textDim,
-                    fontFamily: theme.mono,
-                  }}
-                >
-                  Parsed universe:{" "}
-                  {parsedSymbols.length > 0 ? parsedSymbols.join(", ") : "—"}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {selectedStrategy?.parameterDefinitions?.length ? (
-            <div style={{ marginTop: scale.sp(10) }}>
-              <div style={fieldLabelStyle(theme, scale)}>
-                Strategy Parameters
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: scale.sp(8),
-                }}
-              >
-                {selectedStrategy.parameterDefinitions.map((definition) => (
-                  <div key={definition.key}>
-                    <div
-                      style={{
-                        fontSize: scale.fs(9),
-                        color: theme.textDim,
-                        marginBottom: scale.sp(4),
-                      }}
-                    >
-                      {definition.label}
-                    </div>
-                    {definition.type === "boolean" ? (
-                      <select
-                        value={parameterValueToInput(
-                          definition,
-                          parameters[definition.key],
-                        )}
-                        onChange={(event) =>
-                          setParameters((current) => ({
-                            ...current,
-                            [definition.key]: coerceParameterInput(
-                              definition,
-                              event.target.value,
-                            ),
-                          }))
-                        }
-                        style={inputStyle(theme, scale)}
-                      >
-                        <option value="true">true</option>
-                        <option value="false">false</option>
-                      </select>
-                    ) : definition.options.length > 1 ? (
-                      <select
-                        value={parameterValueToInput(
-                          definition,
-                          parameters[definition.key],
-                        )}
-                        onChange={(event) =>
-                          setParameters((current) => ({
-                            ...current,
-                            [definition.key]: coerceParameterInput(
-                              definition,
-                              event.target.value,
-                            ),
-                          }))
-                        }
-                        style={inputStyle(theme, scale)}
-                      >
-                        {definition.options.map((value) => (
-                          <option
-                            key={`${definition.key}-${String(value)}`}
-                            value={String(value)}
-                          >
-                            {String(value)}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type={
-                          definition.type === "integer" ||
-                          definition.type === "number"
-                            ? "number"
-                            : "text"
-                        }
-                        step={
-                          definition.step ??
-                          (definition.type === "integer" ? 1 : "any")
-                        }
-                        min={definition.min ?? undefined}
-                        max={definition.max ?? undefined}
-                        value={parameterValueToInput(
-                          definition,
-                          parameters[definition.key],
-                        )}
-                        onChange={(event) =>
-                          setParameters((current) => ({
-                            ...current,
-                            [definition.key]: coerceParameterInput(
-                              definition,
-                              event.target.value,
-                            ),
-                          }))
-                        }
-                        style={inputStyle(theme, scale)}
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: scale.sp(8),
-              marginTop: scale.sp(10),
-            }}
-          >
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Initial Capital</div>
-              <input
-                type="number"
-                value={portfolioRules.initialCapital}
-                onChange={(event) =>
-                  setPortfolioRules((current) => ({
-                    ...current,
-                    initialCapital: Number(event.target.value),
-                  }))
-                }
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Position Size %</div>
-              <input
-                type="number"
-                value={portfolioRules.positionSizePercent}
-                onChange={(event) =>
-                  setPortfolioRules((current) => ({
-                    ...current,
-                    positionSizePercent: Number(event.target.value),
-                  }))
-                }
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Max Positions</div>
-              <input
-                type="number"
-                value={portfolioRules.maxConcurrentPositions}
-                onChange={(event) =>
-                  setPortfolioRules((current) => ({
-                    ...current,
-                    maxConcurrentPositions: Number(event.target.value),
-                  }))
-                }
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Gross Exposure %</div>
-              <input
-                type="number"
-                value={portfolioRules.maxGrossExposurePercent}
-                onChange={(event) =>
-                  setPortfolioRules((current) => ({
-                    ...current,
-                    maxGrossExposurePercent: Number(event.target.value),
-                  }))
-                }
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Commission Bps</div>
-              <input
-                type="number"
-                value={executionProfile.commissionBps}
-                onChange={(event) =>
-                  setExecutionProfile((current) => ({
-                    ...current,
-                    commissionBps: Number(event.target.value),
-                  }))
-                }
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-            <div>
-              <div style={fieldLabelStyle(theme, scale)}>Slippage Bps</div>
-              <input
-                type="number"
-                value={executionProfile.slippageBps}
-                onChange={(event) =>
-                  setExecutionProfile((current) => ({
-                    ...current,
-                    slippageBps: Number(event.target.value),
-                  }))
-                }
-                style={inputStyle(theme, scale)}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginTop: scale.sp(10) }}>
-            <div style={fieldLabelStyle(theme, scale)}>Optimizer Profile</div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: scale.sp(8),
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: scale.fs(9),
-                    color: theme.textDim,
-                    marginBottom: scale.sp(4),
-                  }}
-                >
-                  Mode
-                </div>
-                <select
-                  value={optimizerMode}
-                  onChange={(event) =>
-                    setOptimizerMode(
-                      event.target.value as BacktestOptimizerMode,
-                    )
-                  }
-                  style={inputStyle(theme, scale)}
-                >
-                  <option value="grid">grid</option>
-                  <option value="random">random</option>
-                  <option value="walk_forward">walk_forward</option>
-                </select>
-              </div>
-              <div>
-                <div
-                  style={{
-                    fontSize: scale.fs(9),
-                    color: theme.textDim,
-                    marginBottom: scale.sp(4),
-                  }}
-                >
-                  Random Budget
-                </div>
-                <input
-                  type="number"
-                  value={randomCandidateBudget}
-                  onChange={(event) =>
-                    setRandomCandidateBudget(Number(event.target.value))
-                  }
-                  style={inputStyle(theme, scale)}
-                />
-              </div>
-              <div>
-                <div
-                  style={{
-                    fontSize: scale.fs(9),
-                    color: theme.textDim,
-                    marginBottom: scale.sp(4),
-                  }}
-                >
-                  Training Months
-                </div>
-                <input
-                  type="number"
-                  value={walkForwardTrainingMonths}
-                  onChange={(event) =>
-                    setWalkForwardTrainingMonths(Number(event.target.value))
-                  }
-                  style={inputStyle(theme, scale)}
-                />
-              </div>
-              <div>
-                <div
-                  style={{
-                    fontSize: scale.fs(9),
-                    color: theme.textDim,
-                    marginBottom: scale.sp(4),
-                  }}
-                >
-                  Test Months
-                </div>
-                <input
-                  type="number"
-                  value={walkForwardTestMonths}
-                  onChange={(event) =>
-                    setWalkForwardTestMonths(Number(event.target.value))
-                  }
-                  style={inputStyle(theme, scale)}
-                />
-              </div>
-              <div>
-                <div
-                  style={{
-                    fontSize: scale.fs(9),
-                    color: theme.textDim,
-                    marginBottom: scale.sp(4),
-                  }}
-                >
-                  Step Months
-                </div>
-                <input
-                  type="number"
-                  value={walkForwardStepMonths}
-                  onChange={(event) =>
-                    setWalkForwardStepMonths(Number(event.target.value))
-                  }
-                  style={inputStyle(theme, scale)}
-                />
-              </div>
-            </div>
-          </div>
-
-          {selectedStrategy ? (
-            <div
-              style={{
-                marginTop: scale.sp(10),
-                padding: scale.sp("10px 12px"),
-                borderRadius: scale.dim(5),
-                background: theme.bg0,
-                border: `1px solid ${theme.border}`,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: scale.sp(8),
-                  marginBottom: scale.sp(6),
-                }}
-              >
-                <div style={{ fontSize: scale.fs(10), color: theme.textSec }}>
-                  {selectedStrategy.description}
-                </div>
-                <StatusBadge
-                  status={selectedStrategy.status}
-                  theme={theme}
-                  scale={scale}
-                />
-              </div>
-              {selectedStrategy.compatibilityNotes.length > 0 ? (
-                <div style={{ fontSize: scale.fs(9), color: theme.textDim }}>
-                  {selectedStrategy.compatibilityNotes.join(" · ")}
-                </div>
-              ) : null}
-              {selectedStrategy.unsupportedFeatures.length > 0 ? (
-                <div
-                  style={{
-                    marginTop: scale.sp(6),
-                    fontSize: scale.fs(9),
-                    color: theme.amber,
-                  }}
-                >
-                  Blockers: {selectedStrategy.unsupportedFeatures.join(", ")}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div
-            style={{
-              marginTop: scale.sp(12),
-              display: "flex",
-              justifyContent: "flex-end",
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => void handleCreateStudy()}
-              style={buttonStyle(theme, scale, "primary")}
-            >
-              Save Study
-            </button>
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          title="Saved Studies"
-          theme={theme}
-          scale={scale}
-          right={
-            <div
-              style={{
-                fontSize: scale.fs(9),
-                color: theme.textDim,
-                fontFamily: theme.mono,
-              }}
-            >
-              {studies.length} total
-            </div>
-          }
-        >
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: scale.sp(8),
-              maxHeight: scale.dim(580),
-              overflowY: "auto",
-            }}
-          >
-            {studies.length === 0 ? (
-              <div style={{ color: theme.textDim, fontSize: scale.fs(10) }}>
-                No studies yet. Save one from the builder to start queueing
-                runs.
-              </div>
-            ) : (
-              studies.map((study) => (
-                <button
-                  key={study.id}
-                  type="button"
-                  onClick={() => setSelectedStudyId(study.id)}
-                  style={{
-                    textAlign: "left",
-                    border: `1px solid ${study.id === selectedStudyId ? theme.accent : theme.border}`,
-                    background:
-                      study.id === selectedStudyId
-                        ? theme.accentDim
-                        : theme.bg0,
-                    borderRadius: scale.dim(5),
-                    padding: scale.sp("10px 12px"),
-                    cursor: "pointer",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: scale.sp(8),
-                      marginBottom: scale.sp(4),
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: scale.fs(11),
-                        fontWeight: 700,
-                        color: theme.text,
-                      }}
-                    >
-                      {study.name}
-                    </div>
-                    <StatusBadge
-                      status={study.optimizerMode}
-                      theme={theme}
-                      scale={scale}
-                    />
-                  </div>
-                  <div
-                    style={{
-                      fontSize: scale.fs(9),
-                      color: theme.textDim,
-                      fontFamily: theme.mono,
-                    }}
-                  >
-                    {study.strategyId}@{study.strategyVersion} ·{" "}
-                    {study.timeframe} · {study.symbols.length} symbols
-                  </div>
-                  <div
-                    style={{
-                      marginTop: scale.sp(6),
-                      fontSize: scale.fs(9),
-                      color: theme.textSec,
-                    }}
-                  >
-                    {study.symbols.slice(0, 4).join(", ")}
-                    {study.symbols.length > 4
-                      ? ` +${study.symbols.length - 4}`
-                      : ""}
-                  </div>
-                  <div
-                    style={{
-                      marginTop: scale.sp(6),
-                      fontSize: scale.fs(8),
-                      color: theme.textMuted,
-                    }}
-                  >
-                    Updated {formatDateTime(study.updatedAt)}
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </SectionCard>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-          gap: scale.sp(10),
-          alignItems: "start",
-        }}
-      >
-        <SectionCard
-          title="Study Deck"
-          theme={theme}
-          scale={scale}
-          right={
-            selectedStudy ? (
-              <StatusBadge
-                status={selectedStudyStrategy?.status ?? "unknown"}
-                theme={theme}
-                scale={scale}
-              />
-            ) : undefined
-          }
-        >
-          {!selectedStudy ? (
-            <div style={{ color: theme.textDim, fontSize: scale.fs(10) }}>
-              Pick a study to queue runs and review completed work.
-            </div>
-          ) : (
-            <>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                  gap: scale.sp(8),
-                }}
-              >
-                <MetricCard
-                  label="Runs"
-                  value={String(runs.length)}
-                  accent={theme.text}
-                  theme={theme}
-                  scale={scale}
-                />
-                <MetricCard
-                  label="Completed"
-                  value={String(completedRuns.length)}
-                  accent={theme.green}
-                  theme={theme}
-                  scale={scale}
-                />
-                <MetricCard
-                  label="Latest Return"
-                  value={formatPercent(
-                    previewChart?.latestCompletedRun?.metrics
-                      ?.totalReturnPercent ?? null,
-                  )}
-                  accent={theme.accent}
-                  theme={theme}
-                  scale={scale}
-                />
-                <MetricCard
-                  label="Best Sharpe"
-                  value={formatNumber(
-                    previewChart?.bestCompletedRun?.metrics?.sharpeRatio ??
-                      null,
-                  )}
-                  accent={theme.accent}
-                  theme={theme}
-                  scale={scale}
-                />
-              </div>
-
-              <div
-                style={{
-                  marginTop: scale.sp(10),
-                  ...cardStyle(theme, scale),
-                  background: theme.bg0,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: scale.sp(8),
-                    marginBottom: scale.sp(8),
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontSize: scale.fs(10),
-                        fontWeight: 700,
-                        color: theme.textSec,
-                      }}
-                    >
-                      Latest vs Best Equity
-                    </div>
-                    <div
-                      style={{
-                        fontSize: scale.fs(9),
-                        color: theme.textDim,
-                        fontFamily: theme.mono,
-                        marginTop: scale.sp(3),
-                      }}
-                    >
-                      {previewChart?.latestCompletedRun
-                        ? `Latest ${previewChart.latestCompletedRun.name}`
-                        : "No completed runs yet"}
-                      {previewChart?.bestCompletedRun
-                        ? ` · Best ${previewChart.bestCompletedRun.name}`
-                        : ""}
-                    </div>
-                  </div>
-                  {studyPreviewQuery.isFetching ? (
-                    <div
-                      style={{
-                        fontSize: scale.fs(9),
-                        color: theme.textDim,
-                        fontFamily: theme.mono,
-                      }}
-                    >
-                      refreshing…
-                    </div>
-                  ) : null}
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: scale.sp(6),
-                    marginBottom: scale.sp(8),
-                  }}
-                >
-                  {(previewChart?.comparisonBadges ?? []).map((badge) => (
-                    <div
-                      key={badge.id}
-                      style={{
-                        padding: scale.sp("6px 9px"),
-                        borderRadius: scale.dim(5),
-                        border: `1px solid ${theme.border}`,
-                        background: theme.bg2,
-                        minWidth: scale.dim(112),
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: scale.fs(8),
-                          color: theme.textMuted,
-                          textTransform: "uppercase",
-                          letterSpacing: "0.06em",
-                        }}
-                      >
-                        {badge.label}
-                      </div>
-                      <div
-                        style={{
-                          marginTop: scale.sp(4),
-                          fontSize: scale.fs(10),
-                          fontWeight: 700,
-                          color: comparisonBadgeAccent(badge, theme),
-                          fontFamily: theme.mono,
-                        }}
-                      >
-                        L {formatComparisonBadgeValue(badge, badge.latestValue)}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: scale.fs(9),
-                          color: theme.textDim,
-                          fontFamily: theme.mono,
-                        }}
-                      >
-                        B {formatComparisonBadgeValue(badge, badge.bestValue)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{ height: scale.dim(250) }}>
-                  {mergedPreviewSeries.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={mergedPreviewSeries.map((point) => ({
-                          occurredAt: formatDateTime(point.occurredAt),
-                          latestEquity: point.latestEquity,
-                          bestEquity: point.bestEquity,
-                        }))}
-                        margin={{ top: 8, right: 10, left: 0, bottom: 0 }}
-                      >
-                        <CartesianGrid
-                          stroke={theme.border}
-                          strokeDasharray="3 3"
-                        />
-                        <XAxis
-                          dataKey="occurredAt"
-                          tick={{
-                            fill: theme.textMuted,
-                            fontSize: scale.fs(8),
-                          }}
-                          minTickGap={24}
-                        />
-                        <YAxis
-                          tick={{
-                            fill: theme.textMuted,
-                            fontSize: scale.fs(8),
-                          }}
-                          tickFormatter={(value: number) =>
-                            `$${compactFormatter.format(value)}`
-                          }
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: theme.bg4,
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(6),
-                            color: theme.text,
-                            fontFamily: theme.mono,
-                          }}
-                          formatter={(value, name: string) => [
-                            formatCurrency(
-                              typeof value === "number" ? value : Number(value),
-                            ),
-                            name === "latestEquity" ? "Latest" : "Best",
-                          ]}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="latestEquity"
-                          stroke={theme.accent}
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
-                        />
-                        {previewChart?.bestCompletedRun?.id !==
-                        previewChart?.latestCompletedRun?.id ? (
-                          <Line
-                            type="monotone"
-                            dataKey="bestEquity"
-                            stroke={theme.green}
-                            strokeWidth={2}
-                            dot={false}
-                            connectNulls
-                          />
-                        ) : null}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div
-                      style={{ color: theme.textDim, fontSize: scale.fs(10) }}
-                    >
-                      Complete a run to populate the latest-versus-best equity
-                      comparison.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  marginTop: scale.sp(10),
-                  padding: scale.sp("10px 12px"),
-                  borderRadius: scale.dim(5),
-                  border: `1px solid ${theme.border}`,
-                  background: theme.bg0,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: scale.fs(9),
-                    color: theme.textMuted,
-                    marginBottom: scale.sp(6),
-                  }}
-                >
-                  Sweep Preview
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: scale.sp(6),
-                    marginBottom: scale.sp(6),
-                  }}
-                >
-                  {derivedSweepDimensions.length > 0 ? (
-                    derivedSweepDimensions.map((dimension) => (
-                      <span
-                        key={dimension.key}
-                        style={{
-                          padding: scale.sp("4px 8px"),
-                          borderRadius: scale.dim(999),
-                          background: theme.bg2,
-                          border: `1px solid ${theme.border}`,
-                          fontSize: scale.fs(9),
-                          color: theme.textSec,
-                          fontFamily: theme.mono,
-                        }}
-                      >
-                        {dimension.key}: {dimension.values.join(", ")}
-                      </span>
-                    ))
-                  ) : (
-                    <span
-                      style={{ fontSize: scale.fs(9), color: theme.textDim }}
-                    >
-                      No derived sweep dimensions for this study.
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: scale.fs(9), color: theme.textDim }}>
-                  {selectedStudy.optimizerMode} · window{" "}
-                  {formatDateTime(selectedStudy.startsAt)} to{" "}
-                  {formatDateTime(selectedStudy.endsAt)}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  marginTop: scale.sp(10),
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 1fr) auto auto",
-                  gap: scale.sp(8),
-                  alignItems: "end",
-                }}
-              >
-                <div>
-                  <div style={fieldLabelStyle(theme, scale)}>Run Name</div>
-                  <input
-                    value={runNameDraft}
-                    onChange={(event) => setRunNameDraft(event.target.value)}
-                    style={inputStyle(theme, scale)}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleQueueRun()}
-                  disabled={selectedStudyStrategy?.status !== "runnable"}
-                  style={{
-                    ...buttonStyle(theme, scale, "primary"),
-                    opacity:
-                      selectedStudyStrategy?.status !== "runnable" ? 0.5 : 1,
-                  }}
-                >
-                  Queue Run
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleQueueSweep()}
-                  disabled={selectedStudyStrategy?.status !== "runnable"}
-                  style={{
-                    ...buttonStyle(theme, scale, "secondary"),
-                    opacity:
-                      selectedStudyStrategy?.status !== "runnable" ? 0.5 : 1,
-                  }}
-                >
-                  Queue Sweep
-                </button>
-              </div>
-
-              <div style={{ marginTop: scale.sp(12) }}>
-                <div
-                  style={{
-                    fontSize: scale.fs(10),
-                    fontWeight: 700,
-                    color: theme.textSec,
-                    marginBottom: scale.sp(6),
-                  }}
-                >
-                  Recent Runs
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: scale.sp(6),
-                    maxHeight: scale.dim(260),
-                    overflowY: "auto",
-                  }}
-                >
-                  {runs.length === 0 ? (
-                    <div
-                      style={{ color: theme.textDim, fontSize: scale.fs(10) }}
-                    >
-                      No runs have been queued for this study yet.
-                    </div>
-                  ) : (
-                    runs.map((run) => (
-                      <button
-                        key={run.id}
-                        type="button"
-                        onClick={() => setSelectedRunId(run.id)}
-                        style={{
-                          textAlign: "left",
-                          background:
-                            run.id === selectedRunId
-                              ? theme.accentDim
-                              : theme.bg0,
-                          border: `1px solid ${run.id === selectedRunId ? theme.accent : theme.border}`,
-                          borderRadius: scale.dim(5),
-                          padding: scale.sp("10px 12px"),
-                          cursor: "pointer",
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: scale.sp(8),
-                          }}
-                        >
-                          <div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(10),
-                                fontWeight: 700,
-                                color: theme.text,
-                              }}
-                            >
-                              {run.name}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(9),
-                                color: theme.textDim,
-                                fontFamily: theme.mono,
-                              }}
-                            >
-                              {formatDateTime(run.startedAt ?? run.createdAt)}
-                            </div>
-                          </div>
-                          <StatusBadge
-                            status={run.status}
-                            theme={theme}
-                            scale={scale}
-                          />
-                        </div>
-                        {run.metrics ? (
-                          <div
-                            style={{
-                              marginTop: scale.sp(8),
-                              display: "grid",
-                              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                              gap: scale.sp(6),
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: scale.fs(9),
-                                color: theme.textSec,
-                              }}
-                            >
-                              Return{" "}
-                              {formatPercent(run.metrics.totalReturnPercent)}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(9),
-                                color: theme.textSec,
-                              }}
-                            >
-                              Sharpe {formatNumber(run.metrics.sharpeRatio)}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(9),
-                                color: theme.textSec,
-                              }}
-                            >
-                              Max DD{" "}
-                              {formatPercent(run.metrics.maxDrawdownPercent)}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(9),
-                                color: theme.textSec,
-                              }}
-                            >
-                              Trades {run.metrics.tradeCount}
-                            </div>
-                          </div>
-                        ) : null}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          title="Jobs & Draft Queue"
-          theme={theme}
-          scale={scale}
-          right={
-            <div
-              style={{
-                fontSize: scale.fs(9),
-                color: theme.textDim,
-                fontFamily: theme.mono,
-              }}
-            >
-              {activeJobs.length} active
-            </div>
-          }
-        >
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: scale.sp(8),
-              marginBottom: scale.sp(12),
-            }}
-          >
-            {jobs.length === 0 ? (
-              <div style={{ color: theme.textDim, fontSize: scale.fs(10) }}>
-                No worker activity yet.
-              </div>
-            ) : (
-              jobs.slice(0, 8).map((job: BacktestJobSummary) => (
-                <div
-                  key={job.id}
-                  style={{
-                    background: theme.bg0,
-                    border: `1px solid ${theme.border}`,
-                    borderRadius: scale.dim(5),
-                    padding: scale.sp("10px 12px"),
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: scale.sp(8),
-                      marginBottom: scale.sp(6),
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          fontSize: scale.fs(10),
-                          fontWeight: 700,
-                          color: theme.text,
-                        }}
-                      >
-                        {job.kind}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: scale.fs(9),
-                          color: theme.textDim,
-                          fontFamily: theme.mono,
-                        }}
-                      >
-                        {formatDateTime(job.startedAt ?? job.createdAt)}
-                      </div>
-                    </div>
-                    <StatusBadge
-                      status={job.status}
-                      theme={theme}
-                      scale={scale}
-                    />
-                  </div>
-                  <div
-                    style={{
-                      fontSize: scale.fs(9),
-                      color: theme.textSec,
-                      marginBottom: scale.sp(6),
-                    }}
-                  >
-                    Progress {job.progressPercent}% · attempts{" "}
-                    {job.attemptCount}
-                  </div>
-                  <div
-                    style={{
-                      height: scale.dim(6),
-                      borderRadius: scale.dim(999),
-                      background: theme.bg3,
-                      overflow: "hidden",
-                      marginBottom: scale.sp(6),
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${Math.max(2, job.progressPercent)}%`,
-                        height: "100%",
-                        background: getStatusColor(job.status, theme),
-                      }}
-                    />
-                  </div>
-                  {job.errorMessage ? (
-                    <div
-                      style={{
-                        fontSize: scale.fs(9),
-                        color: theme.red,
-                        marginBottom: scale.sp(6),
-                      }}
-                    >
-                      {job.errorMessage}
-                    </div>
-                  ) : null}
-                  {[
-                    "queued",
-                    "preparing_data",
-                    "running",
-                    "aggregating",
-                    "cancel_requested",
-                  ].includes(job.status) ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleCancelJob(job.id)}
-                      style={buttonStyle(theme, scale, "danger")}
-                    >
-                      Request Cancel
-                    </button>
-                  ) : null}
-                </div>
-              ))
-            )}
-          </div>
-
-          <div
-            style={{
-              fontSize: scale.fs(10),
-              fontWeight: 700,
-              color: theme.textSec,
-              marginBottom: scale.sp(8),
-            }}
-          >
-            Promoted Drafts
-          </div>
-          <DraftStrategiesList
-            drafts={(draftsQuery.data?.drafts ?? []).slice(0, 3)}
-            theme={theme}
-            scale={scale}
-            compact
-          />
-        </SectionCard>
-      </div>
-
-      <SectionCard
-        title="Run Detail"
-        theme={theme}
-        scale={scale}
-        right={
-          runDetail ? (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: scale.sp(8),
-              }}
-            >
-              <StatusBadge
-                status={runDetail.run.status}
-                theme={theme}
-                scale={scale}
-              />
-              {runDetail.run.status === "completed" ? (
-                <button
-                  type="button"
-                  onClick={() => void handlePromoteRun()}
-                  style={buttonStyle(theme, scale, "primary")}
-                >
-                  Promote to Algo Draft
-                </button>
-              ) : null}
-            </div>
-          ) : undefined
-        }
-      >
-        {!runDetail ? (
-          <div style={{ color: theme.textDim, fontSize: scale.fs(10) }}>
-            Select a run to inspect equity, trades, cached datasets, and
-            promotion state.
-          </div>
-        ) : (
-          <>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                gap: scale.sp(8),
-              }}
-            >
-              <MetricCard
-                label="Net P&L"
-                value={formatCurrency(headlineMetrics?.netPnl ?? null)}
-                accent={theme.green}
-                theme={theme}
-                scale={scale}
-              />
-              <MetricCard
-                label="Return"
-                value={formatPercent(
-                  headlineMetrics?.totalReturnPercent ?? null,
-                )}
-                accent={theme.green}
-                theme={theme}
-                scale={scale}
-              />
-              <MetricCard
-                label="Sharpe"
-                value={formatNumber(headlineMetrics?.sharpeRatio ?? null)}
-                accent={theme.accent}
-                theme={theme}
-                scale={scale}
-              />
-              <MetricCard
-                label="Max DD"
-                value={formatPercent(
-                  headlineMetrics?.maxDrawdownPercent ?? null,
-                )}
-                accent={theme.red}
-                theme={theme}
-                scale={scale}
-              />
-              <MetricCard
-                label="Win Rate"
-                value={formatPercent(headlineMetrics?.winRatePercent ?? null)}
-                accent={theme.text}
-                theme={theme}
-                scale={scale}
-              />
-              <MetricCard
-                label="Trades"
-                value={String(headlineMetrics?.tradeCount ?? "—")}
-                accent={theme.text}
-                theme={theme}
-                scale={scale}
-              />
-            </div>
-
-            <div
-              style={{
-                marginTop: scale.sp(12),
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 2.3fr) minmax(320px, 1fr)",
-                gap: scale.sp(10),
-                alignItems: "start",
-              }}
-            >
-              <div
-                style={{ ...cardStyle(theme, scale), background: theme.bg0 }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: scale.sp(8),
-                    marginBottom: scale.sp(8),
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontSize: scale.fs(10),
-                        fontWeight: 700,
-                        color: theme.textSec,
-                      }}
-                    >
-                      Run Chart
-                    </div>
-                    <div
-                      style={{
-                        fontSize: scale.fs(9),
-                        color: theme.textDim,
-                        fontFamily: theme.mono,
-                        marginTop: scale.sp(3),
-                      }}
-                    >
-                      Shared research-chart surface with grouped fills and
-                      selected-trade focus.
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: scale.sp(8),
-                    }}
-                  >
-                    <div style={{ minWidth: scale.dim(180) }}>
-                      <div style={fieldLabelStyle(theme, scale)}>Symbol</div>
-                      <select
-                        value={
-                          selectedRunChartSymbol ||
-                          runChart?.selectedSymbol ||
-                          ""
-                        }
-                        onChange={(event) =>
-                          handleRunChartSymbolChange(event.target.value)
-                        }
-                        style={inputStyle(theme, scale)}
-                      >
-                        {(
-                          runChart?.availableSymbols ?? runDetail.study.symbols
-                        ).map((symbol) => (
-                          <option key={symbol} value={symbol}>
-                            {symbol}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    {runChartQuery.isFetching ? (
-                      <div
-                        style={{
-                          fontSize: scale.fs(9),
-                          color: theme.textDim,
-                          fontFamily: theme.mono,
-                        }}
-                      >
-                        syncing chart…
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div style={{ height: scale.dim(430) }}>
-                  {runChartModel ? (
-                    <ResearchChartFrame
-                      theme={theme}
-                      themeKey="backtest-research-chart"
-                      model={runChartModel}
-                      showSurfaceToolbar
-                      showLegend
-                      style={{ height: "100%" }}
-                      onTradeMarkerSelection={handleTradeMarkerSelection}
-                      surfaceBottomOverlay={
-                        pendingTradeOptions.length > 0 ? (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: scale.sp(8),
-                              padding: scale.sp("8px 10px"),
-                              background: `${theme.bg2}e6`,
-                              borderTop: `1px solid ${theme.border}`,
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: scale.fs(9),
-                                color: theme.textMuted,
-                                textTransform: "uppercase",
-                                letterSpacing: "0.06em",
-                              }}
-                            >
-                              Overlapping Trades
-                            </span>
-                            {pendingTradeOptions.map((trade) => (
-                              <button
-                                key={trade.tradeSelectionId}
-                                type="button"
-                                onClick={() =>
-                                  handleTradeSelection(trade.tradeSelectionId)
-                                }
-                                style={buttonStyle(theme, scale, "secondary")}
-                              >
-                                {trade.symbol} · {formatDateTime(trade.entryTs)}{" "}
-                                · {formatPercent(trade.pnlPercent ?? null)}
-                              </button>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={() => setPendingTradeSelectionIds([])}
-                              style={buttonStyle(theme, scale, "ghost")}
-                            >
-                              Dismiss
-                            </button>
-                          </div>
-                        ) : activeTradeOverlay ? (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: scale.sp(8),
-                              padding: scale.sp("8px 10px"),
-                              background: `${theme.bg2}e6`,
-                              borderTop: `1px solid ${theme.border}`,
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: scale.sp(10),
-                                flexWrap: "wrap",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  fontSize: scale.fs(9),
-                                  color: theme.textMuted,
-                                  textTransform: "uppercase",
-                                  letterSpacing: "0.06em",
-                                }}
-                              >
-                                Focused Trade
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: scale.fs(10),
-                                  fontWeight: 700,
-                                  color: theme.text,
-                                }}
-                              >
-                                {activeTradeOverlay.symbol} ·{" "}
-                                {activeTradeOverlay.dir}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: scale.fs(9),
-                                  color: theme.textDim,
-                                  fontFamily: theme.mono,
-                                }}
-                              >
-                                {formatDateTime(activeTradeOverlay.entryTs)} →{" "}
-                                {formatDateTime(
-                                  activeTradeOverlay.exitTs ?? null,
-                                )}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: scale.fs(10),
-                                  fontWeight: 700,
-                                  color: tradeOverlayAccent(
-                                    activeTradeOverlay,
-                                    theme,
-                                  ),
-                                  fontFamily: theme.mono,
-                                }}
-                              >
-                                {formatCurrency(activeTradeOverlay.pnl ?? null)}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: scale.fs(9),
-                                  color: theme.textSec,
-                                }}
-                              >
-                                Entry{" "}
-                                {formatNumber(
-                                  activeTradeOverlay.entryPrice ?? null,
-                                )}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: scale.fs(9),
-                                  color: theme.textSec,
-                                }}
-                              >
-                                Exit{" "}
-                                {formatNumber(
-                                  activeTradeOverlay.exitPrice ?? null,
-                                )}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: scale.fs(9),
-                                  color: theme.textSec,
-                                }}
-                              >
-                                Qty {formatNumber(activeTradeOverlay.qty, 0)}
-                              </span>
-                              {activeTradeOverlay.thresholdPath?.segments
-                                ?.length ? (
-                                <span
-                                  style={{
-                                    fontSize: scale.fs(9),
-                                    color: theme.amber,
-                                  }}
-                                >
-                                  {activeTradeOverlay.thresholdPath.segments
-                                    .map(
-                                      (segment: TradeThresholdSegment) =>
-                                        segment.label ?? segment.kind,
-                                    )
-                                    .join(" · ")}
-                                </span>
-                              ) : null}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedTradeSelectionId(null)}
-                              style={buttonStyle(theme, scale, "ghost")}
-                            >
-                              Reset Focus
-                            </button>
-                          </div>
-                        ) : null
-                      }
-                      surfaceBottomOverlayHeight={
-                        pendingTradeOptions.length > 0 || activeTradeOverlay
-                          ? scale.dim(64)
-                          : 0
-                      }
-                    />
-                  ) : (
-                    <div
-                      style={{ color: theme.textDim, fontSize: scale.fs(10) }}
-                    >
-                      Loading run chart from pinned study data.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gap: scale.sp(10) }}>
-                <div
-                  style={{ ...cardStyle(theme, scale), background: theme.bg0 }}
-                >
-                  <div
-                    style={{
-                      fontSize: scale.fs(10),
-                      fontWeight: 700,
-                      color: theme.textSec,
-                      marginBottom: scale.sp(8),
-                    }}
-                  >
-                    Equity Curve
-                  </div>
-                  <div style={{ height: scale.dim(220) }}>
-                    {runDetail.points.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart
-                          data={runDetail.points.map((point) => ({
-                            occurredAt: formatDateTime(point.occurredAt),
-                            equity: point.equity,
-                            drawdownPercent: point.drawdownPercent,
-                          }))}
-                          margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                        >
-                          <CartesianGrid
-                            stroke={theme.border}
-                            strokeDasharray="3 3"
-                          />
-                          <XAxis
-                            dataKey="occurredAt"
-                            tick={{
-                              fill: theme.textMuted,
-                              fontSize: scale.fs(8),
-                            }}
-                            minTickGap={24}
-                          />
-                          <YAxis
-                            tick={{
-                              fill: theme.textMuted,
-                              fontSize: scale.fs(8),
-                            }}
-                            tickFormatter={(value: number) =>
-                              `$${compactFormatter.format(value)}`
-                            }
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: theme.bg4,
-                              border: `1px solid ${theme.border}`,
-                              borderRadius: scale.dim(6),
-                              color: theme.text,
-                              fontFamily: theme.mono,
-                            }}
-                            formatter={(value: number, name: string) => {
-                              if (name === "equity") {
-                                return [formatCurrency(value), "Equity"];
-                              }
-                              return [formatPercent(value), "Drawdown"];
-                            }}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey="equity"
-                            stroke={theme.green}
-                            fill={theme.greenBg}
-                            strokeWidth={2}
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div
-                        style={{ color: theme.textDim, fontSize: scale.fs(10) }}
-                      >
-                        Equity points will appear after the run reaches
-                        completion.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div
-                  style={{ ...cardStyle(theme, scale), background: theme.bg0 }}
-                >
-                  <div
-                    style={{
-                      fontSize: scale.fs(10),
-                      fontWeight: 700,
-                      color: theme.textSec,
-                      marginBottom: scale.sp(8),
-                    }}
-                  >
-                    Promotion Draft
-                  </div>
-                  <div style={{ display: "grid", gap: scale.sp(8) }}>
-                    <div>
-                      <div style={fieldLabelStyle(theme, scale)}>
-                        Draft Name
-                      </div>
-                      <input
-                        value={promotionName}
-                        onChange={(event) =>
-                          setPromotionName(event.target.value)
-                        }
-                        style={inputStyle(theme, scale)}
-                      />
-                    </div>
-                    <div>
-                      <div style={fieldLabelStyle(theme, scale)}>Notes</div>
-                      <textarea
-                        value={promotionNotes}
-                        onChange={(event) =>
-                          setPromotionNotes(event.target.value)
-                        }
-                        rows={4}
-                        style={{
-                          ...inputStyle(theme, scale),
-                          resize: "vertical",
-                        }}
-                      />
-                    </div>
-                    <div
-                      style={{ fontSize: scale.fs(9), color: theme.textDim }}
-                    >
-                      Promote after the run is complete to stamp the algo draft
-                      with parameters, execution costs, and stored metrics.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              style={{
-                marginTop: scale.sp(12),
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-                gap: scale.sp(10),
-                alignItems: "start",
-              }}
-            >
-              <div
-                style={{ ...cardStyle(theme, scale), background: theme.bg0 }}
-              >
-                <div
-                  style={{
-                    fontSize: scale.fs(10),
-                    fontWeight: 700,
-                    color: theme.textSec,
-                    marginBottom: scale.sp(8),
-                  }}
-                >
-                  Recent Trades
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: scale.sp(6),
-                    maxHeight: scale.dim(420),
-                    overflowY: "auto",
-                  }}
-                >
-                  {runDetail.trades.length === 0 ? (
-                    <div
-                      style={{ color: theme.textDim, fontSize: scale.fs(10) }}
-                    >
-                      No fills recorded for this run yet.
-                    </div>
-                  ) : (
-                    runDetail.trades.map((trade) => {
-                      const tradeSelectionId = buildRunTradeSelectionId(
-                        runDetail.run.id,
-                        trade,
-                      );
-                      const isActiveTrade =
-                        tradeSelectionId === runChart?.activeTradeSelectionId;
-
-                      return (
-                        <button
-                          key={`${trade.symbol}-${trade.entryAt}-${trade.exitAt}`}
-                          type="button"
-                          onClick={() =>
-                            handleTradeSelection(tradeSelectionId, trade.symbol)
-                          }
-                          style={{
-                            textAlign: "left",
-                            border: `1px solid ${isActiveTrade ? theme.accent : theme.border}`,
-                            background: isActiveTrade
-                              ? theme.accentDim
-                              : "transparent",
-                            borderRadius: scale.dim(5),
-                            padding: scale.sp("8px 10px"),
-                            cursor: "pointer",
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              gap: scale.sp(8),
-                            }}
-                          >
-                            <div>
-                              <div
-                                style={{
-                                  fontSize: scale.fs(10),
-                                  fontWeight: 700,
-                                  color: theme.text,
-                                }}
-                              >
-                                {trade.symbol} · {trade.side}
-                              </div>
-                              <div
-                                style={{
-                                  fontSize: scale.fs(8),
-                                  color: theme.textDim,
-                                  fontFamily: theme.mono,
-                                }}
-                              >
-                                {formatDateTime(trade.entryAt)} →{" "}
-                                {formatDateTime(trade.exitAt)}
-                              </div>
-                            </div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(10),
-                                fontWeight: 700,
-                                color:
-                                  trade.netPnl >= 0 ? theme.green : theme.red,
-                                fontFamily: theme.mono,
-                              }}
-                            >
-                              {formatCurrency(trade.netPnl)}
-                            </div>
-                          </div>
-                          <div
-                            style={{
-                              marginTop: scale.sp(6),
-                              display: "grid",
-                              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                              gap: scale.sp(6),
-                              fontSize: scale.fs(8),
-                              color: theme.textSec,
-                            }}
-                          >
-                            <div>
-                              Qty {numberFormatter.format(trade.quantity)}
-                            </div>
-                            <div>Bars {trade.barsHeld}</div>
-                            <div>Exit {trade.exitReason}</div>
-                            <div>P&L {formatPercent(trade.netPnlPercent)}</div>
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              <div
-                style={{ ...cardStyle(theme, scale), background: theme.bg0 }}
-              >
-                <div
-                  style={{
-                    fontSize: scale.fs(10),
-                    fontWeight: 700,
-                    color: theme.textSec,
-                    marginBottom: scale.sp(8),
-                  }}
-                >
-                  Cached Datasets
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: scale.sp(6),
-                    maxHeight: scale.dim(320),
-                    overflowY: "auto",
-                  }}
-                >
-                  {runDetail.datasets.length === 0 ? (
-                    <div
-                      style={{ color: theme.textDim, fontSize: scale.fs(10) }}
-                    >
-                      No dataset references recorded yet.
-                    </div>
-                  ) : (
-                    runDetail.datasets.map((dataset) => (
-                      <div
-                        key={dataset.datasetId}
-                        style={{
-                          border: `1px solid ${theme.border}`,
-                          borderRadius: scale.dim(5),
-                          padding: scale.sp("8px 10px"),
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: scale.sp(8),
-                          }}
-                        >
-                          <div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(10),
-                                fontWeight: 700,
-                                color: theme.text,
-                              }}
-                            >
-                              {dataset.symbol} · {dataset.timeframe}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: scale.fs(8),
-                                color: theme.textDim,
-                                fontFamily: theme.mono,
-                              }}
-                            >
-                              {dataset.source} ·{" "}
-                              {compactFormatter.format(dataset.barCount)} bars
-                            </div>
-                          </div>
-                          <div
-                            style={{
-                              fontSize: scale.fs(9),
-                              color: dataset.isSeeded
-                                ? theme.cyan
-                                : theme.textDim,
-                            }}
-                          >
-                            {dataset.isSeeded ? "seeded" : "cached"}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            marginTop: scale.sp(6),
-                            fontSize: scale.fs(8),
-                            color: theme.textSec,
-                          }}
-                        >
-                          {formatDateTime(dataset.startsAt)} →{" "}
-                          {formatDateTime(dataset.endsAt)} · pinned{" "}
-                          {dataset.pinnedCount}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </SectionCard>
-    </div>
-  );
-}
 
 export function BacktestWorkspace({
   theme,
@@ -4128,6 +1333,15 @@ export function BacktestWorkspace({
   defaultWatchlistId,
   isVisible = false,
 }: BacktestWorkspaceProps) {
+  const { preferences: userPreferences } = useUserPreferences();
+  const formatBacktestDateTime = useCallback(
+    (value: string | null | undefined) => formatDateTime(value, userPreferences),
+    [userPreferences],
+  );
+  const formatBacktestHour = useCallback(
+    (value: string | null | undefined) => formatHour(value, userPreferences),
+    [userPreferences],
+  );
   useRuntimeWorkloadFlag("backtest:workspace", isVisible, {
     kind: "poll",
     label: "Backtest workspace",
@@ -4780,7 +1994,7 @@ export function BacktestWorkspace({
     >();
 
     tradeRows.forEach((trade) => {
-      const hour = hourFormatter.format(new Date(trade.entryAt));
+      const hour = formatBacktestHour(trade.entryAt);
       const current = rows.get(hour) ?? { hour, netPnl: 0, count: 0 };
       current.netPnl += trade.netPnl;
       current.count += 1;
@@ -4792,7 +2006,7 @@ export function BacktestWorkspace({
       const rightHour = Number.parseInt(right.hour, 10);
       return leftHour - rightHour;
     });
-  }, [tradeRows]);
+  }, [formatBacktestHour, tradeRows]);
   const holdProfile = useMemo(() => {
     const buckets = [
       { label: "1-2", min: 1, max: 2, count: 0 },
@@ -4937,6 +2151,19 @@ export function BacktestWorkspace({
   ];
   const headlineMetrics =
     runDetail?.run.metrics ?? completedRuns[0]?.metrics ?? null;
+  const advancedMetrics = asAdvancedMetrics(headlineMetrics?.advanced);
+  const validationMetrics = asValidationMetrics(headlineMetrics?.validation);
+  const dataQualityMetrics = asDataQualityMetrics(headlineMetrics?.dataQuality);
+  const benchmarkMetrics = asBenchmarkMetrics(headlineMetrics?.benchmarks);
+  const runWarnings = asStringArray(runDetail?.run.warnings);
+  const validationWarnings = asStringArray(validationMetrics?.warnings);
+  const trustWarnings = useMemo(
+    () =>
+      [...runWarnings, ...validationWarnings].filter(
+        (warning, index, allWarnings) => allWarnings.indexOf(warning) === index,
+      ),
+    [runWarnings, validationWarnings],
+  );
 
   useEffect(() => {
     if (hasAutoEnabledRayAlgoOverlay) {
@@ -6179,6 +3406,7 @@ export function BacktestWorkspace({
                   <ResearchChartFrame
                     theme={theme}
                     themeKey="backtest-workspace-spot"
+                    rangeIdentityKey={`backtest-spot:${selectedRunId}:${selectedChartSymbol}:${selectedChartTimeframe}`}
                     model={spotChartModel}
                     showSurfaceToolbar
                     showLegend
@@ -6216,7 +3444,7 @@ export function BacktestWorkspace({
                               }
                               style={buttonStyle(theme, scale, "secondary")}
                             >
-                              {trade.symbol} · {formatDateTime(trade.entryTs)} ·{" "}
+                              {trade.symbol} · {formatBacktestDateTime(trade.entryTs)} ·{" "}
                               {formatPercent(trade.pnlPercent ?? null)}
                             </button>
                           ))}
@@ -6318,6 +3546,7 @@ export function BacktestWorkspace({
                   <ResearchChartFrame
                     theme={theme}
                     themeKey="backtest-workspace-options"
+                    rangeIdentityKey={`backtest-options:${selectedRunId}:${selectedChartSymbol}:${selectedChartTimeframe}`}
                     model={runChartModel}
                     showSurfaceToolbar
                     showLegend
@@ -6452,6 +3681,200 @@ export function BacktestWorkspace({
             <div
               style={{
                 display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gap: scale.sp(8),
+              }}
+            >
+              <div style={{ ...cardStyle(theme, scale), background: theme.bg0 }}>
+                <div
+                  style={{
+                    fontSize: scale.fs(10),
+                    fontWeight: 700,
+                    color: theme.textSec,
+                    marginBottom: scale.sp(8),
+                  }}
+                >
+                  Trust Report
+                </div>
+                <div style={{ display: "grid", gap: scale.sp(6) }}>
+                  {[
+                    [
+                      "Source policy",
+                      dataQualityMetrics?.sourcePolicy?.replaceAll("_", " ") ??
+                        "—",
+                    ],
+                    [
+                      "Primary source",
+                      dataQualityMetrics?.primarySource ?? "—",
+                    ],
+                    [
+                      "Coverage",
+                      formatPercent(dataQualityMetrics?.coveragePercent, 1),
+                    ],
+                    [
+                      "Recent cutoff",
+                      typeof dataQualityMetrics?.ibkrRecentCutoffMinutes === "number"
+                        ? `${dataQualityMetrics.ibkrRecentCutoffMinutes} min`
+                        : "—",
+                    ],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: scale.sp(8),
+                        fontSize: scale.fs(9),
+                      }}
+                    >
+                      <span style={{ color: theme.textMuted }}>{label}</span>
+                      <span
+                        style={{
+                          color: theme.textSec,
+                          fontFamily: theme.mono,
+                          textAlign: "right",
+                        }}
+                      >
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ ...cardStyle(theme, scale), background: theme.bg0 }}>
+                <div
+                  style={{
+                    fontSize: scale.fs(10),
+                    fontWeight: 700,
+                    color: theme.textSec,
+                    marginBottom: scale.sp(8),
+                  }}
+                >
+                  Validation
+                </div>
+                <div style={{ display: "grid", gap: scale.sp(6) }}>
+                  {[
+                    [
+                      "Trials",
+                      formatNumber(validationMetrics?.trialCount),
+                    ],
+                    [
+                      "OOS windows",
+                      formatNumber(validationMetrics?.oosWindowCount),
+                    ],
+                    [
+                      "Deflated Sharpe",
+                      formatNumber(advancedMetrics?.deflatedSharpeRatio),
+                    ],
+                    [
+                      "PSR",
+                      typeof advancedMetrics?.probabilisticSharpeRatio === "number"
+                        ? formatPercent(
+                            advancedMetrics.probabilisticSharpeRatio * 100,
+                          )
+                        : "—",
+                    ],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: scale.sp(8),
+                        fontSize: scale.fs(9),
+                      }}
+                    >
+                      <span style={{ color: theme.textMuted }}>{label}</span>
+                      <span style={{ color: theme.textSec, fontFamily: theme.mono }}>
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ ...cardStyle(theme, scale), background: theme.bg0 }}>
+                <div
+                  style={{
+                    fontSize: scale.fs(10),
+                    fontWeight: 700,
+                    color: theme.textSec,
+                    marginBottom: scale.sp(8),
+                  }}
+                >
+                  Benchmarks
+                </div>
+                <div style={{ display: "grid", gap: scale.sp(6) }}>
+                  {benchmarkMetrics.length === 0 ? (
+                    <div style={{ color: theme.textDim, fontSize: scale.fs(9) }}>
+                      Benchmark data is not available for this run.
+                    </div>
+                  ) : (
+                    benchmarkMetrics.map((benchmark) => (
+                      <div
+                        key={benchmark.symbol}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "0.5fr 1fr 1fr",
+                          gap: scale.sp(8),
+                          fontSize: scale.fs(9),
+                        }}
+                      >
+                        <span style={{ color: theme.text, fontWeight: 700 }}>
+                          {benchmark.symbol}
+                        </span>
+                        <span style={{ color: theme.textSec }}>
+                          {formatPercent(benchmark.totalReturnPercent)}
+                        </span>
+                        <span style={{ color: theme.textDim }}>
+                          β {formatNumber(benchmark.beta)}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {trustWarnings.length > 0 ? (
+              <div
+                style={{
+                  ...cardStyle(theme, scale),
+                  background: theme.bg0,
+                  borderColor: theme.amber,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: scale.fs(10),
+                    fontWeight: 700,
+                    color: theme.amber,
+                    marginBottom: scale.sp(8),
+                  }}
+                >
+                  Promotion Caveats
+                </div>
+                <div style={{ display: "grid", gap: scale.sp(6) }}>
+                  {trustWarnings.slice(0, 5).map((warning) => (
+                    <div
+                      key={warning}
+                      style={{
+                        fontSize: scale.fs(9),
+                        color: theme.textSec,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {warning}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div
+              style={{
+                display: "grid",
                 gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
                 gap: scale.sp(8),
               }}
@@ -6520,6 +3943,38 @@ export function BacktestWorkspace({
                 theme={theme}
                 scale={scale}
               />
+              <MetricCard
+                label="Sortino"
+                value={formatNumber(advancedMetrics?.sortinoRatio)}
+                accent={theme.accent}
+                theme={theme}
+                scale={scale}
+              />
+              <MetricCard
+                label="Calmar"
+                value={formatNumber(advancedMetrics?.calmarRatio)}
+                accent={theme.accent}
+                theme={theme}
+                scale={scale}
+              />
+              <MetricCard
+                label="Monte Carlo P05"
+                value={formatPercent(
+                  advancedMetrics?.monteCarlo?.p05ReturnPercent,
+                )}
+                accent={theme.text}
+                theme={theme}
+                scale={scale}
+              />
+              <MetricCard
+                label="Loss Risk"
+                value={formatPercent(
+                  advancedMetrics?.monteCarlo?.probabilityOfLossPercent,
+                )}
+                accent={theme.red}
+                theme={theme}
+                scale={scale}
+              />
             </div>
 
             <div
@@ -6540,7 +3995,7 @@ export function BacktestWorkspace({
                 },
                 {
                   label: "Backtest Window",
-                  value: `${formatDateTime(runDetail.study.startsAt)} → ${formatDateTime(runDetail.study.endsAt)}`,
+                  value: `${formatBacktestDateTime(runDetail.study.startsAt)} → ${formatBacktestDateTime(runDetail.study.endsAt)}`,
                 },
                 {
                   label: "Coverage",
@@ -6674,7 +4129,7 @@ export function BacktestWorkspace({
                                   fontFamily: theme.mono,
                                 }}
                               >
-                                {formatDateTime(trade.entryAt)}
+                                {formatBacktestDateTime(trade.entryAt)}
                               </div>
                             </div>
                             <div
@@ -6873,8 +4328,8 @@ export function BacktestWorkspace({
                                   fontFamily: theme.mono,
                                 }}
                               >
-                                {formatDateTime(trade.entryAt)} →{" "}
-                                {formatDateTime(trade.exitAt)}
+                                {formatBacktestDateTime(trade.entryAt)} →{" "}
+                                {formatBacktestDateTime(trade.exitAt)}
                               </div>
                             </div>
                             <div
@@ -7078,12 +4533,12 @@ export function BacktestWorkspace({
                       >
                         <div>
                           Signal / Entry / Exit:{" "}
-                          {formatDateTime(
+                          {formatBacktestDateTime(
                             selectedTradeRecord?.entryAt ??
                               activeTradeOverlay?.entryTs,
                           )}{" "}
                           →{" "}
-                          {formatDateTime(
+                          {formatBacktestDateTime(
                             selectedTradeRecord?.exitAt ??
                               activeTradeOverlay?.exitTs ??
                               null,
@@ -7120,7 +4575,7 @@ export function BacktestWorkspace({
                         <div>
                           Best / Worst during hold:{" "}
                           {selectedTradeDiagnostics
-                            ? `${formatNumber(selectedTradeDiagnostics.maxFavorablePrice)} @ ${formatDateTime(selectedTradeDiagnostics.maxFavorableAt)} / ${formatNumber(selectedTradeDiagnostics.maxAdversePrice)} @ ${formatDateTime(selectedTradeDiagnostics.maxAdverseAt)}`
+                            ? `${formatNumber(selectedTradeDiagnostics.maxFavorablePrice)} @ ${formatBacktestDateTime(selectedTradeDiagnostics.maxFavorableAt)} / ${formatNumber(selectedTradeDiagnostics.maxAdversePrice)} @ ${formatBacktestDateTime(selectedTradeDiagnostics.maxAdverseAt)}`
                             : "—"}
                         </div>
                         <div>
@@ -7191,7 +4646,7 @@ export function BacktestWorkspace({
                                           fontFamily: theme.mono,
                                         }}
                                       >
-                                        {formatDateTime(step.occurredAt)}
+                                        {formatBacktestDateTime(step.occurredAt)}
                                       </div>
                                     </div>
                                     <div style={{ textAlign: "right" }}>
@@ -7346,7 +4801,7 @@ export function BacktestWorkspace({
                                     selectedTradeExitConsequences.bestPrice,
                                   )}{" "}
                                   @{" "}
-                                  {formatDateTime(
+                                  {formatBacktestDateTime(
                                     selectedTradeExitConsequences.bestOccurredAt,
                                   )}
                                 </div>
@@ -7398,7 +4853,7 @@ export function BacktestWorkspace({
                                     selectedTradeExitConsequences.worstPrice,
                                   )}{" "}
                                   @{" "}
-                                  {formatDateTime(
+                                  {formatBacktestDateTime(
                                     selectedTradeExitConsequences.worstOccurredAt,
                                   )}
                                 </div>
@@ -8048,7 +5503,7 @@ export function BacktestWorkspace({
                                   fontFamily: theme.mono,
                                 }}
                               >
-                                {formatDateTime(trade.entryAt)}
+                                {formatBacktestDateTime(trade.entryAt)}
                               </td>
                               <td
                                 style={{
@@ -8198,6 +5653,16 @@ export function BacktestWorkspace({
                                           ?.bestDelta,
                                       )}
                                     </div>
+                                    <div>
+                                      Risk path{" "}
+                                      {trade.exitReason === "trailing_stop"
+                                        ? "Trailing stop hit"
+                                        : trade.exitReason === "stop_loss"
+                                          ? "Stop loss hit"
+                                          : trade.exitReason === "take_profit"
+                                            ? "Take profit hit"
+                                            : "Strategy exit"}
+                                    </div>
                                   </div>
                                 </td>
                               </tr>
@@ -8292,6 +5757,7 @@ export function BacktestWorkspace({
                   return (
                     <div
                       key={phase.label}
+                      className={phase.active ? "ra-focus-rail" : "ra-row-enter"}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -8303,6 +5769,7 @@ export function BacktestWorkspace({
                       }}
                     >
                       <span
+                        className={phase.active ? "ra-status-pulse" : undefined}
                         style={{
                           width: scale.dim(8),
                           height: scale.dim(8),
@@ -8496,7 +5963,7 @@ export function BacktestWorkspace({
                               fontFamily: theme.mono,
                             }}
                           >
-                            {formatDateTime(run.finishedAt ?? run.createdAt)}
+                            {formatBacktestDateTime(run.finishedAt ?? run.createdAt)}
                           </div>
                         </div>
                         <StatusBadge
@@ -8571,7 +6038,7 @@ export function BacktestWorkspace({
                               fontFamily: theme.mono,
                             }}
                           >
-                            {formatDateTime(run.startedAt ?? run.createdAt)}
+                            {formatBacktestDateTime(run.startedAt ?? run.createdAt)}
                           </div>
                         </div>
                         <div
@@ -8671,7 +6138,7 @@ export function BacktestWorkspace({
                               fontFamily: theme.mono,
                             }}
                           >
-                            {formatDateTime(job.startedAt ?? job.createdAt)}
+                            {formatBacktestDateTime(job.startedAt ?? job.createdAt)}
                           </div>
                         </div>
                         <StatusBadge
@@ -8719,6 +6186,7 @@ export function BacktestWorkspace({
                 drafts={(draftsQuery.data?.drafts ?? []).slice(0, 3)}
                 theme={theme}
                 scale={scale}
+                formatDateTimeLabel={formatBacktestDateTime}
                 compact
               />
             </div>
@@ -8886,7 +6354,7 @@ export function BacktestWorkspace({
                           }}
                         >
                           {script.scriptKey} · {script.defaultPaneType} pane ·
-                          updated {formatDateTime(script.updatedAt)}
+                          updated {formatBacktestDateTime(script.updatedAt)}
                         </div>
                       </div>
                       <div
