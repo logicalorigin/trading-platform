@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestRunChartChartPriceContext =
-  (typeof BacktestRunChartChartPriceContext)[keyof typeof BacktestRunChartChartPriceContext];
+export type BacktestRunChartChartPriceContext = typeof BacktestRunChartChartPriceContext[keyof typeof BacktestRunChartChartPriceContext];
+
 
 export const BacktestRunChartChartPriceContext = {
-  spot: "spot",
-  option: "option",
+  spot: 'spot',
+  option: 'option',
 } as const;

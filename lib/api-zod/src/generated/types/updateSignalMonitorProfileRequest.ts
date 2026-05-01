@@ -5,9 +5,9 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { EnvironmentMode } from "./environmentMode";
-import type { JsonObject } from "./jsonObject";
-import type { SignalMonitorTimeframe } from "./signalMonitorTimeframe";
+import type { EnvironmentMode } from './environmentMode';
+import type { JsonObject } from './jsonObject';
+import type { SignalMonitorTimeframe } from './signalMonitorTimeframe';
 
 export interface UpdateSignalMonitorProfileRequest {
   environment?: EnvironmentMode;

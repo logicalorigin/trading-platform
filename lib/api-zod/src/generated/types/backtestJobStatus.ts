@@ -6,16 +6,16 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestJobStatus =
-  (typeof BacktestJobStatus)[keyof typeof BacktestJobStatus];
+export type BacktestJobStatus = typeof BacktestJobStatus[keyof typeof BacktestJobStatus];
+
 
 export const BacktestJobStatus = {
-  queued: "queued",
-  preparing_data: "preparing_data",
-  running: "running",
-  aggregating: "aggregating",
-  completed: "completed",
-  failed: "failed",
-  cancel_requested: "cancel_requested",
-  canceled: "canceled",
+  queued: 'queued',
+  preparing_data: 'preparing_data',
+  running: 'running',
+  aggregating: 'aggregating',
+  completed: 'completed',
+  failed: 'failed',
+  cancel_requested: 'cancel_requested',
+  canceled: 'canceled',
 } as const;

@@ -32,6 +32,8 @@ tags:
     description: Algo deployment lifecycle and execution event history
   - name: backtests
     description: Backtest studies, runs, sweeps, and draft strategy promotion
+  - name: diagnostics
+    description: Real-time and historical operator diagnostics
 paths:
   /healthz:
     get:
@@ -60,6 +62,202 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionInfo"
+
+  /diagnostics/runtime:
+    get:
+      operationId: getRuntimeDiagnostics
+      tags: [diagnostics]
+      summary: Get runtime diagnostics
+      description: Returns read-only bridge, API memory, chart-support, and order-capability diagnostics.
+      responses:
+        "200":
+          description: Runtime diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeDiagnosticsResponse"
+
+  /diagnostics/latest:
+    get:
+      operationId: getLatestDiagnostics
+      tags: [diagnostics]
+      summary: Get latest diagnostics rollup
+      responses:
+        "200":
+          description: Latest diagnostics rollup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticsLatestResponse"
+
+  /diagnostics/history:
+    get:
+      operationId: listDiagnosticHistory
+      tags: [diagnostics]
+      summary: List historical diagnostic snapshots
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: subsystem
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Diagnostic history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticHistoryResponse"
+
+  /diagnostics/events:
+    get:
+      operationId: listDiagnosticEvents
+      tags: [diagnostics]
+      summary: List grouped diagnostic events and incidents
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: subsystem
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            $ref: "#/components/schemas/DiagnosticSeverity"
+      responses:
+        "200":
+          description: Diagnostic events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticEventsResponse"
+
+  /diagnostics/events/{eventId}:
+    get:
+      operationId: getDiagnosticEventDetail
+      tags: [diagnostics]
+      summary: Get diagnostic event detail
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Diagnostic event detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticEventDetailResponse"
+
+  /diagnostics/thresholds:
+    get:
+      operationId: getDiagnosticThresholds
+      tags: [diagnostics]
+      summary: Get diagnostic thresholds
+      responses:
+        "200":
+          description: Diagnostic thresholds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticThresholdsResponse"
+    put:
+      operationId: updateDiagnosticThresholds
+      tags: [diagnostics]
+      summary: Update diagnostic threshold overrides
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiagnosticThresholdsUpdateRequest"
+      responses:
+        "200":
+          description: Updated diagnostic thresholds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticThresholdsResponse"
+
+  /diagnostics/client-events:
+    post:
+      operationId: recordClientDiagnosticEvent
+      tags: [diagnostics]
+      summary: Record a browser/client diagnostic event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiagnosticClientEventRequest"
+      responses:
+        "202":
+          description: Recorded diagnostic event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticEventRecordResponse"
+
+  /diagnostics/export:
+    get:
+      operationId: exportDiagnostics
+      tags: [diagnostics]
+      summary: Export raw diagnostics for the selected window
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: subsystem
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Raw diagnostic export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticExportResponse"
+
+  /diagnostics/stream:
+    get:
+      operationId: streamDiagnostics
+      tags: [diagnostics]
+      summary: Stream live diagnostic snapshots and events
+      responses:
+        "200":
+          description: Diagnostic SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
 
   /broker-connections:
     get:
@@ -474,6 +672,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/OrderPreview"
 
+  /shadow/orders/preview:
+    post:
+      operationId: previewShadowOrder
+      tags: [orders]
+      summary: Preview an internal Shadow account fill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceOrderRequest"
+      responses:
+        "200":
+          description: Shadow fill preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderPreview"
+
+  /shadow/orders:
+    post:
+      operationId: placeShadowOrder
+      tags: [orders]
+      summary: Record an internal Shadow account fill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceOrderRequest"
+      responses:
+        "201":
+          description: Shadow order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountOrder"
+
   /orders/submit:
     post:
       operationId: submitOrders
@@ -567,6 +803,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/QuoteSnapshotsResponse"
 
+  /options/quotes:
+    post:
+      operationId: getOptionQuoteSnapshots
+      tags: [market-data]
+      summary: Get latest option quotes for provider contract IDs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OptionQuoteSnapshotsRequest"
+      responses:
+        "200":
+          description: Latest option quote snapshots
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionQuoteSnapshotsResponse"
+
   /news:
     get:
       operationId: getNews
@@ -635,14 +890,26 @@ paths:
           description: Restrict results to active tickers.
           schema:
             type: boolean
+        - name: mode
+          in: query
+          required: false
+          description: Optional search mode. Use trade-resolve when Trade needs an exact IBKR-tradable contract.
+          schema:
+            type: string
+            enum: [search, trade-resolve]
+        - name: strictTrade
+          in: query
+          required: false
+          description: Require an exact IBKR-tradable contract instead of returning fuzzy discovery matches.
+          schema:
+            type: boolean
         - name: limit
           in: query
           required: false
-          description: Maximum number of search results to return.
+          description: Requested number of ranked search results to return. No artificial maximum is enforced by the API; clients should request progressively larger pages for large universes.
           schema:
             type: integer
             minimum: 1
-            maximum: 50
       responses:
         "200":
           description: Ticker universe search results
@@ -686,6 +953,19 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: historyCursor
+          in: query
+          required: false
+          description: Opaque server-issued cursor for provider-native historical continuation. Falls back to from/to when invalid or expired.
+          schema:
+            type: string
+            nullable: true
+        - name: preferCursor
+          in: query
+          required: false
+          description: Prefer historyCursor continuation before the normal from/to window when a cursor is present.
+          schema:
+            type: boolean
         - name: assetClass
           in: query
           required: false
@@ -719,6 +999,19 @@ paths:
           description: Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
           schema:
             type: boolean
+        - name: allowStudyFallback
+          in: query
+          required: false
+          description: Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Polygon/Massive aggregate history remains valid for backtests.
+          schema:
+            type: boolean
+        - name: brokerRecentWindowMinutes
+          in: query
+          required: false
+          description: Limit broker-sourced recent history to this many minutes before falling back to Massive/Polygon history.
+          schema:
+            type: integer
+            minimum: 0
       responses:
         "200":
           description: Historical bars
@@ -749,6 +1042,26 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/OptionRight"
+        - name: strikesAroundMoney
+          in: query
+          required: false
+          description: Number of strikes on each side of the closest ATM strike to return. Defaults to 6.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+        - name: strikeCoverage
+          in: query
+          required: false
+          description: Named strike window. Use full to hydrate every strike for the requested expiration.
+          schema:
+            $ref: "#/components/schemas/OptionChainStrikeCoverage"
+        - name: quoteHydration
+          in: query
+          required: false
+          description: Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to snapshot.
+          schema:
+            $ref: "#/components/schemas/OptionChainQuoteHydration"
       responses:
         "200":
           description: Options chain
@@ -756,6 +1069,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OptionChainResponse"
+  /options/chains/batch:
+    post:
+      operationId: batchOptionChains
+      tags: [market-data]
+      summary: Get multiple option chain snapshots
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OptionChainBatchRequest"
+      responses:
+        "200":
+          description: Batched option chains
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionChainBatchResponse"
 
   /options/expirations:
     get:
@@ -768,6 +1099,13 @@ paths:
           required: true
           schema:
             type: string
+        - name: maxExpirations
+          in: query
+          required: false
+          description: Optional cap. Omit to discover every expiration IBKR exposes.
+          schema:
+            type: integer
+            minimum: 1
       responses:
         "200":
           description: Option expirations
@@ -775,6 +1113,131 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OptionExpirationsResponse"
+
+  /options/resolve-contract:
+    get:
+      operationId: resolveOptionContract
+      tags: [market-data]
+      summary: Resolve an option contract to an IBKR broker contract id
+      parameters:
+        - name: underlying
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: expirationDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: strike
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: right
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/OptionRight"
+      responses:
+        "200":
+          description: Resolved option contract
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionContractResolutionResponse"
+
+  /options/chart-bars:
+    get:
+      operationId: getOptionChartBars
+      tags: [market-data]
+      summary: Get option chart bars with server-side contract resolution and fallback
+      parameters:
+        - name: underlying
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: expirationDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: strike
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: right
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/OptionRight"
+        - name: optionTicker
+          in: query
+          required: false
+          description: Provider-native OPRA option ticker to use for option aggregate fallback.
+          schema:
+            type: string
+            nullable: true
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: timeframe
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/BarTimeframe"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50000
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: historyCursor
+          in: query
+          required: false
+          description: Opaque server-issued cursor for provider-native historical continuation. Falls back to from/to when invalid or expired.
+          schema:
+            type: string
+            nullable: true
+        - name: preferCursor
+          in: query
+          required: false
+          description: Prefer historyCursor continuation before the normal from/to window when a cursor is present.
+          schema:
+            type: boolean
+        - name: outsideRth
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Option chart bars
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionChartBarsResponse"
 
   /streams/quotes:
     get:
@@ -919,6 +1382,29 @@ paths:
             type: number
             minimum: 0.1
             maximum: 100
+        - name: scope
+          in: query
+          required: false
+          description: Return all flow or only contracts that match the unusual-flow threshold.
+          schema:
+            type: string
+            enum: [all, unusual]
+        - name: minPremium
+          in: query
+          required: false
+          description: Minimum option premium, in dollars, required for each returned flow row.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 50000000
+        - name: maxDte
+          in: query
+          required: false
+          description: Maximum days to expiration to include in the flow scan.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 730
       responses:
         "200":
           description: Options flow
@@ -926,6 +1412,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FlowEventsResponse"
+
+  /flow/universe:
+    get:
+      operationId: getFlowUniverse
+      tags: [flow]
+      summary: Get options flow scanner universe
+      responses:
+        "200":
+          description: Options flow scanner universe
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlowUniverseResponse"
 
   /signal-monitor/profile:
     get:
@@ -1280,6 +1779,94 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AlgoDeployment"
+
+  /algo/deployments/{deploymentId}/signal-options/state:
+    get:
+      operationId: getSignalOptionsAutomationState
+      tags: [automation]
+      summary: Get signal-options shadow automation state for a deployment
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Signal-options automation state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalOptionsAutomationState"
+
+  /algo/deployments/{deploymentId}/signal-options/shadow-scan:
+    post:
+      operationId: runSignalOptionsShadowScan
+      tags: [automation]
+      summary: Run a signal-options shadow scan
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated signal-options automation state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalOptionsAutomationState"
+
+  /algo/deployments/{deploymentId}/signal-options/deviation:
+    post:
+      operationId: recordSignalOptionsManualDeviation
+      tags: [automation]
+      summary: Record a manual Trade preview deviation from a signal-options plan
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignalOptionsManualDeviationRequest"
+      responses:
+        "201":
+          description: Recorded manual deviation event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalOptionsManualDeviationResponse"
+
+  /algo/deployments/{deploymentId}/signal-options/profile:
+    patch:
+      operationId: updateSignalOptionsExecutionProfile
+      tags: [automation]
+      summary: Update signal-options execution profile
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignalOptionsExecutionProfile"
+      responses:
+        "200":
+          description: Updated signal-options automation state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalOptionsAutomationState"
 
   /algo/events:
     get:
@@ -1784,12 +2371,10 @@ components:
         transport:
           type: string
           enum:
-            - client_portal
             - tws
         role:
           type: string
           enum:
-            - account
             - market_data
         configured:
           type: boolean
@@ -1834,6 +2419,33 @@ components:
             - null
         liveMarketDataAvailable:
           type: [boolean, "null"]
+        healthFresh:
+          type: boolean
+        healthAgeMs:
+          type: [integer, "null"]
+        stale:
+          type: boolean
+        bridgeReachable:
+          type: boolean
+        socketConnected:
+          type: boolean
+        accountsLoaded:
+          type: boolean
+        configuredLiveMarketDataMode:
+          type: boolean
+        streamFresh:
+          type: boolean
+        streamState:
+          type: string
+          enum: [offline, login_required, checking, delayed, live, quiet, stale, capacity_limited, reconnecting, reconnect_needed]
+        streamStateReason:
+          type: [string, "null"]
+        lastStreamEventAgeMs:
+          type: [integer, "null"]
+        strictReady:
+          type: boolean
+        strictReason:
+          type: [string, "null"]
       required:
         - transport
         - role
@@ -1856,12 +2468,9 @@ components:
     IbkrBridgeConnectionsHealth:
       type: object
       properties:
-        clientPortal:
-          $ref: "#/components/schemas/IbkrBridgeConnectionHealth"
         tws:
           $ref: "#/components/schemas/IbkrBridgeConnectionHealth"
       required:
-        - clientPortal
         - tws
 
     IbkrBridgeHealth:
@@ -1897,9 +2506,7 @@ components:
         transport:
           type: string
           enum:
-            - client_portal
             - tws
-            - ibx
         connectionTarget:
           type: [string, "null"]
         sessionMode:
@@ -1919,6 +2526,33 @@ components:
             - null
         liveMarketDataAvailable:
           type: [boolean, "null"]
+        healthFresh:
+          type: boolean
+        healthAgeMs:
+          type: [integer, "null"]
+        stale:
+          type: boolean
+        bridgeReachable:
+          type: boolean
+        socketConnected:
+          type: boolean
+        accountsLoaded:
+          type: boolean
+        configuredLiveMarketDataMode:
+          type: boolean
+        streamFresh:
+          type: boolean
+        streamState:
+          type: string
+          enum: [offline, login_required, checking, delayed, live, quiet, stale, capacity_limited, reconnecting, reconnect_needed]
+        streamStateReason:
+          type: [string, "null"]
+        lastStreamEventAgeMs:
+          type: [integer, "null"]
+        strictReady:
+          type: boolean
+        strictReason:
+          type: [string, "null"]
         connections:
           $ref: "#/components/schemas/IbkrBridgeConnectionsHealth"
       required:
@@ -1939,6 +2573,7 @@ components:
         - clientId
         - marketDataMode
         - liveMarketDataAvailable
+        - connections
 
     SessionInfo:
       type: object
@@ -1979,6 +2614,447 @@ components:
         - configured
         - ibkrBridge
         - timestamp
+
+    RuntimeMemoryDiagnostics:
+      type: object
+      properties:
+        rss:
+          type: number
+        heapUsed:
+          type: number
+        heapTotal:
+          type: number
+        external:
+          type: number
+      required:
+        - rss
+        - heapUsed
+        - heapTotal
+        - external
+
+    RuntimeApiDiagnostics:
+      type: object
+      properties:
+        uptimeMs:
+          type: integer
+        memoryMb:
+          $ref: "#/components/schemas/RuntimeMemoryDiagnostics"
+      required:
+        - uptimeMs
+        - memoryMb
+
+    RuntimeOrderCapabilityDiagnostics:
+      type: object
+      properties:
+        orderDataVisible:
+          type: boolean
+        readOnlyModeLikely:
+          type: boolean
+        liveActionConfirmationRequired:
+          type: boolean
+        diagnosticsMutateOrders:
+          type: boolean
+      required:
+        - orderDataVisible
+        - readOnlyModeLikely
+        - liveActionConfirmationRequired
+        - diagnosticsMutateOrders
+
+    RuntimeIbkrDiagnostics:
+      type: object
+      properties:
+        transport:
+          type: string
+          enum:
+            - tws
+        configured:
+          type: boolean
+        bridgeUrlConfigured:
+          type: boolean
+        bridgeTokenConfigured:
+          type: boolean
+        legacyIbkrEnvPresent:
+          type: boolean
+        reachable:
+          type: boolean
+        healthError:
+          type: [string, "null"]
+        connected:
+          type: boolean
+        authenticated:
+          type: boolean
+        competing:
+          type: boolean
+        selectedAccountId:
+          type: [string, "null"]
+        accountCount:
+          type: integer
+        connectionTarget:
+          type: [string, "null"]
+        sessionMode:
+          oneOf:
+            - $ref: "#/components/schemas/EnvironmentMode"
+            - type: "null"
+        clientId:
+          type: [integer, "null"]
+        marketDataMode:
+          type: [string, "null"]
+          enum:
+            - live
+            - frozen
+            - delayed
+            - delayed_frozen
+            - unknown
+            - null
+        liveMarketDataAvailable:
+          type: [boolean, "null"]
+        healthFresh:
+          type: boolean
+        healthAgeMs:
+          type: [integer, "null"]
+        stale:
+          type: boolean
+        bridgeReachable:
+          type: boolean
+        socketConnected:
+          type: boolean
+        accountsLoaded:
+          type: boolean
+        configuredLiveMarketDataMode:
+          type: boolean
+        streamFresh:
+          type: boolean
+        streamState:
+          type: string
+          enum: [offline, login_required, checking, delayed, live, quiet, stale, capacity_limited, reconnecting, reconnect_needed]
+        streamStateReason:
+          type: [string, "null"]
+        lastStreamEventAgeMs:
+          type: [integer, "null"]
+        strictReady:
+          type: boolean
+        strictReason:
+          type: [string, "null"]
+        lastTickleAt:
+          type: [string, "null"]
+          format: date-time
+        lastRecoveryAttemptAt:
+          type: [string, "null"]
+          format: date-time
+        lastRecoveryError:
+          type: [string, "null"]
+        lastError:
+          type: [string, "null"]
+        orderCapability:
+          $ref: "#/components/schemas/RuntimeOrderCapabilityDiagnostics"
+      required:
+        - transport
+        - configured
+        - bridgeUrlConfigured
+        - bridgeTokenConfigured
+        - legacyIbkrEnvPresent
+        - reachable
+        - healthError
+        - connected
+        - authenticated
+        - competing
+        - selectedAccountId
+        - accountCount
+        - connectionTarget
+        - sessionMode
+        - clientId
+        - marketDataMode
+        - liveMarketDataAvailable
+        - lastTickleAt
+        - lastRecoveryAttemptAt
+        - lastRecoveryError
+        - lastError
+        - orderCapability
+
+    RuntimeDiagnosticsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        api:
+          $ref: "#/components/schemas/RuntimeApiDiagnostics"
+        ibkr:
+          $ref: "#/components/schemas/RuntimeIbkrDiagnostics"
+      required:
+        - timestamp
+        - api
+        - ibkr
+
+    DiagnosticSeverity:
+      type: string
+      enum:
+        - info
+        - warning
+        - critical
+
+    DiagnosticStatus:
+      type: string
+      enum:
+        - ok
+        - degraded
+        - down
+        - unknown
+
+    DiagnosticSnapshot:
+      type: object
+      properties:
+        id:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+        subsystem:
+          type: string
+        status:
+          $ref: "#/components/schemas/DiagnosticStatus"
+        severity:
+          $ref: "#/components/schemas/DiagnosticSeverity"
+        summary:
+          type: string
+        dimensions:
+          $ref: "#/components/schemas/JsonObject"
+        metrics:
+          $ref: "#/components/schemas/JsonObject"
+        raw:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - id
+        - observedAt
+        - subsystem
+        - status
+        - severity
+        - summary
+        - dimensions
+        - metrics
+        - raw
+
+    DiagnosticEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        incidentKey:
+          type: string
+        subsystem:
+          type: string
+        category:
+          type: string
+        code:
+          type: [string, "null"]
+        severity:
+          $ref: "#/components/schemas/DiagnosticSeverity"
+        status:
+          type: string
+          enum:
+            - open
+            - resolved
+        message:
+          type: string
+        firstSeenAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        eventCount:
+          type: integer
+        dimensions:
+          $ref: "#/components/schemas/JsonObject"
+        raw:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - id
+        - incidentKey
+        - subsystem
+        - category
+        - code
+        - severity
+        - status
+        - message
+        - firstSeenAt
+        - lastSeenAt
+        - eventCount
+        - dimensions
+        - raw
+
+    DiagnosticThreshold:
+      type: object
+      properties:
+        metricKey:
+          type: string
+        label:
+          type: string
+        subsystem:
+          type: string
+        unit:
+          type: string
+        warning:
+          type: number
+        critical:
+          type: number
+        enabled:
+          type: boolean
+        audible:
+          type: boolean
+        description:
+          type: string
+      required:
+        - metricKey
+        - label
+        - subsystem
+        - unit
+        - warning
+        - critical
+        - enabled
+        - audible
+        - description
+
+    DiagnosticsLatestResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/DiagnosticStatus"
+        severity:
+          $ref: "#/components/schemas/DiagnosticSeverity"
+        summary:
+          type: string
+        snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticSnapshot"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticEvent"
+        thresholds:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticThreshold"
+
+    DiagnosticHistoryPoint:
+      type: object
+      properties:
+        at:
+          type: string
+          format: date-time
+        subsystem:
+          type: string
+        severity:
+          $ref: "#/components/schemas/DiagnosticSeverity"
+        status:
+          $ref: "#/components/schemas/DiagnosticStatus"
+        count:
+          type: integer
+        metrics:
+          $ref: "#/components/schemas/JsonObject"
+
+    DiagnosticHistoryResponse:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        resolutionMs:
+          type: integer
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticHistoryPoint"
+        snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticSnapshot"
+
+    DiagnosticEventsResponse:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticEvent"
+
+    DiagnosticEventDetailResponse:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/DiagnosticEvent"
+        relatedSnapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticSnapshot"
+
+    DiagnosticThresholdsResponse:
+      type: object
+      properties:
+        thresholds:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticThreshold"
+
+    DiagnosticThresholdsUpdateRequest:
+      type: object
+      properties:
+        thresholds:
+          type: array
+          items:
+            type: object
+            properties:
+              metricKey:
+                type: string
+              warning:
+                type: number
+              critical:
+                type: number
+              enabled:
+                type: boolean
+              audible:
+                type: boolean
+            required:
+              - metricKey
+
+    DiagnosticClientEventRequest:
+      type: object
+      properties:
+        category:
+          type: string
+        severity:
+          $ref: "#/components/schemas/DiagnosticSeverity"
+        code:
+          type: [string, "null"]
+        message:
+          type: string
+        dimensions:
+          $ref: "#/components/schemas/JsonObject"
+        raw:
+          $ref: "#/components/schemas/JsonObject"
+
+    DiagnosticEventRecordResponse:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/DiagnosticEvent"
+
+    DiagnosticExportResponse:
+      type: object
+      additionalProperties: true
 
     ResearchStatus:
       type: object
@@ -2615,6 +3691,18 @@ components:
           type: [string, "null"]
         logoUrl:
           type: [string, "null"]
+        countryCode:
+          type: [string, "null"]
+          description: ISO 3166-1 alpha-2 country or EU region code for the instrument issuer when known.
+        exchangeCountryCode:
+          type: [string, "null"]
+          description: ISO 3166-1 alpha-2 country or EU region code for the listing exchange when known.
+        sector:
+          type: [string, "null"]
+          description: Provider or locally-derived sector label when available.
+        industry:
+          type: [string, "null"]
+          description: Provider or locally-derived industry label when available.
         contractDescription:
           type: [string, "null"]
         contractMeta:
@@ -2672,6 +3760,10 @@ components:
         - normalizedExchangeMic
         - exchangeDisplay
         - logoUrl
+        - countryCode
+        - exchangeCountryCode
+        - sector
+        - industry
         - contractDescription
         - contractMeta
         - locale
@@ -2808,6 +3900,22 @@ components:
           type: string
         symbol:
           type: string
+        market:
+          oneOf:
+            - $ref: "#/components/schemas/UniverseMarket"
+            - type: "null"
+        normalizedExchangeMic:
+          type: [string, "null"]
+        exchangeDisplay:
+          type: [string, "null"]
+        countryCode:
+          type: [string, "null"]
+        exchangeCountryCode:
+          type: [string, "null"]
+        sector:
+          type: [string, "null"]
+        industry:
+          type: [string, "null"]
         sortOrder:
           type: integer
         addedAt:
@@ -2816,6 +3924,13 @@ components:
       required:
         - id
         - symbol
+        - market
+        - normalizedExchangeMic
+        - exchangeDisplay
+        - countryCode
+        - exchangeCountryCode
+        - sector
+        - industry
         - sortOrder
         - addedAt
 
@@ -2885,8 +4000,21 @@ components:
         delayed:
           type: boolean
         freshness:
-          type: string
-          enum: [live, stale, pending]
+          $ref: "#/components/schemas/MarketDataFreshness"
+        marketDataMode:
+          type: [string, "null"]
+          enum:
+            - live
+            - frozen
+            - delayed
+            - delayed_frozen
+            - unknown
+            - null
+        dataUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        ageMs:
+          type: [number, "null"]
         cacheAgeMs:
           type: [number, "null"]
         latency:
@@ -2957,6 +4085,22 @@ components:
           $ref: "#/components/schemas/IbkrBridgeHealthTransport"
         delayed:
           type: boolean
+        freshness:
+          $ref: "#/components/schemas/MarketDataFreshness"
+        marketDataMode:
+          type: [string, "null"]
+          enum:
+            - live
+            - frozen
+            - delayed
+            - delayed_frozen
+            - unknown
+            - null
+        dataUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        ageMs:
+          type: [number, "null"]
       required:
         - timestamp
         - open
@@ -3003,13 +4147,13 @@ components:
         contract:
           $ref: "#/components/schemas/OptionContract"
         bid:
-          type: number
+          type: [number, "null"]
         ask:
-          type: number
+          type: [number, "null"]
         last:
-          type: number
+          type: [number, "null"]
         mark:
-          type: number
+          type: [number, "null"]
         impliedVolatility:
           type: number
           nullable: true
@@ -3026,12 +4170,31 @@ components:
           type: number
           nullable: true
         openInterest:
-          type: number
+          type: [number, "null"]
         volume:
-          type: number
+          type: [number, "null"]
         updatedAt:
           type: string
           format: date-time
+        quoteFreshness:
+          $ref: "#/components/schemas/MarketDataFreshness"
+        marketDataMode:
+          type: [string, "null"]
+          enum:
+            - live
+            - frozen
+            - delayed
+            - delayed_frozen
+            - unknown
+            - null
+        quoteUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        dataUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        ageMs:
+          type: [number, "null"]
       required:
         - contract
         - bid
@@ -3172,6 +4335,17 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        source:
+          type: string
+          enum: [manual, automation]
+        sourceEventId:
+          type: string
+          nullable: true
+        clientOrderId:
+          type: string
+          nullable: true
+        payload:
+          $ref: "#/components/schemas/JsonObject"
       required:
         - accountId
         - mode
@@ -3293,6 +4467,9 @@ components:
           $ref: "#/components/schemas/FlowEventBasis"
         optionTicker:
           type: string
+        providerContractId:
+          type: [string, "null"]
+          description: Broker contract identifier, when the flow source can map the option to a broker-backed contract.
         strike:
           type: number
         expirationDate:
@@ -3302,16 +4479,59 @@ components:
           $ref: "#/components/schemas/OptionRight"
         price:
           type: number
+        bid:
+          type: [number, "null"]
+          description: Best bid observed with the event or snapshot, when available.
+        ask:
+          type: [number, "null"]
+          description: Best ask observed with the event or snapshot, when available.
+        last:
+          type: [number, "null"]
+          description: Last option price observed with the event or snapshot, when available.
+        mark:
+          type: [number, "null"]
+          description: Mark or midpoint price used for snapshot-derived flow, when available.
         size:
           type: number
         premium:
           type: number
+        multiplier:
+          type: [number, "null"]
+          description: Option contract multiplier, when the source provides it.
+        sharesPerContract:
+          type: [number, "null"]
+          description: Shares represented by one option contract, when the source provides it.
         openInterest:
           type: number
         impliedVolatility:
           oneOf:
             - type: number
             - type: "null"
+        delta:
+          type: [number, "null"]
+        gamma:
+          type: [number, "null"]
+        theta:
+          type: [number, "null"]
+        vega:
+          type: [number, "null"]
+        underlyingPrice:
+          type: [number, "null"]
+          description: Underlying reference price used to classify moneyness, when available.
+        moneyness:
+          type: [string, "null"]
+          enum: [ITM, ATM, OTM, UNKNOWN, null]
+        distancePercent:
+          type: [number, "null"]
+          description: Signed strike distance from the underlying reference price, in percent.
+        confidence:
+          type: string
+          enum: [confirmed_trade, snapshot_activity, fallback_estimate]
+          description: Data-confidence class for the flow row.
+        sourceBasis:
+          type: string
+          enum: [confirmed_trade, snapshot_activity, fallback_estimate]
+          description: Machine-readable source basis shown by the Flow UI.
         exchange:
           type: string
         side:
@@ -3342,6 +4562,7 @@ components:
         - provider
         - basis
         - optionTicker
+        - providerContractId
         - strike
         - expirationDate
         - right
@@ -3379,6 +4600,63 @@ components:
         unusualThreshold:
           type: number
           description: Volume / open-interest multiplier the server applied when flagging unusual prints. Defaults to 1.
+        ibkrStatus:
+          type: string
+          enum: [loaded, empty, degraded, error]
+        ibkrReason:
+          type: [string, "null"]
+        ibkrExpirationCount:
+          type: integer
+          minimum: 0
+        ibkrHydratedExpirationCount:
+          type: integer
+          minimum: 0
+        ibkrContractCount:
+          type: integer
+          minimum: 0
+        ibkrQualifiedContractCount:
+          type: integer
+          minimum: 0
+        scannerCoverage:
+          type: object
+          properties:
+            mode:
+              type: string
+              enum: [watchlist, market, hybrid]
+            targetSize:
+              type: integer
+              minimum: 0
+            selectedSymbols:
+              type: integer
+              minimum: 0
+            rankedAt:
+              type: [string, "null"]
+              format: date-time
+            lastRefreshAt:
+              type: [string, "null"]
+              format: date-time
+            lastGoodAt:
+              type: [string, "null"]
+              format: date-time
+            stale:
+              type: boolean
+            fallbackUsed:
+              type: boolean
+            cooldownCount:
+              type: integer
+              minimum: 0
+            scannedSymbols:
+              type: integer
+              minimum: 0
+            currentBatch:
+              type: array
+              items:
+                type: string
+            lastScanAt:
+              type: [string, "null"]
+              format: date-time
+            degradedReason:
+              type: [string, "null"]
       required:
         - provider
         - status
@@ -3409,11 +4687,11 @@ components:
 
     AccountHistoryRange:
       type: string
-      enum: [1W, 1M, 3M, YTD, 1Y, ALL]
+      enum: [1D, 1W, 1M, 3M, 6M, YTD, 1Y, ALL]
 
     AccountMetricSource:
       type: string
-      enum: [IBKR_ACCOUNT_SUMMARY, IBKR_POSITIONS, FLEX, LOCAL_LEDGER]
+      enum: [IBKR_ACCOUNT_SUMMARY, IBKR_POSITIONS, FLEX, LOCAL_LEDGER, SHADOW_LEDGER]
 
     AccountMetric:
       type: object
@@ -3572,7 +4850,7 @@ components:
           type: string
         source:
           type: string
-          enum: [FLEX, LOCAL_LEDGER]
+          enum: [FLEX, LOCAL_LEDGER, IBKR_ACCOUNT_SUMMARY, SHADOW_LEDGER]
         deposits:
           type: number
         withdrawals:
@@ -3637,6 +4915,29 @@ components:
         benchmark:
           type: string
           nullable: true
+        asOf:
+          type: string
+          format: date-time
+          nullable: true
+        latestSnapshotAt:
+          type: string
+          format: date-time
+          nullable: true
+        isStale:
+          type: boolean
+        staleReason:
+          type: string
+          nullable: true
+        terminalPointSource:
+          type: string
+          nullable: true
+          enum:
+            - live_account_summary
+            - persisted_snapshot
+            - flex
+            - shadow_ledger
+        liveTerminalIncluded:
+          type: boolean
         points:
           type: array
           items:
@@ -3652,6 +4953,12 @@ components:
         - flexConfigured
         - lastFlexRefreshAt
         - benchmark
+        - asOf
+        - latestSnapshotAt
+        - isStale
+        - staleReason
+        - terminalPointSource
+        - liveTerminalIncluded
         - points
         - events
 
@@ -3768,6 +5075,10 @@ components:
           type: string
         assetClass:
           type: string
+        optionContract:
+          oneOf:
+            - $ref: "#/components/schemas/OptionContract"
+            - type: "null"
         sector:
           type: string
         quantity:
@@ -3804,6 +5115,19 @@ components:
             $ref: "#/components/schemas/Order"
         source:
           type: string
+        sourceType:
+          type: string
+          enum: [manual, automation, mixed]
+        strategyLabel:
+          type: string
+          nullable: true
+        attributionStatus:
+          type: string
+          enum: [attributed, mixed, unknown]
+        sourceAttribution:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
       required:
         - id
         - accountId
@@ -3856,7 +5180,7 @@ components:
           type: string
         source:
           type: string
-          enum: [LIVE, FLEX]
+          enum: [LIVE, FLEX, SHADOW]
         accountId:
           type: string
         symbol:
@@ -3895,6 +5219,24 @@ components:
           nullable: true
         currency:
           type: string
+        sourceType:
+          type: string
+          enum: [manual, automation]
+        strategyLabel:
+          type: string
+          nullable: true
+        candidateId:
+          type: string
+          nullable: true
+        deploymentId:
+          type: string
+          nullable: true
+        deploymentName:
+          type: string
+          nullable: true
+        sourceEventId:
+          type: string
+          nullable: true
       required:
         - id
         - source
@@ -3983,6 +5325,24 @@ components:
           nullable: true
         source:
           type: string
+        sourceType:
+          type: string
+          enum: [manual, automation]
+        strategyLabel:
+          type: string
+          nullable: true
+        candidateId:
+          type: string
+          nullable: true
+        deploymentId:
+          type: string
+          nullable: true
+        deploymentName:
+          type: string
+          nullable: true
+        sourceEventId:
+          type: string
+          nullable: true
       required:
         - id
         - accountId
@@ -4013,6 +5373,24 @@ components:
           enum: [working, history]
         currency:
           type: string
+        degraded:
+          type: boolean
+        reason:
+          type: string
+        stale:
+          type: boolean
+        debug:
+          type: object
+          properties:
+            message:
+              type: string
+            code:
+              type: string
+            timeoutMs:
+              type: number
+          required:
+            - message
+            - code
         orders:
           type: array
           items:
@@ -4304,6 +5682,24 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Order"
+        degraded:
+          type: boolean
+        reason:
+          type: string
+        stale:
+          type: boolean
+        debug:
+          type: object
+          properties:
+            message:
+              type: string
+            code:
+              type: string
+            timeoutMs:
+              type: number
+          required:
+            - message
+            - code
       required:
         - orders
 
@@ -4327,6 +5723,79 @@ components:
         - transport
         - delayed
         - fallbackUsed
+
+    RequestDebug:
+      type: object
+      properties:
+        cacheStatus:
+          type: string
+          enum: [hit, miss, inflight]
+          nullable: true
+        totalMs:
+          type: number
+        upstreamMs:
+          type: number
+          nullable: true
+        requestedCount:
+          type: integer
+          minimum: 0
+        returnedCount:
+          type: integer
+          minimum: 0
+        bridgeChunks:
+          type: integer
+          minimum: 0
+        providerMode:
+          type: string
+          nullable: true
+        liveMarketDataAvailable:
+          type: boolean
+          nullable: true
+        missingProviderContractIds:
+          type: array
+          items:
+            type: string
+        complete:
+          type: boolean
+        capped:
+          type: boolean
+        stale:
+          type: boolean
+        degraded:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        backoffRemainingMs:
+          type: number
+          nullable: true
+      required:
+        - totalMs
+
+    OptionQuoteSnapshotsRequest:
+      type: object
+      properties:
+        underlying:
+          type: string
+          nullable: true
+        providerContractIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+      required:
+        - providerContractIds
+
+    OptionQuoteSnapshotsResponse:
+      allOf:
+        - $ref: "#/components/schemas/QuoteSnapshotsResponse"
+        - type: object
+          properties:
+            underlying:
+              type: string
+              nullable: true
+            debug:
+              $ref: "#/components/schemas/RequestDebug"
 
     NewsResponse:
       type: object
@@ -4370,6 +5839,32 @@ components:
           type: boolean
         gapFilled:
           type: boolean
+        freshness:
+          $ref: "#/components/schemas/MarketDataFreshness"
+        marketDataMode:
+          type: [string, "null"]
+          enum:
+            - live
+            - frozen
+            - delayed
+            - delayed_frozen
+            - unknown
+            - null
+        dataUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        ageMs:
+          type: [number, "null"]
+        emptyReason:
+          type: [string, "null"]
+        historySource:
+          type: [string, "null"]
+        studyFallback:
+          type: boolean
+        historyPage:
+          oneOf:
+            - $ref: "#/components/schemas/BarsHistoryPage"
+            - type: "null"
       required:
         - symbol
         - timeframe
@@ -4377,6 +5872,63 @@ components:
         - transport
         - delayed
         - gapFilled
+        - freshness
+        - marketDataMode
+        - dataUpdatedAt
+        - ageMs
+        - emptyReason
+        - historySource
+        - studyFallback
+
+    BarsHistoryPage:
+      type: object
+      properties:
+        requestedFrom:
+          type: [string, "null"]
+          format: date-time
+        requestedTo:
+          type: [string, "null"]
+          format: date-time
+        oldestBarAt:
+          type: [string, "null"]
+          format: date-time
+        newestBarAt:
+          type: [string, "null"]
+          format: date-time
+        returnedCount:
+          type: number
+        nextBefore:
+          type: [string, "null"]
+          format: date-time
+        provider:
+          type: [string, "null"]
+        exhaustedBefore:
+          type: boolean
+        providerCursor:
+          type: [string, "null"]
+        providerNextUrl:
+          type: [string, "null"]
+        providerPageCount:
+          type: [number, "null"]
+        providerPageLimitReached:
+          type: boolean
+        historyCursor:
+          type: [string, "null"]
+        hydrationStatus:
+          type: string
+          enum: [cold, partial, warm, warming, exhausted]
+        cacheStatus:
+          type: [string, "null"]
+          enum: [hit, miss, partial, null]
+      required:
+        - requestedFrom
+        - requestedTo
+        - oldestBarAt
+        - newestBarAt
+        - returnedCount
+        - nextBefore
+        - provider
+        - exhaustedBefore
 
     OptionChainResponse:
       type: object
@@ -4396,6 +5948,90 @@ components:
         - expirationDate
         - contracts
 
+    OptionChainBatchRequest:
+      type: object
+      properties:
+        underlying:
+          type: string
+        expirationDates:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: date
+        contractType:
+          $ref: "#/components/schemas/OptionRight"
+        strikesAroundMoney:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Number of strikes on each side of the closest ATM strike to return. Defaults to 6.
+        strikeCoverage:
+          $ref: "#/components/schemas/OptionChainStrikeCoverage"
+        quoteHydration:
+          $ref: "#/components/schemas/OptionChainQuoteHydration"
+      required:
+        - underlying
+        - expirationDates
+
+    OptionChainStrikeCoverage:
+      type: string
+      enum: [fast, standard, full]
+
+    OptionChainQuoteHydration:
+      type: string
+      enum: [metadata, snapshot]
+
+    MarketDataFreshness:
+      type: string
+      enum:
+        - live
+        - delayed
+        - frozen
+        - delayed_frozen
+        - stale
+        - metadata
+        - unavailable
+        - pending
+
+    OptionChainBatchResult:
+      type: object
+      properties:
+        expirationDate:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [loaded, empty, failed]
+        contracts:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptionChainQuote"
+        error:
+          type: string
+          nullable: true
+        debug:
+          $ref: "#/components/schemas/RequestDebug"
+      required:
+        - expirationDate
+        - status
+        - contracts
+
+    OptionChainBatchResponse:
+      type: object
+      properties:
+        underlying:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptionChainBatchResult"
+        debug:
+          $ref: "#/components/schemas/RequestDebug"
+      required:
+        - underlying
+        - results
+
     OptionExpirationSummary:
       type: object
       properties:
@@ -4414,9 +6050,101 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OptionExpirationSummary"
+        debug:
+          $ref: "#/components/schemas/RequestDebug"
       required:
         - underlying
         - expirations
+
+    OptionContractResolutionStatus:
+      type: string
+      enum: [resolved, not_found, error]
+
+    OptionContractResolutionResponse:
+      type: object
+      properties:
+        underlying:
+          type: string
+        expirationDate:
+          type: string
+          format: date
+        strike:
+          type: number
+        right:
+          $ref: "#/components/schemas/OptionRight"
+        status:
+          $ref: "#/components/schemas/OptionContractResolutionStatus"
+        providerContractId:
+          type: [string, "null"]
+        contract:
+          oneOf:
+            - $ref: "#/components/schemas/OptionContract"
+            - type: "null"
+        errorMessage:
+          type: [string, "null"]
+        debug:
+          $ref: "#/components/schemas/RequestDebug"
+      required:
+        - underlying
+        - expirationDate
+        - strike
+        - right
+        - status
+        - providerContractId
+        - contract
+        - errorMessage
+        - debug
+
+    OptionChartBarsResolutionSource:
+      type: string
+      enum: [chain, provided, resolver, none]
+
+    OptionChartBarsDataSource:
+      type: string
+      enum: [ibkr-history, polygon-option-aggregates, none]
+
+    OptionChartBarsResponse:
+      allOf:
+        - $ref: "#/components/schemas/BarsResponse"
+        - type: object
+          properties:
+            underlying:
+              type: string
+            expirationDate:
+              type: string
+              format: date
+            strike:
+              type: number
+            right:
+              $ref: "#/components/schemas/OptionRight"
+            optionTicker:
+              type: [string, "null"]
+            contract:
+              oneOf:
+                - $ref: "#/components/schemas/OptionContract"
+                - type: "null"
+            providerContractId:
+              type: [string, "null"]
+            resolutionSource:
+              $ref: "#/components/schemas/OptionChartBarsResolutionSource"
+            dataSource:
+              $ref: "#/components/schemas/OptionChartBarsDataSource"
+            feedIssue:
+              type: boolean
+            debug:
+              $ref: "#/components/schemas/RequestDebug"
+          required:
+            - underlying
+            - expirationDate
+            - strike
+            - right
+            - optionTicker
+            - contract
+            - providerContractId
+            - resolutionSource
+            - dataSource
+            - feedIssue
+            - debug
 
     SseStream:
       type: string
@@ -4504,6 +6232,108 @@ components:
       required:
         - deployments
 
+    SignalOptionsExecutionProfile:
+      type: object
+      properties:
+        version:
+          type: string
+          enum: [v1]
+        mode:
+          type: string
+          enum: [shadow]
+        optionSelection:
+          $ref: "#/components/schemas/JsonObject"
+        riskCaps:
+          $ref: "#/components/schemas/JsonObject"
+        liquidityGate:
+          $ref: "#/components/schemas/JsonObject"
+        fillPolicy:
+          $ref: "#/components/schemas/JsonObject"
+        exitPolicy:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - version
+        - mode
+        - optionSelection
+        - riskCaps
+        - liquidityGate
+        - fillPolicy
+        - exitPolicy
+
+    SignalOptionsAutomationState:
+      type: object
+      properties:
+        deployment:
+          $ref: "#/components/schemas/AlgoDeployment"
+        profile:
+          $ref: "#/components/schemas/SignalOptionsExecutionProfile"
+        mode:
+          type: string
+          enum: [shadow]
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        activePositions:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        risk:
+          $ref: "#/components/schemas/JsonObject"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutionEvent"
+      required:
+        - deployment
+        - profile
+        - mode
+        - candidates
+        - activePositions
+        - risk
+        - events
+
+    SignalOptionsManualDeviationRequest:
+      type: object
+      properties:
+        candidateId:
+          type: string
+        symbol:
+          type: string
+        source:
+          type: string
+          enum: [trade_preview]
+        changedFields:
+          type: array
+          items:
+            type: string
+        plannedContract:
+          $ref: "#/components/schemas/JsonObject"
+        plannedOrderPlan:
+          $ref: "#/components/schemas/JsonObject"
+        actualOrderRequest:
+          $ref: "#/components/schemas/JsonObject"
+        automationCandidate:
+          $ref: "#/components/schemas/JsonObject"
+        metadata:
+          $ref: "#/components/schemas/JsonObject"
+      required:
+        - candidateId
+        - symbol
+        - source
+        - changedFields
+        - plannedContract
+        - plannedOrderPlan
+        - actualOrderRequest
+
+    SignalOptionsManualDeviationResponse:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/ExecutionEvent"
+      required:
+        - event
+
     ExecutionEvent:
       type: object
       properties:
@@ -4567,6 +6397,78 @@ components:
       required:
         - events
         - source
+
+    FlowUniverseCoverage:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [watchlist, market, hybrid]
+        targetSize:
+          type: integer
+          minimum: 0
+        selectedSymbols:
+          type: integer
+          minimum: 0
+        rankedAt:
+          type: [string, "null"]
+          format: date-time
+        lastRefreshAt:
+          type: [string, "null"]
+          format: date-time
+        lastGoodAt:
+          type: [string, "null"]
+          format: date-time
+        stale:
+          type: boolean
+        fallbackUsed:
+          type: boolean
+        cooldownCount:
+          type: integer
+          minimum: 0
+        scannedSymbols:
+          type: integer
+          minimum: 0
+        currentBatch:
+          type: array
+          items:
+            type: string
+        lastScanAt:
+          type: [string, "null"]
+          format: date-time
+        degradedReason:
+          type: [string, "null"]
+
+    FlowUniverseSources:
+      type: object
+      properties:
+        builtInSymbols:
+          type: array
+          items:
+            type: string
+        flowUniverseSymbols:
+          type: array
+          items:
+            type: string
+      required:
+        - builtInSymbols
+        - flowUniverseSymbols
+
+    FlowUniverseResponse:
+      type: object
+      properties:
+        coverage:
+          $ref: "#/components/schemas/FlowUniverseCoverage"
+        symbols:
+          type: array
+          items:
+            type: string
+        sources:
+          $ref: "#/components/schemas/FlowUniverseSources"
+      required:
+        - coverage
+        - symbols
+        - sources
 
     SignalMonitorDirection:
       type: string
@@ -5242,6 +7144,7 @@ components:
 
     BacktestMetrics:
       type: object
+      additionalProperties: true
       properties:
         netPnl:
           type: number

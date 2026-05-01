@@ -18,7 +18,7 @@ type BridgeHealth = {
   configured: boolean;
   authenticated: boolean;
   connected: boolean;
-  transport: "client_portal" | "tws" | "ibx";
+  transport: "tws";
   selectedAccountId: string | null;
   marketDataMode:
     | "live"
@@ -63,7 +63,7 @@ type RequestBenchmark = {
 
 const DEFAULT_API_BASE_URL = process.env["API_BASE_URL"] ?? "http://127.0.0.1:8080/api";
 const DEFAULT_BRIDGE_BASE_URL =
-  process.env["IBKR_BRIDGE_BASE_URL"] ?? process.env["BRIDGE_BASE_URL"] ?? "http://127.0.0.1:3002";
+  process.env["BRIDGE_BASE_URL"] ?? "http://127.0.0.1:3002";
 const DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL"];
 const STREAM_GAP_THRESHOLD_MS = 2_500;
 

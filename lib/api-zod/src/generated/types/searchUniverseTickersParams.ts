@@ -5,33 +5,41 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { UniverseMarket } from "./universeMarket";
+import type { SearchUniverseTickersMode } from './searchUniverseTickersMode';
+import type { UniverseMarket } from './universeMarket';
 
 export type SearchUniverseTickersParams = {
-  /**
-   * Search within the ticker symbol and company name.
-   */
-  search?: string;
-  /**
-   * Restrict results to a market.
-   */
-  market?: UniverseMarket;
-  /**
-   * Restrict results to one or more markets. Takes precedence over market when provided.
-   */
-  markets?: UniverseMarket[];
-  /**
-   * Optional Polygon ticker type filter.
-   */
-  type?: string;
-  /**
-   * Restrict results to active tickers.
-   */
-  active?: boolean;
-  /**
-   * Maximum number of search results to return.
-   * @minimum 1
-   * @maximum 50
-   */
-  limit?: number;
+/**
+ * Search within the ticker symbol and company name.
+ */
+search?: string;
+/**
+ * Restrict results to a market.
+ */
+market?: UniverseMarket;
+/**
+ * Restrict results to one or more markets. Takes precedence over market when provided.
+ */
+markets?: UniverseMarket[];
+/**
+ * Optional Polygon ticker type filter.
+ */
+type?: string;
+/**
+ * Restrict results to active tickers.
+ */
+active?: boolean;
+/**
+ * Optional search mode. Use trade-resolve when Trade needs an exact IBKR-tradable contract.
+ */
+mode?: SearchUniverseTickersMode;
+/**
+ * Require an exact IBKR-tradable contract instead of returning fuzzy discovery matches.
+ */
+strictTrade?: boolean;
+/**
+ * Requested number of ranked search results to return. No artificial maximum is enforced by the API; clients should request progressively larger pages for large universes.
+ * @minimum 1
+ */
+limit?: number;
 };

@@ -5,11 +5,12 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AssetClass } from "./assetClass";
-import type { OrderSide } from "./orderSide";
-import type { OrderStatus } from "./orderStatus";
-import type { OrderType } from "./orderType";
-import type { TimeInForce } from "./timeInForce";
+import type { AccountOrderSourceType } from './accountOrderSourceType';
+import type { AssetClass } from './assetClass';
+import type { OrderSide } from './orderSide';
+import type { OrderStatus } from './orderStatus';
+import type { OrderType } from './orderType';
+import type { TimeInForce } from './timeInForce';
 
 export interface AccountOrder {
   id: string;
@@ -30,4 +31,10 @@ export interface AccountOrder {
   averageFillPrice: number | null;
   commission: number | null;
   source: string;
+  sourceType?: AccountOrderSourceType;
+  strategyLabel?: string | null;
+  candidateId?: string | null;
+  deploymentId?: string | null;
+  deploymentName?: string | null;
+  sourceEventId?: string | null;
 }

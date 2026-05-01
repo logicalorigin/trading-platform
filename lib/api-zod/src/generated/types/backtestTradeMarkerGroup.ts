@@ -5,8 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BacktestTradeMarkerGroupDir } from "./backtestTradeMarkerGroupDir";
-import type { BacktestTradeMarkerGroupKind } from "./backtestTradeMarkerGroupKind";
+import type { BacktestTradeMarkerGroupDir } from './backtestTradeMarkerGroupDir';
+import type { BacktestTradeMarkerGroupKind } from './backtestTradeMarkerGroupKind';
 
 export interface BacktestTradeMarkerGroup {
   id: string;

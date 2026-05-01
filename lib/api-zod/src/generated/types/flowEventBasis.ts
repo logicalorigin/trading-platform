@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type FlowEventBasis =
-  (typeof FlowEventBasis)[keyof typeof FlowEventBasis];
+export type FlowEventBasis = typeof FlowEventBasis[keyof typeof FlowEventBasis];
+
 
 export const FlowEventBasis = {
-  snapshot: "snapshot",
-  trade: "trade",
+  snapshot: 'snapshot',
+  trade: 'trade',
 } as const;

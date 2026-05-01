@@ -5,10 +5,26 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { OptionRight } from "./optionRight";
+import type { OptionChainQuoteHydration } from './optionChainQuoteHydration';
+import type { OptionChainStrikeCoverage } from './optionChainStrikeCoverage';
+import type { OptionRight } from './optionRight';
 
 export type GetOptionChainParams = {
-  underlying: string;
-  expirationDate?: Date;
-  contractType?: OptionRight;
+underlying: string;
+expirationDate?: Date;
+contractType?: OptionRight;
+/**
+ * Number of strikes on each side of the closest ATM strike to return. Defaults to 6.
+ * @minimum 1
+ * @maximum 50
+ */
+strikesAroundMoney?: number;
+/**
+ * Named strike window. Use full to hydrate every strike for the requested expiration.
+ */
+strikeCoverage?: OptionChainStrikeCoverage;
+/**
+ * Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to snapshot.
+ */
+quoteHydration?: OptionChainQuoteHydration;
 };

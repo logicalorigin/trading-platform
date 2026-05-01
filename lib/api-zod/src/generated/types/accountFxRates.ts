@@ -6,4 +6,4 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type AccountFxRates = { [key: string]: number | null };
+export type AccountFxRates = {[key: string]: number | null};

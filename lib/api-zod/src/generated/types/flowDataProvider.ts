@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type FlowDataProvider =
-  (typeof FlowDataProvider)[keyof typeof FlowDataProvider];
+export type FlowDataProvider = typeof FlowDataProvider[keyof typeof FlowDataProvider];
+
 
 export const FlowDataProvider = {
-  ibkr: "ibkr",
-  polygon: "polygon",
+  ibkr: 'ibkr',
+  polygon: 'polygon',
 } as const;

@@ -7,5 +7,5 @@
  */
 
 export type GetResearchSnapshotsParams = {
-  symbols: string;
+symbols: string;
 };

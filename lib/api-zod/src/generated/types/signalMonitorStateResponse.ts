@@ -5,8 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { SignalMonitorProfile } from "./signalMonitorProfile";
-import type { SignalMonitorSymbolState } from "./signalMonitorSymbolState";
+import type { SignalMonitorProfile } from './signalMonitorProfile';
+import type { SignalMonitorSymbolState } from './signalMonitorSymbolState';
 
 export interface SignalMonitorStateResponse {
   profile: SignalMonitorProfile;

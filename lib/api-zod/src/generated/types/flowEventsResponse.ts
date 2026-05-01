@@ -5,8 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { FlowEvent } from "./flowEvent";
-import type { FlowEventsSource } from "./flowEventsSource";
+import type { FlowEvent } from './flowEvent';
+import type { FlowEventsSource } from './flowEventsSource';
 
 export interface FlowEventsResponse {
   events: FlowEvent[];

@@ -6,9 +6,9 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type ResearchProvider =
-  (typeof ResearchProvider)[keyof typeof ResearchProvider];
+export type ResearchProvider = typeof ResearchProvider[keyof typeof ResearchProvider];
+
 
 export const ResearchProvider = {
-  fmp: "fmp",
+  fmp: 'fmp',
 } as const;

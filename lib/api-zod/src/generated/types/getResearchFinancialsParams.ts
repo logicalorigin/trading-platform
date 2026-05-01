@@ -7,5 +7,5 @@
  */
 
 export type GetResearchFinancialsParams = {
-  symbol: string;
+symbol: string;
 };

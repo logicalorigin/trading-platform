@@ -5,13 +5,13 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BacktestDirectionMode } from "./backtestDirectionMode";
-import type { BacktestExecutionProfile } from "./backtestExecutionProfile";
-import type { BacktestOptimizerMode } from "./backtestOptimizerMode";
-import type { BacktestPortfolioRules } from "./backtestPortfolioRules";
-import type { BacktestStudyRecordOptimizerConfig } from "./backtestStudyRecordOptimizerConfig";
-import type { BacktestStudyRecordParameters } from "./backtestStudyRecordParameters";
-import type { BarTimeframe } from "./barTimeframe";
+import type { BacktestDirectionMode } from './backtestDirectionMode';
+import type { BacktestExecutionProfile } from './backtestExecutionProfile';
+import type { BacktestOptimizerMode } from './backtestOptimizerMode';
+import type { BacktestPortfolioRules } from './backtestPortfolioRules';
+import type { BacktestStudyRecordOptimizerConfig } from './backtestStudyRecordOptimizerConfig';
+import type { BacktestStudyRecordParameters } from './backtestStudyRecordParameters';
+import type { BarTimeframe } from './barTimeframe';
 
 export interface BacktestStudyRecord {
   id: string;

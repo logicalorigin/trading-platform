@@ -5,7 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { UniverseTicker } from "./universeTicker";
+import type { UniverseTicker } from './universeTicker';
 
 export interface UniverseTickersResponse {
   count: number;

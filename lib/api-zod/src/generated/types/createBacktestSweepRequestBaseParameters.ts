@@ -6,6 +6,4 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type CreateBacktestSweepRequestBaseParameters = {
-  [key: string]: unknown;
-};
+export type CreateBacktestSweepRequestBaseParameters = { [key: string]: unknown };

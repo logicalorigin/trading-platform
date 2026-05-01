@@ -5,10 +5,11 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
-import type { QuoteSnapshotFreshness } from "./quoteSnapshotFreshness";
-import type { QuoteSnapshotLatency } from "./quoteSnapshotLatency";
-import type { QuoteSource } from "./quoteSource";
+import type { IbkrBridgeHealthTransport } from './ibkrBridgeHealthTransport';
+import type { MarketDataFreshness } from './marketDataFreshness';
+import type { QuoteSnapshotLatency } from './quoteSnapshotLatency';
+import type { QuoteSnapshotMarketDataMode } from './quoteSnapshotMarketDataMode';
+import type { QuoteSource } from './quoteSource';
 
 export interface QuoteSnapshot {
   symbol: string;
@@ -29,7 +30,13 @@ export interface QuoteSnapshot {
   source: QuoteSource;
   transport: IbkrBridgeHealthTransport;
   delayed: boolean;
-  freshness?: QuoteSnapshotFreshness;
+  freshness?: MarketDataFreshness;
+  /** @nullable */
+  marketDataMode?: QuoteSnapshotMarketDataMode;
+  /** @nullable */
+  dataUpdatedAt?: Date | null;
+  /** @nullable */
+  ageMs?: number | null;
   /** @nullable */
   cacheAgeMs?: number | null;
   /** @nullable */

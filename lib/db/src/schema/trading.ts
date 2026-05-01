@@ -162,6 +162,205 @@ export const balanceSnapshotsTable = pgTable(
   ],
 );
 
+export const shadowAccountsTable = pgTable("shadow_accounts", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  displayName: text("display_name").notNull(),
+  currency: varchar("currency", { length: 16 }).notNull().default("USD"),
+  startingBalance: numeric("starting_balance", {
+    precision: 20,
+    scale: 6,
+  }).notNull(),
+  cash: numeric("cash", { precision: 20, scale: 6 }).notNull(),
+  realizedPnl: numeric("realized_pnl", { precision: 20, scale: 6 })
+    .notNull()
+    .default("0"),
+  fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
+  status: varchar("status", { length: 32 }).notNull().default("active"),
+  ...timestamps,
+});
+
+export const shadowOrdersTable = pgTable(
+  "shadow_orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: varchar("account_id", { length: 64 })
+      .notNull()
+      .references(() => shadowAccountsTable.id),
+    source: varchar("source", { length: 32 }).notNull().default("manual"),
+    sourceEventId: uuid("source_event_id"),
+    clientOrderId: varchar("client_order_id", { length: 160 }),
+    symbol: varchar("symbol", { length: 64 }).notNull(),
+    assetClass: varchar("asset_class", { length: 32 }).notNull(),
+    side: orderSideEnum("side").notNull(),
+    type: orderTypeEnum("type").notNull().default("market"),
+    timeInForce: timeInForceEnum("time_in_force").notNull().default("day"),
+    status: orderStatusEnum("status").notNull().default("filled"),
+    quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
+    filledQuantity: numeric("filled_quantity", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    limitPrice: numeric("limit_price", { precision: 18, scale: 6 }),
+    stopPrice: numeric("stop_price", { precision: 18, scale: 6 }),
+    averageFillPrice: numeric("average_fill_price", {
+      precision: 18,
+      scale: 6,
+    }),
+    fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
+    rejectionReason: text("rejection_reason"),
+    optionContract: jsonb("option_contract").$type<Record<string, unknown> | null>(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    placedAt: timestamp("placed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    filledAt: timestamp("filled_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index("shadow_orders_account_idx").on(table.accountId),
+    index("shadow_orders_symbol_idx").on(table.symbol),
+    index("shadow_orders_status_idx").on(table.status),
+    index("shadow_orders_placed_at_idx").on(table.placedAt),
+    uniqueIndex("shadow_orders_source_event_idx").on(table.sourceEventId),
+    uniqueIndex("shadow_orders_client_order_idx").on(table.clientOrderId),
+  ],
+);
+
+export const shadowFillsTable = pgTable(
+  "shadow_fills",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: varchar("account_id", { length: 64 })
+      .notNull()
+      .references(() => shadowAccountsTable.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => shadowOrdersTable.id),
+    sourceEventId: uuid("source_event_id"),
+    symbol: varchar("symbol", { length: 64 }).notNull(),
+    assetClass: varchar("asset_class", { length: 32 }).notNull(),
+    side: orderSideEnum("side").notNull(),
+    quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
+    price: numeric("price", { precision: 18, scale: 6 }).notNull(),
+    grossAmount: numeric("gross_amount", { precision: 20, scale: 6 }).notNull(),
+    fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
+    realizedPnl: numeric("realized_pnl", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    cashDelta: numeric("cash_delta", { precision: 20, scale: 6 }).notNull(),
+    optionContract: jsonb("option_contract").$type<Record<string, unknown> | null>(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("shadow_fills_account_idx").on(table.accountId),
+    index("shadow_fills_order_idx").on(table.orderId),
+    index("shadow_fills_symbol_idx").on(table.symbol),
+    index("shadow_fills_occurred_at_idx").on(table.occurredAt),
+    uniqueIndex("shadow_fills_source_event_idx").on(table.sourceEventId),
+  ],
+);
+
+export const shadowPositionsTable = pgTable(
+  "shadow_positions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: varchar("account_id", { length: 64 })
+      .notNull()
+      .references(() => shadowAccountsTable.id),
+    positionKey: varchar("position_key", { length: 240 }).notNull(),
+    symbol: varchar("symbol", { length: 64 }).notNull(),
+    assetClass: varchar("asset_class", { length: 32 }).notNull(),
+    quantity: numeric("quantity", { precision: 20, scale: 6 }).notNull(),
+    averageCost: numeric("average_cost", { precision: 18, scale: 6 }).notNull(),
+    mark: numeric("mark", { precision: 18, scale: 6 }),
+    marketValue: numeric("market_value", { precision: 20, scale: 6 }),
+    unrealizedPnl: numeric("unrealized_pnl", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    realizedPnl: numeric("realized_pnl", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
+    optionContract: jsonb("option_contract").$type<Record<string, unknown> | null>(),
+    openedAt: timestamp("opened_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    asOf: timestamp("as_of", { withTimezone: true }).defaultNow().notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("open"),
+    ...timestamps,
+  },
+  (table) => [
+    index("shadow_positions_account_idx").on(table.accountId),
+    index("shadow_positions_symbol_idx").on(table.symbol),
+    index("shadow_positions_status_idx").on(table.status),
+    uniqueIndex("shadow_positions_account_key_idx").on(
+      table.accountId,
+      table.positionKey,
+    ),
+  ],
+);
+
+export const shadowPositionMarksTable = pgTable(
+  "shadow_position_marks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: varchar("account_id", { length: 64 })
+      .notNull()
+      .references(() => shadowAccountsTable.id),
+    positionId: uuid("position_id")
+      .notNull()
+      .references(() => shadowPositionsTable.id),
+    mark: numeric("mark", { precision: 18, scale: 6 }).notNull(),
+    marketValue: numeric("market_value", { precision: 20, scale: 6 }).notNull(),
+    unrealizedPnl: numeric("unrealized_pnl", {
+      precision: 20,
+      scale: 6,
+    }).notNull(),
+    source: varchar("source", { length: 32 }).notNull().default("quote"),
+    asOf: timestamp("as_of", { withTimezone: true }).defaultNow().notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("shadow_position_marks_account_idx").on(table.accountId),
+    index("shadow_position_marks_position_idx").on(table.positionId),
+    index("shadow_position_marks_as_of_idx").on(table.asOf),
+  ],
+);
+
+export const shadowBalanceSnapshotsTable = pgTable(
+  "shadow_balance_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: varchar("account_id", { length: 64 })
+      .notNull()
+      .references(() => shadowAccountsTable.id),
+    currency: varchar("currency", { length: 16 }).notNull().default("USD"),
+    cash: numeric("cash", { precision: 20, scale: 6 }).notNull(),
+    buyingPower: numeric("buying_power", { precision: 20, scale: 6 }).notNull(),
+    netLiquidation: numeric("net_liquidation", {
+      precision: 20,
+      scale: 6,
+    }).notNull(),
+    realizedPnl: numeric("realized_pnl", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    unrealizedPnl: numeric("unrealized_pnl", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    fees: numeric("fees", { precision: 20, scale: 6 }).notNull().default("0"),
+    source: varchar("source", { length: 32 }).notNull().default("ledger"),
+    asOf: timestamp("as_of", { withTimezone: true }).defaultNow().notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("shadow_balance_snapshots_account_idx").on(table.accountId),
+    index("shadow_balance_snapshots_as_of_idx").on(table.asOf),
+  ],
+);
+
 export const flexReportRunsTable = pgTable(
   "flex_report_runs",
   {

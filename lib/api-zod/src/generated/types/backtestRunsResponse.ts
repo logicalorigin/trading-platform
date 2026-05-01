@@ -5,7 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BacktestRunSummary } from "./backtestRunSummary";
+import type { BacktestRunSummary } from './backtestRunSummary';
 
 export interface BacktestRunsResponse {
   runs: BacktestRunSummary[];

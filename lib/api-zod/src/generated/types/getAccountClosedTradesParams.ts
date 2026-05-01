@@ -5,15 +5,15 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { EnvironmentMode } from "./environmentMode";
-import type { GetAccountClosedTradesPnlSign } from "./getAccountClosedTradesPnlSign";
+import type { EnvironmentMode } from './environmentMode';
+import type { GetAccountClosedTradesPnlSign } from './getAccountClosedTradesPnlSign';
 
 export type GetAccountClosedTradesParams = {
-  from?: Date;
-  to?: Date;
-  symbol?: string;
-  assetClass?: string;
-  pnlSign?: GetAccountClosedTradesPnlSign;
-  holdDuration?: string;
-  mode?: EnvironmentMode;
+from?: Date;
+to?: Date;
+symbol?: string;
+assetClass?: string;
+pnlSign?: GetAccountClosedTradesPnlSign;
+holdDuration?: string;
+mode?: EnvironmentMode;
 };

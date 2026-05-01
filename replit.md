@@ -37,22 +37,57 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **rayalgo** (`artifacts/rayalgo`, `/`) — RayAlgo Platform. React + Vite + Recharts + D3 trading terminal imported from external project. Single ~5300-line component (`src/RayAlgoPlatform.jsx`) containing six screens: Market, Flow, Trade, Research, Algo, Backtest. Uses inline styles only; `index.css` is intentionally minimal (no Tailwind theme tokens) and `App.tsx` simply renders `<RayAlgoPlatform />`. The `components/ui/` directory only retains `dropdown-menu.tsx` and `popover.tsx` (the only shadcn wrappers actually imported); the rest of the shadcn library plus its dependencies (radix-*, sonner, vaul, wouter, cmdk, framer-motion, react-hook-form, date-fns, etc.) were removed in the dependency cleanup pass.
 - **api-server** (`artifacts/api-server`) — Express API serving research, trading, market data, and the new backtesting routes.
 - **backtest-worker** (`artifacts/backtest-worker`) — background job worker that claims queued backtest jobs, hydrates/caches datasets, runs studies and sweeps, and promotes persistent run artifacts into the database.
-- **ibkr-bridge** (`artifacts/ibkr-bridge`) — small HTTP service that fronts the user's local Interactive Brokers Client Portal Gateway (CPG). Built into `dist/index.mjs`; runs on port 3002 via the "IBKR Bridge" workflow. The api-server's `IbkrBridgeClient` calls it for accounts, positions, bars, quotes, market depth, and orders. All Date-typed fields are deserialized at the bridge-client boundary in `artifacts/api-server/src/providers/ibkr/bridge-client.ts` (HTTP JSON only carries strings).
+- **ibkr-bridge** (`artifacts/ibkr-bridge`) — small HTTP service that runs beside the user's local Interactive Brokers Gateway/TWS socket. Built into `dist/index.mjs`; the Windows one-click helper exposes the bridge through Cloudflare, and the api-server's `IbkrBridgeClient` calls it for accounts, positions, bars, quotes, market depth, orders, and TWS contract search. All Date-typed fields are deserialized at the bridge-client boundary in `artifacts/api-server/src/providers/ibkr/bridge-client.ts` (HTTP JSON only carries strings).
 
 ## IBKR Live Data Setup (User-Side)
 
-The IBKR feed depends on three processes running on the user's Windows machine, plus a tunnel into Replit. If charts/quotes go quiet, work through this in order.
+### IB Gateway/TWS live mode
 
-### Required env (already set in Replit Secrets)
+IBKR uses pure IB Gateway/TWS mode. Client Portal Gateway is not a supported
+runtime path for this project. IBKR market-data line limits still apply, so this
+mode streams watchlist/visible/selected instruments and falls back to
+vendor/cached data for over-budget symbols. Do not expose the raw TWS socket.
 
-- `IBKR_TRANSPORT=client_portal`
-- `IBKR_BASE_URL=https://ibkr.<userdomain>/v1/api` (stable named-tunnel hostname; see below)
-- `IBKR_BRIDGE_URL=http://127.0.0.1:3002`
-- `IBKR_ALLOW_INSECURE_TLS=true` (CPG uses a self-signed cert)
+Replit does not need IBKR bridge URL secrets for the normal live flow. Start
+IBKR activation from the RayAlgo header; the Windows helper posts the fresh
+Cloudflare bridge URL and bridge token back to the API, which stores them in the
+runtime override. Stale URL secrets such as `IBKR_BASE_URL`,
+`IBKR_API_BASE_URL`, `IB_GATEWAY_URL`, `IBKR_GATEWAY_URL`, `IBKR_BRIDGE_URL`,
+and `IBKR_BRIDGE_BASE_URL` should be deleted from Replit Secrets if present.
 
-### Tunnel: named cloudflared tunnel (recommended)
+Keep non-URL secrets/config as needed:
 
-Quick tunnels (`cloudflared tunnel --url ...`) mint a fresh `*.trycloudflare.com` hostname every restart, which forces `IBKR_BASE_URL` to be re-edited in Replit Secrets every session. A **named tunnel** bound to the user's Cloudflare account gives a stable hostname (e.g. `ibkr.<userdomain>`) that survives restarts, machine reboots, and cloudflared upgrades — set the secret once and forget it.
+- `IBKR_TRANSPORT=tws` may remain as shared runtime intent.
+- Optional account pin: `IBKR_ACCOUNT_ID=<live-account-id>`.
+- Optional caps: `IBKR_MAX_LIVE_EQUITY_LINES=80`, `IBKR_MAX_LIVE_OPTION_LINES=20`.
+- Account history/Flex secrets such as `IBKR_FLEX_TOKEN` and `IBKR_FLEX_QUERY_ID`
+  are unrelated to bridge URL activation and should not be removed.
+
+Windows side:
+
+1. Start IB Gateway/TWS live and enable API socket clients on port `4001`.
+   Uncheck API read-only mode only when live order submission is intentionally
+   being tested.
+2. Start activation from the RayAlgo header on the Windows machine. The helper
+   defaults to live mode, port `4001`, client id `101`, and live market data
+   type `1`.
+3. The helper downloads the current served bridge bundle, starts the local
+   bridge, starts a fresh Cloudflare quick tunnel when needed, and records the
+   active URL automatically.
+
+Security rule: when `IBKR_TRANSPORT=tws`, the bridge requires
+a bridge token for every route except `/healthz`. The token is generated by
+activation and stored with the runtime override; browser clients should not call
+the Windows bridge directly.
+
+Do not run Client Portal Gateway and IB Gateway/TWS at the same time with the
+same IBKR username; IBKR treats them as competing brokerage sessions.
+
+### Tunnel: named cloudflared tunnel (optional)
+
+The one-click helper uses Cloudflare quick tunnels and clears stale quick-tunnel
+state before launching a replacement. A named tunnel can still be used later if
+a stable hostname is needed, but it is not part of the supported one-click path.
 
 One-time setup on the Windows machine (requires a Cloudflare account with a zone you control):
 
@@ -63,56 +98,34 @@ One-time setup on the Windows machine (requires a Cloudflare account with a zone
    ```yaml
    tunnel: ibkr
    credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL-UUID>.json
-   originRequest:
-     noTLSVerify: true
    ingress:
      - hostname: ibkr.<userdomain>
-       service: https://localhost:5000
+       service: http://localhost:3002
      - service: http_status:404
    ```
-5. Set `IBKR_BASE_URL=https://ibkr.<userdomain>/v1/api` in Replit Secrets — once.
+5. Start activation from the RayAlgo header so the API stores the active bridge
+   URL in the runtime override.
 
-### Three windows on Windows
+### Windows processes
 
-1. **CPG (PowerShell #1)** — `cd $env:USERPROFILE\clientportal.gw; bin\run.bat root\conf.yaml`. Listens on `https://localhost:5000`. Requires OpenJDK 21.
-2. **cloudflared (PowerShell #2)** — `cloudflared tunnel run ibkr`. Uses the named tunnel + `config.yml` above; the public hostname stays `ibkr.<userdomain>` across restarts.
-   - **Fallback (no Cloudflare account)**: `cloudflared tunnel --url https://localhost:5000 --no-tls-verify` still works, but prints a fresh `*.trycloudflare.com` URL each run that has to be pasted into `IBKR_BASE_URL` (with `/v1/api` appended) every session.
-3. **Browser tab** — `https://localhost:5000` for login. Click through the cert warning.
+1. **IB Gateway/TWS** — logged in live with API socket clients enabled on `127.0.0.1:4001`.
+2. **RayAlgo IBKR bridge** — launched only by the one-click activation helper; listens on `http://localhost:3002`.
+3. **cloudflared** — launched by the activation helper for the bridge HTTP service.
 
-When a session-start script is added (see follow-up "one-click launch on Windows"), it should invoke `cloudflared tunnel run ibkr` (named tunnel by name), **not** `cloudflared tunnel --url ...`, so `IBKR_BASE_URL` never has to be touched.
+### One-click activation helper (`scripts/windows/rayalgo-ibkr-helper.ps1`)
 
-### One-click launcher (`scripts/windows/start-ibkr.ps1`)
-
-Instead of opening windows #1 and #2 by hand, just run the launcher:
-
-- **Double-click** `scripts\windows\start-ibkr.cmd`, **or**
-- **From PowerShell**: `powershell -ExecutionPolicy Bypass -File scripts\windows\start-ibkr.ps1`
+Start activation from the RayAlgo header after IB Gateway/TWS is logged in.
 
 What it does:
 
-1. Opens CPG in its own PowerShell window (`%USERPROFILE%\clientportal.gw\bin\run.bat root\conf.yaml`).
-2. Opens `cloudflared tunnel --url https://localhost:5000 --no-tls-verify` in another window and tees its output to `%TEMP%\rayalgo-ibkr\cloudflared-<timestamp>.log`.
-3. Watches the log for the `*.trycloudflare.com` hostname and prints a big banner with the fully formatted `IBKR_BASE_URL` (already includes `/v1/api`). The value is copied to the clipboard when possible.
-
-Only manual step left: paste that `IBKR_BASE_URL` into Replit Secrets, then complete the browser login at `https://localhost:5000`. Override defaults with `-CpgPath`, `-CloudflaredExe`, or `-TunnelTimeoutSeconds` if your install differs.
-
-### The IBKR 2FA trick that actually works
-
-The default "push notification to IBKR Mobile" flow **silently fails** with CPG. Use challenge/response instead:
-
-1. In the browser at `https://localhost:5000`, enter username + password and click Login. Page sits "waiting for authentication" — leave it.
-2. Open IBKR Mobile → menu → **"Authenticate"** (NOT a push notification — an actual menu item, sometimes labeled "Two-Factor Authentication" or "Generate Response").
-3. The browser will offer a **"Get Challenge String"** link/button. Click it; a 6–8 digit code appears.
-4. Type that code into the IBKR Mobile app. The app returns a response code.
-5. Type the response code back into the browser. You should see "Client login succeeds".
-
-CPG sessions silently expire roughly every 24h. Re-running the challenge/response above is enough; the bridge auto-recovers.
+1. Checks whether the IB Gateway/TWS socket is reachable.
+2. Self-updates the installed protocol handler when the served helper version changes.
+3. Opens the RayAlgo bridge with `IBKR_TRANSPORT=tws`.
+4. Clears stale quick-tunnel state, opens cloudflared, and posts the fresh bridge URL/token back to the API.
 
 ### Verifying the chain from Replit
 
 ```
-curl -sS -X POST https://<tunnel>/v1/api/iserver/auth/status   # expect authenticated:true
-curl -sS http://127.0.0.1:3002/accounts                         # expect real account data
 curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # expect HTTP 200
 ```
 
@@ -125,11 +138,11 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 `artifacts/api-server/src/services/platform.ts` is wired so IBKR is the primary source for everything the user has IBKR market data for, with Polygon as fallback only:
 
 - **Bars** — IBKR historical bars merged with Polygon gap fill. Bars are tagged `ibkr-history` or `polygon-history` (no blanket source label).
-- **News** — `getNews` calls `IbkrBridgeClient.getNews` first (`/iserver/news` keyed by conid). Falls back to Polygon when IBKR returns nothing (e.g. tickerless requests, since CP requires a conid).
-- **Universe search** — `searchUniverseTickers` calls `IbkrBridgeClient.searchTickers` first (`/iserver/secdef/search`, filtered to STK). Falls back to Polygon for non-stock markets and on empty IBKR result.
+- **News** — TWS does not expose the Client Portal `/iserver/news` feed through this bridge; `getNews` falls back to Polygon.
+- **Universe search** — `searchUniverseTickers` calls `IbkrBridgeClient.searchTickers` first. The TWS bridge maps `getMatchingSymbols()` results to IBKR contract metadata, then falls back to Polygon when IBKR returns nothing.
 - **Flow events** — derived from `IbkrBridgeClient.getOptionChain` snapshots, ranked by premium. Note: the IBKR option-chain mapper currently leaves `volume`/`openInterest` at 0; flow events synthesize size as `volume || 1` so contracts with a real `mark` still surface. To get true volume/OI, extend the snapshot field set in `client.ts` to include OPRA fields (e.g. 7762 = volume).
   - **Expiry parsing fix** — IBKR returns option expiries as compact YYYYMMDD strings (e.g. `"20260423"`). `lib/values.ts` `toDate()` now handles 8-digit string/integer inputs as calendar dates *before* the numeric-milliseconds branch. Previously every option contract resolved to `1970-01-01T05:37:40Z`, which collapsed flow event IDs and broke UI dedupe.
-- **Bridge surface** — new endpoints `GET /news` and `GET /universe/search` on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). The TWS provider stubs both to empty arrays since the user's transport is Client Portal.
+- **Bridge surface** — endpoints `GET /news` and `GET /universe/search` live on the IBKR bridge (`artifacts/ibkr-bridge/src/app.ts`). `GET /news` returns empty in TWS mode by design; `GET /universe/search` is backed by TWS contract search.
 
 ## Server log noise (dev workflow)
 
@@ -164,35 +177,39 @@ that workflow. Production is unaffected: it runs raw JSON pino without
 `pnpm --filter @workspace/ibkr-bridge run build` before restart since the
 bridge runs the compiled `dist/index.mjs`.
 
-## Vite dev server: single instance per workflow
+## Dev servers: single instance per workflow
 
-The rayalgo workflow used to spawn duplicate vite processes that fought over
-port `18747` (the port the Replit preview proxy is pinned to in
-`artifacts/rayalgo/.replit-artifact/artifact.toml`). Symptoms: vite logged
-`Port 18747 is in use, trying another one...` and bound `18748`, while the
-preview pane kept hitting the stale orphan on `18747`. Two fixes prevent the
+The dev workflows should own exactly one listener per pinned port: API on
+`8080` and rayalgo on `18747`. Older restarts could leave an orphan node process
+holding the port, causing the next API start to fail with `EADDRINUSE` or vite to
+bind a fallback port that the preview proxy never used. Three fixes prevent the
 recurrence:
 
-1. **`strictPort: true`** on both `server` and `preview` blocks of
-   `artifacts/rayalgo/vite.config.ts` — vite now exits with an error instead of
-   silently falling back to the next port. Failure becomes loud and visible.
-2. **`exec` in the dev scripts** so SIGTERM from `restart_workflow` propagates
+1. **Shared port reaper** in `scripts/reap-dev-port.mjs`, run by both
+   `artifacts/api-server/package.json` and `artifacts/rayalgo/package.json`
+   before their dev servers start. It scans `/proc/net/tcp[6]` for the requested
+   `PORT` and reaps the owning PID directly; stale pid files are not trusted.
+2. **`strictPort: true`** on both `server` and `preview` blocks of
+   `artifacts/rayalgo/vite.config.ts` so vite exits with an error instead of
+   silently falling back to the next port.
+3. **`exec` in the dev scripts** so SIGTERM from `restart_workflow` propagates
    through the `pnpm` wrapper to the actual node process. Applied to both
    `artifacts/rayalgo/package.json` (`exec vite ...`) and
-   `artifacts/api-server/package.json` (`exec pnpm run start` and
-   `exec node ... dist/index.mjs`). Without `exec`, the pnpm wrapper would
-   intercept SIGTERM, leave the grandchild node process running as an orphan
-   holding the port, and the next workflow start would EADDRINUSE-fail.
+   `artifacts/api-server/package.json` (`exec node ... dist/index.mjs` in both
+   `dev` and `start`).
 
-If a workflow restart still fails with `EADDRINUSE`, sweep orphans manually:
+If a workflow restart still fails with `EADDRINUSE`, run the shared reaper for
+the conflicting pinned port and restart the workflow:
 
 ```bash
-ps -eo pid,etime,cmd | grep -E "node.*(api-server|ibkr-bridge|vite|rayalgo)" | grep -v grep
-kill -KILL <pids>
+PORT=8080 node scripts/reap-dev-port.mjs    # API
+PORT=18747 node scripts/reap-dev-port.mjs   # rayalgo preview
 ```
 
-`fuser` is unavailable on this NixOS image; use `pkill -KILL -f <pattern>` or
-check `/proc/net/tcp[6]` (look for `:HEX_PORT` where HEX = `printf '%04X' PORT`).
+`fuser` is unavailable on this NixOS image, and `ps`/`pgrep` may be unavailable
+depending on the shell environment. If the reaper cannot identify the PID, check
+`/proc/net/tcp[6]` directly (look for `:HEX_PORT` where HEX =
+`printf '%04X' PORT`).
 
 ### `ensurePreviewReachable` removed from rayalgo
 
@@ -216,7 +233,7 @@ that calls `server.close()` and `process.exit()` is a known follow-up.
 
 ## Snapshot quote pipeline (gray-screen fix)
 
-The IBKR Client Portal streams *partial* field updates per WebSocket tick and
+Legacy Client Portal snapshots streamed *partial* field updates per WebSocket tick and
 prefixes some prices with marker letters (`C`, `H`, `B`, `@`). Three coupled
 fixes were required so `/api/quotes/snapshot` returns real data instead of zeros:
 

@@ -5,11 +5,11 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AccountFx } from "./accountFx";
-import type { AccountSummaryAccount } from "./accountSummaryAccount";
-import type { AccountSummaryMetrics } from "./accountSummaryMetrics";
-import type { EnvironmentMode } from "./environmentMode";
-import type { JsonObject } from "./jsonObject";
+import type { AccountFx } from './accountFx';
+import type { AccountSummaryAccount } from './accountSummaryAccount';
+import type { AccountSummaryMetrics } from './accountSummaryMetrics';
+import type { EnvironmentMode } from './environmentMode';
+import type { JsonObject } from './jsonObject';
 
 export interface AccountSummaryResponse {
   accountId: string;

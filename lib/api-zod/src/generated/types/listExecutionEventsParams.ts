@@ -7,10 +7,10 @@
  */
 
 export type ListExecutionEventsParams = {
-  deploymentId?: string;
-  /**
-   * @minimum 1
-   * @maximum 500
-   */
-  limit?: number;
+deploymentId?: string;
+/**
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
 };

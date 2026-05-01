@@ -7,6 +7,6 @@
  */
 
 export type GetBacktestRunChartParams = {
-  symbol?: string;
-  selectedTradeId?: string;
+symbol?: string;
+selectedTradeId?: string;
 };

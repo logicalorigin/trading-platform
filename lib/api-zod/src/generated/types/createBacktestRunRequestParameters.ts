@@ -9,6 +9,4 @@
 /**
  * @nullable
  */
-export type CreateBacktestRunRequestParameters = {
-  [key: string]: unknown;
-} | null;
+export type CreateBacktestRunRequestParameters = { [key: string]: unknown } | null;

@@ -5,20 +5,37 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { OptionContract } from "./optionContract";
+import type { MarketDataFreshness } from './marketDataFreshness';
+import type { OptionChainQuoteMarketDataMode } from './optionChainQuoteMarketDataMode';
+import type { OptionContract } from './optionContract';
 
 export interface OptionChainQuote {
   contract: OptionContract;
-  bid: number;
-  ask: number;
-  last: number;
-  mark: number;
+  /** @nullable */
+  bid: number | null;
+  /** @nullable */
+  ask: number | null;
+  /** @nullable */
+  last: number | null;
+  /** @nullable */
+  mark: number | null;
   impliedVolatility?: number | null;
   delta?: number | null;
   gamma?: number | null;
   theta?: number | null;
   vega?: number | null;
-  openInterest: number;
-  volume: number;
+  /** @nullable */
+  openInterest: number | null;
+  /** @nullable */
+  volume: number | null;
   updatedAt: Date;
+  quoteFreshness?: MarketDataFreshness;
+  /** @nullable */
+  marketDataMode?: OptionChainQuoteMarketDataMode;
+  /** @nullable */
+  quoteUpdatedAt?: Date | null;
+  /** @nullable */
+  dataUpdatedAt?: Date | null;
+  /** @nullable */
+  ageMs?: number | null;
 }

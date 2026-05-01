@@ -1,0 +1,514 @@
+export type OptionsFlowScannerTransport = "tws";
+
+export type OptionsFlowScannerTransportStatus = {
+  transport: OptionsFlowScannerTransport | null;
+  connected?: boolean | null;
+  configured?: boolean | null;
+  authenticated?: boolean | null;
+  liveMarketDataAvailable?: boolean | null;
+  lastError?: string | null;
+};
+
+export type OptionsFlowScannerSource = {
+  status?: string;
+  provider?: string;
+  errorMessage?: string | null;
+};
+
+export type OptionsFlowScannerFetchResult<TEvent> = {
+  events: TEvent[];
+  source?: OptionsFlowScannerSource | null;
+};
+
+export type OptionsFlowScannerRequest = {
+  limit: number;
+  unusualThreshold?: number;
+};
+
+export type OptionsFlowScannerSnapshot<TEvent> = {
+  symbol: string;
+  events: TEvent[];
+  source: OptionsFlowScannerSource | null;
+  scannedAt: Date;
+  transport: OptionsFlowScannerTransport | null;
+  status: string;
+  error: string | null;
+  freshness: "fresh" | "stale";
+};
+
+export type OptionsFlowScannerRunResult = {
+  scannedSymbols: string[];
+  skippedSymbols: string[];
+  failedSymbols: string[];
+  transport: OptionsFlowScannerTransport | null;
+  skippedReason: string | null;
+};
+
+export type OptionsFlowScannerOptions<TEvent> = {
+  fetchSymbol: (input: {
+    symbol: string;
+    limit: number;
+    unusualThreshold?: number;
+  }) => Promise<OptionsFlowScannerFetchResult<TEvent>>;
+  getTransport: () => Promise<OptionsFlowScannerTransportStatus | null>;
+  normalizeSymbol?: (symbol: string) => string;
+  now?: () => number;
+  maxConcurrency?: number;
+  snapshotTtlMs?: number;
+  snapshotStaleTtlMs?: number;
+  preferredTransport?: OptionsFlowScannerTransport | null;
+  allowFallbackTransport?: boolean;
+  onError?: (error: unknown, context: { symbol?: string; phase: string }) => void;
+  onBatch?: (symbols: readonly string[]) => void;
+  onResult?: (input: {
+    symbol: string;
+    result?: OptionsFlowScannerFetchResult<TEvent>;
+    failed: boolean;
+    error?: string | null;
+  }) => void | Promise<void>;
+};
+
+type StoredSnapshot<TEvent> = {
+  symbol: string;
+  events: TEvent[];
+  source: OptionsFlowScannerSource | null;
+  scannedAtMs: number;
+  expiresAtMs: number;
+  staleExpiresAtMs: number;
+  transport: OptionsFlowScannerTransport | null;
+  status: string;
+  error: string | null;
+  requestedLimit: number;
+};
+
+type QueuedScan = {
+  symbol: string;
+  request: OptionsFlowScannerRequest;
+};
+
+const DEFAULT_MAX_CONCURRENCY = 2;
+const DEFAULT_SNAPSHOT_TTL_MS = 60_000;
+const DEFAULT_SNAPSHOT_STALE_TTL_MS = 5 * 60_000;
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return typeof error === "string" && error.trim()
+    ? error
+    : "Unknown options flow scanner error.";
+}
+
+function normalizeThreshold(value: number | undefined): number | undefined {
+  return Number.isFinite(value) && (value ?? 0) > 0 ? value : undefined;
+}
+
+function keyFor(symbol: string, unusualThreshold: number | undefined): string {
+  return `${symbol}:${normalizeThreshold(unusualThreshold) ?? "default"}`;
+}
+
+function uniqueSymbols(
+  symbols: readonly string[],
+  normalizeSymbol: (symbol: string) => string,
+): string[] {
+  return [
+    ...new Set(
+      symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+    ),
+  ];
+}
+
+function getTransportSkipReason(
+  status: OptionsFlowScannerTransportStatus | null,
+  preferredTransport: OptionsFlowScannerTransport | null,
+  allowFallbackTransport: boolean,
+): string | null {
+  const transport = status?.transport ?? null;
+
+  if (
+    preferredTransport &&
+    transport !== preferredTransport &&
+    !allowFallbackTransport
+  ) {
+    return `transport-not-${preferredTransport}`;
+  }
+
+  if (status?.configured === false) {
+    return "bridge-not-configured";
+  }
+
+  if (status?.connected === false) {
+    return "gateway-not-connected";
+  }
+
+  if (status?.authenticated === false) {
+    return "gateway-not-authenticated";
+  }
+
+  if (status?.liveMarketDataAvailable === false) {
+    return "market-data-not-live";
+  }
+
+  return null;
+}
+
+export function createOptionsFlowScanner<TEvent>(
+  options: OptionsFlowScannerOptions<TEvent>,
+) {
+  const normalizeSymbol =
+    options.normalizeSymbol ?? ((symbol: string) => symbol.trim().toUpperCase());
+  const now = options.now ?? (() => Date.now());
+  let maxConcurrency = Math.max(
+    1,
+    Math.floor(options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY),
+  );
+  const snapshotTtlMs = Math.max(
+    1_000,
+    options.snapshotTtlMs ?? DEFAULT_SNAPSHOT_TTL_MS,
+  );
+  const snapshotStaleTtlMs = Math.max(
+    snapshotTtlMs,
+    options.snapshotStaleTtlMs ?? DEFAULT_SNAPSHOT_STALE_TTL_MS,
+  );
+  const preferredTransport = options.preferredTransport ?? null;
+  const allowFallbackTransport = Boolean(options.allowFallbackTransport);
+
+  const snapshots = new Map<string, StoredSnapshot<TEvent>>();
+  const queued = new Map<string, QueuedScan>();
+  let drainPromise: Promise<OptionsFlowScannerRunResult> | null = null;
+  let timer: NodeJS.Timeout | null = null;
+  let stopRotation: (() => void) | null = null;
+  let rotationOffset = 0;
+
+  async function getTransport(): Promise<OptionsFlowScannerTransportStatus | null> {
+    try {
+      return await options.getTransport();
+    } catch (error) {
+      options.onError?.(error, { phase: "transport" });
+      return null;
+    }
+  }
+
+  async function fetchOne(
+    symbol: string,
+    request: OptionsFlowScannerRequest,
+    transport: OptionsFlowScannerTransport | null,
+  ): Promise<{ symbol: string; failed: boolean }> {
+    const scanStartedAt = now();
+    try {
+      const result = await options.fetchSymbol({
+        symbol,
+        limit: request.limit,
+        unusualThreshold: normalizeThreshold(request.unusualThreshold),
+      });
+      const settledAt = now();
+      storeSnapshot(symbol, request, result, transport, scanStartedAt, settledAt);
+      await options.onResult?.({ symbol, result, failed: false });
+      return { symbol, failed: false };
+    } catch (error) {
+      const settledAt = now();
+      const message = getErrorMessage(error);
+      snapshots.set(keyFor(symbol, request.unusualThreshold), {
+        symbol,
+        events: [],
+        source: {
+          status: "error",
+          provider: "none",
+          errorMessage: message,
+        },
+        scannedAtMs: scanStartedAt,
+        expiresAtMs: settledAt + snapshotTtlMs,
+        staleExpiresAtMs: settledAt + snapshotStaleTtlMs,
+        transport,
+        status: "error",
+        error: message,
+        requestedLimit: request.limit,
+      });
+      options.onError?.(error, { symbol, phase: "fetch" });
+      await options.onResult?.({ symbol, failed: true, error: message });
+      return { symbol, failed: true };
+    }
+  }
+
+  function storeSnapshot(
+    symbolInput: string,
+    request: OptionsFlowScannerRequest,
+    result: OptionsFlowScannerFetchResult<TEvent>,
+    transport: OptionsFlowScannerTransport | null = null,
+    scannedAtMs = now(),
+    settledAtMs = now(),
+  ): void {
+    const symbol = normalizeSymbol(symbolInput);
+    const source = result.source ?? null;
+    snapshots.set(keyFor(symbol, request.unusualThreshold), {
+      symbol,
+      events: result.events,
+      source,
+      scannedAtMs,
+      expiresAtMs: settledAtMs + snapshotTtlMs,
+      staleExpiresAtMs: settledAtMs + snapshotStaleTtlMs,
+      transport,
+      status: source?.status ?? (result.events.length ? "live" : "empty"),
+      error: source?.errorMessage ?? null,
+      requestedLimit: request.limit,
+    });
+  }
+
+  async function runOnce(
+    symbols: readonly string[],
+    request: OptionsFlowScannerRequest,
+  ): Promise<OptionsFlowScannerRunResult> {
+    const normalizedSymbols = uniqueSymbols(symbols, normalizeSymbol);
+    const transportStatus = await getTransport();
+    const transport = transportStatus?.transport ?? null;
+    const skipReason = getTransportSkipReason(
+      transportStatus,
+      preferredTransport,
+      allowFallbackTransport,
+    );
+
+    if (skipReason) {
+      return {
+        scannedSymbols: [],
+        skippedSymbols: normalizedSymbols,
+        failedSymbols: [],
+        transport,
+        skippedReason: skipReason,
+      };
+    }
+
+    if (!normalizedSymbols.length) {
+      return {
+        scannedSymbols: [],
+        skippedSymbols: [],
+        failedSymbols: [],
+        transport,
+        skippedReason: null,
+      };
+    }
+
+    const scannedSymbols: string[] = [];
+    const failedSymbols: string[] = [];
+    let cursor = 0;
+    const workerCount = Math.min(maxConcurrency, normalizedSymbols.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (cursor < normalizedSymbols.length) {
+        const index = cursor;
+        cursor += 1;
+        const symbol = normalizedSymbols[index];
+        const result = await fetchOne(symbol, request, transport);
+        scannedSymbols.push(result.symbol);
+        if (result.failed) {
+          failedSymbols.push(result.symbol);
+        }
+      }
+    });
+
+    await Promise.all(workers);
+
+    return {
+      scannedSymbols,
+      skippedSymbols: [],
+      failedSymbols,
+      transport,
+      skippedReason: null,
+    };
+  }
+
+  async function drainQueue(): Promise<OptionsFlowScannerRunResult> {
+    const batch = Array.from(queued.values());
+    queued.clear();
+    const grouped = new Map<string, QueuedScan[]>();
+    for (const item of batch) {
+      const groupKey = `${item.request.limit}:${normalizeThreshold(item.request.unusualThreshold) ?? "default"}`;
+      const group = grouped.get(groupKey) ?? [];
+      group.push(item);
+      grouped.set(groupKey, group);
+    }
+
+    const result: OptionsFlowScannerRunResult = {
+      scannedSymbols: [],
+      skippedSymbols: [],
+      failedSymbols: [],
+      transport: null,
+      skippedReason: null,
+    };
+
+    for (const group of grouped.values()) {
+      const groupResult = await runOnce(
+        group.map((item) => item.symbol),
+        group[0]?.request ?? { limit: 50 },
+      );
+      result.scannedSymbols.push(...groupResult.scannedSymbols);
+      result.skippedSymbols.push(...groupResult.skippedSymbols);
+      result.failedSymbols.push(...groupResult.failedSymbols);
+      result.transport = groupResult.transport;
+      result.skippedReason = groupResult.skippedReason;
+    }
+    drainPromise = null;
+
+    if (queued.size > 0) {
+      drainPromise = drainQueue();
+    }
+
+    return result;
+  }
+
+  function requestScan(
+    symbols: readonly string[],
+    request: OptionsFlowScannerRequest,
+  ): Promise<OptionsFlowScannerRunResult> {
+    for (const symbol of uniqueSymbols(symbols, normalizeSymbol)) {
+      queued.set(keyFor(symbol, request.unusualThreshold), { symbol, request });
+    }
+
+    if (!drainPromise) {
+      drainPromise = drainQueue();
+    }
+
+    return drainPromise;
+  }
+
+  function getSnapshot(
+    symbolInput: string,
+    request: OptionsFlowScannerRequest,
+  ): OptionsFlowScannerSnapshot<TEvent> | null {
+    const symbol = normalizeSymbol(symbolInput);
+    const snapshot = snapshots.get(keyFor(symbol, request.unusualThreshold));
+    if (!snapshot) {
+      return null;
+    }
+
+    const current = now();
+    if (snapshot.staleExpiresAtMs <= current) {
+      snapshots.delete(keyFor(symbol, request.unusualThreshold));
+      return null;
+    }
+
+    if (
+      snapshot.requestedLimit < request.limit &&
+      snapshot.events.length >= snapshot.requestedLimit
+    ) {
+      return null;
+    }
+
+    return {
+      symbol: snapshot.symbol,
+      events: snapshot.events.slice(0, request.limit),
+      source: snapshot.source,
+      scannedAt: new Date(snapshot.scannedAtMs),
+      transport: snapshot.transport,
+      status: snapshot.status,
+      error: snapshot.error,
+      freshness: snapshot.expiresAtMs > current ? "fresh" : "stale",
+    };
+  }
+
+  function startRotation(input: {
+    symbols: readonly string[] | (() => readonly string[]);
+    request: OptionsFlowScannerRequest;
+    intervalMs: number | (() => number);
+    batchSize: number | (() => number);
+  }): void {
+    if (timer || stopRotation) {
+      return;
+    }
+
+    let stopped = false;
+    stopRotation = () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      stopRotation = null;
+    };
+    const configuredSymbols = input.symbols;
+    const getSymbols: () => readonly string[] =
+      typeof configuredSymbols === "function"
+        ? configuredSymbols
+        : () => configuredSymbols;
+
+    const schedule = (delayMs: number) => {
+      if (stopped) {
+        return;
+      }
+      timer = setTimeout(run, Math.max(1_000, delayMs));
+      timer.unref?.();
+    };
+
+    const nextBatch = (): string[] => {
+      const symbols = uniqueSymbols(getSymbols(), normalizeSymbol);
+      if (!symbols.length) {
+        rotationOffset = 0;
+        return [];
+      }
+
+      const configuredBatchSize =
+        typeof input.batchSize === "function" ? input.batchSize() : input.batchSize;
+      const size = Math.max(1, Math.min(configuredBatchSize, symbols.length));
+      const start = rotationOffset % symbols.length;
+      const batch: string[] = [];
+      for (let index = 0; index < size; index += 1) {
+        batch.push(symbols[(start + index) % symbols.length]);
+      }
+      rotationOffset = (start + size) % symbols.length;
+      return batch;
+    };
+
+    const run = async () => {
+      timer = null;
+      const batch = nextBatch();
+      if (batch.length) {
+        try {
+          options.onBatch?.(batch);
+          await requestScan(batch, input.request);
+        } catch (error) {
+          options.onError?.(error, { phase: "rotation" });
+        }
+      }
+      const nextInterval =
+        typeof input.intervalMs === "function"
+          ? input.intervalMs()
+          : input.intervalMs;
+      schedule(nextInterval);
+    };
+
+    void run();
+  }
+
+  function stop(): void {
+    stopRotation?.();
+  }
+
+  function reset(): void {
+    stop();
+    snapshots.clear();
+    queued.clear();
+    drainPromise = null;
+    rotationOffset = 0;
+  }
+
+  function setMaxConcurrency(value: number): void {
+    if (Number.isFinite(value) && value > 0) {
+      maxConcurrency = Math.max(1, Math.floor(value));
+    }
+  }
+
+  function getMaxConcurrency(): number {
+    return maxConcurrency;
+  }
+
+  return {
+    getMaxConcurrency,
+    getSnapshot,
+    requestScan,
+    runOnce,
+    reset,
+    setMaxConcurrency,
+    storeSnapshot,
+    startRotation,
+    stop,
+  };
+}

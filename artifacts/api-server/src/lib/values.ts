@@ -198,8 +198,8 @@ export function normalizeSymbol(symbol: string): string {
   const normalized = symbol.trim().toUpperCase();
 
   // Polygon follows SIP-style share class tickers like BRK.B rather than BRK-B.
-  if (/^[A-Z]{1,5}-[A-Z]{1,2}$/.test(normalized)) {
-    return normalized.replace("-", ".");
+  if (/^[A-Z]{1,5}[ -][A-Z]{1,2}$/.test(normalized)) {
+    return normalized.replace(/[ -]/, ".");
   }
 
   return normalized;

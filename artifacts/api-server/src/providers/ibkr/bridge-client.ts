@@ -4,7 +4,12 @@ import https from "node:https";
 import { HttpError } from "../../lib/errors";
 import { withSearchParams, type QueryValue } from "../../lib/http";
 import { logger } from "../../lib/logger";
-import { getIbkrBridgeRuntimeConfig, type RuntimeMode } from "../../lib/runtime";
+import { normalizeSymbol } from "../../lib/values";
+import {
+  getIbkrBridgeRuntimeConfig,
+  type IbkrBridgeRuntimeConfig,
+  type RuntimeMode,
+} from "../../lib/runtime";
 import type {
   BrokerBarSnapshot,
   BrokerAccountSnapshot,
@@ -26,6 +31,7 @@ import type {
 } from "./client";
 
 type BridgeHealthSnapshot = {
+  bridgeRuntimeBuild?: string | null;
   configured: boolean;
   authenticated: boolean;
   connected: boolean;
@@ -37,7 +43,7 @@ type BridgeHealthSnapshot = {
   lastRecoveryAttemptAt: Date | null;
   lastRecoveryError: string | null;
   updatedAt: Date;
-  transport: "client_portal" | "tws" | "ibx";
+  transport: "tws";
   connectionTarget: string | null;
   sessionMode: RuntimeMode | null;
   clientId: number | null;
@@ -49,15 +55,45 @@ type BridgeHealthSnapshot = {
     | "unknown"
     | null;
   liveMarketDataAvailable: boolean | null;
-  connections?: {
-    clientPortal: BridgeConnectionHealthSnapshot;
+  healthFresh?: boolean;
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  strictReason?: string | null;
+  diagnostics?: {
+    scheduler?: unknown;
+    pressure?: string;
+    subscriptions?: unknown;
+    lastReconnectReason?: string | null;
+  };
+  connections: {
     tws: BridgeConnectionHealthSnapshot;
   };
 };
 
+export type BridgeLaneDiagnosticsSnapshot = {
+  scheduler?: unknown;
+  schedulerConfig?: unknown;
+  limits?: unknown;
+  subscriptions?: unknown;
+  pressure?: string;
+  updatedAt?: Date | string;
+};
+
+export type BridgeLaneSettingsRequest = {
+  scheduler?: Record<string, Record<string, number | null | undefined>>;
+  limits?: Record<string, number | null | undefined>;
+};
+
 type BridgeConnectionHealthSnapshot = {
-  transport: "client_portal" | "tws";
-  role: "account" | "market_data";
+  transport: "tws";
+  role: "market_data";
   configured: boolean;
   reachable: boolean;
   authenticated: boolean;
@@ -79,16 +115,64 @@ type BridgeConnectionHealthSnapshot = {
     | "unknown"
     | null;
   liveMarketDataAvailable: boolean | null;
+  healthFresh?: boolean;
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  strictReason?: string | null;
+};
+
+export type BridgeOrdersMetadata = {
+  degraded?: boolean;
+  reason?: string;
+  stale?: boolean;
+  detail?: string;
+  timeoutMs?: number;
+};
+
+export type BridgeOrdersResult = BridgeOrdersMetadata & {
+  orders: BrokerOrderSnapshot[];
 };
 
 type QuoteStreamPayload = {
-  quotes?: Array<Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }>;
+  quotes?: Array<
+    Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }
+  >;
 };
 
 type OptionQuoteStreamPayload = QuoteStreamPayload;
 
 type BarStreamPayload = {
-  bar?: Omit<BrokerBarSnapshot, "timestamp"> & { timestamp: string | Date } | null;
+  bar?:
+    | (Omit<BrokerBarSnapshot, "timestamp" | "dataUpdatedAt"> & {
+        timestamp: string | Date;
+        dataUpdatedAt?: string | Date | null;
+      })
+    | null;
+};
+
+type StreamStatusPayload = {
+  state?: string;
+  reason?: string;
+  message?: string;
+  requestedCount?: number;
+  admittedCount?: number;
+  rejectedCount?: number;
+  retryDelayMs?: number;
+  lastEventAgeMs?: number | null;
+  backoffRemainingMs?: number | null;
+};
+
+export type QuoteStreamSignal = {
+  type: "open" | "ready" | "status" | "heartbeat";
+  at: Date;
+  status?: StreamStatusPayload | null;
 };
 
 type OptionExpirationsPayload = {
@@ -139,7 +223,9 @@ function hydrateOrder(raw: BrokerOrderSnapshot): BrokerOrderSnapshot {
   };
 }
 
-function hydrateExecution(raw: BrokerExecutionSnapshot): BrokerExecutionSnapshot {
+function hydrateExecution(
+  raw: BrokerExecutionSnapshot,
+): BrokerExecutionSnapshot {
   return { ...raw, executedAt: toDate(raw.executedAt) };
 }
 
@@ -150,20 +236,60 @@ function hydrateMarketDepth(
   return { ...raw, updatedAt: toDate(raw.updatedAt) };
 }
 
-function hydrateOptionChainContract(raw: OptionChainContract): OptionChainContract {
+function hydrateOptionChainContract(
+  raw: OptionChainContract,
+): OptionChainContract {
   return {
     ...raw,
     updatedAt: toDate(raw.updatedAt),
-    contract: { ...raw.contract, expirationDate: toDate(raw.contract.expirationDate) },
+    quoteUpdatedAt: raw.quoteUpdatedAt ? toDate(raw.quoteUpdatedAt) : null,
+    dataUpdatedAt: raw.dataUpdatedAt ? toDate(raw.dataUpdatedAt) : null,
+    contract: {
+      ...raw.contract,
+      expirationDate: toDate(raw.contract.expirationDate),
+    },
   };
 }
 
-function hydrateSession(raw: SessionStatusSnapshot | null): SessionStatusSnapshot | null {
+function hydrateSession(
+  raw: SessionStatusSnapshot | null,
+): SessionStatusSnapshot | null {
   if (!raw) return raw;
   return { ...raw, updatedAt: toDate(raw.updatedAt) };
 }
 
 function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
+  const twsConnection = raw.connections?.tws ?? {
+    transport: "tws" as const,
+    role: "market_data" as const,
+    configured: raw.configured,
+    reachable: raw.connected,
+    authenticated: raw.authenticated,
+    competing: raw.competing,
+    target: raw.connectionTarget,
+    mode: raw.sessionMode,
+    clientId: raw.clientId,
+    selectedAccountId: raw.selectedAccountId,
+    accounts: raw.accounts,
+    lastPingMs: null,
+    lastPingAt: null,
+    lastTickleAt: raw.lastTickleAt,
+    lastError: raw.lastError,
+    marketDataMode: raw.marketDataMode,
+    liveMarketDataAvailable: raw.liveMarketDataAvailable,
+    healthFresh: raw.healthFresh,
+    healthAgeMs: raw.healthAgeMs,
+    stale: raw.stale,
+    bridgeReachable: raw.bridgeReachable,
+    socketConnected: raw.socketConnected,
+    accountsLoaded: raw.accountsLoaded,
+    configuredLiveMarketDataMode: raw.configuredLiveMarketDataMode,
+    streamFresh: raw.streamFresh,
+    lastStreamEventAgeMs: raw.lastStreamEventAgeMs,
+    strictReady: raw.strictReady,
+    strictReason: raw.strictReason,
+  };
+
   return {
     ...raw,
     updatedAt: toDate(raw.updatedAt),
@@ -171,12 +297,9 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
     lastRecoveryAttemptAt: raw.lastRecoveryAttemptAt
       ? toDate(raw.lastRecoveryAttemptAt)
       : null,
-    connections: raw.connections
-      ? {
-          clientPortal: hydrateConnectionHealth(raw.connections.clientPortal),
-          tws: hydrateConnectionHealth(raw.connections.tws),
-        }
-      : undefined,
+    connections: {
+      tws: hydrateConnectionHealth(twsConnection),
+    },
   };
 }
 
@@ -216,12 +339,42 @@ function hydrateQuote(
 ): QuoteSnapshot {
   return {
     ...raw,
+    symbol: normalizeSymbol(raw.symbol),
     // Older bridge versions don't emit openInterest; normalize to null
     // so downstream code can rely on the field always being present.
     openInterest: raw.openInterest ?? null,
-    updatedAt: raw.updatedAt instanceof Date ? raw.updatedAt : new Date(raw.updatedAt),
+    updatedAt:
+      raw.updatedAt instanceof Date ? raw.updatedAt : new Date(raw.updatedAt),
+    dataUpdatedAt: raw.dataUpdatedAt ? toDate(raw.dataUpdatedAt) : null,
     latency: hydrateLatency(raw.latency),
   };
+}
+
+function toIbkrBridgeStockSymbol(symbol: string): string {
+  const normalized = normalizeSymbol(symbol);
+  if (/^[A-Z]{1,5}\.[A-Z]{1,2}$/.test(normalized)) {
+    return normalized.replace(/\./g, " ");
+  }
+  return normalized;
+}
+
+function normalizeBridgeStockSymbols(symbols: string[]): string[] {
+  return Array.from(
+    new Set(
+      symbols.map((symbol) => toIbkrBridgeStockSymbol(symbol)).filter(Boolean),
+    ),
+  ).sort();
+}
+
+function toBridgeStockSymbolForRequest(input: {
+  symbol: string;
+  assetClass?: "equity" | "option";
+  providerContractId?: string | null;
+}): string {
+  if (input.assetClass === "option" || input.providerContractId) {
+    return input.symbol;
+  }
+  return toIbkrBridgeStockSymbol(input.symbol);
 }
 
 function readJsonResponsePayload(text: string, contentType: string): unknown {
@@ -229,7 +382,10 @@ function readJsonResponsePayload(text: string, contentType: string): unknown {
     return null;
   }
 
-  if (contentType.includes("application/json") || contentType.includes("+json")) {
+  if (
+    contentType.includes("application/json") ||
+    contentType.includes("+json")
+  ) {
     try {
       return JSON.parse(text) as unknown;
     } catch {
@@ -298,7 +454,9 @@ function parseSseBlock(block: string): SseMessage | null {
   };
 }
 
-function findSseBoundary(buffer: string): { index: number; length: number } | null {
+function findSseBoundary(
+  buffer: string,
+): { index: number; length: number } | null {
   const lf = buffer.indexOf("\n\n");
   const crlf = buffer.indexOf("\r\n\r\n");
 
@@ -317,27 +475,94 @@ function findSseBoundary(buffer: string): { index: number; length: number } | nu
   return { index: crlf, length: 4 };
 }
 
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function isLikelyUsEquitySession(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value ?? "0",
+  );
+  if (["Sat", "Sun"].includes(weekday)) {
+    return false;
+  }
+  const minutes = hour * 60 + minute;
+  return minutes >= 9 * 60 + 25 && minutes <= 16 * 60 + 5;
+}
+
 export class IbkrBridgeClient {
-  private readonly config = getIbkrBridgeRuntimeConfig();
-  // Default 0 = disabled. Hydration paths fan out many parallel CPG calls
-  // that legitimately tail-latency past 30s during warmup; any finite cap
-  // was cutting valid traffic. Tab-freeze risk is bounded by LRU caches +
-  // truncated error logs landed earlier this session, plus the input
-  // AbortSignal from the original caller is still honored. Set
-  // IBKR_BRIDGE_REQUEST_TIMEOUT_MS to a positive number to re-enable.
+  // Keep bridge calls bounded by default. Market-open load can leave the
+  // tunnel/bridge wedged long enough for request handlers and UI queries to
+  // pile up; callers that need a shorter budget should pass an AbortSignal.
   private readonly requestTimeoutMs = Math.max(
     0,
-    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "0"),
+    Number(process.env["IBKR_BRIDGE_REQUEST_TIMEOUT_MS"] ?? "12000"),
+  );
+  private readonly quoteStreamStallMs = readPositiveIntegerEnv(
+    "IBKR_QUOTE_STREAM_STALL_MS",
+    45_000,
+  );
+  private readonly optionQuoteStreamStallMs = readPositiveIntegerEnv(
+    "IBKR_OPTION_QUOTE_STREAM_STALL_MS",
+    0,
+  );
+  private readonly historicalBarStreamStallMs = readPositiveIntegerEnv(
+    "IBKR_BAR_STREAM_STALL_MS",
+    0,
   );
 
-  private buildUrl(path: string, params: Record<string, QueryValue> = {}): URL {
-    if (!this.config) {
-      throw new HttpError(503, "Interactive Brokers bridge is not configured.", {
-        code: "ibkr_bridge_not_configured",
-      });
+  private getConfig(): IbkrBridgeRuntimeConfig {
+    const config = getIbkrBridgeRuntimeConfig();
+
+    if (!config) {
+      throw new HttpError(
+        503,
+        "Interactive Brokers bridge is not configured.",
+        {
+          code: "ibkr_bridge_not_configured",
+        },
+      );
     }
 
-    return withSearchParams(`${this.config.baseUrl}${path}`, params);
+    return config;
+  }
+
+  private buildUrl(
+    config: IbkrBridgeRuntimeConfig,
+    path: string,
+    params: Record<string, QueryValue> = {},
+  ): URL {
+    return withSearchParams(`${config.baseUrl}${path}`, params);
+  }
+
+  private buildHeaders(
+    config: IbkrBridgeRuntimeConfig,
+    initHeaders?: RequestInit["headers"],
+  ): Headers {
+    const headers = new Headers(initHeaders);
+
+    if (config.apiToken) {
+      headers.set("Authorization", `Bearer ${config.apiToken}`);
+    }
+
+    return headers;
+  }
+
+  private buildNodeHeaders(
+    config: IbkrBridgeRuntimeConfig,
+    initHeaders: RequestInit["headers"] = {},
+  ): Record<string, string> {
+    return Object.fromEntries(this.buildHeaders(config, initHeaders).entries());
   }
 
   private request<T>(
@@ -345,6 +570,7 @@ export class IbkrBridgeClient {
     init: RequestInit = {},
     params: Record<string, QueryValue> = {},
   ): Promise<T> {
+    const config = this.getConfig();
     const controller = new AbortController();
     const inputSignal = init.signal;
     let didTimeout = false;
@@ -363,28 +589,36 @@ export class IbkrBridgeClient {
       inputSignal?.addEventListener("abort", abortFromInput, { once: true });
     }
 
-    return this.requestJson<T>(path, this.buildUrl(path, params), {
+    return this.requestJson<T>(path, this.buildUrl(config, path, params), {
       ...init,
-      headers: {
+      headers: this.buildHeaders(config, {
         Accept: "application/json",
-        ...(init.headers ? Object.fromEntries(new Headers(init.headers).entries()) : {}),
-      },
+        ...(init.headers
+          ? Object.fromEntries(new Headers(init.headers).entries())
+          : {}),
+      }),
       signal: controller.signal,
-    }).catch((error: unknown) => {
-      if (didTimeout) {
-        throw new HttpError(504, `IBKR bridge request to ${path} timed out after ${this.requestTimeoutMs}ms.`, {
-          code: "ibkr_bridge_request_timeout",
-          cause: error,
-        });
-      }
+    })
+      .catch((error: unknown) => {
+        if (didTimeout) {
+          throw new HttpError(
+            504,
+            `IBKR bridge request to ${path} timed out after ${this.requestTimeoutMs}ms.`,
+            {
+              code: "ibkr_bridge_request_timeout",
+              cause: error,
+            },
+          );
+        }
 
-      throw error;
-    }).finally(() => {
-      if (timeout !== null) {
-        clearTimeout(timeout);
-      }
-      inputSignal?.removeEventListener("abort", abortFromInput);
-    });
+        throw error;
+      })
+      .finally(() => {
+        if (timeout !== null) {
+          clearTimeout(timeout);
+        }
+        inputSignal?.removeEventListener("abort", abortFromInput);
+      });
   }
 
   private requestJson<T>(
@@ -409,7 +643,8 @@ export class IbkrBridgeClient {
 
     return new Promise<T>((resolve, reject) => {
       const client = url.protocol === "https:" ? https : http;
-      const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+      const agent =
+        url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
       const request = client.request(
         url,
         {
@@ -439,25 +674,28 @@ export class IbkrBridgeClient {
               durationMs,
               reusedSocket: request.reusedSocket,
             };
-            const logLevel = process.env.LOG_LEVEL === "info" ? "info" : "debug";
+            const logLevel =
+              process.env.LOG_LEVEL === "info" ? "info" : "debug";
             logger[logLevel](logPayload, "IBKR bridge request completed");
 
             if (statusCode < 200 || statusCode >= 300) {
-              reject(new HttpError(
-                statusCode,
-                buildBridgeErrorMessage(statusCode, statusMessage, payload),
-                {
-                  code: "upstream_http_error",
-                  detail:
-                    typeof payload === "string"
-                      ? payload
-                      : payload && typeof payload === "object"
-                        ? JSON.stringify(payload)
-                        : undefined,
-                  data: payload,
-                  expose: statusCode < 500,
-                },
-              ));
+              reject(
+                new HttpError(
+                  statusCode,
+                  buildBridgeErrorMessage(statusCode, statusMessage, payload),
+                  {
+                    code: "upstream_http_error",
+                    detail:
+                      typeof payload === "string"
+                        ? payload
+                        : payload && typeof payload === "object"
+                          ? JSON.stringify(payload)
+                          : undefined,
+                    data: payload,
+                    expose: statusCode < 500,
+                  },
+                ),
+              );
               return;
             }
 
@@ -467,14 +705,16 @@ export class IbkrBridgeClient {
       );
 
       request.on("error", (error) => {
-        reject(new HttpError(502, "Upstream request failed.", {
-          code: "upstream_request_failed",
-          cause: error,
-          detail:
-            error instanceof Error && error.message
-              ? error.message
-              : "The upstream service could not be reached.",
-        }));
+        reject(
+          new HttpError(502, "Upstream request failed.", {
+            code: "upstream_request_failed",
+            cause: error,
+            detail:
+              error instanceof Error && error.message
+                ? error.message
+                : "The upstream service could not be reached.",
+          }),
+        );
       });
 
       const abort = () => {
@@ -502,12 +742,34 @@ export class IbkrBridgeClient {
     return hydrateHealth(await this.request<BridgeHealthSnapshot>("/healthz"));
   }
 
+  async getLaneDiagnostics(): Promise<BridgeLaneDiagnosticsSnapshot> {
+    return this.request<BridgeLaneDiagnosticsSnapshot>("/diagnostics/lanes");
+  }
+
+  async updateLaneDiagnostics(
+    input: BridgeLaneSettingsRequest,
+  ): Promise<BridgeLaneDiagnosticsSnapshot> {
+    return this.request<BridgeLaneDiagnosticsSnapshot>("/diagnostics/lanes", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
+  }
+
   async getSession(): Promise<SessionStatusSnapshot | null> {
-    return hydrateSession(await this.request<SessionStatusSnapshot | null>("/session"));
+    return hydrateSession(
+      await this.request<SessionStatusSnapshot | null>("/session"),
+    );
   }
 
   async listAccounts(mode: RuntimeMode): Promise<BrokerAccountSnapshot[]> {
-    const payload = await this.request<{ accounts: BrokerAccountSnapshot[] }>("/accounts", {}, { mode });
+    const payload = await this.request<{ accounts: BrokerAccountSnapshot[] }>(
+      "/accounts",
+      {},
+      { mode },
+    );
     return payload.accounts.map(hydrateAccount);
   }
 
@@ -515,10 +777,14 @@ export class IbkrBridgeClient {
     accountId?: string;
     mode: RuntimeMode;
   }): Promise<BrokerPositionSnapshot[]> {
-    const payload = await this.request<{ positions: BrokerPositionSnapshot[] }>("/positions", {}, {
-      mode: input.mode,
-      accountId: input.accountId,
-    });
+    const payload = await this.request<{ positions: BrokerPositionSnapshot[] }>(
+      "/positions",
+      {},
+      {
+        mode: input.mode,
+        accountId: input.accountId,
+      },
+    );
     return payload.positions.map(hydratePosition);
   }
 
@@ -535,12 +801,48 @@ export class IbkrBridgeClient {
       | "rejected"
       | "expired";
   }): Promise<BrokerOrderSnapshot[]> {
-    const payload = await this.request<{ orders: BrokerOrderSnapshot[] }>("/orders", {}, {
-      mode: input.mode,
-      accountId: input.accountId,
-      status: input.status,
-    });
-    return payload.orders.map(hydrateOrder);
+    const payload = await this.listOrdersWithMeta(input);
+    return payload.orders;
+  }
+
+  async listOrdersWithMeta(input: {
+    accountId?: string;
+    mode: RuntimeMode;
+    status?:
+      | "pending_submit"
+      | "submitted"
+      | "accepted"
+      | "partially_filled"
+      | "filled"
+      | "canceled"
+      | "rejected"
+      | "expired";
+    signal?: AbortSignal;
+  }): Promise<BridgeOrdersResult> {
+    const payload = await this.request<{
+      orders: BrokerOrderSnapshot[];
+      degraded?: boolean;
+      reason?: string;
+      stale?: boolean;
+      detail?: string;
+      timeoutMs?: number;
+    }>(
+      "/orders",
+      { signal: input.signal },
+      {
+        mode: input.mode,
+        accountId: input.accountId,
+        status: input.status,
+      },
+    );
+    return {
+      orders: payload.orders.map(hydrateOrder),
+      degraded: payload.degraded,
+      reason: payload.reason,
+      stale: payload.stale,
+      detail: payload.detail,
+      timeoutMs: payload.timeoutMs,
+    };
   }
 
   async listExecutions(input: {
@@ -550,7 +852,9 @@ export class IbkrBridgeClient {
     symbol?: string;
     providerContractId?: string | null;
   }): Promise<BrokerExecutionSnapshot[]> {
-    const payload = await this.request<{ executions: BrokerExecutionSnapshot[] }>(
+    const payload = await this.request<{
+      executions: BrokerExecutionSnapshot[];
+    }>(
       "/executions",
       {},
       {
@@ -565,11 +869,12 @@ export class IbkrBridgeClient {
   }
 
   async getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
-    const payload = await this.request<{ quotes: Array<Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }> }>(
-      "/quotes/snapshot",
-      {},
-      { symbols: symbols.join(",") },
-    );
+    const bridgeSymbols = normalizeBridgeStockSymbols(symbols);
+    const payload = await this.request<{
+      quotes: Array<
+        Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }
+      >;
+    }>("/quotes/snapshot", {}, { symbols: bridgeSymbols.join(",") });
     return payload.quotes.map(hydrateQuote);
   }
 
@@ -589,18 +894,22 @@ export class IbkrBridgeClient {
     }
 
     const payload = await this.request<{
-      quotes: Array<Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }>;
-    }>("/options/quotes", {}, {
-      underlying: input.underlying ?? undefined,
-      contracts: normalizedProviderContractIds.join(","),
-    });
+      quotes: Array<
+        Omit<QuoteSnapshot, "updatedAt"> & { updatedAt: string | Date }
+      >;
+    }>(
+      "/options/quotes",
+      {},
+      {
+        underlying: input.underlying ?? undefined,
+        contracts: normalizedProviderContractIds.join(","),
+      },
+    );
     return payload.quotes.map(hydrateQuote);
   }
 
   async prewarmQuoteSubscriptions(symbols: string[]): Promise<void> {
-    const normalizedSymbols = Array.from(
-      new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean)),
-    );
+    const normalizedSymbols = normalizeBridgeStockSymbols(symbols);
 
     await this.request<{ symbols: string[]; updatedAt: string }>(
       "/quotes/prewarm",
@@ -618,25 +927,75 @@ export class IbkrBridgeClient {
     symbols: string[],
     onQuotes: (quotes: QuoteSnapshot[]) => void,
     onError?: (error: unknown) => void,
+    onSignal?: (signal: QuoteStreamSignal) => void,
   ): () => void {
-    const url = this.buildUrl("/streams/quotes", { symbols: symbols.join(",") });
+    const config = this.getConfig();
+    const bridgeSymbols = normalizeBridgeStockSymbols(symbols);
+    const url = this.buildUrl(config, "/streams/quotes", {
+      symbols: bridgeSymbols.join(","),
+    });
     const requestId = randomUUID();
     const client = url.protocol === "https:" ? https : http;
-    const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+    const agent =
+      url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
     let stopped = false;
     let buffer = "";
+    let lastUsefulEventAt = Date.now();
+    let lastStreamStatus: StreamStatusPayload | null = null;
+    let stallTimer: NodeJS.Timeout | null = null;
+    const touchStreamActivity = () => {
+      lastUsefulEventAt = Date.now();
+    };
+    const stopStallWatchdog = () => {
+      if (stallTimer) {
+        clearInterval(stallTimer);
+        stallTimer = null;
+      }
+    };
+    const startStallWatchdog = () => {
+      stopStallWatchdog();
+      if (this.quoteStreamStallMs <= 0) {
+        return;
+      }
+      stallTimer = setInterval(
+        () => {
+          if (stopped || !isLikelyUsEquitySession()) {
+            return;
+          }
+          const ageMs = Date.now() - lastUsefulEventAt;
+          if (ageMs < this.quoteStreamStallMs) {
+            return;
+          }
+          const error = new Error(
+            `IBKR bridge quote stream stalled for ${ageMs}ms.`,
+          );
+          logger.warn(
+            { requestId, ageMs, symbols: bridgeSymbols, lastStreamStatus },
+            "IBKR bridge quote stream stalled",
+          );
+          stopped = true;
+          request.destroy(error);
+          onError?.(error);
+        },
+        Math.max(1_000, Math.floor(this.quoteStreamStallMs / 2)),
+      );
+      stallTimer.unref?.();
+    };
 
     const request = client.request(
       url,
       {
         method: "GET",
-        headers: {
+        headers: this.buildNodeHeaders(config, {
           Accept: "text/event-stream",
-        },
+        }),
         agent,
       },
       (response) => {
-        if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+        if (
+          (response.statusCode ?? 0) < 200 ||
+          (response.statusCode ?? 0) >= 300
+        ) {
           const chunks: Buffer[] = [];
           response.on("data", (chunk: Buffer | string) => {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -646,14 +1005,16 @@ export class IbkrBridgeClient {
               return;
             }
 
-            onError?.(new HttpError(
-              response.statusCode ?? 502,
-              `IBKR bridge quote stream failed with HTTP ${response.statusCode ?? 0}.`,
-              {
-                code: "ibkr_bridge_stream_failed",
-                detail: Buffer.concat(chunks).toString("utf8"),
-              },
-            ));
+            onError?.(
+              new HttpError(
+                response.statusCode ?? 502,
+                `IBKR bridge quote stream failed with HTTP ${response.statusCode ?? 0}.`,
+                {
+                  code: "ibkr_bridge_stream_failed",
+                  detail: Buffer.concat(chunks).toString("utf8"),
+                },
+              ),
+            );
           });
           return;
         }
@@ -661,11 +1022,18 @@ export class IbkrBridgeClient {
         logger.info(
           {
             requestId,
-            symbols,
+            symbols: bridgeSymbols,
             reusedSocket: request.reusedSocket,
           },
           "IBKR bridge quote stream connected",
         );
+        lastUsefulEventAt = Date.now();
+        onSignal?.({
+          type: "open",
+          at: new Date(lastUsefulEventAt),
+          status: null,
+        });
+        startStallWatchdog();
 
         response.setEncoding("utf8");
         response.on("data", (chunk: string) => {
@@ -685,17 +1053,60 @@ export class IbkrBridgeClient {
                 const payload = JSON.parse(message.data) as QuoteStreamPayload;
                 const quotes = (payload.quotes ?? []).map(hydrateQuote);
                 if (quotes.length) {
+                  lastUsefulEventAt = Date.now();
                   onQuotes(quotes);
                 }
               } catch (error) {
-                logger.warn({ err: error }, "IBKR bridge quote stream payload parse failed");
+                logger.warn(
+                  { err: error },
+                  "IBKR bridge quote stream payload parse failed",
+                );
               }
+            } else if (message?.event === "stream-status") {
+              try {
+                lastStreamStatus = JSON.parse(
+                  message.data,
+                ) as StreamStatusPayload;
+                lastUsefulEventAt = Date.now();
+                onSignal?.({
+                  type: "status",
+                  at: new Date(lastUsefulEventAt),
+                  status: lastStreamStatus,
+                });
+              } catch {
+                lastStreamStatus = null;
+              }
+            } else if (message?.event === "ready") {
+              lastUsefulEventAt = Date.now();
+              onSignal?.({
+                type: "ready",
+                at: new Date(lastUsefulEventAt),
+                status: lastStreamStatus,
+              });
+            } else if (message?.event === "heartbeat") {
+              lastUsefulEventAt = Date.now();
+              onSignal?.({
+                type: "heartbeat",
+                at: new Date(lastUsefulEventAt),
+                status: lastStreamStatus,
+              });
+            } else if (
+              !message &&
+              rawBlock.split(/\r?\n/).some((line) => line.startsWith(":"))
+            ) {
+              lastUsefulEventAt = Date.now();
+              onSignal?.({
+                type: "heartbeat",
+                at: new Date(lastUsefulEventAt),
+                status: lastStreamStatus,
+              });
             }
 
             boundary = findSseBoundary(buffer);
           }
         });
         response.on("end", () => {
+          stopStallWatchdog();
           if (!stopped) {
             onError?.(new Error("IBKR bridge quote stream ended."));
           }
@@ -704,6 +1115,7 @@ export class IbkrBridgeClient {
     );
 
     request.on("error", (error) => {
+      stopStallWatchdog();
       if (!stopped) {
         onError?.(error);
       }
@@ -713,6 +1125,7 @@ export class IbkrBridgeClient {
 
     return () => {
       stopped = true;
+      stopStallWatchdog();
       request.destroy();
     };
   }
@@ -724,6 +1137,7 @@ export class IbkrBridgeClient {
     },
     onQuotes: (quotes: QuoteSnapshot[]) => void,
     onError?: (error: unknown) => void,
+    onSignal?: (signal: QuoteStreamSignal) => void,
   ): () => void {
     const normalizedProviderContractIds = Array.from(
       new Set(
@@ -732,27 +1146,78 @@ export class IbkrBridgeClient {
           .filter(Boolean),
       ),
     );
-    const url = this.buildUrl("/streams/options/quotes", {
+    const config = this.getConfig();
+    const url = this.buildUrl(config, "/streams/options/quotes", {
       underlying: input.underlying ?? undefined,
       contracts: normalizedProviderContractIds.join(","),
     });
     const requestId = randomUUID();
     const client = url.protocol === "https:" ? https : http;
-    const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+    const agent =
+      url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
     let stopped = false;
     let buffer = "";
+    let lastUsefulEventAt = Date.now();
+    let lastStreamStatus: StreamStatusPayload | null = null;
+    let stallTimer: NodeJS.Timeout | null = null;
+    const touchStreamActivity = () => {
+      lastUsefulEventAt = Date.now();
+    };
+    const stopStallWatchdog = () => {
+      if (stallTimer) {
+        clearInterval(stallTimer);
+        stallTimer = null;
+      }
+    };
+    const startStallWatchdog = () => {
+      stopStallWatchdog();
+      if (this.optionQuoteStreamStallMs <= 0) {
+        return;
+      }
+      stallTimer = setInterval(
+        () => {
+          if (stopped || !isLikelyUsEquitySession()) {
+            return;
+          }
+          const ageMs = Date.now() - lastUsefulEventAt;
+          if (ageMs < this.optionQuoteStreamStallMs) {
+            return;
+          }
+          const error = new Error(
+            `IBKR bridge option quote stream stalled for ${ageMs}ms.`,
+          );
+          logger.warn(
+            {
+              requestId,
+              ageMs,
+              providerContractIds: normalizedProviderContractIds.length,
+              lastStreamStatus,
+            },
+            "IBKR bridge option quote stream stalled",
+          );
+          stopped = true;
+          request.destroy(error);
+          onError?.(error);
+        },
+        Math.max(1_000, Math.floor(this.optionQuoteStreamStallMs / 2)),
+      );
+      stallTimer.unref?.();
+    };
 
     const request = client.request(
       url,
       {
         method: "GET",
-        headers: {
+        headers: this.buildNodeHeaders(config, {
           Accept: "text/event-stream",
-        },
+        }),
         agent,
       },
       (response) => {
-        if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+        if (
+          (response.statusCode ?? 0) < 200 ||
+          (response.statusCode ?? 0) >= 300
+        ) {
           const chunks: Buffer[] = [];
           response.on("data", (chunk: Buffer | string) => {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -762,14 +1227,16 @@ export class IbkrBridgeClient {
               return;
             }
 
-            onError?.(new HttpError(
-              response.statusCode ?? 502,
-              `IBKR bridge option quote stream failed with HTTP ${response.statusCode ?? 0}.`,
-              {
-                code: "ibkr_bridge_option_stream_failed",
-                detail: Buffer.concat(chunks).toString("utf8"),
-              },
-            ));
+            onError?.(
+              new HttpError(
+                response.statusCode ?? 502,
+                `IBKR bridge option quote stream failed with HTTP ${response.statusCode ?? 0}.`,
+                {
+                  code: "ibkr_bridge_option_stream_failed",
+                  detail: Buffer.concat(chunks).toString("utf8"),
+                },
+              ),
+            );
           });
           return;
         }
@@ -782,6 +1249,13 @@ export class IbkrBridgeClient {
           },
           "IBKR bridge option quote stream connected",
         );
+        touchStreamActivity();
+        onSignal?.({
+          type: "open",
+          at: new Date(lastUsefulEventAt),
+          status: null,
+        });
+        startStallWatchdog();
 
         response.setEncoding("utf8");
         response.on("data", (chunk: string) => {
@@ -798,9 +1272,12 @@ export class IbkrBridgeClient {
 
             if (message?.event === "quotes") {
               try {
-                const payload = JSON.parse(message.data) as OptionQuoteStreamPayload;
+                const payload = JSON.parse(
+                  message.data,
+                ) as OptionQuoteStreamPayload;
                 const quotes = (payload.quotes ?? []).map(hydrateQuote);
                 if (quotes.length) {
+                  touchStreamActivity();
                   onQuotes(quotes);
                 }
               } catch (error) {
@@ -809,12 +1286,51 @@ export class IbkrBridgeClient {
                   "IBKR bridge option quote stream payload parse failed",
                 );
               }
+            } else if (message?.event === "stream-status") {
+              try {
+                touchStreamActivity();
+                lastStreamStatus = JSON.parse(
+                  message.data,
+                ) as StreamStatusPayload;
+                onSignal?.({
+                  type: "status",
+                  at: new Date(lastUsefulEventAt),
+                  status: lastStreamStatus,
+                });
+              } catch {
+                lastStreamStatus = null;
+              }
+            } else if (message?.event === "ready") {
+              touchStreamActivity();
+              onSignal?.({
+                type: "ready",
+                at: new Date(lastUsefulEventAt),
+                status: lastStreamStatus,
+              });
+            } else if (message?.event === "heartbeat") {
+              touchStreamActivity();
+              onSignal?.({
+                type: "heartbeat",
+                at: new Date(lastUsefulEventAt),
+                status: lastStreamStatus,
+              });
+            } else if (
+              !message &&
+              rawBlock.split(/\r?\n/).some((line) => line.startsWith(":"))
+            ) {
+              touchStreamActivity();
+              onSignal?.({
+                type: "heartbeat",
+                at: new Date(lastUsefulEventAt),
+                status: lastStreamStatus,
+              });
             }
 
             boundary = findSseBoundary(buffer);
           }
         });
         response.on("end", () => {
+          stopStallWatchdog();
           if (!stopped) {
             onError?.(new Error("IBKR bridge option quote stream ended."));
           }
@@ -823,6 +1339,7 @@ export class IbkrBridgeClient {
     );
 
     request.on("error", (error) => {
+      stopStallWatchdog();
       if (!stopped) {
         onError?.(error);
       }
@@ -832,6 +1349,7 @@ export class IbkrBridgeClient {
 
     return () => {
       stopped = true;
+      stopStallWatchdog();
       request.destroy();
     };
   }
@@ -848,32 +1366,87 @@ export class IbkrBridgeClient {
     onBar: (bar: BrokerBarSnapshot) => void,
     onError?: (error: unknown) => void,
   ): () => void {
-    const url = this.buildUrl("/streams/bars", {
-      symbol: input.symbol,
+    const config = this.getConfig();
+    const bridgeSymbol = toBridgeStockSymbolForRequest(input);
+    const url = this.buildUrl(config, "/streams/bars", {
+      symbol: bridgeSymbol,
       timeframe: input.timeframe,
       assetClass: input.assetClass,
       providerContractId: input.providerContractId,
       outsideRth:
-        typeof input.outsideRth === "boolean" ? String(input.outsideRth) : undefined,
+        typeof input.outsideRth === "boolean"
+          ? String(input.outsideRth)
+          : undefined,
       source: input.source,
     });
     const requestId = randomUUID();
     const client = url.protocol === "https:" ? https : http;
-    const agent = url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
+    const agent =
+      url.protocol === "https:" ? bridgeHttpsAgent : bridgeHttpAgent;
     let stopped = false;
     let buffer = "";
+    let lastUsefulEventAt = Date.now();
+    let lastStreamStatus: StreamStatusPayload | null = null;
+    let stallTimer: NodeJS.Timeout | null = null;
+    const touchStreamActivity = () => {
+      lastUsefulEventAt = Date.now();
+    };
+    const stopStallWatchdog = () => {
+      if (stallTimer) {
+        clearInterval(stallTimer);
+        stallTimer = null;
+      }
+    };
+    const startStallWatchdog = () => {
+      stopStallWatchdog();
+      if (this.historicalBarStreamStallMs <= 0) {
+        return;
+      }
+      stallTimer = setInterval(
+        () => {
+          if (stopped || !isLikelyUsEquitySession()) {
+            return;
+          }
+          const ageMs = Date.now() - lastUsefulEventAt;
+          if (ageMs < this.historicalBarStreamStallMs) {
+            return;
+          }
+          const error = new Error(
+            `IBKR bridge historical bar stream stalled for ${ageMs}ms.`,
+          );
+          logger.warn(
+            {
+              requestId,
+              ageMs,
+              symbol: bridgeSymbol,
+              timeframe: input.timeframe,
+              lastStreamStatus,
+            },
+            "IBKR bridge historical bar stream stalled",
+          );
+          stopped = true;
+          request.destroy(error);
+          onError?.(error);
+        },
+        Math.max(5_000, Math.floor(this.historicalBarStreamStallMs / 2)),
+      );
+      stallTimer.unref?.();
+    };
 
     const request = client.request(
       url,
       {
         method: "GET",
-        headers: {
+        headers: this.buildNodeHeaders(config, {
           Accept: "text/event-stream",
-        },
+        }),
         agent,
       },
       (response) => {
-        if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+        if (
+          (response.statusCode ?? 0) < 200 ||
+          (response.statusCode ?? 0) >= 300
+        ) {
           const chunks: Buffer[] = [];
           response.on("data", (chunk: Buffer | string) => {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -883,14 +1456,16 @@ export class IbkrBridgeClient {
               return;
             }
 
-            onError?.(new HttpError(
-              response.statusCode ?? 502,
-              `IBKR bridge bar stream failed with HTTP ${response.statusCode ?? 0}.`,
-              {
-                code: "ibkr_bridge_bar_stream_failed",
-                detail: Buffer.concat(chunks).toString("utf8"),
-              },
-            ));
+            onError?.(
+              new HttpError(
+                response.statusCode ?? 502,
+                `IBKR bridge bar stream failed with HTTP ${response.statusCode ?? 0}.`,
+                {
+                  code: "ibkr_bridge_bar_stream_failed",
+                  detail: Buffer.concat(chunks).toString("utf8"),
+                },
+              ),
+            );
           });
           return;
         }
@@ -898,13 +1473,15 @@ export class IbkrBridgeClient {
         logger.info(
           {
             requestId,
-            symbol: input.symbol,
+            symbol: bridgeSymbol,
             timeframe: input.timeframe,
             providerContractId: input.providerContractId ?? null,
             reusedSocket: request.reusedSocket,
           },
           "IBKR bridge historical bar stream connected",
         );
+        touchStreamActivity();
+        startStallWatchdog();
 
         response.setEncoding("utf8");
         response.on("data", (chunk: string) => {
@@ -923,16 +1500,67 @@ export class IbkrBridgeClient {
               try {
                 const payload = JSON.parse(message.data) as BarStreamPayload;
                 if (payload.bar) {
+                  touchStreamActivity();
                   onBar({
                     ...payload.bar,
                     timestamp:
                       payload.bar.timestamp instanceof Date
                         ? payload.bar.timestamp
                         : new Date(payload.bar.timestamp),
+                    dataUpdatedAt: payload.bar.dataUpdatedAt
+                      ? toDate(payload.bar.dataUpdatedAt)
+                      : null,
                   });
                 }
               } catch (error) {
-                logger.warn({ err: error }, "IBKR bridge bar stream payload parse failed");
+                logger.warn(
+                  { err: error },
+                  "IBKR bridge bar stream payload parse failed",
+                );
+              }
+            } else if (message?.event === "stream-status") {
+              try {
+                touchStreamActivity();
+                lastStreamStatus = JSON.parse(
+                  message.data,
+                ) as StreamStatusPayload;
+              } catch {
+                lastStreamStatus = null;
+              }
+            } else if (
+              message?.event === "ready" ||
+              message?.event === "heartbeat"
+            ) {
+              touchStreamActivity();
+            } else if (
+              !message &&
+              rawBlock.split(/\r?\n/).some((line) => line.startsWith(":"))
+            ) {
+              touchStreamActivity();
+            } else if (
+              message?.event === "stream-error" ||
+              message?.event === "error"
+            ) {
+              try {
+                const payload = JSON.parse(message.data) as {
+                  title?: string;
+                  detail?: string;
+                };
+                onError?.(
+                  new Error(
+                    payload.detail ||
+                      payload.title ||
+                      "IBKR bridge bar stream reported an error.",
+                  ),
+                );
+              } catch (error) {
+                logger.warn(
+                  { err: error },
+                  "IBKR bridge bar stream error payload parse failed",
+                );
+                onError?.(
+                  new Error("IBKR bridge bar stream reported an error."),
+                );
               }
             }
 
@@ -940,6 +1568,7 @@ export class IbkrBridgeClient {
           }
         });
         response.on("end", () => {
+          stopStallWatchdog();
           if (!stopped) {
             onError?.(new Error("IBKR bridge bar stream ended."));
           }
@@ -948,6 +1577,7 @@ export class IbkrBridgeClient {
     );
 
     request.on("error", (error) => {
+      stopStallWatchdog();
       if (!stopped) {
         onError?.(error);
       }
@@ -957,6 +1587,7 @@ export class IbkrBridgeClient {
 
     return () => {
       stopped = true;
+      stopStallWatchdog();
       request.destroy();
     };
   }
@@ -972,11 +1603,19 @@ export class IbkrBridgeClient {
     outsideRth?: boolean;
     source?: HistoryDataSource;
   }): Promise<BrokerBarSnapshot[]> {
-    const payload = await this.request<{ bars: Array<Omit<BrokerBarSnapshot, "timestamp"> & { timestamp: string | Date }> }>(
+    const bridgeSymbol = toBridgeStockSymbolForRequest(input);
+    const payload = await this.request<{
+      bars: Array<
+        Omit<BrokerBarSnapshot, "timestamp" | "dataUpdatedAt"> & {
+          timestamp: string | Date;
+          dataUpdatedAt?: string | Date | null;
+        }
+      >;
+    }>(
       "/bars",
       {},
       {
-        symbol: input.symbol,
+        symbol: bridgeSymbol,
         timeframe: input.timeframe,
         limit: input.limit,
         from: input.from,
@@ -989,7 +1628,9 @@ export class IbkrBridgeClient {
     );
     return payload.bars.map((bar) => ({
       ...bar,
-      timestamp: bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp),
+      timestamp:
+        bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp),
+      dataUpdatedAt: bar.dataUpdatedAt ? toDate(bar.dataUpdatedAt) : null,
     }));
   }
 
@@ -999,17 +1640,25 @@ export class IbkrBridgeClient {
     contractType?: "call" | "put";
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    strikeCoverage?: "fast" | "standard" | "full";
+    quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
-    const payload = await this.request<{ contracts: OptionChainContract[] }>("/options/chains", {
-      signal: input.signal,
-    }, {
-      underlying: input.underlying,
-      expirationDate: input.expirationDate,
-      contractType: input.contractType,
-      maxExpirations: input.maxExpirations,
-      strikesAroundMoney: input.strikesAroundMoney,
-    });
+    const payload = await this.request<{ contracts: OptionChainContract[] }>(
+      "/options/chains",
+      {
+        signal: input.signal,
+      },
+      {
+        underlying: input.underlying,
+        expirationDate: input.expirationDate,
+        contractType: input.contractType,
+        maxExpirations: input.maxExpirations,
+        strikesAroundMoney: input.strikesAroundMoney,
+        strikeCoverage: input.strikeCoverage,
+        quoteHydration: input.quoteHydration,
+      },
+    );
     return payload.contracts.map(hydrateOptionChainContract);
   }
 
@@ -1018,12 +1667,16 @@ export class IbkrBridgeClient {
     maxExpirations?: number;
     signal?: AbortSignal;
   }): Promise<Date[]> {
-    const payload = await this.request<OptionExpirationsPayload>("/options/expirations", {
-      signal: input.signal,
-    }, {
-      underlying: input.underlying,
-      maxExpirations: input.maxExpirations,
-    }).catch(async (error: unknown) => {
+    const payload = await this.request<OptionExpirationsPayload>(
+      "/options/expirations",
+      {
+        signal: input.signal,
+      },
+      {
+        underlying: input.underlying,
+        maxExpirations: input.maxExpirations,
+      },
+    ).catch(async (error: unknown) => {
       if (error instanceof HttpError && error.statusCode === 404) {
         const contracts = await this.getOptionChain({
           underlying: input.underlying,
@@ -1038,7 +1691,10 @@ export class IbkrBridgeClient {
             new Map(
               contracts.map((contract) => {
                 const expirationDate = contract.contract.expirationDate;
-                return [expirationDate.toISOString().slice(0, 10), expirationDate];
+                return [
+                  expirationDate.toISOString().slice(0, 10),
+                  expirationDate,
+                ];
               }),
             ).values(),
           ),
@@ -1063,12 +1719,15 @@ export class IbkrBridgeClient {
     providerContractId?: string | null;
     exchange?: string | null;
   }): Promise<BrokerMarketDepthSnapshot | null> {
-    const payload = await this.request<{ depth: BrokerMarketDepthSnapshot | null }>(
+    const bridgeSymbol = toBridgeStockSymbolForRequest(input);
+    const payload = await this.request<{
+      depth: BrokerMarketDepthSnapshot | null;
+    }>(
       "/market-depth",
       {},
       {
         accountId: input.accountId,
-        symbol: input.symbol,
+        symbol: bridgeSymbol,
         assetClass: input.assetClass,
         providerContractId: input.providerContractId,
         exchange: input.exchange,
@@ -1085,7 +1744,10 @@ export class IbkrBridgeClient {
         "Content-Type": "application/json",
       },
     });
-    return { ...raw, optionContract: hydrateOptionContract(raw.optionContract) };
+    return {
+      ...raw,
+      optionContract: hydrateOptionContract(raw.optionContract),
+    };
   }
 
   async placeOrder(input: PlaceOrderInput): Promise<BrokerOrderSnapshot> {
@@ -1156,7 +1818,10 @@ export class IbkrBridgeClient {
     return { ...raw, submittedAt: toDate(raw.submittedAt) };
   }
 
-  async getNews(input: { ticker?: string; limit?: number }): Promise<IbkrNewsArticle[]> {
+  async getNews(input: {
+    ticker?: string;
+    limit?: number;
+  }): Promise<IbkrNewsArticle[]> {
     const params: Record<string, QueryValue> = {};
     if (input.ticker) params.ticker = input.ticker;
     if (typeof input.limit === "number") params.limit = input.limit;

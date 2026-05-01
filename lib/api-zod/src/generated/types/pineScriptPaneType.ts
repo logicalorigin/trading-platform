@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type PineScriptPaneType =
-  (typeof PineScriptPaneType)[keyof typeof PineScriptPaneType];
+export type PineScriptPaneType = typeof PineScriptPaneType[keyof typeof PineScriptPaneType];
+
 
 export const PineScriptPaneType = {
-  price: "price",
-  lower: "lower",
+  price: 'price',
+  lower: 'lower',
 } as const;

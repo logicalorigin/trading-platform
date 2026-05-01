@@ -4,6 +4,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { isHttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
+import { recordApiRequest } from "./services/diagnostics";
 
 const app: Express = express();
 
@@ -25,8 +26,44 @@ function isZodError(error: unknown): error is ZodErrorLike {
   );
 }
 
+function applyIsolationHeaders(_req: express.Request, res: express.Response, next: express.NextFunction) {
+  const mode = process.env["RAYALGO_CROSS_ORIGIN_ISOLATION"] || "report-only";
+  const coop = process.env["RAYALGO_COOP_POLICY"] || "same-origin";
+  const coep = process.env["RAYALGO_COEP_POLICY"] || "require-corp";
+  res.setHeader("Reporting-Endpoints", 'rayalgo="/api/diagnostics/browser-reports"');
+  if (mode === "off") {
+    next();
+    return;
+  }
+  if (mode.startsWith("enforce")) {
+    res.setHeader("Cross-Origin-Opener-Policy", coop);
+    res.setHeader(
+      "Cross-Origin-Embedder-Policy",
+      mode === "enforce-credentialless" ? "credentialless" : coep,
+    );
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  } else {
+    res.setHeader("Cross-Origin-Opener-Policy-Report-Only", `${coop}; report-to="rayalgo"`);
+    res.setHeader("Cross-Origin-Embedder-Policy-Report-Only", `${coep}; report-to="rayalgo"`);
+  }
+  next();
+}
+
 app.use((req, _res, next) => {
   (req as { _startTime?: number })._startTime = Date.now();
+  next();
+});
+app.use(applyIsolationHeaders);
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    recordApiRequest({
+      method: req.method,
+      path: req.path || req.url?.split("?")[0] || "/",
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    });
+  });
   next();
 });
 app.use(
@@ -58,7 +95,7 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ type: ["application/json", "application/reports+json"] }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);

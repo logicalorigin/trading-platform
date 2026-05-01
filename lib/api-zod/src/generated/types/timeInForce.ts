@@ -6,11 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type TimeInForce = (typeof TimeInForce)[keyof typeof TimeInForce];
+export type TimeInForce = typeof TimeInForce[keyof typeof TimeInForce];
+
 
 export const TimeInForce = {
-  day: "day",
-  gtc: "gtc",
-  ioc: "ioc",
-  fok: "fok",
+  day: 'day',
+  gtc: 'gtc',
+  ioc: 'ioc',
+  fok: 'fok',
 } as const;

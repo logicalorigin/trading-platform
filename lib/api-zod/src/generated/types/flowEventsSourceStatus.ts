@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type FlowEventsSourceStatus =
-  (typeof FlowEventsSourceStatus)[keyof typeof FlowEventsSourceStatus];
+export type FlowEventsSourceStatus = typeof FlowEventsSourceStatus[keyof typeof FlowEventsSourceStatus];
+
 
 export const FlowEventsSourceStatus = {
-  live: "live",
-  fallback: "fallback",
-  empty: "empty",
-  error: "error",
+  live: 'live',
+  fallback: 'fallback',
+  empty: 'empty',
+  error: 'error',
 } as const;

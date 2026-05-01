@@ -5,7 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AccountMetricSource } from "./accountMetricSource";
+import type { AccountMetricSource } from './accountMetricSource';
 
 export interface AccountMetric {
   value: number | null;

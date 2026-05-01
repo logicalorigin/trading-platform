@@ -7,14 +7,14 @@
  */
 
 export type GetNewsParams = {
-  /**
-   * Optional ticker to filter articles by symbol.
-   */
-  ticker?: string;
-  /**
-   * Maximum number of articles to return.
-   * @minimum 1
-   * @maximum 50
-   */
-  limit?: number;
+/**
+ * Optional ticker to filter articles by symbol.
+ */
+ticker?: string;
+/**
+ * Maximum number of articles to return.
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
 };

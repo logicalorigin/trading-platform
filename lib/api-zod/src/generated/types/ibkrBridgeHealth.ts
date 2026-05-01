@@ -5,10 +5,11 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { EnvironmentMode } from "./environmentMode";
-import type { IbkrBridgeConnectionsHealth } from "./ibkrBridgeConnectionsHealth";
-import type { IbkrBridgeHealthMarketDataMode } from "./ibkrBridgeHealthMarketDataMode";
-import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
+import type { EnvironmentMode } from './environmentMode';
+import type { IbkrBridgeConnectionsHealth } from './ibkrBridgeConnectionsHealth';
+import type { IbkrBridgeHealthMarketDataMode } from './ibkrBridgeHealthMarketDataMode';
+import type { IbkrBridgeHealthStreamState } from './ibkrBridgeHealthStreamState';
+import type { IbkrBridgeHealthTransport } from './ibkrBridgeHealthTransport';
 
 export interface IbkrBridgeHealth {
   configured: boolean;
@@ -37,5 +38,22 @@ export interface IbkrBridgeHealth {
   marketDataMode: IbkrBridgeHealthMarketDataMode;
   /** @nullable */
   liveMarketDataAvailable: boolean | null;
-  connections?: IbkrBridgeConnectionsHealth;
+  healthFresh?: boolean;
+  /** @nullable */
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  streamState?: IbkrBridgeHealthStreamState;
+  /** @nullable */
+  streamStateReason?: string | null;
+  /** @nullable */
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  /** @nullable */
+  strictReason?: string | null;
+  connections: IbkrBridgeConnectionsHealth;
 }

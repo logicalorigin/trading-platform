@@ -9,6 +9,4 @@
 /**
  * @nullable
  */
-export type UniverseTickerContractMeta = {
-  [key: string]: string | number | boolean | null;
-} | null;
+export type UniverseTickerContractMeta = {[key: string]: string | number | boolean | null} | null;

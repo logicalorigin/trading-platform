@@ -5,7 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AccountTradeSource } from "./accountTradeSource";
+import type { AccountTradeSource } from './accountTradeSource';
+import type { AccountTradeSourceType } from './accountTradeSourceType';
 
 export interface AccountTrade {
   id: string;
@@ -24,4 +25,10 @@ export interface AccountTrade {
   holdDurationMinutes: number | null;
   commissions: number | null;
   currency: string;
+  sourceType?: AccountTradeSourceType;
+  strategyLabel?: string | null;
+  candidateId?: string | null;
+  deploymentId?: string | null;
+  deploymentName?: string | null;
+  sourceEventId?: string | null;
 }

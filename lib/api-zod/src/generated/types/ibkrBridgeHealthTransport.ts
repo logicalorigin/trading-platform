@@ -6,11 +6,9 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type IbkrBridgeHealthTransport =
-  (typeof IbkrBridgeHealthTransport)[keyof typeof IbkrBridgeHealthTransport];
+export type IbkrBridgeHealthTransport = typeof IbkrBridgeHealthTransport[keyof typeof IbkrBridgeHealthTransport];
+
 
 export const IbkrBridgeHealthTransport = {
-  client_portal: "client_portal",
-  tws: "tws",
-  ibx: "ibx",
+  tws: 'tws',
 } as const;

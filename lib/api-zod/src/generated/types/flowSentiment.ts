@@ -6,10 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type FlowSentiment = (typeof FlowSentiment)[keyof typeof FlowSentiment];
+export type FlowSentiment = typeof FlowSentiment[keyof typeof FlowSentiment];
+
 
 export const FlowSentiment = {
-  bullish: "bullish",
-  bearish: "bearish",
-  neutral: "neutral",
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
 } as const;

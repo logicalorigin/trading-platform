@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeReasonTraceStepKind =
-  (typeof BacktestTradeReasonTraceStepKind)[keyof typeof BacktestTradeReasonTraceStepKind];
+export type BacktestTradeReasonTraceStepKind = typeof BacktestTradeReasonTraceStepKind[keyof typeof BacktestTradeReasonTraceStepKind];
+
 
 export const BacktestTradeReasonTraceStepKind = {
-  entry: "entry",
-  max_favorable: "max_favorable",
-  max_adverse: "max_adverse",
-  exit: "exit",
+  entry: 'entry',
+  max_favorable: 'max_favorable',
+  max_adverse: 'max_adverse',
+  exit: 'exit',
 } as const;

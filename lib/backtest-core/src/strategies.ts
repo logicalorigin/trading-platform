@@ -12,6 +12,7 @@ import {
   backtestOptionPresets,
   defaultBacktestOptionPresetId,
 } from "./options";
+import { defaultSignalOptionsExecutionProfile } from "./signal-options";
 
 type ExecutableStrategy = StrategyCatalogItem & {
   evaluate(context: StrategySignalContext): BacktestSignal;
@@ -346,7 +347,7 @@ const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
     label: "Execution Mode",
     type: "enum",
     defaultValue: "spot",
-    options: ["spot", "options"],
+    options: ["spot", "options", "signal_options"],
   },
   {
     key: "contractPresetId",
@@ -363,6 +364,57 @@ const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
     options: [],
     min: 2,
     max: 50,
+    step: 1,
+  },
+  {
+    key: "signalOptionsMinDte",
+    label: "Signal Options Min DTE",
+    type: "integer",
+    defaultValue: defaultSignalOptionsExecutionProfile.optionSelection.minDte,
+    options: [],
+    min: 0,
+    max: 45,
+    step: 1,
+  },
+  {
+    key: "signalOptionsMaxDte",
+    label: "Signal Options Max DTE",
+    type: "integer",
+    defaultValue: defaultSignalOptionsExecutionProfile.optionSelection.maxDte,
+    options: [],
+    min: 0,
+    max: 90,
+    step: 1,
+  },
+  {
+    key: "signalOptionsMaxPremium",
+    label: "Signal Options Max Premium",
+    type: "number",
+    defaultValue: defaultSignalOptionsExecutionProfile.riskCaps.maxPremiumPerEntry,
+    options: [],
+    min: 1,
+    max: 100000,
+    step: 25,
+  },
+  {
+    key: "signalOptionsMaxContracts",
+    label: "Signal Options Max Contracts",
+    type: "integer",
+    defaultValue: defaultSignalOptionsExecutionProfile.riskCaps.maxContracts,
+    options: [],
+    min: 1,
+    max: 500,
+    step: 1,
+  },
+  {
+    key: "signalOptionsMaxSpreadPct",
+    label: "Signal Options Max Spread %",
+    type: "number",
+    defaultValue:
+      defaultSignalOptionsExecutionProfile.liquidityGate.maxSpreadPctOfMid,
+    options: [],
+    min: 0,
+    max: 500,
     step: 1,
   },
 ];
@@ -431,6 +483,7 @@ const strategies: ExecutableStrategy[] = [
       "Uses the current JS RayReplica market-structure port, not a full Pine executor.",
       "BUY/SELL events map to bullish and bearish CHOCH transitions.",
       "Spot mode remains the baseline path; options mode is long-premium only and uses preset contract selection.",
+      "Signal-options mode shares deployment risk/liquidity defaults with the automation shadow scanner.",
       "BOS, TP/SL, filters, and short-side shares execution remain chart-only for now.",
     ],
     unsupportedFeatures: [],
@@ -439,6 +492,16 @@ const strategies: ExecutableStrategy[] = [
       executionMode: "spot",
       contractPresetId: defaultBacktestOptionPresetId,
       timeHorizon: 10,
+      signalOptionsMinDte:
+        defaultSignalOptionsExecutionProfile.optionSelection.minDte,
+      signalOptionsMaxDte:
+        defaultSignalOptionsExecutionProfile.optionSelection.maxDte,
+      signalOptionsMaxPremium:
+        defaultSignalOptionsExecutionProfile.riskCaps.maxPremiumPerEntry,
+      signalOptionsMaxContracts:
+        defaultSignalOptionsExecutionProfile.riskCaps.maxContracts,
+      signalOptionsMaxSpreadPct:
+        defaultSignalOptionsExecutionProfile.liquidityGate.maxSpreadPctOfMid,
     },
     evaluate({ bars, index, parameters }) {
       const signals = buildRayReplicaSignalTape(bars, parameters).signals;

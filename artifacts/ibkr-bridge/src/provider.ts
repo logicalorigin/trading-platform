@@ -8,6 +8,7 @@ import type {
   BrokerBarSnapshot,
   BrokerExecutionSnapshot,
   BrokerMarketDepthSnapshot,
+  BrokerOrderSnapshot,
   CancelOrderSnapshot,
   HistoryBarTimeframe,
   HistoryDataSource,
@@ -22,6 +23,7 @@ import type {
 } from "../../api-server/src/providers/ibkr/client";
 
 export type BridgeHealth = {
+  bridgeRuntimeBuild: string | null;
   configured: boolean;
   authenticated: boolean;
   connected: boolean;
@@ -33,17 +35,34 @@ export type BridgeHealth = {
   lastRecoveryAttemptAt: Date | null;
   lastRecoveryError: string | null;
   updatedAt: Date;
-  transport: IbkrTransport;
+  transport: Extract<IbkrTransport, "tws">;
   connectionTarget: string | null;
   sessionMode: RuntimeMode | null;
   clientId: number | null;
   marketDataMode: IbkrMarketDataMode | null;
   liveMarketDataAvailable: boolean | null;
+  healthFresh?: boolean;
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  strictReason?: string | null;
+  diagnostics?: {
+    scheduler?: unknown;
+    pressure?: string;
+    subscriptions?: unknown;
+    lastReconnectReason?: string | null;
+  };
 };
 
 export type BridgeConnectionHealth = {
-  transport: Extract<IbkrTransport, "client_portal" | "tws">;
-  role: "account" | "market_data";
+  transport: Extract<IbkrTransport, "tws">;
+  role: "market_data";
   configured: boolean;
   reachable: boolean;
   authenticated: boolean;
@@ -59,10 +78,20 @@ export type BridgeConnectionHealth = {
   lastError: string | null;
   marketDataMode: IbkrMarketDataMode | null;
   liveMarketDataAvailable: boolean | null;
+  healthFresh?: boolean;
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  strictReason?: string | null;
 };
 
 export type BridgeConnectionsHealth = {
-  clientPortal: BridgeConnectionHealth;
   tws: BridgeConnectionHealth;
 };
 
@@ -70,15 +99,45 @@ export type BridgeHealthResponse = BridgeHealth & {
   connections: BridgeConnectionsHealth;
 };
 
+export type BridgeOrdersResult = {
+  orders: BrokerOrderSnapshot[];
+  degraded?: boolean;
+  reason?: "open_orders_timeout" | "open_orders_error";
+  stale?: boolean;
+  detail?: string;
+  timeoutMs?: number;
+};
+
+export type BridgeLaneDiagnostics = {
+  scheduler: unknown;
+  schedulerConfig: unknown;
+  limits: unknown;
+  subscriptions: unknown;
+  pressure: string;
+  updatedAt: Date;
+};
+
+export type BridgeLaneSettingsInput = {
+  scheduler?: Record<string, Record<string, number | null | undefined>>;
+  limits?: Record<string, number | null | undefined>;
+};
+
 export interface IbkrBridgeProvider {
+  shutdown?(): Promise<void> | void;
   refreshSession(): Promise<SessionStatusSnapshot | null>;
   tickle(): Promise<void>;
   getHealth(): Promise<BridgeHealth>;
+  getLaneDiagnostics?(): BridgeLaneDiagnostics | Promise<BridgeLaneDiagnostics>;
+  applyLaneSettings?(
+    input: BridgeLaneSettingsInput,
+  ): BridgeLaneDiagnostics | Promise<BridgeLaneDiagnostics>;
   listAccounts(mode: RuntimeMode): Promise<BrokerAccountSnapshot[]>;
   listPositions(input: {
     accountId?: string;
     mode: RuntimeMode;
-  }): Promise<import("../../api-server/src/providers/ibkr/client").BrokerPositionSnapshot[]>;
+  }): Promise<
+    import("../../api-server/src/providers/ibkr/client").BrokerPositionSnapshot[]
+  >;
   listOrders(input: {
     accountId?: string;
     mode: RuntimeMode;
@@ -91,7 +150,7 @@ export interface IbkrBridgeProvider {
       | "canceled"
       | "rejected"
       | "expired";
-  }): Promise<import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot[]>;
+  }): Promise<BridgeOrdersResult>;
   listExecutions(input: {
     accountId?: string;
     days?: number;
@@ -117,6 +176,8 @@ export interface IbkrBridgeProvider {
     contractType?: "call" | "put" | null;
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    strikeCoverage?: "fast" | "standard" | "full";
+    quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]>;
   getOptionExpirations(input: {
@@ -132,7 +193,11 @@ export interface IbkrBridgeProvider {
     exchange?: string | null;
   }): Promise<BrokerMarketDepthSnapshot | null>;
   previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot>;
-  placeOrder(input: PlaceOrderInput): Promise<import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot>;
+  placeOrder(
+    input: PlaceOrderInput,
+  ): Promise<
+    import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot
+  >;
   submitRawOrders(input: {
     accountId?: string | null;
     mode?: RuntimeMode | null;
@@ -190,5 +255,6 @@ export interface IbkrBridgeProvider {
       source?: HistoryDataSource;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
+    onError?: (error: unknown) => void,
   ): Promise<() => void>;
 }

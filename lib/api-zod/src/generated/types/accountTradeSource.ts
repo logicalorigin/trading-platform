@@ -6,10 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type AccountTradeSource =
-  (typeof AccountTradeSource)[keyof typeof AccountTradeSource];
+export type AccountTradeSource = typeof AccountTradeSource[keyof typeof AccountTradeSource];
+
 
 export const AccountTradeSource = {
-  LIVE: "LIVE",
-  FLEX: "FLEX",
+  LIVE: 'LIVE',
+  FLEX: 'FLEX',
+  SHADOW: 'SHADOW',
 } as const;

@@ -6,9 +6,9 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BrokerProvider =
-  (typeof BrokerProvider)[keyof typeof BrokerProvider];
+export type BrokerProvider = typeof BrokerProvider[keyof typeof BrokerProvider];
+
 
 export const BrokerProvider = {
-  ibkr: "ibkr",
+  ibkr: 'ibkr',
 } as const;

@@ -9,6 +9,8 @@ import {
   sql,
   type SQL,
 } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import {
   db,
   instrumentsTable,
@@ -16,23 +18,97 @@ import {
   watchlistsTable,
 } from "@workspace/db";
 import { universeCatalogListingsTable } from "@workspace/db/schema";
-import { HttpError } from "../lib/errors";
+import { HttpError, isHttpError } from "../lib/errors";
 import {
+  getIbkrBridgeRuntimeConfig,
+  getIbkrBridgeRuntimeOverride,
   getPolygonRuntimeConfig,
+  getFmpRuntimeConfig,
+  getIgnoredIbkrBridgeRuntimeEnvNames,
   getProviderConfiguration,
   getRuntimeMode,
 } from "../lib/runtime";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
-import { type PlaceOrderInput } from "../providers/ibkr/client";
-import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
+import {
+  type BrokerBarSnapshot,
+  type BrokerOrderSnapshot,
+  type HistoryBarTimeframe,
+  type MarketDataFreshness,
+  type PlaceOrderInput,
+  type QuoteSnapshot,
+} from "../providers/ibkr/client";
+import {
+  IbkrBridgeClient,
+  type BridgeOrdersResult,
+} from "../providers/ibkr/bridge-client";
 import {
   PolygonMarketDataClient,
   computeUnusualMetrics,
+  type BarSnapshot as PolygonBarSnapshot,
   type MarketDataProvider,
+  type OptionChainContract as PolygonOptionChainContract,
+  type PolygonAggregateBarsPage,
+  type QuoteSnapshot as PolygonQuoteSnapshot,
   type UniverseTicker,
   type UniverseMarket,
 } from "../providers/polygon/market-data";
+import { FmpResearchClient } from "../providers/fmp/client";
+import {
+  createOptionsFlowScanner,
+  type OptionsFlowScannerRequest,
+} from "./options-flow-scanner";
+import {
+  createFlowUniverseManager,
+  getFlowScannerIntervalMs,
+  type FlowUniverseCoverage,
+  type FlowUniverseMode,
+} from "./flow-universe";
+import {
+  fetchBridgeQuoteSnapshots,
+  getBridgeQuoteStreamDiagnostics,
+} from "./bridge-quote-stream";
+import {
+  fetchBridgeOptionQuoteSnapshots,
+  getCurrentBridgeOptionQuoteSnapshots,
+} from "./bridge-option-quote-stream";
+import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
+import { recordServerDiagnosticEvent } from "./diagnostics";
+import {
+  getBridgeGovernorSnapshot,
+  isBridgeWorkBackedOff,
+  recordBridgeWorkFailure,
+  runBridgeWork,
+} from "./bridge-governor";
+import { listIbkrAccounts, listIbkrExecutions } from "./ibkr-account-bridge";
+import {
+  clearBridgeOrderReadSuppression,
+  getBridgeOrderReadSuppression,
+  markBridgeOrderReadsSuppressed,
+} from "./bridge-order-read-state";
+import { resolveIbkrLaneSymbols } from "./ibkr-lane-policy";
+import {
+  loadStoredMarketBars,
+  normalizeBarsToStoreTimeframe,
+  persistMarketDataBars,
+} from "./market-data-store";
+import {
+  admitMarketDataLeases,
+  getMarketDataAdmissionDiagnostics,
+  recordMarketDataFallback,
+  releaseMarketDataLeases,
+} from "./market-data-admission";
+import {
+  normalizeUniverseMarket,
+  resolveMarketIdentityFields,
+  resolveMarketIdentityMetadata,
+} from "./market-identity";
+import {
+  getDurableOptionMetadataDiagnostics,
+  loadDurableOptionChain,
+  loadDurableOptionExpirations,
+  persistDurableOptionChain,
+} from "./option-metadata-store";
 
 const BUILT_IN_WATCHLISTS = [
   {
@@ -124,12 +200,26 @@ const BUILT_IN_INSTRUMENT_NAMES = Object.fromEntries(
 type WatchlistMutationSymbol = {
   symbol: string;
   name?: string | null;
+  market?: UniverseMarket | string | null;
+  normalizedExchangeMic?: string | null;
+  exchangeDisplay?: string | null;
+  countryCode?: string | null;
+  exchangeCountryCode?: string | null;
+  sector?: string | null;
+  industry?: string | null;
 };
 
 type WatchlistItemRecord = {
   id: string;
   symbol: string;
   name?: string | null;
+  market: UniverseMarket | null;
+  normalizedExchangeMic: string | null;
+  exchangeDisplay: string | null;
+  countryCode: string | null;
+  exchangeCountryCode: string | null;
+  sector: string | null;
+  industry: string | null;
   sortOrder: number;
   addedAt: Date;
 };
@@ -141,6 +231,130 @@ type WatchlistRecord = {
   items: WatchlistItemRecord[];
   updatedAt: Date;
 };
+
+type WatchlistIdentityFields = {
+  market: UniverseMarket | null;
+  normalizedExchangeMic: string | null;
+  exchangeDisplay: string | null;
+  countryCode: string | null;
+  exchangeCountryCode: string | null;
+  sector: string | null;
+  industry: string | null;
+};
+
+const WATCHLIST_IDENTITY_METADATA_KEY = "marketIdentity";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readIdentityString(value: unknown, maxLength = 160): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : null;
+}
+
+function compactWatchlistIdentityMetadata(
+  identity: WatchlistIdentityFields,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(identity).filter(([, value]) => value != null),
+  );
+}
+
+function readWatchlistIdentityMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): Partial<WatchlistIdentityFields> {
+  if (!isRecord(metadata)) {
+    return {};
+  }
+
+  const nested = isRecord(metadata[WATCHLIST_IDENTITY_METADATA_KEY])
+    ? (metadata[WATCHLIST_IDENTITY_METADATA_KEY] as Record<string, unknown>)
+    : {};
+  const readFromMetadata = (key: keyof WatchlistIdentityFields) =>
+    nested[key] ?? metadata[key];
+
+  return {
+    market: normalizeUniverseMarket(readFromMetadata("market")) ?? undefined,
+    normalizedExchangeMic:
+      readIdentityString(readFromMetadata("normalizedExchangeMic"), 32) ??
+      undefined,
+    exchangeDisplay:
+      readIdentityString(readFromMetadata("exchangeDisplay"), 80) ?? undefined,
+    countryCode: readIdentityString(readFromMetadata("countryCode"), 8) ?? undefined,
+    exchangeCountryCode:
+      readIdentityString(readFromMetadata("exchangeCountryCode"), 8) ??
+      undefined,
+    sector: readIdentityString(readFromMetadata("sector"), 80) ?? undefined,
+    industry: readIdentityString(readFromMetadata("industry"), 120) ?? undefined,
+  };
+}
+
+function buildWatchlistIdentityFields(
+  symbol: string,
+  input: Partial<WatchlistMutationSymbol>,
+  existing: Partial<WatchlistIdentityFields> = {},
+): WatchlistIdentityFields {
+  const incomingNormalizedExchangeMic = readIdentityString(
+    input.normalizedExchangeMic,
+    32,
+  );
+  const normalizedExchangeMic = (
+    incomingNormalizedExchangeMic ??
+    existing.normalizedExchangeMic ??
+    null
+  )?.toUpperCase() ?? null;
+  const exchangeDisplay =
+    readIdentityString(input.exchangeDisplay, 80) ??
+    (incomingNormalizedExchangeMic ? normalizedExchangeMic : existing.exchangeDisplay) ??
+    normalizedExchangeMic;
+  const market =
+    normalizeUniverseMarket(input.market) ?? existing.market ?? null;
+  const countryCode =
+    readIdentityString(input.countryCode, 8) ?? existing.countryCode ?? null;
+  const exchangeCountryCode =
+    readIdentityString(input.exchangeCountryCode, 8) ??
+    existing.exchangeCountryCode ??
+    null;
+  const sector =
+    readIdentityString(input.sector, 80) ?? existing.sector ?? null;
+  const industry =
+    readIdentityString(input.industry, 120) ?? existing.industry ?? null;
+  const resolved = resolveMarketIdentityFields({
+    ticker: symbol,
+    market,
+    normalizedExchangeMic,
+    exchangeDisplay,
+    countryCode,
+    exchangeCountryCode,
+    sector,
+    industry,
+  });
+
+  return {
+    market: resolved.market ?? market,
+    normalizedExchangeMic,
+    exchangeDisplay,
+    countryCode: resolved.countryCode,
+    exchangeCountryCode: resolved.exchangeCountryCode,
+    sector: resolved.sector,
+    industry: resolved.industry,
+  };
+}
+
+function mergeInstrumentMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  identity: WatchlistIdentityFields,
+): Record<string, unknown> {
+  const base = isRecord(metadata) ? metadata : {};
+  return {
+    ...base,
+    [WATCHLIST_IDENTITY_METADATA_KEY]: compactWatchlistIdentityMetadata(identity),
+  };
+}
 
 async function ensureDefaultWatchlistSeeded(): Promise<void> {
   const existing = await db
@@ -219,6 +433,8 @@ async function selectWatchlistRows(watchlistId?: string) {
       itemId: watchlistItemsTable.id,
       symbol: instrumentsTable.symbol,
       instrumentName: instrumentsTable.name,
+      instrumentExchange: instrumentsTable.exchange,
+      instrumentMetadata: instrumentsTable.metadata,
       sortOrder: watchlistItemsTable.sortOrder,
       addedAt: watchlistItemsTable.createdAt,
     })
@@ -258,10 +474,34 @@ function mapWatchlistRows(
     };
 
     if (row.itemId && row.symbol) {
+      const storedIdentity = readWatchlistIdentityMetadata(row.instrumentMetadata);
+      const identity = buildWatchlistIdentityFields(
+        row.symbol,
+        {
+          normalizedExchangeMic:
+            storedIdentity.normalizedExchangeMic ?? row.instrumentExchange ?? null,
+          exchangeDisplay:
+            storedIdentity.exchangeDisplay ?? row.instrumentExchange ?? null,
+          market: storedIdentity.market,
+          countryCode: storedIdentity.countryCode,
+          exchangeCountryCode: storedIdentity.exchangeCountryCode,
+          sector: storedIdentity.sector,
+          industry: storedIdentity.industry,
+        },
+        storedIdentity,
+      );
+
       existing.items.push({
         id: row.itemId,
         symbol: row.symbol,
         name: row.instrumentName ?? row.symbol,
+        market: identity.market,
+        normalizedExchangeMic: identity.normalizedExchangeMic,
+        exchangeDisplay: identity.exchangeDisplay,
+        countryCode: identity.countryCode,
+        exchangeCountryCode: identity.exchangeCountryCode,
+        sector: identity.sector,
+        industry: identity.industry,
         sortOrder: row.sortOrder ?? 0,
         addedAt: row.addedAt ?? row.watchlistUpdatedAt,
       });
@@ -279,6 +519,10 @@ async function listWatchlistsFromDb() {
   return mapWatchlistRows(await selectWatchlistRows());
 }
 
+export async function listWatchlistsForDiagnostics() {
+  return listWatchlistsFromDb();
+}
+
 async function getWatchlistById(
   watchlistId: string,
 ): Promise<WatchlistRecord | null> {
@@ -290,6 +534,7 @@ async function getWatchlistById(
 let lastIbkrWatchlistPrewarmSignature: string | null = null;
 let pendingIbkrWatchlistPrewarmSignature: string | null = null;
 let ibkrWatchlistPrewarmSequence = 0;
+const IBKR_WATCHLIST_PREWARM_OWNER = "watchlist-prewarm";
 
 function collectWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
   return Array.from(
@@ -307,12 +552,35 @@ function scheduleIbkrWatchlistPrewarm(
   watchlists: WatchlistRecord[],
   reason: string,
 ) {
-  if (!getProviderConfiguration().ibkr) {
+  if (
+    !getProviderConfiguration().ibkr ||
+    isBridgeWorkBackedOff("health") ||
+    isBridgeWorkBackedOff("quotes")
+  ) {
     return;
   }
 
   const symbols = collectWatchlistSymbols(watchlists);
-  const signature = symbols.join(",");
+  const resolvedSymbols = resolveIbkrLaneSymbols("equity-live-quotes", {
+    watchlists: symbols,
+  });
+  const admission = admitMarketDataLeases({
+    owner: IBKR_WATCHLIST_PREWARM_OWNER,
+    intent: "convenience-live",
+    requests: resolvedSymbols.admittedSymbols.map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+    fallbackProvider: "polygon",
+  });
+  const admittedSymbols = admission.admitted
+    .map((lease) => lease.symbol)
+    .filter((symbol): symbol is string => Boolean(symbol));
+  if (!admittedSymbols.length) {
+    releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
+    return;
+  }
+  const signature = admittedSymbols.join(",");
 
   if (
     signature === lastIbkrWatchlistPrewarmSignature ||
@@ -325,8 +593,9 @@ function scheduleIbkrWatchlistPrewarm(
   ibkrWatchlistPrewarmSequence = sequence;
   pendingIbkrWatchlistPrewarmSignature = signature;
 
-  void getIbkrClient()
-    .prewarmQuoteSubscriptions(symbols)
+  void runBridgeWork("quotes", () =>
+    getIbkrClient().prewarmQuoteSubscriptions(admittedSymbols),
+  )
     .then(() => {
       if (sequence !== ibkrWatchlistPrewarmSequence) {
         return;
@@ -334,13 +603,21 @@ function scheduleIbkrWatchlistPrewarm(
 
       lastIbkrWatchlistPrewarmSignature = signature;
       logger.info(
-        { symbols, reason },
+        {
+          symbols: admittedSymbols,
+          droppedSymbols: resolvedSymbols.droppedSymbols,
+          reason,
+        },
         "IBKR bridge watchlist prewarm synced",
       );
     })
     .catch((error) => {
+      if (sequence === ibkrWatchlistPrewarmSequence) {
+        releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_failed");
+        lastIbkrWatchlistPrewarmSignature = null;
+      }
       logger.warn(
-        { err: error, symbols, reason },
+        { err: error, symbols: admittedSymbols, reason },
         "IBKR bridge watchlist prewarm failed",
       );
     })
@@ -357,7 +634,9 @@ function scheduleIbkrWatchlistPrewarmFromDb(reason: string) {
   }
 
   void listWatchlistsFromDb()
-    .then((snapshot) => scheduleIbkrWatchlistPrewarm(snapshot.watchlists, reason))
+    .then((snapshot) =>
+      scheduleIbkrWatchlistPrewarm(snapshot.watchlists, reason),
+    )
     .catch((error) => {
       logger.warn(
         { err: error, reason },
@@ -369,6 +648,7 @@ function scheduleIbkrWatchlistPrewarmFromDb(reason: string) {
 async function ensureInstrumentForSymbol({
   symbol,
   name,
+  ...identityInput
 }: WatchlistMutationSymbol) {
   const normalized = normalizeSymbol(symbol).toUpperCase();
   if (!normalized) {
@@ -381,21 +661,54 @@ async function ensureInstrumentForSymbol({
     .select({
       id: instrumentsTable.id,
       symbol: instrumentsTable.symbol,
+      exchange: instrumentsTable.exchange,
+      metadata: instrumentsTable.metadata,
     })
     .from(instrumentsTable)
     .where(eq(instrumentsTable.symbol, normalized))
     .limit(1);
 
   if (existing[0]) {
-    return existing[0];
+    const storedMetadataIdentity = readWatchlistIdentityMetadata(existing[0].metadata);
+    const storedIdentity = {
+      ...storedMetadataIdentity,
+      normalizedExchangeMic:
+        storedMetadataIdentity.normalizedExchangeMic ??
+        existing[0].exchange ??
+        undefined,
+      exchangeDisplay:
+        storedMetadataIdentity.exchangeDisplay ??
+        existing[0].exchange ??
+        undefined,
+    };
+    const identity = buildWatchlistIdentityFields(
+      normalized,
+      identityInput,
+      storedIdentity,
+    );
+    await db
+      .update(instrumentsTable)
+      .set({
+        exchange: identity.normalizedExchangeMic ?? identity.exchangeDisplay,
+        metadata: mergeInstrumentMetadata(existing[0].metadata, identity),
+      })
+      .where(eq(instrumentsTable.id, existing[0].id));
+
+    return {
+      id: existing[0].id,
+      symbol: existing[0].symbol,
+    };
   }
 
+  const identity = buildWatchlistIdentityFields(normalized, identityInput);
   const [created] = await db
     .insert(instrumentsTable)
     .values({
       symbol: normalized,
       assetClass: "equity",
       name: name?.trim() || BUILT_IN_INSTRUMENT_NAMES[normalized] || normalized,
+      exchange: identity.normalizedExchangeMic ?? identity.exchangeDisplay,
+      metadata: mergeInstrumentMetadata(null, identity),
     })
     .onConflictDoNothing()
     .returning({
@@ -411,6 +724,7 @@ async function ensureInstrumentForSymbol({
     .select({
       id: instrumentsTable.id,
       symbol: instrumentsTable.symbol,
+      metadata: instrumentsTable.metadata,
     })
     .from(instrumentsTable)
     .where(eq(instrumentsTable.symbol, normalized))
@@ -422,7 +736,18 @@ async function ensureInstrumentForSymbol({
     });
   }
 
-  return fallback[0];
+  await db
+    .update(instrumentsTable)
+    .set({
+      exchange: identity.normalizedExchangeMic ?? identity.exchangeDisplay,
+      metadata: mergeInstrumentMetadata(fallback[0].metadata, identity),
+    })
+    .where(eq(instrumentsTable.id, fallback[0].id));
+
+  return {
+    id: fallback[0].id,
+    symbol: fallback[0].symbol,
+  };
 }
 
 async function rebalanceWatchlistSortOrder(watchlistId: string) {
@@ -455,6 +780,12 @@ async function setDefaultWatchlistIfNeeded(watchlistId: string) {
     .where(eq(watchlistsTable.id, watchlistId));
 }
 
+type PolygonMarketDataClientFactory = (
+  config: NonNullable<ReturnType<typeof getPolygonRuntimeConfig>>,
+) => PolygonMarketDataClient;
+
+let polygonMarketDataClientFactory: PolygonMarketDataClientFactory | null = null;
+
 function getPolygonClient(): PolygonMarketDataClient {
   const config = getPolygonRuntimeConfig();
 
@@ -466,7 +797,13 @@ function getPolygonClient(): PolygonMarketDataClient {
     });
   }
 
-  return new PolygonMarketDataClient(config);
+  return polygonMarketDataClientFactory?.(config) ?? new PolygonMarketDataClient(config);
+}
+
+export function __setPolygonMarketDataClientFactoryForTests(
+  factory: PolygonMarketDataClientFactory | null,
+): void {
+  polygonMarketDataClientFactory = factory;
 }
 
 function getMarketDataConnectionName() {
@@ -476,8 +813,36 @@ function getMarketDataConnectionName() {
     : "Polygon Market Data";
 }
 
+function getMarketDataConnectionCapabilities(): string[] {
+  const config = getPolygonRuntimeConfig();
+  if (config?.baseUrl.includes("massive.com")) {
+    return ["historical-bars", "delayed-bars", "ticker-search"];
+  }
+
+  return [
+    "quotes",
+    "bars",
+    "options-chain",
+    "stock-stream",
+    "options-flow",
+  ];
+}
+
+type IbkrBridgeClientFactory = () => IbkrBridgeClient;
+
+let ibkrBridgeClientFactory: IbkrBridgeClientFactory = () =>
+  new IbkrBridgeClient();
+
 function getIbkrClient(): IbkrBridgeClient {
-  return new IbkrBridgeClient();
+  return ibkrBridgeClientFactory();
+}
+
+export function __setIbkrBridgeClientFactoryForTests(
+  factory: IbkrBridgeClientFactory | null,
+): void {
+  ibkrBridgeClientFactory = factory ?? (() => new IbkrBridgeClient());
+  lastKnownBridgeHealth = null;
+  lastBridgeHealthRefreshPromise = null;
 }
 
 type FlowDataProvider = "ibkr" | "polygon";
@@ -492,6 +857,13 @@ type FlowEventsSource = {
   errorMessage: string | null;
   fetchedAt: Date;
   unusualThreshold: number;
+  ibkrStatus?: "loaded" | "empty" | "degraded" | "error";
+  ibkrReason?: string | null;
+  ibkrExpirationCount?: number;
+  ibkrHydratedExpirationCount?: number;
+  ibkrContractCount?: number;
+  ibkrQualifiedContractCount?: number;
+  scannerCoverage?: FlowUniverseCoverage;
 };
 
 type FlowEventsResult = {
@@ -499,12 +871,132 @@ type FlowEventsResult = {
   source: FlowEventsSource;
 };
 
-const FLOW_EVENTS_CACHE_TTL_MS = 15_000;
+const FLOW_EVENTS_CACHE_TTL_MS = 60_000;
+const FLOW_EVENTS_CACHE_STALE_TTL_MS = 5 * 60_000;
+const FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE = readPositiveIntegerEnv(
+  "FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE",
+  1,
+);
 const flowEventsCache = new Map<
   string,
-  { value: FlowEventsResult; expiresAt: number }
+  { value: FlowEventsResult; expiresAt: number; staleExpiresAt: number }
 >();
 const flowEventsInFlight = new Map<string, Promise<FlowEventsResult>>();
+let flowEventsOnDemandActive = 0;
+type FlowEventsScope = "all" | "unusual";
+
+type FlowEventsFilters = {
+  scope: FlowEventsScope;
+  minPremium: number;
+  maxDte: number | null;
+};
+
+function normalizeFlowEventsScope(value: unknown): FlowEventsScope {
+  return value === "unusual" ? "unusual" : "all";
+}
+
+function normalizeFlowEventsFilters(input: {
+  scope?: unknown;
+  minPremium?: unknown;
+  maxDte?: unknown;
+}): FlowEventsFilters {
+  const minPremium =
+    Number.isFinite(Number(input.minPremium)) && Number(input.minPremium) > 0
+      ? Math.min(50_000_000, Math.max(0, Number(input.minPremium)))
+      : 0;
+  const maxDte =
+    input.maxDte === undefined || input.maxDte === null || input.maxDte === ""
+      ? null
+      : Number.isFinite(Number(input.maxDte))
+        ? Math.min(730, Math.max(0, Math.round(Number(input.maxDte))))
+        : null;
+
+  return {
+    scope: normalizeFlowEventsScope(input.scope),
+    minPremium,
+    maxDte,
+  };
+}
+
+function getExpirationDte(
+  expirationDate: Date,
+  now = new Date(),
+): number | null {
+  if (
+    !(expirationDate instanceof Date) ||
+    Number.isNaN(expirationDate.getTime())
+  ) {
+    return null;
+  }
+  const todayUtc = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  const expirationUtc = Date.UTC(
+    expirationDate.getUTCFullYear(),
+    expirationDate.getUTCMonth(),
+    expirationDate.getUTCDate(),
+  );
+  return Math.max(0, Math.ceil((expirationUtc - todayUtc) / 86_400_000));
+}
+
+function flowEventMatchesFilters(
+  event: unknown,
+  filters: FlowEventsFilters,
+  unusualThreshold: number | undefined,
+): boolean {
+  const row = event as {
+    isUnusual?: unknown;
+    unusualScore?: unknown;
+    premium?: unknown;
+    expirationDate?: unknown;
+  };
+  if (
+    filters.scope === "unusual" &&
+    !row.isUnusual &&
+    !(Number(row.unusualScore) >= (unusualThreshold ?? 1))
+  ) {
+    return false;
+  }
+  if (filters.minPremium > 0 && Number(row.premium ?? 0) < filters.minPremium) {
+    return false;
+  }
+  if (filters.maxDte !== null) {
+    const expirationDate =
+      row.expirationDate instanceof Date
+        ? row.expirationDate
+        : new Date(String(row.expirationDate ?? ""));
+    const dte = getExpirationDte(expirationDate);
+    if (dte === null || dte > filters.maxDte) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function filterFlowEventsForRequest(
+  events: unknown[],
+  filters: FlowEventsFilters,
+  unusualThreshold: number | undefined,
+  limit: number,
+): unknown[] {
+  return (events || [])
+    .filter((event) => flowEventMatchesFilters(event, filters, unusualThreshold))
+    .slice(0, limit);
+}
+
+function flowEventsFilterCacheKey(filters: FlowEventsFilters): string {
+  return [
+    filters.scope,
+    filters.minPremium || 0,
+    filters.maxDte ?? "any",
+  ].join(":");
+}
+
+function hasNarrowFlowFilters(filters: FlowEventsFilters): boolean {
+  return filters.scope !== "all" || filters.minPremium > 0 || filters.maxDte !== null;
+}
 
 function flowSource(input: {
   provider: FlowSourceProvider;
@@ -513,6 +1005,13 @@ function flowSource(input: {
   attemptedProviders?: FlowDataProvider[];
   errorMessage?: string | null;
   unusualThreshold?: number;
+  ibkrStatus?: FlowEventsSource["ibkrStatus"];
+  ibkrReason?: string | null;
+  ibkrExpirationCount?: number;
+  ibkrHydratedExpirationCount?: number;
+  ibkrContractCount?: number;
+  ibkrQualifiedContractCount?: number;
+  scannerCoverage?: FlowUniverseCoverage;
 }): FlowEventsSource {
   return {
     provider: input.provider,
@@ -526,6 +1025,50 @@ function flowSource(input: {
       (input.unusualThreshold as number) > 0
         ? (input.unusualThreshold as number)
         : 1,
+    ibkrStatus: input.ibkrStatus,
+    ibkrReason: input.ibkrReason,
+    ibkrExpirationCount: input.ibkrExpirationCount,
+    ibkrHydratedExpirationCount: input.ibkrHydratedExpirationCount,
+    ibkrContractCount: input.ibkrContractCount,
+    ibkrQualifiedContractCount: input.ibkrQualifiedContractCount,
+    scannerCoverage: input.scannerCoverage ?? flowUniverseManager.getCoverage(),
+  };
+}
+
+function shouldDeferOnDemandFlowRefresh(): string | null {
+  if (flowEventsOnDemandActive >= FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE) {
+    return "options_flow_on_demand_saturated";
+  }
+
+  const optionsLane = getBridgeGovernorSnapshot().options;
+  if (optionsLane.queued > 0) {
+    return "options_lane_queued";
+  }
+
+  return null;
+}
+
+function deferredFlowEventsResult(input: {
+  underlying: string;
+  filters: FlowEventsFilters;
+  limit: number;
+  unusualThreshold?: number;
+  reason: string;
+}): FlowEventsResult {
+  return {
+    events: [],
+    source: flowSource({
+      provider: "ibkr",
+      status: "empty",
+      attemptedProviders: ["ibkr"],
+      unusualThreshold: input.unusualThreshold ?? 1,
+      ibkrStatus: "degraded",
+      ibkrReason: input.reason,
+      ibkrExpirationCount: 0,
+      ibkrHydratedExpirationCount: 0,
+      ibkrContractCount: 0,
+      ibkrQualifiedContractCount: 0,
+    }),
   };
 }
 
@@ -539,10 +1082,557 @@ function getErrorMessage(error: unknown): string {
     : "Unknown provider error.";
 }
 
+let lastKnownBridgeHealth: Awaited<ReturnType<IbkrBridgeClient["getHealth"]>> | null =
+  null;
+let lastBridgeHealthRefreshPromise: Promise<void> | null = null;
+let lastBridgeHealthWarningAt = 0;
+let lastBridgeHealthPingMs: number | null = null;
+let lastBridgeHealthPingAt: Date | null = null;
+
+function sessionBridgeHealthInitialTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env["SESSION_BRIDGE_HEALTH_INITIAL_TIMEOUT_MS"] ?? "0",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 0;
+}
+
+function sessionBridgeHealthBackgroundTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env["SESSION_BRIDGE_HEALTH_TIMEOUT_MS"] ?? "5000",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 5_000;
+}
+
+function sessionBridgeHealthStaleTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env["SESSION_BRIDGE_HEALTH_STALE_TIMEOUT_MS"] ?? "1500",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 1_500;
+}
+
+function bridgeHealthFreshMs(): number {
+  const configured = Number.parseInt(
+    process.env["IBKR_BRIDGE_HEALTH_FRESH_MS"] ?? "30000",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 30_000;
+}
+
+function bridgeStreamFreshMs(): number {
+  const configured = Number.parseInt(
+    process.env["IBKR_BRIDGE_STREAM_FRESH_MS"] ??
+      process.env["IBKR_QUOTE_STREAM_STALL_MS"] ??
+      "45000",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 45_000;
+}
+
+export type IbkrRuntimeStreamState =
+  | "offline"
+  | "login_required"
+  | "checking"
+  | "delayed"
+  | "live"
+  | "quiet"
+  | "stale"
+  | "capacity_limited"
+  | "reconnecting"
+  | "reconnect_needed";
+
+function isLikelyUsEquitySession(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
+  if (weekday === "Sat" || weekday === "Sun") {
+    return false;
+  }
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value ?? "0",
+  );
+  const minutes = hour * 60 + minute;
+  return minutes >= 9 * 60 + 25 && minutes <= 16 * 60 + 5;
+}
+
+function streamStateDetail(
+  state: IbkrRuntimeStreamState,
+  reason: string,
+): {
+  streamState: IbkrRuntimeStreamState;
+  streamStateReason: string;
+} {
+  return {
+    streamState: state,
+    streamStateReason: reason,
+  };
+}
+
+export function __resolveIbkrRuntimeStreamStateForTests(input: {
+  configured?: boolean;
+  healthFresh?: boolean;
+  bridgeReachable?: boolean;
+  connected?: boolean;
+  authenticated?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  liveMarketDataAvailable?: boolean | null;
+  streamFresh?: boolean;
+  streamActive?: boolean;
+  reconnectScheduled?: boolean;
+  streamLastError?: string | null;
+  streamPressure?: string | null;
+  desiredSymbolCount?: number;
+  now?: Date;
+}): {
+  streamState: IbkrRuntimeStreamState;
+  streamStateReason: string;
+} {
+  const marketSessionActive = isLikelyUsEquitySession(input.now ?? new Date());
+  if (!input.configured) return streamStateDetail("offline", "not_configured");
+  const hasCapacityPressure =
+    input.streamPressure === "capacity_limited" ||
+    input.streamPressure === "backpressure";
+  if (!input.healthFresh) {
+    if (
+      hasCapacityPressure &&
+      (input.bridgeReachable || input.connected || input.authenticated)
+    ) {
+      return streamStateDetail("capacity_limited", input.streamPressure!);
+    }
+    if (input.streamFresh && (input.connected || input.authenticated)) {
+      return streamStateDetail("live", "fresh_stream_event_health_stale");
+    }
+    if (input.bridgeReachable || input.connected || input.authenticated) {
+      return streamStateDetail("checking", "health_stale");
+    }
+    return streamStateDetail("reconnect_needed", "bridge_unreachable");
+  }
+  if (!input.connected) {
+    return streamStateDetail("reconnect_needed", "gateway_socket_disconnected");
+  }
+  if (!input.authenticated) {
+    return streamStateDetail("login_required", "gateway_login_required");
+  }
+  if (!input.accountsLoaded) {
+    return streamStateDetail("checking", "accounts_unavailable");
+  }
+  if (
+    input.configuredLiveMarketDataMode === false ||
+    input.liveMarketDataAvailable === false
+  ) {
+    return streamStateDetail("delayed", "live_market_data_not_configured");
+  }
+  if (!marketSessionActive) {
+    return streamStateDetail("quiet", "market_session_quiet");
+  }
+  const desiredSymbolCount =
+    input.desiredSymbolCount ?? (input.streamActive ? 1 : 0);
+  if (desiredSymbolCount <= 0) {
+    return streamStateDetail("quiet", "no_active_quote_consumers");
+  }
+  if (hasCapacityPressure) {
+    return streamStateDetail("capacity_limited", input.streamPressure!);
+  }
+  if (input.reconnectScheduled) {
+    return streamStateDetail("reconnecting", "quote_stream_reconnecting");
+  }
+  if (
+    input.streamLastError &&
+    isCapacityPressureBridgeError(input.streamLastError)
+  ) {
+    return streamStateDetail("capacity_limited", "capacity_error");
+  }
+  if (input.streamLastError) {
+    return streamStateDetail("reconnecting", "quote_stream_error");
+  }
+  if (input.streamFresh) return streamStateDetail("live", "fresh_stream_event");
+  if (!input.streamActive) {
+    return streamStateDetail("checking", "quote_stream_starting");
+  }
+  return streamStateDetail("stale", "stream_not_fresh");
+}
+
+function warnBridgeHealthFailure(error: unknown, context: string): void {
+  const now = Date.now();
+  if (now - lastBridgeHealthWarningAt < 60_000) {
+    return;
+  }
+  lastBridgeHealthWarningAt = now;
+  logger.warn({ err: error, context }, "IBKR bridge health request failed");
+}
+
+function recordBridgeHealthPing(startedAt: number, pingAt: Date): void {
+  lastBridgeHealthPingMs = Math.max(
+    0,
+    Math.round(performance.now() - startedAt),
+  );
+  lastBridgeHealthPingAt = pingAt;
+}
+
+async function fetchBridgeHealthWithPing() {
+  const startedAt = performance.now();
+  const pingAt = new Date();
+  try {
+    const health = await getIbkrClient().getHealth();
+    recordBridgeHealthPing(startedAt, pingAt);
+    return health;
+  } catch (error) {
+    recordBridgeHealthPing(startedAt, pingAt);
+    throw error;
+  }
+}
+
+function timestampMs(value: unknown): number | null {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  return null;
+}
+
+function numericRecordValue(record: unknown, key: string): number | null {
+  if (!record || typeof record !== "object") {
+    return null;
+  }
+  const value = (record as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function minFinite(...values: Array<number | null | undefined>): number | null {
+  const finiteValues = values.filter((value): value is number =>
+    Number.isFinite(value),
+  );
+  return finiteValues.length ? Math.min(...finiteValues) : null;
+}
+
+function isRequestScopedBridgeHealthError(value: unknown): boolean {
+  const message = String(value ?? "").toLowerCase();
+  if (!message) {
+    return false;
+  }
+
+  return (
+    (message.includes("snapshot market data subscription") &&
+      message.includes("generic")) ||
+    (message.includes("error validating request") &&
+      message.includes("market data")) ||
+    message.includes("no security definition has been found") ||
+    (message.includes("can't find eid") && message.includes("tickerid")) ||
+    message.includes("ibkr_bridge_lane_timeout") ||
+    message.includes("lane timed out after") ||
+    (message.includes("historical market data service") &&
+      message.includes("query cancelled")) ||
+    isCapacityPressureBridgeError(message)
+  );
+}
+
+function isCapacityPressureBridgeError(value: unknown): boolean {
+  const message = String(value ?? "").toLowerCase();
+  return (
+    message.includes("ibkr_bridge_lane_queue_full") ||
+    message.includes("lane queue is full") ||
+    message.includes("market data line") ||
+    message.includes("max number of tickers") ||
+    message.includes("ticker limit") ||
+    message.includes("subscription limit")
+  );
+}
+
+function sanitizeConnectedBridgeLastError(
+  value: string | null | undefined,
+  connected: boolean,
+): string | null {
+  if (!value) {
+    return null;
+  }
+  if (connected && isRequestScopedBridgeHealthError(value)) {
+    return null;
+  }
+  return value;
+}
+
+function hasCurrentBridgeDiagnostics(
+  health: Awaited<ReturnType<IbkrBridgeClient["getHealth"]>>,
+): boolean {
+  return Boolean(health.diagnostics && typeof health.diagnostics === "object");
+}
+
+function resolveBridgeStrictReason(input: {
+  healthFresh: boolean;
+  connected: boolean;
+  authenticated: boolean;
+  accountsLoaded: boolean;
+  configuredLiveMarketDataMode: boolean;
+  streamFresh: boolean;
+  streamActive?: boolean;
+  desiredSymbolCount?: number;
+  marketSessionActive: boolean;
+}): string | null {
+  if (!input.healthFresh && input.streamFresh && input.connected && input.authenticated) {
+    return null;
+  }
+  if (!input.healthFresh) return "health_stale";
+  if (!input.connected) return "gateway_socket_disconnected";
+  if (!input.authenticated) return "gateway_login_required";
+  if (!input.accountsLoaded) return "accounts_unavailable";
+  if (!input.configuredLiveMarketDataMode) return "live_market_data_not_configured";
+  if (!input.marketSessionActive) {
+    return input.streamFresh ? null : "market_session_quiet";
+  }
+  const desiredSymbolCount =
+    input.desiredSymbolCount ?? (input.streamActive ? 1 : 0);
+  if (desiredSymbolCount <= 0) return null;
+  if (!input.streamFresh) {
+    return "stream_not_fresh";
+  }
+  return null;
+}
+
+export function __resolveIbkrRuntimeStrictReasonForTests(input: {
+  healthFresh: boolean;
+  connected: boolean;
+  authenticated: boolean;
+  accountsLoaded: boolean;
+  configuredLiveMarketDataMode: boolean;
+  streamFresh: boolean;
+  streamActive?: boolean;
+  desiredSymbolCount?: number;
+  now?: Date;
+}): string | null {
+  return resolveBridgeStrictReason({
+    ...input,
+    marketSessionActive: isLikelyUsEquitySession(input.now ?? new Date()),
+  });
+}
+
+function annotateBridgeHealth(
+  health: Awaited<ReturnType<IbkrBridgeClient["getHealth"]>>,
+  options: {
+    forceStale?: boolean;
+    bridgeQuoteDiagnostics?: ReturnType<typeof getBridgeQuoteStreamDiagnostics> | null;
+  } = {},
+) {
+  const now = Date.now();
+  const marketSessionActive = isLikelyUsEquitySession(new Date(now));
+  const updatedAtMs = timestampMs(health.updatedAt);
+  const healthAgeMs = updatedAtMs === null ? null : Math.max(0, now - updatedAtMs);
+  const healthFresh =
+    options.forceStale === true
+      ? false
+      : healthAgeMs !== null && healthAgeMs <= bridgeHealthFreshMs();
+  const bridgeReachable = options.forceStale === true ? false : true;
+  const subscriptions =
+    health.diagnostics &&
+    typeof health.diagnostics === "object" &&
+    "subscriptions" in health.diagnostics
+      ? (health.diagnostics as Record<string, unknown>)["subscriptions"]
+      : null;
+  const bridgeQuoteStreamAgeMs =
+    options.bridgeQuoteDiagnostics?.streamActive === true
+      ? (options.bridgeQuoteDiagnostics.lastSignalAgeMs ??
+        options.bridgeQuoteDiagnostics.lastEventAgeMs)
+      : null;
+  const desiredSymbolCount = Math.max(
+    options.bridgeQuoteDiagnostics?.unionSymbolCount ?? 0,
+    numericRecordValue(subscriptions, "activeQuoteSubscriptions") ?? 0,
+    numericRecordValue(subscriptions, "prewarmSymbolCount") ?? 0,
+    numericRecordValue(subscriptions, "quoteListenerCount") ?? 0,
+  );
+  const lastStreamEventAgeMs = minFinite(
+    numericRecordValue(subscriptions, "lastQuoteAgeMs"),
+    numericRecordValue(subscriptions, "lastAggregateSourceAgeMs"),
+    bridgeQuoteStreamAgeMs,
+  );
+  const streamFresh =
+    lastStreamEventAgeMs !== null && lastStreamEventAgeMs <= bridgeStreamFreshMs();
+  const accountsLoaded = Array.isArray(health.accounts) && health.accounts.length > 0;
+  const currentBridgeDiagnostics = hasCurrentBridgeDiagnostics(health);
+  if (health.connected && health.authenticated && !currentBridgeDiagnostics) {
+    markBridgeOrderReadsSuppressed({
+      reason: "orders_bridge_update_required",
+      message:
+        "The running Windows IBKR bridge is an older build; order snapshots are paused until the bridge is reactivated.",
+      ttlMs: 10 * 60_000,
+    });
+  } else if (currentBridgeDiagnostics) {
+    clearBridgeOrderReadSuppression("orders_bridge_update_required");
+  }
+  const configuredLiveMarketDataMode =
+    health.marketDataMode === "live" ||
+    (health.marketDataMode == null && health.liveMarketDataAvailable === true);
+  const sanitizedHealthLastError = sanitizeConnectedBridgeLastError(
+    health.lastError,
+    Boolean(health.connected),
+  );
+  const strictReason = resolveBridgeStrictReason({
+    healthFresh,
+    connected: Boolean(health.connected),
+    authenticated: Boolean(health.authenticated),
+    accountsLoaded,
+    configuredLiveMarketDataMode,
+    streamFresh,
+    streamActive: options.bridgeQuoteDiagnostics?.streamActive,
+    desiredSymbolCount,
+    marketSessionActive,
+  });
+  const strictReady = strictReason === null;
+  const streamState = __resolveIbkrRuntimeStreamStateForTests({
+    configured: true,
+    healthFresh,
+    bridgeReachable,
+    connected: Boolean(health.connected),
+    authenticated: Boolean(health.authenticated),
+    accountsLoaded,
+    configuredLiveMarketDataMode,
+    liveMarketDataAvailable: health.liveMarketDataAvailable,
+    streamFresh,
+    streamActive: options.bridgeQuoteDiagnostics?.streamActive,
+    reconnectScheduled: options.bridgeQuoteDiagnostics?.reconnectScheduled,
+    streamLastError: options.bridgeQuoteDiagnostics?.lastError,
+    streamPressure: options.bridgeQuoteDiagnostics?.pressure,
+    desiredSymbolCount,
+  });
+  const strictFields = {
+    healthFresh,
+    healthAgeMs,
+    stale: !healthFresh,
+    bridgeReachable,
+    socketConnected: Boolean(health.connected),
+    accountsLoaded,
+    configuredLiveMarketDataMode,
+    streamFresh,
+    lastStreamEventAgeMs,
+    strictReady,
+    strictReason,
+    ...streamState,
+  };
+  const rawTwsConnection = health.connections?.tws;
+  const twsConnection = rawTwsConnection
+    ? {
+        ...rawTwsConnection,
+        lastPingMs: rawTwsConnection.lastPingMs ?? lastBridgeHealthPingMs,
+        lastPingAt: rawTwsConnection.lastPingAt ?? lastBridgeHealthPingAt,
+        ...strictFields,
+        lastError: sanitizeConnectedBridgeLastError(
+          rawTwsConnection.lastError,
+          Boolean(rawTwsConnection.reachable || health.connected),
+        ),
+        reachable: Boolean(rawTwsConnection.reachable && bridgeReachable),
+      }
+    : undefined;
+
+  return {
+    ...health,
+    lastError: sanitizedHealthLastError,
+    ...strictFields,
+    connections: health.connections
+      ? {
+          ...health.connections,
+          ...(twsConnection ? { tws: twsConnection } : {}),
+        }
+      : health.connections,
+  };
+}
+
+async function refreshBridgeHealthForSession(
+  timeoutMs: number,
+  context: string,
+): Promise<void> {
+  if (isBridgeWorkBackedOff("health")) {
+    return;
+  }
+
+  try {
+    const health = await withTimeout(
+      runBridgeWork("health", () => fetchBridgeHealthWithPing()),
+      timeoutMs,
+      () =>
+        new HttpError(504, "IBKR bridge health request timed out.", {
+          code: "ibkr_bridge_health_timeout",
+          detail: `Bridge health did not respond within ${timeoutMs}ms.`,
+        }),
+    );
+    lastKnownBridgeHealth = health;
+  } catch (error) {
+    warnBridgeHealthFailure(error, context);
+  }
+}
+
+function scheduleBridgeHealthRefreshForSession(context: string): void {
+  if (lastBridgeHealthRefreshPromise || isBridgeWorkBackedOff("health")) {
+    return;
+  }
+
+  lastBridgeHealthRefreshPromise = refreshBridgeHealthForSession(
+    sessionBridgeHealthBackgroundTimeoutMs(),
+    context,
+  ).finally(() => {
+    lastBridgeHealthRefreshPromise = null;
+  });
+}
+
+async function getBridgeHealthForSession() {
+  if (!getProviderConfiguration().ibkr) {
+    return null;
+  }
+
+  const initialTimeoutMs = sessionBridgeHealthInitialTimeoutMs();
+  if (!lastKnownBridgeHealth && initialTimeoutMs > 0) {
+    await refreshBridgeHealthForSession(
+      initialTimeoutMs,
+      "session_initial",
+    );
+  }
+
+  if (!lastKnownBridgeHealth) {
+    scheduleBridgeHealthRefreshForSession("session_background");
+    return null;
+  }
+
+  let annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
+    bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
+  });
+  if (
+    (annotated.healthAgeMs === null ||
+      annotated.healthAgeMs > bridgeHealthFreshMs()) &&
+    !lastBridgeHealthRefreshPromise &&
+    !isBridgeWorkBackedOff("health")
+  ) {
+    await refreshBridgeHealthForSession(
+      sessionBridgeHealthStaleTimeoutMs(),
+      "session_stale",
+    );
+    if (lastKnownBridgeHealth) {
+      annotated = annotateBridgeHealth(lastKnownBridgeHealth, {
+        bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
+      });
+    }
+  }
+  if (
+    annotated.healthAgeMs === null ||
+    annotated.healthAgeMs > Math.floor(bridgeHealthFreshMs() / 2)
+  ) {
+    scheduleBridgeHealthRefreshForSession("session_background");
+  }
+
+  return annotated;
+}
+
 export async function getSession() {
-  const bridgeHealth = await getIbkrClient()
-    .getHealth()
-    .catch(() => null);
+  const bridgeHealth = await getBridgeHealthForSession();
   return {
     environment: getRuntimeMode(),
     brokerProvider: "ibkr" as const,
@@ -558,17 +1648,584 @@ export async function getSession() {
   };
 }
 
+function maskAccountId(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (value.length <= 4) {
+    return "****";
+  }
+
+  return `${value.slice(0, 2)}...${value.slice(-4)}`;
+}
+
+function mb(value: number): number {
+  return Math.round((value / 1024 / 1024) * 10) / 10;
+}
+
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+eventLoopDelay.enable();
+
+function nsToMs(value: number): number {
+  return Math.round((value / 1_000_000) * 10) / 10;
+}
+
+function serializeBridgeHealthError(error: unknown): {
+  error: string;
+  code: string | null;
+  statusCode: number | null;
+  detail: string | null;
+} {
+  return {
+    error:
+      error instanceof Error && error.message
+        ? error.message
+        : "IBKR bridge health request failed.",
+    code: isHttpError(error) ? (error.code ?? null) : null,
+    statusCode: isHttpError(error) ? error.statusCode : null,
+    detail: isHttpError(error) ? (error.detail ?? null) : null,
+  };
+}
+
+function runtimeDiagnosticsTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_TIMEOUT_MS"] ?? "6500",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 6_500;
+}
+
+function runtimeDiagnosticsStaleHealthCacheMs(): number {
+  const configured = Number.parseInt(
+    process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_STALE_CACHE_MS"] ?? "120000",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 120_000;
+}
+
+function orderReadTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env["IBKR_ORDER_READ_TIMEOUT_MS"] ?? "9000",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 9_000;
+}
+
+function gatewayTradingHealthTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env["IBKR_GATEWAY_TRADING_HEALTH_TIMEOUT_MS"] ?? "2500",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 2_500;
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutError: () => Error,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(timeoutError());
+    }, timeoutMs);
+    timeout.unref?.();
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+function serializeOrderReadDebug(error: unknown, timeoutMs: number) {
+  const cause = isHttpError(error) ? error.cause : null;
+  const causeCode = cause instanceof HttpError ? cause.code : null;
+  const code =
+    causeCode === "orders_timeout"
+      ? "orders_timeout"
+      : isHttpError(error)
+        ? (error.code ?? "orders_timeout")
+        : "orders_timeout";
+  return {
+    message:
+      error instanceof Error && error.message
+        ? error.message
+        : "IBKR order read timed out.",
+    code,
+    timeoutMs,
+  };
+}
+
+function getBridgeBackoffRemainingMs(category: "orders" | "options" | "health"): number {
+  return getBridgeGovernorSnapshot()[category].backoffRemainingMs;
+}
+
+async function recordOrderReadDegraded(input: {
+  accountId?: string;
+  mode?: "paper" | "live";
+  reason: string;
+  message: string;
+  timeoutMs?: number;
+  stale?: boolean;
+  detail?: string | null;
+}) {
+  await recordServerDiagnosticEvent({
+    subsystem: "orders",
+    category: "visibility",
+    code: input.reason,
+    severity: "warning",
+    message: input.message,
+    dimensions: {
+      accountId: input.accountId ?? null,
+      mode: input.mode ?? null,
+      timeoutMs: input.timeoutMs ?? null,
+      stale: input.stale ?? null,
+    },
+    raw: {
+      detail: input.detail ?? null,
+    },
+  }).catch(() => {});
+}
+
+export type ResilientOrdersResponse = {
+  orders: BrokerOrderSnapshot[];
+  degraded?: boolean;
+  reason?: string;
+  stale?: boolean;
+  debug?: {
+    message: string;
+    code: string;
+    timeoutMs?: number;
+  };
+};
+
+export async function listOrdersWithResilience(input: {
+  accountId?: string;
+  mode?: "paper" | "live";
+  status?:
+    | "pending_submit"
+    | "submitted"
+    | "accepted"
+    | "partially_filled"
+    | "filled"
+    | "canceled"
+    | "rejected"
+    | "expired";
+}): Promise<ResilientOrdersResponse> {
+  const client = getIbkrClient();
+  const timeoutMs = orderReadTimeoutMs();
+  const suppression = getBridgeOrderReadSuppression();
+  if (suppression) {
+    void recordOrderReadDegraded({
+      accountId: input.accountId,
+      mode: input.mode,
+      reason: suppression.reason,
+      message: "Skipping open-orders read while the IBKR bridge order endpoint is suppressed.",
+      stale: true,
+      detail: suppression.message,
+    });
+    return {
+      orders: [],
+      degraded: true,
+      reason: suppression.reason,
+      stale: true,
+      debug: {
+        message: suppression.message,
+        code: suppression.reason,
+      },
+    };
+  }
+  const governor = getBridgeGovernorSnapshot().orders;
+  if (isBridgeWorkBackedOff("orders")) {
+    void recordOrderReadDegraded({
+      accountId: input.accountId,
+      mode: input.mode,
+      reason: "orders_backoff",
+      message: "Skipping open-orders read while the IBKR bridge is backed off.",
+      timeoutMs,
+      stale: true,
+      detail: `Bridge order reads are backed off for ${governor.backoffRemainingMs}ms.`,
+    });
+    return {
+      orders: [],
+      degraded: true,
+      reason: "orders_backoff",
+      stale: true,
+      debug: {
+        message: "Bridge order reads are temporarily backed off.",
+        code: "orders_backoff",
+        timeoutMs,
+      },
+    };
+  }
+  if (governor.active > 0 || governor.queued > 0) {
+    void recordOrderReadDegraded({
+      accountId: input.accountId,
+      mode: input.mode,
+      reason: "orders_busy",
+      message: "Skipping open-orders read while another order read is active.",
+      timeoutMs,
+      stale: true,
+      detail: `Bridge order reads are busy (active=${governor.active}, queued=${governor.queued}).`,
+    });
+    return {
+      orders: [],
+      degraded: true,
+      reason: "orders_busy",
+      stale: true,
+      debug: {
+        message: "Bridge order reads are busy; skipping queued read.",
+        code: "orders_busy",
+        timeoutMs,
+      },
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(
+      new HttpError(504, "IBKR order read timed out.", {
+        code: "orders_timeout",
+        detail: `Order read did not respond within ${timeoutMs}ms.`,
+      }),
+    );
+  }, timeoutMs);
+  timeout.unref?.();
+
+  try {
+    const result: BridgeOrdersResult = await runBridgeWork(
+      "orders",
+      () =>
+        withTimeout(
+          client.listOrdersWithMeta({
+            accountId: input.accountId,
+            mode: input.mode ?? getRuntimeMode(),
+            status: input.status,
+            signal: controller.signal,
+          }),
+          timeoutMs,
+          () =>
+            new HttpError(504, "IBKR order read timed out.", {
+              code: "orders_timeout",
+              detail: `Order read did not respond within ${timeoutMs}ms.`,
+            }),
+        ),
+    );
+    if (result.degraded) {
+      void recordOrderReadDegraded({
+        accountId: input.accountId,
+        mode: input.mode,
+        reason: result.reason ?? "orders_degraded",
+        message: "Open-orders snapshot timed out; using cached order stream.",
+        timeoutMs: result.timeoutMs,
+        stale: result.stale,
+        detail: result.detail ?? null,
+      });
+    }
+    return {
+      orders: result.orders,
+      degraded: result.degraded,
+      reason: result.reason,
+      stale: result.stale,
+      debug: result.degraded
+        ? {
+            message:
+              result.detail ||
+              "Open-orders snapshot timed out; using cached order stream.",
+            code: result.reason ?? "orders_degraded",
+            timeoutMs: result.timeoutMs,
+          }
+        : undefined,
+    };
+  } catch (error) {
+    const debug = serializeOrderReadDebug(error, timeoutMs);
+    void recordOrderReadDegraded({
+      accountId: input.accountId,
+      mode: input.mode,
+      reason: "orders_timeout",
+      message: "IBKR order read timed out before the bridge responded.",
+      timeoutMs,
+      stale: false,
+      detail: debug.message,
+    });
+    return {
+      orders: [],
+      degraded: true,
+      reason: "orders_timeout",
+      stale: false,
+      debug,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function getRuntimeDiagnostics() {
+  const bridgeConfig = getIbkrBridgeRuntimeConfig();
+  const bridgeOverride = getIbkrBridgeRuntimeOverride();
+  const ignoredBridgeEnvNames = getIgnoredIbkrBridgeRuntimeEnvNames();
+  const configured = getProviderConfiguration();
+  const bridgeHealthTimeoutMs = runtimeDiagnosticsTimeoutMs();
+  const bridgeQuoteDiagnostics = getBridgeQuoteStreamDiagnostics();
+  const cachedBridgeHealthAgeMs =
+    lastKnownBridgeHealth == null
+      ? null
+      : (() => {
+          const updatedAtMs = timestampMs(lastKnownBridgeHealth.updatedAt);
+          return updatedAtMs === null ? null : Math.max(0, Date.now() - updatedAtMs);
+        })();
+  const useCachedBridgeHealth =
+    lastKnownBridgeHealth !== null &&
+    cachedBridgeHealthAgeMs !== null &&
+    cachedBridgeHealthAgeMs <= runtimeDiagnosticsStaleHealthCacheMs();
+  if (
+    useCachedBridgeHealth &&
+    cachedBridgeHealthAgeMs > Math.floor(bridgeHealthFreshMs() / 2)
+  ) {
+    scheduleBridgeHealthRefreshForSession("runtime_background");
+  }
+  const bridgeHealthResult = useCachedBridgeHealth
+    ? lastKnownBridgeHealth
+    : isBridgeWorkBackedOff("health")
+      ? serializeBridgeHealthError(
+          new HttpError(503, "IBKR bridge health is temporarily backed off.", {
+            code: "ibkr_bridge_health_backoff",
+            detail: `Bridge health checks are backed off for ${getBridgeBackoffRemainingMs("health")}ms.`,
+          }),
+        )
+      : await runBridgeWork("health", () =>
+          withTimeout(
+            fetchBridgeHealthWithPing(),
+            bridgeHealthTimeoutMs,
+            () =>
+              new HttpError(504, "IBKR bridge health request timed out.", {
+                code: "ibkr_bridge_health_timeout",
+                detail: `Bridge health did not respond within ${bridgeHealthTimeoutMs}ms.`,
+              }),
+          ),
+        ).catch(serializeBridgeHealthError);
+  const bridgeHealth =
+    bridgeHealthResult && !("error" in bridgeHealthResult)
+      ? bridgeHealthResult
+      : null;
+  const bridgeHealthError =
+    bridgeHealthResult && "error" in bridgeHealthResult
+      ? bridgeHealthResult
+      : null;
+  const memory = process.memoryUsage();
+  const resourceCaches = getPlatformResourceDiagnostics();
+  if (bridgeHealth) {
+    lastKnownBridgeHealth = bridgeHealth;
+  }
+  const annotatedHealth = bridgeHealth
+    ? annotateBridgeHealth(bridgeHealth, { bridgeQuoteDiagnostics })
+    : lastKnownBridgeHealth
+      ? annotateBridgeHealth(lastKnownBridgeHealth, {
+          forceStale: true,
+          bridgeQuoteDiagnostics,
+        })
+      : null;
+  const healthError = bridgeHealthError?.error ?? null;
+  const healthErrorCode = bridgeHealthError?.code ?? null;
+  const healthErrorStatusCode = bridgeHealthError?.statusCode ?? null;
+  const healthErrorDetail = bridgeHealthError?.detail ?? null;
+  const fallbackStreamState = __resolveIbkrRuntimeStreamStateForTests({
+    configured: configured.ibkr,
+    healthFresh: false,
+    connected: false,
+    authenticated: false,
+  });
+
+  return {
+    timestamp: new Date(),
+    api: {
+      uptimeMs: Math.round(process.uptime() * 1000),
+      memoryMb: {
+        rss: mb(memory.rss),
+        heapUsed: mb(memory.heapUsed),
+        heapTotal: mb(memory.heapTotal),
+        external: mb(memory.external),
+        arrayBuffers: mb(memory.arrayBuffers),
+      },
+      resourceCaches,
+      eventLoopDelayMs: {
+        mean: nsToMs(eventLoopDelay.mean),
+        max: nsToMs(eventLoopDelay.max),
+        p95: nsToMs(eventLoopDelay.percentile(95)),
+      },
+    },
+    ibkr: {
+      transport: "tws" as const,
+      configured: configured.ibkr,
+      bridgeUrlConfigured: Boolean(bridgeConfig?.baseUrl),
+      bridgeTokenConfigured: Boolean(bridgeConfig?.apiToken),
+      runtimeOverrideActive: Boolean(bridgeOverride),
+      runtimeOverrideUpdatedAt: bridgeOverride?.updatedAt ?? null,
+      ignoredBridgeEnvNames,
+      ignoredBridgeEnvConfigured: ignoredBridgeEnvNames.length > 0,
+      reachable: Boolean(annotatedHealth?.bridgeReachable),
+      healthError,
+      healthErrorCode,
+      healthErrorStatusCode,
+      healthErrorDetail,
+      healthFresh: annotatedHealth?.healthFresh ?? false,
+      healthAgeMs: annotatedHealth?.healthAgeMs ?? null,
+      stale: annotatedHealth?.stale ?? true,
+      bridgeReachable: annotatedHealth?.bridgeReachable ?? false,
+      socketConnected: annotatedHealth?.socketConnected ?? false,
+      accountsLoaded: annotatedHealth?.accountsLoaded ?? false,
+      configuredLiveMarketDataMode:
+        annotatedHealth?.configuredLiveMarketDataMode ?? false,
+      streamFresh: annotatedHealth?.streamFresh ?? false,
+      lastStreamEventAgeMs: annotatedHealth?.lastStreamEventAgeMs ?? null,
+      strictReady: annotatedHealth?.strictReady ?? false,
+      strictReason: annotatedHealth
+        ? annotatedHealth.strictReason
+        : healthErrorCode || healthError
+          ? "health_error"
+          : "health_unavailable",
+      streamState: annotatedHealth?.streamState ?? fallbackStreamState.streamState,
+      streamStateReason:
+        annotatedHealth?.streamStateReason ?? fallbackStreamState.streamStateReason,
+      connected: annotatedHealth?.connected ?? false,
+      authenticated: annotatedHealth?.authenticated ?? false,
+      competing: annotatedHealth?.competing ?? false,
+      selectedAccountId: maskAccountId(annotatedHealth?.selectedAccountId),
+      accountCount: annotatedHealth?.accounts?.length ?? 0,
+      connectionTarget: annotatedHealth?.connectionTarget ?? null,
+      sessionMode: annotatedHealth?.sessionMode ?? null,
+      clientId: annotatedHealth?.clientId ?? null,
+      marketDataMode: annotatedHealth?.marketDataMode ?? null,
+      liveMarketDataAvailable: annotatedHealth?.liveMarketDataAvailable ?? null,
+      lastTickleAt: annotatedHealth?.lastTickleAt ?? null,
+      lastRecoveryAttemptAt: annotatedHealth?.lastRecoveryAttemptAt ?? null,
+      lastRecoveryError: annotatedHealth?.lastRecoveryError ?? null,
+      lastError: annotatedHealth?.lastError ?? null,
+      bridgeDiagnostics: annotatedHealth?.diagnostics ?? null,
+      orderCapability: {
+        orderDataVisible: Boolean(
+          annotatedHealth?.healthFresh &&
+            annotatedHealth.connected &&
+            annotatedHealth.authenticated,
+        ),
+        readOnlyModeLikely:
+          typeof annotatedHealth?.lastError === "string" &&
+          /read.?only/i.test(annotatedHealth.lastError),
+        liveActionConfirmationRequired: true,
+        diagnosticsMutateOrders: false,
+      },
+      governor: getBridgeGovernorSnapshot(),
+      streams: {
+        bridgeQuote: bridgeQuoteDiagnostics,
+        stockAggregates: getStockAggregateStreamDiagnostics(),
+        marketDataAdmission: getMarketDataAdmissionDiagnostics(),
+      },
+    },
+  };
+}
+
+export function getPlatformResourceDiagnostics() {
+  const now = Date.now();
+  const countExpired = <T extends { expiresAt?: number; staleExpiresAt?: number }>(
+    entries: Iterable<T>,
+  ) => {
+    let expired = 0;
+    let staleExpired = 0;
+    for (const entry of entries) {
+      if (typeof entry.expiresAt === "number" && entry.expiresAt <= now) {
+        expired += 1;
+      }
+      if (
+        typeof entry.staleExpiresAt === "number" &&
+        entry.staleExpiresAt <= now
+      ) {
+        staleExpired += 1;
+      }
+    }
+    return { expired, staleExpired };
+  };
+
+  return {
+    bars: {
+      entries: barsCache.size,
+      maxEntries: BARS_CACHE_MAX_ENTRIES,
+      inFlight: barsInFlight.size,
+      historyCursorEntries: chartHistoryCursors.size,
+      historyCursorMaxEntries: CHART_HISTORY_CURSOR_MAX_ENTRIES,
+      historyCursorTtlMs: CHART_HISTORY_CURSOR_TTL_MS,
+      cursorEnabled: isChartHydrationCursorEnabled(),
+      dedupeEnabled: isChartHydrationDedupeEnabled(),
+      backgroundEnabled: isChartHydrationBackgroundEnabled(),
+      hydration: { ...barsHydrationCounters },
+      ttlMs: BARS_CACHE_TTL_MS,
+      staleTtlMs: BARS_CACHE_STALE_TTL_MS,
+      ...countExpired(barsCache.values()),
+    },
+    optionChains: {
+      entries: optionChainCache.size,
+      maxEntries: OPTION_CHAIN_CACHE_MAX_ENTRIES,
+      inFlight: optionChainInFlight.size,
+      ttlMs: OPTION_CHAIN_CACHE_TTL_MS,
+      metadataTtlMs: OPTION_CHAIN_METADATA_CACHE_TTL_MS,
+      metadataStaleTtlMs: OPTION_CHAIN_METADATA_STALE_TTL_MS,
+      durable: getDurableOptionMetadataDiagnostics(),
+      ...countExpired(optionChainCache.values()),
+    },
+    optionExpirations: {
+      entries: optionExpirationCache.size,
+      maxEntries: OPTION_CHAIN_CACHE_MAX_ENTRIES,
+      inFlight: optionExpirationInFlight.size,
+      ttlMs: OPTION_EXPIRATION_CACHE_TTL_MS,
+      ...countExpired(optionExpirationCache.values()),
+    },
+    optionContracts: {
+      entries: optionContractResolutionCache.size,
+      inFlight: 0,
+      ttlMs: OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS,
+      ...countExpired(optionContractResolutionCache.values()),
+    },
+    flowEvents: {
+      entries: flowEventsCache.size,
+      inFlight: flowEventsInFlight.size,
+      ttlMs: FLOW_EVENTS_CACHE_TTL_MS,
+      ...countExpired(flowEventsCache.values()),
+    },
+    universeSearch: {
+      entries: universeSearchCache.size,
+      inFlight: universeSearchInFlight.size,
+      ttlMs: UNIVERSE_SEARCH_CACHE_TTL_MS,
+      ...countExpired(universeSearchCache.values()),
+    },
+    universeLogos: {
+      entries: universeLogoCache.size,
+      inFlight: universeLogoInFlight.size,
+      ttlMs: UNIVERSE_LOGO_CACHE_TTL_MS,
+      ...countExpired(universeLogoCache.values()),
+    },
+    universeIbkrHydration: {
+      queued: universeCatalogIbkrHydrationQueue.length,
+      queuedUnique: universeCatalogIbkrHydrationQueued.size,
+      inFlight: universeCatalogIbkrHydrationInFlight.size,
+    },
+  };
+}
+
 export async function listBrokerConnections() {
   const configured = getProviderConfiguration();
   const timestamp = new Date();
   const marketDataName = getMarketDataConnectionName();
+  const marketDataCapabilities = getMarketDataConnectionCapabilities();
   const bridgeHealth = await getIbkrClient()
     .getHealth()
     .catch(() => null);
-  const ibkrConnectionName =
-    bridgeHealth?.transport === "tws"
-      ? "Interactive Brokers Gateway"
-      : "Interactive Brokers Client Portal";
+  const ibkrConnectionName = "Interactive Brokers Gateway";
   const ibkrStatus = !configured.ibkr
     ? ("disconnected" as const)
     : bridgeHealth?.connected
@@ -587,13 +2244,7 @@ export async function listBrokerConnections() {
         status: configured.polygon
           ? ("configured" as const)
           : ("disconnected" as const),
-        capabilities: [
-          "quotes",
-          "bars",
-          "options-chain",
-          "stock-stream",
-          "options-flow",
-        ],
+        capabilities: marketDataCapabilities,
         updatedAt: timestamp,
       },
       {
@@ -604,13 +2255,7 @@ export async function listBrokerConnections() {
         status: configured.polygon
           ? ("configured" as const)
           : ("disconnected" as const),
-        capabilities: [
-          "quotes",
-          "bars",
-          "options-chain",
-          "stock-stream",
-          "options-flow",
-        ],
+        capabilities: marketDataCapabilities,
         updatedAt: timestamp,
       },
       {
@@ -658,9 +2303,8 @@ export async function listBrokerConnections() {
 }
 
 export async function listAccounts(input: { mode?: "paper" | "live" }) {
-  const client = getIbkrClient();
   return {
-    accounts: await client.listAccounts(input.mode ?? getRuntimeMode()),
+    accounts: await listIbkrAccounts(input.mode ?? getRuntimeMode()),
   };
 }
 
@@ -688,6 +2332,13 @@ export async function createWatchlist(input: {
         .map((item) => ({
           symbol: normalizeSymbol(item.symbol).toUpperCase(),
           name: item.name?.trim() || null,
+          market: item.market ?? null,
+          normalizedExchangeMic: item.normalizedExchangeMic ?? null,
+          exchangeDisplay: item.exchangeDisplay ?? null,
+          countryCode: item.countryCode ?? null,
+          exchangeCountryCode: item.exchangeCountryCode ?? null,
+          sector: item.sector ?? null,
+          industry: item.industry ?? null,
         }))
         .filter((item) => item.symbol)
         .map((item) => [item.symbol, item]),
@@ -823,7 +2474,7 @@ export async function addWatchlistSymbol(
     .limit(1);
 
   if (exists[0]) {
-    return current;
+    return getWatchlistById(watchlistId);
   }
 
   const [lastItem] = await db
@@ -929,10 +2580,12 @@ export async function listPositions(input: {
 }) {
   const client = getIbkrClient();
   return {
-    positions: await client.listPositions({
-      accountId: input.accountId,
-      mode: input.mode ?? getRuntimeMode(),
-    }),
+    positions: (
+      await client.listPositions({
+        accountId: input.accountId,
+        mode: input.mode ?? getRuntimeMode(),
+      })
+    ).filter((position) => Math.abs(Number(position.quantity)) > 1e-9),
   };
 }
 
@@ -949,14 +2602,7 @@ export async function listOrders(input: {
     | "rejected"
     | "expired";
 }) {
-  const client = getIbkrClient();
-  return {
-    orders: await client.listOrders({
-      accountId: input.accountId,
-      mode: input.mode ?? getRuntimeMode(),
-      status: input.status,
-    }),
-  };
+  return listOrdersWithResilience(input);
 }
 
 export async function listExecutions(input: {
@@ -966,9 +2612,8 @@ export async function listExecutions(input: {
   symbol?: string;
   providerContractId?: string | null;
 }) {
-  const client = getIbkrClient();
   return {
-    executions: await client.listExecutions(input),
+    executions: await listIbkrExecutions(input),
   };
 }
 
@@ -989,8 +2634,148 @@ function assertLiveOrderConfirmed(
   );
 }
 
+type GatewayTradingHealth = Partial<
+  Awaited<ReturnType<IbkrBridgeClient["getHealth"]>>
+>;
+
+type GatewayTradingReadiness = {
+  ready: boolean;
+  reason: string | null;
+  message: string;
+};
+
+function gatewayTradingUnavailable(
+  reason: string,
+  message: string,
+): GatewayTradingReadiness {
+  return { ready: false, reason, message };
+}
+
+export function resolveIbkrGatewayTradingReadinessForTests(input: {
+  configured: boolean;
+  health: GatewayTradingHealth | null | undefined;
+}): GatewayTradingReadiness {
+  if (!input.configured) {
+    return gatewayTradingUnavailable(
+      "ibkr_not_configured",
+      "Interactive Brokers is not configured for order routing.",
+    );
+  }
+
+  const health = input.health;
+  if (!health) {
+    return gatewayTradingUnavailable(
+      "bridge_health_unavailable",
+      "IB Gateway trading is unavailable until the bridge returns a fresh health check.",
+    );
+  }
+
+  if (health.competing === true) {
+    return gatewayTradingUnavailable(
+      "gateway_competing_session",
+      "IB Gateway is connected, but another session is competing for the broker connection.",
+    );
+  }
+
+  if (health.healthFresh === false) {
+    return gatewayTradingUnavailable(
+      "health_stale",
+      "IB Gateway trading is unavailable until the bridge status is fresh.",
+    );
+  }
+
+  if (health.connected !== true) {
+    return gatewayTradingUnavailable(
+      "gateway_socket_disconnected",
+      "IB Gateway is disconnected. Reconnect Gateway before trading.",
+    );
+  }
+
+  if (health.authenticated !== true) {
+    return gatewayTradingUnavailable(
+      "gateway_login_required",
+      "IB Gateway is connected, but the broker session is not authenticated.",
+    );
+  }
+
+  const accountsLoaded =
+    health.accountsLoaded === true ||
+    (Array.isArray(health.accounts) && health.accounts.length > 0) ||
+    Boolean(health.selectedAccountId);
+  if (!accountsLoaded) {
+    return gatewayTradingUnavailable(
+      "accounts_unavailable",
+      "IB Gateway is connected, but no broker accounts are loaded yet.",
+    );
+  }
+
+  return {
+    ready: true,
+    reason: null,
+    message: "IB Gateway is connected and ready for trading.",
+  };
+}
+
+function throwGatewayTradingUnavailable(
+  readiness: GatewayTradingReadiness,
+  cause?: unknown,
+): never {
+  throw new HttpError(409, readiness.message, {
+    code: "ibkr_gateway_trading_unavailable",
+    detail: readiness.reason ?? "gateway_trading_unavailable",
+    data: { reason: readiness.reason },
+    expose: true,
+    cause,
+  });
+}
+
+export async function assertIbkrGatewayTradingAvailable() {
+  if (!getProviderConfiguration().ibkr) {
+    throwGatewayTradingUnavailable(
+      resolveIbkrGatewayTradingReadinessForTests({
+        configured: false,
+        health: null,
+      }),
+    );
+  }
+
+  let annotatedHealth: ReturnType<typeof annotateBridgeHealth>;
+  try {
+    const health = await withTimeout(
+      runBridgeWork("health", () => fetchBridgeHealthWithPing()),
+      gatewayTradingHealthTimeoutMs(),
+      () =>
+        new HttpError(504, "IB Gateway health request timed out.", {
+          code: "ibkr_gateway_health_timeout",
+          detail: "Gateway health did not respond before the trading guard timed out.",
+        }),
+    );
+    lastKnownBridgeHealth = health;
+    annotatedHealth = annotateBridgeHealth(health, {
+      bridgeQuoteDiagnostics: getBridgeQuoteStreamDiagnostics(),
+    });
+  } catch (error) {
+    throwGatewayTradingUnavailable(
+      gatewayTradingUnavailable(
+        "bridge_health_unavailable",
+        "IB Gateway trading is unavailable until the bridge returns a fresh health check.",
+      ),
+      error,
+    );
+  }
+
+  const readiness = resolveIbkrGatewayTradingReadinessForTests({
+    configured: true,
+    health: annotatedHealth,
+  });
+  if (!readiness.ready) {
+    throwGatewayTradingUnavailable(readiness);
+  }
+}
+
 export async function placeOrder(input: PlaceOrderInput) {
   assertLiveOrderConfirmed(input.mode, input.confirm);
+  await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClient();
   return client.placeOrder(input);
 }
@@ -1007,6 +2792,7 @@ export async function submitRawOrders(input: {
   ibkrOrders: Record<string, unknown>[];
 }) {
   assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
+  await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClient();
   return client.submitRawOrders(input);
 }
@@ -1019,6 +2805,7 @@ export async function replaceOrder(input: {
   confirm?: boolean | null;
 }) {
   assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
+  await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClient();
   return client.replaceOrder({
     accountId: input.accountId,
@@ -1037,8 +2824,46 @@ export async function cancelOrder(input: {
   extOperator?: string | null;
 }) {
   assertLiveOrderConfirmed(getRuntimeMode(), input.confirm);
+  await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClient();
   return client.cancelOrder(input);
+}
+
+function polygonQuoteToBrokerQuote(quote: PolygonQuoteSnapshot): QuoteSnapshot & {
+  source: "polygon";
+} {
+  return {
+    symbol: quote.symbol,
+    price: quote.price,
+    bid: quote.bid,
+    ask: quote.ask,
+    bidSize: quote.bidSize,
+    askSize: quote.askSize,
+    change: quote.change,
+    changePercent: quote.changePercent,
+    open: quote.open,
+    high: quote.high,
+    low: quote.low,
+    prevClose: quote.prevClose,
+    volume: quote.volume,
+    openInterest: null,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    updatedAt: quote.updatedAt,
+    providerContractId: null,
+    transport: "tws",
+    delayed: true,
+    freshness: "delayed",
+    marketDataMode: "delayed",
+    dataUpdatedAt: quote.updatedAt,
+    ageMs: getAgeMs(quote.updatedAt),
+    cacheAgeMs: null,
+    latency: null,
+    source: "polygon",
+  };
 }
 
 export async function getQuoteSnapshots(input: { symbols: string }) {
@@ -1047,24 +2872,62 @@ export async function getQuoteSnapshots(input: { symbols: string }) {
     .map((symbol) => normalizeSymbol(symbol))
     .filter(Boolean);
   const bridgeClient = getIbkrClient();
-  const [bridgeHealth, ibkrQuotes] = await Promise.all([
+  type BridgeQuoteSnapshotPayload = Awaited<
+    ReturnType<typeof fetchBridgeQuoteSnapshots>
+  >;
+  const [bridgeHealth, payload] = await Promise.all([
     bridgeClient.getHealth().catch(() => null),
-    bridgeClient
-      .getQuoteSnapshots(symbols)
-      .catch(
-        (): Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>> => [],
-      ),
+    fetchBridgeQuoteSnapshots(symbols).catch(
+      (): BridgeQuoteSnapshotPayload => ({ quotes: [] }),
+    ),
   ]);
+  const ibkrQuotes = payload.quotes;
+  const ibkrSymbols = new Set(ibkrQuotes.map((quote) => normalizeSymbol(quote.symbol)));
+  const missingSymbols = symbols.filter((symbol) => !ibkrSymbols.has(symbol));
+  let polygonQuotes: Array<QuoteSnapshot & { source: "polygon" }> = [];
 
-  return {
-    quotes: ibkrQuotes.map((quote) => ({
+  if (missingSymbols.length > 0 && getPolygonRuntimeConfig()) {
+    try {
+      polygonQuotes = (await getPolygonClient().getQuoteSnapshots(missingSymbols)).map(
+        polygonQuoteToBrokerQuote,
+      );
+      polygonQuotes.forEach((quote) => {
+        recordMarketDataFallback({
+          owner: "quote-snapshot",
+          intent: "visible-live",
+          fallbackProvider: "polygon",
+          reason: "ibkr_missing_or_not_admitted",
+          instrumentKey: `equity:${quote.symbol}`,
+        });
+      });
+    } catch {
+      polygonQuotes = [];
+    }
+  }
+  const quotesBySymbol = new Map<string, (QuoteSnapshot & { source: "ibkr" | "polygon" })>();
+  ibkrQuotes.forEach((quote) => {
+    quotesBySymbol.set(normalizeSymbol(quote.symbol), {
       ...quote,
       providerContractId: quote.providerContractId ?? null,
       source: "ibkr" as const,
-    })),
-    transport: bridgeHealth?.transport ?? null,
-    delayed: ibkrQuotes.some((quote) => quote.delayed),
-    fallbackUsed: false,
+    });
+  });
+  polygonQuotes.forEach((quote) => {
+    const symbol = normalizeSymbol(quote.symbol);
+    if (!quotesBySymbol.has(symbol)) {
+      quotesBySymbol.set(symbol, quote);
+    }
+  });
+  const quotes = symbols.flatMap((symbol) => {
+    const quote = quotesBySymbol.get(symbol);
+    return quote ? [quote] : [];
+  });
+
+  return {
+    quotes,
+    transport: quotes[0]?.transport ?? bridgeHealth?.transport ?? null,
+    delayed: quotes.some((quote) => quote.delayed),
+    fallbackUsed: polygonQuotes.length > 0,
   };
 }
 
@@ -1099,6 +2962,8 @@ type SearchUniverseTickersInput = {
   type?: string;
   active?: boolean;
   limit?: number;
+  mode?: "search" | "trade-resolve";
+  strictTrade?: boolean;
 };
 
 type SearchUniverseTickersOptions = {
@@ -1106,6 +2971,62 @@ type SearchUniverseTickersOptions = {
 };
 
 type UniverseSearchResponse = { count: number; results: UniverseTicker[] };
+type UniverseLogoRecord = {
+  symbol: string;
+  logoUrl: string | null;
+  source: "tradingview" | "polygon" | "fmp" | "none";
+  assetType: "symbol_icon" | "provider_logo" | "unknown";
+  confidence: number;
+  updatedAt: string;
+};
+
+const UNIVERSE_LOGO_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
+const UNIVERSE_LOGO_BATCH_LIMIT = 50;
+const TRADINGVIEW_SYMBOL_LOGO_BASE_URL = "https://s3-symbol-logo.tradingview.com";
+const TRADINGVIEW_LOGO_SLUGS: Record<string, string> = {
+  AAPL: "apple",
+  ABBV: "abbvie",
+  ABNB: "airbnb",
+  AMD: "advanced-micro-devices",
+  AMZN: "amazon",
+  ARM: "arm",
+  AVGO: "broadcom",
+  BAC: "bank-of-america",
+  BRK: "berkshire-hathaway",
+  "BRK.B": "berkshire-hathaway",
+  COIN: "coinbase",
+  COST: "costco-wholesale",
+  CRM: "salesforce",
+  CVX: "chevron",
+  DIS: "walt-disney",
+  GOOGL: "alphabet",
+  GOOG: "alphabet",
+  HD: "home-depot",
+  HOOD: "robinhood",
+  INTC: "intel",
+  JPM: "jpmorgan-chase",
+  MA: "mastercard",
+  META: "meta-platforms",
+  MSFT: "microsoft",
+  MU: "micron-technology",
+  NFLX: "netflix",
+  NVDA: "nvidia",
+  ORCL: "oracle",
+  PLTR: "palantir",
+  QCOM: "qualcomm",
+  SHOP: "shopify",
+  TSLA: "tesla",
+  TSM: "taiwan-semiconductor",
+  UNH: "unitedhealth",
+  V: "visa",
+  WMT: "walmart",
+  XOM: "exxon-mobil",
+};
+const universeLogoCache = new Map<
+  string,
+  { expiresAt: number; value: UniverseLogoRecord }
+>();
+const universeLogoInFlight = new Map<string, Promise<UniverseLogoRecord>>();
 type UniverseCatalogSearchResponse = UniverseSearchResponse & {
   listingRows: UniverseCatalogListingHydrationRecord[];
 };
@@ -1134,14 +3055,12 @@ const INTERACTIVE_IBKR_MARKET_GROUPS: UniverseMarket[][] = [
   ["fx"],
   ["crypto"],
 ];
+const UNIVERSE_SEARCH_DEFAULT_LIMIT = 40;
 const UNIVERSE_SEARCH_CACHE_TTL_MS = 30_000;
-const UNIVERSE_SEARCH_CACHE_MAX = 120;
-const UNIVERSE_SEARCH_IBKR_BUDGET_MS = 2_200;
-const UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS = 300;
-const UNIVERSE_SEARCH_INTERACTIVE_BUDGET_MS = 2_500;
-const UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS = 8_000;
+const UNIVERSE_SEARCH_IBKR_BUDGET_MS = 6_000;
+const UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS = 1_500;
+const UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS = 12_000;
 const UNIVERSE_CATALOG_IBKR_HYDRATION_QUEUE_CONCURRENCY = 2;
-const UNIVERSE_CATALOG_IBKR_HYDRATION_PER_SEARCH = 4;
 const UNIVERSE_CATALOG_IBKR_RETRY_COOLDOWN_MS = 30 * 60_000;
 const universeSearchCache = new Map<
   string,
@@ -1185,7 +3104,13 @@ const EXCHANGE_MIC_ALIASES: Record<string, string> = {
   PINX: "OTC",
   OTCLINK: "OTC",
 };
-const US_PRIMARY_EXCHANGE_MICS = new Set(["XNAS", "XNYS", "ARCX", "XASE", "BATS"]);
+const US_PRIMARY_EXCHANGE_MICS = new Set([
+  "XNAS",
+  "XNYS",
+  "ARCX",
+  "XASE",
+  "BATS",
+]);
 const US_EXCHANGE_PREFERENCE_SCORE: Record<string, number> = {
   XNAS: 680,
   XNYS: 660,
@@ -1305,6 +3230,32 @@ function normalizeTickerSearchQuery(value: string) {
   return normalizeSymbol(value).toUpperCase();
 }
 
+function normalizeUniverseSearchInput(value: string) {
+  const raw = value.trim().toUpperCase().replace(/^[\s$^]+/, "");
+  if (!raw) return "";
+
+  const compact = raw.replace(/^X:/, "").replace(/[\s./-]+/g, "");
+  if (
+    /^[A-Z]{6}$/.test(compact) &&
+    FX_CURRENCY_CODES.has(compact.slice(0, 3)) &&
+    FX_CURRENCY_CODES.has(compact.slice(3))
+  ) {
+    return compact.slice(0, 3);
+  }
+
+  const cryptoBase = compact.endsWith("USD") ? compact.slice(0, -3) : compact;
+  if (CRYPTO_TICKER_HINTS.has(cryptoBase)) {
+    return cryptoBase;
+  }
+
+  const shareClass = /^([A-Z]{1,5})[ .\/-]([A-Z]{1,2})$/.exec(raw);
+  if (shareClass) {
+    return `${shareClass[1]}.${shareClass[2]}`;
+  }
+
+  return normalizeSymbol(raw);
+}
+
 function isLikelyFxTickerSearch(query: string) {
   const normalized = normalizeTickerSearchQuery(query);
   if (FX_CURRENCY_CODES.has(normalized)) return true;
@@ -1322,7 +3273,10 @@ function isLikelyIndexTickerSearch(query: string) {
 function isLikelyCryptoTickerSearch(query: string) {
   const normalized = normalizeTickerSearchQuery(query).replace(/^X:/, "");
   if (CRYPTO_TICKER_HINTS.has(normalized)) return true;
-  return normalized.endsWith("USD") && CRYPTO_TICKER_HINTS.has(normalized.slice(0, -3));
+  return (
+    normalized.endsWith("USD") &&
+    CRYPTO_TICKER_HINTS.has(normalized.slice(0, -3))
+  );
 }
 
 function isLikelyFuturesTickerSearch(query: string) {
@@ -1336,16 +3290,28 @@ function getInteractivePrimaryUniverseMarkets(
   const requestedMarketSet = new Set(requestedMarkets);
   const primaryMarkets: UniverseMarket[] = [];
 
-  if (isLikelyFxTickerSearch(normalizedSearch) && requestedMarketSet.has("fx")) {
+  if (
+    isLikelyFxTickerSearch(normalizedSearch) &&
+    requestedMarketSet.has("fx")
+  ) {
     primaryMarkets.push("fx");
   }
-  if (isLikelyCryptoTickerSearch(normalizedSearch) && requestedMarketSet.has("crypto")) {
+  if (
+    isLikelyCryptoTickerSearch(normalizedSearch) &&
+    requestedMarketSet.has("crypto")
+  ) {
     primaryMarkets.push("crypto");
   }
-  if (isLikelyIndexTickerSearch(normalizedSearch) && requestedMarketSet.has("indices")) {
+  if (
+    isLikelyIndexTickerSearch(normalizedSearch) &&
+    requestedMarketSet.has("indices")
+  ) {
     primaryMarkets.push("indices");
   }
-  if (isLikelyFuturesTickerSearch(normalizedSearch) && requestedMarketSet.has("futures")) {
+  if (
+    isLikelyFuturesTickerSearch(normalizedSearch) &&
+    requestedMarketSet.has("futures")
+  ) {
     primaryMarkets.push("futures");
   }
 
@@ -1372,7 +3338,10 @@ function resolveRequestedUniverseMarkets(input: SearchUniverseTickersInput) {
   return Array.from(new Set(raw.filter((market) => allowed.has(market))));
 }
 
-function normalizeExchangeMic(exchange: string | null | undefined, market: UniverseMarket) {
+function normalizeExchangeMic(
+  exchange: string | null | undefined,
+  market: UniverseMarket,
+) {
   const raw = exchange?.trim().toUpperCase() ?? "";
   if (!raw) {
     if (market === "fx") return "FX";
@@ -1414,7 +3383,9 @@ function inferLegacyIbkrUniverseMarket(ticker: UniverseTicker): UniverseMarket {
 function normalizeRootSymbol(ticker: UniverseTicker) {
   const root =
     ticker.rootSymbol?.trim() ||
-    normalizeSymbol(ticker.ticker).replace(/^X:/, "").split(/[./:\s-]+/)[0] ||
+    normalizeSymbol(ticker.ticker)
+      .replace(/^X:/, "")
+      .split(/[./:\s-]+/)[0] ||
     normalizeSymbol(ticker.ticker);
   return normalizeSymbol(root);
 }
@@ -1428,19 +3399,34 @@ function hydrateUniverseTickerMetadata(ticker: UniverseTicker): UniverseTicker {
     ticker.exchangeDisplay ??
     extractExchangeHintFromText(ticker.name) ??
     extractExchangeHintFromText(ticker.contractDescription);
-  const normalizedExchangeMic = normalizeExchangeMic(
-    exchangeHint,
-    market,
-  );
+  const normalizedExchangeMic = normalizeExchangeMic(exchangeHint, market);
   const providers = Array.from(
-    new Set([
-      ...(ticker.providers ?? []),
-      ...(ticker.provider ? [ticker.provider] : []),
-    ].filter((provider): provider is MarketDataProvider => provider === "ibkr" || provider === "polygon")),
-  ).sort((left, right) => (left === "ibkr" ? -1 : right === "ibkr" ? 1 : left.localeCompare(right)));
+    new Set(
+      [
+        ...(ticker.providers ?? []),
+        ...(ticker.provider ? [ticker.provider] : []),
+      ].filter(
+        (provider): provider is MarketDataProvider =>
+          provider === "ibkr" || provider === "polygon",
+      ),
+    ),
+  ).sort((left, right) =>
+    left === "ibkr" ? -1 : right === "ibkr" ? 1 : left.localeCompare(right),
+  );
   const tradeProvider =
     ticker.tradeProvider ??
     (ticker.providerContractId && providers.includes("ibkr") ? "ibkr" : null);
+  const identityMetadata = resolveMarketIdentityMetadata({
+    ...ticker,
+    ticker: normalizedTicker,
+    market,
+    normalizedExchangeMic,
+    exchangeDisplay:
+      ticker.exchangeDisplay ??
+      ticker.primaryExchange ??
+      exchangeHint ??
+      (normalizedExchangeMic || null),
+  });
 
   return {
     ...ticker,
@@ -1448,8 +3434,16 @@ function hydrateUniverseTickerMetadata(ticker: UniverseTicker): UniverseTicker {
     market,
     rootSymbol: ticker.rootSymbol ?? normalizeRootSymbol(ticker),
     normalizedExchangeMic,
-    exchangeDisplay: ticker.exchangeDisplay ?? ticker.primaryExchange ?? exchangeHint ?? (normalizedExchangeMic || null),
+    exchangeDisplay:
+      ticker.exchangeDisplay ??
+      ticker.primaryExchange ??
+      exchangeHint ??
+      (normalizedExchangeMic || null),
     logoUrl: ticker.logoUrl ?? null,
+    countryCode: identityMetadata.countryCode,
+    exchangeCountryCode: identityMetadata.exchangeCountryCode,
+    sector: identityMetadata.sector,
+    industry: identityMetadata.industry,
     contractDescription: ticker.contractDescription ?? ticker.name,
     contractMeta: ticker.contractMeta ?? null,
     providers,
@@ -1472,7 +3466,9 @@ function normalizeUniverseTickerContractMeta(
     return null;
   }
 
-  const normalizedEntries = Object.entries(value as Record<string, unknown>).filter(
+  const normalizedEntries = Object.entries(
+    value as Record<string, unknown>,
+  ).filter(
     ([, entryValue]) =>
       typeof entryValue === "string" ||
       typeof entryValue === "number" ||
@@ -1508,8 +3504,8 @@ function normalizeUniverseCatalogName(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-const universeCatalogListingsHydrationColumns = universeCatalogListingsTable as
-  typeof universeCatalogListingsTable & {
+const universeCatalogListingsHydrationColumns =
+  universeCatalogListingsTable as typeof universeCatalogListingsTable & {
     ibkrHydrationStatus: any;
     ibkrHydrationAttemptedAt: any;
     ibkrHydratedAt: any;
@@ -1574,6 +3570,10 @@ function mapUniverseCatalogRowToUniverseTicker(
     normalizedExchangeMic: row.normalizedExchangeMic ?? null,
     exchangeDisplay: row.exchangeDisplay ?? null,
     logoUrl: null,
+    countryCode: null,
+    exchangeCountryCode: null,
+    sector: null,
+    industry: null,
     contractDescription: row.contractDescription ?? null,
     locale: row.locale ?? null,
     type: row.type ?? null,
@@ -1660,6 +3660,17 @@ function buildTickerSearchAliases(ticker: UniverseTicker): string[] {
   if (ticker.market === "crypto" && withoutProviderPrefix.endsWith("USD")) {
     aliases.add(withoutProviderPrefix.slice(0, -3));
   }
+  if (ticker.market === "crypto" && !withoutProviderPrefix.endsWith("USD")) {
+    aliases.add(`${withoutProviderPrefix}USD`);
+  }
+  if (ticker.market === "fx" && /^[A-Z]{3}$/.test(withoutProviderPrefix)) {
+    aliases.add(`${withoutProviderPrefix}USD`);
+    aliases.add(`${withoutProviderPrefix}.USD`);
+  }
+  if (/^[A-Z]{1,5}\.[A-Z]{1,2}$/.test(withoutProviderPrefix)) {
+    aliases.add(withoutProviderPrefix.replace(".", " "));
+    aliases.add(withoutProviderPrefix.replace(".", ""));
+  }
 
   return Array.from(aliases).filter(Boolean);
 }
@@ -1672,8 +3683,10 @@ function mergeUniverseTicker(
   if (!current) return next;
 
   const existing = hydrateUniverseTickerMetadata(current);
-  const providers = Array.from(new Set([...existing.providers, ...next.providers])).sort(
-    (left, right) => (left === "ibkr" ? -1 : right === "ibkr" ? 1 : left.localeCompare(right)),
+  const providers = Array.from(
+    new Set([...existing.providers, ...next.providers]),
+  ).sort((left, right) =>
+    left === "ibkr" ? -1 : right === "ibkr" ? 1 : left.localeCompare(right),
   );
   const ibkrProviderContractId =
     existing.provider === "ibkr" || existing.tradeProvider === "ibkr"
@@ -1682,19 +3695,31 @@ function mergeUniverseTicker(
         ? next.providerContractId
         : null;
   const providerContractId =
-    ibkrProviderContractId ?? existing.providerContractId ?? next.providerContractId ?? null;
-  const tradeProvider = providerContractId && providers.includes("ibkr") ? "ibkr" : null;
+    ibkrProviderContractId ??
+    existing.providerContractId ??
+    next.providerContractId ??
+    null;
+  const tradeProvider =
+    providerContractId && providers.includes("ibkr") ? "ibkr" : null;
 
   return {
     ...existing,
     ...next,
     name: next.name.length > existing.name.length ? next.name : existing.name,
     rootSymbol: existing.rootSymbol || next.rootSymbol,
-    normalizedExchangeMic: existing.normalizedExchangeMic || next.normalizedExchangeMic,
+    normalizedExchangeMic:
+      existing.normalizedExchangeMic || next.normalizedExchangeMic,
     exchangeDisplay: existing.exchangeDisplay || next.exchangeDisplay,
     logoUrl: existing.logoUrl || next.logoUrl,
+    countryCode: existing.countryCode || next.countryCode,
+    exchangeCountryCode:
+      existing.exchangeCountryCode || next.exchangeCountryCode,
+    sector: existing.sector || next.sector,
+    industry: existing.industry || next.industry,
     contractDescription:
-      next.contractDescription && next.contractDescription.length > (existing.contractDescription ?? "").length
+      next.contractDescription &&
+      next.contractDescription.length >
+        (existing.contractDescription ?? "").length
         ? next.contractDescription
         : existing.contractDescription || next.contractDescription,
     contractMeta: {
@@ -1708,7 +3733,9 @@ function mergeUniverseTicker(
     shareClassFigi: existing.shareClassFigi || next.shareClassFigi,
     lastUpdatedAt: existing.lastUpdatedAt || next.lastUpdatedAt,
     providers,
-    provider: tradeProvider ?? (providers.includes("polygon") ? "polygon" : providers[0] ?? null),
+    provider:
+      tradeProvider ??
+      (providers.includes("polygon") ? "polygon" : (providers[0] ?? null)),
     tradeProvider,
     dataProviderPreference: providers.includes("ibkr")
       ? "ibkr"
@@ -1744,9 +3771,7 @@ function scoreUniverseTicker(
   if (normalizedName === queryLower) score += 720;
   else if (normalizedName.startsWith(queryLower)) score += 560;
   else if (
-    normalizedName
-      .split(/[\s./-]+/)
-      .some((part) => part.startsWith(queryLower))
+    normalizedName.split(/[\s./-]+/).some((part) => part.startsWith(queryLower))
   ) {
     score += 500;
   } else if (normalizedName.includes(queryLower)) {
@@ -1764,18 +3789,25 @@ function scoreUniverseTicker(
     if (
       ticker.normalizedExchangeMic &&
       US_PRIMARY_EXCHANGE_MICS.has(ticker.normalizedExchangeMic) &&
-      (ticker.market === "stocks" || ticker.market === "etf" || ticker.market === "otc")
+      (ticker.market === "stocks" ||
+        ticker.market === "etf" ||
+        ticker.market === "otc")
     ) {
-      score += US_EXCHANGE_PREFERENCE_SCORE[ticker.normalizedExchangeMic] ?? 450;
+      score +=
+        US_EXCHANGE_PREFERENCE_SCORE[ticker.normalizedExchangeMic] ?? 450;
       if (ticker.providers.includes("ibkr")) score += 160;
       if (ticker.providerContractId) score += 120;
     }
   }
   if (tickerAliases.includes(queryUpper)) {
-    if (ticker.market === "fx" && isLikelyFxTickerSearch(queryUpper)) score += 1_500;
-    if (ticker.market === "crypto" && isLikelyCryptoTickerSearch(queryUpper)) score += 1_500;
-    if (ticker.market === "indices" && isLikelyIndexTickerSearch(queryUpper)) score += 1_500;
-    if (ticker.market === "futures" && isLikelyFuturesTickerSearch(queryUpper)) score += 1_500;
+    if (ticker.market === "fx" && isLikelyFxTickerSearch(queryUpper))
+      score += 1_500;
+    if (ticker.market === "crypto" && isLikelyCryptoTickerSearch(queryUpper))
+      score += 1_500;
+    if (ticker.market === "indices" && isLikelyIndexTickerSearch(queryUpper))
+      score += 1_500;
+    if (ticker.market === "futures" && isLikelyFuturesTickerSearch(queryUpper))
+      score += 1_500;
   }
   if (
     ticker.normalizedExchangeMic &&
@@ -1783,8 +3815,10 @@ function scoreUniverseTicker(
   ) {
     score +=
       tickerAliases.includes(queryUpper) &&
-      (ticker.market === "stocks" || ticker.market === "etf" || ticker.market === "otc")
-        ? US_EXCHANGE_PREFERENCE_SCORE[ticker.normalizedExchangeMic] ?? 450
+      (ticker.market === "stocks" ||
+        ticker.market === "etf" ||
+        ticker.market === "otc")
+        ? (US_EXCHANGE_PREFERENCE_SCORE[ticker.normalizedExchangeMic] ?? 450)
         : 220;
   }
   if (ticker.normalizedExchangeMic || ticker.primaryExchange) score += 5;
@@ -1803,6 +3837,7 @@ function getUniverseSearchCacheKey(
     markets: [...markets].sort(),
     type: input.type ?? null,
     active: input.active ?? null,
+    mode: input.mode ?? (input.strictTrade ? "trade-resolve" : "search"),
     limit,
   });
 }
@@ -1819,19 +3854,17 @@ function readUniverseSearchCache(key: string) {
   return sanitizeUniverseSearchResponse(cached.data);
 }
 
-function writeUniverseSearchCache(
-  key: string,
-  data: UniverseSearchResponse,
-) {
+function writeUniverseSearchCache(key: string, data: UniverseSearchResponse) {
   const sanitized = sanitizeUniverseSearchResponse(data);
+  const now = Date.now();
   universeSearchCache.set(key, {
-    expiresAt: Date.now() + UNIVERSE_SEARCH_CACHE_TTL_MS,
+    expiresAt: now + UNIVERSE_SEARCH_CACHE_TTL_MS,
     data: sanitized,
   });
-  while (universeSearchCache.size > UNIVERSE_SEARCH_CACHE_MAX) {
-    const oldestKey = universeSearchCache.keys().next().value;
-    if (!oldestKey) break;
-    universeSearchCache.delete(oldestKey);
+  for (const [cacheKey, cached] of universeSearchCache) {
+    if (cached.expiresAt <= now) {
+      universeSearchCache.delete(cacheKey);
+    }
   }
 }
 
@@ -1841,37 +3874,68 @@ export async function searchUniverseCatalog(input: {
   resultLimit: number;
   active?: boolean;
 }) {
-  const normalizedTickerQuery = normalizeSymbol(input.normalizedSearch).toUpperCase();
-  const normalizedNameQuery = normalizeUniverseCatalogName(input.normalizedSearch);
+  const normalizedTickerQuery = normalizeSymbol(
+    input.normalizedSearch,
+  ).toUpperCase();
+  const normalizedNameQuery = normalizeUniverseCatalogName(
+    input.normalizedSearch,
+  );
   if (!normalizedTickerQuery && !normalizedNameQuery) {
-    return { count: 0, results: [], listingRows: [] } satisfies UniverseCatalogSearchResponse;
+    return {
+      count: 0,
+      results: [],
+      listingRows: [],
+    } satisfies UniverseCatalogSearchResponse;
   }
 
   const filters = [
     inArray(universeCatalogListingsTable.market, input.requestedMarkets),
   ] as SqlCondition[];
   if (typeof input.active === "boolean") {
-    filters.push(eq(universeCatalogListingsTable.active, input.active) as SqlCondition);
+    filters.push(
+      eq(universeCatalogListingsTable.active, input.active) as SqlCondition,
+    );
   }
 
   const exactConditions = [] as SqlCondition[];
   if (normalizedTickerQuery) {
     exactConditions.push(
-      eq(universeCatalogListingsTable.normalizedTicker, normalizedTickerQuery) as SqlCondition,
-      eq(universeCatalogListingsTable.rootSymbol, normalizedTickerQuery) as SqlCondition,
-      eq(universeCatalogListingsTable.compositeFigi, normalizedTickerQuery) as SqlCondition,
-      eq(universeCatalogListingsTable.shareClassFigi, normalizedTickerQuery) as SqlCondition,
-      eq(universeCatalogListingsTable.cik, normalizedTickerQuery) as SqlCondition,
+      eq(
+        universeCatalogListingsTable.normalizedTicker,
+        normalizedTickerQuery,
+      ) as SqlCondition,
+      eq(
+        universeCatalogListingsTable.rootSymbol,
+        normalizedTickerQuery,
+      ) as SqlCondition,
+      eq(
+        universeCatalogListingsTable.compositeFigi,
+        normalizedTickerQuery,
+      ) as SqlCondition,
+      eq(
+        universeCatalogListingsTable.shareClassFigi,
+        normalizedTickerQuery,
+      ) as SqlCondition,
+      eq(
+        universeCatalogListingsTable.cik,
+        normalizedTickerQuery,
+      ) as SqlCondition,
     );
   }
   if (input.normalizedSearch) {
     exactConditions.push(
-      eq(universeCatalogListingsTable.providerContractId, input.normalizedSearch) as SqlCondition,
+      eq(
+        universeCatalogListingsTable.providerContractId,
+        input.normalizedSearch,
+      ) as SqlCondition,
     );
   }
   if (normalizedNameQuery) {
     exactConditions.push(
-      eq(universeCatalogListingsTable.normalizedName, normalizedNameQuery) as SqlCondition,
+      eq(
+        universeCatalogListingsTable.normalizedName,
+        normalizedNameQuery,
+      ) as SqlCondition,
     );
   }
 
@@ -1882,22 +3946,32 @@ export async function searchUniverseCatalog(input: {
         universeCatalogListingsTable.normalizedTicker,
         `${normalizedTickerQuery}%`,
       ) as SqlCondition,
-      like(universeCatalogListingsTable.rootSymbol, `${normalizedTickerQuery}%`) as SqlCondition,
+      like(
+        universeCatalogListingsTable.rootSymbol,
+        `${normalizedTickerQuery}%`,
+      ) as SqlCondition,
     );
   }
   if (normalizedNameQuery) {
     prefixConditions.push(
-      like(universeCatalogListingsTable.normalizedName, `${normalizedNameQuery}%`) as SqlCondition,
+      like(
+        universeCatalogListingsTable.normalizedName,
+        `${normalizedNameQuery}%`,
+      ) as SqlCondition,
     );
   }
   if (normalizedNameQuery.length >= 2) {
     prefixConditions.push(
-      like(universeCatalogListingsTable.normalizedName, `% ${normalizedNameQuery}%`) as SqlCondition,
+      like(
+        universeCatalogListingsTable.normalizedName,
+        `% ${normalizedNameQuery}%`,
+      ) as SqlCondition,
     );
   }
 
   const containsConditions =
-    !isTickerLikeSearch(input.normalizedSearch) && normalizedNameQuery.length >= 3
+    !isTickerLikeSearch(input.normalizedSearch) &&
+    normalizedNameQuery.length >= 3
       ? [
           like(
             universeCatalogListingsTable.normalizedName,
@@ -1922,13 +3996,22 @@ export async function searchUniverseCatalog(input: {
   ]);
 
   const merged = new Map<string, UniverseTicker>();
-  const listingRowMap = new Map<string, UniverseCatalogListingHydrationRecord>();
+  const listingRowMap = new Map<
+    string,
+    UniverseCatalogListingHydrationRecord
+  >();
   for (const row of [...exactRows, ...prefixRows, ...containsRows]) {
     const ticker = mapUniverseCatalogRowToUniverseTicker(row);
-    listingRowMap.set(row.listingKey, row as UniverseCatalogListingHydrationRecord);
+    listingRowMap.set(
+      row.listingKey,
+      row as UniverseCatalogListingHydrationRecord,
+    );
     merged.set(
       buildUniverseTickerMergeKey(ticker),
-      mergeUniverseTicker(merged.get(buildUniverseTickerMergeKey(ticker)), ticker),
+      mergeUniverseTicker(
+        merged.get(buildUniverseTickerMergeKey(ticker)),
+        ticker,
+      ),
     );
   }
 
@@ -2041,7 +4124,11 @@ export async function upsertUniverseCatalogRows(rows: UniverseTicker[]) {
           else ${universeCatalogListingsHydrationColumns.ibkrHydrationError}
         end`,
         contractDescription: value.contractDescription,
-        contractMeta: value.contractMeta,
+        contractMeta: sql<Record<string, unknown> | null>`case
+          when ${universeCatalogListingsTable.contractMeta} is null then excluded.contract_meta
+          when excluded.contract_meta is null then ${universeCatalogListingsTable.contractMeta}
+          else ${universeCatalogListingsTable.contractMeta} || excluded.contract_meta
+        end`,
         lastUpdatedAt: value.lastUpdatedAt,
         lastSeenAt: value.lastSeenAt,
         updatedAt: value.updatedAt,
@@ -2153,13 +4240,17 @@ function isUniverseIdentifierSearch(query: string) {
   const normalized = query.trim().toUpperCase();
   if (!normalized) return false;
   if (/^\d+$/.test(normalized)) return true;
-  if (normalized.startsWith("BBG") && /^[A-Z0-9]{12}$/.test(normalized)) return true;
+  if (normalized.startsWith("BBG") && /^[A-Z0-9]{12}$/.test(normalized))
+    return true;
   if (/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(normalized)) return true;
-  if (/^[A-Z0-9]{9}$/.test(normalized) && !/^[A-Z]{1,6}$/.test(normalized)) return true;
+  if (/^[A-Z0-9]{9}$/.test(normalized) && !/^[A-Z]{1,6}$/.test(normalized))
+    return true;
   return false;
 }
 
-function isUniverseCatalogRowIbkrHydrated(row: UniverseCatalogListingHydrationRecord) {
+function isUniverseCatalogRowIbkrHydrated(
+  row: UniverseCatalogListingHydrationRecord,
+) {
   return (
     row.tradeProvider === "ibkr" &&
     (row.providers ?? []).includes("ibkr") &&
@@ -2174,7 +4265,9 @@ function shouldAttemptUniverseCatalogIbkrHydration(
   if (isUniverseCatalogRowIbkrHydrated(row)) return false;
   if (force) return true;
 
-  const status = normalizeUniverseCatalogHydrationStatus(row.ibkrHydrationStatus);
+  const status = normalizeUniverseCatalogHydrationStatus(
+    row.ibkrHydrationStatus,
+  );
   if (status === "pending") return true;
 
   const attemptedAt =
@@ -2187,7 +4280,9 @@ function shouldAttemptUniverseCatalogIbkrHydration(
   return Date.now() - attemptedAt >= UNIVERSE_CATALOG_IBKR_RETRY_COOLDOWN_MS;
 }
 
-function getUniverseCatalogIbkrHydrationMarkets(market: UniverseMarket): UniverseMarket[] {
+function getUniverseCatalogIbkrHydrationMarkets(
+  market: UniverseMarket,
+): UniverseMarket[] {
   if (market === "stocks" || market === "etf" || market === "otc") {
     return ["stocks", "etf", "otc"];
   }
@@ -2217,7 +4312,8 @@ function scoreUniverseCatalogIbkrCandidate(
 
   let score = 5_000;
   if (candidate.market === row.market) score += 800;
-  if (rowExchange && candidateExchange && rowExchange === candidateExchange) score += 400;
+  if (rowExchange && candidateExchange && rowExchange === candidateExchange)
+    score += 400;
   if (candidate.primaryExchange && row.primaryExchange) {
     const normalizedPrimaryExchange = normalizeExchangeMic(
       row.primaryExchange,
@@ -2231,9 +4327,15 @@ function scoreUniverseCatalogIbkrCandidate(
     }
   }
   if (candidateName === rowName) score += 360;
-  else if (candidateName.startsWith(rowName) || rowName.startsWith(candidateName)) score += 220;
-  else if (candidateName.includes(rowName) || rowName.includes(candidateName)) score += 120;
-  if (candidate.tradeProvider === "ibkr" && candidate.providerContractId) score += 160;
+  else if (
+    candidateName.startsWith(rowName) ||
+    rowName.startsWith(candidateName)
+  )
+    score += 220;
+  else if (candidateName.includes(rowName) || rowName.includes(candidateName))
+    score += 120;
+  if (candidate.tradeProvider === "ibkr" && candidate.providerContractId)
+    score += 160;
   if (candidate.providers.includes("ibkr")) score += 80;
   return score;
 }
@@ -2278,7 +4380,7 @@ export async function hydrateUniverseCatalogListingWithIbkr(
     const results = await getIbkrClient().searchTickers({
       search: row.ticker,
       markets: getUniverseCatalogIbkrHydrationMarkets(row.market),
-      limit: 12,
+      limit: UNIVERSE_SEARCH_DEFAULT_LIMIT,
       signal: options.signal,
     });
     const bestCandidate = results.results
@@ -2288,7 +4390,11 @@ export async function hydrateUniverseCatalogListingWithIbkr(
       }))
       .sort((left, right) => right.score - left.score)[0];
 
-    if (bestCandidate && Number.isFinite(bestCandidate.score) && bestCandidate.score > 0) {
+    if (
+      bestCandidate &&
+      Number.isFinite(bestCandidate.score) &&
+      bestCandidate.score > 0
+    ) {
       const mergedTicker = mergeUniverseTicker(
         mapUniverseCatalogRowToUniverseTicker(row),
         bestCandidate.candidate,
@@ -2360,7 +4466,8 @@ export async function hydrateUniverseCatalogListingWithIbkr(
       providerContractId: null,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown IBKR hydration error.";
+    const message =
+      error instanceof Error ? error.message : "Unknown IBKR hydration error.";
     const failedSet = {
       ibkrHydrationStatus: "failed",
       ibkrHydrationAttemptedAt: attemptedAt,
@@ -2379,10 +4486,12 @@ export async function hydrateUniverseCatalogListingWithIbkr(
   }
 }
 
-function enqueueUniverseCatalogIbkrHydrationRows(rows: UniverseCatalogListingHydrationRecord[]) {
-  const candidates = rows
-    .filter((row) => shouldAttemptUniverseCatalogIbkrHydration(row))
-    .slice(0, UNIVERSE_CATALOG_IBKR_HYDRATION_PER_SEARCH);
+function enqueueUniverseCatalogIbkrHydrationRows(
+  rows: UniverseCatalogListingHydrationRecord[],
+) {
+  const candidates = rows.filter((row) =>
+    shouldAttemptUniverseCatalogIbkrHydration(row),
+  );
 
   for (const row of candidates) {
     if (
@@ -2400,22 +4509,25 @@ function enqueueUniverseCatalogIbkrHydrationRows(rows: UniverseCatalogListingHyd
 
 function drainUniverseCatalogIbkrHydrationQueue() {
   while (
-    universeCatalogIbkrHydrationInFlight.size < UNIVERSE_CATALOG_IBKR_HYDRATION_QUEUE_CONCURRENCY &&
+    universeCatalogIbkrHydrationInFlight.size <
+      UNIVERSE_CATALOG_IBKR_HYDRATION_QUEUE_CONCURRENCY &&
     universeCatalogIbkrHydrationQueue.length > 0
   ) {
     const listingKey = universeCatalogIbkrHydrationQueue.shift();
     if (!listingKey) break;
     universeCatalogIbkrHydrationQueued.delete(listingKey);
     universeCatalogIbkrHydrationInFlight.add(listingKey);
-    void hydrateUniverseCatalogListingWithIbkr({ listingKey }).catch((error) => {
-      logger.debug(
-        { err: error, listingKey },
-        "background IBKR hydration for universe catalog failed",
-      );
-    }).finally(() => {
-      universeCatalogIbkrHydrationInFlight.delete(listingKey);
-      drainUniverseCatalogIbkrHydrationQueue();
-    });
+    void hydrateUniverseCatalogListingWithIbkr({ listingKey })
+      .catch((error) => {
+        logger.debug(
+          { err: error, listingKey },
+          "background IBKR hydration for universe catalog failed",
+        );
+      })
+      .finally(() => {
+        universeCatalogIbkrHydrationInFlight.delete(listingKey);
+        drainUniverseCatalogIbkrHydrationQueue();
+      });
   }
 }
 
@@ -2423,6 +4535,10 @@ function createClientAbortedError() {
   return new HttpError(499, "Ticker search request was aborted.", {
     code: "ticker_search_aborted",
   });
+}
+
+function isClientAbortedTickerSearchError(error: unknown): boolean {
+  return error instanceof HttpError && error.code === "ticker_search_aborted";
 }
 
 function throwIfSignalAborted(signal?: AbortSignal) {
@@ -2451,13 +4567,21 @@ async function awaitWithAbort<T>(
   }
 }
 
-function createBudgetSignal(parentSignal: AbortSignal | undefined, timeoutMs: number) {
+function createBudgetSignal(
+  parentSignal: AbortSignal | undefined,
+  timeoutMs: number,
+) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    if (!controller.signal.aborted) {
-      controller.abort(new Error(`Ticker search budget exceeded after ${timeoutMs}ms.`));
-    }
-  }, Math.max(1, timeoutMs));
+  const timeout = setTimeout(
+    () => {
+      if (!controller.signal.aborted) {
+        controller.abort(
+          new Error(`Ticker search budget exceeded after ${timeoutMs}ms.`),
+        );
+      }
+    },
+    Math.max(1, timeoutMs),
+  );
   const abortFromParent = () => {
     if (!controller.signal.aborted) {
       controller.abort(parentSignal?.reason);
@@ -2483,7 +4607,9 @@ function isTickerLikeSearch(query: string) {
   return /^[A-Z][A-Z0-9.:-]{0,15}$/i.test(query.trim());
 }
 
-function sanitizeUniverseSearchResponse(response: UniverseSearchResponse): UniverseSearchResponse {
+function sanitizeUniverseSearchResponse(
+  response: UniverseSearchResponse,
+): UniverseSearchResponse {
   return {
     count: response.results.length,
     results: response.results.map((ticker) => ({
@@ -2491,6 +4617,140 @@ function sanitizeUniverseSearchResponse(response: UniverseSearchResponse): Unive
       logoUrl: null,
     })),
   };
+}
+
+function normalizeUniverseLogoSymbols(symbols: string[] | string | undefined) {
+  const rawSymbols = Array.isArray(symbols)
+    ? symbols
+    : typeof symbols === "string"
+      ? symbols.split(",")
+      : [];
+  return Array.from(
+    new Set(rawSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  ).slice(0, UNIVERSE_LOGO_BATCH_LIMIT);
+}
+
+function getTradingViewSymbolLogoUrl(symbol: string): string | null {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const rootSymbol = normalizedSymbol.replace(/^[A-Z]:/, "").split(/[/:]/)[0];
+  const slug =
+    TRADINGVIEW_LOGO_SLUGS[normalizedSymbol] ??
+    TRADINGVIEW_LOGO_SLUGS[rootSymbol] ??
+    null;
+
+  return slug ? `${TRADINGVIEW_SYMBOL_LOGO_BASE_URL}/${slug}.svg` : null;
+}
+
+async function fetchUniverseLogoRecord(
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<UniverseLogoRecord> {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const nowIso = new Date().toISOString();
+  const tradingViewLogoUrl = getTradingViewSymbolLogoUrl(normalizedSymbol);
+  if (tradingViewLogoUrl) {
+    return {
+      symbol: normalizedSymbol,
+      logoUrl: tradingViewLogoUrl,
+      source: "tradingview",
+      assetType: "symbol_icon",
+      confidence: 0.95,
+      updatedAt: nowIso,
+    };
+  }
+
+  const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;
+  if (polygonClient) {
+    const polygonLogoUrl = await polygonClient.getTickerLogoUrl(
+      normalizedSymbol,
+      signal,
+    );
+    if (polygonLogoUrl) {
+      return {
+        symbol: normalizedSymbol,
+        logoUrl: polygonLogoUrl,
+        source: "polygon",
+        assetType: "provider_logo",
+        confidence: 0.65,
+        updatedAt: nowIso,
+      };
+    }
+  }
+
+  const fmpConfig = getFmpRuntimeConfig();
+  if (fmpConfig) {
+    try {
+      const fmpLogoUrl = await new FmpResearchClient(
+        fmpConfig,
+      ).getCompanyLogoUrl(normalizedSymbol);
+      if (fmpLogoUrl) {
+        return {
+          symbol: normalizedSymbol,
+          logoUrl: fmpLogoUrl,
+          source: "fmp",
+          assetType: "provider_logo",
+          confidence: 0.5,
+          updatedAt: nowIso,
+        };
+      }
+    } catch (error) {
+      logger.debug(
+        { err: error, symbol: normalizedSymbol },
+        "FMP logo lookup failed",
+      );
+    }
+  }
+
+  return {
+    symbol: normalizedSymbol,
+    logoUrl: null,
+    source: "none",
+    assetType: "unknown",
+    confidence: 0,
+    updatedAt: nowIso,
+  };
+}
+
+async function getUniverseLogoRecord(symbol: string, signal?: AbortSignal) {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const cached = universeLogoCache.get(normalizedSymbol);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const existingFlight = universeLogoInFlight.get(normalizedSymbol);
+  if (existingFlight) {
+    return existingFlight;
+  }
+
+  const flight = fetchUniverseLogoRecord(normalizedSymbol, signal)
+    .then((value) => {
+      universeLogoCache.set(normalizedSymbol, {
+        expiresAt: Date.now() + UNIVERSE_LOGO_CACHE_TTL_MS,
+        value,
+      });
+      return value;
+    })
+    .finally(() => {
+      universeLogoInFlight.delete(normalizedSymbol);
+    });
+  universeLogoInFlight.set(normalizedSymbol, flight);
+  return flight;
+}
+
+export async function getUniverseLogos(
+  input: { symbols?: string[] | string },
+  options: { signal?: AbortSignal } = {},
+): Promise<{ logos: UniverseLogoRecord[] }> {
+  const symbols = normalizeUniverseLogoSymbols(input.symbols);
+  if (!symbols.length) {
+    return { logos: [] };
+  }
+
+  const logos = await Promise.all(
+    symbols.map((symbol) => getUniverseLogoRecord(symbol, options.signal)),
+  );
+  return { logos };
 }
 
 function finalizeUniverseSearchResponse(input: {
@@ -2511,12 +4771,22 @@ function finalizeUniverseSearchResponse(input: {
   const results = Array.from(merged.values())
     .sort((left, right) => {
       const scoreDiff =
-        scoreUniverseTicker(right, input.normalizedSearch, input.requestedMarketSet) -
-        scoreUniverseTicker(left, input.normalizedSearch, input.requestedMarketSet);
+        scoreUniverseTicker(
+          right,
+          input.normalizedSearch,
+          input.requestedMarketSet,
+        ) -
+        scoreUniverseTicker(
+          left,
+          input.normalizedSearch,
+          input.requestedMarketSet,
+        );
       if (scoreDiff !== 0) return scoreDiff;
       const tickerDiff = left.ticker.localeCompare(right.ticker);
       if (tickerDiff !== 0) return tickerDiff;
-      return (left.normalizedExchangeMic ?? "").localeCompare(right.normalizedExchangeMic ?? "");
+      return (left.normalizedExchangeMic ?? "").localeCompare(
+        right.normalizedExchangeMic ?? "",
+      );
     })
     .slice(0, input.resultLimit);
 
@@ -2527,7 +4797,9 @@ async function runUniverseSearchTask(
   label: string,
   budgetMs: number,
   signal: AbortSignal | undefined,
-  task: (signal: AbortSignal) => Promise<{ count: number; results: UniverseTicker[] }>,
+  task: (
+    signal: AbortSignal,
+  ) => Promise<{ count: number; results: UniverseTicker[] }>,
 ): Promise<{
   label: string;
   elapsedMs: number;
@@ -2562,7 +4834,10 @@ function deriveCusipCandidates(query: string) {
   const normalized = query.trim().toUpperCase();
   const candidates = new Set<string>();
   if (/^[A-Z0-9]{9}$/.test(normalized)) candidates.add(normalized);
-  if (/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(normalized) && !normalized.startsWith("BBG")) {
+  if (
+    /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(normalized) &&
+    !normalized.startsWith("BBG")
+  ) {
     candidates.add(normalized.slice(2, 11));
   }
   return Array.from(candidates);
@@ -2572,7 +4847,9 @@ function resolveInteractiveIbkrMarketGroups(
   input: SearchUniverseTickersInput,
   requestedMarkets: UniverseMarket[],
 ) {
-  const hasExplicitMarketFilter = Boolean(input.market || input.markets?.length);
+  const hasExplicitMarketFilter = Boolean(
+    input.market || input.markets?.length,
+  );
   if (hasExplicitMarketFilter) {
     return [requestedMarkets];
   }
@@ -2585,8 +4862,17 @@ function resolveInteractiveIbkrMarketGroups(
   return groups.length ? groups : [requestedMarkets];
 }
 
+function normalizeUniverseSearchLimit(
+  value: number | undefined,
+  fallback = UNIVERSE_SEARCH_DEFAULT_LIMIT,
+) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.max(1, Math.floor(numeric));
+}
+
 function getInteractiveUniverseSearchLimit(resultLimit: number) {
-  return Math.min(20, Math.max(resultLimit + 6, 10));
+  return Math.max(resultLimit + 12, UNIVERSE_SEARCH_DEFAULT_LIMIT);
 }
 
 function shouldRunUniverseSearchBackgroundEnrichment(input: {
@@ -2605,7 +4891,10 @@ function shouldRunUniverseSearchBackgroundEnrichment(input: {
 
 function hasIbkrTradableResult(response: UniverseSearchResponse) {
   return response.results.some(
-    (row) => row.providers.includes("ibkr") && row.tradeProvider === "ibkr" && row.providerContractId,
+    (row) =>
+      row.providers.includes("ibkr") &&
+      row.tradeProvider === "ibkr" &&
+      row.providerContractId,
   );
 }
 
@@ -2613,16 +4902,44 @@ function hasExactIbkrTradableTickerMatch(
   response: UniverseSearchResponse,
   normalizedSearch: string,
 ) {
+  return response.results.some((row) =>
+    isExactIbkrTradableTickerMatch(row, normalizedSearch),
+  );
+}
+
+function isExactIbkrTradableTickerMatch(
+  row: UniverseTicker,
+  normalizedSearch: string,
+) {
   const normalizedQuery = normalizeSymbol(normalizedSearch).toUpperCase();
   if (!normalizedQuery) return false;
 
-  return response.results.some(
-    (row) =>
-      row.providers.includes("ibkr") &&
-      row.tradeProvider === "ibkr" &&
-      row.providerContractId &&
-      buildTickerSearchAliases(row).includes(normalizedQuery),
+  return (
+    row.providers.includes("ibkr") &&
+    row.tradeProvider === "ibkr" &&
+    Boolean(row.providerContractId) &&
+    buildTickerSearchAliases(row).includes(normalizedQuery)
   );
+}
+
+function filterExactIbkrTradableTickerMatches(input: {
+  response: UniverseSearchResponse;
+  normalizedSearch: string;
+  requestedMarketSet: Set<UniverseMarket>;
+  resultLimit: number;
+}): UniverseSearchResponse {
+  const results = input.response.results
+    .filter(
+      (row) =>
+        input.requestedMarketSet.has(row.market) &&
+        isExactIbkrTradableTickerMatch(row, input.normalizedSearch),
+    )
+    .slice(0, input.resultLimit);
+
+  return sanitizeUniverseSearchResponse({
+    count: results.length,
+    results,
+  });
 }
 
 function hasStrongPrimaryIbkrNameMatch(
@@ -2645,7 +4962,10 @@ function hasStrongPrimaryIbkrNameMatch(
   }
 
   const normalizedName = first.name.trim().toLowerCase();
-  if (normalizedName === normalizedQuery || normalizedName.startsWith(normalizedQuery)) {
+  if (
+    normalizedName === normalizedQuery ||
+    normalizedName.startsWith(normalizedQuery)
+  ) {
     return true;
   }
 
@@ -2661,6 +4981,7 @@ async function runInteractiveUniverseSearch(input: {
   requestedMarketSet: Set<UniverseMarket>;
   resultLimit: number;
   cacheKey: string;
+  strictTradeResolve: boolean;
   signal: AbortSignal;
 }): Promise<UniverseSearchResponse> {
   const startedAt = Date.now();
@@ -2678,20 +4999,18 @@ async function runInteractiveUniverseSearch(input: {
   const primaryInteractiveIbkrGroupKeySet = new Set(
     interactiveIbkrMarketGroups
       .filter((markets) =>
-        markets.some((market) => primaryInteractiveIbkrMarkets.includes(market)),
+        markets.some((market) =>
+          primaryInteractiveIbkrMarkets.includes(market),
+        ),
       )
       .map((markets) => getInteractiveIbkrMarketGroupKey(markets)),
   );
-  const primaryIbkrGroupEntries = interactiveIbkrMarketGroups
-    .map((markets, index) => ({ markets, index }))
-    .filter(({ markets }) =>
-      primaryInteractiveIbkrGroupKeySet.has(getInteractiveIbkrMarketGroupKey(markets)),
-    );
-  const secondaryIbkrGroupEntries = interactiveIbkrMarketGroups
-    .map((markets, index) => ({ markets, index }))
-    .filter(({ markets }) =>
-      !primaryInteractiveIbkrGroupKeySet.has(getInteractiveIbkrMarketGroupKey(markets)),
-    );
+  const ibkrGroupEntries = interactiveIbkrMarketGroups.map(
+    (markets, index) => ({
+      markets,
+      index,
+    }),
+  );
   const interactiveProviderController = new AbortController();
   const abortInteractiveProviders = () => {
     if (!interactiveProviderController.signal.aborted) {
@@ -2702,9 +5021,17 @@ async function runInteractiveUniverseSearch(input: {
   if (input.signal.aborted) {
     abortInteractiveProviders();
   } else {
-    input.signal.addEventListener("abort", abortInteractiveProviders, { once: true });
+    input.signal.addEventListener("abort", abortInteractiveProviders, {
+      once: true,
+    });
   }
-  const buildIbkrTask = ({ markets, index }: { markets: UniverseMarket[]; index: number }) =>
+  const buildIbkrTask = ({
+    markets,
+    index,
+  }: {
+    markets: UniverseMarket[];
+    index: number;
+  }) =>
     runUniverseSearchTask(
       `ibkr-${markets.join("+")}`,
       UNIVERSE_SEARCH_IBKR_BUDGET_MS,
@@ -2787,9 +5114,10 @@ async function runInteractiveUniverseSearch(input: {
       markets: UniverseMarket[];
     }> = [];
     const pendingIbkrTasks = new Map(
-      primaryIbkrGroupEntries.map((entry) => [entry.index, buildIbkrTask(entry)] as const),
+      ibkrGroupEntries.map(
+        (entry) => [entry.index, buildIbkrTask(entry)] as const,
+      ),
     );
-    let secondaryIbkrTasksStarted = secondaryIbkrGroupEntries.length === 0;
 
     while (pendingIbkrTasks.size > 0) {
       const nextResult = await awaitWithAbort(
@@ -2811,18 +5139,21 @@ async function runInteractiveUniverseSearch(input: {
       const settledPrimaryGroupKeys = new Set(
         settledIbkrResults
           .filter((result) =>
-            primaryInteractiveIbkrGroupKeySet.has(getInteractiveIbkrMarketGroupKey(result.markets)),
+            primaryInteractiveIbkrGroupKeySet.has(
+              getInteractiveIbkrMarketGroupKey(result.markets),
+            ),
           )
           .map((result) => getInteractiveIbkrMarketGroupKey(result.markets)),
       );
-      const primaryGroupsSettled = Array.from(primaryInteractiveIbkrGroupKeySet).every((key) =>
-        settledPrimaryGroupKeys.has(key),
-      );
+      const primaryGroupsSettled = Array.from(
+        primaryInteractiveIbkrGroupKeySet,
+      ).every((key) => settledPrimaryGroupKeys.has(key));
       const hasEarlyExactMatch = hasExactIbkrTradableTickerMatch(
         exactResponse,
         input.normalizedSearch,
       );
       const hasEarlyPrimaryNameMatch =
+        !input.strictTradeResolve &&
         !isTickerLikeSearch(input.normalizedSearch) &&
         hasStrongPrimaryIbkrNameMatch(
           exactResponse,
@@ -2838,6 +5169,7 @@ async function runInteractiveUniverseSearch(input: {
           writeUniverseSearchCache(input.cacheKey, exactResponse);
         }
         if (
+          !input.strictTradeResolve &&
           shouldRunUniverseSearchBackgroundEnrichment({
             normalizedSearch: input.normalizedSearch,
             response: exactResponse,
@@ -2864,25 +5196,24 @@ async function runInteractiveUniverseSearch(input: {
             firstTicker: exactResponse.results[0]?.ticker ?? null,
             firstTradeProvider: exactResponse.results[0]?.tradeProvider ?? null,
             earlyReturn: true,
-            earlyMatchReason: hasEarlyExactMatch ? "exact_ticker" : "primary_name",
+            earlyMatchReason: hasEarlyExactMatch
+              ? "exact_ticker"
+              : "primary_name",
           },
           "ticker search completed",
         );
 
         return exactResponse;
       }
-
-      if (!secondaryIbkrTasksStarted && primaryGroupsSettled) {
-        secondaryIbkrTasksStarted = true;
-        for (const entry of secondaryIbkrGroupEntries) {
-          pendingIbkrTasks.set(entry.index, buildIbkrTask(entry));
-        }
-      }
     }
 
-    const polygonInteractiveResults = await Promise.all(polygonInteractiveTasks);
+    const polygonInteractiveResults = await Promise.all(
+      polygonInteractiveTasks,
+    );
     providerResults.push(
-      ...polygonInteractiveResults.flatMap((result) => result.result?.results ?? []),
+      ...polygonInteractiveResults.flatMap(
+        (result) => result.result?.results ?? [],
+      ),
     );
     const response = finalizeUniverseSearchResponse({
       providerResults,
@@ -2891,10 +5222,15 @@ async function runInteractiveUniverseSearch(input: {
       resultLimit: input.resultLimit,
     });
 
-    if (hasIbkrTradableResult(response)) {
+    if (
+      hasIbkrTradableResult(response) &&
+      (!input.strictTradeResolve ||
+        hasExactIbkrTradableTickerMatch(response, input.normalizedSearch))
+    ) {
       writeUniverseSearchCache(input.cacheKey, response);
     }
     if (
+      !input.strictTradeResolve &&
       shouldRunUniverseSearchBackgroundEnrichment({
         normalizedSearch: input.normalizedSearch,
         response,
@@ -2934,6 +5270,23 @@ async function runInteractiveUniverseSearch(input: {
   }
 }
 
+function observeAbandonedUniverseSearchFlight(
+  promise: Promise<UniverseSearchResponse>,
+  cacheKey: string,
+): void {
+  void promise.catch((error) => {
+    if (isClientAbortedTickerSearchError(error)) {
+      logger.debug({ cacheKey }, "abandoned ticker search flight was aborted");
+      return;
+    }
+
+    logger.debug(
+      { err: error, cacheKey },
+      "abandoned ticker search flight failed",
+    );
+  });
+}
+
 function startUniverseSearchBackgroundEnrichment(input: {
   searchInput: SearchUniverseTickersInput;
   normalizedSearch: string;
@@ -2952,22 +5305,30 @@ function startUniverseSearchBackgroundEnrichment(input: {
   universeSearchBackgroundInFlight.add(input.cacheKey);
 
   void (async () => {
-    const budgetSignal = createBudgetSignal(undefined, UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS);
-      const providerResults = [
-        ...input.seedResults,
-        ...(readUniverseSearchCache(input.cacheKey)?.results ?? []),
-      ];
+    const budgetSignal = createBudgetSignal(
+      undefined,
+      UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS,
+    );
+    const providerResults = [
+      ...input.seedResults,
+      ...(readUniverseSearchCache(input.cacheKey)?.results ?? []),
+    ];
 
     try {
       const polygonMarkets = POLYGON_SEARCH_MARKETS.filter((market) =>
         input.requestedMarketSet.has(market),
       );
-      const tasks: Array<Promise<{ count: number; results: UniverseTicker[] }>> = [];
+      const tasks: Array<
+        Promise<{ count: number; results: UniverseTicker[] }>
+      > = [];
 
       if (isTickerLikeSearch(input.normalizedSearch)) {
         tasks.push(
           polygonClient
-            .getUniverseTickerByTicker(input.normalizedSearch, budgetSignal.signal)
+            .getUniverseTickerByTicker(
+              input.normalizedSearch,
+              budgetSignal.signal,
+            )
             .then((ticker) => ({
               count: ticker ? 1 : 0,
               results: ticker ? [ticker] : [],
@@ -2976,8 +5337,11 @@ function startUniverseSearchBackgroundEnrichment(input: {
       }
 
       for (const cusip of deriveCusipCandidates(input.normalizedSearch)) {
-        for (const market of polygonMarkets.filter((candidate) =>
-          candidate === "stocks" || candidate === "etf" || candidate === "otc",
+        for (const market of polygonMarkets.filter(
+          (candidate) =>
+            candidate === "stocks" ||
+            candidate === "etf" ||
+            candidate === "otc",
         )) {
           tasks.push(
             polygonClient.searchUniverseTickers({
@@ -3038,14 +5402,24 @@ export async function searchUniverseTickers(
   input: SearchUniverseTickersInput,
   options: SearchUniverseTickersOptions = {},
 ) {
-  const normalizedSearch = input.search?.trim() ?? "";
+  const normalizedSearch = normalizeUniverseSearchInput(input.search ?? "");
   if (!normalizedSearch) return { count: 0, results: [] };
 
-  const resultLimit = Math.max(1, Math.min(input.limit ?? 12, 50));
+  const searchInput = {
+    ...input,
+    search: normalizedSearch,
+  };
+  const resultLimit = normalizeUniverseSearchLimit(input.limit);
   const requestedMarkets = resolveRequestedUniverseMarkets(input);
   const requestedMarketSet = new Set(requestedMarkets);
   const identifierSearch = isUniverseIdentifierSearch(normalizedSearch);
-  const cacheKey = getUniverseSearchCacheKey(input, requestedMarkets, resultLimit);
+  const strictTradeResolve =
+    input.mode === "trade-resolve" || input.strictTrade === true;
+  const cacheKey = getUniverseSearchCacheKey(
+    searchInput,
+    requestedMarkets,
+    resultLimit,
+  );
   const cached = readUniverseSearchCache(cacheKey);
   if (cached) return cached;
 
@@ -3058,7 +5432,30 @@ export async function searchUniverseTickers(
       active: input.active,
     });
     if (catalogResponse.results.length) {
-      if (!identifierSearch) {
+      if (strictTradeResolve) {
+        enqueueUniverseCatalogIbkrHydrationRows(catalogResponse.listingRows);
+        const exactCatalogResponse = filterExactIbkrTradableTickerMatches({
+          response: catalogResponse,
+          normalizedSearch,
+          requestedMarketSet,
+          resultLimit,
+        });
+        if (exactCatalogResponse.results.length) {
+          writeUniverseSearchCache(cacheKey, exactCatalogResponse);
+          logger.debug(
+            {
+              search: normalizedSearch,
+              outcome: "catalog_exact",
+              count: exactCatalogResponse.count,
+              firstTicker: exactCatalogResponse.results[0]?.ticker ?? null,
+            },
+            "strict trade ticker resolution completed",
+          );
+          return exactCatalogResponse;
+        }
+      }
+
+      if (!strictTradeResolve && !identifierSearch) {
         enqueueUniverseCatalogIbkrHydrationRows(catalogResponse.listingRows);
         if (
           shouldUseUniverseCatalogImmediateResponse({
@@ -3075,6 +5472,7 @@ export async function searchUniverseTickers(
       }
 
       if (
+        !strictTradeResolve &&
         identifierSearch &&
         shouldUseUniverseCatalogResponse({
           response: catalogResponse,
@@ -3098,24 +5496,20 @@ export async function searchUniverseTickers(
   let flight = universeSearchInFlight.get(cacheKey);
   if (!flight) {
     const controller = new AbortController();
-    const interactiveBudget = createBudgetSignal(
-      controller.signal,
-      UNIVERSE_SEARCH_INTERACTIVE_BUDGET_MS,
-    );
     flight = {
       controller,
       consumers: 0,
       settled: false,
       promise: runInteractiveUniverseSearch({
-        searchInput: input,
+        searchInput,
         normalizedSearch,
         requestedMarkets,
         requestedMarketSet,
         resultLimit,
         cacheKey,
-        signal: interactiveBudget.signal,
+        strictTradeResolve,
+        signal: controller.signal,
       }).finally(() => {
-        interactiveBudget.dispose();
         const current = universeSearchInFlight.get(cacheKey);
         if (current) current.settled = true;
         universeSearchInFlight.delete(cacheKey);
@@ -3127,29 +5521,57 @@ export async function searchUniverseTickers(
   flight.consumers += 1;
   try {
     const liveResponse = await awaitWithAbort(flight.promise, options.signal);
-    const response =
-      catalogResponse?.results.length
-        ? finalizeUniverseSearchResponse({
-            providerResults: [...catalogResponse.results, ...liveResponse.results],
-            requestedMarketSet,
-            normalizedSearch,
-            resultLimit,
-          })
-        : liveResponse;
-    void upsertUniverseCatalogRows(response.results).catch((error) => {
+    const response = catalogResponse?.results.length
+      ? finalizeUniverseSearchResponse({
+          providerResults: [
+            ...catalogResponse.results,
+            ...liveResponse.results,
+          ],
+          requestedMarketSet,
+          normalizedSearch,
+          resultLimit,
+        })
+      : liveResponse;
+    const finalResponse = strictTradeResolve
+      ? filterExactIbkrTradableTickerMatches({
+          response,
+          normalizedSearch,
+          requestedMarketSet,
+          resultLimit,
+        })
+      : response;
+    void upsertUniverseCatalogRows(finalResponse.results).catch((error) => {
       logger.debug(
         { err: error, search: normalizedSearch },
         "persisted universe catalog upsert failed",
       );
     });
-    if (hasIbkrTradableResult(response)) {
-      writeUniverseSearchCache(cacheKey, response);
+    if (hasIbkrTradableResult(finalResponse)) {
+      writeUniverseSearchCache(cacheKey, finalResponse);
     }
-    return response;
+    if (strictTradeResolve) {
+      if (!finalResponse.results.length) {
+        universeSearchCache.delete(cacheKey);
+      }
+      logger.debug(
+        {
+          search: normalizedSearch,
+          outcome: finalResponse.results.length
+            ? "ibkr_live_exact"
+            : "ibkr_no_exact",
+          rawCount: response.count,
+          count: finalResponse.count,
+          firstTicker: finalResponse.results[0]?.ticker ?? null,
+        },
+        "strict trade ticker resolution completed",
+      );
+    }
+    return finalResponse;
   } finally {
     flight.consumers -= 1;
     if (flight.consumers <= 0 && !flight.settled) {
       flight.controller.abort();
+      observeAbandonedUniverseSearchFlight(flight.promise, cacheKey);
     }
   }
 }
@@ -3160,12 +5582,34 @@ type GetBarsInput = {
   limit?: number;
   from?: Date;
   to?: Date;
+  historyCursor?: string | null;
+  preferCursor?: boolean;
   assetClass?: "equity" | "option";
   market?: UniverseMarket;
   providerContractId?: string | null;
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
   allowHistoricalSynthesis?: boolean;
+  allowStudyFallback?: boolean;
+  brokerRecentWindowMinutes?: number | null;
+};
+
+type BarsHistoryPage = {
+  requestedFrom: Date | null;
+  requestedTo: Date | null;
+  oldestBarAt: Date | null;
+  newestBarAt: Date | null;
+  returnedCount: number;
+  nextBefore: Date | null;
+  provider: string | null;
+  exhaustedBefore: boolean;
+  providerCursor: string | null;
+  providerNextUrl: string | null;
+  providerPageCount: number | null;
+  providerPageLimitReached: boolean;
+  historyCursor: string | null;
+  hydrationStatus: "cold" | "partial" | "warm" | "warming" | "exhausted";
+  cacheStatus: "hit" | "miss" | "partial" | null;
 };
 
 type GetBarsResult = Awaited<ReturnType<typeof getBarsImpl>>;
@@ -3173,6 +5617,15 @@ type RequestDebugMetadata = {
   cacheStatus: "hit" | "miss" | "inflight";
   totalMs: number;
   upstreamMs: number | null;
+  stale?: boolean;
+  ageMs?: number | null;
+  degraded?: boolean;
+  reason?: string | null;
+  backoffRemainingMs?: number | null;
+  requestedCount?: number;
+  returnedCount?: number;
+  complete?: boolean;
+  capped?: boolean;
 };
 type GetBarsRequestDebug = RequestDebugMetadata & {
   gapFilled: boolean;
@@ -3188,6 +5641,21 @@ type GetOptionChainResult = {
 type GetOptionChainResultWithDebug = GetOptionChainResult & {
   debug: RequestDebugMetadata;
 };
+type BatchOptionChainResult = {
+  expirationDate: Date;
+  status: "loaded" | "empty" | "failed";
+  contracts: IbkrOptionChainContracts;
+  error?: string | null;
+  debug?: RequestDebugMetadata;
+};
+type BatchOptionChainsResult = {
+  underlying: string;
+  results: BatchOptionChainResult[];
+  debug?: RequestDebugMetadata & {
+    requestedCount: number;
+    returnedCount: number;
+  };
+};
 type GetOptionExpirationsResult = {
   underlying: string;
   expirations: Array<{ expirationDate: Date }>;
@@ -3195,15 +5663,54 @@ type GetOptionExpirationsResult = {
 type GetOptionExpirationsResultWithDebug = GetOptionExpirationsResult & {
   debug: RequestDebugMetadata;
 };
+type ResolveOptionContractResult = {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+  status: "resolved" | "not_found" | "error";
+  providerContractId: string | null;
+  contract: IbkrOptionChainContracts[number]["contract"] | null;
+  errorMessage: string | null;
+  debug: RequestDebugMetadata;
+};
+type OptionChartBarsResolutionSource = "chain" | "provided" | "resolver" | "none";
+type OptionChartBarsDataSource =
+  | "ibkr-history"
+  | "polygon-option-aggregates"
+  | "none";
+type OptionChartBarsResult = GetBarsResult & {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+  optionTicker: string | null;
+  contract: IbkrOptionChainContracts[number]["contract"] | null;
+  providerContractId: string | null;
+  resolutionSource: OptionChartBarsResolutionSource;
+  dataSource: OptionChartBarsDataSource;
+  feedIssue: boolean;
+  debug: RequestDebugMetadata;
+};
 
-const BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<Record<GetBarsInput["timeframe"], number>> = {
+const BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
+  Record<GetBarsInput["timeframe"], number>
+> = {
+  "1s": 7_200,
+  "5s": 8_640,
+  "15s": 12_000,
   "1m": 20_000,
   "5m": 20_000,
   "15m": 15_000,
   "1h": 10_000,
   "1d": 5_000,
 };
-const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<Record<GetBarsInput["timeframe"], number>> = {
+const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<
+  Record<GetBarsInput["timeframe"], number>
+> = {
+  "1s": 900,
+  "5s": 1_800,
+  "15s": 2_400,
   "1m": 5_000,
   "5m": 5_000,
   "15m": 5_000,
@@ -3211,14 +5718,25 @@ const OPTION_BAR_LIMIT_CAPS_BY_TIMEFRAME: Partial<Record<GetBarsInput["timeframe
   "1d": 1_000,
 };
 const DEFAULT_BARS_LIMIT = 200;
-const BROKER_RECENT_HISTORY_MS = 24 * 60 * 60 * 1_000;
-const BROKER_HISTORY_STEP_MS: Partial<Record<GetBarsInput["timeframe"], number>> = {
+const BROKER_RECENT_HISTORY_MS = 60 * 60 * 1_000;
+const BROKER_HISTORY_STEP_MS: Partial<
+  Record<GetBarsInput["timeframe"], number>
+> = {
+  "5s": 5_000,
   "1m": 60_000,
   "5m": 5 * 60_000,
   "15m": 15 * 60_000,
   "1h": 60 * 60_000,
   "1d": 24 * 60 * 60_000,
 };
+const BROKER_HISTORY_TIMEFRAMES = new Set<HistoryBarTimeframe>([
+  "5s",
+  "1m",
+  "5m",
+  "15m",
+  "1h",
+  "1d",
+]);
 
 function shouldLimitBrokerHistoryToRecent(input: GetBarsInput): boolean {
   return input.assetClass !== "option" && input.market !== "futures";
@@ -3261,13 +5779,22 @@ function buildRecentBrokerHistoryInput(
 
   const requestedTo = input.to ?? now;
   const brokerTo = new Date(Math.min(requestedTo.getTime(), now.getTime()));
-  const recentBoundaryMs = now.getTime() - BROKER_RECENT_HISTORY_MS;
+  const brokerRecentWindowMs =
+    typeof input.brokerRecentWindowMinutes === "number" &&
+    Number.isFinite(input.brokerRecentWindowMinutes) &&
+    input.brokerRecentWindowMinutes >= 0
+      ? input.brokerRecentWindowMinutes * 60_000
+      : BROKER_RECENT_HISTORY_MS;
+  const recentBoundaryMs = now.getTime() - brokerRecentWindowMs;
   if (brokerTo.getTime() < recentBoundaryMs) {
     return null;
   }
 
   const explicitFromMs = input.from?.getTime();
-  const recentFromMs = Math.max(explicitFromMs ?? recentBoundaryMs, recentBoundaryMs);
+  const recentFromMs = Math.max(
+    explicitFromMs ?? recentBoundaryMs,
+    recentBoundaryMs,
+  );
   const recentFrom = new Date(Math.min(recentFromMs, brokerTo.getTime()));
   if (recentFrom.getTime() > brokerTo.getTime()) {
     return null;
@@ -3290,11 +5817,48 @@ function buildRecentBrokerHistoryInput(
 // (or refetches racing each other) share a single upstream IBKR/Polygon
 // fetch. The bridge can hold an upstream history slot for 7-15s, so even
 // a small TTL of a few seconds dramatically reduces request volume.
-const BARS_CACHE_TTL_MS = 5_000;
+const BARS_CACHE_TTL_MS = 15_000;
+const BARS_CACHE_STALE_TTL_MS = 10 * 60_000;
 const BARS_CACHE_MAX_ENTRIES = 256;
+const BARS_PROVIDER_BUDGET_MS = readPositiveIntegerEnv(
+  "BARS_PROVIDER_BUDGET_MS",
+  3_000,
+);
+const CHART_HISTORY_CURSOR_TTL_MS = readPositiveIntegerEnv(
+  "CHART_HISTORY_CURSOR_TTL_MS",
+  10 * 60_000,
+);
+const CHART_HISTORY_CURSOR_MAX_ENTRIES = readPositiveIntegerEnv(
+  "CHART_HISTORY_CURSOR_MAX_ENTRIES",
+  512,
+);
+type ChartHistoryCursorRecord = {
+  signature: string;
+  providerNextUrl: string;
+  createdAt: number;
+  expiresAt: number;
+};
+const chartHistoryCursors = new Map<string, ChartHistoryCursorRecord>();
+const barsHydrationCounters = {
+  cacheHit: 0,
+  cacheMiss: 0,
+  inFlightJoin: 0,
+  staleServed: 0,
+  providerFetch: 0,
+  providerPage: 0,
+  cursorContinuation: 0,
+  cursorFallback: 0,
+  backgroundRefresh: 0,
+};
 const barsCache = new Map<
   string,
-  { input: GetBarsInput; value: GetBarsResult; expiresAt: number }
+  {
+    input: GetBarsInput;
+    value: GetBarsResult;
+    cachedAt: number;
+    expiresAt: number;
+    staleExpiresAt: number;
+  }
 >();
 const barsInFlight = new Map<
   string,
@@ -3303,7 +5867,7 @@ const barsInFlight = new Map<
 
 function pruneBarsCache(now: number): void {
   for (const [key, entry] of barsCache) {
-    if (entry.expiresAt <= now) {
+    if (entry.staleExpiresAt <= now) {
       barsCache.delete(key);
     }
   }
@@ -3329,12 +5893,16 @@ function buildBarsCacheKey(input: GetBarsInput): string {
     limit: input.limit ?? null,
     from: input.from ? input.from.getTime() : null,
     to: input.to ? input.to.getTime() : null,
+    historyCursor: input.historyCursor ?? null,
+    preferCursor: input.preferCursor ?? null,
     assetClass: input.assetClass ?? null,
     market: input.market ?? null,
     providerContractId: input.providerContractId ?? null,
     outsideRth: input.outsideRth ?? null,
     source: input.source ?? null,
     allowHistoricalSynthesis: input.allowHistoricalSynthesis ?? null,
+    allowStudyFallback: input.allowStudyFallback ?? null,
+    brokerRecentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
   });
 }
 
@@ -3350,6 +5918,129 @@ function buildBarsScopeKey(input: GetBarsInput): string {
     outsideRth: input.outsideRth ?? null,
     source: input.source ?? null,
     allowHistoricalSynthesis: input.allowHistoricalSynthesis ?? null,
+    allowStudyFallback: input.allowStudyFallback ?? null,
+    brokerRecentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+  });
+}
+
+function isChartHydrationCursorEnabled(): boolean {
+  return readBooleanEnv("CHART_HYDRATION_CURSOR_ENABLED", true);
+}
+
+function isChartHydrationDedupeEnabled(): boolean {
+  return readBooleanEnv("CHART_HYDRATION_DEDUPE_ENABLED", true);
+}
+
+function isChartHydrationBackgroundEnabled(): boolean {
+  return readBooleanEnv("CHART_HYDRATION_BACKGROUND_ENABLED", true);
+}
+
+function pruneChartHistoryCursors(now = Date.now()): void {
+  for (const [token, record] of chartHistoryCursors) {
+    if (record.expiresAt <= now) {
+      chartHistoryCursors.delete(token);
+    }
+  }
+
+  if (chartHistoryCursors.size <= CHART_HISTORY_CURSOR_MAX_ENTRIES) {
+    return;
+  }
+
+  const overflow = chartHistoryCursors.size - CHART_HISTORY_CURSOR_MAX_ENTRIES;
+  let removed = 0;
+  for (const token of chartHistoryCursors.keys()) {
+    if (removed >= overflow) break;
+    chartHistoryCursors.delete(token);
+    removed += 1;
+  }
+}
+
+function createChartHistoryCursor(
+  signature: string | null | undefined,
+  providerNextUrl?: string | null,
+): string | null {
+  if (
+    !isChartHydrationCursorEnabled() ||
+    !signature ||
+    !providerNextUrl?.trim()
+  ) {
+    return null;
+  }
+
+  const now = Date.now();
+  pruneChartHistoryCursors(now);
+  const token = randomUUID();
+  chartHistoryCursors.set(token, {
+    signature,
+    providerNextUrl,
+    createdAt: now,
+    expiresAt: now + CHART_HISTORY_CURSOR_TTL_MS,
+  });
+  return token;
+}
+
+function resolveChartHistoryCursor(input: {
+  token?: string | null;
+  signature: string;
+}):
+  | { ok: true; providerNextUrl: string }
+  | { ok: false; reason: "disabled" | "missing" | "not_found" | "expired" | "signature_mismatch" } {
+  if (!isChartHydrationCursorEnabled()) {
+    return { ok: false, reason: "disabled" };
+  }
+  if (!input.token?.trim()) {
+    return { ok: false, reason: "missing" };
+  }
+
+  const token = input.token.trim();
+  const record = chartHistoryCursors.get(token);
+  if (!record) {
+    return { ok: false, reason: "not_found" };
+  }
+  if (record.expiresAt <= Date.now()) {
+    chartHistoryCursors.delete(token);
+    return { ok: false, reason: "expired" };
+  }
+  if (record.signature !== input.signature) {
+    return { ok: false, reason: "signature_mismatch" };
+  }
+
+  return { ok: true, providerNextUrl: record.providerNextUrl };
+}
+
+function buildBarsHistoryCursorSignature(input: GetBarsInput): string {
+  return JSON.stringify({
+    kind: "bars",
+    symbol: normalizeSymbol(input.symbol),
+    timeframe: input.timeframe,
+    assetClass: input.assetClass ?? "equity",
+    market: input.market ?? null,
+    providerContractId: input.providerContractId ?? null,
+    outsideRth: input.outsideRth ?? null,
+    source: input.source ?? null,
+  });
+}
+
+function buildOptionChartHistoryCursorSignature(input: {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+  optionTicker: string | null;
+  providerContractId?: string | null;
+  timeframe: GetBarsInput["timeframe"];
+  outsideRth?: boolean;
+}): string {
+  return JSON.stringify({
+    kind: "option-chart-bars",
+    underlying: normalizeSymbol(input.underlying),
+    expirationDate: input.expirationDate.toISOString().slice(0, 10),
+    strike: Number.isFinite(input.strike) ? input.strike : null,
+    right: input.right,
+    optionTicker: input.optionTicker ?? null,
+    providerContractId: input.providerContractId ?? null,
+    timeframe: input.timeframe,
+    outsideRth: input.outsideRth ?? null,
   });
 }
 
@@ -3358,25 +6049,56 @@ function sliceBarsResultForRequest(
   input: GetBarsInput,
 ): GetBarsResult {
   const desiredBars = Math.max(input.limit ?? value.bars.length ?? 0, 1);
+  const bars =
+    value.bars.length > desiredBars
+      ? value.bars.slice(-desiredBars)
+      : value.bars;
   return {
     ...value,
-    bars:
-      value.bars.length > desiredBars
-        ? value.bars.slice(-desiredBars)
-        : value.bars,
+    bars,
+    historyPage: buildBarsHistoryPage({
+      request: input,
+      bars,
+      provider: bars[bars.length - 1]?.source ?? value.historyPage?.provider ?? null,
+      exhaustedBefore: value.historyPage?.exhaustedBefore ?? false,
+      providerCursor: value.historyPage?.providerCursor ?? null,
+      providerNextUrl: value.historyPage?.providerNextUrl ?? null,
+      providerPageCount: value.historyPage?.providerPageCount ?? null,
+      providerPageLimitReached:
+        value.historyPage?.providerPageLimitReached ?? false,
+      historyCursor: value.historyPage?.historyCursor ?? null,
+      hydrationStatus: value.historyPage?.hydrationStatus,
+      cacheStatus: value.historyPage?.cacheStatus ?? null,
+    }),
   };
 }
+
+type ReusableCachedBarsEntry = {
+  input: GetBarsInput;
+  value: GetBarsResult;
+  fresh: boolean;
+  ageMs: number | null;
+};
 
 function findReusableCachedBarsEntry(
   input: GetBarsInput,
   now: number,
-): GetBarsResult | null {
+  allowStale = false,
+): ReusableCachedBarsEntry | null {
+  if (input.preferCursor && input.historyCursor) {
+    return null;
+  }
   const scopeKey = buildBarsScopeKey(input);
   const desiredLimit = input.limit ?? DEFAULT_BARS_LIMIT;
 
   for (const [key, entry] of barsCache) {
-    if (entry.expiresAt <= now) {
+    if (entry.staleExpiresAt <= now) {
       barsCache.delete(key);
+      continue;
+    }
+
+    const fresh = entry.expiresAt > now;
+    if (!fresh && !allowStale) {
       continue;
     }
 
@@ -3388,7 +6110,14 @@ function findReusableCachedBarsEntry(
       continue;
     }
 
-    return sliceBarsResultForRequest(entry.value, input);
+    return {
+      input: entry.input,
+      value: sliceBarsResultForRequest(entry.value, input),
+      fresh,
+      ageMs: Number.isFinite(entry.cachedAt)
+        ? Math.max(0, now - entry.cachedAt)
+        : null,
+    };
   }
 
   return null;
@@ -3397,6 +6126,9 @@ function findReusableCachedBarsEntry(
 function findReusableBarsInFlight(
   input: GetBarsInput,
 ): Promise<GetBarsResult> | null {
+  if (input.preferCursor && input.historyCursor) {
+    return null;
+  }
   const scopeKey = buildBarsScopeKey(input);
   const desiredLimit = input.limit ?? DEFAULT_BARS_LIMIT;
 
@@ -3409,7 +6141,9 @@ function findReusableBarsInFlight(
       continue;
     }
 
-    return entry.promise.then((value) => sliceBarsResultForRequest(value, input));
+    return entry.promise.then((value) =>
+      sliceBarsResultForRequest(value, input),
+    );
   }
 
   return null;
@@ -3419,10 +6153,42 @@ function withBarsDebug(
   value: GetBarsResult,
   debug: GetBarsRequestDebug,
 ): GetBarsResultWithDebug {
+  const hydrationStatus: BarsHistoryPage["hydrationStatus"] =
+    value.historyPage?.hydrationStatus ??
+    (debug.stale
+      ? "warming"
+      : value.bars.length
+        ? "warm"
+        : "cold");
   return {
     ...value,
+    historyPage: value.historyPage
+      ? {
+          ...value.historyPage,
+          cacheStatus: debug.cacheStatus === "inflight" ? "partial" : debug.cacheStatus,
+          hydrationStatus,
+        }
+      : value.historyPage,
     debug,
   };
+}
+
+function resolveWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null;
+  const timeout = new Promise<T>((resolve) => {
+    timeoutId = setTimeout(() => resolve(fallback), timeoutMs);
+    timeoutId.unref?.();
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  });
 }
 
 export async function getBarsWithDebug(
@@ -3431,24 +6197,69 @@ export async function getBarsWithDebug(
   const sanitizedInput = sanitizeBarsInput(input);
   const key = buildBarsCacheKey(sanitizedInput);
   const requestedAt = Date.now();
-  const reusableCached = findReusableCachedBarsEntry(sanitizedInput, requestedAt);
+  const dedupeEnabled = isChartHydrationDedupeEnabled();
+
+  if (!dedupeEnabled) {
+    const upstreamStartedAt = Date.now();
+    barsHydrationCounters.cacheMiss += 1;
+    const value = await getBarsImpl(sanitizedInput);
+    return withBarsDebug(value, {
+      cacheStatus: "miss",
+      totalMs: Math.max(0, Date.now() - requestedAt),
+      upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+      gapFilled: value.gapFilled,
+    });
+  }
+
+  const reusableCached = findReusableCachedBarsEntry(
+    sanitizedInput,
+    requestedAt,
+  );
 
   if (reusableCached) {
-    return withBarsDebug(reusableCached, {
+    barsHydrationCounters.cacheHit += 1;
+    return withBarsDebug(reusableCached.value, {
       cacheStatus: "hit",
       totalMs: Math.max(0, Date.now() - requestedAt),
       upstreamMs: null,
-      gapFilled: reusableCached.gapFilled,
+      gapFilled: reusableCached.value.gapFilled,
+      ageMs: reusableCached.ageMs,
     });
   }
 
   const cached = barsCache.get(key);
   if (cached && cached.expiresAt > requestedAt) {
+    barsHydrationCounters.cacheHit += 1;
     return withBarsDebug(cached.value, {
       cacheStatus: "hit",
       totalMs: Math.max(0, Date.now() - requestedAt),
       upstreamMs: null,
       gapFilled: cached.value.gapFilled,
+      ageMs: Number.isFinite(cached.cachedAt)
+        ? Math.max(0, requestedAt - cached.cachedAt)
+        : null,
+    });
+  }
+
+  const reusableStale = findReusableCachedBarsEntry(
+    sanitizedInput,
+    requestedAt,
+    true,
+  );
+  if (reusableStale) {
+    barsHydrationCounters.cacheHit += 1;
+    barsHydrationCounters.staleServed += 1;
+    if (isChartHydrationBackgroundEnabled()) {
+      barsHydrationCounters.backgroundRefresh += 1;
+      refreshBarsCache(key, sanitizedInput).catch(() => {});
+    }
+    return withBarsDebug(reusableStale.value, {
+      cacheStatus: "hit",
+      totalMs: Math.max(0, Date.now() - requestedAt),
+      upstreamMs: null,
+      gapFilled: reusableStale.value.gapFilled,
+      stale: true,
+      ageMs: reusableStale.ageMs,
     });
   }
   if (cached) {
@@ -3457,6 +6268,7 @@ export async function getBarsWithDebug(
 
   const reusableInFlight = findReusableBarsInFlight(sanitizedInput);
   if (reusableInFlight) {
+    barsHydrationCounters.inFlightJoin += 1;
     const value = await reusableInFlight;
     return withBarsDebug(value, {
       cacheStatus: "inflight",
@@ -3467,6 +6279,7 @@ export async function getBarsWithDebug(
   }
   const inFlight = barsInFlight.get(key);
   if (inFlight) {
+    barsHydrationCounters.inFlightJoin += 1;
     const value = await inFlight.promise;
     return withBarsDebug(value, {
       cacheStatus: "inflight",
@@ -3477,27 +6290,8 @@ export async function getBarsWithDebug(
   }
 
   const upstreamStartedAt = Date.now();
-  const promise = (async () => {
-    try {
-      const value = await getBarsImpl(sanitizedInput);
-      const settledAt = Date.now();
-      barsCache.set(key, {
-        input: sanitizedInput,
-        value,
-        expiresAt: settledAt + BARS_CACHE_TTL_MS,
-      });
-      pruneBarsCache(settledAt);
-      return value;
-    } finally {
-      barsInFlight.delete(key);
-    }
-  })();
-
-  barsInFlight.set(key, {
-    input: sanitizedInput,
-    promise,
-  });
-  const value = await promise;
+  barsHydrationCounters.cacheMiss += 1;
+  const value = await refreshBarsCache(key, sanitizedInput);
 
   return withBarsDebug(value, {
     cacheStatus: "miss",
@@ -3507,9 +6301,476 @@ export async function getBarsWithDebug(
   });
 }
 
+function refreshBarsCache(
+  key: string,
+  input: GetBarsInput,
+): Promise<GetBarsResult> {
+  const existing = barsInFlight.get(key);
+  if (existing) {
+    return existing.promise;
+  }
+
+  const promise = (async () => {
+    try {
+      const value = await getBarsImpl(input);
+      const settledAt = Date.now();
+      barsCache.set(key, {
+        input,
+        value,
+        cachedAt: settledAt,
+        expiresAt: settledAt + BARS_CACHE_TTL_MS,
+        staleExpiresAt: settledAt + BARS_CACHE_STALE_TTL_MS,
+      });
+      pruneBarsCache(settledAt);
+      return value;
+    } finally {
+      barsInFlight.delete(key);
+    }
+  })();
+
+  barsInFlight.set(key, {
+    input,
+    promise,
+  });
+  return promise;
+}
+
 export async function getBars(input: GetBarsInput): Promise<GetBarsResult> {
   const { debug: _debug, ...value } = await getBarsWithDebug(input);
   return value;
+}
+
+const BAR_TIMEFRAME_MS: Partial<Record<GetBarsInput["timeframe"], number>> = {
+  "1s": 1_000,
+  "5s": 5_000,
+  "15s": 15_000,
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "1h": 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+};
+
+function normalizeFreshness(input: {
+  freshness?: MarketDataFreshness | string | null;
+  marketDataMode?: string | null;
+  delayed?: boolean | null;
+}): MarketDataFreshness {
+  const freshness = input.freshness;
+  if (
+    freshness === "live" ||
+    freshness === "delayed" ||
+    freshness === "frozen" ||
+    freshness === "delayed_frozen" ||
+    freshness === "stale" ||
+    freshness === "metadata" ||
+    freshness === "unavailable" ||
+    freshness === "pending"
+  ) {
+    return freshness;
+  }
+  if (input.marketDataMode === "frozen") return "frozen";
+  if (input.marketDataMode === "delayed_frozen") return "delayed_frozen";
+  if (input.marketDataMode === "delayed" || input.delayed) return "delayed";
+  if (input.marketDataMode === "live") return "live";
+  return "unavailable";
+}
+
+function getLatestBar(
+  bars: readonly BrokerBarSnapshot[],
+): BrokerBarSnapshot | null {
+  return bars.length ? bars[bars.length - 1] ?? null : null;
+}
+
+function getBarDataUpdatedAt(bar: BrokerBarSnapshot | null): Date | null {
+  return bar?.dataUpdatedAt ?? bar?.timestamp ?? null;
+}
+
+function getAgeMs(value: Date | null, now = Date.now()): number | null {
+  if (!value || Number.isNaN(value.getTime())) {
+    return null;
+  }
+  return Math.max(0, now - value.getTime());
+}
+
+function getOldestBar(
+  bars: readonly BrokerBarSnapshot[],
+): BrokerBarSnapshot | null {
+  return bars.length ? bars[0] ?? null : null;
+}
+
+function sanitizeProviderNextUrl(value?: string | null): string | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    url.searchParams.delete("apiKey");
+    url.searchParams.delete("apikey");
+    return url.toString();
+  } catch {
+    return /apiKey=/i.test(value) ? null : value;
+  }
+}
+
+function buildPolygonHistoryPageMetadata(
+  page?: PolygonAggregateBarsPage | null,
+  cursorSignature?: string | null,
+): Pick<
+  BarsHistoryPage,
+  | "providerCursor"
+  | "providerNextUrl"
+  | "providerPageCount"
+  | "providerPageLimitReached"
+  | "historyCursor"
+> {
+  const providerNextUrl = sanitizeProviderNextUrl(page?.nextUrl);
+  return {
+    providerCursor: providerNextUrl,
+    providerNextUrl,
+    providerPageCount: typeof page?.pageCount === "number" ? page.pageCount : null,
+    providerPageLimitReached: Boolean(page?.pageLimitReached),
+    historyCursor: createChartHistoryCursor(cursorSignature, page?.nextUrl),
+  };
+}
+
+function mapPolygonBarsToBrokerBars(input: {
+  bars: PolygonBarSnapshot[];
+  sourceName: string;
+  outsideRth: boolean;
+  delayed: boolean;
+}): BrokerBarSnapshot[] {
+  return input.bars.map((bar): BrokerBarSnapshot => ({
+    timestamp: bar.timestamp,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    volume: bar.volume,
+    source: input.sourceName,
+    providerContractId: null,
+    outsideRth: input.outsideRth,
+    partial: false,
+    transport: "tws",
+    delayed: input.delayed,
+    freshness: input.delayed ? "delayed" : "live",
+    marketDataMode: input.delayed ? "delayed" : "live",
+    dataUpdatedAt: bar.timestamp,
+    ageMs: getAgeMs(bar.timestamp),
+  }));
+}
+
+async function fetchPolygonBarsPage(
+  client: PolygonMarketDataClient,
+  input: Parameters<PolygonMarketDataClient["getBars"]>[0],
+): Promise<PolygonAggregateBarsPage> {
+  const pageFetcher = (
+    client as Partial<Pick<PolygonMarketDataClient, "getBarsPage">>
+  ).getBarsPage;
+  if (typeof pageFetcher === "function") {
+    return pageFetcher.call(client, input);
+  }
+
+  const bars = await client.getBars(input);
+  return {
+    bars,
+    nextUrl: null,
+    pageCount: bars.length ? 1 : 0,
+    pageLimitReached: false,
+    requestedFrom: input.from ?? new Date(0),
+    requestedTo: input.to ?? new Date(),
+  };
+}
+
+async function fetchPolygonOptionBarsPage(
+  client: PolygonMarketDataClient,
+  input: Parameters<PolygonMarketDataClient["getOptionAggregateBars"]>[0],
+): Promise<PolygonAggregateBarsPage> {
+  const pageFetcher = (
+    client as Partial<
+      Pick<PolygonMarketDataClient, "getOptionAggregateBarsPage">
+    >
+  ).getOptionAggregateBarsPage;
+  if (typeof pageFetcher === "function") {
+    return pageFetcher.call(client, input);
+  }
+
+  const bars = await client.getOptionAggregateBars(input);
+  return {
+    bars,
+    nextUrl: null,
+    pageCount: bars.length ? 1 : 0,
+    pageLimitReached: false,
+    requestedFrom: input.from ?? new Date(0),
+    requestedTo: input.to ?? new Date(),
+  };
+}
+
+async function fetchPolygonBarsProviderCursorPage(
+  client: PolygonMarketDataClient,
+  input: Parameters<PolygonMarketDataClient["getBarsProviderCursorPage"]>[0],
+): Promise<PolygonAggregateBarsPage> {
+  return client.getBarsProviderCursorPage(input);
+}
+
+function buildBarsHistoryPage(input: {
+  request: GetBarsInput;
+  bars: BrokerBarSnapshot[];
+  provider: string | null;
+  exhaustedBefore?: boolean;
+  providerCursor?: string | null;
+  providerNextUrl?: string | null;
+  providerPageCount?: number | null;
+  providerPageLimitReached?: boolean | null;
+  historyCursor?: string | null;
+  hydrationStatus?: BarsHistoryPage["hydrationStatus"];
+  cacheStatus?: BarsHistoryPage["cacheStatus"];
+}): BarsHistoryPage {
+  const oldestBar = getOldestBar(input.bars);
+  const newestBar = getLatestBar(input.bars);
+  const stepMs = BAR_TIMEFRAME_MS[input.request.timeframe] ?? 0;
+  const oldestBarAt = oldestBar?.timestamp ?? null;
+  const newestBarAt = newestBar?.timestamp ?? null;
+  const fallbackNextBefore =
+    !oldestBarAt && input.request.from && stepMs > 0
+      ? new Date(Math.max(0, input.request.from.getTime() - stepMs))
+      : null;
+  const nextBefore =
+    oldestBarAt && stepMs > 0
+      ? new Date(Math.max(0, oldestBarAt.getTime() - 1))
+      : fallbackNextBefore;
+
+  return {
+    requestedFrom: input.request.from ?? null,
+    requestedTo: input.request.to ?? null,
+    oldestBarAt,
+    newestBarAt,
+    returnedCount: input.bars.length,
+    nextBefore,
+    provider: input.provider,
+    exhaustedBefore: Boolean(input.exhaustedBefore),
+    providerCursor: input.providerCursor ?? input.providerNextUrl ?? null,
+    providerNextUrl: input.providerNextUrl ?? null,
+    providerPageCount: input.providerPageCount ?? null,
+    providerPageLimitReached: Boolean(input.providerPageLimitReached),
+    historyCursor: input.historyCursor ?? null,
+    hydrationStatus:
+      input.hydrationStatus ??
+      (input.exhaustedBefore ? "exhausted" : input.bars.length ? "warm" : "cold"),
+    cacheStatus: input.cacheStatus ?? null,
+  };
+}
+
+function isBarStaleForTimeframe(input: {
+  bar: BrokerBarSnapshot | null;
+  timeframe: GetBarsInput["timeframe"];
+  assetClass?: GetBarsInput["assetClass"];
+}): boolean {
+  if (!input.bar || input.assetClass !== "option") {
+    return false;
+  }
+  const stepMs = BAR_TIMEFRAME_MS[input.timeframe] ?? 60_000;
+  const staleAfterMs =
+    input.timeframe === "1d"
+      ? 36 * 60 * 60_000
+      : Math.max(10 * 60_000, stepMs * 3);
+  const ageMs = getAgeMs(getBarDataUpdatedAt(input.bar));
+  return ageMs !== null && ageMs > staleAfterMs;
+}
+
+function resolveBarsEmptyReason(input: {
+  request: GetBarsInput;
+  attemptedBrokerHistory: boolean;
+  brokerHistoryError: unknown;
+}): string | null {
+  if (input.request.assetClass === "option" && !input.request.providerContractId) {
+    return "missing-provider-contract-id";
+  }
+  if (!input.attemptedBrokerHistory) {
+    return "unsupported-broker-timeframe";
+  }
+  if (input.brokerHistoryError) {
+    return "broker-history-error";
+  }
+  return "broker-history-empty";
+}
+
+function getOptionQuoteMark(quote: QuoteSnapshot | null): number | null {
+  if (!quote) {
+    return null;
+  }
+  if (quote.bid > 0 && quote.ask > 0) {
+    return (quote.bid + quote.ask) / 2;
+  }
+  if (quote.price > 0) {
+    return quote.price;
+  }
+  if (quote.ask > 0) {
+    return quote.ask;
+  }
+  if (quote.bid > 0) {
+    return quote.bid;
+  }
+  return null;
+}
+
+function buildOptionStudyFallbackBar(input: {
+  request: GetBarsInput;
+  quote: QuoteSnapshot;
+  fallbackTransport: BrokerBarSnapshot["transport"];
+}): BrokerBarSnapshot | null {
+  const mark = getOptionQuoteMark(input.quote);
+  if (mark === null || mark <= 0) {
+    return null;
+  }
+  const dataUpdatedAt = input.quote.dataUpdatedAt ?? input.quote.updatedAt;
+  const timestamp = dataUpdatedAt ?? new Date();
+
+  return {
+    timestamp,
+    open: mark,
+    high: mark,
+    low: mark,
+    close: mark,
+    volume: input.quote.volume ?? 0,
+    source: "option-study-quote-fallback",
+    providerContractId: input.request.providerContractId ?? null,
+    outsideRth: Boolean(input.request.outsideRth),
+    partial: true,
+    transport: input.quote.transport ?? input.fallbackTransport,
+    delayed: Boolean(input.quote.delayed),
+    freshness: normalizeFreshness(input.quote),
+    marketDataMode: input.quote.marketDataMode ?? null,
+    dataUpdatedAt,
+    ageMs: getAgeMs(dataUpdatedAt),
+  };
+}
+
+async function fetchOptionStudyFallbackBar(input: {
+  request: GetBarsInput;
+  bridgeClient: IbkrBridgeClient;
+  fallbackTransport: BrokerBarSnapshot["transport"];
+}): Promise<BrokerBarSnapshot | null> {
+  const providerContractId = input.request.providerContractId?.trim();
+  if (
+    input.request.assetClass !== "option" ||
+    !input.request.allowStudyFallback ||
+    !providerContractId
+  ) {
+    return null;
+  }
+
+  const cachedQuote = getCurrentBridgeOptionQuoteSnapshots({
+    underlying: input.request.symbol,
+    providerContractIds: [providerContractId],
+  }).find(
+    (entry) =>
+      entry.providerContractId === providerContractId &&
+      entry.freshness !== "stale" &&
+      entry.freshness !== "unavailable" &&
+      entry.freshness !== "pending",
+  );
+  const quotes = cachedQuote
+    ? [cachedQuote]
+    : await resolveWithin(
+        fetchBridgeOptionQuoteSnapshots({
+          underlying: input.request.symbol,
+          providerContractIds: [providerContractId],
+          intent: "historical",
+          fallbackProvider: "cache",
+          requiresGreeks: false,
+        }).then((payload) => payload.quotes),
+        BARS_PROVIDER_BUDGET_MS,
+        [],
+      );
+  const quote = quotes.find(
+    (entry) => entry.providerContractId === providerContractId,
+  ) ?? quotes[0] ?? null;
+
+  return quote
+    ? buildOptionStudyFallbackBar({
+        request: input.request,
+        quote,
+        fallbackTransport: input.fallbackTransport,
+      })
+    : null;
+}
+
+function decorateBarsResult(input: {
+  request: GetBarsInput;
+  bars: BrokerBarSnapshot[];
+  bridgeHealth: Awaited<ReturnType<IbkrBridgeClient["getHealth"]>> | null;
+  gapFilled: boolean;
+  emptyReason: string | null;
+  studyFallback: boolean;
+  historyProvider?: string | null;
+  historyPageMetadata?: Partial<
+    Pick<
+      BarsHistoryPage,
+      | "providerCursor"
+      | "providerNextUrl"
+      | "providerPageCount"
+      | "providerPageLimitReached"
+      | "historyCursor"
+    >
+  >;
+  hydrationStatus?: BarsHistoryPage["hydrationStatus"];
+  cacheStatus?: BarsHistoryPage["cacheStatus"];
+}) {
+  const latestBar = getLatestBar(input.bars);
+  const dataUpdatedAt = getBarDataUpdatedAt(latestBar);
+  const ageMs = getAgeMs(dataUpdatedAt);
+  const latestFreshness = latestBar
+    ? normalizeFreshness({
+        freshness: latestBar.freshness,
+        marketDataMode:
+          latestBar.marketDataMode ?? input.bridgeHealth?.marketDataMode,
+        delayed: latestBar.delayed,
+      })
+    : "unavailable";
+  const freshness =
+    latestFreshness !== "frozen" &&
+    latestFreshness !== "delayed_frozen" &&
+    isBarStaleForTimeframe({
+      bar: latestBar,
+      timeframe: input.request.timeframe,
+      assetClass: input.request.assetClass,
+    })
+      ? "stale"
+      : latestFreshness;
+
+  return {
+    symbol: normalizeSymbol(input.request.symbol),
+    timeframe: input.request.timeframe,
+    bars: input.bars,
+    transport:
+      latestBar?.transport ?? input.bridgeHealth?.transport ?? null,
+    delayed: input.bars.some((bar) => bar.delayed),
+    gapFilled: input.gapFilled,
+    freshness,
+    marketDataMode:
+      latestBar?.marketDataMode ?? input.bridgeHealth?.marketDataMode ?? null,
+    dataUpdatedAt,
+    ageMs,
+    emptyReason: input.bars.length ? null : input.emptyReason,
+    historySource: latestBar?.source ?? null,
+    studyFallback: input.studyFallback,
+    historyPage: buildBarsHistoryPage({
+      request: input.request,
+      bars: input.bars,
+      provider: input.historyProvider ?? latestBar?.source ?? null,
+      exhaustedBefore: false,
+      providerCursor: input.historyPageMetadata?.providerCursor ?? null,
+      providerNextUrl: input.historyPageMetadata?.providerNextUrl ?? null,
+      providerPageCount: input.historyPageMetadata?.providerPageCount ?? null,
+      providerPageLimitReached:
+        input.historyPageMetadata?.providerPageLimitReached ?? false,
+      historyCursor: input.historyPageMetadata?.historyCursor ?? null,
+      hydrationStatus: input.hydrationStatus,
+      cacheStatus: input.cacheStatus ?? null,
+    }),
+  };
 }
 
 async function getBarsImpl(input: GetBarsInput) {
@@ -3517,7 +6778,11 @@ async function getBarsImpl(input: GetBarsInput) {
   const bridgeHealth = await bridgeClient.getHealth().catch(() => null);
   const polygonConfig = getPolygonRuntimeConfig();
   const polygonClient = polygonConfig ? getPolygonClient() : null;
-  const polygonBarsDelayed = polygonConfig?.baseUrl.includes("massive.com") ?? false;
+  const polygonBarsDelayed =
+    polygonConfig?.baseUrl.includes("massive.com") ?? false;
+  const historicalStoreSource = polygonBarsDelayed
+    ? "massive-history"
+    : "polygon-history";
   // Default to including extended hours across ALL timeframes so the "last close"
   // a chart shows is consistent regardless of the selected interval. Without this,
   // 1d returned RTH-only bars while 1m/5m/15m/1h returned extended-hours bars,
@@ -3525,10 +6790,12 @@ async function getBarsImpl(input: GetBarsInput) {
   // Callers (e.g. backtest) can still pass outsideRth=false explicitly for strict RTH.
   const outsideRth =
     typeof input.outsideRth === "boolean" ? input.outsideRth : true;
-  const isBrokerHistoryTimeframe = ["1m", "5m", "15m", "1h", "1d"].includes(
-    input.timeframe,
+  const isBrokerHistoryTimeframe = BROKER_HISTORY_TIMEFRAMES.has(
+    input.timeframe as HistoryBarTimeframe,
   );
   let ibkrBars: Awaited<ReturnType<IbkrBridgeClient["getHistoricalBars"]>> = [];
+  let attemptedBrokerHistory = false;
+  let brokerHistoryError: unknown = null;
 
   if (isBrokerHistoryTimeframe) {
     try {
@@ -3537,85 +6804,191 @@ async function getBarsImpl(input: GetBarsInput) {
         new Date(),
       );
       if (brokerHistoryInput) {
-        ibkrBars = await bridgeClient.getHistoricalBars({
-          symbol: brokerHistoryInput.symbol,
-          timeframe: brokerHistoryInput.timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
-          limit: brokerHistoryInput.limit,
-          from: brokerHistoryInput.from,
-          to: brokerHistoryInput.to,
-          assetClass: brokerHistoryInput.assetClass,
-          providerContractId: brokerHistoryInput.providerContractId,
-          outsideRth,
-          source: brokerHistoryInput.source,
+        attemptedBrokerHistory = true;
+        ibkrBars = await resolveWithin(
+          bridgeClient.getHistoricalBars({
+            symbol: brokerHistoryInput.symbol,
+            timeframe: brokerHistoryInput.timeframe as HistoryBarTimeframe,
+            limit: brokerHistoryInput.limit,
+            from: brokerHistoryInput.from,
+            to: brokerHistoryInput.to,
+            assetClass: brokerHistoryInput.assetClass,
+            providerContractId: brokerHistoryInput.providerContractId,
+            outsideRth,
+            source: brokerHistoryInput.source,
+          }),
+          BARS_PROVIDER_BUDGET_MS,
+          [],
+        );
+      } else if (shouldLimitBrokerHistoryToRecent(input)) {
+        recordMarketDataFallback({
+          owner: "bars-history",
+          intent: "historical",
+          fallbackProvider: polygonClient ? "polygon" : "cache",
+          reason: "outside_recent_live_window",
+          instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
         });
       }
     } catch (error) {
+      brokerHistoryError = error;
       ibkrBars = [];
     }
   }
-  const desiredBars = Math.max(input.limit ?? ibkrBars.length ?? 0, 1);
+  const storedHistoricalBars = await loadStoredMarketBars({
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+    assetClass: input.assetClass,
+    market: input.market,
+    providerContractId: input.providerContractId,
+    outsideRth,
+    source: input.source,
+    recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+    sourceName: historicalStoreSource,
+  });
+  const desiredBars = Math.max(
+    input.limit ?? (ibkrBars.length + storedHistoricalBars.length),
+    1,
+  );
   const allowHistoricalSynthesis = input.allowHistoricalSynthesis !== false;
   const needsGapFill =
     allowHistoricalSynthesis &&
     input.market !== "futures" &&
     polygonClient &&
-    (!isBrokerHistoryTimeframe ||
-      (desiredBars > 0 && ibkrBars.length < desiredBars));
+    desiredBars > 0 &&
+    storedHistoricalBars.length + ibkrBars.length < desiredBars;
 
-  let bars = ibkrBars;
+  let bars = [...storedHistoricalBars, ...ibkrBars];
   let gapFilled = false;
+  let polygonBarsPage: PolygonAggregateBarsPage | null = null;
 
   if (needsGapFill && polygonClient) {
-    let polygonBars: Awaited<ReturnType<PolygonMarketDataClient["getBars"]>> =
-      [];
+    let polygonBars: BrokerBarSnapshot[] = [];
+    let attemptedCursorContinuation = false;
+    let usedCursorContinuation = false;
+    const cursorSignature = buildBarsHistoryCursorSignature(input);
+    const cursorResolution = input.preferCursor
+      ? resolveChartHistoryCursor({
+          token: input.historyCursor,
+          signature: cursorSignature,
+        })
+      : ({ ok: false, reason: "missing" } as const);
     try {
-      polygonBars = await polygonClient.getBars({
-        symbol: input.symbol,
-        timeframe: input.timeframe,
-        limit: desiredBars,
-        from: input.from,
-        to: input.to,
-      });
+      if (cursorResolution.ok) {
+        attemptedCursorContinuation = true;
+        polygonBarsPage = await resolveWithin(
+          fetchPolygonBarsProviderCursorPage(polygonClient, {
+            symbol: input.symbol,
+            timeframe: input.timeframe,
+            limit: desiredBars,
+            providerNextUrl: cursorResolution.providerNextUrl,
+          }).catch(() => null),
+          BARS_PROVIDER_BUDGET_MS,
+          null,
+        );
+        usedCursorContinuation = Boolean(polygonBarsPage);
+      }
+      if (!polygonBarsPage) {
+        if (attemptedCursorContinuation) {
+          barsHydrationCounters.cursorFallback += 1;
+        } else if (input.preferCursor && input.historyCursor) {
+          barsHydrationCounters.cursorFallback += 1;
+        }
+        polygonBarsPage = await resolveWithin(
+          fetchPolygonBarsPage(polygonClient, {
+            symbol: input.symbol,
+            timeframe: input.timeframe,
+            limit: desiredBars,
+            from: input.from,
+            to: input.to,
+          }),
+          BARS_PROVIDER_BUDGET_MS,
+          null,
+        );
+      }
+      if (polygonBarsPage) {
+        barsHydrationCounters.providerFetch += 1;
+        barsHydrationCounters.providerPage += polygonBarsPage.pageCount;
+      }
+      if (usedCursorContinuation) {
+        barsHydrationCounters.cursorContinuation += 1;
+      }
+      polygonBars = normalizeBarsToStoreTimeframe(
+        mapPolygonBarsToBrokerBars({
+          bars: polygonBarsPage?.bars ?? [],
+          sourceName: historicalStoreSource,
+          outsideRth,
+          delayed: polygonBarsDelayed,
+        }),
+        input.timeframe,
+      );
     } catch {
+      polygonBarsPage = null;
       polygonBars = [];
     }
-    const merged = new Map<
-      number,
-      {
-        timestamp: Date;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-        source: string;
-        providerContractId: string | null;
-        outsideRth: boolean;
-        partial: boolean;
-        transport: "client_portal" | "tws" | "ibx";
-        delayed: boolean;
-      }
-    >();
+    void persistMarketDataBars({
+      request: {
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        from: input.from,
+        to: input.to,
+        assetClass: input.assetClass,
+        market: input.market,
+        providerContractId: input.providerContractId,
+        outsideRth,
+        source: input.source,
+        recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+      },
+      sourceName: historicalStoreSource,
+      bars: polygonBars,
+    });
+    const merged = new Map<number, BrokerBarSnapshot>();
 
     // Tag each bar honestly with its actual source so the chart UI / debugging
     // can tell what came from where. IBKR bars always overwrite Polygon bars at
     // the same timestamp because IBKR is the authoritative live broker feed.
+    storedHistoricalBars.forEach((bar) => {
+      merged.set(bar.timestamp.getTime(), bar);
+    });
     polygonBars.forEach((bar) => {
       gapFilled = true;
       merged.set(bar.timestamp.getTime(), {
         ...bar,
-        source: "polygon-history",
+        source: historicalStoreSource,
         providerContractId: null,
         outsideRth,
         partial: false,
-        transport: bridgeHealth?.transport ?? "client_portal",
+        transport: "tws",
         delayed: polygonBarsDelayed,
+        freshness: polygonBarsDelayed ? "delayed" : "live",
+        dataUpdatedAt: bar.timestamp,
       });
     });
     ibkrBars.forEach((bar) => {
       merged.set(bar.timestamp.getTime(), {
         ...bar,
         source: "ibkr-history",
+        transport: "tws",
+      });
+    });
+    bars = Array.from(merged.values())
+      .sort(
+        (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
+      )
+      .slice(-desiredBars);
+  } else if (bars.length) {
+    const merged = new Map<number, BrokerBarSnapshot>();
+    storedHistoricalBars.forEach((bar) => {
+      merged.set(bar.timestamp.getTime(), bar);
+    });
+    ibkrBars.forEach((bar) => {
+      merged.set(bar.timestamp.getTime(), {
+        ...bar,
+        source: "ibkr-history",
+        transport: "tws",
       });
     });
     bars = Array.from(merged.values())
@@ -3625,14 +6998,42 @@ async function getBarsImpl(input: GetBarsInput) {
       .slice(-desiredBars);
   }
 
-  return {
-    symbol: normalizeSymbol(input.symbol),
-    timeframe: input.timeframe,
+  let emptyReason = bars.length
+    ? null
+    : resolveBarsEmptyReason({
+        request: input,
+        attemptedBrokerHistory,
+        brokerHistoryError,
+      });
+  let studyFallback = false;
+
+  if (!bars.length && input.allowStudyFallback) {
+    const fallbackBar = await fetchOptionStudyFallbackBar({
+      request: input,
+      bridgeClient,
+      fallbackTransport: bridgeHealth?.transport ?? "tws",
+    }).catch(() => null);
+
+    if (fallbackBar) {
+      bars = [fallbackBar];
+      emptyReason = null;
+      studyFallback = true;
+    }
+  }
+
+  return decorateBarsResult({
+    request: input,
     bars,
-    transport: bars[0]?.transport ?? bridgeHealth?.transport ?? null,
-    delayed: bars.some((bar) => bar.delayed),
+    bridgeHealth,
     gapFilled,
-  };
+    emptyReason,
+    studyFallback,
+    historyProvider: polygonClient ? historicalStoreSource : null,
+    historyPageMetadata: buildPolygonHistoryPageMetadata(
+      polygonBarsPage,
+      buildBarsHistoryCursorSignature(input),
+    ),
+  });
 }
 
 type IbkrOptionChainInput = {
@@ -3641,24 +7042,563 @@ type IbkrOptionChainInput = {
   contractType?: "call" | "put";
   maxExpirations?: number;
   strikesAroundMoney?: number;
+  strikeCoverage?: OptionChainStrikeCoverage;
+  quoteHydration?: OptionChainQuoteHydration;
+  allowDelayedSnapshotHydration?: boolean;
 };
-type IbkrOptionChainContracts = Awaited<ReturnType<IbkrBridgeClient["getOptionChain"]>>;
+type IbkrOptionChainContracts = Awaited<
+  ReturnType<IbkrBridgeClient["getOptionChain"]>
+>;
 type IbkrOptionExpirationsInput = {
   underlying: string;
   maxExpirations?: number;
 };
-type IbkrOptionExpirationDates = Awaited<ReturnType<IbkrBridgeClient["getOptionExpirations"]>>;
+type IbkrOptionExpirationDates = Awaited<
+  ReturnType<IbkrBridgeClient["getOptionExpirations"]>
+>;
+type OptionChainStrikeCoverage = "fast" | "standard" | "full";
+type OptionChainQuoteHydration = "metadata" | "snapshot";
 
-const OPTION_CHAIN_CACHE_TTL_MS = 2 * 60_000;
-const OPTION_EXPIRATION_CACHE_TTL_MS = 30 * 60_000;
-const OPTION_EXPIRATION_STALE_TTL_MS = 6 * 60 * 60_000;
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw || !raw.trim()) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readNonNegativeIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw || !raw.trim()) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function readPositiveNumberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw || !raw.trim()) {
+    return fallback;
+  }
+
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw || !raw.trim()) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
+function readSymbolListEnv(
+  name: string,
+  fallback: readonly string[],
+): string[] {
+  const raw = process.env[name];
+  const symbols = (raw && raw.trim() ? raw.split(",") : fallback)
+    .map((symbol) => normalizeSymbol(symbol))
+    .filter(Boolean);
+
+  return [...new Set(symbols)];
+}
+
+function readStringListEnv(
+  name: string,
+  fallback: readonly string[],
+): string[] {
+  const raw = process.env[name];
+  const values = (raw && raw.trim() ? raw.split(",") : fallback)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  return [...new Set(values)];
+}
+
+function readFlowUniverseModeEnv(): FlowUniverseMode {
+  const normalized = process.env["OPTIONS_FLOW_UNIVERSE_MODE"]?.trim().toLowerCase();
+  return normalized === "watchlist" || normalized === "market" || normalized === "hybrid"
+    ? normalized
+    : "hybrid";
+}
+
+function readOptionChainStrikeCoverageEnv(
+  name: string,
+  fallback: OptionChainStrikeCoverage,
+): OptionChainStrikeCoverage {
+  const normalized = process.env[name]?.trim().toLowerCase();
+  return normalized === "fast" ||
+    normalized === "standard" ||
+    normalized === "full"
+    ? normalized
+    : fallback;
+}
+
+const OPTION_CHAIN_CACHE_TTL_MS = readPositiveIntegerEnv(
+  "OPTION_CHAIN_CACHE_TTL_MS",
+  2 * 60_000,
+);
+const OPTION_CHAIN_CACHE_STALE_TTL_MS = readPositiveIntegerEnv(
+  "OPTION_CHAIN_CACHE_STALE_TTL_MS",
+  15 * 60_000,
+);
+const OPTION_CHAIN_METADATA_CACHE_TTL_MS = readPositiveIntegerEnv(
+  "OPTION_CHAIN_METADATA_CACHE_TTL_MS",
+  15 * 60_000,
+);
+const OPTION_CHAIN_METADATA_STALE_TTL_MS = readPositiveIntegerEnv(
+  "OPTION_CHAIN_METADATA_STALE_TTL_MS",
+  2 * 60 * 60_000,
+);
+const OPTION_EXPIRATION_CACHE_TTL_MS = readPositiveIntegerEnv(
+  "OPTION_EXPIRATION_CACHE_TTL_MS",
+  2 * 60 * 60_000,
+);
+const OPTION_EXPIRATION_STALE_TTL_MS = readPositiveIntegerEnv(
+  "OPTION_EXPIRATION_STALE_TTL_MS",
+  24 * 60 * 60_000,
+);
+const OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS = readPositiveIntegerEnv(
+  "OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS",
+  24 * 60 * 60_000,
+);
+const OPTION_CONTRACT_STRIKE_EXACT_TOLERANCE = 0.000001;
+const OPTION_CONTRACT_STRIKE_MATCH_TOLERANCE = 0.01;
+const OPTION_UPSTREAM_BACKOFF_MS = readPositiveIntegerEnv(
+  "OPTION_UPSTREAM_BACKOFF_MS",
+  readPositiveIntegerEnv("IBKR_BRIDGE_OPTIONS_BACKOFF_MS", 60_000),
+);
 const OPTION_CHAIN_CACHE_MAX_ENTRIES = 128;
 const OPTION_CHAIN_STRIKES_AROUND_MONEY = 6;
+const OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY = 2;
+const OPTION_CHAIN_PUBLIC_MAX_STRIKES_AROUND_MONEY = 50;
+const OPTION_CHAIN_BATCH_CONCURRENCY = readPositiveIntegerEnv(
+  "OPTION_CHAIN_BATCH_CONCURRENCY",
+  3,
+);
+const OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS = readNonNegativeIntegerEnv(
+  "OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS",
+  0,
+);
+const OPTIONS_FLOW_SCANNER_ENABLED = readBooleanEnv(
+  "OPTIONS_FLOW_SCANNER_ENABLED",
+  true,
+);
+const OPTIONS_FLOW_SCANNER_INTERVAL_MS = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_INTERVAL_MS",
+  15_000,
+);
+const OPTIONS_FLOW_UNIVERSE_MODE = readFlowUniverseModeEnv();
+const OPTIONS_FLOW_UNIVERSE_SIZE = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_UNIVERSE_SIZE",
+  500,
+);
+const OPTIONS_FLOW_UNIVERSE_REFRESH_MS = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_UNIVERSE_REFRESH_MS",
+  15 * 60_000,
+);
+const OPTIONS_FLOW_UNIVERSE_MARKETS = readStringListEnv(
+  "OPTIONS_FLOW_UNIVERSE_MARKETS",
+  ["stocks", "etf"],
+);
+const OPTIONS_FLOW_UNIVERSE_MIN_PRICE = readPositiveNumberEnv(
+  "OPTIONS_FLOW_UNIVERSE_MIN_PRICE",
+  5,
+);
+const OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME = readPositiveNumberEnv(
+  "OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME",
+  25_000_000,
+);
+const OPTIONS_FLOW_SCANNER_ALWAYS_ON = readBooleanEnv(
+  "OPTIONS_FLOW_SCANNER_ALWAYS_ON",
+  true,
+);
+const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
+  2,
+);
+const OPTIONS_FLOW_SCANNER_CONCURRENCY = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_CONCURRENCY",
+  2,
+);
+const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_LIMIT",
+  120,
+);
+const OPTIONS_FLOW_SCANNER_LINE_BUDGET = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_LINE_BUDGET",
+  40,
+);
+const OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE = readOptionChainStrikeCoverageEnv(
+  "OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE",
+  "full",
+);
+const OPTIONS_FLOW_EXPIRATION_SCAN_COUNT = readNonNegativeIntegerEnv(
+  "OPTIONS_FLOW_EXPIRATION_SCAN_COUNT",
+  OPTIONS_FLOW_UNIVERSE_MODE === "watchlist" ? 0 : 4,
+);
+export type OptionsFlowRuntimeConfig = {
+  optionUpstreamBackoffMs: number;
+  optionChainBatchConcurrency: number;
+  scannerEnabled: boolean;
+  scannerIntervalMs: number;
+  universeMode: FlowUniverseMode;
+  universeSize: number;
+  universeRefreshMs: number;
+  universeMarkets: string[];
+  universeMinPrice: number;
+  universeMinDollarVolume: number;
+  scannerAlwaysOn: boolean;
+  scannerBatchSize: number;
+  scannerConcurrency: number;
+  scannerLimit: number;
+  scannerLineBudget: number;
+  scannerStrikeCoverage: OptionChainStrikeCoverage;
+  expirationScanCount: number;
+};
+
+export type OptionsFlowRuntimeConfigSnapshot = OptionsFlowRuntimeConfig & {
+  defaults: OptionsFlowRuntimeConfig;
+  overrides: Partial<OptionsFlowRuntimeConfig>;
+  sources: Record<keyof OptionsFlowRuntimeConfig, "default" | "override">;
+};
+
+const OPTIONS_FLOW_DEFAULT_CONFIG: OptionsFlowRuntimeConfig = {
+  optionUpstreamBackoffMs: OPTION_UPSTREAM_BACKOFF_MS,
+  optionChainBatchConcurrency: OPTION_CHAIN_BATCH_CONCURRENCY,
+  scannerEnabled: OPTIONS_FLOW_SCANNER_ENABLED,
+  scannerIntervalMs: OPTIONS_FLOW_SCANNER_INTERVAL_MS,
+  universeMode: OPTIONS_FLOW_UNIVERSE_MODE,
+  universeSize: OPTIONS_FLOW_UNIVERSE_SIZE,
+  universeRefreshMs: OPTIONS_FLOW_UNIVERSE_REFRESH_MS,
+  universeMarkets: OPTIONS_FLOW_UNIVERSE_MARKETS,
+  universeMinPrice: OPTIONS_FLOW_UNIVERSE_MIN_PRICE,
+  universeMinDollarVolume: OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME,
+  scannerAlwaysOn: OPTIONS_FLOW_SCANNER_ALWAYS_ON,
+  scannerBatchSize: OPTIONS_FLOW_SCANNER_BATCH_SIZE,
+  scannerConcurrency: OPTIONS_FLOW_SCANNER_CONCURRENCY,
+  scannerLimit: OPTIONS_FLOW_SCANNER_LIMIT,
+  scannerLineBudget: OPTIONS_FLOW_SCANNER_LINE_BUDGET,
+  scannerStrikeCoverage: OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE,
+  expirationScanCount: OPTIONS_FLOW_EXPIRATION_SCAN_COUNT,
+};
+
+let optionsFlowRuntimeOverrides: Partial<OptionsFlowRuntimeConfig> = {};
+
+function cloneOptionsFlowConfig(
+  config: OptionsFlowRuntimeConfig,
+): OptionsFlowRuntimeConfig {
+  return {
+    ...config,
+    universeMarkets: [...config.universeMarkets],
+  };
+}
+
+export function getOptionsFlowRuntimeConfig(): OptionsFlowRuntimeConfig {
+  return cloneOptionsFlowConfig({
+    ...OPTIONS_FLOW_DEFAULT_CONFIG,
+    ...optionsFlowRuntimeOverrides,
+    universeMarkets:
+      optionsFlowRuntimeOverrides.universeMarkets ??
+      OPTIONS_FLOW_DEFAULT_CONFIG.universeMarkets,
+  });
+}
+
+export function getOptionsFlowRuntimeConfigSnapshot(): OptionsFlowRuntimeConfigSnapshot {
+  const current = getOptionsFlowRuntimeConfig();
+  return {
+    ...current,
+    defaults: cloneOptionsFlowConfig(OPTIONS_FLOW_DEFAULT_CONFIG),
+    overrides: {
+      ...optionsFlowRuntimeOverrides,
+      universeMarkets: optionsFlowRuntimeOverrides.universeMarkets
+        ? [...optionsFlowRuntimeOverrides.universeMarkets]
+        : undefined,
+    },
+    sources: Object.fromEntries(
+      (Object.keys(OPTIONS_FLOW_DEFAULT_CONFIG) as Array<
+        keyof OptionsFlowRuntimeConfig
+      >).map((key) => [
+        key,
+        optionsFlowRuntimeOverrides[key] === undefined ? "default" : "override",
+      ]),
+    ) as OptionsFlowRuntimeConfigSnapshot["sources"],
+  };
+}
+
+export function setOptionsFlowRuntimeOverrides(
+  overrides: Partial<OptionsFlowRuntimeConfig>,
+): void {
+  const previous = getOptionsFlowRuntimeConfig();
+  optionsFlowRuntimeOverrides = {
+    ...optionsFlowRuntimeOverrides,
+    ...overrides,
+    universeMarkets: overrides.universeMarkets
+      ? [...overrides.universeMarkets]
+      : optionsFlowRuntimeOverrides.universeMarkets,
+  };
+  const next = getOptionsFlowRuntimeConfig();
+  optionsFlowScanner.setMaxConcurrency(next.scannerConcurrency);
+  flowUniverseManager.updateConfig({
+    mode: next.universeMode,
+    targetSize:
+      next.universeMode === "watchlist" ? BUILT_IN_SYMBOLS.length : next.universeSize,
+    refreshMs: next.universeRefreshMs,
+    markets: next.universeMarkets,
+    minPrice: next.universeMinPrice,
+    minDollarVolume: next.universeMinDollarVolume,
+  });
+  if (optionsFlowScannerStarted && JSON.stringify(previous) !== JSON.stringify(next)) {
+    stopOptionsFlowScanner();
+    startOptionsFlowScanner();
+  }
+}
+
+export function resetOptionsFlowRuntimeOverrides(
+  keys?: Array<keyof OptionsFlowRuntimeConfig>,
+): void {
+  if (!keys || keys.length === 0) {
+    optionsFlowRuntimeOverrides = {};
+  } else {
+    keys.forEach((key) => {
+      delete optionsFlowRuntimeOverrides[key];
+    });
+  }
+  const next = getOptionsFlowRuntimeConfig();
+  optionsFlowScanner.setMaxConcurrency(next.scannerConcurrency);
+  flowUniverseManager.updateConfig({
+    mode: next.universeMode,
+    targetSize:
+      next.universeMode === "watchlist" ? BUILT_IN_SYMBOLS.length : next.universeSize,
+    refreshMs: next.universeRefreshMs,
+    markets: next.universeMarkets,
+    minPrice: next.universeMinPrice,
+    minDollarVolume: next.universeMinDollarVolume,
+  });
+  if (optionsFlowScannerStarted) {
+    stopOptionsFlowScanner();
+    startOptionsFlowScanner();
+  }
+}
+const initialOptionsFlowConfig = getOptionsFlowRuntimeConfig();
+const flowUniverseManager = createFlowUniverseManager({
+  db,
+  mode: initialOptionsFlowConfig.universeMode,
+  targetSize:
+    initialOptionsFlowConfig.universeMode === "watchlist"
+      ? BUILT_IN_SYMBOLS.length
+      : initialOptionsFlowConfig.universeSize,
+  refreshMs: initialOptionsFlowConfig.universeRefreshMs,
+  markets: initialOptionsFlowConfig.universeMarkets,
+  minPrice: initialOptionsFlowConfig.universeMinPrice,
+  minDollarVolume: initialOptionsFlowConfig.universeMinDollarVolume,
+  fallbackSymbols: BUILT_IN_SYMBOLS,
+  fetchLiquiditySnapshots: async (symbols) => {
+    if (!getPolygonRuntimeConfig()) {
+      return [];
+    }
+    const snapshots = await getPolygonClient().getQuoteSnapshots([...symbols]);
+    return snapshots.map((snapshot) => ({
+      symbol: snapshot.symbol,
+      price: snapshot.price,
+      volume: snapshot.volume,
+    }));
+  },
+});
+const optionsFlowScanner = createOptionsFlowScanner<unknown>({
+  normalizeSymbol,
+  maxConcurrency: initialOptionsFlowConfig.scannerConcurrency,
+  snapshotTtlMs: FLOW_EVENTS_CACHE_TTL_MS,
+  snapshotStaleTtlMs: FLOW_EVENTS_CACHE_STALE_TTL_MS,
+  preferredTransport: "tws",
+  allowFallbackTransport: false,
+  getTransport: async () => {
+    if (isBridgeWorkBackedOff("health") || isBridgeWorkBackedOff("options")) {
+      return null;
+    }
+    const health = await runBridgeWork("health", () => getIbkrClient().getHealth())
+      .catch(() => null);
+    return health
+      ? {
+          transport: health.transport,
+          connected: health.connected,
+          configured: health.configured,
+          authenticated: health.authenticated,
+          liveMarketDataAvailable: health.liveMarketDataAvailable,
+          lastError: health.lastError,
+        }
+      : null;
+  },
+  fetchSymbol: ({ symbol, limit, unusualThreshold }) =>
+    listFlowEventsUncached({
+      underlying: symbol,
+      limit,
+      filters: normalizeFlowEventsFilters({ scope: "all" }),
+      unusualThreshold,
+      allowPolygonFallback: false,
+    }),
+  onBatch: (symbols) => {
+    flowUniverseManager.noteBatch(symbols);
+  },
+  onResult: ({ symbol, result, failed, error }) =>
+    flowUniverseManager.recordObservation({
+      symbol,
+      events: (result?.events ?? []) as Array<{
+        premium?: number;
+        unusualScore?: number;
+        isUnusual?: boolean;
+      }>,
+      failed,
+      reason: error ?? result?.source?.errorMessage ?? result?.source?.status ?? null,
+    }),
+  onError: (error, context) => {
+    logger.warn({ err: error, ...context }, "Options flow scanner error");
+  },
+});
+
+let optionsFlowScannerStarted = false;
+
+function getFlowScannerPinnedSymbols(): string[] {
+  const configuredSymbols = readSymbolListEnv(
+    "OPTIONS_FLOW_SCANNER_SYMBOLS",
+    [],
+  );
+  return configuredSymbols.length ? configuredSymbols : BUILT_IN_SYMBOLS;
+}
+
+export function getOptionsFlowScannerLaneResolution() {
+  const { builtInSymbols, flowUniverseSymbols } = getOptionsFlowLaneSourceSymbols();
+  return resolveIbkrLaneSymbols("flow-scanner", {
+    "built-in": builtInSymbols,
+    "flow-universe": flowUniverseSymbols,
+  });
+}
+
+export function getOptionsFlowLaneSourceSymbols(): {
+  builtInSymbols: string[];
+  flowUniverseSymbols: string[];
+} {
+  const config = getOptionsFlowRuntimeConfig();
+  const builtInSymbols = getFlowScannerPinnedSymbols();
+  const flowUniverseSymbols =
+    config.universeMode === "watchlist"
+      ? builtInSymbols
+      : flowUniverseManager.getSymbols({ pinnedSymbols: builtInSymbols });
+  return { builtInSymbols, flowUniverseSymbols };
+}
+
+export function startOptionsFlowScanner(): void {
+  const config = getOptionsFlowRuntimeConfig();
+  if (optionsFlowScannerStarted || !config.scannerEnabled) {
+    return;
+  }
+
+  const resolveScannerSymbols = () =>
+    getOptionsFlowScannerLaneResolution().admittedSymbols;
+  const initialSymbols = resolveScannerSymbols();
+  if (!initialSymbols.length) {
+    return;
+  }
+
+  optionsFlowScanner.setMaxConcurrency(config.scannerConcurrency);
+  optionsFlowScanner.startRotation({
+    symbols: resolveScannerSymbols,
+    request: { limit: Math.min(config.scannerLimit, config.scannerLineBudget) },
+    intervalMs: () =>
+      getFlowScannerIntervalMs({
+        baseIntervalMs: getOptionsFlowRuntimeConfig().scannerIntervalMs,
+        alwaysOn: getOptionsFlowRuntimeConfig().scannerAlwaysOn,
+      }),
+    batchSize: () =>
+      Math.max(
+        1,
+        Math.min(
+          getOptionsFlowRuntimeConfig().scannerBatchSize,
+          getOptionsFlowRuntimeConfig().scannerLineBudget,
+        ),
+      ),
+  });
+  optionsFlowScannerStarted = true;
+  logger.info(
+    {
+      symbols: initialSymbols.length,
+      batchSize: config.scannerBatchSize,
+      concurrency: config.scannerConcurrency,
+      lineBudget: config.scannerLineBudget,
+      strikeCoverage: config.scannerStrikeCoverage,
+      intervalMs: config.scannerIntervalMs,
+      universeMode: config.universeMode,
+      universeTargetSize: config.universeSize,
+      preferredTransport: "tws",
+    },
+    "Started options flow scanner",
+  );
+}
+
+export function stopOptionsFlowScanner(): void {
+  optionsFlowScanner.stop();
+  optionsFlowScannerStarted = false;
+}
+
+export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
+  return flowUniverseManager.getCoverage();
+}
+
+export function getOptionsFlowUniverse() {
+  const sources = getOptionsFlowLaneSourceSymbols();
+  return {
+    coverage: getOptionsFlowUniverseCoverage(),
+    symbols: sources.flowUniverseSymbols,
+    sources,
+  };
+}
+
+export async function __runOptionsFlowScannerOnceForTests(
+  symbols: readonly string[],
+  input: Partial<OptionsFlowScannerRequest> = {},
+) {
+  return optionsFlowScanner.runOnce(symbols, {
+    limit: Math.max(
+      1,
+      Math.min(
+        input.limit ?? getOptionsFlowRuntimeConfig().scannerLimit,
+        getOptionsFlowRuntimeConfig().scannerLineBudget,
+      ),
+    ),
+    unusualThreshold: input.unusualThreshold,
+  });
+}
+
 const optionChainCache = new Map<
   string,
-  { value: IbkrOptionChainContracts; expiresAt: number }
+  {
+    input: IbkrOptionChainInput;
+    value: IbkrOptionChainContracts;
+    centerPrice: number | null;
+    cachedAt: number;
+    expiresAt: number;
+    staleExpiresAt: number;
+  }
 >();
-const optionChainInFlight = new Map<string, Promise<IbkrOptionChainContracts>>();
+const optionChainInFlight = new Map<
+  string,
+  Promise<IbkrOptionChainContracts>
+>();
 const optionExpirationCache = new Map<
   string,
   {
@@ -3667,17 +7607,57 @@ const optionExpirationCache = new Map<
     staleExpiresAt: number;
   }
 >();
-const optionExpirationInFlight = new Map<string, Promise<IbkrOptionExpirationDates>>();
+const optionExpirationInFlight = new Map<
+  string,
+  Promise<IbkrOptionExpirationDates>
+>();
+const optionContractResolutionCache = new Map<
+  string,
+  {
+    value: ResolveOptionContractResult;
+    expiresAt: number;
+  }
+>();
+const optionUpstreamBackoffUntilByKey = new Map<string, number>();
+
+export function __resetOptionChainCachesForTests(input?: {
+  resetFlowScanner?: boolean;
+}): void {
+  optionChainCache.clear();
+  optionChainInFlight.clear();
+  optionExpirationCache.clear();
+  optionExpirationInFlight.clear();
+  optionContractResolutionCache.clear();
+  optionUpstreamBackoffUntilByKey.clear();
+  barsCache.clear();
+  barsInFlight.clear();
+  chartHistoryCursors.clear();
+  Object.keys(barsHydrationCounters).forEach((key) => {
+    barsHydrationCounters[key as keyof typeof barsHydrationCounters] = 0;
+  });
+  flowEventsCache.clear();
+  flowEventsInFlight.clear();
+  if (input?.resetFlowScanner !== false) {
+    optionsFlowScanner.reset();
+    optionsFlowScannerStarted = false;
+    flowUniverseManager.reset();
+  }
+}
 
 function pruneOptionChainCache(now: number): void {
   for (const [key, entry] of optionChainCache) {
-    if (entry.expiresAt <= now) {
+    if (entry.staleExpiresAt <= now) {
       optionChainCache.delete(key);
     }
   }
   for (const [key, entry] of optionExpirationCache) {
     if (entry.staleExpiresAt <= now) {
       optionExpirationCache.delete(key);
+    }
+  }
+  for (const [key, entry] of optionContractResolutionCache) {
+    if (entry.expiresAt <= now) {
+      optionContractResolutionCache.delete(key);
     }
   }
 
@@ -3713,15 +7693,672 @@ function buildOptionChainCacheKey(input: IbkrOptionChainInput): string {
       : null,
     contractType: input.contractType ?? null,
     maxExpirations: input.maxExpirations ?? null,
+    strikeCoverage: input.strikeCoverage ?? null,
     strikesAroundMoney: input.strikesAroundMoney ?? null,
+    quoteHydration: input.quoteHydration ?? "snapshot",
+    delayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
   });
 }
 
-function buildOptionExpirationCacheKey(input: IbkrOptionExpirationsInput): string {
+function buildOptionChainScopeKey(input: IbkrOptionChainInput): string {
+  return JSON.stringify({
+    underlying: normalizeSymbol(input.underlying),
+    expirationDate: input.expirationDate
+      ? input.expirationDate.toISOString().slice(0, 10)
+      : null,
+    contractType: input.contractType ?? null,
+    maxExpirations: input.maxExpirations ?? null,
+    quoteHydration: input.quoteHydration ?? "snapshot",
+    delayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
+  });
+}
+
+function buildOptionExpirationCacheKey(
+  input: IbkrOptionExpirationsInput,
+): string {
   return JSON.stringify({
     underlying: normalizeSymbol(input.underlying),
     maxExpirations: input.maxExpirations ?? null,
   });
+}
+
+function buildOptionContractResolutionCacheKey(input: {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+}): string {
+  return JSON.stringify({
+    underlying: normalizeSymbol(input.underlying),
+    expirationDate: input.expirationDate.toISOString().slice(0, 10),
+    strike: Number(input.strike),
+    right: input.right,
+  });
+}
+
+function findResolvedOptionContractMatch(
+  contracts: IbkrOptionChainContracts,
+  input: {
+    expirationKey: string;
+    right: "call" | "put";
+    strike: number;
+  },
+): IbkrOptionChainContracts[number] | null {
+  let nearest: IbkrOptionChainContracts[number] | null = null;
+  let nearestDistance = Infinity;
+
+  for (const candidate of contracts) {
+    const contract = candidate.contract;
+    if (
+      contract.right !== input.right ||
+      contract.expirationDate.toISOString().slice(0, 10) !== input.expirationKey
+    ) {
+      continue;
+    }
+
+    const distance = Math.abs(contract.strike - input.strike);
+    if (distance <= OPTION_CONTRACT_STRIKE_EXACT_TOLERANCE) {
+      return candidate;
+    }
+    if (
+      distance <= OPTION_CONTRACT_STRIKE_MATCH_TOLERANCE &&
+      distance < nearestDistance
+    ) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest;
+}
+
+function buildPolygonOptionTicker(input: {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+}): string | null {
+  const underlying = normalizeSymbol(input.underlying).replace(/[^A-Z0-9]/g, "");
+  if (!underlying || !Number.isFinite(input.strike) || input.strike <= 0) {
+    return null;
+  }
+
+  const expiration = input.expirationDate;
+  if (Number.isNaN(expiration.getTime())) {
+    return null;
+  }
+
+  const yy = String(expiration.getUTCFullYear()).slice(-2);
+  const mm = String(expiration.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(expiration.getUTCDate()).padStart(2, "0");
+  const side = input.right === "put" ? "P" : "C";
+  const strike = String(Math.round(input.strike * 1000)).padStart(8, "0");
+  return `O:${underlying}${yy}${mm}${dd}${side}${strike}`;
+}
+
+function normalizePolygonOptionTicker(value: unknown): string | null {
+  const normalized =
+    typeof value === "string"
+      ? value.trim().toUpperCase().replace(/\s+/g, "")
+      : "";
+  if (!normalized) {
+    return null;
+  }
+
+  const ticker = normalized.startsWith("O:") ? normalized : `O:${normalized}`;
+  return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : null;
+}
+
+function mapPolygonOptionBarsToBrokerBars(input: {
+  bars: PolygonBarSnapshot[];
+  providerContractId: string | null;
+  delayed: boolean;
+  outsideRth: boolean;
+}): BrokerBarSnapshot[] {
+  return input.bars.map((bar) => ({
+    timestamp: bar.timestamp,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    volume: bar.volume,
+    source: "polygon-option-aggregates",
+    providerContractId: input.providerContractId,
+    outsideRth: input.outsideRth,
+    partial: false,
+    transport: "tws",
+    delayed: input.delayed,
+    freshness: input.delayed ? "delayed" : "live",
+    marketDataMode: input.delayed ? "delayed" : "live",
+    dataUpdatedAt: bar.timestamp,
+    ageMs: getAgeMs(bar.timestamp),
+  }));
+}
+
+function mergePolygonOptionSnapshotIntoIbkrContract(
+  contract: IbkrOptionChainContracts[number],
+  snapshot: PolygonOptionChainContract,
+  delayed: boolean,
+): IbkrOptionChainContracts[number] {
+  const updatedAt = snapshot.updatedAt;
+  return {
+    ...contract,
+    bid: snapshot.bid,
+    ask: snapshot.ask,
+    last: snapshot.last,
+    mark: snapshot.mark,
+    impliedVolatility: snapshot.impliedVolatility,
+    delta: snapshot.delta,
+    gamma: snapshot.gamma,
+    theta: snapshot.theta,
+    vega: snapshot.vega,
+    openInterest: snapshot.openInterest,
+    volume: snapshot.volume,
+    updatedAt,
+    quoteFreshness: delayed ? "delayed" : "live",
+    marketDataMode: delayed ? "delayed" : "live",
+    quoteUpdatedAt: updatedAt,
+    dataUpdatedAt: updatedAt,
+    ageMs: getAgeMs(updatedAt),
+  };
+}
+
+async function hydrateOptionChainWithPolygonSnapshots(input: {
+  request: IbkrOptionChainInput;
+  contracts: IbkrOptionChainContracts;
+}): Promise<IbkrOptionChainContracts> {
+  const polygonConfig = getPolygonRuntimeConfig();
+  if (!polygonConfig || input.contracts.length === 0) {
+    return input.contracts;
+  }
+
+  try {
+    const snapshots = await getPolygonClient().getOptionChain({
+      underlying: input.request.underlying,
+      expirationDate: input.request.expirationDate,
+      contractType: input.request.contractType,
+    });
+    const byTicker = new Map(
+      snapshots.map((snapshot) => [
+        normalizePolygonOptionTicker(snapshot.contract.ticker),
+        snapshot,
+      ]),
+    );
+    const delayed = polygonConfig.baseUrl.includes("massive.com");
+    return input.contracts.map((contract) => {
+      const polygonTicker = buildPolygonOptionTicker({
+        underlying: contract.contract.underlying,
+        expirationDate: contract.contract.expirationDate,
+        strike: contract.contract.strike,
+        right: contract.contract.right,
+      });
+      const snapshot = polygonTicker ? byTicker.get(polygonTicker) : null;
+      return snapshot
+        ? mergePolygonOptionSnapshotIntoIbkrContract(contract, snapshot, delayed)
+        : contract;
+    });
+  } catch (error) {
+    logger.debug(
+      { err: error, underlying: input.request.underlying },
+      "Polygon option-chain snapshot hydration failed",
+    );
+    return input.contracts;
+  }
+}
+
+function isIbkrOptionHistoryFeedIssue(input: {
+  barsResult: GetBarsResult | null;
+  error: unknown;
+}): boolean {
+  if (input.error) {
+    return true;
+  }
+
+  const emptyReason = input.barsResult?.emptyReason ?? null;
+  return emptyReason === "broker-history-error";
+}
+
+function normalizePublicOptionChainStrikeWindow(
+  value: number | undefined,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return OPTION_CHAIN_STRIKES_AROUND_MONEY;
+  }
+
+  return Math.min(
+    OPTION_CHAIN_PUBLIC_MAX_STRIKES_AROUND_MONEY,
+    Math.max(1, Math.floor(value)),
+  );
+}
+
+function normalizePublicOptionChainStrikeSelection(input: {
+  strikeCoverage?: OptionChainStrikeCoverage;
+  strikesAroundMoney?: number;
+}): {
+  strikeCoverage?: OptionChainStrikeCoverage;
+  strikesAroundMoney?: number;
+} {
+  if (input.strikeCoverage === "full") {
+    return {
+      strikeCoverage: "full",
+      strikesAroundMoney: undefined,
+    };
+  }
+
+  if (typeof input.strikesAroundMoney === "number") {
+    return {
+      strikeCoverage: input.strikeCoverage,
+      strikesAroundMoney: normalizePublicOptionChainStrikeWindow(
+        input.strikesAroundMoney,
+      ),
+    };
+  }
+
+  if (input.strikeCoverage === "fast") {
+    return {
+      strikeCoverage: "fast",
+      strikesAroundMoney: OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY,
+    };
+  }
+
+  return {
+    strikeCoverage: input.strikeCoverage ?? "standard",
+    strikesAroundMoney: OPTION_CHAIN_STRIKES_AROUND_MONEY,
+  };
+}
+
+function normalizePublicOptionChainQuoteHydration(
+  value: OptionChainQuoteHydration | undefined,
+): OptionChainQuoteHydration {
+  return value === "metadata" ? "metadata" : "snapshot";
+}
+
+function normalizeIbkrOptionChainInput(
+  input: IbkrOptionChainInput,
+): IbkrOptionChainInput {
+  return {
+    ...input,
+    ...normalizePublicOptionChainStrikeSelection(input),
+    quoteHydration: normalizePublicOptionChainQuoteHydration(
+      input.quoteHydration,
+    ),
+    allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
+  };
+}
+
+function resolveOptionChainCacheWindows(input: IbkrOptionChainInput): {
+  ttlMs: number;
+  staleTtlMs: number;
+} {
+  if (input.quoteHydration === "metadata") {
+    return {
+      ttlMs: OPTION_CHAIN_METADATA_CACHE_TTL_MS,
+      staleTtlMs: Math.max(
+        OPTION_CHAIN_METADATA_CACHE_TTL_MS,
+        OPTION_CHAIN_METADATA_STALE_TTL_MS,
+      ),
+    };
+  }
+
+  return {
+    ttlMs: OPTION_CHAIN_CACHE_TTL_MS,
+    staleTtlMs: Math.max(
+      OPTION_CHAIN_CACHE_TTL_MS,
+      OPTION_CHAIN_CACHE_STALE_TTL_MS,
+    ),
+  };
+}
+
+function getOptionChainStrikeWindow(input: IbkrOptionChainInput): number {
+  if (input.strikeCoverage === "full") {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return (
+    normalizePublicOptionChainStrikeSelection(input).strikesAroundMoney ??
+    OPTION_CHAIN_STRIKES_AROUND_MONEY
+  );
+}
+
+function isOptionChainCacheSuperset(
+  cachedInput: IbkrOptionChainInput,
+  requestedInput: IbkrOptionChainInput,
+): boolean {
+  if (
+    buildOptionChainScopeKey(cachedInput) !==
+    buildOptionChainScopeKey(requestedInput)
+  ) {
+    return false;
+  }
+
+  if (requestedInput.strikeCoverage === "full") {
+    return cachedInput.strikeCoverage === "full";
+  }
+
+  return (
+    cachedInput.strikeCoverage === "full" ||
+    getOptionChainStrikeWindow(cachedInput) >=
+      getOptionChainStrikeWindow(requestedInput)
+  );
+}
+
+function readOptionChainUnderlyingPrice(
+  contracts: IbkrOptionChainContracts,
+): number | null {
+  const prices = contracts
+    .map((contract) =>
+      typeof contract.underlyingPrice === "number" &&
+      Number.isFinite(contract.underlyingPrice) &&
+      contract.underlyingPrice > 0
+        ? contract.underlyingPrice
+        : null,
+    )
+    .filter((price): price is number => price !== null);
+
+  if (!prices.length) {
+    return null;
+  }
+
+  return prices[Math.floor((prices.length - 1) / 2)];
+}
+
+function deriveOptionChainQuotedCenterStrike(
+  contracts: IbkrOptionChainContracts,
+): number | null {
+  const byStrike = new Map<
+    number,
+    { call: number | null; put: number | null }
+  >();
+
+  contracts.forEach((contract) => {
+    const strike = contract.contract.strike;
+    if (!Number.isFinite(strike)) {
+      return;
+    }
+    const entry = byStrike.get(strike) ?? { call: null, put: null };
+    const mark =
+      contract.mark != null && contract.mark > 0
+        ? contract.mark
+        : contract.last != null && contract.last > 0
+          ? contract.last
+          : contract.bid != null &&
+              contract.ask != null &&
+              contract.bid > 0 &&
+              contract.ask > 0
+            ? (contract.bid + contract.ask) / 2
+            : null;
+    if (contract.contract.right === "call") {
+      entry.call = mark;
+    } else {
+      entry.put = mark;
+    }
+    byStrike.set(strike, entry);
+  });
+
+  const quotedPairs = Array.from(byStrike.entries())
+    .map(([strike, entry]) =>
+      entry.call !== null && entry.put !== null
+        ? { strike, score: Math.abs(entry.call - entry.put) }
+        : null,
+    )
+    .filter((entry): entry is { strike: number; score: number } =>
+      Boolean(entry),
+    )
+    .sort(
+      (left, right) => left.score - right.score || left.strike - right.strike,
+    );
+
+  if (quotedPairs[0]) {
+    return quotedPairs[0].strike;
+  }
+
+  return null;
+}
+
+function deriveOptionChainMedianStrike(
+  contracts: IbkrOptionChainContracts,
+): number | null {
+  const strikes = Array.from(
+    new Set(
+      contracts
+        .map((contract) => contract.contract.strike)
+        .filter((strike) => Number.isFinite(strike)),
+    ),
+  ).sort((left, right) => left - right);
+  return strikes.length ? strikes[Math.floor((strikes.length - 1) / 2)] : null;
+}
+
+function deriveOptionChainCenterPrice(
+  contracts: IbkrOptionChainContracts,
+): number | null {
+  return (
+    readOptionChainUnderlyingPrice(contracts) ??
+    deriveOptionChainQuotedCenterStrike(contracts) ??
+    deriveOptionChainMedianStrike(contracts)
+  );
+}
+
+function deriveOptionChainCenterStrike(
+  contracts: IbkrOptionChainContracts,
+  preferredCenterPrice?: number | null,
+): number | null {
+  if (
+    typeof preferredCenterPrice === "number" &&
+    Number.isFinite(preferredCenterPrice) &&
+    preferredCenterPrice > 0
+  ) {
+    return preferredCenterPrice;
+  }
+
+  const quotedCenterStrike = deriveOptionChainQuotedCenterStrike(contracts);
+  if (quotedCenterStrike !== null) {
+    return quotedCenterStrike;
+  }
+
+  return deriveOptionChainMedianStrike(contracts);
+}
+
+function sliceOptionChainContractsForRequest(
+  contracts: IbkrOptionChainContracts,
+  input: IbkrOptionChainInput,
+  options: {
+    centerPrice?: number | null;
+  } = {},
+): IbkrOptionChainContracts {
+  let filtered = contracts.filter((contract) => {
+    if (
+      input.expirationDate &&
+      contract.contract.expirationDate.toISOString().slice(0, 10) !==
+        input.expirationDate.toISOString().slice(0, 10)
+    ) {
+      return false;
+    }
+
+    return (
+      !input.contractType || contract.contract.right === input.contractType
+    );
+  });
+
+  if (input.strikeCoverage !== "full") {
+    const strikesAroundMoney = getOptionChainStrikeWindow(input);
+    if (Number.isFinite(strikesAroundMoney)) {
+      const strikes = Array.from(
+        new Set(
+          filtered
+            .map((contract) => contract.contract.strike)
+            .filter((strike) => Number.isFinite(strike)),
+        ),
+      ).sort((left, right) => left - right);
+      const maxStrikeCount = strikesAroundMoney * 2 + 1;
+
+      if (strikes.length > maxStrikeCount) {
+        const centerStrike = deriveOptionChainCenterStrike(
+          filtered,
+          options.centerPrice,
+        );
+        const closestIndex =
+          centerStrike === null
+            ? Math.floor((strikes.length - 1) / 2)
+            : strikes.reduce(
+                (bestIndex, strike, index) =>
+                  Math.abs(strike - centerStrike) <
+                  Math.abs(strikes[bestIndex] - centerStrike)
+                    ? index
+                    : bestIndex,
+                0,
+              );
+        const start = Math.max(0, closestIndex - strikesAroundMoney);
+        const end = Math.min(
+          strikes.length,
+          closestIndex + strikesAroundMoney + 1,
+        );
+        const allowedStrikes = new Set(strikes.slice(start, end));
+        filtered = filtered.filter((contract) =>
+          allowedStrikes.has(contract.contract.strike),
+        );
+      }
+    }
+  }
+
+  return filtered.sort(
+    (left, right) =>
+      left.contract.expirationDate.getTime() -
+        right.contract.expirationDate.getTime() ||
+      left.contract.strike - right.contract.strike ||
+      left.contract.right.localeCompare(right.contract.right),
+  );
+}
+
+function isUnderlyingResolutionError(error: unknown): boolean {
+  if (!(error instanceof HttpError)) {
+    return false;
+  }
+
+  if (error.code === "ibkr_contract_not_found") {
+    return true;
+  }
+
+  if (error.code !== "upstream_http_error") {
+    return false;
+  }
+
+  const data = error.data;
+  return Boolean(
+    data &&
+      typeof data === "object" &&
+      "code" in data &&
+      (data as { code?: unknown }).code === "ibkr_contract_not_found",
+  );
+}
+
+function isTransientOptionUpstreamError(error: unknown): boolean {
+  if (!(error instanceof HttpError)) {
+    return false;
+  }
+
+  if (
+    error.code === "ibkr_bridge_request_timeout" ||
+    error.code === "ibkr_bridge_health_timeout" ||
+    error.code === "upstream_request_failed"
+  ) {
+    return true;
+  }
+
+  if (error.code !== "upstream_http_error") {
+    return false;
+  }
+
+  return error.statusCode >= 500 || error.statusCode === 429;
+}
+
+function getOptionBackoffKey(kind: "chain" | "expiration", key: string): string {
+  return `${kind}:${key}`;
+}
+
+function isOptionUpstreamBackedOff(kind: "chain" | "expiration", key: string): boolean {
+  const until = optionUpstreamBackoffUntilByKey.get(getOptionBackoffKey(kind, key));
+  if (!until) {
+    return false;
+  }
+  if (until <= Date.now()) {
+    optionUpstreamBackoffUntilByKey.delete(getOptionBackoffKey(kind, key));
+    return false;
+  }
+  return true;
+}
+
+function recordOptionUpstreamBackoff(
+  kind: "chain" | "expiration",
+  key: string,
+  error: unknown,
+): void {
+  if (!isTransientOptionUpstreamError(error)) {
+    return;
+  }
+
+  optionUpstreamBackoffUntilByKey.set(
+    getOptionBackoffKey(kind, key),
+    Date.now() + getOptionsFlowRuntimeConfig().optionUpstreamBackoffMs,
+  );
+}
+
+function recordOptionDegradedEvent(input: {
+  kind: "chain" | "expiration";
+  underlying: string;
+  reason: string;
+  message: string;
+  expirationDate?: Date | null;
+  detail?: string | null;
+}): void {
+  void recordServerDiagnosticEvent({
+    subsystem: "market-data",
+    category: "options",
+    code: input.reason,
+    severity: "warning",
+    message: input.message,
+    dimensions: {
+      kind: input.kind,
+      underlying: input.underlying,
+      expirationDate: input.expirationDate?.toISOString().slice(0, 10) ?? null,
+    },
+    raw: {
+      detail: input.detail ?? null,
+    },
+  }).catch(() => {});
+}
+
+function formatOptionChainBatchError(error: unknown): string {
+  if (error instanceof HttpError) {
+    return error.message || error.detail || "Option chain request failed.";
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Option chain request failed.";
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(values.length, Math.max(1, concurrency));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(values[index], index);
+      }
+    }),
+  );
+
+  return results;
 }
 
 async function getCachedIbkrOptionChain(
@@ -3731,13 +8368,99 @@ async function getCachedIbkrOptionChain(
   return contracts;
 }
 
+function seedOptionChainCache(input: {
+  key: string;
+  cacheInput: IbkrOptionChainInput;
+  contracts: IbkrOptionChainContracts;
+  cachedAt: number;
+  expiresAt: number;
+  staleExpiresAt: number;
+}): void {
+  if (!input.contracts.length) {
+    return;
+  }
+
+  optionChainCache.set(input.key, {
+    input: input.cacheInput,
+    value: input.contracts,
+    centerPrice: deriveOptionChainCenterPrice(input.contracts),
+    cachedAt: input.cachedAt,
+    expiresAt: input.expiresAt,
+    staleExpiresAt: input.staleExpiresAt,
+  });
+  pruneOptionChainCache(Date.now());
+}
+
+async function loadDurableOptionChainForRequest(input: {
+  key: string;
+  normalizedInput: IbkrOptionChainInput;
+  requestedAt: number;
+}): Promise<{
+  contracts: IbkrOptionChainContracts;
+  debug: RequestDebugMetadata;
+} | null> {
+  if (input.normalizedInput.quoteHydration !== "metadata") {
+    return null;
+  }
+
+  const cacheWindows = resolveOptionChainCacheWindows(input.normalizedInput);
+  const durable = await loadDurableOptionChain({
+    underlying: input.normalizedInput.underlying,
+    expirationDate: input.normalizedInput.expirationDate,
+    contractType: input.normalizedInput.contractType,
+    maxExpirations: input.normalizedInput.maxExpirations,
+    maxAgeMs: cacheWindows.ttlMs,
+    staleMaxAgeMs: cacheWindows.staleTtlMs,
+  });
+  if (!durable?.value.length) {
+    return null;
+  }
+
+  const centerPrice = deriveOptionChainCenterPrice(durable.value);
+  const contracts = sliceOptionChainContractsForRequest(
+    durable.value,
+    input.normalizedInput,
+    { centerPrice },
+  );
+  if (!contracts.length) {
+    return null;
+  }
+
+  const now = Date.now();
+  const cachedAt =
+    typeof durable.ageMs === "number" && Number.isFinite(durable.ageMs)
+      ? Math.max(0, now - durable.ageMs)
+      : now;
+  seedOptionChainCache({
+    key: input.key,
+    cacheInput: input.normalizedInput,
+    contracts,
+    cachedAt,
+    expiresAt: cachedAt + cacheWindows.ttlMs,
+    staleExpiresAt: cachedAt + cacheWindows.staleTtlMs,
+  });
+
+  return {
+    contracts,
+    debug: {
+      cacheStatus: "hit",
+      totalMs: Math.max(0, Date.now() - input.requestedAt),
+      upstreamMs: null,
+      stale: durable.freshness === "stale",
+      ageMs: durable.ageMs,
+      reason: "durable_option_chain",
+    },
+  };
+}
+
 async function getCachedIbkrOptionChainWithDebug(
   input: IbkrOptionChainInput,
 ): Promise<{
   contracts: IbkrOptionChainContracts;
   debug: RequestDebugMetadata;
 }> {
-  const key = buildOptionChainCacheKey(input);
+  const normalizedInput = normalizeIbkrOptionChainInput(input);
+  const key = buildOptionChainCacheKey(normalizedInput);
   const requestedAt = Date.now();
   const cached = optionChainCache.get(key);
 
@@ -3748,44 +8471,212 @@ async function getCachedIbkrOptionChainWithDebug(
         cacheStatus: "hit",
         totalMs: Math.max(0, Date.now() - requestedAt),
         upstreamMs: null,
+        ageMs: Number.isFinite(cached.cachedAt)
+          ? Math.max(0, requestedAt - cached.cachedAt)
+          : null,
       },
     };
-  }
-  if (cached) {
-    optionChainCache.delete(key);
   }
 
   const inFlight = optionChainInFlight.get(key);
-  if (inFlight) {
-    const contracts = await inFlight;
+  if (cached && cached.staleExpiresAt > requestedAt) {
+    if (!inFlight) {
+      refreshOptionChainCache(key, normalizedInput).catch(() => {});
+    }
     return {
-      contracts,
+      contracts: cached.value,
       debug: {
-        cacheStatus: "inflight",
+        cacheStatus: "hit",
         totalMs: Math.max(0, Date.now() - requestedAt),
         upstreamMs: null,
+        stale: true,
+        ageMs: Number.isFinite(cached.cachedAt)
+          ? Math.max(0, requestedAt - cached.cachedAt)
+          : null,
+      },
+    };
+  }
+  if (cached && isOptionUpstreamBackedOff("chain", key)) {
+    return {
+      contracts: sliceOptionChainContractsForRequest(
+        cached.value,
+        normalizedInput,
+        { centerPrice: cached.centerPrice },
+      ),
+      debug: {
+        cacheStatus: "hit",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        stale: true,
+        ageMs: Number.isFinite(cached.cachedAt)
+          ? Math.max(0, requestedAt - cached.cachedAt)
+          : null,
       },
     };
   }
 
-  const upstreamStartedAt = Date.now();
-  const promise = (async () => {
-    try {
-      const value = await getIbkrClient().getOptionChain(input);
-      const settledAt = Date.now();
-      optionChainCache.set(key, {
-        value,
-        expiresAt: settledAt + OPTION_CHAIN_CACHE_TTL_MS,
-      });
-      pruneOptionChainCache(settledAt);
-      return value;
-    } finally {
-      optionChainInFlight.delete(key);
+  for (const [cachedKey, reusable] of optionChainCache) {
+    if (cachedKey === key) {
+      continue;
     }
-  })();
+    if (reusable.staleExpiresAt <= requestedAt) {
+      optionChainCache.delete(cachedKey);
+      continue;
+    }
+    if (!isOptionChainCacheSuperset(reusable.input, normalizedInput)) {
+      continue;
+    }
 
-  optionChainInFlight.set(key, promise);
-  const contracts = await promise;
+    if (reusable.expiresAt > requestedAt) {
+      return {
+        contracts: sliceOptionChainContractsForRequest(
+          reusable.value,
+          normalizedInput,
+          { centerPrice: reusable.centerPrice },
+        ),
+        debug: {
+          cacheStatus: "hit",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: null,
+          ageMs: Number.isFinite(reusable.cachedAt)
+            ? Math.max(0, requestedAt - reusable.cachedAt)
+            : null,
+        },
+      };
+    }
+
+    if (!optionChainInFlight.has(cachedKey)) {
+      refreshOptionChainCache(cachedKey, reusable.input).catch(() => {});
+    }
+    return {
+      contracts: sliceOptionChainContractsForRequest(
+        reusable.value,
+        normalizedInput,
+        { centerPrice: reusable.centerPrice },
+      ),
+      debug: {
+        cacheStatus: "hit",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        stale: true,
+        ageMs: Number.isFinite(reusable.cachedAt)
+          ? Math.max(0, requestedAt - reusable.cachedAt)
+          : null,
+      },
+    };
+  }
+
+  const durable = await loadDurableOptionChainForRequest({
+    key,
+    normalizedInput,
+    requestedAt,
+  });
+  if (durable && durable.debug.stale !== true) {
+    return durable;
+  }
+
+  if (!cached && isBridgeWorkBackedOff("options")) {
+    return (
+      durable ?? {
+        contracts: [],
+        debug: {
+          cacheStatus: "miss",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: null,
+          stale: true,
+          degraded: true,
+          reason: "options_backoff",
+          backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
+        },
+      }
+    );
+  }
+
+  if (inFlight) {
+    try {
+      const contracts = await inFlight;
+      return {
+        contracts,
+        debug: {
+          cacheStatus: "inflight",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: null,
+        },
+      };
+    } catch (error) {
+      recordOptionUpstreamBackoff("chain", key, error);
+      if (cached && isTransientOptionUpstreamError(error)) {
+        return {
+          contracts: sliceOptionChainContractsForRequest(
+            cached.value,
+            normalizedInput,
+            { centerPrice: cached.centerPrice },
+          ),
+          debug: {
+            cacheStatus: "hit",
+            totalMs: Math.max(0, Date.now() - requestedAt),
+            upstreamMs: null,
+            stale: true,
+            ageMs: Number.isFinite(cached.cachedAt)
+              ? Math.max(0, requestedAt - cached.cachedAt)
+              : null,
+          },
+        };
+      }
+      if (durable && isTransientOptionUpstreamError(error)) {
+        return {
+          contracts: durable.contracts,
+          debug: {
+            ...durable.debug,
+            stale: true,
+            degraded: true,
+            reason: "durable_option_chain_after_upstream_failure",
+          },
+        };
+      }
+      throw error;
+    }
+  }
+
+  const upstreamStartedAt = Date.now();
+  let contracts: IbkrOptionChainContracts;
+  try {
+    contracts = await refreshOptionChainCache(key, normalizedInput);
+  } catch (error) {
+    recordOptionUpstreamBackoff("chain", key, error);
+    if (cached && isTransientOptionUpstreamError(error)) {
+      return {
+        contracts: sliceOptionChainContractsForRequest(
+          cached.value,
+          normalizedInput,
+          { centerPrice: cached.centerPrice },
+        ),
+        debug: {
+          cacheStatus: "hit",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+          stale: true,
+          ageMs: Number.isFinite(cached.cachedAt)
+            ? Math.max(0, requestedAt - cached.cachedAt)
+            : null,
+        },
+      };
+    }
+    if (durable && isTransientOptionUpstreamError(error)) {
+      return {
+        contracts: durable.contracts,
+        debug: {
+          ...durable.debug,
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+          stale: true,
+          degraded: true,
+          reason: "durable_option_chain_after_upstream_failure",
+        },
+      };
+    }
+    throw error;
+  }
 
   return {
     contracts,
@@ -3793,6 +8684,123 @@ async function getCachedIbkrOptionChainWithDebug(
       cacheStatus: "miss",
       totalMs: Math.max(0, Date.now() - requestedAt),
       upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+    },
+  };
+}
+
+function refreshOptionChainCache(
+  key: string,
+  input: IbkrOptionChainInput,
+): Promise<IbkrOptionChainContracts> {
+  const existing = optionChainInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = (async () => {
+    try {
+      const ibkrValue = await runBridgeWork("options", () =>
+        getIbkrClient().getOptionChain(input),
+      );
+      const value =
+        input.quoteHydration === "metadata" &&
+        input.allowDelayedSnapshotHydration !== false
+          ? await hydrateOptionChainWithPolygonSnapshots({
+              request: input,
+              contracts: ibkrValue,
+            })
+          : ibkrValue;
+      const settledAt = Date.now();
+      if (value.length > 0) {
+        const cacheWindows = resolveOptionChainCacheWindows(input);
+        seedOptionChainCache({
+          key,
+          cacheInput: input,
+          contracts: value,
+          cachedAt: settledAt,
+          expiresAt: settledAt + cacheWindows.ttlMs,
+          staleExpiresAt: settledAt + cacheWindows.staleTtlMs,
+        });
+        void persistDurableOptionChain({
+          contracts: value,
+          source:
+            input.quoteHydration === "metadata"
+              ? "ibkr-metadata"
+              : "ibkr-snapshot",
+          asOf: new Date(settledAt),
+        });
+      } else if (!optionChainCache.has(key)) {
+        optionChainCache.delete(key);
+      }
+      return value;
+    } finally {
+      optionChainInFlight.delete(key);
+    }
+  })();
+
+  optionChainInFlight.set(key, promise);
+  return promise;
+}
+
+function seedOptionExpirationCache(input: {
+  key: string;
+  expirations: IbkrOptionExpirationDates;
+  cachedAt: number;
+  expiresAt: number;
+  staleExpiresAt: number;
+}): void {
+  if (!input.expirations.length) {
+    return;
+  }
+
+  optionExpirationCache.set(input.key, {
+    value: input.expirations,
+    expiresAt: input.expiresAt,
+    staleExpiresAt: input.staleExpiresAt,
+  });
+  pruneOptionChainCache(Date.now());
+}
+
+async function loadDurableOptionExpirationsForRequest(input: {
+  key: string;
+  request: IbkrOptionExpirationsInput;
+  requestedAt: number;
+}): Promise<{
+  expirations: IbkrOptionExpirationDates;
+  debug: RequestDebugMetadata;
+} | null> {
+  const durable = await loadDurableOptionExpirations({
+    underlying: input.request.underlying,
+    maxExpirations: input.request.maxExpirations,
+    maxAgeMs: OPTION_EXPIRATION_CACHE_TTL_MS,
+    staleMaxAgeMs: OPTION_EXPIRATION_STALE_TTL_MS,
+  });
+  if (!durable?.value.length) {
+    return null;
+  }
+
+  const now = Date.now();
+  const cachedAt =
+    typeof durable.ageMs === "number" && Number.isFinite(durable.ageMs)
+      ? Math.max(0, now - durable.ageMs)
+      : now;
+  seedOptionExpirationCache({
+    key: input.key,
+    expirations: durable.value,
+    cachedAt,
+    expiresAt: cachedAt + OPTION_EXPIRATION_CACHE_TTL_MS,
+    staleExpiresAt: cachedAt + OPTION_EXPIRATION_STALE_TTL_MS,
+  });
+
+  return {
+    expirations: durable.value,
+    debug: {
+      cacheStatus: "hit",
+      totalMs: Math.max(0, Date.now() - input.requestedAt),
+      upstreamMs: null,
+      stale: durable.freshness === "stale",
+      ageMs: durable.ageMs,
+      reason: "durable_option_expirations",
     },
   };
 }
@@ -3832,24 +8840,147 @@ async function getCachedIbkrOptionExpirationsWithDebug(
       },
     };
   }
-  if (cached) {
-    optionExpirationCache.delete(key);
-  }
-
-  if (inFlight) {
-    const expirations = await inFlight;
+  if (cached && isOptionUpstreamBackedOff("expiration", key)) {
     return {
-      expirations,
+      expirations: cached.value,
       debug: {
-        cacheStatus: "inflight",
+        cacheStatus: "hit",
         totalMs: Math.max(0, Date.now() - requestedAt),
         upstreamMs: null,
+        stale: true,
       },
     };
   }
 
+  const durable = await loadDurableOptionExpirationsForRequest({
+    key,
+    request: input,
+    requestedAt,
+  });
+  if (durable && durable.debug.stale !== true) {
+    return durable;
+  }
+
+  if (!cached && isBridgeWorkBackedOff("options")) {
+    return (
+      durable ?? {
+        expirations: [],
+        debug: {
+          cacheStatus: "miss",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: null,
+          stale: true,
+          degraded: true,
+          reason: "options_backoff",
+          backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
+        },
+      }
+    );
+  }
+
+  if (inFlight) {
+    try {
+      const expirations = await inFlight;
+      return {
+        expirations,
+        debug: {
+          cacheStatus: "inflight",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: null,
+        },
+      };
+    } catch (error) {
+      recordOptionUpstreamBackoff("expiration", key, error);
+      if (cached && isTransientOptionUpstreamError(error)) {
+        return {
+          expirations: cached.value,
+          debug: {
+            cacheStatus: "hit",
+            totalMs: Math.max(0, Date.now() - requestedAt),
+            upstreamMs: null,
+            stale: true,
+          },
+        };
+      }
+      if (durable && isTransientOptionUpstreamError(error)) {
+        return {
+          expirations: durable.expirations,
+          debug: {
+            ...durable.debug,
+            stale: true,
+            degraded: true,
+            reason: "durable_option_expirations_after_upstream_failure",
+          },
+        };
+      }
+      if (isTransientOptionUpstreamError(error)) {
+        return {
+          expirations: [],
+          debug: {
+            cacheStatus: "miss",
+            totalMs: Math.max(0, Date.now() - requestedAt),
+            upstreamMs: null,
+            stale: true,
+            degraded: true,
+            reason: isBridgeWorkBackedOff("options")
+              ? "options_backoff"
+              : "options_upstream_failure",
+            backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
+          },
+        };
+      }
+      throw error;
+    }
+  }
+
   const upstreamStartedAt = Date.now();
-  const expirations = await refreshOptionExpirationCache(key, input);
+  let expirations: IbkrOptionExpirationDates;
+  try {
+    expirations = await refreshOptionExpirationCache(key, input);
+  } catch (error) {
+    recordOptionUpstreamBackoff("expiration", key, error);
+    if (cached && isTransientOptionUpstreamError(error)) {
+      return {
+        expirations: cached.value,
+        debug: {
+          cacheStatus: "hit",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+          stale: true,
+        },
+      };
+    }
+    if (durable && isTransientOptionUpstreamError(error)) {
+      return {
+        expirations: durable.expirations,
+        debug: {
+          ...durable.debug,
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+          stale: true,
+          degraded: true,
+          reason: "durable_option_expirations_after_upstream_failure",
+        },
+      };
+    }
+    if (isTransientOptionUpstreamError(error)) {
+      return {
+        expirations: [],
+        debug: {
+          cacheStatus: "miss",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+          stale: true,
+          degraded: true,
+          reason: isBridgeWorkBackedOff("options")
+            ? "options_backoff"
+            : "options_upstream_failure",
+          backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
+        },
+      };
+    }
+    throw error;
+  }
 
   return {
     expirations,
@@ -3872,14 +9003,21 @@ function refreshOptionExpirationCache(
 
   const promise = (async () => {
     try {
-      const value = await getIbkrClient().getOptionExpirations(input);
+      const value = await runBridgeWork("options", () =>
+        getIbkrClient().getOptionExpirations(input),
+      );
       const settledAt = Date.now();
-      optionExpirationCache.set(key, {
-        value,
-        expiresAt: settledAt + OPTION_EXPIRATION_CACHE_TTL_MS,
-        staleExpiresAt: settledAt + OPTION_EXPIRATION_STALE_TTL_MS,
-      });
-      pruneOptionChainCache(settledAt);
+      if (value.length > 0) {
+        seedOptionExpirationCache({
+          key,
+          expirations: value,
+          cachedAt: settledAt,
+          expiresAt: settledAt + OPTION_EXPIRATION_CACHE_TTL_MS,
+          staleExpiresAt: settledAt + OPTION_EXPIRATION_STALE_TTL_MS,
+        });
+      } else if (!optionExpirationCache.has(key)) {
+        optionExpirationCache.delete(key);
+      }
       return value;
     } finally {
       optionExpirationInFlight.delete(key);
@@ -3894,17 +9032,55 @@ export async function getOptionChainWithDebug(input: {
   underlying: string;
   expirationDate?: Date;
   contractType?: "call" | "put";
+  maxExpirations?: number;
+  strikesAroundMoney?: number;
+  strikeCoverage?: OptionChainStrikeCoverage;
+  quoteHydration?: OptionChainQuoteHydration;
 }): Promise<GetOptionChainResultWithDebug> {
+  const requestedAt = Date.now();
+  const normalizedUnderlying = normalizeSymbol(input.underlying);
   const optionChain = await getCachedIbkrOptionChainWithDebug({
     ...input,
-    maxExpirations: 1,
-    strikesAroundMoney: input.expirationDate
-      ? OPTION_CHAIN_STRIKES_AROUND_MONEY
-      : 6,
+  }).catch((error) => {
+    if (isUnderlyingResolutionError(error) || !isTransientOptionUpstreamError(error)) {
+      throw error;
+    }
+
+    logger.warn(
+      { err: error, underlying: normalizedUnderlying },
+      "Returning degraded empty option chain after transient upstream failure",
+    );
+    return {
+      contracts: [],
+      debug: {
+        cacheStatus: "miss" as const,
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        stale: true,
+        degraded: true,
+        reason: "options_upstream_failure",
+      },
+    };
   });
+  if (optionChain.contracts.length === 0) {
+    optionChain.debug.degraded = true;
+    optionChain.debug.reason ??= optionChain.debug.stale
+      ? "options_degraded_empty"
+      : "options_successful_empty";
+    recordOptionDegradedEvent({
+      kind: "chain",
+      underlying: normalizedUnderlying,
+      expirationDate: input.expirationDate ?? null,
+      reason: optionChain.debug.reason,
+      message:
+        optionChain.debug.reason === "options_successful_empty"
+          ? "IBKR returned an empty option chain."
+          : "Option chain is degraded or stale.",
+    });
+  }
 
   return {
-    underlying: normalizeSymbol(input.underlying),
+    underlying: normalizedUnderlying,
     expirationDate: input.expirationDate ?? null,
     contracts: optionChain.contracts,
     debug: optionChain.debug,
@@ -3915,17 +9091,168 @@ export async function getOptionChain(input: {
   underlying: string;
   expirationDate?: Date;
   contractType?: "call" | "put";
+  maxExpirations?: number;
+  strikesAroundMoney?: number;
+  strikeCoverage?: OptionChainStrikeCoverage;
+  quoteHydration?: OptionChainQuoteHydration;
 }): Promise<GetOptionChainResult> {
   const { debug: _debug, ...value } = await getOptionChainWithDebug(input);
   return value;
 }
 
+export async function batchOptionChains(input: {
+  underlying: string;
+  expirationDates: Date[];
+  contractType?: "call" | "put";
+  strikesAroundMoney?: number;
+  strikeCoverage?: OptionChainStrikeCoverage;
+  quoteHydration?: OptionChainQuoteHydration;
+  allowDelayedSnapshotHydration?: boolean;
+}): Promise<BatchOptionChainsResult> {
+  const requestedAt = Date.now();
+  const underlying = normalizeSymbol(input.underlying);
+  const expirationDates = Array.from(
+    new Map(
+      input.expirationDates
+        .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+        .map((date) => [date.toISOString().slice(0, 10), date]),
+    ).values(),
+  );
+
+  if (
+    OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS > 0 &&
+    expirationDates.length > OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS
+  ) {
+    throw new HttpError(
+      413,
+      `Option-chain batch requested ${expirationDates.length} expirations, above the configured emergency ceiling of ${OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS}.`,
+      {
+        code: "option_chain_batch_too_large",
+      },
+    );
+  }
+
+  const results = await mapWithConcurrency(
+    expirationDates,
+    getOptionsFlowRuntimeConfig().optionChainBatchConcurrency,
+    async (expirationDate) => {
+      try {
+        const { contracts, debug } = await getCachedIbkrOptionChainWithDebug({
+          underlying,
+          expirationDate,
+          contractType: input.contractType,
+          maxExpirations: 1,
+          strikesAroundMoney: input.strikesAroundMoney,
+          strikeCoverage: input.strikeCoverage,
+          quoteHydration: input.quoteHydration,
+          allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
+        });
+
+        const resultDebug: RequestDebugMetadata =
+          contracts.length > 0
+            ? debug
+            : {
+                ...debug,
+                degraded: true,
+                reason: debug.reason ?? "options_successful_empty",
+              };
+        if (contracts.length === 0) {
+          recordOptionDegradedEvent({
+            kind: "chain",
+            underlying,
+            expirationDate,
+            reason: resultDebug.reason ?? "options_successful_empty",
+            message: "IBKR returned an empty option-chain batch result.",
+          });
+        }
+
+        return {
+          expirationDate,
+          status: contracts.length ? "loaded" : "failed",
+          contracts,
+          error: contracts.length ? null : "IBKR returned an empty option chain.",
+          debug: resultDebug,
+        } satisfies BatchOptionChainResult;
+      } catch (error) {
+        if (isUnderlyingResolutionError(error)) {
+          throw error;
+        }
+
+        return {
+          expirationDate,
+          status: "failed",
+          contracts: [],
+          error: formatOptionChainBatchError(error),
+          debug: {
+        cacheStatus: "miss",
+        totalMs: 0,
+        upstreamMs: null,
+        degraded: true,
+        reason: "options_batch_failure",
+      },
+        } satisfies BatchOptionChainResult;
+      }
+    },
+  );
+
+  const returnedCount = results.reduce(
+    (total, result) => total + result.contracts.length,
+    0,
+  );
+  const upstreamMsValues = results
+    .map((result) => result.debug?.upstreamMs)
+    .filter((value): value is number => typeof value === "number");
+
+  return {
+    underlying,
+    results,
+    debug: {
+      cacheStatus: results.some(
+        (result) => result.debug?.cacheStatus === "miss",
+      )
+        ? "miss"
+        : results.some((result) => result.debug?.cacheStatus === "inflight")
+          ? "inflight"
+          : "hit",
+      totalMs: Math.max(0, Date.now() - requestedAt),
+      upstreamMs: upstreamMsValues.length
+        ? upstreamMsValues.reduce((total, value) => total + value, 0)
+        : null,
+      requestedCount: expirationDates.length,
+      returnedCount,
+    },
+  };
+}
+
 export async function getOptionExpirationsWithDebug(input: {
   underlying: string;
+  maxExpirations?: number;
 }): Promise<GetOptionExpirationsResultWithDebug> {
+  const requestedAt = Date.now();
+  const normalizedUnderlying = normalizeSymbol(input.underlying);
   const optionExpirations = await getCachedIbkrOptionExpirationsWithDebug({
     underlying: input.underlying,
-    maxExpirations: 256,
+    maxExpirations: input.maxExpirations,
+  }).catch((error) => {
+    if (isUnderlyingResolutionError(error) || !isTransientOptionUpstreamError(error)) {
+      throw error;
+    }
+
+    logger.warn(
+      { err: error, underlying: normalizedUnderlying },
+      "Returning degraded empty option expirations after transient upstream failure",
+    );
+    return {
+      expirations: [],
+      debug: {
+        cacheStatus: "miss" as const,
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        stale: true,
+        degraded: true,
+        reason: "options_upstream_failure",
+      },
+    };
   });
   const today = new Date();
   const todayUtc = Date.UTC(
@@ -3946,19 +9273,565 @@ export async function getOptionExpirationsWithDebug(input: {
     (left, right) =>
       left.expirationDate.getTime() - right.expirationDate.getTime(),
   );
+  if (expirations.length === 0) {
+    optionExpirations.debug.degraded = true;
+    optionExpirations.debug.reason ??= optionExpirations.debug.stale
+      ? "option_expirations_degraded_empty"
+      : "option_expirations_successful_empty";
+    recordOptionDegradedEvent({
+      kind: "expiration",
+      underlying: normalizedUnderlying,
+      reason: optionExpirations.debug.reason,
+      message:
+        optionExpirations.debug.reason === "option_expirations_successful_empty"
+          ? "IBKR returned no option expirations."
+          : "Option expirations are degraded or stale.",
+    });
+  }
 
   return {
-    underlying: normalizeSymbol(input.underlying),
+    underlying: normalizedUnderlying,
     expirations,
-    debug: optionExpirations.debug,
+    debug: {
+      ...optionExpirations.debug,
+      requestedCount: input.maxExpirations ?? expirations.length,
+      returnedCount: expirations.length,
+      complete: input.maxExpirations === undefined,
+      capped: input.maxExpirations !== undefined,
+    },
   };
 }
 
 export async function getOptionExpirations(input: {
   underlying: string;
+  maxExpirations?: number;
 }): Promise<GetOptionExpirationsResult> {
-  const { debug: _debug, ...value } = await getOptionExpirationsWithDebug(input);
+  const { debug: _debug, ...value } =
+    await getOptionExpirationsWithDebug(input);
   return value;
+}
+
+export async function resolveOptionContractWithDebug(input: {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+}): Promise<ResolveOptionContractResult> {
+  const requestedAt = Date.now();
+  const underlying = normalizeSymbol(input.underlying);
+  const expirationDate = input.expirationDate;
+  const strike = Number(input.strike);
+  const right = input.right;
+  const key = buildOptionContractResolutionCacheKey({
+    underlying,
+    expirationDate,
+    strike,
+    right,
+  });
+  const cached = optionContractResolutionCache.get(key);
+  if (cached && cached.expiresAt > requestedAt) {
+    return {
+      ...cached.value,
+      debug: {
+        ...cached.value.debug,
+        cacheStatus: "hit",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+      },
+    };
+  }
+
+  if (!underlying || !Number.isFinite(strike) || strike <= 0) {
+    return {
+      underlying,
+      expirationDate,
+      strike,
+      right,
+      status: "error",
+      providerContractId: null,
+      contract: null,
+      errorMessage: "Invalid option contract identity.",
+      debug: {
+        cacheStatus: "miss",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        degraded: true,
+        reason: "invalid_option_contract_identity",
+      },
+    };
+  }
+
+  const upstreamStartedAt = Date.now();
+  try {
+    const { contracts, debug } = await getCachedIbkrOptionChainWithDebug({
+      underlying,
+      expirationDate,
+      contractType: right,
+      strikeCoverage: "full",
+      quoteHydration: "metadata",
+    });
+    const expirationKey = expirationDate.toISOString().slice(0, 10);
+    const match = findResolvedOptionContractMatch(contracts, {
+      expirationKey,
+      right,
+      strike,
+    });
+    const providerContractId = match?.contract.providerContractId?.trim() || null;
+    const result: ResolveOptionContractResult = {
+      underlying,
+      expirationDate,
+      strike,
+      right,
+      status: providerContractId ? "resolved" : "not_found",
+      providerContractId,
+      contract: providerContractId ? match?.contract ?? null : null,
+      errorMessage: providerContractId
+        ? null
+        : match
+          ? "IBKR returned the option contract without a provider contract id."
+          : "IBKR did not return a matching option contract for this expiration, side, and strike.",
+      debug: {
+        ...debug,
+        cacheStatus: debug.cacheStatus,
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs:
+          debug.upstreamMs ?? Math.max(0, Date.now() - upstreamStartedAt),
+        requestedCount: 1,
+        returnedCount: providerContractId ? 1 : 0,
+        degraded: providerContractId ? debug.degraded : true,
+        reason: providerContractId
+          ? debug.reason ?? null
+          : match
+            ? "option_contract_missing_provider_contract_id"
+            : "option_contract_not_found",
+      },
+    };
+
+    if (providerContractId) {
+      optionContractResolutionCache.set(key, {
+        value: result,
+        expiresAt: Date.now() + OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS,
+      });
+    }
+
+    return result;
+  } catch (error) {
+    const message = getErrorMessage(error);
+    return {
+      underlying,
+      expirationDate,
+      strike,
+      right,
+      status: "error",
+      providerContractId: null,
+      contract: null,
+      errorMessage: message,
+      debug: {
+        cacheStatus: "miss",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
+        degraded: true,
+        reason: isTransientOptionUpstreamError(error)
+          ? "options_upstream_failure"
+          : "option_contract_resolution_error",
+      },
+    };
+  }
+}
+
+export async function getOptionChartBarsWithDebug(input: {
+  underlying: string;
+  expirationDate: Date;
+  strike: number;
+  right: "call" | "put";
+  optionTicker?: string | null;
+  providerContractId?: string | null;
+  timeframe: GetBarsInput["timeframe"];
+  limit?: number;
+  from?: Date;
+  to?: Date;
+  historyCursor?: string | null;
+  preferCursor?: boolean;
+  outsideRth?: boolean;
+}): Promise<OptionChartBarsResult> {
+  const requestedAt = Date.now();
+  const underlying = normalizeSymbol(input.underlying);
+  const expirationDate = input.expirationDate;
+  const strike = Number(input.strike);
+  const right = input.right;
+  const providedOptionTicker = normalizePolygonOptionTicker(input.optionTicker);
+  const rawProvidedProviderContractId =
+    typeof input.providerContractId === "string"
+      ? input.providerContractId.trim()
+      : "";
+  const providedProviderContractId =
+    rawProvidedProviderContractId &&
+    rawProvidedProviderContractId !== "null" &&
+    rawProvidedProviderContractId !== "undefined"
+      ? rawProvidedProviderContractId
+      : null;
+  const outsideRth = Boolean(input.outsideRth);
+  const baseResult = {
+    underlying,
+    expirationDate,
+    strike,
+    right,
+    optionTicker: providedOptionTicker,
+    symbol: underlying,
+    timeframe: input.timeframe,
+    transport: null,
+    delayed: false,
+    gapFilled: false,
+    freshness: "unavailable" as MarketDataFreshness,
+    marketDataMode: null,
+    dataUpdatedAt: null,
+    ageMs: null,
+    historySource: null,
+    studyFallback: false,
+  };
+
+  const finish = (
+    value: Omit<OptionChartBarsResult, "debug" | "historyPage"> & {
+      historyPage?: BarsHistoryPage;
+    },
+    debug: Partial<RequestDebugMetadata>,
+  ): OptionChartBarsResult => {
+    const historyProvider =
+      value.historySource ??
+      (value.dataSource !== "none"
+        ? value.dataSource
+        : value.emptyReason === "no-option-aggregate-bars"
+          ? "polygon-option-aggregates"
+          : null);
+    return {
+      ...value,
+      historyPage:
+        value.historyPage ??
+        buildBarsHistoryPage({
+          request: {
+            symbol: underlying,
+            timeframe: input.timeframe,
+            limit: input.limit,
+            from: input.from,
+            to: input.to,
+            assetClass: "option",
+            providerContractId: value.providerContractId,
+            outsideRth,
+            source: "midpoint",
+          },
+          bars: value.bars,
+          provider: historyProvider,
+          exhaustedBefore: false,
+        }),
+      debug: {
+        cacheStatus: debug.cacheStatus ?? "miss",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: debug.upstreamMs ?? null,
+        requestedCount: 1,
+        returnedCount: value.bars.length,
+        degraded:
+          debug.degraded ??
+          (value.dataSource !== "ibkr-history" ||
+            value.feedIssue ||
+            value.bars.length === 0),
+        reason: debug.reason ?? value.emptyReason ?? null,
+        stale: debug.stale,
+        ageMs: debug.ageMs,
+        backoffRemainingMs: debug.backoffRemainingMs,
+        complete: debug.complete,
+        capped: debug.capped,
+      },
+    };
+  };
+
+  if (
+    !underlying ||
+    !expirationDate ||
+    Number.isNaN(expirationDate.getTime()) ||
+    !Number.isFinite(strike) ||
+    strike <= 0
+  ) {
+    return finish(
+      {
+        ...baseResult,
+        bars: [],
+        contract: null,
+        providerContractId: null,
+        resolutionSource: "none",
+        dataSource: "none",
+        emptyReason: "invalid-option-contract-identity",
+        feedIssue: false,
+      },
+      { degraded: true, reason: "invalid_option_contract_identity" },
+    );
+  }
+
+  let contract: IbkrOptionChainContracts[number]["contract"] | null = null;
+  let providerContractId: string | null = null;
+  let resolutionSource: OptionChartBarsResolutionSource = "none";
+  let chainDebug: RequestDebugMetadata | null = null;
+  let chainError: unknown = null;
+
+  try {
+    const chain = await getCachedIbkrOptionChainWithDebug({
+      underlying,
+      expirationDate,
+      contractType: right,
+      strikeCoverage: "full",
+      quoteHydration: "metadata",
+    });
+    chainDebug = chain.debug;
+    const match = findResolvedOptionContractMatch(chain.contracts, {
+      expirationKey: expirationDate.toISOString().slice(0, 10),
+      right,
+      strike,
+    });
+    contract = match?.contract ?? null;
+    providerContractId = contract?.providerContractId?.trim() || null;
+    resolutionSource = providerContractId ? "chain" : "none";
+  } catch (error) {
+    chainError = error;
+  }
+
+  if (!providerContractId && providedProviderContractId) {
+    providerContractId = providedProviderContractId;
+    resolutionSource = "provided";
+  }
+
+  if (!providerContractId && !chainError) {
+    const resolved = await resolveOptionContractWithDebug({
+      underlying,
+      expirationDate,
+      strike,
+      right,
+    });
+    if (resolved.providerContractId) {
+      contract = resolved.contract;
+      providerContractId = resolved.providerContractId;
+      resolutionSource = "resolver";
+    }
+  }
+
+  let ibkrBarsResult: GetBarsResult | null = null;
+  let ibkrBarsError: unknown = null;
+  if (providerContractId) {
+    try {
+      const { debug: _debug, ...barsResult } = await getBarsWithDebug({
+        symbol: underlying,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        from: input.from,
+        to: input.to,
+        assetClass: "option",
+        providerContractId,
+        source: "midpoint",
+        outsideRth,
+        allowHistoricalSynthesis: false,
+        allowStudyFallback: false,
+      });
+      ibkrBarsResult = barsResult;
+    } catch (error) {
+      ibkrBarsError = error;
+    }
+  }
+
+  const polygonOptionTicker =
+    providedOptionTicker ??
+    normalizePolygonOptionTicker(contract?.ticker) ??
+    buildPolygonOptionTicker({
+      underlying,
+      expirationDate,
+      strike: contract?.strike ?? strike,
+      right: contract?.right ?? right,
+    });
+
+  if (ibkrBarsResult?.bars.length) {
+    return finish(
+      {
+        ...baseResult,
+        ...ibkrBarsResult,
+        optionTicker: polygonOptionTicker,
+        contract,
+        providerContractId,
+        resolutionSource,
+        dataSource: "ibkr-history",
+        emptyReason: null,
+        feedIssue: false,
+      },
+      {
+        cacheStatus: chainDebug?.cacheStatus ?? "miss",
+        upstreamMs: chainDebug?.upstreamMs ?? null,
+        degraded: false,
+        reason: null,
+      },
+    );
+  }
+
+  const feedIssue = isIbkrOptionHistoryFeedIssue({
+    barsResult: ibkrBarsResult,
+    error: ibkrBarsError,
+  }) || Boolean(!providerContractId && (chainError || chainDebug?.degraded));
+
+  if (!polygonOptionTicker) {
+    return finish(
+      {
+        ...baseResult,
+        bars: [],
+        optionTicker: polygonOptionTicker,
+        contract,
+        providerContractId,
+        resolutionSource,
+        dataSource: "none",
+        emptyReason: "missing-polygon-option-ticker",
+        feedIssue,
+      },
+      { degraded: true },
+    );
+  }
+
+  const polygonConfig = getPolygonRuntimeConfig();
+  if (!polygonConfig) {
+    return finish(
+      {
+        ...baseResult,
+        bars: [],
+        optionTicker: polygonOptionTicker,
+        contract,
+        providerContractId,
+        resolutionSource,
+        dataSource: "none",
+        emptyReason: "polygon-not-configured",
+        feedIssue,
+      },
+      { degraded: true },
+    );
+  }
+
+  try {
+    const cursorSignature = buildOptionChartHistoryCursorSignature({
+      underlying,
+      expirationDate,
+      strike,
+      right,
+      optionTicker: polygonOptionTicker,
+      providerContractId,
+      timeframe: input.timeframe,
+      outsideRth,
+    });
+    const cursorResolution = input.preferCursor
+      ? resolveChartHistoryCursor({
+          token: input.historyCursor,
+          signature: cursorSignature,
+        })
+      : ({ ok: false, reason: "missing" } as const);
+    let polygonPage: PolygonAggregateBarsPage | null = null;
+    let attemptedCursorContinuation = false;
+    let usedCursorContinuation = false;
+    if (cursorResolution.ok) {
+      attemptedCursorContinuation = true;
+      polygonPage = await resolveWithin(
+        fetchPolygonBarsProviderCursorPage(getPolygonClient(), {
+          symbol: polygonOptionTicker,
+          timeframe: input.timeframe,
+          limit: input.limit,
+          providerNextUrl: cursorResolution.providerNextUrl,
+        }).catch(() => null),
+        BARS_PROVIDER_BUDGET_MS,
+        null,
+      );
+      usedCursorContinuation = Boolean(polygonPage);
+    }
+    if (!polygonPage) {
+      if (attemptedCursorContinuation || (input.preferCursor && input.historyCursor)) {
+        barsHydrationCounters.cursorFallback += 1;
+      }
+      polygonPage = await fetchPolygonOptionBarsPage(getPolygonClient(), {
+        optionTicker: polygonOptionTicker,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        from: input.from,
+        to: input.to,
+      });
+    }
+    barsHydrationCounters.providerFetch += 1;
+    barsHydrationCounters.providerPage += polygonPage.pageCount;
+    if (usedCursorContinuation) {
+      barsHydrationCounters.cursorContinuation += 1;
+    }
+    const bars = mapPolygonOptionBarsToBrokerBars({
+      bars: polygonPage.bars,
+      providerContractId,
+      delayed: polygonConfig.baseUrl.includes("massive.com"),
+      outsideRth,
+    });
+    const latestBar = getLatestBar(bars);
+    const dataUpdatedAt = getBarDataUpdatedAt(latestBar);
+    const historySource = "polygon-option-aggregates";
+    const historyPage = buildBarsHistoryPage({
+      request: {
+        symbol: underlying,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        from: input.from,
+        to: input.to,
+        assetClass: "option",
+        providerContractId,
+        outsideRth,
+        source: "midpoint",
+      },
+      bars,
+      provider: historySource,
+      exhaustedBefore: false,
+      ...buildPolygonHistoryPageMetadata(polygonPage, cursorSignature),
+    });
+
+    return finish(
+      {
+        ...baseResult,
+        optionTicker: polygonOptionTicker,
+        bars,
+        contract,
+        providerContractId,
+        resolutionSource,
+        dataSource: bars.length ? "polygon-option-aggregates" : "none",
+        emptyReason: bars.length ? null : "no-option-aggregate-bars",
+        feedIssue,
+        transport: null,
+        delayed: bars.some((bar) => bar.delayed),
+        freshness: bars.length
+          ? bars.some((bar) => bar.delayed)
+            ? "delayed"
+            : "live"
+          : "unavailable",
+        marketDataMode: bars.length
+          ? bars.some((bar) => bar.delayed)
+            ? "delayed"
+            : "live"
+          : null,
+        dataUpdatedAt,
+        ageMs: getAgeMs(dataUpdatedAt),
+        historySource: bars.length ? historySource : null,
+        studyFallback: false,
+        historyPage,
+      },
+      { degraded: true },
+    );
+  } catch {
+    return finish(
+      {
+        ...baseResult,
+        bars: [],
+        optionTicker: polygonOptionTicker,
+        contract,
+        providerContractId,
+        resolutionSource,
+        dataSource: "none",
+        emptyReason: "polygon-history-error",
+        feedIssue,
+      },
+      { degraded: true },
+    );
+  }
 }
 
 export async function getMarketDepth(input: {
@@ -3980,17 +9853,102 @@ export async function getMarketDepth(input: {
   };
 }
 
+function selectFlowScannerExpirationDates(input: {
+  expirations: readonly Date[];
+  maxDte: number | null;
+  expirationScanCount?: number;
+}): Date[] {
+  const maxDte = input.maxDte;
+  const expirationsByDte =
+    maxDte === null
+      ? [...input.expirations]
+      : input.expirations.filter(
+          (expirationDate) =>
+            (getExpirationDte(expirationDate) ?? Number.POSITIVE_INFINITY) <=
+            maxDte,
+        );
+  const expirationScanCount =
+    typeof input.expirationScanCount === "number" &&
+    Number.isFinite(input.expirationScanCount) &&
+    input.expirationScanCount >= 0
+      ? Math.floor(input.expirationScanCount)
+      : getOptionsFlowRuntimeConfig().expirationScanCount;
+
+  return expirationScanCount > 0
+    ? expirationsByDte.slice(0, expirationScanCount)
+    : expirationsByDte;
+}
+
+function buildFlowScannerMetadataSelection(input: {
+  lineBudget: number;
+  expirationCount: number;
+  strikeCoverage?: OptionChainStrikeCoverage;
+}): Pick<IbkrOptionChainInput, "strikeCoverage" | "strikesAroundMoney"> {
+  const strikeCoverage =
+    input.strikeCoverage ?? getOptionsFlowRuntimeConfig().scannerStrikeCoverage;
+  if (strikeCoverage === "full" || strikeCoverage === "fast") {
+    return { strikeCoverage };
+  }
+
+  const linesPerExpiration = Math.max(
+    2,
+    Math.floor(input.lineBudget / Math.max(1, input.expirationCount)),
+  );
+  const scannerStrikesAroundMoney = Math.max(
+    1,
+    Math.min(
+      OPTION_CHAIN_STRIKES_AROUND_MONEY,
+      Math.floor((linesPerExpiration / 2 - 1) / 2),
+    ),
+  );
+
+  return {
+    strikeCoverage: "standard",
+    strikesAroundMoney: scannerStrikesAroundMoney,
+  };
+}
+
+function selectFlowScannerLiveCandidateContracts(
+  contracts: IbkrOptionChainContracts,
+  lineBudget: number,
+): IbkrOptionChainContracts {
+  return contracts
+    .filter((contract) => contract.contract.providerContractId)
+    .sort((left, right) => {
+      const leftMark = left.mark ?? left.last ?? 0;
+      const rightMark = right.mark ?? right.last ?? 0;
+      const leftVolume = left.volume ?? 0;
+      const rightVolume = right.volume ?? 0;
+      const leftPremium =
+        leftMark * leftVolume * left.contract.sharesPerContract;
+      const rightPremium =
+        rightMark * rightVolume * right.contract.sharesPerContract;
+      if (leftPremium !== rightPremium) return rightPremium - leftPremium;
+      if ((leftVolume ?? 0) !== (rightVolume ?? 0)) {
+        return (rightVolume ?? 0) - (leftVolume ?? 0);
+      }
+      return (right.openInterest ?? 0) - (left.openInterest ?? 0);
+    })
+    .slice(0, Math.max(1, lineBudget));
+}
+
 export async function listFlowEvents(input: {
   underlying?: string;
   limit?: number;
+  scope?: FlowEventsScope;
+  minPremium?: number;
+  maxDte?: number;
   unusualThreshold?: number;
+  blocking?: boolean;
 }): Promise<FlowEventsResult> {
   const underlying = normalizeSymbol(input.underlying ?? "");
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+  const blocking = input.blocking ?? true;
   const unusualThreshold =
     Number.isFinite(input.unusualThreshold) && (input.unusualThreshold ?? 0) > 0
       ? Math.min(100, Math.max(0.1, input.unusualThreshold as number))
       : undefined;
+  const filters = normalizeFlowEventsFilters(input);
 
   if (!underlying) {
     return {
@@ -4003,81 +9961,413 @@ export async function listFlowEvents(input: {
     };
   }
 
-  const cacheKey = `${underlying}:${limit}:${unusualThreshold ?? "default"}`;
+  const scannerRequest = {
+    limit: Math.max(limit, getOptionsFlowRuntimeConfig().scannerLimit),
+    unusualThreshold,
+  };
+  const scannerSnapshot = getOptionsFlowRuntimeConfig().scannerEnabled
+    ? optionsFlowScanner.getSnapshot(underlying, {
+        limit: scannerRequest.limit,
+        unusualThreshold,
+      })
+    : null;
+  if (scannerSnapshot?.freshness === "fresh") {
+    return {
+      events: filterFlowEventsForRequest(
+        scannerSnapshot.events,
+        filters,
+        unusualThreshold,
+        limit,
+      ),
+      source:
+        (scannerSnapshot.source as FlowEventsSource | null) ??
+        flowSource({
+          provider: "none",
+          status: "empty",
+          unusualThreshold: unusualThreshold ?? 1,
+        }),
+    };
+  }
+
+  const cacheKey = `${underlying}:${limit}:${
+    unusualThreshold ?? "default"
+  }:${flowEventsFilterCacheKey(filters)}`;
+  const requestedAt = Date.now();
   const cached = flowEventsCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > requestedAt) {
+    return cached.value;
+  }
+  const inFlight = flowEventsInFlight.get(cacheKey);
+
+  if (scannerSnapshot?.freshness === "stale") {
+    optionsFlowScanner
+      .requestScan([underlying], scannerRequest)
+      .catch((error) => {
+        logger.warn(
+          { err: error, underlying },
+          "Failed to queue options flow scanner refresh",
+        );
+    });
+    return {
+      events: filterFlowEventsForRequest(
+        scannerSnapshot.events,
+        filters,
+        unusualThreshold,
+        limit,
+      ),
+      source:
+        (scannerSnapshot.source as FlowEventsSource | null) ??
+        flowSource({
+          provider: "none",
+          status: "empty",
+          unusualThreshold: unusualThreshold ?? 1,
+        }),
+    };
+  }
+
+  if (cached && cached.staleExpiresAt > requestedAt) {
+    if (!inFlight) {
+      refreshFlowEventsCache(cacheKey, {
+        underlying,
+        limit,
+        filters,
+        unusualThreshold,
+      }).catch(() => {});
+    }
     return cached.value;
   }
   if (cached) {
     flowEventsCache.delete(cacheKey);
   }
 
-  const inFlight = flowEventsInFlight.get(cacheKey);
   if (inFlight) {
+    if (!blocking) {
+      return deferredFlowEventsResult({
+        underlying,
+        limit,
+        filters,
+        unusualThreshold,
+        reason: "options_flow_on_demand_refreshing",
+      });
+    }
     return inFlight;
   }
 
-  const request = listFlowEventsUncached({
+  const deferReason = shouldDeferOnDemandFlowRefresh();
+  if (deferReason) {
+    return deferredFlowEventsResult({
+      underlying,
+      limit,
+      filters,
+      unusualThreshold,
+      reason: deferReason,
+    });
+  }
+
+  const refresh = refreshFlowEventsCache(cacheKey, {
     underlying,
     limit,
+    filters,
     unusualThreshold,
-  }).then((value) => {
+  });
+  if (!blocking) {
+    return deferredFlowEventsResult({
+      underlying,
+      limit,
+      filters,
+      unusualThreshold,
+      reason: "options_flow_on_demand_refreshing",
+    });
+  }
+
+  return refresh;
+}
+
+function refreshFlowEventsCache(
+  cacheKey: string,
+  input: {
+    underlying: string;
+    limit: number;
+    filters: FlowEventsFilters;
+    unusualThreshold?: number;
+  },
+): Promise<FlowEventsResult> {
+  const existing = flowEventsInFlight.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  flowEventsOnDemandActive += 1;
+  const request = listFlowEventsUncached(input).then((value) => {
+    const settledAt = Date.now();
     flowEventsCache.set(cacheKey, {
       value,
-      expiresAt: Date.now() + FLOW_EVENTS_CACHE_TTL_MS,
+      expiresAt: settledAt + FLOW_EVENTS_CACHE_TTL_MS,
+      staleExpiresAt: settledAt + FLOW_EVENTS_CACHE_STALE_TTL_MS,
     });
+    if (
+      getOptionsFlowRuntimeConfig().scannerEnabled &&
+      !hasNarrowFlowFilters(input.filters)
+    ) {
+      optionsFlowScanner.storeSnapshot(
+        input.underlying,
+        {
+          limit: input.limit,
+          unusualThreshold: input.unusualThreshold,
+        },
+        value,
+      );
+    }
     return value;
   });
-
   flowEventsInFlight.set(cacheKey, request);
 
-  try {
-    return await request;
-  } finally {
-    flowEventsInFlight.delete(cacheKey);
-  }
+  request.then(
+    () => {
+      flowEventsOnDemandActive = Math.max(0, flowEventsOnDemandActive - 1);
+      flowEventsInFlight.delete(cacheKey);
+    },
+    () => {
+      flowEventsOnDemandActive = Math.max(0, flowEventsOnDemandActive - 1);
+      flowEventsInFlight.delete(cacheKey);
+    },
+  );
+  return request;
 }
 
 async function listFlowEventsUncached(input: {
   underlying: string;
   limit: number;
+  filters: FlowEventsFilters;
   unusualThreshold?: number;
+  allowPolygonFallback?: boolean;
 }): Promise<FlowEventsResult> {
   // Derive IBKR flow from option-chain snapshots. These are not consolidated
   // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
   // labels them as active/unusual contracts rather than verified sweeps.
   let contracts: IbkrOptionChainContracts = [];
-  const attemptedProviders: FlowDataProvider[] = ["ibkr"];
+  const attemptedProviders: FlowDataProvider[] = [];
   let ibkrError: string | null = null;
+  let ibkrReason: string | null = null;
+  let ibkrStatus: FlowEventsSource["ibkrStatus"] = "empty";
+  let ibkrExpirationCount = 0;
+  let ibkrHydratedExpirationCount = 0;
+  let ibkrContractCount = 0;
+  let ibkrQualifiedContractCount = 0;
   let polygonError: string | null = null;
 
+  if (input.allowPolygonFallback !== false && getPolygonRuntimeConfig()) {
+    attemptedProviders.push("polygon");
+    try {
+      const polygonCandidateLimit = hasNarrowFlowFilters(input.filters)
+        ? Math.min(
+            250,
+            Math.max(
+              input.limit * 4,
+              input.limit,
+              getOptionsFlowRuntimeConfig().scannerLimit,
+            ),
+          )
+        : input.limit;
+      const polygonEvents = await getPolygonClient().getDerivedFlowEvents({
+        underlying: input.underlying,
+        limit: polygonCandidateLimit,
+        unusualThreshold: input.unusualThreshold,
+      });
+      const filteredPolygonEvents = filterFlowEventsForRequest(
+        polygonEvents,
+        input.filters,
+        input.unusualThreshold,
+        input.limit,
+      );
+
+      if (filteredPolygonEvents.length > 0) {
+        return {
+          events: filteredPolygonEvents,
+          source: flowSource({
+            provider: "polygon",
+            status: "fallback",
+            attemptedProviders,
+            unusualThreshold: input.unusualThreshold ?? 1,
+            ibkrStatus,
+            ibkrReason: "options_flow_polygon_first",
+          }),
+        };
+      }
+    } catch (error) {
+      polygonError = getErrorMessage(error);
+    }
+  }
+
+  attemptedProviders.push("ibkr");
   try {
-    // Keep coverage tight — IBKR snapshots are rate-limited and the flow
-    // panel renders the highest-premium contracts first, so a moderate
-    // window around the money is plenty.
-    contracts = await getCachedIbkrOptionChain({
+    const expirationsResult = await getCachedIbkrOptionExpirationsWithDebug({
       underlying: input.underlying,
-      maxExpirations: 1,
-      strikesAroundMoney: 6,
     });
+    ibkrExpirationCount = expirationsResult.expirations.length;
+    ibkrReason = expirationsResult.debug.reason ?? null;
+
+    const candidateExpirations = selectFlowScannerExpirationDates({
+      expirations: expirationsResult.expirations,
+      maxDte: input.filters.maxDte,
+    });
+
+    if (candidateExpirations.length > 0) {
+      const lineBudget = Math.max(
+        1,
+        getOptionsFlowRuntimeConfig().scannerLineBudget,
+      );
+      const metadataSelection = buildFlowScannerMetadataSelection({
+        lineBudget,
+        expirationCount: candidateExpirations.length,
+      });
+      const batch = await batchOptionChains({
+        underlying: input.underlying,
+        expirationDates: candidateExpirations,
+        ...metadataSelection,
+        quoteHydration: "metadata",
+        allowDelayedSnapshotHydration: false,
+      });
+      const metadataContracts = batch.results.flatMap((result) => result.contracts);
+      const liveCandidateContracts = selectFlowScannerLiveCandidateContracts(
+        metadataContracts,
+        lineBudget,
+      );
+      const liveCandidateProviderContractIds = liveCandidateContracts
+        .map((contract) => contract.contract.providerContractId)
+        .filter((providerContractId): providerContractId is string =>
+          Boolean(providerContractId),
+        );
+      const quotePayload =
+        liveCandidateProviderContractIds.length > 0
+          ? await fetchBridgeOptionQuoteSnapshots({
+              underlying: input.underlying,
+              providerContractIds: liveCandidateProviderContractIds,
+              owner: `flow-scanner:${normalizeSymbol(input.underlying)}`,
+              intent: "flow-scanner-live",
+              ttlMs: Math.max(
+                10_000,
+                getOptionsFlowRuntimeConfig().scannerIntervalMs,
+              ),
+              fallbackProvider: "none",
+              requiresGreeks: false,
+            }).catch((error) => {
+              ibkrReason ??= "options_flow_live_quote_unavailable";
+              ibkrError = getErrorMessage(error);
+              return null;
+            })
+          : null;
+      const admittedProviderContractIds = new Set(
+        quotePayload?.debug?.acceptedProviderContractIds ?? [],
+      );
+      const admittedContracts = liveCandidateContracts.filter((contract) =>
+        admittedProviderContractIds.has(
+          contract.contract.providerContractId ?? "",
+        ),
+      );
+      if (admittedContracts.length > 0) {
+        const quotes: QuoteSnapshot[] = quotePayload?.quotes ?? [];
+        const quotesByProviderContractId = new Map(
+          quotes
+            .map((quote) => [
+              quote.providerContractId?.trim?.() || "",
+              quote,
+            ] as const)
+            .filter(([providerContractId]) => Boolean(providerContractId)),
+        );
+        contracts = admittedContracts.flatMap((contract) => {
+          const quote = quotesByProviderContractId.get(
+            contract.contract.providerContractId ?? "",
+          );
+          if (!quote) {
+            return quotes.length > 0 ? [] : [contract];
+          }
+          const bid = quote.bid ?? contract.bid ?? null;
+          const ask = quote.ask ?? contract.ask ?? null;
+          const last = quote.price ?? contract.last ?? null;
+          return [
+            {
+              ...contract,
+              bid,
+              ask,
+              last,
+              mark:
+                bid != null && ask != null && bid > 0 && ask > 0
+                  ? (bid + ask) / 2
+                  : last,
+              impliedVolatility:
+                quote.impliedVolatility ?? contract.impliedVolatility ?? null,
+              delta: quote.delta ?? contract.delta ?? null,
+              gamma: quote.gamma ?? contract.gamma ?? null,
+              theta: quote.theta ?? contract.theta ?? null,
+              vega: quote.vega ?? contract.vega ?? null,
+              openInterest: quote.openInterest ?? contract.openInterest ?? null,
+              volume: quote.volume ?? contract.volume ?? null,
+              updatedAt: quote.updatedAt ?? contract.updatedAt,
+              quoteFreshness: quote.freshness ?? contract.quoteFreshness,
+              marketDataMode: quote.marketDataMode ?? contract.marketDataMode,
+              quoteUpdatedAt:
+                quote.dataUpdatedAt ?? quote.updatedAt ?? contract.quoteUpdatedAt,
+              dataUpdatedAt:
+                quote.dataUpdatedAt ?? quote.updatedAt ?? contract.dataUpdatedAt,
+              ageMs: quote.ageMs ?? contract.ageMs ?? null,
+            },
+          ];
+        });
+      } else {
+        contracts = [];
+      }
+      ibkrHydratedExpirationCount = batch.results.filter(
+        (result) => result.contracts.length > 0,
+      ).length;
+      ibkrReason ??=
+        batch.results.length > 0 && contracts.length === 0
+          ? (quotePayload?.debug?.rejectedCount ?? 0) > 0
+            ? "options_flow_scanner_line_budget_exhausted"
+            : "options_flow_no_hydrated_contracts"
+          : null;
+    } else {
+      ibkrReason ??= expirationsResult.debug.stale
+        ? "options_flow_expirations_degraded_empty"
+        : "options_flow_no_expirations";
+    }
   } catch (error) {
     ibkrError = getErrorMessage(error);
+    ibkrReason = "options_flow_ibkr_error";
+    ibkrStatus = "error";
     contracts = [];
+  }
+
+  ibkrContractCount = contracts.length;
+  const qualifiedContracts = contracts.filter(
+    (c) => (c.mark ?? 0) > 0 && (c.volume ?? 0) > 0,
+  );
+  ibkrQualifiedContractCount = qualifiedContracts.length;
+  if (ibkrStatus !== "error") {
+    ibkrStatus =
+      ibkrQualifiedContractCount > 0
+        ? "loaded"
+        : ibkrReason?.includes("degraded")
+          ? "degraded"
+          : "empty";
+  }
+  if (!ibkrReason && contracts.length > 0 && ibkrQualifiedContractCount === 0) {
+    ibkrReason = "options_flow_no_volume_candidates";
   }
 
   // IBKR snapshots now include OPRA volume (field 7762) and option open
   // interest (field 7638), so flow events can rank by real traded premium.
   // Require both a marked contract and non-zero day volume to filter out the
   // inactive long tail.
-  const events = contracts
-    .filter((c) => c.mark > 0 && c.volume > 0)
+  const events = qualifiedContracts
     .map((c) => {
-      const mid = (c.bid + c.ask) / 2;
+      const mark = c.mark ?? 0;
+      const mid = ((c.bid ?? 0) + (c.ask ?? 0)) / 2;
       const side: "buy" | "sell" | "unknown" =
-        c.bid > 0 && c.ask > 0
-          ? c.last >= c.ask
+        (c.bid ?? 0) > 0 && (c.ask ?? 0) > 0 && c.last != null
+          ? c.last >= (c.ask ?? 0)
             ? "buy"
-            : c.last <= c.bid
+            : c.last <= (c.bid ?? 0)
               ? "sell"
               : c.last > mid
                 ? "buy"
@@ -4092,11 +10382,11 @@ async function listFlowEventsUncached(input: {
               (c.contract.right === "put" && side === "sell")
             ? "bullish"
             : "bearish";
-      const price = c.last > 0 ? c.last : c.mark;
-      const size = c.volume;
+      const price = (c.last ?? 0) > 0 ? (c.last ?? mark) : mark;
+      const size = c.volume ?? 0;
       const { unusualScore, isUnusual } = computeUnusualMetrics(
         size,
-        c.openInterest,
+        c.openInterest ?? 0,
         input.unusualThreshold,
       );
       // Rank by mark-based premium (mark × volume × multiplier) so the
@@ -4108,14 +10398,30 @@ async function listFlowEventsUncached(input: {
         provider: "ibkr" as const,
         basis: "snapshot" as const,
         optionTicker: c.contract.ticker,
+        providerContractId: c.contract.providerContractId ?? null,
         strike: c.contract.strike,
         expirationDate: c.contract.expirationDate,
         right: c.contract.right,
         price,
+        bid: c.bid,
+        ask: c.ask,
+        last: c.last,
+        mark,
         size,
-        premium: c.mark * size * c.contract.sharesPerContract,
+        premium: mark * size * c.contract.sharesPerContract,
+        multiplier: c.contract.multiplier,
+        sharesPerContract: c.contract.sharesPerContract,
         openInterest: c.openInterest,
         impliedVolatility: c.impliedVolatility,
+        delta: c.delta,
+        gamma: c.gamma,
+        theta: c.theta,
+        vega: c.vega,
+        underlyingPrice: null,
+        moneyness: null,
+        distancePercent: null,
+        confidence: "snapshot_activity" as const,
+        sourceBasis: "snapshot_activity" as const,
         exchange: "IBKR",
         side,
         sentiment,
@@ -4125,6 +10431,9 @@ async function listFlowEventsUncached(input: {
         isUnusual,
       };
     })
+    .filter((event) =>
+      flowEventMatchesFilters(event, input.filters, input.unusualThreshold),
+    )
     // Surface unusual contracts (volume > open interest) above routine flow,
     // then fall back to premium so the highest-conviction events win ties.
     .sort((a, b) => {
@@ -4144,22 +10453,44 @@ async function listFlowEventsUncached(input: {
         status: "live",
         attemptedProviders,
         unusualThreshold: input.unusualThreshold ?? 1,
+        ibkrStatus,
+        ibkrReason,
+        ibkrExpirationCount,
+        ibkrHydratedExpirationCount,
+        ibkrContractCount,
+        ibkrQualifiedContractCount,
       }),
     };
   }
 
-  if (getPolygonRuntimeConfig()) {
+  if (getPolygonRuntimeConfig() && !attemptedProviders.includes("polygon")) {
     attemptedProviders.push("polygon");
     try {
+      const polygonCandidateLimit = hasNarrowFlowFilters(input.filters)
+        ? Math.min(
+            250,
+            Math.max(
+              input.limit * 4,
+              input.limit,
+              getOptionsFlowRuntimeConfig().scannerLimit,
+            ),
+          )
+        : input.limit;
       const polygonEvents = await getPolygonClient().getDerivedFlowEvents({
         underlying: input.underlying,
-        limit: input.limit,
+        limit: polygonCandidateLimit,
         unusualThreshold: input.unusualThreshold,
       });
+      const filteredPolygonEvents = filterFlowEventsForRequest(
+        polygonEvents,
+        input.filters,
+        input.unusualThreshold,
+        input.limit,
+      );
 
-      if (polygonEvents.length > 0) {
+      if (filteredPolygonEvents.length > 0) {
         return {
-          events: polygonEvents,
+          events: filteredPolygonEvents,
           source: flowSource({
             provider: "polygon",
             status: "fallback",
@@ -4167,6 +10498,12 @@ async function listFlowEventsUncached(input: {
             attemptedProviders,
             errorMessage: ibkrError,
             unusualThreshold: input.unusualThreshold ?? 1,
+            ibkrStatus,
+            ibkrReason,
+            ibkrExpirationCount,
+            ibkrHydratedExpirationCount,
+            ibkrContractCount,
+            ibkrQualifiedContractCount,
           }),
         };
       }
@@ -4185,6 +10522,378 @@ async function listFlowEventsUncached(input: {
       attemptedProviders,
       errorMessage,
       unusualThreshold: input.unusualThreshold ?? 1,
+      ibkrStatus,
+      ibkrReason,
+      ibkrExpirationCount,
+      ibkrHydratedExpirationCount,
+      ibkrContractCount,
+      ibkrQualifiedContractCount,
     }),
+  };
+}
+
+type FlowScannerBenchmarkLineUsage = {
+  activeLineCount: number;
+  activeOptionLineCount: number;
+  flowScannerLineCount: number;
+  flowScannerRemainingLineCount: number;
+  usableRemainingLineCount: number;
+  leaseCount: number;
+};
+
+export type FlowScannerBenchmarkBudgetResult = {
+  underlying: string;
+  lineBudget: number;
+  status: "loaded" | "empty" | "error";
+  strikeCoverage: OptionChainStrikeCoverage;
+  strikesAroundMoney: number | null;
+  expirationCount: number;
+  expirationsCacheStatus: RequestDebugMetadata["cacheStatus"] | null;
+  expirationsDegraded: boolean;
+  expirationsDebugReason: string | null;
+  candidateExpirationCount: number;
+  hydratedExpirationCount: number;
+  metadataFailedExpirationCount: number;
+  metadataContractCount: number;
+  metadataErrorSamples: string[];
+  metadataDebugReasonCounts: Array<{ reason: string; count: number }>;
+  liveCandidateCount: number;
+  acceptedQuoteCount: number;
+  rejectedQuoteCount: number;
+  returnedQuoteCount: number;
+  missingQuoteCount: number;
+  timingsMs: {
+    total: number;
+    expirations: number;
+    metadata: number;
+    quote: number;
+    lineDwell: number;
+  };
+  lineUsageBefore: FlowScannerBenchmarkLineUsage;
+  lineUsageBeforeQuotes: FlowScannerBenchmarkLineUsage;
+  lineUsageAfter: FlowScannerBenchmarkLineUsage;
+  errorMessage: string | null;
+};
+
+export type FlowScannerBenchmarkResult = {
+  underlying: string;
+  startedAt: Date;
+  finishedAt: Date;
+  config: {
+    lineBudgets: number[];
+    maxDte: number | null;
+    expirationScanCount: number;
+    strikeCoverage: OptionChainStrikeCoverage;
+    scannerIntervalMs: number;
+  };
+  results: FlowScannerBenchmarkBudgetResult[];
+};
+
+function summarizeMarketDataLineUsage(
+  diagnostics: ReturnType<typeof getMarketDataAdmissionDiagnostics>,
+): FlowScannerBenchmarkLineUsage {
+  return {
+    activeLineCount: diagnostics.activeLineCount,
+    activeOptionLineCount: diagnostics.activeOptionLineCount,
+    flowScannerLineCount: diagnostics.flowScannerLineCount,
+    flowScannerRemainingLineCount: diagnostics.flowScannerRemainingLineCount,
+    usableRemainingLineCount: diagnostics.usableRemainingLineCount,
+    leaseCount: diagnostics.leaseCount,
+  };
+}
+
+function normalizeFlowScannerBenchmarkLineBudgets(
+  values: readonly number[] | undefined,
+): number[] {
+  const rawValues = values?.length ? values : [10, 20, 40];
+  return Array.from(
+    new Set(
+      rawValues
+        .map((value) => Math.floor(Number(value)))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.max(1, Math.min(150, value))),
+    ),
+  ).sort((left, right) => left - right);
+}
+
+function summarizeBenchmarkBatchDebug(
+  batch: BatchOptionChainsResult | null,
+): {
+  failedExpirationCount: number;
+  errorSamples: string[];
+  debugReasonCounts: Array<{ reason: string; count: number }>;
+} {
+  if (!batch) {
+    return {
+      failedExpirationCount: 0,
+      errorSamples: [],
+      debugReasonCounts: [],
+    };
+  }
+
+  const errorSamples = new Set<string>();
+  const reasonCounts = new Map<string, number>();
+
+  for (const result of batch.results) {
+    const error = typeof result.error === "string" ? result.error.trim() : "";
+    if (error) {
+      errorSamples.add(error);
+    }
+
+    const reason =
+      typeof result.debug?.reason === "string" && result.debug.reason.trim()
+        ? result.debug.reason.trim()
+        : result.status === "loaded"
+          ? "loaded"
+          : "unknown";
+    reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+  }
+
+  return {
+    failedExpirationCount: batch.results.filter(
+      (result) => result.status !== "loaded",
+    ).length,
+    errorSamples: Array.from(errorSamples).slice(0, 5),
+    debugReasonCounts: Array.from(reasonCounts.entries())
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((left, right) => right.count - left.count),
+  };
+}
+
+export async function benchmarkOptionsFlowScannerTickerPass(input: {
+  underlying: string;
+  lineBudgets?: readonly number[];
+  maxDte?: number | null;
+  expirationScanCount?: number | null;
+  strikeCoverage?: OptionChainStrikeCoverage;
+}): Promise<FlowScannerBenchmarkResult> {
+  const underlying = normalizeSymbol(input.underlying);
+  if (!underlying) {
+    throw new HttpError(400, "underlying is required.", {
+      code: "invalid_flow_scanner_benchmark_request",
+    });
+  }
+
+  const runtimeConfig = getOptionsFlowRuntimeConfig();
+  const lineBudgets = normalizeFlowScannerBenchmarkLineBudgets(input.lineBudgets);
+  const maxDte =
+    input.maxDte === undefined
+      ? null
+      : input.maxDte === null
+        ? null
+        : Math.max(0, Math.floor(input.maxDte));
+  const expirationScanCount =
+    typeof input.expirationScanCount === "number" &&
+    Number.isFinite(input.expirationScanCount) &&
+    input.expirationScanCount >= 0
+      ? Math.floor(input.expirationScanCount)
+      : runtimeConfig.expirationScanCount;
+  const strikeCoverage =
+    input.strikeCoverage ?? runtimeConfig.scannerStrikeCoverage;
+  const startedAt = new Date();
+  const results: FlowScannerBenchmarkBudgetResult[] = [];
+
+  for (const lineBudget of lineBudgets) {
+    const totalStartedAt = Date.now();
+    const lineUsageBefore = summarizeMarketDataLineUsage(
+      getMarketDataAdmissionDiagnostics(),
+    );
+    let expirationCount = 0;
+    let expirationsCacheStatus: RequestDebugMetadata["cacheStatus"] | null =
+      null;
+    let expirationsDegraded = false;
+    let expirationsDebugReason: string | null = null;
+    let candidateExpirationCount = 0;
+    let hydratedExpirationCount = 0;
+    let metadataFailedExpirationCount = 0;
+    let metadataContractCount = 0;
+    let metadataErrorSamples: string[] = [];
+    let metadataDebugReasonCounts: Array<{ reason: string; count: number }> = [];
+    let liveCandidateCount = 0;
+    let acceptedQuoteCount = 0;
+    let rejectedQuoteCount = 0;
+    let returnedQuoteCount = 0;
+    let missingQuoteCount = 0;
+    let expirationsMs = 0;
+    let metadataMs = 0;
+    let quoteMs = 0;
+    let lineDwellMs = 0;
+    let lineUsageBeforeQuotes = lineUsageBefore;
+    let selectedStrikeCoverage = strikeCoverage;
+    let selectedStrikesAroundMoney: number | null = null;
+
+    try {
+      const expirationsStartedAt = Date.now();
+      const expirationsResult = await getCachedIbkrOptionExpirationsWithDebug({
+        underlying,
+      });
+      expirationsMs = Math.max(0, Date.now() - expirationsStartedAt);
+      expirationCount = expirationsResult.expirations.length;
+      expirationsCacheStatus = expirationsResult.debug.cacheStatus ?? null;
+      expirationsDegraded = Boolean(expirationsResult.debug.degraded);
+      expirationsDebugReason = expirationsResult.debug.reason ?? null;
+      const candidateExpirations = selectFlowScannerExpirationDates({
+        expirations: expirationsResult.expirations,
+        maxDte,
+        expirationScanCount,
+      });
+      candidateExpirationCount = candidateExpirations.length;
+
+      const metadataSelection = buildFlowScannerMetadataSelection({
+        lineBudget,
+        expirationCount: candidateExpirations.length,
+        strikeCoverage,
+      });
+      selectedStrikeCoverage = metadataSelection.strikeCoverage ?? "standard";
+      selectedStrikesAroundMoney =
+        metadataSelection.strikesAroundMoney ?? null;
+
+      const metadataStartedAt = Date.now();
+      const batch =
+        candidateExpirations.length > 0
+          ? await batchOptionChains({
+              underlying,
+              expirationDates: candidateExpirations,
+              ...metadataSelection,
+              quoteHydration: "metadata",
+              allowDelayedSnapshotHydration: false,
+            })
+          : null;
+      metadataMs = Math.max(0, Date.now() - metadataStartedAt);
+      hydratedExpirationCount =
+        batch?.results.filter((result) => result.contracts.length > 0).length ??
+        0;
+      const batchDebugSummary = summarizeBenchmarkBatchDebug(batch);
+      metadataFailedExpirationCount =
+        batchDebugSummary.failedExpirationCount;
+      metadataErrorSamples = batchDebugSummary.errorSamples;
+      metadataDebugReasonCounts = batchDebugSummary.debugReasonCounts;
+      const metadataContracts =
+        batch?.results.flatMap((result) => result.contracts) ?? [];
+      metadataContractCount = metadataContracts.length;
+      const liveCandidateContracts = selectFlowScannerLiveCandidateContracts(
+        metadataContracts,
+        lineBudget,
+      );
+      liveCandidateCount = liveCandidateContracts.length;
+      const providerContractIds = liveCandidateContracts
+        .map((contract) => contract.contract.providerContractId)
+        .filter((providerContractId): providerContractId is string =>
+          Boolean(providerContractId),
+        );
+
+      lineUsageBeforeQuotes = summarizeMarketDataLineUsage(
+        getMarketDataAdmissionDiagnostics(),
+      );
+      const quoteStartedAt = Date.now();
+      const quotePayload =
+        providerContractIds.length > 0
+          ? await fetchBridgeOptionQuoteSnapshots({
+              underlying,
+              providerContractIds,
+              owner: `flow-scanner-benchmark:${underlying}:${lineBudget}:${quoteStartedAt}`,
+              intent: "flow-scanner-live",
+              ttlMs: Math.max(10_000, runtimeConfig.scannerIntervalMs),
+              fallbackProvider: "none",
+              requiresGreeks: false,
+            })
+          : null;
+      quoteMs = Math.max(0, Date.now() - quoteStartedAt);
+      lineDwellMs = quoteMs;
+      acceptedQuoteCount = quotePayload?.debug?.acceptedCount ?? 0;
+      rejectedQuoteCount = quotePayload?.debug?.rejectedCount ?? 0;
+      returnedQuoteCount =
+        quotePayload?.debug?.returnedCount ?? quotePayload?.quotes.length ?? 0;
+      missingQuoteCount = Math.max(0, acceptedQuoteCount - returnedQuoteCount);
+
+      results.push({
+        underlying,
+        lineBudget,
+        status:
+          returnedQuoteCount > 0 || metadataContractCount > 0
+            ? "loaded"
+            : "empty",
+        strikeCoverage: selectedStrikeCoverage,
+        strikesAroundMoney: selectedStrikesAroundMoney,
+        expirationCount,
+        expirationsCacheStatus,
+        expirationsDegraded,
+        expirationsDebugReason,
+        candidateExpirationCount,
+        hydratedExpirationCount,
+        metadataFailedExpirationCount,
+        metadataContractCount,
+        metadataErrorSamples,
+        metadataDebugReasonCounts,
+        liveCandidateCount,
+        acceptedQuoteCount,
+        rejectedQuoteCount,
+        returnedQuoteCount,
+        missingQuoteCount,
+        timingsMs: {
+          total: Math.max(0, Date.now() - totalStartedAt),
+          expirations: expirationsMs,
+          metadata: metadataMs,
+          quote: quoteMs,
+          lineDwell: lineDwellMs,
+        },
+        lineUsageBefore,
+        lineUsageBeforeQuotes,
+        lineUsageAfter: summarizeMarketDataLineUsage(
+          getMarketDataAdmissionDiagnostics(),
+        ),
+        errorMessage: null,
+      });
+    } catch (error) {
+      results.push({
+        underlying,
+        lineBudget,
+        status: "error",
+        strikeCoverage: selectedStrikeCoverage,
+        strikesAroundMoney: selectedStrikesAroundMoney,
+        expirationCount,
+        expirationsCacheStatus,
+        expirationsDegraded,
+        expirationsDebugReason,
+        candidateExpirationCount,
+        hydratedExpirationCount,
+        metadataFailedExpirationCount,
+        metadataContractCount,
+        metadataErrorSamples,
+        metadataDebugReasonCounts,
+        liveCandidateCount,
+        acceptedQuoteCount,
+        rejectedQuoteCount,
+        returnedQuoteCount,
+        missingQuoteCount,
+        timingsMs: {
+          total: Math.max(0, Date.now() - totalStartedAt),
+          expirations: expirationsMs,
+          metadata: metadataMs,
+          quote: quoteMs,
+          lineDwell: lineDwellMs,
+        },
+        lineUsageBefore,
+        lineUsageBeforeQuotes,
+        lineUsageAfter: summarizeMarketDataLineUsage(
+          getMarketDataAdmissionDiagnostics(),
+        ),
+        errorMessage: getErrorMessage(error),
+      });
+    }
+  }
+
+  return {
+    underlying,
+    startedAt,
+    finishedAt: new Date(),
+    config: {
+      lineBudgets,
+      maxDte,
+      expirationScanCount,
+      strikeCoverage,
+      scannerIntervalMs: runtimeConfig.scannerIntervalMs,
+    },
+    results,
   };
 }

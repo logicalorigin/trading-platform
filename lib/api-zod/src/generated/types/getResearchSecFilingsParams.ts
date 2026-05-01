@@ -7,10 +7,10 @@
  */
 
 export type GetResearchSecFilingsParams = {
-  symbol: string;
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
+symbol: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
 };

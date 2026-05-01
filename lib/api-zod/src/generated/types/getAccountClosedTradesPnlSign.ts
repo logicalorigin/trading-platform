@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type GetAccountClosedTradesPnlSign =
-  (typeof GetAccountClosedTradesPnlSign)[keyof typeof GetAccountClosedTradesPnlSign];
+export type GetAccountClosedTradesPnlSign = typeof GetAccountClosedTradesPnlSign[keyof typeof GetAccountClosedTradesPnlSign];
+
 
 export const GetAccountClosedTradesPnlSign = {
-  all: "all",
-  winners: "winners",
-  losers: "losers",
+  all: 'all',
+  winners: 'winners',
+  losers: 'losers',
 } as const;

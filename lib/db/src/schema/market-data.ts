@@ -5,6 +5,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -57,6 +58,12 @@ export const barCacheTable = pgTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex("bar_cache_instrument_timeframe_source_starts_at_idx").on(
+      table.instrumentId,
+      table.timeframe,
+      table.source,
+      table.startsAt,
+    ),
     index("bar_cache_instrument_idx").on(table.instrumentId),
     index("bar_cache_symbol_timeframe_idx").on(table.symbol, table.timeframe),
     index("bar_cache_starts_at_idx").on(table.startsAt),

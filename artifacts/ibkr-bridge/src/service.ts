@@ -1,7 +1,6 @@
 import { performance } from "node:perf_hooks";
 import {
   getIbkrBridgeProviderRuntimeConfig,
-  getIbkrRuntimeConfig,
   getIbkrTwsRuntimeConfig,
   type RuntimeMode,
 } from "../../api-server/src/lib/runtime";
@@ -21,32 +20,26 @@ import type {
   ReplaceOrderSnapshot,
   SessionStatusSnapshot,
 } from "../../api-server/src/providers/ibkr/client";
-import { ClientPortalIbkrBridgeProvider } from "./client-portal-provider";
 import type {
   BridgeConnectionHealth,
   BridgeConnectionsHealth,
   BridgeHealth,
   BridgeHealthResponse,
+  BridgeLaneSettingsInput,
   IbkrBridgeProvider,
 } from "./provider";
 import { TwsIbkrBridgeProvider } from "./tws-provider";
 
 export class IbkrBridgeService {
   private readonly runtime = getIbkrBridgeProviderRuntimeConfig();
-  private readonly clientPortalConfig = getIbkrRuntimeConfig();
   private readonly twsConfig = getIbkrTwsRuntimeConfig();
-  private readonly clientPortalProvider = this.clientPortalConfig
-    ? new ClientPortalIbkrBridgeProvider(this.clientPortalConfig)
-    : null;
   private readonly twsProvider = this.twsConfig
     ? new TwsIbkrBridgeProvider(this.twsConfig)
     : null;
   private readonly provider: IbkrBridgeProvider | null = this.runtime
     ? this.runtime.transport === "tws"
       ? this.twsProvider
-      : this.runtime.transport === "client_portal"
-        ? this.clientPortalProvider
-        : null
+      : null
     : null;
 
   private ensureProvider(): IbkrBridgeProvider {
@@ -73,8 +66,14 @@ export class IbkrBridgeService {
     await this.provider.tickle();
   }
 
+  async shutdown(): Promise<void> {
+    await this.provider?.shutdown?.();
+  }
+
   private buildUnconfiguredHealth(): BridgeHealth {
     return {
+      bridgeRuntimeBuild:
+        process.env["IBKR_BRIDGE_RUNTIME_BUILD"]?.trim() || null,
       configured: false,
       authenticated: false,
       connected: false,
@@ -82,19 +81,27 @@ export class IbkrBridgeService {
       selectedAccountId: null,
       accounts: [],
       lastTickleAt: null,
-      lastError:
-        this.runtime?.transport === "ibx"
-          ? "IBX transport is recognized, but the bridge provider is not implemented yet."
-          : null,
+      lastError: null,
       lastRecoveryAttemptAt: null,
       lastRecoveryError: null,
       updatedAt: new Date(),
-      transport: this.runtime?.transport ?? "client_portal",
+      transport: "tws",
       connectionTarget: null,
       sessionMode: null,
       clientId: null,
       marketDataMode: null,
       liveMarketDataAvailable: null,
+      healthFresh: false,
+      healthAgeMs: null,
+      stale: true,
+      bridgeReachable: false,
+      socketConnected: false,
+      accountsLoaded: false,
+      configuredLiveMarketDataMode: false,
+      streamFresh: false,
+      lastStreamEventAgeMs: null,
+      strictReady: false,
+      strictReason: "bridge_not_configured",
     };
   }
 
@@ -123,6 +130,17 @@ export class IbkrBridgeService {
       lastError: null,
       marketDataMode: null,
       liveMarketDataAvailable: null,
+      healthFresh: false,
+      healthAgeMs: null,
+      stale: true,
+      bridgeReachable: false,
+      socketConnected: false,
+      accountsLoaded: false,
+      configuredLiveMarketDataMode: false,
+      streamFresh: false,
+      lastStreamEventAgeMs: null,
+      strictReady: false,
+      strictReason: "bridge_not_configured",
     };
   }
 
@@ -132,11 +150,8 @@ export class IbkrBridgeService {
     lastPingMs: number,
     lastPingAt: Date,
   ): BridgeConnectionHealth {
-    const transport =
-      health.transport === "tws" ? "tws" : "client_portal";
-
     return {
-      transport,
+      transport: "tws",
       role,
       configured: health.configured,
       reachable: health.connected,
@@ -153,13 +168,27 @@ export class IbkrBridgeService {
       lastError: health.lastError,
       marketDataMode: health.marketDataMode,
       liveMarketDataAvailable: health.liveMarketDataAvailable,
+      healthFresh: health.healthFresh,
+      healthAgeMs: health.healthAgeMs,
+      stale: health.stale,
+      bridgeReachable: health.bridgeReachable,
+      socketConnected: health.socketConnected,
+      accountsLoaded: health.accountsLoaded,
+      configuredLiveMarketDataMode: health.configuredLiveMarketDataMode,
+      streamFresh: health.streamFresh,
+      lastStreamEventAgeMs: health.lastStreamEventAgeMs,
+      strictReady: health.strictReady,
+      strictReason: health.strictReason,
     };
   }
 
   private async probeConnection(
     provider: IbkrBridgeProvider | null,
     fallback: BridgeConnectionHealth,
-  ): Promise<{ health: BridgeHealth | null; connection: BridgeConnectionHealth }> {
+  ): Promise<{
+    health: BridgeHealth | null;
+    connection: BridgeConnectionHealth;
+  }> {
     if (!provider) {
       return { health: null, connection: fallback };
     }
@@ -195,19 +224,23 @@ export class IbkrBridgeService {
           lastPingMs,
           lastPingAt,
           lastError,
+          healthFresh: false,
+          healthAgeMs: null,
+          stale: true,
+          bridgeReachable: false,
+          socketConnected: false,
+          accountsLoaded: false,
+          configuredLiveMarketDataMode: false,
+          streamFresh: false,
+          lastStreamEventAgeMs: null,
+          strictReady: false,
+          strictReason: "health_error",
         },
       };
     }
   }
 
   async getHealth(): Promise<BridgeHealthResponse> {
-    const clientPortalFallback = this.buildUnconfiguredConnection(
-      "client_portal",
-      "account",
-      this.clientPortalConfig?.baseUrl ?? null,
-      null,
-      null,
-    );
     const twsFallback = this.buildUnconfiguredConnection(
       "tws",
       "market_data",
@@ -216,32 +249,39 @@ export class IbkrBridgeService {
       this.twsConfig?.clientId ?? null,
     );
 
-    const [clientPortalProbe, twsProbe] = await Promise.all([
-      this.probeConnection(this.clientPortalProvider, {
-        ...clientPortalFallback,
-        configured: Boolean(this.clientPortalProvider),
-      }),
-      this.probeConnection(this.twsProvider, {
-        ...twsFallback,
-        configured: Boolean(this.twsProvider),
-      }),
-    ]);
+    const twsProbe = await this.probeConnection(this.twsProvider, {
+      ...twsFallback,
+      configured: Boolean(this.twsProvider),
+    });
 
     const connections: BridgeConnectionsHealth = {
-      clientPortal: clientPortalProbe.connection,
       tws: twsProbe.connection,
     };
     const activeHealth =
-      this.runtime?.transport === "tws"
-        ? twsProbe.health
-        : this.runtime?.transport === "client_portal"
-          ? clientPortalProbe.health
-          : null;
+      this.runtime?.transport === "tws" ? twsProbe.health : null;
 
     return {
       ...(activeHealth ?? this.buildUnconfiguredHealth()),
       connections,
     };
+  }
+
+  async getLaneDiagnostics() {
+    const provider = this.ensureProvider();
+    if (!provider.getLaneDiagnostics) {
+      throw new Error("IBKR bridge lane diagnostics are not supported.");
+    }
+
+    return provider.getLaneDiagnostics();
+  }
+
+  async updateLaneSettings(input: BridgeLaneSettingsInput) {
+    const provider = this.ensureProvider();
+    if (!provider.applyLaneSettings) {
+      throw new Error("IBKR bridge lane settings are not supported.");
+    }
+
+    return provider.applyLaneSettings(input);
   }
 
   listAccounts(mode: RuntimeMode) {
@@ -302,6 +342,8 @@ export class IbkrBridgeService {
     contractType?: "call" | "put" | null;
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    strikeCoverage?: "fast" | "standard" | "full";
+    quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
     return this.ensureProvider().getOptionChain(input);
@@ -331,7 +373,9 @@ export class IbkrBridgeService {
 
   placeOrder(
     input: PlaceOrderInput,
-  ): Promise<import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot> {
+  ): Promise<
+    import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot
+  > {
     return this.ensureProvider().placeOrder(input);
   }
 
@@ -364,7 +408,10 @@ export class IbkrBridgeService {
     return this.ensureProvider().cancelOrder(input);
   }
 
-  getNews(input: { ticker?: string; limit?: number }): Promise<IbkrNewsArticle[]> {
+  getNews(input: {
+    ticker?: string;
+    limit?: number;
+  }): Promise<IbkrNewsArticle[]> {
     return this.ensureProvider().getNews(input);
   }
 
@@ -388,7 +435,9 @@ export class IbkrBridgeService {
     onQuote: (quote: QuoteSnapshot) => void,
   ): Promise<() => void> {
     if (!this.provider?.subscribeQuoteStream) {
-      throw new Error("IBKR quote streaming is not supported by this transport.");
+      throw new Error(
+        "IBKR quote streaming is not supported by this transport.",
+      );
     }
 
     return this.provider.subscribeQuoteStream(symbols, onQuote);
@@ -429,12 +478,13 @@ export class IbkrBridgeService {
       source?: HistoryDataSource;
     },
     onBar: (bar: BrokerBarSnapshot) => void,
+    onError?: (error: unknown) => void,
   ): Promise<() => void> {
     if (!this.provider?.subscribeHistoricalBarStream) {
       return () => {};
     }
 
-    return this.provider.subscribeHistoricalBarStream(input, onBar);
+    return this.provider.subscribeHistoricalBarStream(input, onBar, onError);
   }
 }
 

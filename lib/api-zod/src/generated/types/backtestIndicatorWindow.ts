@@ -5,8 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BacktestIndicatorWindowDirection } from "./backtestIndicatorWindowDirection";
-import type { BacktestIndicatorWindowMeta } from "./backtestIndicatorWindowMeta";
+import type { BacktestIndicatorWindowDirection } from './backtestIndicatorWindowDirection';
+import type { BacktestIndicatorWindowMeta } from './backtestIndicatorWindowMeta';
 
 export interface BacktestIndicatorWindow {
   id: string;
@@ -18,7 +18,7 @@ export interface BacktestIndicatorWindow {
   startBarIndex: number | null;
   /** @nullable */
   endBarIndex: number | null;
-  tone: "bullish" | "bearish" | "neutral" | null;
+  tone: 'bullish' | 'bearish' | 'neutral' | null;
   /** @nullable */
   conviction: number | null;
   meta: BacktestIndicatorWindowMeta;

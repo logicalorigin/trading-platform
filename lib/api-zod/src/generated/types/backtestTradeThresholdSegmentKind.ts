@@ -6,13 +6,13 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeThresholdSegmentKind =
-  (typeof BacktestTradeThresholdSegmentKind)[keyof typeof BacktestTradeThresholdSegmentKind];
+export type BacktestTradeThresholdSegmentKind = typeof BacktestTradeThresholdSegmentKind[keyof typeof BacktestTradeThresholdSegmentKind];
+
 
 export const BacktestTradeThresholdSegmentKind = {
-  take_profit: "take_profit",
-  stop_loss: "stop_loss",
-  trail_arm: "trail_arm",
-  trail_stop: "trail_stop",
-  exit_trigger: "exit_trigger",
+  take_profit: 'take_profit',
+  stop_loss: 'stop_loss',
+  trail_arm: 'trail_arm',
+  trail_stop: 'trail_stop',
+  exit_trigger: 'exit_trigger',
 } as const;

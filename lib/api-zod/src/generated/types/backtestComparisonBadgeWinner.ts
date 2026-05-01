@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestComparisonBadgeWinner =
-  (typeof BacktestComparisonBadgeWinner)[keyof typeof BacktestComparisonBadgeWinner];
+export type BacktestComparisonBadgeWinner = typeof BacktestComparisonBadgeWinner[keyof typeof BacktestComparisonBadgeWinner];
+
 
 export const BacktestComparisonBadgeWinner = {
-  latest: "latest",
-  best: "best",
-  tie: "tie",
-  none: "none",
+  latest: 'latest',
+  best: 'best',
+  tie: 'tie',
+  none: 'none',
 } as const;

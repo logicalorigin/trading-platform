@@ -5,247 +5,265 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-export type HealthStatusStatus =
-  (typeof HealthStatusStatus)[keyof typeof HealthStatusStatus];
+export type HealthStatusStatus = typeof HealthStatusStatus[keyof typeof HealthStatusStatus];
+
 
 export const HealthStatusStatus = {
-  ok: "ok",
+  ok: 'ok',
 } as const;
 
 export interface HealthStatus {
   status: HealthStatusStatus;
 }
 
-export type EnvironmentMode =
-  (typeof EnvironmentMode)[keyof typeof EnvironmentMode];
+export type EnvironmentMode = typeof EnvironmentMode[keyof typeof EnvironmentMode];
+
 
 export const EnvironmentMode = {
-  paper: "paper",
-  live: "live",
+  paper: 'paper',
+  live: 'live',
 } as const;
 
-export type BrokerProvider =
-  (typeof BrokerProvider)[keyof typeof BrokerProvider];
+export type BrokerProvider = typeof BrokerProvider[keyof typeof BrokerProvider];
+
 
 export const BrokerProvider = {
-  ibkr: "ibkr",
+  ibkr: 'ibkr',
 } as const;
 
-export type MarketDataProvider =
-  (typeof MarketDataProvider)[keyof typeof MarketDataProvider];
+export type MarketDataProvider = typeof MarketDataProvider[keyof typeof MarketDataProvider];
+
 
 export const MarketDataProvider = {
-  polygon: "polygon",
-  ibkr: "ibkr",
+  polygon: 'polygon',
+  ibkr: 'ibkr',
 } as const;
 
-export type FlowDataProvider =
-  (typeof FlowDataProvider)[keyof typeof FlowDataProvider];
+export type FlowDataProvider = typeof FlowDataProvider[keyof typeof FlowDataProvider];
+
 
 export const FlowDataProvider = {
-  ibkr: "ibkr",
-  polygon: "polygon",
+  ibkr: 'ibkr',
+  polygon: 'polygon',
 } as const;
 
-export type FlowEventBasis =
-  (typeof FlowEventBasis)[keyof typeof FlowEventBasis];
+export type FlowEventBasis = typeof FlowEventBasis[keyof typeof FlowEventBasis];
+
 
 export const FlowEventBasis = {
-  snapshot: "snapshot",
-  trade: "trade",
+  snapshot: 'snapshot',
+  trade: 'trade',
 } as const;
 
-export type FlowEventsSourceProvider =
-  (typeof FlowEventsSourceProvider)[keyof typeof FlowEventsSourceProvider];
+export type FlowEventsSourceProvider = typeof FlowEventsSourceProvider[keyof typeof FlowEventsSourceProvider];
+
 
 export const FlowEventsSourceProvider = {
-  ibkr: "ibkr",
-  polygon: "polygon",
-  none: "none",
+  ibkr: 'ibkr',
+  polygon: 'polygon',
+  none: 'none',
 } as const;
 
-export type FlowEventsSourceStatus =
-  (typeof FlowEventsSourceStatus)[keyof typeof FlowEventsSourceStatus];
+export type FlowEventsSourceStatus = typeof FlowEventsSourceStatus[keyof typeof FlowEventsSourceStatus];
+
 
 export const FlowEventsSourceStatus = {
-  live: "live",
-  fallback: "fallback",
-  empty: "empty",
-  error: "error",
+  live: 'live',
+  fallback: 'fallback',
+  empty: 'empty',
+  error: 'error',
 } as const;
 
-export type UniverseMarket =
-  (typeof UniverseMarket)[keyof typeof UniverseMarket];
+export type UniverseMarket = typeof UniverseMarket[keyof typeof UniverseMarket];
+
 
 export const UniverseMarket = {
-  stocks: "stocks",
-  etf: "etf",
-  indices: "indices",
-  futures: "futures",
-  fx: "fx",
-  crypto: "crypto",
-  otc: "otc",
+  stocks: 'stocks',
+  etf: 'etf',
+  indices: 'indices',
+  futures: 'futures',
+  fx: 'fx',
+  crypto: 'crypto',
+  otc: 'otc',
 } as const;
 
-export type ResearchProvider =
-  (typeof ResearchProvider)[keyof typeof ResearchProvider];
+export type ResearchProvider = typeof ResearchProvider[keyof typeof ResearchProvider];
+
 
 export const ResearchProvider = {
-  fmp: "fmp",
+  fmp: 'fmp',
 } as const;
 
-export type ConnectionStatus =
-  (typeof ConnectionStatus)[keyof typeof ConnectionStatus];
+export type ConnectionStatus = typeof ConnectionStatus[keyof typeof ConnectionStatus];
+
 
 export const ConnectionStatus = {
-  configured: "configured",
-  connected: "connected",
-  disconnected: "disconnected",
-  error: "error",
+  configured: 'configured',
+  connected: 'connected',
+  disconnected: 'disconnected',
+  error: 'error',
 } as const;
 
-export type AssetClass = (typeof AssetClass)[keyof typeof AssetClass];
+export type AssetClass = typeof AssetClass[keyof typeof AssetClass];
+
 
 export const AssetClass = {
-  equity: "equity",
-  option: "option",
+  equity: 'equity',
+  option: 'option',
 } as const;
 
-export type OptionRight = (typeof OptionRight)[keyof typeof OptionRight];
+export type OptionRight = typeof OptionRight[keyof typeof OptionRight];
+
 
 export const OptionRight = {
-  call: "call",
-  put: "put",
+  call: 'call',
+  put: 'put',
 } as const;
 
-export type OrderSide = (typeof OrderSide)[keyof typeof OrderSide];
+export type OrderSide = typeof OrderSide[keyof typeof OrderSide];
+
 
 export const OrderSide = {
-  buy: "buy",
-  sell: "sell",
+  buy: 'buy',
+  sell: 'sell',
 } as const;
 
-export type OrderType = (typeof OrderType)[keyof typeof OrderType];
+export type OrderType = typeof OrderType[keyof typeof OrderType];
+
 
 export const OrderType = {
-  market: "market",
-  limit: "limit",
-  stop: "stop",
-  stop_limit: "stop_limit",
+  market: 'market',
+  limit: 'limit',
+  stop: 'stop',
+  stop_limit: 'stop_limit',
 } as const;
 
-export type TimeInForce = (typeof TimeInForce)[keyof typeof TimeInForce];
+export type TimeInForce = typeof TimeInForce[keyof typeof TimeInForce];
+
 
 export const TimeInForce = {
-  day: "day",
-  gtc: "gtc",
-  ioc: "ioc",
-  fok: "fok",
+  day: 'day',
+  gtc: 'gtc',
+  ioc: 'ioc',
+  fok: 'fok',
 } as const;
 
-export type OrderStatus = (typeof OrderStatus)[keyof typeof OrderStatus];
+export type OrderStatus = typeof OrderStatus[keyof typeof OrderStatus];
+
 
 export const OrderStatus = {
-  pending_submit: "pending_submit",
-  submitted: "submitted",
-  accepted: "accepted",
-  partially_filled: "partially_filled",
-  filled: "filled",
-  canceled: "canceled",
-  rejected: "rejected",
-  expired: "expired",
+  pending_submit: 'pending_submit',
+  submitted: 'submitted',
+  accepted: 'accepted',
+  partially_filled: 'partially_filled',
+  filled: 'filled',
+  canceled: 'canceled',
+  rejected: 'rejected',
+  expired: 'expired',
 } as const;
 
-export type BarTimeframe = (typeof BarTimeframe)[keyof typeof BarTimeframe];
+export type BarTimeframe = typeof BarTimeframe[keyof typeof BarTimeframe];
+
 
 export const BarTimeframe = {
-  "1s": "1s",
-  "5s": "5s",
-  "15s": "15s",
-  "1m": "1m",
-  "5m": "5m",
-  "15m": "15m",
-  "1h": "1h",
-  "1d": "1d",
+  '1s': '1s',
+  '5s': '5s',
+  '15s': '15s',
+  '1m': '1m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '1h',
+  '1d': '1d',
 } as const;
 
-export type SignalMonitorTimeframe =
-  (typeof SignalMonitorTimeframe)[keyof typeof SignalMonitorTimeframe];
+export type SignalMonitorTimeframe = typeof SignalMonitorTimeframe[keyof typeof SignalMonitorTimeframe];
+
 
 export const SignalMonitorTimeframe = {
-  "1m": "1m",
-  "5m": "5m",
-  "15m": "15m",
-  "1h": "1h",
-  "1d": "1d",
+  '1m': '1m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '1h',
+  '1d': '1d',
 } as const;
 
-export type FlowSentiment = (typeof FlowSentiment)[keyof typeof FlowSentiment];
+export type FlowSentiment = typeof FlowSentiment[keyof typeof FlowSentiment];
+
 
 export const FlowSentiment = {
-  bullish: "bullish",
-  bearish: "bearish",
-  neutral: "neutral",
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
 } as const;
 
-export type QuoteSource = (typeof QuoteSource)[keyof typeof QuoteSource];
+export type QuoteSource = typeof QuoteSource[keyof typeof QuoteSource];
+
 
 export const QuoteSource = {
-  ibkr: "ibkr",
-  polygon: "polygon",
+  ibkr: 'ibkr',
+  polygon: 'polygon',
 } as const;
 
-export type BarDataSource = (typeof BarDataSource)[keyof typeof BarDataSource];
+export type BarDataSource = typeof BarDataSource[keyof typeof BarDataSource];
+
 
 export const BarDataSource = {
-  trades: "trades",
-  midpoint: "midpoint",
-  bid_ask: "bid_ask",
+  trades: 'trades',
+  midpoint: 'midpoint',
+  bid_ask: 'bid_ask',
 } as const;
 
-export interface JsonObject {
-  [key: string]: unknown;
-}
+export interface JsonObject { [key: string]: unknown }
 
-export const SessionMarketDataProvidersResearch = {
-  ...MarketDataProvider,
-  ...ResearchProvider,
-} as const;
+export const SessionMarketDataProvidersResearch = {...MarketDataProvider,...ResearchProvider,} as const
 export interface SessionMarketDataProviders {
   live: MarketDataProvider;
   historical: MarketDataProvider;
-  research: (typeof SessionMarketDataProvidersResearch)[keyof typeof SessionMarketDataProvidersResearch];
+  research: typeof SessionMarketDataProvidersResearch[keyof typeof SessionMarketDataProvidersResearch];
 }
 
-export type IbkrBridgeConnectionHealthTransport =
-  (typeof IbkrBridgeConnectionHealthTransport)[keyof typeof IbkrBridgeConnectionHealthTransport];
+export type IbkrBridgeConnectionHealthTransport = typeof IbkrBridgeConnectionHealthTransport[keyof typeof IbkrBridgeConnectionHealthTransport];
+
 
 export const IbkrBridgeConnectionHealthTransport = {
-  client_portal: "client_portal",
-  tws: "tws",
+  tws: 'tws',
 } as const;
 
-export type IbkrBridgeConnectionHealthRole =
-  (typeof IbkrBridgeConnectionHealthRole)[keyof typeof IbkrBridgeConnectionHealthRole];
+export type IbkrBridgeConnectionHealthRole = typeof IbkrBridgeConnectionHealthRole[keyof typeof IbkrBridgeConnectionHealthRole];
+
 
 export const IbkrBridgeConnectionHealthRole = {
-  account: "account",
-  market_data: "market_data",
+  market_data: 'market_data',
 } as const;
 
 /**
  * @nullable
  */
-export type IbkrBridgeConnectionHealthMarketDataMode =
-  | (typeof IbkrBridgeConnectionHealthMarketDataMode)[keyof typeof IbkrBridgeConnectionHealthMarketDataMode]
-  | null;
+export type IbkrBridgeConnectionHealthMarketDataMode = typeof IbkrBridgeConnectionHealthMarketDataMode[keyof typeof IbkrBridgeConnectionHealthMarketDataMode] | null;
+
 
 export const IbkrBridgeConnectionHealthMarketDataMode = {
-  live: "live",
-  frozen: "frozen",
-  delayed: "delayed",
-  delayed_frozen: "delayed_frozen",
-  unknown: "unknown",
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
+} as const;
+
+export type IbkrBridgeConnectionHealthStreamState = typeof IbkrBridgeConnectionHealthStreamState[keyof typeof IbkrBridgeConnectionHealthStreamState];
+
+
+export const IbkrBridgeConnectionHealthStreamState = {
+  offline: 'offline',
+  login_required: 'login_required',
+  checking: 'checking',
+  delayed: 'delayed',
+  live: 'live',
+  quiet: 'quiet',
+  stale: 'stale',
+  capacity_limited: 'capacity_limited',
+  reconnecting: 'reconnecting',
+  reconnect_needed: 'reconnect_needed',
 } as const;
 
 export interface IbkrBridgeConnectionHealth {
@@ -275,35 +293,64 @@ export interface IbkrBridgeConnectionHealth {
   marketDataMode: IbkrBridgeConnectionHealthMarketDataMode;
   /** @nullable */
   liveMarketDataAvailable: boolean | null;
+  healthFresh?: boolean;
+  /** @nullable */
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  streamState?: IbkrBridgeConnectionHealthStreamState;
+  /** @nullable */
+  streamStateReason?: string | null;
+  /** @nullable */
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  /** @nullable */
+  strictReason?: string | null;
 }
 
 export interface IbkrBridgeConnectionsHealth {
-  clientPortal: IbkrBridgeConnectionHealth;
   tws: IbkrBridgeConnectionHealth;
 }
 
-export type IbkrBridgeHealthTransport =
-  (typeof IbkrBridgeHealthTransport)[keyof typeof IbkrBridgeHealthTransport];
+export type IbkrBridgeHealthTransport = typeof IbkrBridgeHealthTransport[keyof typeof IbkrBridgeHealthTransport];
+
 
 export const IbkrBridgeHealthTransport = {
-  client_portal: "client_portal",
-  tws: "tws",
-  ibx: "ibx",
+  tws: 'tws',
 } as const;
 
 /**
  * @nullable
  */
-export type IbkrBridgeHealthMarketDataMode =
-  | (typeof IbkrBridgeHealthMarketDataMode)[keyof typeof IbkrBridgeHealthMarketDataMode]
-  | null;
+export type IbkrBridgeHealthMarketDataMode = typeof IbkrBridgeHealthMarketDataMode[keyof typeof IbkrBridgeHealthMarketDataMode] | null;
+
 
 export const IbkrBridgeHealthMarketDataMode = {
-  live: "live",
-  frozen: "frozen",
-  delayed: "delayed",
-  delayed_frozen: "delayed_frozen",
-  unknown: "unknown",
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
+} as const;
+
+export type IbkrBridgeHealthStreamState = typeof IbkrBridgeHealthStreamState[keyof typeof IbkrBridgeHealthStreamState];
+
+
+export const IbkrBridgeHealthStreamState = {
+  offline: 'offline',
+  login_required: 'login_required',
+  checking: 'checking',
+  delayed: 'delayed',
+  live: 'live',
+  quiet: 'quiet',
+  stale: 'stale',
+  capacity_limited: 'capacity_limited',
+  reconnecting: 'reconnecting',
+  reconnect_needed: 'reconnect_needed',
 } as const;
 
 export interface IbkrBridgeHealth {
@@ -333,7 +380,24 @@ export interface IbkrBridgeHealth {
   marketDataMode: IbkrBridgeHealthMarketDataMode;
   /** @nullable */
   liveMarketDataAvailable: boolean | null;
-  connections?: IbkrBridgeConnectionsHealth;
+  healthFresh?: boolean;
+  /** @nullable */
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  streamState?: IbkrBridgeHealthStreamState;
+  /** @nullable */
+  streamStateReason?: string | null;
+  /** @nullable */
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  /** @nullable */
+  strictReason?: string | null;
+  connections: IbkrBridgeConnectionsHealth;
 }
 
 export type SessionInfoConfigured = {
@@ -351,6 +415,258 @@ export interface SessionInfo {
   ibkrBridge: IbkrBridgeHealth | null;
   timestamp: string;
 }
+
+export interface RuntimeMemoryDiagnostics {
+  rss: number;
+  heapUsed: number;
+  heapTotal: number;
+  external: number;
+}
+
+export interface RuntimeApiDiagnostics {
+  uptimeMs: number;
+  memoryMb: RuntimeMemoryDiagnostics;
+}
+
+export interface RuntimeOrderCapabilityDiagnostics {
+  orderDataVisible: boolean;
+  readOnlyModeLikely: boolean;
+  liveActionConfirmationRequired: boolean;
+  diagnosticsMutateOrders: boolean;
+}
+
+export type RuntimeIbkrDiagnosticsTransport = typeof RuntimeIbkrDiagnosticsTransport[keyof typeof RuntimeIbkrDiagnosticsTransport];
+
+
+export const RuntimeIbkrDiagnosticsTransport = {
+  tws: 'tws',
+} as const;
+
+/**
+ * @nullable
+ */
+export type RuntimeIbkrDiagnosticsMarketDataMode = typeof RuntimeIbkrDiagnosticsMarketDataMode[keyof typeof RuntimeIbkrDiagnosticsMarketDataMode] | null;
+
+
+export const RuntimeIbkrDiagnosticsMarketDataMode = {
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
+} as const;
+
+export type RuntimeIbkrDiagnosticsStreamState = typeof RuntimeIbkrDiagnosticsStreamState[keyof typeof RuntimeIbkrDiagnosticsStreamState];
+
+
+export const RuntimeIbkrDiagnosticsStreamState = {
+  offline: 'offline',
+  login_required: 'login_required',
+  checking: 'checking',
+  delayed: 'delayed',
+  live: 'live',
+  quiet: 'quiet',
+  stale: 'stale',
+  capacity_limited: 'capacity_limited',
+  reconnecting: 'reconnecting',
+  reconnect_needed: 'reconnect_needed',
+} as const;
+
+export interface RuntimeIbkrDiagnostics {
+  transport: RuntimeIbkrDiagnosticsTransport;
+  configured: boolean;
+  bridgeUrlConfigured: boolean;
+  bridgeTokenConfigured: boolean;
+  legacyIbkrEnvPresent: boolean;
+  reachable: boolean;
+  /** @nullable */
+  healthError: string | null;
+  connected: boolean;
+  authenticated: boolean;
+  competing: boolean;
+  /** @nullable */
+  selectedAccountId: string | null;
+  accountCount: number;
+  /** @nullable */
+  connectionTarget: string | null;
+  sessionMode: EnvironmentMode | null;
+  /** @nullable */
+  clientId: number | null;
+  /** @nullable */
+  marketDataMode: RuntimeIbkrDiagnosticsMarketDataMode;
+  /** @nullable */
+  liveMarketDataAvailable: boolean | null;
+  healthFresh?: boolean;
+  /** @nullable */
+  healthAgeMs?: number | null;
+  stale?: boolean;
+  bridgeReachable?: boolean;
+  socketConnected?: boolean;
+  accountsLoaded?: boolean;
+  configuredLiveMarketDataMode?: boolean;
+  streamFresh?: boolean;
+  streamState?: RuntimeIbkrDiagnosticsStreamState;
+  /** @nullable */
+  streamStateReason?: string | null;
+  /** @nullable */
+  lastStreamEventAgeMs?: number | null;
+  strictReady?: boolean;
+  /** @nullable */
+  strictReason?: string | null;
+  /** @nullable */
+  lastTickleAt: string | null;
+  /** @nullable */
+  lastRecoveryAttemptAt: string | null;
+  /** @nullable */
+  lastRecoveryError: string | null;
+  /** @nullable */
+  lastError: string | null;
+  orderCapability: RuntimeOrderCapabilityDiagnostics;
+}
+
+export interface RuntimeDiagnosticsResponse {
+  timestamp: string;
+  api: RuntimeApiDiagnostics;
+  ibkr: RuntimeIbkrDiagnostics;
+}
+
+export type DiagnosticSeverity = typeof DiagnosticSeverity[keyof typeof DiagnosticSeverity];
+
+
+export const DiagnosticSeverity = {
+  info: 'info',
+  warning: 'warning',
+  critical: 'critical',
+} as const;
+
+export type DiagnosticStatus = typeof DiagnosticStatus[keyof typeof DiagnosticStatus];
+
+
+export const DiagnosticStatus = {
+  ok: 'ok',
+  degraded: 'degraded',
+  down: 'down',
+  unknown: 'unknown',
+} as const;
+
+export interface DiagnosticSnapshot {
+  id: string;
+  observedAt: string;
+  subsystem: string;
+  status: DiagnosticStatus;
+  severity: DiagnosticSeverity;
+  summary: string;
+  dimensions: JsonObject;
+  metrics: JsonObject;
+  raw: JsonObject;
+}
+
+export type DiagnosticEventStatus = typeof DiagnosticEventStatus[keyof typeof DiagnosticEventStatus];
+
+
+export const DiagnosticEventStatus = {
+  open: 'open',
+  resolved: 'resolved',
+} as const;
+
+export interface DiagnosticEvent {
+  id: string;
+  incidentKey: string;
+  subsystem: string;
+  category: string;
+  /** @nullable */
+  code: string | null;
+  severity: DiagnosticSeverity;
+  status: DiagnosticEventStatus;
+  message: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  eventCount: number;
+  dimensions: JsonObject;
+  raw: JsonObject;
+}
+
+export interface DiagnosticThreshold {
+  metricKey: string;
+  label: string;
+  subsystem: string;
+  unit: string;
+  warning: number;
+  critical: number;
+  enabled: boolean;
+  audible: boolean;
+  description: string;
+}
+
+export interface DiagnosticsLatestResponse {
+  timestamp?: string;
+  status?: DiagnosticStatus;
+  severity?: DiagnosticSeverity;
+  summary?: string;
+  snapshots?: DiagnosticSnapshot[];
+  events?: DiagnosticEvent[];
+  thresholds?: DiagnosticThreshold[];
+}
+
+export interface DiagnosticHistoryPoint {
+  at?: string;
+  subsystem?: string;
+  severity?: DiagnosticSeverity;
+  status?: DiagnosticStatus;
+  count?: number;
+  metrics?: JsonObject;
+}
+
+export interface DiagnosticHistoryResponse {
+  from?: string;
+  to?: string;
+  resolutionMs?: number;
+  points?: DiagnosticHistoryPoint[];
+  snapshots?: DiagnosticSnapshot[];
+}
+
+export interface DiagnosticEventsResponse {
+  from?: string;
+  to?: string;
+  events?: DiagnosticEvent[];
+}
+
+export interface DiagnosticEventDetailResponse {
+  event?: DiagnosticEvent;
+  relatedSnapshots?: DiagnosticSnapshot[];
+}
+
+export interface DiagnosticThresholdsResponse {
+  thresholds?: DiagnosticThreshold[];
+}
+
+export type DiagnosticThresholdsUpdateRequestThresholdsItem = {
+  metricKey: string;
+  warning?: number;
+  critical?: number;
+  enabled?: boolean;
+  audible?: boolean;
+};
+
+export interface DiagnosticThresholdsUpdateRequest {
+  thresholds?: DiagnosticThresholdsUpdateRequestThresholdsItem[];
+}
+
+export interface DiagnosticClientEventRequest {
+  category?: string;
+  severity?: DiagnosticSeverity;
+  /** @nullable */
+  code?: string | null;
+  message?: string;
+  dimensions?: JsonObject;
+  raw?: JsonObject;
+}
+
+export interface DiagnosticEventRecordResponse {
+  event?: DiagnosticEvent;
+}
+
+export interface DiagnosticExportResponse { [key: string]: unknown }
 
 export interface ResearchStatus {
   configured: boolean;
@@ -683,9 +999,7 @@ export interface NewsArticle {
 /**
  * @nullable
  */
-export type UniverseTickerContractMeta = {
-  [key: string]: string | number | boolean | null;
-} | null;
+export type UniverseTickerContractMeta = {[key: string]: string | number | boolean | null} | null;
 
 export interface UniverseTicker {
   ticker: string;
@@ -699,6 +1013,26 @@ export interface UniverseTicker {
   exchangeDisplay: string | null;
   /** @nullable */
   logoUrl: string | null;
+  /**
+   * ISO 3166-1 alpha-2 country or EU region code for the instrument issuer when known.
+   * @nullable
+   */
+  countryCode: string | null;
+  /**
+   * ISO 3166-1 alpha-2 country or EU region code for the listing exchange when known.
+   * @nullable
+   */
+  exchangeCountryCode: string | null;
+  /**
+   * Provider or locally-derived sector label when available.
+   * @nullable
+   */
+  sector: string | null;
+  /**
+   * Provider or locally-derived industry label when available.
+   * @nullable
+   */
+  industry: string | null;
   /** @nullable */
   contractDescription: string | null;
   /** @nullable */
@@ -728,13 +1062,10 @@ export interface UniverseTicker {
   providerContractId: string | null;
 }
 
-export const BrokerConnectionProvider = {
-  ...BrokerProvider,
-  ...MarketDataProvider,
-} as const;
+export const BrokerConnectionProvider = {...BrokerProvider,...MarketDataProvider,} as const
 export interface BrokerConnection {
   id: string;
-  provider: (typeof BrokerConnectionProvider)[keyof typeof BrokerConnectionProvider];
+  provider: typeof BrokerConnectionProvider[keyof typeof BrokerConnectionProvider];
   name: string;
   mode: EnvironmentMode;
   status: ConnectionStatus;
@@ -773,6 +1104,19 @@ export interface BrokerAccount {
 export interface WatchlistItem {
   id: string;
   symbol: string;
+  market: UniverseMarket | null;
+  /** @nullable */
+  normalizedExchangeMic: string | null;
+  /** @nullable */
+  exchangeDisplay: string | null;
+  /** @nullable */
+  countryCode: string | null;
+  /** @nullable */
+  exchangeCountryCode: string | null;
+  /** @nullable */
+  sector: string | null;
+  /** @nullable */
+  industry: string | null;
   sortOrder: number;
   addedAt: string;
 }
@@ -785,13 +1129,18 @@ export interface Watchlist {
   updatedAt: string;
 }
 
-export type QuoteSnapshotFreshness =
-  (typeof QuoteSnapshotFreshness)[keyof typeof QuoteSnapshotFreshness];
+/**
+ * @nullable
+ */
+export type QuoteSnapshotMarketDataMode = typeof QuoteSnapshotMarketDataMode[keyof typeof QuoteSnapshotMarketDataMode] | null;
 
-export const QuoteSnapshotFreshness = {
-  live: "live",
-  stale: "stale",
-  pending: "pending",
+
+export const QuoteSnapshotMarketDataMode = {
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
 } as const;
 
 /**
@@ -807,6 +1156,20 @@ export type QuoteSnapshotLatency = {
   /** @nullable */
   apiServerEmittedAt?: string | null;
 } | null;
+
+export type MarketDataFreshness = typeof MarketDataFreshness[keyof typeof MarketDataFreshness];
+
+
+export const MarketDataFreshness = {
+  live: 'live',
+  delayed: 'delayed',
+  frozen: 'frozen',
+  delayed_frozen: 'delayed_frozen',
+  stale: 'stale',
+  metadata: 'metadata',
+  unavailable: 'unavailable',
+  pending: 'pending',
+} as const;
 
 export interface QuoteSnapshot {
   symbol: string;
@@ -827,13 +1190,33 @@ export interface QuoteSnapshot {
   source: QuoteSource;
   transport: IbkrBridgeHealthTransport;
   delayed: boolean;
-  freshness?: QuoteSnapshotFreshness;
+  freshness?: MarketDataFreshness;
+  /** @nullable */
+  marketDataMode?: QuoteSnapshotMarketDataMode;
+  /** @nullable */
+  dataUpdatedAt?: string | null;
+  /** @nullable */
+  ageMs?: number | null;
   /** @nullable */
   cacheAgeMs?: number | null;
   /** @nullable */
   latency?: QuoteSnapshotLatency;
   updatedAt: string;
 }
+
+/**
+ * @nullable
+ */
+export type BarMarketDataMode = typeof BarMarketDataMode[keyof typeof BarMarketDataMode] | null;
+
+
+export const BarMarketDataMode = {
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
+} as const;
 
 export interface Bar {
   timestamp: string;
@@ -849,6 +1232,13 @@ export interface Bar {
   partial?: boolean;
   transport: IbkrBridgeHealthTransport;
   delayed: boolean;
+  freshness?: MarketDataFreshness;
+  /** @nullable */
+  marketDataMode?: BarMarketDataMode;
+  /** @nullable */
+  dataUpdatedAt?: string | null;
+  /** @nullable */
+  ageMs?: number | null;
 }
 
 export interface OptionContract {
@@ -862,20 +1252,49 @@ export interface OptionContract {
   providerContractId?: string | null;
 }
 
+/**
+ * @nullable
+ */
+export type OptionChainQuoteMarketDataMode = typeof OptionChainQuoteMarketDataMode[keyof typeof OptionChainQuoteMarketDataMode] | null;
+
+
+export const OptionChainQuoteMarketDataMode = {
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
+} as const;
+
 export interface OptionChainQuote {
   contract: OptionContract;
-  bid: number;
-  ask: number;
-  last: number;
-  mark: number;
+  /** @nullable */
+  bid: number | null;
+  /** @nullable */
+  ask: number | null;
+  /** @nullable */
+  last: number | null;
+  /** @nullable */
+  mark: number | null;
   impliedVolatility?: number | null;
   delta?: number | null;
   gamma?: number | null;
   theta?: number | null;
   vega?: number | null;
-  openInterest: number;
-  volume: number;
+  /** @nullable */
+  openInterest: number | null;
+  /** @nullable */
+  volume: number | null;
   updatedAt: string;
+  quoteFreshness?: MarketDataFreshness;
+  /** @nullable */
+  marketDataMode?: OptionChainQuoteMarketDataMode;
+  /** @nullable */
+  quoteUpdatedAt?: string | null;
+  /** @nullable */
+  dataUpdatedAt?: string | null;
+  /** @nullable */
+  ageMs?: number | null;
 }
 
 export interface Position {
@@ -912,6 +1331,14 @@ export interface Order {
   optionContract: OptionContract | null;
 }
 
+export type PlaceOrderRequestSource = typeof PlaceOrderRequestSource[keyof typeof PlaceOrderRequestSource];
+
+
+export const PlaceOrderRequestSource = {
+  manual: 'manual',
+  automation: 'automation',
+} as const;
+
 export interface PlaceOrderRequest {
   accountId: string;
   mode: EnvironmentMode;
@@ -924,6 +1351,10 @@ export interface PlaceOrderRequest {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContract | null;
+  source?: PlaceOrderRequestSource;
+  sourceEventId?: string | null;
+  clientOrderId?: string | null;
+  payload?: JsonObject;
 }
 
 export interface OrderPreview {
@@ -944,9 +1375,7 @@ export interface SubmitIbkrOrdersRequest {
   ibkrOrders: JsonObject[];
 }
 
-export interface SubmitIbkrOrdersResponse {
-  [key: string]: unknown;
-}
+export interface SubmitIbkrOrdersResponse { [key: string]: unknown }
 
 export interface ReplaceOrderRequest {
   accountId: string;
@@ -972,20 +1401,116 @@ export interface CancelOrderResponse {
   submittedAt: string;
 }
 
+/**
+ * @nullable
+ */
+export type FlowEventMoneyness = typeof FlowEventMoneyness[keyof typeof FlowEventMoneyness] | null;
+
+
+export const FlowEventMoneyness = {
+  ITM: 'ITM',
+  ATM: 'ATM',
+  OTM: 'OTM',
+  UNKNOWN: 'UNKNOWN',
+} as const;
+
+/**
+ * Data-confidence class for the flow row.
+ */
+export type FlowEventConfidence = typeof FlowEventConfidence[keyof typeof FlowEventConfidence];
+
+
+export const FlowEventConfidence = {
+  confirmed_trade: 'confirmed_trade',
+  snapshot_activity: 'snapshot_activity',
+  fallback_estimate: 'fallback_estimate',
+} as const;
+
+/**
+ * Machine-readable source basis shown by the Flow UI.
+ */
+export type FlowEventSourceBasis = typeof FlowEventSourceBasis[keyof typeof FlowEventSourceBasis];
+
+
+export const FlowEventSourceBasis = {
+  confirmed_trade: 'confirmed_trade',
+  snapshot_activity: 'snapshot_activity',
+  fallback_estimate: 'fallback_estimate',
+} as const;
+
 export interface FlowEvent {
   id: string;
   underlying: string;
   provider: FlowDataProvider;
   basis: FlowEventBasis;
   optionTicker: string;
+  /**
+   * Broker contract identifier, when the flow source can map the option to a broker-backed contract.
+   * @nullable
+   */
+  providerContractId: string | null;
   strike: number;
   expirationDate: string;
   right: OptionRight;
   price: number;
+  /**
+   * Best bid observed with the event or snapshot, when available.
+   * @nullable
+   */
+  bid?: number | null;
+  /**
+   * Best ask observed with the event or snapshot, when available.
+   * @nullable
+   */
+  ask?: number | null;
+  /**
+   * Last option price observed with the event or snapshot, when available.
+   * @nullable
+   */
+  last?: number | null;
+  /**
+   * Mark or midpoint price used for snapshot-derived flow, when available.
+   * @nullable
+   */
+  mark?: number | null;
   size: number;
   premium: number;
+  /**
+   * Option contract multiplier, when the source provides it.
+   * @nullable
+   */
+  multiplier?: number | null;
+  /**
+   * Shares represented by one option contract, when the source provides it.
+   * @nullable
+   */
+  sharesPerContract?: number | null;
   openInterest: number;
   impliedVolatility: number | null;
+  /** @nullable */
+  delta?: number | null;
+  /** @nullable */
+  gamma?: number | null;
+  /** @nullable */
+  theta?: number | null;
+  /** @nullable */
+  vega?: number | null;
+  /**
+   * Underlying reference price used to classify moneyness, when available.
+   * @nullable
+   */
+  underlyingPrice?: number | null;
+  /** @nullable */
+  moneyness?: FlowEventMoneyness;
+  /**
+   * Signed strike distance from the underlying reference price, in percent.
+   * @nullable
+   */
+  distancePercent?: number | null;
+  /** Data-confidence class for the flow row. */
+  confidence?: FlowEventConfidence;
+  /** Machine-readable source basis shown by the Flow UI. */
+  sourceBasis?: FlowEventSourceBasis;
   exchange: string;
   side: string;
   sentiment: FlowSentiment;
@@ -997,6 +1522,50 @@ export interface FlowEvent {
   isUnusual: boolean;
 }
 
+export type FlowEventsSourceIbkrStatus = typeof FlowEventsSourceIbkrStatus[keyof typeof FlowEventsSourceIbkrStatus];
+
+
+export const FlowEventsSourceIbkrStatus = {
+  loaded: 'loaded',
+  empty: 'empty',
+  degraded: 'degraded',
+  error: 'error',
+} as const;
+
+export type FlowEventsSourceScannerCoverageMode = typeof FlowEventsSourceScannerCoverageMode[keyof typeof FlowEventsSourceScannerCoverageMode];
+
+
+export const FlowEventsSourceScannerCoverageMode = {
+  watchlist: 'watchlist',
+  market: 'market',
+  hybrid: 'hybrid',
+} as const;
+
+export type FlowEventsSourceScannerCoverage = {
+  mode?: FlowEventsSourceScannerCoverageMode;
+  /** @minimum 0 */
+  targetSize?: number;
+  /** @minimum 0 */
+  selectedSymbols?: number;
+  /** @nullable */
+  rankedAt?: string | null;
+  /** @nullable */
+  lastRefreshAt?: string | null;
+  /** @nullable */
+  lastGoodAt?: string | null;
+  stale?: boolean;
+  fallbackUsed?: boolean;
+  /** @minimum 0 */
+  cooldownCount?: number;
+  /** @minimum 0 */
+  scannedSymbols?: number;
+  currentBatch?: string[];
+  /** @nullable */
+  lastScanAt?: string | null;
+  /** @nullable */
+  degradedReason?: string | null;
+};
+
 export interface FlowEventsSource {
   provider: FlowEventsSourceProvider;
   status: FlowEventsSourceStatus;
@@ -1007,6 +1576,18 @@ export interface FlowEventsSource {
   fetchedAt: string;
   /** Volume / open-interest multiplier the server applied when flagging unusual prints. Defaults to 1. */
   unusualThreshold?: number;
+  ibkrStatus?: FlowEventsSourceIbkrStatus;
+  /** @nullable */
+  ibkrReason?: string | null;
+  /** @minimum 0 */
+  ibkrExpirationCount?: number;
+  /** @minimum 0 */
+  ibkrHydratedExpirationCount?: number;
+  /** @minimum 0 */
+  ibkrContractCount?: number;
+  /** @minimum 0 */
+  ibkrQualifiedContractCount?: number;
+  scannerCoverage?: FlowEventsSourceScannerCoverage;
 }
 
 export interface BrokerConnectionsResponse {
@@ -1017,26 +1598,29 @@ export interface AccountsResponse {
   accounts: BrokerAccount[];
 }
 
-export type AccountHistoryRange =
-  (typeof AccountHistoryRange)[keyof typeof AccountHistoryRange];
+export type AccountHistoryRange = typeof AccountHistoryRange[keyof typeof AccountHistoryRange];
+
 
 export const AccountHistoryRange = {
-  "1W": "1W",
-  "1M": "1M",
-  "3M": "3M",
-  YTD: "YTD",
-  "1Y": "1Y",
-  ALL: "ALL",
+  '1D': '1D',
+  '1W': '1W',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  YTD: 'YTD',
+  '1Y': '1Y',
+  ALL: 'ALL',
 } as const;
 
-export type AccountMetricSource =
-  (typeof AccountMetricSource)[keyof typeof AccountMetricSource];
+export type AccountMetricSource = typeof AccountMetricSource[keyof typeof AccountMetricSource];
+
 
 export const AccountMetricSource = {
-  IBKR_ACCOUNT_SUMMARY: "IBKR_ACCOUNT_SUMMARY",
-  IBKR_POSITIONS: "IBKR_POSITIONS",
-  FLEX: "FLEX",
-  LOCAL_LEDGER: "LOCAL_LEDGER",
+  IBKR_ACCOUNT_SUMMARY: 'IBKR_ACCOUNT_SUMMARY',
+  IBKR_POSITIONS: 'IBKR_POSITIONS',
+  FLEX: 'FLEX',
+  LOCAL_LEDGER: 'LOCAL_LEDGER',
+  SHADOW_LEDGER: 'SHADOW_LEDGER',
 } as const;
 
 export interface AccountMetric {
@@ -1076,7 +1660,7 @@ export interface AccountSummaryAccount {
   updatedAt: string;
 }
 
-export type AccountFxRates = { [key: string]: number | null };
+export type AccountFxRates = {[key: string]: number | null};
 
 export interface AccountFx {
   baseCurrency: string;
@@ -1097,12 +1681,14 @@ export interface AccountSummaryResponse {
   metrics: AccountSummaryMetrics;
 }
 
-export type AccountEquityPointSource =
-  (typeof AccountEquityPointSource)[keyof typeof AccountEquityPointSource];
+export type AccountEquityPointSource = typeof AccountEquityPointSource[keyof typeof AccountEquityPointSource];
+
 
 export const AccountEquityPointSource = {
-  FLEX: "FLEX",
-  LOCAL_LEDGER: "LOCAL_LEDGER",
+  FLEX: 'FLEX',
+  LOCAL_LEDGER: 'LOCAL_LEDGER',
+  IBKR_ACCOUNT_SUMMARY: 'IBKR_ACCOUNT_SUMMARY',
+  SHADOW_LEDGER: 'SHADOW_LEDGER',
 } as const;
 
 export interface AccountEquityPoint {
@@ -1133,6 +1719,12 @@ export interface AccountEquityHistoryResponse {
   flexConfigured: boolean;
   lastFlexRefreshAt: string | null;
   benchmark: string | null;
+  asOf: string | null;
+  latestSnapshotAt: string | null;
+  isStale: boolean;
+  staleReason: string | null;
+  terminalPointSource: 'live_account_summary' | 'persisted_snapshot' | 'flex' | 'shadow_ledger' | null;
+  liveTerminalIncluded: boolean;
   points: AccountEquityPoint[];
   events: AccountCashEvent[];
 }
@@ -1171,6 +1763,24 @@ export interface AccountPositionLot {
   source: string;
 }
 
+export type AccountPositionRowSourceType = typeof AccountPositionRowSourceType[keyof typeof AccountPositionRowSourceType];
+
+
+export const AccountPositionRowSourceType = {
+  manual: 'manual',
+  automation: 'automation',
+  mixed: 'mixed',
+} as const;
+
+export type AccountPositionRowAttributionStatus = typeof AccountPositionRowAttributionStatus[keyof typeof AccountPositionRowAttributionStatus];
+
+
+export const AccountPositionRowAttributionStatus = {
+  attributed: 'attributed',
+  mixed: 'mixed',
+  unknown: 'unknown',
+} as const;
+
 export interface AccountPositionRow {
   id: string;
   accountId: string;
@@ -1178,6 +1788,7 @@ export interface AccountPositionRow {
   symbol: string;
   description: string;
   assetClass: string;
+  optionContract?: OptionContract | null;
   sector: string;
   quantity: number;
   averageCost: number;
@@ -1192,6 +1803,10 @@ export interface AccountPositionRow {
   lots: AccountPositionLot[];
   openOrders: Order[];
   source: string;
+  sourceType?: AccountPositionRowSourceType;
+  strategyLabel?: string | null;
+  attributionStatus?: AccountPositionRowAttributionStatus;
+  sourceAttribution?: JsonObject[];
 }
 
 export interface AccountPositionsResponse {
@@ -1202,12 +1817,21 @@ export interface AccountPositionsResponse {
   updatedAt: string;
 }
 
-export type AccountTradeSource =
-  (typeof AccountTradeSource)[keyof typeof AccountTradeSource];
+export type AccountTradeSource = typeof AccountTradeSource[keyof typeof AccountTradeSource];
+
 
 export const AccountTradeSource = {
-  LIVE: "LIVE",
-  FLEX: "FLEX",
+  LIVE: 'LIVE',
+  FLEX: 'FLEX',
+  SHADOW: 'SHADOW',
+} as const;
+
+export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof AccountTradeSourceType];
+
+
+export const AccountTradeSourceType = {
+  manual: 'manual',
+  automation: 'automation',
 } as const;
 
 export interface AccountTrade {
@@ -1227,6 +1851,12 @@ export interface AccountTrade {
   holdDurationMinutes: number | null;
   commissions: number | null;
   currency: string;
+  sourceType?: AccountTradeSourceType;
+  strategyLabel?: string | null;
+  candidateId?: string | null;
+  deploymentId?: string | null;
+  deploymentName?: string | null;
+  sourceEventId?: string | null;
 }
 
 export interface AccountClosedTradesResponse {
@@ -1236,6 +1866,14 @@ export interface AccountClosedTradesResponse {
   summary: JsonObject;
   updatedAt: string;
 }
+
+export type AccountOrderSourceType = typeof AccountOrderSourceType[keyof typeof AccountOrderSourceType];
+
+
+export const AccountOrderSourceType = {
+  manual: 'manual',
+  automation: 'automation',
+} as const;
 
 export interface AccountOrder {
   id: string;
@@ -1256,20 +1894,36 @@ export interface AccountOrder {
   averageFillPrice: number | null;
   commission: number | null;
   source: string;
+  sourceType?: AccountOrderSourceType;
+  strategyLabel?: string | null;
+  candidateId?: string | null;
+  deploymentId?: string | null;
+  deploymentName?: string | null;
+  sourceEventId?: string | null;
 }
 
-export type AccountOrdersResponseTab =
-  (typeof AccountOrdersResponseTab)[keyof typeof AccountOrdersResponseTab];
+export type AccountOrdersResponseTab = typeof AccountOrdersResponseTab[keyof typeof AccountOrdersResponseTab];
+
 
 export const AccountOrdersResponseTab = {
-  working: "working",
-  history: "history",
+  working: 'working',
+  history: 'history',
 } as const;
+
+export type AccountOrdersResponseDebug = {
+  message: string;
+  code: string;
+  timeoutMs?: number;
+};
 
 export interface AccountOrdersResponse {
   accountId: string;
   tab: AccountOrdersResponseTab;
   currency: string;
+  degraded?: boolean;
+  reason?: string;
+  stale?: boolean;
+  debug?: AccountOrdersResponseDebug;
   orders: AccountOrder[];
   updatedAt: string;
 }
@@ -1364,8 +2018,18 @@ export interface PositionsResponse {
   positions: Position[];
 }
 
+export type OrdersResponseDebug = {
+  message: string;
+  code: string;
+  timeoutMs?: number;
+};
+
 export interface OrdersResponse {
   orders: Order[];
+  degraded?: boolean;
+  reason?: string;
+  stale?: boolean;
+  debug?: OrdersResponseDebug;
 }
 
 export interface QuoteSnapshotsResponse {
@@ -1374,6 +2038,47 @@ export interface QuoteSnapshotsResponse {
   delayed: boolean;
   fallbackUsed: boolean;
 }
+
+export type RequestDebugCacheStatus = typeof RequestDebugCacheStatus[keyof typeof RequestDebugCacheStatus] | null;
+
+
+export const RequestDebugCacheStatus = {
+  hit: 'hit',
+  miss: 'miss',
+  inflight: 'inflight',
+} as const;
+
+export interface RequestDebug {
+  cacheStatus?: RequestDebugCacheStatus;
+  totalMs: number;
+  upstreamMs?: number | null;
+  /** @minimum 0 */
+  requestedCount?: number;
+  /** @minimum 0 */
+  returnedCount?: number;
+  /** @minimum 0 */
+  bridgeChunks?: number;
+  providerMode?: string | null;
+  liveMarketDataAvailable?: boolean | null;
+  missingProviderContractIds?: string[];
+  complete?: boolean;
+  capped?: boolean;
+  stale?: boolean;
+  degraded?: boolean;
+  reason?: string | null;
+  backoffRemainingMs?: number | null;
+}
+
+export interface OptionQuoteSnapshotsRequest {
+  underlying?: string | null;
+  /** @minItems 1 */
+  providerContractIds: string[];
+}
+
+export type OptionQuoteSnapshotsResponse = QuoteSnapshotsResponse & ({
+  underlying?: string | null;
+  debug?: RequestDebug;
+});
 
 export interface NewsResponse {
   articles: NewsArticle[];
@@ -1384,6 +2089,49 @@ export interface UniverseTickersResponse {
   results: UniverseTicker[];
 }
 
+/**
+ * @nullable
+ */
+export type BarsResponseMarketDataMode = typeof BarsResponseMarketDataMode[keyof typeof BarsResponseMarketDataMode] | null;
+
+
+export const BarsResponseMarketDataMode = {
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
+} as const;
+
+export interface BarsHistoryPage {
+  /** @nullable */
+  requestedFrom: string | null;
+  /** @nullable */
+  requestedTo: string | null;
+  /** @nullable */
+  oldestBarAt: string | null;
+  /** @nullable */
+  newestBarAt: string | null;
+  returnedCount: number;
+  /** @nullable */
+  nextBefore: string | null;
+  /** @nullable */
+  provider: string | null;
+  exhaustedBefore: boolean;
+  /** @nullable */
+  providerCursor?: string | null;
+  /** @nullable */
+  providerNextUrl?: string | null;
+  /** @nullable */
+  providerPageCount?: number | null;
+  providerPageLimitReached?: boolean;
+  /** @nullable */
+  historyCursor?: string | null;
+  hydrationStatus?: 'cold' | 'partial' | 'warm' | 'warming' | 'exhausted';
+  /** @nullable */
+  cacheStatus?: 'hit' | 'miss' | 'partial' | null;
+}
+
 export interface BarsResponse {
   symbol: string;
   timeframe: BarTimeframe;
@@ -1391,12 +2139,80 @@ export interface BarsResponse {
   transport: IbkrBridgeHealthTransport | null;
   delayed: boolean;
   gapFilled: boolean;
+  freshness: MarketDataFreshness;
+  /** @nullable */
+  marketDataMode: BarsResponseMarketDataMode;
+  /** @nullable */
+  dataUpdatedAt: string | null;
+  /** @nullable */
+  ageMs: number | null;
+  /** @nullable */
+  emptyReason: string | null;
+  /** @nullable */
+  historySource: string | null;
+  studyFallback: boolean;
+  historyPage?: BarsHistoryPage | null;
 }
 
 export interface OptionChainResponse {
   underlying: string;
   expirationDate: string | null;
   contracts: OptionChainQuote[];
+}
+
+export type OptionChainStrikeCoverage = typeof OptionChainStrikeCoverage[keyof typeof OptionChainStrikeCoverage];
+
+
+export const OptionChainStrikeCoverage = {
+  fast: 'fast',
+  standard: 'standard',
+  full: 'full',
+} as const;
+
+export type OptionChainQuoteHydration = typeof OptionChainQuoteHydration[keyof typeof OptionChainQuoteHydration];
+
+
+export const OptionChainQuoteHydration = {
+  metadata: 'metadata',
+  snapshot: 'snapshot',
+} as const;
+
+export interface OptionChainBatchRequest {
+  underlying: string;
+  /** @minItems 1 */
+  expirationDates: string[];
+  contractType?: OptionRight;
+  /**
+   * Number of strikes on each side of the closest ATM strike to return. Defaults to 6.
+   * @minimum 1
+   * @maximum 50
+   */
+  strikesAroundMoney?: number;
+  strikeCoverage?: OptionChainStrikeCoverage;
+  quoteHydration?: OptionChainQuoteHydration;
+}
+
+export type OptionChainBatchResultStatus = typeof OptionChainBatchResultStatus[keyof typeof OptionChainBatchResultStatus];
+
+
+export const OptionChainBatchResultStatus = {
+  loaded: 'loaded',
+  empty: 'empty',
+  failed: 'failed',
+} as const;
+
+export interface OptionChainBatchResult {
+  expirationDate: string;
+  status: OptionChainBatchResultStatus;
+  contracts: OptionChainQuote[];
+  error?: string | null;
+  debug?: RequestDebug;
+}
+
+export interface OptionChainBatchResponse {
+  underlying: string;
+  results: OptionChainBatchResult[];
+  debug?: RequestDebug;
 }
 
 export interface OptionExpirationSummary {
@@ -1406,7 +2222,66 @@ export interface OptionExpirationSummary {
 export interface OptionExpirationsResponse {
   underlying: string;
   expirations: OptionExpirationSummary[];
+  debug?: RequestDebug;
 }
+
+export type OptionContractResolutionStatus = typeof OptionContractResolutionStatus[keyof typeof OptionContractResolutionStatus];
+
+
+export const OptionContractResolutionStatus = {
+  resolved: 'resolved',
+  not_found: 'not_found',
+  error: 'error',
+} as const;
+
+export interface OptionContractResolutionResponse {
+  underlying: string;
+  expirationDate: string;
+  strike: number;
+  right: OptionRight;
+  status: OptionContractResolutionStatus;
+  /** @nullable */
+  providerContractId: string | null;
+  contract: OptionContract | null;
+  /** @nullable */
+  errorMessage: string | null;
+  debug: RequestDebug;
+}
+
+export type OptionChartBarsResolutionSource = typeof OptionChartBarsResolutionSource[keyof typeof OptionChartBarsResolutionSource];
+
+
+export const OptionChartBarsResolutionSource = {
+  chain: 'chain',
+  provided: 'provided',
+  resolver: 'resolver',
+  none: 'none',
+} as const;
+
+export type OptionChartBarsDataSource = typeof OptionChartBarsDataSource[keyof typeof OptionChartBarsDataSource];
+
+
+export const OptionChartBarsDataSource = {
+  'ibkr-history': 'ibkr-history',
+  'polygon-option-aggregates': 'polygon-option-aggregates',
+  none: 'none',
+} as const;
+
+export type OptionChartBarsResponse = BarsResponse & ({
+  underlying: string;
+  expirationDate: string;
+  strike: number;
+  right: OptionRight;
+  /** @nullable */
+  optionTicker: string | null;
+  contract: OptionContract | null;
+  /** @nullable */
+  providerContractId: string | null;
+  resolutionSource: OptionChartBarsResolutionSource;
+  dataSource: OptionChartBarsDataSource;
+  feedIssue: boolean;
+  debug: RequestDebug;
+});
 
 export type SseStream = string;
 
@@ -1442,6 +2317,37 @@ export interface AlgoDeploymentsResponse {
   deployments: AlgoDeployment[];
 }
 
+export type SignalOptionsExecutionProfileVersion = typeof SignalOptionsExecutionProfileVersion[keyof typeof SignalOptionsExecutionProfileVersion];
+
+
+export const SignalOptionsExecutionProfileVersion = {
+  v1: 'v1',
+} as const;
+
+export type SignalOptionsExecutionProfileMode = typeof SignalOptionsExecutionProfileMode[keyof typeof SignalOptionsExecutionProfileMode];
+
+
+export const SignalOptionsExecutionProfileMode = {
+  shadow: 'shadow',
+} as const;
+
+export interface SignalOptionsExecutionProfile {
+  version: SignalOptionsExecutionProfileVersion;
+  mode: SignalOptionsExecutionProfileMode;
+  optionSelection: JsonObject;
+  riskCaps: JsonObject;
+  liquidityGate: JsonObject;
+  fillPolicy: JsonObject;
+  exitPolicy: JsonObject;
+}
+
+export type SignalOptionsAutomationStateMode = typeof SignalOptionsAutomationStateMode[keyof typeof SignalOptionsAutomationStateMode];
+
+
+export const SignalOptionsAutomationStateMode = {
+  shadow: 'shadow',
+} as const;
+
 export interface ExecutionEvent {
   id: string;
   /** @nullable */
@@ -1460,6 +2366,39 @@ export interface ExecutionEvent {
   updatedAt: string;
 }
 
+export interface SignalOptionsAutomationState {
+  deployment: AlgoDeployment;
+  profile: SignalOptionsExecutionProfile;
+  mode: SignalOptionsAutomationStateMode;
+  candidates: JsonObject[];
+  activePositions: JsonObject[];
+  risk: JsonObject;
+  events: ExecutionEvent[];
+}
+
+export type SignalOptionsManualDeviationRequestSource = typeof SignalOptionsManualDeviationRequestSource[keyof typeof SignalOptionsManualDeviationRequestSource];
+
+
+export const SignalOptionsManualDeviationRequestSource = {
+  trade_preview: 'trade_preview',
+} as const;
+
+export interface SignalOptionsManualDeviationRequest {
+  candidateId: string;
+  symbol: string;
+  source: SignalOptionsManualDeviationRequestSource;
+  changedFields: string[];
+  plannedContract: JsonObject;
+  plannedOrderPlan: JsonObject;
+  actualOrderRequest: JsonObject;
+  automationCandidate?: JsonObject;
+  metadata?: JsonObject;
+}
+
+export interface SignalOptionsManualDeviationResponse {
+  event: ExecutionEvent;
+}
+
 export interface ExecutionEventsResponse {
   events: ExecutionEvent[];
 }
@@ -1469,23 +2408,68 @@ export interface FlowEventsResponse {
   source: FlowEventsSource;
 }
 
-export type SignalMonitorDirection =
-  (typeof SignalMonitorDirection)[keyof typeof SignalMonitorDirection];
+export type FlowUniverseCoverageMode = typeof FlowUniverseCoverageMode[keyof typeof FlowUniverseCoverageMode];
 
-export const SignalMonitorDirection = {
-  buy: "buy",
-  sell: "sell",
+
+export const FlowUniverseCoverageMode = {
+  watchlist: 'watchlist',
+  market: 'market',
+  hybrid: 'hybrid',
 } as const;
 
-export type SignalMonitorSymbolStatus =
-  (typeof SignalMonitorSymbolStatus)[keyof typeof SignalMonitorSymbolStatus];
+export interface FlowUniverseCoverage {
+  mode?: FlowUniverseCoverageMode;
+  /** @minimum 0 */
+  targetSize?: number;
+  /** @minimum 0 */
+  selectedSymbols?: number;
+  /** @nullable */
+  rankedAt?: string | null;
+  /** @nullable */
+  lastRefreshAt?: string | null;
+  /** @nullable */
+  lastGoodAt?: string | null;
+  stale?: boolean;
+  fallbackUsed?: boolean;
+  /** @minimum 0 */
+  cooldownCount?: number;
+  /** @minimum 0 */
+  scannedSymbols?: number;
+  currentBatch?: string[];
+  /** @nullable */
+  lastScanAt?: string | null;
+  /** @nullable */
+  degradedReason?: string | null;
+}
+
+export interface FlowUniverseSources {
+  builtInSymbols: string[];
+  flowUniverseSymbols: string[];
+}
+
+export interface FlowUniverseResponse {
+  coverage: FlowUniverseCoverage;
+  symbols: string[];
+  sources: FlowUniverseSources;
+}
+
+export type SignalMonitorDirection = typeof SignalMonitorDirection[keyof typeof SignalMonitorDirection];
+
+
+export const SignalMonitorDirection = {
+  buy: 'buy',
+  sell: 'sell',
+} as const;
+
+export type SignalMonitorSymbolStatus = typeof SignalMonitorSymbolStatus[keyof typeof SignalMonitorSymbolStatus];
+
 
 export const SignalMonitorSymbolStatus = {
-  ok: "ok",
-  stale: "stale",
-  unavailable: "unavailable",
-  error: "error",
-  unknown: "unknown",
+  ok: 'ok',
+  stale: 'stale',
+  unavailable: 'unavailable',
+  error: 'error',
+  unknown: 'unknown',
 } as const;
 
 export interface SignalMonitorProfile {
@@ -1537,12 +2521,12 @@ export interface UpdateSignalMonitorProfileRequest {
   evaluationConcurrency?: number;
 }
 
-export type EvaluateSignalMonitorRequestMode =
-  (typeof EvaluateSignalMonitorRequestMode)[keyof typeof EvaluateSignalMonitorRequestMode];
+export type EvaluateSignalMonitorRequestMode = typeof EvaluateSignalMonitorRequestMode[keyof typeof EvaluateSignalMonitorRequestMode];
+
 
 export const EvaluateSignalMonitorRequestMode = {
-  hydrate: "hydrate",
-  incremental: "incremental",
+  hydrate: 'hydrate',
+  incremental: 'incremental',
 } as const;
 
 export interface EvaluateSignalMonitorRequest {
@@ -1604,22 +2588,22 @@ export interface SignalMonitorEventsResponse {
   events: SignalMonitorEvent[];
 }
 
-export type PineScriptStatus =
-  (typeof PineScriptStatus)[keyof typeof PineScriptStatus];
+export type PineScriptStatus = typeof PineScriptStatus[keyof typeof PineScriptStatus];
+
 
 export const PineScriptStatus = {
-  draft: "draft",
-  ready: "ready",
-  error: "error",
-  archived: "archived",
+  draft: 'draft',
+  ready: 'ready',
+  error: 'error',
+  archived: 'archived',
 } as const;
 
-export type PineScriptPaneType =
-  (typeof PineScriptPaneType)[keyof typeof PineScriptPaneType];
+export type PineScriptPaneType = typeof PineScriptPaneType[keyof typeof PineScriptPaneType];
+
 
 export const PineScriptPaneType = {
-  price: "price",
-  lower: "lower",
+  price: 'price',
+  lower: 'lower',
 } as const;
 
 export type PineScriptRecordMetadata = { [key: string]: unknown };
@@ -1678,53 +2662,53 @@ export interface UpdatePineScriptRequest {
   metadata?: UpdatePineScriptRequestMetadata;
 }
 
-export type BacktestStrategyStatus =
-  (typeof BacktestStrategyStatus)[keyof typeof BacktestStrategyStatus];
+export type BacktestStrategyStatus = typeof BacktestStrategyStatus[keyof typeof BacktestStrategyStatus];
+
 
 export const BacktestStrategyStatus = {
-  runnable: "runnable",
-  blocked: "blocked",
+  runnable: 'runnable',
+  blocked: 'blocked',
 } as const;
 
-export type BacktestDirectionMode =
-  (typeof BacktestDirectionMode)[keyof typeof BacktestDirectionMode];
+export type BacktestDirectionMode = typeof BacktestDirectionMode[keyof typeof BacktestDirectionMode];
+
 
 export const BacktestDirectionMode = {
-  long_only: "long_only",
-  long_short: "long_short",
+  long_only: 'long_only',
+  long_short: 'long_short',
 } as const;
 
-export type BacktestOptimizerMode =
-  (typeof BacktestOptimizerMode)[keyof typeof BacktestOptimizerMode];
+export type BacktestOptimizerMode = typeof BacktestOptimizerMode[keyof typeof BacktestOptimizerMode];
+
 
 export const BacktestOptimizerMode = {
-  grid: "grid",
-  random: "random",
-  walk_forward: "walk_forward",
+  grid: 'grid',
+  random: 'random',
+  walk_forward: 'walk_forward',
 } as const;
 
-export type BacktestJobStatus =
-  (typeof BacktestJobStatus)[keyof typeof BacktestJobStatus];
+export type BacktestJobStatus = typeof BacktestJobStatus[keyof typeof BacktestJobStatus];
+
 
 export const BacktestJobStatus = {
-  queued: "queued",
-  preparing_data: "preparing_data",
-  running: "running",
-  aggregating: "aggregating",
-  completed: "completed",
-  failed: "failed",
-  cancel_requested: "cancel_requested",
-  canceled: "canceled",
+  queued: 'queued',
+  preparing_data: 'preparing_data',
+  running: 'running',
+  aggregating: 'aggregating',
+  completed: 'completed',
+  failed: 'failed',
+  cancel_requested: 'cancel_requested',
+  canceled: 'canceled',
 } as const;
 
-export type BacktestParameterDefinitionType =
-  (typeof BacktestParameterDefinitionType)[keyof typeof BacktestParameterDefinitionType];
+export type BacktestParameterDefinitionType = typeof BacktestParameterDefinitionType[keyof typeof BacktestParameterDefinitionType];
+
 
 export const BacktestParameterDefinitionType = {
-  integer: "integer",
-  number: "number",
-  boolean: "boolean",
-  enum: "enum",
+  integer: 'integer',
+  number: 'number',
+  boolean: 'boolean',
+  enum: 'enum',
 } as const;
 
 export interface BacktestParameterDefinition {
@@ -1741,9 +2725,7 @@ export interface BacktestParameterDefinition {
   options: (string | number | boolean)[];
 }
 
-export type BacktestStrategyCatalogItemDefaultParameters = {
-  [key: string]: unknown;
-};
+export type BacktestStrategyCatalogItemDefaultParameters = { [key: string]: unknown };
 
 export interface BacktestStrategyCatalogItem {
   strategyId: string;
@@ -1821,9 +2803,7 @@ export interface BacktestStudyRecord {
 /**
  * @nullable
  */
-export type CreateBacktestRunRequestParameters = {
-  [key: string]: unknown;
-} | null;
+export type CreateBacktestRunRequestParameters = { [key: string]: unknown } | null;
 
 export interface CreateBacktestRunRequest {
   studyId: string;
@@ -1838,9 +2818,7 @@ export interface BacktestSweepDimension {
   values: unknown[];
 }
 
-export type CreateBacktestSweepRequestBaseParameters = {
-  [key: string]: unknown;
-};
+export type CreateBacktestSweepRequestBaseParameters = { [key: string]: unknown };
 
 export interface CreateBacktestSweepRequest {
   studyId: string;
@@ -1866,7 +2844,8 @@ export interface BacktestMetrics {
   profitFactor: number;
   sharpeRatio: number;
   returnOverMaxDrawdown: number;
-}
+  [key: string]: unknown;
+ }
 
 export interface BacktestRunSummary {
   id: string;
@@ -1892,23 +2871,23 @@ export interface BacktestRunSummary {
   updatedAt: string;
 }
 
-export type BacktestTradeReasonTraceStepKind =
-  (typeof BacktestTradeReasonTraceStepKind)[keyof typeof BacktestTradeReasonTraceStepKind];
+export type BacktestTradeReasonTraceStepKind = typeof BacktestTradeReasonTraceStepKind[keyof typeof BacktestTradeReasonTraceStepKind];
+
 
 export const BacktestTradeReasonTraceStepKind = {
-  entry: "entry",
-  max_favorable: "max_favorable",
-  max_adverse: "max_adverse",
-  exit: "exit",
+  entry: 'entry',
+  max_favorable: 'max_favorable',
+  max_adverse: 'max_adverse',
+  exit: 'exit',
 } as const;
 
-export type BacktestTradeReasonTraceStepEmphasis =
-  (typeof BacktestTradeReasonTraceStepEmphasis)[keyof typeof BacktestTradeReasonTraceStepEmphasis];
+export type BacktestTradeReasonTraceStepEmphasis = typeof BacktestTradeReasonTraceStepEmphasis[keyof typeof BacktestTradeReasonTraceStepEmphasis];
+
 
 export const BacktestTradeReasonTraceStepEmphasis = {
-  positive: "positive",
-  negative: "negative",
-  neutral: "neutral",
+  positive: 'positive',
+  negative: 'negative',
+  neutral: 'neutral',
 } as const;
 
 export interface BacktestTradeReasonTraceStep {
@@ -2025,23 +3004,23 @@ export interface BacktestChartBarRange {
   endMs: number;
 }
 
-export type BacktestChartMarkerPosition =
-  (typeof BacktestChartMarkerPosition)[keyof typeof BacktestChartMarkerPosition];
+export type BacktestChartMarkerPosition = typeof BacktestChartMarkerPosition[keyof typeof BacktestChartMarkerPosition];
+
 
 export const BacktestChartMarkerPosition = {
-  aboveBar: "aboveBar",
-  belowBar: "belowBar",
-  inBar: "inBar",
+  aboveBar: 'aboveBar',
+  belowBar: 'belowBar',
+  inBar: 'inBar',
 } as const;
 
-export type BacktestChartMarkerShape =
-  (typeof BacktestChartMarkerShape)[keyof typeof BacktestChartMarkerShape];
+export type BacktestChartMarkerShape = typeof BacktestChartMarkerShape[keyof typeof BacktestChartMarkerShape];
+
 
 export const BacktestChartMarkerShape = {
-  circle: "circle",
-  square: "square",
-  arrowUp: "arrowUp",
-  arrowDown: "arrowDown",
+  circle: 'circle',
+  square: 'square',
+  arrowUp: 'arrowUp',
+  arrowDown: 'arrowDown',
 } as const;
 
 export interface BacktestChartMarker {
@@ -2068,7 +3047,7 @@ export interface BacktestIndicatorEvent {
   time: number | null;
   /** @nullable */
   barIndex: number | null;
-  direction: "long" | "short" | null;
+  direction: 'long' | 'short' | null;
   /** @nullable */
   label: string | null;
   /** @nullable */
@@ -2082,7 +3061,7 @@ export interface BacktestIndicatorZone {
   id: string;
   strategy: string;
   zoneType: string;
-  direction: "long" | "short" | null;
+  direction: 'long' | 'short' | null;
   startTs: string;
   endTs: string;
   /** @nullable */
@@ -2096,12 +3075,12 @@ export interface BacktestIndicatorZone {
   meta: BacktestIndicatorZoneMeta;
 }
 
-export type BacktestIndicatorWindowDirection =
-  (typeof BacktestIndicatorWindowDirection)[keyof typeof BacktestIndicatorWindowDirection];
+export type BacktestIndicatorWindowDirection = typeof BacktestIndicatorWindowDirection[keyof typeof BacktestIndicatorWindowDirection];
+
 
 export const BacktestIndicatorWindowDirection = {
-  long: "long",
-  short: "short",
+  long: 'long',
+  short: 'short',
 } as const;
 
 export type BacktestIndicatorWindowMeta = { [key: string]: unknown };
@@ -2116,30 +3095,30 @@ export interface BacktestIndicatorWindow {
   startBarIndex: number | null;
   /** @nullable */
   endBarIndex: number | null;
-  tone: "bullish" | "bearish" | "neutral" | null;
+  tone: 'bullish' | 'bearish' | 'neutral' | null;
   /** @nullable */
   conviction: number | null;
   meta: BacktestIndicatorWindowMeta;
 }
 
-export type BacktestTradeThresholdSegmentKind =
-  (typeof BacktestTradeThresholdSegmentKind)[keyof typeof BacktestTradeThresholdSegmentKind];
+export type BacktestTradeThresholdSegmentKind = typeof BacktestTradeThresholdSegmentKind[keyof typeof BacktestTradeThresholdSegmentKind];
+
 
 export const BacktestTradeThresholdSegmentKind = {
-  take_profit: "take_profit",
-  stop_loss: "stop_loss",
-  trail_arm: "trail_arm",
-  trail_stop: "trail_stop",
-  exit_trigger: "exit_trigger",
+  take_profit: 'take_profit',
+  stop_loss: 'stop_loss',
+  trail_arm: 'trail_arm',
+  trail_stop: 'trail_stop',
+  exit_trigger: 'exit_trigger',
 } as const;
 
-export type BacktestTradeThresholdSegmentStyle =
-  (typeof BacktestTradeThresholdSegmentStyle)[keyof typeof BacktestTradeThresholdSegmentStyle];
+export type BacktestTradeThresholdSegmentStyle = typeof BacktestTradeThresholdSegmentStyle[keyof typeof BacktestTradeThresholdSegmentStyle];
+
 
 export const BacktestTradeThresholdSegmentStyle = {
-  solid: "solid",
-  dashed: "dashed",
-  dotted: "dotted",
+  solid: 'solid',
+  dashed: 'dashed',
+  dotted: 'dotted',
 } as const;
 
 export interface BacktestTradeThresholdSegment {
@@ -2159,20 +3138,20 @@ export interface BacktestTradeThresholdPath {
   segments: BacktestTradeThresholdSegment[];
 }
 
-export type BacktestTradeOverlayDir =
-  (typeof BacktestTradeOverlayDir)[keyof typeof BacktestTradeOverlayDir];
+export type BacktestTradeOverlayDir = typeof BacktestTradeOverlayDir[keyof typeof BacktestTradeOverlayDir];
+
 
 export const BacktestTradeOverlayDir = {
-  long: "long",
-  short: "short",
+  long: 'long',
+  short: 'short',
 } as const;
 
-export type BacktestTradeOverlayChartPriceContext =
-  (typeof BacktestTradeOverlayChartPriceContext)[keyof typeof BacktestTradeOverlayChartPriceContext];
+export type BacktestTradeOverlayChartPriceContext = typeof BacktestTradeOverlayChartPriceContext[keyof typeof BacktestTradeOverlayChartPriceContext];
+
 
 export const BacktestTradeOverlayChartPriceContext = {
-  spot: "spot",
-  option: "option",
+  spot: 'spot',
+  option: 'option',
 } as const;
 
 export interface BacktestTradeOverlay {
@@ -2231,20 +3210,20 @@ export interface BacktestTradeOverlay {
   thresholdPath: BacktestTradeThresholdPath | null;
 }
 
-export type BacktestTradeMarkerGroupKind =
-  (typeof BacktestTradeMarkerGroupKind)[keyof typeof BacktestTradeMarkerGroupKind];
+export type BacktestTradeMarkerGroupKind = typeof BacktestTradeMarkerGroupKind[keyof typeof BacktestTradeMarkerGroupKind];
+
 
 export const BacktestTradeMarkerGroupKind = {
-  entry: "entry",
-  exit: "exit",
+  entry: 'entry',
+  exit: 'exit',
 } as const;
 
-export type BacktestTradeMarkerGroupDir =
-  (typeof BacktestTradeMarkerGroupDir)[keyof typeof BacktestTradeMarkerGroupDir];
+export type BacktestTradeMarkerGroupDir = typeof BacktestTradeMarkerGroupDir[keyof typeof BacktestTradeMarkerGroupDir];
+
 
 export const BacktestTradeMarkerGroupDir = {
-  long: "long",
-  short: "short",
+  long: 'long',
+  short: 'short',
 } as const;
 
 export interface BacktestTradeMarkerGroup {
@@ -2273,9 +3252,7 @@ export interface BacktestTradeMarkerGroups {
   timeToTradeIds: BacktestTimeToTradeIdsEntry[];
 }
 
-export type BacktestIndicatorMarkerPayloadMarkersByTradeId = {
-  [key: string]: BacktestChartMarker[];
-};
+export type BacktestIndicatorMarkerPayloadMarkersByTradeId = {[key: string]: BacktestChartMarker[]};
 
 export interface BacktestIndicatorMarkerPayload {
   overviewMarkers: BacktestChartMarker[];
@@ -2295,12 +3272,12 @@ export interface BacktestTradeSelectionFocus {
   visibleLogicalRange: BacktestTradeSelectionFocusVisibleLogicalRange;
 }
 
-export type BacktestRunChartChartPriceContext =
-  (typeof BacktestRunChartChartPriceContext)[keyof typeof BacktestRunChartChartPriceContext];
+export type BacktestRunChartChartPriceContext = typeof BacktestRunChartChartPriceContext[keyof typeof BacktestRunChartChartPriceContext];
+
 
 export const BacktestRunChartChartPriceContext = {
-  spot: "spot",
-  option: "option",
+  spot: 'spot',
+  option: 'option',
 } as const;
 
 export type BacktestRunChartDefaultVisibleLogicalRange = {
@@ -2337,24 +3314,24 @@ export interface BacktestEquitySeriesPoint {
   drawdownPercent: number;
 }
 
-export type BacktestComparisonBadgeFormat =
-  (typeof BacktestComparisonBadgeFormat)[keyof typeof BacktestComparisonBadgeFormat];
+export type BacktestComparisonBadgeFormat = typeof BacktestComparisonBadgeFormat[keyof typeof BacktestComparisonBadgeFormat];
+
 
 export const BacktestComparisonBadgeFormat = {
-  currency: "currency",
-  percent: "percent",
-  number: "number",
-  integer: "integer",
+  currency: 'currency',
+  percent: 'percent',
+  number: 'number',
+  integer: 'integer',
 } as const;
 
-export type BacktestComparisonBadgeWinner =
-  (typeof BacktestComparisonBadgeWinner)[keyof typeof BacktestComparisonBadgeWinner];
+export type BacktestComparisonBadgeWinner = typeof BacktestComparisonBadgeWinner[keyof typeof BacktestComparisonBadgeWinner];
+
 
 export const BacktestComparisonBadgeWinner = {
-  latest: "latest",
-  best: "best",
-  tie: "tie",
-  none: "none",
+  latest: 'latest',
+  best: 'best',
+  tie: 'tie',
+  none: 'none',
 } as const;
 
 export interface BacktestComparisonBadge {
@@ -2463,293 +3440,411 @@ export interface BacktestDraftStrategiesResponse {
   drafts: BacktestDraftStrategy[];
 }
 
+export type ListDiagnosticHistoryParams = {
+from?: string;
+to?: string;
+subsystem?: string;
+};
+
+export type ListDiagnosticEventsParams = {
+from?: string;
+to?: string;
+subsystem?: string;
+severity?: DiagnosticSeverity;
+};
+
+export type ExportDiagnosticsParams = {
+from?: string;
+to?: string;
+subsystem?: string;
+};
+
 export type ListAccountsParams = {
-  /**
-   * Filter by paper or live environment.
-   */
-  mode?: EnvironmentMode;
+/**
+ * Filter by paper or live environment.
+ */
+mode?: EnvironmentMode;
 };
 
 export type GetAccountSummaryParams = {
-  mode?: EnvironmentMode;
+mode?: EnvironmentMode;
 };
 
 export type GetAccountEquityHistoryParams = {
-  range?: AccountHistoryRange;
-  benchmark?: string;
-  mode?: EnvironmentMode;
+range?: AccountHistoryRange;
+benchmark?: string;
+mode?: EnvironmentMode;
 };
 
 export type GetAccountAllocationParams = {
-  mode?: EnvironmentMode;
+mode?: EnvironmentMode;
 };
 
 export type GetAccountPositionsParams = {
-  assetClass?: string;
-  mode?: EnvironmentMode;
+assetClass?: string;
+mode?: EnvironmentMode;
 };
 
 export type GetAccountClosedTradesParams = {
-  from?: string;
-  to?: string;
-  symbol?: string;
-  assetClass?: string;
-  pnlSign?: GetAccountClosedTradesPnlSign;
-  holdDuration?: string;
-  mode?: EnvironmentMode;
+from?: string;
+to?: string;
+symbol?: string;
+assetClass?: string;
+pnlSign?: GetAccountClosedTradesPnlSign;
+holdDuration?: string;
+mode?: EnvironmentMode;
 };
 
-export type GetAccountClosedTradesPnlSign =
-  (typeof GetAccountClosedTradesPnlSign)[keyof typeof GetAccountClosedTradesPnlSign];
+export type GetAccountClosedTradesPnlSign = typeof GetAccountClosedTradesPnlSign[keyof typeof GetAccountClosedTradesPnlSign];
+
 
 export const GetAccountClosedTradesPnlSign = {
-  all: "all",
-  winners: "winners",
-  losers: "losers",
+  all: 'all',
+  winners: 'winners',
+  losers: 'losers',
 } as const;
 
 export type GetAccountOrdersParams = {
-  tab?: GetAccountOrdersTab;
-  mode?: EnvironmentMode;
+tab?: GetAccountOrdersTab;
+mode?: EnvironmentMode;
 };
 
-export type GetAccountOrdersTab =
-  (typeof GetAccountOrdersTab)[keyof typeof GetAccountOrdersTab];
+export type GetAccountOrdersTab = typeof GetAccountOrdersTab[keyof typeof GetAccountOrdersTab];
+
 
 export const GetAccountOrdersTab = {
-  working: "working",
-  history: "history",
+  working: 'working',
+  history: 'history',
 } as const;
 
 export type GetAccountRiskParams = {
-  mode?: EnvironmentMode;
+mode?: EnvironmentMode;
 };
 
 export type GetAccountCashActivityParams = {
-  from?: string;
-  to?: string;
-  mode?: EnvironmentMode;
+from?: string;
+to?: string;
+mode?: EnvironmentMode;
 };
 
 export type ListPositionsParams = {
-  accountId?: string;
-  mode?: EnvironmentMode;
+accountId?: string;
+mode?: EnvironmentMode;
 };
 
 export type ListOrdersParams = {
-  accountId?: string;
-  mode?: EnvironmentMode;
-  status?: OrderStatus;
+accountId?: string;
+mode?: EnvironmentMode;
+status?: OrderStatus;
 };
 
 export type GetQuoteSnapshotsParams = {
-  /**
-   * Comma-separated ticker symbols.
-   */
-  symbols: string;
+/**
+ * Comma-separated ticker symbols.
+ */
+symbols: string;
 };
 
 export type GetNewsParams = {
-  /**
-   * Optional ticker to filter articles by symbol.
-   */
-  ticker?: string;
-  /**
-   * Maximum number of articles to return.
-   * @minimum 1
-   * @maximum 50
-   */
-  limit?: number;
+/**
+ * Optional ticker to filter articles by symbol.
+ */
+ticker?: string;
+/**
+ * Maximum number of articles to return.
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
 };
 
 export type SearchUniverseTickersParams = {
-  /**
-   * Search within the ticker symbol and company name.
-   */
-  search?: string;
-  /**
-   * Restrict results to a market.
-   */
-  market?: UniverseMarket;
-  /**
-   * Restrict results to one or more markets. Takes precedence over market when provided.
-   */
-  markets?: UniverseMarket[];
-  /**
-   * Optional Polygon ticker type filter.
-   */
-  type?: string;
-  /**
-   * Restrict results to active tickers.
-   */
-  active?: boolean;
-  /**
-   * Maximum number of search results to return.
-   * @minimum 1
-   * @maximum 50
-   */
-  limit?: number;
+/**
+ * Search within the ticker symbol and company name.
+ */
+search?: string;
+/**
+ * Restrict results to a market.
+ */
+market?: UniverseMarket;
+/**
+ * Restrict results to one or more markets. Takes precedence over market when provided.
+ */
+markets?: UniverseMarket[];
+/**
+ * Optional Polygon ticker type filter.
+ */
+type?: string;
+/**
+ * Restrict results to active tickers.
+ */
+active?: boolean;
+/**
+ * Optional search mode. Use trade-resolve when Trade needs an exact IBKR-tradable contract.
+ */
+mode?: SearchUniverseTickersMode;
+/**
+ * Require an exact IBKR-tradable contract instead of returning fuzzy discovery matches.
+ */
+strictTrade?: boolean;
+/**
+ * Requested number of ranked search results to return. No artificial maximum is enforced by the API; clients should request progressively larger pages for large universes.
+ * @minimum 1
+ */
+limit?: number;
 };
 
+export type SearchUniverseTickersMode = typeof SearchUniverseTickersMode[keyof typeof SearchUniverseTickersMode];
+
+
+export const SearchUniverseTickersMode = {
+  search: 'search',
+  'trade-resolve': 'trade-resolve',
+} as const;
+
 export type GetBarsParams = {
-  symbol: string;
-  timeframe: BarTimeframe;
-  /**
-   * @minimum 1
-   * @maximum 50000
-   */
-  limit?: number;
-  from?: string;
-  to?: string;
-  assetClass?: AssetClass;
-  /**
-   * Provider market context from ticker search; used to avoid cross-asset historical fallbacks.
-   */
-  market?: UniverseMarket;
-  providerContractId?: string | null;
-  outsideRth?: boolean;
-  source?: BarDataSource;
-  /**
-   * Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
-   */
-  allowHistoricalSynthesis?: boolean;
+symbol: string;
+timeframe: BarTimeframe;
+/**
+ * @minimum 1
+ * @maximum 50000
+ */
+limit?: number;
+from?: string;
+to?: string;
+historyCursor?: string | null;
+preferCursor?: boolean;
+assetClass?: AssetClass;
+/**
+ * Provider market context from ticker search; used to avoid cross-asset historical fallbacks.
+ */
+market?: UniverseMarket;
+providerContractId?: string | null;
+outsideRth?: boolean;
+source?: BarDataSource;
+/**
+ * Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
+ */
+allowHistoricalSynthesis?: boolean;
+/**
+ * Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Polygon/Massive aggregate history remains valid for backtests.
+ */
+allowStudyFallback?: boolean;
+/**
+ * Limit broker-sourced recent history to this many minutes before falling back to Massive/Polygon history.
+ * @minimum 0
+ */
+brokerRecentWindowMinutes?: number;
 };
 
 export type GetOptionChainParams = {
-  underlying: string;
-  expirationDate?: string;
-  contractType?: OptionRight;
+underlying: string;
+expirationDate?: string;
+contractType?: OptionRight;
+/**
+ * Number of strikes on each side of the closest ATM strike to return. Defaults to 6.
+ * @minimum 1
+ * @maximum 50
+ */
+strikesAroundMoney?: number;
+/**
+ * Named strike window. Use full to hydrate every strike for the requested expiration.
+ */
+strikeCoverage?: OptionChainStrikeCoverage;
+/**
+ * Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to snapshot.
+ */
+quoteHydration?: OptionChainQuoteHydration;
 };
 
 export type GetOptionExpirationsParams = {
-  underlying: string;
+underlying: string;
+/**
+ * Optional cap. Omit to discover every expiration IBKR exposes.
+ * @minimum 1
+ */
+maxExpirations?: number;
+};
+
+export type ResolveOptionContractParams = {
+underlying: string;
+expirationDate: string;
+strike: number;
+right: OptionRight;
+};
+
+export type GetOptionChartBarsParams = {
+underlying: string;
+expirationDate: string;
+strike: number;
+right: OptionRight;
+/**
+ * Provider-native OPRA option ticker to use for option aggregate fallback.
+ */
+optionTicker?: string | null;
+providerContractId?: string | null;
+timeframe: BarTimeframe;
+/**
+ * @minimum 1
+ * @maximum 50000
+ */
+limit?: number;
+from?: string;
+to?: string;
+historyCursor?: string | null;
+preferCursor?: boolean;
+outsideRth?: boolean;
 };
 
 export type StreamQuoteSnapshotsParams = {
-  /**
-   * Comma-separated ticker symbols.
-   */
-  symbols: string;
+/**
+ * Comma-separated ticker symbols.
+ */
+symbols: string;
 };
 
 export type StreamOptionChainsParams = {
-  /**
-   * Comma-separated underlying symbols.
-   */
-  underlyings: string;
+/**
+ * Comma-separated underlying symbols.
+ */
+underlyings: string;
 };
 
 export type StreamOrdersParams = {
-  accountId?: string;
-  mode?: EnvironmentMode;
-  status?: OrderStatus;
+accountId?: string;
+mode?: EnvironmentMode;
+status?: OrderStatus;
 };
 
 export type StreamAccountsParams = {
-  accountId?: string;
-  mode?: EnvironmentMode;
+accountId?: string;
+mode?: EnvironmentMode;
 };
 
 export type StreamStockAggregatesParams = {
-  /**
-   * Comma-separated ticker symbols.
-   */
-  symbols: string;
+/**
+ * Comma-separated ticker symbols.
+ */
+symbols: string;
 };
 
 export type ListFlowEventsParams = {
-  underlying?: string;
-  /**
-   * @minimum 1
-   * @maximum 1000
-   */
-  limit?: number;
-  /**
-   * Volume / open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep/swing desks.
-   * @minimum 0.1
-   * @maximum 100
-   */
-  unusualThreshold?: number;
+underlying?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * Volume / open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep/swing desks.
+ * @minimum 0.1
+ * @maximum 100
+ */
+unusualThreshold?: number;
+/**
+ * Return all flow or only contracts that match the unusual-flow threshold.
+ */
+scope?: ListFlowEventsScope;
+/**
+ * Minimum option premium, in dollars, required for each returned flow row.
+ * @minimum 0
+ * @maximum 50000000
+ */
+minPremium?: number;
+/**
+ * Maximum days to expiration to include in the flow scan.
+ * @minimum 0
+ * @maximum 730
+ */
+maxDte?: number;
 };
 
+export type ListFlowEventsScope = typeof ListFlowEventsScope[keyof typeof ListFlowEventsScope];
+
+
+export const ListFlowEventsScope = {
+  all: 'all',
+  unusual: 'unusual',
+} as const;
+
 export type GetSignalMonitorProfileParams = {
-  environment?: EnvironmentMode;
+environment?: EnvironmentMode;
 };
 
 export type GetSignalMonitorStateParams = {
-  environment?: EnvironmentMode;
+environment?: EnvironmentMode;
 };
 
 export type ListSignalMonitorEventsParams = {
-  environment?: EnvironmentMode;
-  symbol?: string;
-  /**
-   * @minimum 1
-   * @maximum 500
-   */
-  limit?: number;
+environment?: EnvironmentMode;
+symbol?: string;
+/**
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
 };
 
 export type GetResearchFundamentalsParams = {
-  symbol: string;
+symbol: string;
 };
 
 export type GetResearchFinancialsParams = {
-  symbol: string;
+symbol: string;
 };
 
 export type GetResearchSnapshotsParams = {
-  symbols: string;
+symbols: string;
 };
 
 export type GetResearchEarningsCalendarParams = {
-  from: string;
-  to: string;
+from: string;
+to: string;
 };
 
 export type GetResearchSecFilingsParams = {
-  symbol: string;
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
+symbol: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
 };
 
 export type GetResearchTranscriptsParams = {
-  symbol: string;
+symbol: string;
 };
 
 export type GetResearchTranscriptParams = {
-  symbol: string;
-  /**
-   * @minimum 1
-   * @maximum 4
-   */
-  quarter?: number;
-  year?: number;
+symbol: string;
+/**
+ * @minimum 1
+ * @maximum 4
+ */
+quarter?: number;
+year?: number;
 };
 
 export type ListAlgoDeploymentsParams = {
-  mode?: EnvironmentMode;
+mode?: EnvironmentMode;
 };
 
 export type ListExecutionEventsParams = {
-  deploymentId?: string;
-  /**
-   * @minimum 1
-   * @maximum 500
-   */
-  limit?: number;
+deploymentId?: string;
+/**
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
 };
 
 export type ListBacktestRunsParams = {
-  studyId?: string;
-  sweepId?: string;
-  status?: BacktestJobStatus;
+studyId?: string;
+sweepId?: string;
+status?: BacktestJobStatus;
 };
 
 export type GetBacktestRunChartParams = {
-  symbol?: string;
-  selectedTradeId?: string;
+symbol?: string;
+selectedTradeId?: string;
 };

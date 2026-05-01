@@ -5,9 +5,9 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AccountCashEvent } from "./accountCashEvent";
-import type { AccountEquityPoint } from "./accountEquityPoint";
-import type { AccountHistoryRange } from "./accountHistoryRange";
+import type { AccountCashEvent } from './accountCashEvent';
+import type { AccountEquityPoint } from './accountEquityPoint';
+import type { AccountHistoryRange } from './accountHistoryRange';
 
 export interface AccountEquityHistoryResponse {
   accountId: string;
@@ -16,6 +16,12 @@ export interface AccountEquityHistoryResponse {
   flexConfigured: boolean;
   lastFlexRefreshAt: Date | null;
   benchmark: string | null;
+  asOf: Date | null;
+  latestSnapshotAt: Date | null;
+  isStale: boolean;
+  staleReason: string | null;
+  terminalPointSource: 'live_account_summary' | 'persisted_snapshot' | 'flex' | 'shadow_ledger' | null;
+  liveTerminalIncluded: boolean;
   points: AccountEquityPoint[];
   events: AccountCashEvent[];
 }

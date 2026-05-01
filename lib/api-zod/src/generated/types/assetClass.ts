@@ -6,9 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type AssetClass = (typeof AssetClass)[keyof typeof AssetClass];
+export type AssetClass = typeof AssetClass[keyof typeof AssetClass];
+
 
 export const AssetClass = {
-  equity: "equity",
-  option: "option",
+  equity: 'equity',
+  option: 'option',
 } as const;

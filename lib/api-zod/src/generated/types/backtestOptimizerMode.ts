@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestOptimizerMode =
-  (typeof BacktestOptimizerMode)[keyof typeof BacktestOptimizerMode];
+export type BacktestOptimizerMode = typeof BacktestOptimizerMode[keyof typeof BacktestOptimizerMode];
+
 
 export const BacktestOptimizerMode = {
-  grid: "grid",
-  random: "random",
-  walk_forward: "walk_forward",
+  grid: 'grid',
+  random: 'random',
+  walk_forward: 'walk_forward',
 } as const;

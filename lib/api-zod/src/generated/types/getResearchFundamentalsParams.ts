@@ -7,5 +7,5 @@
  */
 
 export type GetResearchFundamentalsParams = {
-  symbol: string;
+symbol: string;
 };

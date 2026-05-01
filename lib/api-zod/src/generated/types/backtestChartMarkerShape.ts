@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestChartMarkerShape =
-  (typeof BacktestChartMarkerShape)[keyof typeof BacktestChartMarkerShape];
+export type BacktestChartMarkerShape = typeof BacktestChartMarkerShape[keyof typeof BacktestChartMarkerShape];
+
 
 export const BacktestChartMarkerShape = {
-  circle: "circle",
-  square: "square",
-  arrowUp: "arrowUp",
-  arrowDown: "arrowDown",
+  circle: 'circle',
+  square: 'square',
+  arrowUp: 'arrowUp',
+  arrowDown: 'arrowDown',
 } as const;

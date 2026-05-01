@@ -6,13 +6,13 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type SignalMonitorSymbolStatus =
-  (typeof SignalMonitorSymbolStatus)[keyof typeof SignalMonitorSymbolStatus];
+export type SignalMonitorSymbolStatus = typeof SignalMonitorSymbolStatus[keyof typeof SignalMonitorSymbolStatus];
+
 
 export const SignalMonitorSymbolStatus = {
-  ok: "ok",
-  stale: "stale",
-  unavailable: "unavailable",
-  error: "error",
-  unknown: "unknown",
+  ok: 'ok',
+  stale: 'stale',
+  unavailable: 'unavailable',
+  error: 'error',
+  unknown: 'unknown',
 } as const;

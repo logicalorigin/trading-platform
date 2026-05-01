@@ -28,13 +28,43 @@ import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
 import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
-import { getBars } from "./platform";
+import {
+  assertIbkrGatewayTradingAvailable,
+  getBars,
+  getQuoteSnapshots,
+  listOrdersWithResilience,
+} from "./platform";
+import {
+  listIbkrAccounts,
+  listIbkrExecutions,
+  listIbkrPositions,
+} from "./ibkr-account-bridge";
+import {
+  getShadowAccountAllocation,
+  getShadowAccountCashActivity,
+  getShadowAccountClosedTrades,
+  getShadowAccountEquityHistory,
+  getShadowAccountOrders,
+  getShadowAccountPositions,
+  getShadowAccountRisk,
+  getShadowAccountSummary,
+  isShadowAccountId,
+} from "./shadow-account";
+import {
+  accountBenchmarkLimitForRange,
+  accountBenchmarkTimeframeForRange,
+  accountRangeStart,
+  accountSnapshotBucketSizeMs,
+  normalizeAccountRange,
+  type AccountRange,
+} from "./account-ranges";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
   BrokerOrderSnapshot,
   BrokerPositionSnapshot,
   OptionChainContract,
+  QuoteSnapshot,
 } from "../providers/ibkr/client";
 
 const COMBINED_ACCOUNT_ID = "combined";
@@ -52,7 +82,6 @@ const OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY = 250;
 const OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY = 2_000;
 const ACCOUNT_SCHEMA_READINESS_CACHE_TTL_MS = 30_000;
 
-type AccountRange = "1W" | "1M" | "3M" | "YTD" | "1Y" | "ALL";
 type OrderTab = "working" | "history";
 
 type FlexRecord = {
@@ -74,6 +103,9 @@ type AccountUniverse = {
   isCombined: boolean;
   accounts: BrokerAccountSnapshot[];
   primaryCurrency: string;
+  source: "live" | "persisted" | "flex";
+  latestSnapshotAt: Date | null;
+  staleReason: string | null;
 };
 
 type OptionPositionSnapshot = BrokerPositionSnapshot & {
@@ -109,6 +141,7 @@ type OptionChainCacheEntry = {
 
 const snapshotWriteTimestamps = new Map<string, number>();
 const optionGreekChainCache = new Map<string, OptionChainCacheEntry>();
+const POSITION_QUANTITY_EPSILON = 1e-9;
 const OPTIONAL_ACCOUNT_SCHEMA_TABLES = [
   "flex_report_runs",
   "flex_nav_history",
@@ -140,6 +173,16 @@ let accountSchemaReadinessPromise: Promise<AccountSchemaReadiness> | null = null
 const loggedMissingAccountSchemaTables = new Set<OptionalAccountSchemaTable>();
 let loggedAccountSchemaReadinessError: string | null = null;
 
+function isOpenBrokerPosition(position: Pick<BrokerPositionSnapshot, "quantity">): boolean {
+  return Math.abs(Number(position.quantity)) > POSITION_QUANTITY_EPSILON;
+}
+
+function filterOpenBrokerPositions<T extends Pick<BrokerPositionSnapshot, "quantity">>(
+  positions: T[],
+): T[] {
+  return positions.filter(isOpenBrokerPosition);
+}
+
 const ETF_SYMBOLS = new Set([
   "SPY",
   "QQQ",
@@ -169,8 +212,10 @@ const STATIC_SECTOR_BY_SYMBOL: Record<string, string> = {
   BAC: "Financials",
   XOM: "Energy",
   CVX: "Energy",
+  FCEL: "Energy",
   UNH: "Health Care",
   JNJ: "Health Care",
+  INDI: "Technology",
   SPY: "Broad Market ETF",
   QQQ: "Growth ETF",
   IWM: "Small-Cap ETF",
@@ -550,46 +595,6 @@ function dateFromDateOnly(value: string | Date): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
-function rangeStart(range: AccountRange): Date | null {
-  const now = new Date();
-  const start = new Date(now);
-
-  switch (range) {
-    case "1W":
-      start.setUTCDate(now.getUTCDate() - 7);
-      return start;
-    case "1M":
-      start.setUTCMonth(now.getUTCMonth() - 1);
-      return start;
-    case "3M":
-      start.setUTCMonth(now.getUTCMonth() - 3);
-      return start;
-    case "YTD":
-      return new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
-    case "1Y":
-      start.setUTCFullYear(now.getUTCFullYear() - 1);
-      return start;
-    case "ALL":
-      return null;
-  }
-}
-
-function snapshotBucketSizeMs(range: AccountRange): number | null {
-  switch (range) {
-    case "1W":
-      return 60_000;
-    case "1M":
-      return 5 * 60_000;
-    case "3M":
-    case "YTD":
-      return 30 * 60_000;
-    case "1Y":
-      return 2 * 60 * 60_000;
-    case "ALL":
-      return 24 * 60 * 60_000;
-  }
-}
-
 type EquitySnapshotRow = {
   providerAccountId: string;
   asOf: Date;
@@ -597,22 +602,123 @@ type EquitySnapshotRow = {
   netLiquidation: string | null;
 };
 
+type PersistedAccountSnapshotRow = EquitySnapshotRow & {
+  displayName: string;
+  mode: RuntimeMode;
+  cash: string | null;
+  buyingPower: string | null;
+  maintenanceMargin: string | null;
+};
+
 type AccountEquityHistorySeedPoint = {
   timestamp: Date;
   netLiquidation: number;
   currency: string;
-  source: "FLEX" | "LOCAL_LEDGER";
+  source: "FLEX" | "LOCAL_LEDGER" | "SHADOW_LEDGER" | "IBKR_ACCOUNT_SUMMARY";
   deposits: number;
   withdrawals: number;
   dividends: number;
   fees: number;
 };
 
+function externalTransferAmount(
+  point: Pick<AccountEquityHistorySeedPoint, "deposits" | "withdrawals">,
+): number {
+  return (point.deposits ?? 0) - (point.withdrawals ?? 0);
+}
+
+function calculateTransferAdjustedReturnPoints(
+  seedPoints: AccountEquityHistorySeedPoint[],
+) {
+  const firstPoint = seedPoints[0] ?? null;
+  const firstPointTransfer = firstPoint ? externalTransferAmount(firstPoint) : 0;
+  const initialPreviousNav = firstPoint
+    ? firstPointTransfer > 0
+      ? Math.max(0, firstPoint.netLiquidation - firstPointTransfer)
+      : firstPoint.netLiquidation - firstPointTransfer
+    : null;
+  const baseline =
+    initialPreviousNav !== null && Math.abs(initialPreviousNav) > 0
+      ? initialPreviousNav
+      : (seedPoints.find((point) => Math.abs(point.netLiquidation) > 0)
+          ?.netLiquidation ??
+        firstPoint?.netLiquidation ??
+        0);
+  let previousNav: number | null = initialPreviousNav;
+  let cumulativePnl = 0;
+  let capitalBase = Math.max(
+    Math.abs(baseline),
+    Math.abs(firstPoint?.netLiquidation ?? 0),
+  );
+
+  return seedPoints.map((point, index) => {
+    const transfer = externalTransferAmount(point);
+    if (index > 0 && transfer > 0) {
+      capitalBase += transfer;
+    }
+    const pnlDelta =
+      previousNav === null ? 0 : point.netLiquidation - previousNav - transfer;
+    cumulativePnl += pnlDelta;
+    previousNav = point.netLiquidation;
+
+    return {
+      ...point,
+      externalTransfer: transfer,
+      pnlDelta,
+      cumulativePnl,
+      returnPercent: capitalBase ? (cumulativePnl / capitalBase) * 100 : 0,
+    };
+  });
+}
+
+type ExternalCashTransferCandidate = {
+  activityType: string;
+  description: string | null;
+  amount: string | number;
+};
+
+function classifyExternalCashTransfer(
+  row: ExternalCashTransferCandidate,
+): number | null {
+  const amount = toNumber(row.amount);
+  if (amount === null || amount === 0) {
+    return null;
+  }
+
+  const activityType = row.activityType ?? "";
+  const description = row.description ?? "";
+  const text = `${activityType} ${description}`;
+  if (/dividend|interest|commission|fee|tax|withholding/i.test(text)) {
+    return null;
+  }
+  if (
+    !/deposit|withdraw|disbursement|cash receipt|electronic fund|funds transfer|wire|ach|incoming|outgoing/i.test(
+      text,
+    )
+  ) {
+    return null;
+  }
+
+  if (/withdraw|disbursement|outgoing/i.test(description)) {
+    return -Math.abs(amount);
+  }
+  if (/deposit|cash receipt|incoming/i.test(description)) {
+    return Math.abs(amount);
+  }
+  if (/withdraw|outgoing/i.test(activityType)) {
+    return -Math.abs(amount);
+  }
+  if (/deposit|incoming/i.test(activityType)) {
+    return Math.abs(amount);
+  }
+  return amount;
+}
+
 function compactEquitySnapshotRows(
   rows: EquitySnapshotRow[],
   range: AccountRange,
 ): EquitySnapshotRow[] {
-  const bucketSizeMs = snapshotBucketSizeMs(range);
+  const bucketSizeMs = accountSnapshotBucketSizeMs(range);
   if (!bucketSizeMs || rows.length <= 1) {
     return rows;
   }
@@ -628,6 +734,18 @@ function compactEquitySnapshotRows(
 
   return Array.from(byBucket.values()).sort(
     (left, right) => left.asOf.getTime() - right.asOf.getTime(),
+  );
+}
+
+function filterSnapshotsOnFlexTransferDates(
+  rows: EquitySnapshotRow[],
+  flexTransferDates: Set<string>,
+): EquitySnapshotRow[] {
+  if (!flexTransferDates.size) {
+    return rows;
+  }
+  return rows.filter(
+    (row) => !flexTransferDates.has(formatDateOnly(row.asOf)),
   );
 }
 
@@ -651,18 +769,6 @@ function trimLeadingInactiveEquityPoints(
   return points.slice(firstMeaningfulIndex);
 }
 
-function normalizeRange(raw: unknown): AccountRange {
-  const value = typeof raw === "string" ? raw.toUpperCase() : "1M";
-  return value === "1W" ||
-    value === "1M" ||
-    value === "3M" ||
-    value === "YTD" ||
-    value === "1Y" ||
-    value === "ALL"
-    ? value
-    : "1M";
-}
-
 function normalizeOrderTab(raw: unknown): OrderTab {
   return raw === "history" ? "history" : "working";
 }
@@ -671,11 +777,15 @@ function currencyOf(accounts: BrokerAccountSnapshot[]): string {
   return accounts[0]?.currency || "USD";
 }
 
-function accountMetricUpdatedAt(accounts: BrokerAccountSnapshot[]): Date | null {
+function latestTimestampOf(accounts: BrokerAccountSnapshot[]): Date | null {
   const timestamps = accounts
     .map((account) => account.updatedAt?.getTime?.() ?? 0)
     .filter(Boolean);
   return timestamps.length ? new Date(Math.max(...timestamps)) : null;
+}
+
+function accountMetricUpdatedAt(accounts: BrokerAccountSnapshot[]): Date | null {
+  return latestTimestampOf(accounts);
 }
 
 function sumAccounts(
@@ -709,13 +819,99 @@ function weightedAccountAverage(
   );
 }
 
+function persistedAccountRowsToSnapshots(
+  rows: PersistedAccountSnapshotRow[],
+): {
+  accounts: BrokerAccountSnapshot[];
+  latestSnapshotAt: Date | null;
+} {
+  const latestByAccount = new Map<string, PersistedAccountSnapshotRow>();
+  rows.forEach((row) => {
+    if (!latestByAccount.has(row.providerAccountId)) {
+      latestByAccount.set(row.providerAccountId, row);
+    }
+  });
+
+  const accounts = Array.from(latestByAccount.values()).map((row) => ({
+    id: row.providerAccountId,
+    providerAccountId: row.providerAccountId,
+    provider: "ibkr" as const,
+    mode: row.mode,
+    displayName: row.displayName || `IBKR ${row.providerAccountId}`,
+    currency: row.currency || "USD",
+    buyingPower: toNumber(row.buyingPower) ?? 0,
+    cash: toNumber(row.cash) ?? 0,
+    netLiquidation: toNumber(row.netLiquidation) ?? 0,
+    accountType: inferAccountType(row.providerAccountId),
+    totalCashValue: null,
+    settledCash: null,
+    accruedCash: null,
+    initialMargin: null,
+    maintenanceMargin: toNumber(row.maintenanceMargin),
+    excessLiquidity: null,
+    cushion: null,
+    sma: null,
+    dayTradingBuyingPower: null,
+    regTInitialMargin: null,
+    grossPositionValue: null,
+    leverage: null,
+    dayTradesRemaining: null,
+    isPatternDayTrader: null,
+    updatedAt: row.asOf,
+  }));
+
+  return {
+    accounts,
+    latestSnapshotAt: latestTimestampOf(accounts),
+  };
+}
+
+async function getPersistedBackedAccounts(
+  requestedAccountId: string,
+  mode: RuntimeMode,
+): Promise<{
+  accounts: BrokerAccountSnapshot[];
+  latestSnapshotAt: Date | null;
+}> {
+  const isCombined = requestedAccountId === COMBINED_ACCOUNT_ID;
+  const conditions = [eq(brokerAccountsTable.mode, mode)];
+  if (!isCombined) {
+    conditions.push(eq(brokerAccountsTable.providerAccountId, requestedAccountId));
+  }
+
+  const rows = await db
+    .select({
+      providerAccountId: brokerAccountsTable.providerAccountId,
+      displayName: brokerAccountsTable.displayName,
+      mode: brokerAccountsTable.mode,
+      asOf: balanceSnapshotsTable.asOf,
+      currency: balanceSnapshotsTable.currency,
+      cash: balanceSnapshotsTable.cash,
+      buyingPower: balanceSnapshotsTable.buyingPower,
+      netLiquidation: balanceSnapshotsTable.netLiquidation,
+      maintenanceMargin: balanceSnapshotsTable.maintenanceMargin,
+    })
+    .from(brokerAccountsTable)
+    .innerJoin(
+      balanceSnapshotsTable,
+      eq(balanceSnapshotsTable.accountId, brokerAccountsTable.id),
+    )
+    .where(and(...conditions))
+    .orderBy(desc(balanceSnapshotsTable.asOf))
+    .limit(1_000);
+
+  return persistedAccountRowsToSnapshots(rows);
+}
+
 async function getLiveAccountUniverse(
   accountId: string,
   mode: RuntimeMode,
 ): Promise<AccountUniverse> {
-  const accounts = await getIbkrClient()
-    .listAccounts(mode)
-    .catch(() => [] as BrokerAccountSnapshot[]);
+  let liveReadFailed = false;
+  const accounts = await listIbkrAccounts(mode).catch(() => {
+    liveReadFailed = true;
+    return [] as BrokerAccountSnapshot[];
+  });
   const requestedAccountId = accountId || COMBINED_ACCOUNT_ID;
   const isCombined = requestedAccountId === COMBINED_ACCOUNT_ID;
   const selectedAccounts = isCombined
@@ -723,6 +919,25 @@ async function getLiveAccountUniverse(
     : accounts.filter((account) => account.id === requestedAccountId);
 
   if (!selectedAccounts.length) {
+    const persistedAccounts = await getPersistedBackedAccounts(
+      requestedAccountId,
+      mode,
+    );
+    if (persistedAccounts.accounts.length) {
+      return {
+        requestedAccountId,
+        accountIds: persistedAccounts.accounts.map((account) => account.id),
+        isCombined,
+        accounts: persistedAccounts.accounts,
+        primaryCurrency: currencyOf(persistedAccounts.accounts),
+        source: "persisted",
+        latestSnapshotAt: persistedAccounts.latestSnapshotAt,
+        staleReason: liveReadFailed
+          ? "ibkr_unavailable_using_persisted_snapshots"
+          : "ibkr_accounts_empty_using_persisted_snapshots",
+      };
+    }
+
     const flexAccounts = await getFlexBackedAccounts(requestedAccountId, mode);
     if (flexAccounts.length) {
       return {
@@ -731,6 +946,11 @@ async function getLiveAccountUniverse(
         isCombined,
         accounts: flexAccounts,
         primaryCurrency: currencyOf(flexAccounts),
+        source: "flex",
+        latestSnapshotAt: null,
+        staleReason: liveReadFailed
+          ? "ibkr_unavailable_using_flex_history"
+          : "ibkr_accounts_empty_using_flex_history",
       };
     }
 
@@ -746,6 +966,9 @@ async function getLiveAccountUniverse(
     isCombined,
     accounts: selectedAccounts,
     primaryCurrency: currencyOf(selectedAccounts),
+    source: "live",
+    latestSnapshotAt: null,
+    staleReason: null,
   };
 }
 
@@ -816,30 +1039,52 @@ async function listPositionsForUniverse(
   mode: RuntimeMode,
 ): Promise<BrokerPositionSnapshot[]> {
   if (!universe.isCombined && universe.accountIds[0]) {
-    return getIbkrClient().listPositions({
-      accountId: universe.accountIds[0],
-      mode,
-    });
+    return filterOpenBrokerPositions(
+      await listIbkrPositions({
+        accountId: universe.accountIds[0],
+        mode,
+      }),
+    );
   }
 
   const positions = await Promise.all(
     universe.accountIds.map((accountId) =>
-      getIbkrClient().listPositions({ accountId, mode }),
+      listIbkrPositions({ accountId, mode }),
     ),
   );
-  return positions.flat();
+  return filterOpenBrokerPositions(positions.flat());
 }
 
 async function listOrdersForUniverse(
   universe: AccountUniverse,
   mode: RuntimeMode,
-): Promise<BrokerOrderSnapshot[]> {
-  const orders = await Promise.all(
+): Promise<{
+  orders: BrokerOrderSnapshot[];
+  degraded?: boolean;
+  reason?: string;
+  stale?: boolean;
+  debug?: {
+    message: string;
+    code: string;
+    timeoutMs?: number;
+  };
+}> {
+  const results = await Promise.all(
     universe.accountIds.map((accountId) =>
-      getIbkrClient().listOrders({ accountId, mode }),
+      listOrdersWithResilience({ accountId, mode }),
     ),
   );
-  return orders.flat();
+  const degraded = results.some((result) => result.degraded);
+  const firstDegraded = results.find((result) => result.degraded);
+  return {
+    orders: results.flatMap((result) => result.orders),
+    degraded: degraded || undefined,
+    reason: firstDegraded?.reason,
+    stale: degraded
+      ? results.some((result) => result.stale === true)
+      : undefined,
+    debug: firstDegraded?.debug,
+  };
 }
 
 async function listExecutionsForUniverse(
@@ -852,7 +1097,7 @@ async function listExecutionsForUniverse(
 ): Promise<BrokerExecutionSnapshot[]> {
   const executions = await Promise.all(
     universe.accountIds.map((accountId) =>
-      getIbkrClient().listExecutions({
+      listIbkrExecutions({
         accountId,
         days: options.days,
         limit: options.limit,
@@ -941,17 +1186,165 @@ function weightPercent(value: number, nav: number | null): number | null {
   return (value / nav) * 100;
 }
 
-function exposureSummary(positions: BrokerPositionSnapshot[]) {
+function positionSignedNotional(position: BrokerPositionSnapshot): number {
+  const marketValue = Number(position.marketValue);
+  if (Number.isFinite(marketValue) && Math.abs(marketValue) > POSITION_QUANTITY_EPSILON) {
+    return marketValue;
+  }
+
+  const averagePrice = Number(position.averagePrice);
+  const quantity = Number(position.quantity);
+  const multiplier = Number(position.optionContract?.multiplier ?? 1);
+  if (
+    Number.isFinite(averagePrice) &&
+    Number.isFinite(quantity) &&
+    Number.isFinite(multiplier) &&
+    Math.abs(quantity) > POSITION_QUANTITY_EPSILON &&
+    averagePrice > 0 &&
+    multiplier > 0
+  ) {
+    return averagePrice * quantity * multiplier;
+  }
+
+  return Number.isFinite(marketValue) ? marketValue : 0;
+}
+
+type PositionMarketHydration = {
+  mark: number;
+  marketValue: number;
+  unrealizedPnl: number;
+  unrealizedPnlPercent: number;
+  dayChange: number | null;
+  dayChangePercent: number | null;
+  source: "IBKR_POSITIONS" | "QUOTE_SNAPSHOT";
+};
+
+function positionMultiplier(position: BrokerPositionSnapshot): number {
+  return Number(position.optionContract?.multiplier ?? 1);
+}
+
+function canHydratePositionFromEquityQuote(position: BrokerPositionSnapshot): boolean {
+  return !position.optionContract && position.assetClass !== "option";
+}
+
+function buildPositionMarketHydration(
+  position: BrokerPositionSnapshot,
+  quote: QuoteSnapshot | null | undefined,
+): PositionMarketHydration {
+  const quantity = Number(position.quantity);
+  const averagePrice = Number(position.averagePrice);
+  const multiplier = positionMultiplier(position);
+  const quotePrice = Number(quote?.price);
+  const quoteChange = Number(quote?.change);
+  const quotePrevClose = Number(quote?.prevClose);
+  const hasQuotePrice =
+    canHydratePositionFromEquityQuote(position) &&
+    Number.isFinite(quotePrice) &&
+    quotePrice > 0;
+  const mark = hasQuotePrice
+    ? quotePrice
+    : Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
+      ? position.marketPrice
+      : averagePrice;
+  const marketValue =
+    Number.isFinite(mark) &&
+    Number.isFinite(quantity) &&
+    Number.isFinite(multiplier)
+      ? mark * quantity * multiplier
+      : positionSignedNotional(position);
+  const unrealizedPnl =
+    Number.isFinite(mark) &&
+    Number.isFinite(averagePrice) &&
+    Number.isFinite(quantity) &&
+    Number.isFinite(multiplier)
+      ? (mark - averagePrice) * quantity * multiplier
+      : position.unrealizedPnl;
+  const unrealizedPnlPercent =
+    Number.isFinite(mark) && Number.isFinite(averagePrice) && averagePrice !== 0
+      ? ((mark - averagePrice) / averagePrice) * 100
+      : position.unrealizedPnlPercent;
+  const dayChange =
+    hasQuotePrice && Number.isFinite(quoteChange)
+      ? quoteChange * quantity * multiplier
+      : null;
+  const previousValue =
+    Number.isFinite(quotePrevClose) &&
+    Number.isFinite(quantity) &&
+    Number.isFinite(multiplier)
+      ? quotePrevClose * quantity * multiplier
+      : null;
+
+  return {
+    mark,
+    marketValue,
+    unrealizedPnl,
+    unrealizedPnlPercent,
+    dayChange,
+    dayChangePercent:
+      dayChange !== null && previousValue
+        ? (dayChange / Math.abs(previousValue)) * 100
+        : null,
+    source: hasQuotePrice ? "QUOTE_SNAPSHOT" : "IBKR_POSITIONS",
+  };
+}
+
+async function hydratePositionMarkets(
+  positions: BrokerPositionSnapshot[],
+): Promise<Map<string, PositionMarketHydration>> {
+  const symbols = Array.from(
+    new Set(
+      positions
+        .filter(canHydratePositionFromEquityQuote)
+        .map((position) => normalizeSymbol(positionReferenceSymbol(position)))
+        .filter(Boolean),
+    ),
+  );
+  let quotesBySymbol = new Map<string, QuoteSnapshot>();
+
+  if (symbols.length) {
+    const payload = await getQuoteSnapshots({ symbols: symbols.join(",") }).catch(() => ({
+      quotes: [],
+    }));
+    quotesBySymbol = new Map(
+      (payload.quotes || []).map((quote) => [normalizeSymbol(quote.symbol), quote]),
+    );
+  }
+
+  return new Map(
+    positions.map((position) => [
+      position.id,
+      buildPositionMarketHydration(
+        position,
+        quotesBySymbol.get(normalizeSymbol(positionReferenceSymbol(position))),
+      ),
+    ]),
+  );
+}
+
+function hydratedPositionMarketValue(
+  position: BrokerPositionSnapshot,
+  hydration: Map<string, PositionMarketHydration>,
+): number {
+  return hydration.get(position.id)?.marketValue ?? positionSignedNotional(position);
+}
+
+function exposureSummary(
+  positions: BrokerPositionSnapshot[],
+  valueForPosition: (position: BrokerPositionSnapshot) => number = (position) =>
+    position.marketValue,
+) {
   const grossLong = positions
-    .filter((position) => position.marketValue > 0)
-    .reduce((sum, position) => sum + position.marketValue, 0);
+    .map(valueForPosition)
+    .filter((marketValue) => marketValue > 0)
+    .reduce((sum, marketValue) => sum + marketValue, 0);
   const grossShort = Math.abs(
     positions
-      .filter((position) => position.marketValue < 0)
-      .reduce((sum, position) => sum + position.marketValue, 0),
+      .map(valueForPosition)
+      .filter((marketValue) => marketValue < 0)
+      .reduce((sum, marketValue) => sum + marketValue, 0),
   );
   const netExposure = positions.reduce(
-    (sum, position) => sum + position.marketValue,
+    (sum, position) => sum + valueForPosition(position),
     0,
   );
 
@@ -1566,6 +1959,21 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
       return [];
     }
 
+    const explicitDeposits = firstNumber(attrs, ["deposits"]);
+    const explicitWithdrawals = firstNumber(attrs, ["withdrawals"]);
+    const combinedDepositsWithdrawals = firstNumber(attrs, [
+      "depositsWithdrawals",
+      "depositsAndWithdrawals",
+    ]);
+    const deposits =
+      explicitDeposits ?? (combinedDepositsWithdrawals && combinedDepositsWithdrawals > 0
+        ? combinedDepositsWithdrawals
+        : null);
+    const withdrawals =
+      explicitWithdrawals ?? (combinedDepositsWithdrawals && combinedDepositsWithdrawals < 0
+        ? Math.abs(combinedDepositsWithdrawals)
+        : null);
+
     return [
       {
         providerAccountId,
@@ -1576,14 +1984,8 @@ async function upsertFlexReport(xml: string, runId: string): Promise<{
         securities: numericString(
           firstNumber(attrs, ["securities", "stockValue", "positionValue"]),
         ),
-        deposits: numericString(
-          firstNumber(attrs, [
-            "deposits",
-            "depositsWithdrawals",
-            "depositsAndWithdrawals",
-          ]),
-        ),
-        withdrawals: numericString(firstNumber(attrs, ["withdrawals"])),
+        deposits: numericString(deposits),
+        withdrawals: numericString(withdrawals),
         dividends: numericString(firstNumber(attrs, ["dividends"])),
         fees: numericString(
           firstNumber(attrs, ["fees", "commissions", "advisorFees"]),
@@ -2129,9 +2531,14 @@ export async function getAccountSummary(input: {
   accountId: string;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountSummary();
+  }
+
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const positions = await listPositionsForUniverse(universe, mode);
+  const marketHydration = await hydratePositionMarkets(positions);
   const updatedAt = accountMetricUpdatedAt(universe.accounts) ?? new Date();
   const currency = universe.primaryCurrency;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
@@ -2139,7 +2546,7 @@ export async function getAccountSummary(input: {
   const totalPnl = initialNav === null ? null : nav - initialNav;
 
   const dayPnl = positions.reduce(
-    (sum, position) => sum + (position.unrealizedPnl ?? 0),
+    (sum, position) => sum + (marketHydration.get(position.id)?.dayChange ?? 0),
     0,
   );
 
@@ -2237,12 +2644,12 @@ export async function getAccountSummary(input: {
         "Cushion",
         updatedAt,
       ),
-      dayPnl: metric(dayPnl, currency, "IBKR_POSITIONS", "UnrealizedPnL", updatedAt),
+      dayPnl: metric(dayPnl, currency, "IBKR_POSITIONS", "QuoteChange", updatedAt),
       dayPnlPercent: metric(
         nav ? (dayPnl / nav) * 100 : null,
         null,
         "IBKR_POSITIONS",
-        "UnrealizedPnL/NetLiquidation",
+        "QuoteChange/NetLiquidation",
         updatedAt,
       ),
       totalPnl: metric(totalPnl, currency, "FLEX", "ChangeInNAV", updatedAt),
@@ -2297,7 +2704,11 @@ export async function getAccountSummary(input: {
       ),
       grossPositionValue: metric(
         sumAccounts(universe.accounts, "grossPositionValue") ??
-          positions.reduce((sum, position) => sum + Math.abs(position.marketValue), 0),
+          positions.reduce(
+            (sum, position) =>
+              sum + Math.abs(hydratedPositionMarketValue(position, marketHydration)),
+            0,
+          ),
         currency,
         "IBKR_ACCOUNT_SUMMARY",
         "GrossPositionValue",
@@ -2344,10 +2755,6 @@ async function getInitialFlexNav(accountIds: string[]): Promise<number | null> {
   return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
 }
 
-function benchmarkTimeframeForRange(range: AccountRange): "1h" | "1d" {
-  return range === "1W" || range === "1M" ? "1h" : "1d";
-}
-
 async function resolveBenchmarkPercents(input: {
   benchmark: string | null | undefined;
   range: AccountRange;
@@ -2361,13 +2768,13 @@ async function resolveBenchmarkPercents(input: {
   try {
     const bars = await getBars({
       symbol: input.benchmark,
-      timeframe: benchmarkTimeframeForRange(input.range),
+      timeframe: accountBenchmarkTimeframeForRange(input.range),
       from:
         input.start ??
         input.points[0]?.timestamp ??
         new Date(Date.now() - 365 * 86_400_000),
       to: input.points[input.points.length - 1]?.timestamp ?? new Date(),
-      limit: input.range === "1W" ? 300 : 1_000,
+      limit: accountBenchmarkLimitForRange(input.range),
       outsideRth: true,
       allowHistoricalSynthesis: true,
     });
@@ -2411,10 +2818,17 @@ export async function getAccountEquityHistory(input: {
   benchmark?: string | null;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountEquityHistory({
+      range: input.range,
+      benchmark: input.benchmark,
+    });
+  }
+
   const mode = input.mode ?? getRuntimeMode();
-  const range = normalizeRange(input.range);
+  const range = normalizeAccountRange(input.range);
   const universe = await getLiveAccountUniverse(input.accountId, mode);
-  const start = rangeStart(range);
+  const start = accountRangeStart(range);
   const flexConditions = [inArray(flexNavHistoryTable.providerAccountId, universe.accountIds)];
   if (start) {
     flexConditions.push(
@@ -2431,6 +2845,22 @@ export async function getAccountEquityHistory(input: {
         .from(flexNavHistoryTable)
         .where(and(...flexConditions))
         .orderBy(flexNavHistoryTable.statementDate),
+  });
+  const flexCashConditions = [
+    inArray(flexCashActivityTable.providerAccountId, universe.accountIds),
+  ];
+  if (start) {
+    flexCashConditions.push(gte(flexCashActivityTable.activityDate, start));
+  }
+  const flexCashRows = await withOptionalAccountSchemaFallback({
+    tables: ["flex_cash_activity"],
+    fallback: () => [],
+    run: async () =>
+      db
+        .select()
+        .from(flexCashActivityTable)
+        .where(and(...flexCashConditions))
+        .orderBy(flexCashActivityTable.activityDate),
   });
 
   const snapshotConditions = [
@@ -2479,9 +2909,67 @@ export async function getAccountEquityHistory(input: {
     });
   });
 
-  snapshotRows.forEach((row) => {
+  const flexTransferDates = new Set<string>();
+  const flexRowsHaveExternalTransfers = flexRows.some(
+    (row) =>
+      Math.abs(toNumber(row.deposits) ?? 0) > 0 ||
+      Math.abs(toNumber(row.withdrawals) ?? 0) > 0,
+  );
+  flexRows.forEach((row) => {
+    if (
+      Math.abs(toNumber(row.deposits) ?? 0) > 0 ||
+      Math.abs(toNumber(row.withdrawals) ?? 0) > 0
+    ) {
+      flexTransferDates.add(row.statementDate);
+    }
+  });
+  if (!flexRowsHaveExternalTransfers) {
+    const cashTransfersByDate = new Map<
+      string,
+      { deposits: number; withdrawals: number }
+    >();
+    flexCashRows.forEach((row) => {
+      const transfer = classifyExternalCashTransfer(row);
+      if (transfer === null) {
+        return;
+      }
+      const key = dateFromDateOnly(formatDateOnly(row.activityDate)).toISOString();
+      const current = cashTransfersByDate.get(key) ?? {
+        deposits: 0,
+        withdrawals: 0,
+      };
+      if (transfer > 0) {
+        current.deposits += transfer;
+      } else {
+        current.withdrawals += Math.abs(transfer);
+      }
+      cashTransfersByDate.set(key, current);
+    });
+
+    cashTransfersByDate.forEach((transfer, key) => {
+      const current = byTimestamp.get(key);
+      if (!current) {
+        return;
+      }
+      byTimestamp.set(key, {
+        ...current,
+        deposits: transfer.deposits,
+        withdrawals: transfer.withdrawals,
+      });
+    });
+  }
+
+  const transferSafeSnapshotRows = filterSnapshotsOnFlexTransferDates(
+    snapshotRows,
+    flexTransferDates,
+  );
+
+  transferSafeSnapshotRows.forEach((row) => {
     const key = row.asOf.toISOString();
     const current = byTimestamp.get(key);
+    if (current?.source === "FLEX") {
+      return;
+    }
     byTimestamp.set(key, {
       timestamp: row.asOf,
       netLiquidation:
@@ -2495,18 +2983,41 @@ export async function getAccountEquityHistory(input: {
     });
   });
 
-  const sortedSeedPoints = trimLeadingInactiveEquityPoints(
-    Array.from(byTimestamp.values()).sort(
-      (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
-    ),
-  );
-  const baselineNetLiquidation =
-    sortedSeedPoints.find((point) => Math.abs(point.netLiquidation) > 0)
-      ?.netLiquidation ??
-    sortedSeedPoints[0]?.netLiquidation ??
-    0;
+  const currentNetLiquidation =
+    universe.source === "live"
+      ? sumAccounts(universe.accounts, "netLiquidation")
+      : null;
+  const currentTimestamp = accountMetricUpdatedAt(universe.accounts) ?? new Date();
+  const liveTerminalIncluded =
+    currentNetLiquidation !== null &&
+    (!start || currentTimestamp.getTime() >= start.getTime());
+  if (
+    currentNetLiquidation !== null &&
+    (!start || currentTimestamp.getTime() >= start.getTime())
+  ) {
+    const key = currentTimestamp.toISOString();
+    const current = byTimestamp.get(key);
+    byTimestamp.set(key, {
+      timestamp: currentTimestamp,
+      netLiquidation: currentNetLiquidation,
+      currency: universe.primaryCurrency,
+      source: "IBKR_ACCOUNT_SUMMARY",
+      deposits: current?.deposits ?? 0,
+      withdrawals: current?.withdrawals ?? 0,
+      dividends: current?.dividends ?? 0,
+      fees: current?.fees ?? 0,
+    });
+  }
 
-  const points = sortedSeedPoints.map((point) => {
+  const sortedSeedPoints = trimLeadingInactiveEquityPoints(
+    Array.from(byTimestamp.values())
+      .filter((point) => !start || point.timestamp.getTime() >= start.getTime())
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()),
+  );
+  const adjustedSeedPoints =
+    calculateTransferAdjustedReturnPoints(sortedSeedPoints);
+
+  const points = adjustedSeedPoints.map((point) => {
       return {
         timestamp: point.timestamp,
         netLiquidation: point.netLiquidation,
@@ -2516,11 +3027,7 @@ export async function getAccountEquityHistory(input: {
         withdrawals: point.withdrawals,
         dividends: point.dividends,
         fees: point.fees,
-        returnPercent: baselineNetLiquidation
-          ? ((point.netLiquidation - baselineNetLiquidation) /
-              baselineNetLiquidation) *
-            100
-          : 0,
+        returnPercent: point.returnPercent,
         benchmarkPercent: null,
       };
     });
@@ -2534,6 +3041,23 @@ export async function getAccountEquityHistory(input: {
     ...point,
     benchmarkPercent: benchmarkPercents[index] ?? null,
   }));
+  const latestSnapshotAt =
+    rawSnapshotRows.reduce<Date | null>((latest, row) => {
+      if (!latest || row.asOf.getTime() > latest.getTime()) {
+        return row.asOf;
+      }
+      return latest;
+    }, universe.latestSnapshotAt) ?? null;
+  const lastPoint = pointsWithBenchmark[pointsWithBenchmark.length - 1] ?? null;
+  const terminalPointSource = liveTerminalIncluded
+    ? "live_account_summary"
+    : lastPoint?.source === "LOCAL_LEDGER"
+      ? "persisted_snapshot"
+      : lastPoint?.source === "FLEX"
+        ? "flex"
+        : lastPoint?.source === "SHADOW_LEDGER"
+          ? "shadow_ledger"
+          : null;
 
   const lastRun = await withOptionalAccountSchemaFallback({
     tables: ["flex_report_runs"],
@@ -2555,6 +3079,12 @@ export async function getAccountEquityHistory(input: {
     flexConfigured: flexConfigured(),
     lastFlexRefreshAt: lastRun?.completedAt ?? null,
     benchmark: input.benchmark || null,
+    asOf: lastPoint?.timestamp ?? null,
+    latestSnapshotAt,
+    isStale: universe.source !== "live",
+    staleReason: universe.staleReason,
+    terminalPointSource,
+    liveTerminalIncluded,
     points: pointsWithBenchmark,
     events: pointsWithBenchmark
       .filter(
@@ -2583,9 +3113,14 @@ export async function getAccountAllocation(input: {
   accountId: string;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountAllocation();
+  }
+
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const positions = await listPositionsForUniverse(universe, mode);
+  const marketHydration = await hydratePositionMarkets(positions);
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
 
   await upsertTickerReferenceCache(positions);
@@ -2595,8 +3130,9 @@ export async function getAccountAllocation(input: {
   positions.forEach((position) => {
     const assetClass = normalizeAssetClassLabel(position);
     const sector = sectorForSymbol(positionReferenceSymbol(position));
-    assetBuckets.set(assetClass, (assetBuckets.get(assetClass) ?? 0) + position.marketValue);
-    sectorBuckets.set(sector, (sectorBuckets.get(sector) ?? 0) + position.marketValue);
+    const allocationValue = hydratedPositionMarketValue(position, marketHydration);
+    assetBuckets.set(assetClass, (assetBuckets.get(assetClass) ?? 0) + allocationValue);
+    sectorBuckets.set(sector, (sectorBuckets.get(sector) ?? 0) + allocationValue);
   });
 
   const cash = sumAccounts(universe.accounts, "cash") ?? 0;
@@ -2617,7 +3153,9 @@ export async function getAccountAllocation(input: {
     currency: universe.primaryCurrency,
     assetClass: bucketRows(assetBuckets),
     sector: bucketRows(sectorBuckets),
-    exposure: exposureSummary(positions),
+    exposure: exposureSummary(positions, (position) =>
+      hydratedPositionMarketValue(position, marketHydration),
+    ),
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
   };
 }
@@ -2658,15 +3196,23 @@ export async function getAccountPositions(input: {
   assetClass?: string | null;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountPositions({
+      assetClass: input.assetClass,
+    });
+  }
+
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const positionsPromise = listPositionsForUniverse(universe, mode);
-  const [positions, orders, lots, greekEnrichment] = await Promise.all([
+  const [positions, ordersResult, lots, greekEnrichment] = await Promise.all([
     positionsPromise,
     listOrdersForUniverse(universe, mode),
     getPositionLots(universe.accountIds),
     positionsPromise.then((result) => enrichPositionGreeks(result)),
   ]);
+  const marketHydration = await hydratePositionMarkets(positions);
+  const orders = ordersResult.orders;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
   const filteredPositions =
     input.assetClass && input.assetClass !== "all"
@@ -2696,6 +3242,7 @@ export async function getAccountPositions(input: {
     symbol: string;
     description: string;
     assetClass: string;
+    optionContract: BrokerPositionSnapshot["optionContract"] | null;
     sector: string;
     quantity: number;
     averageCostAccumulator: number;
@@ -2726,6 +3273,7 @@ export async function getAccountPositions(input: {
               ? `${position.optionContract.underlying} ${formatDateOnly(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
               : position.symbol,
             assetClass: normalizeAssetClassLabel(position),
+            optionContract: position.optionContract ?? null,
             sector: sectorForSymbol(positionReferenceSymbol(position)),
             quantity: 0,
             averageCostAccumulator: 0,
@@ -2744,17 +3292,36 @@ export async function getAccountPositions(input: {
           };
           const greek = greekEnrichment.byPositionId.get(position.id);
           const quantityWeight = Math.abs(position.quantity);
-          const marketValueWeight = Math.abs(position.marketValue ?? 0);
+          const hydratedMarket = marketHydration.get(position.id);
+          const positionValue =
+            hydratedMarket?.marketValue ?? positionSignedNotional(position);
+          const positionMark =
+            hydratedMarket?.mark ??
+            (Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
+              ? position.marketPrice
+              : position.averagePrice);
+          const marketValueWeight = Math.abs(positionValue);
 
           current.quantity += position.quantity;
           current.averageCostAccumulator += position.averagePrice * quantityWeight;
-          current.markAccumulator += position.marketPrice * quantityWeight;
+          current.markAccumulator += positionMark * quantityWeight;
           current.averageWeight += quantityWeight;
           current.unrealizedWeight += marketValueWeight;
-          current.unrealizedPnl += position.unrealizedPnl;
+          current.dayChange = upsertNullableTotal(
+            current.dayChange,
+            hydratedMarket?.dayChange ?? null,
+          );
+          current.dayChangePercent = upsertNullableTotal(
+            current.dayChangePercent,
+            hydratedMarket?.dayChangePercent == null || marketValueWeight <= 0
+              ? null
+              : hydratedMarket.dayChangePercent * marketValueWeight,
+          );
+          current.unrealizedPnl += hydratedMarket?.unrealizedPnl ?? position.unrealizedPnl;
           current.unrealizedPnlPercentAccumulator +=
-            (position.unrealizedPnlPercent ?? 0) * marketValueWeight;
-          current.marketValue += position.marketValue ?? 0;
+            (hydratedMarket?.unrealizedPnlPercent ?? position.unrealizedPnlPercent ?? 0) *
+            marketValueWeight;
+          current.marketValue += positionValue;
           current.betaWeightedDelta = upsertNullableTotal(
             current.betaWeightedDelta,
             greek?.betaWeightedDelta ?? null,
@@ -2780,6 +3347,7 @@ export async function getAccountPositions(input: {
         symbol: row.symbol,
         description: row.description,
         assetClass: row.assetClass,
+        optionContract: row.optionContract,
         sector: row.sector,
         quantity: row.quantity,
         averageCost:
@@ -2788,7 +3356,10 @@ export async function getAccountPositions(input: {
             : 0,
         mark: row.averageWeight > 0 ? row.markAccumulator / row.averageWeight : 0,
         dayChange: row.dayChange,
-        dayChangePercent: row.dayChangePercent,
+        dayChangePercent:
+          row.unrealizedWeight > 0 && row.dayChangePercent !== null
+            ? row.dayChangePercent / row.unrealizedWeight
+            : null,
         unrealizedPnl: row.unrealizedPnl,
         unrealizedPnlPercent:
           row.unrealizedWeight > 0
@@ -2817,9 +3388,20 @@ export async function getAccountPositions(input: {
           .map(([, order]) => order)
           .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime()),
         source: row.source,
+        sourceType: "manual" as const,
+        strategyLabel: "Manual",
+        attributionStatus: "unknown" as const,
+        sourceAttribution: [],
       }))
     : filteredPositions.map((position) => {
-        const marketValue = position.marketValue ?? 0;
+        const hydratedMarket = marketHydration.get(position.id);
+        const marketValue =
+          hydratedMarket?.marketValue ?? positionSignedNotional(position);
+        const mark =
+          hydratedMarket?.mark ??
+          (Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
+            ? position.marketPrice
+            : position.averagePrice);
         const greek = greekEnrichment.byPositionId.get(position.id);
         const referenceSymbol = positionReferenceSymbol(position);
         return {
@@ -2831,14 +3413,16 @@ export async function getAccountPositions(input: {
             ? `${position.optionContract.underlying} ${formatDateOnly(position.optionContract.expirationDate)} ${position.optionContract.strike} ${position.optionContract.right}`
             : position.symbol,
           assetClass: normalizeAssetClassLabel(position),
+          optionContract: position.optionContract ?? null,
           sector: sectorForSymbol(referenceSymbol),
           quantity: position.quantity,
           averageCost: position.averagePrice,
-          mark: position.marketPrice,
-          dayChange: null,
-          dayChangePercent: null,
-          unrealizedPnl: position.unrealizedPnl,
-          unrealizedPnlPercent: position.unrealizedPnlPercent,
+          mark,
+          dayChange: hydratedMarket?.dayChange ?? null,
+          dayChangePercent: hydratedMarket?.dayChangePercent ?? null,
+          unrealizedPnl: hydratedMarket?.unrealizedPnl ?? position.unrealizedPnl,
+          unrealizedPnlPercent:
+            hydratedMarket?.unrealizedPnlPercent ?? position.unrealizedPnlPercent,
           marketValue,
           weightPercent: weightPercent(marketValue, nav),
           betaWeightedDelta: greek?.betaWeightedDelta ?? null,
@@ -2848,17 +3432,24 @@ export async function getAccountPositions(input: {
               (order) => orderGroupKey(order) === positionGroupKey(position),
             ),
           source: "IBKR_POSITIONS",
+          sourceType: "manual" as const,
+          strategyLabel: "Manual",
+          attributionStatus: "unknown" as const,
+          sourceAttribution: [],
         };
       });
 
-  const exposure = exposureSummary(filteredPositions);
+  const openRows = rows.filter((row) => Math.abs(Number(row.quantity)) > POSITION_QUANTITY_EPSILON);
+  const exposure = exposureSummary(filteredPositions, (position) =>
+    hydratedPositionMarketValue(position, marketHydration),
+  );
   return {
     accountId: universe.requestedAccountId,
     currency: universe.primaryCurrency,
-    positions: rows,
+    positions: openRows,
     totals: {
-      weightPercent: rows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
-      unrealizedPnl: rows.reduce((sum, row) => sum + row.unrealizedPnl, 0),
+      weightPercent: openRows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
+      unrealizedPnl: openRows.reduce((sum, row) => sum + row.unrealizedPnl, 0),
       grossLong: exposure.grossLong,
       grossShort: exposure.grossShort,
       netExposure: exposure.netExposure,
@@ -3065,6 +3656,16 @@ export async function getAccountClosedTrades(input: {
   holdDuration?: string | null;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountClosedTrades({
+      from: input.from,
+      to: input.to,
+      symbol: input.symbol,
+      assetClass: input.assetClass,
+      pnlSign: input.pnlSign,
+    });
+  }
+
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const trades = await listClosedTradesForUniverse(universe, input);
@@ -3092,11 +3693,17 @@ export async function getAccountOrders(input: {
   tab?: OrderTab;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountOrders({
+      tab: input.tab,
+    });
+  }
+
   const mode = input.mode ?? getRuntimeMode();
   const tab = normalizeOrderTab(input.tab);
   const universe = await getLiveAccountUniverse(input.accountId, mode);
-  const orders = await listOrdersForUniverse(universe, mode);
-  const filtered = orders.filter((order) =>
+  const orderResult = await listOrdersForUniverse(universe, mode);
+  const filtered = orderResult.orders.filter((order) =>
     tab === "working" ? workingOrderStatus(order.status) : terminalOrderStatus(order.status),
   );
 
@@ -3104,6 +3711,10 @@ export async function getAccountOrders(input: {
     accountId: universe.requestedAccountId,
     tab,
     currency: universe.primaryCurrency,
+    degraded: orderResult.degraded,
+    reason: orderResult.reason,
+    stale: orderResult.stale,
+    debug: orderResult.debug,
     orders: filtered.map((order) => ({
       id: order.id,
       accountId: order.accountId,
@@ -3133,6 +3744,15 @@ export async function cancelAccountOrder(input: {
   orderId: string;
   confirm?: boolean | null;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return {
+      orderId: input.orderId,
+      accountId: input.accountId,
+      message: "Shadow orders fill immediately and cannot be canceled.",
+      submittedAt: new Date(),
+    };
+  }
+
   if (getRuntimeMode() === "live" && input.confirm !== true) {
     throw new HttpError(409, "Live order cancellation requires confirmation.", {
       code: "ibkr_live_cancel_confirmation_required",
@@ -3140,6 +3760,7 @@ export async function cancelAccountOrder(input: {
     });
   }
 
+  await assertIbkrGatewayTradingAvailable();
   return getIbkrClient().cancelOrder({
     accountId: input.accountId,
     orderId: input.orderId,
@@ -3151,29 +3772,48 @@ export async function getAccountRisk(input: {
   accountId: string;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountRisk();
+  }
+
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const [positions, closedTrades] = await Promise.all([
     listPositionsForUniverse(universe, mode),
     listClosedTradesForUniverse(universe, {}),
   ]);
-  const greekEnrichment = await enrichPositionGreeks(positions);
+  const [greekEnrichment, marketHydration] = await Promise.all([
+    enrichPositionGreeks(positions),
+    hydratePositionMarkets(positions),
+  ]);
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
-  const exposure = exposureSummary(positions);
+  const exposure = exposureSummary(positions, (position) =>
+    hydratedPositionMarketValue(position, marketHydration),
+  );
   const sectorMap = new Map<string, number>();
   positions.forEach((position) => {
     const sector = sectorForSymbol(positionReferenceSymbol(position));
-    sectorMap.set(sector, (sectorMap.get(sector) ?? 0) + position.marketValue);
+    sectorMap.set(
+      sector,
+      (sectorMap.get(sector) ?? 0) +
+        hydratedPositionMarketValue(position, marketHydration),
+    );
   });
 
   const positionRows = positions
-    .map((position) => ({
-      symbol: position.symbol,
-      marketValue: position.marketValue,
-      weightPercent: weightPercent(position.marketValue, nav),
-      unrealizedPnl: position.unrealizedPnl,
-      sector: sectorForSymbol(positionReferenceSymbol(position)),
-    }))
+    .map((position) => {
+      const hydratedMarket = marketHydration.get(position.id);
+      const marketValue =
+        hydratedMarket?.marketValue ?? positionSignedNotional(position);
+      return {
+        symbol: position.symbol,
+        marketValue,
+        weightPercent: weightPercent(marketValue, nav),
+        dayChange: hydratedMarket?.dayChange ?? null,
+        unrealizedPnl: hydratedMarket?.unrealizedPnl ?? position.unrealizedPnl,
+        sector: sectorForSymbol(positionReferenceSymbol(position)),
+      };
+    })
     .sort((a, b) => Math.abs(b.marketValue) - Math.abs(a.marketValue));
   const realizedRows = closedTrades
     .filter((trade) => (trade.realizedPnl ?? 0) !== 0)
@@ -3225,7 +3865,7 @@ export async function getAccountRisk(input: {
       positionCount: 0,
       optionPositionCount: 0,
     };
-    entry.exposure += position.marketValue;
+    entry.exposure += hydratedPositionMarketValue(position, marketHydration);
     entry.positionCount += 1;
     if (position.assetClass === "option") {
       entry.optionPositionCount += 1;
@@ -3298,12 +3938,12 @@ export async function getAccountRisk(input: {
     },
     winnersLosers: {
       todayWinners: positionRows
-        .filter((row) => row.unrealizedPnl > 0)
-        .sort((a, b) => b.unrealizedPnl - a.unrealizedPnl)
+        .filter((row) => (row.dayChange ?? 0) > 0)
+        .sort((a, b) => (b.dayChange ?? 0) - (a.dayChange ?? 0))
         .slice(0, 5),
       todayLosers: positionRows
-        .filter((row) => row.unrealizedPnl < 0)
-        .sort((a, b) => a.unrealizedPnl - b.unrealizedPnl)
+        .filter((row) => (row.dayChange ?? 0) < 0)
+        .sort((a, b) => (a.dayChange ?? 0) - (b.dayChange ?? 0))
         .slice(0, 5),
       allTimeWinners: realizedRows
         .filter((row) => row.unrealizedPnl > 0)
@@ -3390,6 +4030,10 @@ export async function getAccountCashActivity(input: {
   to?: Date | null;
   mode?: RuntimeMode;
 }) {
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountCashActivity();
+  }
+
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const conditions = [
@@ -3552,3 +4196,16 @@ export async function testFlexToken() {
     ...result,
   };
 }
+
+export const __accountEquityHistoryInternalsForTests = {
+  calculateTransferAdjustedReturnPoints,
+  classifyExternalCashTransfer,
+  filterSnapshotsOnFlexTransferDates,
+  persistedAccountRowsToSnapshots,
+};
+
+export const __accountPositionInternalsForTests = {
+  buildPositionMarketHydration,
+  filterOpenBrokerPositions,
+  isOpenBrokerPosition,
+};

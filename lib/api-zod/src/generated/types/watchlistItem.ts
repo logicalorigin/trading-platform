@@ -5,10 +5,24 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { UniverseMarket } from './universeMarket';
 
 export interface WatchlistItem {
   id: string;
   symbol: string;
+  market: UniverseMarket | null;
+  /** @nullable */
+  normalizedExchangeMic: string | null;
+  /** @nullable */
+  exchangeDisplay: string | null;
+  /** @nullable */
+  countryCode: string | null;
+  /** @nullable */
+  exchangeCountryCode: string | null;
+  /** @nullable */
+  sector: string | null;
+  /** @nullable */
+  industry: string | null;
   sortOrder: number;
   addedAt: Date;
 }

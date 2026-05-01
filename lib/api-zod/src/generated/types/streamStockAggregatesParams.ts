@@ -7,8 +7,8 @@
  */
 
 export type StreamStockAggregatesParams = {
-  /**
-   * Comma-separated ticker symbols.
-   */
-  symbols: string;
+/**
+ * Comma-separated ticker symbols.
+ */
+symbols: string;
 };

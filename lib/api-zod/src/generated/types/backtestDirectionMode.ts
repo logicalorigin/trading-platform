@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestDirectionMode =
-  (typeof BacktestDirectionMode)[keyof typeof BacktestDirectionMode];
+export type BacktestDirectionMode = typeof BacktestDirectionMode[keyof typeof BacktestDirectionMode];
+
 
 export const BacktestDirectionMode = {
-  long_only: "long_only",
-  long_short: "long_short",
+  long_only: 'long_only',
+  long_short: 'long_short',
 } as const;

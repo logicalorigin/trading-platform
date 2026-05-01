@@ -1071,6 +1071,24 @@ function resolveBadgeWinner(
   return latestValue > bestValue ? "latest" : "best";
 }
 
+function thresholdKindForExitReason(
+  exitReason: string,
+): "take_profit" | "stop_loss" | "trail_stop" | "exit_trigger" | null {
+  if (exitReason === "take_profit") {
+    return "take_profit";
+  }
+
+  if (exitReason === "stop_loss") {
+    return "stop_loss";
+  }
+
+  if (exitReason === "trailing_stop") {
+    return "trail_stop";
+  }
+
+  return null;
+}
+
 function buildComparisonBadges(
   latestRun: BacktestRun | null,
   bestRun: BacktestRun | null,
@@ -1718,7 +1736,10 @@ function buildRunIndicatorPayload(
 function resolveRunExecutionMode(
   parameters: Record<string, unknown> | null | undefined,
 ): "spot" | "options" {
-  return parameters?.executionMode === "options" ? "options" : "spot";
+  return parameters?.executionMode === "options" ||
+    parameters?.executionMode === "signal_options"
+    ? "options"
+    : "spot";
 }
 
 function coerceScalarParameter(value: unknown): string | number | boolean {
@@ -2022,12 +2043,23 @@ export async function getBacktestRunChart(
       exitSpotPrice: number;
       entryBasePrice: null;
       exitBasePrice: null;
-      stopLossPrice: null;
-      takeProfitPrice: null;
+      stopLossPrice: number | null;
+      takeProfitPrice: number | null;
       trailActivationPrice: null;
-      lastTrailStopPrice: null;
-      exitTriggerPrice: null;
-      thresholdPath: null;
+      lastTrailStopPrice: number | null;
+      exitTriggerPrice: number | null;
+      thresholdPath: {
+        segments: Array<{
+          id: string;
+          kind: "take_profit" | "stop_loss" | "trail_stop" | "exit_trigger";
+          startBarIndex: number;
+          endBarIndex: number;
+          value: number;
+          style: "solid" | "dashed" | "dotted";
+          hit: boolean | null;
+          label: string | null;
+        }>;
+      } | null;
     }>
   >((overlays, trade) => {
     if (normalizeSymbol(trade.symbol) !== selectedSymbol) {
@@ -2049,6 +2081,31 @@ export async function getBacktestRunChart(
     const netPnl = numericValue(trade.netPnl);
     const entrySpotPrice = spotPriceAt(trade.entryAt.getTime()) ?? entryPrice;
     const exitSpotPrice = spotPriceAt(trade.exitAt.getTime()) ?? exitPrice;
+    const thresholdKind = thresholdKindForExitReason(trade.exitReason);
+    const thresholdStyle: "solid" | "dashed" =
+      thresholdKind === "trail_stop" ? "dashed" : "solid";
+    const thresholdPath =
+      thresholdKind && entryBarIndex != null && exitBarIndex != null
+        ? {
+            segments: [
+              {
+                id: `${tradeSelectionId}-${thresholdKind}`,
+                kind: thresholdKind,
+                startBarIndex: Math.min(entryBarIndex, exitBarIndex),
+                endBarIndex: Math.max(entryBarIndex, exitBarIndex),
+                value: exitPrice,
+                style: thresholdStyle,
+                hit: true,
+                label:
+                  thresholdKind === "take_profit"
+                    ? "Take profit"
+                    : thresholdKind === "trail_stop"
+                      ? "Trailing stop"
+                      : "Stop loss",
+              },
+            ],
+          }
+        : null;
 
     overlays.push({
       id: tradeSelectionId,
@@ -2076,12 +2133,12 @@ export async function getBacktestRunChart(
       exitSpotPrice,
       entryBasePrice: null,
       exitBasePrice: null,
-      stopLossPrice: null,
-      takeProfitPrice: null,
+      stopLossPrice: thresholdKind === "stop_loss" ? exitPrice : null,
+      takeProfitPrice: thresholdKind === "take_profit" ? exitPrice : null,
       trailActivationPrice: null,
-      lastTrailStopPrice: null,
-      exitTriggerPrice: null,
-      thresholdPath: null,
+      lastTrailStopPrice: thresholdKind === "trail_stop" ? exitPrice : null,
+      exitTriggerPrice: thresholdKind ? exitPrice : null,
+      thresholdPath,
     });
 
     return overlays;

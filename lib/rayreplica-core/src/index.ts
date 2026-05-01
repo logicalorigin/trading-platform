@@ -161,7 +161,7 @@ export const DEFAULT_RAY_REPLICA_SIGNAL_SETTINGS: RayReplicaSignalSettings = {
   restrictToSelectedSessions: false,
   sessions: [],
   waitForBarClose: true,
-  signalOffsetAtr: 1.5,
+  signalOffsetAtr: 3.0,
 };
 
 const RAY_REPLICA_BOS_CONFIRMATION_OPTIONS = ["close", "wicks"] as const;

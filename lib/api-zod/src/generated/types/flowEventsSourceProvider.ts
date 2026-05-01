@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type FlowEventsSourceProvider =
-  (typeof FlowEventsSourceProvider)[keyof typeof FlowEventsSourceProvider];
+export type FlowEventsSourceProvider = typeof FlowEventsSourceProvider[keyof typeof FlowEventsSourceProvider];
+
 
 export const FlowEventsSourceProvider = {
-  ibkr: "ibkr",
-  polygon: "polygon",
-  none: "none",
+  ibkr: 'ibkr',
+  polygon: 'polygon',
+  none: 'none',
 } as const;

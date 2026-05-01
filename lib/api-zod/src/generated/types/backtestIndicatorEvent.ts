@@ -5,7 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BacktestIndicatorEventMeta } from "./backtestIndicatorEventMeta";
+import type { BacktestIndicatorEventMeta } from './backtestIndicatorEventMeta';
 
 export interface BacktestIndicatorEvent {
   id: string;
@@ -16,7 +16,7 @@ export interface BacktestIndicatorEvent {
   time: number | null;
   /** @nullable */
   barIndex: number | null;
-  direction: "long" | "short" | null;
+  direction: 'long' | 'short' | null;
   /** @nullable */
   label: string | null;
   /** @nullable */

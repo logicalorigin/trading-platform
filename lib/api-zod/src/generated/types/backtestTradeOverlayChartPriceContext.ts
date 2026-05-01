@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeOverlayChartPriceContext =
-  (typeof BacktestTradeOverlayChartPriceContext)[keyof typeof BacktestTradeOverlayChartPriceContext];
+export type BacktestTradeOverlayChartPriceContext = typeof BacktestTradeOverlayChartPriceContext[keyof typeof BacktestTradeOverlayChartPriceContext];
+
 
 export const BacktestTradeOverlayChartPriceContext = {
-  spot: "spot",
-  option: "option",
+  spot: 'spot',
+  option: 'option',
 } as const;

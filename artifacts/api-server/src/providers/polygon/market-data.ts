@@ -57,6 +57,10 @@ export type UniverseTicker = {
   normalizedExchangeMic: string | null;
   exchangeDisplay: string | null;
   logoUrl: string | null;
+  countryCode: string | null;
+  exchangeCountryCode: string | null;
+  sector: string | null;
+  industry: string | null;
   contractDescription: string | null;
   contractMeta: UniverseTickerContractMeta;
   locale: string | null;
@@ -101,6 +105,15 @@ export type BarSnapshot = {
   volume: number;
 };
 
+export type PolygonAggregateBarsPage = {
+  bars: BarSnapshot[];
+  nextUrl: string | null;
+  pageCount: number;
+  pageLimitReached: boolean;
+  requestedFrom: Date;
+  requestedTo: Date;
+};
+
 export type OptionChainContract = {
   contract: {
     ticker: string;
@@ -143,6 +156,7 @@ export type FlowEvent = {
   provider: "polygon";
   basis: "trade";
   optionTicker: string;
+  providerContractId: string | null;
   strike: number;
   expirationDate: Date;
   right: OptionRight;
@@ -158,6 +172,18 @@ export type FlowEvent = {
   occurredAt: Date;
   unusualScore: number;
   isUnusual: boolean;
+  bid?: number | null;
+  ask?: number | null;
+  mark?: number | null;
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  underlyingPrice?: number | null;
+  moneyness?: string | null;
+  distancePercent?: number | null;
+  confidence?: "confirmed_trade" | "snapshot_activity" | "fallback_estimate";
+  sourceBasis?: "confirmed_trade" | "snapshot_activity" | "fallback_estimate";
 };
 
 const TIMEFRAME_TO_POLYGON_RANGE: Record<
@@ -178,6 +204,11 @@ const MASSIVE_DELAYED_INTRADAY_LAG_MS = 15 * 60 * 1_000;
 const AGGREGATE_BASE_LIMIT_MAX = 50_000;
 const INTRADAY_AGGREGATE_WINDOW_MS = 31 * 24 * 60 * 60 * 1_000;
 const AGGREGATE_CHUNK_MAX = 60;
+const AGGREGATE_NEXT_PAGE_MAX = 4;
+const OPTION_AGGREGATE_INTRADAY_LOOKBACK_MS = 10 * 24 * 60 * 60 * 1_000;
+const OPTION_FLOW_EXPIRATION_LOOKAHEAD_DAYS = 60;
+const OPTION_FLOW_SNAPSHOT_PAGE_LIMIT = 250;
+const OPTION_FLOW_SNAPSHOT_MAX_PAGES = 12;
 
 function isIntradayTimeframe(timeframe: BarTimeframe): boolean {
   return timeframe !== "1d";
@@ -206,6 +237,42 @@ function resolveAggregateBaseLimit(timeframe: BarTimeframe, desiredBars: number)
     default:
       return safeBars;
   }
+}
+
+function resolveAggregateWindowBaseLimit(
+  timeframe: BarTimeframe,
+  from: Date,
+  to: Date,
+): number {
+  const rangeConfig = TIMEFRAME_TO_POLYGON_RANGE[timeframe];
+  const approximateBars = Math.max(
+    1,
+    Math.ceil(
+      Math.max(rangeConfig.stepMs, to.getTime() - from.getTime()) /
+        rangeConfig.stepMs,
+    ) + 1,
+  );
+  return resolveAggregateBaseLimit(timeframe, approximateBars);
+}
+
+function resolveAggregateChunkWindowMs(timeframe: BarTimeframe): number {
+  const rangeConfig = TIMEFRAME_TO_POLYGON_RANGE[timeframe];
+  const baseAggregatesPerBar = Math.max(
+    1,
+    resolveAggregateBaseLimit(timeframe, 1),
+  );
+  const maxBarsPerWindow = Math.max(
+    1,
+    Math.floor(AGGREGATE_BASE_LIMIT_MAX / baseAggregatesPerBar),
+  );
+  return Math.min(
+    INTRADAY_AGGREGATE_WINDOW_MS,
+    Math.max(rangeConfig.stepMs, maxBarsPerWindow * rangeConfig.stepMs),
+  );
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1_000);
 }
 
 function midpoint(bid: number, ask: number, fallback: number): number {
@@ -658,6 +725,34 @@ function mapFlowEvent(
       getNumberPath(lastQuote, ["ap"]),
       getNumberPath(lastQuote, ["P"]),
     ) ?? 0;
+  const greeks = asRecord(record["greeks"]);
+  const underlyingAsset = asRecord(record["underlying_asset"]);
+  const underlyingPrice = firstDefined(
+    asNumber(record["underlying_price"]),
+    asNumber(record["underlyingPrice"]),
+    asNumber(underlyingAsset?.["price"]),
+    asNumber(underlyingAsset?.["last_price"]),
+  );
+  const distancePercent =
+    underlyingPrice !== null && underlyingPrice > 0
+      ? ((strike - underlyingPrice) / underlyingPrice) * 100
+      : null;
+  const absoluteDistance =
+    underlyingPrice !== null ? Math.abs(strike - underlyingPrice) : null;
+  const atmBand =
+    underlyingPrice !== null ? Math.max(0.01, underlyingPrice * 0.0025) : null;
+  const moneyness =
+    underlyingPrice === null || atmBand === null || absoluteDistance === null
+      ? null
+      : absoluteDistance <= atmBand
+        ? "ATM"
+        : right === "call"
+          ? strike < underlyingPrice
+            ? "ITM"
+            : "OTM"
+          : strike > underlyingPrice
+            ? "ITM"
+            : "OTM";
 
   const sharesPerContract = asNumber(details["shares_per_contract"]) ?? 100;
   const occurredAt =
@@ -682,6 +777,7 @@ function mapFlowEvent(
     provider: "polygon",
     basis: "trade",
     optionTicker,
+    providerContractId: null,
     strike,
     expirationDate,
     right,
@@ -703,6 +799,18 @@ function mapFlowEvent(
     occurredAt,
     unusualScore,
     isUnusual,
+    bid,
+    ask,
+    mark: bid > 0 && ask > 0 ? (bid + ask) / 2 : price,
+    delta: asNumber(greeks?.["delta"]),
+    gamma: asNumber(greeks?.["gamma"]),
+    theta: asNumber(greeks?.["theta"]),
+    vega: asNumber(greeks?.["vega"]),
+    underlyingPrice,
+    moneyness,
+    distancePercent,
+    confidence: "confirmed_trade",
+    sourceBasis: "confirmed_trade",
   };
 }
 
@@ -810,6 +918,10 @@ function mapUniverseTicker(result: unknown): UniverseTicker | null {
     normalizedExchangeMic: primaryExchange,
     exchangeDisplay: primaryExchange,
     logoUrl: null,
+    countryCode: null,
+    exchangeCountryCode: null,
+    sector: null,
+    industry: null,
     contractDescription: name,
     contractMeta: {
       polygonMarket: market,
@@ -879,13 +991,13 @@ export class PolygonMarketDataClient {
     });
   }
 
-  async getBars(input: {
+  async getBarsPage(input: {
     symbol: string;
     timeframe: BarTimeframe;
     limit?: number;
     from?: Date;
     to?: Date;
-  }): Promise<BarSnapshot[]> {
+  }): Promise<PolygonAggregateBarsPage> {
     const rangeConfig = TIMEFRAME_TO_POLYGON_RANGE[input.timeframe];
     const desiredBars = Math.max(input.limit ?? 200, 1);
     const defaultTo =
@@ -902,7 +1014,12 @@ export class PolygonMarketDataClient {
     const fetchAggregateWindow = async (
       windowFrom: Date,
       windowTo: Date,
-    ): Promise<BarSnapshot[]> => {
+    ): Promise<{
+      bars: BarSnapshot[];
+      nextUrl: string | null;
+      pageCount: number;
+      pageLimitReached: boolean;
+    }> => {
       const approximateBars = Math.max(
         1,
         Math.ceil(
@@ -922,25 +1039,55 @@ export class PolygonMarketDataClient {
           limit: baseAggregateLimit,
         },
       );
-      const payload = await fetchJson<unknown>(url);
-      const record = asRecord(payload);
+      const bars: BarSnapshot[] = [];
+      let nextUrl: string | null = url.toString();
+      let rawProviderNextUrl: string | null = null;
+      let pageCount = 0;
+      while (nextUrl && pageCount < AGGREGATE_NEXT_PAGE_MAX) {
+        const payload = await fetchJson<unknown>(nextUrl);
+        const record = asRecord(payload);
+        bars.push(...compact(asArray(record?.["results"]).map(mapAggregateBar)));
+        const rawNextUrl = asString(record?.["next_url"]);
+        rawProviderNextUrl = rawNextUrl;
+        nextUrl = rawNextUrl ? this.buildUrl(rawNextUrl).toString() : null;
+        pageCount += 1;
+      }
 
-      return compact(asArray(record?.["results"]).map(mapAggregateBar));
+      return {
+        bars,
+        nextUrl: nextUrl ? rawProviderNextUrl : null,
+        pageCount,
+        pageLimitReached: Boolean(nextUrl),
+      };
     };
+    const rangeBaseLimit = resolveAggregateWindowBaseLimit(
+      input.timeframe,
+      from,
+      to,
+    );
 
     const needsChunking =
       isIntradayTimeframe(input.timeframe) &&
       (to.getTime() - from.getTime() > INTRADAY_AGGREGATE_WINDOW_MS ||
-        resolveAggregateBaseLimit(input.timeframe, desiredBars) >
-          AGGREGATE_BASE_LIMIT_MAX);
+        rangeBaseLimit > AGGREGATE_BASE_LIMIT_MAX);
 
     if (!needsChunking) {
-      return (await fetchAggregateWindow(from, to)).slice(-desiredBars);
+      const page = await fetchAggregateWindow(from, to);
+      return {
+        ...page,
+        bars: page.bars.slice(-desiredBars),
+        requestedFrom: from,
+        requestedTo: to,
+      };
     }
 
     const barsByTimestamp = new Map<number, BarSnapshot>();
     let cursor = new Date(to);
     let chunkCount = 0;
+    const chunkWindowMs = resolveAggregateChunkWindowMs(input.timeframe);
+    let totalPageCount = 0;
+    let providerNextUrl: string | null = null;
+    let providerPageLimitReached = false;
 
     while (
       cursor.getTime() > from.getTime() &&
@@ -948,10 +1095,16 @@ export class PolygonMarketDataClient {
       chunkCount < AGGREGATE_CHUNK_MAX
     ) {
       const windowFrom = new Date(
-        Math.max(from.getTime(), cursor.getTime() - INTRADAY_AGGREGATE_WINDOW_MS),
+        Math.max(from.getTime(), cursor.getTime() - chunkWindowMs),
       );
-      const chunkBars = await fetchAggregateWindow(windowFrom, cursor);
-      chunkBars.forEach((bar) => {
+      const chunkPage = await fetchAggregateWindow(windowFrom, cursor);
+      totalPageCount += chunkPage.pageCount;
+      if (chunkPage.nextUrl) {
+        providerNextUrl = chunkPage.nextUrl;
+      }
+      providerPageLimitReached =
+        providerPageLimitReached || chunkPage.pageLimitReached;
+      chunkPage.bars.forEach((bar) => {
         barsByTimestamp.set(bar.timestamp.getTime(), bar);
       });
 
@@ -959,9 +1112,110 @@ export class PolygonMarketDataClient {
       chunkCount += 1;
     }
 
-    return Array.from(barsByTimestamp.values())
+    return {
+      bars: Array.from(barsByTimestamp.values())
+        .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
+        .slice(-desiredBars),
+      nextUrl: providerNextUrl,
+      pageCount: totalPageCount,
+      pageLimitReached: providerPageLimitReached,
+      requestedFrom: from,
+      requestedTo: to,
+    };
+  }
+
+  async getBars(input: {
+    symbol: string;
+    timeframe: BarTimeframe;
+    limit?: number;
+    from?: Date;
+    to?: Date;
+  }): Promise<BarSnapshot[]> {
+    return (await this.getBarsPage(input)).bars;
+  }
+
+  async getBarsProviderCursorPage(input: {
+    symbol: string;
+    timeframe: BarTimeframe;
+    providerNextUrl: string;
+    limit?: number;
+  }): Promise<PolygonAggregateBarsPage> {
+    const desiredBars = Math.max(input.limit ?? 200, 1);
+    const bars: BarSnapshot[] = [];
+    let nextUrl: string | null = this.buildUrl(input.providerNextUrl).toString();
+    let rawProviderNextUrl: string | null = null;
+    let pageCount = 0;
+
+    while (nextUrl && pageCount < AGGREGATE_NEXT_PAGE_MAX) {
+      const payload = await fetchJson<unknown>(nextUrl);
+      const record = asRecord(payload);
+      bars.push(...compact(asArray(record?.["results"]).map(mapAggregateBar)));
+      const rawNextUrl = asString(record?.["next_url"]);
+      rawProviderNextUrl = rawNextUrl;
+      nextUrl = rawNextUrl ? this.buildUrl(rawNextUrl).toString() : null;
+      pageCount += 1;
+    }
+
+    const sortedBars = bars
       .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
       .slice(-desiredBars);
+    const requestedFrom = sortedBars[0]?.timestamp ?? new Date(0);
+    const requestedTo =
+      sortedBars[sortedBars.length - 1]?.timestamp ?? requestedFrom;
+
+    return {
+      bars: sortedBars,
+      nextUrl: nextUrl ? rawProviderNextUrl : null,
+      pageCount,
+      pageLimitReached: Boolean(nextUrl),
+      requestedFrom,
+      requestedTo,
+    };
+  }
+
+  async getOptionAggregateBarsPage(input: {
+    optionTicker: string;
+    timeframe: BarTimeframe;
+    limit?: number;
+    from?: Date;
+    to?: Date;
+  }): Promise<PolygonAggregateBarsPage> {
+    const desiredBars = Math.max(input.limit ?? 200, 1);
+    const to =
+      input.to ??
+      (this.config.baseUrl.includes("massive.com") &&
+      isIntradayTimeframe(input.timeframe)
+        ? new Date(Date.now() - MASSIVE_DELAYED_INTRADAY_LAG_MS)
+        : undefined);
+    const from =
+      input.from ??
+      (isIntradayTimeframe(input.timeframe)
+        ? new Date(
+            (to?.getTime() ?? Date.now()) -
+              Math.max(
+                OPTION_AGGREGATE_INTRADAY_LOOKBACK_MS,
+                TIMEFRAME_TO_POLYGON_RANGE[input.timeframe].stepMs * desiredBars * 20,
+              ),
+          )
+        : undefined);
+
+    return this.getBarsPage({
+      symbol: input.optionTicker.trim().toUpperCase(),
+      timeframe: input.timeframe,
+      limit: input.limit,
+      from,
+      to,
+    });
+  }
+
+  async getOptionAggregateBars(input: {
+    optionTicker: string;
+    timeframe: BarTimeframe;
+    limit?: number;
+    from?: Date;
+    to?: Date;
+  }): Promise<BarSnapshot[]> {
+    return (await this.getOptionAggregateBarsPage(input)).bars;
   }
 
   async getNews(input: {
@@ -1007,6 +1261,9 @@ export class PolygonMarketDataClient {
       return { count: 0, results: [] };
     }
 
+    const limit = Number.isFinite(input.limit)
+      ? Math.max(1, Math.floor(Number(input.limit)))
+      : 50;
     const payload = await fetchJson<unknown>(
       this.buildUrl("/v3/reference/tickers", {
         search: input.cusip ? undefined : asString(input.search),
@@ -1016,7 +1273,7 @@ export class PolygonMarketDataClient {
         active: input.active,
         sort: "ticker",
         order: "asc",
-        limit: Math.max(1, Math.min(input.limit ?? 12, 50)),
+        limit,
       }),
       { signal: input.signal },
     );
@@ -1089,7 +1346,7 @@ export class PolygonMarketDataClient {
     };
   }
 
-  private async getTickerLogoUrl(
+  async getTickerLogoUrl(
     ticker: string,
     signal?: AbortSignal,
   ): Promise<string | null> {
@@ -1291,36 +1548,87 @@ export class PolygonMarketDataClient {
   }): Promise<FlowEvent[]> {
     const underlying = normalizeSymbol(input.underlying);
     const limit = Math.max(1, Math.min(input.limit ?? 50, 250));
-    const url = this.buildUrl(`/v3/snapshot/options/${encodeURIComponent(underlying)}`, {
-      order: "desc",
-      sort: "expiration_date",
-      limit: 250,
-    });
-    const payload = await fetchJson<unknown>(url);
-    const record = asRecord(payload);
+    const now = new Date();
+    let nextUrl: string | null = this.buildUrl(
+      `/v3/snapshot/options/${encodeURIComponent(underlying)}`,
+      {
+        "expiration_date.gte": toIsoDateString(now),
+        "expiration_date.lte": toIsoDateString(
+          addUtcDays(now, OPTION_FLOW_EXPIRATION_LOOKAHEAD_DAYS),
+        ),
+        order: "asc",
+        sort: "expiration_date",
+        limit: OPTION_FLOW_SNAPSHOT_PAGE_LIMIT,
+      },
+    ).toString();
+    const results: unknown[] = [];
+    let pageCount = 0;
+
+    while (nextUrl && pageCount < OPTION_FLOW_SNAPSHOT_MAX_PAGES) {
+      const page = await this.fetchChainPage(nextUrl);
+      results.push(...page.results);
+      nextUrl = page.nextUrl;
+      pageCount += 1;
+    }
+
+    if (results.length === 0) {
+      const fallbackUrl = this.buildUrl(
+        `/v3/snapshot/options/${encodeURIComponent(underlying)}`,
+        {
+          order: "desc",
+          sort: "expiration_date",
+          limit: OPTION_FLOW_SNAPSHOT_PAGE_LIMIT,
+        },
+      );
+      const payload = await fetchJson<unknown>(fallbackUrl);
+      const record = asRecord(payload);
+      results.push(...asArray(record?.["results"]));
+    }
 
     return compact(
-      asArray(record?.["results"]).map((result) =>
-        mapFlowEvent(underlying, result, input.unusualThreshold),
-      ),
+      results.map((result) => {
+        const event = mapFlowEvent(underlying, result, input.unusualThreshold);
+        if (!event) {
+          return null;
+        }
+
+        const record = asRecord(result);
+        const day = asRecord(record?.["day"]);
+        const dayVolume =
+          firstDefined(
+            getNumberPath(day, ["volume"]),
+            getNumberPath(day, ["v"]),
+          ) ?? event.size;
+
+        return { event, dayVolume };
+      }),
     )
       .sort((left, right) => {
-        // Float unusual prints (volume > open interest) to the top so the
-        // notifications feed and ranked lists surface fresh institutional
-        // activity ahead of routine market-maker turnover.
-        if (left.isUnusual !== right.isUnusual) {
-          return left.isUnusual ? -1 : 1;
-        }
-        if (left.isUnusual && right.isUnusual && left.unusualScore !== right.unusualScore) {
-          return right.unusualScore - left.unusualScore;
-        }
-        const timeDelta = right.occurredAt.getTime() - left.occurredAt.getTime();
+        const timeDelta =
+          right.event.occurredAt.getTime() - left.event.occurredAt.getTime();
         if (timeDelta !== 0) {
           return timeDelta;
         }
 
-        return right.premium - left.premium;
+        if (left.event.isUnusual !== right.event.isUnusual) {
+          return left.event.isUnusual ? -1 : 1;
+        }
+        if (
+          left.event.isUnusual &&
+          right.event.isUnusual &&
+          left.event.unusualScore !== right.event.unusualScore
+        ) {
+          return right.event.unusualScore - left.event.unusualScore;
+        }
+
+        const volumeDelta = right.dayVolume - left.dayVolume;
+        if (volumeDelta !== 0) {
+          return volumeDelta;
+        }
+
+        return right.event.premium - left.event.premium;
       })
-      .slice(0, limit);
+      .slice(0, limit)
+      .map(({ event }) => event);
   }
 }

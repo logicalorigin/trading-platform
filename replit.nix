@@ -1,5 +1,10 @@
 { pkgs }: {
   deps = [
+    pkgs.python3
+    pkgs.python3Packages.pip
+    pkgs.github-cli
+    pkgs.poppler_utils
+    pkgs.libreoffice
     pkgs.bubblewrap
     pkgs.glib
     pkgs.expat

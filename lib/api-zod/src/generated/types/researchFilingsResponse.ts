@@ -5,7 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { ResearchFiling } from "./researchFiling";
+import type { ResearchFiling } from './researchFiling';
 
 export interface ResearchFilingsResponse {
   symbol: string;

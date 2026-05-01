@@ -6,12 +6,13 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type AccountMetricSource =
-  (typeof AccountMetricSource)[keyof typeof AccountMetricSource];
+export type AccountMetricSource = typeof AccountMetricSource[keyof typeof AccountMetricSource];
+
 
 export const AccountMetricSource = {
-  IBKR_ACCOUNT_SUMMARY: "IBKR_ACCOUNT_SUMMARY",
-  IBKR_POSITIONS: "IBKR_POSITIONS",
-  FLEX: "FLEX",
-  LOCAL_LEDGER: "LOCAL_LEDGER",
+  IBKR_ACCOUNT_SUMMARY: 'IBKR_ACCOUNT_SUMMARY',
+  IBKR_POSITIONS: 'IBKR_POSITIONS',
+  FLEX: 'FLEX',
+  LOCAL_LEDGER: 'LOCAL_LEDGER',
+  SHADOW_LEDGER: 'SHADOW_LEDGER',
 } as const;

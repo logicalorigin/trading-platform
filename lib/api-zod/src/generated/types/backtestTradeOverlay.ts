@@ -5,9 +5,9 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BacktestTradeOverlayChartPriceContext } from "./backtestTradeOverlayChartPriceContext";
-import type { BacktestTradeOverlayDir } from "./backtestTradeOverlayDir";
-import type { BacktestTradeThresholdPath } from "./backtestTradeThresholdPath";
+import type { BacktestTradeOverlayChartPriceContext } from './backtestTradeOverlayChartPriceContext';
+import type { BacktestTradeOverlayDir } from './backtestTradeOverlayDir';
+import type { BacktestTradeThresholdPath } from './backtestTradeThresholdPath';
 
 export interface BacktestTradeOverlay {
   id: string;

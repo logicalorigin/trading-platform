@@ -5,13 +5,13 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BrokerConnectionProvider } from "./brokerConnectionProvider";
-import type { ConnectionStatus } from "./connectionStatus";
-import type { EnvironmentMode } from "./environmentMode";
+import type { BrokerConnectionProvider } from './brokerConnectionProvider';
+import type { ConnectionStatus } from './connectionStatus';
+import type { EnvironmentMode } from './environmentMode';
 
 export interface BrokerConnection {
   id: string;
-  provider: (typeof BrokerConnectionProvider)[keyof typeof BrokerConnectionProvider];
+  provider: typeof BrokerConnectionProvider[keyof typeof BrokerConnectionProvider];
   name: string;
   mode: EnvironmentMode;
   status: ConnectionStatus;

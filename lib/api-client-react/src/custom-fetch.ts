@@ -1,5 +1,6 @@
 export type CustomFetchOptions = RequestInit & {
   responseType?: "json" | "text" | "blob" | "auto";
+  timeoutMs?: number | null;
 };
 
 export type ErrorType<T = unknown> = ApiError<T>;
@@ -10,14 +11,23 @@ export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
+const HEAVY_GET_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
+const TRANSIENT_API_GET_STATUS_CODES = new Set([502, 503, 504]);
+const DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS = [250, 750, 1_500, 2_500];
 const HEAVY_GET_PATHS = new Set([
   "/api/bars",
+  "/api/options/chart-bars",
   "/api/options/chains",
   "/api/flow/events",
 ]);
 const HEAVY_GET_CONCURRENCY = 3;
 const HEAVY_GET_PRIORITY: Record<string, number> = {
+  "/api/options/chart-bars": 12,
   "/api/options/chains": 10,
+};
+const STARTUP_GET_TIMEOUT_MS: Record<string, number> = {
+  "/api/watchlists": 2_500,
+  "/api/diagnostics/runtime": 2_000,
 };
 
 // ---------------------------------------------------------------------------
@@ -28,11 +38,17 @@ let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
 let _heavyActiveCount = 0;
 let _heavySequence = 0;
-const _heavyQueue: Array<{
+let _transientApiGetRetryDelaysMs: readonly number[] =
+  DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS;
+type HeavyQueueEntry = {
   run: () => void;
+  reject: (error: unknown) => void;
   priority: number;
   sequence: number;
-}> = [];
+  started: boolean;
+  canceled: boolean;
+};
+const _heavyQueue: HeavyQueueEntry[] = [];
 const _heavyInFlight = new Map<string, Promise<unknown>>();
 
 /**
@@ -59,6 +75,13 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+export function setCustomFetchTransientRetryDelaysForTests(
+  delaysMs: readonly number[] | null,
+): void {
+  _transientApiGetRetryDelaysMs =
+    delaysMs ?? DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -145,6 +168,17 @@ function headersFingerprint(headers: Headers): string {
   return JSON.stringify(entries);
 }
 
+function readHeavyGetPriorityHeader(headers: Headers): number | null {
+  const raw = headers.get(HEAVY_GET_PRIORITY_HEADER);
+  if (raw == null) {
+    return null;
+  }
+
+  headers.delete(HEAVY_GET_PRIORITY_HEADER);
+  const priority = Number(raw);
+  return Number.isFinite(priority) ? priority : null;
+}
+
 function requestInitFingerprint(
   input: RequestInfo | URL,
   init: RequestInit,
@@ -220,6 +254,152 @@ function createAbortError(): Error {
   return error;
 }
 
+function createTimeoutError(timeoutMs: number): Error {
+  if (typeof DOMException !== "undefined") {
+    return new DOMException(
+      `The request timed out after ${timeoutMs}ms.`,
+      "TimeoutError",
+    );
+  }
+
+  const error = new Error(`The request timed out after ${timeoutMs}ms.`);
+  error.name = "TimeoutError";
+  return error;
+}
+
+function resolveDefaultRequestTimeoutMs(
+  input: RequestInfo | URL,
+  method: string,
+): number | null {
+  if (method !== "GET") {
+    return null;
+  }
+
+  const normalizedUrl = normalizeUrlForDedupe(input);
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  return STARTUP_GET_TIMEOUT_MS[normalizedUrl.pathname] ?? null;
+}
+
+function isApiPath(input: RequestInfo | URL): boolean {
+  const normalizedUrl = normalizeUrlForDedupe(input);
+  if (!normalizedUrl) {
+    return false;
+  }
+
+  return (
+    normalizedUrl.pathname === "/api" ||
+    normalizedUrl.pathname.startsWith("/api/")
+  );
+}
+
+function shouldRetryTransientApiGet(input: {
+  requestInput: RequestInfo | URL;
+  method: string;
+  response: Response;
+  attemptIndex: number;
+}): boolean {
+  if (input.method !== "GET") {
+    return false;
+  }
+  if (input.attemptIndex >= _transientApiGetRetryDelaysMs.length) {
+    return false;
+  }
+  if (!TRANSIENT_API_GET_STATUS_CODES.has(input.response.status)) {
+    return false;
+  }
+
+  return isApiPath(input.requestInput);
+}
+
+async function discardRetryResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Best-effort cleanup only. The retry is more important than draining an
+    // already-failed proxy response.
+  }
+}
+
+function waitForRetryDelay(
+  delayMs: number,
+  signal?: AbortSignal | null,
+): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(createAbortError());
+  }
+  if (delayMs <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cleanup = () => {};
+    const handleAbort = () => {
+      cleanup();
+      reject(createAbortError());
+    };
+    cleanup = () => {
+      if (timeoutId != null) {
+        clearTimeout(timeoutId);
+      }
+      signal?.removeEventListener("abort", handleAbort);
+    };
+
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+function withRequestTimeout(
+  init: RequestInit,
+  timeoutMs: number | null | undefined,
+): {
+  init: RequestInit;
+  cleanup: () => void;
+  didTimeout: () => boolean;
+} {
+  if (!timeoutMs || timeoutMs <= 0 || typeof AbortController === "undefined") {
+    return {
+      init,
+      cleanup: () => {},
+      didTimeout: () => false,
+    };
+  }
+
+  const controller = new AbortController();
+  const inputSignal = init.signal;
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createTimeoutError(timeoutMs));
+  }, timeoutMs);
+  const abortFromInput = () => controller.abort(inputSignal?.reason);
+
+  if (inputSignal?.aborted) {
+    controller.abort(inputSignal.reason);
+  } else {
+    inputSignal?.addEventListener("abort", abortFromInput, { once: true });
+  }
+
+  return {
+    init: {
+      ...init,
+      signal: controller.signal,
+    },
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      inputSignal?.removeEventListener("abort", abortFromInput);
+    },
+    didTimeout: () => timedOut,
+  };
+}
+
 function waitForCaller<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
   if (!signal) {
     return promise;
@@ -259,8 +439,12 @@ function takeNextHeavyRequest(): (() => void) | null {
   let nextIndex = 0;
   for (let index = 1; index < _heavyQueue.length; index += 1) {
     const current = _heavyQueue[index];
+    if (current.canceled) {
+      continue;
+    }
     const next = _heavyQueue[nextIndex];
     if (
+      next.canceled ||
       current.priority > next.priority ||
       (current.priority === next.priority && current.sequence < next.sequence)
     ) {
@@ -268,15 +452,50 @@ function takeNextHeavyRequest(): (() => void) | null {
     }
   }
 
-  return _heavyQueue.splice(nextIndex, 1)[0]?.run ?? null;
+  const [entry] = _heavyQueue.splice(nextIndex, 1);
+  if (!entry || entry.canceled) {
+    return takeNextHeavyRequest();
+  }
+  return entry.run;
 }
 
 function runQueuedHeavyRequest<T>(
   task: () => Promise<T>,
   priority = 0,
+  signal?: AbortSignal | null,
 ): Promise<T> {
+  if (signal?.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
   return new Promise((resolve, reject) => {
+    let entry: HeavyQueueEntry | null = null;
+    const cleanup = () => {
+      signal?.removeEventListener("abort", handleAbort);
+    };
+    const handleAbort = () => {
+      if (!entry || entry.started) {
+        return;
+      }
+
+      entry.canceled = true;
+      const index = _heavyQueue.indexOf(entry);
+      if (index >= 0) {
+        _heavyQueue.splice(index, 1);
+      }
+      cleanup();
+      reject(createAbortError());
+    };
     const run = () => {
+      if (entry?.canceled) {
+        cleanup();
+        reject(createAbortError());
+        return;
+      }
+      if (entry) {
+        entry.started = true;
+      }
+      cleanup();
       _heavyActiveCount += 1;
       task().then(resolve, reject).finally(() => {
         _heavyActiveCount = Math.max(0, _heavyActiveCount - 1);
@@ -290,11 +509,16 @@ function runQueuedHeavyRequest<T>(
       return;
     }
 
-    _heavyQueue.push({
+    entry = {
       run,
+      reject,
       priority,
       sequence: _heavySequence,
-    });
+      started: false,
+      canceled: false,
+    };
+    signal?.addEventListener("abort", handleAbort, { once: true });
+    _heavyQueue.push(entry);
     _heavySequence += 1;
   });
 }
@@ -537,23 +761,52 @@ async function executeFetch<T = unknown>(input: {
   headers: Headers;
   responseType: "json" | "text" | "blob" | "auto";
   requestInfo: { method: string; url: string };
+  timeoutMs?: number | null;
 }): Promise<T> {
-  const response = await fetch(input.requestInput, {
-    ...input.init,
-    method: input.method,
-    headers: input.headers,
-  });
+  for (let attemptIndex = 0; ; attemptIndex += 1) {
+    const timed = withRequestTimeout(input.init, input.timeoutMs);
 
-  if (!response.ok) {
-    const errorData = await parseErrorBody(response, input.method);
-    throw new ApiError(response, errorData, input.requestInfo);
+    try {
+      const response = await fetch(input.requestInput, {
+        ...timed.init,
+        method: input.method,
+        headers: input.headers,
+      });
+
+      if (!response.ok) {
+        if (
+          shouldRetryTransientApiGet({
+            requestInput: input.requestInput,
+            method: input.method,
+            response,
+            attemptIndex,
+          })
+        ) {
+          const delayMs = _transientApiGetRetryDelaysMs[attemptIndex] ?? 0;
+          await discardRetryResponseBody(response);
+          timed.cleanup();
+          await waitForRetryDelay(delayMs, input.init.signal);
+          continue;
+        }
+
+        const errorData = await parseErrorBody(response, input.method);
+        throw new ApiError(response, errorData, input.requestInfo);
+      }
+
+      return (await parseSuccessBody(
+        response,
+        input.responseType,
+        input.requestInfo,
+      )) as T;
+    } catch (error) {
+      if (timed.didTimeout()) {
+        throw createTimeoutError(input.timeoutMs ?? 0);
+      }
+      throw error;
+    } finally {
+      timed.cleanup();
+    }
   }
-
-  return (await parseSuccessBody(
-    response,
-    input.responseType,
-    input.requestInfo,
-  )) as T;
 }
 
 export function resetCustomFetchDedupeForTests(): void {
@@ -561,6 +814,7 @@ export function resetCustomFetchDedupeForTests(): void {
   _heavySequence = 0;
   _heavyQueue.splice(0, _heavyQueue.length);
   _heavyInFlight.clear();
+  setCustomFetchTransientRetryDelaysForTests(null);
 }
 
 export async function customFetch<T = unknown>(
@@ -568,7 +822,12 @@ export async function customFetch<T = unknown>(
   options: CustomFetchOptions = {},
 ): Promise<T> {
   input = applyBaseUrl(input);
-  const { responseType = "auto", headers: headersInit, ...init } = options;
+  const {
+    responseType = "auto",
+    headers: headersInit,
+    timeoutMs: timeoutOption,
+    ...init
+  } = options;
 
   const method = resolveMethod(input, init.method);
 
@@ -599,7 +858,12 @@ export async function customFetch<T = unknown>(
     }
   }
 
+  const explicitHeavyPriority = readHeavyGetPriorityHeader(headers);
   const requestInfo = { method, url: resolveUrl(input) };
+  const timeoutMs =
+    timeoutOption === undefined
+      ? resolveDefaultRequestTimeoutMs(input, method)
+      : timeoutOption;
   const heavyKey = buildHeavyGetKey({
     requestInput: input,
     init,
@@ -618,7 +882,8 @@ export async function customFetch<T = unknown>(
     const detachCallerAbort = shouldDetachCallerAbort(input, method);
     const { signal: _callerSignal, ...initWithoutSignal } = init;
     const upstreamInit = detachCallerAbort ? initWithoutSignal : init;
-    const priority = getHeavyGetPriority(input, method);
+    const priority =
+      explicitHeavyPriority ?? getHeavyGetPriority(input, method);
     const sharedRequest = runQueuedHeavyRequest(() =>
       executeFetch<T>({
         requestInput: input,
@@ -627,8 +892,10 @@ export async function customFetch<T = unknown>(
         headers,
         responseType,
         requestInfo,
+        timeoutMs,
       }),
       priority,
+      detachCallerAbort ? undefined : callerSignal,
     ).finally(() => {
       _heavyInFlight.delete(heavyKey);
     });
@@ -644,5 +911,6 @@ export async function customFetch<T = unknown>(
     headers,
     responseType,
     requestInfo,
+    timeoutMs,
   });
 }

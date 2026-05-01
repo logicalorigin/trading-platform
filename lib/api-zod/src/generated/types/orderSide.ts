@@ -6,9 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type OrderSide = (typeof OrderSide)[keyof typeof OrderSide];
+export type OrderSide = typeof OrderSide[keyof typeof OrderSide];
+
 
 export const OrderSide = {
-  buy: "buy",
-  sell: "sell",
+  buy: 'buy',
+  sell: 'sell',
 } as const;

@@ -5,8 +5,12 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AccountPositionLot } from "./accountPositionLot";
-import type { Order } from "./order";
+import type { AccountPositionLot } from './accountPositionLot';
+import type { AccountPositionRowAttributionStatus } from './accountPositionRowAttributionStatus';
+import type { AccountPositionRowSourceType } from './accountPositionRowSourceType';
+import type { JsonObject } from './jsonObject';
+import type { OptionContract } from './optionContract';
+import type { Order } from './order';
 
 export interface AccountPositionRow {
   id: string;
@@ -15,6 +19,7 @@ export interface AccountPositionRow {
   symbol: string;
   description: string;
   assetClass: string;
+  optionContract?: OptionContract | null;
   sector: string;
   quantity: number;
   averageCost: number;
@@ -29,4 +34,8 @@ export interface AccountPositionRow {
   lots: AccountPositionLot[];
   openOrders: Order[];
   source: string;
+  sourceType?: AccountPositionRowSourceType;
+  strategyLabel?: string | null;
+  attributionStatus?: AccountPositionRowAttributionStatus;
+  sourceAttribution?: JsonObject[];
 }

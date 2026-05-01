@@ -6,9 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type QuoteSource = (typeof QuoteSource)[keyof typeof QuoteSource];
+export type QuoteSource = typeof QuoteSource[keyof typeof QuoteSource];
+
 
 export const QuoteSource = {
-  ibkr: "ibkr",
-  polygon: "polygon",
+  ibkr: 'ibkr',
+  polygon: 'polygon',
 } as const;

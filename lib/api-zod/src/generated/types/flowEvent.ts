@@ -5,10 +5,13 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { FlowDataProvider } from "./flowDataProvider";
-import type { FlowEventBasis } from "./flowEventBasis";
-import type { FlowSentiment } from "./flowSentiment";
-import type { OptionRight } from "./optionRight";
+import type { FlowDataProvider } from './flowDataProvider';
+import type { FlowEventBasis } from './flowEventBasis';
+import type { FlowEventConfidence } from './flowEventConfidence';
+import type { FlowEventMoneyness } from './flowEventMoneyness';
+import type { FlowEventSourceBasis } from './flowEventSourceBasis';
+import type { FlowSentiment } from './flowSentiment';
+import type { OptionRight } from './optionRight';
 
 export interface FlowEvent {
   id: string;
@@ -16,14 +19,73 @@ export interface FlowEvent {
   provider: FlowDataProvider;
   basis: FlowEventBasis;
   optionTicker: string;
+  /**
+   * Broker contract identifier, when the flow source can map the option to a broker-backed contract.
+   * @nullable
+   */
+  providerContractId: string | null;
   strike: number;
   expirationDate: Date;
   right: OptionRight;
   price: number;
+  /**
+   * Best bid observed with the event or snapshot, when available.
+   * @nullable
+   */
+  bid?: number | null;
+  /**
+   * Best ask observed with the event or snapshot, when available.
+   * @nullable
+   */
+  ask?: number | null;
+  /**
+   * Last option price observed with the event or snapshot, when available.
+   * @nullable
+   */
+  last?: number | null;
+  /**
+   * Mark or midpoint price used for snapshot-derived flow, when available.
+   * @nullable
+   */
+  mark?: number | null;
   size: number;
   premium: number;
+  /**
+   * Option contract multiplier, when the source provides it.
+   * @nullable
+   */
+  multiplier?: number | null;
+  /**
+   * Shares represented by one option contract, when the source provides it.
+   * @nullable
+   */
+  sharesPerContract?: number | null;
   openInterest: number;
   impliedVolatility: number | null;
+  /** @nullable */
+  delta?: number | null;
+  /** @nullable */
+  gamma?: number | null;
+  /** @nullable */
+  theta?: number | null;
+  /** @nullable */
+  vega?: number | null;
+  /**
+   * Underlying reference price used to classify moneyness, when available.
+   * @nullable
+   */
+  underlyingPrice?: number | null;
+  /** @nullable */
+  moneyness?: FlowEventMoneyness;
+  /**
+   * Signed strike distance from the underlying reference price, in percent.
+   * @nullable
+   */
+  distancePercent?: number | null;
+  /** Data-confidence class for the flow row. */
+  confidence?: FlowEventConfidence;
+  /** Machine-readable source basis shown by the Flow UI. */
+  sourceBasis?: FlowEventSourceBasis;
   exchange: string;
   side: string;
   sentiment: FlowSentiment;

@@ -1,5 +1,9 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   GetBarsQueryParams,
   GetBarsResponse,
@@ -9,6 +13,12 @@ import {
   GetOptionChainResponse,
   GetOptionExpirationsQueryParams,
   GetOptionExpirationsResponse,
+  ResolveOptionContractQueryParams,
+  ResolveOptionContractResponse,
+  GetOptionChartBarsQueryParams,
+  GetOptionChartBarsResponse,
+  GetOptionQuoteSnapshotsBody,
+  GetOptionQuoteSnapshotsResponse,
   GetQuoteSnapshotsQueryParams,
   GetQuoteSnapshotsResponse,
   SearchUniverseTickersQueryParams,
@@ -20,6 +30,7 @@ import {
   ListBrokerConnectionsResponse,
   ListFlowEventsQueryParams,
   ListFlowEventsResponse,
+  GetFlowUniverseResponse,
   ListOrdersQueryParams,
   ListOrdersResponse,
   ListPositionsQueryParams,
@@ -27,18 +38,27 @@ import {
   PlaceOrderBody,
   ReplaceOrderBody,
   CancelOrderBody,
+  BatchOptionChainsBody,
+  BatchOptionChainsResponse,
 } from "@workspace/api-zod";
 import {
   cancelOrder,
   createWatchlist,
   deleteWatchlist,
   getBarsWithDebug,
+  benchmarkOptionsFlowScannerTickerPass,
+  batchOptionChains,
   getMarketDepth,
   getNews,
   getOptionChainWithDebug,
   getOptionExpirationsWithDebug,
+  getOptionChartBarsWithDebug,
+  resolveOptionContractWithDebug,
   getQuoteSnapshots,
+  getRuntimeDiagnostics,
+  getOptionsFlowUniverse,
   getSession,
+  getUniverseLogos,
   listAccounts,
   listBrokerConnections,
   listExecutions,
@@ -75,7 +95,12 @@ import {
   subscribeQuoteSnapshots,
 } from "../services/bridge-streams";
 import {
+  fetchShadowAccountSnapshotPayload,
+  subscribeShadowAccountSnapshots,
+} from "../services/shadow-account-streams";
+import {
   getCurrentStockMinuteAggregates,
+  getStockAggregateStreamDiagnostics,
   isStockAggregateStreamingAvailable,
   subscribeStockMinuteAggregates,
 } from "../services/stock-aggregate-stream";
@@ -92,8 +117,219 @@ import {
   getFlexHealth,
   testFlexToken,
 } from "../services/account";
+import type { AccountRange } from "../services/account-ranges";
+import {
+  placeShadowOrder,
+  previewShadowOrder,
+  SHADOW_ACCOUNT_ID,
+} from "../services/shadow-account";
+import {
+  attachLegacyIbkrBridgeRuntime,
+  attachIbkrBridgeRuntime,
+  detachIbkrBridgeRuntime,
+  getIbkrBridgeLauncher,
+  recordLegacyIbkrBridgeActivationProgress,
+} from "../services/ibkr-bridge-runtime";
 
 const router: IRouter = Router();
+const LOGO_PROXY_ALLOWED_HOSTS = new Set([
+  "s3-symbol-logo.tradingview.com",
+  "api.polygon.io",
+  "storage.googleapis.com",
+  "financialmodelingprep.com",
+  "images.financialmodelingprep.com",
+]);
+
+function sameOriginLogoUrl(logoUrl: string | null): string | null {
+  if (!logoUrl || logoUrl.startsWith("data:") || logoUrl.startsWith("/")) {
+    return logoUrl;
+  }
+  try {
+    const parsed = new URL(logoUrl);
+    if (!LOGO_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
+      return null;
+    }
+    return `/api/universe/logo-proxy?url=${encodeURIComponent(logoUrl)}`;
+  } catch {
+    return null;
+  }
+}
+const HISTORY_BAR_TIMEFRAMES = ["5s", "1m", "5m", "15m", "1h", "1d"] as const;
+type RouteHistoryBarTimeframe = (typeof HISTORY_BAR_TIMEFRAMES)[number];
+const isHistoryBarTimeframe = (
+  value: string,
+): value is RouteHistoryBarTimeframe =>
+  HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe);
+const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
+const IBKR_BRIDGE_HELPER_SCRIPT_PATHS = [
+  resolve(ROUTE_DIR, "../../../../scripts/windows/rayalgo-ibkr-helper.ps1"),
+  resolve(ROUTE_DIR, "../../../scripts/windows/rayalgo-ibkr-helper.ps1"),
+  resolve(process.cwd(), "../../scripts/windows/rayalgo-ibkr-helper.ps1"),
+  resolve(process.cwd(), "scripts/windows/rayalgo-ibkr-helper.ps1"),
+];
+const IBKR_BRIDGE_BUNDLE_PATHS = [
+  resolve(ROUTE_DIR, "../../../../artifacts/ibgateway-bridge-windows-current.tar.gz"),
+  resolve(ROUTE_DIR, "../../../ibgateway-bridge-windows-current.tar.gz"),
+  resolve(process.cwd(), "../../artifacts/ibgateway-bridge-windows-current.tar.gz"),
+  resolve(process.cwd(), "artifacts/ibgateway-bridge-windows-current.tar.gz"),
+];
+const IBKR_BRIDGE_PUBLIC_BASE_URL_ENV_NAMES = [
+  "IBKR_BRIDGE_API_BASE_URL",
+  "RAYALGO_PUBLIC_API_BASE_URL",
+  "PUBLIC_API_BASE_URL",
+];
+const REPLIT_PUBLIC_HOST_ENV_NAMES = [
+  "REPLIT_DEV_DOMAIN",
+  "REPLIT_DOMAINS",
+];
+const SSE_MAX_BUFFERED_CHUNKS = Math.max(
+  1,
+  Number.parseInt(process.env["IBKR_SSE_MAX_BUFFERED_CHUNKS"] ?? "256", 10) ||
+    256,
+);
+const SSE_DRAIN_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(process.env["IBKR_SSE_DRAIN_TIMEOUT_MS"] ?? "5000", 10) ||
+    5_000,
+);
+
+async function readIbkrBridgeHelperScript(): Promise<string> {
+  let lastError: unknown = null;
+
+  for (const candidate of IBKR_BRIDGE_HELPER_SCRIPT_PATHS) {
+    try {
+      return await readFile(candidate, "utf8");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("IB Gateway bridge protocol helper script was not found.");
+}
+
+function findIbkrBridgeBundlePath(): string | null {
+  for (const candidate of IBKR_BRIDGE_BUNDLE_PATHS) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function isLoopbackHost(host: string): boolean {
+  const hostname = host.split(":")[0]?.toLowerCase() ?? "";
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    host.startsWith("[::1]")
+  );
+}
+
+function getFirstHeaderValue(value: string | undefined): string | null {
+  return value?.split(",")[0]?.trim() || null;
+}
+
+function normalizeOrigin(rawOrigin: string): string | null {
+  try {
+    const originUrl = new URL(rawOrigin);
+    originUrl.pathname = "";
+    originUrl.search = "";
+    originUrl.hash = "";
+    return originUrl.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function getConfiguredBridgeBaseUrl(): string | null {
+  for (const name of IBKR_BRIDGE_PUBLIC_BASE_URL_ENV_NAMES) {
+    const value = process.env[name]?.trim();
+    if (!value) {
+      continue;
+    }
+
+    const normalized = normalizeOrigin(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function getReplitBridgeBaseUrl(): string | null {
+  for (const name of REPLIT_PUBLIC_HOST_ENV_NAMES) {
+    const value = process.env[name]?.split(",")[0]?.trim();
+    if (!value) {
+      continue;
+    }
+
+    const normalized = normalizeOrigin(
+      value.startsWith("http") ? value : `https://${value}`,
+    );
+    if (normalized && !isLoopbackHost(new URL(normalized).host)) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function buildOriginFromHost(
+  proto: string | null,
+  host: string,
+  options: { preferHttpsForPublicHost?: boolean } = {},
+): string {
+  const normalizedHost = host.trim();
+  const publicHost = !isLoopbackHost(normalizedHost);
+  const normalizedProto =
+    proto === "http" || proto === "https" ? proto : publicHost ? "https" : "http";
+
+  return `${options.preferHttpsForPublicHost && publicHost ? "https" : normalizedProto}://${normalizedHost}`;
+}
+
+export function getIbkrBridgeRequestOrigin(
+  req: Pick<Request, "get" | "protocol">,
+): string {
+  const configured = getConfiguredBridgeBaseUrl();
+  if (configured) {
+    return configured;
+  }
+
+  const forwardedProto = getFirstHeaderValue(req.get("x-forwarded-proto"));
+  const forwardedHost = getFirstHeaderValue(req.get("x-forwarded-host"));
+  if (forwardedHost && !isLoopbackHost(forwardedHost)) {
+    return buildOriginFromHost(forwardedProto, forwardedHost, {
+      preferHttpsForPublicHost: true,
+    });
+  }
+
+  const host = req.get("host")?.trim();
+  const origin = req.get("origin");
+  if (host && isLoopbackHost(host) && origin) {
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (normalizedOrigin && !isLoopbackHost(new URL(normalizedOrigin).host)) {
+      return normalizedOrigin;
+    }
+  }
+
+  if ((host && isLoopbackHost(host)) || (forwardedHost && isLoopbackHost(forwardedHost))) {
+    const replitBaseUrl = getReplitBridgeBaseUrl();
+    if (replitBaseUrl) {
+      return replitBaseUrl;
+    }
+  }
+
+  if (!host) {
+    return "http://127.0.0.1";
+  }
+
+  return buildOriginFromHost(forwardedProto || req.protocol || "http", host);
+}
 
 function createRequestAbortSignal(req: Request, res: Response): AbortSignal {
   const controller = new AbortController();
@@ -137,6 +373,11 @@ function setRequestDebugHeaders(
         totalMs: number;
         upstreamMs: number | null;
         gapFilled?: boolean;
+        stale?: boolean;
+        ageMs?: number | null;
+        degraded?: boolean;
+        reason?: string | null;
+        backoffRemainingMs?: number | null;
       }
     | undefined,
 ): void {
@@ -153,6 +394,24 @@ function setRequestDebugHeaders(
   if (typeof debug.gapFilled === "boolean") {
     res.setHeader("X-RayAlgo-Gap-Filled", debug.gapFilled ? "1" : "0");
   }
+  if (typeof debug.stale === "boolean") {
+    res.setHeader("X-RayAlgo-Cache-Stale", debug.stale ? "1" : "0");
+  }
+  if (typeof debug.ageMs === "number") {
+    res.setHeader("X-RayAlgo-Cache-Age-Ms", String(debug.ageMs));
+  }
+  if (typeof debug.degraded === "boolean") {
+    res.setHeader("X-RayAlgo-Degraded", debug.degraded ? "1" : "0");
+  }
+  if (typeof debug.reason === "string" && debug.reason) {
+    res.setHeader("X-RayAlgo-Degraded-Reason", debug.reason);
+  }
+  if (typeof debug.backoffRemainingMs === "number") {
+    res.setHeader(
+      "X-RayAlgo-Backoff-Remaining-Ms",
+      String(Math.max(0, Math.round(debug.backoffRemainingMs))),
+    );
+  }
 }
 
 function parseWatchlistSymbolBody(body: unknown) {
@@ -168,6 +427,28 @@ function parseWatchlistSymbolBody(body: unknown) {
   return {
     symbol,
     name: readOptionalString((body as Record<string, unknown>).name, 160),
+    market: readOptionalString((body as Record<string, unknown>).market, 32),
+    normalizedExchangeMic: readOptionalString(
+      (body as Record<string, unknown>).normalizedExchangeMic,
+      32,
+    ),
+    exchangeDisplay: readOptionalString(
+      (body as Record<string, unknown>).exchangeDisplay,
+      80,
+    ),
+    countryCode: readOptionalString(
+      (body as Record<string, unknown>).countryCode,
+      8,
+    ),
+    exchangeCountryCode: readOptionalString(
+      (body as Record<string, unknown>).exchangeCountryCode,
+      8,
+    ),
+    sector: readOptionalString((body as Record<string, unknown>).sector, 80),
+    industry: readOptionalString(
+      (body as Record<string, unknown>).industry,
+      120,
+    ),
   };
 }
 
@@ -316,17 +597,45 @@ async function startSse(
   let cleanedUp = false;
   let nextEventId = 1;
   let writeQueue = Promise.resolve();
+  let pendingChunks = 0;
   let unsubscribe: () => void = () => {};
+  let heartbeat: NodeJS.Timeout | null = null;
   const lastEventId =
     typeof req.headers["last-event-id"] === "string" &&
     req.headers["last-event-id"].trim()
       ? req.headers["last-event-id"].trim()
       : null;
 
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+    unsubscribe();
+    if (!res.destroyed) {
+      res.end();
+    }
+  };
+
   const enqueueChunk = (chunk: string): Promise<void> => {
+    if (cleanedUp || res.destroyed || res.writableEnded) {
+      return Promise.resolve();
+    }
+
+    pendingChunks += 1;
+    if (pendingChunks > SSE_MAX_BUFFERED_CHUNKS) {
+      cleanup();
+      return Promise.resolve();
+    }
+
     writeQueue = writeQueue
       .then(async () => {
-        if (cleanedUp) {
+        if (cleanedUp || res.destroyed || res.writableEnded) {
           return;
         }
 
@@ -334,9 +643,30 @@ async function startSse(
           return;
         }
 
-        await once(res, "drain");
+        let timeout: NodeJS.Timeout | null = null;
+        try {
+          await Promise.race([
+            once(res, "drain"),
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error("SSE client did not drain in time.")),
+                SSE_DRAIN_TIMEOUT_MS,
+              );
+              timeout.unref?.();
+            }),
+          ]);
+        } finally {
+          if (timeout) {
+            clearTimeout(timeout);
+          }
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        cleanup();
+      })
+      .finally(() => {
+        pendingChunks = Math.max(0, pendingChunks - 1);
+      });
 
     return writeQueue;
   };
@@ -357,22 +687,11 @@ async function startSse(
 
   await enqueueChunk("retry: 5000\n\n");
 
-  const heartbeat = setInterval(() => {
+  heartbeat = setInterval(() => {
     void writeComment(`ping ${new Date().toISOString()}`);
   }, 15_000);
 
-  const cleanup = () => {
-    if (cleanedUp) {
-      return;
-    }
-
-    cleanedUp = true;
-    clearInterval(heartbeat);
-    unsubscribe();
-    res.end();
-  };
-
-  req.on("close", cleanup);
+  res.on("close", cleanup);
   req.on("aborted", cleanup);
 
   try {
@@ -400,6 +719,63 @@ router.get("/session", async (_req, res) => {
   const data = GetSessionResponse.parse(await getSession());
 
   res.json(data);
+});
+
+router.get("/diagnostics/runtime", async (_req, res) => {
+  res.json(await getRuntimeDiagnostics());
+});
+
+router.get("/ibkr/bridge/launcher", async (req, res) => {
+  res.json(
+    getIbkrBridgeLauncher({
+      apiBaseUrl: getIbkrBridgeRequestOrigin(req),
+    }),
+  );
+});
+
+router.post("/ibkr/activation/:activationId/progress", async (req, res) => {
+  res.json(
+    recordLegacyIbkrBridgeActivationProgress(
+      req.params.activationId,
+      req.body,
+    ),
+  );
+});
+
+router.post("/ibkr/activation/:activationId/complete", async (req, res) => {
+  res.json(await attachLegacyIbkrBridgeRuntime(req.params.activationId, req.body));
+});
+
+router.get("/ibkr/bridge/helper.ps1", async (_req, res) => {
+  const script = await readIbkrBridgeHelperScript();
+
+  res
+    .type("text/plain; charset=utf-8")
+    .setHeader("Cache-Control", "no-store");
+  res.send(script);
+});
+
+router.get("/ibkr/bridge/bundle.tar.gz", async (_req, res) => {
+  const bundlePath = findIbkrBridgeBundlePath();
+  if (!bundlePath) {
+    res.status(404).json({
+      error: "IB Gateway bridge bundle was not found.",
+    });
+    return;
+  }
+
+  res
+    .type("application/gzip")
+    .setHeader("Cache-Control", "no-store");
+  res.sendFile(bundlePath);
+});
+
+router.post("/ibkr/bridge/attach", async (req, res) => {
+  res.json(await attachIbkrBridgeRuntime(req.body));
+});
+
+router.post("/ibkr/bridge/detach", async (req, res) => {
+  res.json(detachIbkrBridgeRuntime(req.body));
 });
 
 router.get("/broker-connections", async (_req, res) => {
@@ -435,7 +811,7 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
       accountId: req.params.accountId,
       range:
         typeof req.query.range === "string"
-          ? (req.query.range as "1W" | "1M" | "3M" | "YTD" | "1Y" | "ALL")
+          ? (req.query.range as AccountRange)
           : undefined,
       benchmark:
         typeof req.query.benchmark === "string" ? req.query.benchmark : null,
@@ -582,6 +958,26 @@ router.get("/orders", async (req, res) => {
   res.json(data);
 });
 
+router.post("/shadow/orders/preview", async (req, res) => {
+  const body = PlaceOrderBody.parse({
+    ...req.body,
+    accountId: SHADOW_ACCOUNT_ID,
+    mode: "paper",
+  });
+
+  res.json(await previewShadowOrder(body));
+});
+
+router.post("/shadow/orders", async (req, res) => {
+  const body = PlaceOrderBody.parse({
+    ...req.body,
+    accountId: SHADOW_ACCOUNT_ID,
+    mode: "paper",
+  });
+
+  res.status(201).json(await placeShadowOrder(body));
+});
+
 router.post("/orders", async (req, res) => {
   const body = PlaceOrderBody.parse(req.body);
   res.status(201).json(await placeOrder(body));
@@ -672,6 +1068,18 @@ router.get("/quotes/snapshot", async (req, res) => {
   res.json(data);
 });
 
+router.post("/options/quotes", async (req, res) => {
+  const body = GetOptionQuoteSnapshotsBody.parse(req.body);
+  const data = GetOptionQuoteSnapshotsResponse.parse(
+    await fetchOptionQuoteSnapshotPayload({
+      underlying: body.underlying ?? null,
+      providerContractIds: body.providerContractIds,
+    }),
+  );
+
+  res.json(data);
+});
+
 router.get("/news", async (req, res) => {
   const query = GetNewsQueryParams.parse(req.query);
   const data = GetNewsResponse.parse(await getNews(query));
@@ -690,14 +1098,80 @@ router.get("/universe/tickers", async (req, res) => {
   res.json(data);
 });
 
+router.get("/universe/logos", async (req, res) => {
+  const rawSymbols = req.query.symbols;
+  const symbols =
+    Array.isArray(rawSymbols)
+      ? rawSymbols.flatMap((value) => String(value).split(","))
+      : typeof rawSymbols === "string"
+        ? rawSymbols.split(",")
+        : [];
+  const data = await getUniverseLogos(
+    { symbols },
+    { signal: createRequestAbortSignal(req, res) },
+  );
+
+  res.json({
+    ...data,
+    logos: data.logos.map((logo) => ({
+      ...logo,
+      logoUrl: sameOriginLogoUrl(logo.logoUrl),
+    })),
+  });
+});
+
+router.get("/universe/logo-proxy", async (req, res) => {
+  const rawUrl = typeof req.query.url === "string" ? req.query.url : "";
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    res.status(400).json({ error: "Invalid logo URL." });
+    return;
+  }
+  if (!LOGO_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
+    res.status(403).json({ error: "Logo host is not allowed." });
+    return;
+  }
+  const upstream = await fetch(parsed, {
+    headers: { Accept: "image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8" },
+    signal: createRequestAbortSignal(req, res),
+  });
+  if (!upstream.ok || !upstream.body) {
+    res.status(upstream.status || 502).end();
+    return;
+  }
+  res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  res.type(upstream.headers.get("content-type") || "image/svg+xml");
+  const bytes = Buffer.from(await upstream.arrayBuffer());
+  res.send(bytes);
+});
+
 router.get("/bars", async (req, res) => {
   const query = GetBarsQueryParams.parse(
     coerceBooleanQueryFields(
       coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
-      ["outsideRth", "allowHistoricalSynthesis"],
+      [
+        "outsideRth",
+        "allowHistoricalSynthesis",
+        "allowStudyFallback",
+        "preferCursor",
+      ],
     ),
   );
-  const raw = await getBarsWithDebug(query);
+  const rawBrokerRecentWindowMinutes =
+    typeof req.query.brokerRecentWindowMinutes === "string"
+      ? Number(req.query.brokerRecentWindowMinutes)
+      : null;
+  const raw = await getBarsWithDebug({
+    ...query,
+    brokerRecentWindowMinutes:
+      rawBrokerRecentWindowMinutes != null &&
+      Number.isFinite(rawBrokerRecentWindowMinutes)
+        ? rawBrokerRecentWindowMinutes
+        : null,
+  });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetBarsResponse.parse(raw);
 
@@ -715,6 +1189,15 @@ router.get("/options/chains", async (req, res) => {
   res.json(data);
 });
 
+router.post("/options/chains/batch", async (req, res) => {
+  const body = BatchOptionChainsBody.parse(req.body);
+  const raw = await batchOptionChains(body);
+  setRequestDebugHeaders(res, raw.debug);
+  const data = BatchOptionChainsResponse.parse(raw);
+
+  res.json(data);
+});
+
 router.get("/options/expirations", async (req, res) => {
   const query = GetOptionExpirationsQueryParams.parse(
     req.query as Record<string, unknown>,
@@ -722,6 +1205,32 @@ router.get("/options/expirations", async (req, res) => {
   const raw = await getOptionExpirationsWithDebug(query);
   setRequestDebugHeaders(res, raw.debug);
   const data = GetOptionExpirationsResponse.parse(raw);
+
+  res.json(data);
+});
+
+router.get("/options/resolve-contract", async (req, res) => {
+  const query = ResolveOptionContractQueryParams.parse(
+    req.query as Record<string, unknown>,
+  );
+  const raw = await resolveOptionContractWithDebug(query);
+  setRequestDebugHeaders(res, raw.debug);
+  const data = ResolveOptionContractResponse.parse(raw);
+
+  res.json(data);
+});
+
+router.get("/options/chart-bars", async (req, res) => {
+  const dateCoercedQuery = coerceDateQueryFields(
+    req.query as Record<string, unknown>,
+    ["expirationDate", "from", "to"],
+  );
+  const query = GetOptionChartBarsQueryParams.parse(
+    coerceBooleanQueryFields(dateCoercedQuery, ["outsideRth", "preferCursor"]),
+  );
+  const raw = await getOptionChartBarsWithDebug(query);
+  setRequestDebugHeaders(res, raw.debug);
+  const data = GetOptionChartBarsResponse.parse(raw);
 
   res.json(data);
 });
@@ -762,9 +1271,69 @@ router.get("/market-depth", async (req, res) => {
 
 router.get("/flow/events", async (req, res) => {
   const query = ListFlowEventsQueryParams.parse(req.query);
-  const data = ListFlowEventsResponse.parse(await listFlowEvents(query));
+  const data = ListFlowEventsResponse.parse(
+    await listFlowEvents({ ...query, blocking: false }),
+  );
 
   res.json(data);
+});
+
+router.get("/flow/universe", async (_req, res) => {
+  const data = GetFlowUniverseResponse.parse(getOptionsFlowUniverse());
+  res.json(data);
+});
+
+router.post("/flow/scanner/benchmark", async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const underlying =
+    typeof body.underlying === "string" ? body.underlying.trim() : "";
+  if (!underlying) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/invalid-request",
+      title: "Missing underlying",
+      status: 400,
+      detail: "underlying is required.",
+    });
+    return;
+  }
+
+  const rawLineBudgets = Array.isArray(body.lineBudgets)
+    ? body.lineBudgets
+    : typeof body.lineBudgets === "string"
+      ? body.lineBudgets.split(",")
+      : undefined;
+  const lineBudgets = rawLineBudgets
+    ?.map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const strikeCoverage =
+    body.strikeCoverage === "fast" ||
+    body.strikeCoverage === "standard" ||
+    body.strikeCoverage === "full"
+      ? body.strikeCoverage
+      : undefined;
+  const maxDte =
+    body.maxDte === null
+      ? null
+      : Number.isFinite(Number(body.maxDte))
+        ? Number(body.maxDte)
+        : undefined;
+  const expirationScanCount =
+    body.expirationScanCount === null || body.expirationScanCount === undefined
+      ? undefined
+      : Number.isFinite(Number(body.expirationScanCount)) &&
+          Number(body.expirationScanCount) >= 0
+        ? Number(body.expirationScanCount)
+        : undefined;
+
+  res.json(
+    await benchmarkOptionsFlowScannerTickerPass({
+      underlying,
+      lineBudgets,
+      maxDte,
+      expirationScanCount,
+      strikeCoverage,
+    }),
+  );
 });
 
 router.get("/streams/quotes", async (req, res) => {
@@ -908,7 +1477,7 @@ router.get("/streams/bars", async (req, res) => {
   const timeframe =
     typeof req.query.timeframe === "string" ? req.query.timeframe : "";
 
-  if (!symbol || !["1m", "5m", "15m", "1h", "1d"].includes(timeframe)) {
+  if (!symbol || !isHistoryBarTimeframe(timeframe)) {
     res.status(400).type("application/problem+json").json({
       type: "https://rayalgo.local/problems/invalid-request",
       title: "Missing bar stream input",
@@ -966,7 +1535,7 @@ router.get("/streams/bars", async (req, res) => {
     await writeBarPayload(
       await fetchHistoricalBarSnapshotPayload({
         symbol,
-        timeframe: timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
+        timeframe,
         assetClass:
           req.query.assetClass === "option"
             ? "option"
@@ -992,33 +1561,52 @@ router.get("/streams/bars", async (req, res) => {
       providerContractId,
       source: "ibkr-bridge",
     });
+    const heartbeat = setInterval(() => {
+      void writeEvent("heartbeat", { at: new Date().toISOString() });
+    }, 15_000);
+    heartbeat.unref?.();
 
-    return subscribeHistoricalBarSnapshots(
-      {
-        symbol,
-        timeframe: timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
-        assetClass:
-          req.query.assetClass === "option"
-            ? "option"
-            : req.query.assetClass === "equity"
-              ? "equity"
+    try {
+      const unsubscribeBars = subscribeHistoricalBarSnapshots(
+        {
+          symbol,
+          timeframe,
+          assetClass:
+            req.query.assetClass === "option"
+              ? "option"
+              : req.query.assetClass === "equity"
+                ? "equity"
+                : undefined,
+          providerContractId,
+          outsideRth:
+            typeof req.query.outsideRth === "string"
+              ? req.query.outsideRth === "true"
               : undefined,
-        providerContractId,
-        outsideRth:
-          typeof req.query.outsideRth === "string"
-            ? req.query.outsideRth === "true"
-            : undefined,
-        source:
-          req.query.source === "midpoint" || req.query.source === "bid_ask"
-            ? req.query.source
-            : req.query.source === "trades"
-              ? "trades"
-              : undefined,
-      },
-      (payload) => {
-        void writeBarPayload(payload);
-      },
-    );
+          source:
+            req.query.source === "midpoint" || req.query.source === "bid_ask"
+              ? req.query.source
+              : req.query.source === "trades"
+                ? "trades"
+                : undefined,
+        },
+        (payload) => {
+          void writeBarPayload(payload);
+        },
+        (error) => {
+          void writeEvent("stream-error", {
+            title: "Historical bar stream interrupted",
+            detail: error instanceof Error ? error.message : "Unknown stream error.",
+          });
+        },
+      );
+      return () => {
+        clearInterval(heartbeat);
+        unsubscribeBars();
+      };
+    } catch (error) {
+      clearInterval(heartbeat);
+      throw error;
+    }
   });
 });
 
@@ -1179,6 +1767,21 @@ router.get("/streams/accounts", async (req, res) => {
   });
 });
 
+router.get("/streams/accounts/shadow", async (req, res) => {
+  await startSse(req, res, async ({ writeEvent }) => {
+    await writeEvent("accounts", await fetchShadowAccountSnapshotPayload());
+    await writeEvent("ready", {
+      accountId: SHADOW_ACCOUNT_ID,
+      mode: "paper",
+      source: "shadow-ledger",
+    });
+
+    return subscribeShadowAccountSnapshots((payload) => {
+      writeEvent("accounts", payload);
+    });
+  });
+});
+
 router.get("/streams/stocks/aggregates", async (req, res) => {
   const rawSymbols = Array.isArray(req.query.symbols)
     ? req.query.symbols.join(",")
@@ -1203,10 +1806,10 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
   if (!isStockAggregateStreamingAvailable()) {
     res.status(503).type("application/problem+json").json({
       type: "https://rayalgo.local/problems/upstream",
-      title: "IBKR stock streaming is not configured.",
+      title: "Stock aggregate streaming is not configured.",
       status: 503,
-      detail: "Set the IBKR gateway or bridge configuration before using stock aggregate streams.",
-      code: "ibkr_stock_stream_unavailable",
+      detail: "Set IBKR bridge configuration or Polygon market-data credentials before using stock aggregate streams.",
+      code: "stock_aggregate_stream_unavailable",
     });
     return;
   }
@@ -1223,13 +1826,25 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
       });
     }
 
+    const streamDiagnostics = getStockAggregateStreamDiagnostics();
+    const streamSource =
+      streamDiagnostics.provider === "none"
+        ? "ibkr-websocket-derived"
+        : streamDiagnostics.provider;
     await writeEvent("ready", {
       symbols,
-      delayed: false,
-      source: "ibkr-websocket-derived",
+      delayed: streamSource === "polygon-delayed-websocket",
+      source: streamSource,
     });
+    const statusTimer = setInterval(() => {
+      void writeEvent("stream-status", {
+        state: "open",
+        ...getStockAggregateStreamDiagnostics(),
+      });
+    }, 5_000);
+    statusTimer.unref?.();
 
-    return subscribeStockMinuteAggregates(symbols, (message) => {
+    const unsubscribeAggregates = subscribeStockMinuteAggregates(symbols, (message) => {
       writeEvent("aggregate", {
         ...message,
         latency: {
@@ -1238,6 +1853,10 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
         },
       });
     });
+    return () => {
+      clearInterval(statusTimer);
+      unsubscribeAggregates();
+    };
   });
 });
 

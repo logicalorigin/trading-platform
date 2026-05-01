@@ -9,14 +9,13 @@
 /**
  * @nullable
  */
-export type IbkrBridgeHealthMarketDataMode =
-  | (typeof IbkrBridgeHealthMarketDataMode)[keyof typeof IbkrBridgeHealthMarketDataMode]
-  | null;
+export type IbkrBridgeHealthMarketDataMode = typeof IbkrBridgeHealthMarketDataMode[keyof typeof IbkrBridgeHealthMarketDataMode] | null;
+
 
 export const IbkrBridgeHealthMarketDataMode = {
-  live: "live",
-  frozen: "frozen",
-  delayed: "delayed",
-  delayed_frozen: "delayed_frozen",
-  unknown: "unknown",
+  live: 'live',
+  frozen: 'frozen',
+  delayed: 'delayed',
+  delayed_frozen: 'delayed_frozen',
+  unknown: 'unknown',
 } as const;

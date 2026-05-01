@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type PineScriptStatus =
-  (typeof PineScriptStatus)[keyof typeof PineScriptStatus];
+export type PineScriptStatus = typeof PineScriptStatus[keyof typeof PineScriptStatus];
+
 
 export const PineScriptStatus = {
-  draft: "draft",
-  ready: "ready",
-  error: "error",
-  archived: "archived",
+  draft: 'draft',
+  ready: 'ready',
+  error: 'error',
+  archived: 'archived',
 } as const;

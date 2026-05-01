@@ -6,10 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BarDataSource = (typeof BarDataSource)[keyof typeof BarDataSource];
+export type BarDataSource = typeof BarDataSource[keyof typeof BarDataSource];
+
 
 export const BarDataSource = {
-  trades: "trades",
-  midpoint: "midpoint",
-  bid_ask: "bid_ask",
+  trades: 'trades',
+  midpoint: 'midpoint',
+  bid_ask: 'bid_ask',
 } as const;

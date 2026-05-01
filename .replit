@@ -59,6 +59,7 @@ externalPort = 8008
 [[ports]]
 localPort = 18082
 externalPort = 8081
+exposeLocalhost = true
 
 [[ports]]
 localPort = 18083
@@ -87,8 +88,9 @@ externalPort = 3003
 [userenv]
 
 [userenv.shared]
-IBKR_TRANSPORT = "client_portal"
-IBKR_BRIDGE_URL = "http://127.0.0.1:3002"
+IBKR_TRANSPORT = "tws"
+PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
+TZ = "America/Denver"
 
 [workflows]
 runButton = "Project"
@@ -98,9 +100,20 @@ name = "Project"
 mode = "parallel"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "IBKR Bridge"
+task = "shell.exec"
+args = "PORT=8080 LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=18747 BASE_PATH=/ pnpm --filter @workspace/rayalgo run dev"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "echo 'IBKR live broker features use the Windows IB Gateway activation flow. Start activation from the RayAlgo header; do not store bridge URL secrets in Replit.'"
 
 [[workflows.workflow]]
 name = "IBKR Bridge"
@@ -111,5 +124,4 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=3002 LOG_LEVEL=warn node --enable-source-maps artifacts/ibkr-bridge/dist/index.mjs"
-waitForPort = 3002
+args = "echo 'Do not run the IBKR bridge in Replit for TWS mode. Start activation from the RayAlgo header on the Windows machine running IB Gateway; the fresh tunnel URL is stored by activation.'"

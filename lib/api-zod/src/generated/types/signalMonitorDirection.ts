@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type SignalMonitorDirection =
-  (typeof SignalMonitorDirection)[keyof typeof SignalMonitorDirection];
+export type SignalMonitorDirection = typeof SignalMonitorDirection[keyof typeof SignalMonitorDirection];
+
 
 export const SignalMonitorDirection = {
-  buy: "buy",
-  sell: "sell",
+  buy: 'buy',
+  sell: 'sell',
 } as const;

@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestParameterDefinitionType =
-  (typeof BacktestParameterDefinitionType)[keyof typeof BacktestParameterDefinitionType];
+export type BacktestParameterDefinitionType = typeof BacktestParameterDefinitionType[keyof typeof BacktestParameterDefinitionType];
+
 
 export const BacktestParameterDefinitionType = {
-  integer: "integer",
-  number: "number",
-  boolean: "boolean",
-  enum: "enum",
+  integer: 'integer',
+  number: 'number',
+  boolean: 'boolean',
+  enum: 'enum',
 } as const;

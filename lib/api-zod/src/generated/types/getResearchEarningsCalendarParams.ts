@@ -7,6 +7,6 @@
  */
 
 export type GetResearchEarningsCalendarParams = {
-  from: Date;
-  to: Date;
+from: Date;
+to: Date;
 };

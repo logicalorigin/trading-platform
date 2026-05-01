@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeReasonTraceStepEmphasis =
-  (typeof BacktestTradeReasonTraceStepEmphasis)[keyof typeof BacktestTradeReasonTraceStepEmphasis];
+export type BacktestTradeReasonTraceStepEmphasis = typeof BacktestTradeReasonTraceStepEmphasis[keyof typeof BacktestTradeReasonTraceStepEmphasis];
+
 
 export const BacktestTradeReasonTraceStepEmphasis = {
-  positive: "positive",
-  negative: "negative",
-  neutral: "neutral",
+  positive: 'positive',
+  negative: 'negative',
+  neutral: 'neutral',
 } as const;

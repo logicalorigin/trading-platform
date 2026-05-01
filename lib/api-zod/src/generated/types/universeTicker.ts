@@ -5,9 +5,9 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { MarketDataProvider } from "./marketDataProvider";
-import type { UniverseMarket } from "./universeMarket";
-import type { UniverseTickerContractMeta } from "./universeTickerContractMeta";
+import type { MarketDataProvider } from './marketDataProvider';
+import type { UniverseMarket } from './universeMarket';
+import type { UniverseTickerContractMeta } from './universeTickerContractMeta';
 
 export interface UniverseTicker {
   ticker: string;
@@ -21,6 +21,26 @@ export interface UniverseTicker {
   exchangeDisplay: string | null;
   /** @nullable */
   logoUrl: string | null;
+  /**
+   * ISO 3166-1 alpha-2 country or EU region code for the instrument issuer when known.
+   * @nullable
+   */
+  countryCode: string | null;
+  /**
+   * ISO 3166-1 alpha-2 country or EU region code for the listing exchange when known.
+   * @nullable
+   */
+  exchangeCountryCode: string | null;
+  /**
+   * Provider or locally-derived sector label when available.
+   * @nullable
+   */
+  sector: string | null;
+  /**
+   * Provider or locally-derived industry label when available.
+   * @nullable
+   */
+  industry: string | null;
   /** @nullable */
   contractDescription: string | null;
   /** @nullable */

@@ -6,13 +6,13 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type SignalMonitorTimeframe =
-  (typeof SignalMonitorTimeframe)[keyof typeof SignalMonitorTimeframe];
+export type SignalMonitorTimeframe = typeof SignalMonitorTimeframe[keyof typeof SignalMonitorTimeframe];
+
 
 export const SignalMonitorTimeframe = {
-  "1m": "1m",
-  "5m": "5m",
-  "15m": "15m",
-  "1h": "1h",
-  "1d": "1d",
+  '1m': '1m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '1h',
+  '1d': '1d',
 } as const;

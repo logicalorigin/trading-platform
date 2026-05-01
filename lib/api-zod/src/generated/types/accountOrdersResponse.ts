@@ -5,13 +5,18 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AccountOrder } from "./accountOrder";
-import type { AccountOrdersResponseTab } from "./accountOrdersResponseTab";
+import type { AccountOrder } from './accountOrder';
+import type { AccountOrdersResponseDebug } from './accountOrdersResponseDebug';
+import type { AccountOrdersResponseTab } from './accountOrdersResponseTab';
 
 export interface AccountOrdersResponse {
   accountId: string;
   tab: AccountOrdersResponseTab;
   currency: string;
+  degraded?: boolean;
+  reason?: string;
+  stale?: boolean;
+  debug?: AccountOrdersResponseDebug;
   orders: AccountOrder[];
   updatedAt: Date;
 }

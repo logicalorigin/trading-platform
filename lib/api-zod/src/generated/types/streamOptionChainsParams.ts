@@ -7,8 +7,8 @@
  */
 
 export type StreamOptionChainsParams = {
-  /**
-   * Comma-separated underlying symbols.
-   */
-  underlyings: string;
+/**
+ * Comma-separated underlying symbols.
+ */
+underlyings: string;
 };

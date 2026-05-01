@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "hello": "tsx ./src/hello.ts",
     "ibkr:latency": "tsx ./src/ibkr-latency-bench.ts",
+    "ibkr:flow-scanner-bench": "tsx ./src/ibkr-flow-scanner-line-bench.ts",
+    "ibkr:soak": "tsx ./src/ibkr-connection-soak.ts",
     "universe:sync": "tsx ./src/sync-universe-catalog.ts",
+    "universe:sync:nasdaq": "tsx ./src/sync-nasdaq-listed-universe.ts",
     "universe:hydrate:ibkr": "tsx ./src/hydrate-universe-catalog-ibkr.ts",
     "test:universe-catalog": "node --import tsx --test ./src/universe-catalog-live.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

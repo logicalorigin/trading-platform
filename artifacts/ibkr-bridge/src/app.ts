@@ -1,11 +1,23 @@
+import { timingSafeEqual } from "node:crypto";
 import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import { isHttpError } from "../../api-server/src/lib/errors";
 import { logger } from "./logger";
 import { ibkrBridgeService } from "./service";
+import { createSseWriter, type SseWriter } from "./sse-writer";
 
 const app: Express = express();
+const HISTORY_BAR_TIMEFRAMES = ["5s", "1m", "5m", "15m", "1h", "1d"] as const;
+type RouteHistoryBarTimeframe = (typeof HISTORY_BAR_TIMEFRAMES)[number];
+
+function isHistoryBarTimeframe(
+  value: string | null,
+): value is RouteHistoryBarTimeframe {
+  return Boolean(
+    value && HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe),
+  );
+}
 
 type ZodIssueLike = {
   message?: unknown;
@@ -16,6 +28,103 @@ type ZodErrorLike = {
   issues?: unknown;
 };
 
+function createQuoteSseBatchWriter(
+  writer: SseWriter,
+  flushIntervalMs = 100,
+): {
+  enqueue: (quote: unknown) => void;
+  close: () => void;
+} {
+  let pending: unknown[] = [];
+  let flushTimer: NodeJS.Timeout | null = null;
+
+  const clearFlushTimer = () => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+  };
+
+  const flush = () => {
+    flushTimer = null;
+    if (!pending.length || writer.isClosed()) {
+      pending = [];
+      return;
+    }
+
+    const quotes = pending;
+    pending = [];
+    void writer.writeEvent("quotes", { quotes });
+  };
+
+  return {
+    enqueue(quote: unknown): void {
+      if (writer.isClosed()) {
+        return;
+      }
+      pending.push(quote);
+      if (flushTimer) {
+        return;
+      }
+      flushTimer = setTimeout(flush, flushIntervalMs);
+      flushTimer.unref?.();
+    },
+    close(): void {
+      clearFlushTimer();
+      pending = [];
+    },
+  };
+}
+
+function getErrorCode(error: unknown): string | null {
+  if (isHttpError(error) && error.code) {
+    return error.code;
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return (error as { code: string }).code;
+  }
+  return null;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : String(error || "Unknown IBKR bridge stream error.");
+}
+
+function isStreamCapacityError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    code === "ibkr_bridge_lane_queue_full" ||
+    message.includes("ibkr_bridge_lane_queue_full") ||
+    message.includes("lane queue is full") ||
+    message.includes("market data line") ||
+    message.includes("max number of tickers") ||
+    message.includes("ticker limit") ||
+    message.includes("subscription limit")
+  );
+}
+
+function streamCapacityState(error: unknown): "backpressure" | "capacity_limited" {
+  const code = getErrorCode(error);
+  const message = getErrorMessage(error).toLowerCase();
+  return code === "ibkr_bridge_lane_queue_full" ||
+    message.includes("ibkr_bridge_lane_queue_full") ||
+    message.includes("lane queue is full")
+    ? "backpressure"
+    : "capacity_limited";
+}
+
+function nextStreamRetryDelayMs(attempt: number): number {
+  return Math.min(30_000, 1_000 * 2 ** Math.max(0, attempt));
+}
+
 function isZodError(error: unknown): error is ZodErrorLike {
   return Boolean(
     error &&
@@ -25,7 +134,10 @@ function isZodError(error: unknown): error is ZodErrorLike {
   );
 }
 
-function createRequestAbortSignal(req: Request, res: Response): AbortSignal {
+export function createRequestAbortSignal(
+  req: Request,
+  res: Response,
+): AbortSignal {
   const controller = new AbortController();
   const abort = () => {
     if (!controller.signal.aborted) {
@@ -47,6 +159,46 @@ function createRequestAbortSignal(req: Request, res: Response): AbortSignal {
 
   return controller.signal;
 }
+
+function isTruthyEnv(raw: string | undefined): boolean {
+  if (!raw) {
+    return false;
+  }
+
+  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+}
+
+function extractBearerToken(header: string | undefined): string | null {
+  if (!header) {
+    return null;
+  }
+
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match?.[1]?.trim() || null;
+}
+
+function safeTokenEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+const bridgeApiToken =
+  process.env["IBKR_BRIDGE_API_TOKEN"]?.trim() ||
+  process.env["IBKR_BRIDGE_TOKEN"]?.trim() ||
+  "";
+const bridgeRequiresAuth =
+  Boolean(bridgeApiToken) ||
+  isTruthyEnv(process.env["IBKR_BRIDGE_REQUIRE_AUTH"]);
+const bridgeCorsOrigins = (process.env["IBKR_BRIDGE_CORS_ORIGINS"] ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 app.use((req, _res, next) => {
   (req as { _startTime?: number })._startTime = Date.now();
@@ -80,7 +232,54 @@ app.use(
     },
   }),
 );
-app.use(cors());
+app.use(
+  cors({
+    origin: bridgeRequiresAuth
+      ? bridgeCorsOrigins.length > 0
+        ? bridgeCorsOrigins
+        : false
+      : true,
+  }),
+);
+app.use((req, res, next) => {
+  if (
+    req.method === "OPTIONS" ||
+    req.path === "/healthz" ||
+    req.path === "/readyz"
+  ) {
+    next();
+    return;
+  }
+
+  if (!bridgeRequiresAuth) {
+    next();
+    return;
+  }
+
+  if (!bridgeApiToken) {
+    res.status(503).json({
+      title: "IBKR bridge API token is required",
+      status: 503,
+      code: "ibkr_bridge_api_token_missing",
+      detail:
+        "Set IBKR_BRIDGE_API_TOKEN before exposing the bridge or running TWS transport.",
+    });
+    return;
+  }
+
+  const requestToken = extractBearerToken(req.header("authorization"));
+  if (!requestToken || !safeTokenEquals(requestToken, bridgeApiToken)) {
+    res.status(401).json({
+      title: "Unauthorized",
+      status: 401,
+      code: "ibkr_bridge_unauthorized",
+      detail: "Provide a valid Bearer token for the IBKR bridge.",
+    });
+    return;
+  }
+
+  next();
+});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -88,8 +287,24 @@ app.get("/healthz", async (_req, res) => {
   res.json(await ibkrBridgeService.getHealth());
 });
 
+app.get("/readyz", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "ibkr-bridge",
+    updatedAt: new Date().toISOString(),
+  });
+});
+
 app.get("/session", async (_req, res) => {
   res.json(await ibkrBridgeService.refreshSession());
+});
+
+app.get("/diagnostics/lanes", async (_req, res) => {
+  res.json(await ibkrBridgeService.getLaneDiagnostics());
+});
+
+app.put("/diagnostics/lanes", async (req, res) => {
+  res.json(await ibkrBridgeService.updateLaneSettings(req.body ?? {}));
 });
 
 app.get("/accounts", async (req, res) => {
@@ -101,7 +316,8 @@ app.get("/accounts", async (req, res) => {
 
 app.get("/positions", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "paper";
-  const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
+  const accountId =
+    typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   res.json({
     positions: await ibkrBridgeService.listPositions({ accountId, mode }),
   });
@@ -109,17 +325,22 @@ app.get("/positions", async (req, res) => {
 
 app.get("/orders", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : "paper";
-  const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
-  const status = typeof req.query.status === "string" ? req.query.status as Parameters<typeof ibkrBridgeService.listOrders>[0]["status"] : undefined;
-  res.json({
-    orders: await ibkrBridgeService.listOrders({ accountId, mode, status }),
-  });
+  const accountId =
+    typeof req.query.accountId === "string" ? req.query.accountId : undefined;
+  const status =
+    typeof req.query.status === "string"
+      ? (req.query.status as Parameters<
+          typeof ibkrBridgeService.listOrders
+        >[0]["status"])
+      : undefined;
+  res.json(await ibkrBridgeService.listOrders({ accountId, mode, status }));
 });
 
 app.get("/executions", async (req, res) => {
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
-  const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
+  const symbol =
+    typeof req.query.symbol === "string" ? req.query.symbol : undefined;
   const providerContractId =
     typeof req.query.providerContractId === "string" &&
     req.query.providerContractId.trim()
@@ -149,7 +370,10 @@ app.get("/quotes/snapshot", async (req, res) => {
     : typeof req.query.symbols === "string"
       ? req.query.symbols
       : "";
-  const symbols = rawSymbols.split(",").map((symbol) => symbol.trim()).filter(Boolean);
+  const symbols = rawSymbols
+    .split(",")
+    .map((symbol) => symbol.trim())
+    .filter(Boolean);
 
   res.json({
     quotes: await ibkrBridgeService.getQuoteSnapshots(symbols),
@@ -185,7 +409,12 @@ app.get("/streams/quotes", async (req, res, next) => {
       ? req.query.symbols
       : "";
   const symbols = Array.from(
-    new Set(rawSymbols.split(",").map((symbol) => symbol.trim().toUpperCase()).filter(Boolean)),
+    new Set(
+      rawSymbols
+        .split(",")
+        .map((symbol) => symbol.trim().toUpperCase())
+        .filter(Boolean),
+    ),
   );
 
   if (!symbols.length) {
@@ -200,31 +429,37 @@ app.get("/streams/quotes", async (req, res, next) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
-  res.write("retry: 5000\n\n");
+  const writer = createSseWriter(res, {
+    route: "/streams/quotes",
+    symbols: symbols.length,
+  });
+  const quoteBatch = createQuoteSseBatchWriter(writer);
+  void writer.writeRetry(5_000);
 
   let cleanedUp = false;
   let unsubscribe: () => void = () => {};
-  let eventId = 1;
-
-  const writeEvent = (event: string, payload: unknown) => {
-    if (cleanedUp || res.destroyed) {
-      return;
-    }
-
-    res.write(
-      `id: ${eventId}\n` +
-        `event: ${event}\n` +
-        `data: ${JSON.stringify(payload)}\n\n`,
-    );
-    eventId += 1;
+  let retryTimer: NodeJS.Timeout | null = null;
+  let retryAttempt = 0;
+  let streamStatus: Record<string, unknown> = {
+    state: "open",
+    lastEventAgeMs: null,
+    requestedCount: symbols.length,
   };
 
   const heartbeat = setInterval(() => {
-    if (!cleanedUp && !res.destroyed) {
-      res.write(`: ping ${new Date().toISOString()}\n\n`);
+    if (!cleanedUp && !writer.isClosed()) {
+      void writer.writeComment(`ping ${new Date().toISOString()}`);
+      void writer.writeEvent("stream-status", streamStatus);
     }
   }, 15_000);
   heartbeat.unref?.();
+
+  const clearRetryTimer = () => {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
 
   const cleanup = () => {
     if (cleanedUp) {
@@ -233,41 +468,86 @@ app.get("/streams/quotes", async (req, res, next) => {
 
     cleanedUp = true;
     clearInterval(heartbeat);
+    clearRetryTimer();
+    quoteBatch.close();
     unsubscribe();
-    res.end();
+    writer.close();
   };
 
-  req.on("close", cleanup);
+  res.on("close", cleanup);
   req.on("aborted", cleanup);
 
-  try {
-    const nextUnsubscribe = await ibkrBridgeService.subscribeQuoteStream(symbols, (quote) => {
-      writeEvent("quotes", { quotes: [quote] });
-    });
-    if (cleanedUp) {
-      nextUnsubscribe();
+  const connect = async () => {
+    if (cleanedUp || writer.isClosed()) {
       return;
     }
 
-    unsubscribe = nextUnsubscribe;
-    writeEvent("ready", {
-      symbols,
-      source: "ibkr-bridge",
-    });
-  } catch (error) {
-    cleanup();
-    next(error);
-  }
+    try {
+      const nextUnsubscribe = await ibkrBridgeService.subscribeQuoteStream(
+        symbols,
+        (quote) => {
+          quoteBatch.enqueue(quote);
+        },
+      );
+      if (cleanedUp) {
+        nextUnsubscribe();
+        return;
+      }
+
+      retryAttempt = 0;
+      streamStatus = {
+        state: "open",
+        lastEventAgeMs: null,
+        requestedCount: symbols.length,
+        admittedCount: symbols.length,
+        rejectedCount: 0,
+      };
+      unsubscribe();
+      unsubscribe = nextUnsubscribe;
+      await writer.writeEvent("stream-status", streamStatus);
+      await writer.writeEvent("ready", {
+        symbols,
+        source: "ibkr-bridge",
+      });
+    } catch (error) {
+      if (isStreamCapacityError(error) && !cleanedUp && !writer.isClosed()) {
+        const retryDelayMs = nextStreamRetryDelayMs(retryAttempt);
+        retryAttempt += 1;
+        streamStatus = {
+          state: streamCapacityState(error),
+          reason: getErrorCode(error) ?? "ibkr_stream_capacity_limited",
+          message: getErrorMessage(error),
+          requestedCount: symbols.length,
+          admittedCount: 0,
+          rejectedCount: symbols.length,
+          retryDelayMs,
+        };
+        await writer.writeEvent("stream-status", streamStatus);
+        clearRetryTimer();
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void connect();
+        }, retryDelayMs);
+        retryTimer.unref?.();
+        return;
+      }
+
+      cleanup();
+      next(error);
+    }
+  };
+
+  void connect();
 });
 
 app.get("/bars", async (req, res) => {
-  const timeframe = typeof req.query.timeframe === "string" ? req.query.timeframe : null;
+  const timeframe =
+    typeof req.query.timeframe === "string" ? req.query.timeframe : null;
 
   if (
     typeof req.query.symbol !== "string" ||
     !req.query.symbol.trim() ||
-    !timeframe ||
-    !["1m", "5m", "15m", "1h", "1d"].includes(timeframe)
+    !isHistoryBarTimeframe(timeframe)
   ) {
     res.status(400).json({
       error: "symbol and timeframe query parameters are required",
@@ -280,7 +560,7 @@ app.get("/bars", async (req, res) => {
     timeframe,
     bars: await ibkrBridgeService.getHistoricalBars({
       symbol: req.query.symbol.trim().toUpperCase(),
-      timeframe: timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
+      timeframe,
       limit:
         typeof req.query.limit === "string" && req.query.limit.trim()
           ? Number(req.query.limit)
@@ -300,7 +580,8 @@ app.get("/bars", async (req, res) => {
             ? "equity"
             : undefined,
       providerContractId:
-        typeof req.query.providerContractId === "string" && req.query.providerContractId.trim()
+        typeof req.query.providerContractId === "string" &&
+        req.query.providerContractId.trim()
           ? req.query.providerContractId.trim()
           : null,
       outsideRth:
@@ -318,13 +599,13 @@ app.get("/bars", async (req, res) => {
 });
 
 app.get("/streams/bars", async (req, res, next) => {
-  const timeframe = typeof req.query.timeframe === "string" ? req.query.timeframe : null;
+  const timeframe =
+    typeof req.query.timeframe === "string" ? req.query.timeframe : null;
 
   if (
     typeof req.query.symbol !== "string" ||
     !req.query.symbol.trim() ||
-    !timeframe ||
-    !["1m", "5m", "15m", "1h", "1d"].includes(timeframe)
+    !isHistoryBarTimeframe(timeframe)
   ) {
     res.status(400).json({
       error: "symbol and timeframe query parameters are required",
@@ -334,7 +615,7 @@ app.get("/streams/bars", async (req, res, next) => {
 
   const input = {
     symbol: req.query.symbol.trim().toUpperCase(),
-    timeframe: timeframe as "1m" | "5m" | "15m" | "1h" | "1d",
+    timeframe,
     assetClass:
       req.query.assetClass === "option"
         ? "option"
@@ -363,25 +644,25 @@ app.get("/streams/bars", async (req, res, next) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
-  res.write("retry: 5000\n\n");
+  const writer = createSseWriter(res, {
+    route: "/streams/bars",
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+  });
+  void writer.writeRetry(5_000);
 
   let cleanedUp = false;
   let unsubscribe: () => void = () => {};
-  let eventId = 1;
   let lastBarSignature: string | null = null;
-
-  const writeEvent = (event: string, payload: unknown) => {
-    if (cleanedUp || res.destroyed) {
-      return;
-    }
-
-    res.write(
-      `id: ${eventId}\n` +
-        `event: ${event}\n` +
-        `data: ${JSON.stringify(payload)}\n\n`,
-    );
-    eventId += 1;
-  };
+  const heartbeat = setInterval(() => {
+    void writer.writeEvent("heartbeat", { at: new Date().toISOString() });
+    void writer.writeEvent("stream-status", {
+      state: "open",
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+    });
+  }, 15_000);
+  heartbeat.unref?.();
   const buildBarSignature = (
     bar: {
       timestamp: Date | string;
@@ -398,7 +679,9 @@ app.get("/streams/bars", async (req, res, next) => {
     }
 
     const timestamp =
-      bar.timestamp instanceof Date ? bar.timestamp.toISOString() : String(bar.timestamp);
+      bar.timestamp instanceof Date
+        ? bar.timestamp.toISOString()
+        : String(bar.timestamp);
     return JSON.stringify({
       timestamp,
       open: bar.open,
@@ -425,7 +708,7 @@ app.get("/streams/bars", async (req, res, next) => {
     }
 
     lastBarSignature = signature;
-    writeEvent("bar", {
+    void writer.writeEvent("bar", {
       symbol: input.symbol,
       timeframe: input.timeframe,
       bar,
@@ -437,10 +720,12 @@ app.get("/streams/bars", async (req, res, next) => {
       return;
     }
     cleanedUp = true;
+    clearInterval(heartbeat);
     unsubscribe();
+    writer.close();
   };
 
-  req.on("close", cleanup);
+  res.on("close", cleanup);
   req.on("aborted", cleanup);
 
   try {
@@ -456,12 +741,22 @@ app.get("/streams/bars", async (req, res, next) => {
       });
     }
 
-    const nextUnsubscribe = await ibkrBridgeService.subscribeHistoricalBarStream(
-      input,
-      (bar) => {
-        writeBarEvent(bar);
-      },
-    );
+    const nextUnsubscribe =
+      await ibkrBridgeService.subscribeHistoricalBarStream(
+        input,
+        (bar) => {
+          writeBarEvent(bar);
+        },
+        (error) => {
+          logger.warn({ err: error }, "IBKR historical bar stream failed");
+          void writer.writeEvent("stream-error", {
+            title: "Historical bar stream interrupted",
+            detail:
+              error instanceof Error ? error.message : "Unknown stream error.",
+          });
+          cleanup();
+        },
+      );
 
     if (cleanedUp) {
       nextUnsubscribe();
@@ -469,7 +764,7 @@ app.get("/streams/bars", async (req, res, next) => {
     }
 
     unsubscribe = nextUnsubscribe;
-    writeEvent("ready", {
+    await writer.writeEvent("ready", {
       symbol: input.symbol,
       timeframe: input.timeframe,
       assetClass: input.assetClass ?? "equity",
@@ -483,24 +778,25 @@ app.get("/streams/bars", async (req, res, next) => {
 });
 
 app.get("/options/chains", async (req, res) => {
-  if (typeof req.query.underlying !== "string" || !req.query.underlying.trim()) {
+  if (
+    typeof req.query.underlying !== "string" ||
+    !req.query.underlying.trim()
+  ) {
     res.status(400).json({
       error: "underlying query parameter is required",
     });
     return;
   }
 
-  const abortController = new AbortController();
-  const abort = () => abortController.abort();
-  req.on("aborted", abort);
-  req.on("close", abort);
+  const signal = createRequestAbortSignal(req, res);
 
   try {
     const underlying = req.query.underlying.trim().toUpperCase();
     const contracts = await ibkrBridgeService.getOptionChain({
       underlying: req.query.underlying.trim().toUpperCase(),
       expirationDate:
-        typeof req.query.expirationDate === "string" && req.query.expirationDate.trim()
+        typeof req.query.expirationDate === "string" &&
+        req.query.expirationDate.trim()
           ? new Date(req.query.expirationDate)
           : undefined,
       contractType:
@@ -515,10 +811,21 @@ app.get("/options/chains", async (req, res) => {
         typeof req.query.strikesAroundMoney === "string"
           ? Number(req.query.strikesAroundMoney)
           : undefined,
-      signal: abortController.signal,
+      strikeCoverage:
+        req.query.strikeCoverage === "fast" ||
+        req.query.strikeCoverage === "standard" ||
+        req.query.strikeCoverage === "full"
+          ? req.query.strikeCoverage
+          : undefined,
+      quoteHydration:
+        req.query.quoteHydration === "metadata" ||
+        req.query.quoteHydration === "snapshot"
+          ? req.query.quoteHydration
+          : undefined,
+      signal,
     });
 
-    if (abortController.signal.aborted) {
+    if (signal.aborted) {
       return;
     }
 
@@ -527,29 +834,26 @@ app.get("/options/chains", async (req, res) => {
       contracts,
     });
   } catch (error) {
-    if (abortController.signal.aborted) {
+    if (signal.aborted) {
       return;
     }
 
     throw error;
-  } finally {
-    req.off("aborted", abort);
-    req.off("close", abort);
   }
 });
 
 app.get("/options/expirations", async (req, res) => {
-  if (typeof req.query.underlying !== "string" || !req.query.underlying.trim()) {
+  if (
+    typeof req.query.underlying !== "string" ||
+    !req.query.underlying.trim()
+  ) {
     res.status(400).json({
       error: "underlying query parameter is required",
     });
     return;
   }
 
-  const abortController = new AbortController();
-  const abort = () => abortController.abort();
-  req.on("aborted", abort);
-  req.on("close", abort);
+  const signal = createRequestAbortSignal(req, res);
 
   try {
     const underlying = req.query.underlying.trim().toUpperCase();
@@ -559,10 +863,10 @@ app.get("/options/expirations", async (req, res) => {
         typeof req.query.maxExpirations === "string"
           ? Number(req.query.maxExpirations)
           : undefined,
-      signal: abortController.signal,
+      signal,
     });
 
-    if (abortController.signal.aborted) {
+    if (signal.aborted) {
       return;
     }
 
@@ -571,14 +875,11 @@ app.get("/options/expirations", async (req, res) => {
       expirations: expirations.map((expirationDate) => ({ expirationDate })),
     });
   } catch (error) {
-    if (abortController.signal.aborted) {
+    if (signal.aborted) {
       return;
     }
 
     throw error;
-  } finally {
-    req.off("aborted", abort);
-    req.off("close", abort);
   }
 });
 
@@ -659,31 +960,39 @@ app.get("/streams/options/quotes", async (req, res, next) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
-  res.write("retry: 5000\n\n");
+  const writer = createSseWriter(res, {
+    route: "/streams/options/quotes",
+    underlying,
+    contracts: providerContractIds.length,
+  });
+  const quoteBatch = createQuoteSseBatchWriter(writer);
+  void writer.writeRetry(5_000);
 
   let cleanedUp = false;
   let unsubscribe: () => void = () => {};
-  let eventId = 1;
-
-  const writeEvent = (event: string, payload: unknown) => {
-    if (cleanedUp || res.destroyed) {
-      return;
-    }
-
-    res.write(
-      `id: ${eventId}\n` +
-        `event: ${event}\n` +
-        `data: ${JSON.stringify(payload)}\n\n`,
-    );
-    eventId += 1;
+  let retryTimer: NodeJS.Timeout | null = null;
+  let retryAttempt = 0;
+  let streamStatus: Record<string, unknown> = {
+    state: "open",
+    underlying,
+    requestedCount: providerContractIds.length,
+    providerContractIds: providerContractIds.length,
   };
 
   const heartbeat = setInterval(() => {
-    if (!cleanedUp && !res.destroyed) {
-      res.write(`: ping ${new Date().toISOString()}\n\n`);
+    if (!cleanedUp && !writer.isClosed()) {
+      void writer.writeComment(`ping ${new Date().toISOString()}`);
+      void writer.writeEvent("stream-status", streamStatus);
     }
   }, 15_000);
   heartbeat.unref?.();
+
+  const clearRetryTimer = () => {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
 
   const cleanup = () => {
     if (cleanedUp) {
@@ -692,44 +1001,89 @@ app.get("/streams/options/quotes", async (req, res, next) => {
 
     cleanedUp = true;
     clearInterval(heartbeat);
+    clearRetryTimer();
+    quoteBatch.close();
     unsubscribe();
-    res.end();
+    writer.close();
   };
 
-  req.on("close", cleanup);
+  res.on("close", cleanup);
   req.on("aborted", cleanup);
 
-  try {
-    writeEvent("quotes", {
-      quotes: await ibkrBridgeService.getOptionQuoteSnapshots({
-        underlying,
-        providerContractIds,
-      }),
-    });
-    const nextUnsubscribe = await ibkrBridgeService.subscribeOptionQuoteStream(
-      {
-        underlying,
-        providerContractIds,
-      },
-      (quote) => {
-        writeEvent("quotes", { quotes: [quote] });
-      },
-    );
-    if (cleanedUp) {
-      nextUnsubscribe();
+  const connect = async () => {
+    if (cleanedUp || writer.isClosed()) {
       return;
     }
 
-    unsubscribe = nextUnsubscribe;
-    writeEvent("ready", {
-      underlying,
-      providerContractIds,
-      source: "ibkr-bridge",
-    });
-  } catch (error) {
-    cleanup();
-    next(error);
-  }
+    try {
+      await writer.writeEvent("quotes", {
+        quotes: await ibkrBridgeService.getOptionQuoteSnapshots({
+          underlying,
+          providerContractIds,
+        }),
+      });
+      const nextUnsubscribe = await ibkrBridgeService.subscribeOptionQuoteStream(
+        {
+          underlying,
+          providerContractIds,
+        },
+        (quote) => {
+          quoteBatch.enqueue(quote);
+        },
+      );
+      if (cleanedUp) {
+        nextUnsubscribe();
+        return;
+      }
+
+      retryAttempt = 0;
+      streamStatus = {
+        state: "open",
+        underlying,
+        requestedCount: providerContractIds.length,
+        admittedCount: providerContractIds.length,
+        rejectedCount: 0,
+        providerContractIds: providerContractIds.length,
+      };
+      unsubscribe();
+      unsubscribe = nextUnsubscribe;
+      await writer.writeEvent("stream-status", streamStatus);
+      await writer.writeEvent("ready", {
+        underlying,
+        providerContractIds,
+        source: "ibkr-bridge",
+      });
+    } catch (error) {
+      if (isStreamCapacityError(error) && !cleanedUp && !writer.isClosed()) {
+        const retryDelayMs = nextStreamRetryDelayMs(retryAttempt);
+        retryAttempt += 1;
+        streamStatus = {
+          state: streamCapacityState(error),
+          reason: getErrorCode(error) ?? "ibkr_stream_capacity_limited",
+          message: getErrorMessage(error),
+          underlying,
+          requestedCount: providerContractIds.length,
+          admittedCount: 0,
+          rejectedCount: providerContractIds.length,
+          retryDelayMs,
+          providerContractIds: providerContractIds.length,
+        };
+        await writer.writeEvent("stream-status", streamStatus);
+        clearRetryTimer();
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void connect();
+        }, retryDelayMs);
+        retryTimer.unref?.();
+        return;
+      }
+
+      cleanup();
+      next(error);
+    }
+  };
+
+  void connect();
 });
 
 app.get("/market-depth", async (req, res) => {
@@ -773,15 +1127,18 @@ app.post("/orders/preview", async (req, res) => {
 
 app.post("/orders/submit", async (req, res) => {
   if (Array.isArray(req.body?.ibkrOrders)) {
-    res.status(201).json(await ibkrBridgeService.submitRawOrders({
-      accountId: typeof req.body.accountId === "string" ? req.body.accountId : null,
-      mode:
-        req.body.mode === "live" || req.body.mode === "paper"
-          ? req.body.mode
-          : null,
-      confirm: req.body.confirm === true,
-      orders: req.body.ibkrOrders,
-    }));
+    res.status(201).json(
+      await ibkrBridgeService.submitRawOrders({
+        accountId:
+          typeof req.body.accountId === "string" ? req.body.accountId : null,
+        mode:
+          req.body.mode === "live" || req.body.mode === "paper"
+            ? req.body.mode
+            : null,
+        confirm: req.body.confirm === true,
+        orders: req.body.ibkrOrders,
+      }),
+    );
     return;
   }
 
@@ -790,15 +1147,18 @@ app.post("/orders/submit", async (req, res) => {
 
 app.post("/orders", async (req, res) => {
   if (Array.isArray(req.body?.ibkrOrders)) {
-    res.status(201).json(await ibkrBridgeService.submitRawOrders({
-      accountId: typeof req.body.accountId === "string" ? req.body.accountId : null,
-      mode:
-        req.body.mode === "live" || req.body.mode === "paper"
-          ? req.body.mode
-          : null,
-      confirm: req.body.confirm === true,
-      orders: req.body.ibkrOrders,
-    }));
+    res.status(201).json(
+      await ibkrBridgeService.submitRawOrders({
+        accountId:
+          typeof req.body.accountId === "string" ? req.body.accountId : null,
+        mode:
+          req.body.mode === "live" || req.body.mode === "paper"
+            ? req.body.mode
+            : null,
+        confirm: req.body.confirm === true,
+        orders: req.body.ibkrOrders,
+      }),
+    );
     return;
   }
 
@@ -806,32 +1166,36 @@ app.post("/orders", async (req, res) => {
 });
 
 app.post("/orders/:orderId/replace", async (req, res) => {
-  res.json(await ibkrBridgeService.replaceOrder({
-    accountId: req.body.accountId,
-    orderId: req.params.orderId,
-    order: req.body.order,
-    mode: req.body.mode === "live" ? "live" : "paper",
-  }));
+  res.json(
+    await ibkrBridgeService.replaceOrder({
+      accountId: req.body.accountId,
+      orderId: req.params.orderId,
+      order: req.body.order,
+      mode: req.body.mode === "live" ? "live" : "paper",
+    }),
+  );
 });
 
 app.post("/orders/:orderId/cancel", async (req, res) => {
-  res.json(await ibkrBridgeService.cancelOrder({
-    accountId: req.body.accountId,
-    orderId: req.params.orderId,
-    manualIndicator:
-      typeof req.body.manualIndicator === "boolean"
-        ? req.body.manualIndicator
-        : null,
-    extOperator:
-      typeof req.body.extOperator === "string"
-        ? req.body.extOperator
-        : null,
-  }));
+  res.json(
+    await ibkrBridgeService.cancelOrder({
+      accountId: req.body.accountId,
+      orderId: req.params.orderId,
+      manualIndicator:
+        typeof req.body.manualIndicator === "boolean"
+          ? req.body.manualIndicator
+          : null,
+      extOperator:
+        typeof req.body.extOperator === "string" ? req.body.extOperator : null,
+    }),
+  );
 });
 
 app.get("/news", async (req, res) => {
-  const ticker = typeof req.query.ticker === "string" ? req.query.ticker : undefined;
-  const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+  const ticker =
+    typeof req.query.ticker === "string" ? req.query.ticker : undefined;
+  const limit =
+    typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
   res.json(
     await ibkrBridgeService.getNews({
       ticker,
@@ -841,71 +1205,95 @@ app.get("/news", async (req, res) => {
 });
 
 app.get("/universe/search", async (req, res) => {
-  const search = typeof req.query.search === "string" ? req.query.search : undefined;
-  const market = typeof req.query.market === "string" ? req.query.market : undefined;
+  const search =
+    typeof req.query.search === "string" ? req.query.search : undefined;
+  const market =
+    typeof req.query.market === "string" ? req.query.market : undefined;
   const marketsRaw = req.query.markets;
   const markets =
     typeof marketsRaw === "string"
-      ? marketsRaw.split(",").map((value) => value.trim()).filter(Boolean)
+      ? marketsRaw
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
       : Array.isArray(marketsRaw)
         ? marketsRaw.flatMap((value) =>
             typeof value === "string"
-              ? value.split(",").map((part) => part.trim()).filter(Boolean)
+              ? value
+                  .split(",")
+                  .map((part) => part.trim())
+                  .filter(Boolean)
               : [],
           )
         : undefined;
-  const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+  const limit =
+    typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
   res.json(
     await ibkrBridgeService.searchTickers({
       search,
-      market: market as Parameters<typeof ibkrBridgeService.searchTickers>[0]["market"],
-      markets: markets as Parameters<typeof ibkrBridgeService.searchTickers>[0]["markets"],
+      market: market as Parameters<
+        typeof ibkrBridgeService.searchTickers
+      >[0]["market"],
+      markets: markets as Parameters<
+        typeof ibkrBridgeService.searchTickers
+      >[0]["markets"],
       limit: Number.isFinite(limit) ? limit : undefined,
       signal: createRequestAbortSignal(req, res),
     }),
   );
 });
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  if (res.headersSent) {
-    return;
-  }
-
-  if (isZodError(error)) {
-    const issues = (error.issues as unknown[]).map((issue) => issue as ZodIssueLike);
-
-    res.status(400).json({
-      title: "Invalid request",
-      status: 400,
-      detail: issues
-        .map((issue) => (typeof issue.message === "string" ? issue.message : "Invalid input"))
-        .join("; "),
-      errors: issues,
-    });
-    return;
-  }
-
-  if (isHttpError(error)) {
-    if (error.statusCode >= 500) {
-      logger.error({ err: error }, "Bridge request failed");
+app.use(
+  (
+    error: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    if (res.headersSent) {
+      return;
     }
 
-    res.status(error.statusCode).json({
-      title: error.message,
-      status: error.statusCode,
-      detail: error.detail,
-      code: error.code,
+    if (isZodError(error)) {
+      const issues = (error.issues as unknown[]).map(
+        (issue) => issue as ZodIssueLike,
+      );
+
+      res.status(400).json({
+        title: "Invalid request",
+        status: 400,
+        detail: issues
+          .map((issue) =>
+            typeof issue.message === "string" ? issue.message : "Invalid input",
+          )
+          .join("; "),
+        errors: issues,
+      });
+      return;
+    }
+
+    if (isHttpError(error)) {
+      if (error.statusCode >= 500) {
+        logger.error({ err: error }, "Bridge request failed");
+      }
+
+      res.status(error.statusCode).json({
+        title: error.message,
+        status: error.statusCode,
+        detail: error.detail,
+        code: error.code,
+      });
+      return;
+    }
+
+    logger.error({ err: error }, "Unhandled bridge error");
+
+    res.status(500).json({
+      title: "Internal server error",
+      status: 500,
+      detail: "The IBKR bridge hit an unexpected error.",
     });
-    return;
-  }
-
-  logger.error({ err: error }, "Unhandled bridge error");
-
-  res.status(500).json({
-    title: "Internal server error",
-    status: 500,
-    detail: "The IBKR bridge hit an unexpected error.",
-  });
-});
+  },
+);
 
 export default app;

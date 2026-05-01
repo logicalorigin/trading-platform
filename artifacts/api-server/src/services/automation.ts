@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
+import { assertAlgoGatewayReady } from "./algo-gateway";
 
 type CreateAlgoDeploymentInput = {
   strategyId: string;
@@ -136,6 +137,22 @@ export async function setAlgoDeploymentEnabled(input: {
   deploymentId: string;
   enabled: boolean;
 }) {
+  const [existing] = await db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.id, input.deploymentId))
+    .limit(1);
+
+  if (!existing) {
+    throw new HttpError(404, "Algorithm deployment not found.", {
+      code: "algo_deployment_not_found",
+    });
+  }
+
+  if (input.enabled) {
+    await assertAlgoGatewayReady();
+  }
+
   const [deployment] = await db
     .update(algoDeploymentsTable)
     .set({
@@ -145,12 +162,6 @@ export async function setAlgoDeploymentEnabled(input: {
     })
     .where(eq(algoDeploymentsTable.id, input.deploymentId))
     .returning();
-
-  if (!deployment) {
-    throw new HttpError(404, "Algorithm deployment not found.", {
-      code: "algo_deployment_not_found",
-    });
-  }
 
   await db.insert(executionEventsTable).values({
     deploymentId: deployment.id,

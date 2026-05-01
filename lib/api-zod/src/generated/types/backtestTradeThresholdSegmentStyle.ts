@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeThresholdSegmentStyle =
-  (typeof BacktestTradeThresholdSegmentStyle)[keyof typeof BacktestTradeThresholdSegmentStyle];
+export type BacktestTradeThresholdSegmentStyle = typeof BacktestTradeThresholdSegmentStyle[keyof typeof BacktestTradeThresholdSegmentStyle];
+
 
 export const BacktestTradeThresholdSegmentStyle = {
-  solid: "solid",
-  dashed: "dashed",
-  dotted: "dotted",
+  solid: 'solid',
+  dashed: 'dashed',
+  dotted: 'dotted',
 } as const;

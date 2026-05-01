@@ -5,13 +5,13 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AssetClass } from "./assetClass";
-import type { EnvironmentMode } from "./environmentMode";
-import type { OptionContract } from "./optionContract";
-import type { OrderSide } from "./orderSide";
-import type { OrderStatus } from "./orderStatus";
-import type { OrderType } from "./orderType";
-import type { TimeInForce } from "./timeInForce";
+import type { AssetClass } from './assetClass';
+import type { EnvironmentMode } from './environmentMode';
+import type { OptionContract } from './optionContract';
+import type { OrderSide } from './orderSide';
+import type { OrderStatus } from './orderStatus';
+import type { OrderType } from './orderType';
+import type { TimeInForce } from './timeInForce';
 
 export interface Order {
   id: string;

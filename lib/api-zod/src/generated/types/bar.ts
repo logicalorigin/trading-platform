@@ -5,7 +5,9 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { IbkrBridgeHealthTransport } from "./ibkrBridgeHealthTransport";
+import type { BarMarketDataMode } from './barMarketDataMode';
+import type { IbkrBridgeHealthTransport } from './ibkrBridgeHealthTransport';
+import type { MarketDataFreshness } from './marketDataFreshness';
 
 export interface Bar {
   timestamp: Date;
@@ -21,4 +23,11 @@ export interface Bar {
   partial?: boolean;
   transport: IbkrBridgeHealthTransport;
   delayed: boolean;
+  freshness?: MarketDataFreshness;
+  /** @nullable */
+  marketDataMode?: BarMarketDataMode;
+  /** @nullable */
+  dataUpdatedAt?: Date | null;
+  /** @nullable */
+  ageMs?: number | null;
 }

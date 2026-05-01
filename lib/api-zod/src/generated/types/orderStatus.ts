@@ -6,15 +6,16 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type OrderStatus = (typeof OrderStatus)[keyof typeof OrderStatus];
+export type OrderStatus = typeof OrderStatus[keyof typeof OrderStatus];
+
 
 export const OrderStatus = {
-  pending_submit: "pending_submit",
-  submitted: "submitted",
-  accepted: "accepted",
-  partially_filled: "partially_filled",
-  filled: "filled",
-  canceled: "canceled",
-  rejected: "rejected",
-  expired: "expired",
+  pending_submit: 'pending_submit',
+  submitted: 'submitted',
+  accepted: 'accepted',
+  partially_filled: 'partially_filled',
+  filled: 'filled',
+  canceled: 'canceled',
+  rejected: 'rejected',
+  expired: 'expired',
 } as const;

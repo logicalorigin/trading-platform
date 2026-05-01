@@ -6,10 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type AccountEquityPointSource =
-  (typeof AccountEquityPointSource)[keyof typeof AccountEquityPointSource];
+export type AccountEquityPointSource = typeof AccountEquityPointSource[keyof typeof AccountEquityPointSource];
+
 
 export const AccountEquityPointSource = {
-  FLEX: "FLEX",
-  LOCAL_LEDGER: "LOCAL_LEDGER",
+  FLEX: 'FLEX',
+  LOCAL_LEDGER: 'LOCAL_LEDGER',
+  IBKR_ACCOUNT_SUMMARY: 'IBKR_ACCOUNT_SUMMARY',
+  SHADOW_LEDGER: 'SHADOW_LEDGER',
 } as const;

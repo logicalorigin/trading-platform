@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestChartMarkerPosition =
-  (typeof BacktestChartMarkerPosition)[keyof typeof BacktestChartMarkerPosition];
+export type BacktestChartMarkerPosition = typeof BacktestChartMarkerPosition[keyof typeof BacktestChartMarkerPosition];
+
 
 export const BacktestChartMarkerPosition = {
-  aboveBar: "aboveBar",
-  belowBar: "belowBar",
-  inBar: "inBar",
+  aboveBar: 'aboveBar',
+  belowBar: 'belowBar',
+  inBar: 'inBar',
 } as const;

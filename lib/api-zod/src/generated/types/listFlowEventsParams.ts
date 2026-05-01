@@ -5,18 +5,35 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { ListFlowEventsScope } from './listFlowEventsScope';
 
 export type ListFlowEventsParams = {
-  underlying?: string;
-  /**
-   * @minimum 1
-   * @maximum 1000
-   */
-  limit?: number;
-  /**
-   * Volume / open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep/swing desks.
-   * @minimum 0.1
-   * @maximum 100
-   */
-  unusualThreshold?: number;
+underlying?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * Volume / open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep/swing desks.
+ * @minimum 0.1
+ * @maximum 100
+ */
+unusualThreshold?: number;
+/**
+ * Return all flow or only contracts that match the unusual-flow threshold.
+ */
+scope?: ListFlowEventsScope;
+/**
+ * Minimum option premium, in dollars, required for each returned flow row.
+ * @minimum 0
+ * @maximum 50000000
+ */
+minPremium?: number;
+/**
+ * Maximum days to expiration to include in the flow scan.
+ * @minimum 0
+ * @maximum 730
+ */
+maxDte?: number;
 };

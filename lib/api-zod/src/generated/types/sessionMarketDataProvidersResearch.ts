@@ -5,10 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import { MarketDataProvider } from "./marketDataProvider";
-import { ResearchProvider } from "./researchProvider";
+import { MarketDataProvider } from './marketDataProvider';
+import { ResearchProvider } from './researchProvider';
 
-export const SessionMarketDataProvidersResearch = {
-  ...MarketDataProvider,
-  ...ResearchProvider,
-} as const;
+export const SessionMarketDataProvidersResearch = {...MarketDataProvider,...ResearchProvider,} as const

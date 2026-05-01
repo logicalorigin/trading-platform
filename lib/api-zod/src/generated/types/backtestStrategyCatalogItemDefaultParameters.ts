@@ -6,6 +6,4 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestStrategyCatalogItemDefaultParameters = {
-  [key: string]: unknown;
-};
+export type BacktestStrategyCatalogItemDefaultParameters = { [key: string]: unknown };

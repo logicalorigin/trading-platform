@@ -6,15 +6,16 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BarTimeframe = (typeof BarTimeframe)[keyof typeof BarTimeframe];
+export type BarTimeframe = typeof BarTimeframe[keyof typeof BarTimeframe];
+
 
 export const BarTimeframe = {
-  "1s": "1s",
-  "5s": "5s",
-  "15s": "15s",
-  "1m": "1m",
-  "5m": "5m",
-  "15m": "15m",
-  "1h": "1h",
-  "1d": "1d",
+  '1s': '1s',
+  '5s': '5s',
+  '15s': '15s',
+  '1m': '1m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '1h',
+  '1d': '1d',
 } as const;

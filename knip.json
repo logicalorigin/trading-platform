@@ -1,5 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignoreFiles": [
+    "lib/api-zod/src/generated/**"
+  ],
   "workspaces": {
     ".": {
       "entry": ["scripts/**/*.{ts,js,mjs}"],
@@ -10,8 +13,9 @@
       "project": "src/**/*.ts"
     },
     "artifacts/ibkr-bridge": {
-      "entry": ["src/index.ts", "build.mjs"],
-      "project": "src/**/*.ts"
+      "entry": ["src/index.ts", "build.mjs", "src/**/*.test.ts"],
+      "project": "src/**/*.ts",
+      "ignoreDependencies": ["ws", "@types/ws"]
     },
     "artifacts/backtest-worker": {
       "entry": ["src/index.ts", "build.mjs"],

@@ -6,14 +6,16 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type AccountHistoryRange =
-  (typeof AccountHistoryRange)[keyof typeof AccountHistoryRange];
+export type AccountHistoryRange = typeof AccountHistoryRange[keyof typeof AccountHistoryRange];
+
 
 export const AccountHistoryRange = {
-  "1W": "1W",
-  "1M": "1M",
-  "3M": "3M",
-  YTD: "YTD",
-  "1Y": "1Y",
-  ALL: "ALL",
+  '1D': '1D',
+  '1W': '1W',
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  YTD: 'YTD',
+  '1Y': '1Y',
+  ALL: 'ALL',
 } as const;

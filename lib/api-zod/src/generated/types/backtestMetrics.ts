@@ -15,4 +15,5 @@ export interface BacktestMetrics {
   profitFactor: number;
   sharpeRatio: number;
   returnOverMaxDrawdown: number;
-}
+  [key: string]: unknown;
+ }

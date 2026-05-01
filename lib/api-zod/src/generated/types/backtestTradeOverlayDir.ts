@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeOverlayDir =
-  (typeof BacktestTradeOverlayDir)[keyof typeof BacktestTradeOverlayDir];
+export type BacktestTradeOverlayDir = typeof BacktestTradeOverlayDir[keyof typeof BacktestTradeOverlayDir];
+
 
 export const BacktestTradeOverlayDir = {
-  long: "long",
-  short: "short",
+  long: 'long',
+  short: 'short',
 } as const;

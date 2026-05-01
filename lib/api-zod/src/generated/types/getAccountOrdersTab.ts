@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type GetAccountOrdersTab =
-  (typeof GetAccountOrdersTab)[keyof typeof GetAccountOrdersTab];
+export type GetAccountOrdersTab = typeof GetAccountOrdersTab[keyof typeof GetAccountOrdersTab];
+
 
 export const GetAccountOrdersTab = {
-  working: "working",
-  history: "history",
+  working: 'working',
+  history: 'history',
 } as const;

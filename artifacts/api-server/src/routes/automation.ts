@@ -6,6 +6,12 @@ import {
   listExecutionEvents,
   setAlgoDeploymentEnabled,
 } from "../services/automation";
+import {
+  listSignalOptionsAutomationState,
+  recordSignalOptionsManualDeviation,
+  runSignalOptionsShadowScan,
+  updateSignalOptionsExecutionProfile,
+} from "../services/signal-options-automation";
 
 const router: IRouter = Router();
 
@@ -72,6 +78,52 @@ router.post("/algo/deployments/:deploymentId/pause", async (req, res): Promise<v
     await setAlgoDeploymentEnabled({
       deploymentId: req.params.deploymentId,
       enabled: false,
+    }),
+  );
+});
+
+router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, res): Promise<void> => {
+  res.json(
+    await listSignalOptionsAutomationState({
+      deploymentId: req.params.deploymentId,
+    }),
+  );
+});
+
+router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async (req, res): Promise<void> => {
+  res.json(
+    await runSignalOptionsShadowScan({
+      deploymentId: req.params.deploymentId,
+      forceEvaluate: true,
+      source: "manual",
+    }),
+  );
+});
+
+router.post("/algo/deployments/:deploymentId/signal-options/deviation", async (req, res): Promise<void> => {
+  const deviation =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+
+  res.status(201).json(
+    await recordSignalOptionsManualDeviation({
+      deploymentId: req.params.deploymentId,
+      deviation,
+    }),
+  );
+});
+
+router.patch("/algo/deployments/:deploymentId/signal-options/profile", async (req, res): Promise<void> => {
+  const patch =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+
+  res.json(
+    await updateSignalOptionsExecutionProfile({
+      deploymentId: req.params.deploymentId,
+      patch,
     }),
   );
 });

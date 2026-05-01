@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeMarkerGroupKind =
-  (typeof BacktestTradeMarkerGroupKind)[keyof typeof BacktestTradeMarkerGroupKind];
+export type BacktestTradeMarkerGroupKind = typeof BacktestTradeMarkerGroupKind[keyof typeof BacktestTradeMarkerGroupKind];
+
 
 export const BacktestTradeMarkerGroupKind = {
-  entry: "entry",
-  exit: "exit",
+  entry: 'entry',
+  exit: 'exit',
 } as const;

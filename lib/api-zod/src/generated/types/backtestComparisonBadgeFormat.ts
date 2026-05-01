@@ -6,12 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestComparisonBadgeFormat =
-  (typeof BacktestComparisonBadgeFormat)[keyof typeof BacktestComparisonBadgeFormat];
+export type BacktestComparisonBadgeFormat = typeof BacktestComparisonBadgeFormat[keyof typeof BacktestComparisonBadgeFormat];
+
 
 export const BacktestComparisonBadgeFormat = {
-  currency: "currency",
-  percent: "percent",
-  number: "number",
-  integer: "integer",
+  currency: 'currency',
+  percent: 'percent',
+  number: 'number',
+  integer: 'integer',
 } as const;

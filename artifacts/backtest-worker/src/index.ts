@@ -3,11 +3,14 @@ import {
   buildCandidatesForMode,
   buildRayReplicaSignalTape,
   buildWalkForwardWindows,
+  calculateBacktestMetrics,
+  calculateBenchmarkMetrics,
   rankCandidateResults,
   runBacktest,
   type BacktestBar,
   type BacktestMetrics,
   type BacktestPoint,
+  type BacktestRiskRules,
   type BacktestTrade,
   type StudyDefinition,
 } from "@workspace/backtest-core";
@@ -44,6 +47,8 @@ type ApiBarsResponse = {
     low: number;
     close: number;
     volume: number;
+    source?: string;
+    delayed?: boolean;
   }>;
 };
 
@@ -129,6 +134,7 @@ type SimulatedOptionTrade = BacktestTrade & {
 };
 
 const benchmarkSymbols = ["SPY", "QQQ"] as const;
+const BACKTEST_IBKR_RECENT_CUTOFF_MINUTES = 30;
 
 const newYorkTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -165,6 +171,8 @@ function normalizeBar(bar: ApiBarsResponse["bars"][number]): BacktestBar {
     low: bar.low,
     close: bar.close,
     volume: bar.volume,
+    source: bar.source,
+    delayed: bar.delayed,
   };
 }
 
@@ -222,6 +230,11 @@ async function fetchBarsRange(input: HistoricalBarsRequest): Promise<BacktestBar
   url.searchParams.set("from", input.from.toISOString());
   url.searchParams.set("to", input.to.toISOString());
   url.searchParams.set("limit", "50000");
+  url.searchParams.set("allowHistoricalSynthesis", "true");
+  url.searchParams.set(
+    "brokerRecentWindowMinutes",
+    String(BACKTEST_IBKR_RECENT_CUTOFF_MINUTES),
+  );
   if (input.assetClass) {
     url.searchParams.set("assetClass", input.assetClass);
   }
@@ -267,6 +280,31 @@ async function fetchBarsSegmented(input: HistoricalBarsRequest): Promise<Backtes
 
 function estimateByteSize(bars: BacktestBar[]): number {
   return bars.length * 64;
+}
+
+function summarizeDatasetSource(bars: BacktestBar[]): string {
+  const sources = new Set(
+    bars
+      .map((bar) => bar.source)
+      .filter((source): source is string => Boolean(source)),
+  );
+  const hasIbkr = [...sources].some((source) => source.includes("ibkr"));
+  const hasMassive = [...sources].some(
+    (source) =>
+      source.includes("polygon") ||
+      source.includes("massive") ||
+      source.includes("history"),
+  );
+
+  if (hasIbkr && hasMassive) {
+    return "massive+ibkr_recent";
+  }
+
+  if (hasIbkr) {
+    return "ibkr_recent";
+  }
+
+  return "massive";
 }
 
 async function getStoredBarStorageBytes(): Promise<number> {
@@ -394,7 +432,7 @@ async function persistDataset(
     .values({
       symbol,
       timeframe,
-      source: "massive",
+      source: summarizeDatasetSource(bars),
       sessionMode: "regular",
       startsAt: from,
       endsAt: to,
@@ -499,6 +537,115 @@ async function loadStudyData(study: StudyRow): Promise<{
   return { barsBySymbol, datasets };
 }
 
+async function loadBenchmarkData(study: StudyRow): Promise<{
+  barsBySymbol: Record<string, BacktestBar[]>;
+  datasets: DatasetRow[];
+}> {
+  const barsBySymbol: Record<string, BacktestBar[]> = {};
+  const datasets: DatasetRow[] = [];
+
+  for (const symbol of benchmarkSymbols) {
+    const loaded = await loadDataset({
+      symbol,
+      timeframe: study.timeframe,
+      from: study.startsAt,
+      to: study.endsAt,
+      preferSeededMinuteDataset: true,
+      assetClass: "equity",
+    });
+
+    barsBySymbol[symbol] = loaded.bars;
+    datasets.push(loaded.dataset);
+  }
+
+  return { barsBySymbol, datasets };
+}
+
+function buildDataQualityMetrics(
+  datasets: DatasetRow[],
+  barsBySymbol: Record<string, BacktestBar[]>,
+) {
+  const sources = new Set(datasets.map((dataset) => dataset.source));
+  const bars = Object.values(barsBySymbol).flat();
+  const mixedSources =
+    sources.size > 1 ||
+    [...sources].some((source) => source.includes("+"));
+  const missingBarCount = Object.values(barsBySymbol).filter(
+    (symbolBars) => symbolBars.length === 0,
+  ).length;
+
+  return {
+    sourcePolicy: "massive_historical_with_ibkr_recent_30m",
+    primarySource: mixedSources
+      ? "mixed"
+      : sources.values().next().value ?? "massive",
+    ibkrRecentCutoffMinutes: BACKTEST_IBKR_RECENT_CUTOFF_MINUTES,
+    coveragePercent:
+      Object.keys(barsBySymbol).length > 0
+        ? ((Object.keys(barsBySymbol).length - missingBarCount) /
+            Object.keys(barsBySymbol).length) *
+          100
+        : 0,
+    missingBarCount,
+    delayed: bars.some((bar) => Boolean(bar.delayed)),
+    mixedSources,
+  };
+}
+
+function enrichResultMetrics(input: {
+  result: PersistedResult;
+  study: StudyDefinition;
+  datasets: DatasetRow[];
+  barsBySymbol: Record<string, BacktestBar[]>;
+  benchmarkBarsBySymbol?: Record<string, BacktestBar[]>;
+  trialCount?: number;
+  oosWindowCount?: number;
+  parameterCount?: number;
+}): PersistedResult {
+  const benchmarks =
+    input.benchmarkBarsBySymbol == null
+      ? undefined
+      : benchmarkSymbols.flatMap((symbol) => {
+          const benchmark = calculateBenchmarkMetrics({
+            symbol,
+            benchmarkBars: input.benchmarkBarsBySymbol?.[symbol] ?? [],
+            strategyPoints: input.result.points,
+            initialCapital: input.study.portfolioRules.initialCapital,
+          });
+          return benchmark ? [benchmark] : [];
+        });
+  const metrics = calculateBacktestMetrics(
+    input.result.points,
+    input.result.trades,
+    input.study.portfolioRules.initialCapital,
+    {
+      trialCount: input.trialCount,
+      oosWindowCount: input.oosWindowCount,
+      parameterCount: input.parameterCount,
+      benchmarks,
+    },
+  );
+  metrics.dataQuality = buildDataQualityMetrics(input.datasets, input.barsBySymbol);
+
+  const warnings = [...input.result.warnings];
+  if (metrics.dataQuality.mixedSources) {
+    warnings.push(
+      `Historical policy used Massive data plus IBKR bars inside the final ${BACKTEST_IBKR_RECENT_CUTOFF_MINUTES} minutes.`,
+    );
+  }
+  metrics.validation?.warnings.forEach((warning) => {
+    if (!warnings.includes(warning)) {
+      warnings.push(warning);
+    }
+  });
+
+  return {
+    ...input.result,
+    metrics,
+    warnings,
+  };
+}
+
 async function pinDatasetsToRun(
   runId: string,
   bindings: RunDatasetBinding[],
@@ -535,6 +682,12 @@ function buildStudyDefinition(
   study: StudyRow,
   parametersOverride?: Record<string, unknown>,
 ): StudyDefinition {
+  const optimizerConfig = (study.optimizerConfig ?? {}) as Record<string, unknown>;
+  const rawRiskRules =
+    parametersOverride?.riskRules ??
+    (study.parameters as Record<string, unknown> | null)?.riskRules ??
+    optimizerConfig.riskRules;
+
   return {
     strategyId: study.strategyId,
     strategyVersion: study.strategyVersion,
@@ -546,6 +699,7 @@ function buildStudyDefinition(
       ...(study.parameters ?? {}),
       ...(parametersOverride ?? {}),
     } as Record<string, string | number | boolean>,
+    riskRules: normalizeRiskRules(rawRiskRules),
     executionProfile: study.executionProfile as {
       commissionBps: number;
       slippageBps: number;
@@ -559,6 +713,33 @@ function buildStudyDefinition(
   };
 }
 
+function normalizeRiskRules(value: unknown): BacktestRiskRules | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const readPercent = (key: string): number | null => {
+    const raw = record[key];
+    const parsed = typeof raw === "number" ? raw : Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const basis =
+    record.basis === "underlying_price" ||
+    record.basis === "both" ||
+    record.basis === "position_price"
+      ? record.basis
+      : undefined;
+
+  return {
+    stopLossPercent: readPercent("stopLossPercent"),
+    takeProfitPercent: readPercent("takeProfitPercent"),
+    trailingStopPercent: readPercent("trailingStopPercent"),
+    trailingActivationPercent: readPercent("trailingActivationPercent"),
+    basis,
+  };
+}
+
 function computeCommission(value: number, commissionBps: number): number {
   return value * (commissionBps / 10_000);
 }
@@ -566,76 +747,6 @@ function computeCommission(value: number, commissionBps: number): number {
 function applySlippage(price: number, side: "buy" | "sell", slippageBps: number): number {
   const multiplier = slippageBps / 10_000;
   return side === "buy" ? price * (1 + multiplier) : price * (1 - multiplier);
-}
-
-function calculateSharpe(points: BacktestPoint[]): number {
-  if (points.length < 3) {
-    return 0;
-  }
-
-  const returns: number[] = [];
-  for (let index = 1; index < points.length; index += 1) {
-    const previousEquity = points[index - 1]?.equity ?? 0;
-    const currentEquity = points[index]?.equity ?? 0;
-
-    if (previousEquity <= 0) {
-      continue;
-    }
-
-    returns.push((currentEquity - previousEquity) / previousEquity);
-  }
-
-  if (returns.length < 2) {
-    return 0;
-  }
-
-  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
-  const variance =
-    returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
-    (returns.length - 1);
-  const standardDeviation = Math.sqrt(variance);
-
-  if (standardDeviation === 0) {
-    return 0;
-  }
-
-  return (mean / standardDeviation) * Math.sqrt(252);
-}
-
-function buildMetrics(
-  points: BacktestPoint[],
-  trades: BacktestTrade[],
-  initialCapital: number,
-): BacktestMetrics {
-  const endingEquity = points[points.length - 1]?.equity ?? initialCapital;
-  const netPnl = endingEquity - initialCapital;
-  const wins = trades.filter((trade) => trade.netPnl > 0);
-  const losses = trades.filter((trade) => trade.netPnl < 0);
-  const profitFactor =
-    Math.abs(
-      wins.reduce((sum, trade) => sum + trade.netPnl, 0) /
-        (losses.reduce((sum, trade) => sum + trade.netPnl, 0) || -1),
-    ) || 0;
-  const maxDrawdownPercent = Math.abs(
-    points.reduce(
-      (minimum, point) => Math.min(minimum, point.drawdownPercent),
-      0,
-    ),
-  );
-  const totalReturnPercent = initialCapital > 0 ? (netPnl / initialCapital) * 100 : 0;
-  const returnOverMaxDrawdown =
-    maxDrawdownPercent === 0 ? totalReturnPercent : totalReturnPercent / Math.abs(maxDrawdownPercent);
-
-  return {
-    netPnl,
-    totalReturnPercent,
-    maxDrawdownPercent,
-    tradeCount: trades.length,
-    winRatePercent: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
-    profitFactor,
-    sharpeRatio: calculateSharpe(points),
-    returnOverMaxDrawdown,
-  };
 }
 
 function resolveExecutionMode(study: StudyDefinition): "spot" | "options" {
@@ -817,7 +928,9 @@ async function runOptionsBacktest(
   result: PersistedResult;
   datasetBindings: RunDatasetBinding[];
 }> {
-  const warnings: string[] = [];
+  const warnings: string[] = [
+    "Options backtests use trade-derived option aggregates/bars; historical quote/NBBO replay is not available on the current Massive Developer plans.",
+  ];
   const trades: SimulatedOptionTrade[] = [];
   const datasetBindings: RunDatasetBinding[] = [];
   const positions = new Map<string, OptionPositionState>();
@@ -1061,7 +1174,7 @@ async function runOptionsBacktest(
 
   return {
     result: {
-      metrics: buildMetrics(
+      metrics: calculateBacktestMetrics(
         points,
         baseTrades,
         study.portfolioRules.initialCapital,
@@ -1276,6 +1389,7 @@ async function processSingleRun(job: JobRow): Promise<void> {
 
   await heartbeat(job.id, 10);
   const { barsBySymbol, datasets } = await loadStudyData(study);
+  const benchmarkData = await loadBenchmarkData(study);
 
   if (await shouldCancel(job.id)) {
     await db
@@ -1295,18 +1409,34 @@ async function processSingleRun(job: JobRow): Promise<void> {
     dataset,
     role: "primary",
   }));
+  const benchmarkDatasetBindings = benchmarkData.datasets.map((dataset) => ({
+    dataset,
+    role: `benchmark:${dataset.symbol}`,
+  }));
+  const studyDefinition = buildStudyDefinition(study, run.parameters);
   const execution = await executeStudyRun(
-    buildStudyDefinition(study, run.parameters),
+    studyDefinition,
     barsBySymbol,
     primaryDatasetBindings,
   );
+  const enrichedResult = enrichResultMetrics({
+    result: execution.result,
+    study: studyDefinition,
+    datasets: [...datasets, ...benchmarkData.datasets],
+    barsBySymbol,
+    benchmarkBarsBySymbol: benchmarkData.barsBySymbol,
+  });
   await db
     .update(backtestRunsTable)
     .set({ status: "aggregating", updatedAt: new Date() })
     .where(eq(backtestRunsTable.id, run.id));
 
   await heartbeat(job.id, 80);
-  await persistRunArtifacts(run, execution.datasetBindings, execution.result);
+  await persistRunArtifacts(
+    run,
+    [...execution.datasetBindings, ...benchmarkDatasetBindings],
+    enrichedResult,
+  );
 }
 
 function sliceBarsByWindow(
@@ -1416,6 +1546,7 @@ async function processSweep(job: JobRow): Promise<void> {
   );
 
   const { barsBySymbol, datasets } = await loadStudyData(study);
+  const benchmarkData = await loadBenchmarkData(study);
   const results: Array<{
     run: RunRow;
     datasetBindings: RunDatasetBinding[];
@@ -1501,6 +1632,10 @@ async function processSweep(job: JobRow): Promise<void> {
           dataset,
           role: "primary",
         }));
+        const benchmarkDatasetBindings = benchmarkData.datasets.map((dataset) => ({
+          dataset,
+          role: `benchmark:${dataset.symbol}`,
+        }));
 
         if (sweep.mode === "walk_forward" && windows.length > 0) {
           const windowResults = await Promise.all(
@@ -1522,13 +1657,25 @@ async function processSweep(job: JobRow): Promise<void> {
 
           return {
             run,
-            datasetBindings: primaryDatasetBindings,
-            result: {
-              metrics: mergeWindowMetrics(windowResults),
-              trades: windowResults[0]?.trades ?? [],
-              points: windowResults[0]?.points ?? [],
-              warnings: windowResults.flatMap((windowResult) => windowResult.warnings),
-            },
+            datasetBindings: [
+              ...primaryDatasetBindings,
+              ...benchmarkDatasetBindings,
+            ],
+            result: enrichResultMetrics({
+              result: {
+                metrics: mergeWindowMetrics(windowResults),
+                trades: windowResults.flatMap((windowResult) => windowResult.trades),
+                points: windowResults.flatMap((windowResult) => windowResult.points),
+                warnings: windowResults.flatMap((windowResult) => windowResult.warnings),
+              },
+              study: studyDefinition,
+              datasets: [...datasets, ...benchmarkData.datasets],
+              barsBySymbol,
+              benchmarkBarsBySymbol: benchmarkData.barsBySymbol,
+              trialCount: candidateParameters.length,
+              oosWindowCount: windows.length,
+              parameterCount: dimensions.length,
+            }),
           };
         }
 
@@ -1540,8 +1687,19 @@ async function processSweep(job: JobRow): Promise<void> {
 
         return {
           run,
-          datasetBindings: execution.datasetBindings,
-          result: execution.result,
+          datasetBindings: [
+            ...execution.datasetBindings,
+            ...benchmarkDatasetBindings,
+          ],
+          result: enrichResultMetrics({
+            result: execution.result,
+            study: studyDefinition,
+            datasets: [...datasets, ...benchmarkData.datasets],
+            barsBySymbol,
+            benchmarkBarsBySymbol: benchmarkData.barsBySymbol,
+            trialCount: candidateParameters.length,
+            parameterCount: dimensions.length,
+          }),
         };
       }),
     );

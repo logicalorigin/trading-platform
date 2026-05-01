@@ -6,6 +6,4 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export interface JsonObject {
-  [key: string]: unknown;
-}
+export interface JsonObject { [key: string]: unknown }

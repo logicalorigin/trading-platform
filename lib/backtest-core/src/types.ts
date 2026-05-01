@@ -55,6 +55,8 @@ export type BacktestBar = {
   low: number;
   close: number;
   volume: number;
+  source?: string;
+  delayed?: boolean;
 };
 
 export type PositionState = {
@@ -65,6 +67,8 @@ export type PositionState = {
   quantity: number;
   entryValue: number;
   commissionPaid: number;
+  highestPrice?: number;
+  trailingStopPrice?: number | null;
 };
 
 export type ExecutionProfile = {
@@ -79,6 +83,14 @@ export type PortfolioRules = {
   maxGrossExposurePercent: number;
 };
 
+export type BacktestRiskRules = {
+  stopLossPercent?: number | null;
+  takeProfitPercent?: number | null;
+  trailingStopPercent?: number | null;
+  trailingActivationPercent?: number | null;
+  basis?: "position_price" | "underlying_price" | "both";
+};
+
 export type StudyDefinition = {
   strategyId: string;
   strategyVersion: string;
@@ -87,6 +99,7 @@ export type StudyDefinition = {
   from: Date;
   to: Date;
   parameters: StrategyParameters;
+  riskRules?: BacktestRiskRules;
   executionProfile: ExecutionProfile;
   portfolioRules: PortfolioRules;
 };
@@ -136,6 +149,66 @@ export type BacktestMetrics = {
   profitFactor: number;
   sharpeRatio: number;
   returnOverMaxDrawdown: number;
+  advanced?: BacktestAdvancedMetrics;
+  validation?: BacktestValidationMetrics;
+  dataQuality?: BacktestDataQualityMetrics;
+  benchmarks?: BacktestBenchmarkMetrics[];
+};
+
+export type BacktestMonteCarloMetrics = {
+  seed: number;
+  sampleCount: number;
+  p05ReturnPercent: number;
+  p50ReturnPercent: number;
+  p95ReturnPercent: number;
+  probabilityOfLossPercent: number;
+  p95MaxDrawdownPercent: number;
+};
+
+export type BacktestAdvancedMetrics = {
+  annualizedVolatilityPercent: number;
+  sortinoRatio: number;
+  calmarRatio: number;
+  expectancy: number;
+  averageWin: number;
+  averageLoss: number;
+  payoffRatio: number;
+  exposurePercent: number;
+  turnover: number;
+  maxDrawdownDurationBars: number;
+  skew: number;
+  excessKurtosis: number;
+  probabilisticSharpeRatio: number;
+  deflatedSharpeRatio: number;
+  monteCarlo: BacktestMonteCarloMetrics;
+};
+
+export type BacktestValidationMetrics = {
+  trialCount: number;
+  oosWindowCount: number;
+  parameterCount: number;
+  pboProbabilityPercent: number | null;
+  cpcvFoldCount: number | null;
+  warnings: string[];
+};
+
+export type BacktestDataQualityMetrics = {
+  sourcePolicy: string;
+  primarySource: string;
+  ibkrRecentCutoffMinutes: number;
+  coveragePercent: number;
+  missingBarCount: number;
+  delayed: boolean;
+  mixedSources: boolean;
+};
+
+export type BacktestBenchmarkMetrics = {
+  symbol: string;
+  totalReturnPercent: number;
+  maxDrawdownPercent: number;
+  beta: number | null;
+  alphaPercent: number | null;
+  correlation: number | null;
 };
 
 export type BacktestRunResult = {

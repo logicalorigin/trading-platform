@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type EvaluateSignalMonitorRequestMode =
-  (typeof EvaluateSignalMonitorRequestMode)[keyof typeof EvaluateSignalMonitorRequestMode];
+export type EvaluateSignalMonitorRequestMode = typeof EvaluateSignalMonitorRequestMode[keyof typeof EvaluateSignalMonitorRequestMode];
+
 
 export const EvaluateSignalMonitorRequestMode = {
-  hydrate: "hydrate",
-  incremental: "incremental",
+  hydrate: 'hydrate',
+  incremental: 'incremental',
 } as const;

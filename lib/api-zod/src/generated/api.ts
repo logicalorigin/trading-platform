@@ -5,1528 +5,2063 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import * as zod from "zod";
+import * as zod from 'zod';
+
 
 /**
  * Returns server health status
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
-  status: zod.enum(["ok"]),
-});
+  "status": zod.enum(['ok'])
+})
+
 
 /**
  * Returns environment, provider, and configuration status information.
  * @summary Get runtime session metadata
  */
 export const GetSessionResponse = zod.object({
-  environment: zod.enum(["paper", "live"]),
-  brokerProvider: zod.enum(["ibkr"]),
-  marketDataProvider: zod.enum(["polygon", "ibkr"]),
-  marketDataProviders: zod.object({
-    live: zod.enum(["polygon", "ibkr"]),
-    historical: zod.enum(["polygon", "ibkr"]),
-    research: zod.union([zod.enum(["polygon", "ibkr"]), zod.enum(["fmp"])]),
-  }),
-  configured: zod.object({
-    polygon: zod.boolean(),
-    ibkr: zod.boolean(),
-    research: zod.boolean(),
-  }),
-  ibkrBridge: zod.union([
-    zod.object({
-      configured: zod.boolean(),
-      authenticated: zod.boolean(),
-      connected: zod.boolean(),
-      competing: zod.boolean(),
-      selectedAccountId: zod.string().nullable(),
-      accounts: zod.array(zod.string()),
-      lastTickleAt: zod.coerce.date().nullable(),
-      lastError: zod.string().nullable(),
-      lastRecoveryAttemptAt: zod.coerce.date().nullable(),
-      lastRecoveryError: zod.string().nullable(),
-      updatedAt: zod.coerce.date(),
-      transport: zod.enum(["client_portal", "tws", "ibx"]),
-      connectionTarget: zod.string().nullable(),
-      sessionMode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
-      clientId: zod.number().nullable(),
-      marketDataMode: zod
-        .union([
-          zod.literal("live"),
-          zod.literal("frozen"),
-          zod.literal("delayed"),
-          zod.literal("delayed_frozen"),
-          zod.literal("unknown"),
-          zod.literal(null),
-        ])
-        .nullable(),
-      liveMarketDataAvailable: zod.boolean().nullable(),
-      connections: zod
-        .object({
-          clientPortal: zod.object({
-            transport: zod.enum(["client_portal", "tws"]),
-            role: zod.enum(["account", "market_data"]),
-            configured: zod.boolean(),
-            reachable: zod.boolean(),
-            authenticated: zod.boolean(),
-            competing: zod.boolean(),
-            target: zod.string().nullable(),
-            mode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
-            clientId: zod.number().nullable(),
-            selectedAccountId: zod.string().nullable(),
-            accounts: zod.array(zod.string()),
-            lastPingMs: zod.number().nullable(),
-            lastPingAt: zod.coerce.date().nullable(),
-            lastTickleAt: zod.coerce.date().nullable(),
-            lastError: zod.string().nullable(),
-            marketDataMode: zod
-              .union([
-                zod.literal("live"),
-                zod.literal("frozen"),
-                zod.literal("delayed"),
-                zod.literal("delayed_frozen"),
-                zod.literal("unknown"),
-                zod.literal(null),
-              ])
-              .nullable(),
-            liveMarketDataAvailable: zod.boolean().nullable(),
-          }),
-          tws: zod.object({
-            transport: zod.enum(["client_portal", "tws"]),
-            role: zod.enum(["account", "market_data"]),
-            configured: zod.boolean(),
-            reachable: zod.boolean(),
-            authenticated: zod.boolean(),
-            competing: zod.boolean(),
-            target: zod.string().nullable(),
-            mode: zod.union([zod.enum(["paper", "live"]), zod.null()]),
-            clientId: zod.number().nullable(),
-            selectedAccountId: zod.string().nullable(),
-            accounts: zod.array(zod.string()),
-            lastPingMs: zod.number().nullable(),
-            lastPingAt: zod.coerce.date().nullable(),
-            lastTickleAt: zod.coerce.date().nullable(),
-            lastError: zod.string().nullable(),
-            marketDataMode: zod
-              .union([
-                zod.literal("live"),
-                zod.literal("frozen"),
-                zod.literal("delayed"),
-                zod.literal("delayed_frozen"),
-                zod.literal("unknown"),
-                zod.literal(null),
-              ])
-              .nullable(),
-            liveMarketDataAvailable: zod.boolean().nullable(),
-          }),
-        })
-        .optional(),
-    }),
-    zod.null(),
-  ]),
-  timestamp: zod.coerce.date(),
-});
+  "environment": zod.enum(['paper', 'live']),
+  "brokerProvider": zod.enum(['ibkr']),
+  "marketDataProvider": zod.enum(['polygon', 'ibkr']),
+  "marketDataProviders": zod.object({
+  "live": zod.enum(['polygon', 'ibkr']),
+  "historical": zod.enum(['polygon', 'ibkr']),
+  "research": zod.union([zod.enum(['polygon', 'ibkr']),zod.enum(['fmp'])])
+}),
+  "configured": zod.object({
+  "polygon": zod.boolean(),
+  "ibkr": zod.boolean(),
+  "research": zod.boolean()
+}),
+  "ibkrBridge": zod.union([zod.object({
+  "configured": zod.boolean(),
+  "authenticated": zod.boolean(),
+  "connected": zod.boolean(),
+  "competing": zod.boolean(),
+  "selectedAccountId": zod.string().nullable(),
+  "accounts": zod.array(zod.string()),
+  "lastTickleAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "lastRecoveryAttemptAt": zod.coerce.date().nullable(),
+  "lastRecoveryError": zod.string().nullable(),
+  "updatedAt": zod.coerce.date(),
+  "transport": zod.enum(['tws']),
+  "connectionTarget": zod.string().nullable(),
+  "sessionMode": zod.union([zod.enum(['paper', 'live']),zod.null()]),
+  "clientId": zod.number().nullable(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullable(),
+  "liveMarketDataAvailable": zod.boolean().nullable(),
+  "healthFresh": zod.boolean().optional(),
+  "healthAgeMs": zod.number().nullish(),
+  "stale": zod.boolean().optional(),
+  "bridgeReachable": zod.boolean().optional(),
+  "socketConnected": zod.boolean().optional(),
+  "accountsLoaded": zod.boolean().optional(),
+  "configuredLiveMarketDataMode": zod.boolean().optional(),
+  "streamFresh": zod.boolean().optional(),
+  "streamState": zod.enum(['offline', 'login_required', 'checking', 'delayed', 'live', 'quiet', 'stale', 'capacity_limited', 'reconnecting', 'reconnect_needed']).optional(),
+  "streamStateReason": zod.string().nullish(),
+  "lastStreamEventAgeMs": zod.number().nullish(),
+  "strictReady": zod.boolean().optional(),
+  "strictReason": zod.string().nullish(),
+  "connections": zod.object({
+  "tws": zod.object({
+  "transport": zod.enum(['tws']),
+  "role": zod.enum(['market_data']),
+  "configured": zod.boolean(),
+  "reachable": zod.boolean(),
+  "authenticated": zod.boolean(),
+  "competing": zod.boolean(),
+  "target": zod.string().nullable(),
+  "mode": zod.union([zod.enum(['paper', 'live']),zod.null()]),
+  "clientId": zod.number().nullable(),
+  "selectedAccountId": zod.string().nullable(),
+  "accounts": zod.array(zod.string()),
+  "lastPingMs": zod.number().nullable(),
+  "lastPingAt": zod.coerce.date().nullable(),
+  "lastTickleAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullable(),
+  "liveMarketDataAvailable": zod.boolean().nullable(),
+  "healthFresh": zod.boolean().optional(),
+  "healthAgeMs": zod.number().nullish(),
+  "stale": zod.boolean().optional(),
+  "bridgeReachable": zod.boolean().optional(),
+  "socketConnected": zod.boolean().optional(),
+  "accountsLoaded": zod.boolean().optional(),
+  "configuredLiveMarketDataMode": zod.boolean().optional(),
+  "streamFresh": zod.boolean().optional(),
+  "streamState": zod.enum(['offline', 'login_required', 'checking', 'delayed', 'live', 'quiet', 'stale', 'capacity_limited', 'reconnecting', 'reconnect_needed']).optional(),
+  "streamStateReason": zod.string().nullish(),
+  "lastStreamEventAgeMs": zod.number().nullish(),
+  "strictReady": zod.boolean().optional(),
+  "strictReason": zod.string().nullish()
+})
+})
+}),zod.null()]),
+  "timestamp": zod.coerce.date()
+})
+
+
+/**
+ * Returns read-only bridge, API memory, chart-support, and order-capability diagnostics.
+ * @summary Get runtime diagnostics
+ */
+export const GetRuntimeDiagnosticsResponse = zod.object({
+  "timestamp": zod.coerce.date(),
+  "api": zod.object({
+  "uptimeMs": zod.number(),
+  "memoryMb": zod.object({
+  "rss": zod.number(),
+  "heapUsed": zod.number(),
+  "heapTotal": zod.number(),
+  "external": zod.number()
+})
+}),
+  "ibkr": zod.object({
+  "transport": zod.enum(['tws']),
+  "configured": zod.boolean(),
+  "bridgeUrlConfigured": zod.boolean(),
+  "bridgeTokenConfigured": zod.boolean(),
+  "legacyIbkrEnvPresent": zod.boolean(),
+  "reachable": zod.boolean(),
+  "healthError": zod.string().nullable(),
+  "connected": zod.boolean(),
+  "authenticated": zod.boolean(),
+  "competing": zod.boolean(),
+  "selectedAccountId": zod.string().nullable(),
+  "accountCount": zod.number(),
+  "connectionTarget": zod.string().nullable(),
+  "sessionMode": zod.union([zod.enum(['paper', 'live']),zod.null()]),
+  "clientId": zod.number().nullable(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullable(),
+  "liveMarketDataAvailable": zod.boolean().nullable(),
+  "healthFresh": zod.boolean().optional(),
+  "healthAgeMs": zod.number().nullish(),
+  "stale": zod.boolean().optional(),
+  "bridgeReachable": zod.boolean().optional(),
+  "socketConnected": zod.boolean().optional(),
+  "accountsLoaded": zod.boolean().optional(),
+  "configuredLiveMarketDataMode": zod.boolean().optional(),
+  "streamFresh": zod.boolean().optional(),
+  "streamState": zod.enum(['offline', 'login_required', 'checking', 'delayed', 'live', 'quiet', 'stale', 'capacity_limited', 'reconnecting', 'reconnect_needed']).optional(),
+  "streamStateReason": zod.string().nullish(),
+  "lastStreamEventAgeMs": zod.number().nullish(),
+  "strictReady": zod.boolean().optional(),
+  "strictReason": zod.string().nullish(),
+  "lastTickleAt": zod.coerce.date().nullable(),
+  "lastRecoveryAttemptAt": zod.coerce.date().nullable(),
+  "lastRecoveryError": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "orderCapability": zod.object({
+  "orderDataVisible": zod.boolean(),
+  "readOnlyModeLikely": zod.boolean(),
+  "liveActionConfirmationRequired": zod.boolean(),
+  "diagnosticsMutateOrders": zod.boolean()
+})
+})
+})
+
+
+/**
+ * @summary Get latest diagnostics rollup
+ */
+export const GetLatestDiagnosticsResponse = zod.object({
+  "timestamp": zod.coerce.date().optional(),
+  "status": zod.enum(['ok', 'degraded', 'down', 'unknown']).optional(),
+  "severity": zod.enum(['info', 'warning', 'critical']).optional(),
+  "summary": zod.string().optional(),
+  "snapshots": zod.array(zod.object({
+  "id": zod.string(),
+  "observedAt": zod.coerce.date(),
+  "subsystem": zod.string(),
+  "status": zod.enum(['ok', 'degraded', 'down', 'unknown']),
+  "severity": zod.enum(['info', 'warning', 'critical']),
+  "summary": zod.string(),
+  "dimensions": zod.record(zod.string(), zod.unknown()),
+  "metrics": zod.record(zod.string(), zod.unknown()),
+  "raw": zod.record(zod.string(), zod.unknown())
+})).optional(),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "incidentKey": zod.string(),
+  "subsystem": zod.string(),
+  "category": zod.string(),
+  "code": zod.string().nullable(),
+  "severity": zod.enum(['info', 'warning', 'critical']),
+  "status": zod.enum(['open', 'resolved']),
+  "message": zod.string(),
+  "firstSeenAt": zod.coerce.date(),
+  "lastSeenAt": zod.coerce.date(),
+  "eventCount": zod.number(),
+  "dimensions": zod.record(zod.string(), zod.unknown()),
+  "raw": zod.record(zod.string(), zod.unknown())
+})).optional(),
+  "thresholds": zod.array(zod.object({
+  "metricKey": zod.string(),
+  "label": zod.string(),
+  "subsystem": zod.string(),
+  "unit": zod.string(),
+  "warning": zod.number(),
+  "critical": zod.number(),
+  "enabled": zod.boolean(),
+  "audible": zod.boolean(),
+  "description": zod.string()
+})).optional()
+})
+
+
+/**
+ * @summary List historical diagnostic snapshots
+ */
+export const ListDiagnosticHistoryQueryParams = zod.object({
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "subsystem": zod.coerce.string().optional()
+})
+
+export const ListDiagnosticHistoryResponse = zod.object({
+  "from": zod.coerce.date().optional(),
+  "to": zod.coerce.date().optional(),
+  "resolutionMs": zod.number().optional(),
+  "points": zod.array(zod.object({
+  "at": zod.coerce.date().optional(),
+  "subsystem": zod.string().optional(),
+  "severity": zod.enum(['info', 'warning', 'critical']).optional(),
+  "status": zod.enum(['ok', 'degraded', 'down', 'unknown']).optional(),
+  "count": zod.number().optional(),
+  "metrics": zod.record(zod.string(), zod.unknown()).optional()
+})).optional(),
+  "snapshots": zod.array(zod.object({
+  "id": zod.string(),
+  "observedAt": zod.coerce.date(),
+  "subsystem": zod.string(),
+  "status": zod.enum(['ok', 'degraded', 'down', 'unknown']),
+  "severity": zod.enum(['info', 'warning', 'critical']),
+  "summary": zod.string(),
+  "dimensions": zod.record(zod.string(), zod.unknown()),
+  "metrics": zod.record(zod.string(), zod.unknown()),
+  "raw": zod.record(zod.string(), zod.unknown())
+})).optional()
+})
+
+
+/**
+ * @summary List grouped diagnostic events and incidents
+ */
+export const ListDiagnosticEventsQueryParams = zod.object({
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "subsystem": zod.coerce.string().optional(),
+  "severity": zod.enum(['info', 'warning', 'critical']).optional()
+})
+
+export const ListDiagnosticEventsResponse = zod.object({
+  "from": zod.coerce.date().optional(),
+  "to": zod.coerce.date().optional(),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "incidentKey": zod.string(),
+  "subsystem": zod.string(),
+  "category": zod.string(),
+  "code": zod.string().nullable(),
+  "severity": zod.enum(['info', 'warning', 'critical']),
+  "status": zod.enum(['open', 'resolved']),
+  "message": zod.string(),
+  "firstSeenAt": zod.coerce.date(),
+  "lastSeenAt": zod.coerce.date(),
+  "eventCount": zod.number(),
+  "dimensions": zod.record(zod.string(), zod.unknown()),
+  "raw": zod.record(zod.string(), zod.unknown())
+})).optional()
+})
+
+
+/**
+ * @summary Get diagnostic event detail
+ */
+export const GetDiagnosticEventDetailParams = zod.object({
+  "eventId": zod.coerce.string()
+})
+
+export const GetDiagnosticEventDetailResponse = zod.object({
+  "event": zod.object({
+  "id": zod.string(),
+  "incidentKey": zod.string(),
+  "subsystem": zod.string(),
+  "category": zod.string(),
+  "code": zod.string().nullable(),
+  "severity": zod.enum(['info', 'warning', 'critical']),
+  "status": zod.enum(['open', 'resolved']),
+  "message": zod.string(),
+  "firstSeenAt": zod.coerce.date(),
+  "lastSeenAt": zod.coerce.date(),
+  "eventCount": zod.number(),
+  "dimensions": zod.record(zod.string(), zod.unknown()),
+  "raw": zod.record(zod.string(), zod.unknown())
+}).optional(),
+  "relatedSnapshots": zod.array(zod.object({
+  "id": zod.string(),
+  "observedAt": zod.coerce.date(),
+  "subsystem": zod.string(),
+  "status": zod.enum(['ok', 'degraded', 'down', 'unknown']),
+  "severity": zod.enum(['info', 'warning', 'critical']),
+  "summary": zod.string(),
+  "dimensions": zod.record(zod.string(), zod.unknown()),
+  "metrics": zod.record(zod.string(), zod.unknown()),
+  "raw": zod.record(zod.string(), zod.unknown())
+})).optional()
+})
+
+
+/**
+ * @summary Get diagnostic thresholds
+ */
+export const GetDiagnosticThresholdsResponse = zod.object({
+  "thresholds": zod.array(zod.object({
+  "metricKey": zod.string(),
+  "label": zod.string(),
+  "subsystem": zod.string(),
+  "unit": zod.string(),
+  "warning": zod.number(),
+  "critical": zod.number(),
+  "enabled": zod.boolean(),
+  "audible": zod.boolean(),
+  "description": zod.string()
+})).optional()
+})
+
+
+/**
+ * @summary Update diagnostic threshold overrides
+ */
+export const UpdateDiagnosticThresholdsBody = zod.object({
+  "thresholds": zod.array(zod.object({
+  "metricKey": zod.string(),
+  "warning": zod.number().optional(),
+  "critical": zod.number().optional(),
+  "enabled": zod.boolean().optional(),
+  "audible": zod.boolean().optional()
+})).optional()
+})
+
+export const UpdateDiagnosticThresholdsResponse = zod.object({
+  "thresholds": zod.array(zod.object({
+  "metricKey": zod.string(),
+  "label": zod.string(),
+  "subsystem": zod.string(),
+  "unit": zod.string(),
+  "warning": zod.number(),
+  "critical": zod.number(),
+  "enabled": zod.boolean(),
+  "audible": zod.boolean(),
+  "description": zod.string()
+})).optional()
+})
+
+
+/**
+ * @summary Record a browser/client diagnostic event
+ */
+export const RecordClientDiagnosticEventBody = zod.object({
+  "category": zod.string().optional(),
+  "severity": zod.enum(['info', 'warning', 'critical']).optional(),
+  "code": zod.string().nullish(),
+  "message": zod.string().optional(),
+  "dimensions": zod.record(zod.string(), zod.unknown()).optional(),
+  "raw": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Export raw diagnostics for the selected window
+ */
+export const ExportDiagnosticsQueryParams = zod.object({
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "subsystem": zod.coerce.string().optional()
+})
+
+export const ExportDiagnosticsResponse = zod.record(zod.string(), zod.unknown())
+
 
 /**
  * @summary List configured broker and market data connections
  */
 export const ListBrokerConnectionsResponse = zod.object({
-  connections: zod.array(
-    zod.object({
-      id: zod.string(),
-      provider: zod.union([zod.enum(["ibkr"]), zod.enum(["polygon", "ibkr"])]),
-      name: zod.string(),
-      mode: zod.enum(["paper", "live"]),
-      status: zod.enum(["configured", "connected", "disconnected", "error"]),
-      capabilities: zod.array(zod.string()),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "connections": zod.array(zod.object({
+  "id": zod.string(),
+  "provider": zod.union([zod.enum(['ibkr']),zod.enum(['polygon', 'ibkr'])]),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "status": zod.enum(['configured', 'connected', 'disconnected', 'error']),
+  "capabilities": zod.array(zod.string()),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary List broker accounts
  */
 export const ListAccountsQueryParams = zod.object({
-  mode: zod
-    .enum(["paper", "live"])
-    .optional()
-    .describe("Filter by paper or live environment."),
-});
+  "mode": zod.enum(['paper', 'live']).optional().describe('Filter by paper or live environment.')
+})
 
 export const ListAccountsResponse = zod.object({
-  accounts: zod.array(
-    zod.object({
-      id: zod.string(),
-      providerAccountId: zod.string(),
-      provider: zod.enum(["ibkr"]),
-      mode: zod.enum(["paper", "live"]),
-      displayName: zod.string(),
-      currency: zod.string(),
-      buyingPower: zod.number(),
-      cash: zod.number(),
-      netLiquidation: zod.number(),
-      accountType: zod.string().nullish(),
-      totalCashValue: zod.number().nullish(),
-      settledCash: zod.number().nullish(),
-      accruedCash: zod.number().nullish(),
-      initialMargin: zod.number().nullish(),
-      maintenanceMargin: zod.number().nullish(),
-      excessLiquidity: zod.number().nullish(),
-      cushion: zod.number().nullish(),
-      sma: zod.number().nullish(),
-      dayTradingBuyingPower: zod.number().nullish(),
-      regTInitialMargin: zod.number().nullish(),
-      grossPositionValue: zod.number().nullish(),
-      leverage: zod.number().nullish(),
-      dayTradesRemaining: zod.number().nullish(),
-      isPatternDayTrader: zod.boolean().nullish(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "accounts": zod.array(zod.object({
+  "id": zod.string(),
+  "providerAccountId": zod.string(),
+  "provider": zod.enum(['ibkr']),
+  "mode": zod.enum(['paper', 'live']),
+  "displayName": zod.string(),
+  "currency": zod.string(),
+  "buyingPower": zod.number(),
+  "cash": zod.number(),
+  "netLiquidation": zod.number(),
+  "accountType": zod.string().nullish(),
+  "totalCashValue": zod.number().nullish(),
+  "settledCash": zod.number().nullish(),
+  "accruedCash": zod.number().nullish(),
+  "initialMargin": zod.number().nullish(),
+  "maintenanceMargin": zod.number().nullish(),
+  "excessLiquidity": zod.number().nullish(),
+  "cushion": zod.number().nullish(),
+  "sma": zod.number().nullish(),
+  "dayTradingBuyingPower": zod.number().nullish(),
+  "regTInitialMargin": zod.number().nullish(),
+  "grossPositionValue": zod.number().nullish(),
+  "leverage": zod.number().nullish(),
+  "dayTradesRemaining": zod.number().nullish(),
+  "isPatternDayTrader": zod.boolean().nullish(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary Get IBKR Flex setup and refresh health
  */
 export const GetFlexHealthResponse = zod.object({
-  bridgeConnected: zod.boolean().nullable(),
-  flexConfigured: zod.boolean(),
-  flexTokenPresent: zod.boolean(),
-  flexQueryIdPresent: zod.boolean(),
-  schemaReady: zod.boolean(),
-  missingTables: zod.array(zod.string()),
-  schemaError: zod.string().nullable(),
-  lastSuccessfulRefreshAt: zod.coerce.date().nullable(),
-  lastAttemptAt: zod.coerce.date().nullable(),
-  lastStatus: zod.string().nullable(),
-  lastError: zod.string().nullable(),
-  snapshotsRecording: zod.boolean(),
-  lastSnapshotAt: zod.coerce.date().nullable(),
-  snapshotCoverageStartAt: zod.coerce.date().nullable(),
-  snapshotCoverageEndAt: zod.coerce.date().nullable(),
-  snapshotPointCount: zod.number(),
-  flexNavCoverageStartDate: zod.coerce.date().nullable(),
-  flexNavCoverageEndDate: zod.coerce.date().nullable(),
-  flexNavRowCount: zod.number(),
-});
+  "bridgeConnected": zod.boolean().nullable(),
+  "flexConfigured": zod.boolean(),
+  "flexTokenPresent": zod.boolean(),
+  "flexQueryIdPresent": zod.boolean(),
+  "schemaReady": zod.boolean(),
+  "missingTables": zod.array(zod.string()),
+  "schemaError": zod.string().nullable(),
+  "lastSuccessfulRefreshAt": zod.coerce.date().nullable(),
+  "lastAttemptAt": zod.coerce.date().nullable(),
+  "lastStatus": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "snapshotsRecording": zod.boolean(),
+  "lastSnapshotAt": zod.coerce.date().nullable(),
+  "snapshotCoverageStartAt": zod.coerce.date().nullable(),
+  "snapshotCoverageEndAt": zod.coerce.date().nullable(),
+  "snapshotPointCount": zod.number(),
+  "flexNavCoverageStartDate": zod.coerce.date().nullable(),
+  "flexNavCoverageEndDate": zod.coerce.date().nullable(),
+  "flexNavRowCount": zod.number()
+})
+
 
 /**
  * @summary Test the configured IBKR Flex token and query
  */
 export const TestFlexTokenResponse = zod.object({
-  ok: zod.boolean(),
-  message: zod.string(),
-  runId: zod.string(),
-  referenceCode: zod.string(),
-  counts: zod.record(zod.string(), zod.unknown()),
-});
+  "ok": zod.boolean(),
+  "message": zod.string(),
+  "runId": zod.string(),
+  "referenceCode": zod.string(),
+  "counts": zod.record(zod.string(), zod.unknown())
+})
+
 
 /**
  * @summary Get live account header metrics
  */
 export const GetAccountSummaryParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountSummaryQueryParams = zod.object({
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountSummaryResponse = zod.object({
-  accountId: zod.string(),
-  isCombined: zod.boolean(),
-  mode: zod.enum(["paper", "live"]),
-  currency: zod.string(),
-  accounts: zod.array(
-    zod.object({
-      id: zod.string(),
-      displayName: zod.string(),
-      currency: zod.string(),
-      live: zod.boolean(),
-      accountType: zod.string().nullable(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-  updatedAt: zod.coerce.date(),
-  fx: zod.object({
-    baseCurrency: zod.string(),
-    timestamp: zod.coerce.date().nullable(),
-    rates: zod.record(zod.string(), zod.number().nullable()),
-    warning: zod.string().nullable(),
-  }),
-  badges: zod.record(zod.string(), zod.unknown()),
-  metrics: zod.object({
-    netLiquidation: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    totalCash: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    buyingPower: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    marginUsed: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    maintenanceMargin: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    maintenanceMarginCushionPercent: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    dayPnl: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    dayPnlPercent: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    totalPnl: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    totalPnlPercent: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    settledCash: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    unsettledCash: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    sma: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    dayTradingBuyingPower: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    regTInitialMargin: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    leverage: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-    grossPositionValue: zod
-      .object({
-        value: zod.number().nullable(),
-        currency: zod.string().nullable(),
-        source: zod.enum([
-          "IBKR_ACCOUNT_SUMMARY",
-          "IBKR_POSITIONS",
-          "FLEX",
-          "LOCAL_LEDGER",
-        ]),
-        field: zod.string(),
-        updatedAt: zod.coerce.date().nullable(),
-      })
-      .optional(),
-  }),
-});
+  "accountId": zod.string(),
+  "isCombined": zod.boolean(),
+  "mode": zod.enum(['paper', 'live']),
+  "currency": zod.string(),
+  "accounts": zod.array(zod.object({
+  "id": zod.string(),
+  "displayName": zod.string(),
+  "currency": zod.string(),
+  "live": zod.boolean(),
+  "accountType": zod.string().nullable(),
+  "updatedAt": zod.coerce.date()
+})),
+  "updatedAt": zod.coerce.date(),
+  "fx": zod.object({
+  "baseCurrency": zod.string(),
+  "timestamp": zod.coerce.date().nullable(),
+  "rates": zod.record(zod.string(), zod.number().nullable()),
+  "warning": zod.string().nullable()
+}),
+  "badges": zod.record(zod.string(), zod.unknown()),
+  "metrics": zod.object({
+  "netLiquidation": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "totalCash": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "buyingPower": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "marginUsed": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "maintenanceMargin": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "maintenanceMarginCushionPercent": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "dayPnl": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "dayPnlPercent": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "totalPnl": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "totalPnlPercent": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "settledCash": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "unsettledCash": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "sma": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "dayTradingBuyingPower": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "regTInitialMargin": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "leverage": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional(),
+  "grossPositionValue": zod.object({
+  "value": zod.number().nullable(),
+  "currency": zod.string().nullable(),
+  "source": zod.enum(['IBKR_ACCOUNT_SUMMARY', 'IBKR_POSITIONS', 'FLEX', 'LOCAL_LEDGER', 'SHADOW_LEDGER']),
+  "field": zod.string(),
+  "updatedAt": zod.coerce.date().nullable()
+}).optional()
+})
+})
+
 
 /**
  * @summary Get Flex and intraday NAV history
  */
 export const GetAccountEquityHistoryParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountEquityHistoryQueryParams = zod.object({
-  range: zod.enum(["1W", "1M", "3M", "YTD", "1Y", "ALL"]).optional(),
-  benchmark: zod.coerce.string().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional(),
+  "benchmark": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountEquityHistoryResponse = zod.object({
-  accountId: zod.string(),
-  range: zod.enum(["1W", "1M", "3M", "YTD", "1Y", "ALL"]),
-  currency: zod.string(),
-  flexConfigured: zod.boolean(),
-  lastFlexRefreshAt: zod.coerce.date().nullable(),
-  benchmark: zod.string().nullable(),
-  points: zod.array(
-    zod.object({
-      timestamp: zod.coerce.date(),
-      netLiquidation: zod.number(),
-      currency: zod.string(),
-      source: zod.enum(["FLEX", "LOCAL_LEDGER"]),
-      deposits: zod.number(),
-      withdrawals: zod.number(),
-      dividends: zod.number(),
-      fees: zod.number(),
-      returnPercent: zod.number(),
-      benchmarkPercent: zod.number().nullable(),
-    }),
-  ),
-  events: zod.array(
-    zod.object({
-      timestamp: zod.coerce.date(),
-      type: zod.string(),
-      amount: zod.number(),
-      currency: zod.string(),
-      source: zod.string(),
-    }),
-  ),
-});
+  "accountId": zod.string(),
+  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']),
+  "currency": zod.string(),
+  "flexConfigured": zod.boolean(),
+  "lastFlexRefreshAt": zod.coerce.date().nullable(),
+  "benchmark": zod.string().nullable(),
+  "asOf": zod.coerce.date().nullable(),
+  "latestSnapshotAt": zod.coerce.date().nullable(),
+  "isStale": zod.boolean(),
+  "staleReason": zod.string().nullable(),
+  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger']).nullable(),
+  "liveTerminalIncluded": zod.boolean(),
+  "points": zod.array(zod.object({
+  "timestamp": zod.coerce.date(),
+  "netLiquidation": zod.number(),
+  "currency": zod.string(),
+  "source": zod.enum(['FLEX', 'LOCAL_LEDGER', 'IBKR_ACCOUNT_SUMMARY', 'SHADOW_LEDGER']),
+  "deposits": zod.number(),
+  "withdrawals": zod.number(),
+  "dividends": zod.number(),
+  "fees": zod.number(),
+  "returnPercent": zod.number(),
+  "benchmarkPercent": zod.number().nullable()
+})),
+  "events": zod.array(zod.object({
+  "timestamp": zod.coerce.date(),
+  "type": zod.string(),
+  "amount": zod.number(),
+  "currency": zod.string(),
+  "source": zod.string()
+}))
+})
+
 
 /**
  * @summary Get allocation and exposure summary
  */
 export const GetAccountAllocationParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountAllocationQueryParams = zod.object({
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountAllocationResponse = zod.object({
-  accountId: zod.string(),
-  currency: zod.string(),
-  assetClass: zod.array(
-    zod.object({
-      label: zod.string(),
-      value: zod.number(),
-      weightPercent: zod.number().nullable(),
-      source: zod.string(),
-    }),
-  ),
-  sector: zod.array(
-    zod.object({
-      label: zod.string(),
-      value: zod.number(),
-      weightPercent: zod.number().nullable(),
-      source: zod.string(),
-    }),
-  ),
-  exposure: zod.object({
-    grossLong: zod.number(),
-    grossShort: zod.number(),
-    netExposure: zod.number(),
-  }),
-  updatedAt: zod.coerce.date(),
-});
+  "accountId": zod.string(),
+  "currency": zod.string(),
+  "assetClass": zod.array(zod.object({
+  "label": zod.string(),
+  "value": zod.number(),
+  "weightPercent": zod.number().nullable(),
+  "source": zod.string()
+})),
+  "sector": zod.array(zod.object({
+  "label": zod.string(),
+  "value": zod.number(),
+  "weightPercent": zod.number().nullable(),
+  "source": zod.string()
+})),
+  "exposure": zod.object({
+  "grossLong": zod.number(),
+  "grossShort": zod.number(),
+  "netExposure": zod.number()
+}),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Get current positions with lots and open order context
  */
 export const GetAccountPositionsParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountPositionsQueryParams = zod.object({
-  assetClass: zod.coerce.string().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "assetClass": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountPositionsResponse = zod.object({
-  accountId: zod.string(),
-  currency: zod.string(),
-  positions: zod.array(
-    zod.object({
-      id: zod.string(),
-      accountId: zod.string(),
-      accounts: zod.array(zod.string()),
-      symbol: zod.string(),
-      description: zod.string(),
-      assetClass: zod.string(),
-      sector: zod.string(),
-      quantity: zod.number(),
-      averageCost: zod.number(),
-      mark: zod.number(),
-      dayChange: zod.number().nullable(),
-      dayChangePercent: zod.number().nullable(),
-      unrealizedPnl: zod.number(),
-      unrealizedPnlPercent: zod.number(),
-      marketValue: zod.number(),
-      weightPercent: zod.number().nullable(),
-      betaWeightedDelta: zod.number().nullable(),
-      lots: zod.array(
-        zod.object({
-          accountId: zod.string(),
-          symbol: zod.string(),
-          quantity: zod.number(),
-          averageCost: zod.number(),
-          marketPrice: zod.number().nullable(),
-          marketValue: zod.number().nullable(),
-          unrealizedPnl: zod.number().nullable(),
-          asOf: zod.coerce.date(),
-          source: zod.string(),
-        }),
-      ),
-      openOrders: zod.array(
-        zod.object({
-          id: zod.string(),
-          accountId: zod.string(),
-          mode: zod.enum(["paper", "live"]),
-          confirm: zod.boolean().optional(),
-          symbol: zod.string(),
-          assetClass: zod.enum(["equity", "option"]),
-          side: zod.enum(["buy", "sell"]),
-          type: zod.enum(["market", "limit", "stop", "stop_limit"]),
-          timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
-          status: zod.enum([
-            "pending_submit",
-            "submitted",
-            "accepted",
-            "partially_filled",
-            "filled",
-            "canceled",
-            "rejected",
-            "expired",
-          ]),
-          quantity: zod.number(),
-          filledQuantity: zod.number(),
-          limitPrice: zod.number().nullable(),
-          stopPrice: zod.number().nullable(),
-          placedAt: zod.coerce.date(),
-          updatedAt: zod.coerce.date(),
-          optionContract: zod.union([
-            zod.object({
-              ticker: zod.string(),
-              underlying: zod.string(),
-              expirationDate: zod.coerce.date(),
-              strike: zod.number(),
-              right: zod.enum(["call", "put"]),
-              multiplier: zod.number(),
-              sharesPerContract: zod.number(),
-              providerContractId: zod.string().nullish(),
-            }),
-            zod.null(),
-          ]),
-        }),
-      ),
-      source: zod.string(),
-    }),
-  ),
-  totals: zod.record(zod.string(), zod.unknown()),
-  updatedAt: zod.coerce.date(),
-});
+  "accountId": zod.string(),
+  "currency": zod.string(),
+  "positions": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "accounts": zod.array(zod.string()),
+  "symbol": zod.string(),
+  "description": zod.string(),
+  "assetClass": zod.string(),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]).optional(),
+  "sector": zod.string(),
+  "quantity": zod.number(),
+  "averageCost": zod.number(),
+  "mark": zod.number(),
+  "dayChange": zod.number().nullable(),
+  "dayChangePercent": zod.number().nullable(),
+  "unrealizedPnl": zod.number(),
+  "unrealizedPnlPercent": zod.number(),
+  "marketValue": zod.number(),
+  "weightPercent": zod.number().nullable(),
+  "betaWeightedDelta": zod.number().nullable(),
+  "lots": zod.array(zod.object({
+  "accountId": zod.string(),
+  "symbol": zod.string(),
+  "quantity": zod.number(),
+  "averageCost": zod.number(),
+  "marketPrice": zod.number().nullable(),
+  "marketValue": zod.number().nullable(),
+  "unrealizedPnl": zod.number().nullable(),
+  "asOf": zod.coerce.date(),
+  "source": zod.string()
+})),
+  "openOrders": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "quantity": zod.number(),
+  "filledQuantity": zod.number(),
+  "limitPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "placedAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()])
+})),
+  "source": zod.string(),
+  "sourceType": zod.enum(['manual', 'automation', 'mixed']).optional(),
+  "strategyLabel": zod.string().nullish(),
+  "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),
+  "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional()
+})),
+  "totals": zod.record(zod.string(), zod.unknown()),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Get closed trades and recent live executions
  */
 export const GetAccountClosedTradesParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountClosedTradesQueryParams = zod.object({
-  from: zod.date().optional(),
-  to: zod.date().optional(),
-  symbol: zod.coerce.string().optional(),
-  assetClass: zod.coerce.string().optional(),
-  pnlSign: zod.enum(["all", "winners", "losers"]).optional(),
-  holdDuration: zod.coerce.string().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "symbol": zod.coerce.string().optional(),
+  "assetClass": zod.coerce.string().optional(),
+  "pnlSign": zod.enum(['all', 'winners', 'losers']).optional(),
+  "holdDuration": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountClosedTradesResponse = zod.object({
-  accountId: zod.string(),
-  currency: zod.string(),
-  trades: zod.array(
-    zod.object({
-      id: zod.string(),
-      source: zod.enum(["LIVE", "FLEX"]),
-      accountId: zod.string(),
-      symbol: zod.string(),
-      side: zod.string(),
-      assetClass: zod.string(),
-      quantity: zod.number(),
-      openDate: zod.coerce.date().nullable(),
-      closeDate: zod.coerce.date().nullable(),
-      avgOpen: zod.number().nullable(),
-      avgClose: zod.number().nullable(),
-      realizedPnl: zod.number().nullable(),
-      realizedPnlPercent: zod.number().nullable(),
-      holdDurationMinutes: zod.number().nullable(),
-      commissions: zod.number().nullable(),
-      currency: zod.string(),
-    }),
-  ),
-  summary: zod.record(zod.string(), zod.unknown()),
-  updatedAt: zod.coerce.date(),
-});
+  "accountId": zod.string(),
+  "currency": zod.string(),
+  "trades": zod.array(zod.object({
+  "id": zod.string(),
+  "source": zod.enum(['LIVE', 'FLEX', 'SHADOW']),
+  "accountId": zod.string(),
+  "symbol": zod.string(),
+  "side": zod.string(),
+  "assetClass": zod.string(),
+  "quantity": zod.number(),
+  "openDate": zod.coerce.date().nullable(),
+  "closeDate": zod.coerce.date().nullable(),
+  "avgOpen": zod.number().nullable(),
+  "avgClose": zod.number().nullable(),
+  "realizedPnl": zod.number().nullable(),
+  "realizedPnlPercent": zod.number().nullable(),
+  "holdDurationMinutes": zod.number().nullable(),
+  "commissions": zod.number().nullable(),
+  "currency": zod.string(),
+  "sourceType": zod.enum(['manual', 'automation']).optional(),
+  "strategyLabel": zod.string().nullish(),
+  "candidateId": zod.string().nullish(),
+  "deploymentId": zod.string().nullish(),
+  "deploymentName": zod.string().nullish(),
+  "sourceEventId": zod.string().nullish()
+})),
+  "summary": zod.record(zod.string(), zod.unknown()),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Get working or historical orders for an account
  */
 export const GetAccountOrdersParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountOrdersQueryParams = zod.object({
-  tab: zod.enum(["working", "history"]).optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "tab": zod.enum(['working', 'history']).optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountOrdersResponse = zod.object({
-  accountId: zod.string(),
-  tab: zod.enum(["working", "history"]),
-  currency: zod.string(),
-  orders: zod.array(
-    zod.object({
-      id: zod.string(),
-      accountId: zod.string(),
-      symbol: zod.string(),
-      side: zod.enum(["buy", "sell"]),
-      type: zod.enum(["market", "limit", "stop", "stop_limit"]),
-      assetClass: zod.enum(["equity", "option"]),
-      quantity: zod.number(),
-      filledQuantity: zod.number(),
-      limitPrice: zod.number().nullable(),
-      stopPrice: zod.number().nullable(),
-      timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
-      status: zod.enum([
-        "pending_submit",
-        "submitted",
-        "accepted",
-        "partially_filled",
-        "filled",
-        "canceled",
-        "rejected",
-        "expired",
-      ]),
-      placedAt: zod.coerce.date(),
-      filledAt: zod.coerce.date().nullable(),
-      updatedAt: zod.coerce.date(),
-      averageFillPrice: zod.number().nullable(),
-      commission: zod.number().nullable(),
-      source: zod.string(),
-    }),
-  ),
-  updatedAt: zod.coerce.date(),
-});
+  "accountId": zod.string(),
+  "tab": zod.enum(['working', 'history']),
+  "currency": zod.string(),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().optional(),
+  "stale": zod.boolean().optional(),
+  "debug": zod.object({
+  "message": zod.string(),
+  "code": zod.string(),
+  "timeoutMs": zod.number().optional()
+}).optional(),
+  "orders": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "symbol": zod.string(),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "assetClass": zod.enum(['equity', 'option']),
+  "quantity": zod.number(),
+  "filledQuantity": zod.number(),
+  "limitPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "placedAt": zod.coerce.date(),
+  "filledAt": zod.coerce.date().nullable(),
+  "updatedAt": zod.coerce.date(),
+  "averageFillPrice": zod.number().nullable(),
+  "commission": zod.number().nullable(),
+  "source": zod.string(),
+  "sourceType": zod.enum(['manual', 'automation']).optional(),
+  "strategyLabel": zod.string().nullish(),
+  "candidateId": zod.string().nullish(),
+  "deploymentId": zod.string().nullish(),
+  "deploymentName": zod.string().nullish(),
+  "sourceEventId": zod.string().nullish()
+})),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Cancel a working order from the Account screen
  */
 export const CancelAccountOrderParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-  orderId: zod.coerce.string(),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.'),
+  "orderId": zod.coerce.string()
+})
 
 export const CancelAccountOrderBody = zod.object({
-  confirm: zod.boolean().optional(),
-});
+  "confirm": zod.boolean().optional()
+})
 
 export const CancelAccountOrderResponse = zod.object({
-  orderId: zod.string(),
-  accountId: zod.string().nullable(),
-  message: zod.string(),
-  submittedAt: zod.coerce.date(),
-});
+  "orderId": zod.string(),
+  "accountId": zod.string().nullable(),
+  "message": zod.string(),
+  "submittedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Get portfolio risk dashboard metrics
  */
 export const GetAccountRiskParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountRiskQueryParams = zod.object({
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountRiskResponse = zod.object({
-  accountId: zod.string(),
-  currency: zod.string(),
-  concentration: zod.record(zod.string(), zod.unknown()),
-  winnersLosers: zod.record(zod.string(), zod.unknown()),
-  margin: zod.record(zod.string(), zod.unknown()),
-  greeks: zod.record(zod.string(), zod.unknown()),
-  expiryConcentration: zod.record(zod.string(), zod.unknown()),
-  updatedAt: zod.coerce.date(),
-});
+  "accountId": zod.string(),
+  "currency": zod.string(),
+  "concentration": zod.record(zod.string(), zod.unknown()),
+  "winnersLosers": zod.record(zod.string(), zod.unknown()),
+  "margin": zod.record(zod.string(), zod.unknown()),
+  "greeks": zod.record(zod.string(), zod.unknown()),
+  "expiryConcentration": zod.record(zod.string(), zod.unknown()),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Get cash and funding activity
  */
 export const GetAccountCashActivityParams = zod.object({
-  accountId: zod.coerce
-    .string()
-    .describe('IBKR account id or the virtual \"combined\" account id.'),
-});
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
 
 export const GetAccountCashActivityQueryParams = zod.object({
-  from: zod.date().optional(),
-  to: zod.date().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetAccountCashActivityResponse = zod.object({
-  accountId: zod.string(),
-  currency: zod.string(),
-  settledCash: zod.number().nullable(),
-  unsettledCash: zod.number().nullable(),
-  totalCash: zod.number().nullable(),
-  dividendsMonth: zod.number(),
-  dividendsYtd: zod.number(),
-  interestPaidEarnedYtd: zod.number(),
-  feesYtd: zod.number(),
-  activities: zod.array(
-    zod.object({
-      id: zod.string(),
-      accountId: zod.string(),
-      date: zod.coerce.date(),
-      type: zod.string(),
-      description: zod.string().nullable(),
-      amount: zod.number(),
-      currency: zod.string(),
-      source: zod.string(),
-    }),
-  ),
-  dividends: zod.array(
-    zod.object({
-      id: zod.string(),
-      accountId: zod.string(),
-      symbol: zod.string().nullable(),
-      description: zod.string().nullable(),
-      paidDate: zod.coerce.date(),
-      amount: zod.number(),
-      currency: zod.string(),
-      source: zod.string(),
-    }),
-  ),
-  updatedAt: zod.coerce.date(),
-});
+  "accountId": zod.string(),
+  "currency": zod.string(),
+  "settledCash": zod.number().nullable(),
+  "unsettledCash": zod.number().nullable(),
+  "totalCash": zod.number().nullable(),
+  "dividendsMonth": zod.number(),
+  "dividendsYtd": zod.number(),
+  "interestPaidEarnedYtd": zod.number(),
+  "feesYtd": zod.number(),
+  "activities": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "date": zod.coerce.date(),
+  "type": zod.string(),
+  "description": zod.string().nullable(),
+  "amount": zod.number(),
+  "currency": zod.string(),
+  "source": zod.string()
+})),
+  "dividends": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "symbol": zod.string().nullable(),
+  "description": zod.string().nullable(),
+  "paidDate": zod.coerce.date(),
+  "amount": zod.number(),
+  "currency": zod.string(),
+  "source": zod.string()
+})),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary List saved watchlists
  */
 export const ListWatchlistsResponse = zod.object({
-  watchlists: zod.array(
-    zod.object({
-      id: zod.string(),
-      name: zod.string(),
-      isDefault: zod.boolean(),
-      items: zod.array(
-        zod.object({
-          id: zod.string(),
-          symbol: zod.string(),
-          sortOrder: zod.number(),
-          addedAt: zod.coerce.date(),
-        }),
-      ),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "watchlists": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "isDefault": zod.boolean(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "market": zod.union([zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),zod.null()]),
+  "normalizedExchangeMic": zod.string().nullable(),
+  "exchangeDisplay": zod.string().nullable(),
+  "countryCode": zod.string().nullable(),
+  "exchangeCountryCode": zod.string().nullable(),
+  "sector": zod.string().nullable(),
+  "industry": zod.string().nullable(),
+  "sortOrder": zod.number(),
+  "addedAt": zod.coerce.date()
+})),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary List open positions
  */
 export const ListPositionsQueryParams = zod.object({
-  accountId: zod.coerce.string().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "accountId": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const ListPositionsResponse = zod.object({
-  positions: zod.array(
-    zod.object({
-      id: zod.string(),
-      accountId: zod.string(),
-      symbol: zod.string(),
-      assetClass: zod.enum(["equity", "option"]),
-      quantity: zod.number(),
-      averagePrice: zod.number(),
-      marketPrice: zod.number(),
-      marketValue: zod.number(),
-      unrealizedPnl: zod.number(),
-      unrealizedPnlPercent: zod.number(),
-      optionContract: zod.union([
-        zod.object({
-          ticker: zod.string(),
-          underlying: zod.string(),
-          expirationDate: zod.coerce.date(),
-          strike: zod.number(),
-          right: zod.enum(["call", "put"]),
-          multiplier: zod.number(),
-          sharesPerContract: zod.number(),
-          providerContractId: zod.string().nullish(),
-        }),
-        zod.null(),
-      ]),
-    }),
-  ),
-});
+  "positions": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "quantity": zod.number(),
+  "averagePrice": zod.number(),
+  "marketPrice": zod.number(),
+  "marketValue": zod.number(),
+  "unrealizedPnl": zod.number(),
+  "unrealizedPnlPercent": zod.number(),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()])
+}))
+})
+
 
 /**
  * @summary List orders
  */
 export const ListOrdersQueryParams = zod.object({
-  accountId: zod.coerce.string().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-  status: zod
-    .enum([
-      "pending_submit",
-      "submitted",
-      "accepted",
-      "partially_filled",
-      "filled",
-      "canceled",
-      "rejected",
-      "expired",
-    ])
-    .optional(),
-});
+  "accountId": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional(),
+  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
+})
 
 export const ListOrdersResponse = zod.object({
-  orders: zod.array(
-    zod.object({
-      id: zod.string(),
-      accountId: zod.string(),
-      mode: zod.enum(["paper", "live"]),
-      confirm: zod.boolean().optional(),
-      symbol: zod.string(),
-      assetClass: zod.enum(["equity", "option"]),
-      side: zod.enum(["buy", "sell"]),
-      type: zod.enum(["market", "limit", "stop", "stop_limit"]),
-      timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
-      status: zod.enum([
-        "pending_submit",
-        "submitted",
-        "accepted",
-        "partially_filled",
-        "filled",
-        "canceled",
-        "rejected",
-        "expired",
-      ]),
-      quantity: zod.number(),
-      filledQuantity: zod.number(),
-      limitPrice: zod.number().nullable(),
-      stopPrice: zod.number().nullable(),
-      placedAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-      optionContract: zod.union([
-        zod.object({
-          ticker: zod.string(),
-          underlying: zod.string(),
-          expirationDate: zod.coerce.date(),
-          strike: zod.number(),
-          right: zod.enum(["call", "put"]),
-          multiplier: zod.number(),
-          sharesPerContract: zod.number(),
-          providerContractId: zod.string().nullish(),
-        }),
-        zod.null(),
-      ]),
-    }),
-  ),
-});
+  "orders": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "quantity": zod.number(),
+  "filledQuantity": zod.number(),
+  "limitPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "placedAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()])
+})),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().optional(),
+  "stale": zod.boolean().optional(),
+  "debug": zod.object({
+  "message": zod.string(),
+  "code": zod.string(),
+  "timeoutMs": zod.number().optional()
+}).optional()
+})
+
 
 /**
  * @summary Submit an order
  */
 export const PlaceOrderBody = zod.object({
-  accountId: zod.string(),
-  mode: zod.enum(["paper", "live"]),
-  symbol: zod.string(),
-  assetClass: zod.enum(["equity", "option"]),
-  side: zod.enum(["buy", "sell"]),
-  type: zod.enum(["market", "limit", "stop", "stop_limit"]),
-  quantity: zod.number(),
-  limitPrice: zod.number().nullish(),
-  stopPrice: zod.number().nullish(),
-  timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
-  optionContract: zod.union([
-    zod.object({
-      ticker: zod.string(),
-      underlying: zod.string(),
-      expirationDate: zod.coerce.date(),
-      strike: zod.number(),
-      right: zod.enum(["call", "put"]),
-      multiplier: zod.number(),
-      sharesPerContract: zod.number(),
-      providerContractId: zod.string().nullish(),
-    }),
-    zod.null(),
-  ]),
-});
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "quantity": zod.number(),
+  "limitPrice": zod.number().nullish(),
+  "stopPrice": zod.number().nullish(),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "source": zod.enum(['manual', 'automation']).optional(),
+  "sourceEventId": zod.string().nullish(),
+  "clientOrderId": zod.string().nullish(),
+  "payload": zod.record(zod.string(), zod.unknown()).optional()
+})
+
 
 /**
  * @summary Preview a normalized IBKR order payload before submission
  */
 export const PreviewOrderBody = zod.object({
-  accountId: zod.string(),
-  mode: zod.enum(["paper", "live"]),
-  symbol: zod.string(),
-  assetClass: zod.enum(["equity", "option"]),
-  side: zod.enum(["buy", "sell"]),
-  type: zod.enum(["market", "limit", "stop", "stop_limit"]),
-  quantity: zod.number(),
-  limitPrice: zod.number().nullish(),
-  stopPrice: zod.number().nullish(),
-  timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
-  optionContract: zod.union([
-    zod.object({
-      ticker: zod.string(),
-      underlying: zod.string(),
-      expirationDate: zod.coerce.date(),
-      strike: zod.number(),
-      right: zod.enum(["call", "put"]),
-      multiplier: zod.number(),
-      sharesPerContract: zod.number(),
-      providerContractId: zod.string().nullish(),
-    }),
-    zod.null(),
-  ]),
-});
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "quantity": zod.number(),
+  "limitPrice": zod.number().nullish(),
+  "stopPrice": zod.number().nullish(),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "source": zod.enum(['manual', 'automation']).optional(),
+  "sourceEventId": zod.string().nullish(),
+  "clientOrderId": zod.string().nullish(),
+  "payload": zod.record(zod.string(), zod.unknown()).optional()
+})
 
 export const PreviewOrderResponse = zod.object({
-  accountId: zod.string(),
-  mode: zod.enum(["paper", "live"]),
-  symbol: zod.string(),
-  assetClass: zod.enum(["equity", "option"]),
-  resolvedContractId: zod.number(),
-  orderPayload: zod.record(zod.string(), zod.unknown()),
-  optionContract: zod.union([
-    zod.object({
-      ticker: zod.string(),
-      underlying: zod.string(),
-      expirationDate: zod.coerce.date(),
-      strike: zod.number(),
-      right: zod.enum(["call", "put"]),
-      multiplier: zod.number(),
-      sharesPerContract: zod.number(),
-      providerContractId: zod.string().nullish(),
-    }),
-    zod.null(),
-  ]),
-});
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "resolvedContractId": zod.number(),
+  "orderPayload": zod.record(zod.string(), zod.unknown()),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()])
+})
+
+
+/**
+ * @summary Preview an internal Shadow account fill
+ */
+export const PreviewShadowOrderBody = zod.object({
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "quantity": zod.number(),
+  "limitPrice": zod.number().nullish(),
+  "stopPrice": zod.number().nullish(),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "source": zod.enum(['manual', 'automation']).optional(),
+  "sourceEventId": zod.string().nullish(),
+  "clientOrderId": zod.string().nullish(),
+  "payload": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+export const PreviewShadowOrderResponse = zod.object({
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "resolvedContractId": zod.number(),
+  "orderPayload": zod.record(zod.string(), zod.unknown()),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()])
+})
+
+
+/**
+ * @summary Record an internal Shadow account fill
+ */
+export const PlaceShadowOrderBody = zod.object({
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "quantity": zod.number(),
+  "limitPrice": zod.number().nullish(),
+  "stopPrice": zod.number().nullish(),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "source": zod.enum(['manual', 'automation']).optional(),
+  "sourceEventId": zod.string().nullish(),
+  "clientOrderId": zod.string().nullish(),
+  "payload": zod.record(zod.string(), zod.unknown()).optional()
+})
+
 
 /**
  * @summary Submit either a normalized order request or raw IBKR order payloads
  */
-export const SubmitOrdersBody = zod.union([
-  zod.object({
-    accountId: zod.string(),
-    mode: zod.enum(["paper", "live"]),
-    symbol: zod.string(),
-    assetClass: zod.enum(["equity", "option"]),
-    side: zod.enum(["buy", "sell"]),
-    type: zod.enum(["market", "limit", "stop", "stop_limit"]),
-    quantity: zod.number(),
-    limitPrice: zod.number().nullish(),
-    stopPrice: zod.number().nullish(),
-    timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
-    optionContract: zod.union([
-      zod.object({
-        ticker: zod.string(),
-        underlying: zod.string(),
-        expirationDate: zod.coerce.date(),
-        strike: zod.number(),
-        right: zod.enum(["call", "put"]),
-        multiplier: zod.number(),
-        sharesPerContract: zod.number(),
-        providerContractId: zod.string().nullish(),
-      }),
-      zod.null(),
-    ]),
-  }),
-  zod.object({
-    accountId: zod.string().nullish(),
-    mode: zod.union([zod.enum(["paper", "live"]), zod.null()]).optional(),
-    confirm: zod.boolean().optional(),
-    ibkrOrders: zod.array(zod.record(zod.string(), zod.unknown())),
-  }),
-]);
+export const SubmitOrdersBody = zod.union([zod.object({
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "quantity": zod.number(),
+  "limitPrice": zod.number().nullish(),
+  "stopPrice": zod.number().nullish(),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "source": zod.enum(['manual', 'automation']).optional(),
+  "sourceEventId": zod.string().nullish(),
+  "clientOrderId": zod.string().nullish(),
+  "payload": zod.record(zod.string(), zod.unknown()).optional()
+}),zod.object({
+  "accountId": zod.string().nullish(),
+  "mode": zod.union([zod.enum(['paper', 'live']),zod.null()]).optional(),
+  "confirm": zod.boolean().optional(),
+  "ibkrOrders": zod.array(zod.record(zod.string(), zod.unknown()))
+})])
+
 
 /**
  * @summary Replace an existing IBKR order using the raw IBKR modify payload
  */
 export const ReplaceOrderParams = zod.object({
-  orderId: zod.coerce.string(),
-});
+  "orderId": zod.coerce.string()
+})
 
 export const ReplaceOrderBody = zod.object({
-  accountId: zod.string(),
-  mode: zod.enum(["paper", "live"]).optional(),
-  confirm: zod.boolean().optional(),
-  order: zod.record(zod.string(), zod.unknown()),
-});
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']).optional(),
+  "confirm": zod.boolean().optional(),
+  "order": zod.record(zod.string(), zod.unknown())
+})
 
 export const ReplaceOrderResponse = zod.object({
-  id: zod.string(),
-  accountId: zod.string(),
-  mode: zod.enum(["paper", "live"]),
-  confirm: zod.boolean().optional(),
-  symbol: zod.string(),
-  assetClass: zod.enum(["equity", "option"]),
-  side: zod.enum(["buy", "sell"]),
-  type: zod.enum(["market", "limit", "stop", "stop_limit"]),
-  timeInForce: zod.enum(["day", "gtc", "ioc", "fok"]),
-  status: zod.enum([
-    "pending_submit",
-    "submitted",
-    "accepted",
-    "partially_filled",
-    "filled",
-    "canceled",
-    "rejected",
-    "expired",
-  ]),
-  quantity: zod.number(),
-  filledQuantity: zod.number(),
-  limitPrice: zod.number().nullable(),
-  stopPrice: zod.number().nullable(),
-  placedAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-  optionContract: zod.union([
-    zod.object({
-      ticker: zod.string(),
-      underlying: zod.string(),
-      expirationDate: zod.coerce.date(),
-      strike: zod.number(),
-      right: zod.enum(["call", "put"]),
-      multiplier: zod.number(),
-      sharesPerContract: zod.number(),
-      providerContractId: zod.string().nullish(),
-    }),
-    zod.null(),
-  ]),
-});
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "quantity": zod.number(),
+  "filledQuantity": zod.number(),
+  "limitPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "placedAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()])
+})
+
 
 /**
  * @summary Request cancellation for an existing IBKR order
  */
 export const CancelOrderParams = zod.object({
-  orderId: zod.coerce.string(),
-});
+  "orderId": zod.coerce.string()
+})
 
 export const CancelOrderBody = zod.object({
-  accountId: zod.string(),
-  confirm: zod.boolean().optional(),
-  manualIndicator: zod.boolean().nullish(),
-  extOperator: zod.string().nullish(),
-});
+  "accountId": zod.string(),
+  "confirm": zod.boolean().optional(),
+  "manualIndicator": zod.boolean().nullish(),
+  "extOperator": zod.string().nullish()
+})
 
 export const CancelOrderResponse = zod.object({
-  orderId: zod.string(),
-  accountId: zod.string().nullable(),
-  message: zod.string(),
-  submittedAt: zod.coerce.date(),
-});
+  "orderId": zod.string(),
+  "accountId": zod.string().nullable(),
+  "message": zod.string(),
+  "submittedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Get latest quotes for symbols
  */
 export const GetQuoteSnapshotsQueryParams = zod.object({
-  symbols: zod.coerce.string().describe("Comma-separated ticker symbols."),
-});
+  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.')
+})
 
 export const GetQuoteSnapshotsResponse = zod.object({
-  quotes: zod.array(
-    zod.object({
-      symbol: zod.string(),
-      price: zod.number(),
-      bid: zod.number(),
-      ask: zod.number(),
-      bidSize: zod.number(),
-      askSize: zod.number(),
-      change: zod.number(),
-      changePercent: zod.number(),
-      open: zod.number().nullable(),
-      high: zod.number().nullable(),
-      low: zod.number().nullable(),
-      prevClose: zod.number().nullable(),
-      volume: zod.number().nullable(),
-      providerContractId: zod.string().nullable(),
-      source: zod.enum(["ibkr", "polygon"]),
-      transport: zod.unknown(),
-      delayed: zod.boolean(),
-      freshness: zod.enum(["live", "stale", "pending"]).optional(),
-      cacheAgeMs: zod.number().nullish(),
-      latency: zod
-        .object({
-          bridgeReceivedAt: zod.coerce.date().nullish(),
-          bridgeEmittedAt: zod.coerce.date().nullish(),
-          apiServerReceivedAt: zod.coerce.date().nullish(),
-          apiServerEmittedAt: zod.coerce.date().nullish(),
-        })
-        .nullish(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-  transport: zod.union([zod.unknown(), zod.null()]),
-  delayed: zod.boolean(),
-  fallbackUsed: zod.boolean(),
-});
+  "quotes": zod.array(zod.object({
+  "symbol": zod.string(),
+  "price": zod.number(),
+  "bid": zod.number(),
+  "ask": zod.number(),
+  "bidSize": zod.number(),
+  "askSize": zod.number(),
+  "change": zod.number(),
+  "changePercent": zod.number(),
+  "open": zod.number().nullable(),
+  "high": zod.number().nullable(),
+  "low": zod.number().nullable(),
+  "prevClose": zod.number().nullable(),
+  "volume": zod.number().nullable(),
+  "providerContractId": zod.string().nullable(),
+  "source": zod.enum(['ibkr', 'polygon']),
+  "transport": zod.unknown(),
+  "delayed": zod.boolean(),
+  "freshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
+  "dataUpdatedAt": zod.coerce.date().nullish(),
+  "ageMs": zod.number().nullish(),
+  "cacheAgeMs": zod.number().nullish(),
+  "latency": zod.object({
+  "bridgeReceivedAt": zod.coerce.date().nullish(),
+  "bridgeEmittedAt": zod.coerce.date().nullish(),
+  "apiServerReceivedAt": zod.coerce.date().nullish(),
+  "apiServerEmittedAt": zod.coerce.date().nullish()
+}).nullish(),
+  "updatedAt": zod.coerce.date()
+})),
+  "transport": zod.union([zod.unknown(),zod.null()]),
+  "delayed": zod.boolean(),
+  "fallbackUsed": zod.boolean()
+})
+
+
+/**
+ * @summary Get latest option quotes for provider contract IDs
+ */
+
+
+
+export const GetOptionQuoteSnapshotsBody = zod.object({
+  "underlying": zod.string().nullish(),
+  "providerContractIds": zod.array(zod.string()).min(1)
+})
+
+export const getOptionQuoteSnapshotsResponseTwoDebugRequestedCountMin = 0;
+
+export const getOptionQuoteSnapshotsResponseTwoDebugReturnedCountMin = 0;
+
+export const getOptionQuoteSnapshotsResponseTwoDebugBridgeChunksMin = 0;
+
+
+
+export const GetOptionQuoteSnapshotsResponse = zod.object({
+  "quotes": zod.array(zod.object({
+  "symbol": zod.string(),
+  "price": zod.number(),
+  "bid": zod.number(),
+  "ask": zod.number(),
+  "bidSize": zod.number(),
+  "askSize": zod.number(),
+  "change": zod.number(),
+  "changePercent": zod.number(),
+  "open": zod.number().nullable(),
+  "high": zod.number().nullable(),
+  "low": zod.number().nullable(),
+  "prevClose": zod.number().nullable(),
+  "volume": zod.number().nullable(),
+  "providerContractId": zod.string().nullable(),
+  "source": zod.enum(['ibkr', 'polygon']),
+  "transport": zod.unknown(),
+  "delayed": zod.boolean(),
+  "freshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
+  "dataUpdatedAt": zod.coerce.date().nullish(),
+  "ageMs": zod.number().nullish(),
+  "cacheAgeMs": zod.number().nullish(),
+  "latency": zod.object({
+  "bridgeReceivedAt": zod.coerce.date().nullish(),
+  "bridgeEmittedAt": zod.coerce.date().nullish(),
+  "apiServerReceivedAt": zod.coerce.date().nullish(),
+  "apiServerEmittedAt": zod.coerce.date().nullish()
+}).nullish(),
+  "updatedAt": zod.coerce.date()
+})),
+  "transport": zod.union([zod.unknown(),zod.null()]),
+  "delayed": zod.boolean(),
+  "fallbackUsed": zod.boolean()
+}).and(zod.object({
+  "underlying": zod.string().nullish(),
+  "debug": zod.object({
+  "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
+  "totalMs": zod.number(),
+  "upstreamMs": zod.number().nullish(),
+  "requestedCount": zod.number().min(getOptionQuoteSnapshotsResponseTwoDebugRequestedCountMin).optional(),
+  "returnedCount": zod.number().min(getOptionQuoteSnapshotsResponseTwoDebugReturnedCountMin).optional(),
+  "bridgeChunks": zod.number().min(getOptionQuoteSnapshotsResponseTwoDebugBridgeChunksMin).optional(),
+  "providerMode": zod.string().nullish(),
+  "liveMarketDataAvailable": zod.boolean().nullish(),
+  "missingProviderContractIds": zod.array(zod.string()).optional(),
+  "complete": zod.boolean().optional(),
+  "capped": zod.boolean().optional(),
+  "stale": zod.boolean().optional(),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "backoffRemainingMs": zod.number().nullish()
+}).optional()
+}))
+
 
 /**
  * @summary Get latest market news articles
  */
 export const getNewsQueryLimitMax = 50;
 
+
+
 export const GetNewsQueryParams = zod.object({
-  ticker: zod.coerce
-    .string()
-    .optional()
-    .describe("Optional ticker to filter articles by symbol."),
-  limit: zod.coerce
-    .number()
-    .min(1)
-    .max(getNewsQueryLimitMax)
-    .optional()
-    .describe("Maximum number of articles to return."),
-});
+  "ticker": zod.coerce.string().optional().describe('Optional ticker to filter articles by symbol.'),
+  "limit": zod.coerce.number().min(1).max(getNewsQueryLimitMax).optional().describe('Maximum number of articles to return.')
+})
 
 export const GetNewsResponse = zod.object({
-  articles: zod.array(
-    zod.object({
-      id: zod.string(),
-      title: zod.string(),
-      description: zod.string().nullable(),
-      articleUrl: zod.string(),
-      imageUrl: zod.string().nullable(),
-      author: zod.string().nullable(),
-      publishedAt: zod.coerce.date(),
-      tickers: zod.array(zod.string()),
-      publisher: zod.object({
-        name: zod.string(),
-        homepageUrl: zod.string().nullable(),
-        logoUrl: zod.string().nullable(),
-      }),
-      sentiment: zod.string().nullable(),
-      sentimentReasoning: zod.string().nullable(),
-    }),
-  ),
-});
+  "articles": zod.array(zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "description": zod.string().nullable(),
+  "articleUrl": zod.string(),
+  "imageUrl": zod.string().nullable(),
+  "author": zod.string().nullable(),
+  "publishedAt": zod.coerce.date(),
+  "tickers": zod.array(zod.string()),
+  "publisher": zod.object({
+  "name": zod.string(),
+  "homepageUrl": zod.string().nullable(),
+  "logoUrl": zod.string().nullable()
+}),
+  "sentiment": zod.string().nullable(),
+  "sentimentReasoning": zod.string().nullable()
+}))
+})
+
 
 /**
  * @summary Search the ticker universe
  */
-export const searchUniverseTickersQueryLimitMax = 50;
+
+
 
 export const SearchUniverseTickersQueryParams = zod.object({
-  search: zod.coerce
-    .string()
-    .optional()
-    .describe("Search within the ticker symbol and company name."),
-  market: zod
-    .enum(["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"])
-    .optional()
-    .describe("Restrict results to a market."),
-  markets: zod
-    .array(
-      zod.enum(["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"]),
-    )
-    .optional()
-    .describe(
-      "Restrict results to one or more markets. Takes precedence over market when provided.",
-    ),
-  type: zod.coerce
-    .string()
-    .optional()
-    .describe("Optional Polygon ticker type filter."),
-  active: zod.coerce
-    .boolean()
-    .optional()
-    .describe("Restrict results to active tickers."),
-  limit: zod.coerce
-    .number()
-    .min(1)
-    .max(searchUniverseTickersQueryLimitMax)
-    .optional()
-    .describe("Maximum number of search results to return."),
-});
+  "search": zod.coerce.string().optional().describe('Search within the ticker symbol and company name.'),
+  "market": zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']).optional().describe('Restrict results to a market.'),
+  "markets": zod.array(zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc'])).optional().describe('Restrict results to one or more markets. Takes precedence over market when provided.'),
+  "type": zod.coerce.string().optional().describe('Optional Polygon ticker type filter.'),
+  "active": zod.coerce.boolean().optional().describe('Restrict results to active tickers.'),
+  "mode": zod.enum(['search', 'trade-resolve']).optional().describe('Optional search mode. Use trade-resolve when Trade needs an exact IBKR-tradable contract.'),
+  "strictTrade": zod.coerce.boolean().optional().describe('Require an exact IBKR-tradable contract instead of returning fuzzy discovery matches.'),
+  "limit": zod.coerce.number().min(1).optional().describe('Requested number of ranked search results to return. No artificial maximum is enforced by the API; clients should request progressively larger pages for large universes.')
+})
 
 export const SearchUniverseTickersResponse = zod.object({
-  count: zod.number(),
-  results: zod.array(
-    zod.object({
-      ticker: zod.string(),
-      name: zod.string(),
-      market: zod.enum([
-        "stocks",
-        "etf",
-        "indices",
-        "futures",
-        "fx",
-        "crypto",
-        "otc",
-      ]),
-      rootSymbol: zod.string().nullable(),
-      normalizedExchangeMic: zod.string().nullable(),
-      exchangeDisplay: zod.string().nullable(),
-      logoUrl: zod.string().nullable(),
-      contractDescription: zod.string().nullable(),
-      contractMeta: zod
-        .record(
-          zod.string(),
-          zod.union([zod.string(), zod.number(), zod.boolean(), zod.null()]),
-        )
-        .nullable(),
-      locale: zod.string().nullable(),
-      type: zod.string().nullable(),
-      active: zod.boolean(),
-      primaryExchange: zod.string().nullable(),
-      currencyName: zod.string().nullable(),
-      cik: zod.string().nullable(),
-      compositeFigi: zod.string().nullable(),
-      shareClassFigi: zod.string().nullable(),
-      lastUpdatedAt: zod.coerce.date().nullable(),
-      provider: zod.union([zod.enum(["polygon", "ibkr"]), zod.null()]),
-      providers: zod.array(zod.enum(["polygon", "ibkr"])),
-      tradeProvider: zod.union([zod.enum(["polygon", "ibkr"]), zod.null()]),
-      dataProviderPreference: zod.union([
-        zod.enum(["polygon", "ibkr"]),
-        zod.null(),
-      ]),
-      providerContractId: zod.string().nullable(),
-    }),
-  ),
-});
+  "count": zod.number(),
+  "results": zod.array(zod.object({
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "market": zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']),
+  "rootSymbol": zod.string().nullable(),
+  "normalizedExchangeMic": zod.string().nullable(),
+  "exchangeDisplay": zod.string().nullable(),
+  "logoUrl": zod.string().nullable(),
+  "countryCode": zod.string().nullable().describe('ISO 3166-1 alpha-2 country or EU region code for the instrument issuer when known.'),
+  "exchangeCountryCode": zod.string().nullable().describe('ISO 3166-1 alpha-2 country or EU region code for the listing exchange when known.'),
+  "sector": zod.string().nullable().describe('Provider or locally-derived sector label when available.'),
+  "industry": zod.string().nullable().describe('Provider or locally-derived industry label when available.'),
+  "contractDescription": zod.string().nullable(),
+  "contractMeta": zod.record(zod.string(), zod.union([zod.string(),zod.number(),zod.boolean(),zod.null()])).nullable(),
+  "locale": zod.string().nullable(),
+  "type": zod.string().nullable(),
+  "active": zod.boolean(),
+  "primaryExchange": zod.string().nullable(),
+  "currencyName": zod.string().nullable(),
+  "cik": zod.string().nullable(),
+  "compositeFigi": zod.string().nullable(),
+  "shareClassFigi": zod.string().nullable(),
+  "lastUpdatedAt": zod.coerce.date().nullable(),
+  "provider": zod.union([zod.enum(['polygon', 'ibkr']),zod.null()]),
+  "providers": zod.array(zod.enum(['polygon', 'ibkr'])),
+  "tradeProvider": zod.union([zod.enum(['polygon', 'ibkr']),zod.null()]),
+  "dataProviderPreference": zod.union([zod.enum(['polygon', 'ibkr']),zod.null()]),
+  "providerContractId": zod.string().nullable()
+}))
+})
+
 
 /**
  * @summary Get broker-first historical bars for a symbol or contract
  */
 export const getBarsQueryLimitMax = 50000;
 
+export const getBarsQueryBrokerRecentWindowMinutesMin = 0;
+
+
+
 export const GetBarsQueryParams = zod.object({
-  symbol: zod.coerce.string(),
-  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-  limit: zod.coerce.number().min(1).max(getBarsQueryLimitMax).optional(),
-  from: zod.date().optional(),
-  to: zod.date().optional(),
-  assetClass: zod.enum(["equity", "option"]).optional(),
-  market: zod
-    .enum(["stocks", "etf", "indices", "futures", "fx", "crypto", "otc"])
-    .optional()
-    .describe(
-      "Provider market context from ticker search; used to avoid cross-asset historical fallbacks.",
-    ),
-  providerContractId: zod.coerce.string().nullish(),
-  outsideRth: zod.coerce.boolean().optional(),
-  source: zod.enum(["trades", "midpoint", "bid_ask"]).optional(),
-  allowHistoricalSynthesis: zod.coerce
-    .boolean()
-    .optional()
-    .describe(
-      "Allow Polygon\/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.",
-    ),
-});
+  "symbol": zod.coerce.string(),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "limit": zod.coerce.number().min(1).max(getBarsQueryLimitMax).optional(),
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "historyCursor": zod.coerce.string().nullish(),
+  "preferCursor": zod.coerce.boolean().optional(),
+  "assetClass": zod.enum(['equity', 'option']).optional(),
+  "market": zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']).optional().describe('Provider market context from ticker search; used to avoid cross-asset historical fallbacks.'),
+  "providerContractId": zod.coerce.string().nullish(),
+  "outsideRth": zod.coerce.boolean().optional(),
+  "source": zod.enum(['trades', 'midpoint', 'bid_ask']).optional(),
+  "allowHistoricalSynthesis": zod.coerce.boolean().optional().describe('Allow Polygon\/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.'),
+  "allowStudyFallback": zod.coerce.boolean().optional().describe('Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Polygon\/Massive aggregate history remains valid for backtests.'),
+  "brokerRecentWindowMinutes": zod.coerce.number().min(getBarsQueryBrokerRecentWindowMinutesMin).optional().describe('Limit broker-sourced recent history to this many minutes before falling back to Massive\/Polygon history.')
+})
+
+const BarsHistoryPage = zod.object({
+  "requestedFrom": zod.coerce.date().nullable(),
+  "requestedTo": zod.coerce.date().nullable(),
+  "oldestBarAt": zod.coerce.date().nullable(),
+  "newestBarAt": zod.coerce.date().nullable(),
+  "returnedCount": zod.number(),
+  "nextBefore": zod.coerce.date().nullable(),
+  "provider": zod.string().nullable(),
+  "exhaustedBefore": zod.boolean(),
+  "providerCursor": zod.string().nullable().optional(),
+  "providerNextUrl": zod.string().nullable().optional(),
+  "providerPageCount": zod.number().nullable().optional(),
+  "providerPageLimitReached": zod.boolean().optional(),
+  "historyCursor": zod.string().nullable().optional(),
+  "hydrationStatus": zod.enum(['cold', 'partial', 'warm', 'warming', 'exhausted']).optional(),
+  "cacheStatus": zod.enum(['hit', 'miss', 'partial']).nullable().optional()
+})
 
 export const GetBarsResponse = zod.object({
-  symbol: zod.string(),
-  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-  bars: zod.array(
-    zod.object({
-      timestamp: zod.coerce.date(),
-      open: zod.number(),
-      high: zod.number(),
-      low: zod.number(),
-      close: zod.number(),
-      volume: zod.number(),
-      source: zod.string().optional(),
-      providerContractId: zod.string().nullish(),
-      outsideRth: zod.boolean().optional(),
-      partial: zod.boolean().optional(),
-      transport: zod.unknown(),
-      delayed: zod.boolean(),
-    }),
-  ),
-  transport: zod.union([zod.unknown(), zod.null()]),
-  delayed: zod.boolean(),
-  gapFilled: zod.boolean(),
-});
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "bars": zod.array(zod.object({
+  "timestamp": zod.coerce.date(),
+  "open": zod.number(),
+  "high": zod.number(),
+  "low": zod.number(),
+  "close": zod.number(),
+  "volume": zod.number(),
+  "source": zod.string().optional(),
+  "providerContractId": zod.string().nullish(),
+  "outsideRth": zod.boolean().optional(),
+  "partial": zod.boolean().optional(),
+  "transport": zod.unknown(),
+  "delayed": zod.boolean(),
+  "freshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
+  "dataUpdatedAt": zod.coerce.date().nullish(),
+  "ageMs": zod.number().nullish()
+})),
+  "transport": zod.union([zod.unknown(),zod.null()]),
+  "delayed": zod.boolean(),
+  "gapFilled": zod.boolean(),
+  "freshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullable(),
+  "dataUpdatedAt": zod.coerce.date().nullable(),
+  "ageMs": zod.number().nullable(),
+  "emptyReason": zod.string().nullable(),
+  "historySource": zod.string().nullable(),
+  "studyFallback": zod.boolean(),
+  "historyPage": BarsHistoryPage.nullish()
+})
+
 
 /**
  * @summary Get options chain snapshot
  */
+export const getOptionChainQueryStrikesAroundMoneyMax = 50;
+
+
+
 export const GetOptionChainQueryParams = zod.object({
-  underlying: zod.coerce.string(),
-  expirationDate: zod.date().optional(),
-  contractType: zod.enum(["call", "put"]).optional(),
-});
+  "underlying": zod.coerce.string(),
+  "expirationDate": zod.date().optional(),
+  "contractType": zod.enum(['call', 'put']).optional(),
+  "strikesAroundMoney": zod.coerce.number().min(1).max(getOptionChainQueryStrikesAroundMoneyMax).optional().describe('Number of strikes on each side of the closest ATM strike to return. Defaults to 6.'),
+  "strikeCoverage": zod.enum(['fast', 'standard', 'full']).optional().describe('Named strike window. Use full to hydrate every strike for the requested expiration.'),
+  "quoteHydration": zod.enum(['metadata', 'snapshot']).optional().describe('Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to snapshot.')
+})
 
 export const GetOptionChainResponse = zod.object({
-  underlying: zod.string(),
-  expirationDate: zod.coerce.date().nullable(),
-  contracts: zod.array(
-    zod.object({
-      contract: zod.object({
-        ticker: zod.string(),
-        underlying: zod.string(),
-        expirationDate: zod.coerce.date(),
-        strike: zod.number(),
-        right: zod.enum(["call", "put"]),
-        multiplier: zod.number(),
-        sharesPerContract: zod.number(),
-        providerContractId: zod.string().nullish(),
-      }),
-      bid: zod.number(),
-      ask: zod.number(),
-      last: zod.number(),
-      mark: zod.number(),
-      impliedVolatility: zod.number().nullish(),
-      delta: zod.number().nullish(),
-      gamma: zod.number().nullish(),
-      theta: zod.number().nullish(),
-      vega: zod.number().nullish(),
-      openInterest: zod.number(),
-      volume: zod.number(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date().nullable(),
+  "contracts": zod.array(zod.object({
+  "contract": zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),
+  "bid": zod.number().nullable(),
+  "ask": zod.number().nullable(),
+  "last": zod.number().nullable(),
+  "mark": zod.number().nullable(),
+  "impliedVolatility": zod.number().nullish(),
+  "delta": zod.number().nullish(),
+  "gamma": zod.number().nullish(),
+  "theta": zod.number().nullish(),
+  "vega": zod.number().nullish(),
+  "openInterest": zod.number().nullable(),
+  "volume": zod.number().nullable(),
+  "updatedAt": zod.coerce.date(),
+  "quoteFreshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
+  "quoteUpdatedAt": zod.coerce.date().nullish(),
+  "dataUpdatedAt": zod.coerce.date().nullish(),
+  "ageMs": zod.number().nullish()
+}))
+})
+
+
+/**
+ * @summary Get multiple option chain snapshots
+ */
+
+export const batchOptionChainsBodyStrikesAroundMoneyMax = 50;
+
+
+
+export const BatchOptionChainsBody = zod.object({
+  "underlying": zod.string(),
+  "expirationDates": zod.array(zod.coerce.date()).min(1),
+  "contractType": zod.enum(['call', 'put']).optional(),
+  "strikesAroundMoney": zod.number().min(1).max(batchOptionChainsBodyStrikesAroundMoneyMax).optional().describe('Number of strikes on each side of the closest ATM strike to return. Defaults to 6.'),
+  "strikeCoverage": zod.enum(['fast', 'standard', 'full']).optional(),
+  "quoteHydration": zod.enum(['metadata', 'snapshot']).optional()
+})
+
+export const batchOptionChainsResponseResultsItemDebugRequestedCountMin = 0;
+
+export const batchOptionChainsResponseResultsItemDebugReturnedCountMin = 0;
+
+export const batchOptionChainsResponseResultsItemDebugBridgeChunksMin = 0;
+
+export const batchOptionChainsResponseDebugRequestedCountMin = 0;
+
+export const batchOptionChainsResponseDebugReturnedCountMin = 0;
+
+export const batchOptionChainsResponseDebugBridgeChunksMin = 0;
+
+
+
+export const BatchOptionChainsResponse = zod.object({
+  "underlying": zod.string(),
+  "results": zod.array(zod.object({
+  "expirationDate": zod.coerce.date(),
+  "status": zod.enum(['loaded', 'empty', 'failed']),
+  "contracts": zod.array(zod.object({
+  "contract": zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),
+  "bid": zod.number().nullable(),
+  "ask": zod.number().nullable(),
+  "last": zod.number().nullable(),
+  "mark": zod.number().nullable(),
+  "impliedVolatility": zod.number().nullish(),
+  "delta": zod.number().nullish(),
+  "gamma": zod.number().nullish(),
+  "theta": zod.number().nullish(),
+  "vega": zod.number().nullish(),
+  "openInterest": zod.number().nullable(),
+  "volume": zod.number().nullable(),
+  "updatedAt": zod.coerce.date(),
+  "quoteFreshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
+  "quoteUpdatedAt": zod.coerce.date().nullish(),
+  "dataUpdatedAt": zod.coerce.date().nullish(),
+  "ageMs": zod.number().nullish()
+})),
+  "error": zod.string().nullish(),
+  "debug": zod.object({
+  "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
+  "totalMs": zod.number(),
+  "upstreamMs": zod.number().nullish(),
+  "requestedCount": zod.number().min(batchOptionChainsResponseResultsItemDebugRequestedCountMin).optional(),
+  "returnedCount": zod.number().min(batchOptionChainsResponseResultsItemDebugReturnedCountMin).optional(),
+  "bridgeChunks": zod.number().min(batchOptionChainsResponseResultsItemDebugBridgeChunksMin).optional(),
+  "providerMode": zod.string().nullish(),
+  "liveMarketDataAvailable": zod.boolean().nullish(),
+  "missingProviderContractIds": zod.array(zod.string()).optional(),
+  "complete": zod.boolean().optional(),
+  "capped": zod.boolean().optional(),
+  "stale": zod.boolean().optional(),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "backoffRemainingMs": zod.number().nullish()
+}).optional()
+})),
+  "debug": zod.object({
+  "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
+  "totalMs": zod.number(),
+  "upstreamMs": zod.number().nullish(),
+  "requestedCount": zod.number().min(batchOptionChainsResponseDebugRequestedCountMin).optional(),
+  "returnedCount": zod.number().min(batchOptionChainsResponseDebugReturnedCountMin).optional(),
+  "bridgeChunks": zod.number().min(batchOptionChainsResponseDebugBridgeChunksMin).optional(),
+  "providerMode": zod.string().nullish(),
+  "liveMarketDataAvailable": zod.boolean().nullish(),
+  "missingProviderContractIds": zod.array(zod.string()).optional(),
+  "complete": zod.boolean().optional(),
+  "capped": zod.boolean().optional(),
+  "stale": zod.boolean().optional(),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "backoffRemainingMs": zod.number().nullish()
+}).optional()
+})
+
 
 /**
  * @summary Get available option expirations
  */
+
+
+
 export const GetOptionExpirationsQueryParams = zod.object({
-  underlying: zod.coerce.string(),
-});
+  "underlying": zod.coerce.string(),
+  "maxExpirations": zod.coerce.number().min(1).optional().describe('Optional cap. Omit to discover every expiration IBKR exposes.')
+})
+
+export const getOptionExpirationsResponseDebugRequestedCountMin = 0;
+
+export const getOptionExpirationsResponseDebugReturnedCountMin = 0;
+
+export const getOptionExpirationsResponseDebugBridgeChunksMin = 0;
+
+
 
 export const GetOptionExpirationsResponse = zod.object({
-  underlying: zod.string(),
-  expirations: zod.array(
-    zod.object({
-      expirationDate: zod.coerce.date(),
-    }),
-  ),
-});
+  "underlying": zod.string(),
+  "expirations": zod.array(zod.object({
+  "expirationDate": zod.coerce.date()
+})),
+  "debug": zod.object({
+  "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
+  "totalMs": zod.number(),
+  "upstreamMs": zod.number().nullish(),
+  "requestedCount": zod.number().min(getOptionExpirationsResponseDebugRequestedCountMin).optional(),
+  "returnedCount": zod.number().min(getOptionExpirationsResponseDebugReturnedCountMin).optional(),
+  "bridgeChunks": zod.number().min(getOptionExpirationsResponseDebugBridgeChunksMin).optional(),
+  "providerMode": zod.string().nullish(),
+  "liveMarketDataAvailable": zod.boolean().nullish(),
+  "missingProviderContractIds": zod.array(zod.string()).optional(),
+  "complete": zod.boolean().optional(),
+  "capped": zod.boolean().optional(),
+  "stale": zod.boolean().optional(),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "backoffRemainingMs": zod.number().nullish()
+}).optional()
+})
+
+
+/**
+ * @summary Resolve an option contract to an IBKR broker contract id
+ */
+export const ResolveOptionContractQueryParams = zod.object({
+  "underlying": zod.coerce.string(),
+  "expirationDate": zod.date(),
+  "strike": zod.coerce.number(),
+  "right": zod.enum(['call', 'put'])
+})
+
+export const resolveOptionContractResponseDebugRequestedCountMin = 0;
+
+export const resolveOptionContractResponseDebugReturnedCountMin = 0;
+
+export const resolveOptionContractResponseDebugBridgeChunksMin = 0;
+
+
+
+export const ResolveOptionContractResponse = zod.object({
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "status": zod.enum(['resolved', 'not_found', 'error']),
+  "providerContractId": zod.string().nullable(),
+  "contract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "errorMessage": zod.string().nullable(),
+  "debug": zod.object({
+  "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
+  "totalMs": zod.number(),
+  "upstreamMs": zod.number().nullish(),
+  "requestedCount": zod.number().min(resolveOptionContractResponseDebugRequestedCountMin).optional(),
+  "returnedCount": zod.number().min(resolveOptionContractResponseDebugReturnedCountMin).optional(),
+  "bridgeChunks": zod.number().min(resolveOptionContractResponseDebugBridgeChunksMin).optional(),
+  "providerMode": zod.string().nullish(),
+  "liveMarketDataAvailable": zod.boolean().nullish(),
+  "missingProviderContractIds": zod.array(zod.string()).optional(),
+  "complete": zod.boolean().optional(),
+  "capped": zod.boolean().optional(),
+  "stale": zod.boolean().optional(),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "backoffRemainingMs": zod.number().nullish()
+})
+})
+
+
+/**
+ * @summary Get option chart bars with server-side contract resolution and fallback
+ */
+export const getOptionChartBarsQueryLimitMax = 50000;
+
+
+
+export const GetOptionChartBarsQueryParams = zod.object({
+  "underlying": zod.coerce.string(),
+  "expirationDate": zod.date(),
+  "strike": zod.coerce.number(),
+  "right": zod.enum(['call', 'put']),
+  "optionTicker": zod.coerce.string().nullish().describe('Provider-native OPRA option ticker to use for option aggregate fallback.'),
+  "providerContractId": zod.coerce.string().nullish(),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "limit": zod.coerce.number().min(1).max(getOptionChartBarsQueryLimitMax).optional(),
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "historyCursor": zod.coerce.string().nullish(),
+  "preferCursor": zod.coerce.boolean().optional(),
+  "outsideRth": zod.coerce.boolean().optional()
+})
+
+export const getOptionChartBarsResponseTwoDebugRequestedCountMin = 0;
+
+export const getOptionChartBarsResponseTwoDebugReturnedCountMin = 0;
+
+export const getOptionChartBarsResponseTwoDebugBridgeChunksMin = 0;
+
+
+
+export const GetOptionChartBarsResponse = zod.object({
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "bars": zod.array(zod.object({
+  "timestamp": zod.coerce.date(),
+  "open": zod.number(),
+  "high": zod.number(),
+  "low": zod.number(),
+  "close": zod.number(),
+  "volume": zod.number(),
+  "source": zod.string().optional(),
+  "providerContractId": zod.string().nullish(),
+  "outsideRth": zod.boolean().optional(),
+  "partial": zod.boolean().optional(),
+  "transport": zod.unknown(),
+  "delayed": zod.boolean(),
+  "freshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']).optional(),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullish(),
+  "dataUpdatedAt": zod.coerce.date().nullish(),
+  "ageMs": zod.number().nullish()
+})),
+  "transport": zod.union([zod.unknown(),zod.null()]),
+  "delayed": zod.boolean(),
+  "gapFilled": zod.boolean(),
+  "freshness": zod.enum(['live', 'delayed', 'frozen', 'delayed_frozen', 'stale', 'metadata', 'unavailable', 'pending']),
+  "marketDataMode": zod.union([zod.literal('live'),zod.literal('frozen'),zod.literal('delayed'),zod.literal('delayed_frozen'),zod.literal('unknown'),zod.literal(null)]).nullable(),
+  "dataUpdatedAt": zod.coerce.date().nullable(),
+  "ageMs": zod.number().nullable(),
+  "emptyReason": zod.string().nullable(),
+  "historySource": zod.string().nullable(),
+  "studyFallback": zod.boolean(),
+  "historyPage": BarsHistoryPage.nullish()
+}).and(zod.object({
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "optionTicker": zod.string().nullable(),
+  "contract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "providerContractId": zod.string().nullable(),
+  "resolutionSource": zod.enum(['chain', 'provided', 'resolver', 'none']),
+  "dataSource": zod.enum(['ibkr-history', 'polygon-option-aggregates', 'none']),
+  "feedIssue": zod.boolean(),
+  "debug": zod.object({
+  "cacheStatus": zod.enum(['hit', 'miss', 'inflight']).nullish(),
+  "totalMs": zod.number(),
+  "upstreamMs": zod.number().nullish(),
+  "requestedCount": zod.number().min(getOptionChartBarsResponseTwoDebugRequestedCountMin).optional(),
+  "returnedCount": zod.number().min(getOptionChartBarsResponseTwoDebugReturnedCountMin).optional(),
+  "bridgeChunks": zod.number().min(getOptionChartBarsResponseTwoDebugBridgeChunksMin).optional(),
+  "providerMode": zod.string().nullish(),
+  "liveMarketDataAvailable": zod.boolean().nullish(),
+  "missingProviderContractIds": zod.array(zod.string()).optional(),
+  "complete": zod.boolean().optional(),
+  "capped": zod.boolean().optional(),
+  "stale": zod.boolean().optional(),
+  "degraded": zod.boolean().optional(),
+  "reason": zod.string().nullish(),
+  "backoffRemainingMs": zod.number().nullish()
+})
+}))
+
 
 /**
  * @summary Stream quote snapshots over server-sent events
  */
 export const StreamQuoteSnapshotsQueryParams = zod.object({
-  symbols: zod.coerce.string().describe("Comma-separated ticker symbols."),
-});
+  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.')
+})
+
 
 /**
  * @summary Stream option chain snapshots over server-sent events
  */
 export const StreamOptionChainsQueryParams = zod.object({
-  underlyings: zod.coerce
-    .string()
-    .describe("Comma-separated underlying symbols."),
-});
+  "underlyings": zod.coerce.string().describe('Comma-separated underlying symbols.')
+})
+
 
 /**
  * @summary Stream order snapshots over server-sent events
  */
 export const StreamOrdersQueryParams = zod.object({
-  accountId: zod.coerce.string().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-  status: zod
-    .enum([
-      "pending_submit",
-      "submitted",
-      "accepted",
-      "partially_filled",
-      "filled",
-      "canceled",
-      "rejected",
-      "expired",
-    ])
-    .optional(),
-});
+  "accountId": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional(),
+  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']).optional()
+})
+
 
 /**
  * @summary Stream account and position snapshots over server-sent events
  */
 export const StreamAccountsQueryParams = zod.object({
-  accountId: zod.coerce.string().optional(),
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "accountId": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
+
 
 /**
  * @summary Stream broker-derived stock minute aggregates over server-sent events
  */
 export const StreamStockAggregatesQueryParams = zod.object({
-  symbols: zod.coerce.string().describe("Comma-separated ticker symbols."),
-});
+  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.')
+})
+
 
 /**
  * @summary List options flow events
@@ -1536,91 +2071,174 @@ export const listFlowEventsQueryLimitMax = 1000;
 export const listFlowEventsQueryUnusualThresholdMin = 0.1;
 export const listFlowEventsQueryUnusualThresholdMax = 100;
 
+export const listFlowEventsQueryMinPremiumMin = 0;
+export const listFlowEventsQueryMinPremiumMax = 50000000;
+
+export const listFlowEventsQueryMaxDteMin = 0;
+export const listFlowEventsQueryMaxDteMax = 730;
+
+
+
 export const ListFlowEventsQueryParams = zod.object({
-  underlying: zod.coerce.string().optional(),
-  limit: zod.coerce.number().min(1).max(listFlowEventsQueryLimitMax).optional(),
-  unusualThreshold: zod.coerce
-    .number()
-    .min(listFlowEventsQueryUnusualThresholdMin)
-    .max(listFlowEventsQueryUnusualThresholdMax)
-    .optional()
-    .describe(
-      "Volume \/ open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep\/swing desks.",
-    ),
-});
+  "underlying": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().min(1).max(listFlowEventsQueryLimitMax).optional(),
+  "unusualThreshold": zod.coerce.number().min(listFlowEventsQueryUnusualThresholdMin).max(listFlowEventsQueryUnusualThresholdMax).optional().describe('Volume \/ open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep\/swing desks.'),
+  "scope": zod.enum(['all', 'unusual']).optional().describe('Return all flow or only contracts that match the unusual-flow threshold.'),
+  "minPremium": zod.coerce.number().min(listFlowEventsQueryMinPremiumMin).max(listFlowEventsQueryMinPremiumMax).optional().describe('Minimum option premium, in dollars, required for each returned flow row.'),
+  "maxDte": zod.coerce.number().min(listFlowEventsQueryMaxDteMin).max(listFlowEventsQueryMaxDteMax).optional().describe('Maximum days to expiration to include in the flow scan.')
+})
+
+export const listFlowEventsResponseSourceIbkrExpirationCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrHydratedExpirationCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrContractCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrQualifiedContractCountMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageTargetSizeMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageSelectedSymbolsMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageCooldownCountMin = 0;
+
+export const listFlowEventsResponseSourceScannerCoverageScannedSymbolsMin = 0;
+
+
 
 export const ListFlowEventsResponse = zod.object({
-  events: zod.array(
-    zod.object({
-      id: zod.string(),
-      underlying: zod.string(),
-      provider: zod.enum(["ibkr", "polygon"]),
-      basis: zod.enum(["snapshot", "trade"]),
-      optionTicker: zod.string(),
-      strike: zod.number(),
-      expirationDate: zod.coerce.date(),
-      right: zod.enum(["call", "put"]),
-      price: zod.number(),
-      size: zod.number(),
-      premium: zod.number(),
-      openInterest: zod.number(),
-      impliedVolatility: zod.union([zod.number(), zod.null()]),
-      exchange: zod.string(),
-      side: zod.string(),
-      sentiment: zod.enum(["bullish", "bearish", "neutral"]),
-      tradeConditions: zod.array(zod.string()),
-      occurredAt: zod.coerce.date(),
-      unusualScore: zod
-        .number()
-        .describe(
-          "Volume divided by prior-session open interest, capped at 10. Higher values indicate the event is more likely to be a fresh institutional position rather than routine market-maker turnover.",
-        ),
-      isUnusual: zod
-        .boolean()
-        .describe(
-          "True when the contract's day volume meets or exceeds its open interest (the default unusual-flow threshold).",
-        ),
-    }),
-  ),
-  source: zod.object({
-    provider: zod.enum(["ibkr", "polygon", "none"]),
-    status: zod.enum(["live", "fallback", "empty", "error"]),
-    fallbackUsed: zod.boolean(),
-    attemptedProviders: zod.array(zod.enum(["ibkr", "polygon"])),
-    errorMessage: zod.string().nullable(),
-    fetchedAt: zod.coerce.date(),
-    unusualThreshold: zod
-      .number()
-      .optional()
-      .describe(
-        "Volume \/ open-interest multiplier the server applied when flagging unusual prints. Defaults to 1.",
-      ),
-  }),
-});
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "underlying": zod.string(),
+  "provider": zod.enum(['ibkr', 'polygon']),
+  "basis": zod.enum(['snapshot', 'trade']),
+  "optionTicker": zod.string(),
+  "providerContractId": zod.string().nullable().describe('Broker contract identifier, when the flow source can map the option to a broker-backed contract.'),
+  "strike": zod.number(),
+  "expirationDate": zod.coerce.date(),
+  "right": zod.enum(['call', 'put']),
+  "price": zod.number(),
+  "bid": zod.number().nullish().describe('Best bid observed with the event or snapshot, when available.'),
+  "ask": zod.number().nullish().describe('Best ask observed with the event or snapshot, when available.'),
+  "last": zod.number().nullish().describe('Last option price observed with the event or snapshot, when available.'),
+  "mark": zod.number().nullish().describe('Mark or midpoint price used for snapshot-derived flow, when available.'),
+  "size": zod.number(),
+  "premium": zod.number(),
+  "multiplier": zod.number().nullish().describe('Option contract multiplier, when the source provides it.'),
+  "sharesPerContract": zod.number().nullish().describe('Shares represented by one option contract, when the source provides it.'),
+  "openInterest": zod.number(),
+  "impliedVolatility": zod.union([zod.number(),zod.null()]),
+  "delta": zod.number().nullish(),
+  "gamma": zod.number().nullish(),
+  "theta": zod.number().nullish(),
+  "vega": zod.number().nullish(),
+  "underlyingPrice": zod.number().nullish().describe('Underlying reference price used to classify moneyness, when available.'),
+  "moneyness": zod.union([zod.literal('ITM'),zod.literal('ATM'),zod.literal('OTM'),zod.literal('UNKNOWN'),zod.literal(null)]).nullish(),
+  "distancePercent": zod.number().nullish().describe('Signed strike distance from the underlying reference price, in percent.'),
+  "confidence": zod.enum(['confirmed_trade', 'snapshot_activity', 'fallback_estimate']).optional().describe('Data-confidence class for the flow row.'),
+  "sourceBasis": zod.enum(['confirmed_trade', 'snapshot_activity', 'fallback_estimate']).optional().describe('Machine-readable source basis shown by the Flow UI.'),
+  "exchange": zod.string(),
+  "side": zod.string(),
+  "sentiment": zod.enum(['bullish', 'bearish', 'neutral']),
+  "tradeConditions": zod.array(zod.string()),
+  "occurredAt": zod.coerce.date(),
+  "unusualScore": zod.number().describe('Volume divided by prior-session open interest, capped at 10. Higher values indicate the event is more likely to be a fresh institutional position rather than routine market-maker turnover.'),
+  "isUnusual": zod.boolean().describe('True when the contract\'s day volume meets or exceeds its open interest (the default unusual-flow threshold).')
+})),
+  "source": zod.object({
+  "provider": zod.enum(['ibkr', 'polygon', 'none']),
+  "status": zod.enum(['live', 'fallback', 'empty', 'error']),
+  "fallbackUsed": zod.boolean(),
+  "attemptedProviders": zod.array(zod.enum(['ibkr', 'polygon'])),
+  "errorMessage": zod.string().nullable(),
+  "fetchedAt": zod.coerce.date(),
+  "unusualThreshold": zod.number().optional().describe('Volume \/ open-interest multiplier the server applied when flagging unusual prints. Defaults to 1.'),
+  "ibkrStatus": zod.enum(['loaded', 'empty', 'degraded', 'error']).optional(),
+  "ibkrReason": zod.string().nullish(),
+  "ibkrExpirationCount": zod.number().min(listFlowEventsResponseSourceIbkrExpirationCountMin).optional(),
+  "ibkrHydratedExpirationCount": zod.number().min(listFlowEventsResponseSourceIbkrHydratedExpirationCountMin).optional(),
+  "ibkrContractCount": zod.number().min(listFlowEventsResponseSourceIbkrContractCountMin).optional(),
+  "ibkrQualifiedContractCount": zod.number().min(listFlowEventsResponseSourceIbkrQualifiedContractCountMin).optional(),
+  "scannerCoverage": zod.object({
+  "mode": zod.enum(['watchlist', 'market', 'hybrid']).optional(),
+  "targetSize": zod.number().min(listFlowEventsResponseSourceScannerCoverageTargetSizeMin).optional(),
+  "selectedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageSelectedSymbolsMin).optional(),
+  "rankedAt": zod.coerce.date().nullish(),
+  "lastRefreshAt": zod.coerce.date().nullish(),
+  "lastGoodAt": zod.coerce.date().nullish(),
+  "stale": zod.boolean().optional(),
+  "fallbackUsed": zod.boolean().optional(),
+  "cooldownCount": zod.number().min(listFlowEventsResponseSourceScannerCoverageCooldownCountMin).optional(),
+  "scannedSymbols": zod.number().min(listFlowEventsResponseSourceScannerCoverageScannedSymbolsMin).optional(),
+  "currentBatch": zod.array(zod.string()).optional(),
+  "lastScanAt": zod.coerce.date().nullish(),
+  "degradedReason": zod.string().nullish()
+}).optional()
+})
+})
+
+
+/**
+ * @summary Get options flow scanner universe
+ */
+export const getFlowUniverseResponseCoverageTargetSizeMin = 0;
+
+export const getFlowUniverseResponseCoverageSelectedSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageCooldownCountMin = 0;
+
+export const getFlowUniverseResponseCoverageScannedSymbolsMin = 0;
+
+
+
+export const GetFlowUniverseResponse = zod.object({
+  "coverage": zod.object({
+  "mode": zod.enum(['watchlist', 'market', 'hybrid']).optional(),
+  "targetSize": zod.number().min(getFlowUniverseResponseCoverageTargetSizeMin).optional(),
+  "selectedSymbols": zod.number().min(getFlowUniverseResponseCoverageSelectedSymbolsMin).optional(),
+  "rankedAt": zod.coerce.date().nullish(),
+  "lastRefreshAt": zod.coerce.date().nullish(),
+  "lastGoodAt": zod.coerce.date().nullish(),
+  "stale": zod.boolean().optional(),
+  "fallbackUsed": zod.boolean().optional(),
+  "cooldownCount": zod.number().min(getFlowUniverseResponseCoverageCooldownCountMin).optional(),
+  "scannedSymbols": zod.number().min(getFlowUniverseResponseCoverageScannedSymbolsMin).optional(),
+  "currentBatch": zod.array(zod.string()).optional(),
+  "lastScanAt": zod.coerce.date().nullish(),
+  "degradedReason": zod.string().nullish()
+}),
+  "symbols": zod.array(zod.string()),
+  "sources": zod.object({
+  "builtInSymbols": zod.array(zod.string()),
+  "flowUniverseSymbols": zod.array(zod.string())
+})
+})
+
 
 /**
  * @summary Get the RayReplica monitor profile for an environment
  */
 export const GetSignalMonitorProfileQueryParams = zod.object({
-  environment: zod.enum(["paper", "live"]).optional(),
-});
+  "environment": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetSignalMonitorProfileResponse = zod.object({
-  id: zod.string(),
-  environment: zod.enum(["paper", "live"]),
-  enabled: zod.boolean(),
-  watchlistId: zod.string().nullable(),
-  timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
-  rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
-  freshWindowBars: zod.number(),
-  pollIntervalSeconds: zod.number(),
-  maxSymbols: zod.number(),
-  evaluationConcurrency: zod.number(),
-  lastEvaluatedAt: zod.coerce.date().nullable(),
-  lastError: zod.string().nullable(),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
+  "id": zod.string(),
+  "environment": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "watchlistId": zod.string().nullable(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "freshWindowBars": zod.number(),
+  "pollIntervalSeconds": zod.number(),
+  "maxSymbols": zod.number(),
+  "evaluationConcurrency": zod.number(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Update the RayReplica monitor profile for an environment
@@ -1634,50 +2252,37 @@ export const updateSignalMonitorProfileBodyMaxSymbolsMax = 250;
 
 export const updateSignalMonitorProfileBodyEvaluationConcurrencyMax = 10;
 
+
+
 export const UpdateSignalMonitorProfileBody = zod.object({
-  environment: zod.enum(["paper", "live"]).optional(),
-  enabled: zod.boolean().optional(),
-  watchlistId: zod.string().nullish(),
-  timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]).optional(),
-  rayReplicaSettings: zod.record(zod.string(), zod.unknown()).optional(),
-  freshWindowBars: zod
-    .number()
-    .min(1)
-    .max(updateSignalMonitorProfileBodyFreshWindowBarsMax)
-    .optional(),
-  pollIntervalSeconds: zod
-    .number()
-    .min(updateSignalMonitorProfileBodyPollIntervalSecondsMin)
-    .max(updateSignalMonitorProfileBodyPollIntervalSecondsMax)
-    .optional(),
-  maxSymbols: zod
-    .number()
-    .min(1)
-    .max(updateSignalMonitorProfileBodyMaxSymbolsMax)
-    .optional(),
-  evaluationConcurrency: zod
-    .number()
-    .min(1)
-    .max(updateSignalMonitorProfileBodyEvaluationConcurrencyMax)
-    .optional(),
-});
+  "environment": zod.enum(['paper', 'live']).optional(),
+  "enabled": zod.boolean().optional(),
+  "watchlistId": zod.string().nullish(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']).optional(),
+  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()).optional(),
+  "freshWindowBars": zod.number().min(1).max(updateSignalMonitorProfileBodyFreshWindowBarsMax).optional(),
+  "pollIntervalSeconds": zod.number().min(updateSignalMonitorProfileBodyPollIntervalSecondsMin).max(updateSignalMonitorProfileBodyPollIntervalSecondsMax).optional(),
+  "maxSymbols": zod.number().min(1).max(updateSignalMonitorProfileBodyMaxSymbolsMax).optional(),
+  "evaluationConcurrency": zod.number().min(1).max(updateSignalMonitorProfileBodyEvaluationConcurrencyMax).optional()
+})
 
 export const UpdateSignalMonitorProfileResponse = zod.object({
-  id: zod.string(),
-  environment: zod.enum(["paper", "live"]),
-  enabled: zod.boolean(),
-  watchlistId: zod.string().nullable(),
-  timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
-  rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
-  freshWindowBars: zod.number(),
-  pollIntervalSeconds: zod.number(),
-  maxSymbols: zod.number(),
-  evaluationConcurrency: zod.number(),
-  lastEvaluatedAt: zod.coerce.date().nullable(),
-  lastError: zod.string().nullable(),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
+  "id": zod.string(),
+  "environment": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "watchlistId": zod.string().nullable(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "freshWindowBars": zod.number(),
+  "pollIntervalSeconds": zod.number(),
+  "maxSymbols": zod.number(),
+  "evaluationConcurrency": zod.number(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Evaluate the RayReplica monitor profile
@@ -1685,1525 +2290,1491 @@ export const UpdateSignalMonitorProfileResponse = zod.object({
 export const evaluateSignalMonitorBodyModeDefault = `incremental`;
 
 export const EvaluateSignalMonitorBody = zod.object({
-  environment: zod.enum(["paper", "live"]).optional(),
-  mode: zod
-    .enum(["hydrate", "incremental"])
-    .default(evaluateSignalMonitorBodyModeDefault),
-  watchlistId: zod.string().nullish(),
-});
+  "environment": zod.enum(['paper', 'live']).optional(),
+  "mode": zod.enum(['hydrate', 'incremental']).default(evaluateSignalMonitorBodyModeDefault),
+  "watchlistId": zod.string().nullish()
+})
 
 export const EvaluateSignalMonitorResponse = zod.object({
-  profile: zod.object({
-    id: zod.string(),
-    environment: zod.enum(["paper", "live"]),
-    enabled: zod.boolean(),
-    watchlistId: zod.string().nullable(),
-    timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
-    rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
-    freshWindowBars: zod.number(),
-    pollIntervalSeconds: zod.number(),
-    maxSymbols: zod.number(),
-    evaluationConcurrency: zod.number(),
-    lastEvaluatedAt: zod.coerce.date().nullable(),
-    lastError: zod.string().nullable(),
-    createdAt: zod.coerce.date(),
-    updatedAt: zod.coerce.date(),
-  }),
-  states: zod.array(
-    zod.object({
-      id: zod.string(),
-      profileId: zod.string(),
-      symbol: zod.string(),
-      timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
-      currentSignalDirection: zod.union([
-        zod.enum(["buy", "sell"]),
-        zod.null(),
-      ]),
-      currentSignalAt: zod.coerce.date().nullable(),
-      currentSignalPrice: zod.number().nullable(),
-      latestBarAt: zod.coerce.date().nullable(),
-      barsSinceSignal: zod.number().nullable(),
-      fresh: zod.boolean(),
-      status: zod.enum(["ok", "stale", "unavailable", "error", "unknown"]),
-      active: zod.boolean(),
-      lastEvaluatedAt: zod.coerce.date().nullable(),
-      lastError: zod.string().nullable(),
-    }),
-  ),
-  evaluatedAt: zod.coerce.date(),
-  truncated: zod.boolean(),
-  skippedSymbols: zod.array(zod.string()),
-});
+  "profile": zod.object({
+  "id": zod.string(),
+  "environment": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "watchlistId": zod.string().nullable(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "freshWindowBars": zod.number(),
+  "pollIntervalSeconds": zod.number(),
+  "maxSymbols": zod.number(),
+  "evaluationConcurrency": zod.number(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "states": zod.array(zod.object({
+  "id": zod.string(),
+  "profileId": zod.string(),
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "currentSignalDirection": zod.union([zod.enum(['buy', 'sell']),zod.null()]),
+  "currentSignalAt": zod.coerce.date().nullable(),
+  "currentSignalPrice": zod.number().nullable(),
+  "latestBarAt": zod.coerce.date().nullable(),
+  "barsSinceSignal": zod.number().nullable(),
+  "fresh": zod.boolean(),
+  "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
+  "active": zod.boolean(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable()
+})),
+  "evaluatedAt": zod.coerce.date(),
+  "truncated": zod.boolean(),
+  "skippedSymbols": zod.array(zod.string())
+})
+
 
 /**
  * @summary List current RayReplica signal states
  */
 export const GetSignalMonitorStateQueryParams = zod.object({
-  environment: zod.enum(["paper", "live"]).optional(),
-});
+  "environment": zod.enum(['paper', 'live']).optional()
+})
 
 export const GetSignalMonitorStateResponse = zod.object({
-  profile: zod.object({
-    id: zod.string(),
-    environment: zod.enum(["paper", "live"]),
-    enabled: zod.boolean(),
-    watchlistId: zod.string().nullable(),
-    timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
-    rayReplicaSettings: zod.record(zod.string(), zod.unknown()),
-    freshWindowBars: zod.number(),
-    pollIntervalSeconds: zod.number(),
-    maxSymbols: zod.number(),
-    evaluationConcurrency: zod.number(),
-    lastEvaluatedAt: zod.coerce.date().nullable(),
-    lastError: zod.string().nullable(),
-    createdAt: zod.coerce.date(),
-    updatedAt: zod.coerce.date(),
-  }),
-  states: zod.array(
-    zod.object({
-      id: zod.string(),
-      profileId: zod.string(),
-      symbol: zod.string(),
-      timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
-      currentSignalDirection: zod.union([
-        zod.enum(["buy", "sell"]),
-        zod.null(),
-      ]),
-      currentSignalAt: zod.coerce.date().nullable(),
-      currentSignalPrice: zod.number().nullable(),
-      latestBarAt: zod.coerce.date().nullable(),
-      barsSinceSignal: zod.number().nullable(),
-      fresh: zod.boolean(),
-      status: zod.enum(["ok", "stale", "unavailable", "error", "unknown"]),
-      active: zod.boolean(),
-      lastEvaluatedAt: zod.coerce.date().nullable(),
-      lastError: zod.string().nullable(),
-    }),
-  ),
-  evaluatedAt: zod.coerce.date(),
-  truncated: zod.boolean(),
-  skippedSymbols: zod.array(zod.string()),
-});
+  "profile": zod.object({
+  "id": zod.string(),
+  "environment": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "watchlistId": zod.string().nullable(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "freshWindowBars": zod.number(),
+  "pollIntervalSeconds": zod.number(),
+  "maxSymbols": zod.number(),
+  "evaluationConcurrency": zod.number(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "states": zod.array(zod.object({
+  "id": zod.string(),
+  "profileId": zod.string(),
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "currentSignalDirection": zod.union([zod.enum(['buy', 'sell']),zod.null()]),
+  "currentSignalAt": zod.coerce.date().nullable(),
+  "currentSignalPrice": zod.number().nullable(),
+  "latestBarAt": zod.coerce.date().nullable(),
+  "barsSinceSignal": zod.number().nullable(),
+  "fresh": zod.boolean(),
+  "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
+  "active": zod.boolean(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable()
+})),
+  "evaluatedAt": zod.coerce.date(),
+  "truncated": zod.boolean(),
+  "skippedSymbols": zod.array(zod.string())
+})
+
 
 /**
  * @summary List RayReplica signal monitor events
  */
 export const listSignalMonitorEventsQueryLimitMax = 500;
 
+
+
 export const ListSignalMonitorEventsQueryParams = zod.object({
-  environment: zod.enum(["paper", "live"]).optional(),
-  symbol: zod.coerce.string().optional(),
-  limit: zod.coerce
-    .number()
-    .min(1)
-    .max(listSignalMonitorEventsQueryLimitMax)
-    .optional(),
-});
+  "environment": zod.enum(['paper', 'live']).optional(),
+  "symbol": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().min(1).max(listSignalMonitorEventsQueryLimitMax).optional()
+})
 
 export const ListSignalMonitorEventsResponse = zod.object({
-  events: zod.array(
-    zod.object({
-      id: zod.string(),
-      profileId: zod.string(),
-      environment: zod.enum(["paper", "live"]),
-      symbol: zod.string(),
-      timeframe: zod.enum(["1m", "5m", "15m", "1h", "1d"]),
-      direction: zod.enum(["buy", "sell"]),
-      signalAt: zod.coerce.date(),
-      signalPrice: zod.number().nullable(),
-      close: zod.number().nullable(),
-      emittedAt: zod.coerce.date(),
-      source: zod.string(),
-      payload: zod.record(zod.string(), zod.unknown()),
-    }),
-  ),
-});
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "profileId": zod.string(),
+  "environment": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "direction": zod.enum(['buy', 'sell']),
+  "signalAt": zod.coerce.date(),
+  "signalPrice": zod.number().nullable(),
+  "close": zod.number().nullable(),
+  "emittedAt": zod.coerce.date(),
+  "source": zod.string(),
+  "payload": zod.record(zod.string(), zod.unknown())
+}))
+})
+
 
 /**
  * Returns whether the server-side research provider is configured.
  * @summary Get research provider status
  */
 export const GetResearchStatusResponse = zod.object({
-  configured: zod.boolean(),
-  provider: zod.union([zod.enum(["fmp"]), zod.null()]),
-});
+  "configured": zod.boolean(),
+  "provider": zod.union([zod.enum(['fmp']),zod.null()])
+})
+
 
 /**
  * @summary Get research fundamentals for a symbol
  */
 export const GetResearchFundamentalsQueryParams = zod.object({
-  symbol: zod.coerce.string(),
-});
+  "symbol": zod.coerce.string()
+})
 
 export const GetResearchFundamentalsResponse = zod.object({
-  symbol: zod.string(),
-  fundamentals: zod.union([
-    zod.object({
-      symbol: zod.string(),
-      revenueTTM: zod.number().nullable(),
-      grossMarginTTM: zod.number().nullable(),
-      netMarginTTM: zod.number().nullable(),
-      operMarginTTM: zod.number().nullable(),
-      roeTTM: zod.number().nullable(),
-      debtToEquity: zod.number().nullable(),
-      evToEBITDA: zod.number().nullable(),
-      priceToSales: zod.number().nullable(),
-      beta: zod.number().nullable(),
-      sector: zod.string().nullable(),
-      industry: zod.string().nullable(),
-      ceo: zod.string().nullable(),
-    }),
-    zod.null(),
-  ]),
-});
+  "symbol": zod.string(),
+  "fundamentals": zod.union([zod.object({
+  "symbol": zod.string(),
+  "revenueTTM": zod.number().nullable(),
+  "grossMarginTTM": zod.number().nullable(),
+  "netMarginTTM": zod.number().nullable(),
+  "operMarginTTM": zod.number().nullable(),
+  "roeTTM": zod.number().nullable(),
+  "debtToEquity": zod.number().nullable(),
+  "evToEBITDA": zod.number().nullable(),
+  "priceToSales": zod.number().nullable(),
+  "beta": zod.number().nullable(),
+  "sector": zod.string().nullable(),
+  "industry": zod.string().nullable(),
+  "ceo": zod.string().nullable()
+}),zod.null()])
+})
+
 
 /**
  * Returns annual statement history plus trailing-twelve-month rollups for the research UI.
  * @summary Get normalized research financial statements for a symbol
  */
 export const GetResearchFinancialsQueryParams = zod.object({
-  symbol: zod.coerce.string(),
-});
+  "symbol": zod.coerce.string()
+})
 
 export const GetResearchFinancialsResponse = zod.object({
-  symbol: zod.string(),
-  financials: zod.union([
-    zod.object({
-      symbol: zod.string(),
-      years: zod.array(zod.string()),
-      revs: zod.array(zod.number().nullable()),
-      isData: zod.array(
-        zod.object({
-          rev: zod.number().nullable(),
-          cogs: zod.number().nullable(),
-          grossProfit: zod.number().nullable(),
-          rd: zod.number().nullable(),
-          sga: zod.number().nullable(),
-          da: zod.number().nullable(),
-          totalOpex: zod.number().nullable(),
-          opIncome: zod.number().nullable(),
-          intExp: zod.number().nullable(),
-          otherInc: zod.number().nullable(),
-          preTax: zod.number().nullable(),
-          tax: zod.number().nullable(),
-          netIncome: zod.number().nullable(),
-          eps: zod.number().nullable(),
-        }),
-      ),
-      bsData: zod.array(
-        zod.object({
-          ca: zod.number().nullable(),
-          cashSTI: zod.number().nullable(),
-          cash: zod.number().nullable(),
-          sti: zod.number().nullable(),
-          recv: zod.number().nullable(),
-          inv: zod.number().nullable(),
-          invFG: zod.number().nullable(),
-          invWIP: zod.number().nullable(),
-          invRM: zod.number().nullable(),
-          prepaid: zod.number().nullable(),
-          ta: zod.number().nullable(),
-          ppe: zod.number().nullable(),
-          gw: zod.number().nullable(),
-          otherLT: zod.number().nullable(),
-          cl: zod.number().nullable(),
-          ap: zod.number().nullable(),
-          stDebt: zod.number().nullable(),
-          accrued: zod.number().nullable(),
-          ltDebt: zod.number().nullable(),
-          tl: zod.number().nullable(),
-          equity: zod.number().nullable(),
-          tlse: zod.number().nullable(),
-        }),
-      ),
-      cfData: zod.array(
-        zod.object({
-          netIncome: zod.number().nullable(),
-          da: zod.number().nullable(),
-          sbc: zod.number().nullable(),
-          wcImpact: zod.number().nullable(),
-          cfo: zod.number().nullable(),
-          capex: zod.number().nullable(),
-          cfi: zod.number().nullable(),
-          divPaid: zod.number().nullable(),
-          buybacks: zod.number().nullable(),
-          debtChg: zod.number().nullable(),
-          cff: zod.number().nullable(),
-          fcf: zod.number().nullable(),
-        }),
-      ),
-      ratiosData: zod.array(
-        zod.object({
-          roic: zod.number().nullable(),
-          fcfMargin: zod.number().nullable(),
-          fcfYield: zod.number().nullable(),
-          debtEbitda: zod.number().nullable(),
-          netDebt: zod.number().nullable(),
-          currentRatio: zod.number().nullable(),
-          rdIntensity: zod.number().nullable(),
-          capexIntensity: zod.number().nullable(),
-          gmPct: zod.number().nullable(),
-          opmPct: zod.number().nullable(),
-          netMargin: zod.number().nullable(),
-          runwayQtrs: zod.number().nullable(),
-        }),
-      ),
-      qEPS: zod.array(
-        zod.object({
-          label: zod.string(),
-          actual: zod.number().nullable(),
-          estimate: zod.number().nullable(),
-          beat: zod.boolean().nullable(),
-          diff: zod.number().nullable(),
-        }),
-      ),
-      annualEarnings: zod.array(
-        zod.object({
-          year: zod.string(),
-          earnings: zod.number().nullable(),
-          isEstimate: zod.boolean(),
-        }),
-      ),
-    }),
-    zod.null(),
-  ]),
-});
+  "symbol": zod.string(),
+  "financials": zod.union([zod.object({
+  "symbol": zod.string(),
+  "years": zod.array(zod.string()),
+  "revs": zod.array(zod.number().nullable()),
+  "isData": zod.array(zod.object({
+  "rev": zod.number().nullable(),
+  "cogs": zod.number().nullable(),
+  "grossProfit": zod.number().nullable(),
+  "rd": zod.number().nullable(),
+  "sga": zod.number().nullable(),
+  "da": zod.number().nullable(),
+  "totalOpex": zod.number().nullable(),
+  "opIncome": zod.number().nullable(),
+  "intExp": zod.number().nullable(),
+  "otherInc": zod.number().nullable(),
+  "preTax": zod.number().nullable(),
+  "tax": zod.number().nullable(),
+  "netIncome": zod.number().nullable(),
+  "eps": zod.number().nullable()
+})),
+  "bsData": zod.array(zod.object({
+  "ca": zod.number().nullable(),
+  "cashSTI": zod.number().nullable(),
+  "cash": zod.number().nullable(),
+  "sti": zod.number().nullable(),
+  "recv": zod.number().nullable(),
+  "inv": zod.number().nullable(),
+  "invFG": zod.number().nullable(),
+  "invWIP": zod.number().nullable(),
+  "invRM": zod.number().nullable(),
+  "prepaid": zod.number().nullable(),
+  "ta": zod.number().nullable(),
+  "ppe": zod.number().nullable(),
+  "gw": zod.number().nullable(),
+  "otherLT": zod.number().nullable(),
+  "cl": zod.number().nullable(),
+  "ap": zod.number().nullable(),
+  "stDebt": zod.number().nullable(),
+  "accrued": zod.number().nullable(),
+  "ltDebt": zod.number().nullable(),
+  "tl": zod.number().nullable(),
+  "equity": zod.number().nullable(),
+  "tlse": zod.number().nullable()
+})),
+  "cfData": zod.array(zod.object({
+  "netIncome": zod.number().nullable(),
+  "da": zod.number().nullable(),
+  "sbc": zod.number().nullable(),
+  "wcImpact": zod.number().nullable(),
+  "cfo": zod.number().nullable(),
+  "capex": zod.number().nullable(),
+  "cfi": zod.number().nullable(),
+  "divPaid": zod.number().nullable(),
+  "buybacks": zod.number().nullable(),
+  "debtChg": zod.number().nullable(),
+  "cff": zod.number().nullable(),
+  "fcf": zod.number().nullable()
+})),
+  "ratiosData": zod.array(zod.object({
+  "roic": zod.number().nullable(),
+  "fcfMargin": zod.number().nullable(),
+  "fcfYield": zod.number().nullable(),
+  "debtEbitda": zod.number().nullable(),
+  "netDebt": zod.number().nullable(),
+  "currentRatio": zod.number().nullable(),
+  "rdIntensity": zod.number().nullable(),
+  "capexIntensity": zod.number().nullable(),
+  "gmPct": zod.number().nullable(),
+  "opmPct": zod.number().nullable(),
+  "netMargin": zod.number().nullable(),
+  "runwayQtrs": zod.number().nullable()
+})),
+  "qEPS": zod.array(zod.object({
+  "label": zod.string(),
+  "actual": zod.number().nullable(),
+  "estimate": zod.number().nullable(),
+  "beat": zod.boolean().nullable(),
+  "diff": zod.number().nullable()
+})),
+  "annualEarnings": zod.array(zod.object({
+  "year": zod.string(),
+  "earnings": zod.number().nullable(),
+  "isEstimate": zod.boolean()
+}))
+}),zod.null()])
+})
+
 
 /**
  * Returns broker quote fields plus research enrichment needed by the research UI.
  * @summary Get research-ready market snapshots for symbols
  */
 export const GetResearchSnapshotsQueryParams = zod.object({
-  symbols: zod.coerce.string(),
-});
+  "symbols": zod.coerce.string()
+})
 
 export const GetResearchSnapshotsResponse = zod.object({
-  snapshots: zod.array(
-    zod.object({
-      symbol: zod.string(),
-      price: zod.number().nullable(),
-      bid: zod.number().nullable(),
-      ask: zod.number().nullable(),
-      change: zod.number().nullable(),
-      changePercent: zod.number().nullable(),
-      dayLow: zod.number().nullable(),
-      dayHigh: zod.number().nullable(),
-      yearLow: zod.number().nullable(),
-      yearHigh: zod.number().nullable(),
-      mc: zod.number().nullable(),
-      pe: zod.number().nullable(),
-      eps: zod.number().nullable(),
-      sharesOut: zod.number().nullable(),
-    }),
-  ),
-});
+  "snapshots": zod.array(zod.object({
+  "symbol": zod.string(),
+  "price": zod.number().nullable(),
+  "bid": zod.number().nullable(),
+  "ask": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "dayLow": zod.number().nullable(),
+  "dayHigh": zod.number().nullable(),
+  "yearLow": zod.number().nullable(),
+  "yearHigh": zod.number().nullable(),
+  "mc": zod.number().nullable(),
+  "pe": zod.number().nullable(),
+  "eps": zod.number().nullable(),
+  "sharesOut": zod.number().nullable()
+}))
+})
+
 
 /**
  * @summary Get earnings calendar entries
  */
 export const GetResearchEarningsCalendarQueryParams = zod.object({
-  from: zod.date(),
-  to: zod.date(),
-});
+  "from": zod.date(),
+  "to": zod.date()
+})
 
 export const GetResearchEarningsCalendarResponse = zod.object({
-  entries: zod.array(
-    zod.object({
-      symbol: zod.string(),
-      date: zod.coerce.date().nullable(),
-      time: zod.string().nullable(),
-      epsEstimated: zod.number().nullable(),
-      revenueEstimated: zod.number().nullable(),
-      fiscalDateEnding: zod.coerce.date().nullable(),
-    }),
-  ),
-});
+  "entries": zod.array(zod.object({
+  "symbol": zod.string(),
+  "date": zod.coerce.date().nullable(),
+  "time": zod.string().nullable(),
+  "epsEstimated": zod.number().nullable(),
+  "revenueEstimated": zod.number().nullable(),
+  "fiscalDateEnding": zod.coerce.date().nullable()
+}))
+})
+
 
 /**
  * @summary Get recent SEC filings for a symbol
  */
 export const getResearchSecFilingsQueryLimitMax = 100;
 
+
+
 export const GetResearchSecFilingsQueryParams = zod.object({
-  symbol: zod.coerce.string(),
-  limit: zod.coerce
-    .number()
-    .min(1)
-    .max(getResearchSecFilingsQueryLimitMax)
-    .optional(),
-});
+  "symbol": zod.coerce.string(),
+  "limit": zod.coerce.number().min(1).max(getResearchSecFilingsQueryLimitMax).optional()
+})
 
 export const GetResearchSecFilingsResponse = zod.object({
-  symbol: zod.string(),
-  filings: zod.array(
-    zod.object({
-      symbol: zod.string(),
-      type: zod.string().nullable(),
-      filingDate: zod.coerce.date().nullable(),
-      acceptedDate: zod.string().nullable(),
-      finalLink: zod.string().nullable(),
-      link: zod.string().nullable(),
-    }),
-  ),
-});
+  "symbol": zod.string(),
+  "filings": zod.array(zod.object({
+  "symbol": zod.string(),
+  "type": zod.string().nullable(),
+  "filingDate": zod.coerce.date().nullable(),
+  "acceptedDate": zod.string().nullable(),
+  "finalLink": zod.string().nullable(),
+  "link": zod.string().nullable()
+}))
+})
+
 
 /**
  * @summary List available transcript dates for a symbol
  */
 export const GetResearchTranscriptsQueryParams = zod.object({
-  symbol: zod.coerce.string(),
-});
+  "symbol": zod.coerce.string()
+})
 
 export const GetResearchTranscriptsResponse = zod.object({
-  symbol: zod.string(),
-  transcripts: zod.array(
-    zod.object({
-      year: zod.number().nullable(),
-      quarter: zod.number().nullable(),
-      date: zod.coerce.date().nullable(),
-    }),
-  ),
-});
+  "symbol": zod.string(),
+  "transcripts": zod.array(zod.object({
+  "year": zod.number().nullable(),
+  "quarter": zod.number().nullable(),
+  "date": zod.coerce.date().nullable()
+}))
+})
+
 
 /**
  * @summary Get a transcript for a symbol
  */
 export const getResearchTranscriptQueryQuarterMax = 4;
 
+
+
 export const GetResearchTranscriptQueryParams = zod.object({
-  symbol: zod.coerce.string(),
-  quarter: zod.coerce
-    .number()
-    .min(1)
-    .max(getResearchTranscriptQueryQuarterMax)
-    .optional(),
-  year: zod.coerce.number().optional(),
-});
+  "symbol": zod.coerce.string(),
+  "quarter": zod.coerce.number().min(1).max(getResearchTranscriptQueryQuarterMax).optional(),
+  "year": zod.coerce.number().optional()
+})
 
 export const GetResearchTranscriptResponse = zod.object({
-  symbol: zod.string(),
-  transcript: zod.union([
-    zod.object({
-      symbol: zod.string(),
-      quarter: zod.number().nullable(),
-      year: zod.number().nullable(),
-      date: zod.coerce.date().nullable(),
-      content: zod.string().nullable(),
-    }),
-    zod.null(),
-  ]),
-});
+  "symbol": zod.string(),
+  "transcript": zod.union([zod.object({
+  "symbol": zod.string(),
+  "quarter": zod.number().nullable(),
+  "year": zod.number().nullable(),
+  "date": zod.coerce.date().nullable(),
+  "content": zod.string().nullable()
+}),zod.null()])
+})
+
 
 /**
  * @summary List saved algo deployments
  */
 export const ListAlgoDeploymentsQueryParams = zod.object({
-  mode: zod.enum(["paper", "live"]).optional(),
-});
+  "mode": zod.enum(['paper', 'live']).optional()
+})
 
 export const ListAlgoDeploymentsResponse = zod.object({
-  deployments: zod.array(
-    zod.object({
-      id: zod.string(),
-      strategyId: zod.string(),
-      name: zod.string(),
-      mode: zod.enum(["paper", "live"]),
-      enabled: zod.boolean(),
-      providerAccountId: zod.string(),
-      symbolUniverse: zod.array(zod.string()),
-      config: zod.record(zod.string(), zod.unknown()),
-      lastEvaluatedAt: zod.coerce.date().nullable(),
-      lastSignalAt: zod.coerce.date().nullable(),
-      lastError: zod.string().nullable(),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "deployments": zod.array(zod.object({
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary Create an algo deployment linked to a promoted strategy
  */
 export const CreateAlgoDeploymentBody = zod.object({
-  strategyId: zod.string(),
-  name: zod.string(),
-  providerAccountId: zod.string(),
-  mode: zod.enum(["paper", "live"]),
-  symbolUniverse: zod.array(zod.string()).optional(),
-  config: zod.record(zod.string(), zod.unknown()).optional(),
-});
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "providerAccountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbolUniverse": zod.array(zod.string()).optional(),
+  "config": zod.record(zod.string(), zod.unknown()).optional()
+})
+
 
 /**
  * @summary Enable an algo deployment
  */
 export const EnableAlgoDeploymentParams = zod.object({
-  deploymentId: zod.coerce.string(),
-});
+  "deploymentId": zod.coerce.string()
+})
 
 export const EnableAlgoDeploymentResponse = zod.object({
-  id: zod.string(),
-  strategyId: zod.string(),
-  name: zod.string(),
-  mode: zod.enum(["paper", "live"]),
-  enabled: zod.boolean(),
-  providerAccountId: zod.string(),
-  symbolUniverse: zod.array(zod.string()),
-  config: zod.record(zod.string(), zod.unknown()),
-  lastEvaluatedAt: zod.coerce.date().nullable(),
-  lastSignalAt: zod.coerce.date().nullable(),
-  lastError: zod.string().nullable(),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Pause an algo deployment
  */
 export const PauseAlgoDeploymentParams = zod.object({
-  deploymentId: zod.coerce.string(),
-});
+  "deploymentId": zod.coerce.string()
+})
 
 export const PauseAlgoDeploymentResponse = zod.object({
-  id: zod.string(),
-  strategyId: zod.string(),
-  name: zod.string(),
-  mode: zod.enum(["paper", "live"]),
-  enabled: zod.boolean(),
-  providerAccountId: zod.string(),
-  symbolUniverse: zod.array(zod.string()),
-  config: zod.record(zod.string(), zod.unknown()),
-  lastEvaluatedAt: zod.coerce.date().nullable(),
-  lastSignalAt: zod.coerce.date().nullable(),
-  lastError: zod.string().nullable(),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Get signal-options shadow automation state for a deployment
+ */
+export const GetSignalOptionsAutomationStateParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const GetSignalOptionsAutomationStateResponse = zod.object({
+  "deployment": zod.object({
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "profile": zod.object({
+  "version": zod.enum(['v1']),
+  "mode": zod.enum(['shadow']),
+  "optionSelection": zod.record(zod.string(), zod.unknown()),
+  "riskCaps": zod.record(zod.string(), zod.unknown()),
+  "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "fillPolicy": zod.record(zod.string(), zod.unknown()),
+  "exitPolicy": zod.record(zod.string(), zod.unknown())
+}),
+  "mode": zod.enum(['shadow']),
+  "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
+  "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
+  "risk": zod.record(zod.string(), zod.unknown()),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "deploymentId": zod.string().nullable(),
+  "algoRunId": zod.string().nullable(),
+  "providerAccountId": zod.string().nullable(),
+  "symbol": zod.string().nullable(),
+  "eventType": zod.string(),
+  "summary": zod.string(),
+  "payload": zod.record(zod.string(), zod.unknown()),
+  "occurredAt": zod.coerce.date(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Run a signal-options shadow scan
+ */
+export const RunSignalOptionsShadowScanParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const RunSignalOptionsShadowScanResponse = zod.object({
+  "deployment": zod.object({
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "profile": zod.object({
+  "version": zod.enum(['v1']),
+  "mode": zod.enum(['shadow']),
+  "optionSelection": zod.record(zod.string(), zod.unknown()),
+  "riskCaps": zod.record(zod.string(), zod.unknown()),
+  "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "fillPolicy": zod.record(zod.string(), zod.unknown()),
+  "exitPolicy": zod.record(zod.string(), zod.unknown())
+}),
+  "mode": zod.enum(['shadow']),
+  "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
+  "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
+  "risk": zod.record(zod.string(), zod.unknown()),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "deploymentId": zod.string().nullable(),
+  "algoRunId": zod.string().nullable(),
+  "providerAccountId": zod.string().nullable(),
+  "symbol": zod.string().nullable(),
+  "eventType": zod.string(),
+  "summary": zod.string(),
+  "payload": zod.record(zod.string(), zod.unknown()),
+  "occurredAt": zod.coerce.date(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Record a manual Trade preview deviation from a signal-options plan
+ */
+export const RecordSignalOptionsManualDeviationParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const RecordSignalOptionsManualDeviationBody = zod.object({
+  "candidateId": zod.string(),
+  "symbol": zod.string(),
+  "source": zod.enum(['trade_preview']),
+  "changedFields": zod.array(zod.string()),
+  "plannedContract": zod.record(zod.string(), zod.unknown()),
+  "plannedOrderPlan": zod.record(zod.string(), zod.unknown()),
+  "actualOrderRequest": zod.record(zod.string(), zod.unknown()),
+  "automationCandidate": zod.record(zod.string(), zod.unknown()).optional(),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
+ * @summary Update signal-options execution profile
+ */
+export const UpdateSignalOptionsExecutionProfileParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const UpdateSignalOptionsExecutionProfileBody = zod.object({
+  "version": zod.enum(['v1']),
+  "mode": zod.enum(['shadow']),
+  "optionSelection": zod.record(zod.string(), zod.unknown()),
+  "riskCaps": zod.record(zod.string(), zod.unknown()),
+  "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "fillPolicy": zod.record(zod.string(), zod.unknown()),
+  "exitPolicy": zod.record(zod.string(), zod.unknown())
+})
+
+export const UpdateSignalOptionsExecutionProfileResponse = zod.object({
+  "deployment": zod.object({
+  "id": zod.string(),
+  "strategyId": zod.string(),
+  "name": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "providerAccountId": zod.string(),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastSignalAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "profile": zod.object({
+  "version": zod.enum(['v1']),
+  "mode": zod.enum(['shadow']),
+  "optionSelection": zod.record(zod.string(), zod.unknown()),
+  "riskCaps": zod.record(zod.string(), zod.unknown()),
+  "liquidityGate": zod.record(zod.string(), zod.unknown()),
+  "fillPolicy": zod.record(zod.string(), zod.unknown()),
+  "exitPolicy": zod.record(zod.string(), zod.unknown())
+}),
+  "mode": zod.enum(['shadow']),
+  "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
+  "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
+  "risk": zod.record(zod.string(), zod.unknown()),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "deploymentId": zod.string().nullable(),
+  "algoRunId": zod.string().nullable(),
+  "providerAccountId": zod.string().nullable(),
+  "symbol": zod.string().nullable(),
+  "eventType": zod.string(),
+  "summary": zod.string(),
+  "payload": zod.record(zod.string(), zod.unknown()),
+  "occurredAt": zod.coerce.date(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary List execution and deployment lifecycle events
  */
 export const listExecutionEventsQueryLimitMax = 500;
 
+
+
 export const ListExecutionEventsQueryParams = zod.object({
-  deploymentId: zod.coerce.string().optional(),
-  limit: zod.coerce
-    .number()
-    .min(1)
-    .max(listExecutionEventsQueryLimitMax)
-    .optional(),
-});
+  "deploymentId": zod.coerce.string().optional(),
+  "limit": zod.coerce.number().min(1).max(listExecutionEventsQueryLimitMax).optional()
+})
 
 export const ListExecutionEventsResponse = zod.object({
-  events: zod.array(
-    zod.object({
-      id: zod.string(),
-      deploymentId: zod.string().nullable(),
-      algoRunId: zod.string().nullable(),
-      providerAccountId: zod.string().nullable(),
-      symbol: zod.string().nullable(),
-      eventType: zod.string(),
-      summary: zod.string(),
-      payload: zod.record(zod.string(), zod.unknown()),
-      occurredAt: zod.coerce.date(),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "deploymentId": zod.string().nullable(),
+  "algoRunId": zod.string().nullable(),
+  "providerAccountId": zod.string().nullable(),
+  "symbol": zod.string().nullable(),
+  "eventType": zod.string(),
+  "summary": zod.string(),
+  "payload": zod.record(zod.string(), zod.unknown()),
+  "occurredAt": zod.coerce.date(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary List saved Pine scripts for chart indicators
  */
 export const ListPineScriptsResponse = zod.object({
-  scripts: zod.array(
-    zod.object({
-      id: zod.string(),
-      scriptKey: zod.string(),
-      name: zod.string(),
-      description: zod.string().nullable(),
-      sourceCode: zod.string(),
-      status: zod.enum(["draft", "ready", "error", "archived"]),
-      defaultPaneType: zod.enum(["price", "lower"]),
-      chartAccessEnabled: zod.boolean(),
-      notes: zod.string().nullable(),
-      lastError: zod.string().nullable(),
-      tags: zod.array(zod.string()),
-      metadata: zod.record(zod.string(), zod.unknown()),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "scripts": zod.array(zod.object({
+  "id": zod.string(),
+  "scriptKey": zod.string(),
+  "name": zod.string(),
+  "description": zod.string().nullable(),
+  "sourceCode": zod.string(),
+  "status": zod.enum(['draft', 'ready', 'error', 'archived']),
+  "defaultPaneType": zod.enum(['price', 'lower']),
+  "chartAccessEnabled": zod.boolean(),
+  "notes": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "tags": zod.array(zod.string()),
+  "metadata": zod.record(zod.string(), zod.unknown()),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary Create a Pine script library entry
  */
 export const CreatePineScriptBody = zod.object({
-  scriptKey: zod.string().optional(),
-  name: zod.string(),
-  description: zod.string().optional(),
-  sourceCode: zod.string(),
-  status: zod.enum(["draft", "ready", "error", "archived"]).optional(),
-  defaultPaneType: zod.enum(["price", "lower"]).optional(),
-  chartAccessEnabled: zod.boolean().optional(),
-  notes: zod.string().optional(),
-  tags: zod.array(zod.string()).optional(),
-  metadata: zod.record(zod.string(), zod.unknown()).optional(),
-});
+  "scriptKey": zod.string().optional(),
+  "name": zod.string(),
+  "description": zod.string().optional(),
+  "sourceCode": zod.string(),
+  "status": zod.enum(['draft', 'ready', 'error', 'archived']).optional(),
+  "defaultPaneType": zod.enum(['price', 'lower']).optional(),
+  "chartAccessEnabled": zod.boolean().optional(),
+  "notes": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
+})
+
 
 /**
  * @summary Update a Pine script library entry
  */
 export const UpdatePineScriptParams = zod.object({
-  scriptId: zod.coerce.string(),
-});
+  "scriptId": zod.coerce.string()
+})
 
 export const UpdatePineScriptBody = zod.object({
-  name: zod.string().optional(),
-  description: zod.string().optional(),
-  sourceCode: zod.string().optional(),
-  status: zod.enum(["draft", "ready", "error", "archived"]).optional(),
-  defaultPaneType: zod.enum(["price", "lower"]).optional(),
-  chartAccessEnabled: zod.boolean().optional(),
-  notes: zod.string().optional(),
-  lastError: zod.string().optional(),
-  tags: zod.array(zod.string()).optional(),
-  metadata: zod.record(zod.string(), zod.unknown()).optional(),
-});
+  "name": zod.string().optional(),
+  "description": zod.string().optional(),
+  "sourceCode": zod.string().optional(),
+  "status": zod.enum(['draft', 'ready', 'error', 'archived']).optional(),
+  "defaultPaneType": zod.enum(['price', 'lower']).optional(),
+  "chartAccessEnabled": zod.boolean().optional(),
+  "notes": zod.string().optional(),
+  "lastError": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional()
+})
 
 export const UpdatePineScriptResponse = zod.object({
-  id: zod.string(),
-  scriptKey: zod.string(),
-  name: zod.string(),
-  description: zod.string().nullable(),
-  sourceCode: zod.string(),
-  status: zod.enum(["draft", "ready", "error", "archived"]),
-  defaultPaneType: zod.enum(["price", "lower"]),
-  chartAccessEnabled: zod.boolean(),
-  notes: zod.string().nullable(),
-  lastError: zod.string().nullable(),
-  tags: zod.array(zod.string()),
-  metadata: zod.record(zod.string(), zod.unknown()),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
+  "id": zod.string(),
+  "scriptKey": zod.string(),
+  "name": zod.string(),
+  "description": zod.string().nullable(),
+  "sourceCode": zod.string(),
+  "status": zod.enum(['draft', 'ready', 'error', 'archived']),
+  "defaultPaneType": zod.enum(['price', 'lower']),
+  "chartAccessEnabled": zod.boolean(),
+  "notes": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "tags": zod.array(zod.string()),
+  "metadata": zod.record(zod.string(), zod.unknown()),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary List available backtest strategies
  */
 export const ListBacktestStrategiesResponse = zod.object({
-  strategies: zod.array(
-    zod.object({
-      strategyId: zod.string(),
-      version: zod.string(),
-      label: zod.string(),
-      description: zod.string(),
-      status: zod.enum(["runnable", "blocked"]),
-      directionMode: zod.enum(["long_only", "long_short"]),
-      supportedTimeframes: zod.array(
-        zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-      ),
-      compatibilityNotes: zod.array(zod.string()),
-      unsupportedFeatures: zod.array(zod.string()),
-      parameterDefinitions: zod.array(
-        zod.object({
-          key: zod.string(),
-          label: zod.string(),
-          type: zod.enum(["integer", "number", "boolean", "enum"]),
-          defaultValue: zod.union([zod.string(), zod.number(), zod.boolean()]),
-          min: zod.number().nullable(),
-          max: zod.number().nullable(),
-          step: zod.number().nullable(),
-          options: zod.array(
-            zod.union([zod.string(), zod.number(), zod.boolean()]),
-          ),
-        }),
-      ),
-      defaultParameters: zod.record(zod.string(), zod.unknown()),
-    }),
-  ),
-});
+  "strategies": zod.array(zod.object({
+  "strategyId": zod.string(),
+  "version": zod.string(),
+  "label": zod.string(),
+  "description": zod.string(),
+  "status": zod.enum(['runnable', 'blocked']),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "supportedTimeframes": zod.array(zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d'])),
+  "compatibilityNotes": zod.array(zod.string()),
+  "unsupportedFeatures": zod.array(zod.string()),
+  "parameterDefinitions": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "type": zod.enum(['integer', 'number', 'boolean', 'enum']),
+  "defaultValue": zod.union([zod.string(),zod.number(),zod.boolean()]),
+  "min": zod.number().nullable(),
+  "max": zod.number().nullable(),
+  "step": zod.number().nullable(),
+  "options": zod.array(zod.union([zod.string(),zod.number(),zod.boolean()]))
+})),
+  "defaultParameters": zod.record(zod.string(), zod.unknown())
+}))
+})
+
 
 /**
  * @summary List saved backtest studies
  */
 export const ListBacktestStudiesResponse = zod.object({
-  studies: zod.array(
-    zod.object({
-      id: zod.string(),
-      name: zod.string(),
-      strategyId: zod.string(),
-      strategyVersion: zod.string(),
-      directionMode: zod.enum(["long_only", "long_short"]),
-      watchlistId: zod.string().nullable(),
-      symbols: zod.array(zod.string()),
-      timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-      startsAt: zod.coerce.date(),
-      endsAt: zod.coerce.date(),
-      parameters: zod.record(zod.string(), zod.unknown()),
-      portfolioRules: zod.object({
-        initialCapital: zod.number(),
-        positionSizePercent: zod.number(),
-        maxConcurrentPositions: zod.number(),
-        maxGrossExposurePercent: zod.number(),
-      }),
-      executionProfile: zod.object({
-        commissionBps: zod.number(),
-        slippageBps: zod.number(),
-      }),
-      optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
-      optimizerConfig: zod.record(zod.string(), zod.unknown()),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "studies": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "watchlistId": zod.string().nullable(),
+  "symbols": zod.array(zod.string()),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date(),
+  "parameters": zod.record(zod.string(), zod.unknown()),
+  "portfolioRules": zod.object({
+  "initialCapital": zod.number(),
+  "positionSizePercent": zod.number(),
+  "maxConcurrentPositions": zod.number(),
+  "maxGrossExposurePercent": zod.number()
+}),
+  "executionProfile": zod.object({
+  "commissionBps": zod.number(),
+  "slippageBps": zod.number()
+}),
+  "optimizerMode": zod.enum(['grid', 'random', 'walk_forward']),
+  "optimizerConfig": zod.record(zod.string(), zod.unknown()),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary Create a backtest study
  */
 export const CreateBacktestStudyBody = zod.object({
-  name: zod.string(),
-  strategyId: zod.string(),
-  strategyVersion: zod.string(),
-  directionMode: zod.enum(["long_only", "long_short"]),
-  watchlistId: zod.string().nullable(),
-  symbols: zod.array(zod.string()),
-  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-  startsAt: zod.coerce.date(),
-  endsAt: zod.coerce.date(),
-  parameters: zod.record(zod.string(), zod.unknown()),
-  portfolioRules: zod.object({
-    initialCapital: zod.number(),
-    positionSizePercent: zod.number(),
-    maxConcurrentPositions: zod.number(),
-    maxGrossExposurePercent: zod.number(),
-  }),
-  executionProfile: zod.object({
-    commissionBps: zod.number(),
-    slippageBps: zod.number(),
-  }),
-  optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
-  optimizerConfig: zod.record(zod.string(), zod.unknown()),
-});
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "watchlistId": zod.string().nullable(),
+  "symbols": zod.array(zod.string()),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date(),
+  "parameters": zod.record(zod.string(), zod.unknown()),
+  "portfolioRules": zod.object({
+  "initialCapital": zod.number(),
+  "positionSizePercent": zod.number(),
+  "maxConcurrentPositions": zod.number(),
+  "maxGrossExposurePercent": zod.number()
+}),
+  "executionProfile": zod.object({
+  "commissionBps": zod.number(),
+  "slippageBps": zod.number()
+}),
+  "optimizerMode": zod.enum(['grid', 'random', 'walk_forward']),
+  "optimizerConfig": zod.record(zod.string(), zod.unknown())
+})
+
 
 /**
  * @summary Get one backtest study
  */
 export const GetBacktestStudyParams = zod.object({
-  studyId: zod.coerce.string(),
-});
+  "studyId": zod.coerce.string()
+})
 
 export const GetBacktestStudyResponse = zod.object({
-  id: zod.string(),
-  name: zod.string(),
-  strategyId: zod.string(),
-  strategyVersion: zod.string(),
-  directionMode: zod.enum(["long_only", "long_short"]),
-  watchlistId: zod.string().nullable(),
-  symbols: zod.array(zod.string()),
-  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-  startsAt: zod.coerce.date(),
-  endsAt: zod.coerce.date(),
-  parameters: zod.record(zod.string(), zod.unknown()),
-  portfolioRules: zod.object({
-    initialCapital: zod.number(),
-    positionSizePercent: zod.number(),
-    maxConcurrentPositions: zod.number(),
-    maxGrossExposurePercent: zod.number(),
-  }),
-  executionProfile: zod.object({
-    commissionBps: zod.number(),
-    slippageBps: zod.number(),
-  }),
-  optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
-  optimizerConfig: zod.record(zod.string(), zod.unknown()),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
+  "id": zod.string(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "watchlistId": zod.string().nullable(),
+  "symbols": zod.array(zod.string()),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date(),
+  "parameters": zod.record(zod.string(), zod.unknown()),
+  "portfolioRules": zod.object({
+  "initialCapital": zod.number(),
+  "positionSizePercent": zod.number(),
+  "maxConcurrentPositions": zod.number(),
+  "maxGrossExposurePercent": zod.number()
+}),
+  "executionProfile": zod.object({
+  "commissionBps": zod.number(),
+  "slippageBps": zod.number()
+}),
+  "optimizerMode": zod.enum(['grid', 'random', 'walk_forward']),
+  "optimizerConfig": zod.record(zod.string(), zod.unknown()),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
 
 /**
  * @summary Get the latest-vs-best completed study preview chart
  */
 export const GetBacktestStudyPreviewChartParams = zod.object({
-  studyId: zod.coerce.string(),
-});
+  "studyId": zod.coerce.string()
+})
 
 export const GetBacktestStudyPreviewChartResponse = zod.object({
-  studyId: zod.string(),
-  latestCompletedRun: zod.union([
-    zod.object({
-      id: zod.string(),
-      studyId: zod.string(),
-      sweepId: zod.string().nullable(),
-      name: zod.string(),
-      strategyId: zod.string(),
-      strategyVersion: zod.string(),
-      directionMode: zod.enum(["long_only", "long_short"]),
-      status: zod.enum([
-        "queued",
-        "preparing_data",
-        "running",
-        "aggregating",
-        "completed",
-        "failed",
-        "cancel_requested",
-        "canceled",
-      ]),
-      sortRank: zod.number().nullable(),
-      metrics: zod.union([
-        zod.object({
-          netPnl: zod.number(),
-          totalReturnPercent: zod.number(),
-          maxDrawdownPercent: zod.number(),
-          tradeCount: zod.number(),
-          winRatePercent: zod.number(),
-          profitFactor: zod.number(),
-          sharpeRatio: zod.number(),
-          returnOverMaxDrawdown: zod.number(),
-        }),
-        zod.null(),
-      ]),
-      warnings: zod.array(zod.string()),
-      errorMessage: zod.string().nullable(),
-      startedAt: zod.coerce.date().nullable(),
-      finishedAt: zod.coerce.date().nullable(),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-    zod.null(),
-  ]),
-  bestCompletedRun: zod.union([
-    zod.object({
-      id: zod.string(),
-      studyId: zod.string(),
-      sweepId: zod.string().nullable(),
-      name: zod.string(),
-      strategyId: zod.string(),
-      strategyVersion: zod.string(),
-      directionMode: zod.enum(["long_only", "long_short"]),
-      status: zod.enum([
-        "queued",
-        "preparing_data",
-        "running",
-        "aggregating",
-        "completed",
-        "failed",
-        "cancel_requested",
-        "canceled",
-      ]),
-      sortRank: zod.number().nullable(),
-      metrics: zod.union([
-        zod.object({
-          netPnl: zod.number(),
-          totalReturnPercent: zod.number(),
-          maxDrawdownPercent: zod.number(),
-          tradeCount: zod.number(),
-          winRatePercent: zod.number(),
-          profitFactor: zod.number(),
-          sharpeRatio: zod.number(),
-          returnOverMaxDrawdown: zod.number(),
-        }),
-        zod.null(),
-      ]),
-      warnings: zod.array(zod.string()),
-      errorMessage: zod.string().nullable(),
-      startedAt: zod.coerce.date().nullable(),
-      finishedAt: zod.coerce.date().nullable(),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-    zod.null(),
-  ]),
-  comparisonBadges: zod.array(
-    zod.object({
-      id: zod.string(),
-      label: zod.string(),
-      format: zod.enum(["currency", "percent", "number", "integer"]),
-      latestValue: zod.number().nullable(),
-      bestValue: zod.number().nullable(),
-      winner: zod.enum(["latest", "best", "tie", "none"]),
-    }),
-  ),
-  latestSeries: zod.array(
-    zod.object({
-      occurredAt: zod.coerce.date(),
-      equity: zod.number(),
-      drawdownPercent: zod.number(),
-    }),
-  ),
-  bestSeries: zod.array(
-    zod.object({
-      occurredAt: zod.coerce.date(),
-      equity: zod.number(),
-      drawdownPercent: zod.number(),
-    }),
-  ),
-});
+  "studyId": zod.string(),
+  "latestCompletedRun": zod.union([zod.object({
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "sweepId": zod.string().nullable(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "sortRank": zod.number().nullable(),
+  "metrics": zod.union([zod.object({
+  "netPnl": zod.number(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number(),
+  "tradeCount": zod.number(),
+  "winRatePercent": zod.number(),
+  "profitFactor": zod.number(),
+  "sharpeRatio": zod.number(),
+  "returnOverMaxDrawdown": zod.number()
+}),zod.null()]),
+  "warnings": zod.array(zod.string()),
+  "errorMessage": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
+  "bestCompletedRun": zod.union([zod.object({
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "sweepId": zod.string().nullable(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "sortRank": zod.number().nullable(),
+  "metrics": zod.union([zod.object({
+  "netPnl": zod.number(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number(),
+  "tradeCount": zod.number(),
+  "winRatePercent": zod.number(),
+  "profitFactor": zod.number(),
+  "sharpeRatio": zod.number(),
+  "returnOverMaxDrawdown": zod.number()
+}),zod.null()]),
+  "warnings": zod.array(zod.string()),
+  "errorMessage": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
+  "comparisonBadges": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "format": zod.enum(['currency', 'percent', 'number', 'integer']),
+  "latestValue": zod.number().nullable(),
+  "bestValue": zod.number().nullable(),
+  "winner": zod.enum(['latest', 'best', 'tie', 'none'])
+})),
+  "latestSeries": zod.array(zod.object({
+  "occurredAt": zod.coerce.date(),
+  "equity": zod.number(),
+  "drawdownPercent": zod.number()
+})),
+  "bestSeries": zod.array(zod.object({
+  "occurredAt": zod.coerce.date(),
+  "equity": zod.number(),
+  "drawdownPercent": zod.number()
+}))
+})
+
 
 /**
  * @summary List backtest runs
  */
 export const ListBacktestRunsQueryParams = zod.object({
-  studyId: zod.coerce.string().optional(),
-  sweepId: zod.coerce.string().optional(),
-  status: zod
-    .enum([
-      "queued",
-      "preparing_data",
-      "running",
-      "aggregating",
-      "completed",
-      "failed",
-      "cancel_requested",
-      "canceled",
-    ])
-    .optional(),
-});
+  "studyId": zod.coerce.string().optional(),
+  "sweepId": zod.coerce.string().optional(),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']).optional()
+})
 
 export const ListBacktestRunsResponse = zod.object({
-  runs: zod.array(
-    zod.object({
-      id: zod.string(),
-      studyId: zod.string(),
-      sweepId: zod.string().nullable(),
-      name: zod.string(),
-      strategyId: zod.string(),
-      strategyVersion: zod.string(),
-      directionMode: zod.enum(["long_only", "long_short"]),
-      status: zod.enum([
-        "queued",
-        "preparing_data",
-        "running",
-        "aggregating",
-        "completed",
-        "failed",
-        "cancel_requested",
-        "canceled",
-      ]),
-      sortRank: zod.number().nullable(),
-      metrics: zod.union([
-        zod.object({
-          netPnl: zod.number(),
-          totalReturnPercent: zod.number(),
-          maxDrawdownPercent: zod.number(),
-          tradeCount: zod.number(),
-          winRatePercent: zod.number(),
-          profitFactor: zod.number(),
-          sharpeRatio: zod.number(),
-          returnOverMaxDrawdown: zod.number(),
-        }),
-        zod.null(),
-      ]),
-      warnings: zod.array(zod.string()),
-      errorMessage: zod.string().nullable(),
-      startedAt: zod.coerce.date().nullable(),
-      finishedAt: zod.coerce.date().nullable(),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "runs": zod.array(zod.object({
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "sweepId": zod.string().nullable(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "sortRank": zod.number().nullable(),
+  "metrics": zod.union([zod.object({
+  "netPnl": zod.number(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number(),
+  "tradeCount": zod.number(),
+  "winRatePercent": zod.number(),
+  "profitFactor": zod.number(),
+  "sharpeRatio": zod.number(),
+  "returnOverMaxDrawdown": zod.number()
+}),zod.null()]),
+  "warnings": zod.array(zod.string()),
+  "errorMessage": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary Queue a single backtest run
  */
 export const CreateBacktestRunBody = zod.object({
-  studyId: zod.string(),
-  name: zod.string().nullable(),
-  parameters: zod.record(zod.string(), zod.unknown()).nullable(),
-});
+  "studyId": zod.string(),
+  "name": zod.string().nullable(),
+  "parameters": zod.record(zod.string(), zod.unknown()).nullable()
+})
+
 
 /**
  * @summary Get one backtest run
  */
 export const GetBacktestRunParams = zod.object({
-  runId: zod.coerce.string(),
-});
+  "runId": zod.coerce.string()
+})
 
 export const GetBacktestRunResponse = zod.object({
-  run: zod.object({
-    id: zod.string(),
-    studyId: zod.string(),
-    sweepId: zod.string().nullable(),
-    name: zod.string(),
-    strategyId: zod.string(),
-    strategyVersion: zod.string(),
-    directionMode: zod.enum(["long_only", "long_short"]),
-    status: zod.enum([
-      "queued",
-      "preparing_data",
-      "running",
-      "aggregating",
-      "completed",
-      "failed",
-      "cancel_requested",
-      "canceled",
-    ]),
-    sortRank: zod.number().nullable(),
-    metrics: zod.union([
-      zod.object({
-        netPnl: zod.number(),
-        totalReturnPercent: zod.number(),
-        maxDrawdownPercent: zod.number(),
-        tradeCount: zod.number(),
-        winRatePercent: zod.number(),
-        profitFactor: zod.number(),
-        sharpeRatio: zod.number(),
-        returnOverMaxDrawdown: zod.number(),
-      }),
-      zod.null(),
-    ]),
-    warnings: zod.array(zod.string()),
-    errorMessage: zod.string().nullable(),
-    startedAt: zod.coerce.date().nullable(),
-    finishedAt: zod.coerce.date().nullable(),
-    createdAt: zod.coerce.date(),
-    updatedAt: zod.coerce.date(),
-  }),
-  study: zod.object({
-    id: zod.string(),
-    name: zod.string(),
-    strategyId: zod.string(),
-    strategyVersion: zod.string(),
-    directionMode: zod.enum(["long_only", "long_short"]),
-    watchlistId: zod.string().nullable(),
-    symbols: zod.array(zod.string()),
-    timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-    startsAt: zod.coerce.date(),
-    endsAt: zod.coerce.date(),
-    parameters: zod.record(zod.string(), zod.unknown()),
-    portfolioRules: zod.object({
-      initialCapital: zod.number(),
-      positionSizePercent: zod.number(),
-      maxConcurrentPositions: zod.number(),
-      maxGrossExposurePercent: zod.number(),
-    }),
-    executionProfile: zod.object({
-      commissionBps: zod.number(),
-      slippageBps: zod.number(),
-    }),
-    optimizerMode: zod.enum(["grid", "random", "walk_forward"]),
-    optimizerConfig: zod.record(zod.string(), zod.unknown()),
-    createdAt: zod.coerce.date(),
-    updatedAt: zod.coerce.date(),
-  }),
-  trades: zod.array(
-    zod.object({
-      tradeSelectionId: zod.string(),
-      symbol: zod.string(),
-      side: zod.string(),
-      entryAt: zod.coerce.date(),
-      exitAt: zod.coerce.date(),
-      entryPrice: zod.number(),
-      exitPrice: zod.number(),
-      quantity: zod.number(),
-      entryValue: zod.number(),
-      exitValue: zod.number(),
-      grossPnl: zod.number(),
-      netPnl: zod.number(),
-      netPnlPercent: zod.number(),
-      barsHeld: zod.number(),
-      commissionPaid: zod.number(),
-      exitReason: zod.string(),
-      diagnostics: zod.union([
-        zod.object({
-          holdMinutes: zod.number(),
-          entryBarIndex: zod.number().nullable(),
-          exitBarIndex: zod.number().nullable(),
-          maxFavorablePrice: zod.number().nullable(),
-          maxFavorableAt: zod.coerce.date().nullable(),
-          maxFavorableBarIndex: zod.number().nullable(),
-          maxFavorableDelta: zod.number().nullable(),
-          maxFavorablePercent: zod.number().nullable(),
-          maxAdversePrice: zod.number().nullable(),
-          maxAdverseAt: zod.coerce.date().nullable(),
-          maxAdverseBarIndex: zod.number().nullable(),
-          maxAdverseDelta: zod.number().nullable(),
-          maxAdversePercent: zod.number().nullable(),
-          reasonTrace: zod.array(
-            zod.object({
-              id: zod.string(),
-              kind: zod.enum(["entry", "max_favorable", "max_adverse", "exit"]),
-              label: zod.string(),
-              occurredAt: zod.coerce.date(),
-              barIndex: zod.number().nullable(),
-              price: zod.number(),
-              deltaFromEntry: zod.number(),
-              deltaPercentFromEntry: zod.number(),
-              emphasis: zod.enum(["positive", "negative", "neutral"]),
-            }),
-          ),
-          exitConsequences: zod.union([
-            zod.object({
-              windowBars: zod.number(),
-              barsObserved: zod.number(),
-              bestPrice: zod.number(),
-              bestOccurredAt: zod.coerce.date(),
-              bestBarIndex: zod.number(),
-              bestDelta: zod.number(),
-              bestPercent: zod.number(),
-              worstPrice: zod.number(),
-              worstOccurredAt: zod.coerce.date(),
-              worstBarIndex: zod.number(),
-              worstDelta: zod.number(),
-              worstPercent: zod.number(),
-            }),
-            zod.null(),
-          ]),
-        }),
-        zod.null(),
-      ]),
-    }),
-  ),
-  points: zod.array(
-    zod.object({
-      occurredAt: zod.coerce.date(),
-      equity: zod.number(),
-      cash: zod.number(),
-      grossExposure: zod.number(),
-      drawdownPercent: zod.number(),
-    }),
-  ),
-  datasets: zod.array(
-    zod.object({
-      datasetId: zod.string(),
-      symbol: zod.string(),
-      timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-      source: zod.string(),
-      startsAt: zod.coerce.date(),
-      endsAt: zod.coerce.date(),
-      barCount: zod.number(),
-      pinnedCount: zod.number(),
-      isSeeded: zod.boolean(),
-    }),
-  ),
-});
+  "run": zod.object({
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "sweepId": zod.string().nullable(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "sortRank": zod.number().nullable(),
+  "metrics": zod.union([zod.object({
+  "netPnl": zod.number(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number(),
+  "tradeCount": zod.number(),
+  "winRatePercent": zod.number(),
+  "profitFactor": zod.number(),
+  "sharpeRatio": zod.number(),
+  "returnOverMaxDrawdown": zod.number()
+}),zod.null()]),
+  "warnings": zod.array(zod.string()),
+  "errorMessage": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "study": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "watchlistId": zod.string().nullable(),
+  "symbols": zod.array(zod.string()),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date(),
+  "parameters": zod.record(zod.string(), zod.unknown()),
+  "portfolioRules": zod.object({
+  "initialCapital": zod.number(),
+  "positionSizePercent": zod.number(),
+  "maxConcurrentPositions": zod.number(),
+  "maxGrossExposurePercent": zod.number()
+}),
+  "executionProfile": zod.object({
+  "commissionBps": zod.number(),
+  "slippageBps": zod.number()
+}),
+  "optimizerMode": zod.enum(['grid', 'random', 'walk_forward']),
+  "optimizerConfig": zod.record(zod.string(), zod.unknown()),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "trades": zod.array(zod.object({
+  "tradeSelectionId": zod.string(),
+  "symbol": zod.string(),
+  "side": zod.string(),
+  "entryAt": zod.coerce.date(),
+  "exitAt": zod.coerce.date(),
+  "entryPrice": zod.number(),
+  "exitPrice": zod.number(),
+  "quantity": zod.number(),
+  "entryValue": zod.number(),
+  "exitValue": zod.number(),
+  "grossPnl": zod.number(),
+  "netPnl": zod.number(),
+  "netPnlPercent": zod.number(),
+  "barsHeld": zod.number(),
+  "commissionPaid": zod.number(),
+  "exitReason": zod.string(),
+  "diagnostics": zod.union([zod.object({
+  "holdMinutes": zod.number(),
+  "entryBarIndex": zod.number().nullable(),
+  "exitBarIndex": zod.number().nullable(),
+  "maxFavorablePrice": zod.number().nullable(),
+  "maxFavorableAt": zod.coerce.date().nullable(),
+  "maxFavorableBarIndex": zod.number().nullable(),
+  "maxFavorableDelta": zod.number().nullable(),
+  "maxFavorablePercent": zod.number().nullable(),
+  "maxAdversePrice": zod.number().nullable(),
+  "maxAdverseAt": zod.coerce.date().nullable(),
+  "maxAdverseBarIndex": zod.number().nullable(),
+  "maxAdverseDelta": zod.number().nullable(),
+  "maxAdversePercent": zod.number().nullable(),
+  "reasonTrace": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['entry', 'max_favorable', 'max_adverse', 'exit']),
+  "label": zod.string(),
+  "occurredAt": zod.coerce.date(),
+  "barIndex": zod.number().nullable(),
+  "price": zod.number(),
+  "deltaFromEntry": zod.number(),
+  "deltaPercentFromEntry": zod.number(),
+  "emphasis": zod.enum(['positive', 'negative', 'neutral'])
+})),
+  "exitConsequences": zod.union([zod.object({
+  "windowBars": zod.number(),
+  "barsObserved": zod.number(),
+  "bestPrice": zod.number(),
+  "bestOccurredAt": zod.coerce.date(),
+  "bestBarIndex": zod.number(),
+  "bestDelta": zod.number(),
+  "bestPercent": zod.number(),
+  "worstPrice": zod.number(),
+  "worstOccurredAt": zod.coerce.date(),
+  "worstBarIndex": zod.number(),
+  "worstDelta": zod.number(),
+  "worstPercent": zod.number()
+}),zod.null()])
+}),zod.null()])
+})),
+  "points": zod.array(zod.object({
+  "occurredAt": zod.coerce.date(),
+  "equity": zod.number(),
+  "cash": zod.number(),
+  "grossExposure": zod.number(),
+  "drawdownPercent": zod.number()
+})),
+  "datasets": zod.array(zod.object({
+  "datasetId": zod.string(),
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "source": zod.string(),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date(),
+  "barCount": zod.number(),
+  "pinnedCount": zod.number(),
+  "isSeeded": zod.boolean()
+}))
+})
+
 
 /**
  * @summary Get the research-chart payload for a backtest run
  */
 export const GetBacktestRunChartParams = zod.object({
-  runId: zod.coerce.string(),
-});
+  "runId": zod.coerce.string()
+})
 
 export const GetBacktestRunChartQueryParams = zod.object({
-  symbol: zod.coerce.string().optional(),
-  selectedTradeId: zod.coerce.string().optional(),
-});
+  "symbol": zod.coerce.string().optional(),
+  "selectedTradeId": zod.coerce.string().optional()
+})
 
 export const GetBacktestRunChartResponse = zod.object({
-  runId: zod.string(),
-  studyId: zod.string(),
-  timeframe: zod.enum(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "1d"]),
-  chartPriceContext: zod.enum(["spot", "option"]),
-  availableSymbols: zod.array(zod.string()),
-  selectedSymbol: zod.string(),
-  defaultTradeSelectionId: zod.string().nullable(),
-  activeTradeSelectionId: zod.string().nullable(),
-  chartBars: zod.array(
-    zod.object({
-      time: zod.number(),
-      ts: zod.coerce.date(),
-      date: zod.string(),
-      o: zod.number(),
-      h: zod.number(),
-      l: zod.number(),
-      c: zod.number(),
-      v: zod.number(),
-    }),
-  ),
-  chartBarRanges: zod.array(
-    zod.object({
-      startMs: zod.number(),
-      endMs: zod.number(),
-    }),
-  ),
-  tradeOverlays: zod.array(
-    zod.object({
-      id: zod.string(),
-      tradeSelectionId: zod.string(),
-      symbol: zod.string(),
-      entryBarIndex: zod.number().nullable(),
-      exitBarIndex: zod.number().nullable(),
-      entryTs: zod.coerce.date(),
-      exitTs: zod.coerce.date().nullable(),
-      dir: zod.enum(["long", "short"]),
-      strat: zod.string(),
-      qty: zod.number(),
-      pnl: zod.number().nullable(),
-      pnlPercent: zod.number().nullable(),
-      er: zod.string().nullable(),
-      profitable: zod.boolean().nullable(),
-      pricingMode: zod.string().nullable(),
-      chartPriceContext: zod.enum(["spot", "option"]),
-      entryPrice: zod.number().nullable(),
-      exitPrice: zod.number().nullable(),
-      oe: zod.number().nullable(),
-      ep: zod.number().nullable(),
-      exitFill: zod.number().nullable(),
-      entrySpotPrice: zod.number().nullable(),
-      exitSpotPrice: zod.number().nullable(),
-      entryBasePrice: zod.number().nullable(),
-      exitBasePrice: zod.number().nullable(),
-      stopLossPrice: zod.number().nullable(),
-      takeProfitPrice: zod.number().nullable(),
-      trailActivationPrice: zod.number().nullable(),
-      lastTrailStopPrice: zod.number().nullable(),
-      exitTriggerPrice: zod.number().nullable(),
-      thresholdPath: zod.union([
-        zod.object({
-          segments: zod.array(
-            zod.object({
-              id: zod.string(),
-              kind: zod.enum([
-                "take_profit",
-                "stop_loss",
-                "trail_arm",
-                "trail_stop",
-                "exit_trigger",
-              ]),
-              startBarIndex: zod.number(),
-              endBarIndex: zod.number(),
-              value: zod.number(),
-              style: zod.enum(["solid", "dashed", "dotted"]),
-              hit: zod.boolean().nullable(),
-              label: zod.string().nullable(),
-            }),
-          ),
-        }),
-        zod.null(),
-      ]),
-    }),
-  ),
-  tradeMarkerGroups: zod.object({
-    entryGroups: zod.array(
-      zod.object({
-        id: zod.string(),
-        kind: zod.enum(["entry", "exit"]),
-        time: zod.number(),
-        dir: zod.enum(["long", "short"]),
-        profitable: zod.boolean().nullable(),
-        barIndex: zod.number().nullable(),
-        tradeSelectionIds: zod.array(zod.string()),
-        label: zod.string().nullable(),
-      }),
-    ),
-    exitGroups: zod.array(
-      zod.object({
-        id: zod.string(),
-        kind: zod.enum(["entry", "exit"]),
-        time: zod.number(),
-        dir: zod.enum(["long", "short"]),
-        profitable: zod.boolean().nullable(),
-        barIndex: zod.number().nullable(),
-        tradeSelectionIds: zod.array(zod.string()),
-        label: zod.string().nullable(),
-      }),
-    ),
-    interactionGroups: zod.array(
-      zod.object({
-        id: zod.string(),
-        kind: zod.enum(["entry", "exit"]),
-        time: zod.number(),
-        dir: zod.enum(["long", "short"]),
-        profitable: zod.boolean().nullable(),
-        barIndex: zod.number().nullable(),
-        tradeSelectionIds: zod.array(zod.string()),
-        label: zod.string().nullable(),
-      }),
-    ),
-    timeToTradeIds: zod.array(
-      zod.object({
-        time: zod.string(),
-        tradeSelectionIds: zod.array(zod.string()),
-      }),
-    ),
-  }),
-  indicatorEvents: zod.array(
-    zod.object({
-      id: zod.string(),
-      strategy: zod.string(),
-      eventType: zod.string(),
-      ts: zod.coerce.date(),
-      time: zod.number().nullable(),
-      barIndex: zod.number().nullable(),
-      direction: zod.union([zod.enum(["long", "short"]), zod.null()]),
-      label: zod.string().nullable(),
-      conviction: zod.number().nullable(),
-      meta: zod.record(zod.string(), zod.unknown()),
-    }),
-  ),
-  indicatorZones: zod.array(
-    zod.object({
-      id: zod.string(),
-      strategy: zod.string(),
-      zoneType: zod.string(),
-      direction: zod.union([zod.enum(["long", "short"]), zod.null()]),
-      startTs: zod.coerce.date(),
-      endTs: zod.coerce.date(),
-      startBarIndex: zod.number().nullable(),
-      endBarIndex: zod.number().nullable(),
-      top: zod.number(),
-      bottom: zod.number(),
-      label: zod.string().nullable(),
-      meta: zod.record(zod.string(), zod.unknown()),
-    }),
-  ),
-  indicatorWindows: zod.array(
-    zod.object({
-      id: zod.string(),
-      strategy: zod.string(),
-      direction: zod.enum(["long", "short"]),
-      startTs: zod.coerce.date(),
-      endTs: zod.coerce.date(),
-      startBarIndex: zod.number().nullable(),
-      endBarIndex: zod.number().nullable(),
-      tone: zod.union([
-        zod.enum(["bullish", "bearish", "neutral"]),
-        zod.null(),
-      ]),
-      conviction: zod.number().nullable(),
-      meta: zod.record(zod.string(), zod.unknown()),
-    }),
-  ),
-  indicatorMarkerPayload: zod.object({
-    overviewMarkers: zod.array(
-      zod.object({
-        id: zod.string(),
-        time: zod.number(),
-        barIndex: zod.number(),
-        position: zod.enum(["aboveBar", "belowBar", "inBar"]),
-        shape: zod.enum(["circle", "square", "arrowUp", "arrowDown"]),
-        color: zod.string(),
-        text: zod.string().nullable(),
-        size: zod.number().nullable(),
-      }),
-    ),
-    markersByTradeId: zod.record(
-      zod.string(),
-      zod.array(
-        zod.object({
-          id: zod.string(),
-          time: zod.number(),
-          barIndex: zod.number(),
-          position: zod.enum(["aboveBar", "belowBar", "inBar"]),
-          shape: zod.enum(["circle", "square", "arrowUp", "arrowDown"]),
-          color: zod.string(),
-          text: zod.string().nullable(),
-          size: zod.number().nullable(),
-        }),
-      ),
-    ),
-    timeToTradeIds: zod.array(
-      zod.object({
-        time: zod.string(),
-        tradeSelectionIds: zod.array(zod.string()),
-      }),
-    ),
-  }),
-  selectionFocus: zod.union([
-    zod.object({
-      token: zod.number(),
-      tradeSelectionId: zod.string().nullable(),
-      visibleLogicalRange: zod.union([
-        zod.object({
-          from: zod.number(),
-          to: zod.number(),
-        }),
-        zod.null(),
-      ]),
-    }),
-    zod.null(),
-  ]),
-  defaultVisibleLogicalRange: zod.union([
-    zod.object({
-      from: zod.number(),
-      to: zod.number(),
-    }),
-    zod.null(),
-  ]),
-});
+  "runId": zod.string(),
+  "studyId": zod.string(),
+  "timeframe": zod.enum(['1s', '5s', '15s', '1m', '5m', '15m', '1h', '1d']),
+  "chartPriceContext": zod.enum(['spot', 'option']),
+  "availableSymbols": zod.array(zod.string()),
+  "selectedSymbol": zod.string(),
+  "defaultTradeSelectionId": zod.string().nullable(),
+  "activeTradeSelectionId": zod.string().nullable(),
+  "chartBars": zod.array(zod.object({
+  "time": zod.number(),
+  "ts": zod.coerce.date(),
+  "date": zod.string(),
+  "o": zod.number(),
+  "h": zod.number(),
+  "l": zod.number(),
+  "c": zod.number(),
+  "v": zod.number()
+})),
+  "chartBarRanges": zod.array(zod.object({
+  "startMs": zod.number(),
+  "endMs": zod.number()
+})),
+  "tradeOverlays": zod.array(zod.object({
+  "id": zod.string(),
+  "tradeSelectionId": zod.string(),
+  "symbol": zod.string(),
+  "entryBarIndex": zod.number().nullable(),
+  "exitBarIndex": zod.number().nullable(),
+  "entryTs": zod.coerce.date(),
+  "exitTs": zod.coerce.date().nullable(),
+  "dir": zod.enum(['long', 'short']),
+  "strat": zod.string(),
+  "qty": zod.number(),
+  "pnl": zod.number().nullable(),
+  "pnlPercent": zod.number().nullable(),
+  "er": zod.string().nullable(),
+  "profitable": zod.boolean().nullable(),
+  "pricingMode": zod.string().nullable(),
+  "chartPriceContext": zod.enum(['spot', 'option']),
+  "entryPrice": zod.number().nullable(),
+  "exitPrice": zod.number().nullable(),
+  "oe": zod.number().nullable(),
+  "ep": zod.number().nullable(),
+  "exitFill": zod.number().nullable(),
+  "entrySpotPrice": zod.number().nullable(),
+  "exitSpotPrice": zod.number().nullable(),
+  "entryBasePrice": zod.number().nullable(),
+  "exitBasePrice": zod.number().nullable(),
+  "stopLossPrice": zod.number().nullable(),
+  "takeProfitPrice": zod.number().nullable(),
+  "trailActivationPrice": zod.number().nullable(),
+  "lastTrailStopPrice": zod.number().nullable(),
+  "exitTriggerPrice": zod.number().nullable(),
+  "thresholdPath": zod.union([zod.object({
+  "segments": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['take_profit', 'stop_loss', 'trail_arm', 'trail_stop', 'exit_trigger']),
+  "startBarIndex": zod.number(),
+  "endBarIndex": zod.number(),
+  "value": zod.number(),
+  "style": zod.enum(['solid', 'dashed', 'dotted']),
+  "hit": zod.boolean().nullable(),
+  "label": zod.string().nullable()
+}))
+}),zod.null()])
+})),
+  "tradeMarkerGroups": zod.object({
+  "entryGroups": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['entry', 'exit']),
+  "time": zod.number(),
+  "dir": zod.enum(['long', 'short']),
+  "profitable": zod.boolean().nullable(),
+  "barIndex": zod.number().nullable(),
+  "tradeSelectionIds": zod.array(zod.string()),
+  "label": zod.string().nullable()
+})),
+  "exitGroups": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['entry', 'exit']),
+  "time": zod.number(),
+  "dir": zod.enum(['long', 'short']),
+  "profitable": zod.boolean().nullable(),
+  "barIndex": zod.number().nullable(),
+  "tradeSelectionIds": zod.array(zod.string()),
+  "label": zod.string().nullable()
+})),
+  "interactionGroups": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(['entry', 'exit']),
+  "time": zod.number(),
+  "dir": zod.enum(['long', 'short']),
+  "profitable": zod.boolean().nullable(),
+  "barIndex": zod.number().nullable(),
+  "tradeSelectionIds": zod.array(zod.string()),
+  "label": zod.string().nullable()
+})),
+  "timeToTradeIds": zod.array(zod.object({
+  "time": zod.string(),
+  "tradeSelectionIds": zod.array(zod.string())
+}))
+}),
+  "indicatorEvents": zod.array(zod.object({
+  "id": zod.string(),
+  "strategy": zod.string(),
+  "eventType": zod.string(),
+  "ts": zod.coerce.date(),
+  "time": zod.number().nullable(),
+  "barIndex": zod.number().nullable(),
+  "direction": zod.union([zod.enum(['long', 'short']),zod.null()]),
+  "label": zod.string().nullable(),
+  "conviction": zod.number().nullable(),
+  "meta": zod.record(zod.string(), zod.unknown())
+})),
+  "indicatorZones": zod.array(zod.object({
+  "id": zod.string(),
+  "strategy": zod.string(),
+  "zoneType": zod.string(),
+  "direction": zod.union([zod.enum(['long', 'short']),zod.null()]),
+  "startTs": zod.coerce.date(),
+  "endTs": zod.coerce.date(),
+  "startBarIndex": zod.number().nullable(),
+  "endBarIndex": zod.number().nullable(),
+  "top": zod.number(),
+  "bottom": zod.number(),
+  "label": zod.string().nullable(),
+  "meta": zod.record(zod.string(), zod.unknown())
+})),
+  "indicatorWindows": zod.array(zod.object({
+  "id": zod.string(),
+  "strategy": zod.string(),
+  "direction": zod.enum(['long', 'short']),
+  "startTs": zod.coerce.date(),
+  "endTs": zod.coerce.date(),
+  "startBarIndex": zod.number().nullable(),
+  "endBarIndex": zod.number().nullable(),
+  "tone": zod.union([zod.enum(['bullish', 'bearish', 'neutral']),zod.null()]),
+  "conviction": zod.number().nullable(),
+  "meta": zod.record(zod.string(), zod.unknown())
+})),
+  "indicatorMarkerPayload": zod.object({
+  "overviewMarkers": zod.array(zod.object({
+  "id": zod.string(),
+  "time": zod.number(),
+  "barIndex": zod.number(),
+  "position": zod.enum(['aboveBar', 'belowBar', 'inBar']),
+  "shape": zod.enum(['circle', 'square', 'arrowUp', 'arrowDown']),
+  "color": zod.string(),
+  "text": zod.string().nullable(),
+  "size": zod.number().nullable()
+})),
+  "markersByTradeId": zod.record(zod.string(), zod.array(zod.object({
+  "id": zod.string(),
+  "time": zod.number(),
+  "barIndex": zod.number(),
+  "position": zod.enum(['aboveBar', 'belowBar', 'inBar']),
+  "shape": zod.enum(['circle', 'square', 'arrowUp', 'arrowDown']),
+  "color": zod.string(),
+  "text": zod.string().nullable(),
+  "size": zod.number().nullable()
+}))),
+  "timeToTradeIds": zod.array(zod.object({
+  "time": zod.string(),
+  "tradeSelectionIds": zod.array(zod.string())
+}))
+}),
+  "selectionFocus": zod.union([zod.object({
+  "token": zod.number(),
+  "tradeSelectionId": zod.string().nullable(),
+  "visibleLogicalRange": zod.union([zod.object({
+  "from": zod.number(),
+  "to": zod.number()
+}),zod.null()])
+}),zod.null()]),
+  "defaultVisibleLogicalRange": zod.union([zod.object({
+  "from": zod.number(),
+  "to": zod.number()
+}),zod.null()])
+})
+
 
 /**
  * @summary Promote a completed run into a draft algo strategy
  */
 export const PromoteBacktestRunParams = zod.object({
-  runId: zod.coerce.string(),
-});
+  "runId": zod.coerce.string()
+})
 
 export const PromoteBacktestRunBody = zod.object({
-  name: zod.string(),
-  notes: zod.string().nullable(),
-});
+  "name": zod.string(),
+  "notes": zod.string().nullable()
+})
+
 
 /**
  * @summary Queue a backtest optimizer sweep
  */
 export const CreateBacktestSweepBody = zod.object({
-  studyId: zod.string(),
-  mode: zod.enum(["grid", "random", "walk_forward"]),
-  baseParameters: zod.record(zod.string(), zod.unknown()),
-  dimensions: zod.array(
-    zod.object({
-      key: zod.string(),
-      values: zod.array(zod.unknown()),
-    }),
-  ),
-  randomCandidateBudget: zod.number().nullable(),
-  walkForwardTrainingMonths: zod.number().nullable(),
-  walkForwardTestMonths: zod.number().nullable(),
-  walkForwardStepMonths: zod.number().nullable(),
-});
+  "studyId": zod.string(),
+  "mode": zod.enum(['grid', 'random', 'walk_forward']),
+  "baseParameters": zod.record(zod.string(), zod.unknown()),
+  "dimensions": zod.array(zod.object({
+  "key": zod.string(),
+  "values": zod.array(zod.unknown())
+})),
+  "randomCandidateBudget": zod.number().nullable(),
+  "walkForwardTrainingMonths": zod.number().nullable(),
+  "walkForwardTestMonths": zod.number().nullable(),
+  "walkForwardStepMonths": zod.number().nullable()
+})
+
 
 /**
  * @summary Get one optimizer sweep
  */
 export const GetBacktestSweepParams = zod.object({
-  sweepId: zod.coerce.string(),
-});
+  "sweepId": zod.coerce.string()
+})
 
 export const GetBacktestSweepResponse = zod.object({
-  id: zod.string(),
-  studyId: zod.string(),
-  mode: zod.enum(["grid", "random", "walk_forward"]),
-  status: zod.enum([
-    "queued",
-    "preparing_data",
-    "running",
-    "aggregating",
-    "completed",
-    "failed",
-    "cancel_requested",
-    "canceled",
-  ]),
-  candidateTargetCount: zod.number(),
-  candidateCompletedCount: zod.number(),
-  bestRunId: zod.string().nullable(),
-  startedAt: zod.coerce.date().nullable(),
-  finishedAt: zod.coerce.date().nullable(),
-  candidates: zod.array(
-    zod.object({
-      id: zod.string(),
-      studyId: zod.string(),
-      sweepId: zod.string().nullable(),
-      name: zod.string(),
-      strategyId: zod.string(),
-      strategyVersion: zod.string(),
-      directionMode: zod.enum(["long_only", "long_short"]),
-      status: zod.enum([
-        "queued",
-        "preparing_data",
-        "running",
-        "aggregating",
-        "completed",
-        "failed",
-        "cancel_requested",
-        "canceled",
-      ]),
-      sortRank: zod.number().nullable(),
-      metrics: zod.union([
-        zod.object({
-          netPnl: zod.number(),
-          totalReturnPercent: zod.number(),
-          maxDrawdownPercent: zod.number(),
-          tradeCount: zod.number(),
-          winRatePercent: zod.number(),
-          profitFactor: zod.number(),
-          sharpeRatio: zod.number(),
-          returnOverMaxDrawdown: zod.number(),
-        }),
-        zod.null(),
-      ]),
-      warnings: zod.array(zod.string()),
-      errorMessage: zod.string().nullable(),
-      startedAt: zod.coerce.date().nullable(),
-      finishedAt: zod.coerce.date().nullable(),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "mode": zod.enum(['grid', 'random', 'walk_forward']),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "candidateTargetCount": zod.number(),
+  "candidateCompletedCount": zod.number(),
+  "bestRunId": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "candidates": zod.array(zod.object({
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "sweepId": zod.string().nullable(),
+  "name": zod.string(),
+  "strategyId": zod.string(),
+  "strategyVersion": zod.string(),
+  "directionMode": zod.enum(['long_only', 'long_short']),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "sortRank": zod.number().nullable(),
+  "metrics": zod.union([zod.object({
+  "netPnl": zod.number(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number(),
+  "tradeCount": zod.number(),
+  "winRatePercent": zod.number(),
+  "profitFactor": zod.number(),
+  "sharpeRatio": zod.number(),
+  "returnOverMaxDrawdown": zod.number()
+}),zod.null()]),
+  "warnings": zod.array(zod.string()),
+  "errorMessage": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary List backtest jobs
  */
 export const ListBacktestJobsResponse = zod.object({
-  jobs: zod.array(
-    zod.object({
-      id: zod.string(),
-      studyId: zod.string(),
-      kind: zod.string(),
-      runId: zod.string().nullable(),
-      sweepId: zod.string().nullable(),
-      status: zod.enum([
-        "queued",
-        "preparing_data",
-        "running",
-        "aggregating",
-        "completed",
-        "failed",
-        "cancel_requested",
-        "canceled",
-      ]),
-      progressPercent: zod.number(),
-      attemptCount: zod.number(),
-      errorMessage: zod.string().nullable(),
-      startedAt: zod.coerce.date().nullable(),
-      finishedAt: zod.coerce.date().nullable(),
-      lastHeartbeatAt: zod.coerce.date().nullable(),
-      createdAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "jobs": zod.array(zod.object({
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "kind": zod.string(),
+  "runId": zod.string().nullable(),
+  "sweepId": zod.string().nullable(),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "progressPercent": zod.number(),
+  "attemptCount": zod.number(),
+  "errorMessage": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "lastHeartbeatAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date()
+}))
+})
+
 
 /**
  * @summary Request cancellation for a queued or running job
  */
 export const CancelBacktestJobParams = zod.object({
-  jobId: zod.coerce.string(),
-});
+  "jobId": zod.coerce.string()
+})
 
 export const CancelBacktestJobResponse = zod.object({
-  id: zod.string(),
-  studyId: zod.string(),
-  kind: zod.string(),
-  runId: zod.string().nullable(),
-  sweepId: zod.string().nullable(),
-  status: zod.enum([
-    "queued",
-    "preparing_data",
-    "running",
-    "aggregating",
-    "completed",
-    "failed",
-    "cancel_requested",
-    "canceled",
-  ]),
-  progressPercent: zod.number(),
-  attemptCount: zod.number(),
-  errorMessage: zod.string().nullable(),
-  startedAt: zod.coerce.date().nullable(),
-  finishedAt: zod.coerce.date().nullable(),
-  lastHeartbeatAt: zod.coerce.date().nullable(),
-  createdAt: zod.coerce.date(),
-});
+  "id": zod.string(),
+  "studyId": zod.string(),
+  "kind": zod.string(),
+  "runId": zod.string().nullable(),
+  "sweepId": zod.string().nullable(),
+  "status": zod.enum(['queued', 'preparing_data', 'running', 'aggregating', 'completed', 'failed', 'cancel_requested', 'canceled']),
+  "progressPercent": zod.number(),
+  "attemptCount": zod.number(),
+  "errorMessage": zod.string().nullable(),
+  "startedAt": zod.coerce.date().nullable(),
+  "finishedAt": zod.coerce.date().nullable(),
+  "lastHeartbeatAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
 
 /**
  * @summary List promoted draft strategies
  */
 export const ListBacktestDraftStrategiesResponse = zod.object({
-  drafts: zod.array(
-    zod.object({
-      id: zod.string(),
-      runId: zod.string(),
-      studyId: zod.string(),
-      name: zod.string(),
-      enabled: zod.boolean(),
-      mode: zod.enum(["paper", "live"]),
-      symbolUniverse: zod.array(zod.string()),
-      config: zod.record(zod.string(), zod.unknown()),
-      promotedAt: zod.coerce.date(),
-    }),
-  ),
-});
+  "drafts": zod.array(zod.object({
+  "id": zod.string(),
+  "runId": zod.string(),
+  "studyId": zod.string(),
+  "name": zod.string(),
+  "enabled": zod.boolean(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbolUniverse": zod.array(zod.string()),
+  "config": zod.record(zod.string(), zod.unknown()),
+  "promotedAt": zod.coerce.date()
+}))
+})

@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type EnvironmentMode =
-  (typeof EnvironmentMode)[keyof typeof EnvironmentMode];
+export type EnvironmentMode = typeof EnvironmentMode[keyof typeof EnvironmentMode];
+
 
 export const EnvironmentMode = {
-  paper: "paper",
-  live: "live",
+  paper: 'paper',
+  live: 'live',
 } as const;

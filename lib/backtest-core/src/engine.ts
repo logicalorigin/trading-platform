@@ -2,11 +2,12 @@ import {
   getExecutableStrategy,
   getStrategyCatalogItem,
 } from "./strategies";
+import { calculateBacktestMetrics } from "./analytics";
 import type {
   BacktestBar,
-  BacktestMetrics,
   BacktestPoint,
   BacktestRunResult,
+  BacktestRiskRules,
   BacktestTrade,
   PositionState,
   StudyDefinition,
@@ -36,74 +37,92 @@ function applySlippage(price: number, side: "buy" | "sell", slippageBps: number)
   return side === "buy" ? price * (1 + multiplier) : price * (1 - multiplier);
 }
 
-function calculateSharpe(points: BacktestPoint[]): number {
-  if (points.length < 3) {
-    return 0;
-  }
-
-  const returns: number[] = [];
-  for (let index = 1; index < points.length; index += 1) {
-    const previousEquity = points[index - 1]?.equity ?? 0;
-    const currentEquity = points[index]?.equity ?? 0;
-
-    if (previousEquity <= 0) {
-      continue;
-    }
-
-    returns.push((currentEquity - previousEquity) / previousEquity);
-  }
-
-  if (returns.length < 2) {
-    return 0;
-  }
-
-  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
-  const variance =
-    returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
-    (returns.length - 1);
-  const standardDeviation = Math.sqrt(variance);
-
-  if (standardDeviation === 0) {
-    return 0;
-  }
-
-  return (mean / standardDeviation) * Math.sqrt(252);
+function positivePercent(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
-function buildMetrics(
-  points: BacktestPoint[],
-  trades: BacktestTrade[],
-  initialCapital: number,
-): BacktestMetrics {
-  const endingEquity = points[points.length - 1]?.equity ?? initialCapital;
-  const netPnl = endingEquity - initialCapital;
-  const wins = trades.filter((trade) => trade.netPnl > 0);
-  const losses = trades.filter((trade) => trade.netPnl < 0);
-  const profitFactor =
-    Math.abs(
-      wins.reduce((sum, trade) => sum + trade.netPnl, 0) /
-        (losses.reduce((sum, trade) => sum + trade.netPnl, 0) || -1),
-    ) || 0;
-  const maxDrawdownPercent = Math.abs(
-    points.reduce(
-      (minimum, point) => Math.min(minimum, point.drawdownPercent),
-      0,
-    ),
+function hasRiskRules(rules: BacktestRiskRules | undefined): boolean {
+  return Boolean(
+    positivePercent(rules?.stopLossPercent) ||
+      positivePercent(rules?.takeProfitPercent) ||
+      positivePercent(rules?.trailingStopPercent),
   );
-  const totalReturnPercent = initialCapital > 0 ? (netPnl / initialCapital) * 100 : 0;
-  const returnOverMaxDrawdown =
-    maxDrawdownPercent === 0 ? totalReturnPercent : totalReturnPercent / Math.abs(maxDrawdownPercent);
+}
 
-  return {
-    netPnl,
-    totalReturnPercent,
-    maxDrawdownPercent,
-    tradeCount: trades.length,
-    winRatePercent: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
-    profitFactor,
-    sharpeRatio: calculateSharpe(points),
-    returnOverMaxDrawdown,
-  };
+function resolveRiskExit(
+  position: PositionState,
+  bar: BacktestBar,
+  rules: BacktestRiskRules | undefined,
+): { price: number; reason: string } | null {
+  if (!hasRiskRules(rules)) {
+    return null;
+  }
+
+  const stopLossPercent = positivePercent(rules?.stopLossPercent);
+  const takeProfitPercent = positivePercent(rules?.takeProfitPercent);
+  const trailingStopPercent = positivePercent(rules?.trailingStopPercent);
+  const trailingActivationPercent =
+    positivePercent(rules?.trailingActivationPercent) ?? 0;
+  const highestPrice = Math.max(position.highestPrice ?? position.entryPrice, bar.high);
+  position.highestPrice = highestPrice;
+
+  const fixedStop =
+    stopLossPercent != null
+      ? position.entryPrice * (1 - stopLossPercent / 100)
+      : null;
+  const takeProfit =
+    takeProfitPercent != null
+      ? position.entryPrice * (1 + takeProfitPercent / 100)
+      : null;
+  const trailingActivated =
+    trailingStopPercent != null &&
+    highestPrice >= position.entryPrice * (1 + trailingActivationPercent / 100);
+
+  if (trailingActivated && trailingStopPercent != null) {
+    const nextTrailingStop = highestPrice * (1 - trailingStopPercent / 100);
+    position.trailingStopPrice =
+      position.trailingStopPrice == null
+        ? nextTrailingStop
+        : Math.max(position.trailingStopPrice, nextTrailingStop);
+  }
+
+  const trailingStop = position.trailingStopPrice ?? null;
+  const activeStops = [
+    fixedStop ? { price: fixedStop, reason: "stop_loss" } : null,
+    trailingStop ? { price: trailingStop, reason: "trailing_stop" } : null,
+  ].filter(
+    (stop): stop is { price: number; reason: string } =>
+      Boolean(stop && Number.isFinite(stop.price)),
+  );
+  const triggeredStops = activeStops.filter((stop) => bar.low <= stop.price);
+  const triggeredTarget =
+    takeProfit != null && bar.high >= takeProfit
+      ? { price: takeProfit, reason: "take_profit" }
+      : null;
+
+  if (triggeredStops.length > 0) {
+    const mostConservativeStop = triggeredStops.sort(
+      (left, right) => left.price - right.price,
+    )[0]!;
+    return {
+      price:
+        bar.open <= mostConservativeStop.price
+          ? bar.open
+          : mostConservativeStop.price,
+      reason: mostConservativeStop.reason,
+    };
+  }
+
+  if (triggeredTarget) {
+    return {
+      price: bar.open >= triggeredTarget.price ? bar.open : triggeredTarget.price,
+      reason: triggeredTarget.reason,
+    };
+  }
+
+  return null;
 }
 
 function closeTrade(
@@ -257,6 +276,8 @@ export function runBacktest(
         quantity,
         entryValue,
         commissionPaid,
+        highestPrice: fillPrice,
+        trailingStopPrice: null,
       });
       pendingEntries.delete(order.symbol);
     });
@@ -273,6 +294,36 @@ export function runBacktest(
 
       const symbolBars = barsBySymbol[symbol] ?? [];
       const position = positions.get(symbol) ?? null;
+      if (position) {
+        const riskExit = resolveRiskExit(position, bar, study.riskRules);
+        if (riskExit) {
+          const exitPrice = applySlippage(
+            riskExit.price,
+            "sell",
+            study.executionProfile.slippageBps,
+          );
+          const exitValue = exitPrice * position.quantity;
+          const commissionPaid = computeCommission(
+            exitValue,
+            study.executionProfile.commissionBps,
+          );
+
+          cash += exitValue - commissionPaid;
+          trades.push(
+            closeTrade(
+              position,
+              occurredAt,
+              exitPrice,
+              riskExit.reason,
+              nextIndex - position.entryIndex,
+              commissionPaid,
+            ),
+          );
+          positions.delete(symbol);
+          pendingExits.delete(symbol);
+          return;
+        }
+      }
       const signal = strategy.evaluate({
         symbol,
         bars: symbolBars,
@@ -367,7 +418,11 @@ export function runBacktest(
   }
 
   return {
-    metrics: buildMetrics(points, trades, study.portfolioRules.initialCapital),
+    metrics: calculateBacktestMetrics(
+      points,
+      trades,
+      study.portfolioRules.initialCapital,
+    ),
     trades,
     points,
     warnings,

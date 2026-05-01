@@ -5,8 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AssetClass } from "./assetClass";
-import type { OptionContract } from "./optionContract";
+import type { AssetClass } from './assetClass';
+import type { OptionContract } from './optionContract';
 
 export interface Position {
   id: string;

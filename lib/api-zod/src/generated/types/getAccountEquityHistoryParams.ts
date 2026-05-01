@@ -5,11 +5,11 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AccountHistoryRange } from "./accountHistoryRange";
-import type { EnvironmentMode } from "./environmentMode";
+import type { AccountHistoryRange } from './accountHistoryRange';
+import type { EnvironmentMode } from './environmentMode';
 
 export type GetAccountEquityHistoryParams = {
-  range?: AccountHistoryRange;
-  benchmark?: string;
-  mode?: EnvironmentMode;
+range?: AccountHistoryRange;
+benchmark?: string;
+mode?: EnvironmentMode;
 };

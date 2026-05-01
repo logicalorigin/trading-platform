@@ -6,11 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type OrderType = (typeof OrderType)[keyof typeof OrderType];
+export type OrderType = typeof OrderType[keyof typeof OrderType];
+
 
 export const OrderType = {
-  market: "market",
-  limit: "limit",
-  stop: "stop",
-  stop_limit: "stop_limit",
+  market: 'market',
+  limit: 'limit',
+  stop: 'stop',
+  stop_limit: 'stop_limit',
 } as const;

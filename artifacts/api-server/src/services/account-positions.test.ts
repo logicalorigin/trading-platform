@@ -1,0 +1,82 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
+process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
+
+test("account position internals remove closed broker rows", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const rows = __accountPositionInternalsForTests.filterOpenBrokerPositions([
+    { symbol: "AAL", quantity: 0 },
+    { symbol: "FCEL", quantity: 30 },
+    { symbol: "SHORT", quantity: -5 },
+    { symbol: "TINY", quantity: 1e-12 },
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => row.symbol),
+    ["FCEL", "SHORT"],
+  );
+  assert.equal(
+    __accountPositionInternalsForTests.isOpenBrokerPosition({ quantity: 0 }),
+    false,
+  );
+});
+
+test("account position hydration derives mark, day P&L, and unrealized P&L from quotes", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const hydrated =
+    __accountPositionInternalsForTests.buildPositionMarketHydration(
+      {
+        id: "U1:INDI",
+        accountId: "U1",
+        symbol: "INDI",
+        assetClass: "equity",
+        quantity: 200,
+        averagePrice: 4.42275,
+        marketPrice: 4.42275,
+        marketValue: 884.55,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        optionContract: null,
+      },
+      {
+        symbol: "INDI",
+        price: 4.64,
+        bid: 4.48,
+        ask: 4.75,
+        bidSize: 0,
+        askSize: 300,
+        change: 0.13,
+        changePercent: 2.882483370288246,
+        open: 4.09,
+        high: 4.62,
+        low: 4.04,
+        prevClose: 4.51,
+        volume: 2,
+        openInterest: null,
+        impliedVolatility: null,
+        delta: null,
+        gamma: null,
+        theta: null,
+        vega: null,
+        providerContractId: "496414757",
+        delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date("2026-05-01T00:08:40.151Z"),
+        ageMs: null,
+        cacheAgeMs: 0,
+        latency: null,
+        transport: "tws",
+        updatedAt: new Date("2026-05-01T00:08:40.151Z"),
+      },
+    );
+
+  assert.equal(hydrated.mark, 4.64);
+  assert.equal(Number(hydrated.marketValue.toFixed(2)), 928);
+  assert.equal(Number(hydrated.dayChange?.toFixed(2)), 26);
+  assert.equal(Number(hydrated.dayChangePercent?.toFixed(6)), 2.882483);
+  assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 43.45);
+  assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
+});

@@ -7,11 +7,11 @@
  */
 
 export type GetResearchTranscriptParams = {
-  symbol: string;
-  /**
-   * @minimum 1
-   * @maximum 4
-   */
-  quarter?: number;
-  year?: number;
+symbol: string;
+/**
+ * @minimum 1
+ * @maximum 4
+ */
+quarter?: number;
+year?: number;
 };

@@ -5,9 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { IbkrBridgeConnectionHealth } from "./ibkrBridgeConnectionHealth";
+import type { IbkrBridgeConnectionHealth } from './ibkrBridgeConnectionHealth';
 
 export interface IbkrBridgeConnectionsHealth {
-  clientPortal: IbkrBridgeConnectionHealth;
   tws: IbkrBridgeConnectionHealth;
 }

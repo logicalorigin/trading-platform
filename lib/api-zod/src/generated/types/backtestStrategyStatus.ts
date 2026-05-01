@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestStrategyStatus =
-  (typeof BacktestStrategyStatus)[keyof typeof BacktestStrategyStatus];
+export type BacktestStrategyStatus = typeof BacktestStrategyStatus[keyof typeof BacktestStrategyStatus];
+
 
 export const BacktestStrategyStatus = {
-  runnable: "runnable",
-  blocked: "blocked",
+  runnable: 'runnable',
+  blocked: 'blocked',
 } as const;

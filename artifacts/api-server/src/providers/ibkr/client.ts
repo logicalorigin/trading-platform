@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { HttpError } from "../../lib/errors";
 import { fetchJson, withSearchParams, type QueryValue } from "../../lib/http";
 import type {
+  IbkrMarketDataMode,
   IbkrRuntimeConfig,
   IbkrTransport,
   RuntimeMode,
@@ -35,7 +36,7 @@ type OrderStatus =
   | "expired";
 type OrderType = "market" | "limit" | "stop" | "stop_limit";
 type TimeInForce = "day" | "gtc" | "ioc" | "fok";
-export type HistoryBarTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
+export type HistoryBarTimeframe = "5s" | "1m" | "5m" | "15m" | "1h" | "1d";
 export type HistoryDataSource = "trades" | "midpoint" | "bid_ask";
 type HeaderInput = ConstructorParameters<typeof Headers>[0];
 export type UniverseMarket =
@@ -47,9 +48,19 @@ export type UniverseMarket =
   | "crypto"
   | "otc";
 type MarketDataProvider = "ibkr" | "polygon";
-type UniverseTickerContractMeta =
-  | Record<string, string | number | boolean | null>
-  | null;
+export type MarketDataFreshness =
+  | "live"
+  | "delayed"
+  | "frozen"
+  | "delayed_frozen"
+  | "stale"
+  | "metadata"
+  | "unavailable"
+  | "pending";
+type UniverseTickerContractMeta = Record<
+  string,
+  string | number | boolean | null
+> | null;
 export type OptionContractSnapshot = {
   ticker: string;
   underlying: string;
@@ -100,7 +111,9 @@ export type BrokerPositionSnapshot = {
   marketValue: number;
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
-  optionContract: (OptionContractSnapshot & { providerContractId: string | null }) | null;
+  optionContract:
+    | (OptionContractSnapshot & { providerContractId: string | null })
+    | null;
 };
 
 export type BrokerOrderSnapshot = {
@@ -161,7 +174,10 @@ export type QuoteSnapshot = {
   providerContractId: string | null;
   transport: IbkrTransport;
   delayed: boolean;
-  freshness?: "live" | "stale" | "pending";
+  freshness?: MarketDataFreshness;
+  marketDataMode?: IbkrMarketDataMode | null;
+  dataUpdatedAt?: Date | null;
+  ageMs?: number | null;
   cacheAgeMs?: number | null;
   latency?: {
     bridgeReceivedAt?: Date | null;
@@ -184,6 +200,10 @@ export type BrokerBarSnapshot = {
   partial: boolean;
   transport: IbkrTransport;
   delayed: boolean;
+  freshness?: MarketDataFreshness;
+  marketDataMode?: IbkrMarketDataMode | null;
+  dataUpdatedAt?: Date | null;
+  ageMs?: number | null;
 };
 
 export type ResolvedIbkrContract = {
@@ -220,6 +240,10 @@ export type IbkrUniverseTicker = {
   normalizedExchangeMic: string | null;
   exchangeDisplay: string | null;
   logoUrl: string | null;
+  countryCode: string | null;
+  exchangeCountryCode: string | null;
+  sector: string | null;
+  industry: string | null;
   contractDescription: string | null;
   contractMeta: UniverseTickerContractMeta;
   locale: string | null;
@@ -249,18 +273,24 @@ export type OptionChainContract = {
     sharesPerContract: number;
     providerContractId: string | null;
   };
-  bid: number;
-  ask: number;
-  last: number;
-  mark: number;
+  bid: number | null;
+  ask: number | null;
+  last: number | null;
+  mark: number | null;
   impliedVolatility: number | null;
   delta: number | null;
   gamma: number | null;
   theta: number | null;
   vega: number | null;
-  openInterest: number;
-  volume: number;
+  openInterest: number | null;
+  volume: number | null;
   updatedAt: Date;
+  quoteFreshness?: MarketDataFreshness;
+  marketDataMode?: IbkrMarketDataMode | null;
+  quoteUpdatedAt?: Date | null;
+  dataUpdatedAt?: Date | null;
+  ageMs?: number | null;
+  underlyingPrice?: number | null;
 };
 
 export type SessionStatusSnapshot = {
@@ -377,9 +407,8 @@ export const SNAPSHOT_FIELDS = [
   "7310", // option theta
   "7311", // option vega
 ] as const;
-export const STREAMING_SNAPSHOT_FIELDS: readonly string[] = SNAPSHOT_FIELDS.filter(
-  (field) => field !== "87_raw",
-);
+export const STREAMING_SNAPSHOT_FIELDS: readonly string[] =
+  SNAPSHOT_FIELDS.filter((field) => field !== "87_raw");
 
 const DEFAULT_HISTORY_BAR_LIMIT = 200;
 const HISTORY_RESPONSE_MAX_POINTS = 1_000;
@@ -389,13 +418,15 @@ const OPTION_CHAIN_METADATA_CACHE_TTL_MS = 5 * 60_000;
 const DEFAULT_OPTION_CHAIN_EXPIRATIONS = 1;
 const DEFAULT_OPTION_CHAIN_STRIKES_AROUND_MONEY = 6;
 const OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY = 16;
+type OptionChainStrikeCoverage = "fast" | "standard" | "full";
+type OptionChainQuoteHydration = "metadata" | "snapshot";
 const HISTORY_SOURCE_TO_IBKR: Record<HistoryDataSource, string> = {
   trades: "Trades",
   midpoint: "Midpoint",
   bid_ask: "Bid_Ask",
 };
 
-const HISTORY_TIMEFRAME_TO_BAR: Record<HistoryBarTimeframe, string> = {
+const HISTORY_TIMEFRAME_TO_BAR: Partial<Record<HistoryBarTimeframe, string>> = {
   "1m": "1min",
   "5m": "5min",
   "15m": "15min",
@@ -404,6 +435,7 @@ const HISTORY_TIMEFRAME_TO_BAR: Record<HistoryBarTimeframe, string> = {
 };
 
 const HISTORY_TIMEFRAME_STEP_MS: Record<HistoryBarTimeframe, number> = {
+  "5s": 5_000,
   "1m": 60_000,
   "5m": 300_000,
   "15m": 900_000,
@@ -411,6 +443,7 @@ const HISTORY_TIMEFRAME_STEP_MS: Record<HistoryBarTimeframe, number> = {
   "1d": 86_400_000,
 };
 const HISTORY_TIMEFRAME_MAX_PAGES: Record<HistoryBarTimeframe, number> = {
+  "5s": 20,
   "1m": 20,
   "5m": 20,
   "15m": 15,
@@ -447,7 +480,10 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-function positiveIntegerOrDefault(value: number | undefined, fallback: number): number {
+function positiveIntegerOrDefault(
+  value: number | undefined,
+  fallback: number,
+): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fallback;
   }
@@ -456,11 +492,7 @@ function positiveIntegerOrDefault(value: number | undefined, fallback: number): 
 }
 
 function startOfUtcDay(date = new Date()): number {
-  return Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate(),
-  );
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
 async function mapWithConcurrency<T, R>(
@@ -584,9 +616,7 @@ function parseIbkrTradeDateTime(value: unknown): Date | null {
     return null;
   }
 
-  const match = text.match(
-    /^(\d{4})(\d{2})(\d{2})-(\d{2}):(\d{2}):(\d{2})$/,
-  );
+  const match = text.match(/^(\d{4})(\d{2})(\d{2})-(\d{2}):(\d{2}):(\d{2})$/);
   if (!match) {
     return null;
   }
@@ -620,7 +650,9 @@ function resolveHistoryStepMs(timeframe: HistoryBarTimeframe): number {
   return HISTORY_TIMEFRAME_STEP_MS[timeframe];
 }
 
-function normalizeHistoryDataSource(source: HistoryDataSource | null | undefined): HistoryDataSource {
+function normalizeHistoryDataSource(
+  source: HistoryDataSource | null | undefined,
+): HistoryDataSource {
   return source ?? "trades";
 }
 
@@ -629,10 +661,13 @@ function buildHistoryPeriod(
   barCount: number,
   outsideRth = true,
 ): string {
-  const desiredBars = Math.max(1, Math.min(HISTORY_RESPONSE_MAX_POINTS, Math.ceil(barCount)));
-  const marketHoursPadding =
-    timeframe === "1d" ? 1 : outsideRth ? 1 : 5;
-  const totalMs = desiredBars * resolveHistoryStepMs(timeframe) * marketHoursPadding;
+  const desiredBars = Math.max(
+    1,
+    Math.min(HISTORY_RESPONSE_MAX_POINTS, Math.ceil(barCount)),
+  );
+  const marketHoursPadding = timeframe === "1d" ? 1 : outsideRth ? 1 : 5;
+  const totalMs =
+    desiredBars * resolveHistoryStepMs(timeframe) * marketHoursPadding;
   const minuteMs = 60_000;
   const hourMs = 3_600_000;
   const dayMs = 86_400_000;
@@ -840,7 +875,9 @@ function normalizeOrderStatus(
   return "submitted";
 }
 
-function parseOptionDetails(record: Record<string, unknown>): BrokerPositionSnapshot["optionContract"] {
+function parseOptionDetails(
+  record: Record<string, unknown>,
+): BrokerPositionSnapshot["optionContract"] {
   const providerContractId = asString(record["conid"]);
   const underlying =
     firstDefined(
@@ -852,7 +889,8 @@ function parseOptionDetails(record: Record<string, unknown>): BrokerPositionSnap
     firstDefined(record["expiry"], record["maturityDate"]),
   );
   const strike =
-    firstDefined(asNumber(record["strike"]), asNumber(record["strikePrice"])) ?? null;
+    firstDefined(asNumber(record["strike"]), asNumber(record["strikePrice"])) ??
+    null;
   const right = normalizeOptionRight(
     firstDefined(asString(record["putOrCall"]), asString(record["right"])),
   );
@@ -863,7 +901,9 @@ function parseOptionDetails(record: Record<string, unknown>): BrokerPositionSnap
   }
 
   const description = asString(record["contractDesc"]);
-  const bracketMatch = description?.match(/\[([A-Z0-9 ]+\d{6}[CP]\d+)\s+\d+\]$/);
+  const bracketMatch = description?.match(
+    /\[([A-Z0-9 ]+\d{6}[CP]\d+)\s+\d+\]$/,
+  );
   const ticker =
     bracketMatch?.[1]?.replace(/\s+/g, "") ??
     asString(record["localSymbol"]) ??
@@ -912,16 +952,15 @@ export function parseSnapshotQuote(
   payload: Record<string, unknown>,
   assetClass: AssetClass | null = null,
 ): QuoteSnapshot {
-  const delayed =
-    [
-      payload["31"],
-      payload["84"],
-      payload["86"],
-      payload["70"],
-      payload["71"],
-      payload["7295"],
-      payload["7296"],
-    ].some((value) => typeof value === "string" && value.trim().startsWith("@"));
+  const delayed = [
+    payload["31"],
+    payload["84"],
+    payload["86"],
+    payload["70"],
+    payload["71"],
+    payload["7295"],
+    payload["7296"],
+  ].some((value) => typeof value === "string" && value.trim().startsWith("@"));
   const lastRaw = firstDefined(
     asNumber(payload["31"]),
     asNumber(payload["last"]),
@@ -952,50 +991,35 @@ export function parseSnapshotQuote(
   const bid = bidRaw ?? 0;
   const ask = askRaw ?? bid;
   const bidSize =
-    firstDefined(
-      asNumber(payload["88"]),
-      asNumber(payload["bidSize"]),
-    ) ?? 0;
+    firstDefined(asNumber(payload["88"]), asNumber(payload["bidSize"])) ?? 0;
   const askSize =
     firstDefined(
       asNumber(payload["85"]),
       asNumber(payload["askSize"]),
       asNumber(payload["7059"]),
     ) ?? 0;
-  const prevClose =
-    firstDefined(
-      asNumber(payload["7296"]),
-      asNumber(payload["7741"]),
-      asNumber(payload["prevClose"]),
-      asNumber(payload["close"]),
-    );
-  const open =
-    firstDefined(
-      asNumber(payload["7295"]),
-      asNumber(payload["open"]),
-    );
-  const high =
-    firstDefined(
-      asNumber(payload["70"]),
-      asNumber(payload["high"]),
-    );
-  const low =
-    firstDefined(
-      asNumber(payload["71"]),
-      asNumber(payload["low"]),
-    );
-  const volume =
-    firstDefined(
-      asNumber(payload["87_raw"]),
-      asNumber(payload["7762"]),
-      asNumber(payload["87"]),
-      asNumber(payload["volume"]),
-    );
-  const openInterest =
-    firstDefined(
-      asNumber(payload["7638"]),
-      asNumber(payload["openInterest"]),
-    );
+  const prevClose = firstDefined(
+    asNumber(payload["7296"]),
+    asNumber(payload["7741"]),
+    asNumber(payload["prevClose"]),
+    asNumber(payload["close"]),
+  );
+  const open = firstDefined(
+    asNumber(payload["7295"]),
+    asNumber(payload["open"]),
+  );
+  const high = firstDefined(asNumber(payload["70"]), asNumber(payload["high"]));
+  const low = firstDefined(asNumber(payload["71"]), asNumber(payload["low"]));
+  const volume = firstDefined(
+    asNumber(payload["87_raw"]),
+    asNumber(payload["7762"]),
+    asNumber(payload["87"]),
+    asNumber(payload["volume"]),
+  );
+  const openInterest = firstDefined(
+    asNumber(payload["7638"]),
+    asNumber(payload["openInterest"]),
+  );
   const impliedVolatility = firstDefined(
     normalizeIvFromPercent(payload["7633"]),
     normalizeIvFromPercent(payload["7283"]),
@@ -1037,12 +1061,9 @@ export function parseSnapshotQuote(
   const change =
     ibkrChange ?? (prevClose !== null && price > 0 ? price - prevClose : 0);
   const changePercent =
-    ibkrChangePct ??
-    (prevClose ? (change / prevClose) * 100 : 0);
+    ibkrChangePct ?? (prevClose ? (change / prevClose) * 100 : 0);
   const updatedAt =
-    toDate(payload["_updated"]) ??
-    toDate(payload["updatedAt"]) ??
-    new Date();
+    toDate(payload["_updated"]) ?? toDate(payload["updatedAt"]) ?? new Date();
 
   return {
     symbol,
@@ -1068,6 +1089,10 @@ export function parseSnapshotQuote(
     providerContractId,
     transport: "client_portal",
     delayed,
+    freshness: delayed ? "delayed" : "live",
+    marketDataMode: delayed ? "delayed" : "live",
+    dataUpdatedAt: updatedAt,
+    ageMs: null,
   };
 }
 
@@ -1122,6 +1147,10 @@ function parseHistoricalBars(
         partial: false,
         transport: "client_portal",
         delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: timestamp,
+        ageMs: null,
       } satisfies BrokerBarSnapshot;
     }),
   ).sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
@@ -1131,11 +1160,11 @@ function toOptionChainContract(
   optionContract: NonNullable<BrokerPositionSnapshot["optionContract"]>,
   quote: QuoteSnapshot | null,
 ): OptionChainContract {
-  const bid = quote?.bid ?? 0;
-  const ask = quote?.ask ?? bid;
-  const last = quote?.price ?? 0;
+  const bid = quote?.bid ?? null;
+  const ask = quote?.ask ?? null;
+  const last = quote?.price ?? null;
   const mark =
-    bid > 0 && ask > 0
+    bid != null && ask != null && bid > 0 && ask > 0
       ? (bid + ask) / 2
       : last;
 
@@ -1159,9 +1188,14 @@ function toOptionChainContract(
     gamma: quote?.gamma ?? null,
     theta: quote?.theta ?? null,
     vega: quote?.vega ?? null,
-    openInterest: quote?.openInterest ?? 0,
-    volume: quote?.volume ?? 0,
+    openInterest: quote?.openInterest ?? null,
+    volume: quote?.volume ?? null,
     updatedAt: quote?.updatedAt ?? new Date(),
+    quoteFreshness: quote?.freshness ?? (quote ? "live" : "metadata"),
+    marketDataMode: quote?.marketDataMode ?? null,
+    quoteUpdatedAt: quote?.dataUpdatedAt ?? quote?.updatedAt ?? null,
+    dataUpdatedAt: quote?.dataUpdatedAt ?? quote?.updatedAt ?? null,
+    ageMs: quote?.ageMs ?? null,
   };
 }
 
@@ -1282,10 +1316,14 @@ export class IbkrClient {
       });
     } catch (error) {
       if (didTimeout) {
-        throw new HttpError(504, `IBKR request to ${path} timed out after ${this.requestTimeoutMs}ms.`, {
-          code: "ibkr_request_timeout",
-          cause: error,
-        });
+        throw new HttpError(
+          504,
+          `IBKR request to ${path} timed out after ${this.requestTimeoutMs}ms.`,
+          {
+            code: "ibkr_request_timeout",
+            cause: error,
+          },
+        );
       }
 
       if (inputSignal?.aborted) {
@@ -1340,13 +1378,10 @@ export class IbkrClient {
   }
 
   async getSessionStatus(): Promise<SessionStatusSnapshot> {
-    const payload = await this.request<unknown>(
-      "/iserver/auth/status",
-      {
-        method: "POST",
-        body: JSON.stringify({}),
-      },
-    );
+    const payload = await this.request<unknown>("/iserver/auth/status", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
     const record = asRecord(payload);
 
     return {
@@ -1355,10 +1390,7 @@ export class IbkrClient {
           record?.["isAuthenticated"] ??
           record?.["connected"],
       ),
-      connected: Boolean(
-        record?.["connected"] ??
-          record?.["authenticated"],
-      ),
+      connected: Boolean(record?.["connected"] ?? record?.["authenticated"]),
       competing: Boolean(record?.["competing"]),
       selectedAccountId:
         firstDefined(
@@ -1372,28 +1404,22 @@ export class IbkrClient {
   }
 
   async tickleSession(): Promise<Record<string, unknown> | null> {
-    const payload = await this.request<unknown>(
-      "/tickle",
-      {
-        method: "POST",
-        body: JSON.stringify({}),
-      },
-    );
+    const payload = await this.request<unknown>("/tickle", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
 
     return asRecord(payload);
   }
 
   async initializeBrokerageSession(): Promise<Record<string, unknown> | null> {
-    const payload = await this.request<unknown>(
-      "/iserver/auth/ssodh/init",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          publish: true,
-          compete: true,
-        }),
-      },
-    );
+    const payload = await this.request<unknown>("/iserver/auth/ssodh/init", {
+      method: "POST",
+      body: JSON.stringify({
+        publish: true,
+        compete: true,
+      }),
+    });
 
     return asRecord(payload);
   }
@@ -1402,13 +1428,10 @@ export class IbkrClient {
     try {
       await this.initializeBrokerageSession();
     } catch (error) {
-      await this.request<unknown>(
-        "/iserver/reauthenticate",
-        {
-          method: "POST",
-          body: JSON.stringify({}),
-        },
-      ).catch(() => {
+      await this.request<unknown>("/iserver/reauthenticate", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }).catch(() => {
         throw error;
       });
     }
@@ -1470,7 +1493,9 @@ export class IbkrClient {
     return asString(record?.["acctId"]) ?? accountId;
   }
 
-  async resolveActiveAccountId(accountId?: string | null): Promise<string | null> {
+  async resolveActiveAccountId(
+    accountId?: string | null,
+  ): Promise<string | null> {
     const session = await this.ensureBrokerageSession();
     const targetAccountId =
       accountId ??
@@ -1592,10 +1617,13 @@ export class IbkrClient {
     );
   }
 
-  private async getCachedOptionStrikes(input: {
-    conid: number;
-    month: string;
-  }, signal?: AbortSignal): Promise<number[]> {
+  private async getCachedOptionStrikes(
+    input: {
+      conid: number;
+      month: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<number[]> {
     const cacheKey = `${input.conid}:${input.month}`;
     const cached = readCachedValue(this.optionStrikesCache, cacheKey);
     if (cached) {
@@ -1633,12 +1661,15 @@ export class IbkrClient {
     );
   }
 
-  private async getCachedOptionInfo(input: {
-    conid: number;
-    month: string;
-    strike: number;
-    right: OptionRight;
-  }, signal?: AbortSignal): Promise<Record<string, unknown>[]> {
+  private async getCachedOptionInfo(
+    input: {
+      conid: number;
+      month: string;
+      strike: number;
+      right: OptionRight;
+    },
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>[]> {
     const cacheKey = `${input.conid}:${input.month}:${input.strike}:${input.right}`;
     const cached = readCachedValue(this.optionInfoCache, cacheKey);
     if (cached) {
@@ -1666,7 +1697,9 @@ export class IbkrClient {
     );
   }
 
-  private async getAccountSummary(accountId: string): Promise<Record<string, unknown> | null> {
+  private async getAccountSummary(
+    accountId: string,
+  ): Promise<Record<string, unknown> | null> {
     const payload = await this.request<unknown>(
       `/portfolio/${encodeURIComponent(accountId)}/summary`,
     );
@@ -1674,7 +1707,9 @@ export class IbkrClient {
     return asRecord(payload);
   }
 
-  private async getAccountLedger(accountId: string): Promise<Record<string, unknown> | null> {
+  private async getAccountLedger(
+    accountId: string,
+  ): Promise<Record<string, unknown> | null> {
     const payload = await this.request<unknown>(
       `/portfolio/${encodeURIComponent(accountId)}/ledger`,
     );
@@ -1682,7 +1717,9 @@ export class IbkrClient {
     return asRecord(payload);
   }
 
-  private getBaseLedger(ledger: Record<string, unknown> | null): Record<string, unknown> | null {
+  private getBaseLedger(
+    ledger: Record<string, unknown> | null,
+  ): Record<string, unknown> | null {
     if (!ledger) {
       return null;
     }
@@ -1700,13 +1737,19 @@ export class IbkrClient {
     return Promise.all(
       accounts.map(async (account) => {
         const accountId =
-          firstDefined(asString(account["accountId"]), asString(account["id"])) ??
-          null;
+          firstDefined(
+            asString(account["accountId"]),
+            asString(account["id"]),
+          ) ?? null;
 
         if (!accountId) {
-          throw new HttpError(502, "IBKR returned an account without an account ID.", {
-            code: "ibkr_invalid_account",
-          });
+          throw new HttpError(
+            502,
+            "IBKR returned an account without an account ID.",
+            {
+              code: "ibkr_invalid_account",
+            },
+          );
         }
 
         const [summary, ledger] = await Promise.all([
@@ -1724,7 +1767,11 @@ export class IbkrClient {
 
         const cash =
           firstDefined(
-            findMetric(summary, ["totalcashvalue", "cashbalance", "settledcash"]),
+            findMetric(summary, [
+              "totalcashvalue",
+              "cashbalance",
+              "settledcash",
+            ]),
             findMetric(baseLedger, ["cashbalance", "settledcash"]),
           ) ?? 0;
 
@@ -1753,7 +1800,9 @@ export class IbkrClient {
         ]);
         const patternDayTraderRaw = firstDefined(
           asString(findCaseInsensitiveValue(summary ?? {}, "patterndaytrader")),
-          asString(findCaseInsensitiveValue(summary ?? {}, "ispatterndaytrader")),
+          asString(
+            findCaseInsensitiveValue(summary ?? {}, "ispatterndaytrader"),
+          ),
         );
 
         return {
@@ -1776,7 +1825,10 @@ export class IbkrClient {
           totalCashValue,
           settledCash,
           accruedCash: findMetric(summary, ["accruedcash"]),
-          initialMargin: findMetric(summary, ["initmarginreq", "initialmargin"]),
+          initialMargin: findMetric(summary, [
+            "initmarginreq",
+            "initialmargin",
+          ]),
           maintenanceMargin: findMetric(summary, [
             "maintmarginreq",
             "maintenancemargin",
@@ -1794,7 +1846,9 @@ export class IbkrClient {
           leverage: findMetric(summary, ["leverage"]),
           dayTradesRemaining,
           isPatternDayTrader: patternDayTraderRaw
-            ? ["true", "yes", "1", "y"].includes(patternDayTraderRaw.toLowerCase())
+            ? ["true", "yes", "1", "y"].includes(
+                patternDayTraderRaw.toLowerCase(),
+              )
             : null,
           updatedAt: new Date(),
         };
@@ -1802,7 +1856,9 @@ export class IbkrClient {
     );
   }
 
-  private async listAccountPositions(accountId: string): Promise<BrokerPositionSnapshot[]> {
+  private async listAccountPositions(
+    accountId: string,
+  ): Promise<BrokerPositionSnapshot[]> {
     const positions: BrokerPositionSnapshot[] = [];
     let pageId = 0;
 
@@ -1835,7 +1891,8 @@ export class IbkrClient {
               assetClass === "option" ? parseOptionDetails(position) : null;
             const symbol =
               assetClass === "option"
-                ? optionContract?.underlying ?? normalizeSymbol(asString(position["ticker"]) ?? "")
+                ? (optionContract?.underlying ??
+                  normalizeSymbol(asString(position["ticker"]) ?? ""))
                 : normalizeSymbol(
                     firstDefined(
                       asString(position["ticker"]),
@@ -1870,7 +1927,9 @@ export class IbkrClient {
               ) ?? 0;
             const multiplier = optionContract?.sharesPerContract ?? 1;
             const denominator =
-              Math.abs(averagePrice * quantity * multiplier) || Math.abs(marketValue) || 1;
+              Math.abs(averagePrice * quantity * multiplier) ||
+              Math.abs(marketValue) ||
+              1;
 
             return {
               id: `${accountId}:${asString(position["conid"]) ?? symbol}`,
@@ -1907,8 +1966,10 @@ export class IbkrClient {
       ? [input.accountId]
       : (await this.getPortfolioAccounts()).flatMap((account) => {
           const accountId =
-            firstDefined(asString(account["accountId"]), asString(account["id"])) ??
-            null;
+            firstDefined(
+              asString(account["accountId"]),
+              asString(account["id"]),
+            ) ?? null;
           return accountId ? [accountId] : [];
         });
 
@@ -1977,8 +2038,10 @@ export class IbkrClient {
 
           const mapped: BrokerOrderSnapshot = {
             id:
-              firstDefined(asString(raw["orderId"]), asString(raw["order_id"])) ??
-              randomUUID(),
+              firstDefined(
+                asString(raw["orderId"]),
+                asString(raw["order_id"]),
+              ) ?? randomUUID(),
             accountId:
               firstDefined(
                 asString(raw["acct"]),
@@ -2070,9 +2133,13 @@ export class IbkrClient {
     }
 
     const clampedDays = Math.max(1, Math.min(7, Math.floor(input.days ?? 1)));
-    const payload = await this.request<unknown>("/iserver/account/trades", {}, {
-      days: clampedDays,
-    });
+    const payload = await this.request<unknown>(
+      "/iserver/account/trades",
+      {},
+      {
+        days: clampedDays,
+      },
+    );
     const rawRows = Array.isArray(payload)
       ? payload
       : asArray(asRecord(payload)?.["trades"]);
@@ -2088,7 +2155,8 @@ export class IbkrClient {
         }
 
         const providerContractId =
-          firstDefined(asString(raw["conidEx"]), asString(raw["conid"])) ?? null;
+          firstDefined(asString(raw["conidEx"]), asString(raw["conid"])) ??
+          null;
         const symbol = normalizeSymbol(
           firstDefined(
             asString(raw["symbol"]),
@@ -2099,10 +2167,7 @@ export class IbkrClient {
         );
         const assetClass =
           normalizeAssetClass(
-            firstDefined(
-              asString(raw["sec_type"]),
-              asString(raw["secType"]),
-            ),
+            firstDefined(asString(raw["sec_type"]), asString(raw["secType"])),
           ) ?? "equity";
 
         if (
@@ -2134,8 +2199,7 @@ export class IbkrClient {
               parseIbkrTradeDateTime(raw["trade_time"]),
             ) ?? new Date(),
           orderDescription: asString(raw["order_description"]) ?? null,
-          contractDescription:
-            asString(raw["contract_description_2"]) ?? null,
+          contractDescription: asString(raw["contract_description_2"]) ?? null,
           providerContractId,
           orderRef: asString(raw["order_ref"]) ?? null,
         } satisfies BrokerExecutionSnapshot;
@@ -2163,16 +2227,18 @@ export class IbkrClient {
     const fieldList = fields.join(",");
     const conidBatches = chunk(conids, SNAPSHOT_BATCH_SIZE);
 
-    await Promise.all(conidBatches.map((conidBatch) =>
-      this.request<unknown>(
-        "/iserver/marketdata/snapshot",
-        { signal },
-        {
-          conids: conidBatch.join(","),
-          fields: fieldList,
-        },
+    await Promise.all(
+      conidBatches.map((conidBatch) =>
+        this.request<unknown>(
+          "/iserver/marketdata/snapshot",
+          { signal },
+          {
+            conids: conidBatch.join(","),
+            fields: fieldList,
+          },
+        ),
       ),
-    ));
+    );
 
     await sleep(150);
   }
@@ -2190,21 +2256,23 @@ export class IbkrClient {
       signal,
     );
 
-    const batchResults = await Promise.all(chunk(requests, SNAPSHOT_BATCH_SIZE).map(async (requestBatch) => {
-      const payload = await this.request<unknown>(
-        "/iserver/marketdata/snapshot",
-        { signal },
-        {
-          conids: requestBatch.map((request) => request.conid).join(","),
-          fields,
-        },
-      );
+    const batchResults = await Promise.all(
+      chunk(requests, SNAPSHOT_BATCH_SIZE).map(async (requestBatch) => {
+        const payload = await this.request<unknown>(
+          "/iserver/marketdata/snapshot",
+          { signal },
+          {
+            conids: requestBatch.map((request) => request.conid).join(","),
+            fields,
+          },
+        );
 
-      return {
-        requestBatch,
-        rows: compact(asArray(payload).map(asRecord)),
-      };
-    }));
+        return {
+          requestBatch,
+          rows: compact(asArray(payload).map(asRecord)),
+        };
+      }),
+    );
 
     batchResults.forEach(({ requestBatch, rows }) => {
       rows.forEach((row) => {
@@ -2213,7 +2281,9 @@ export class IbkrClient {
           return;
         }
 
-        const request = requestBatch.find((candidate) => String(candidate.conid) === conid);
+        const request = requestBatch.find(
+          (candidate) => String(candidate.conid) === conid,
+        );
         if (!request) {
           return;
         }
@@ -2256,33 +2326,34 @@ export class IbkrClient {
       })),
     );
 
-    return resolved.map(({ symbol, contract }) => (
-      quoteMap.get(String(contract.conid)) ?? {
-        symbol,
-        price: 0,
-        bid: 0,
-        ask: 0,
-        bidSize: 0,
-        askSize: 0,
-        change: 0,
-        changePercent: 0,
-        open: null,
-        high: null,
-        low: null,
-        prevClose: null,
-        volume: null,
-        openInterest: null,
-        impliedVolatility: null,
-        delta: null,
-        gamma: null,
-        theta: null,
-        vega: null,
-        updatedAt: new Date(),
-        providerContractId: String(contract.conid),
-        transport: "client_portal",
-        delayed: false,
-      }
-    ));
+    return resolved.map(
+      ({ symbol, contract }) =>
+        quoteMap.get(String(contract.conid)) ?? {
+          symbol,
+          price: 0,
+          bid: 0,
+          ask: 0,
+          bidSize: 0,
+          askSize: 0,
+          change: 0,
+          changePercent: 0,
+          open: null,
+          high: null,
+          low: null,
+          prevClose: null,
+          volume: null,
+          openInterest: null,
+          impliedVolatility: null,
+          delta: null,
+          gamma: null,
+          theta: null,
+          vega: null,
+          updatedAt: new Date(),
+          providerContractId: String(contract.conid),
+          transport: "client_portal",
+          delayed: false,
+        },
+    );
   }
 
   async getHistoricalBars(input: {
@@ -2299,6 +2370,16 @@ export class IbkrClient {
     return this.withHistoryRequestPermit(async () => {
       const timeframe = input.timeframe;
       const bar = HISTORY_TIMEFRAME_TO_BAR[timeframe];
+      if (!bar) {
+        throw new HttpError(
+          400,
+          "IBKR Client Portal historical bars do not support this timeframe.",
+          {
+            code: "ibkr_history_timeframe_unsupported",
+            data: { timeframe },
+          },
+        );
+      }
       const outsideRth =
         typeof input.outsideRth === "boolean"
           ? input.outsideRth
@@ -2355,14 +2436,17 @@ export class IbkrClient {
           } catch (error) {
             lastError = error;
             const status =
-              typeof (error as { statusCode?: unknown })?.statusCode === "number"
-                ? ((error as { statusCode: number }).statusCode)
+              typeof (error as { statusCode?: unknown })?.statusCode ===
+              "number"
+                ? (error as { statusCode: number }).statusCode
                 : undefined;
             const detail = (error as { detail?: unknown })?.detail;
             const cause = (error as { cause?: unknown })?.cause;
             const haystack = [
               error instanceof Error ? error.message : String(error ?? ""),
-              typeof detail === "string" ? detail : JSON.stringify(detail ?? ""),
+              typeof detail === "string"
+                ? detail
+                : JSON.stringify(detail ?? ""),
               cause instanceof Error ? cause.message : String(cause ?? ""),
             ].join(" | ");
             const isTransientHttp = status !== undefined && status >= 500;
@@ -2419,10 +2503,12 @@ export class IbkrClient {
         .sort(
           (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
         )
-        .filter((barPoint) => (
-          (!input.from || barPoint.timestamp.getTime() >= input.from.getTime()) &&
-          (!input.to || barPoint.timestamp.getTime() <= input.to.getTime())
-        ));
+        .filter(
+          (barPoint) =>
+            (!input.from ||
+              barPoint.timestamp.getTime() >= input.from.getTime()) &&
+            (!input.to || barPoint.timestamp.getTime() <= input.to.getTime()),
+        );
 
       return sorted.slice(-(input.limit ?? sorted.length));
     });
@@ -2434,40 +2520,56 @@ export class IbkrClient {
     contractType?: OptionRight | null;
     maxExpirations?: number;
     strikesAroundMoney?: number;
+    strikeCoverage?: OptionChainStrikeCoverage;
+    quoteHydration?: OptionChainQuoteHydration;
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
     return this.withOptionChainRequestPermit(async () => {
       const signal = input.signal;
       throwIfAborted(signal);
-      const searchResults = await this.searchSecurities(input.underlying, { signal });
+      const searchResults = await this.searchSecurities(input.underlying, {
+        signal,
+      });
       const normalizedUnderlying = normalizeSymbol(input.underlying);
       const match =
-        searchResults.find((result) =>
-          normalizeSymbol(asString(result["symbol"]) ?? "") === normalizedUnderlying,
+        searchResults.find(
+          (result) =>
+            normalizeSymbol(asString(result["symbol"]) ?? "") ===
+            normalizedUnderlying,
         ) ?? searchResults[0];
 
       if (!match) {
-        throw new HttpError(404, `Unable to resolve IBKR contract for ${input.underlying}.`, {
-          code: "ibkr_contract_not_found",
-        });
+        throw new HttpError(
+          404,
+          `Unable to resolve IBKR contract for ${input.underlying}.`,
+          {
+            code: "ibkr_contract_not_found",
+          },
+        );
       }
 
       const underlyingConid = asNumber(match["conid"]);
       if (underlyingConid === null) {
-        throw new HttpError(502, `IBKR returned an invalid contract identifier for ${input.underlying}.`, {
-          code: "ibkr_invalid_conid",
-        });
+        throw new HttpError(
+          502,
+          `IBKR returned an invalid contract identifier for ${input.underlying}.`,
+          {
+            code: "ibkr_invalid_conid",
+          },
+        );
       }
 
-      const optionSection = compact(asArray(match["sections"]).map(asRecord)).find(
-        (section) => asString(section["secType"]) === "OPT",
-      );
+      const optionSection = compact(
+        asArray(match["sections"]).map(asRecord),
+      ).find((section) => asString(section["secType"]) === "OPT");
       const months = (asString(optionSection?.["months"]) ?? "")
         .split(";")
         .map((month) => month.trim())
         .filter(Boolean);
 
-      const requestedMonth = input.expirationDate ? toIbkrMonthCode(input.expirationDate) : null;
+      const requestedMonth = input.expirationDate
+        ? toIbkrMonthCode(input.expirationDate)
+        : null;
       const maxExpirations = positiveIntegerOrDefault(
         input.maxExpirations,
         DEFAULT_OPTION_CHAIN_EXPIRATIONS,
@@ -2476,16 +2578,18 @@ export class IbkrClient {
         ? months.filter((month) => month === requestedMonth)
         : months.slice(0, maxExpirations);
 
-      const underlyingQuote = (await this.getMarketDataSnapshotMap(
-        [
-          {
-            conid: underlyingConid,
-            symbol: normalizedUnderlying,
-            assetClass: "equity",
-          },
-        ],
-        signal,
-      )).get(String(underlyingConid));
+      const underlyingQuote = (
+        await this.getMarketDataSnapshotMap(
+          [
+            {
+              conid: underlyingConid,
+              symbol: normalizedUnderlying,
+              assetClass: "equity",
+            },
+          ],
+          signal,
+        )
+      ).get(String(underlyingConid));
       const spotPrice = underlyingQuote?.price ?? 0;
       const strikesAroundMoney = positiveIntegerOrDefault(
         input.strikesAroundMoney,
@@ -2494,143 +2598,180 @@ export class IbkrClient {
       const rights: OptionRight[] = input.contractType
         ? [input.contractType]
         : ["call", "put"];
+      const quoteHydration = input.quoteHydration ?? "snapshot";
 
       const contracts = (
         await Promise.all(
-          candidateMonths.map(async (month): Promise<
-            NonNullable<BrokerPositionSnapshot["optionContract"]>[]
-          > => {
-            const strikes = await this.getCachedOptionStrikes({
-              conid: underlyingConid,
+          candidateMonths.map(
+            async (
               month,
-            }, signal);
-
-            const relevantStrikes =
-              spotPrice > 0 && strikes.length > strikesAroundMoney * 2 + 1
-                ? (() => {
-                    const closestIndex = strikes.reduce((bestIndex, strike, index) => (
-                      Math.abs(strike - spotPrice) < Math.abs(strikes[bestIndex] - spotPrice)
-                        ? index
-                        : bestIndex
-                    ), 0);
-                    const start = Math.max(0, closestIndex - strikesAroundMoney);
-                    const end = Math.min(strikes.length, closestIndex + strikesAroundMoney + 1);
-                    return strikes.slice(start, end);
-                  })()
-                : strikes;
-
-            const contractRequests = relevantStrikes.flatMap((strike) =>
-              rights.map((right) => ({ strike, right })),
-            );
-            const contractGroups = await mapWithConcurrency(
-              contractRequests,
-              OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY,
-              async ({ strike, right }): Promise<
-                NonNullable<BrokerPositionSnapshot["optionContract"]>[]
-              > => {
-                const matches = await this.getCachedOptionInfo({
+            ): Promise<
+              NonNullable<BrokerPositionSnapshot["optionContract"]>[]
+            > => {
+              const strikes = await this.getCachedOptionStrikes(
+                {
                   conid: underlyingConid,
                   month,
+                },
+                signal,
+              );
+
+              const relevantStrikes =
+                input.strikeCoverage !== "full" &&
+                spotPrice > 0 &&
+                strikes.length > strikesAroundMoney * 2 + 1
+                  ? (() => {
+                      const closestIndex = strikes.reduce(
+                        (bestIndex, strike, index) =>
+                          Math.abs(strike - spotPrice) <
+                          Math.abs(strikes[bestIndex] - spotPrice)
+                            ? index
+                            : bestIndex,
+                        0,
+                      );
+                      const start = Math.max(
+                        0,
+                        closestIndex - strikesAroundMoney,
+                      );
+                      const end = Math.min(
+                        strikes.length,
+                        closestIndex + strikesAroundMoney + 1,
+                      );
+                      return strikes.slice(start, end);
+                    })()
+                  : strikes;
+
+              const contractRequests = relevantStrikes.flatMap((strike) =>
+                rights.map((right) => ({ strike, right })),
+              );
+              const contractGroups = await mapWithConcurrency(
+                contractRequests,
+                OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY,
+                async ({
                   strike,
                   right,
-                }, signal);
-                const parsedMatches = compact(
-                  matches.map((record) => {
-                    const optionContract = parseOptionDetails(record);
-                    if (!optionContract) {
-                      return null;
-                    }
-
-                    if (
-                      input.expirationDate &&
-                      optionContract.expirationDate.toISOString().slice(0, 10) !==
-                        input.expirationDate.toISOString().slice(0, 10)
-                    ) {
-                      return null;
-                    }
-
-                    return {
-                      record,
-                      optionContract,
-                    };
-                  }),
-                );
-
-                const preferredContracts = Array.from(
-                  parsedMatches.reduce<
-                    Map<
-                      string,
-                      {
-                        record: Record<string, unknown>;
-                        optionContract: NonNullable<
-                          BrokerPositionSnapshot["optionContract"]
-                        >;
+                }): Promise<
+                  NonNullable<BrokerPositionSnapshot["optionContract"]>[]
+                > => {
+                  const matches = await this.getCachedOptionInfo(
+                    {
+                      conid: underlyingConid,
+                      month,
+                      strike,
+                      right,
+                    },
+                    signal,
+                  );
+                  const parsedMatches = compact(
+                    matches.map((record) => {
+                      const optionContract = parseOptionDetails(record);
+                      if (!optionContract) {
+                        return null;
                       }
-                    >
-                  >((acc, candidate) => {
-                    const expiryKey = candidate.optionContract.expirationDate
-                      .toISOString()
-                      .slice(0, 10);
-                    const existing = acc.get(expiryKey);
-                    const tradingClass = normalizeSymbol(
-                      asString(candidate.record["tradingClass"]) ?? "",
-                    );
-                    const existingTradingClass = normalizeSymbol(
-                      asString(existing?.record["tradingClass"]) ?? "",
-                    );
-                    const candidateScore =
-                      tradingClass === normalizedUnderlying
-                        ? 0
-                        : tradingClass.startsWith(normalizedUnderlying)
-                          ? 1
-                          : 2;
-                    const existingScore =
-                      existingTradingClass === normalizedUnderlying
-                        ? 0
-                        : existingTradingClass.startsWith(normalizedUnderlying)
-                          ? 1
-                          : 2;
 
-                    if (!existing || candidateScore < existingScore) {
-                      acc.set(expiryKey, candidate);
-                    }
+                      if (
+                        input.expirationDate &&
+                        optionContract.expirationDate
+                          .toISOString()
+                          .slice(0, 10) !==
+                          input.expirationDate.toISOString().slice(0, 10)
+                      ) {
+                        return null;
+                      }
 
-                    return acc;
-                  }, new Map())
-                    .values(),
-                ).map((candidate) => candidate.optionContract);
+                      return {
+                        record,
+                        optionContract,
+                      };
+                    }),
+                  );
 
-                return preferredContracts;
-              },
-              signal,
-            );
+                  const preferredContracts = Array.from(
+                    parsedMatches
+                      .reduce<
+                        Map<
+                          string,
+                          {
+                            record: Record<string, unknown>;
+                            optionContract: NonNullable<
+                              BrokerPositionSnapshot["optionContract"]
+                            >;
+                          }
+                        >
+                      >((acc, candidate) => {
+                        const expiryKey =
+                          candidate.optionContract.expirationDate
+                            .toISOString()
+                            .slice(0, 10);
+                        const existing = acc.get(expiryKey);
+                        const tradingClass = normalizeSymbol(
+                          asString(candidate.record["tradingClass"]) ?? "",
+                        );
+                        const existingTradingClass = normalizeSymbol(
+                          asString(existing?.record["tradingClass"]) ?? "",
+                        );
+                        const candidateScore =
+                          tradingClass === normalizedUnderlying
+                            ? 0
+                            : tradingClass.startsWith(normalizedUnderlying)
+                              ? 1
+                              : 2;
+                        const existingScore =
+                          existingTradingClass === normalizedUnderlying
+                            ? 0
+                            : existingTradingClass.startsWith(
+                                  normalizedUnderlying,
+                                )
+                              ? 1
+                              : 2;
 
-            return contractGroups.flat();
-          }),
+                        if (!existing || candidateScore < existingScore) {
+                          acc.set(expiryKey, candidate);
+                        }
+
+                        return acc;
+                      }, new Map())
+                      .values(),
+                  ).map((candidate) => candidate.optionContract);
+
+                  return preferredContracts;
+                },
+                signal,
+              );
+
+              return contractGroups.flat();
+            },
+          ),
         )
       ).flat();
 
       const uniqueContracts = Array.from(
         new Map(
-          contracts.map((contract) => [contract.providerContractId ?? contract.ticker, contract]),
+          contracts.map((contract) => [
+            contract.providerContractId ?? contract.ticker,
+            contract,
+          ]),
         ).values(),
-      ).filter((contract) => {
-        if (input.expirationDate) {
-          return true;
-        }
+      )
+        .filter((contract) => {
+          if (input.expirationDate) {
+            return true;
+          }
 
-        const today = new Date();
-        const todayUtc = Date.UTC(
-          today.getUTCFullYear(),
-          today.getUTCMonth(),
-          today.getUTCDate(),
+          const today = new Date();
+          const todayUtc = Date.UTC(
+            today.getUTCFullYear(),
+            today.getUTCMonth(),
+            today.getUTCDate(),
+          );
+          return contract.expirationDate.getTime() >= todayUtc;
+        })
+        .sort(
+          (left, right) =>
+            left.expirationDate.getTime() - right.expirationDate.getTime() ||
+            left.strike - right.strike ||
+            left.right.localeCompare(right.right),
         );
-        return contract.expirationDate.getTime() >= todayUtc;
-      }).sort((left, right) => (
-        left.expirationDate.getTime() - right.expirationDate.getTime() ||
-        left.strike - right.strike ||
-        left.right.localeCompare(right.right)
-      ));
       const allowedExpirations = input.expirationDate
         ? null
         : new Set(
@@ -2644,23 +2785,34 @@ export class IbkrClient {
           );
       const scopedContracts = allowedExpirations
         ? uniqueContracts.filter((contract) =>
-            allowedExpirations.has(contract.expirationDate.toISOString().slice(0, 10)),
+            allowedExpirations.has(
+              contract.expirationDate.toISOString().slice(0, 10),
+            ),
           )
         : uniqueContracts;
-      const quoteRequests = scopedContracts.flatMap((contract) => {
-        const conid = asNumber(contract.providerContractId);
-        return conid === null
-          ? []
-          : [{ conid, symbol: contract.ticker, assetClass: "option" as const }];
-      });
       let quoteMap = new Map<string, QuoteSnapshot>();
 
-      try {
-        quoteMap = await this.getMarketDataSnapshotMap(quoteRequests, signal);
-      } catch {
-        // Contract metadata is still useful when IBKR has no live option quote
-        // snapshot available or an OPRA snapshot request times out.
-        quoteMap = new Map<string, QuoteSnapshot>();
+      if (quoteHydration === "snapshot") {
+        const quoteRequests = scopedContracts.flatMap((contract) => {
+          const conid = asNumber(contract.providerContractId);
+          return conid === null
+            ? []
+            : [
+                {
+                  conid,
+                  symbol: contract.ticker,
+                  assetClass: "option" as const,
+                },
+              ];
+        });
+
+        try {
+          quoteMap = await this.getMarketDataSnapshotMap(quoteRequests, signal);
+        } catch {
+          // Contract metadata is still useful when IBKR has no live option quote
+          // snapshot available or an OPRA snapshot request times out.
+          quoteMap = new Map<string, QuoteSnapshot>();
+        }
       }
 
       return scopedContracts
@@ -2670,11 +2822,13 @@ export class IbkrClient {
             : null;
           return toOptionChainContract(contract, quote ?? null);
         })
-        .sort((left, right) => (
-          left.contract.expirationDate.getTime() - right.contract.expirationDate.getTime() ||
-          left.contract.strike - right.contract.strike ||
-          left.contract.right.localeCompare(right.contract.right)
-        ));
+        .sort(
+          (left, right) =>
+            left.contract.expirationDate.getTime() -
+              right.contract.expirationDate.getTime() ||
+            left.contract.strike - right.contract.strike ||
+            left.contract.right.localeCompare(right.contract.right),
+        );
     }, input.signal);
   }
 
@@ -2686,35 +2840,52 @@ export class IbkrClient {
     return this.withOptionChainRequestPermit(async () => {
       const signal = input.signal;
       throwIfAborted(signal);
-      const searchResults = await this.searchSecurities(input.underlying, { signal });
+      const searchResults = await this.searchSecurities(input.underlying, {
+        signal,
+      });
       const normalizedUnderlying = normalizeSymbol(input.underlying);
       const match =
-        searchResults.find((result) =>
-          normalizeSymbol(asString(result["symbol"]) ?? "") === normalizedUnderlying,
+        searchResults.find(
+          (result) =>
+            normalizeSymbol(asString(result["symbol"]) ?? "") ===
+            normalizedUnderlying,
         ) ?? searchResults[0];
 
       if (!match) {
-        throw new HttpError(404, `Unable to resolve IBKR contract for ${input.underlying}.`, {
-          code: "ibkr_contract_not_found",
-        });
+        throw new HttpError(
+          404,
+          `Unable to resolve IBKR contract for ${input.underlying}.`,
+          {
+            code: "ibkr_contract_not_found",
+          },
+        );
       }
 
       const underlyingConid = asNumber(match["conid"]);
       if (underlyingConid === null) {
-        throw new HttpError(502, `IBKR returned an invalid contract identifier for ${input.underlying}.`, {
-          code: "ibkr_invalid_conid",
-        });
+        throw new HttpError(
+          502,
+          `IBKR returned an invalid contract identifier for ${input.underlying}.`,
+          {
+            code: "ibkr_invalid_conid",
+          },
+        );
       }
 
-      const optionSection = compact(asArray(match["sections"]).map(asRecord)).find(
-        (section) => asString(section["secType"]) === "OPT",
-      );
+      const optionSection = compact(
+        asArray(match["sections"]).map(asRecord),
+      ).find((section) => asString(section["secType"]) === "OPT");
       const months = (asString(optionSection?.["months"]) ?? "")
         .split(";")
         .map((month) => month.trim())
         .filter(Boolean);
-      const maxExpirations = positiveIntegerOrDefault(input.maxExpirations, 256);
-      const candidateMonths = months.slice(0, Math.max(1, maxExpirations));
+      const maxExpirations =
+        typeof input.maxExpirations === "number" &&
+        Number.isFinite(input.maxExpirations)
+          ? Math.max(1, Math.floor(input.maxExpirations))
+          : null;
+      const candidateMonths =
+        maxExpirations === null ? months : months.slice(0, maxExpirations);
       const underlyingQuote = await this.getMarketDataSnapshotMap(
         [
           {
@@ -2725,7 +2896,8 @@ export class IbkrClient {
         ],
         signal,
       ).catch(() => new Map<string, QuoteSnapshot>());
-      const spotPrice = underlyingQuote.get(String(underlyingConid))?.price ?? 0;
+      const spotPrice =
+        underlyingQuote.get(String(underlyingConid))?.price ?? 0;
       const todayUtc = startOfUtcDay();
       const expirations = new Map<string, Date>();
 
@@ -2733,29 +2905,38 @@ export class IbkrClient {
         candidateMonths,
         Math.min(OPTION_CHAIN_CONTRACT_INFO_CONCURRENCY, 8),
         async (month) => {
-          const strikes = await this.getCachedOptionStrikes({
-            conid: underlyingConid,
-            month,
-          }, signal);
+          const strikes = await this.getCachedOptionStrikes(
+            {
+              conid: underlyingConid,
+              month,
+            },
+            signal,
+          );
           if (!strikes.length) {
             return;
           }
 
           const closestIndex =
             spotPrice > 0
-              ? strikes.reduce((bestIndex, strike, index) => (
-                  Math.abs(strike - spotPrice) < Math.abs(strikes[bestIndex] - spotPrice)
-                    ? index
-                    : bestIndex
-                ), 0)
+              ? strikes.reduce(
+                  (bestIndex, strike, index) =>
+                    Math.abs(strike - spotPrice) <
+                    Math.abs(strikes[bestIndex] - spotPrice)
+                      ? index
+                      : bestIndex,
+                  0,
+                )
               : Math.floor(strikes.length / 2);
           const probeStrike = strikes[closestIndex] ?? strikes[0];
-          const matches = await this.getCachedOptionInfo({
-            conid: underlyingConid,
-            month,
-            strike: probeStrike,
-            right: "call",
-          }, signal);
+          const matches = await this.getCachedOptionInfo(
+            {
+              conid: underlyingConid,
+              month,
+              strike: probeStrike,
+              right: "call",
+            },
+            signal,
+          );
 
           matches.forEach((record) => {
             const optionContract = parseOptionDetails(record);
@@ -2764,15 +2945,22 @@ export class IbkrClient {
               return;
             }
 
-            expirations.set(expirationDate.toISOString().slice(0, 10), expirationDate);
+            expirations.set(
+              expirationDate.toISOString().slice(0, 10),
+              expirationDate,
+            );
           });
         },
         signal,
       );
 
-      return Array.from(expirations.values())
-        .sort((left, right) => left.getTime() - right.getTime())
-        .slice(0, maxExpirations);
+      const sortedExpirations = Array.from(expirations.values()).sort(
+        (left, right) => left.getTime() - right.getTime(),
+      );
+
+      return maxExpirations === null
+        ? sortedExpirations
+        : sortedExpirations.slice(0, maxExpirations);
     }, input.signal);
   }
 
@@ -2803,24 +2991,33 @@ export class IbkrClient {
         ) ??
         results.find(
           (result) =>
-            normalizeSymbol(asString(result["symbol"]) ?? "") === normalizeSymbol(symbol),
+            normalizeSymbol(asString(result["symbol"]) ?? "") ===
+            normalizeSymbol(symbol),
         ) ??
         results[0];
       if (match) break;
     }
 
     if (!match) {
-      throw new HttpError(404, `Unable to resolve IBKR contract for ${symbol}.`, {
-        code: "ibkr_contract_not_found",
-      });
+      throw new HttpError(
+        404,
+        `Unable to resolve IBKR contract for ${symbol}.`,
+        {
+          code: "ibkr_contract_not_found",
+        },
+      );
     }
 
     const conid = asNumber(match["conid"]);
 
     if (conid === null) {
-      throw new HttpError(502, `IBKR returned an invalid contract identifier for ${symbol}.`, {
-        code: "ibkr_invalid_conid",
-      });
+      throw new HttpError(
+        502,
+        `IBKR returned an invalid contract identifier for ${symbol}.`,
+        {
+          code: "ibkr_invalid_conid",
+        },
+      );
     }
 
     return {
@@ -2835,7 +3032,9 @@ export class IbkrClient {
     };
   }
 
-  async resolveStockContracts(symbols: string[]): Promise<ResolvedIbkrContract[]> {
+  async resolveStockContracts(
+    symbols: string[],
+  ): Promise<ResolvedIbkrContract[]> {
     const normalizedSymbols = Array.from(
       new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
     );
@@ -2869,7 +3068,9 @@ export class IbkrClient {
       };
     }
 
-    const underlying = await this.resolveStockContract(optionContract.underlying);
+    const underlying = await this.resolveStockContract(
+      optionContract.underlying,
+    );
     const month = toIbkrMonthCode(optionContract.expirationDate);
 
     const payload = await this.request<unknown>(
@@ -2886,7 +3087,10 @@ export class IbkrClient {
     );
 
     const results = compact(asArray(payload).map(asRecord));
-    const expectedExpiration = optionContract.expirationDate.toISOString().slice(0, 10).replace(/-/g, "");
+    const expectedExpiration = optionContract.expirationDate
+      .toISOString()
+      .slice(0, 10)
+      .replace(/-/g, "");
     const match =
       results.find((result) => {
         const maturity = asString(result["maturityDate"]);
@@ -2913,9 +3117,13 @@ export class IbkrClient {
     const conid = asNumber(match["conid"]);
 
     if (conid === null) {
-      throw new HttpError(502, "IBKR returned an invalid option contract identifier.", {
-        code: "ibkr_invalid_option_conid",
-      });
+      throw new HttpError(
+        502,
+        "IBKR returned an invalid option contract identifier.",
+        {
+          code: "ibkr_invalid_option_conid",
+        },
+      );
     }
 
     return {
@@ -2955,14 +3163,17 @@ export class IbkrClient {
     };
   }
 
-  private async confirmOrderReplies(responsePayload: unknown): Promise<Record<string, unknown>> {
+  private async confirmOrderReplies(
+    responsePayload: unknown,
+  ): Promise<Record<string, unknown>> {
     let currentPayload = responsePayload;
 
     for (let replyCount = 0; replyCount < 5; replyCount += 1) {
       const results = compact(asArray(currentPayload).map(asRecord));
       const successfulOrder = results.find(
         (result) =>
-          asString(result["order_id"]) !== null || asString(result["orderId"]) !== null,
+          asString(result["order_id"]) !== null ||
+          asString(result["orderId"]) !== null,
       );
 
       if (successfulOrder) {
@@ -2990,9 +3201,13 @@ export class IbkrClient {
       );
     }
 
-    throw new HttpError(502, "IBKR order submission did not return a final order acknowledgement.", {
-      code: "ibkr_missing_order_ack",
-    });
+    throw new HttpError(
+      502,
+      "IBKR order submission did not return a final order acknowledgement.",
+      {
+        code: "ibkr_missing_order_ack",
+      },
+    );
   }
 
   private async buildStructuredOrderBody(input: PlaceOrderInput): Promise<{
@@ -3002,12 +3217,18 @@ export class IbkrClient {
   }> {
     const tradingAccounts = await this.getTradingAccountsInfo();
     const accountId =
-      input.accountId || this.config.defaultAccountId || tradingAccounts.accounts[0];
+      input.accountId ||
+      this.config.defaultAccountId ||
+      tradingAccounts.accounts[0];
 
     if (!accountId) {
-      throw new HttpError(400, "No IBKR account was provided for order placement.", {
-        code: "ibkr_missing_account_id",
-      });
+      throw new HttpError(
+        400,
+        "No IBKR account was provided for order placement.",
+        {
+          code: "ibkr_missing_account_id",
+        },
+      );
     }
 
     const resolvedContract =
@@ -3072,15 +3293,20 @@ export class IbkrClient {
     placedAt: Date,
   ): BrokerOrderSnapshot {
     const status = normalizeOrderStatus(
-      firstDefined(asString(result["order_status"]), asString(result["status"])),
+      firstDefined(
+        asString(result["order_status"]),
+        asString(result["status"]),
+      ),
       0,
       input.quantity,
     );
 
     return {
       id:
-        firstDefined(asString(result["order_id"]), asString(result["orderId"])) ??
-        randomUUID(),
+        firstDefined(
+          asString(result["order_id"]),
+          asString(result["orderId"]),
+        ) ?? randomUUID(),
       accountId,
       mode: input.mode,
       symbol: normalizeSymbol(input.symbol),
@@ -3105,7 +3331,8 @@ export class IbkrClient {
   }
 
   async previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot> {
-    const { accountId, body, resolvedContractId } = await this.buildStructuredOrderBody(input);
+    const { accountId, body, resolvedContractId } =
+      await this.buildStructuredOrderBody(input);
 
     return {
       accountId,
@@ -3150,9 +3377,13 @@ export class IbkrClient {
       null;
 
     if (!accountId) {
-      throw new HttpError(400, "No IBKR account was provided for order placement.", {
-        code: "ibkr_missing_account_id",
-      });
+      throw new HttpError(
+        400,
+        "No IBKR account was provided for order placement.",
+        {
+          code: "ibkr_missing_account_id",
+        },
+      );
     }
 
     const payload = await this.request<unknown>(
@@ -3190,8 +3421,10 @@ export class IbkrClient {
     return (
       currentOrders.find((order) => order.id === input.orderId) ?? {
         id:
-          firstDefined(asString(result["order_id"]), asString(result["orderId"])) ??
-          input.orderId,
+          firstDefined(
+            asString(result["order_id"]),
+            asString(result["orderId"]),
+          ) ?? input.orderId,
         accountId: input.accountId,
         mode: input.mode,
         symbol: normalizeSymbol(asString(input.order["ticker"]) ?? "UNKNOWN"),
@@ -3234,14 +3467,23 @@ export class IbkrClient {
 
     return {
       orderId:
-        firstDefined(asString(record?.["order_id"]), asString(record?.["orderId"]), input.orderId) ??
-        input.orderId,
+        firstDefined(
+          asString(record?.["order_id"]),
+          asString(record?.["orderId"]),
+          input.orderId,
+        ) ?? input.orderId,
       accountId:
-        firstDefined(asString(record?.["account"]), asString(record?.["acct"]), input.accountId) ??
-        null,
+        firstDefined(
+          asString(record?.["account"]),
+          asString(record?.["acct"]),
+          input.accountId,
+        ) ?? null,
       message:
-        firstDefined(asString(record?.["msg"]), asString(record?.["message"]), "Request submitted") ??
-        "Request submitted",
+        firstDefined(
+          asString(record?.["msg"]),
+          asString(record?.["message"]),
+          "Request submitted",
+        ) ?? "Request submitted",
       submittedAt: new Date(),
     };
   }
@@ -3251,7 +3493,9 @@ export class IbkrClient {
    * results in the same shape the platform service expects from Polygon's
    * universe-search endpoint so it can be a drop-in primary source.
    */
-  private extractIbkrExchangeHint(value: string | null | undefined): string | null {
+  private extractIbkrExchangeHint(
+    value: string | null | undefined,
+  ): string | null {
     const text = value?.trim() ?? "";
     const match = text.match(/\(([A-Z0-9._ -]{2,16})\)\s*$/);
     return match?.[1]?.trim() ?? null;
@@ -3263,8 +3507,14 @@ export class IbkrClient {
     );
   }
 
-  private isPreferredIbkrExchange(exchange: string | null | undefined): boolean {
-    const normalized = exchange?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") ?? "";
+  private isPreferredIbkrExchange(
+    exchange: string | null | undefined,
+  ): boolean {
+    const normalized =
+      exchange
+        ?.trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "") ?? "";
     return [
       "NASDAQ",
       "NASDAQNMS",
@@ -3341,7 +3591,10 @@ export class IbkrClient {
       ) ?? "";
     if (!ticker || !name) return null;
 
-    const fallbackSection = this.findIbkrSecuritySection(record, fallbackSecType);
+    const fallbackSection = this.findIbkrSecuritySection(
+      record,
+      fallbackSecType,
+    );
     const recordSecType = asString(record["secType"]);
     if (
       !recordSecType &&
@@ -3371,8 +3624,10 @@ export class IbkrClient {
 
     const normalizedTicker = normalizeSymbol(ticker);
     const providerContractId =
-      firstDefined(asString(record["conid"]), asNumber(record["conid"])?.toString()) ??
-      null;
+      firstDefined(
+        asString(record["conid"]),
+        asNumber(record["conid"])?.toString(),
+      ) ?? null;
 
     return {
       ticker: normalizedTicker,
@@ -3382,6 +3637,10 @@ export class IbkrClient {
       normalizedExchangeMic: primaryExchange,
       exchangeDisplay: primaryExchange,
       logoUrl: null,
+      countryCode: null,
+      exchangeCountryCode: null,
+      sector: null,
+      industry: null,
       contractDescription: name,
       contractMeta: {
         secType: secType ?? null,
@@ -3414,7 +3673,9 @@ export class IbkrClient {
     if (ticker.market !== "futures") return ticker;
 
     const meta = asRecord(ticker.contractMeta);
-    const rootConid = asNumber(meta?.["rootConid"] ?? ticker.providerContractId);
+    const rootConid = asNumber(
+      meta?.["rootConid"] ?? ticker.providerContractId,
+    );
     const frontMonth = asString(meta?.["months"])
       ?.split(";")
       .map((month) => month.trim())
@@ -3446,8 +3707,10 @@ export class IbkrClient {
       if (!info) return ticker;
 
       const providerContractId =
-        firstDefined(asString(info["conid"]), asNumber(info["conid"])?.toString()) ??
-        ticker.providerContractId;
+        firstDefined(
+          asString(info["conid"]),
+          asNumber(info["conid"])?.toString(),
+        ) ?? ticker.providerContractId;
       const listingExchange =
         firstDefined(
           asString(info["listingExchange"]),
@@ -3455,8 +3718,10 @@ export class IbkrClient {
           ticker.primaryExchange,
         ) ?? ticker.primaryExchange;
       const expiry =
-        firstDefined(asString(info["maturityDate"]), asString(info["lastTradeDate"])) ??
-        null;
+        firstDefined(
+          asString(info["maturityDate"]),
+          asString(info["lastTradeDate"]),
+        ) ?? null;
       const description = asString(info["desc1"]);
 
       return {
@@ -3465,7 +3730,9 @@ export class IbkrClient {
         primaryExchange: listingExchange,
         normalizedExchangeMic: listingExchange,
         exchangeDisplay: listingExchange,
-        contractDescription: [ticker.name, description].filter(Boolean).join(" "),
+        contractDescription: [ticker.name, description]
+          .filter(Boolean)
+          .join(" "),
         contractMeta: {
           ...(ticker.contractMeta ?? {}),
           rootConid: String(rootConid),
@@ -3550,8 +3817,13 @@ export class IbkrClient {
       score += 320;
     }
 
-    if (requestedMarkets.size && requestedMarkets.has(ticker.market)) score += 120;
-    if (this.isPreferredIbkrExchange(ticker.primaryExchange ?? ticker.exchangeDisplay)) {
+    if (requestedMarkets.size && requestedMarkets.has(ticker.market))
+      score += 120;
+    if (
+      this.isPreferredIbkrExchange(
+        ticker.primaryExchange ?? ticker.exchangeDisplay,
+      )
+    ) {
       score += 180;
     }
     if (ticker.providerContractId) score += 40;
@@ -3570,9 +3842,15 @@ export class IbkrClient {
     const search = input.search?.trim();
     if (!search) return { count: 0, results: [] };
 
-    const limit = Math.max(1, Math.min(input.limit ?? 12, 50));
+    const limit = Number.isFinite(input.limit)
+      ? Math.max(1, Math.floor(Number(input.limit)))
+      : 50;
     const requestedMarkets = new Set(
-      input.markets?.length ? input.markets : input.market ? [input.market] : [],
+      input.markets?.length
+        ? input.markets
+        : input.market
+          ? [input.market]
+          : [],
     );
     const identifierSearch = search.toUpperCase();
     const isLikelyFigi =
@@ -3612,11 +3890,13 @@ export class IbkrClient {
         input.markets ?? (input.market ? [input.market] : undefined),
       );
       const searchTasks = secTypes.map(async (secType) =>
-        (await this.searchSecurities(search, {
-          secType,
-          includeName: secType === "STK" || secType === "ETF",
-          signal: input.signal,
-        }).catch(() => [] as Record<string, unknown>[])).map((record) => ({
+        (
+          await this.searchSecurities(search, {
+            secType,
+            includeName: secType === "STK" || secType === "ETF",
+            signal: input.signal,
+          }).catch(() => [] as Record<string, unknown>[])
+        ).map((record) => ({
           record,
           fallbackSecType: secType,
         })),
@@ -3641,15 +3921,23 @@ export class IbkrClient {
     }
 
     const seenConids = new Set<string>();
-    const mappedResults: Array<{ ticker: IbkrUniverseTicker; index: number }> = [];
+    const mappedResults: Array<{ ticker: IbkrUniverseTicker; index: number }> =
+      [];
     for (const { record, identifierMatch, fallbackSecType } of raw) {
-      let mapped = this.mapIbkrUniverseTicker(record, identifierMatch, fallbackSecType);
+      let mapped = this.mapIbkrUniverseTicker(
+        record,
+        identifierMatch,
+        fallbackSecType,
+      );
       if (mapped?.market === "futures") {
         mapped = await this.hydrateFrontFuturesTicker(mapped, input.signal);
       }
       if (!mapped) continue;
-      if (requestedMarkets.size && !requestedMarkets.has(mapped.market)) continue;
-      const conidKey = mapped.providerContractId ?? `${mapped.ticker}:${mapped.market}:${mapped.primaryExchange ?? ""}`;
+      if (requestedMarkets.size && !requestedMarkets.has(mapped.market))
+        continue;
+      const conidKey =
+        mapped.providerContractId ??
+        `${mapped.ticker}:${mapped.market}:${mapped.primaryExchange ?? ""}`;
       if (seenConids.has(conidKey)) continue;
       seenConids.add(conidKey);
 
@@ -3662,7 +3950,9 @@ export class IbkrClient {
           this.scoreIbkrUniverseTicker(right.ticker, search, requestedMarkets) -
           this.scoreIbkrUniverseTicker(left.ticker, search, requestedMarkets);
         if (scoreDiff !== 0) return scoreDiff;
-        const tickerDiff = left.ticker.ticker.localeCompare(right.ticker.ticker);
+        const tickerDiff = left.ticker.ticker.localeCompare(
+          right.ticker.ticker,
+        );
         return tickerDiff !== 0 ? tickerDiff : left.index - right.index;
       })
       .map(({ ticker }) => ticker)
@@ -3721,10 +4011,8 @@ export class IbkrClient {
         if (!id || !headline) return null;
 
         const updated =
-          firstDefined(
-            asString(record["updated"]),
-            asString(record["date"]),
-          ) ?? null;
+          firstDefined(asString(record["updated"]), asString(record["date"])) ??
+          null;
         // IBKR timestamps are typically ms since epoch as a number-or-string,
         // sometimes formatted as "YYYYMMDDhhmmss". Try both shapes.
         let publishedAt: Date | null = null;

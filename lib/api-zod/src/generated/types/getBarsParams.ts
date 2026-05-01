@@ -5,31 +5,42 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { AssetClass } from "./assetClass";
-import type { BarDataSource } from "./barDataSource";
-import type { BarTimeframe } from "./barTimeframe";
-import type { UniverseMarket } from "./universeMarket";
+import type { AssetClass } from './assetClass';
+import type { BarDataSource } from './barDataSource';
+import type { BarTimeframe } from './barTimeframe';
+import type { UniverseMarket } from './universeMarket';
 
 export type GetBarsParams = {
-  symbol: string;
-  timeframe: BarTimeframe;
-  /**
-   * @minimum 1
-   * @maximum 50000
-   */
-  limit?: number;
-  from?: Date;
-  to?: Date;
-  assetClass?: AssetClass;
-  /**
-   * Provider market context from ticker search; used to avoid cross-asset historical fallbacks.
-   */
-  market?: UniverseMarket;
-  providerContractId?: string | null;
-  outsideRth?: boolean;
-  source?: BarDataSource;
-  /**
-   * Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
-   */
-  allowHistoricalSynthesis?: boolean;
+symbol: string;
+timeframe: BarTimeframe;
+/**
+ * @minimum 1
+ * @maximum 50000
+ */
+limit?: number;
+from?: Date;
+to?: Date;
+historyCursor?: string | null;
+preferCursor?: boolean;
+assetClass?: AssetClass;
+/**
+ * Provider market context from ticker search; used to avoid cross-asset historical fallbacks.
+ */
+market?: UniverseMarket;
+providerContractId?: string | null;
+outsideRth?: boolean;
+source?: BarDataSource;
+/**
+ * Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
+ */
+allowHistoricalSynthesis?: boolean;
+/**
+ * Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Polygon/Massive aggregate history remains valid for backtests.
+ */
+allowStudyFallback?: boolean;
+/**
+ * Limit broker-sourced recent history to this many minutes before falling back to Massive/Polygon history.
+ * @minimum 0
+ */
+brokerRecentWindowMinutes?: number;
 };

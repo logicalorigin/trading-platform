@@ -1,3 +1,7 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 export type RuntimeMode = "paper" | "live";
 export type PolygonRuntimeConfig = {
   apiKey: string;
@@ -18,7 +22,7 @@ export type IbkrRuntimeConfig = {
   password: string | null;
   allowInsecureTls: boolean;
 };
-export type IbkrTransport = "client_portal" | "tws" | "ibx";
+export type IbkrTransport = "client_portal" | "tws";
 export type IbkrMarketDataMode =
   | "live"
   | "frozen"
@@ -34,20 +38,22 @@ export type IbkrTwsRuntimeConfig = {
   marketDataType: 1 | 2 | 3 | 4;
 };
 export type IbkrBridgeProviderRuntimeConfig =
-  | {
-      transport: "client_portal";
-      config: IbkrRuntimeConfig;
-    }
-  | {
-      transport: "tws";
-      config: IbkrTwsRuntimeConfig;
-    }
-  | {
-      transport: "ibx";
-      config: null;
-    };
+  {
+    transport: "tws";
+    config: IbkrTwsRuntimeConfig;
+  };
 export type IbkrBridgeRuntimeConfig = {
   baseUrl: string;
+  apiToken: string | null;
+};
+export type IbkrBridgeRuntimeOverrideMetadata = {
+  bridgeId?: string | null;
+  managementTokenHash?: string | null;
+};
+export type IbkrBridgeRuntimeOverrideSnapshot = IbkrBridgeRuntimeConfig & {
+  updatedAt: Date;
+  bridgeId: string | null;
+  managementTokenHash: string | null;
 };
 
 const POLYGON_API_KEY_ENV_NAMES = [
@@ -74,12 +80,6 @@ const FMP_BASE_URL_ENV_NAMES = [
   "FINANCIAL_MODELING_PREP_BASE_URL",
 ];
 
-const IBKR_BASE_URL_ENV_NAMES = [
-  "IBKR_BASE_URL",
-  "IBKR_API_BASE_URL",
-  "IB_GATEWAY_URL",
-  "IBKR_GATEWAY_URL",
-];
 const IBKR_TRANSPORT_ENV_NAMES = ["IBKR_TRANSPORT"];
 const IBKR_TWS_HOST_ENV_NAMES = [
   "IBKR_TWS_HOST",
@@ -110,38 +110,32 @@ const IBKR_TWS_MARKET_DATA_TYPE_ENV_NAMES = [
   "IB_GATEWAY_MARKET_DATA_TYPE",
 ];
 
-const IBKR_BEARER_TOKEN_ENV_NAMES = [
-  "IBKR_OAUTH_TOKEN",
-  "IBKR_AUTH_TOKEN",
-  "IBKR_BEARER_TOKEN",
-];
-
-const IBKR_COOKIE_ENV_NAMES = [
-  "IBKR_COOKIE",
-  "IBKR_SESSION_COOKIE",
-  "CP_GATEWAY_COOKIE",
-];
-
 const IBKR_DEFAULT_ACCOUNT_ENV_NAMES = [
   "IBKR_ACCOUNT_ID",
   "IBKR_DEFAULT_ACCOUNT_ID",
 ];
 
-const IBKR_EXT_OPERATOR_ENV_NAMES = [
-  "IBKR_EXT_OPERATOR",
-  "IBKR_USERNAME",
-];
-
-const IBKR_EXTRA_HEADERS_JSON_ENV_NAMES = ["IBKR_EXTRA_HEADERS_JSON"];
-const IBKR_PASSWORD_ENV_NAMES = ["IBKR_PASSWORD"];
-const IBKR_ALLOW_INSECURE_TLS_ENV_NAMES = ["IBKR_ALLOW_INSECURE_TLS"];
-const IBKR_BRIDGE_URL_ENV_NAMES = [
+const IGNORED_IBKR_BRIDGE_URL_ENV_NAMES = [
+  "IBKR_BASE_URL",
+  "IBKR_API_BASE_URL",
+  "IB_GATEWAY_URL",
+  "IBKR_GATEWAY_URL",
   "IBKR_BRIDGE_URL",
   "IBKR_BRIDGE_BASE_URL",
 ];
+const IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE_ENV_NAMES = [
+  "IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
+  "RAYALGO_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
+];
+let ibkrBridgeRuntimeOverride: IbkrBridgeRuntimeOverrideSnapshot | null = null;
+let ibkrBridgeRuntimeOverrideLoaded = false;
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function normalizeIbkrBridgeBaseUrl(value: string): string {
+  return stripTrailingSlash(value.replace(/\s+/g, ""));
 }
 
 function getOptionalEnv(names: string[]): string | null {
@@ -156,6 +150,112 @@ function getOptionalEnv(names: string[]): string | null {
   return null;
 }
 
+function getIbkrBridgeRuntimeOverrideFile(): string {
+  return (
+    getOptionalEnv(IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE_ENV_NAMES) ??
+    join(tmpdir(), "rayalgo", "ibkr-bridge-runtime-override.json")
+  );
+}
+
+function normalizeIbkrBridgeRuntimeConfig(
+  config: IbkrBridgeRuntimeConfig,
+  updatedAt = new Date(),
+  metadata: IbkrBridgeRuntimeOverrideMetadata = {},
+): IbkrBridgeRuntimeOverrideSnapshot {
+  return {
+    baseUrl: normalizeIbkrBridgeBaseUrl(config.baseUrl),
+    apiToken: config.apiToken,
+    updatedAt,
+    bridgeId: metadata.bridgeId ?? null,
+    managementTokenHash: metadata.managementTokenHash ?? null,
+  };
+}
+
+function readPersistedIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnapshot | null {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(getIbkrBridgeRuntimeOverrideFile(), "utf8"),
+    ) as unknown;
+
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.baseUrl !== "string" || !record.baseUrl.trim()) {
+      return null;
+    }
+
+    const apiToken =
+      typeof record.apiToken === "string" && record.apiToken.trim()
+        ? record.apiToken.trim()
+        : null;
+    const updatedAt =
+      typeof record.updatedAt === "string" || record.updatedAt instanceof Date
+        ? new Date(record.updatedAt)
+        : new Date();
+
+    return normalizeIbkrBridgeRuntimeConfig(
+      {
+        baseUrl: record.baseUrl,
+        apiToken,
+      },
+      Number.isNaN(updatedAt.getTime()) ? new Date() : updatedAt,
+      {
+        bridgeId:
+          typeof record.bridgeId === "string" && record.bridgeId.trim()
+            ? record.bridgeId.trim()
+            : typeof record.activationId === "string" &&
+                record.activationId.trim()
+              ? record.activationId.trim()
+            : null,
+        managementTokenHash:
+          typeof record.managementTokenHash === "string" &&
+          record.managementTokenHash.trim()
+            ? record.managementTokenHash.trim()
+            : null,
+      },
+    );
+  } catch {
+    return null;
+  }
+}
+
+function loadIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnapshot | null {
+  if (!ibkrBridgeRuntimeOverrideLoaded) {
+    ibkrBridgeRuntimeOverride =
+      ibkrBridgeRuntimeOverride ?? readPersistedIbkrBridgeRuntimeOverride();
+    ibkrBridgeRuntimeOverrideLoaded = true;
+  }
+
+  return ibkrBridgeRuntimeOverride;
+}
+
+function persistIbkrBridgeRuntimeOverride(
+  snapshot: IbkrBridgeRuntimeOverrideSnapshot,
+): void {
+  const path = getIbkrBridgeRuntimeOverrideFile();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    JSON.stringify(
+      {
+        version: 1,
+        baseUrl: snapshot.baseUrl,
+        apiToken: snapshot.apiToken,
+        bridgeId: snapshot.bridgeId,
+        managementTokenHash: snapshot.managementTokenHash,
+        updatedAt: snapshot.updatedAt.toISOString(),
+      },
+      null,
+      2,
+    ),
+    {
+      mode: 0o600,
+    },
+  );
+}
+
 function hasExplicitMassiveCredentials(): boolean {
   return Boolean(
     (process.env["MASSIVE_API_KEY"] && process.env["MASSIVE_API_KEY"]?.trim()) ||
@@ -168,36 +268,6 @@ function hasExplicitPolygonCredentials(): boolean {
     (process.env["POLYGON_API_KEY"] && process.env["POLYGON_API_KEY"]?.trim()) ||
     (process.env["POLYGON_KEY"] && process.env["POLYGON_KEY"]?.trim()),
   );
-}
-
-function parseExtraHeaders(raw: string | null): Record<string, string> {
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>).flatMap(([key, value]) =>
-        typeof value === "string" && value.trim() ? [[key, value.trim()]] : [],
-      ),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function isTruthyEnv(raw: string | null): boolean {
-  if (!raw) {
-    return false;
-  }
-
-  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
 function normalizeRuntimeMode(value: string | null): RuntimeMode | null {
@@ -232,7 +302,7 @@ function normalizeIbkrTransport(value: string | null): IbkrTransport | null {
     normalized === "web" ||
     normalized === "web_api"
   ) {
-    return "client_portal";
+    return null;
   }
 
   if (
@@ -243,10 +313,6 @@ function normalizeIbkrTransport(value: string | null): IbkrTransport | null {
     normalized === "ibgateway"
   ) {
     return "tws";
-  }
-
-  if (normalized === "ibx" || normalized === "direct") {
-    return "ibx";
   }
 
   return null;
@@ -298,30 +364,6 @@ export function getFmpRuntimeConfig(): FmpRuntimeConfig | null {
   };
 }
 
-export function getIbkrRuntimeConfig(): IbkrRuntimeConfig | null {
-  const baseUrl = getOptionalEnv(IBKR_BASE_URL_ENV_NAMES);
-
-  if (!baseUrl) {
-    return null;
-  }
-
-  return {
-    baseUrl: stripTrailingSlash(baseUrl),
-    bearerToken: getOptionalEnv(IBKR_BEARER_TOKEN_ENV_NAMES),
-    cookie: getOptionalEnv(IBKR_COOKIE_ENV_NAMES),
-    defaultAccountId: getOptionalEnv(IBKR_DEFAULT_ACCOUNT_ENV_NAMES),
-    extOperator: getOptionalEnv(IBKR_EXT_OPERATOR_ENV_NAMES),
-    extraHeaders: parseExtraHeaders(
-      getOptionalEnv(IBKR_EXTRA_HEADERS_JSON_ENV_NAMES),
-    ),
-    username: getOptionalEnv(IBKR_EXT_OPERATOR_ENV_NAMES),
-    password: getOptionalEnv(IBKR_PASSWORD_ENV_NAMES),
-    allowInsecureTls: isTruthyEnv(
-      getOptionalEnv(IBKR_ALLOW_INSECURE_TLS_ENV_NAMES),
-    ),
-  };
-}
-
 export function getIbkrTwsRuntimeConfig(): IbkrTwsRuntimeConfig | null {
   const explicitTransport = normalizeIbkrTransport(
     getOptionalEnv(IBKR_TRANSPORT_ENV_NAMES),
@@ -329,13 +371,13 @@ export function getIbkrTwsRuntimeConfig(): IbkrTwsRuntimeConfig | null {
   const host = getOptionalEnv(IBKR_TWS_HOST_ENV_NAMES);
   const port = parseIntegerEnv(getOptionalEnv(IBKR_TWS_PORT_ENV_NAMES));
 
-  if (explicitTransport !== "tws" && !host && port === null) {
+  if (explicitTransport !== "tws") {
     return null;
   }
 
   const mode =
     normalizeRuntimeMode(getOptionalEnv(IBKR_TWS_MODE_ENV_NAMES)) ??
-    getRuntimeMode();
+    "live";
   const marketDataTypeCandidate = parseIntegerEnv(
     getOptionalEnv(IBKR_TWS_MARKET_DATA_TYPE_ENV_NAMES),
   );
@@ -363,26 +405,8 @@ export function getIbkrBridgeProviderRuntimeConfig(): IbkrBridgeProviderRuntimeC
     getOptionalEnv(IBKR_TRANSPORT_ENV_NAMES),
   );
 
-  if (explicitTransport === "tws") {
-    const config = getIbkrTwsRuntimeConfig();
-    return config ? { transport: "tws", config } : null;
-  }
-
-  if (explicitTransport === "ibx") {
-    return { transport: "ibx", config: null };
-  }
-
-  if (explicitTransport === "client_portal") {
-    const config = getIbkrRuntimeConfig();
-    return config ? { transport: "client_portal", config } : null;
-  }
-
-  const clientPortalConfig = getIbkrRuntimeConfig();
-  if (clientPortalConfig) {
-    return {
-      transport: "client_portal",
-      config: clientPortalConfig,
-    };
+  if (explicitTransport !== "tws") {
+    return null;
   }
 
   const twsConfig = getIbkrTwsRuntimeConfig();
@@ -397,17 +421,55 @@ export function getIbkrBridgeProviderRuntimeConfig(): IbkrBridgeProviderRuntimeC
 }
 
 export function getIbkrBridgeRuntimeConfig(): IbkrBridgeRuntimeConfig | null {
-  const baseUrl = getOptionalEnv(IBKR_BRIDGE_URL_ENV_NAMES);
+  const override = loadIbkrBridgeRuntimeOverride();
 
-  if (!baseUrl) {
+  if (override) {
     return {
-      baseUrl: "http://127.0.0.1:5002",
+      baseUrl: override.baseUrl,
+      apiToken: override.apiToken,
     };
   }
 
-  return {
-    baseUrl: stripTrailingSlash(baseUrl),
-  };
+  return null;
+}
+
+export function getIgnoredIbkrBridgeRuntimeEnvNames(): string[] {
+  return IGNORED_IBKR_BRIDGE_URL_ENV_NAMES.filter((name) =>
+    Boolean(process.env[name]?.trim()),
+  );
+}
+
+export function setIbkrBridgeRuntimeOverride(
+  config: IbkrBridgeRuntimeConfig,
+  metadata: IbkrBridgeRuntimeOverrideMetadata = {},
+): IbkrBridgeRuntimeOverrideSnapshot {
+  ibkrBridgeRuntimeOverride = normalizeIbkrBridgeRuntimeConfig(
+    config,
+    new Date(),
+    metadata,
+  );
+  ibkrBridgeRuntimeOverrideLoaded = true;
+  persistIbkrBridgeRuntimeOverride(ibkrBridgeRuntimeOverride);
+
+  return ibkrBridgeRuntimeOverride;
+}
+
+export function clearIbkrBridgeRuntimeOverride(
+  options: { deletePersisted?: boolean } = {},
+): void {
+  ibkrBridgeRuntimeOverride = null;
+  ibkrBridgeRuntimeOverrideLoaded = options.deletePersisted === false ? false : true;
+
+  if (options.deletePersisted !== false) {
+    rmSync(getIbkrBridgeRuntimeOverrideFile(), { force: true });
+  }
+}
+
+export function getIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnapshot | null {
+  const override = loadIbkrBridgeRuntimeOverride();
+  return override
+    ? { ...override, updatedAt: new Date(override.updatedAt) }
+    : null;
 }
 
 export function resolveIbkrMarketDataMode(
@@ -449,6 +511,6 @@ export function getProviderConfiguration() {
   return {
     polygon: Boolean(getPolygonRuntimeConfig()),
     research: Boolean(getFmpRuntimeConfig()),
-    ibkr: Boolean(getIbkrBridgeProviderRuntimeConfig()),
+    ibkr: Boolean(getIbkrBridgeRuntimeConfig()),
   } as const;
 }

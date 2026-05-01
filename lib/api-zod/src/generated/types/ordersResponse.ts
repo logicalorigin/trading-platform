@@ -5,8 +5,13 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { Order } from "./order";
+import type { Order } from './order';
+import type { OrdersResponseDebug } from './ordersResponseDebug';
 
 export interface OrdersResponse {
   orders: Order[];
+  degraded?: boolean;
+  reason?: string;
+  stale?: boolean;
+  debug?: OrdersResponseDebug;
 }

@@ -5,9 +5,7 @@ const API_BASE_URL = stripTrailingSlash(
   process.env["TICKER_SEARCH_API_BASE_URL"] ?? "http://127.0.0.1:8080/api",
 );
 const BRIDGE_BASE_URL = stripTrailingSlash(
-  process.env["TICKER_SEARCH_BRIDGE_BASE_URL"] ??
-    process.env["IBKR_BRIDGE_URL"] ??
-    "http://127.0.0.1:3002",
+  process.env["TICKER_SEARCH_BRIDGE_BASE_URL"] ?? "http://127.0.0.1:3002",
 );
 const REQUEST_TIMEOUT_MS = Number(
   process.env["TICKER_SEARCH_LIVE_TEST_TIMEOUT_MS"] ?? "30000",
@@ -32,6 +30,14 @@ const FAST_BROAD_TICKER_CASES = [
   { search: "TCEHY", ticker: "TCEHY", market: "otc" },
   { search: "CAR", ticker: "CAR", market: "stocks" },
   { search: "OPTX", ticker: "OPTX", market: "stocks" },
+];
+const SMART_INPUT_CASES = [
+  { search: "$SPX", ticker: "SPX", market: "indices", markets: "indices" },
+  { search: "^VIX", ticker: "VIX", market: "indices", markets: "indices" },
+  { search: "EURUSD", ticker: "EUR", market: "fx", markets: "fx" },
+  { search: "EUR.USD", ticker: "EUR", market: "fx", markets: "fx" },
+  { search: "BTCUSD", ticker: "BTC", market: "crypto", markets: "crypto" },
+  { search: "BRK.B", ticker: "BRK.B", market: "stocks", markets: "stocks" },
 ];
 
 function stripTrailingSlash(value) {
@@ -178,6 +184,20 @@ test("live API ticker search keeps no-filter exact searches fast across the sear
   }
 });
 
+test("live API ticker search normalizes smart input variants", { timeout: 180_000 }, async () => {
+  for (const testcase of SMART_INPUT_CASES) {
+    const payload = await searchApi({
+      search: testcase.search,
+      markets: testcase.markets,
+      active: true,
+      limit: 12,
+    });
+    const row = requireTicker(payload, testcase);
+    assertIbkrTradable(row);
+    assertNoEmbeddedLogos(payload);
+  }
+});
+
 test("live API ticker search keeps shared equities IBKR-tradable", { timeout: 60_000 }, async () => {
   const payload = await searchApi({
     search: "AAPL",
@@ -191,6 +211,35 @@ test("live API ticker search keeps shared equities IBKR-tradable", { timeout: 60
   assert.equal(row.tradeProvider, "ibkr");
   assert.ok(row.providerContractId);
   assertNoEmbeddedLogos(payload);
+});
+
+test("live API strict trade resolution rejects fuzzy ticker substitutions", { timeout: 120_000 }, async () => {
+  for (const testcase of [
+    { search: "BITF", forbidden: ["FUFU", "FUFUW"] },
+    { search: "X", forbidden: ["OPTX", "XBIO"] },
+  ]) {
+    const payload = await searchApi({
+      search: testcase.search,
+      markets: "stocks,etf,otc",
+      active: true,
+      limit: 8,
+      mode: "trade-resolve",
+      strictTrade: true,
+    });
+
+    for (const row of payload.results) {
+      assert.equal(
+        row.ticker,
+        testcase.search,
+        `strict ${testcase.search} should only return exact matches; got ${row.ticker}`,
+      );
+      assertIbkrTradable(row);
+      assert.ok(
+        !testcase.forbidden.includes(row.ticker),
+        `strict ${testcase.search} should not return fuzzy ${row.ticker}`,
+      );
+    }
+  }
 });
 
 test("live API ticker search resolves ticker, company name, ISIN, and IBKR conid", { timeout: 120_000 }, async () => {

@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type BacktestTradeMarkerGroupDir =
-  (typeof BacktestTradeMarkerGroupDir)[keyof typeof BacktestTradeMarkerGroupDir];
+export type BacktestTradeMarkerGroupDir = typeof BacktestTradeMarkerGroupDir[keyof typeof BacktestTradeMarkerGroupDir];
+
 
 export const BacktestTradeMarkerGroupDir = {
-  long: "long",
-  short: "short",
+  long: 'long',
+  short: 'short',
 } as const;

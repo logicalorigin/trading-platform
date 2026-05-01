@@ -5,13 +5,13 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { BacktestIndicatorZoneMeta } from "./backtestIndicatorZoneMeta";
+import type { BacktestIndicatorZoneMeta } from './backtestIndicatorZoneMeta';
 
 export interface BacktestIndicatorZone {
   id: string;
   strategy: string;
   zoneType: string;
-  direction: "long" | "short" | null;
+  direction: 'long' | 'short' | null;
   startTs: Date;
   endTs: Date;
   /** @nullable */

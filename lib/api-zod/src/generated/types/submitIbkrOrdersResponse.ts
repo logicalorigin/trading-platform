@@ -6,6 +6,4 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export interface SubmitIbkrOrdersResponse {
-  [key: string]: unknown;
-}
+export interface SubmitIbkrOrdersResponse { [key: string]: unknown }

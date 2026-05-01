@@ -810,6 +810,23 @@ export class FmpResearchClient {
     };
   }
 
+  async getCompanyLogoUrl(symbol: string): Promise<string | null> {
+    const normalized = normalizeSymbol(symbol);
+    const providerSymbol = toProviderSymbol(normalized);
+    const profiles = await this.fetchStable<unknown>("/profile", {
+      symbol: providerSymbol,
+    });
+    const profile = getRecordArray(profiles)[0] ?? null;
+    const imageUrl = asString(
+      profile?.["image"] ??
+        profile?.["imageUrl"] ??
+        profile?.["logo"] ??
+        profile?.["logoUrl"],
+    );
+
+    return imageUrl && /^https?:\/\//i.test(imageUrl) ? imageUrl : null;
+  }
+
   async getFinancials(symbol: string): Promise<ResearchFinancials | null> {
     const normalized = normalizeSymbol(symbol);
     const providerSymbol = toProviderSymbol(normalized);

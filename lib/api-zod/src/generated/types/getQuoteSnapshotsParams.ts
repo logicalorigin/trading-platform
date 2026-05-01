@@ -7,8 +7,8 @@
  */
 
 export type GetQuoteSnapshotsParams = {
-  /**
-   * Comma-separated ticker symbols.
-   */
-  symbols: string;
+/**
+ * Comma-separated ticker symbols.
+ */
+symbols: string;
 };

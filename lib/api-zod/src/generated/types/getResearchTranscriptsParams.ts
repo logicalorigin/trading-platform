@@ -7,5 +7,5 @@
  */
 
 export type GetResearchTranscriptsParams = {
-  symbol: string;
+symbol: string;
 };

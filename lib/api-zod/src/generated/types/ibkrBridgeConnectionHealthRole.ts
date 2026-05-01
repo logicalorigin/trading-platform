@@ -6,10 +6,9 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type IbkrBridgeConnectionHealthRole =
-  (typeof IbkrBridgeConnectionHealthRole)[keyof typeof IbkrBridgeConnectionHealthRole];
+export type IbkrBridgeConnectionHealthRole = typeof IbkrBridgeConnectionHealthRole[keyof typeof IbkrBridgeConnectionHealthRole];
+
 
 export const IbkrBridgeConnectionHealthRole = {
-  account: "account",
-  market_data: "market_data",
+  market_data: 'market_data',
 } as const;

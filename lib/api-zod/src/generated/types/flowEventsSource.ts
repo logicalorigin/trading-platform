@@ -5,9 +5,11 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { FlowDataProvider } from "./flowDataProvider";
-import type { FlowEventsSourceProvider } from "./flowEventsSourceProvider";
-import type { FlowEventsSourceStatus } from "./flowEventsSourceStatus";
+import type { FlowDataProvider } from './flowDataProvider';
+import type { FlowEventsSourceIbkrStatus } from './flowEventsSourceIbkrStatus';
+import type { FlowEventsSourceProvider } from './flowEventsSourceProvider';
+import type { FlowEventsSourceScannerCoverage } from './flowEventsSourceScannerCoverage';
+import type { FlowEventsSourceStatus } from './flowEventsSourceStatus';
 
 export interface FlowEventsSource {
   provider: FlowEventsSourceProvider;
@@ -19,4 +21,16 @@ export interface FlowEventsSource {
   fetchedAt: Date;
   /** Volume / open-interest multiplier the server applied when flagging unusual prints. Defaults to 1. */
   unusualThreshold?: number;
+  ibkrStatus?: FlowEventsSourceIbkrStatus;
+  /** @nullable */
+  ibkrReason?: string | null;
+  /** @minimum 0 */
+  ibkrExpirationCount?: number;
+  /** @minimum 0 */
+  ibkrHydratedExpirationCount?: number;
+  /** @minimum 0 */
+  ibkrContractCount?: number;
+  /** @minimum 0 */
+  ibkrQualifiedContractCount?: number;
+  scannerCoverage?: FlowEventsSourceScannerCoverage;
 }

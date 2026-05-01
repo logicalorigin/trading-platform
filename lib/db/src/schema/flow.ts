@@ -4,9 +4,11 @@ import {
   index,
   jsonb,
   numeric,
+  integer,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -91,10 +93,60 @@ export const alertEventsTable = pgTable(
   ],
 );
 
+export const flowUniverseRankingsTable = pgTable(
+  "flow_universe_rankings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    symbol: varchar("symbol", { length: 64 }).notNull(),
+    market: varchar("market", { length: 32 }).notNull(),
+    price: numeric("price", { precision: 18, scale: 6 }),
+    volume: numeric("volume", { precision: 20, scale: 2 }),
+    dollarVolume: numeric("dollar_volume", { precision: 24, scale: 2 }),
+    marketCap: numeric("market_cap", { precision: 24, scale: 2 }),
+    liquidityRank: integer("liquidity_rank"),
+    flowScore: numeric("flow_score", { precision: 20, scale: 6 })
+      .notNull()
+      .default("0"),
+    previousSessionFlowScore: numeric("previous_session_flow_score", {
+      precision: 20,
+      scale: 6,
+    })
+      .notNull()
+      .default("0"),
+    eligible: boolean("eligible").notNull().default(false),
+    reason: varchar("reason", { length: 160 }),
+    source: varchar("source", { length: 32 }).notNull().default("ibkr"),
+    selected: boolean("selected").notNull().default(false),
+    selectedAt: timestamp("selected_at", { withTimezone: true }),
+    lastScannedAt: timestamp("last_scanned_at", { withTimezone: true }),
+    lastFlowAt: timestamp("last_flow_at", { withTimezone: true }),
+    cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+    failureCount: integer("failure_count").notNull().default(0),
+    rankedAt: timestamp("ranked_at", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("flow_universe_rankings_symbol_idx").on(table.symbol),
+    index("flow_universe_rankings_selected_idx").on(table.selected),
+    index("flow_universe_rankings_eligible_idx").on(table.eligible),
+    index("flow_universe_rankings_rank_idx").on(table.liquidityRank),
+    index("flow_universe_rankings_flow_score_idx").on(table.flowScore),
+    index("flow_universe_rankings_cooldown_idx").on(table.cooldownUntil),
+  ],
+);
+
 export const insertSavedScanSchema = createInsertSchema(savedScansTable);
 export const insertAlertRuleSchema = createInsertSchema(alertRulesTable);
+export const insertFlowUniverseRankingSchema = createInsertSchema(
+  flowUniverseRankingsTable,
+);
 
 export type FlowEvent = typeof flowEventsTable.$inferSelect;
 export type SavedScan = typeof savedScansTable.$inferSelect;
 export type AlertRule = typeof alertRulesTable.$inferSelect;
 export type AlertEvent = typeof alertEventsTable.$inferSelect;
+export type FlowUniverseRanking =
+  typeof flowUniverseRankingsTable.$inferSelect;
+export type InsertFlowUniverseRanking =
+  typeof flowUniverseRankingsTable.$inferInsert;

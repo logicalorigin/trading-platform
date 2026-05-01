@@ -1,6 +1,21 @@
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
+import { HttpError, isHttpError } from "../lib/errors";
+import {
+  isBridgeWorkBackedOff,
+  isTransientBridgeWorkError,
+  runBridgeWork,
+} from "./bridge-governor";
+import {
+  listIbkrAccounts,
+  listIbkrExecutions,
+  listIbkrPositions,
+} from "./ibkr-account-bridge";
+import {
+  getBridgeOrderReadSuppression,
+  markBridgeOrderReadsSuppressed,
+} from "./bridge-order-read-state";
 import type {
   HistoryBarTimeframe,
   HistoryDataSource,
@@ -9,15 +24,60 @@ import {
   fetchBridgeQuoteSnapshots,
   subscribeBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
+import {
+  fetchBridgeOptionQuoteSnapshots,
+  subscribeBridgeOptionQuoteSnapshots,
+  type OptionQuoteSnapshotPayload,
+} from "./bridge-option-quote-stream";
 import { recordAccountSnapshots } from "./account";
 import { getOptionChain } from "./platform";
 
 const bridgeClient = new IbkrBridgeClient();
+const ORDER_SNAPSHOT_STALE_MS = 120_000;
+const STREAM_RECONNECT_MIN_MS = 1_000;
+const STREAM_RECONNECT_MAX_MS = 30_000;
 
 type Unsubscribe = () => void;
+type OrderSnapshotPayload = {
+  orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
+};
+const orderSnapshotCache = new Map<
+  string,
+  { payload: OrderSnapshotPayload; cachedAt: number }
+>();
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function orderSnapshotTimeoutMs(): number {
+  return readPositiveIntegerEnv(
+    "IBKR_ORDER_STREAM_TIMEOUT_MS",
+    readPositiveIntegerEnv("IBKR_ORDER_READ_TIMEOUT_MS", 5_000),
+  );
+}
+
+function isOrderSnapshotTimeoutError(error: unknown): boolean {
+  if (!isHttpError(error)) {
+    return false;
+  }
+  const cause = error.cause;
+  return (
+    error.code === "orders_timeout" ||
+    (cause instanceof HttpError && cause.code === "orders_timeout")
+  );
+}
+
+function nextReconnectDelay(attempt: number): number {
+  return Math.min(
+    STREAM_RECONNECT_MAX_MS,
+    STREAM_RECONNECT_MIN_MS * 2 ** Math.max(0, attempt),
+  );
 }
 
 function createPollingStream<T>({
@@ -79,15 +139,6 @@ type OptionChainSnapshotPayload = {
   }>;
 };
 
-type OptionQuoteSnapshotPayload = {
-  underlying: string | null;
-  quotes: Array<
-    Awaited<ReturnType<IbkrBridgeClient["getOptionQuoteSnapshots"]>>[number] & {
-      source: "ibkr";
-    }
-  >;
-};
-
 type HistoricalBarSnapshotPayload = {
   symbol: string;
   timeframe: HistoryBarTimeframe;
@@ -128,39 +179,11 @@ export async function fetchOptionChainSnapshotPayload(
   };
 }
 
-function normalizeProviderContractIds(providerContractIds: string[]): string[] {
-  return Array.from(
-    new Set(
-      providerContractIds
-        .map((providerContractId) => providerContractId.trim())
-        .filter(Boolean),
-    ),
-  ).sort();
-}
-
 export async function fetchOptionQuoteSnapshotPayload(input: {
   underlying?: string | null;
   providerContractIds: string[];
 }): Promise<OptionQuoteSnapshotPayload> {
-  const normalizedProviderContractIds = normalizeProviderContractIds(
-    input.providerContractIds,
-  );
-
-  return {
-    underlying:
-      typeof input.underlying === "string" && input.underlying.trim()
-        ? normalizeSymbol(input.underlying)
-        : null,
-    quotes: (
-      await bridgeClient.getOptionQuoteSnapshots({
-        underlying: input.underlying ?? undefined,
-        providerContractIds: normalizedProviderContractIds,
-      })
-    ).map((quote) => ({
-      ...quote,
-      source: "ibkr" as const,
-    })),
-  };
+  return fetchBridgeOptionQuoteSnapshots(input);
 }
 
 export async function fetchHistoricalBarSnapshotPayload(input: {
@@ -206,12 +229,82 @@ export async function fetchOrderSnapshotPayload(input: {
     | "canceled"
     | "rejected"
     | "expired";
-}): Promise<{
-  orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
-}> {
-  return {
-    orders: await bridgeClient.listOrders(input),
-  };
+}): Promise<OrderSnapshotPayload> {
+  const cacheKey = stableStringify({
+    accountId: input.accountId ?? null,
+    mode: input.mode,
+    status: input.status ?? null,
+  });
+  const cached = orderSnapshotCache.get(cacheKey);
+  const suppression = getBridgeOrderReadSuppression();
+
+  if (suppression) {
+    return cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
+      ? cached.payload
+      : { orders: [] };
+  }
+
+  if (isBridgeWorkBackedOff("orders")) {
+    if (cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS) {
+      return cached.payload;
+    }
+    return { orders: [] };
+  }
+
+  const timeoutMs = orderSnapshotTimeoutMs();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(
+      new HttpError(504, "IBKR order stream snapshot timed out.", {
+        code: "orders_timeout",
+        detail: `Order stream snapshot did not respond within ${timeoutMs}ms.`,
+      }),
+    );
+  }, timeoutMs);
+  timeout.unref?.();
+
+  try {
+    const payload = await runBridgeWork("orders", async () => ({
+      orders: (
+        await bridgeClient.listOrdersWithMeta({
+          ...input,
+          signal: controller.signal,
+        })
+      ).orders,
+    }));
+    orderSnapshotCache.set(cacheKey, { payload, cachedAt: Date.now() });
+    return payload;
+  } catch (error) {
+    if (isOrderSnapshotTimeoutError(error)) {
+      markBridgeOrderReadsSuppressed({
+        reason: "orders_timeout",
+        message:
+          "Open-orders snapshots are paused after the bridge order endpoint did not respond.",
+        ttlMs: 60_000,
+      });
+      logger.warn(
+        { timeoutMs },
+        "Returning empty order snapshot after order stream timeout",
+      );
+      return cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
+        ? cached.payload
+        : { orders: [] };
+    }
+    if (
+      isTransientBridgeWorkError(error) &&
+      cached &&
+      Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
+    ) {
+      return cached.payload;
+    }
+    if (isTransientBridgeWorkError(error)) {
+      logger.warn({ err: error }, "Returning empty order snapshot after transient bridge failure");
+      return { orders: [] };
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function fetchAccountSnapshotPayload(input: {
@@ -221,14 +314,14 @@ export async function fetchAccountSnapshotPayload(input: {
   accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
   positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
 }> {
-  const accounts = await bridgeClient.listAccounts(input.mode);
+  const accounts = await listIbkrAccounts(input.mode);
   void recordAccountSnapshots(accounts).catch((error) => {
     logger.warn({ err: error }, "Failed to record account balance snapshots");
   });
 
   return {
     accounts,
-    positions: await bridgeClient.listPositions(input),
+    positions: await listIbkrPositions(input),
   };
 }
 
@@ -242,7 +335,7 @@ export async function fetchExecutionSnapshotPayload(input: {
   executions: Awaited<ReturnType<IbkrBridgeClient["listExecutions"]>>;
 }> {
   return {
-    executions: await bridgeClient.listExecutions(input),
+    executions: await listIbkrExecutions(input),
   };
 }
 
@@ -306,64 +399,7 @@ export function subscribeOptionQuoteSnapshots(
   },
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
 ): Unsubscribe {
-  const normalizedProviderContractIds = normalizeProviderContractIds(
-    input.providerContractIds,
-  );
-
-  if (normalizedProviderContractIds.length === 0) {
-    return () => {};
-  }
-
-  let active = true;
-  let unsubscribe: Unsubscribe = () => {};
-  let reconnectTimer: NodeJS.Timeout | null = null;
-
-  const connect = () => {
-    unsubscribe = bridgeClient.streamOptionQuoteSnapshots(
-      {
-        underlying: input.underlying ?? undefined,
-        providerContractIds: normalizedProviderContractIds,
-      },
-      (quotes) => {
-        onSnapshot({
-          underlying:
-            typeof input.underlying === "string" && input.underlying.trim()
-              ? normalizeSymbol(input.underlying)
-              : null,
-          quotes: quotes.map((quote) => ({
-            ...quote,
-            source: "ibkr" as const,
-          })),
-        });
-      },
-      (error) => {
-        logger.warn({ err: error }, "Bridge option quote stream failed");
-        unsubscribe();
-        if (!active || reconnectTimer) {
-          return;
-        }
-
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          if (active) {
-            connect();
-          }
-        }, 1_000);
-        reconnectTimer.unref?.();
-      },
-    );
-  };
-
-  connect();
-
-  return () => {
-    active = false;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    unsubscribe();
-  };
+  return subscribeBridgeOptionQuoteSnapshots(input, onSnapshot);
 }
 
 export function subscribeHistoricalBarSnapshots(
@@ -376,10 +412,12 @@ export function subscribeHistoricalBarSnapshots(
     source?: HistoryDataSource;
   },
   onSnapshot: (payload: HistoricalBarSnapshotPayload) => void,
+  onStreamError?: (error: unknown) => void,
 ): Unsubscribe {
   let active = true;
   let unsubscribe: Unsubscribe = () => {};
   let reconnectTimer: NodeJS.Timeout | null = null;
+  let reconnectAttempt = 0;
 
   const connect = () => {
     unsubscribe = bridgeClient.streamHistoricalBars(
@@ -397,9 +435,11 @@ export function subscribeHistoricalBarSnapshots(
           timeframe: input.timeframe,
           bar,
         });
+        reconnectAttempt = 0;
       },
       (error) => {
         logger.warn({ err: error }, "Bridge historical bar stream failed");
+        onStreamError?.(error);
         unsubscribe();
         if (!active || reconnectTimer) {
           return;
@@ -410,7 +450,8 @@ export function subscribeHistoricalBarSnapshots(
           if (active) {
             connect();
           }
-        }, 1_000);
+        }, nextReconnectDelay(reconnectAttempt));
+        reconnectAttempt += 1;
         reconnectTimer.unref?.();
       },
     );
@@ -437,7 +478,7 @@ export function subscribeOrderSnapshots(
   onSnapshot: (payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> }) => void,
 ): Unsubscribe {
   return createPollingStream({
-    intervalMs: 1_000,
+    intervalMs: 5_000,
     fetchSnapshot: async () => fetchOrderSnapshotPayload(input),
     onSnapshot,
   });

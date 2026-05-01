@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type MarketDataProvider =
-  (typeof MarketDataProvider)[keyof typeof MarketDataProvider];
+export type MarketDataProvider = typeof MarketDataProvider[keyof typeof MarketDataProvider];
+
 
 export const MarketDataProvider = {
-  polygon: "polygon",
-  ibkr: "ibkr",
+  polygon: 'polygon',
+  ibkr: 'ibkr',
 } as const;

@@ -2,6 +2,17 @@ import { getProviderConfiguration } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import { subscribeBridgeQuoteSnapshots } from "./bridge-quote-stream";
+import {
+  getCurrentPolygonStockMinuteAggregates,
+  getPolygonDelayedWebSocketDiagnostics,
+  isPolygonDelayedWebSocketConfigured,
+  subscribePolygonStockMinuteAggregates,
+  type PolygonDelayedStockAggregate,
+} from "./polygon-delayed-stream";
+
+export type StockMinuteAggregateSource =
+  | "ibkr-websocket-derived"
+  | "polygon-delayed-websocket";
 
 export type StockMinuteAggregateMessage = {
   eventType: string;
@@ -18,8 +29,8 @@ export type StockMinuteAggregateMessage = {
   averageTradeSize: number | null;
   startMs: number;
   endMs: number;
-  delayed: false;
-  source: "ibkr-websocket-derived";
+  delayed: boolean;
+  source: StockMinuteAggregateSource;
   latency?: QuoteSnapshot["latency"];
 };
 
@@ -48,11 +59,36 @@ type MinuteAccumulator = {
 const subscribers = new Map<number, Subscriber>();
 const accumulators = new Map<string, MinuteAccumulator>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
+const AGGREGATE_FANOUT_FLUSH_MS = 100;
 
 let nextSubscriberId = 1;
 let quoteUnsubscribe: (() => void) | null = null;
+let polygonUnsubscribe: (() => void) | null = null;
 let quoteSubscriptionSignature = "";
+let activeStreamSource: StockMinuteAggregateSource | "none" = "none";
 let refreshTimer: NodeJS.Timeout | null = null;
+let fanoutTimer: NodeJS.Timeout | null = null;
+const pendingFanoutBySymbol = new Map<string, StockMinuteAggregateMessage>();
+let aggregateEventCount = 0;
+let aggregateGapCount = 0;
+let maxAggregateGapMs = 0;
+let lastAggregateAt: Date | null = null;
+let lastAggregateGapAt: Date | null = null;
+
+function recordAggregateEvent(): void {
+  const now = new Date();
+  if (lastAggregateAt) {
+    const gapMs = Math.max(0, now.getTime() - lastAggregateAt.getTime());
+    maxAggregateGapMs = Math.max(maxAggregateGapMs, gapMs);
+    if (gapMs >= 10_000) {
+      aggregateGapCount += 1;
+      lastAggregateGapAt = now;
+    }
+  }
+
+  aggregateEventCount += 1;
+  lastAggregateAt = now;
+}
 
 function getDesiredSymbols(): string[] {
   return Array.from(
@@ -80,6 +116,24 @@ function broadcastAggregate(message: StockMinuteAggregateMessage) {
   });
 }
 
+function flushAggregateFanout() {
+  fanoutTimer = null;
+  const messages = Array.from(pendingFanoutBySymbol.values());
+  pendingFanoutBySymbol.clear();
+  messages.forEach(broadcastAggregate);
+}
+
+function scheduleAggregateFanout(message: StockMinuteAggregateMessage) {
+  recordAggregateEvent();
+  pendingFanoutBySymbol.set(message.symbol, message);
+  if (fanoutTimer) {
+    return;
+  }
+
+  fanoutTimer = setTimeout(flushAggregateFanout, AGGREGATE_FANOUT_FLUSH_MS);
+  fanoutTimer.unref?.();
+}
+
 function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): StockMinuteAggregateMessage {
   return {
     eventType: "AM",
@@ -105,9 +159,15 @@ function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): Sto
 export function getCurrentStockMinuteAggregates(
   symbols: string[],
 ): StockMinuteAggregateMessage[] {
-  return Array.from(
+  const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  ).flatMap((symbol) => {
+  );
+
+  if (isPolygonDelayedWebSocketConfigured()) {
+    return getCurrentPolygonStockMinuteAggregates(normalizedSymbols);
+  }
+
+  return normalizedSymbols.flatMap((symbol) => {
     const accumulator = accumulators.get(symbol);
     return accumulator ? [toAggregateMessage(symbol, accumulator)] : [];
   });
@@ -144,7 +204,7 @@ function updateAccumulator(input: {
       latency: input.latency,
     };
     accumulators.set(input.symbol, nextAccumulator);
-    broadcastAggregate(toAggregateMessage(input.symbol, nextAccumulator));
+    scheduleAggregateFanout(toAggregateMessage(input.symbol, nextAccumulator));
     return;
   }
 
@@ -159,7 +219,7 @@ function updateAccumulator(input: {
     latency: input.latency,
   };
   accumulators.set(input.symbol, nextAccumulator);
-  broadcastAggregate(toAggregateMessage(input.symbol, nextAccumulator));
+  scheduleAggregateFanout(toAggregateMessage(input.symbol, nextAccumulator));
 }
 
 function handleQuoteSnapshot(payload: BridgeQuoteSnapshotPayload) {
@@ -181,6 +241,10 @@ function handleQuoteSnapshot(payload: BridgeQuoteSnapshotPayload) {
   });
 }
 
+function handlePolygonAggregate(message: PolygonDelayedStockAggregate): void {
+  scheduleAggregateFanout(message);
+}
+
 function clearRefreshTimer() {
   if (!refreshTimer) {
     return;
@@ -193,7 +257,9 @@ function clearRefreshTimer() {
 function refreshQuoteSubscription() {
   clearRefreshTimer();
   const symbols = getDesiredSymbols();
-  const nextSignature = symbols.join(",");
+  const provider = getPreferredStockAggregateStreamSource();
+  const nextSignature =
+    !symbols.length || provider === "none" ? "" : `${provider}:${symbols.join(",")}`;
 
   if (nextSignature === quoteSubscriptionSignature) {
     return;
@@ -201,9 +267,20 @@ function refreshQuoteSubscription() {
 
   quoteUnsubscribe?.();
   quoteUnsubscribe = null;
+  polygonUnsubscribe?.();
+  polygonUnsubscribe = null;
   quoteSubscriptionSignature = nextSignature;
+  activeStreamSource = !symbols.length ? "none" : provider;
 
-  if (!symbols.length) {
+  if (!symbols.length || provider === "none") {
+    return;
+  }
+
+  if (provider === "polygon-delayed-websocket") {
+    polygonUnsubscribe = subscribePolygonStockMinuteAggregates(
+      symbols,
+      handlePolygonAggregate,
+    );
     return;
   }
 
@@ -222,7 +299,43 @@ function scheduleRefreshQuoteSubscription(
 }
 
 export function isStockAggregateStreamingAvailable(): boolean {
-  return getProviderConfiguration().ibkr;
+  return getPreferredStockAggregateStreamSource() !== "none";
+}
+
+export function getPreferredStockAggregateStreamSource():
+  | StockMinuteAggregateSource
+  | "none" {
+  if (isPolygonDelayedWebSocketConfigured()) {
+    return "polygon-delayed-websocket";
+  }
+
+  return getProviderConfiguration().ibkr ? "ibkr-websocket-derived" : "none";
+}
+
+export function getStockAggregateStreamDiagnostics() {
+  const desiredSymbols = getDesiredSymbols();
+  const now = Date.now();
+  const lastAggregateAgeMs = lastAggregateAt
+    ? Math.max(0, now - lastAggregateAt.getTime())
+    : null;
+
+  return {
+    provider: getPreferredStockAggregateStreamSource(),
+    activeProvider: activeStreamSource,
+    activeConsumerCount: subscribers.size,
+    unionSymbolCount: desiredSymbols.length,
+    accumulatorCount: accumulators.size,
+    pendingFanoutCount: pendingFanoutBySymbol.size,
+    eventCount: aggregateEventCount,
+    gapCount: aggregateGapCount,
+    maxGapMs: aggregateEventCount > 1 ? maxAggregateGapMs : null,
+    lastAggregateAt: lastAggregateAt?.toISOString() ?? null,
+    lastAggregateAgeMs,
+    lastGapAt: lastAggregateGapAt?.toISOString() ?? null,
+    quoteSubscriptionActive: Boolean(quoteUnsubscribe ?? polygonUnsubscribe),
+    quoteSubscriptionSignature,
+    polygonDelayedWebSocket: getPolygonDelayedWebSocketDiagnostics(),
+  };
 }
 
 export function subscribeStockMinuteAggregates(
@@ -244,6 +357,13 @@ export function subscribeStockMinuteAggregates(
 
   return () => {
     subscribers.delete(subscriberId);
+    if (subscribers.size === 0) {
+      if (fanoutTimer) {
+        clearTimeout(fanoutTimer);
+        fanoutTimer = null;
+      }
+      pendingFanoutBySymbol.clear();
+    }
     scheduleRefreshQuoteSubscription();
   };
 }

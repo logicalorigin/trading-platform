@@ -60,6 +60,18 @@ export const backtestOptionPresets = [
     maxDte: 2,
     strikeTarget: "otm_step_2",
   },
+  {
+    id: "signal_options_1_3d",
+    label: "Signal Options 1-3D",
+    description:
+      "Shared deployment profile for RayReplica spot signals translated into short-dated long-premium contracts.",
+    targetDte: 1,
+    minDte: 1,
+    maxDte: 3,
+    strikeTarget: "atm",
+    notes:
+      "Matches the shadow automation default: call ATM-above, put ATM-below, with 0DTE excluded.",
+  },
 ] as const satisfies readonly BacktestOptionPreset[];
 
 export type BacktestOptionPresetId =

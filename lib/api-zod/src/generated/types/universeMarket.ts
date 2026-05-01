@@ -6,15 +6,15 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type UniverseMarket =
-  (typeof UniverseMarket)[keyof typeof UniverseMarket];
+export type UniverseMarket = typeof UniverseMarket[keyof typeof UniverseMarket];
+
 
 export const UniverseMarket = {
-  stocks: "stocks",
-  etf: "etf",
-  indices: "indices",
-  futures: "futures",
-  fx: "fx",
-  crypto: "crypto",
-  otc: "otc",
+  stocks: 'stocks',
+  etf: 'etf',
+  indices: 'indices',
+  futures: 'futures',
+  fx: 'fx',
+  crypto: 'crypto',
+  otc: 'otc',
 } as const;

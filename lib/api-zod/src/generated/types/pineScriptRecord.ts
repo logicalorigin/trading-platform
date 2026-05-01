@@ -5,9 +5,9 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { PineScriptPaneType } from "./pineScriptPaneType";
-import type { PineScriptRecordMetadata } from "./pineScriptRecordMetadata";
-import type { PineScriptStatus } from "./pineScriptStatus";
+import type { PineScriptPaneType } from './pineScriptPaneType';
+import type { PineScriptRecordMetadata } from './pineScriptRecordMetadata';
+import type { PineScriptStatus } from './pineScriptStatus';
 
 export interface PineScriptRecord {
   id: string;

@@ -5,11 +5,11 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
-import type { EnvironmentMode } from "./environmentMode";
-import type { OrderStatus } from "./orderStatus";
+import type { EnvironmentMode } from './environmentMode';
+import type { OrderStatus } from './orderStatus';
 
 export type ListOrdersParams = {
-  accountId?: string;
-  mode?: EnvironmentMode;
-  status?: OrderStatus;
+accountId?: string;
+mode?: EnvironmentMode;
+status?: OrderStatus;
 };

@@ -112,7 +112,7 @@ gAP          = "Appearance"
 i_bullCol    = input.color(color.rgb(0, 188, 212), "Bull Color", inline="msc", group=gAP)
 i_bearCol    = input.color(color.rgb(233, 30, 99), "Bear Color", inline="msc", group=gAP)
 i_trendBg    = input.bool(true, "Show Trend Background", group=gAP)
-i_sigOffset  = input.float(1.5, "Buy/Sell Offset (ATR × N)", minval=0.0, step=0.1, tooltip="Distance between BUY/SELL label anchor and signal candle, in ATR units. Live RayAlgo uses ~1-2 × ATR below the low (BUY) or above the high (SELL).", group=gAP)
+i_sigOffset  = input.float(3.0, "Buy/Sell Offset (ATR × N)", minval=0.0, step=0.1, tooltip="Distance between BUY/SELL label anchor and signal candle, in ATR units.", group=gAP)
 
 // --- Alerts ---
 gAL          = "⚠️ Alerts"
@@ -271,12 +271,11 @@ if not na(bosTrackL) and close < bosTrackL
         msDir := -1
     bosTrackL := na
 
-// Draw BOS/CHoCH lines. Tinted pill with white text — visible on trend-colored
-// backgrounds. style_none (text-only) looked too subtle in testing: even with
-// bull/bear textColor the small colored text washed into the regime bg.
+// Draw BOS/CHoCH lines. Structure labels are text-only so they do not cover
+// chart space with a pill background.
 drawStructureLine(srcBar, srcPrice, lbl, col) =>
     ln = line.new(srcBar, srcPrice, bar_index, srcPrice, color=col, style=lineStyle(i_lineStyle), width=1)
-    lb = label.new(math.floor((srcBar + bar_index)/2), srcPrice, lbl, style=label.style_label_center, color=color.new(col, 40), textcolor=color.white, size=size.tiny)
+    lb = label.new(math.floor((srcBar + bar_index)/2), srcPrice, lbl, style=label.style_none, color=color.new(col, 100), textcolor=col, size=size.tiny)
     [ln, lb]
 
 if i_showBOS and bullBOS and not na(sHbar)

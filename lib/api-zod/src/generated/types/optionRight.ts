@@ -6,9 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export type OptionRight = (typeof OptionRight)[keyof typeof OptionRight];
+export type OptionRight = typeof OptionRight[keyof typeof OptionRight];
+
 
 export const OptionRight = {
-  call: "call",
-  put: "put",
+  call: 'call',
+  put: 'put',
 } as const;
