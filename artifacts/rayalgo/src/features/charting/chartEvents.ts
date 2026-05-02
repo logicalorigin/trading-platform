@@ -96,7 +96,7 @@ export const flowEventsToChartEvents = (
     .filter((event) => Boolean(event?.isUnusual))
     .map((event) => {
       const eventSymbol = String(
-        event.ticker || event.underlying || normalizedSymbol,
+        event.ticker || event.underlying || event.symbol || normalizedSymbol,
       )
         .trim()
         .toUpperCase();

@@ -1754,9 +1754,35 @@ function coerceScalarParameter(value: unknown): string | number | boolean {
   return String(value);
 }
 
+const normalizeStrategyParameterDefinition = (
+  definition: StrategyCatalogItem["parameterDefinitions"][number],
+) => ({
+  ...definition,
+  min:
+    typeof definition.min === "number" && Number.isFinite(definition.min)
+      ? definition.min
+      : null,
+  max:
+    typeof definition.max === "number" && Number.isFinite(definition.max)
+      ? definition.max
+      : null,
+  step:
+    typeof definition.step === "number" && Number.isFinite(definition.step)
+      ? definition.step
+      : null,
+  options: Array.isArray(definition.options) ? definition.options : [],
+});
+
+const normalizeStrategyCatalogItem = (strategy: StrategyCatalogItem) => ({
+  ...strategy,
+  parameterDefinitions: strategy.parameterDefinitions.map(
+    normalizeStrategyParameterDefinition,
+  ),
+});
+
 export function listBacktestStrategies() {
   return {
-    strategies: listStrategies(),
+    strategies: listStrategies().map(normalizeStrategyCatalogItem),
   };
 }
 

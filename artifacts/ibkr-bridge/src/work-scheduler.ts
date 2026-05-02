@@ -1,4 +1,4 @@
-import { HttpError } from "../../api-server/src/lib/errors";
+import { HttpError } from "@workspace/ibkr-contracts";
 import {
   getBridgeLaneOverrides,
   setBridgeLaneOverrideSection,

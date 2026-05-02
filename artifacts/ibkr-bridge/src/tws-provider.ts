@@ -22,45 +22,40 @@ import {
   type OrderBook,
   type MarketDataTicks,
 } from "@stoqey/ib";
-import { HttpError } from "../../api-server/src/lib/errors";
 import {
   asNumber,
   asRecord,
   asString,
   compact,
   firstDefined,
-  normalizeSymbol,
-  toDate,
-} from "../../api-server/src/lib/values";
-import {
+  HttpError,
   isLiveIbkrMarketDataMode,
+  normalizeSymbol,
   resolveIbkrMarketDataMode,
-} from "../../api-server/src/lib/runtime";
-import type {
-  IbkrMarketDataMode,
-  IbkrTwsRuntimeConfig,
-  RuntimeMode,
-} from "../../api-server/src/lib/runtime";
-import type {
-  BrokerAccountSnapshot,
-  BrokerBarSnapshot,
-  BrokerExecutionSnapshot,
-  BrokerMarketDepthLevel,
-  BrokerMarketDepthSnapshot,
-  BrokerOrderSnapshot,
-  BrokerPositionSnapshot,
-  CancelOrderSnapshot,
-  HistoryBarTimeframe,
-  HistoryDataSource,
-  IbkrUniverseTicker,
-  OptionChainContract,
-  OrderPreviewSnapshot,
-  PlaceOrderInput,
-  QuoteSnapshot,
-  ReplaceOrderSnapshot,
-  ResolvedIbkrContract,
-  SessionStatusSnapshot,
-} from "../../api-server/src/providers/ibkr/client";
+  toDate,
+  type BrokerAccountSnapshot,
+  type BrokerBarSnapshot,
+  type BrokerExecutionSnapshot,
+  type BrokerMarketDepthLevel,
+  type BrokerMarketDepthSnapshot,
+  type BrokerOrderSnapshot,
+  type BrokerPositionSnapshot,
+  type CancelOrderSnapshot,
+  type HistoryBarTimeframe,
+  type HistoryDataSource,
+  type IbkrMarketDataMode,
+  type IbkrTwsRuntimeConfig,
+  type IbkrNewsArticle,
+  type IbkrUniverseTicker,
+  type OptionChainContract,
+  type OrderPreviewSnapshot,
+  type PlaceOrderInput,
+  type QuoteSnapshot,
+  type ReplaceOrderSnapshot,
+  type ResolvedIbkrContract,
+  type RuntimeMode,
+  type SessionStatusSnapshot,
+} from "@workspace/ibkr-contracts";
 import { logger } from "./logger";
 import type {
   BridgeHealth,
@@ -1699,6 +1694,22 @@ export function toQuoteSnapshot(
     dataUpdatedAt: updatedAt,
     ageMs: null,
   };
+}
+
+export function resolveOptionActivitySnapshotTimeoutMs(input: {
+  genericTickSampleMs: number;
+  symbolCount: number;
+}): number {
+  const sampleMs =
+    Number.isFinite(input.genericTickSampleMs) && input.genericTickSampleMs > 0
+      ? input.genericTickSampleMs
+      : 500;
+  const symbolCount =
+    Number.isFinite(input.symbolCount) && input.symbolCount > 0
+      ? Math.floor(input.symbolCount)
+      : 0;
+
+  return Math.min(20_000, Math.max(1_000, sampleMs + symbolCount * 500));
 }
 
 function toDepthSnapshot(input: {
@@ -4263,14 +4274,14 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   }
 
   async getOptionActivitySnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
+    const normalizedSymbols = Array.from(
+      new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+    );
+
     return runBridgeLane(
       "market-subscriptions",
       async () => {
         await this.refreshSession();
-
-        const normalizedSymbols = Array.from(
-          new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-        );
 
         const snapshots = await Promise.all(
           normalizedSymbols.map(async (symbol) => {
@@ -4295,10 +4306,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         return compact(snapshots);
       },
       {
-        timeoutMs: Math.min(
-          20_000,
-          Math.max(6_000, this.genericTickSampleMs + symbols.length * 100),
-        ),
+        timeoutMs: resolveOptionActivitySnapshotTimeoutMs({
+          genericTickSampleMs: this.genericTickSampleMs,
+          symbolCount: normalizedSymbols.length,
+        }),
       },
     );
   }
@@ -5357,9 +5368,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   async getNews(_input: {
     ticker?: string;
     limit?: number;
-  }): Promise<
-    import("../../api-server/src/providers/ibkr/client").IbkrNewsArticle[]
-  > {
+  }): Promise<IbkrNewsArticle[]> {
     // TWS doesn't expose news via the IB Gateway API in the same way
     // Client Portal does; the platform service falls back to the secondary
     // provider when this returns empty.

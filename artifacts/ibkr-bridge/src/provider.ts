@@ -1,14 +1,10 @@
 import type {
-  RuntimeMode,
-  IbkrTransport,
-  IbkrMarketDataMode,
-} from "../../api-server/src/lib/runtime";
-import type {
   BrokerAccountSnapshot,
   BrokerBarSnapshot,
   BrokerExecutionSnapshot,
   BrokerMarketDepthSnapshot,
   BrokerOrderSnapshot,
+  BrokerPositionSnapshot,
   CancelOrderSnapshot,
   HistoryBarTimeframe,
   HistoryDataSource,
@@ -19,8 +15,11 @@ import type {
   PlaceOrderInput,
   QuoteSnapshot,
   ReplaceOrderSnapshot,
+  RuntimeMode,
   SessionStatusSnapshot,
-} from "../../api-server/src/providers/ibkr/client";
+  IbkrTransport,
+  IbkrMarketDataMode,
+} from "@workspace/ibkr-contracts";
 
 export type BridgeHealth = {
   bridgeRuntimeBuild: string | null;
@@ -135,9 +134,7 @@ export interface IbkrBridgeProvider {
   listPositions(input: {
     accountId?: string;
     mode: RuntimeMode;
-  }): Promise<
-    import("../../api-server/src/providers/ibkr/client").BrokerPositionSnapshot[]
-  >;
+  }): Promise<BrokerPositionSnapshot[]>;
   listOrders(input: {
     accountId?: string;
     mode: RuntimeMode;
@@ -194,11 +191,7 @@ export interface IbkrBridgeProvider {
     exchange?: string | null;
   }): Promise<BrokerMarketDepthSnapshot | null>;
   previewOrder(input: PlaceOrderInput): Promise<OrderPreviewSnapshot>;
-  placeOrder(
-    input: PlaceOrderInput,
-  ): Promise<
-    import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot
-  >;
+  placeOrder(input: PlaceOrderInput): Promise<BrokerOrderSnapshot>;
   submitRawOrders(input: {
     accountId?: string | null;
     mode?: RuntimeMode | null;

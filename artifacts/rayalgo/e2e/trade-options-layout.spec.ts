@@ -1312,12 +1312,17 @@ test("Trade option chain selects a hydrated conid and renders option chart bars"
     .toBe(expirations.length);
 
   const chart = page.getByTestId("trade-contract-option-chart");
+  const contractChartPanel = page.getByTestId("trade-contract-chart-panel");
   await expect(chart).toBeVisible({ timeout: 15_000 });
   await expect(
     page.getByTestId("trade-contract-option-chart-surface"),
   ).toHaveAttribute("data-chart-visible-logical-range", /^(?!none$).+/, {
     timeout: 10_000,
   });
+  await expect(contractChartPanel.getByText(/^MARK$/)).toHaveCount(0);
+  await expect(contractChartPanel.getByText(/^BID$/)).toHaveCount(0);
+  await expect(contractChartPanel.getByText(/^ASK$/)).toHaveCount(0);
+  await expect(contractChartPanel.getByText(/^IV$/)).toHaveCount(0);
   await expect
     .poll(
       () =>

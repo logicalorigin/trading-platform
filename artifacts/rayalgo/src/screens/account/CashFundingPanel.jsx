@@ -40,6 +40,13 @@ const typeTone = (type) => {
   return "default";
 };
 
+const sourceTone = (sourceType) =>
+  sourceType === "automation"
+    ? "pink"
+    : sourceType === "watchlist_backtest"
+      ? "purple"
+      : "default";
+
 export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
   <Panel
     title="Cash & Funding"
@@ -48,7 +55,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
     loading={query.isLoading}
     error={query.error}
     onRetry={query.refetch}
-    minHeight={220}
+    minHeight={168}
   >
     {!query.data ? (
       <EmptyState
@@ -130,7 +137,15 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                     <td style={{ ...tableCellStyle, color: toneForValue(activity.amount), textAlign: "right" }}>
                       {formatAccountMoney(activity.amount, activity.currency, false, maskValues)}
                     </td>
-                    <td style={tableCellStyle}>{activity.source}</td>
+                    <td style={tableCellStyle}>
+                      {activity.sourceType ? (
+                        <Pill tone={sourceTone(activity.sourceType)}>
+                          {activity.strategyLabel || activity.sourceType}
+                        </Pill>
+                      ) : (
+                        activity.source
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

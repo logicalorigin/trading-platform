@@ -530,7 +530,7 @@ export const Panel = ({
   loading,
   error,
   onRetry,
-  minHeight = 180,
+  minHeight = 0,
   noPad = false,
   className,
 }) => (
@@ -539,9 +539,10 @@ export const Panel = ({
     className={className || "ra-panel-enter"}
     style={{
       ...panelStyle,
-      minHeight: dim(minHeight),
+      minHeight: minHeight ? dim(minHeight) : undefined,
       display: "flex",
       flexDirection: "column",
+      alignSelf: "start",
       overflow: "hidden",
       outline: "none",
     }}
@@ -588,7 +589,7 @@ export const Panel = ({
       </div>
       {action}
     </div>
-    <div style={{ flex: 1, minHeight: 0, padding: noPad ? 0 : sp(6) }}>
+    <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(6) }}>
       {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>

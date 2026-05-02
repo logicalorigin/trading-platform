@@ -288,11 +288,12 @@ const Panel = ({ title, action, children }) => (
   <section
     className="ra-panel-enter"
     style={{
-      border: `1px solid ${T.border}`,
-      background: T.bg1,
-      borderRadius: dim(6),
-      padding: sp(12),
-      minWidth: 0,
+        border: `1px solid ${T.border}`,
+        background: T.bg1,
+        borderRadius: dim(6),
+        padding: sp("8px 10px"),
+        minWidth: 0,
+        alignSelf: "start",
     }}
   >
     <div
@@ -359,11 +360,12 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
       border: `1px solid ${severityTone(severity)}66`,
       borderRadius: dim(6),
       background: T.bg2,
-      padding: sp(10),
+      padding: sp("7px 8px"),
       display: "flex",
       flexDirection: "column",
-      gap: sp(6),
+      gap: sp(4),
       minWidth: 0,
+      alignSelf: "start",
       cursor: onClick ? "pointer" : "default",
       textAlign: "left",
     }}
@@ -992,12 +994,13 @@ export default function DiagnosticsScreen() {
 
   return (
     <div
+      data-testid="diagnostics-screen"
       style={{
         height: "100%",
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(16),
+        padding: sp(10),
         fontFamily: T.sans,
       }}
     >
@@ -1068,6 +1071,7 @@ export default function DiagnosticsScreen() {
         {TABS.map((tab) => (
           <button
             key={tab}
+            data-testid={`diagnostics-tab-${tab.toLowerCase().replace(/\s+/g, "-")}`}
             type="button"
             className={joinMotionClasses(
               "ra-interactive",
@@ -1160,7 +1164,7 @@ export default function DiagnosticsScreen() {
 
       {activeTab === "Overview" && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: sp(10), margin: sp("14px 0") }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: sp(8), margin: sp("10px 0"), alignItems: "start" }}>
             <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
             <MetricCard label="IBKR heartbeat" value={formatMs(ibkrMetrics.heartbeatAgeMs)} sub={ibkrMetrics.connected ? "connected" : "disconnected"} severity={ibkrSnapshot?.severity} onClick={() => selectMetric("ibkr", "ibkr.heartbeat_age_ms")} />
             <MetricCard label="Market freshness" value={formatMs(marketDataMetrics.freshnessAgeMs ?? stream.lastEventAgeMs)} sub={`${formatCount(marketDataMetrics.activeConsumerCount ?? stream.activeConsumerCount)} consumers`} severity={marketDataSnapshot?.severity || (stream.streamGapCount > 0 ? "warning" : "info")} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
@@ -1171,7 +1175,7 @@ export default function DiagnosticsScreen() {
             <MetricCard label="Orders" value={formatCount(orderMetrics.orderCount)} sub={`${formatCount(orderMetrics.visibilityFailures)} failures`} severity={orderSnapshot?.severity} onClick={() => selectMetric("orders", "orders.visibility_failures")} />
             <MetricCard label="Storage" value={storageMetrics.reachable ? "reachable" : "offline"} sub={formatMs(storageMetrics.pingMs)} severity={storageSnapshot?.severity} onClick={() => selectMetric("storage", "storage.ping_ms")} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(14) }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(10), alignItems: "start" }}>
             <Panel title="API Latency Trend">
               <Sparkline points={historyData.points || []} subsystem="api" metricKey="p95LatencyMs" />
             </Panel>

@@ -2,10 +2,11 @@ import { Suspense, lazy, useEffect, type ComponentType } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
 
-const RayAlgoApp = lazy(async () => {
-  const mod = await import("../features/platform/RayAlgoApp");
+const PlatformApp = lazy(async () => {
+  // @ts-expect-error JSX module has no declaration file in this TS config
+  const mod = await import("../features/platform/PlatformApp.jsx");
 
-  return { default: mod.RayAlgoApp };
+  return { default: mod.default };
 });
 
 const ChartParityLab = lazy(async () => {
@@ -15,8 +16,8 @@ const ChartParityLab = lazy(async () => {
 });
 
 const TickerSearchLab = lazy(async () => {
-  // @ts-expect-error legacy JSX module has no declaration file in this TS config
-  const mod = (await import("../RayAlgoPlatform.jsx")) as {
+  // @ts-expect-error JSX module has no declaration file in this TS config
+  const mod = (await import("../features/platform/tickerSearch/TickerSearch.jsx")) as {
     TickerSearchLab: ComponentType;
   };
 
@@ -317,7 +318,7 @@ function App() {
         ) : labMode === "ticker-search" ? (
           <TickerSearchLab />
         ) : (
-          <RayAlgoApp />
+          <PlatformApp />
         )}
       </Suspense>
     </AppProviders>

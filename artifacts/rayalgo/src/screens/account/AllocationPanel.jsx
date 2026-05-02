@@ -145,7 +145,7 @@ export const AllocationPanel = ({ query, currency, maskValues = false, compact =
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
-      minHeight={compact ? 246 : 232}
+      minHeight={compact ? 188 : 204}
     >
       {!assetRows.length ? (
         <EmptyState

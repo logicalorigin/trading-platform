@@ -26,7 +26,7 @@ const toEventTime = (event) => {
 };
 
 const getEventSymbol = (event) =>
-  normalizePremiumFlowSymbol(event?.ticker || event?.underlying);
+  normalizePremiumFlowSymbol(event?.ticker || event?.underlying || event?.symbol);
 
 export const buildPremiumFlowTimeline = (events = []) => {
   let cumulative = 0;
@@ -196,18 +196,6 @@ export const resolvePremiumFlowDisplayState = ({
     };
   }
 
-  if (isScanning) {
-    return {
-      label: "Scanning",
-      kind: "scanning",
-      isScanning: true,
-      isQueued: false,
-      isError: false,
-      isStale: false,
-      errorMessage: null,
-    };
-  }
-
   if (hasFlow) {
     const sourceLabel = resolvedSummary.events[0]?.sourceLabel;
     return {
@@ -216,8 +204,20 @@ export const resolvePremiumFlowDisplayState = ({
         (resolvedSummary.events[0]?.basis === "snapshot"
           ? "Snapshot prem"
           : "Premium flow"),
-      kind: "live",
-      isScanning: false,
+      kind: isScanning ? "refreshing" : "live",
+      isScanning,
+      isQueued: false,
+      isError: false,
+      isStale: false,
+      errorMessage: null,
+    };
+  }
+
+  if (isScanning) {
+    return {
+      label: "Scanning",
+      kind: "scanning",
+      isScanning: true,
       isQueued: false,
       isError: false,
       isStale: false,

@@ -2,6 +2,13 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import {
+  evaluateRayReplicaSignals,
+  RAY_REPLICA_SIGNAL_WARMUP_BARS,
+  resolveRayReplicaSignalSettings,
+  type RayReplicaBar,
+  type RayReplicaSignalEvent,
+} from "@workspace/rayreplica-core";
+import {
   db,
   shadowAccountsTable,
   shadowBalanceSnapshotsTable,
@@ -21,6 +28,7 @@ import {
   assertIbkrGatewayTradingAvailable,
   getBars,
   getQuoteSnapshots,
+  listWatchlists,
 } from "./platform";
 import {
   accountRangeStart,
@@ -40,11 +48,24 @@ const STOCK_FIXED_COMMISSION_MIN = 1;
 const STOCK_FIXED_COMMISSION_MAX_RATE = 0.01;
 const OPTION_FIXED_COMMISSION_PER_CONTRACT = 0.65;
 const OPTION_ORF_PER_CONTRACT = 0.02295;
+const WATCHLIST_BACKTEST_SOURCE = "watchlist_backtest";
+const WATCHLIST_BACKTEST_MARK_SOURCE = "watchlist_backtest_mark";
+const WATCHLIST_BACKTEST_TIMEFRAME_MS: Record<ShadowWatchlistBacktestTimeframe, number> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "1h": 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+};
+const WATCHLIST_BACKTEST_COMPLETED_BAR_SAFETY_MS = 2_000;
+const WATCHLIST_BACKTEST_MAX_POSITION_FRACTION = 0.1;
+const WATCHLIST_BACKTEST_MAX_OPEN_POSITIONS = 10;
+const WATCHLIST_BACKTEST_TIME_ZONE = "America/New_York";
 
 type OrderTab = "working" | "history";
 type ShadowAssetClass = "equity" | "option";
 type ShadowSide = "buy" | "sell";
-type ShadowOrderSource = "manual" | "automation";
+type ShadowOrderSource = "manual" | "automation" | "watchlist_backtest";
 type ShadowOptionContract = NonNullable<PlaceOrderInput["optionContract"]>;
 type ShadowOrderInput = Omit<PlaceOrderInput, "accountId" | "mode"> & {
   accountId?: string | null;
@@ -82,6 +103,36 @@ type ShadowFillPlan = {
   multiplier: number;
   positionKey: string;
   markSource: string;
+};
+
+type ShadowTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+type ShadowWatchlistBacktestTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
+
+type WatchlistBacktestFill = {
+  symbol: string;
+  side: ShadowSide;
+  quantity: number;
+  price: number;
+  fees: number;
+  grossAmount: number;
+  cashDelta: number;
+  realizedPnl: number;
+  positionKey: string;
+  placedAt: Date;
+  signalAt: Date;
+  signalPrice: number | null;
+  signalClose: number | null;
+  watchlists: Array<{ id: string; name: string }>;
+  fillSource: string;
+};
+
+type WatchlistBacktestSkip = {
+  symbol: string;
+  reason: string;
+  detail: string;
+  signalAt?: Date | null;
+  watchlists?: Array<{ id: string; name: string }>;
 };
 
 function toNumber(value: unknown): number | null {
@@ -174,21 +225,57 @@ function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function readNumber(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function dateOrNull(value: unknown): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+}
+
+function isWatchlistBacktestPositionKey(value: unknown): boolean {
+  return typeof value === "string" && value.startsWith(`${WATCHLIST_BACKTEST_SOURCE}:`);
+}
+
+function shadowSourceType(order?: ShadowOrderRow | null): "manual" | "automation" | "watchlist_backtest" {
+  if (order?.source === "automation") {
+    return "automation";
+  }
+  if (order?.source === WATCHLIST_BACKTEST_SOURCE) {
+    return WATCHLIST_BACKTEST_SOURCE;
+  }
+  return "manual";
+}
+
+function shadowSourceLabel(sourceType: string, fallback: string | null = null) {
+  if (sourceType === "automation") {
+    return "Signal Options";
+  }
+  if (sourceType === WATCHLIST_BACKTEST_SOURCE) {
+    return "Watchlist Backtest";
+  }
+  return fallback;
+}
+
 function shadowSourceMetadata(order?: ShadowOrderRow | null) {
   const payload = readRecord(order?.payload) ?? {};
   const candidate = readRecord(payload.candidate) ?? readRecord(payload.automationCandidate) ?? {};
   const position = readRecord(payload.position) ?? {};
   const metadata = readRecord(payload.metadata) ?? {};
-  const sourceType =
-    order?.source === "automation"
-      ? "automation"
-      : order?.source === "manual"
-        ? "manual"
-        : "manual";
+  const sourceType = shadowSourceType(order);
   const candidateId =
     readString(candidate.id) ??
     readString(position.candidateId) ??
-    readString(payload.candidateId);
+    readString(payload.candidateId) ??
+    readString(metadata.runId);
   const deploymentId =
     readString(candidate.deploymentId) ??
     readString(metadata.deploymentId) ??
@@ -200,13 +287,15 @@ function shadowSourceMetadata(order?: ShadowOrderRow | null) {
 
   return {
     sourceType,
-    strategyLabel:
-      sourceType === "automation" || candidateId ? "Signal Options" : null,
+    strategyLabel: shadowSourceLabel(sourceType, candidateId ? "Signal Options" : null),
     candidateId,
     deploymentId,
     deploymentName,
     sourceEventId: order?.sourceEventId ?? null,
-    attributionStatus: candidateId || sourceType === "automation" ? "attributed" : "unknown",
+    attributionStatus:
+      candidateId || sourceType === "automation" || sourceType === WATCHLIST_BACKTEST_SOURCE
+        ? "attributed"
+        : "unknown",
   };
 }
 
@@ -218,7 +307,7 @@ function buildPositionSourceAttribution(
   const buckets = new Map<
     string,
     {
-      sourceType: "manual" | "automation";
+      sourceType: "manual" | "automation" | "watchlist_backtest";
       strategyLabel: string | null;
       candidateId: string | null;
       deploymentId: string | null;
@@ -230,17 +319,28 @@ function buildPositionSourceAttribution(
 
   orders
     .filter(
-      (order) =>
-        positionKey({
+      (order) => {
+        const payload = readRecord(order.payload) ?? {};
+        const metadata = readRecord(payload.metadata) ?? {};
+        const attributedPositionKey =
+          readString(metadata.positionKey) ?? readString(payload.positionKey);
+        return (
+          attributedPositionKey ??
+          positionKey({
           symbol: order.symbol,
           assetClass: order.assetClass as ShadowAssetClass,
           optionContract: asOptionContract(order.optionContract),
-        }) === key,
+          })
+        ) === key;
+      },
     )
     .forEach((order) => {
       const metadata = shadowSourceMetadata(order);
       const sourceType =
-        metadata.sourceType === "automation" ? "automation" : "manual";
+        metadata.sourceType === "automation" ||
+        metadata.sourceType === WATCHLIST_BACKTEST_SOURCE
+          ? metadata.sourceType
+          : "manual";
       const bucketKey = [
         sourceType,
         metadata.strategyLabel ?? "Manual",
@@ -286,6 +386,8 @@ function buildPositionSourceAttribution(
     strategyLabel:
       sourceType === "automation"
         ? attribution[0]?.strategyLabel ?? "Signal Options"
+        : sourceType === WATCHLIST_BACKTEST_SOURCE
+          ? attribution[0]?.strategyLabel ?? "Watchlist Backtest"
         : sourceType === "mixed"
           ? "Mixed"
           : null,
@@ -1068,7 +1170,12 @@ function orderRowToResponse(order: typeof shadowOrdersTable.$inferSelect | undef
     updatedAt: order.updatedAt,
     averageFillPrice: toNumber(order.averageFillPrice),
     commission: toNumber(order.fees),
-    source: order.source === "automation" ? "SHADOW_AUTO" : "SHADOW",
+    source:
+      order.source === "automation"
+        ? "SHADOW_AUTO"
+        : order.source === WATCHLIST_BACKTEST_SOURCE
+          ? "SHADOW_BACKTEST"
+          : "SHADOW",
     ...metadata,
   };
 }
@@ -1119,7 +1226,11 @@ export async function refreshShadowPositionMarks() {
   }
 
   if (updatedCount) {
-    await writeShadowBalanceSnapshot("mark");
+    await writeShadowBalanceSnapshot(
+      positions.some((position) => isWatchlistBacktestPositionKey(position.positionKey))
+        ? WATCHLIST_BACKTEST_MARK_SOURCE
+        : "mark",
+    );
   }
 
   return { updatedCount };
@@ -1224,7 +1335,7 @@ export async function getShadowAccountEquityHistory(input: {
   benchmark?: string | null;
 }) {
   const range = normalizeAccountRange(input.range);
-  const totals = await ensureFreshShadowState(false);
+  const totals = await ensureFreshShadowState(true);
   const account = (await readShadowAccount())!;
   const start = accountRangeStart(range);
   const conditions: SQL<unknown>[] = [eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID)];
@@ -1709,6 +1820,14 @@ export async function getShadowAccountCashActivity() {
     .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
     .orderBy(desc(shadowFillsTable.occurredAt))
     .limit(200);
+  const fillOrderIds = fills.map((fill) => fill.orderId);
+  const orders = fillOrderIds.length
+    ? await db
+        .select()
+        .from(shadowOrdersTable)
+        .where(inArray(shadowOrdersTable.id, fillOrderIds))
+    : [];
+  const ordersById = new Map(orders.map((order) => [order.id, order]));
   const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
   const totals = await computeShadowTotals();
   return {
@@ -1732,18 +1851,936 @@ export async function getShadowAccountCashActivity() {
         currency: SHADOW_CURRENCY,
         source: "SHADOW_LEDGER",
       },
-      ...fills.map((fill) => ({
-        id: fill.id,
-        accountId: SHADOW_ACCOUNT_ID,
-        date: fill.occurredAt,
-        type: "Trade",
-        description: `${fill.side.toUpperCase()} ${toNumber(fill.quantity) ?? 0} ${fill.symbol}`,
-        amount: toNumber(fill.cashDelta) ?? 0,
-        currency: SHADOW_CURRENCY,
-        source: "SHADOW_LEDGER",
-      })),
+      ...fills.map((fill) => {
+        const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
+        return {
+          id: fill.id,
+          accountId: SHADOW_ACCOUNT_ID,
+          date: fill.occurredAt,
+          type: "Trade",
+          description: `${fill.side.toUpperCase()} ${toNumber(fill.quantity) ?? 0} ${fill.symbol}`,
+          amount: toNumber(fill.cashDelta) ?? 0,
+          currency: SHADOW_CURRENCY,
+          source: metadata.strategyLabel || "SHADOW_LEDGER",
+          sourceType: metadata.sourceType,
+          strategyLabel: metadata.strategyLabel,
+        };
+      }),
     ],
     dividends: [],
+    updatedAt: new Date(),
+  };
+}
+
+function timeZoneParts(date: Date, timeZone = WATCHLIST_BACKTEST_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
+}
+
+function marketDateKey(date: Date) {
+  const parts = timeZoneParts(date);
+  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function parseMarketDateKey(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    throw new HttpError(400, "Shadow watchlist backtest date must be YYYY-MM-DD.", {
+      code: "shadow_backtest_date_invalid",
+      expose: true,
+    });
+  }
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+  };
+}
+
+function addDaysToMarketDate(value: string, days: number) {
+  const parsed = parseMarketDateKey(value);
+  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day + days));
+  return date.toISOString().slice(0, 10);
+}
+
+function timeZoneOffsetMs(timeZone: string, date: Date) {
+  const parts = timeZoneParts(date, timeZone);
+  const localAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+  return localAsUtc - date.getTime();
+}
+
+function zonedDateTimeToUtc(input: {
+  marketDate: string;
+  hour: number;
+  minute: number;
+  second?: number;
+}) {
+  const parsed = parseMarketDateKey(input.marketDate);
+  const localAsUtc = Date.UTC(
+    parsed.year,
+    parsed.month - 1,
+    parsed.day,
+    input.hour,
+    input.minute,
+    input.second ?? 0,
+  );
+  const firstPass = new Date(
+    localAsUtc - timeZoneOffsetMs(WATCHLIST_BACKTEST_TIME_ZONE, new Date(localAsUtc)),
+  );
+  return new Date(
+    localAsUtc - timeZoneOffsetMs(WATCHLIST_BACKTEST_TIME_ZONE, firstPass),
+  );
+}
+
+function resolveWatchlistBacktestWindow(input: {
+  marketDate?: string | null;
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  const resolvedMarketDate = input.marketDate?.trim() || marketDateKey(now);
+  parseMarketDateKey(resolvedMarketDate);
+  const start = zonedDateTimeToUtc({
+    marketDate: resolvedMarketDate,
+    hour: 9,
+    minute: 30,
+  });
+  const nextMarketDate = addDaysToMarketDate(resolvedMarketDate, 1);
+  const dayEnd = zonedDateTimeToUtc({
+    marketDate: nextMarketDate,
+    hour: 0,
+    minute: 0,
+  });
+  const end =
+    marketDateKey(now) === resolvedMarketDate && now > start
+      ? now
+      : dayEnd;
+  return {
+    marketDate: resolvedMarketDate,
+    start,
+    end,
+    cleanupEnd: dayEnd,
+  };
+}
+
+function normalizeWatchlistBacktestTimeframe(
+  value: unknown,
+): ShadowWatchlistBacktestTimeframe {
+  return ["1m", "5m", "15m", "1h", "1d"].includes(String(value))
+    ? (String(value) as ShadowWatchlistBacktestTimeframe)
+    : "15m";
+}
+
+function isBacktestBarComplete(input: {
+  timestamp: Date;
+  timeframe: ShadowWatchlistBacktestTimeframe;
+  evaluatedAt: Date;
+}) {
+  return (
+    input.timestamp.getTime() +
+      WATCHLIST_BACKTEST_TIMEFRAME_MS[input.timeframe] +
+      WATCHLIST_BACKTEST_COMPLETED_BAR_SAFETY_MS <=
+    input.evaluatedAt.getTime()
+  );
+}
+
+function barsToBacktestRayReplicaBars(
+  inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
+  timeframe: ShadowWatchlistBacktestTimeframe,
+  evaluatedAt: Date,
+) {
+  return inputBars
+    .map((bar): RayReplicaBar | null => {
+      const timestamp = dateOrNull(bar.timestamp);
+      if (
+        !timestamp ||
+        bar.partial === true ||
+        !isBacktestBarComplete({ timestamp, timeframe, evaluatedAt })
+      ) {
+        return null;
+      }
+      const open = Number(bar.open);
+      const high = Number(bar.high);
+      const low = Number(bar.low);
+      const close = Number(bar.close);
+      const volume = Number(bar.volume);
+      if (![open, high, low, close].every(Number.isFinite)) {
+        return null;
+      }
+      return {
+        time: Math.floor(timestamp.getTime() / 1000),
+        ts: timestamp.toISOString(),
+        o: open,
+        h: high,
+        l: low,
+        c: close,
+        v: Number.isFinite(volume) ? volume : 0,
+      };
+    })
+    .filter((bar): bar is RayReplicaBar => Boolean(bar))
+    .sort((left, right) => left.time - right.time);
+}
+
+function collectWatchlistBacktestUniverse(
+  watchlists: Awaited<ReturnType<typeof listWatchlists>>["watchlists"],
+) {
+  const bySymbol = new Map<
+    string,
+    {
+      symbol: string;
+      watchlists: Array<{ id: string; name: string }>;
+    }
+  >();
+  for (const watchlist of watchlists) {
+    for (const item of watchlist.items) {
+      const symbol = normalizeSymbol(item.symbol).toUpperCase();
+      if (!symbol) {
+        continue;
+      }
+      const current = bySymbol.get(symbol) ?? { symbol, watchlists: [] };
+      if (!current.watchlists.some((candidate) => candidate.id === watchlist.id)) {
+        current.watchlists.push({ id: watchlist.id, name: watchlist.name });
+      }
+      bySymbol.set(symbol, current);
+    }
+  }
+  return Array.from(bySymbol.values()).sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  );
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(concurrency, items.length)) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index], index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+function signalDirection(signal: RayReplicaSignalEvent): ShadowSide {
+  return signal.eventType === "buy_signal" ? "buy" : "sell";
+}
+
+function fillForSignal(input: {
+  signal: RayReplicaSignalEvent;
+  bars: RayReplicaBar[];
+  windowEnd: Date;
+}) {
+  const nextBar = input.bars[input.signal.barIndex + 1] ?? null;
+  const nextBarTime = nextBar ? new Date(nextBar.time * 1000) : null;
+  if (nextBar && nextBarTime && nextBarTime <= input.windowEnd) {
+    return {
+      price: cents(nextBar.o),
+      placedAt: nextBarTime,
+      source: "next_bar_open",
+    };
+  }
+  return {
+    price: cents(input.signal.close),
+    placedAt: new Date(input.signal.time * 1000),
+    source: "signal_close",
+  };
+}
+
+async function collectWatchlistBacktestSignals(input: {
+  universe: ReturnType<typeof collectWatchlistBacktestUniverse>;
+  timeframe: ShadowWatchlistBacktestTimeframe;
+  window: ReturnType<typeof resolveWatchlistBacktestWindow>;
+}) {
+  const settings = resolveRayReplicaSignalSettings({});
+  const skipped: WatchlistBacktestSkip[] = [];
+  const candidates = await mapWithConcurrency(input.universe, 4, async (item) => {
+    const barsResult = await getBars({
+      symbol: item.symbol,
+      timeframe: input.timeframe,
+      limit: RAY_REPLICA_SIGNAL_WARMUP_BARS,
+      to: input.window.end,
+      assetClass: "equity",
+      outsideRth: true,
+      source: "trades",
+      allowHistoricalSynthesis: true,
+    }).catch((error: unknown) => {
+      skipped.push({
+        symbol: item.symbol,
+        reason: "bars_unavailable",
+        detail: error instanceof Error ? error.message : "No historical bars were available.",
+        watchlists: item.watchlists,
+      });
+      return { bars: [] as Awaited<ReturnType<typeof getBars>>["bars"] };
+    });
+
+    const chartBars = barsToBacktestRayReplicaBars(
+      barsResult.bars,
+      input.timeframe,
+      input.window.end,
+    );
+    if (!chartBars.length) {
+      skipped.push({
+        symbol: item.symbol,
+        reason: "no_completed_bars",
+        detail: "No completed bars were available in the requested window.",
+        watchlists: item.watchlists,
+      });
+      return [];
+    }
+
+    const evaluation = evaluateRayReplicaSignals({
+      chartBars,
+      settings,
+      includeProvisionalSignals: false,
+    });
+    return evaluation.signalEvents
+      .filter((signal) => {
+        const signalAt = new Date(signal.time * 1000);
+        return signalAt >= input.window.start && signalAt <= input.window.end;
+      })
+      .map((signal) => {
+        const fill = fillForSignal({
+          signal,
+          bars: chartBars,
+          windowEnd: input.window.end,
+        });
+        return {
+          symbol: item.symbol,
+          side: signalDirection(signal),
+          signal,
+          signalAt: new Date(signal.time * 1000),
+          signalPrice: readNumber(signal.price),
+          signalClose: readNumber(signal.close),
+          fillPrice: fill.price,
+          placedAt: fill.placedAt,
+          fillSource: fill.source,
+          watchlists: item.watchlists,
+        };
+      });
+  });
+  return {
+    candidates: candidates.flat().sort((left, right) => {
+      const timeDelta = left.placedAt.getTime() - right.placedAt.getTime();
+      return timeDelta || left.symbol.localeCompare(right.symbol);
+    }),
+    skipped,
+  };
+}
+
+function quantityForCash(input: {
+  cash: number;
+  price: number;
+  targetNotional: number;
+}) {
+  let quantity = Math.floor(Math.min(input.cash, input.targetNotional) / input.price);
+  while (quantity > 0) {
+    const fees = computeShadowOrderFees({
+      assetClass: "equity",
+      quantity,
+      price: input.price,
+    });
+    if (quantity * input.price + fees <= input.cash + 0.000001) {
+      return { quantity, fees };
+    }
+    quantity -= 1;
+  }
+  return { quantity: 0, fees: 0 };
+}
+
+export function buildWatchlistBacktestFills(input: {
+  runId: string;
+  candidates: Awaited<ReturnType<typeof collectWatchlistBacktestSignals>>["candidates"];
+  startingTotals: ShadowTotals;
+  baseMarketValue: number;
+  marketDate: string;
+}) {
+  const fills: WatchlistBacktestFill[] = [];
+  const snapshots: Array<{
+    asOf: Date;
+    cash: number;
+    netLiquidation: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    fees: number;
+  }> = [];
+  const skipped: WatchlistBacktestSkip[] = [];
+  const open = new Map<
+    string,
+    {
+      quantity: number;
+      averageCost: number;
+      lastMark: number;
+      positionKey: string;
+    }
+  >();
+  let cash = input.startingTotals.cash;
+  let syntheticRealizedPnl = 0;
+  let syntheticFees = 0;
+  const targetNotional =
+    input.startingTotals.netLiquidation * WATCHLIST_BACKTEST_MAX_POSITION_FRACTION;
+
+  const pushSnapshot = (asOf: Date) => {
+    let syntheticMarketValue = 0;
+    let syntheticUnrealizedPnl = 0;
+    for (const position of open.values()) {
+      syntheticMarketValue += position.quantity * position.lastMark;
+      syntheticUnrealizedPnl +=
+        (position.lastMark - position.averageCost) * position.quantity;
+    }
+    snapshots.push({
+      asOf,
+      cash,
+      netLiquidation: cash + input.baseMarketValue + syntheticMarketValue,
+      realizedPnl: input.startingTotals.realizedPnl + syntheticRealizedPnl,
+      unrealizedPnl: input.startingTotals.unrealizedPnl + syntheticUnrealizedPnl,
+      fees: input.startingTotals.fees + syntheticFees,
+    });
+  };
+
+  for (const candidate of input.candidates) {
+    const price = candidate.fillPrice;
+    if (!Number.isFinite(price) || price <= 0) {
+      skipped.push({
+        symbol: candidate.symbol,
+        reason: "invalid_fill_price",
+        detail: "The signal did not have a usable fill price.",
+        signalAt: candidate.signalAt,
+        watchlists: candidate.watchlists,
+      });
+      continue;
+    }
+
+    const current = open.get(candidate.symbol);
+    if (candidate.side === "buy") {
+      if (current) {
+        skipped.push({
+          symbol: candidate.symbol,
+          reason: "same_symbol_position_open",
+          detail: "A synthetic position for this symbol was already open.",
+          signalAt: candidate.signalAt,
+          watchlists: candidate.watchlists,
+        });
+        continue;
+      }
+      if (open.size >= WATCHLIST_BACKTEST_MAX_OPEN_POSITIONS) {
+        skipped.push({
+          symbol: candidate.symbol,
+          reason: "max_open_positions",
+          detail: `Synthetic backtest is capped at ${WATCHLIST_BACKTEST_MAX_OPEN_POSITIONS} open positions.`,
+          signalAt: candidate.signalAt,
+          watchlists: candidate.watchlists,
+        });
+        continue;
+      }
+      const { quantity, fees } = quantityForCash({
+        cash,
+        price,
+        targetNotional,
+      });
+      if (quantity <= 0) {
+        skipped.push({
+          symbol: candidate.symbol,
+          reason: "insufficient_cash",
+          detail: "Available Shadow cash could not buy one whole share after fees.",
+          signalAt: candidate.signalAt,
+          watchlists: candidate.watchlists,
+        });
+        continue;
+      }
+      const grossAmount = quantity * price;
+      const cashDelta = -(grossAmount + fees);
+      const positionKey = `${WATCHLIST_BACKTEST_SOURCE}:${input.runId}:equity:${candidate.symbol}`;
+      cash += cashDelta;
+      syntheticFees += fees;
+      open.set(candidate.symbol, {
+        quantity,
+        averageCost: price,
+        lastMark: price,
+        positionKey,
+      });
+      fills.push({
+        symbol: candidate.symbol,
+        side: "buy",
+        quantity,
+        price,
+        fees,
+        grossAmount,
+        cashDelta,
+        realizedPnl: 0,
+        positionKey,
+        placedAt: candidate.placedAt,
+        signalAt: candidate.signalAt,
+        signalPrice: candidate.signalPrice,
+        signalClose: candidate.signalClose,
+        watchlists: candidate.watchlists,
+        fillSource: candidate.fillSource,
+      });
+      pushSnapshot(candidate.placedAt);
+      continue;
+    }
+
+    if (!current) {
+      skipped.push({
+        symbol: candidate.symbol,
+        reason: "no_synthetic_position",
+        detail: "Sell signal skipped because this run had no synthetic long position open.",
+        signalAt: candidate.signalAt,
+        watchlists: candidate.watchlists,
+      });
+      continue;
+    }
+    const quantity = current.quantity;
+    const fees = computeShadowOrderFees({
+      assetClass: "equity",
+      quantity,
+      price,
+    });
+    const grossAmount = quantity * price;
+    const realizedPnl = (price - current.averageCost) * quantity - fees;
+    const cashDelta = grossAmount - fees;
+    cash += cashDelta;
+    syntheticFees += fees;
+    syntheticRealizedPnl += realizedPnl;
+    current.lastMark = price;
+    open.delete(candidate.symbol);
+    fills.push({
+      symbol: candidate.symbol,
+      side: "sell",
+      quantity,
+      price,
+      fees,
+      grossAmount,
+      cashDelta,
+      realizedPnl,
+      positionKey: current.positionKey,
+      placedAt: candidate.placedAt,
+      signalAt: candidate.signalAt,
+      signalPrice: candidate.signalPrice,
+      signalClose: candidate.signalClose,
+      watchlists: candidate.watchlists,
+      fillSource: candidate.fillSource,
+    });
+    pushSnapshot(candidate.placedAt);
+  }
+
+  return { fills, snapshots, skipped };
+}
+
+async function recomputeShadowAccountFromLedger(tx: ShadowTransaction, updatedAt: Date) {
+  const [account] = await tx
+    .select()
+    .from(shadowAccountsTable)
+    .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID))
+    .limit(1);
+  if (!account) {
+    throw new HttpError(500, "Shadow account is missing.", {
+      code: "shadow_account_missing",
+      expose: true,
+    });
+  }
+  const fills = await tx
+    .select()
+    .from(shadowFillsTable)
+    .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID));
+  const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
+  const cash = fills.reduce(
+    (sum, fill) => sum + (toNumber(fill.cashDelta) ?? 0),
+    startingBalance,
+  );
+  const realizedPnl = fills.reduce(
+    (sum, fill) => sum + (toNumber(fill.realizedPnl) ?? 0),
+    0,
+  );
+  const fees = fills.reduce((sum, fill) => sum + (toNumber(fill.fees) ?? 0), 0);
+  await tx
+    .update(shadowAccountsTable)
+    .set({
+      cash: money(cash),
+      realizedPnl: money(realizedPnl),
+      fees: money(fees),
+      updatedAt,
+    })
+    .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID));
+}
+
+function watchlistBacktestSnapshotSource(marketDate: string) {
+  return `${WATCHLIST_BACKTEST_SOURCE}:${marketDate}`;
+}
+
+async function deleteWatchlistBacktestRowsForDate(
+  tx: ShadowTransaction,
+  input: {
+    marketDate: string;
+    windowStart: Date;
+    cleanupEnd: Date;
+  },
+) {
+  const orders = await tx
+    .select()
+    .from(shadowOrdersTable)
+    .where(
+      and(
+        eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowOrdersTable.source, WATCHLIST_BACKTEST_SOURCE),
+      ),
+    );
+  const matchingOrders = orders.filter((order) => {
+    const payload = readRecord(order.payload) ?? {};
+    const metadata = readRecord(payload.metadata) ?? {};
+    return readString(metadata.marketDate) === input.marketDate;
+  });
+  const orderIds = matchingOrders.map((order) => order.id);
+  const positionKeys = Array.from(
+    new Set(
+      matchingOrders
+        .map((order) => {
+          const payload = readRecord(order.payload) ?? {};
+          const metadata = readRecord(payload.metadata) ?? {};
+          return readString(metadata.positionKey) ?? readString(payload.positionKey);
+        })
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+
+  if (positionKeys.length) {
+    const positions = await tx
+      .select({ id: shadowPositionsTable.id })
+      .from(shadowPositionsTable)
+      .where(
+        and(
+          eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+          inArray(shadowPositionsTable.positionKey, positionKeys),
+        ),
+      );
+    const positionIds = positions.map((position) => position.id);
+    if (positionIds.length) {
+      await tx
+        .delete(shadowPositionMarksTable)
+        .where(inArray(shadowPositionMarksTable.positionId, positionIds));
+    }
+    await tx
+      .delete(shadowPositionsTable)
+      .where(
+        and(
+          eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+          inArray(shadowPositionsTable.positionKey, positionKeys),
+        ),
+      );
+  }
+
+  if (orderIds.length) {
+    await tx
+      .delete(shadowFillsTable)
+      .where(
+        and(
+          eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+          inArray(shadowFillsTable.orderId, orderIds),
+        ),
+      );
+    await tx
+      .delete(shadowOrdersTable)
+      .where(
+        and(
+          eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+          inArray(shadowOrdersTable.id, orderIds),
+        ),
+      );
+  }
+
+  await tx
+    .delete(shadowBalanceSnapshotsTable)
+    .where(
+      and(
+        eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(
+          shadowBalanceSnapshotsTable.source,
+          watchlistBacktestSnapshotSource(input.marketDate),
+        ),
+      ),
+    );
+  await tx
+    .delete(shadowBalanceSnapshotsTable)
+    .where(
+      and(
+        eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowBalanceSnapshotsTable.source, WATCHLIST_BACKTEST_MARK_SOURCE),
+        gte(shadowBalanceSnapshotsTable.asOf, input.windowStart),
+        lte(shadowBalanceSnapshotsTable.asOf, input.cleanupEnd),
+      ),
+    );
+
+  return {
+    deletedOrders: orderIds.length,
+    deletedPositionKeys: positionKeys.length,
+  };
+}
+
+async function resetWatchlistBacktestRowsForDate(input: {
+  marketDate: string;
+  windowStart: Date;
+  cleanupEnd: Date;
+}) {
+  await db.transaction(async (tx) => {
+    await deleteWatchlistBacktestRowsForDate(tx, input);
+    await recomputeShadowAccountFromLedger(tx, new Date());
+  });
+}
+
+async function insertWatchlistBacktestFills(input: {
+  runId: string;
+  marketDate: string;
+  windowStart: Date;
+  cleanupEnd: Date;
+  fills: WatchlistBacktestFill[];
+  snapshots: ReturnType<typeof buildWatchlistBacktestFills>["snapshots"];
+}) {
+  const snapshotSource = watchlistBacktestSnapshotSource(input.marketDate);
+  await db.transaction(async (tx) => {
+    await deleteWatchlistBacktestRowsForDate(tx, input);
+
+    for (let index = 0; index < input.fills.length; index += 1) {
+      const fill = input.fills[index]!;
+      const orderId = randomUUID();
+      const fillId = randomUUID();
+      const payload = {
+        metadata: {
+          source: WATCHLIST_BACKTEST_SOURCE,
+          runId: input.runId,
+          marketDate: input.marketDate,
+          positionKey: fill.positionKey,
+          signalAt: fill.signalAt.toISOString(),
+          signalPrice: fill.signalPrice,
+          signalClose: fill.signalClose,
+          fillSource: fill.fillSource,
+          watchlists: fill.watchlists,
+        },
+      };
+      await tx.insert(shadowOrdersTable).values({
+        id: orderId,
+        accountId: SHADOW_ACCOUNT_ID,
+        source: WATCHLIST_BACKTEST_SOURCE,
+        sourceEventId: null,
+        clientOrderId: `shadow-watchlist-backtest-${input.marketDate}-${input.runId}-${index + 1}`,
+        symbol: fill.symbol,
+        assetClass: "equity",
+        side: fill.side,
+        type: "market",
+        timeInForce: "day",
+        status: "filled",
+        quantity: money(fill.quantity),
+        filledQuantity: money(fill.quantity),
+        averageFillPrice: money(fill.price),
+        fees: money(fill.fees),
+        optionContract: null,
+        payload,
+        placedAt: fill.placedAt,
+        filledAt: fill.placedAt,
+      });
+      await tx.insert(shadowFillsTable).values({
+        id: fillId,
+        accountId: SHADOW_ACCOUNT_ID,
+        orderId,
+        sourceEventId: null,
+        symbol: fill.symbol,
+        assetClass: "equity",
+        side: fill.side,
+        quantity: money(fill.quantity),
+        price: money(fill.price),
+        grossAmount: money(fill.grossAmount),
+        fees: money(fill.fees),
+        realizedPnl: money(fill.realizedPnl),
+        cashDelta: money(fill.cashDelta),
+        optionContract: null,
+        occurredAt: fill.placedAt,
+      });
+      await upsertPositionForFill(tx, {
+        symbol: fill.symbol,
+        assetClass: "equity",
+        optionContract: null,
+        positionKey: fill.positionKey,
+        side: fill.side,
+        quantity: fill.quantity,
+        price: fill.price,
+        fees: fill.fees,
+        realizedPnl: fill.realizedPnl,
+        multiplier: 1,
+        occurredAt: fill.placedAt,
+      });
+    }
+
+    if (input.snapshots.length) {
+      await tx.insert(shadowBalanceSnapshotsTable).values(
+        input.snapshots.map((snapshot) => ({
+          accountId: SHADOW_ACCOUNT_ID,
+          currency: SHADOW_CURRENCY,
+          cash: money(snapshot.cash),
+          buyingPower: money(snapshot.cash),
+          netLiquidation: money(snapshot.netLiquidation),
+          realizedPnl: money(snapshot.realizedPnl),
+          unrealizedPnl: money(snapshot.unrealizedPnl),
+          fees: money(snapshot.fees),
+          source: snapshotSource,
+          asOf: snapshot.asOf,
+        })),
+      );
+    }
+
+    await recomputeShadowAccountFromLedger(tx, new Date());
+  });
+}
+
+export async function runShadowWatchlistBacktest(input: {
+  marketDate?: string | null;
+  timeframe?: string | null;
+} = {}) {
+  await ensureShadowAccount();
+  const runId = randomUUID();
+  const timeframe = normalizeWatchlistBacktestTimeframe(input.timeframe);
+  const window = resolveWatchlistBacktestWindow({
+    marketDate: input.marketDate,
+  });
+
+  await resetWatchlistBacktestRowsForDate({
+    marketDate: window.marketDate,
+    windowStart: window.start,
+    cleanupEnd: window.cleanupEnd,
+  });
+  await refreshShadowPositionMarks().catch((error) => {
+    logger.debug?.({ err: error }, "Shadow mark refresh before watchlist backtest failed");
+  });
+  const startingTotals = await computeShadowTotals();
+  const baseMarketValue = startingTotals.marketValue;
+  const { watchlists } = await listWatchlists();
+  const universe = collectWatchlistBacktestUniverse(watchlists);
+  const signalScan = await collectWatchlistBacktestSignals({
+    universe,
+    timeframe,
+    window,
+  });
+  const simulation = buildWatchlistBacktestFills({
+    runId,
+    candidates: signalScan.candidates,
+    startingTotals,
+    baseMarketValue,
+    marketDate: window.marketDate,
+  });
+
+  await insertWatchlistBacktestFills({
+    runId,
+    marketDate: window.marketDate,
+    windowStart: window.start,
+    cleanupEnd: window.cleanupEnd,
+    fills: simulation.fills,
+    snapshots: simulation.snapshots,
+  });
+  await writeShadowBalanceSnapshot(watchlistBacktestSnapshotSource(window.marketDate));
+
+  const finalTotals = await ensureFreshShadowState(true);
+  const realizedPnl = simulation.fills.reduce(
+    (sum, fill) => sum + fill.realizedPnl,
+    0,
+  );
+  const fees = simulation.fills.reduce((sum, fill) => sum + fill.fees, 0);
+  const buys = simulation.fills.filter((fill) => fill.side === "buy");
+  const sells = simulation.fills.filter((fill) => fill.side === "sell");
+  const openSyntheticSymbols = new Set(
+    simulation.fills.reduce<string[]>((symbols, fill) => {
+      if (fill.side === "buy") {
+        symbols.push(fill.symbol);
+      } else {
+        const index = symbols.lastIndexOf(fill.symbol);
+        if (index >= 0) {
+          symbols.splice(index, 1);
+        }
+      }
+      return symbols;
+    }, []),
+  );
+
+  return {
+    runId,
+    source: WATCHLIST_BACKTEST_SOURCE,
+    marketDate: window.marketDate,
+    timeframe,
+    window: {
+      start: window.start,
+      end: window.end,
+      timezone: WATCHLIST_BACKTEST_TIME_ZONE,
+    },
+    sizing: {
+      maxPositionFraction: WATCHLIST_BACKTEST_MAX_POSITION_FRACTION,
+      maxOpenPositions: WATCHLIST_BACKTEST_MAX_OPEN_POSITIONS,
+      wholeSharesOnly: true,
+      startingNetLiquidation: startingTotals.netLiquidation,
+      startingCash: startingTotals.cash,
+    },
+    universe: {
+      watchlistCount: watchlists.length,
+      symbolCount: universe.length,
+      watchlists: watchlists.map((watchlist) => ({
+        id: watchlist.id,
+        name: watchlist.name,
+        symbolCount: watchlist.items.length,
+      })),
+    },
+    summary: {
+      signals: signalScan.candidates.length,
+      ordersCreated: simulation.fills.length,
+      entries: buys.length,
+      exits: sells.length,
+      openSyntheticPositions: openSyntheticSymbols.size,
+      skippedSignals: signalScan.skipped.length + simulation.skipped.length,
+      realizedPnl,
+      fees,
+      endingNetLiquidation: finalTotals.netLiquidation,
+      endingCash: finalTotals.cash,
+    },
+    fills: simulation.fills.map((fill) => ({
+      symbol: fill.symbol,
+      side: fill.side,
+      quantity: fill.quantity,
+      price: fill.price,
+      fees: fill.fees,
+      realizedPnl: fill.realizedPnl,
+      placedAt: fill.placedAt,
+      signalAt: fill.signalAt,
+      watchlists: fill.watchlists,
+    })),
+    skipped: [...signalScan.skipped, ...simulation.skipped],
     updatedAt: new Date(),
   };
 }

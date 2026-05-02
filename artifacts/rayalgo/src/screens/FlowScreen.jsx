@@ -33,18 +33,9 @@ import {
   useMarketFlowSnapshot,
   useMarketFlowSnapshotForStoreKey,
 } from "../features/platform/marketFlowStore";
+import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
+import { FlowScannerStatusPanel } from "../features/flow/FlowScannerStatusPanel.jsx";
 import {
-  Badge,
-  Card,
-  CardTitle,
-  ContractDetailInline,
-  DataUnavailableState,
-  OrderFlowDonut,
-  Pill,
-  SizeBucketRow,
-  _initialState,
-  bridgeRuntimeMessage,
-  bridgeRuntimeTone,
   buildDteBucketsFromEvents,
   buildFlowClockFromEvents,
   buildFlowTideFromEvents,
@@ -52,16 +43,32 @@ import {
   buildPutCallSummaryFromEvents,
   buildSectorFlowFromEvents,
   buildTickerFlowFromEvents,
-  flowProviderColor,
+} from "../features/flow/flowAnalytics";
+import {
+  OrderFlowDonut,
+  SizeBucketRow,
+} from "../features/flow/OrderFlowVisuals.jsx";
+import { flowProviderColor } from "../features/flow/flowPresentation";
+import {
+  bridgeRuntimeMessage,
+} from "../features/platform/bridgeRuntimeModel";
+import { normalizeTickerSymbol } from "../features/platform/tickerIdentity";
+import {
+  Badge,
+  Card,
+  CardTitle,
+  DataUnavailableState,
+  Pill,
+} from "../components/platform/primitives.jsx";
+import { _initialState, persistState } from "../lib/workspaceState";
+import {
   fmtCompactNumber,
   fmtM,
   formatExpirationLabel,
   formatRelativeTimeShort,
   isFiniteNumber,
   mapNewsSentimentToScore,
-  normalizeTickerSymbol,
-  persistState,
-} from "../RayAlgoPlatform";
+} from "../lib/formatters";
 import {
   MISSING_VALUE,
   T,
@@ -1339,7 +1346,6 @@ const FlowOverviewPanel = ({
     flowEvents.length / Math.max(1, flowClock.length),
   );
 
-  const bridgeTone = bridgeRuntimeTone(session);
   const ibkrLoginRequired =
     Boolean(session?.configured?.ibkr) &&
     !session?.ibkrBridge?.authenticated &&
@@ -2959,201 +2965,26 @@ const FlowOverviewPanel = ({
     );
   };
 
-  const unusualScannerLauncher = (
-    <Card
-      className={flowScannerEnabled ? "ra-scan-sweep" : "ra-panel-enter"}
-      style={{
-        padding: "8px 10px",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: sp(10),
-        flexWrap: "wrap",
-      }}
-    >
-      <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
-        <span
-          style={{
-            fontSize: fs(10),
-            fontWeight: 700,
-            fontFamily: T.display,
-            color: T.textSec,
-          }}
-        >
-          Flow Scanner
-        </span>
-        <span
-          style={{
-            fontSize: fs(8),
-            color: T.textDim,
-            fontFamily: T.mono,
-          }}
-        >
-          Runs the broader Flow universe sweep across the workspace. The header radio tower controls the same scanner and shows its published results.
-        </span>
-      </div>
-      <button
-        type="button"
-        onClick={toggleFlowScanner}
-        style={{
-          ...toolbarChipStyle(
-            flowScannerEnabled,
-            flowScannerTone,
-          ),
-          minWidth: dim(150),
-          color: flowScannerTone,
-          borderColor: flowScannerTone,
-        }}
-      >
-        {flowScannerEnabled ? "Stop Flow scan" : "Start Flow scan"}
-      </button>
-    </Card>
-  );
-
-  const flowHeader = (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: sp(8),
-        flexWrap: "wrap",
-        padding: sp("2px 2px 0"),
-        fontSize: fs(8),
-        fontFamily: T.mono,
-        color: T.textDim,
-      }}
-    >
-      <span>
-        Flow source ·{" "}
-        <span style={{ color: flowDisplayColor, fontWeight: 700 }}>
-          {flowDisplayLabel}
-        </span>
-        <span style={{ marginLeft: sp(8) }}>
-          Cycle{" "}
-          <span style={{ color: T.text, fontWeight: 700 }}>
-            {scannedCoverageSymbols}/{totalCoverageSymbols || scannedCoverageSymbols}
-          </span>
-          {coverage.isRotating
-            ? ` · rotating ${coverage.batchSize}/cycle`
-            : ` · full ${coverageModeLabel}`}
-          {intendedCoverageSymbols > selectedCoverageSymbols
-            ? ` · selected ${selectedCoverageSymbols}/${intendedCoverageSymbols}`
-            : ""}
-          {coverage.cooldownCount ? ` · ${coverage.cooldownCount} cooldown` : ""}
-          {newestScanAt
-            ? ` · latest ${formatRelativeTimeShort(
-                new Date(newestScanAt).toISOString(),
-              )}`
-            : ""}
-        </span>
-      </span>
-      <span
-        title={bridgeRuntimeMessage(session)}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(5),
-          color: bridgeTone.color,
-        }}
-      >
-        <span
-          style={{
-            width: dim(6),
-            height: dim(6),
-            background: bridgeTone.color,
-            display: "inline-block",
-          }}
-        />
-        IBKR {bridgeTone.label.toUpperCase()}
-      </span>
-    </div>
-  );
-  const flowQualityBar = (
-    <div
-      data-testid="flow-quality-bar"
-      role="status"
-      aria-label={`Flow quality ${flowQuality.label}`}
-      title={[
-        flowQuality.detail,
-        newestScanAt ? `Newest ${formatFlowAppTime(newestScanAt)}` : null,
-        oldestScanAt && oldestScanAt !== newestScanAt
-          ? `Oldest ${formatFlowAppTime(oldestScanAt)}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
-      style={{
-        display: "grid",
-        gridTemplateColumns: isMobileFlowLayout
-          ? "minmax(0, 1fr)"
-          : "minmax(120px, 0.34fr) minmax(180px, 1fr) auto",
-        gap: sp(8),
-        alignItems: "center",
-        padding: sp("7px 9px"),
-        border: `1px solid ${flowQuality.color}35`,
-        background: `${flowQuality.color}0f`,
-        fontFamily: T.mono,
-        fontSize: fs(8),
-        color: T.textDim,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
-        <span
-          style={{
-            width: dim(7),
-            height: dim(7),
-            background: flowQuality.color,
-            display: "inline-block",
-            flexShrink: 0,
-          }}
-        />
-        <span style={{ color: flowQuality.color, fontWeight: 800 }}>
-          {flowQuality.label.toUpperCase()}
-        </span>
-        <span style={{ color: T.textMuted }}>QUALITY</span>
-      </div>
-      <div
-        style={{
-          minWidth: 0,
-          display: "grid",
-          gridTemplateColumns: "minmax(86px, 0.24fr) minmax(0, 1fr)",
-          gap: sp(8),
-          alignItems: "center",
-        }}
-      >
-        <span style={{ color: T.textSec, whiteSpace: "nowrap" }}>
-          {scannedCoverageSymbols}/{totalCoverageSymbols || scannedCoverageSymbols} cycle
-        </span>
-        <div
-          style={{
-            height: dim(6),
-            background: T.bg3,
-            overflow: "hidden",
-            border: `1px solid ${T.border}`,
-          }}
-        >
-          <div
-            style={{
-              width: `${Math.max(3, Math.min(100, flowQuality.ratio * 100))}%`,
-              height: "100%",
-              background: flowQuality.color,
-            }}
-          />
-        </div>
-      </div>
-      <span
-        style={{
-          color: T.textDim,
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {flowQuality.detail}
-      </span>
-    </div>
+  const flowScannerStatusPanel = (
+    <FlowScannerStatusPanel
+      enabled={flowScannerEnabled}
+      ownerActive={flowScannerOwnerActive}
+      flowDisplayLabel={flowDisplayLabel}
+      flowDisplayColor={flowDisplayColor}
+      flowQuality={flowQuality}
+      coverage={coverage}
+      coverageModeLabel={coverageModeLabel}
+      scannedCoverageSymbols={scannedCoverageSymbols}
+      totalCoverageSymbols={totalCoverageSymbols}
+      intendedCoverageSymbols={intendedCoverageSymbols}
+      selectedCoverageSymbols={selectedCoverageSymbols}
+      newestScanAt={newestScanAt}
+      oldestScanAt={oldestScanAt}
+      scannerConfig={flowScannerControl.config}
+      onToggle={toggleFlowScanner}
+      toggleTone={flowScannerTone}
+      formatAppTime={formatFlowAppTime}
+    />
   );
 
   const flowPresetBar = (
@@ -3255,7 +3086,7 @@ const FlowOverviewPanel = ({
           minWidth: 0,
         }}
       >
-        {flowHeader}
+        {flowScannerStatusPanel}
 
         <Card
           data-testid="flow-top-toolbar"
@@ -3708,7 +3539,6 @@ const FlowOverviewPanel = ({
           ) : null}
         </Card>
 
-        {flowQualityBar}
         {flowPresetBar}
 
         <div
@@ -3745,7 +3575,7 @@ const FlowOverviewPanel = ({
             <Card
               noPad
               style={{
-                minHeight: dim(460),
+                minHeight: filtered.length ? dim(320) : undefined,
                 display: "flex",
                 flexDirection: "column",
               }}
@@ -4202,7 +4032,7 @@ const FlowOverviewPanel = ({
           <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
             {shouldRenderDeferredPanels ? (
               <>
-                <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
+                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle
                 right={
                   activeTicker ? (
@@ -4367,10 +4197,10 @@ const FlowOverviewPanel = ({
                 <Card
                   data-testid="flow-ticker-lens"
                   style={{
-                    padding: "8px 10px",
+                    padding: "6px 8px",
                     display: "flex",
                     flexDirection: "column",
-                    gap: sp(6),
+                    gap: sp(5),
                   }}
                 >
                   <CardTitle
@@ -4549,7 +4379,7 @@ const FlowOverviewPanel = ({
                   </div>
                 </Card>
 
-                <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
+                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle>Execution Stats</CardTitle>
               <div style={{ display: "grid", gridTemplateColumns: metricGridTemplate, gap: sp(6) }}>
                 {[
@@ -4591,7 +4421,7 @@ const FlowOverviewPanel = ({
               </div>
                 </Card>
 
-                <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(5) }}>
+                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(4) }}>
               <CardTitle
                 right={
                   <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
@@ -4644,7 +4474,7 @@ const FlowOverviewPanel = ({
                   ))}
                 </Card>
 
-                <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
+                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle
                 right={
                   <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
@@ -4743,7 +4573,7 @@ const FlowOverviewPanel = ({
               </div>
                 </Card>
 
-                <Card style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: sp(6) }}>
+                <Card style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: sp(5) }}>
               <CardTitle>Strike + Sector Map</CardTitle>
               <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
                 {strikeConcentration.length ? (
@@ -5536,7 +5366,6 @@ const FlowOverviewPanel = ({
           </>
         )}
 
-        {unusualScannerLauncher}
         {flowScannerPanelVisible ? (
           <UnusualScannerSection
             formatFlowAppTime={formatFlowAppTime}
@@ -5708,7 +5537,6 @@ const UnusualScannerSection = ({
     0,
   );
 
-  const bridgeTone = bridgeRuntimeTone(session);
   const ibkrLoginRequired =
     Boolean(session?.configured?.ibkr) &&
     !session?.ibkrBridge?.authenticated &&
@@ -5751,80 +5579,38 @@ const UnusualScannerSection = ({
             ? "No live options flow returned for the configured Flow universe yet."
             : "No contracts in the configured Flow universe have volume above open interest right now.";
 
-  const headerBar = (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: sp(8),
-        padding: sp("2px 2px 0"),
-        fontSize: fs(8),
-        fontFamily: T.mono,
-        color: T.textDim,
-      }}
-    >
-      <span>
-        Flow source ·{" "}
-        <span style={{ color: flowDisplayColor, fontWeight: 700 }}>
-          {flowDisplayLabel}
-        </span>
-        <span style={{ marginLeft: sp(8) }}>
-          Cycle{" "}
-          <span style={{ color: T.text, fontWeight: 700 }}>
-            {scannedCoverageSymbols}/{totalCoverageSymbols || scannedCoverageSymbols}
-          </span>{" "}
-          {coverageModeLabel} symbols
-          {intendedCoverageSymbols > selectedCoverageSymbols ? (
-            <span style={{ marginLeft: sp(6), color: T.textMuted }}>
-              · selected {selectedCoverageSymbols}/{intendedCoverageSymbols}
-            </span>
-          ) : null}
-          {coverage.isRotating ? (
-            <span style={{ marginLeft: sp(6), color: T.textMuted }}>
-              · rotating {coverage.batchSize}/cycle
-              {coverage.currentBatch?.length
-                ? ` · scanning ${coverage.currentBatch[0]}${coverage.currentBatch.length > 1 ? `–${coverage.currentBatch[coverage.currentBatch.length - 1]}` : ""}`
-                : ""}
-            </span>
-          ) : null}
-          {newestScanAt ? (
-            <span
-              style={{ marginLeft: sp(6), color: T.textMuted }}
-              title={
-                oldestScanAt
-                  ? `Oldest scan: ${formatScannerAppTime(oldestScanAt)} · Newest scan: ${formatScannerAppTime(newestScanAt)}`
-                  : undefined
-              }
-            >
-              · newest scan {formatRelativeTimeShort(new Date(newestScanAt).toISOString())}
-              {coverage.isRotating && oldestScanAt && oldestScanAt !== newestScanAt
-                ? ` · oldest ${formatRelativeTimeShort(new Date(oldestScanAt).toISOString())}`
-                : ""}
-            </span>
-          ) : null}
-        </span>
-      </span>
-      <span
-        title={bridgeRuntimeMessage(session)}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(5),
-          color: bridgeTone.color,
-        }}
-      >
-        <span
-          style={{
-            width: dim(6),
-            height: dim(6),
-            background: bridgeTone.color,
-            display: "inline-block",
-          }}
-        />
-        IBKR {bridgeTone.label.toUpperCase()}
-      </span>
-    </div>
+  const scannerFlowQuality = resolveFlowQuality({
+    flowStatus,
+    hasLiveFlow,
+    providerSummary,
+    coverage,
+    watchlistSymbols,
+    newestScanAt,
+    oldestScanAt,
+    livePaused: false,
+  });
+
+  const scannerStatusPanel = (
+    <FlowScannerStatusPanel
+      enabled
+      ownerActive={coverage.isFetching || flowStatus === "loading"}
+      flowDisplayLabel={flowDisplayLabel}
+      flowDisplayColor={flowDisplayColor}
+      flowQuality={scannerFlowQuality}
+      coverage={coverage}
+      coverageModeLabel={coverageModeLabel}
+      scannedCoverageSymbols={scannedCoverageSymbols}
+      totalCoverageSymbols={totalCoverageSymbols}
+      intendedCoverageSymbols={intendedCoverageSymbols}
+      selectedCoverageSymbols={selectedCoverageSymbols}
+      newestScanAt={newestScanAt}
+      oldestScanAt={oldestScanAt}
+      scannerConfig={scannerConfig}
+      toggleTone={flowDisplayColor || T.accent}
+      formatAppTime={formatScannerAppTime}
+      showToggle={false}
+      testId="flow-unusual-scanner-status-panel"
+    />
   );
 
   const kpiCards = [
@@ -5856,38 +5642,7 @@ const UnusualScannerSection = ({
 
   return (
     <>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: sp(6),
-          padding: "0 2px",
-        }}
-      >
-        <span
-          style={{
-            fontSize: fs(10),
-            fontWeight: 700,
-            fontFamily: T.display,
-            color: T.textSec,
-            letterSpacing: "0.02em",
-          }}
-        >
-          Flow Scanner
-        </span>
-        <div style={{ flex: 1, height: dim(1), background: T.border }} />
-        <span
-          style={{
-            fontSize: fs(8),
-            color: T.textDim,
-            fontFamily: T.mono,
-          }}
-        >
-          {coverageModeLabel} rotation
-        </span>
-      </div>
-
-      {headerBar}
+      {scannerStatusPanel}
 
       {watchlistSymbols.length > 0 ? (
         <Card style={{ padding: "6px 9px" }}>

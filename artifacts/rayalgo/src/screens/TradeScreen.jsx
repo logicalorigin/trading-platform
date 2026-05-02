@@ -29,20 +29,21 @@ import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
-  buildResearchChartModelIncremental,
-  clearChartHydrationScope,
   getChartBarLimit,
   getChartTimeframeOptions,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
   flowEventsToChartEvents,
   recordChartBarScopeState,
-  recordChartHydrationMetric,
   resolveRayReplicaRuntimeSettings,
   resolveSpotChartFrameLayout,
   useDrawingHistory,
   useIndicatorLibrary,
 } from "../features/charting";
+import {
+  useDebouncedVisibleRangeExpansion,
+  useMeasuredChartModel,
+} from "../features/charting/chartHydrationRuntime";
 import {
   clearTradeOptionChainSnapshot,
   getTradeOptionChainSnapshot,
@@ -60,33 +61,42 @@ import {
   useOptionChartBars,
 } from "../features/charting/useOptionChartBars.js";
 import {
-  HEAVY_PAYLOAD_GC_MS,
-  QUERY_DEFAULTS,
-  MiniChartTickerSearch,
-  TickerTabStrip,
   TradeEquityPanel,
   TradeL2Panel,
   TradeOrderTicket,
   TradePositionsPanel,
-  TradeStrategyGreeksPanel,
+} from "../features/trade/TradePanels.jsx";
+import { MiniChartTickerSearch } from "../features/platform/tickerSearch/TickerSearch.jsx";
+import { mapFlowEventToUi } from "../features/flow/flowEventMapper";
+import { TradeStrategyGreeksPanel } from "../features/trade/TradeStrategyGreeksPanel.jsx";
+import {
+  TickerTabStrip,
   TradeTickerHeader,
-  _initialState,
-  buildOptionChainRowsFromApi,
-  daysToExpiration,
+} from "../features/trade/TradeWorkspaceChrome.jsx";
+import { useChartTimeframeFavorites } from "../features/charting/useChartTimeframeFavorites";
+import {
   ensureTradeTickerInfo,
+  publishRuntimeTickerSnapshot,
+} from "../features/platform/runtimeTickerStore";
+import {
+  HEAVY_PAYLOAD_GC_MS,
+  QUERY_DEFAULTS,
+} from "../features/platform/queryDefaults";
+import {
+  usePositions,
+  useToast,
+} from "../features/platform/platformContexts.jsx";
+import { _initialState, persistState } from "../lib/workspaceState";
+import {
+  daysToExpiration,
   formatExpirationLabel,
   formatRelativeTimeShort,
   getAtmStrikeFromPrice,
   isFiniteNumber,
-  mapFlowEventToUi,
   parseExpirationValue,
-  publishRuntimeTickerSnapshot,
-  persistState,
-  useChartTimeframeFavorites,
-  usePositions,
-  useToast,
-} from "../RayAlgoPlatform";
+} from "../lib/formatters";
 import { TradeChainPanel } from "../features/trade/TradeChainPanel";
+import { buildOptionChainRowsFromApi } from "../features/trade/optionChainRows";
 import {
   OPTION_CHAIN_AUTO_BATCH_ENABLED,
   OPTION_CHAIN_BATCH_ACTIVE_CHUNKS,
@@ -123,7 +133,7 @@ import {
   motionRowStyle,
   motionVars,
 } from "../lib/motion";
-import { isOpenPositionRow } from "./account/accountPositionRows.js";
+import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
   staleTime: 5 * 60_000,
@@ -150,67 +160,6 @@ const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
 const TRADE_OPTION_CHART_FRAME_LAYOUT = resolveSpotChartFrameLayout(false);
 const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
 export const TRADE_RECENT_TICKER_LIMIT = 16;
-
-const useInstrumentedChartModel = ({ scopeKey, bars, buildInput, deps }) => {
-  const initialHydrationStartedAtRef = useRef(nowMs());
-  const hasRecordedFirstPaintRef = useRef(false);
-  const previousBuildStateRef = useRef(null);
-
-  useEffect(() => {
-    initialHydrationStartedAtRef.current = nowMs();
-    hasRecordedFirstPaintRef.current = false;
-    previousBuildStateRef.current = null;
-    clearChartHydrationScope(scopeKey);
-  }, [scopeKey]);
-
-  const chartModel = useMemo(() => {
-    const startedAt = nowMs();
-    const nextResult = buildResearchChartModelIncremental(
-      buildInput,
-      previousBuildStateRef.current,
-    );
-    previousBuildStateRef.current = nextResult.state;
-    recordChartHydrationMetric("modelBuildMs", nowMs() - startedAt, scopeKey);
-    return nextResult.model;
-  }, deps);
-
-  const latestBarSignature = useMemo(() => {
-    const lastBar = bars[bars.length - 1];
-    if (!lastBar) return "empty";
-    return [
-      bars.length,
-      lastBar.timestamp ?? lastBar.time ?? lastBar.ts ?? "",
-      lastBar.close ?? lastBar.c ?? "",
-      lastBar.volume ?? lastBar.v ?? "",
-    ].join("|");
-  }, [bars]);
-
-  useEffect(() => {
-    if (!chartModel.chartBars.length) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    const frame = requestAnimationFrame(() => {
-      if (cancelled || hasRecordedFirstPaintRef.current) {
-        return;
-      }
-      recordChartHydrationMetric(
-        "firstPaintMs",
-        nowMs() - initialHydrationStartedAtRef.current,
-        scopeKey,
-      );
-      hasRecordedFirstPaintRef.current = true;
-    });
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(frame);
-    };
-  }, [chartModel.chartBars.length, latestBarSignature, scopeKey]);
-
-  return chartModel;
-};
 
 const normalizeIndicatorSelection = (value, fallback = []) => {
   const source = Array.isArray(value) ? value : fallback;
@@ -447,9 +396,6 @@ const buildExpirationOptions = (expirations = []) =>
         (right.actualDate?.getTime?.() ?? 0),
     );
 
-const formatTradeMetric = (value, digits = 2) =>
-  Number.isFinite(value) ? Number(value).toFixed(digits) : MISSING_VALUE;
-
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
@@ -589,12 +535,14 @@ const TradePanelShell = ({
   meta = null,
   children,
   showHeader = true,
+  fill = false,
 }) => (
   <div
     data-testid={testId}
     className="ra-panel-enter"
     style={{
-      height: "100%",
+      height: fill ? "100%" : "auto",
+      alignSelf: fill ? "stretch" : "start",
       minHeight: 0,
       minWidth: 0,
       display: "flex",
@@ -607,8 +555,8 @@ const TradePanelShell = ({
     {showHeader ? (
       <div
         style={{
-          minHeight: dim(30),
-          padding: sp("6px 8px"),
+          minHeight: dim(26),
+          padding: sp("4px 7px"),
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -642,9 +590,9 @@ const TradePanelShell = ({
     ) : null}
     <div
       style={{
-        flex: 1,
+        flex: fill ? 1 : "0 1 auto",
         minHeight: 0,
-        padding: sp(8),
+        padding: sp(6),
         overflow: "hidden",
       }}
     >
@@ -749,6 +697,7 @@ const TradeContractDetailPanel = ({
     baseTimeframe: optionChartBaseTimeframe,
     chartProviderContractId,
     displayBars,
+    emptyOlderHistoryWindowCount,
     hasExhaustedOlderHistory,
     identityKey: optionContractScopeKey,
     isPrependingOlder,
@@ -763,6 +712,7 @@ const TradeContractDetailPanel = ({
     olderHistoryProviderNextUrl,
     olderHistoryProviderPageCount,
     olderHistoryProviderPageLimitReached,
+    prependOlderBars,
     prewarmTimeframe: prewarmFavoriteTimeframe,
     query: optionBarsQuery,
     streamedBars,
@@ -840,7 +790,7 @@ const TradeContractDetailPanel = ({
   useEffect(() => {
     persistState({ tradeOptionRayReplicaSettings: rayReplicaSettings });
   }, [rayReplicaSettings]);
-  const chartModel = useInstrumentedChartModel({
+  const chartModel = useMeasuredChartModel({
     scopeKey:
       optionContractScopeKey ||
       [
@@ -892,14 +842,12 @@ const TradeContractDetailPanel = ({
   const rowBid = selectedRow?.[`${sidePrefix}Bid`] ?? null;
   const rowAsk = selectedRow?.[`${sidePrefix}Ask`] ?? null;
   const rowMark = selectedRow?.[`${sidePrefix}Prem`] ?? null;
-  const rowIv = selectedRow?.[`${sidePrefix}Iv`] ?? null;
   const rowFreshness = selectedRow?.[`${sidePrefix}Freshness`] ?? "metadata";
   const rowQuoteUpdatedAt = selectedRow?.[`${sidePrefix}QuoteUpdatedAt`] ?? null;
   const bid = isFiniteNumber(liveQuote?.bid) ? liveQuote.bid : rowBid;
   const ask = isFiniteNumber(liveQuote?.ask) ? liveQuote.ask : rowAsk;
   const last = isFiniteNumber(liveQuote?.price) ? liveQuote.price : rowMark;
   const mark = getOptionMark(bid, ask, last) ?? rowMark;
-  const iv = liveQuote?.impliedVolatility ?? rowIv;
   const latestBar = displayBars[displayBars.length - 1] || null;
   const quoteFreshness = normalizeMarketFreshness(
     liveQuote?.freshness ?? rowFreshness,
@@ -971,7 +919,7 @@ const TradeContractDetailPanel = ({
       olderHistoryNextBeforeAt: olderHistoryNextBeforeMs
         ? new Date(olderHistoryNextBeforeMs).toISOString()
         : null,
-      emptyOlderHistoryWindowCount: 0,
+      emptyOlderHistoryWindowCount,
       olderHistoryPageCount,
       olderHistoryProvider,
       olderHistoryExhaustionReason,
@@ -986,6 +934,7 @@ const TradeContractDetailPanel = ({
   }, [
     baseBars.length,
     displayBars.length,
+    emptyOlderHistoryWindowCount,
     hasExhaustedOlderHistory,
     isPrependingOlder,
     oldestLoadedAtMs,
@@ -1005,6 +954,56 @@ const TradeContractDetailPanel = ({
     statusLabel,
     streamedBars.length,
   ]);
+
+  const expandOptionVisibleLogicalRange = useCallback(
+    (range) => {
+      if (!range) {
+        return;
+      }
+
+      const visibleBars = Math.max(1, Math.ceil(range.to - range.from));
+      const leftEdgeBufferBars = Math.max(
+        24,
+        Math.min(144, Math.ceil(visibleBars * 0.2)),
+      );
+      if (range.from > leftEdgeBufferBars) {
+        return;
+      }
+
+      const maxLimit = getMaxChartBarLimit(optionChartTimeframe, "option");
+      if (optionBarsLimit < maxLimit) {
+        setOptionBarsLimit((current) =>
+          Math.min(
+            maxLimit,
+            Math.max(
+              getChartBarLimit(optionChartTimeframe, "option"),
+              Math.ceil(current * 2),
+              Math.ceil(displayBars.length * 1.5),
+            ),
+          ),
+        );
+        return;
+      }
+
+      prependOlderBars?.({
+        pageSize: Math.max(
+          getInitialChartBarLimit(optionChartTimeframe, "option"),
+          Math.ceil(visibleBars * 2),
+          240,
+        ),
+      });
+    },
+    [
+      displayBars.length,
+      optionBarsLimit,
+      optionChartTimeframe,
+      prependOlderBars,
+    ],
+  );
+  const scheduleOptionVisibleRangeExpansion =
+    useDebouncedVisibleRangeExpansion(expandOptionVisibleLogicalRange, {
+      resetKey: `${optionContractScopeKey}:${optionChartTimeframe}`,
+    });
 
   useEffect(() => {
     if (!ticker || !optionIdentityReady) {
@@ -1033,67 +1032,17 @@ const TradeContractDetailPanel = ({
       title="CONTRACT"
       meta={heldCount ? `${heldCount} held / ${statusLabel}` : statusLabel}
       showHeader={false}
+      fill
     >
       <div
         style={{
           height: "100%",
           display: "grid",
-          gridTemplateRows: "auto minmax(0, 1fr) auto",
-          gap: sp(8),
+          gridTemplateRows: "minmax(0, 1fr) auto",
+          gap: sp(6),
           minHeight: 0,
         }}
       >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-            gap: sp(6),
-          }}
-        >
-          {[
-            ["MARK", formatTradeMetric(mark)],
-            ["BID", formatTradeMetric(bid)],
-            ["ASK", formatTradeMetric(ask)],
-            [
-              "IV",
-              Number.isFinite(iv) ? `${(iv * 100).toFixed(1)}%` : MISSING_VALUE,
-            ],
-          ].map(([label, value], index) => (
-            <div
-              key={label}
-              className="ra-row-enter"
-              style={{
-                ...motionRowStyle(index, 15, 60),
-                border: `1px solid ${T.border}`,
-                background: T.bg0,
-                padding: sp("6px 7px"),
-                minWidth: 0,
-              }}
-            >
-              <div
-                style={{
-                  color: T.textMuted,
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                  fontWeight: 800,
-                }}
-              >
-                {label}
-              </div>
-              <div
-                style={{
-                  color: T.text,
-                  fontSize: fs(12),
-                  fontFamily: T.mono,
-                  fontWeight: 800,
-                  marginTop: sp(2),
-                }}
-              >
-                {value}
-              </div>
-            </div>
-          ))}
-        </div>
         <div style={{ position: "relative", minHeight: 0, height: "100%" }}>
           <ResearchChartFrame
             dataTestId="trade-contract-option-chart"
@@ -1203,20 +1152,7 @@ const TradeContractDetailPanel = ({
             surfaceBottomOverlayHeight={
               TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceBottomOverlayHeight
             }
-            onVisibleLogicalRangeChange={(range) => {
-              if (!range || range.from > 48) {
-                return;
-              }
-              setOptionBarsLimit((current) =>
-                Math.min(
-                  getMaxChartBarLimit(optionChartTimeframe, "option"),
-                  Math.max(
-                    getChartBarLimit(optionChartTimeframe, "option"),
-                    Math.ceil(current * 2),
-                  ),
-                ),
-              );
-            }}
+            onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
           />
           {!displayBars.length ? (
             <div
@@ -1340,10 +1276,10 @@ const TradeSpotFlowPanel = ({ ticker }) => {
     >
       <div
         style={{
-          height: "100%",
+          height: "auto",
           display: "grid",
-          gridTemplateRows: "auto 1fr",
-          gap: sp(8),
+          gridTemplateRows: "auto auto",
+          gap: sp(6),
           color: T.textSec,
           fontFamily: T.sans,
           fontSize: fs(10),
@@ -1367,7 +1303,7 @@ const TradeSpotFlowPanel = ({ ticker }) => {
           style={{
             border: `1px solid ${T.border}`,
             background: T.bg0,
-            padding: sp(8),
+            padding: sp(6),
             overflow: "hidden",
           }}
         >
@@ -1404,7 +1340,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
     >
       <div
         style={{
-          height: "100%",
+          height: "auto",
           display: "flex",
           flexDirection: "column",
           gap: sp(5),
@@ -1444,7 +1380,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
         ) : (
           <div
             style={{
-              height: "100%",
+              minHeight: dim(72),
               display: "grid",
               placeItems: "center",
               color: T.textDim,
@@ -1579,7 +1515,8 @@ const TradeFlowRuntime = ({ ticker, enabled }) => {
     }
 
     const liveEvents =
-      tickerFlowQuery.data?.events?.map(mapFlowEventToUi) || [];
+      tickerFlowQuery.data?.events?.map((event) => mapFlowEventToUi(event)) ||
+      [];
     const events = liveEvents.length
       ? liveEvents.sort((left, right) => right.premium - left.premium)
       : [];
@@ -2559,7 +2496,7 @@ export const TradeScreen = ({
         exp: "",
       };
     })();
-  const tradeLiveStreamsEnabled = !tradeTickerSearchAnchor;
+  const tradeLiveStreamsEnabled = Boolean(isVisible && !tradeTickerSearchAnchor);
   const tradeBrokerStreamingEnabled = Boolean(
     tradeLiveStreamsEnabled && stockAggregateStreamingEnabled,
   );
@@ -2590,7 +2527,6 @@ export const TradeScreen = ({
           updatedAt: new Date().toISOString(),
         },
       };
-      persistState({ tradeWorkspaces: next });
       return next;
     });
   }, []);
@@ -3266,7 +3202,7 @@ export const TradeScreen = ({
             display: "grid",
             gridTemplateColumns: "1.55fr 0.95fr 1.2fr",
             gap: sp(6),
-            height: dim(360),
+            height: dim(320),
             flexShrink: 0,
           }}
         >
@@ -3300,7 +3236,7 @@ export const TradeScreen = ({
             gridTemplateColumns:
               "minmax(280px, 1fr) minmax(280px, 1fr) minmax(360px, 1.4fr)",
             gap: sp(6),
-            height: dim(348),
+            height: dim(300),
             flexShrink: 0,
           }}
         >

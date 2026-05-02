@@ -25,7 +25,10 @@ import {
   getChartTimeframeStepMs,
   normalizeChartTimeframe,
 } from "./timeframes";
-import { normalizeTimeframeBucketStartMs } from "./timeframeRollups";
+import {
+  expandLocalRollupLimit,
+  normalizeTimeframeBucketStartMs,
+} from "./timeframeRollups";
 
 type UseBrokerStreamedBarsInput = {
   symbol: string;
@@ -59,6 +62,7 @@ type UseHistoricalBarStreamInput = {
 type UsePrependableHistoricalBarsInput = {
   scopeKey: string;
   timeframe: string;
+  pageSizeTimeframe?: string;
   bars?: MarketBar[] | null;
   enabled?: boolean;
   fetchOlderBars?: (input: {
@@ -227,6 +231,27 @@ const resolvePrependLookbackMs = (
     return pageWindowMs;
   }
   return Math.max(pageWindowMs * 3, INTRADAY_PREPEND_MIN_LOOKBACK_MS);
+};
+
+const resolvePrependRequestPageSize = ({
+  pageSize,
+  pageSizeTimeframe,
+  timeframe,
+}: {
+  pageSize: number;
+  pageSizeTimeframe?: string | null;
+  timeframe: string;
+}): number => {
+  const normalizedPageSize = Math.max(1, Math.ceil(pageSize));
+  const normalizedPageSizeTimeframe = normalizeChartTimeframe(
+    pageSizeTimeframe || timeframe,
+  );
+
+  return expandLocalRollupLimit(
+    normalizedPageSize,
+    normalizedPageSizeTimeframe,
+    timeframe,
+  );
 };
 
 const resolveQuoteUpdatedAtMs = (
@@ -977,6 +1002,7 @@ const patchBarsWithLiveQuote = (
 export const usePrependableHistoricalBars = ({
   scopeKey,
   timeframe,
+  pageSizeTimeframe,
   bars,
   enabled = true,
   fetchOlderBars,
@@ -1070,7 +1096,11 @@ export const usePrependableHistoricalBars = ({
         return 0;
       }
 
-      const requestedPageSize = Math.max(1, Math.ceil(input?.pageSize ?? 0));
+      const requestedPageSize = resolvePrependRequestPageSize({
+        pageSize: input?.pageSize ?? 0,
+        pageSizeTimeframe,
+        timeframe,
+      });
       const requestToMs = Math.max(
         0,
         sharedState.olderHistoryNextBeforeMs ?? oldestMs - 1,
@@ -1280,6 +1310,7 @@ export const usePrependableHistoricalBars = ({
       sharedState.olderHistoryCursor,
       sharedState.olderHistoryProviderPageLimitReached,
       scopeKey,
+      pageSizeTimeframe,
       timeframe,
     ],
   );
@@ -1637,5 +1668,6 @@ export const __chartStreamingTestInternals = {
   patchBarsWithHistoricalBarStream,
   isHistoricalBarStreamPayloadForUrl,
   resolvePrependLookbackMs,
+  resolvePrependRequestPageSize,
   resolvePatchedBarLimit,
 };

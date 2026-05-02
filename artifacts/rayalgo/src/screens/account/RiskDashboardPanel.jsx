@@ -13,7 +13,7 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
-import { buildAccountRiskDisplayModel } from "./accountPositionRows.js";
+import { buildAccountRiskDisplayModel } from "../../features/account/accountPositionRows.js";
 
 const ratioPercent = (value, maskValues = false) =>
   value == null || Number.isNaN(Number(value))
@@ -176,7 +176,7 @@ export const RiskDashboardPanel = ({
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
-      minHeight={compact ? 246 : 270}
+      minHeight={compact ? 196 : 220}
     >
       {!data ? (
         <EmptyState title="Risk unavailable" body="Risk metrics load after account and position streams are connected." />

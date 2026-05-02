@@ -207,7 +207,7 @@ test("display chart session policy is stable across intervals", () => {
 
 test("platform display chart requests do not branch outsideRth by interval", () => {
   const platformSource = readFileSync(
-    new URL("../../RayAlgoPlatform.jsx", import.meta.url),
+    new URL("../platform/PlatformApp.jsx", import.meta.url),
     "utf8",
   );
 

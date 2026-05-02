@@ -29,6 +29,31 @@ const WATCHLIST_IDENTITY_EMPTY_FIELDS = Object.freeze({
 const readIdentityValue = (value) =>
   typeof value === "string" && value.trim() ? value.trim() : null;
 
+export const buildWatchlistIdentityPayload = (source = {}) => {
+  if (!source || typeof source !== "object") {
+    return {};
+  }
+
+  const normalizedExchangeMic = readIdentityValue(
+    source.normalizedExchangeMic || source.primaryExchange,
+  );
+  const exchangeDisplay = readIdentityValue(
+    source.exchangeDisplay || source.primaryExchange || normalizedExchangeMic,
+  );
+
+  return Object.fromEntries(
+    [
+      ["market", readIdentityValue(source.market)],
+      ["normalizedExchangeMic", normalizedExchangeMic],
+      ["exchangeDisplay", exchangeDisplay],
+      ["countryCode", readIdentityValue(source.countryCode)],
+      ["exchangeCountryCode", readIdentityValue(source.exchangeCountryCode)],
+      ["sector", readIdentityValue(source.sector)],
+      ["industry", readIdentityValue(source.industry)],
+    ].filter(([, value]) => Boolean(value)),
+  );
+};
+
 const normalizeIdentityFields = (item) => ({
   market: readIdentityValue(item?.market),
   normalizedExchangeMic: readIdentityValue(item?.normalizedExchangeMic),

@@ -186,6 +186,83 @@ export type FlowEvent = {
   sourceBasis?: "confirmed_trade" | "snapshot_activity" | "fallback_estimate";
 };
 
+export type PolygonApiDiagnosticsStatus =
+  | "ok"
+  | "degraded"
+  | "unconfigured"
+  | "unknown";
+
+export type PolygonApiDiagnostics = {
+  configured: boolean;
+  status: PolygonApiDiagnosticsStatus;
+  baseUrl: string | null;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastError: string | null;
+};
+
+const polygonApiDiagnosticsState: {
+  lastSuccessAt: Date | null;
+  lastFailureAt: Date | null;
+  lastError: string | null;
+} = {
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  lastError: null,
+};
+
+const polygonErrorMessage = (error: unknown): string =>
+  error instanceof Error && error.message
+    ? error.message
+    : typeof error === "string" && error.trim()
+      ? error
+      : "Polygon request failed.";
+
+export function recordPolygonApiSuccess(at: Date = new Date()): void {
+  polygonApiDiagnosticsState.lastSuccessAt = at;
+}
+
+export function recordPolygonApiFailure(
+  error: unknown,
+  at: Date = new Date(),
+): void {
+  polygonApiDiagnosticsState.lastFailureAt = at;
+  polygonApiDiagnosticsState.lastError = polygonErrorMessage(error);
+}
+
+export function getPolygonApiDiagnostics(
+  config: PolygonRuntimeConfig | null | undefined,
+): PolygonApiDiagnostics {
+  if (!config) {
+    return {
+      configured: false,
+      status: "unconfigured",
+      baseUrl: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastError: null,
+    };
+  }
+
+  const lastSuccessAt = polygonApiDiagnosticsState.lastSuccessAt;
+  const lastFailureAt = polygonApiDiagnosticsState.lastFailureAt;
+  const status: PolygonApiDiagnosticsStatus =
+    lastFailureAt && (!lastSuccessAt || lastFailureAt > lastSuccessAt)
+      ? "degraded"
+      : lastSuccessAt
+        ? "ok"
+        : "unknown";
+
+  return {
+    configured: true,
+    status,
+    baseUrl: config.baseUrl,
+    lastSuccessAt: lastSuccessAt?.toISOString() ?? null,
+    lastFailureAt: lastFailureAt?.toISOString() ?? null,
+    lastError: polygonApiDiagnosticsState.lastError,
+  };
+}
+
 const TIMEFRAME_TO_POLYGON_RANGE: Record<
   BarTimeframe,
   { multiplier: number; timespan: string; stepMs: number }
@@ -952,6 +1029,20 @@ export class PolygonMarketDataClient {
 
   constructor(private readonly config: PolygonRuntimeConfig) {}
 
+  private async fetchJson<T>(
+    input: string | URL,
+    init: RequestInit = {},
+  ): Promise<T> {
+    try {
+      const payload = await fetchJson<T>(input, init);
+      recordPolygonApiSuccess();
+      return payload;
+    } catch (error) {
+      recordPolygonApiFailure(error);
+      throw error;
+    }
+  }
+
   private buildUrl(pathOrUrl: string, params: Record<string, unknown> = {}): URL {
     const baseUrl = pathOrUrl.startsWith("http")
       ? pathOrUrl
@@ -970,7 +1061,7 @@ export class PolygonMarketDataClient {
       return [];
     }
 
-    const payload = await fetchJson<unknown>(
+    const payload = await this.fetchJson<unknown>(
       this.buildUrl("/v2/snapshot/locale/us/markets/stocks/tickers", {
         tickers: normalizedSymbols.join(","),
       }),
@@ -1044,7 +1135,7 @@ export class PolygonMarketDataClient {
       let rawProviderNextUrl: string | null = null;
       let pageCount = 0;
       while (nextUrl && pageCount < AGGREGATE_NEXT_PAGE_MAX) {
-        const payload = await fetchJson<unknown>(nextUrl);
+        const payload = await this.fetchJson<unknown>(nextUrl);
         const record = asRecord(payload);
         bars.push(...compact(asArray(record?.["results"]).map(mapAggregateBar)));
         const rawNextUrl = asString(record?.["next_url"]);
@@ -1147,7 +1238,7 @@ export class PolygonMarketDataClient {
     let pageCount = 0;
 
     while (nextUrl && pageCount < AGGREGATE_NEXT_PAGE_MAX) {
-      const payload = await fetchJson<unknown>(nextUrl);
+      const payload = await this.fetchJson<unknown>(nextUrl);
       const record = asRecord(payload);
       bars.push(...compact(asArray(record?.["results"]).map(mapAggregateBar)));
       const rawNextUrl = asString(record?.["next_url"]);
@@ -1222,7 +1313,7 @@ export class PolygonMarketDataClient {
     ticker?: string;
     limit?: number;
   }): Promise<NewsArticle[]> {
-    const payload = await fetchJson<unknown>(
+    const payload = await this.fetchJson<unknown>(
       this.buildUrl("/v2/reference/news", {
         ticker: input.ticker ? normalizeSymbol(input.ticker) : undefined,
         order: "desc",
@@ -1264,7 +1355,7 @@ export class PolygonMarketDataClient {
     const limit = Number.isFinite(input.limit)
       ? Math.max(1, Math.floor(Number(input.limit)))
       : 50;
-    const payload = await fetchJson<unknown>(
+    const payload = await this.fetchJson<unknown>(
       this.buildUrl("/v3/reference/tickers", {
         search: input.cusip ? undefined : asString(input.search),
         cusip: asString(input.cusip),
@@ -1324,7 +1415,7 @@ export class PolygonMarketDataClient {
       return { count: 0, results: [], nextUrl: null };
     }
 
-    const payload = await fetchJson<unknown>(
+    const payload = await this.fetchJson<unknown>(
       input.cursorUrl
         ? this.buildUrl(input.cursorUrl)
         : this.buildUrl("/v3/reference/tickers", {
@@ -1360,7 +1451,7 @@ export class PolygonMarketDataClient {
 
     let logoUrl: string | null = null;
     try {
-      const payload = await fetchJson<unknown>(
+      const payload = await this.fetchJson<unknown>(
         this.buildUrl(`/v3/reference/tickers/${encodeURIComponent(normalizedTicker)}`),
         { signal },
       );
@@ -1425,7 +1516,7 @@ export class PolygonMarketDataClient {
     const normalizedTicker = normalizeSymbol(ticker);
     if (!normalizedTicker) return null;
 
-    const payload = await fetchJson<unknown>(
+    const payload = await this.fetchJson<unknown>(
       this.buildUrl(`/v3/reference/tickers/${encodeURIComponent(normalizedTicker)}`),
       { signal },
     );
@@ -1445,7 +1536,7 @@ export class PolygonMarketDataClient {
   private async fetchChainPage(
     nextUrl: string,
   ): Promise<{ results: unknown[]; nextUrl: string | null }> {
-    const payload = await fetchJson<unknown>(this.buildUrl(nextUrl));
+    const payload = await this.fetchJson<unknown>(this.buildUrl(nextUrl));
     const record = asRecord(payload);
 
     return {
@@ -1580,7 +1671,7 @@ export class PolygonMarketDataClient {
           limit: OPTION_FLOW_SNAPSHOT_PAGE_LIMIT,
         },
       );
-      const payload = await fetchJson<unknown>(fallbackUrl);
+      const payload = await this.fetchJson<unknown>(fallbackUrl);
       const record = asRecord(payload);
       results.push(...asArray(record?.["results"]));
     }

@@ -4,7 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./TradeScreen.jsx", import.meta.url), "utf8");
 const platformSource = readFileSync(
-  new URL("../RayAlgoPlatform.jsx", import.meta.url),
+  new URL("../features/platform/PlatformApp.jsx", import.meta.url),
   "utf8",
 );
 

@@ -2,7 +2,7 @@ import {
   joinBenchmarkPercentSeries,
   normalizeEquityPointSeries,
 } from "./equityCurveData.js";
-import { getOpenPositionRows } from "./accountPositionRows.js";
+import { getOpenPositionRows } from "../../features/account/accountPositionRows.js";
 
 const DEFAULT_BENCHMARK_LABELS = {
   SPY: "SPY",

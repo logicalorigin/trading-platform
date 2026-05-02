@@ -80,3 +80,48 @@ test("account position hydration derives mark, day P&L, and unrealized P&L from 
   assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 43.45);
   assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
 });
+
+test("account margin usage is sourced from IBKR initial margin", async () => {
+  const { __accountMarginInternalsForTests } = await import("./account");
+  const margin =
+    __accountMarginInternalsForTests.buildAccountMarginSnapshot([
+      {
+        initialMargin: 12_500,
+        maintenanceMargin: 9_400,
+        excessLiquidity: 80_000,
+        cushion: 0.82,
+        netLiquidation: 100_000,
+        dayTradingBuyingPower: 260_000,
+        sma: 50_000,
+        regTInitialMargin: 11_250,
+      },
+    ] as any);
+
+  assert.equal(margin.marginUsed, 12_500);
+  assert.equal(margin.maintenanceMargin, 9_400);
+  assert.equal(margin.providerFields.marginUsed, "InitMarginReq");
+  assert.equal(margin.marginUsedUsesMaintenanceFallback, false);
+});
+
+test("account margin usage labels maintenance fallback when initial margin is missing", async () => {
+  const { __accountMarginInternalsForTests } = await import("./account");
+  const margin =
+    __accountMarginInternalsForTests.buildAccountMarginSnapshot([
+      {
+        initialMargin: null,
+        maintenanceMargin: 7_300,
+        excessLiquidity: 45_000,
+        cushion: 0.74,
+        netLiquidation: 70_000,
+      },
+    ] as any);
+
+  assert.equal(margin.marginUsed, 7_300);
+  assert.equal(
+    margin.providerFields.marginUsed,
+    "MaintMarginReq (fallback; InitMarginReq missing)",
+  );
+  assert.equal(margin.providerFields.marginUsedAuthoritative, "InitMarginReq");
+  assert.equal(margin.providerFields.marginUsedFallback, "MaintMarginReq");
+  assert.equal(margin.marginUsedUsesMaintenanceFallback, true);
+});

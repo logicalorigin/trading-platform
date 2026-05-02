@@ -23,7 +23,8 @@
     },
     "artifacts/rayalgo": {
       "entry": ["src/main.tsx", "src/main.jsx", "index.html", "vite.config.ts"],
-      "project": "src/**/*.{ts,tsx,js,jsx}"
+      "project": "src/**/*.{ts,tsx,js,jsx}",
+      "ignoreDependencies": ["tailwindcss"]
     },
     "lib/api-spec": {
       "entry": ["src/index.ts", "scripts/**/*.{ts,mjs}"],
@@ -42,6 +43,10 @@
       "project": "src/**/*.ts"
     },
     "lib/backtest-core": {
+      "entry": ["src/index.ts"],
+      "project": "src/**/*.ts"
+    },
+    "lib/ibkr-contracts": {
       "entry": ["src/index.ts"],
       "project": "src/**/*.ts"
     }

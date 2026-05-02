@@ -232,10 +232,18 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     page.getByRole("status", { name: /IWM options premium flow No options flow/i }),
   ).toBeVisible();
   await expect(page.locator("[data-premium-flow-glyph]")).toHaveCount(0);
+  await expect(
+    page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
+  ).toBeVisible();
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(6);
+  const chartFlowUrls = flowUrls.filter((href) => {
+    const params = new URL(href).searchParams;
+    return params.get("scope") !== "unusual";
+  });
+  expect(chartFlowUrls.length).toBeGreaterThanOrEqual(6);
   expect(
-    flowUrls.some((href) => new URL(href).searchParams.has("unusualThreshold")),
+    chartFlowUrls.some((href) => new URL(href).searchParams.has("unusualThreshold")),
   ).toBe(false);
 
   const layout = await strips.evaluateAll((nodes) =>
@@ -262,7 +270,9 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     expect(item.bottomGap ?? -1).toBeGreaterThanOrEqual(-1);
   }
 
-  await page.getByTitle("Settings").first().click();
+  const firstChartFrame = page.getByTestId("market-mini-chart-0");
+  await firstChartFrame.hover();
+  await firstChartFrame.getByRole("button", { name: "Settings" }).click();
   const displayMenu = page.getByRole("menu").filter({ hasText: "Display" }).first();
   await expect(displayMenu).toBeVisible();
   await expect
@@ -279,7 +289,7 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     .toBe(true);
 
   await page.keyboard.press("Escape");
-  await page.getByTitle("Tune RayReplica overlay settings").first().click();
+  await firstChartFrame.getByTitle("Tune RayReplica overlay settings").click();
   const rayReplicaTitle = page.getByText("RayReplica Settings").first();
   await expect(rayReplicaTitle).toBeVisible();
   await expect

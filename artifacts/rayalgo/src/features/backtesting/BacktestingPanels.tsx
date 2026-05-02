@@ -895,7 +895,7 @@ function buttonStyle(
     background,
     color,
     borderRadius: scale.dim(5),
-    padding: scale.sp("8px 12px"),
+    padding: scale.sp("6px 9px"),
     fontFamily: theme.sans,
     fontSize: scale.fs(10),
     fontWeight: 700,
@@ -908,7 +908,7 @@ function cardStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
     background: theme.bg2,
     border: `1px solid ${theme.border}`,
     borderRadius: scale.dim(6),
-    padding: scale.sp("12px 14px"),
+    padding: scale.sp("8px 10px"),
   };
 }
 
@@ -2679,11 +2679,12 @@ export function BacktestWorkspace({
 
   return (
     <div
+      data-testid="backtest-workspace"
       style={{
-        padding: scale.sp(12),
+        padding: scale.sp(8),
         display: "flex",
         flexDirection: "column",
-        gap: scale.sp(10),
+        gap: scale.sp(8),
         height: "100%",
         overflowY: "auto",
       }}
@@ -3404,6 +3405,7 @@ export function BacktestWorkspace({
               <div style={{ height: scale.dim(460) }}>
                 {spotChartModel ? (
                   <ResearchChartFrame
+                    dataTestId="backtest-spot-chart"
                     theme={theme}
                     themeKey="backtest-workspace-spot"
                     rangeIdentityKey={`backtest-spot:${selectedRunId}:${selectedChartSymbol}:${selectedChartTimeframe}`}
@@ -3544,6 +3546,7 @@ export function BacktestWorkspace({
               <div style={{ height: scale.dim(460) }}>
                 {optionChartHasRenderablePayload && runChartModel ? (
                   <ResearchChartFrame
+                    dataTestId="backtest-options-chart"
                     theme={theme}
                     themeKey="backtest-workspace-options"
                     rangeIdentityKey={`backtest-options:${selectedRunId}:${selectedChartSymbol}:${selectedChartTimeframe}`}

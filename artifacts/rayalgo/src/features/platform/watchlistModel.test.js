@@ -2,10 +2,36 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   WATCHLIST_SORT_MODE,
+  buildWatchlistIdentityPayload,
   buildWatchlistRows,
   countWatchlistSymbols,
   sortWatchlistRows,
 } from "./watchlistModel.js";
+
+test("buildWatchlistIdentityPayload normalizes ticker-search identity fields", () => {
+  assert.deepEqual(
+    buildWatchlistIdentityPayload({
+      market: "stocks",
+      primaryExchange: " XNAS ",
+      countryCode: "US",
+      exchangeCountryCode: "US",
+      sector: "Technology",
+      industry: "Semiconductors",
+      empty: "",
+    }),
+    {
+      market: "stocks",
+      normalizedExchangeMic: "XNAS",
+      exchangeDisplay: "XNAS",
+      countryCode: "US",
+      exchangeCountryCode: "US",
+      sector: "Technology",
+      industry: "Semiconductors",
+    },
+  );
+
+  assert.deepEqual(buildWatchlistIdentityPayload(null), {});
+});
 
 test("buildWatchlistRows preserves canonical watchlist item metadata", () => {
   const rows = buildWatchlistRows({

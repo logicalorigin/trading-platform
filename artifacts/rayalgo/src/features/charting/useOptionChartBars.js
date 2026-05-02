@@ -248,6 +248,7 @@ export function useOptionChartBars({
   const prependableBars = usePrependableHistoricalBars({
     scopeKey: baseBarsScopeKey,
     timeframe: baseTimeframe,
+    pageSizeTimeframe: timeframe,
     bars: baseBars,
     enabled: Boolean(enabled && identityReady),
     fetchOlderBars: useCallback(

@@ -2174,42 +2174,31 @@ export default function BloombergLiveDock() {
     }
     const hls = hlsRef.current;
     const video = videoRef.current;
-    if (pageVisible) {
-      if (hls) {
-        try {
-          hls.startLoad(-1);
-        } catch {
-          /* hls already loading */
-        }
-      }
-      if (
-        video &&
-        wasPlayingBeforeHiddenRef.current &&
-        playerStatus !== "error" &&
-        (video.readyState >= 2 || video.currentSrc)
-      ) {
-        wasPlayingBeforeHiddenRef.current = false;
-        void startPlayback();
-        syncPlaybackState();
-      }
-    } else {
-      if (hls) {
-        try {
-          hls.stopLoad();
-        } catch {
-          /* hls already stopped */
-        }
-      }
+    if (!pageVisible) {
+      // Keep the Bloomberg session alive while hidden; only remember whether
+      // the browser should be nudged back into playback when visibility returns.
       wasPlayingBeforeHiddenRef.current = Boolean(
         video && (!video.paused || playerStatus === "loading"),
       );
-      if (video && !video.paused) {
-        try {
-          video.pause();
-        } catch {
-          /* video element already gone */
-        }
+      return undefined;
+    }
+
+    if (hls) {
+      try {
+        hls.startLoad(-1);
+      } catch {
+        /* hls already loading */
       }
+    }
+    if (
+      video &&
+      wasPlayingBeforeHiddenRef.current &&
+      playerStatus !== "error" &&
+      (video.readyState >= 2 || video.currentSrc)
+    ) {
+      wasPlayingBeforeHiddenRef.current = false;
+      void startPlayback();
+      syncPlaybackState();
     }
     return undefined;
   }, [

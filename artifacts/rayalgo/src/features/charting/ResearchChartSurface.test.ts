@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ChartEvent } from "./chartEvents";
 import {
   buildChartLegendStudyItems,
   expandStudySpecsForRender,
@@ -14,12 +15,14 @@ import {
   resolveAutoHydrationVisibleRange,
   resolveChartPlotPanRange,
   resolveChartPlotPanStart,
+  resolvePreferenceRightOffset,
   resolveDashboardStripAnchorStyle,
   resolveDashboardStripTier,
   resolveEffectiveChartViewportSnapshot,
   resolveVisibleRangeChangeSource,
   resolveVisibleRangePublishDecision,
   resolveVisibleRangePublishState,
+  resolveVisibleChartEvents,
   resolveViewportRestoreState,
   resolveViewportVisibleLogicalRange,
   resolveSeriesTailUpdateMode,
@@ -49,6 +52,32 @@ const dashboardFixture = {
     { label: "D1", value: "BULL", color: "#22c55e" },
   ],
 };
+
+const unusualFlowChartEvent: ChartEvent = {
+  id: "uoa:SPY:1",
+  symbol: "SPY",
+  eventType: "unusual_flow",
+  time: "2026-05-01T14:30:00.000Z",
+  placement: "bar",
+  severity: "high",
+  label: "CALL $950K",
+  summary: "SPY 500 C unusual flow $950K",
+  source: "flow",
+  confidence: 0.8,
+  bias: "bullish",
+  actions: ["open_flow"],
+  metadata: {},
+};
+
+test("ResearchChartSurface keeps UOA chart events visible when execution markers are disabled", () => {
+  assert.deepEqual(
+    resolveVisibleChartEvents({
+      chartEvents: [unusualFlowChartEvent],
+      showExecutionMarkers: false,
+    }),
+    [unusualFlowChartEvent],
+  );
+});
 
 test("ResearchChartSurface clamps overlay rectangles inside the plot viewport", () => {
   assert.deepEqual(
@@ -463,7 +492,7 @@ test("ResearchChartSurface normalizes visible range publish state", () => {
   );
 });
 
-test("ResearchChartSurface classifies initialized non-programmatic range changes as user intent", () => {
+test("ResearchChartSurface requires explicit viewport input for user-touched ranges", () => {
   assert.equal(
     resolveVisibleRangeChangeSource({
       initialized: true,
@@ -472,7 +501,7 @@ test("ResearchChartSurface classifies initialized non-programmatic range changes
       hasRecentProgrammaticIntent: false,
       hasRecentUserViewportIntent: false,
     }),
-    "user",
+    "programmatic",
   );
   assert.equal(
     resolveVisibleRangeChangeSource({
@@ -663,6 +692,14 @@ test("ResearchChartSurface converts plot drag distance into one logical range up
 
   assert.deepEqual(next?.visibleRange, { from: 14, to: 74 });
   assert.equal(next?.pan.active, true);
+});
+
+test("ResearchChartSurface clamps future-axis right offset preferences", () => {
+  assert.equal(resolvePreferenceRightOffset(0, false), 0);
+  assert.equal(resolvePreferenceRightOffset(4, false), 4);
+  assert.equal(resolvePreferenceRightOffset(200, false), 6);
+  assert.equal(resolvePreferenceRightOffset(6, true), 4);
+  assert.equal(resolvePreferenceRightOffset(Number.NaN, false), 0);
 });
 
 test("ResearchChartSurface zooms around the current viewport center", () => {

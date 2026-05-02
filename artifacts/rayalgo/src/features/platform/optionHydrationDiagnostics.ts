@@ -68,12 +68,23 @@ const samples: Record<MetricKey, number[]> = {
 let state: SessionState = { updatedAt: null };
 let storeVersion = 0;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let emitScheduled = false;
 const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const sessionStartedAt = Date.now();
 
 const emit = () => {
   storeVersion += 1;
-  listeners.forEach((listener) => listener());
+  if (emitScheduled) return;
+  emitScheduled = true;
+  const notify = () => {
+    emitScheduled = false;
+    listeners.forEach((listener) => listener());
+  };
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(notify);
+  } else {
+    setTimeout(notify, 0);
+  }
 };
 
 const subscribe = (listener: () => void) => {

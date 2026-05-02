@@ -1,15 +1,17 @@
 import {
+  lazy,
   Suspense,
 } from "react";
-import {
-  PhotonicsObservatory,
-} from "../RayAlgoPlatform";
 import {
   T,
   dim,
   fs,
   sp,
 } from "../lib/uiTokens";
+
+const PhotonicsObservatory = lazy(
+  () => import("../features/research/PhotonicsObservatory"),
+);
 
 const ResearchLoadingFallback = () => (
   <div

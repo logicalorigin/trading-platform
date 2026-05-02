@@ -33,6 +33,29 @@ test("flowEventsToChartEvents normalizes unusual flow into bar events", () => {
   assert.equal(events[0].actions.includes("add_alert"), true);
 });
 
+test("flowEventsToChartEvents accepts symbol-only unusual flow payloads", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "flow-symbol-only",
+        symbol: "NVDA",
+        right: "call",
+        strike: 910,
+        premium: 640_000,
+        unusualScore: 3.4,
+        occurredAt: "2026-04-28T14:45:00.000Z",
+        isUnusual: true,
+        sentiment: "bullish",
+      },
+    ],
+    "NVDA",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].symbol, "NVDA");
+  assert.equal(events[0].label, "CALL $640K");
+});
+
 test("earningsCalendarToChartEvents normalizes earnings into timescale events", () => {
   const events = earningsCalendarToChartEvents(
     [{ symbol: "MSFT", date: "2026-05-01", time: "amc" }],

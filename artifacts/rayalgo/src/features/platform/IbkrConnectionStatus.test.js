@@ -958,6 +958,90 @@ test("buildHeaderIbkrPopoverModel gives market-closed stream a unique connected 
   assert.equal(findPopoverDetailRow(model, "State reason").value, "market_session_quiet");
 });
 
+test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    runtimeDiagnostics: {
+      providers: {
+        polygon: {
+          configured: true,
+          status: "ok",
+          baseUrl: "https://api.polygon.io",
+          lastSuccessAt: new Date().toISOString(),
+          lastFailureAt: null,
+          lastError: null,
+        },
+      },
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        liveMarketDataAvailable: true,
+        healthFresh: true,
+        accountsLoaded: true,
+        configuredLiveMarketDataMode: true,
+        streamFresh: true,
+        strictReady: true,
+        streams: {
+          marketDataAdmission: {
+            activeLineCount: 77,
+            flowScannerLineCount: 34,
+            flowScannerRemainingLineCount: 6,
+            leaseCount: 38,
+            budget: {
+              maxLines: 200,
+              flowScannerLineCap: 40,
+            },
+            poolUsage: {
+              "flow-scanner": {
+                activeLineCount: 34,
+                maxLines: 40,
+                remainingLineCount: 6,
+                strict: true,
+              },
+              visible: {
+                activeLineCount: 18,
+                maxLines: 108,
+                remainingLineCount: 90,
+              },
+            },
+            counters: {},
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    model.providerRows.map((row) => [row.label, row.value]),
+    [
+      ["IBKR", "Ready"],
+      ["Polygon", "OK"],
+    ],
+  );
+  assert.equal(model.lineUsage.summary, "77 / 200");
+  assert.deepEqual(
+    model.lineUsage.rows
+      .filter((row) => row.id === "flow-scanner" || row.id === "total")
+      .map((row) => [row.id, row.used, row.cap, row.free]),
+    [
+      ["flow-scanner", 34, 40, 6],
+      ["total", 77, 200, 123],
+    ],
+  );
+});
+
 test("buildHeaderIbkrPopoverModel shows missing quote subscribers when no quote stream subscribers are active", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {

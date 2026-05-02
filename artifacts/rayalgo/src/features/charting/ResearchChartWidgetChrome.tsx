@@ -690,16 +690,16 @@ export const ResearchChartWidgetHeader = ({
   const palette = getPanelPalette(theme);
   const headerHeight = dense ? 28 : 40;
   const timeframes = commonTimeframes(timeframeOptions);
+  const selectTimeframe = (nextTimeframe: string) => {
+    if (!nextTimeframe || nextTimeframe === timeframe) {
+      return;
+    }
+    onChangeTimeframe?.(nextTimeframe);
+  };
   const favoriteTimeframeLookup = useMemo(
     () => new Set(favoriteTimeframes || []),
     [favoriteTimeframes],
   );
-  const renderedFavoriteTimeframes = useMemo(() => {
-    const selected = timeframes.filter((option) =>
-      favoriteTimeframeLookup.has(option.value),
-    );
-    return selected.length ? selected : timeframes.slice(0, dense ? 3 : 5);
-  }, [dense, favoriteTimeframeLookup, timeframes]);
   const resolvedChartType = resolveChartType(controls.baseSeriesType);
   const hasAnchoredSearch =
     typeof onSearchOpenChange === "function" && searchContent != null;
@@ -851,32 +851,12 @@ export const ResearchChartWidgetHeader = ({
 
         <div style={dividerStyle(theme, dense)} />
 
-        {renderedFavoriteTimeframes.map((option) => {
-          const active = option.value === timeframe;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => onChangeTimeframe?.(option.value)}
-              onFocus={() => onPrewarmTimeframe?.(option.value)}
-              onMouseEnter={() => onPrewarmTimeframe?.(option.value)}
-              style={barButtonStyle({
-                theme,
-                palette,
-                dense,
-                active,
-              })}
-              title={`Set timeframe ${option.label}`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
+              data-testid="chart-timeframe-menu-trigger"
+              data-chart-timeframe={timeframe}
               style={barButtonStyle({ theme, palette, dense })}
               title="More timeframes"
             >
@@ -903,9 +883,12 @@ export const ResearchChartWidgetHeader = ({
                 <DropdownMenuItem
                   className={chartMenuItemClassName}
                   key={option.value}
+                  data-testid={`chart-timeframe-option-${option.value}`}
+                  data-active={active ? "true" : "false"}
                   onFocus={() => onPrewarmTimeframe?.(option.value)}
                   onMouseEnter={() => onPrewarmTimeframe?.(option.value)}
-                  onSelect={() => onChangeTimeframe?.(option.value)}
+                  onClick={() => selectTimeframe(option.value)}
+                  onSelect={() => selectTimeframe(option.value)}
                   style={{
                     ...menuItemStyle(theme),
                     display: "flex",
@@ -913,10 +896,12 @@ export const ResearchChartWidgetHeader = ({
                     gap: 8,
                     background: active ? withAlpha(theme.accent || theme.text, "20") : undefined,
                     fontWeight: active ? 700 : 500,
+                    cursor: "pointer",
                   }}
                 >
                   <button
                     type="button"
+                    data-testid={`chart-timeframe-favorite-${option.value}`}
                     aria-label={
                       favorite
                         ? `Remove ${option.label} favorite`

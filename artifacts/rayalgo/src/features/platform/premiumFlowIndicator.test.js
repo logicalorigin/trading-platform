@@ -116,6 +116,25 @@ test("resolvePremiumFlowDisplayState requires fetching and current batch for sca
 
   assert.equal(active.label, "Scanning");
   assert.equal(active.isScanning, true);
+
+  const refreshing = resolvePremiumFlowDisplayState({
+    symbol: "AAPL",
+    summary: buildPremiumFlowSummary("AAPL", [
+      event({ sourceLabel: "IBKR SNAPSHOT" }),
+    ]),
+    flowStatus: "live",
+    providerSummary: {
+      coverage: {
+        isFetching: true,
+        currentBatch: ["AAPL"],
+        lastScannedAt: { AAPL: Date.now() },
+      },
+    },
+  });
+
+  assert.equal(refreshing.label, "IBKR SNAPSHOT");
+  assert.equal(refreshing.kind, "refreshing");
+  assert.equal(refreshing.isScanning, true);
 });
 
 test("resolvePremiumFlowDisplayState distinguishes queued, error, and stale states", () => {

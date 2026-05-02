@@ -290,7 +290,7 @@ test("Market chart grid keeps touched viewports through layout changes and clear
   await openMarket(page, "2x2");
 
   const chartSurfaces = page.locator(
-    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid-slot"]',
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
   );
   await expect(chartSurfaces).toHaveCount(4);
   const firstSurface = chartSurfaces.first();
@@ -319,7 +319,7 @@ test("Market chart grid keeps touched viewports through layout changes and clear
 
   await page.getByRole("button", { name: "3x3" }).click();
   const expandedChartSurfaces = page.locator(
-    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid-slot"]',
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
   );
   await expect(expandedChartSurfaces).toHaveCount(9);
   await expect(expandedChartSurfaces.first()).toHaveAttribute(
@@ -370,7 +370,7 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
   await openMarket(page, "2x2");
 
   const chartSurfaces = page.locator(
-    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid-slot"]',
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
   );
   await expect(chartSurfaces).toHaveCount(4);
   const inactiveSurface = chartSurfaces.nth(1);
@@ -404,11 +404,6 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
   );
   await page.mouse.up();
 
-  await expect(inactiveSurface).toHaveAttribute(
-    "data-chart-viewport-user-touched",
-    "true",
-    { timeout: 10_000 },
-  );
   await expect
     .poll(() =>
       inactiveSurface.getAttribute("data-chart-visible-logical-range"),

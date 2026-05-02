@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getGetAccountEquityHistoryQueryOptions,
   useCancelAccountOrder,
@@ -15,6 +15,7 @@ import {
   useTestFlexToken,
 } from "@workspace/api-client-react";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
+import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppDateTime } from "../lib/timeZone";
@@ -28,11 +29,14 @@ import CashFundingPanel from "./account/CashFundingPanel";
 import SetupHealthPanel from "./account/SetupHealthPanel";
 import { ClosedTradesPanel, OrdersPanel } from "./account/TradesOrdersPanel";
 import { buildAccountReturnsModel } from "./account/accountReturnsModel";
-import { getOpenPositionRows } from "./account/accountPositionRows.js";
+import { getOpenPositionRows } from "../features/account/accountPositionRows.js";
 import {
   ACCOUNT_RANGES,
   Panel,
   Pill,
+  formatAccountMoney,
+  formatAccountPercent,
+  formatNumber,
   normalizeAccountRange,
 } from "./account/accountUtils";
 
@@ -69,6 +73,134 @@ const writeAccountWorkspaceDefault = (key, value) => {
       JSON.stringify({ ...parsed, [key]: value }),
     );
   } catch {}
+};
+
+const ShadowWatchlistBacktestPanel = ({
+  mutation,
+  currency,
+  maskValues = false,
+}) => {
+  const run = mutation.data;
+  const summary = run?.summary || {};
+  const sizing = run?.sizing || {};
+  const running = mutation.isPending;
+  const error = mutation.error;
+  const pnl = Number(summary.realizedPnl || 0);
+  return (
+    <Panel
+      title="Today Watchlist Backtest"
+      rightRail={run?.marketDate || "One-off ledger run"}
+      minHeight={150}
+      error={error}
+      action={
+        <button
+          type="button"
+          onClick={() => mutation.mutate()}
+          disabled={running}
+          data-testid="shadow-watchlist-backtest-run"
+          style={{
+            minHeight: dim(24),
+            padding: sp("3px 8px"),
+            border: `1px solid ${running ? T.textMuted : T.pink}`,
+            borderRadius: dim(4),
+            background: running ? T.bg2 : `${T.pink}22`,
+            color: running ? T.textMuted : T.pink,
+            fontSize: fs(8),
+            fontFamily: T.mono,
+            fontWeight: 900,
+            cursor: running ? "wait" : "pointer",
+            textTransform: "uppercase",
+          }}
+        >
+          {running ? "Running" : run ? "Refresh" : "Run"}
+        </button>
+      }
+    >
+      <div style={{ display: "grid", gap: sp(6) }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
+          <Pill tone="pink">Watchlist Backtest</Pill>
+          <Pill tone="green">Spot Equity</Pill>
+          <Pill tone="cyan">15m RayReplica</Pill>
+          <Pill tone="purple">Ledger Synthetic</Pill>
+        </div>
+        <div style={{ color: T.textSec, fontSize: fs(9), lineHeight: 1.35 }}>
+          Runs all saved watchlists from the New York regular-session open through
+          the latest completed bar. Rows are written as synthetic Shadow ledger
+          activity and kept separate from existing Shadow positions.
+        </div>
+        {run ? (
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: sp(4),
+              }}
+            >
+              {[
+                ["Signals", summary.signals, T.cyan],
+                ["Orders", summary.ordersCreated, T.text],
+                ["Open", summary.openSyntheticPositions, T.purple],
+                ["Skipped", summary.skippedSignals, T.amber],
+              ].map(([label, value, color]) => (
+                <div
+                  key={label}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(4),
+                    background: T.bg0,
+                    padding: sp("4px 5px"),
+                  }}
+                >
+                  <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.mono }}>
+                    {label.toUpperCase()}
+                  </div>
+                  <div style={{ color, fontSize: fs(12), fontFamily: T.mono, fontWeight: 900 }}>
+                    {formatNumber(value || 0, 0)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: sp(4),
+                color: T.textSec,
+                fontSize: fs(9),
+                fontFamily: T.mono,
+              }}
+            >
+              <div>
+                P&L{" "}
+                <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: 900 }}>
+                  {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
+                </span>
+              </div>
+              <div>
+                Fees {formatAccountMoney(summary.fees, currency, true, maskValues)}
+              </div>
+              <div>
+                Cap {formatAccountPercent((sizing.maxPositionFraction || 0) * 100, 0, maskValues)}
+              </div>
+            </div>
+            <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>
+              {formatAppDateTime(run.window?.start)}
+              {" -> "}
+              {formatAppDateTime(run.window?.end)}
+              {" · "}
+              {formatNumber(run.universe?.symbolCount || 0, 0)} symbols across{" "}
+              {formatNumber(run.universe?.watchlistCount || 0, 0)} watchlists
+            </div>
+          </>
+        ) : (
+          <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>
+            No run has been executed in this browser session.
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
 };
 
 export const AccountScreen = ({
@@ -348,6 +480,21 @@ export const AccountScreen = ({
       enabled: Boolean(isVisible && accountRequestId),
     },
   });
+  const shadowWatchlistBacktestMutation = useMutation({
+    mutationFn: () =>
+      platformJsonRequest("/api/accounts/shadow/watchlist-backtest/runs", {
+        method: "POST",
+        body: { timeframe: "15m" },
+        timeoutMs: 120_000,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          String(query.queryKey[0] || "").includes("/api/accounts/shadow"),
+      });
+    },
+  });
 
   const cancelOrderMutation = useCancelAccountOrder({
     mutation: {
@@ -446,11 +593,17 @@ export const AccountScreen = ({
     automationPositions: openAccountPositions.filter(
       (position) => position.sourceType === "automation",
     ).length,
+    backtestPositions: openAccountPositions.filter(
+      (position) => position.sourceType === "watchlist_backtest",
+    ).length,
     mixedPositions: openAccountPositions.filter(
       (position) => position.sourceType === "mixed",
     ).length,
     automationOrders: (ordersQuery.data?.orders || []).filter(
       (order) => order.sourceType === "automation",
+    ).length,
+    backtestOrders: (ordersQuery.data?.orders || []).filter(
+      (order) => order.sourceType === "watchlist_backtest",
     ).length,
     manualOrders: (ordersQuery.data?.orders || []).filter(
       (order) => order.sourceType === "manual",
@@ -536,6 +689,7 @@ export const AccountScreen = ({
         return (
           <button
             key={section.value}
+            data-testid={`account-section-${section.value}`}
             type="button"
             className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
             onClick={() => setAccountSection(section.value)}
@@ -572,6 +726,7 @@ export const AccountScreen = ({
 
   return (
     <div
+      data-testid="account-screen"
       className="ra-panel-enter"
       style={{
         flex: 1,
@@ -730,7 +885,14 @@ export const AccountScreen = ({
             maskValues={maskAccountValues}
           />
           {shadowMode ? (
-            <Panel title="Shadow Account" rightRail="Internal paper" minHeight={170}>
+            <ShadowWatchlistBacktestPanel
+              mutation={shadowWatchlistBacktestMutation}
+              currency={currency}
+              maskValues={maskAccountValues}
+            />
+          ) : null}
+          {shadowMode ? (
+            <Panel title="Shadow Account" rightRail="Internal paper" minHeight={130}>
               <div style={{ display: "grid", gap: sp(5) }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
                   <Pill tone="pink">Shadow</Pill>
@@ -756,9 +918,9 @@ export const AccountScreen = ({
                 >
                   {[
                     ["Auto Pos", shadowAutomationAudit.automationPositions, T.pink],
-                    ["Mixed Pos", shadowAutomationAudit.mixedPositions, T.amber],
+                    ["Backtest Pos", shadowAutomationAudit.backtestPositions, T.purple],
                     ["Auto Orders", shadowAutomationAudit.automationOrders, T.cyan],
-                    ["Manual Orders", shadowAutomationAudit.manualOrders, T.textSec],
+                    ["Backtest Orders", shadowAutomationAudit.backtestOrders, T.pink],
                   ].map(([label, value, color]) => (
                     <div
                       key={label}

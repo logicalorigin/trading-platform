@@ -11,6 +11,7 @@ import {
   isHistoricalDataReconnectableError,
   isSnapshotGenericTickError,
   mapTwsContractDescriptionToUniverseTicker,
+  resolveOptionActivitySnapshotTimeoutMs,
   selectRelevantOptionStrikes,
   toQuoteSnapshot,
   TwsIbkrBridgeProvider,
@@ -1030,6 +1031,30 @@ test("toQuoteSnapshot maps IBKR option volume and open-interest ticks", () => {
 
   assert.equal(quote.volume, 812);
   assert.equal(quote.openInterest, 640);
+});
+
+test("option activity snapshot timeout scales with radar batch size", () => {
+  assert.equal(
+    resolveOptionActivitySnapshotTimeoutMs({
+      genericTickSampleMs: 500,
+      symbolCount: 1,
+    }),
+    1_000,
+  );
+  assert.equal(
+    resolveOptionActivitySnapshotTimeoutMs({
+      genericTickSampleMs: 500,
+      symbolCount: 30,
+    }),
+    15_500,
+  );
+  assert.equal(
+    resolveOptionActivitySnapshotTimeoutMs({
+      genericTickSampleMs: 10_000,
+      symbolCount: 60,
+    }),
+    20_000,
+  );
 });
 
 test("detects nested IBKR snapshot generic-tick validation errors", () => {

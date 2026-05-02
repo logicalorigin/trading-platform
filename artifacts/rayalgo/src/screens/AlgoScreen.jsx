@@ -21,15 +21,17 @@ import {
 } from "../features/backtesting/BacktestingPanels";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
-  Badge,
-  QUERY_DEFAULTS,
   bridgeRuntimeMessage,
   bridgeRuntimeTone,
+} from "../features/platform/bridgeRuntimeModel";
+import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
+import { useToast } from "../features/platform/platformContexts.jsx";
+import { Badge } from "../components/platform/primitives.jsx";
+import {
   formatEnumLabel,
   formatRelativeTimeShort,
   parseSymbolUniverseInput,
-  useToast,
-} from "../RayAlgoPlatform";
+} from "../lib/formatters";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
 import {
@@ -798,6 +800,7 @@ export const AlgoScreen = ({
 
   return (
     <div
+      data-testid="algo-screen"
       style={{
         padding: sp(12),
         display: "flex",
@@ -1570,6 +1573,7 @@ export const AlgoScreen = ({
             {SIGNAL_OPTIONS_TABS.map((tab) => (
               <button
                 key={tab}
+                data-testid={`algo-signal-options-tab-${tab.toLowerCase()}`}
                 type="button"
                 onClick={() => setAutomationTab(tab)}
                 style={{
@@ -1721,7 +1725,7 @@ export const AlgoScreen = ({
               display: "grid",
               gridTemplateColumns: "minmax(280px, 0.95fr) minmax(360px, 1.25fr)",
               gap: sp(10),
-              minHeight: dim(250),
+              minHeight: dim(180),
             }}
           >
             <div
@@ -2312,8 +2316,8 @@ export const AlgoScreen = ({
           background: T.bg2,
           border: `1px solid ${T.border}`,
           borderRadius: dim(6),
-          padding: sp("12px 14px"),
-          flex: 1,
+          padding: sp("8px 10px"),
+          flex: "0 1 auto",
         }}
       >
         <div

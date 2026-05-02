@@ -46,6 +46,7 @@ import {
   sanitizeHistogramPoint,
 } from "./histogramSafety";
 import {
+  MAX_CHART_FUTURE_EXPANSION_BARS,
   formatPreferenceDateTime,
   resolvePreferenceTimeZone,
   type UserPreferences,
@@ -156,10 +157,6 @@ export const resolveVisibleRangeChangeSource = ({
     hasRecentProgrammaticIntent
   ) {
     return "programmatic";
-  }
-
-  if (initialized) {
-    return "user";
   }
 
   return "programmatic";
@@ -918,6 +915,7 @@ type ResearchChartSurfaceProps = {
   onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
   onVisibleLogicalRangeChange?: (range: VisibleLogicalRange | null) => void;
   viewportSnapshot?: ChartViewportSnapshot | null;
+  externalViewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
   persistScalePrefs?: boolean;
 };
@@ -933,6 +931,15 @@ const EMPTY_REFERENCE_LINES: Array<{
 const EMPTY_CHART_EVENTS: ChartEvent[] = [];
 const EMPTY_LEGEND_STUDIES: ChartLegendStudyOption[] = [];
 const EMPTY_SELECTED_LEGEND_STUDIES: string[] = [];
+
+export const resolveVisibleChartEvents = ({
+  chartEvents = EMPTY_CHART_EVENTS,
+  showExecutionMarkers: _showExecutionMarkers = true,
+}: {
+  chartEvents?: ChartEvent[] | null;
+  showExecutionMarkers?: boolean;
+} = {}): ChartEvent[] =>
+  Array.isArray(chartEvents) ? chartEvents : EMPTY_CHART_EVENTS;
 
 type StudyRegistryEntry = {
   paneIndex: number;
@@ -1135,6 +1142,7 @@ export const resolveVisibleRangeSyncAction = ({
 
 export const DEFAULT_REALTIME_FOLLOW_TOLERANCE = 3;
 const USER_VIEWPORT_INTENT_WINDOW_MS = 750;
+const LOCAL_VIEWPORT_TOUCH_SYNC_GRACE_MS = 15_000;
 const PROGRAMMATIC_VIEWPORT_INTENT_WINDOW_MS = 750;
 const PLOT_RESIZE_VIEWPORT_INTENT_WINDOW_MS = 500;
 const CHART_PLOT_PAN_MOVE_TOLERANCE = 6;
@@ -1175,6 +1183,15 @@ export const isPointInsideRightPriceScale = ({
   x <= rect.right &&
   y >= rect.top &&
   y <= rect.bottom;
+
+const isChartControlEventTarget = (target: EventTarget | null): boolean =>
+  typeof Element !== "undefined" &&
+  target instanceof Element &&
+  Boolean(
+    target.closest(
+      "[data-chart-control-root], [data-radix-popper-content-wrapper]",
+    ),
+  );
 
 export const resolveChartPlotPanStart = ({
   pointerId,
@@ -1641,14 +1658,14 @@ const resolvePreferenceScaleMode = (
         ? "indexed"
         : fallback;
 
-const resolvePreferenceRightOffset = (
+export const resolvePreferenceRightOffset = (
   bars: number,
   compact: boolean,
 ): number => {
   const normalized = Number.isFinite(Number(bars))
-    ? Math.max(0, Math.min(200, Number(bars)))
-    : 6;
-  return compact ? Math.min(4, Math.max(1, normalized)) : normalized;
+    ? Math.max(0, Math.min(MAX_CHART_FUTURE_EXPANSION_BARS, Number(bars)))
+    : 0;
+  return compact ? Math.min(4, normalized) : normalized;
 };
 
 const chartTimeToDate = (value: unknown): Date | null => {
@@ -3804,6 +3821,7 @@ export const ResearchChartSurface = ({
   onTradeMarkerSelection,
   onVisibleLogicalRangeChange,
   viewportSnapshot = null,
+  externalViewportUserTouched = false,
   onViewportSnapshotChange,
   persistScalePrefs = true,
 }: ResearchChartSurfaceProps) => {
@@ -3856,6 +3874,7 @@ export const ResearchChartSurface = ({
   const previousFirstChartBarTimeRef = useRef<number | null>(null);
   const initializedRangeRef = useRef(false);
   const pendingStoredRangeSyncRef = useRef(true);
+  const lastUserVisibleRangeRef = useRef<VisibleLogicalRange | null>(null);
   const lastSelectionFocusTokenRef = useRef<number | null>(null);
   const drawingLinesRef = useRef<Record<BaseSeriesType, any[]>>({
     candles: [],
@@ -3879,9 +3898,16 @@ export const ResearchChartSurface = ({
   const visibleRangeChangeRef = useRef(onVisibleLogicalRangeChange);
   const viewportSnapshotChangeRef = useRef(onViewportSnapshotChange);
   const lastUserViewportIntentAtRef = useRef(0);
+  const lastWheelViewportIntentAtRef = useRef(0);
   const viewportPointerActiveRef = useRef(false);
+  const lastPlotViewportIntentAtRef = useRef(0);
   const lastPlotResizeAtRef = useRef(0);
   const plotPanRef = useRef<ChartPlotPanState | null>(null);
+  const nativePlotDragRef = useRef<{
+    pointerId: number | null;
+    x: number;
+    y: number;
+  } | null>(null);
   const lastPlotPanVisibleRangeRef = useRef<VisibleLogicalRange | null>(null);
   const plotPanWindowCleanupRef = useRef<(() => void) | null>(null);
   const plotMousePanWindowCleanupRef = useRef<(() => void) | null>(null);
@@ -3966,9 +3992,10 @@ export const ResearchChartSurface = ({
     userPreferences.chart.futureExpansionBars,
     compact,
   );
-  const visibleChartEvents = userPreferences.trading.showExecutionMarkers
-    ? chartEvents
-    : EMPTY_CHART_EVENTS;
+  const visibleChartEvents = resolveVisibleChartEvents({
+    chartEvents,
+    showExecutionMarkers: userPreferences.trading.showExecutionMarkers,
+  });
   const flowChartBuckets = useMemo(
     () => buildFlowChartBuckets(visibleChartEvents, model),
     [visibleChartEvents, model],
@@ -4004,6 +4031,31 @@ export const ResearchChartSurface = ({
   const [viewportUserTouched, setViewportUserTouched] = useState(
     Boolean(effectiveViewportSnapshot?.userTouched),
   );
+  const viewportUserTouchedRef = useRef(
+    Boolean(effectiveViewportSnapshot?.userTouched),
+  );
+  const syncViewportUserTouched = useCallback(
+    (nextTouched: boolean, options: { force?: boolean } = {}) => {
+      if (
+        !options.force &&
+        !nextTouched &&
+        viewportUserTouchedRef.current &&
+        Date.now() - lastLocalUserViewportAtRef.current <=
+          LOCAL_VIEWPORT_TOUCH_SYNC_GRACE_MS
+      ) {
+        setViewportUserTouched(true);
+        return;
+      }
+      viewportUserTouchedRef.current = nextTouched;
+      setViewportUserTouched(nextTouched);
+    },
+    [],
+  );
+  const markViewportUserTouched = useCallback(() => {
+    viewportUserTouchedRef.current = true;
+    lastLocalUserViewportAtRef.current = Date.now();
+    setViewportUserTouched(true);
+  }, []);
   const [selectedTradeConnector, setSelectedTradeConnector] =
     useState<TradeConnectorOverlay | null>(null);
   const [selectedTradeEntryBadge, setSelectedTradeEntryBadge] =
@@ -4165,6 +4217,7 @@ export const ResearchChartSurface = ({
 
   const clearUserViewportIntent = useCallback(() => {
     lastUserViewportIntentAtRef.current = 0;
+    lastWheelViewportIntentAtRef.current = 0;
     viewportPointerActiveRef.current = false;
   }, []);
 
@@ -4194,17 +4247,11 @@ export const ResearchChartSurface = ({
       lastUserViewportIntentAtRef.current = Date.now();
       if (mode === "pointer") {
         viewportPointerActiveRef.current = true;
+      } else if (mode === "wheel") {
+        lastWheelViewportIntentAtRef.current = Date.now();
       }
       return true;
     },
-    [],
-  );
-
-  const hasRecentUserViewportIntent = useCallback(
-    () =>
-      viewportPointerActiveRef.current ||
-      Date.now() - lastUserViewportIntentAtRef.current <=
-        USER_VIEWPORT_INTENT_WINDOW_MS,
     [],
   );
 
@@ -4237,6 +4284,126 @@ export const ResearchChartSurface = ({
       root.removeEventListener("pointerdown", handleNativePointerDown, true);
     };
   }, [markUserViewportIntent]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !hasChartBars) {
+      return undefined;
+    }
+
+    const isInsidePanArea = (
+      event: globalThis.PointerEvent | globalThis.MouseEvent,
+    ) => {
+      if (!enableInteractions || drawMode || event.button !== 0) {
+        return false;
+      }
+      const rect = container.getBoundingClientRect();
+      if (
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      ) {
+        return false;
+      }
+      const priceScaleWidth =
+        chartRef.current?.priceScale?.("right", 0)?.width?.() || 0;
+      return !isPointInsideRightPriceScale({
+        x: event.clientX,
+        y: event.clientY,
+        rect,
+        priceScaleWidth,
+      });
+    };
+
+    const markDragIntent = () => {
+      const now = Date.now();
+      lastPlotViewportIntentAtRef.current = now;
+      lastUserViewportIntentAtRef.current = now;
+    };
+
+    const handlePointerDown = (event: globalThis.PointerEvent) => {
+      if (!isInsidePanArea(event)) {
+        nativePlotDragRef.current = null;
+        return;
+      }
+      nativePlotDragRef.current = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+      };
+    };
+    const handleMouseDown = (event: globalThis.MouseEvent) => {
+      if (!isInsidePanArea(event)) {
+        nativePlotDragRef.current = null;
+        return;
+      }
+      if (nativePlotDragRef.current?.pointerId != null) {
+        return;
+      }
+      nativePlotDragRef.current = {
+        pointerId: null,
+        x: event.clientX,
+        y: event.clientY,
+      };
+    };
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      const pending = nativePlotDragRef.current;
+      if (
+        !pending ||
+        pending.pointerId !== event.pointerId ||
+        (event.buttons & 1) !== 1
+      ) {
+        return;
+      }
+      if (
+        Math.hypot(event.clientX - pending.x, event.clientY - pending.y) >
+        CHART_PLOT_PAN_MOVE_TOLERANCE
+      ) {
+        markDragIntent();
+      }
+    };
+    const handleMouseMove = (event: globalThis.MouseEvent) => {
+      const pending = nativePlotDragRef.current;
+      if (!pending || (event.buttons & 1) !== 1) {
+        return;
+      }
+      if (
+        Math.hypot(event.clientX - pending.x, event.clientY - pending.y) >
+        CHART_PLOT_PAN_MOVE_TOLERANCE
+      ) {
+        markDragIntent();
+      }
+    };
+    const clearNativePlotDrag = () => {
+      nativePlotDragRef.current = null;
+    };
+
+    container.addEventListener("pointerdown", handlePointerDown, true);
+    container.addEventListener("mousedown", handleMouseDown, true);
+    container.addEventListener("pointermove", handlePointerMove, true);
+    container.addEventListener("mousemove", handleMouseMove, true);
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("mousedown", handleMouseDown, true);
+    window.addEventListener("pointermove", handlePointerMove, true);
+    window.addEventListener("mousemove", handleMouseMove, true);
+    window.addEventListener("pointerup", clearNativePlotDrag, true);
+    window.addEventListener("pointercancel", clearNativePlotDrag, true);
+    window.addEventListener("mouseup", clearNativePlotDrag, true);
+    return () => {
+      container.removeEventListener("pointerdown", handlePointerDown, true);
+      container.removeEventListener("mousedown", handleMouseDown, true);
+      container.removeEventListener("pointermove", handlePointerMove, true);
+      container.removeEventListener("mousemove", handleMouseMove, true);
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("mousedown", handleMouseDown, true);
+      window.removeEventListener("pointermove", handlePointerMove, true);
+      window.removeEventListener("mousemove", handleMouseMove, true);
+      window.removeEventListener("pointerup", clearNativePlotDrag, true);
+      window.removeEventListener("pointercancel", clearNativePlotDrag, true);
+      window.removeEventListener("mouseup", clearNativePlotDrag, true);
+    };
+  }, [drawMode, enableInteractions, hasChartBars, markViewportUserTouched]);
 
   const markProgrammaticViewportIntent = useCallback(
     (signature: string | null = null) => {
@@ -4306,6 +4473,18 @@ export const ResearchChartSurface = ({
         lastSignature: lastPublishedVisibleRangeSignatureRef.current,
         visibleRange,
       });
+      const recentLocalUserViewport =
+        Date.now() - lastLocalUserViewportAtRef.current <=
+        LOCAL_VIEWPORT_TOUCH_SYNC_GRACE_MS;
+      if (
+        source === "programmatic" &&
+        recentLocalUserViewport &&
+        !hasRecentProgrammaticViewportIntent() &&
+        visibleLogicalRangeRef.current &&
+        buildVisibleRangeSignature(visibleLogicalRangeRef.current) !== signature
+      ) {
+        return normalizeVisibleLogicalRange(visibleLogicalRangeRef.current);
+      }
 
       visibleLogicalRangeRef.current = visibleRange;
       realtimeFollowRef.current = realtimeFollow;
@@ -4317,8 +4496,8 @@ export const ResearchChartSurface = ({
         autoHydrationViewportRef.current = false;
         programmaticVisibleRangeSignatureRef.current = null;
         lastProgrammaticViewportIntentAtRef.current = 0;
-        lastLocalUserViewportAtRef.current = Date.now();
-        setViewportUserTouched(true);
+        lastUserVisibleRangeRef.current = visibleRange;
+        markViewportUserTouched();
       }
       if (source === "programmatic") {
         lastPublishedVisibleRangeSignatureRef.current = signature;
@@ -4341,15 +4520,31 @@ export const ResearchChartSurface = ({
       }
       return visibleRange;
     },
-    [buildViewportSnapshot, publishViewportSnapshot],
+    [
+      buildViewportSnapshot,
+      hasRecentProgrammaticViewportIntent,
+      markViewportUserTouched,
+      publishViewportSnapshot,
+    ],
   );
 
   const setProgrammaticVisibleLogicalRange = useCallback(
     (
       nextRange: VisibleLogicalRange | null | undefined,
-      options: { markInitialized?: boolean } = {},
+      options: {
+        markInitialized?: boolean;
+        respectRecentUserRange?: boolean;
+      } = {},
     ): VisibleLogicalRange | null => {
-      const visibleRange = normalizeVisibleLogicalRange(nextRange);
+      const requestedRange = normalizeVisibleLogicalRange(nextRange);
+      const recentLocalUserViewport =
+        Date.now() - lastLocalUserViewportAtRef.current <=
+        LOCAL_VIEWPORT_TOUCH_SYNC_GRACE_MS;
+      const recentUserRange =
+        options.respectRecentUserRange === false || !recentLocalUserViewport
+          ? null
+          : normalizeVisibleLogicalRange(lastUserVisibleRangeRef.current);
+      const visibleRange = recentUserRange || requestedRange;
       if (!chartRef.current || !visibleRange) {
         return null;
       }
@@ -4374,18 +4569,23 @@ export const ResearchChartSurface = ({
     setScaleMode(effectiveViewportSnapshot.scaleMode);
     setAutoScale(effectiveViewportSnapshot.autoScale);
     setInvertScale(effectiveViewportSnapshot.invertScale);
-    setViewportUserTouched(Boolean(effectiveViewportSnapshot.userTouched));
+    syncViewportUserTouched(Boolean(effectiveViewportSnapshot.userTouched));
   }, [
     effectiveViewportSnapshot?.autoScale,
     effectiveViewportSnapshot?.identityKey,
     effectiveViewportSnapshot?.invertScale,
     effectiveViewportSnapshot?.scaleMode,
     effectiveViewportSnapshot?.userTouched,
+    syncViewportUserTouched,
   ]);
 
   useEffect(() => {
-    setViewportUserTouched(Boolean(effectiveViewportSnapshot?.userTouched));
-  }, [rangeIdentityKey, effectiveViewportSnapshot?.identityKey]);
+    syncViewportUserTouched(Boolean(effectiveViewportSnapshot?.userTouched));
+  }, [
+    rangeIdentityKey,
+    effectiveViewportSnapshot?.identityKey,
+    syncViewportUserTouched,
+  ]);
 
   useEffect(() => {
     if (!rangeIdentityKeyRef.current) {
@@ -4395,6 +4595,9 @@ export const ResearchChartSurface = ({
       buildViewportSnapshot({
         visibleRange: normalizeVisibleLogicalRange(visibleLogicalRangeRef.current),
         userTouched: Boolean(
+          externalViewportUserTouched ||
+          viewportUserTouchedRef.current ||
+          viewportUserTouched ||
           effectiveViewportSnapshot?.identityKey === rangeIdentityKeyRef.current &&
             effectiveViewportSnapshot.userTouched,
         ),
@@ -4404,12 +4607,14 @@ export const ResearchChartSurface = ({
   }, [
     autoScale,
     buildViewportSnapshot,
+    externalViewportUserTouched,
     invertScale,
     publishViewportSnapshot,
     rangeIdentityKey,
     scaleMode,
     effectiveViewportSnapshot?.identityKey,
     effectiveViewportSnapshot?.userTouched,
+    viewportUserTouched,
   ]);
 
   useEffect(() => {
@@ -4456,10 +4661,14 @@ export const ResearchChartSurface = ({
     visibleLogicalRangeRef.current = matchingStoredRange;
     realtimeFollowRef.current = restoreState.realtimeFollow;
     lastPublishedVisibleRangeSignatureRef.current = null;
+    lastUserVisibleRangeRef.current = null;
     programmaticVisibleRangeSignatureRef.current = null;
     lastProgrammaticViewportIntentAtRef.current = 0;
     clearUserViewportIntent();
     autoHydrationViewportRef.current = restoreState.autoHydration;
+    syncViewportUserTouched(Boolean(restoreState.matchingSnapshot?.userTouched), {
+      force: true,
+    });
     initializedRangeRef.current = false;
     pendingStoredRangeSyncRef.current = true;
     previousFirstChartBarTimeRef.current = model.chartBars[0]?.time ?? null;
@@ -4500,6 +4709,7 @@ export const ResearchChartSurface = ({
     persistLocalChartState,
     rangeIdentityKey,
     setProgrammaticVisibleLogicalRange,
+    syncViewportUserTouched,
     uiStateKey,
     effectiveViewportSnapshot,
   ]);
@@ -4722,7 +4932,14 @@ export const ResearchChartSurface = ({
           !viewportPointerActiveRef.current &&
           Date.now() - lastPlotResizeAtRef.current <=
             PLOT_RESIZE_VIEWPORT_INTENT_WINDOW_MS;
-        const userIntent = hasRecentUserViewportIntent() && !resizeIntent;
+        const wheelIntent =
+          Date.now() - lastWheelViewportIntentAtRef.current <=
+          USER_VIEWPORT_INTENT_WINDOW_MS;
+        const userIntent =
+          (viewportPointerActiveRef.current ||
+            Boolean(plotPanRef.current) ||
+            wheelIntent) &&
+          !resizeIntent;
         const source = resolveVisibleRangeChangeSource({
           initialized: initializedRangeRef.current,
           nextSignature: signature,
@@ -5267,7 +5484,9 @@ export const ResearchChartSurface = ({
     }
 
     autoHydrationViewportRef.current = false;
-    setProgrammaticVisibleLogicalRange(model.selectionFocus.visibleLogicalRange);
+    setProgrammaticVisibleLogicalRange(model.selectionFocus.visibleLogicalRange, {
+      respectRecentUserRange: false,
+    });
     initializedRangeRef.current = true;
     pendingStoredRangeSyncRef.current = false;
     lastSelectionFocusTokenRef.current = model.selectionFocus.token;
@@ -5942,7 +6161,8 @@ export const ResearchChartSurface = ({
     );
   };
   const clearRememberedViewport = (nextVisibleRange: VisibleLogicalRange | null = null) => {
-    setViewportUserTouched(false);
+    lastUserVisibleRangeRef.current = null;
+    syncViewportUserTouched(false, { force: true });
     publishViewportSnapshot(
       buildViewportSnapshot({
         visibleRange: nextVisibleRange,
@@ -5965,6 +6185,7 @@ export const ResearchChartSurface = ({
     if (nextDefaultRange) {
       setProgrammaticVisibleLogicalRange(nextDefaultRange, {
         markInitialized: true,
+        respectRecentUserRange: false,
       });
     } else {
       markProgrammaticViewportIntent();
@@ -5994,6 +6215,62 @@ export const ResearchChartSurface = ({
       clientY: event.clientY,
     });
   };
+  const handleRootClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+    if (isChartControlEventTarget(event.target)) {
+      return;
+    }
+    if (
+      Date.now() - lastPlotViewportIntentAtRef.current <=
+      USER_VIEWPORT_INTENT_WINDOW_MS
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+  const markPlotViewportDragIntent = (
+    event: MouseEvent<HTMLDivElement> | PointerEvent<HTMLDivElement>,
+  ) => {
+    if (
+      isChartControlEventTarget(event.target) ||
+      !enableInteractions ||
+      drawMode ||
+      (event.buttons & 1) !== 1
+    ) {
+      return false;
+    }
+
+    const container = containerRef.current;
+    if (!container || !chartRef.current) {
+      return false;
+    }
+
+    const rect = container.getBoundingClientRect();
+    const insidePlot = isPointInsideRect({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+    });
+    if (!insidePlot) {
+      return false;
+    }
+
+    const priceScaleWidth =
+      chartRef.current.priceScale?.("right", 0)?.width?.() || 0;
+    const insideRightPriceScale = isPointInsideRightPriceScale({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+      priceScaleWidth,
+    });
+    if (insideRightPriceScale) {
+      return false;
+    }
+
+    const now = Date.now();
+    lastPlotViewportIntentAtRef.current = now;
+    lastUserViewportIntentAtRef.current = now;
+    return true;
+  };
   const movePlotPanToPoint = (
     clientX: number,
     clientY: number,
@@ -6015,7 +6292,9 @@ export const ResearchChartSurface = ({
 
     plotPanRef.current = next.pan;
     lastPlotPanVisibleRangeRef.current = next.visibleRange;
+    lastPlotViewportIntentAtRef.current = Date.now();
     event?.preventDefault?.();
+    event?.stopPropagation?.();
     setAdjustedVisibleRange(next.visibleRange);
     return true;
   };
@@ -6024,9 +6303,19 @@ export const ResearchChartSurface = ({
     if (!finalRange || typeof window === "undefined") {
       return;
     }
-    window.requestAnimationFrame(() => {
+    const finalSignature = buildVisibleRangeSignature(finalRange);
+    const reapply = () => {
+      const userSignature = lastUserVisibleRangeRef.current
+        ? buildVisibleRangeSignature(lastUserVisibleRangeRef.current)
+        : null;
+      if (userSignature && userSignature !== finalSignature) {
+        return;
+      }
       setAdjustedVisibleRange(finalRange);
-    });
+    };
+    window.requestAnimationFrame(reapply);
+    window.setTimeout(reapply, 120);
+    window.setTimeout(reapply, 300);
   };
   const cleanupPlotPanWindowListeners = () => {
     plotPanWindowCleanupRef.current?.();
@@ -6039,6 +6328,10 @@ export const ResearchChartSurface = ({
   const handleRootPointerDownCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
+    if (isChartControlEventTarget(event.target)) {
+      return;
+    }
+
     markUserViewportIntent(event.target, "pointer", {
       clientX: event.clientX,
       clientY: event.clientY,
@@ -6071,6 +6364,14 @@ export const ResearchChartSurface = ({
       rect,
       priceScaleWidth,
     });
+    if (
+      event.button === 0 &&
+      enableInteractions &&
+      !drawMode &&
+      !isInsidePriceScale
+    ) {
+      lastPlotViewportIntentAtRef.current = Date.now();
+    }
     const currentRange =
       visibleLogicalRangeRef.current ||
       chartRef.current.timeScale?.().getVisibleLogicalRange?.();
@@ -6086,6 +6387,10 @@ export const ResearchChartSurface = ({
       insidePlot: isInsidePlot,
       insideRightPriceScale: isInsidePriceScale,
     });
+    if (plotPanRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
     if (plotPanRef.current && event.currentTarget.setPointerCapture) {
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -6129,6 +6434,7 @@ export const ResearchChartSurface = ({
   const handleRootPointerMoveCapture = (
     event: PointerEvent<HTMLDivElement>,
   ) => {
+    markPlotViewportDragIntent(event);
     const pan = plotPanRef.current;
     if (!pan || pan.pointerId !== event.pointerId) {
       return;
@@ -6168,6 +6474,10 @@ export const ResearchChartSurface = ({
     }
   };
   const beginMousePlotPan = (event: MouseEvent<HTMLDivElement>) => {
+    if (isChartControlEventTarget(event.target)) {
+      return;
+    }
+
     markUserViewportIntent(event.target, "pointer", {
       clientX: event.clientX,
       clientY: event.clientY,
@@ -6198,6 +6508,14 @@ export const ResearchChartSurface = ({
       rect,
       priceScaleWidth,
     });
+    if (
+      event.button === 0 &&
+      enableInteractions &&
+      !drawMode &&
+      !insideRightPriceScale
+    ) {
+      lastPlotViewportIntentAtRef.current = Date.now();
+    }
     const currentRange =
       visibleLogicalRangeRef.current ||
       chartRef.current.timeScale?.().getVisibleLogicalRange?.();
@@ -6214,6 +6532,10 @@ export const ResearchChartSurface = ({
       insidePlot,
       insideRightPriceScale,
     });
+    if (plotPanRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
     if (plotPanRef.current && typeof window !== "undefined") {
       const handleWindowMouseMove = (moveEvent: globalThis.MouseEvent) => {
         if (plotPanRef.current?.pointerId !== -1) {
@@ -6239,6 +6561,7 @@ export const ResearchChartSurface = ({
     }
   };
   const moveMousePlotPan = (event: MouseEvent<HTMLDivElement>) => {
+    markPlotViewportDragIntent(event);
     const pan = plotPanRef.current;
     if (!pan || pan.pointerId !== -1) {
       return;
@@ -6254,6 +6577,8 @@ export const ResearchChartSurface = ({
     }
 
     plotPanRef.current = next.pan;
+    lastPlotPanVisibleRangeRef.current = next.visibleRange;
+    lastPlotViewportIntentAtRef.current = Date.now();
     event.preventDefault();
     event.stopPropagation();
     setAdjustedVisibleRange(next.visibleRange);
@@ -6595,11 +6920,15 @@ export const ResearchChartSurface = ({
       data-testid={dataTestId}
       data-chart-range-identity={rangeIdentityKey || undefined}
       data-chart-viewport-user-touched={
-        activeViewportSnapshot?.userTouched || viewportUserTouched
+        activeViewportSnapshot?.userTouched ||
+        externalViewportUserTouched ||
+        viewportUserTouched ||
+        viewportUserTouchedRef.current
           ? "true"
           : "false"
       }
       data-chart-visible-logical-range={activeViewportRangeSignature}
+      data-chart-rendered-bar-count={model.chartBars.length}
       onPointerDownCapture={handleRootPointerDownCapture}
       onPointerMoveCapture={handleRootPointerMoveCapture}
       onPointerUpCapture={handleRootPointerUpCapture}
@@ -6609,6 +6938,7 @@ export const ResearchChartSurface = ({
       onMouseUpCapture={endMousePlotPan}
       onMouseLeave={endMousePlotPan}
       onWheelCapture={handleRootWheelCapture}
+      onClickCapture={handleRootClickCapture}
       style={{
         width: isFullscreen ? "100vw" : "100%",
         height: isFullscreen ? "100vh" : "100%",
@@ -6617,6 +6947,7 @@ export const ResearchChartSurface = ({
         zIndex: isFullscreen ? 160 : undefined,
         overflow: "hidden",
         background: theme.bg2,
+        touchAction: drawMode ? "none" : "pan-y",
       }}
     >
       {resolvedTopOverlay ? (
@@ -6770,6 +7101,26 @@ export const ResearchChartSurface = ({
               cursor: drawMode ? "crosshair" : "default",
             }}
           />
+          {dashboardMarketSession.key === "closed" ? (
+            <div
+              data-testid={dataTestId ? `${dataTestId}-market-closed-overlay` : undefined}
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: chartInsetTop,
+                left: chartInsetLeft,
+                width: drawablePlotWidth || "100%",
+                height: drawablePlotHeight || "100%",
+                pointerEvents: "none",
+                overflow: "hidden",
+                zIndex: 2,
+                background:
+                  `linear-gradient(135deg, ${withAlpha(theme.textMuted, "10")} 0%, ${withAlpha(theme.bg2, "00")} 42%, ${withAlpha(theme.textMuted, "0d")} 100%), ` +
+                  `repeating-linear-gradient(135deg, ${withAlpha(theme.textMuted, "10")} 0 1px, transparent 1px 13px)`,
+                boxShadow: `inset 0 0 0 1px ${withAlpha(theme.textMuted, "16")}`,
+              }}
+            />
+          ) : null}
           {windowOverlays.length ||
           zoneOverlays.length ||
           verticalDrawingOverlays.length ||

@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetNews,
   useGetResearchEarningsCalendar,
@@ -15,19 +16,24 @@ import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import { useMarketAlertsSnapshot } from "../features/platform/marketAlertsStore";
 import { useMarketFlowSnapshot } from "../features/platform/marketFlowStore";
 import { useSignalMonitorSnapshot } from "../features/platform/signalMonitorStore";
+import { MultiChartGrid } from "../features/market/MultiChartGrid.jsx";
+import { MarketActivityPanel } from "../features/market/MarketActivityPanel";
+import {
+  MACRO_TICKERS,
+  RATES_PROXIES,
+  SECTORS,
+  buildRatesProxySummary,
+  buildTrackedBreadthSummary,
+} from "../features/market/marketReferenceData";
+import { normalizeTickerSymbol } from "../features/platform/tickerIdentity";
 import {
   Badge,
   Card,
   CardTitle,
   DataUnavailableState,
-  MACRO_TICKERS,
-  MarketActivityPanel,
-  MultiChartGrid,
-  RATES_PROXIES,
-  SECTORS,
-  _initialState,
-  buildRatesProxySummary,
-  buildTrackedBreadthSummary,
+} from "../components/platform/primitives.jsx";
+import { _initialState, persistState } from "../lib/workspaceState";
+import {
   clampNumber,
   fmtCompactNumber,
   fmtM,
@@ -37,9 +43,7 @@ import {
   formatSignedPercent,
   isFiniteNumber,
   mapNewsSentimentToScore,
-  normalizeTickerSymbol,
-  persistState,
-} from "../RayAlgoPlatform";
+} from "../lib/formatters";
 import {
   MISSING_VALUE,
   T,
@@ -58,10 +62,18 @@ const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
   return <MultiChartGrid {...props} />;
 });
 
+const MARKET_PANEL_RETRY_DELAYS_MS = [750, 1_500, 3_000, 5_000, 8_000];
+
 class MarketPanelErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null };
+    this.state = {
+      error: null,
+      retryAttempt: 0,
+      retryScheduled: false,
+    };
+    this.retryTimer = null;
+    this.handleManualRetry = this.handleManualRetry.bind(this);
   }
 
   static getDerivedStateFromError(error) {
@@ -74,6 +86,7 @@ class MarketPanelErrorBoundary extends Component {
       error,
       componentStack: info?.componentStack,
     });
+    this.scheduleRetry();
   }
 
   componentDidUpdate(previousProps) {
@@ -81,8 +94,73 @@ class MarketPanelErrorBoundary extends Component {
       this.state.error &&
       previousProps.resetKey !== this.props.resetKey
     ) {
-      this.setState({ error: null });
+      this.clearRetryTimer();
+      this.setState({
+        error: null,
+        retryAttempt: 0,
+        retryScheduled: false,
+      });
     }
+  }
+
+  componentWillUnmount() {
+    this.clearRetryTimer();
+  }
+
+  clearRetryTimer() {
+    if (!this.retryTimer) return;
+    const clearTimer =
+      typeof window === "undefined" ? clearTimeout : window.clearTimeout;
+    clearTimer(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  scheduleRetry() {
+    if (this.retryTimer) return;
+    const maxRetries =
+      this.props.maxAutoRetries ?? MARKET_PANEL_RETRY_DELAYS_MS.length;
+    if (this.state.retryAttempt >= maxRetries) {
+      this.setState({ retryScheduled: false });
+      return;
+    }
+
+    const nextAttempt = this.state.retryAttempt + 1;
+    const delay =
+      MARKET_PANEL_RETRY_DELAYS_MS[
+        Math.min(nextAttempt - 1, MARKET_PANEL_RETRY_DELAYS_MS.length - 1)
+      ] ?? 8_000;
+    const setTimer =
+      typeof window === "undefined" ? setTimeout : window.setTimeout;
+    this.setState({ retryScheduled: true });
+    this.retryTimer = setTimer(() => {
+      this.retryTimer = null;
+      this.props.onRetry?.({
+        label: this.props.label,
+        attempt: nextAttempt,
+        automatic: true,
+        error: this.state.error,
+      });
+      this.setState({
+        error: null,
+        retryAttempt: nextAttempt,
+        retryScheduled: false,
+      });
+    }, delay);
+  }
+
+  handleManualRetry() {
+    this.clearRetryTimer();
+    this.props.onRetry?.({
+      label: this.props.label,
+      attempt: this.state.retryAttempt + 1,
+      automatic: false,
+      error: this.state.error,
+    });
+    this.setState({
+      error: null,
+      retryAttempt: 0,
+      retryScheduled: false,
+    });
   }
 
   render() {
@@ -98,8 +176,10 @@ class MarketPanelErrorBoundary extends Component {
         style={{
           minHeight: dim(340),
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: sp(10),
           padding: sp(16),
           border: `1px solid ${T.border}`,
           background: T.bg2,
@@ -109,7 +189,24 @@ class MarketPanelErrorBoundary extends Component {
           textAlign: "center",
         }}
       >
-        Market panel unavailable. Switch tabs or change symbol to retry.
+        <div>
+          Market panel unavailable. Retrying automatically.
+          {this.state.retryScheduled ? "" : " Manual retry is available."}
+        </div>
+        <button
+          type="button"
+          onClick={this.handleManualRetry}
+          style={{
+            border: `1px solid ${T.borderStrong}`,
+            background: T.bg3,
+            color: T.text,
+            cursor: "pointer",
+            font: `700 ${fs(10)}px ${T.mono}`,
+            padding: sp("6px 10px"),
+          }}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -282,6 +379,7 @@ export const MarketScreen = ({
   onChangeMonitorWatchlist,
   watchlists = [],
 }) => {
+  const queryClient = useQueryClient();
   const marketWorkspaceRef = useRef(null);
   const [marketWorkspaceWidth, setMarketWorkspaceWidth] = useState(0);
   const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
@@ -295,6 +393,7 @@ export const MarketScreen = ({
       ? clampNumber(stored, 0.1, 100)
       : 1;
   });
+  const [marketChartRetryRevision, setMarketChartRetryRevision] = useState(0);
   useEffect(() => {
     persistState({ marketActivityPanelWidth: activityPanelWidth });
   }, [activityPanelWidth]);
@@ -349,6 +448,27 @@ export const MarketScreen = ({
   const marketChartResetKey = useMemo(
     () => `${sym || ""}:${symbols.join(",")}:${isVisible ? "visible" : "hidden"}`,
     [isVisible, sym, symbols],
+  );
+  const handleMarketPanelRetry = useCallback(
+    ({ label } = {}) => {
+      if (label !== "chart-grid") {
+        return;
+      }
+      setMarketChartRetryRevision((current) => current + 1);
+      queryClient.invalidateQueries({ queryKey: ["market-mini-bars"] });
+      queryClient.invalidateQueries({ queryKey: ["display-chart-price-bars"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bars"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotes/snapshot"] });
+      queryClient.refetchQueries({
+        queryKey: ["market-mini-bars"],
+        type: "active",
+      });
+      queryClient.refetchQueries({
+        queryKey: ["/api/quotes/snapshot"],
+        type: "active",
+      });
+    },
+    [queryClient],
   );
   const handleStartActivityPanelResize = useCallback(
     (event) => {
@@ -661,8 +781,10 @@ export const MarketScreen = ({
             <MarketPanelErrorBoundary
               label="chart-grid"
               resetKey={marketChartResetKey}
+              onRetry={handleMarketPanelRetry}
             >
               <MemoMultiChartGrid
+                key={`market-chart-grid-${marketChartResetKey}-${marketChartRetryRevision}`}
                 activeSym={sym}
                 onSymClick={onChartFocus || onSymClick}
                 watchlistSymbols={symbols}
@@ -700,7 +822,8 @@ export const MarketScreen = ({
             style={{
               minWidth: 0,
               minHeight: 0,
-              height: stackActivityPanel ? dim(360) : "min(100%, calc(100vh - 122px))",
+              height: "fit-content",
+              maxHeight: stackActivityPanel ? undefined : "calc(100vh - 122px)",
               position: stackActivityPanel ? "relative" : "sticky",
               top: stackActivityPanel ? undefined : sp(8),
             }}
@@ -708,6 +831,7 @@ export const MarketScreen = ({
             <MarketPanelErrorBoundary
               label="activity-panel"
               resetKey={marketChartResetKey}
+              onRetry={handleMarketPanelRetry}
             >
               <MarketActivityPanelContainer
                 isVisible={isVisible}
@@ -792,7 +916,7 @@ export const MarketScreen = ({
               }}
             >
               {marketPulseItems.map((item) => (
-                <Card key={item.label} style={{ padding: "7px 9px", minHeight: dim(74) }}>
+                <Card key={item.label} style={{ padding: "6px 8px", minHeight: dim(56) }}>
                   <div
                     style={{
                       color: T.textDim,
@@ -815,7 +939,7 @@ export const MarketScreen = ({
                   >
                     {item.value}
                   </div>
-                  <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(2) }}>
+                  <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(1) }}>
                     {item.sub}
                   </div>
                 </Card>
@@ -1048,7 +1172,7 @@ export const MarketScreen = ({
             style={{
               display: "flex",
               flexDirection: "column",
-              padding: "7px 10px",
+              padding: "6px 8px",
             }}
           >
             <CardTitle right={<Badge color={T.purple}>REGIME</Badge>}>
@@ -1056,7 +1180,6 @@ export const MarketScreen = ({
             </CardTitle>
             <div
               style={{
-                flex: 1,
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 color: T.textSec,

@@ -41,10 +41,17 @@ const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
   { value: "automation", label: "Automation" },
+  { value: "watchlist_backtest", label: "Backtest" },
 ];
 
 const sourceTone = (sourceType) =>
-  sourceType === "automation" ? "pink" : sourceType === "mixed" ? "amber" : "default";
+  sourceType === "automation"
+    ? "pink"
+    : sourceType === "watchlist_backtest"
+      ? "purple"
+      : sourceType === "mixed"
+        ? "amber"
+        : "default";
 
 export const OrdersPanel = ({
   query,
@@ -70,7 +77,7 @@ export const OrdersPanel = ({
     loading={query.isLoading}
     error={query.error}
     onRetry={query.refetch}
-    minHeight={220}
+    minHeight={168}
     noPad
     action={
       <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
@@ -258,7 +265,7 @@ export const ClosedTradesPanel = ({
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
-      minHeight={266}
+      minHeight={196}
     >
       <div style={{ display: "grid", gap: sp(6) }}>
         <div style={{ display: "grid", gap: sp(4) }}>

@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
-import { isHttpError } from "../../api-server/src/lib/errors";
+import { isHttpError } from "@workspace/ibkr-contracts";
 import { logger } from "./logger";
 import { ibkrBridgeService } from "./service";
 import { createSseWriter, type SseWriter } from "./sse-writer";

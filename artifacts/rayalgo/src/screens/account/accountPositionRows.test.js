@@ -4,7 +4,7 @@ import {
   buildAccountRiskDisplayModel,
   getOpenPositionRows,
   isOpenPositionRow,
-} from "./accountPositionRows.js";
+} from "../../features/account/accountPositionRows.js";
 
 test("open position rows exclude explicit zero quantities", () => {
   assert.equal(isOpenPositionRow({ quantity: 10 }), true);

@@ -16,6 +16,9 @@
       "path": "./lib/backtest-core"
     },
     {
+      "path": "./lib/ibkr-contracts"
+    },
+    {
       "path": "./lib/rayreplica-core"
     }
   ]

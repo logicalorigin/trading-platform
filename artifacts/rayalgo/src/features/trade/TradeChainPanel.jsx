@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  daysToExpiration,
   ensureTradeTickerInfo,
+  useRuntimeTickerSnapshot,
+} from "../platform/runtimeTickerStore";
+import {
+  daysToExpiration,
   fmtCompactNumber,
   getAtmStrikeFromPrice,
   isFiniteNumber,
-  useRuntimeTickerSnapshot,
-} from "../../RayAlgoPlatform";
+} from "../../lib/formatters";
 import {
   resolveTradeOptionChainSnapshot,
   useTradeOptionChainSnapshot,

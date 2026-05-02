@@ -1,0 +1,101 @@
+import { lazy, memo } from "react";
+import { T, sp } from "../../lib/uiTokens.jsx";
+
+const MarketScreen = lazy(() => import("../../screens/MarketScreen"));
+const FlowScreen = lazy(() => import("../../screens/FlowScreen"));
+const TradeScreen = lazy(() => import("../../screens/TradeScreen"));
+const AccountScreen = lazy(() => import("../../screens/AccountScreen"));
+const ResearchScreen = lazy(() => import("../../screens/ResearchScreen"));
+const AlgoScreen = lazy(() => import("../../screens/AlgoScreen"));
+const BacktestScreen = lazy(() => import("../../screens/BacktestScreen"));
+const DiagnosticsScreen = lazy(() => import("../../screens/DiagnosticsScreen"));
+const SettingsScreen = lazy(() => import("../../screens/SettingsScreen"));
+
+export const SCREENS = [
+  { id: "market", label: "Market", icon: "◉" },
+  { id: "flow", label: "Flow", icon: "◈" },
+  { id: "trade", label: "Trade", icon: "◧" },
+  { id: "account", label: "Account", icon: "▣" },
+  { id: "research", label: "Research", icon: "◎" },
+  { id: "algo", label: "Algo", icon: "⬡" },
+  { id: "backtest", label: "Backtest", icon: "⏣" },
+  { id: "diagnostics", label: "Diagnostics", icon: "▤" },
+  { id: "settings", label: "Settings", icon: "⚙" },
+];
+
+export const OPERATIONAL_SCREEN_PRELOAD_ORDER = ["market", "account", "trade"];
+
+export const buildMountedScreenState = (activeScreen) =>
+  Object.fromEntries(SCREENS.map(({ id }) => [id, id === activeScreen]));
+
+export const MemoMarketScreen = memo(MarketScreen);
+export const MemoFlowScreen = memo(FlowScreen);
+export const MemoTradeScreen = memo(TradeScreen);
+export const MemoAccountScreen = memo(AccountScreen);
+export const MemoResearchScreen = memo(ResearchScreen);
+export const MemoAlgoScreen = memo(AlgoScreen);
+export const MemoBacktestScreen = memo(BacktestScreen);
+export const MemoDiagnosticsScreen = memo(DiagnosticsScreen);
+export const MemoSettingsScreen = memo(SettingsScreen);
+
+export const ScreenLoadingFallback = ({ label = "Loading" }) => (
+  <div
+    data-testid="screen-loading-fallback"
+    style={{
+      flex: 1,
+      minHeight: 0,
+      display: "grid",
+      gridTemplateRows: "minmax(180px, 44%) 1fr",
+      gap: sp(10),
+      padding: sp(12),
+      background: T.bg0,
+      color: T.textDim,
+      fontFamily: T.sans,
+    }}
+  >
+    <style>
+      {`
+        @keyframes rayalgoScreenFallbackPulse {
+          0%, 100% { opacity: 0.42; }
+          50% { opacity: 0.86; }
+        }
+      `}
+    </style>
+    <div
+      style={{
+        border: `1px solid ${T.border}`,
+        background: T.bg1,
+        animation: "rayalgoScreenFallbackPulse 1.45s ease-in-out infinite",
+      }}
+    />
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+        gap: sp(10),
+      }}
+    >
+      {[0, 1, 2].map((index) => (
+        <div
+          key={index}
+          style={{
+            border: `1px solid ${T.border}`,
+            background: T.bg1,
+            animation: `rayalgoScreenFallbackPulse ${1.55 + index * 0.12}s ease-in-out infinite`,
+          }}
+        />
+      ))}
+    </div>
+    <span
+      style={{
+        position: "absolute",
+        width: 1,
+        height: 1,
+        overflow: "hidden",
+        clip: "rect(0 0 0 0)",
+      }}
+    >
+      {label}
+    </span>
+  </div>
+);

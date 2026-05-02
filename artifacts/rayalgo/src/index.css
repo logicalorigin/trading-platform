@@ -245,7 +245,7 @@ html, body, #root {
     minmax(270px, 1.08fr)
     minmax(390px, 1.42fr);
   gap: 5px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .ra-account-overview-cell {
@@ -253,7 +253,7 @@ html, body, #root {
 }
 
 .ra-account-overview-cell > section {
-  height: 100%;
+  height: auto;
 }
 
 .ra-account-detail-grid,

@@ -1,0 +1,16 @@
+{
+  "name": "@workspace/ibkr-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./errors": "./src/errors.ts",
+    "./runtime": "./src/runtime.ts",
+    "./values": "./src/values.ts"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

@@ -30,6 +30,7 @@ import {
 } from "../features/charting";
 import {
   DEFAULT_USER_PREFERENCES,
+  MAX_CHART_FUTURE_EXPANSION_BARS,
   formatPreferenceTimeZoneLabel,
 } from "../features/preferences/userPreferenceModel";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
@@ -237,8 +238,9 @@ function Panel({ title, action, children }) {
         border: `1px solid ${T.border}`,
         background: T.bg1,
         borderRadius: dim(6),
-        padding: sp(12),
+        padding: sp("8px 10px"),
         minWidth: 0,
+        alignSelf: "start",
       }}
     >
       <div
@@ -406,9 +408,10 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
         border: `1px solid ${T.border}`,
         borderRadius: dim(5),
         background: T.bg2,
-        padding: sp(10),
+        padding: sp("7px 8px"),
         display: "grid",
-        gap: sp(8),
+        gap: sp(5),
+        alignSelf: "start",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(8) }}>
@@ -1449,7 +1452,7 @@ function ChartDisplayPreferencesPanel({ userPreferences }) {
           label="Future Bars"
           value={chart.futureExpansionBars}
           min={0}
-          max={200}
+          max={MAX_CHART_FUTURE_EXPANSION_BARS}
           onChange={(value) => patchChart({ futureExpansionBars: value })}
         />
         <CheckboxField label="OHLC" checked={chart.showOhlc} onChange={(value) => patchChart({ showOhlc: value })} />
@@ -2336,7 +2339,7 @@ export default function SettingsScreen({
   }, [settingsSearch]);
 
   const renderSettingGrid = (group) => (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", gap: sp(10) }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", gap: sp(8), alignItems: "start" }}>
       {(settingsByGroup.get(group) || []).map((setting) => (
         <SettingCard
           key={setting.key}
@@ -2350,12 +2353,13 @@ export default function SettingsScreen({
 
   return (
     <div
+      data-testid="settings-screen"
       style={{
         height: "100%",
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(16),
+        padding: sp(10),
         fontFamily: T.sans,
       }}
     >
@@ -2427,6 +2431,7 @@ export default function SettingsScreen({
           }}
         >
           <input
+            data-testid="settings-search-input"
             type="search"
             value={settingsSearch}
             onChange={(event) => setSettingsSearch(event.target.value)}
@@ -2436,6 +2441,7 @@ export default function SettingsScreen({
           {visibleTabs.map((tab) => (
             <button
               key={tab.id}
+              data-testid={`settings-tab-${tab.id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
               type="button"
               onClick={() => setActiveTab(tab.id)}
               style={{

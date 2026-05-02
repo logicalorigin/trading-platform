@@ -9,7 +9,7 @@ export type MarketDataIntent =
   | "delayed-ok"
   | "historical";
 
-export type MarketDataFallbackProvider = "polygon" | "cache" | "none";
+export type MarketDataFallbackProvider = "polygon" | "cache" | "ibkr" | "none";
 
 export type MarketDataLineAssetClass = "equity" | "option";
 
@@ -138,9 +138,10 @@ const DEFAULT_MAX_LINES = 200;
 const DEFAULT_RESERVE_LINES = 15;
 const DEFAULT_POOL_LINE_CAPS: Record<MarketDataPoolId, number> = {
   execution: 12,
-  visible: 118,
+  visible: 108,
   automation: 25,
-  "flow-scanner": 30,
+  // Keep the admission pool aligned with OPTIONS_FLOW_SCANNER_LINE_BUDGET.
+  "flow-scanner": 40,
   convenience: 0,
 };
 

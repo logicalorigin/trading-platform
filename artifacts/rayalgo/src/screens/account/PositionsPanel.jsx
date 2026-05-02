@@ -16,7 +16,7 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
-import { isOpenPositionRow } from "./accountPositionRows.js";
+import { isOpenPositionRow } from "../../features/account/accountPositionRows.js";
 
 const ASSET_FILTERS = [
   { value: "all", label: "All" },
@@ -29,8 +29,18 @@ const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
   { value: "automation", label: "Automation" },
+  { value: "watchlist_backtest", label: "Backtest" },
   { value: "mixed", label: "Mixed" },
 ];
+
+const sourceTone = (sourceType) =>
+  sourceType === "automation"
+    ? "pink"
+    : sourceType === "watchlist_backtest"
+      ? "purple"
+      : sourceType === "mixed"
+        ? "amber"
+        : "default";
 
 const headerCellStyle = (active) => ({
   ...tableCellStyle,
@@ -127,7 +137,7 @@ export const PositionsPanel = ({
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
-      minHeight={rows.length ? 176 : 238}
+      minHeight={rows.length ? 144 : 174}
       noPad
       action={
         <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
@@ -317,15 +327,7 @@ export const PositionsPanel = ({
                             ))}
                             {row.assetClass ? <Pill tone="purple">{row.assetClass}</Pill> : null}
                             {row.sourceType ? (
-                              <Pill
-                                tone={
-                                  row.sourceType === "automation"
-                                    ? "pink"
-                                    : row.sourceType === "mixed"
-                                      ? "amber"
-                                      : "default"
-                                }
-                              >
+                              <Pill tone={sourceTone(row.sourceType)}>
                                 {row.strategyLabel || row.sourceType}
                               </Pill>
                             ) : null}
@@ -413,7 +415,7 @@ export const PositionsPanel = ({
                                       }}
                                     >
                                       <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
-                                        <Pill tone={source.sourceType === "automation" ? "pink" : "default"}>
+                                        <Pill tone={sourceTone(source.sourceType)}>
                                           {source.strategyLabel || source.sourceType}
                                         </Pill>
                                         <Pill tone="cyan">

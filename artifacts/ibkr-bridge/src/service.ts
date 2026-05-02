@@ -2,12 +2,12 @@ import { performance } from "node:perf_hooks";
 import {
   getIbkrBridgeProviderRuntimeConfig,
   getIbkrTwsRuntimeConfig,
-  type RuntimeMode,
-} from "../../api-server/src/lib/runtime";
+} from "@workspace/ibkr-contracts";
 import type {
   BrokerBarSnapshot,
   BrokerExecutionSnapshot,
   BrokerMarketDepthSnapshot,
+  BrokerOrderSnapshot,
   CancelOrderSnapshot,
   HistoryBarTimeframe,
   HistoryDataSource,
@@ -18,8 +18,9 @@ import type {
   PlaceOrderInput,
   QuoteSnapshot,
   ReplaceOrderSnapshot,
+  RuntimeMode,
   SessionStatusSnapshot,
-} from "../../api-server/src/providers/ibkr/client";
+} from "@workspace/ibkr-contracts";
 import type {
   BridgeConnectionHealth,
   BridgeConnectionsHealth,
@@ -379,11 +380,7 @@ export class IbkrBridgeService {
     return this.ensureProvider().previewOrder(input);
   }
 
-  placeOrder(
-    input: PlaceOrderInput,
-  ): Promise<
-    import("../../api-server/src/providers/ibkr/client").BrokerOrderSnapshot
-  > {
+  placeOrder(input: PlaceOrderInput): Promise<BrokerOrderSnapshot> {
     return this.ensureProvider().placeOrder(input);
   }
 

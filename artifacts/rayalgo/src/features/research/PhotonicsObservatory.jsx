@@ -1110,6 +1110,7 @@ function CashFlowTable({ fd, color }) {
 
 /* ════════════════════════ PRICE CHART ════════════════════════ */
 function PriceChart({ co, vc, price, wkLow, wkHigh }) {
+  const { preferences: userPreferences } = useUserPreferences();
   const [pricePeriod, setPricePeriod] = useState("3M");
   const [liveHist, setLiveHist] = useState(null);
   const [histStatus, setHistStatus] = useState("idle"); // idle | loading | live | error | nodata
@@ -4495,7 +4496,7 @@ export default function PhotonicsObservatory({
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];
 
   return (
-    <div className="photonics-research-root ra-panel-enter" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
+    <div data-testid="research-screen" className="photonics-research-root ra-panel-enter" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
       <style>{`
         .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: 0; }
         .photonics-research-root { font-family: Arial, Helvetica, sans-serif; }
@@ -4532,7 +4533,7 @@ export default function PhotonicsObservatory({
       `}</style>
 
       {/* Header */}
-      <div style={{ padding: "20px 20px 0", position: "relative" }}>
+      <div style={{ padding: "14px 14px 0", position: "relative" }}>
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 200, background: `radial-gradient(ellipse at 30% -30%, ${currentTheme.accent}14 0%, transparent 55%), radial-gradient(ellipse at 90% 20%, rgba(94,148,232,.03) 0%, transparent 40%)`, pointerEvents: "none" }} />
 
         {researchMetaReady ? (
@@ -4546,12 +4547,12 @@ export default function PhotonicsObservatory({
           </div>
         )}
 
-        <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12 }}>
+        <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 8 }}>
           <div>
             <div style={{ fontSize: 11, color: currentTheme.accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: 600 }}>
               {currentTheme.subtitle}
             </div>
-            <h1 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 34, fontWeight: 400, color: "#111", letterSpacing: -1, lineHeight: 1.05, marginTop: 3 }}>
+            <h1 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 28, fontWeight: 400, color: "#111", letterSpacing: 0, lineHeight: 1.05, marginTop: 2 }}>
               {currentTheme.title}
             </h1>
           </div>
@@ -4607,11 +4608,11 @@ export default function PhotonicsObservatory({
         )}
 
         <div style={{ position: "relative", marginBottom: 8 }}>
-          <input type="text" value={q} onChange={e => setQ(e.target.value)}
+          <input data-testid="research-search-input" type="text" value={q} onChange={e => setQ(e.target.value)}
             disabled={!researchDataReady}
             onKeyDown={e => { if (e.key === "Enter" && cos.length === 1) { setSel(cos[0].t); setQ(""); } if (e.key === "Escape") { setQ(""); setSel(null); } }}
             placeholder={researchDataReady ? "Search ticker or company..." : "Loading ticker universe..."}
-            style={{ width: "100%", background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 8, padding: "8px 14px", color: "#333", fontSize: 11, outline: "none", boxShadow: "0 1px 3px rgba(0,0,0,.04)", opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
+            style={{ width: "100%", background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 8, padding: "6px 10px", color: "#333", fontSize: 11, outline: "none", boxShadow: "0 1px 3px rgba(0,0,0,.04)", opacity: researchDataReady ? 1 : 0.65, cursor: researchDataReady ? "text" : "wait" }}
           />
           {q && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 11, color: "#aaa" }}>{cos.length} match{cos.length !== 1 ? "es" : ""}</span>
@@ -4622,9 +4623,9 @@ export default function PhotonicsObservatory({
         {/* Vertical filter pills */}
         {researchMetaReady && (
         <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: 4 }}>
-          <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? "#fff" : "transparent", border: !vf ? "1px solid rgba(0,0,0,.1)" : "1px solid transparent", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: !vf ? "#111" : "#888", cursor: "pointer", fontWeight: 600, boxShadow: !vf ? "0 1px 3px rgba(0,0,0,.06)" : "none" }}>ALL</button>
+          <button onClick={() => { setVf(null); setSf(null); }} style={{ background: !vf ? "#fff" : "transparent", border: !vf ? "1px solid rgba(0,0,0,.1)" : "1px solid transparent", borderRadius: 6, padding: "3px 8px", fontSize: 11, color: !vf ? "#111" : "#888", cursor: "pointer", fontWeight: 600, boxShadow: !vf ? "0 1px 3px rgba(0,0,0,.06)" : "none" }}>ALL</button>
           {Object.entries(currentTheme.verticals).map(([k, v]) => (
-            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? "#fff" : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: 6, padding: "4px 10px", fontSize: 11, boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : "#444", cursor: "pointer", fontWeight: 600, transition: "all 0.15s" }}>
+            <button key={k} onClick={() => { setVf(vf === k ? null : k); setSf(null); }} style={{ background: vf === k ? "#fff" : "transparent", border: vf === k ? `1px solid ${v.c}44` : "1px solid transparent", borderRadius: 6, padding: "3px 8px", fontSize: 11, boxShadow: vf === k ? `0 1px 4px ${v.c}18` : "none", color: vf === k ? v.c : "#444", cursor: "pointer", fontWeight: 600, transition: "all 0.15s" }}>
               {v.n}
             </button>
           ))}
@@ -4647,7 +4648,7 @@ export default function PhotonicsObservatory({
         {researchMetaReady && (
         <div style={{ display: "flex", gap: 0, borderBottom: "1px solid rgba(0,0,0,.06)", marginTop: 8 }}>
           {[["graph", "Graph"], ["comps", "Comps"], ["macro", "Macro"], ["calendar", "📅 Calendar"]].map(([id, lb]) => (
-            <button key={id} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? "2px solid #CDA24E" : "2px solid transparent", padding: "8px 16px", color: view === id ? "#111" : "#999", fontSize: 10, fontWeight: view === id ? 700 : 500, cursor: "pointer", letterSpacing: 0.3 }}>
+            <button key={id} data-testid={`research-view-${id}`} onClick={() => setView(id)} style={{ background: "none", border: "none", borderBottom: view === id ? "2px solid #CDA24E" : "2px solid transparent", padding: "6px 12px", color: view === id ? "#111" : "#999", fontSize: 10, fontWeight: view === id ? 700 : 500, cursor: "pointer", letterSpacing: 0.3 }}>
               {lb}
             </button>
           ))}
@@ -4656,7 +4657,7 @@ export default function PhotonicsObservatory({
       </div>
 
       {/* Content */}
-      <div style={{ padding: "14px 20px 80px" }}>
+      <div style={{ padding: "10px 14px 64px" }}>
         {!researchDataReady ? (
           <ResearchLoadingState theme={currentTheme} />
         ) : view === "calendar" ? (

@@ -67,6 +67,151 @@ const HEALTHY_STATUS_KEYS = new Set([
   "quiet",
 ]);
 
+const POLYGON_STATUS_META = {
+  ok: { label: "OK", tone: T.green },
+  degraded: { label: "Degraded", tone: T.amber },
+  unconfigured: { label: "Not configured", tone: T.textDim },
+  unknown: { label: "No checks yet", tone: T.textSec },
+};
+
+const formatHeaderTimeAgo = (value) => {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  const ageMs = Math.max(0, Date.now() - timestamp);
+  if (ageMs < 1_000) return "now";
+  if (ageMs < 60_000) return `${Math.round(ageMs / 1_000)}s ago`;
+  if (ageMs < 3_600_000) return `${Math.round(ageMs / 60_000)}m ago`;
+  return `${Math.round(ageMs / 3_600_000)}h ago`;
+};
+
+const usageTone = (used, cap, degraded = false) => {
+  if (degraded) return T.red;
+  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) return T.textDim;
+  const ratio = used / cap;
+  if (ratio >= 0.95) return T.red;
+  if (ratio >= 0.75) return T.amber;
+  return T.textSec;
+};
+
+const sumRecentActions = (admission, actions) => {
+  const counters = admission?.counters || {};
+  return Object.values(counters).reduce((total, counter) => {
+    if (!counter || typeof counter !== "object") return total;
+    return (
+      total +
+      actions.reduce((sum, action) => {
+        const value = counter[action];
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0)
+    );
+  }, 0);
+};
+
+const buildLineUsageRows = (admission) => {
+  if (!admission || typeof admission !== "object") {
+    return {
+      available: false,
+      summary: MISSING_VALUE,
+      rows: [],
+    };
+  }
+
+  const budget = admission.budget || {};
+  const poolUsage = admission.poolUsage || {};
+  const warnings = sumRecentActions(admission, ["rejected", "demoted"]);
+  const pools = [
+    ["flow-scanner", "Flow scanner"],
+    ["visible", "Visible"],
+    ["execution", "Execution"],
+    ["automation", "Automation"],
+    ["convenience", "Convenience"],
+  ];
+  const rows = pools.map(([id, label]) => {
+    const pool = poolUsage[id] || {};
+    const used =
+      Number.isFinite(pool.activeLineCount)
+        ? pool.activeLineCount
+        : id === "flow-scanner"
+          ? admission.flowScannerLineCount
+          : null;
+    const cap =
+      Number.isFinite(pool.maxLines)
+        ? pool.maxLines
+        : id === "flow-scanner"
+          ? budget.flowScannerLineCap
+          : null;
+    const free =
+      Number.isFinite(pool.remainingLineCount)
+        ? pool.remainingLineCount
+        : Number.isFinite(cap) && Number.isFinite(used)
+          ? Math.max(0, cap - used)
+          : null;
+    return {
+      id,
+      label,
+      used,
+      cap,
+      free,
+      tone: usageTone(used, cap, warnings > 0 && id === "flow-scanner"),
+      strict: Boolean(pool.strict),
+    };
+  });
+
+  rows.push({
+    id: "total",
+    label: "Total app",
+    used: admission.activeLineCount,
+    cap: budget.maxLines,
+    free: Number.isFinite(admission.activeLineCount) && Number.isFinite(budget.maxLines)
+      ? Math.max(0, budget.maxLines - admission.activeLineCount)
+      : null,
+    tone: usageTone(admission.activeLineCount, budget.maxLines, warnings > 0),
+    strict: false,
+  });
+
+  return {
+    available: true,
+    summary: `${formatHeaderCount(admission.activeLineCount)} / ${formatHeaderCount(
+      budget.maxLines,
+    )}`,
+    warnings,
+    rows,
+  };
+};
+
+const buildProviderRows = ({ health, liveDataLabel, runtimeDiagnostics }) => {
+  const polygon = runtimeDiagnostics?.providers?.polygon;
+  const polygonMeta =
+    POLYGON_STATUS_META[polygon?.status] || POLYGON_STATUS_META.unknown;
+  const polygonFreshness =
+    formatHeaderTimeAgo(polygon?.lastSuccessAt) ||
+    formatHeaderTimeAgo(polygon?.lastFailureAt);
+  const polygonDetail =
+    polygon?.lastError && polygon?.status === "degraded"
+      ? polygon.lastError
+      : polygonFreshness
+        ? `last ${polygonFreshness}`
+        : polygon?.baseUrl || MISSING_VALUE;
+
+  return [
+    {
+      label: "IBKR",
+      value: health.label,
+      detail: liveDataLabel,
+      tone: health.color,
+    },
+    {
+      label: "Polygon",
+      value: polygonMeta.label,
+      detail: polygonDetail,
+      tone: polygonMeta.tone,
+      wrap: polygon?.status === "degraded",
+    },
+  ];
+};
+
 export const buildHeaderIbkrPopoverModel = ({
   connection,
   latencyStats,
@@ -235,6 +380,14 @@ export const buildHeaderIbkrPopoverModel = ({
       : liveMarketDataAvailable === false
         ? "Delayed"
         : marketDataMode || "Unknown";
+  const providerRows = buildProviderRows({
+    health,
+    liveDataLabel,
+    runtimeDiagnostics,
+  });
+  const lineUsage = buildLineUsageRows(
+    runtime?.streams?.marketDataAdmission,
+  );
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
   let issue = {
@@ -591,6 +744,8 @@ export const buildHeaderIbkrPopoverModel = ({
     badges,
     issue,
     tiles,
+    providerRows,
+    lineUsage,
     detailGroups,
     autoOpenDetails: issue.autoOpenDetails,
   };

@@ -1,5 +1,6 @@
 export const USER_PREFERENCES_UPDATED_EVENT = "rayalgo:user-preferences-updated";
 export const USER_PREFERENCES_STORAGE_KEY = "rayalgo:state:v1";
+export const MAX_CHART_FUTURE_EXPANSION_BARS = 6;
 
 export type UserPreferences = {
   appearance: {
@@ -100,7 +101,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
     showGrid: true,
     crosshairMode: "magnet",
     priceScaleMode: "linear",
-    futureExpansionBars: 6,
+    futureExpansionBars: 0,
     keepTimeZoom: true,
     extendedHours: true,
     sessionBreaks: false,
@@ -244,7 +245,12 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
       showGrid: booleanValue(chart.showGrid, DEFAULT_USER_PREFERENCES.chart.showGrid),
       crosshairMode: enumValue(chart.crosshairMode, ["magnet", "free"], DEFAULT_USER_PREFERENCES.chart.crosshairMode),
       priceScaleMode: enumValue(chart.priceScaleMode, ["linear", "log", "percent", "indexed"], DEFAULT_USER_PREFERENCES.chart.priceScaleMode),
-      futureExpansionBars: numberValue(chart.futureExpansionBars, DEFAULT_USER_PREFERENCES.chart.futureExpansionBars, 0, 1000),
+      futureExpansionBars: numberValue(
+        chart.futureExpansionBars,
+        DEFAULT_USER_PREFERENCES.chart.futureExpansionBars,
+        0,
+        MAX_CHART_FUTURE_EXPANSION_BARS,
+      ),
       keepTimeZoom: booleanValue(chart.keepTimeZoom, DEFAULT_USER_PREFERENCES.chart.keepTimeZoom),
       extendedHours: booleanValue(chart.extendedHours, DEFAULT_USER_PREFERENCES.chart.extendedHours),
       sessionBreaks: booleanValue(chart.sessionBreaks, DEFAULT_USER_PREFERENCES.chart.sessionBreaks),
@@ -328,11 +334,6 @@ export const writeCachedUserPreferences = (
           ? current.theme
           : preferences.appearance.theme,
       scale: preferences.appearance.scale,
-      screen: preferences.workspace.defaultScreen,
-      sym: preferences.workspace.defaultSymbol,
-      marketGridLayout: preferences.workspace.marketGridLayout,
-      flowDensity: preferences.workspace.flowDensity,
-      flowRowsPerPage: preferences.workspace.flowRowsPerPage,
     };
     window.localStorage.setItem(USER_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
     window.dispatchEvent(

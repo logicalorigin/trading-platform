@@ -468,8 +468,8 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
     .toBeGreaterThan(0);
 
   const requestsBeforeLeavingFlow = broadScanRequests.length;
-  await page.getByRole("button", { name: "Market", exact: true }).click();
-  await expect(page.getByTestId("market-workspace")).toBeVisible({
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await expect(page.getByTestId("screen-host-account")).toBeVisible({
     timeout: 30_000,
   });
   await expect
@@ -567,7 +567,7 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await openFlow(page);
 
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
-  await expect(page.getByTestId("flow-quality-bar")).toBeVisible();
+  await expect(page.getByTestId("flow-scanner-status-panel")).toBeVisible();
   await expect(page.getByTestId("flow-preset-bar")).toBeVisible();
   await expect(page.getByTestId("flow-ticker-lens")).toBeVisible();
   await expect(page.getByTestId("flow-tape-row").first()).toBeVisible();

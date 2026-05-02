@@ -81,6 +81,7 @@ type ResearchChartFrameProps = {
   onTradeMarkerSelection?: (tradeSelectionIds: string[]) => void;
   onVisibleLogicalRangeChange?: (range: VisibleLogicalRange | null) => void;
   viewportSnapshot?: ChartViewportSnapshot | null;
+  viewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
   persistScalePrefs?: boolean;
 };
@@ -117,6 +118,7 @@ export const ResearchChartFrame = ({
   onTradeMarkerSelection,
   onVisibleLogicalRangeChange,
   viewportSnapshot,
+  viewportUserTouched = false,
   onViewportSnapshotChange,
   persistScalePrefs,
 }: ResearchChartFrameProps) => (
@@ -165,6 +167,7 @@ export const ResearchChartFrame = ({
         onTradeMarkerSelection={onTradeMarkerSelection}
         onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
         viewportSnapshot={viewportSnapshot}
+        externalViewportUserTouched={viewportUserTouched}
         onViewportSnapshotChange={onViewportSnapshotChange}
         persistScalePrefs={persistScalePrefs}
       />

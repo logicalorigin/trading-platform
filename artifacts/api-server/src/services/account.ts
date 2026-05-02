@@ -54,10 +54,72 @@ import {
   accountBenchmarkLimitForRange,
   accountBenchmarkTimeframeForRange,
   accountRangeStart,
-  accountSnapshotBucketSizeMs,
   normalizeAccountRange,
   type AccountRange,
 } from "./account-ranges";
+import {
+  buildPositionMarketHydration,
+  canHydratePositionFromEquityQuote,
+  filterOpenBrokerPositions,
+  isOpenBrokerPosition,
+  positionReferenceSymbol,
+  positionSignedNotional,
+  POSITION_QUANTITY_EPSILON,
+  type PositionMarketHydration,
+} from "./account-position-model";
+import {
+  buildAccountMarginSnapshot,
+  inferAccountType,
+  sumAccounts,
+  weightedAccountAverage,
+} from "./account-summary-model";
+import {
+  calculateTransferAdjustedReturnPoints,
+  classifyExternalCashTransfer,
+  compactEquitySnapshotRows,
+  filterSnapshotsOnFlexTransferDates,
+  persistedAccountRowsToSnapshots,
+  trimLeadingInactiveEquityPoints,
+  type AccountEquityHistorySeedPoint,
+  type EquitySnapshotRow,
+  type PersistedAccountSnapshotRow,
+} from "./account-equity-history-model";
+import {
+  isEtfSymbol,
+  normalizeAssetClassLabel,
+  normalizeOrderTab,
+  normalizeTradeAssetClassLabel,
+  orderGroupKey,
+  positionGroupKey,
+  terminalOrderStatus,
+  workingOrderStatus,
+  type OrderTab,
+} from "./account-trade-model";
+import {
+  betaForSymbol,
+  buildExpiryConcentration,
+  exposureSummary,
+  hasOptionContract,
+  hydratedPositionMarketValue,
+  matchOptionChainContract,
+  mergeOptionChainContracts,
+  optionChainGroupKey,
+  scaleOptionGreek,
+  sectorForSymbol,
+  sumNullableValues,
+  upsertNullableTotal,
+  weightPercent,
+  type OptionGreekEnrichmentResult,
+  type OptionPositionSnapshot,
+  type PositionGreekSnapshot,
+} from "./account-risk-model";
+import {
+  buildFlexBackfillWindows,
+  extractFlexRecords,
+  extractTagText,
+  flexConfigured,
+  getFlexConfigs,
+} from "./account-flex-model";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -75,19 +137,10 @@ const FLEX_GET_STATEMENT_URL =
 const SNAPSHOT_WRITE_INTERVAL_MS = 60_000;
 const FLEX_POLL_INTERVAL_MS = 5_000;
 const FLEX_MAX_POLLS = 18;
-const FLEX_MAX_OVERRIDE_DAYS = 365;
-const FLEX_MAX_HISTORY_YEARS = 4;
 const OPTION_GREEK_CACHE_TTL_MS = 15_000;
 const OPTION_CHAIN_INITIAL_STRIKES_AROUND_MONEY = 250;
 const OPTION_CHAIN_FALLBACK_STRIKES_AROUND_MONEY = 2_000;
 const ACCOUNT_SCHEMA_READINESS_CACHE_TTL_MS = 30_000;
-
-type OrderTab = "working" | "history";
-
-type FlexRecord = {
-  tag: string;
-  attributes: Record<string, string>;
-};
 
 type AccountMetric = {
   value: number | null;
@@ -108,31 +161,6 @@ type AccountUniverse = {
   staleReason: string | null;
 };
 
-type OptionPositionSnapshot = BrokerPositionSnapshot & {
-  optionContract: NonNullable<BrokerPositionSnapshot["optionContract"]>;
-};
-
-type PositionGreekSnapshot = {
-  positionId: string;
-  symbol: string;
-  underlying: string;
-  delta: number | null;
-  betaWeightedDelta: number | null;
-  gamma: number | null;
-  theta: number | null;
-  vega: number | null;
-  source: "IBKR_POSITIONS" | "IBKR_OPTION_CHAIN";
-  matched: boolean;
-  warning: string | null;
-};
-
-type OptionGreekEnrichmentResult = {
-  byPositionId: Map<string, PositionGreekSnapshot>;
-  totalOptionPositions: number;
-  matchedOptionPositions: number;
-  warnings: string[];
-};
-
 type OptionChainCacheEntry = {
   expiresAt: number;
   contracts: OptionChainContract[];
@@ -141,7 +169,6 @@ type OptionChainCacheEntry = {
 
 const snapshotWriteTimestamps = new Map<string, number>();
 const optionGreekChainCache = new Map<string, OptionChainCacheEntry>();
-const POSITION_QUANTITY_EPSILON = 1e-9;
 const OPTIONAL_ACCOUNT_SCHEMA_TABLES = [
   "flex_report_runs",
   "flex_nav_history",
@@ -172,72 +199,6 @@ let accountSchemaReadinessCache: AccountSchemaReadiness | null = null;
 let accountSchemaReadinessPromise: Promise<AccountSchemaReadiness> | null = null;
 const loggedMissingAccountSchemaTables = new Set<OptionalAccountSchemaTable>();
 let loggedAccountSchemaReadinessError: string | null = null;
-
-function isOpenBrokerPosition(position: Pick<BrokerPositionSnapshot, "quantity">): boolean {
-  return Math.abs(Number(position.quantity)) > POSITION_QUANTITY_EPSILON;
-}
-
-function filterOpenBrokerPositions<T extends Pick<BrokerPositionSnapshot, "quantity">>(
-  positions: T[],
-): T[] {
-  return positions.filter(isOpenBrokerPosition);
-}
-
-const ETF_SYMBOLS = new Set([
-  "SPY",
-  "QQQ",
-  "IWM",
-  "DIA",
-  "TLT",
-  "IEF",
-  "GLD",
-  "USO",
-  "SOXX",
-  "VXX",
-  "VIXY",
-]);
-
-const STATIC_SECTOR_BY_SYMBOL: Record<string, string> = {
-  AAPL: "Technology",
-  MSFT: "Technology",
-  NVDA: "Technology",
-  AMD: "Technology",
-  AVGO: "Technology",
-  META: "Communication Services",
-  GOOGL: "Communication Services",
-  GOOG: "Communication Services",
-  AMZN: "Consumer Discretionary",
-  TSLA: "Consumer Discretionary",
-  JPM: "Financials",
-  BAC: "Financials",
-  XOM: "Energy",
-  CVX: "Energy",
-  FCEL: "Energy",
-  UNH: "Health Care",
-  JNJ: "Health Care",
-  INDI: "Technology",
-  SPY: "Broad Market ETF",
-  QQQ: "Growth ETF",
-  IWM: "Small-Cap ETF",
-  DIA: "Blue-Chip ETF",
-  TLT: "Rates ETF",
-  GLD: "Commodity ETF",
-  SOXX: "Semiconductor ETF",
-};
-
-const BETA_BY_SYMBOL: Record<string, number> = {
-  SPY: 1,
-  QQQ: 1.15,
-  IWM: 1.25,
-  AAPL: 1.2,
-  MSFT: 0.95,
-  NVDA: 1.8,
-  AMD: 1.9,
-  TSLA: 2.1,
-  META: 1.25,
-  GOOGL: 1.05,
-  AMZN: 1.25,
-};
 
 function getIbkrClient(): IbkrBridgeClient {
   return new IbkrBridgeClient();
@@ -595,184 +556,6 @@ function dateFromDateOnly(value: string | Date): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
-type EquitySnapshotRow = {
-  providerAccountId: string;
-  asOf: Date;
-  currency: string;
-  netLiquidation: string | null;
-};
-
-type PersistedAccountSnapshotRow = EquitySnapshotRow & {
-  displayName: string;
-  mode: RuntimeMode;
-  cash: string | null;
-  buyingPower: string | null;
-  maintenanceMargin: string | null;
-};
-
-type AccountEquityHistorySeedPoint = {
-  timestamp: Date;
-  netLiquidation: number;
-  currency: string;
-  source: "FLEX" | "LOCAL_LEDGER" | "SHADOW_LEDGER" | "IBKR_ACCOUNT_SUMMARY";
-  deposits: number;
-  withdrawals: number;
-  dividends: number;
-  fees: number;
-};
-
-function externalTransferAmount(
-  point: Pick<AccountEquityHistorySeedPoint, "deposits" | "withdrawals">,
-): number {
-  return (point.deposits ?? 0) - (point.withdrawals ?? 0);
-}
-
-function calculateTransferAdjustedReturnPoints(
-  seedPoints: AccountEquityHistorySeedPoint[],
-) {
-  const firstPoint = seedPoints[0] ?? null;
-  const firstPointTransfer = firstPoint ? externalTransferAmount(firstPoint) : 0;
-  const initialPreviousNav = firstPoint
-    ? firstPointTransfer > 0
-      ? Math.max(0, firstPoint.netLiquidation - firstPointTransfer)
-      : firstPoint.netLiquidation - firstPointTransfer
-    : null;
-  const baseline =
-    initialPreviousNav !== null && Math.abs(initialPreviousNav) > 0
-      ? initialPreviousNav
-      : (seedPoints.find((point) => Math.abs(point.netLiquidation) > 0)
-          ?.netLiquidation ??
-        firstPoint?.netLiquidation ??
-        0);
-  let previousNav: number | null = initialPreviousNav;
-  let cumulativePnl = 0;
-  let capitalBase = Math.max(
-    Math.abs(baseline),
-    Math.abs(firstPoint?.netLiquidation ?? 0),
-  );
-
-  return seedPoints.map((point, index) => {
-    const transfer = externalTransferAmount(point);
-    if (index > 0 && transfer > 0) {
-      capitalBase += transfer;
-    }
-    const pnlDelta =
-      previousNav === null ? 0 : point.netLiquidation - previousNav - transfer;
-    cumulativePnl += pnlDelta;
-    previousNav = point.netLiquidation;
-
-    return {
-      ...point,
-      externalTransfer: transfer,
-      pnlDelta,
-      cumulativePnl,
-      returnPercent: capitalBase ? (cumulativePnl / capitalBase) * 100 : 0,
-    };
-  });
-}
-
-type ExternalCashTransferCandidate = {
-  activityType: string;
-  description: string | null;
-  amount: string | number;
-};
-
-function classifyExternalCashTransfer(
-  row: ExternalCashTransferCandidate,
-): number | null {
-  const amount = toNumber(row.amount);
-  if (amount === null || amount === 0) {
-    return null;
-  }
-
-  const activityType = row.activityType ?? "";
-  const description = row.description ?? "";
-  const text = `${activityType} ${description}`;
-  if (/dividend|interest|commission|fee|tax|withholding/i.test(text)) {
-    return null;
-  }
-  if (
-    !/deposit|withdraw|disbursement|cash receipt|electronic fund|funds transfer|wire|ach|incoming|outgoing/i.test(
-      text,
-    )
-  ) {
-    return null;
-  }
-
-  if (/withdraw|disbursement|outgoing/i.test(description)) {
-    return -Math.abs(amount);
-  }
-  if (/deposit|cash receipt|incoming/i.test(description)) {
-    return Math.abs(amount);
-  }
-  if (/withdraw|outgoing/i.test(activityType)) {
-    return -Math.abs(amount);
-  }
-  if (/deposit|incoming/i.test(activityType)) {
-    return Math.abs(amount);
-  }
-  return amount;
-}
-
-function compactEquitySnapshotRows(
-  rows: EquitySnapshotRow[],
-  range: AccountRange,
-): EquitySnapshotRow[] {
-  const bucketSizeMs = accountSnapshotBucketSizeMs(range);
-  if (!bucketSizeMs || rows.length <= 1) {
-    return rows;
-  }
-
-  const byBucket = new Map<string, EquitySnapshotRow>();
-  rows.forEach((row) => {
-    const bucketStart = Math.floor(row.asOf.getTime() / bucketSizeMs);
-    byBucket.set(`${row.providerAccountId}:${bucketStart}`, {
-      ...row,
-      asOf: new Date(bucketStart * bucketSizeMs),
-    });
-  });
-
-  return Array.from(byBucket.values()).sort(
-    (left, right) => left.asOf.getTime() - right.asOf.getTime(),
-  );
-}
-
-function filterSnapshotsOnFlexTransferDates(
-  rows: EquitySnapshotRow[],
-  flexTransferDates: Set<string>,
-): EquitySnapshotRow[] {
-  if (!flexTransferDates.size) {
-    return rows;
-  }
-  return rows.filter(
-    (row) => !flexTransferDates.has(formatDateOnly(row.asOf)),
-  );
-}
-
-function hasMeaningfulEquityHistory(point: AccountEquityHistorySeedPoint): boolean {
-  return (
-    Math.abs(point.netLiquidation) > 0 ||
-    Math.abs(point.deposits) > 0 ||
-    Math.abs(point.withdrawals) > 0 ||
-    Math.abs(point.dividends) > 0 ||
-    Math.abs(point.fees) > 0
-  );
-}
-
-function trimLeadingInactiveEquityPoints(
-  points: AccountEquityHistorySeedPoint[],
-): AccountEquityHistorySeedPoint[] {
-  const firstMeaningfulIndex = points.findIndex(hasMeaningfulEquityHistory);
-  if (firstMeaningfulIndex <= 0) {
-    return points;
-  }
-  return points.slice(firstMeaningfulIndex);
-}
-
-function normalizeOrderTab(raw: unknown): OrderTab {
-  return raw === "history" ? "history" : "working";
-}
-
 function currencyOf(accounts: BrokerAccountSnapshot[]): string {
   return accounts[0]?.currency || "USD";
 }
@@ -786,84 +569,6 @@ function latestTimestampOf(accounts: BrokerAccountSnapshot[]): Date | null {
 
 function accountMetricUpdatedAt(accounts: BrokerAccountSnapshot[]): Date | null {
   return latestTimestampOf(accounts);
-}
-
-function sumAccounts(
-  accounts: BrokerAccountSnapshot[],
-  key: keyof BrokerAccountSnapshot,
-): number | null {
-  const values = accounts
-    .map((account) => toNumber(account[key]))
-    .filter((value): value is number => value !== null);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
-}
-
-function weightedAccountAverage(
-  accounts: BrokerAccountSnapshot[],
-  key: keyof BrokerAccountSnapshot,
-): number | null {
-  const weighted = accounts
-    .map((account) => {
-      const value = toNumber(account[key]);
-      const nav = toNumber(account.netLiquidation);
-      return value === null || nav === null ? null : { value, nav: Math.abs(nav) };
-    })
-    .filter((entry): entry is { value: number; nav: number } => Boolean(entry));
-  const denominator = weighted.reduce((sum, entry) => sum + entry.nav, 0);
-  if (!weighted.length || denominator <= 0) {
-    return null;
-  }
-  return (
-    weighted.reduce((sum, entry) => sum + entry.value * entry.nav, 0) /
-    denominator
-  );
-}
-
-function persistedAccountRowsToSnapshots(
-  rows: PersistedAccountSnapshotRow[],
-): {
-  accounts: BrokerAccountSnapshot[];
-  latestSnapshotAt: Date | null;
-} {
-  const latestByAccount = new Map<string, PersistedAccountSnapshotRow>();
-  rows.forEach((row) => {
-    if (!latestByAccount.has(row.providerAccountId)) {
-      latestByAccount.set(row.providerAccountId, row);
-    }
-  });
-
-  const accounts = Array.from(latestByAccount.values()).map((row) => ({
-    id: row.providerAccountId,
-    providerAccountId: row.providerAccountId,
-    provider: "ibkr" as const,
-    mode: row.mode,
-    displayName: row.displayName || `IBKR ${row.providerAccountId}`,
-    currency: row.currency || "USD",
-    buyingPower: toNumber(row.buyingPower) ?? 0,
-    cash: toNumber(row.cash) ?? 0,
-    netLiquidation: toNumber(row.netLiquidation) ?? 0,
-    accountType: inferAccountType(row.providerAccountId),
-    totalCashValue: null,
-    settledCash: null,
-    accruedCash: null,
-    initialMargin: null,
-    maintenanceMargin: toNumber(row.maintenanceMargin),
-    excessLiquidity: null,
-    cushion: null,
-    sma: null,
-    dayTradingBuyingPower: null,
-    regTInitialMargin: null,
-    grossPositionValue: null,
-    leverage: null,
-    dayTradesRemaining: null,
-    isPatternDayTrader: null,
-    updatedAt: row.asOf,
-  }));
-
-  return {
-    accounts,
-    latestSnapshotAt: latestTimestampOf(accounts),
-  };
 }
 
 async function getPersistedBackedAccounts(
@@ -1108,186 +813,6 @@ async function listExecutionsForUniverse(
   return executions.flat();
 }
 
-function terminalOrderStatus(status: BrokerOrderSnapshot["status"]): boolean {
-  return (
-    status === "filled" ||
-    status === "canceled" ||
-    status === "rejected" ||
-    status === "expired"
-  );
-}
-
-function workingOrderStatus(status: BrokerOrderSnapshot["status"]): boolean {
-  return !terminalOrderStatus(status);
-}
-
-function normalizeAssetClassLabel(position: BrokerPositionSnapshot): string {
-  if (position.assetClass === "option") {
-    return "Options";
-  }
-  if (ETF_SYMBOLS.has(position.symbol.toUpperCase())) {
-    return "ETF";
-  }
-  return "Stocks";
-}
-
-function normalizeTradeAssetClassLabel(input: {
-  assetClass: string | null | undefined;
-  symbol: string;
-}): string {
-  const normalized = (input.assetClass ?? "").trim().toLowerCase();
-  if (normalized.includes("option")) {
-    return "Options";
-  }
-  if (ETF_SYMBOLS.has(input.symbol.toUpperCase())) {
-    return "ETF";
-  }
-  return "Stocks";
-}
-
-function positionGroupKey(position: BrokerPositionSnapshot): string {
-  if (position.optionContract) {
-    return [
-      "option",
-      position.optionContract.underlying,
-      formatDateOnly(position.optionContract.expirationDate),
-      position.optionContract.strike,
-      position.optionContract.right,
-    ].join(":");
-  }
-  return `equity:${position.symbol.toUpperCase()}`;
-}
-
-function orderGroupKey(order: BrokerOrderSnapshot): string {
-  if (order.optionContract) {
-    return [
-      "option",
-      order.optionContract.underlying,
-      formatDateOnly(order.optionContract.expirationDate),
-      order.optionContract.strike,
-      order.optionContract.right,
-    ].join(":");
-  }
-  return `equity:${order.symbol.toUpperCase()}`;
-}
-
-function sectorForSymbol(symbol: string): string {
-  return STATIC_SECTOR_BY_SYMBOL[symbol.toUpperCase()] ?? "Unknown";
-}
-
-function betaForSymbol(symbol: string): number {
-  return BETA_BY_SYMBOL[symbol.toUpperCase()] ?? 1;
-}
-
-function weightPercent(value: number, nav: number | null): number | null {
-  if (!nav || nav === 0) {
-    return null;
-  }
-  return (value / nav) * 100;
-}
-
-function positionSignedNotional(position: BrokerPositionSnapshot): number {
-  const marketValue = Number(position.marketValue);
-  if (Number.isFinite(marketValue) && Math.abs(marketValue) > POSITION_QUANTITY_EPSILON) {
-    return marketValue;
-  }
-
-  const averagePrice = Number(position.averagePrice);
-  const quantity = Number(position.quantity);
-  const multiplier = Number(position.optionContract?.multiplier ?? 1);
-  if (
-    Number.isFinite(averagePrice) &&
-    Number.isFinite(quantity) &&
-    Number.isFinite(multiplier) &&
-    Math.abs(quantity) > POSITION_QUANTITY_EPSILON &&
-    averagePrice > 0 &&
-    multiplier > 0
-  ) {
-    return averagePrice * quantity * multiplier;
-  }
-
-  return Number.isFinite(marketValue) ? marketValue : 0;
-}
-
-type PositionMarketHydration = {
-  mark: number;
-  marketValue: number;
-  unrealizedPnl: number;
-  unrealizedPnlPercent: number;
-  dayChange: number | null;
-  dayChangePercent: number | null;
-  source: "IBKR_POSITIONS" | "QUOTE_SNAPSHOT";
-};
-
-function positionMultiplier(position: BrokerPositionSnapshot): number {
-  return Number(position.optionContract?.multiplier ?? 1);
-}
-
-function canHydratePositionFromEquityQuote(position: BrokerPositionSnapshot): boolean {
-  return !position.optionContract && position.assetClass !== "option";
-}
-
-function buildPositionMarketHydration(
-  position: BrokerPositionSnapshot,
-  quote: QuoteSnapshot | null | undefined,
-): PositionMarketHydration {
-  const quantity = Number(position.quantity);
-  const averagePrice = Number(position.averagePrice);
-  const multiplier = positionMultiplier(position);
-  const quotePrice = Number(quote?.price);
-  const quoteChange = Number(quote?.change);
-  const quotePrevClose = Number(quote?.prevClose);
-  const hasQuotePrice =
-    canHydratePositionFromEquityQuote(position) &&
-    Number.isFinite(quotePrice) &&
-    quotePrice > 0;
-  const mark = hasQuotePrice
-    ? quotePrice
-    : Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
-      ? position.marketPrice
-      : averagePrice;
-  const marketValue =
-    Number.isFinite(mark) &&
-    Number.isFinite(quantity) &&
-    Number.isFinite(multiplier)
-      ? mark * quantity * multiplier
-      : positionSignedNotional(position);
-  const unrealizedPnl =
-    Number.isFinite(mark) &&
-    Number.isFinite(averagePrice) &&
-    Number.isFinite(quantity) &&
-    Number.isFinite(multiplier)
-      ? (mark - averagePrice) * quantity * multiplier
-      : position.unrealizedPnl;
-  const unrealizedPnlPercent =
-    Number.isFinite(mark) && Number.isFinite(averagePrice) && averagePrice !== 0
-      ? ((mark - averagePrice) / averagePrice) * 100
-      : position.unrealizedPnlPercent;
-  const dayChange =
-    hasQuotePrice && Number.isFinite(quoteChange)
-      ? quoteChange * quantity * multiplier
-      : null;
-  const previousValue =
-    Number.isFinite(quotePrevClose) &&
-    Number.isFinite(quantity) &&
-    Number.isFinite(multiplier)
-      ? quotePrevClose * quantity * multiplier
-      : null;
-
-  return {
-    mark,
-    marketValue,
-    unrealizedPnl,
-    unrealizedPnlPercent,
-    dayChange,
-    dayChangePercent:
-      dayChange !== null && previousValue
-        ? (dayChange / Math.abs(previousValue)) * 100
-        : null,
-    source: hasQuotePrice ? "QUOTE_SNAPSHOT" : "IBKR_POSITIONS",
-  };
-}
-
 async function hydratePositionMarkets(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, PositionMarketHydration>> {
@@ -1319,164 +844,6 @@ async function hydratePositionMarkets(
       ),
     ]),
   );
-}
-
-function hydratedPositionMarketValue(
-  position: BrokerPositionSnapshot,
-  hydration: Map<string, PositionMarketHydration>,
-): number {
-  return hydration.get(position.id)?.marketValue ?? positionSignedNotional(position);
-}
-
-function exposureSummary(
-  positions: BrokerPositionSnapshot[],
-  valueForPosition: (position: BrokerPositionSnapshot) => number = (position) =>
-    position.marketValue,
-) {
-  const grossLong = positions
-    .map(valueForPosition)
-    .filter((marketValue) => marketValue > 0)
-    .reduce((sum, marketValue) => sum + marketValue, 0);
-  const grossShort = Math.abs(
-    positions
-      .map(valueForPosition)
-      .filter((marketValue) => marketValue < 0)
-      .reduce((sum, marketValue) => sum + marketValue, 0),
-  );
-  const netExposure = positions.reduce(
-    (sum, position) => sum + valueForPosition(position),
-    0,
-  );
-
-  return {
-    grossLong,
-    grossShort,
-    netExposure,
-  };
-}
-
-function positionReferenceSymbol(position: BrokerPositionSnapshot): string {
-  return position.optionContract?.underlying ?? position.symbol;
-}
-
-function hasOptionContract(
-  position: BrokerPositionSnapshot,
-): position is OptionPositionSnapshot {
-  return position.assetClass === "option" && Boolean(position.optionContract);
-}
-
-function optionChainGroupKey(
-  optionContract: NonNullable<BrokerPositionSnapshot["optionContract"]>,
-): string {
-  return `${normalizeSymbol(optionContract.underlying)}:${formatDateOnly(optionContract.expirationDate)}`;
-}
-
-function optionContractTupleKey(input: {
-  underlying: string;
-  expirationDate: Date;
-  strike: number;
-  right: string;
-}): string {
-  return [
-    normalizeSymbol(input.underlying),
-    formatDateOnly(input.expirationDate),
-    String(Number(input.strike)),
-    input.right.toLowerCase(),
-  ].join(":");
-}
-
-function contractMultiplierForPosition(position: OptionPositionSnapshot): number {
-  const optionContract = position.optionContract;
-  return (
-    toNumber(optionContract.sharesPerContract) ??
-    toNumber(optionContract.multiplier) ??
-    100
-  );
-}
-
-function scaleOptionGreek(
-  value: number | null,
-  position: OptionPositionSnapshot,
-): number | null {
-  return value === null
-    ? null
-    : value * position.quantity * contractMultiplierForPosition(position);
-}
-
-function sumNullableValues(values: Array<number | null | undefined>): number | null {
-  const filtered = values.filter((value): value is number => isFiniteNumber(value));
-  return filtered.length ? filtered.reduce((sum, value) => sum + value, 0) : null;
-}
-
-function upsertNullableTotal(
-  current: number | null,
-  next: number | null,
-): number | null {
-  if (next === null) {
-    return current;
-  }
-  return (current ?? 0) + next;
-}
-
-function matchOptionChainContract(
-  contracts: OptionChainContract[],
-  optionContract: NonNullable<BrokerPositionSnapshot["optionContract"]>,
-): OptionChainContract | null {
-  const providerContractId = optionContract.providerContractId
-    ? String(optionContract.providerContractId)
-    : null;
-
-  if (providerContractId) {
-    const directMatch =
-      contracts.find(
-        (contract) =>
-          contract.contract.providerContractId &&
-          String(contract.contract.providerContractId) === providerContractId,
-      ) ?? null;
-    if (directMatch) {
-      return directMatch;
-    }
-  }
-
-  const tupleKey = optionContractTupleKey({
-    underlying: optionContract.underlying,
-    expirationDate: optionContract.expirationDate,
-    strike: optionContract.strike,
-    right: optionContract.right,
-  });
-
-  return (
-    contracts.find(
-      (contract) =>
-        optionContractTupleKey({
-          underlying: contract.contract.underlying,
-          expirationDate: contract.contract.expirationDate,
-          strike: contract.contract.strike,
-          right: contract.contract.right,
-        }) === tupleKey,
-    ) ?? null
-  );
-}
-
-function mergeOptionChainContracts(
-  contractSets: OptionChainContract[][],
-): OptionChainContract[] {
-  const merged = new Map<string, OptionChainContract>();
-
-  contractSets.flat().forEach((contract) => {
-    const key =
-      contract.contract.providerContractId
-        ? `conid:${contract.contract.providerContractId}`
-        : `tuple:${optionContractTupleKey({
-            underlying: contract.contract.underlying,
-            expirationDate: contract.contract.expirationDate,
-            strike: contract.contract.strike,
-            right: contract.contract.right,
-          })}`;
-    merged.set(key, contract);
-  });
-
-  return Array.from(merged.values());
 }
 
 async function getCachedOptionChainContracts(
@@ -1682,76 +1049,6 @@ async function enrichPositionGreeks(
   };
 }
 
-function xmlDecode(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
-}
-
-function parseXmlAttributes(raw: string): Record<string, string> {
-  const attributes: Record<string, string> = {};
-  const attributePattern = /([A-Za-z_:][\w:.-]*)\s*=\s*("([^"]*)"|'([^']*)')/g;
-  let match = attributePattern.exec(raw);
-
-  while (match) {
-    attributes[match[1]] = xmlDecode(match[3] ?? match[4] ?? "");
-    match = attributePattern.exec(raw);
-  }
-
-  return attributes;
-}
-
-function extractFlexRecords(xml: string, tagNames: string[]): FlexRecord[] {
-  const tags = tagNames.join("|");
-  const pattern = new RegExp(
-    `<(${tags})\\b([^>]*?)(?:/>|>[\\s\\S]*?</\\1>)`,
-    "gi",
-  );
-  const records: FlexRecord[] = [];
-  let match = pattern.exec(xml);
-
-  while (match) {
-    records.push({
-      tag: match[1],
-      attributes: parseXmlAttributes(match[2] ?? ""),
-    });
-    match = pattern.exec(xml);
-  }
-
-  return records;
-}
-
-function extractTagText(xml: string, tagName: string): string | null {
-  const pattern = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)</${tagName}>`, "i");
-  const match = xml.match(pattern);
-  return match ? xmlDecode(match[1].trim()) : null;
-}
-
-type FlexConfig = { token: string; queryId: string };
-
-function getFlexConfigs(): FlexConfig[] | null {
-  const token = process.env["IBKR_FLEX_TOKEN"]?.trim();
-  const queryIds = (process.env["IBKR_FLEX_QUERY_ID"] ?? "")
-    .split(/[,\n]/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  return token && queryIds.length
-    ? queryIds.map((queryId) => ({ token, queryId }))
-    : null;
-}
-
-function getFlexConfig(): FlexConfig | null {
-  return getFlexConfigs()?.[0] ?? null;
-}
-
-function flexConfigured(): boolean {
-  return Boolean(getFlexConfigs()?.length);
-}
-
 async function fetchFlexEndpoint(
   url: string,
   params: Record<string, string>,
@@ -1827,40 +1124,6 @@ async function requestFlexReference(config: {
   }
 
   return { referenceCode, statementUrl, rawXml };
-}
-
-function addUtcDays(value: Date, days: number): Date {
-  const next = new Date(value);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-}
-
-function startOfUtcDay(value: Date): Date {
-  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
-}
-
-function buildFlexBackfillWindows(reason: string, now = new Date()): Array<{
-  fromDate: string;
-  toDate: string;
-}> {
-  const end = startOfUtcDay(now);
-  const manualBackfill =
-    /manual|test|backfill|import/i.test(reason) || reason === "scheduled-initial";
-  const historyStart = manualBackfill
-    ? new Date(Date.UTC(end.getUTCFullYear() - FLEX_MAX_HISTORY_YEARS, 0, 1))
-    : addUtcDays(end, -(FLEX_MAX_OVERRIDE_DAYS - 1));
-  const windows: Array<{ fromDate: string; toDate: string }> = [];
-
-  for (let cursor = historyStart; cursor <= end; cursor = addUtcDays(cursor, FLEX_MAX_OVERRIDE_DAYS)) {
-    const windowEndCandidate = addUtcDays(cursor, FLEX_MAX_OVERRIDE_DAYS - 1);
-    const windowEnd = windowEndCandidate <= end ? windowEndCandidate : end;
-    windows.push({
-      fromDate: formatDateOnly(cursor),
-      toDate: formatDateOnly(windowEnd),
-    });
-  }
-
-  return windows;
 }
 
 async function downloadFlexStatement(input: {
@@ -2542,6 +1805,7 @@ export async function getAccountSummary(input: {
   const updatedAt = accountMetricUpdatedAt(universe.accounts) ?? new Date();
   const currency = universe.primaryCurrency;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
+  const marginSnapshot = buildAccountMarginSnapshot(universe.accounts);
   const initialNav = await getInitialFlexNav(universe.accountIds);
   const totalPnl = initialNav === null ? null : nav - initialNav;
 
@@ -2623,22 +1887,21 @@ export async function getAccountSummary(input: {
         updatedAt,
       ),
       marginUsed: metric(
-        sumAccounts(universe.accounts, "initialMargin") ??
-          sumAccounts(universe.accounts, "maintenanceMargin"),
+        marginSnapshot.marginUsed,
         currency,
         "IBKR_ACCOUNT_SUMMARY",
-        "InitMarginReq",
+        marginSnapshot.providerFields.marginUsed,
         updatedAt,
       ),
       maintenanceMargin: metric(
-        sumAccounts(universe.accounts, "maintenanceMargin"),
+        marginSnapshot.maintenanceMargin,
         currency,
         "IBKR_ACCOUNT_SUMMARY",
-        "MaintMarginReq",
+        marginSnapshot.providerFields.maintenanceMargin,
         updatedAt,
       ),
       maintenanceMarginCushionPercent: metric(
-        weightedAccountAverage(universe.accounts, "cushion"),
+        marginSnapshot.maintenanceCushionPercent,
         null,
         "IBKR_ACCOUNT_SUMMARY",
         "Cushion",
@@ -2716,16 +1979,6 @@ export async function getAccountSummary(input: {
       ),
     },
   };
-}
-
-function inferAccountType(accountId: string): string {
-  if (/du|paper/i.test(accountId)) {
-    return "Paper";
-  }
-  if (/ira/i.test(accountId)) {
-    return "IRA";
-  }
-  return "Margin";
 }
 
 async function getInitialFlexNav(accountIds: string[]): Promise<number | null> {
@@ -3180,7 +2433,7 @@ async function upsertTickerReferenceCache(
           .values({
             symbol,
             name: symbol,
-            assetClass: ETF_SYMBOLS.has(symbol) ? "ETF" : "Stock",
+            assetClass: isEtfSymbol(symbol) ? "ETF" : "Stock",
             sector: sectorForSymbol(symbol),
             beta: String(betaForSymbol(symbol)),
             raw: { source: "static-fallback" },
@@ -3787,6 +3040,7 @@ export async function getAccountRisk(input: {
     hydratePositionMarkets(positions),
   ]);
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
+  const marginSnapshot = buildAccountMarginSnapshot(universe.accounts);
   const exposure = exposureSummary(positions, (position) =>
     hydratedPositionMarketValue(position, marketHydration),
   );
@@ -3956,23 +3210,17 @@ export async function getAccountRisk(input: {
     },
     margin: {
       leverageRatio: nav ? exposure.netExposure / nav : null,
-      marginUsed: sumAccounts(universe.accounts, "initialMargin"),
-      marginAvailable: sumAccounts(universe.accounts, "excessLiquidity"),
-      maintenanceMargin: sumAccounts(universe.accounts, "maintenanceMargin"),
-      maintenanceCushionPercent: weightedAccountAverage(universe.accounts, "cushion"),
-      dayTradingBuyingPower: sumAccounts(universe.accounts, "dayTradingBuyingPower"),
-      sma: sumAccounts(universe.accounts, "sma"),
-      regTInitialMargin: sumAccounts(universe.accounts, "regTInitialMargin"),
+      marginUsed: marginSnapshot.marginUsed,
+      marginAvailable: marginSnapshot.marginAvailable,
+      maintenanceMargin: marginSnapshot.maintenanceMargin,
+      maintenanceCushionPercent: marginSnapshot.maintenanceCushionPercent,
+      dayTradingBuyingPower: marginSnapshot.dayTradingBuyingPower,
+      sma: marginSnapshot.sma,
+      regTInitialMargin: marginSnapshot.regTInitialMargin,
+      marginUsedUsesMaintenanceFallback:
+        marginSnapshot.marginUsedUsesMaintenanceFallback,
       pdtDayTradeCount: null,
-      providerFields: {
-        marginUsed: "InitMarginReq",
-        marginAvailable: "ExcessLiquidity",
-        maintenanceMargin: "MaintMarginReq",
-        maintenanceCushionPercent: "Cushion",
-        dayTradingBuyingPower: "DayTradingBuyingPower",
-        sma: "SMA",
-        regTInitialMargin: "RegTMargin",
-      },
+      providerFields: marginSnapshot.providerFields,
     },
     greeks: {
       delta: rawDelta,
@@ -3991,37 +3239,6 @@ export async function getAccountRisk(input: {
     expiryConcentration: buildExpiryConcentration(positions),
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
   };
-}
-
-function buildExpiryConcentration(positions: BrokerPositionSnapshot[]) {
-  const now = Date.now();
-  const week = now + 7 * 86_400_000;
-  const month = now + 30 * 86_400_000;
-  const ninety = now + 90 * 86_400_000;
-  const buckets = {
-    thisWeek: 0,
-    thisMonth: 0,
-    next90Days: 0,
-  };
-
-  positions.forEach((position) => {
-    const expiry = position.optionContract?.expirationDate?.getTime?.();
-    if (!expiry) {
-      return;
-    }
-    const notional = Math.abs(position.marketValue);
-    if (expiry <= week) {
-      buckets.thisWeek += notional;
-    }
-    if (expiry <= month) {
-      buckets.thisMonth += notional;
-    }
-    if (expiry <= ninety) {
-      buckets.next90Days += notional;
-    }
-  });
-
-  return buckets;
 }
 
 export async function getAccountCashActivity(input: {
@@ -4208,4 +3425,36 @@ export const __accountPositionInternalsForTests = {
   buildPositionMarketHydration,
   filterOpenBrokerPositions,
   isOpenBrokerPosition,
+};
+
+export const __accountMarginInternalsForTests = {
+  buildAccountMarginSnapshot,
+};
+
+export const __accountOrderInternalsForTests = {
+  normalizeOrderTab,
+  normalizeTradeAssetClassLabel,
+  orderGroupKey,
+  positionGroupKey,
+  terminalOrderStatus,
+  workingOrderStatus,
+};
+
+export const __accountRiskInternalsForTests = {
+  betaForSymbol,
+  buildExpiryConcentration,
+  matchOptionChainContract,
+  mergeOptionChainContracts,
+  sectorForSymbol,
+  sumNullableValues,
+  upsertNullableTotal,
+  weightPercent,
+};
+
+export const __accountFlexInternalsForTests = {
+  buildFlexBackfillWindows,
+  extractFlexRecords,
+  extractTagText,
+  flexConfigured,
+  getFlexConfigs,
 };

@@ -121,6 +121,7 @@ import type { AccountRange } from "../services/account-ranges";
 import {
   placeShadowOrder,
   previewShadowOrder,
+  runShadowWatchlistBacktest,
   SHADOW_ACCOUNT_ID,
 } from "../services/shadow-account";
 import {
@@ -906,6 +907,15 @@ router.get("/accounts/:accountId/cash-activity", async (req, res) => {
           ? new Date(req.query.to)
           : null,
       mode,
+    }),
+  );
+});
+
+router.post("/accounts/shadow/watchlist-backtest/runs", async (req, res) => {
+  res.status(201).json(
+    await runShadowWatchlistBacktest({
+      marketDate: typeof req.body?.marketDate === "string" ? req.body.marketDate : null,
+      timeframe: typeof req.body?.timeframe === "string" ? req.body.timeframe : null,
     }),
   );
 });

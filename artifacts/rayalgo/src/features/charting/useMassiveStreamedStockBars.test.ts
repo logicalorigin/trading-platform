@@ -222,6 +222,33 @@ test("prepend lookback spans sparse intraday calendar gaps", () => {
   assert.equal(lookbackMs >= 7 * 24 * 60 * 60 * 1_000, true);
 });
 
+test("older history page sizes convert rolled intervals to base bars", () => {
+  assert.equal(
+    __chartStreamingTestInternals.resolvePrependRequestPageSize({
+      pageSize: 480,
+      pageSizeTimeframe: "4h",
+      timeframe: "1h",
+    }),
+    1_920,
+  );
+  assert.equal(
+    __chartStreamingTestInternals.resolvePrependRequestPageSize({
+      pageSize: 360,
+      pageSizeTimeframe: "15s",
+      timeframe: "5s",
+    }),
+    1_080,
+  );
+  assert.equal(
+    __chartStreamingTestInternals.resolvePrependRequestPageSize({
+      pageSize: 240,
+      pageSizeTimeframe: "5m",
+      timeframe: "5m",
+    }),
+    240,
+  );
+});
+
 test("older bars payload preserves server history metadata", () => {
   const bar = buildBar(1);
   const historyPage = {

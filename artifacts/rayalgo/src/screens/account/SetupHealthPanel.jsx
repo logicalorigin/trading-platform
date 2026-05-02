@@ -81,7 +81,7 @@ export const SetupHealthPanel = ({
       loading={healthQuery.isLoading}
       error={healthQuery.error}
       onRetry={healthQuery.refetch}
-      minHeight={218}
+      minHeight={160}
       action={
         <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap", justifyContent: "flex-end" }}>
           <button
