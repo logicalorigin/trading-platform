@@ -915,6 +915,11 @@ router.post("/accounts/shadow/watchlist-backtest/runs", async (req, res) => {
   res.status(201).json(
     await runShadowWatchlistBacktest({
       marketDate: typeof req.body?.marketDate === "string" ? req.body.marketDate : null,
+      marketDateFrom:
+        typeof req.body?.marketDateFrom === "string" ? req.body.marketDateFrom : null,
+      marketDateTo:
+        typeof req.body?.marketDateTo === "string" ? req.body.marketDateTo : null,
+      range: typeof req.body?.range === "string" ? req.body.range : null,
       timeframe: typeof req.body?.timeframe === "string" ? req.body.timeframe : null,
     }),
   );

@@ -128,10 +128,12 @@ async function mockShellApi(
     barsRequests = [],
     ibkrReady = false,
     runtimeLineUsage = null,
+    shadowBacktestRequests = [],
   }: {
     barsRequests?: Array<Record<string, string>>;
     ibkrReady?: boolean;
     runtimeLineUsage?: MockMarketDataAdmission | null;
+    shadowBacktestRequests?: Array<Record<string, unknown>>;
   } = {},
 ) {
   await page.route("**/api/**", async (route) => {
@@ -440,6 +442,48 @@ async function mockShellApi(
       body = { scripts: [] };
     } else if (url.pathname === "/api/accounts") {
       body = { accounts: [] };
+    } else if (url.pathname === "/api/accounts/shadow/watchlist-backtest/runs") {
+      const rawPayload = route.request().postData();
+      const payload = rawPayload ? JSON.parse(rawPayload) : {};
+      shadowBacktestRequests.push(payload);
+      const isWeek = payload.range === "past_week" || payload.range === "week";
+      body = {
+        runId: isWeek ? "mock-week-run" : "mock-today-run",
+        source: "watchlist_backtest",
+        marketDate: "2026-05-01",
+        marketDateFrom: isWeek ? "2026-04-27" : "2026-05-01",
+        marketDateTo: "2026-05-01",
+        rangeKey: isWeek ? "2026-04-27:2026-05-01" : "2026-05-01",
+        timeframe: payload.timeframe || "15m",
+        window: {
+          start: new Date(mockNow - 60 * 60_000).toISOString(),
+          end: new Date(mockNow).toISOString(),
+          timezone: "America/New_York",
+        },
+        sizing: {
+          maxPositionFraction: 0.1,
+          maxOpenPositions: 10,
+          wholeSharesOnly: true,
+          startingNetLiquidation: 30_000,
+          startingCash: 30_000,
+        },
+        universe: { watchlistCount: 1, symbolCount: symbols.length, watchlists: [] },
+        summary: {
+          signals: 3,
+          ordersCreated: 2,
+          entries: 1,
+          exits: 1,
+          openSyntheticPositions: 0,
+          skippedSignals: 0,
+          realizedPnl: isWeek ? 42.5 : 12.25,
+          fees: 2,
+          endingNetLiquidation: 30_040.5,
+          endingCash: 30_040.5,
+        },
+        fills: [],
+        skipped: [],
+        updatedAt: new Date(mockNow).toISOString(),
+      };
     } else if (url.pathname.includes("/account/") || url.pathname.includes("/accounts/")) {
       body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
     }
@@ -652,6 +696,44 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
 
   await openScreen(page, "Account", "account");
   await expect(page.getByText("Shadow internal paper")).toBeVisible();
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("account shadow watchlist backtest posts today and week ranges", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const shadowBacktestRequests: Array<Record<string, unknown>> = [];
+
+  await disableStreamingSources(page);
+  await mockShellApi(page, { shadowBacktestRequests });
+  await page.goto("/");
+  await openScreen(page, "Account", "account");
+  await page.getByTestId("account-section-shadow").click();
+  await expect(page.getByText("Shadow internal paper")).toBeVisible();
+
+  const todayButton = page.getByTestId("shadow-watchlist-backtest-run-today");
+  const weekButton = page.getByTestId("shadow-watchlist-backtest-run-week");
+  await todayButton.scrollIntoViewIfNeeded();
+  await expect(todayButton).toBeVisible();
+  await expect(weekButton).toBeVisible();
+
+  await todayButton.click();
+  await expect
+    .poll(() => shadowBacktestRequests.length, { timeout: 10_000 })
+    .toBe(1);
+  expect(shadowBacktestRequests[0]).toEqual({ timeframe: "15m" });
+
+  await weekButton.click();
+  await expect
+    .poll(() => shadowBacktestRequests.length, { timeout: 10_000 })
+    .toBe(2);
+  expect(shadowBacktestRequests[1]).toEqual({
+    timeframe: "15m",
+    range: "past_week",
+  });
+  await expect(page.getByText("2026-04-27 -> 2026-05-01")).toBeVisible();
+
   expect(runtimeIssues).toEqual([]);
 });
 

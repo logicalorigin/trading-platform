@@ -1922,6 +1922,43 @@ function addDaysToMarketDate(value: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function marketDateWeekday(value: string) {
+  const parsed = parseMarketDateKey(value);
+  return new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day)).getUTCDay();
+}
+
+function previousWeekdayOrSame(value: string) {
+  let cursor = value;
+  while (marketDateWeekday(cursor) === 0 || marketDateWeekday(cursor) === 6) {
+    cursor = addDaysToMarketDate(cursor, -1);
+  }
+  return cursor;
+}
+
+function addWeekdaysToMarketDate(value: string, days: number) {
+  let cursor = value;
+  const step = days < 0 ? -1 : 1;
+  let remaining = Math.abs(days);
+  while (remaining > 0) {
+    cursor = addDaysToMarketDate(cursor, step);
+    const weekday = marketDateWeekday(cursor);
+    if (weekday !== 0 && weekday !== 6) {
+      remaining -= 1;
+    }
+  }
+  return cursor;
+}
+
+function marketDatesBetween(from: string, to: string) {
+  const dates: string[] = [];
+  let cursor = from;
+  while (cursor <= to) {
+    dates.push(cursor);
+    cursor = addDaysToMarketDate(cursor, 1);
+  }
+  return dates;
+}
+
 function timeZoneOffsetMs(timeZone: string, date: Date) {
   const parts = timeZoneParts(date, timeZone);
   const localAsUtc = Date.UTC(
@@ -1960,28 +1997,56 @@ function zonedDateTimeToUtc(input: {
 
 function resolveWatchlistBacktestWindow(input: {
   marketDate?: string | null;
+  marketDateFrom?: string | null;
+  marketDateTo?: string | null;
+  range?: string | null;
   now?: Date;
 }) {
   const now = input.now ?? new Date();
-  const resolvedMarketDate = input.marketDate?.trim() || marketDateKey(now);
-  parseMarketDateKey(resolvedMarketDate);
+  const today = previousWeekdayOrSame(marketDateKey(now));
+  const range = String(input.range || "").trim().toLowerCase();
+  const rangeToDate =
+    input.marketDateTo?.trim() ||
+    input.marketDate?.trim() ||
+    today;
+  const resolvedToDate = previousWeekdayOrSame(rangeToDate);
+  const resolvedFromDate =
+    input.marketDateFrom?.trim() ||
+    (range === "past_week" || range === "week"
+      ? addWeekdaysToMarketDate(resolvedToDate, -4)
+      : input.marketDate?.trim() || resolvedToDate);
+  parseMarketDateKey(resolvedFromDate);
+  parseMarketDateKey(resolvedToDate);
+  if (resolvedFromDate > resolvedToDate) {
+    throw new HttpError(400, "Shadow watchlist backtest date range is inverted.", {
+      code: "shadow_backtest_date_range_invalid",
+      expose: true,
+    });
+  }
   const start = zonedDateTimeToUtc({
-    marketDate: resolvedMarketDate,
+    marketDate: resolvedFromDate,
     hour: 9,
     minute: 30,
   });
-  const nextMarketDate = addDaysToMarketDate(resolvedMarketDate, 1);
+  const nextMarketDate = addDaysToMarketDate(resolvedToDate, 1);
   const dayEnd = zonedDateTimeToUtc({
     marketDate: nextMarketDate,
     hour: 0,
     minute: 0,
   });
   const end =
-    marketDateKey(now) === resolvedMarketDate && now > start
+    marketDateKey(now) === resolvedToDate && now > start
       ? now
       : dayEnd;
+  const rangeKey =
+    resolvedFromDate === resolvedToDate
+      ? resolvedToDate
+      : `${resolvedFromDate}:${resolvedToDate}`;
   return {
-    marketDate: resolvedMarketDate,
+    marketDate: resolvedToDate,
+    marketDateFrom: resolvedFromDate,
+    marketDateTo: resolvedToDate,
+    rangeKey,
     start,
     end,
     cleanupEnd: dayEnd,
@@ -2437,14 +2502,61 @@ async function recomputeShadowAccountFromLedger(tx: ShadowTransaction, updatedAt
     .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID));
 }
 
-function watchlistBacktestSnapshotSource(marketDate: string) {
-  return `${WATCHLIST_BACKTEST_SOURCE}:${marketDate}`;
+function compactMarketDateForSource(value: string) {
+  return value.replaceAll("-", "");
 }
 
-async function deleteWatchlistBacktestRowsForDate(
+function watchlistBacktestSnapshotSource(rangeKey: string) {
+  const [from, to] = rangeKey.split(":");
+  if (from && to) {
+    return `watchlist_bt:${compactMarketDateForSource(from)}:${compactMarketDateForSource(to)}`;
+  }
+  return `${WATCHLIST_BACKTEST_SOURCE}:${rangeKey}`;
+}
+
+function watchlistBacktestSnapshotSourcesForRange(input: {
+  marketDateFrom: string;
+  marketDateTo: string;
+  rangeKey: string;
+}) {
+  return Array.from(
+    new Set(
+      [
+        input.rangeKey,
+        ...marketDatesBetween(input.marketDateFrom, input.marketDateTo),
+      ].map(watchlistBacktestSnapshotSource),
+    ),
+  );
+}
+
+function watchlistBacktestOrderMatchesRange(
+  payload: unknown,
+  input: {
+    marketDateFrom: string;
+    marketDateTo: string;
+    rangeKey: string;
+  },
+) {
+  const payloadRecord = readRecord(payload) ?? {};
+  const metadata = readRecord(payloadRecord.metadata) ?? {};
+  const marketDate = readString(metadata.marketDate);
+  const rangeKey = readString(metadata.rangeKey);
+  return (
+    rangeKey === input.rangeKey ||
+    Boolean(
+      marketDate &&
+        marketDate >= input.marketDateFrom &&
+        marketDate <= input.marketDateTo,
+    )
+  );
+}
+
+async function deleteWatchlistBacktestRowsForRange(
   tx: ShadowTransaction,
   input: {
-    marketDate: string;
+    marketDateFrom: string;
+    marketDateTo: string;
+    rangeKey: string;
     windowStart: Date;
     cleanupEnd: Date;
   },
@@ -2459,9 +2571,7 @@ async function deleteWatchlistBacktestRowsForDate(
       ),
     );
   const matchingOrders = orders.filter((order) => {
-    const payload = readRecord(order.payload) ?? {};
-    const metadata = readRecord(payload.metadata) ?? {};
-    return readString(metadata.marketDate) === input.marketDate;
+    return watchlistBacktestOrderMatchesRange(order.payload, input);
   });
   const orderIds = matchingOrders.map((order) => order.id);
   const positionKeys = Array.from(
@@ -2521,17 +2631,16 @@ async function deleteWatchlistBacktestRowsForDate(
       );
   }
 
-  await tx
-    .delete(shadowBalanceSnapshotsTable)
-    .where(
-      and(
-        eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
-        eq(
-          shadowBalanceSnapshotsTable.source,
-          watchlistBacktestSnapshotSource(input.marketDate),
+  for (const source of watchlistBacktestSnapshotSourcesForRange(input)) {
+    await tx
+      .delete(shadowBalanceSnapshotsTable)
+      .where(
+        and(
+          eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowBalanceSnapshotsTable.source, source),
         ),
-      ),
-    );
+      );
+  }
   await tx
     .delete(shadowBalanceSnapshotsTable)
     .where(
@@ -2549,38 +2658,46 @@ async function deleteWatchlistBacktestRowsForDate(
   };
 }
 
-async function resetWatchlistBacktestRowsForDate(input: {
-  marketDate: string;
+async function resetWatchlistBacktestRowsForRange(input: {
+  marketDateFrom: string;
+  marketDateTo: string;
+  rangeKey: string;
   windowStart: Date;
   cleanupEnd: Date;
 }) {
   await db.transaction(async (tx) => {
-    await deleteWatchlistBacktestRowsForDate(tx, input);
+    await deleteWatchlistBacktestRowsForRange(tx, input);
     await recomputeShadowAccountFromLedger(tx, new Date());
   });
 }
 
 async function insertWatchlistBacktestFills(input: {
   runId: string;
-  marketDate: string;
+  marketDateFrom: string;
+  marketDateTo: string;
+  rangeKey: string;
   windowStart: Date;
   cleanupEnd: Date;
   fills: WatchlistBacktestFill[];
   snapshots: ReturnType<typeof buildWatchlistBacktestFills>["snapshots"];
 }) {
-  const snapshotSource = watchlistBacktestSnapshotSource(input.marketDate);
+  const snapshotSource = watchlistBacktestSnapshotSource(input.rangeKey);
   await db.transaction(async (tx) => {
-    await deleteWatchlistBacktestRowsForDate(tx, input);
+    await deleteWatchlistBacktestRowsForRange(tx, input);
 
     for (let index = 0; index < input.fills.length; index += 1) {
       const fill = input.fills[index]!;
       const orderId = randomUUID();
       const fillId = randomUUID();
+      const fillMarketDate = marketDateKey(fill.placedAt);
       const payload = {
         metadata: {
           source: WATCHLIST_BACKTEST_SOURCE,
           runId: input.runId,
-          marketDate: input.marketDate,
+          rangeKey: input.rangeKey,
+          marketDate: fillMarketDate,
+          marketDateFrom: input.marketDateFrom,
+          marketDateTo: input.marketDateTo,
           positionKey: fill.positionKey,
           signalAt: fill.signalAt.toISOString(),
           signalPrice: fill.signalPrice,
@@ -2594,7 +2711,7 @@ async function insertWatchlistBacktestFills(input: {
         accountId: SHADOW_ACCOUNT_ID,
         source: WATCHLIST_BACKTEST_SOURCE,
         sourceEventId: null,
-        clientOrderId: `shadow-watchlist-backtest-${input.marketDate}-${input.runId}-${index + 1}`,
+        clientOrderId: `shadow-watchlist-backtest-${input.rangeKey}-${input.runId}-${index + 1}`,
         symbol: fill.symbol,
         assetClass: "equity",
         side: fill.side,
@@ -2663,8 +2780,18 @@ async function insertWatchlistBacktestFills(input: {
   });
 }
 
+export const __shadowWatchlistBacktestInternalsForTests = {
+  resolveWatchlistBacktestWindow,
+  watchlistBacktestOrderMatchesRange,
+  watchlistBacktestSnapshotSource,
+  watchlistBacktestSnapshotSourcesForRange,
+};
+
 export async function runShadowWatchlistBacktest(input: {
   marketDate?: string | null;
+  marketDateFrom?: string | null;
+  marketDateTo?: string | null;
+  range?: string | null;
   timeframe?: string | null;
 } = {}) {
   await ensureShadowAccount();
@@ -2672,10 +2799,15 @@ export async function runShadowWatchlistBacktest(input: {
   const timeframe = normalizeWatchlistBacktestTimeframe(input.timeframe);
   const window = resolveWatchlistBacktestWindow({
     marketDate: input.marketDate,
+    marketDateFrom: input.marketDateFrom,
+    marketDateTo: input.marketDateTo,
+    range: input.range,
   });
 
-  await resetWatchlistBacktestRowsForDate({
-    marketDate: window.marketDate,
+  await resetWatchlistBacktestRowsForRange({
+    marketDateFrom: window.marketDateFrom,
+    marketDateTo: window.marketDateTo,
+    rangeKey: window.rangeKey,
     windowStart: window.start,
     cleanupEnd: window.cleanupEnd,
   });
@@ -2696,18 +2828,20 @@ export async function runShadowWatchlistBacktest(input: {
     candidates: signalScan.candidates,
     startingTotals,
     baseMarketValue,
-    marketDate: window.marketDate,
+    marketDate: window.rangeKey,
   });
 
   await insertWatchlistBacktestFills({
     runId,
-    marketDate: window.marketDate,
+    marketDateFrom: window.marketDateFrom,
+    marketDateTo: window.marketDateTo,
+    rangeKey: window.rangeKey,
     windowStart: window.start,
     cleanupEnd: window.cleanupEnd,
     fills: simulation.fills,
     snapshots: simulation.snapshots,
   });
-  await writeShadowBalanceSnapshot(watchlistBacktestSnapshotSource(window.marketDate));
+  await writeShadowBalanceSnapshot(watchlistBacktestSnapshotSource(window.rangeKey));
 
   const finalTotals = await ensureFreshShadowState(true);
   const realizedPnl = simulation.fills.reduce(
@@ -2735,6 +2869,9 @@ export async function runShadowWatchlistBacktest(input: {
     runId,
     source: WATCHLIST_BACKTEST_SOURCE,
     marketDate: window.marketDate,
+    marketDateFrom: window.marketDateFrom,
+    marketDateTo: window.marketDateTo,
+    rangeKey: window.rangeKey,
     timeframe,
     window: {
       start: window.start,

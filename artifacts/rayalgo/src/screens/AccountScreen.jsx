@@ -86,34 +86,50 @@ const ShadowWatchlistBacktestPanel = ({
   const running = mutation.isPending;
   const error = mutation.error;
   const pnl = Number(summary.realizedPnl || 0);
+  const runLabel =
+    run?.marketDateFrom && run?.marketDateTo && run.marketDateFrom !== run.marketDateTo
+      ? `${run.marketDateFrom} -> ${run.marketDateTo}`
+      : run?.marketDate || "One-off ledger run";
+  const runButtonStyle = {
+    minHeight: dim(24),
+    padding: sp("3px 8px"),
+    border: `1px solid ${running ? T.textMuted : T.pink}`,
+    borderRadius: dim(4),
+    background: running ? T.bg2 : `${T.pink}22`,
+    color: running ? T.textMuted : T.pink,
+    fontSize: fs(8),
+    fontFamily: T.mono,
+    fontWeight: 900,
+    cursor: running ? "wait" : "pointer",
+    textTransform: "uppercase",
+  };
   return (
     <Panel
-      title="Today Watchlist Backtest"
-      rightRail={run?.marketDate || "One-off ledger run"}
+      title="Watchlist Backtest"
+      rightRail={runLabel}
       minHeight={150}
       error={error}
       action={
-        <button
-          type="button"
-          onClick={() => mutation.mutate()}
-          disabled={running}
-          data-testid="shadow-watchlist-backtest-run"
-          style={{
-            minHeight: dim(24),
-            padding: sp("3px 8px"),
-            border: `1px solid ${running ? T.textMuted : T.pink}`,
-            borderRadius: dim(4),
-            background: running ? T.bg2 : `${T.pink}22`,
-            color: running ? T.textMuted : T.pink,
-            fontSize: fs(8),
-            fontFamily: T.mono,
-            fontWeight: 900,
-            cursor: running ? "wait" : "pointer",
-            textTransform: "uppercase",
-          }}
-        >
-          {running ? "Running" : run ? "Refresh" : "Run"}
-        </button>
+        <div style={{ display: "flex", gap: sp(3), flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-today"
+            style={runButtonStyle}
+          >
+            {running ? "Running" : "Today"}
+          </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m", range: "past_week" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-week"
+            style={runButtonStyle}
+          >
+            Week
+          </button>
+        </div>
       }
     >
       <div style={{ display: "grid", gap: sp(6) }}>
@@ -125,7 +141,7 @@ const ShadowWatchlistBacktestPanel = ({
         </div>
         <div style={{ color: T.textSec, fontSize: fs(9), lineHeight: 1.35 }}>
           Runs all saved watchlists from the New York regular-session open through
-          the latest completed bar. Rows are written as synthetic Shadow ledger
+          the latest completed bar in the selected window. Rows are written as synthetic Shadow ledger
           activity and kept separate from existing Shadow positions.
         </div>
         {run ? (
@@ -481,10 +497,10 @@ export const AccountScreen = ({
     },
   });
   const shadowWatchlistBacktestMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (payload = { timeframe: "15m" }) =>
       platformJsonRequest("/api/accounts/shadow/watchlist-backtest/runs", {
         method: "POST",
-        body: { timeframe: "15m" },
+        body: payload,
         timeoutMs: 120_000,
       }),
     onSuccess: () => {
