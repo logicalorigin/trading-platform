@@ -455,6 +455,14 @@ async function expectActiveScreenFillsHost(
   page: Page,
   screen: "trade" | "flow" | "research",
 ) {
+  const readyTestId =
+    screen === "trade"
+      ? "trade-top-zone"
+      : screen === "flow"
+        ? "flow-main-layout"
+        : "research-screen";
+  await expect(page.getByTestId(readyTestId)).toBeVisible({ timeout: 30_000 });
+
   const metrics = await page
     .getByTestId(`screen-host-${screen}`)
     .evaluate((host) => {

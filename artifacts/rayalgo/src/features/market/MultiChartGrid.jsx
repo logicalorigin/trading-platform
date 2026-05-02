@@ -1365,16 +1365,4 @@ export const MultiChartGrid = ({
   );
 };
 
-// MarketScreen extracted to ./screens/MarketScreen.jsx
-
-// ═══════════════════════════════════════════════════════════════════
-// SCREEN: FLOW (UOA Scanner)
-// ═══════════════════════════════════════════════════════════════════
-
-// FlowScreen extracted to ./screens/FlowScreen.jsx
-
-// ═══════════════════════════════════════════════════════════════════
-// SCREEN: TRADE
-// ═══════════════════════════════════════════════════════════════════
-
 // ─── Trade tab sub-components ───

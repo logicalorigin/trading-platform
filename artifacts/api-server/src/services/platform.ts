@@ -135,6 +135,8 @@ const BUILT_IN_WATCHLISTS = [
     items: [
       { symbol: "SPY", name: "SPDR S&P 500" },
       { symbol: "QQQ", name: "Invesco QQQ" },
+      { symbol: "TQQQ", name: "ProShares UltraPro QQQ" },
+      { symbol: "SQQQ", name: "ProShares UltraPro Short QQQ" },
       { symbol: "IWM", name: "iShares Russell 2000" },
       { symbol: "DIA", name: "SPDR Dow Jones Industrial Average ETF" },
       { symbol: "AAPL", name: "Apple Inc" },
@@ -168,6 +170,10 @@ const BUILT_IN_WATCHLISTS = [
       { symbol: "QCOM", name: "Qualcomm Inc" },
       { symbol: "ARM", name: "Arm Holdings" },
       { symbol: "SOXX", name: "iShares Semiconductor ETF" },
+      { symbol: "SMH", name: "VanEck Semiconductor ETF" },
+      { symbol: "ASML", name: "ASML Holding" },
+      { symbol: "MRVL", name: "Marvell Technology" },
+      { symbol: "ANET", name: "Arista Networks" },
     ],
   },
   {

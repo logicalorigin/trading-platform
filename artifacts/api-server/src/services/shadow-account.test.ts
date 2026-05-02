@@ -107,6 +107,45 @@ test("buildWatchlistBacktestFills uses run-scoped positions and long-only exits"
   );
 });
 
+test("buildWatchlistBacktestFills can stop out open longs before a RayReplica sell", () => {
+  const result = buildWatchlistBacktestFills({
+    runId: "run-stop-1",
+    marketDate: "2026-05-01",
+    startingTotals: shadowTotals,
+    baseMarketValue: 0,
+    riskOverlay: {
+      label: "SL5",
+      stopLossPercent: 5,
+      trailingStopPercent: null,
+    },
+    barsBySymbol: new Map([
+      [
+        "AAPL",
+        [
+          {
+            time: Math.floor(new Date("2026-05-01T14:45:00.000Z").getTime() / 1000),
+            ts: "2026-05-01T14:45:00.000Z",
+            o: 100,
+            h: 101,
+            l: 94,
+            c: 95,
+            v: 1_000,
+          },
+        ],
+      ],
+    ]),
+    windowEnd: new Date("2026-05-01T15:00:00.000Z"),
+    candidates: [candidate({})] as never,
+  });
+
+  assert.equal(result.fills.length, 2);
+  assert.equal(result.fills[0]?.side, "buy");
+  assert.equal(result.fills[1]?.side, "sell");
+  assert.equal(result.fills[1]?.price, 95);
+  assert.equal(result.fills[1]?.fillSource, "risk_stop_loss:SL5");
+  assert.equal(result.fills[1]?.realizedPnl, -151);
+});
+
 test("watchlist backtest window keeps legacy single-day behavior", () => {
   const window =
     __shadowWatchlistBacktestInternalsForTests.resolveWatchlistBacktestWindow({
@@ -146,6 +185,69 @@ test("watchlist backtest past_week resolves to five weekdays ending at the resol
   assert.equal(weekendWindow.marketDateFrom, "2026-04-27");
   assert.equal(weekendWindow.marketDateTo, "2026-05-01");
   assert.equal(weekendWindow.rangeKey, "2026-04-27:2026-05-01");
+});
+
+test("watchlist backtest last_month resolves to the previous New York calendar month", () => {
+  const window =
+    __shadowWatchlistBacktestInternalsForTests.resolveWatchlistBacktestWindow({
+      range: "last_month",
+      now: new Date("2026-05-02T00:15:00.000Z"),
+    });
+
+  assert.equal(window.marketDateFrom, "2026-04-01");
+  assert.equal(window.marketDateTo, "2026-04-30");
+  assert.equal(window.rangeKey, "2026-04-01:2026-04-30");
+  assert.equal(window.start.toISOString(), "2026-04-01T13:30:00.000Z");
+  assert.equal(window.cleanupEnd.toISOString(), "2026-05-01T04:00:00.000Z");
+
+  const januaryWindow =
+    __shadowWatchlistBacktestInternalsForTests.resolveWatchlistBacktestWindow({
+      range: "month",
+      now: new Date("2026-01-15T18:00:00.000Z"),
+    });
+
+  assert.equal(januaryWindow.marketDateFrom, "2025-12-01");
+  assert.equal(januaryWindow.marketDateTo, "2025-12-31");
+});
+
+test("watchlist backtest ytd resolves from the New York calendar year start", () => {
+  const window =
+    __shadowWatchlistBacktestInternalsForTests.resolveWatchlistBacktestWindow({
+      range: "ytd",
+      now: new Date("2026-05-02T00:15:00.000Z"),
+    });
+
+  assert.equal(window.marketDateFrom, "2026-01-01");
+  assert.equal(window.marketDateTo, "2026-05-01");
+  assert.equal(window.rangeKey, "2026-01-01:2026-05-01");
+  assert.equal(window.start.toISOString(), "2026-01-01T14:30:00.000Z");
+  assert.equal(window.cleanupEnd.toISOString(), "2026-05-02T04:00:00.000Z");
+
+  const aliasWindow =
+    __shadowWatchlistBacktestInternalsForTests.resolveWatchlistBacktestWindow({
+      range: "since_2026",
+      now: new Date("2026-05-02T00:15:00.000Z"),
+    });
+
+  assert.equal(aliasWindow.marketDateFrom, "2026-01-01");
+  assert.equal(aliasWindow.marketDateTo, "2026-05-01");
+});
+
+test("watchlist backtest regular-session filter uses New York market hours", () => {
+  const isRegularSession =
+    __shadowWatchlistBacktestInternalsForTests.isWatchlistBacktestRegularSessionTime;
+
+  assert.equal(isRegularSession(new Date("2026-01-02T14:30:00.000Z")), true);
+  assert.equal(isRegularSession(new Date("2026-01-02T20:59:00.000Z")), true);
+  assert.equal(isRegularSession(new Date("2026-01-02T21:00:00.000Z")), false);
+  assert.equal(
+    isRegularSession(new Date("2026-01-02T21:00:00.000Z"), {
+      allowClosePrint: true,
+    }),
+    true,
+  );
+  assert.equal(isRegularSession(new Date("2026-01-02T09:00:00.000Z")), false);
+  assert.equal(isRegularSession(new Date("2026-01-03T15:00:00.000Z")), false);
 });
 
 test("watchlist backtest rejects inverted date ranges", () => {

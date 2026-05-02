@@ -58,9 +58,12 @@ const WATCHLIST_BACKTEST_TIMEFRAME_MS: Record<ShadowWatchlistBacktestTimeframe, 
   "1d": 24 * 60 * 60_000,
 };
 const WATCHLIST_BACKTEST_COMPLETED_BAR_SAFETY_MS = 2_000;
+const WATCHLIST_BACKTEST_MAX_BAR_LIMIT = 15_000;
 const WATCHLIST_BACKTEST_MAX_POSITION_FRACTION = 0.1;
 const WATCHLIST_BACKTEST_MAX_OPEN_POSITIONS = 10;
 const WATCHLIST_BACKTEST_TIME_ZONE = "America/New_York";
+const WATCHLIST_BACKTEST_OUTSIDE_RTH = false;
+const SHADOW_ORDER_HISTORY_LIMIT = 5_000;
 
 type OrderTab = "working" | "history";
 type ShadowAssetClass = "equity" | "option";
@@ -108,6 +111,12 @@ type ShadowFillPlan = {
 type ShadowTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 type ShadowWatchlistBacktestTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
+
+type WatchlistBacktestRiskOverlay = {
+  label: string;
+  stopLossPercent: number | null;
+  trailingStopPercent: number | null;
+};
 
 type WatchlistBacktestFill = {
   symbol: string;
@@ -1657,7 +1666,7 @@ export async function getShadowAccountOrders(input: {
     .from(shadowOrdersTable)
     .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
     .orderBy(desc(shadowOrdersTable.placedAt))
-    .limit(500);
+    .limit(SHADOW_ORDER_HISTORY_LIMIT);
   const filtered = orders.filter((order) =>
     tab === "working"
       ? !terminalStatuses.includes(order.status)
@@ -1935,6 +1944,28 @@ function previousWeekdayOrSame(value: string) {
   return cursor;
 }
 
+function previousCalendarMonthRange(now: Date) {
+  const parts = timeZoneParts(now);
+  const firstOfPreviousMonth = new Date(Date.UTC(parts.year, parts.month - 2, 1));
+  const year = firstOfPreviousMonth.getUTCFullYear();
+  const month = firstOfPreviousMonth.getUTCMonth() + 1;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const normalizedMonth = String(month).padStart(2, "0");
+  return {
+    from: `${String(year).padStart(4, "0")}-${normalizedMonth}-01`,
+    to: `${String(year).padStart(4, "0")}-${normalizedMonth}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function yearToDateRange(now: Date) {
+  const parts = timeZoneParts(now);
+  const year = String(parts.year).padStart(4, "0");
+  return {
+    from: `${year}-01-01`,
+    to: previousWeekdayOrSame(marketDateKey(now)),
+  };
+}
+
 function addWeekdaysToMarketDate(value: string, days: number) {
   let cursor = value;
   const step = days < 0 ? -1 : 1;
@@ -2005,13 +2036,25 @@ function resolveWatchlistBacktestWindow(input: {
   const now = input.now ?? new Date();
   const today = previousWeekdayOrSame(marketDateKey(now));
   const range = String(input.range || "").trim().toLowerCase();
+  const monthRange =
+    range === "last_month" || range === "month"
+      ? previousCalendarMonthRange(now)
+      : null;
+  const ytdRange =
+    range === "ytd" || range === "year_to_date" || range === "since_2026"
+      ? yearToDateRange(now)
+      : null;
   const rangeToDate =
     input.marketDateTo?.trim() ||
     input.marketDate?.trim() ||
+    ytdRange?.to ||
+    monthRange?.to ||
     today;
   const resolvedToDate = previousWeekdayOrSame(rangeToDate);
   const resolvedFromDate =
     input.marketDateFrom?.trim() ||
+    ytdRange?.from ||
+    monthRange?.from ||
     (range === "past_week" || range === "week"
       ? addWeekdaysToMarketDate(resolvedToDate, -4)
       : input.marketDate?.trim() || resolvedToDate);
@@ -2061,6 +2104,37 @@ function normalizeWatchlistBacktestTimeframe(
     : "15m";
 }
 
+function normalizeRiskOverlayPercent(value: unknown) {
+  const parsed = readNumber(value);
+  if (!Number.isFinite(parsed) || parsed === null || parsed <= 0) {
+    return null;
+  }
+  return Math.min(parsed, 99);
+}
+
+function normalizeWatchlistBacktestRiskOverlay(
+  value: unknown,
+): WatchlistBacktestRiskOverlay | null {
+  const record = readRecord(value);
+  if (!record) {
+    return null;
+  }
+  const stopLossPercent = normalizeRiskOverlayPercent(record.stopLossPercent);
+  const trailingStopPercent = normalizeRiskOverlayPercent(record.trailingStopPercent);
+  if (!stopLossPercent && !trailingStopPercent) {
+    return null;
+  }
+  const pieces = [
+    stopLossPercent ? `SL${stopLossPercent}` : null,
+    trailingStopPercent ? `TR${trailingStopPercent}` : null,
+  ].filter(Boolean);
+  return {
+    label: readString(record.label) || pieces.join("_"),
+    stopLossPercent,
+    trailingStopPercent,
+  };
+}
+
 function isBacktestBarComplete(input: {
   timestamp: Date;
   timeframe: ShadowWatchlistBacktestTimeframe;
@@ -2071,6 +2145,42 @@ function isBacktestBarComplete(input: {
       WATCHLIST_BACKTEST_TIMEFRAME_MS[input.timeframe] +
       WATCHLIST_BACKTEST_COMPLETED_BAR_SAFETY_MS <=
     input.evaluatedAt.getTime()
+  );
+}
+
+function isWatchlistBacktestRegularSessionTime(
+  date: Date,
+  options: { allowClosePrint?: boolean } = {},
+) {
+  const parts = timeZoneParts(date);
+  const weekday = new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day),
+  ).getUTCDay();
+  if (weekday === 0 || weekday === 6) {
+    return false;
+  }
+  const minutes = parts.hour * 60 + parts.minute;
+  const open = 9 * 60 + 30;
+  const close = 16 * 60;
+  return options.allowClosePrint
+    ? minutes >= open && minutes <= close
+    : minutes >= open && minutes < close;
+}
+
+function watchlistBacktestBarLimit(input: {
+  timeframe: ShadowWatchlistBacktestTimeframe;
+  window: ReturnType<typeof resolveWatchlistBacktestWindow>;
+}) {
+  const timeframeMs = WATCHLIST_BACKTEST_TIMEFRAME_MS[input.timeframe];
+  const requestedWindowBars = Math.ceil(
+    Math.max(0, input.window.end.getTime() - input.window.start.getTime()) / timeframeMs,
+  );
+  return Math.min(
+    WATCHLIST_BACKTEST_MAX_BAR_LIMIT,
+    Math.max(
+      RAY_REPLICA_SIGNAL_WARMUP_BARS,
+      requestedWindowBars + RAY_REPLICA_SIGNAL_WARMUP_BARS,
+    ),
   );
 }
 
@@ -2192,14 +2302,16 @@ async function collectWatchlistBacktestSignals(input: {
 }) {
   const settings = resolveRayReplicaSignalSettings({});
   const skipped: WatchlistBacktestSkip[] = [];
+  const barLimit = watchlistBacktestBarLimit(input);
+  const barsBySymbol = new Map<string, RayReplicaBar[]>();
   const candidates = await mapWithConcurrency(input.universe, 4, async (item) => {
     const barsResult = await getBars({
       symbol: item.symbol,
       timeframe: input.timeframe,
-      limit: RAY_REPLICA_SIGNAL_WARMUP_BARS,
+      limit: barLimit,
       to: input.window.end,
       assetClass: "equity",
-      outsideRth: true,
+      outsideRth: WATCHLIST_BACKTEST_OUTSIDE_RTH,
       source: "trades",
       allowHistoricalSynthesis: true,
     }).catch((error: unknown) => {
@@ -2217,6 +2329,7 @@ async function collectWatchlistBacktestSignals(input: {
       input.timeframe,
       input.window.end,
     );
+    barsBySymbol.set(item.symbol, chartBars);
     if (!chartBars.length) {
       skipped.push({
         symbol: item.symbol,
@@ -2235,7 +2348,11 @@ async function collectWatchlistBacktestSignals(input: {
     return evaluation.signalEvents
       .filter((signal) => {
         const signalAt = new Date(signal.time * 1000);
-        return signalAt >= input.window.start && signalAt <= input.window.end;
+        return (
+          signalAt >= input.window.start &&
+          signalAt <= input.window.end &&
+          isWatchlistBacktestRegularSessionTime(signalAt)
+        );
       })
       .map((signal) => {
         const fill = fillForSignal({
@@ -2243,6 +2360,13 @@ async function collectWatchlistBacktestSignals(input: {
           bars: chartBars,
           windowEnd: input.window.end,
         });
+        if (
+          !isWatchlistBacktestRegularSessionTime(fill.placedAt, {
+            allowClosePrint: true,
+          })
+        ) {
+          return null;
+        }
         return {
           symbol: item.symbol,
           side: signalDirection(signal),
@@ -2255,13 +2379,17 @@ async function collectWatchlistBacktestSignals(input: {
           fillSource: fill.source,
           watchlists: item.watchlists,
         };
-      });
+      })
+      .filter((candidate): candidate is NonNullable<typeof candidate> =>
+        Boolean(candidate),
+      );
   });
   return {
     candidates: candidates.flat().sort((left, right) => {
       const timeDelta = left.placedAt.getTime() - right.placedAt.getTime();
       return timeDelta || left.symbol.localeCompare(right.symbol);
     }),
+    barsBySymbol,
     skipped,
   };
 }
@@ -2289,9 +2417,12 @@ function quantityForCash(input: {
 export function buildWatchlistBacktestFills(input: {
   runId: string;
   candidates: Awaited<ReturnType<typeof collectWatchlistBacktestSignals>>["candidates"];
+  barsBySymbol?: Map<string, RayReplicaBar[]>;
+  riskOverlay?: WatchlistBacktestRiskOverlay | null;
   startingTotals: ShadowTotals;
   baseMarketValue: number;
   marketDate: string;
+  windowEnd?: Date;
 }) {
   const fills: WatchlistBacktestFill[] = [];
   const snapshots: Array<{
@@ -2309,7 +2440,10 @@ export function buildWatchlistBacktestFills(input: {
       quantity: number;
       averageCost: number;
       lastMark: number;
+      highestMark: number;
+      lastStopCheckedAt: Date;
       positionKey: string;
+      watchlists: Array<{ id: string; name: string }>;
     }
   >();
   let cash = input.startingTotals.cash;
@@ -2317,6 +2451,7 @@ export function buildWatchlistBacktestFills(input: {
   let syntheticFees = 0;
   const targetNotional =
     input.startingTotals.netLiquidation * WATCHLIST_BACKTEST_MAX_POSITION_FRACTION;
+  const riskOverlay = input.riskOverlay ?? null;
 
   const pushSnapshot = (asOf: Date) => {
     let syntheticMarketValue = 0;
@@ -2336,7 +2471,120 @@ export function buildWatchlistBacktestFills(input: {
     });
   };
 
+  const sellOpenPosition = (sellInput: {
+    symbol: string;
+    current: NonNullable<ReturnType<typeof open.get>>;
+    price: number;
+    placedAt: Date;
+    signalAt: Date;
+    signalPrice: number | null;
+    signalClose: number | null;
+    watchlists: Array<{ id: string; name: string }>;
+    fillSource: string;
+  }) => {
+    const quantity = sellInput.current.quantity;
+    const fees = computeShadowOrderFees({
+      assetClass: "equity",
+      quantity,
+      price: sellInput.price,
+    });
+    const grossAmount = quantity * sellInput.price;
+    const realizedPnl =
+      (sellInput.price - sellInput.current.averageCost) * quantity - fees;
+    const cashDelta = grossAmount - fees;
+    cash += cashDelta;
+    syntheticFees += fees;
+    syntheticRealizedPnl += realizedPnl;
+    sellInput.current.lastMark = sellInput.price;
+    open.delete(sellInput.symbol);
+    fills.push({
+      symbol: sellInput.symbol,
+      side: "sell",
+      quantity,
+      price: sellInput.price,
+      fees,
+      grossAmount,
+      cashDelta,
+      realizedPnl,
+      positionKey: sellInput.current.positionKey,
+      placedAt: sellInput.placedAt,
+      signalAt: sellInput.signalAt,
+      signalPrice: sellInput.signalPrice,
+      signalClose: sellInput.signalClose,
+      watchlists: sellInput.watchlists,
+      fillSource: sellInput.fillSource,
+    });
+    pushSnapshot(sellInput.placedAt);
+  };
+
+  const flushRiskStopsUntil = (until: Date) => {
+    if (!riskOverlay || !input.barsBySymbol) {
+      return;
+    }
+    for (const [symbol, position] of Array.from(open.entries())) {
+      const bars = input.barsBySymbol.get(symbol) ?? [];
+      for (const bar of bars) {
+        if (!open.has(symbol)) {
+          break;
+        }
+        const barAt = new Date(bar.time * 1000);
+        if (barAt <= position.lastStopCheckedAt || barAt > until) {
+          continue;
+        }
+        if (
+          !isWatchlistBacktestRegularSessionTime(barAt, {
+            allowClosePrint: true,
+          })
+        ) {
+          position.lastStopCheckedAt = barAt;
+          continue;
+        }
+
+        const triggered: Array<{ price: number; source: string }> = [];
+        if (riskOverlay.stopLossPercent) {
+          const stopPrice =
+            position.averageCost * (1 - riskOverlay.stopLossPercent / 100);
+          if (bar.l <= stopPrice) {
+            triggered.push({ price: stopPrice, source: "stop_loss" });
+          }
+        }
+        if (riskOverlay.trailingStopPercent) {
+          const trailingStopPrice =
+            position.highestMark * (1 - riskOverlay.trailingStopPercent / 100);
+          if (bar.l <= trailingStopPrice) {
+            triggered.push({
+              price: trailingStopPrice,
+              source: "trailing_stop",
+            });
+          }
+        }
+
+        if (triggered.length) {
+          const selected = triggered.sort((left, right) => right.price - left.price)[0]!;
+          position.lastStopCheckedAt = barAt;
+          sellOpenPosition({
+            symbol,
+            current: position,
+            price: cents(selected.price),
+            placedAt: barAt,
+            signalAt: barAt,
+            signalPrice: cents(selected.price),
+            signalClose: cents(bar.c),
+            watchlists: position.watchlists,
+            fillSource: `risk_${selected.source}:${riskOverlay.label}`,
+          });
+          break;
+        }
+
+        position.highestMark = Math.max(position.highestMark, bar.h, bar.c);
+        position.lastMark = cents(bar.c);
+        position.lastStopCheckedAt = barAt;
+      }
+    }
+  };
+
   for (const candidate of input.candidates) {
+    flushRiskStopsUntil(candidate.placedAt);
     const price = candidate.fillPrice;
     if (!Number.isFinite(price) || price <= 0) {
       skipped.push({
@@ -2395,7 +2643,10 @@ export function buildWatchlistBacktestFills(input: {
         quantity,
         averageCost: price,
         lastMark: price,
+        highestMark: price,
+        lastStopCheckedAt: candidate.placedAt,
         positionKey,
+        watchlists: candidate.watchlists,
       });
       fills.push({
         symbol: candidate.symbol,
@@ -2428,30 +2679,10 @@ export function buildWatchlistBacktestFills(input: {
       });
       continue;
     }
-    const quantity = current.quantity;
-    const fees = computeShadowOrderFees({
-      assetClass: "equity",
-      quantity,
-      price,
-    });
-    const grossAmount = quantity * price;
-    const realizedPnl = (price - current.averageCost) * quantity - fees;
-    const cashDelta = grossAmount - fees;
-    cash += cashDelta;
-    syntheticFees += fees;
-    syntheticRealizedPnl += realizedPnl;
-    current.lastMark = price;
-    open.delete(candidate.symbol);
-    fills.push({
+    sellOpenPosition({
       symbol: candidate.symbol,
-      side: "sell",
-      quantity,
+      current,
       price,
-      fees,
-      grossAmount,
-      cashDelta,
-      realizedPnl,
-      positionKey: current.positionKey,
       placedAt: candidate.placedAt,
       signalAt: candidate.signalAt,
       signalPrice: candidate.signalPrice,
@@ -2459,7 +2690,10 @@ export function buildWatchlistBacktestFills(input: {
       watchlists: candidate.watchlists,
       fillSource: candidate.fillSource,
     });
-    pushSnapshot(candidate.placedAt);
+  }
+
+  if (input.windowEnd) {
+    flushRiskStopsUntil(input.windowEnd);
   }
 
   return { fills, snapshots, skipped };
@@ -2535,8 +2769,12 @@ function watchlistBacktestOrderMatchesRange(
     marketDateFrom: string;
     marketDateTo: string;
     rangeKey: string;
+    replaceAll?: boolean;
   },
 ) {
+  if (input.replaceAll) {
+    return true;
+  }
   const payloadRecord = readRecord(payload) ?? {};
   const metadata = readRecord(payloadRecord.metadata) ?? {};
   const marketDate = readString(metadata.marketDate);
@@ -2559,6 +2797,7 @@ async function deleteWatchlistBacktestRowsForRange(
     rangeKey: string;
     windowStart: Date;
     cleanupEnd: Date;
+    replaceAll?: boolean;
   },
 ) {
   const orders = await tx
@@ -2631,26 +2870,53 @@ async function deleteWatchlistBacktestRowsForRange(
       );
   }
 
-  for (const source of watchlistBacktestSnapshotSourcesForRange(input)) {
+  if (input.replaceAll) {
     await tx
       .delete(shadowBalanceSnapshotsTable)
       .where(
         and(
           eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
-          eq(shadowBalanceSnapshotsTable.source, source),
+          eq(shadowBalanceSnapshotsTable.source, WATCHLIST_BACKTEST_MARK_SOURCE),
+        ),
+      );
+    await tx
+      .delete(shadowBalanceSnapshotsTable)
+      .where(
+        and(
+          eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+          sql`${shadowBalanceSnapshotsTable.source} like ${`${WATCHLIST_BACKTEST_SOURCE}:%`}`,
+        ),
+      );
+    await tx
+      .delete(shadowBalanceSnapshotsTable)
+      .where(
+        and(
+          eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+          sql`${shadowBalanceSnapshotsTable.source} like ${"watchlist_bt:%"}`,
+        ),
+      );
+  } else {
+    for (const source of watchlistBacktestSnapshotSourcesForRange(input)) {
+      await tx
+        .delete(shadowBalanceSnapshotsTable)
+        .where(
+          and(
+            eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+            eq(shadowBalanceSnapshotsTable.source, source),
+          ),
+        );
+    }
+    await tx
+      .delete(shadowBalanceSnapshotsTable)
+      .where(
+        and(
+          eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+          eq(shadowBalanceSnapshotsTable.source, WATCHLIST_BACKTEST_MARK_SOURCE),
+          gte(shadowBalanceSnapshotsTable.asOf, input.windowStart),
+          lte(shadowBalanceSnapshotsTable.asOf, input.cleanupEnd),
         ),
       );
   }
-  await tx
-    .delete(shadowBalanceSnapshotsTable)
-    .where(
-      and(
-        eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
-        eq(shadowBalanceSnapshotsTable.source, WATCHLIST_BACKTEST_MARK_SOURCE),
-        gte(shadowBalanceSnapshotsTable.asOf, input.windowStart),
-        lte(shadowBalanceSnapshotsTable.asOf, input.cleanupEnd),
-      ),
-    );
 
   return {
     deletedOrders: orderIds.length,
@@ -2664,6 +2930,7 @@ async function resetWatchlistBacktestRowsForRange(input: {
   rangeKey: string;
   windowStart: Date;
   cleanupEnd: Date;
+  replaceAll?: boolean;
 }) {
   await db.transaction(async (tx) => {
     await deleteWatchlistBacktestRowsForRange(tx, input);
@@ -2678,6 +2945,8 @@ async function insertWatchlistBacktestFills(input: {
   rangeKey: string;
   windowStart: Date;
   cleanupEnd: Date;
+  replaceAll?: boolean;
+  riskOverlay?: WatchlistBacktestRiskOverlay | null;
   fills: WatchlistBacktestFill[];
   snapshots: ReturnType<typeof buildWatchlistBacktestFills>["snapshots"];
 }) {
@@ -2698,6 +2967,7 @@ async function insertWatchlistBacktestFills(input: {
           marketDate: fillMarketDate,
           marketDateFrom: input.marketDateFrom,
           marketDateTo: input.marketDateTo,
+          riskOverlay: input.riskOverlay ?? null,
           positionKey: fill.positionKey,
           signalAt: fill.signalAt.toISOString(),
           signalPrice: fill.signalPrice,
@@ -2782,6 +3052,7 @@ async function insertWatchlistBacktestFills(input: {
 
 export const __shadowWatchlistBacktestInternalsForTests = {
   resolveWatchlistBacktestWindow,
+  isWatchlistBacktestRegularSessionTime,
   watchlistBacktestOrderMatchesRange,
   watchlistBacktestSnapshotSource,
   watchlistBacktestSnapshotSourcesForRange,
@@ -2793,10 +3064,12 @@ export async function runShadowWatchlistBacktest(input: {
   marketDateTo?: string | null;
   range?: string | null;
   timeframe?: string | null;
+  riskOverlay?: unknown;
 } = {}) {
   await ensureShadowAccount();
   const runId = randomUUID();
   const timeframe = normalizeWatchlistBacktestTimeframe(input.timeframe);
+  const riskOverlay = normalizeWatchlistBacktestRiskOverlay(input.riskOverlay);
   const window = resolveWatchlistBacktestWindow({
     marketDate: input.marketDate,
     marketDateFrom: input.marketDateFrom,
@@ -2810,6 +3083,7 @@ export async function runShadowWatchlistBacktest(input: {
     rangeKey: window.rangeKey,
     windowStart: window.start,
     cleanupEnd: window.cleanupEnd,
+    replaceAll: true,
   });
   await refreshShadowPositionMarks().catch((error) => {
     logger.debug?.({ err: error }, "Shadow mark refresh before watchlist backtest failed");
@@ -2826,9 +3100,12 @@ export async function runShadowWatchlistBacktest(input: {
   const simulation = buildWatchlistBacktestFills({
     runId,
     candidates: signalScan.candidates,
+    barsBySymbol: signalScan.barsBySymbol,
+    riskOverlay,
     startingTotals,
     baseMarketValue,
     marketDate: window.rangeKey,
+    windowEnd: window.end,
   });
 
   await insertWatchlistBacktestFills({
@@ -2838,6 +3115,8 @@ export async function runShadowWatchlistBacktest(input: {
     rangeKey: window.rangeKey,
     windowStart: window.start,
     cleanupEnd: window.cleanupEnd,
+    replaceAll: true,
+    riskOverlay,
     fills: simulation.fills,
     snapshots: simulation.snapshots,
   });
@@ -2873,6 +3152,7 @@ export async function runShadowWatchlistBacktest(input: {
     marketDateTo: window.marketDateTo,
     rangeKey: window.rangeKey,
     timeframe,
+    riskOverlay,
     window: {
       start: window.start,
       end: window.end,

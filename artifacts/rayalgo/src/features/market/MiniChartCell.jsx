@@ -1052,9 +1052,12 @@ export const MiniChartCell = ({
   );
   const handleVisibleLogicalRangeChange = useCallback(
     (range) => {
+      if (!isActive) {
+        return;
+      }
       scheduleVisibleRangeExpansion(range);
     },
-    [scheduleVisibleRangeExpansion],
+    [isActive, scheduleVisibleRangeExpansion],
   );
   const rememberTicker = useCallback(
     (nextTickerOrRow) => {

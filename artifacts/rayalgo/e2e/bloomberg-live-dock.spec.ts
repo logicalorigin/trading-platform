@@ -168,8 +168,8 @@ test("falls back to the secondary Bloomberg source when primary fails", async ({
     "us",
   );
   await expect.poll(async () => (await getBloombergDiagnostics(page))?.failoverCount).toBe(1);
-  expect(primaryRequests).toBeGreaterThan(0);
-  expect(secondaryRequests).toBeGreaterThan(0);
+  await expect.poll(() => primaryRequests).toBeGreaterThan(0);
+  await expect.poll(() => secondaryRequests).toBeGreaterThan(0);
 });
 
 test("surfaces a segment error when no Bloomberg video segments become playable", async ({

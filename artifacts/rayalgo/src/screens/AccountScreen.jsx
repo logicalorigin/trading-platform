@@ -129,6 +129,24 @@ const ShadowWatchlistBacktestPanel = ({
           >
             Week
           </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m", range: "last_month" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-month"
+            style={runButtonStyle}
+          >
+            Month
+          </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "15m", range: "ytd" })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-ytd"
+            style={runButtonStyle}
+          >
+            YTD
+          </button>
         </div>
       }
     >

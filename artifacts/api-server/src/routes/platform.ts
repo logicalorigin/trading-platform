@@ -921,6 +921,12 @@ router.post("/accounts/shadow/watchlist-backtest/runs", async (req, res) => {
         typeof req.body?.marketDateTo === "string" ? req.body.marketDateTo : null,
       range: typeof req.body?.range === "string" ? req.body.range : null,
       timeframe: typeof req.body?.timeframe === "string" ? req.body.timeframe : null,
+      riskOverlay:
+        req.body?.riskOverlay &&
+        typeof req.body.riskOverlay === "object" &&
+        !Array.isArray(req.body.riskOverlay)
+          ? req.body.riskOverlay
+          : null,
     }),
   );
 });
