@@ -45,6 +45,25 @@ test("computeShadowOrderFees applies stock min and cap", () => {
   );
 });
 
+test("buildShadowPositionDayChange uses daily baseline instead of total unrealized pnl", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChange;
+  assert.deepEqual(
+    helper({
+      currentMarketValue: 4_820,
+      baselineMarketValue: null,
+    }),
+    { dayChange: null, dayChangePercent: null },
+  );
+
+  const changed = helper({
+    currentMarketValue: 4_920,
+    baselineMarketValue: 4_820,
+  });
+  assert.equal(changed.dayChange, 100);
+  assert.equal(Number(changed.dayChangePercent?.toFixed(6)), 2.074689);
+});
+
 const shadowTotals = {
   cash: 30_000,
   startingBalance: 30_000,
@@ -66,6 +85,7 @@ const candidate = (patch: Record<string, unknown>) => ({
   fillPrice: 100,
   placedAt: new Date("2026-05-01T14:15:00.000Z"),
   fillSource: "next_bar_open",
+  timeframe: "5m",
   watchlists: [{ id: "default", name: "Default" }],
   ...patch,
 });
@@ -107,6 +127,432 @@ test("buildWatchlistBacktestFills uses run-scoped positions and long-only exits"
   );
 });
 
+test("watchlist backtest closed-trade metrics summarize wins and expectancy", () => {
+  const metrics =
+    __shadowWatchlistBacktestInternalsForTests.summarizeWatchlistBacktestClosedTrades([
+      {
+        side: "buy",
+        realizedPnl: 0,
+      },
+      {
+        side: "sell",
+        realizedPnl: 120,
+      },
+      {
+        side: "sell",
+        realizedPnl: -30,
+      },
+      {
+        side: "sell",
+        realizedPnl: 0,
+      },
+    ] as never);
+
+  assert.equal(metrics.closedTrades, 3);
+  assert.equal(metrics.winningTrades, 1);
+  assert.equal(metrics.losingTrades, 1);
+  assert.equal(Number(metrics.winRatePercent?.toFixed(6)), 33.333333);
+  assert.equal(metrics.averageWin, 120);
+  assert.equal(metrics.averageLoss, -30);
+  assert.equal(metrics.expectancy, 30);
+  assert.equal(metrics.profitFactor, 4);
+});
+
+test("Shadow trading pattern packet attributes ticker performance and chart annotations", () => {
+  const order = ({
+    id,
+    symbol,
+    side,
+    placedAt,
+    candidateId,
+  }: {
+    id: string;
+    symbol: string;
+    side: "buy" | "sell";
+    placedAt: Date;
+    candidateId: string;
+  }) =>
+    ({
+      id,
+      accountId: "shadow",
+      source: "watchlist_backtest",
+      sourceEventId: null,
+      clientOrderId: null,
+      symbol,
+      assetClass: "equity",
+      side,
+      type: "market",
+      timeInForce: "day",
+      status: "filled",
+      quantity: "10",
+      filledQuantity: "10",
+      limitPrice: null,
+      stopPrice: null,
+      averageFillPrice: null,
+      fees: "1",
+      rejectionReason: null,
+      optionContract: null,
+      payload: {
+        candidate: { id: candidateId, symbol },
+        metadata: {
+          runId: "run-patterns",
+          timeframe: "5m",
+          variantId: "SQQQ:1h:exit_longs_buy_proxy",
+        },
+      },
+      placedAt,
+      filledAt: placedAt,
+      createdAt: placedAt,
+      updatedAt: placedAt,
+    });
+  const fill = ({
+    id,
+    orderId,
+    symbol,
+    side,
+    quantity,
+    price,
+    grossAmount,
+    fees,
+    realizedPnl,
+    cashDelta,
+    occurredAt,
+  }: {
+    id: string;
+    orderId: string;
+    symbol: string;
+    side: "buy" | "sell";
+    quantity: number;
+    price: number;
+    grossAmount: number;
+    fees: number;
+    realizedPnl: number;
+    cashDelta: number;
+    occurredAt: Date;
+  }) =>
+    ({
+      id,
+      accountId: "shadow",
+      orderId,
+      sourceEventId: null,
+      symbol,
+      assetClass: "equity",
+      side,
+      quantity: String(quantity),
+      price: String(price),
+      grossAmount: String(grossAmount),
+      fees: String(fees),
+      realizedPnl: String(realizedPnl),
+      cashDelta: String(cashDelta),
+      optionContract: null,
+      occurredAt,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    });
+
+  const orders = [
+    order({
+      id: "11111111-1111-4111-8111-111111111111",
+      symbol: "AAPL",
+      side: "buy",
+      placedAt: new Date("2026-02-03T14:30:00.000Z"),
+      candidateId: "aapl-buy",
+    }),
+    order({
+      id: "22222222-2222-4222-8222-222222222222",
+      symbol: "AAPL",
+      side: "sell",
+      placedAt: new Date("2026-02-03T16:00:00.000Z"),
+      candidateId: "aapl-sell",
+    }),
+    order({
+      id: "33333333-3333-4333-8333-333333333333",
+      symbol: "MSFT",
+      side: "buy",
+      placedAt: new Date("2026-02-04T14:30:00.000Z"),
+      candidateId: "msft-buy",
+    }),
+    order({
+      id: "44444444-4444-4444-8444-444444444444",
+      symbol: "MSFT",
+      side: "sell",
+      placedAt: new Date("2026-02-04T15:00:00.000Z"),
+      candidateId: "msft-sell",
+    }),
+  ];
+
+  const packet =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowTradingPatternsFromRows({
+      range: "YTD",
+      windowStart: new Date("2026-01-01T00:00:00.000Z"),
+      windowEnd: new Date("2026-05-03T00:00:00.000Z"),
+      fills: [
+        fill({
+          id: "fill-aapl-buy",
+          orderId: "11111111-1111-4111-8111-111111111111",
+          symbol: "AAPL",
+          side: "buy",
+          quantity: 10,
+          price: 100,
+          grossAmount: 1_000,
+          fees: 1,
+          realizedPnl: 0,
+          cashDelta: -1_001,
+          occurredAt: new Date("2026-02-03T14:30:00.000Z"),
+        }),
+        fill({
+          id: "fill-aapl-sell",
+          orderId: "22222222-2222-4222-8222-222222222222",
+          symbol: "AAPL",
+          side: "sell",
+          quantity: 10,
+          price: 110,
+          grossAmount: 1_100,
+          fees: 1,
+          realizedPnl: 98,
+          cashDelta: 1_099,
+          occurredAt: new Date("2026-02-03T16:00:00.000Z"),
+        }),
+        fill({
+          id: "fill-msft-buy",
+          orderId: "33333333-3333-4333-8333-333333333333",
+          symbol: "MSFT",
+          side: "buy",
+          quantity: 5,
+          price: 200,
+          grossAmount: 1_000,
+          fees: 1,
+          realizedPnl: 0,
+          cashDelta: -1_001,
+          occurredAt: new Date("2026-02-04T14:30:00.000Z"),
+        }),
+        fill({
+          id: "fill-msft-sell",
+          orderId: "44444444-4444-4444-8444-444444444444",
+          symbol: "MSFT",
+          side: "sell",
+          quantity: 5,
+          price: 190,
+          grossAmount: 950,
+          fees: 1,
+          realizedPnl: -52,
+          cashDelta: 949,
+          occurredAt: new Date("2026-02-04T15:00:00.000Z"),
+        }),
+      ] as never,
+      ordersById: new Map(orders.map((row) => [row.id, row as never])),
+    });
+
+  assert.equal(packet.summary.closedTrades, 2);
+  assert.equal(packet.summary.winningTrades, 1);
+  assert.equal(packet.summary.tradeEvents, 4);
+  assert.equal(packet.summary.bestTicker?.symbol, "AAPL");
+  assert.equal(packet.summary.worstTicker?.symbol, "MSFT");
+  assert.equal(packet.tickerStats[0]?.symbol, "AAPL");
+  assert.equal(packet.tickerStats[1]?.symbol, "MSFT");
+  assert.deepEqual(
+    packet.equityAnnotations.map((event) => event.type),
+    ["trade_buy", "trade_sell", "trade_buy", "trade_sell"],
+  );
+  assert.equal(packet.roundTrips[0]?.holdDurationMinutes, 90);
+  assert.equal(packet.roundTrips[1]?.holdDurationMinutes, 30);
+  assert.equal(packet.sourceStats[0]?.sourceType, "watchlist_backtest");
+  assert.equal(packet.fullPacketIncluded, true);
+});
+
+test("watchlist backtest buy-hold benchmark compares strategy entries to end marks", () => {
+  const metrics =
+    __shadowWatchlistBacktestInternalsForTests.summarizeWatchlistBacktestBuyHoldBenchmark({
+      targetMultiple: 1.5,
+      barsBySymbol: new Map([
+        [
+          "AAPL",
+          [
+            {
+              time: Math.floor(new Date("2026-05-01T14:00:00.000Z").getTime() / 1000),
+              ts: "2026-05-01T14:00:00.000Z",
+              o: 99,
+              h: 101,
+              l: 98,
+              c: 100,
+              v: 1_000,
+            },
+            {
+              time: Math.floor(new Date("2026-05-01T15:00:00.000Z").getTime() / 1000),
+              ts: "2026-05-01T15:00:00.000Z",
+              o: 120,
+              h: 131,
+              l: 119,
+              c: 130,
+              v: 1_000,
+            },
+          ],
+        ],
+      ]),
+      windowStart: new Date("2026-05-01T14:00:00.000Z"),
+      windowEnd: new Date("2026-05-01T16:00:00.000Z"),
+      benchmarkCapital: 1_000,
+      strategyPnl: 98,
+      fills: [
+        {
+          symbol: "AAPL",
+          side: "buy",
+          quantity: 10,
+          price: 100,
+          fees: 1,
+          grossAmount: 1_000,
+        },
+        {
+          symbol: "AAPL",
+          side: "sell",
+          quantity: 10,
+          price: 110,
+          fees: 1,
+          grossAmount: 1_100,
+        },
+      ] as never,
+    });
+
+  assert.equal(metrics.strategyMatchedPnl, 98);
+  assert.equal(Number(metrics.matchedBuyHoldPnl.toFixed(6)), 300);
+  assert.equal(Number(metrics.alphaVsBuyHold.toFixed(6)), -202);
+  assert.equal(Number(metrics.outperformanceMultiple?.toFixed(6)), 0.326667);
+  assert.equal(Number(metrics.targetBuyHoldPnl.toFixed(6)), 450);
+  assert.equal(Number(metrics.targetPnlDelta.toFixed(6)), -352);
+  assert.equal(metrics.tradedSymbols, 1);
+  assert.equal(metrics.benchmarkableSymbols, 1);
+});
+
+test("watchlist backtest sweep includes wider drawdown risk variants", () => {
+  const variants =
+    __shadowWatchlistBacktestInternalsForTests.buildWatchlistBacktestSweepVariants();
+  const ids = new Set(variants.map((variant) => variant.id));
+
+  assert.equal(ids.has("baseline"), true);
+  assert.equal(ids.has("TR3"), true);
+  assert.equal(ids.has("TR5"), true);
+  assert.equal(ids.has("TR8"), true);
+  assert.equal(ids.has("SL6"), true);
+  assert.equal(ids.has("SL10"), true);
+  assert.equal(
+    ids.has("VXX:5m:pause_new_longs:until_proxy_sell:TR5"),
+    true,
+  );
+});
+
+test("watchlist exploratory sweep includes wider stops and cash-only sizing variants", () => {
+  const variants =
+    __shadowWatchlistBacktestInternalsForTests.buildWatchlistBacktestSweepVariants({
+      exploratory: true,
+    });
+  const ids = new Set(variants.map((variant) => variant.id));
+
+  assert.equal(ids.has("TR20:P20x5"), true);
+  assert.equal(ids.has("SL8_TR15:P25x4"), true);
+  assert.equal(
+    ids.has("VXX:15m:pause_new_longs:until_proxy_sell:TR12:P15x6"),
+    true,
+  );
+  assert.equal(variants.length > 330, true);
+});
+
+test("buildWatchlistBacktestFills sizes around existing baseline positions", () => {
+  const sameSymbol = buildWatchlistBacktestFills({
+    runId: "run-baseline-symbol",
+    marketDate: "2026-05-01",
+    startingTotals: {
+      ...shadowTotals,
+      cash: 25_000,
+      marketValue: 5_000,
+      netLiquidation: 30_000,
+    },
+    baseMarketValue: 5_000,
+    baselineOpenPositionCount: 1,
+    baselineOpenSymbols: ["AAPL"],
+    candidates: [candidate({})] as never,
+  });
+
+  assert.equal(sameSymbol.fills.length, 0);
+  assert.equal(sameSymbol.skipped[0]?.reason, "same_symbol_position_open");
+
+  const fullBook = buildWatchlistBacktestFills({
+    runId: "run-baseline-full",
+    marketDate: "2026-05-01",
+    startingTotals: {
+      ...shadowTotals,
+      cash: 25_000,
+      marketValue: 5_000,
+      netLiquidation: 30_000,
+    },
+    baseMarketValue: 5_000,
+    baselineOpenPositionCount: 10,
+    baselineOpenSymbols: ["SIVEF"],
+    candidates: [candidate({ symbol: "MSFT" })] as never,
+  });
+
+  assert.equal(fullBook.fills.length, 0);
+  assert.equal(fullBook.skipped[0]?.reason, "max_open_positions");
+});
+
+test("buildWatchlistBacktestFills honors cash-only sizing overlays", () => {
+  const result = buildWatchlistBacktestFills({
+    runId: "run-sizing",
+    marketDate: "2026-05-01",
+    startingTotals: shadowTotals,
+    baseMarketValue: 0,
+    sizingOverlay: {
+      label: "P20x5",
+      maxPositionFraction: 0.2,
+      maxOpenPositions: 5,
+      cashOnly: true,
+    },
+    candidates: [candidate({})] as never,
+  });
+
+  assert.equal(result.fills.length, 1);
+  assert.equal(result.fills[0]?.quantity, 60);
+});
+
+test("buildWatchlistBacktestFills can rebalance into higher-ranked cash-only signals", () => {
+  const result = buildWatchlistBacktestFills({
+    runId: "run-ranked",
+    marketDate: "2026-05-01",
+    startingTotals: {
+      ...shadowTotals,
+      cash: 1_000,
+      startingBalance: 1_000,
+      netLiquidation: 1_000,
+    },
+    baseMarketValue: 0,
+    sizingOverlay: {
+      label: "P50x1",
+      maxPositionFraction: 0.5,
+      maxOpenPositions: 1,
+      cashOnly: true,
+    },
+    selectionOverlay: {
+      label: "RANK1",
+      mode: "ranked_rebalance",
+      minScoreEdge: 1,
+    },
+    candidates: [
+      candidate({ signalScore: 1 }),
+      candidate({
+        symbol: "MSFT",
+        signalScore: 5,
+        placedAt: new Date("2026-05-01T15:00:00.000Z"),
+        signalAt: new Date("2026-05-01T14:45:00.000Z"),
+      }),
+    ] as never,
+  });
+
+  assert.deepEqual(
+    result.fills.map((fill) => `${fill.side}:${fill.symbol}`),
+    ["buy:AAPL", "sell:AAPL", "buy:MSFT"],
+  );
+  assert.match(result.fills[1]?.fillSource ?? "", /^selection_rebalance:RANK1/);
+});
+
 test("buildWatchlistBacktestFills can stop out open longs before a RayReplica sell", () => {
   const result = buildWatchlistBacktestFills({
     runId: "run-stop-1",
@@ -144,6 +590,103 @@ test("buildWatchlistBacktestFills can stop out open longs before a RayReplica se
   assert.equal(result.fills[1]?.price, 95);
   assert.equal(result.fills[1]?.fillSource, "risk_stop_loss:SL5");
   assert.equal(result.fills[1]?.realizedPnl, -151);
+});
+
+test("watchlist defensive regime can pause ordinary long entries", () => {
+  const result = buildWatchlistBacktestFills({
+    runId: "run-regime-pause",
+    marketDate: "2026-05-01",
+    startingTotals: shadowTotals,
+    baseMarketValue: 0,
+    regimeOverlay: {
+      label: "VXX:5m:pause",
+      proxySymbol: "VXX",
+      signalTimeframe: "5m",
+      action: "pause_new_longs",
+      expiration: "fixed_12_5m_bars",
+      fixedBars: 12,
+      scaleDownFraction: 0.5,
+    },
+    regimeCandidates: [
+      candidate({
+        symbol: "VXX",
+        fillPrice: 20,
+        signalAt: new Date("2026-05-01T14:00:00.000Z"),
+        placedAt: new Date("2026-05-01T14:05:00.000Z"),
+      }),
+    ] as never,
+    candidates: [
+      candidate({
+        symbol: "AAPL",
+        fillPrice: 100,
+        signalAt: new Date("2026-05-01T14:10:00.000Z"),
+        placedAt: new Date("2026-05-01T14:15:00.000Z"),
+      }),
+    ] as never,
+  });
+
+  assert.equal(result.fills.length, 0);
+  assert.equal(result.skipped[0]?.reason, "defensive_regime");
+});
+
+test("watchlist defensive regime can exit longs and buy the proxy", () => {
+  const result = buildWatchlistBacktestFills({
+    runId: "run-regime-exit",
+    marketDate: "2026-05-01",
+    startingTotals: shadowTotals,
+    baseMarketValue: 0,
+    barsBySymbol: new Map([
+      [
+        "AAPL",
+        [
+          {
+            time: Math.floor(new Date("2026-05-01T14:20:00.000Z").getTime() / 1000),
+            ts: "2026-05-01T14:20:00.000Z",
+            o: 101,
+            h: 103,
+            l: 100,
+            c: 102,
+            v: 1_000,
+          },
+        ],
+      ],
+    ]),
+    regimeOverlay: {
+      label: "VXX:5m:defense",
+      proxySymbol: "VXX",
+      signalTimeframe: "5m",
+      action: "exit_longs_buy_proxy",
+      expiration: "until_proxy_sell",
+      fixedBars: 12,
+      scaleDownFraction: 0.5,
+    },
+    candidates: [
+      candidate({
+        symbol: "AAPL",
+        fillPrice: 100,
+        signalAt: new Date("2026-05-01T14:00:00.000Z"),
+        placedAt: new Date("2026-05-01T14:05:00.000Z"),
+      }),
+    ] as never,
+    regimeCandidates: [
+      candidate({
+        symbol: "VXX",
+        fillPrice: 20,
+        signalAt: new Date("2026-05-01T14:25:00.000Z"),
+        placedAt: new Date("2026-05-01T14:30:00.000Z"),
+      }),
+    ] as never,
+  });
+
+  assert.equal(result.fills.length, 3);
+  assert.equal(result.fills[0]?.symbol, "AAPL");
+  assert.equal(result.fills[0]?.side, "buy");
+  assert.equal(result.fills[1]?.symbol, "AAPL");
+  assert.equal(result.fills[1]?.side, "sell");
+  assert.equal(result.fills[1]?.price, 102);
+  assert.equal(result.fills[2]?.symbol, "VXX");
+  assert.equal(result.fills[2]?.side, "buy");
+  assert.equal(result.fills[2]?.fillSource, "regime_proxy_entry:VXX:5m:defense");
 });
 
 test("watchlist backtest window keeps legacy single-day behavior", () => {
@@ -310,5 +853,65 @@ test("watchlist backtest snapshot sources preserve single-day compatibility and 
       "watchlist_backtest:2026-04-30",
       "watchlist_backtest:2026-05-01",
     ],
+  );
+});
+
+test("shadow equity history selects one backtest source instead of mixing ledger marks", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const row = (source: string, asOf: string, createdAt = asOf) => ({
+    source,
+    asOf: new Date(asOf),
+    createdAt: new Date(createdAt),
+  });
+
+  const selected = internals.selectShadowEquityHistoryRows([
+    row("mark", "2026-05-01T14:00:00.000Z"),
+    row("watchlist_bt:20260427:20260501", "2026-05-01T15:00:00.000Z"),
+    row("watchlist_backtest_mark", "2026-05-01T15:30:00.000Z"),
+    row(
+      "watchlist_bt:20260101:20260501",
+      "2026-05-01T16:00:00.000Z",
+      "2026-05-03T01:31:15.000Z",
+    ),
+    row(
+      "watchlist_bt:20260101:20260501",
+      "2026-05-03T01:31:17.000Z",
+      "2026-05-03T01:31:17.000Z",
+    ),
+    row("ledger", "2026-05-01T17:00:00.000Z"),
+  ]);
+
+  assert.equal(selected.scope, "watchlist_backtest");
+  assert.equal(selected.selectedSource, "watchlist_bt:20260101:20260501");
+  assert.equal(selected.includeInitialPoint, false);
+  assert.equal(selected.includeLiveTerminal, false);
+  assert.deepEqual(
+    selected.rows.map((entry) => entry.source),
+    ["watchlist_bt:20260101:20260501"],
+  );
+});
+
+test("shadow equity history uses ledger rows when no run snapshots exist", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const row = (source: string, asOf: string) => ({
+    source,
+    asOf: new Date(asOf),
+    createdAt: new Date(asOf),
+  });
+
+  const selected = internals.selectShadowEquityHistoryRows([
+    row("initial", "2026-04-29T19:31:14.000Z"),
+    row("mark", "2026-05-01T14:00:00.000Z"),
+    row("watchlist_backtest_mark", "2026-05-01T15:30:00.000Z"),
+    row("ledger", "2026-05-01T17:00:00.000Z"),
+  ]);
+
+  assert.equal(selected.scope, "ledger");
+  assert.equal(selected.selectedSource, null);
+  assert.equal(selected.includeInitialPoint, true);
+  assert.equal(selected.includeLiveTerminal, true);
+  assert.deepEqual(
+    selected.rows.map((entry) => entry.source),
+    ["initial", "mark", "ledger"],
   );
 });

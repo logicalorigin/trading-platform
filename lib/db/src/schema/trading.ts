@@ -361,6 +361,50 @@ export const shadowBalanceSnapshotsTable = pgTable(
   ],
 );
 
+export const shadowPortfolioAnalysisSnapshotsTable = pgTable(
+  "shadow_portfolio_analysis_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: varchar("account_id", { length: 64 })
+      .notNull()
+      .references(() => shadowAccountsTable.id),
+    analysisRange: varchar("analysis_range", { length: 16 }).notNull(),
+    sourceScope: varchar("source_scope", { length: 64 })
+      .notNull()
+      .default("shadow"),
+    windowStart: timestamp("window_start", { withTimezone: true }),
+    windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
+    summary: jsonb("summary").$type<Record<string, unknown>>().notNull().default({}),
+    tickerStats: jsonb("ticker_stats")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    sourceStats: jsonb("source_stats")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    timeStats: jsonb("time_stats").$type<Record<string, unknown>>().notNull().default({}),
+    equityAnnotations: jsonb("equity_annotations")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    tradeEvents: jsonb("trade_events")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    fullPacket: jsonb("full_packet")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    ...timestamps,
+  },
+  (table) => [
+    index("shadow_portfolio_analysis_account_idx").on(table.accountId),
+    index("shadow_portfolio_analysis_range_idx").on(table.analysisRange),
+    index("shadow_portfolio_analysis_created_at_idx").on(table.createdAt),
+  ],
+);
+
 export const flexReportRunsTable = pgTable(
   "flex_report_runs",
   {

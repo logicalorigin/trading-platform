@@ -659,7 +659,7 @@ export const GetAccountEquityHistoryResponse = zod.object({
   "latestSnapshotAt": zod.coerce.date().nullable(),
   "isStale": zod.boolean(),
   "staleReason": zod.string().nullable(),
-  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger']).nullable(),
+  "terminalPointSource": zod.enum(['live_account_summary', 'persisted_snapshot', 'flex', 'shadow_ledger', 'shadow_watchlist_backtest']).nullable(),
   "liveTerminalIncluded": zod.boolean(),
   "points": zod.array(zod.object({
   "timestamp": zod.coerce.date(),
@@ -680,6 +680,46 @@ export const GetAccountEquityHistoryResponse = zod.object({
   "currency": zod.string(),
   "source": zod.string()
 }))
+})
+
+
+/**
+ * @summary Get Shadow trading pattern analytics and AI packet
+ */
+export const GetAccountTradingPatternsParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const GetAccountTradingPatternsQueryParams = zod.object({
+  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional(),
+  "snapshotId": zod.coerce.string().optional()
+})
+
+export const GetAccountTradingPatternsResponse = zod.object({
+  "snapshot": zod.record(zod.string(), zod.unknown()),
+  "context": zod.record(zod.string(), zod.unknown()),
+  "summary": zod.record(zod.string(), zod.unknown()),
+  "tickerStats": zod.array(zod.record(zod.string(), zod.unknown())),
+  "sourceStats": zod.array(zod.record(zod.string(), zod.unknown())),
+  "timeStats": zod.record(zod.string(), zod.unknown()),
+  "equityAnnotations": zod.array(zod.record(zod.string(), zod.unknown())),
+  "tradeEvents": zod.array(zod.record(zod.string(), zod.unknown())),
+  "roundTrips": zod.array(zod.record(zod.string(), zod.unknown())),
+  "openLots": zod.array(zod.record(zod.string(), zod.unknown())),
+  "anomalies": zod.array(zod.record(zod.string(), zod.unknown())),
+  "fullPacketIncluded": zod.boolean()
+})
+
+
+/**
+ * @summary Persist a Shadow trading pattern analysis snapshot
+ */
+export const CreateAccountTradingPatternsSnapshotParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const CreateAccountTradingPatternsSnapshotBody = zod.object({
+  "range": zod.enum(['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', 'ALL']).optional()
 })
 
 
@@ -848,7 +888,7 @@ export const GetAccountClosedTradesResponse = zod.object({
   "holdDurationMinutes": zod.number().nullable(),
   "commissions": zod.number().nullable(),
   "currency": zod.string(),
-  "sourceType": zod.enum(['manual', 'automation']).optional(),
+  "sourceType": zod.enum(['manual', 'automation', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
   "candidateId": zod.string().nullish(),
   "deploymentId": zod.string().nullish(),
@@ -1597,8 +1637,8 @@ export const GetBarsQueryParams = zod.object({
   "limit": zod.coerce.number().min(1).max(getBarsQueryLimitMax).optional(),
   "from": zod.date().optional(),
   "to": zod.date().optional(),
-  "historyCursor": zod.coerce.string().nullish(),
-  "preferCursor": zod.coerce.boolean().optional(),
+  "historyCursor": zod.coerce.string().nullish().describe('Opaque server-issued cursor for provider-native historical continuation. Falls back to from\/to when invalid or expired.'),
+  "preferCursor": zod.coerce.boolean().optional().describe('Prefer historyCursor continuation before the normal from\/to window when a cursor is present.'),
   "assetClass": zod.enum(['equity', 'option']).optional(),
   "market": zod.enum(['stocks', 'etf', 'indices', 'futures', 'fx', 'crypto', 'otc']).optional().describe('Provider market context from ticker search; used to avoid cross-asset historical fallbacks.'),
   "providerContractId": zod.coerce.string().nullish(),
@@ -1607,24 +1647,6 @@ export const GetBarsQueryParams = zod.object({
   "allowHistoricalSynthesis": zod.coerce.boolean().optional().describe('Allow Polygon\/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.'),
   "allowStudyFallback": zod.coerce.boolean().optional().describe('Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Polygon\/Massive aggregate history remains valid for backtests.'),
   "brokerRecentWindowMinutes": zod.coerce.number().min(getBarsQueryBrokerRecentWindowMinutesMin).optional().describe('Limit broker-sourced recent history to this many minutes before falling back to Massive\/Polygon history.')
-})
-
-const BarsHistoryPage = zod.object({
-  "requestedFrom": zod.coerce.date().nullable(),
-  "requestedTo": zod.coerce.date().nullable(),
-  "oldestBarAt": zod.coerce.date().nullable(),
-  "newestBarAt": zod.coerce.date().nullable(),
-  "returnedCount": zod.number(),
-  "nextBefore": zod.coerce.date().nullable(),
-  "provider": zod.string().nullable(),
-  "exhaustedBefore": zod.boolean(),
-  "providerCursor": zod.string().nullable().optional(),
-  "providerNextUrl": zod.string().nullable().optional(),
-  "providerPageCount": zod.number().nullable().optional(),
-  "providerPageLimitReached": zod.boolean().optional(),
-  "historyCursor": zod.string().nullable().optional(),
-  "hydrationStatus": zod.enum(['cold', 'partial', 'warm', 'warming', 'exhausted']).optional(),
-  "cacheStatus": zod.enum(['hit', 'miss', 'partial']).nullable().optional()
 })
 
 export const GetBarsResponse = zod.object({
@@ -1658,7 +1680,23 @@ export const GetBarsResponse = zod.object({
   "emptyReason": zod.string().nullable(),
   "historySource": zod.string().nullable(),
   "studyFallback": zod.boolean(),
-  "historyPage": BarsHistoryPage.nullish()
+  "historyPage": zod.union([zod.object({
+  "requestedFrom": zod.coerce.date().nullable(),
+  "requestedTo": zod.coerce.date().nullable(),
+  "oldestBarAt": zod.coerce.date().nullable(),
+  "newestBarAt": zod.coerce.date().nullable(),
+  "returnedCount": zod.number(),
+  "nextBefore": zod.coerce.date().nullable(),
+  "provider": zod.string().nullable(),
+  "exhaustedBefore": zod.boolean(),
+  "providerCursor": zod.string().nullish(),
+  "providerNextUrl": zod.string().nullish(),
+  "providerPageCount": zod.number().nullish(),
+  "providerPageLimitReached": zod.boolean().optional(),
+  "historyCursor": zod.string().nullish(),
+  "hydrationStatus": zod.enum(['cold', 'partial', 'warm', 'warming', 'exhausted']).optional(),
+  "cacheStatus": zod.union([zod.literal('hit'),zod.literal('miss'),zod.literal('partial'),zod.literal(null)]).nullish()
+}),zod.null()]).optional()
 })
 
 
@@ -1935,8 +1973,8 @@ export const GetOptionChartBarsQueryParams = zod.object({
   "limit": zod.coerce.number().min(1).max(getOptionChartBarsQueryLimitMax).optional(),
   "from": zod.date().optional(),
   "to": zod.date().optional(),
-  "historyCursor": zod.coerce.string().nullish(),
-  "preferCursor": zod.coerce.boolean().optional(),
+  "historyCursor": zod.coerce.string().nullish().describe('Opaque server-issued cursor for provider-native historical continuation. Falls back to from\/to when invalid or expired.'),
+  "preferCursor": zod.coerce.boolean().optional().describe('Prefer historyCursor continuation before the normal from\/to window when a cursor is present.'),
   "outsideRth": zod.coerce.boolean().optional()
 })
 
@@ -1979,7 +2017,23 @@ export const GetOptionChartBarsResponse = zod.object({
   "emptyReason": zod.string().nullable(),
   "historySource": zod.string().nullable(),
   "studyFallback": zod.boolean(),
-  "historyPage": BarsHistoryPage.nullish()
+  "historyPage": zod.union([zod.object({
+  "requestedFrom": zod.coerce.date().nullable(),
+  "requestedTo": zod.coerce.date().nullable(),
+  "oldestBarAt": zod.coerce.date().nullable(),
+  "newestBarAt": zod.coerce.date().nullable(),
+  "returnedCount": zod.number(),
+  "nextBefore": zod.coerce.date().nullable(),
+  "provider": zod.string().nullable(),
+  "exhaustedBefore": zod.boolean(),
+  "providerCursor": zod.string().nullish(),
+  "providerNextUrl": zod.string().nullish(),
+  "providerPageCount": zod.number().nullish(),
+  "providerPageLimitReached": zod.boolean().optional(),
+  "historyCursor": zod.string().nullish(),
+  "hydrationStatus": zod.enum(['cold', 'partial', 'warm', 'warming', 'exhausted']).optional(),
+  "cacheStatus": zod.union([zod.literal('hit'),zod.literal('miss'),zod.literal('partial'),zod.literal(null)]).nullish()
+}),zod.null()]).optional()
 }).and(zod.object({
   "underlying": zod.string(),
   "expirationDate": zod.coerce.date(),
@@ -2096,6 +2150,22 @@ export const listFlowEventsResponseSourceIbkrContractCountMin = 0;
 
 export const listFlowEventsResponseSourceIbkrQualifiedContractCountMin = 0;
 
+export const listFlowEventsResponseSourceIbkrCandidateExpirationCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrMetadataContractCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrLiveCandidateCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrAcceptedQuoteCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrRejectedQuoteCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrReturnedQuoteCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrMissingQuoteCountMin = 0;
+
+export const listFlowEventsResponseSourceIbkrFilteredEventCountMin = 0;
+
 export const listFlowEventsResponseSourceScannerCoverageTargetSizeMin = 0;
 
 export const listFlowEventsResponseSourceScannerCoverageActiveTargetSizeMin = 0;
@@ -2173,14 +2243,14 @@ export const ListFlowEventsResponse = zod.object({
   "ibkrHydratedExpirationCount": zod.number().min(listFlowEventsResponseSourceIbkrHydratedExpirationCountMin).optional(),
   "ibkrContractCount": zod.number().min(listFlowEventsResponseSourceIbkrContractCountMin).optional(),
   "ibkrQualifiedContractCount": zod.number().min(listFlowEventsResponseSourceIbkrQualifiedContractCountMin).optional(),
-  "ibkrCandidateExpirationCount": zod.number().min(0).optional(),
-  "ibkrMetadataContractCount": zod.number().min(0).optional(),
-  "ibkrLiveCandidateCount": zod.number().min(0).optional(),
-  "ibkrAcceptedQuoteCount": zod.number().min(0).optional(),
-  "ibkrRejectedQuoteCount": zod.number().min(0).optional(),
-  "ibkrReturnedQuoteCount": zod.number().min(0).optional(),
-  "ibkrMissingQuoteCount": zod.number().min(0).optional(),
-  "ibkrFilteredEventCount": zod.number().min(0).optional(),
+  "ibkrCandidateExpirationCount": zod.number().min(listFlowEventsResponseSourceIbkrCandidateExpirationCountMin).optional(),
+  "ibkrMetadataContractCount": zod.number().min(listFlowEventsResponseSourceIbkrMetadataContractCountMin).optional(),
+  "ibkrLiveCandidateCount": zod.number().min(listFlowEventsResponseSourceIbkrLiveCandidateCountMin).optional(),
+  "ibkrAcceptedQuoteCount": zod.number().min(listFlowEventsResponseSourceIbkrAcceptedQuoteCountMin).optional(),
+  "ibkrRejectedQuoteCount": zod.number().min(listFlowEventsResponseSourceIbkrRejectedQuoteCountMin).optional(),
+  "ibkrReturnedQuoteCount": zod.number().min(listFlowEventsResponseSourceIbkrReturnedQuoteCountMin).optional(),
+  "ibkrMissingQuoteCount": zod.number().min(listFlowEventsResponseSourceIbkrMissingQuoteCountMin).optional(),
+  "ibkrFilteredEventCount": zod.number().min(listFlowEventsResponseSourceIbkrFilteredEventCountMin).optional(),
   "scannerCoverage": zod.object({
   "mode": zod.enum(['watchlist', 'market', 'hybrid']).optional(),
   "targetSize": zod.number().min(listFlowEventsResponseSourceScannerCoverageTargetSizeMin).optional(),

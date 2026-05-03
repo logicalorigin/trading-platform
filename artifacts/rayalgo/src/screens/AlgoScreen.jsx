@@ -24,6 +24,12 @@ import {
   bridgeRuntimeMessage,
   bridgeRuntimeTone,
 } from "../features/platform/bridgeRuntimeModel";
+import {
+  IBKR_BRIDGE_LAUNCH_COOLDOWN_MS,
+  closeIbkrProtocolLauncher,
+  navigateIbkrProtocolLauncher,
+  openIbkrProtocolLauncher,
+} from "../features/platform/ibkrBridgeSession";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import { Badge } from "../components/platform/primitives.jsx";
@@ -46,6 +52,7 @@ import {
   motionRowStyle,
   motionVars,
 } from "../lib/motion";
+import { responsiveFlags, useElementSize } from "../lib/responsive";
 
 const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   version: "v1",
@@ -196,47 +203,6 @@ const signalOptionsApi = async (url, options = {}) => {
   return response.json();
 };
 
-const openIbkrProtocolLauncher = () => {
-  return null;
-};
-
-const closeIbkrProtocolLauncher = (launcher) => {
-  if (!launcher || launcher.closed) {
-    return;
-  }
-
-  try {
-    launcher.close();
-  } catch {
-    // Ignore popup cleanup failures.
-  }
-};
-
-const navigateIbkrProtocolLauncher = (launcher, url) => {
-  if (!url || typeof window === "undefined") {
-    closeIbkrProtocolLauncher(launcher);
-    return false;
-  }
-
-  if (launcher && !launcher.closed) {
-    try {
-      launcher.location.href = url;
-      return true;
-    } catch {
-      // Fall through to same-tab navigation.
-    }
-  }
-
-  try {
-    window.location.href = url;
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const IBKR_BRIDGE_LAUNCH_COOLDOWN_MS = 90_000;
-
 const formatMoney = (value, digits = 0) =>
   Number.isFinite(Number(value))
     ? `$${Number(value).toLocaleString(undefined, {
@@ -301,6 +267,20 @@ export const AlgoScreen = ({
   isVisible = false,
   onJumpToTradeCandidate,
 }) => {
+  const [algoRootRef, algoRootSize] = useElementSize();
+  const { isPhone: algoIsPhone, isNarrow: algoIsNarrow } =
+    responsiveFlags(algoRootSize.width);
+  const algoMetricsGridTemplate = algoIsPhone
+    ? "minmax(0, 1fr)"
+    : algoIsNarrow
+      ? "repeat(2, minmax(0, 1fr))"
+      : "repeat(5, minmax(0, 1fr))";
+  const algoTwoColumnTemplate = algoIsNarrow
+    ? "minmax(0, 1fr)"
+    : "minmax(320px, 0.95fr) minmax(420px, 1.35fr)";
+  const algoCandidateGridTemplate = algoIsNarrow
+    ? "minmax(0, 1fr)"
+    : "minmax(280px, 0.95fr) minmax(360px, 1.25fr)";
   const toast = useToast();
   const { preferences: userPreferences } = useUserPreferences();
   const queryClient = useQueryClient();
@@ -509,7 +489,7 @@ export const AlgoScreen = ({
         kind: "success",
         title: launched ? "Bridge launcher opened" : "Bridge launcher ready",
         body: launched
-          ? "Chrome should ask to open PowerShell for the RayAlgo IBKR bridge."
+          ? "Your browser should ask to open the RayAlgo IBKR PowerShell launcher."
           : "The one-click IBKR bridge handler did not open.",
       });
     },
@@ -524,12 +504,16 @@ export const AlgoScreen = ({
     },
   });
   useEffect(() => {
-    if (brokerAuthenticated || bridgeLaunchInFlightUntil <= bridgeLaunchClock) {
+    if (
+      !isVisible ||
+      brokerAuthenticated ||
+      bridgeLaunchInFlightUntil <= bridgeLaunchClock
+    ) {
       return undefined;
     }
     const timer = window.setInterval(() => setBridgeLaunchClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [bridgeLaunchClock, bridgeLaunchInFlightUntil, brokerAuthenticated]);
+  }, [bridgeLaunchClock, bridgeLaunchInFlightUntil, brokerAuthenticated, isVisible]);
   useEffect(() => {
     if (brokerAuthenticated && bridgeLaunchInFlightUntil > 0) {
       setBridgeLaunchInFlightUntil(0);
@@ -800,14 +784,18 @@ export const AlgoScreen = ({
 
   return (
     <div
+      ref={algoRootRef}
       data-testid="algo-screen"
+      data-layout={algoIsPhone ? "phone" : algoIsNarrow ? "tablet" : "desktop"}
       style={{
-        padding: sp(12),
+        padding: sp(algoIsPhone ? 6 : 12),
         display: "flex",
         flexDirection: "column",
         gap: sp(10),
         height: "100%",
+        width: "100%",
         overflowY: "auto",
+        minWidth: 0,
       }}
     >
       {brokerConfigured && !gatewayReady && (
@@ -931,7 +919,7 @@ export const AlgoScreen = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+            gridTemplateColumns: algoMetricsGridTemplate,
             gap: sp(8),
           }}
         >
@@ -1047,8 +1035,9 @@ export const AlgoScreen = ({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(320px, 0.95fr) minmax(420px, 1.35fr)",
+          gridTemplateColumns: algoTwoColumnTemplate,
           gap: sp(10),
+          minWidth: 0,
         }}
       >
         <div
@@ -1723,9 +1712,10 @@ export const AlgoScreen = ({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(280px, 0.95fr) minmax(360px, 1.25fr)",
+              gridTemplateColumns: algoCandidateGridTemplate,
               gap: sp(10),
               minHeight: dim(180),
+              minWidth: 0,
             }}
           >
             <div

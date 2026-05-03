@@ -26,7 +26,13 @@ timeframe: BarTimeframe;
 limit?: number;
 from?: Date;
 to?: Date;
+/**
+ * Opaque server-issued cursor for provider-native historical continuation. Falls back to from/to when invalid or expired.
+ */
 historyCursor?: string | null;
+/**
+ * Prefer historyCursor continuation before the normal from/to window when a cursor is present.
+ */
 preferCursor?: boolean;
 outsideRth?: boolean;
 };

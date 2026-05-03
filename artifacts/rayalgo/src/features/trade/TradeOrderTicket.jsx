@@ -12,29 +12,34 @@ import {
 } from "@workspace/api-client-react";
 import {
   DISPLAY_CHART_OUTSIDE_RTH,
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  RayReplicaSettingsMenu,
-  ResearchChartFrame,
+  resolveDisplayChartPrice,
+} from "../charting/displayChartSession";
+import { RayReplicaSettingsMenu } from "../charting/RayReplicaSettingsMenu";
+import { ResearchChartFrame } from "../charting/ResearchChartFrame";
+import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
+} from "../charting/ResearchChartWidgetChrome";
+import {
   expandLocalRollupLimit,
-  flowEventsToChartEvents,
-  getChartBarLimit,
-  getChartTimeframeOptions,
+  resolveLocalRollupBaseTimeframe,
+  rollupMarketBars,
+} from "../charting/timeframeRollups";
+import { flowEventsToChartEvents } from "../charting/chartEvents";
+import {
   getInitialChartBarLimit,
   normalizeChartTimeframe,
-  recordChartBarScopeState,
-  resolveDisplayChartPrice,
-  resolveLocalRollupBaseTimeframe,
-  resolveSpotChartFrameLayout,
-  rollupMarketBars,
+} from "../charting/timeframes";
+import { recordChartBarScopeState } from "../charting/chartHydrationStats";
+import { resolveSpotChartFrameLayout } from "../charting/spotChartFrameLayout";
+import {
   useBrokerStreamedBars,
-  useDrawingHistory,
   useHistoricalBarStream,
-  useIndicatorLibrary,
   usePrependableHistoricalBars,
-} from "../charting";
+} from "../charting/useMassiveStreamedStockBars";
+import { useDrawingHistory } from "../charting/useDrawingHistory";
+import { useIndicatorLibrary } from "../charting/pineScripts";
 import {
   buildTradeBarsFromApi,
   describeBrokerChartSource,
@@ -79,6 +84,13 @@ import { usePageVisible } from "../platform/usePageVisible";
 import { usePositions, useToast } from "../platform/platformContexts.jsx";
 import { platformJsonRequest } from "../platform/platformJsonRequest";
 import { useUserPreferences } from "../preferences/useUserPreferences";
+import {
+  DEFAULT_TRADE_EQUITY_STUDIES,
+  TRADE_EQUITY_INDICATOR_PRESET_VERSION,
+  TRADE_TIMEFRAMES,
+  buildTradeBarsPageQueryKey as buildBarsPageQueryKey,
+  buildTradeFlowMarkersFromEvents,
+} from "./tradeChartState";
 import {
   TICKET_ASSET_MODES,
   TICKET_ORDER_TYPES,
@@ -136,56 +148,6 @@ import {
   sp,
 } from "../../lib/uiTokens";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
-
-const buildBarsPageQueryKey = ({
-  queryBase,
-  timeframe,
-  limit,
-  from,
-  to,
-  historyCursor,
-  preferCursor,
-}) => [
-  ...queryBase,
-  timeframe,
-  limit,
-  from || null,
-  to || null,
-  historyCursor || null,
-  preferCursor ? "cursor" : "window",
-];
-
-const TRADE_EQUITY_INDICATOR_PRESET_VERSION = 1;
-const DEFAULT_TRADE_EQUITY_STUDIES = [
-  "ema-21",
-  "ema-55",
-  "vwap",
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-];
-
-const buildTradeFlowMarkersFromEvents = (events, barsLength) => {
-  const list = (events || []).slice(0, 24);
-  if (!list.length || !barsLength) return [];
-  return list.map((evt, index) => {
-    const ratio = list.length === 1 ? 0.5 : index / (list.length - 1);
-    return {
-      barIdx: Math.max(
-        0,
-        Math.min(barsLength - 1, Math.round(ratio * (barsLength - 1))),
-      ),
-      cp: evt.cp,
-      size:
-        evt.premium >= 500000 ? "lg" : evt.premium >= 150000 ? "md" : "sm",
-      golden: evt.golden,
-    };
-  });
-};
-
-const TRADE_TIMEFRAMES = getChartTimeframeOptions("primary").map((option) => ({
-  v: option.value,
-  bars: getChartBarLimit(option.value, "primary"),
-  tag: option.label,
-}));
 
 import { PayoffDiagram } from "./PayoffDiagram.jsx";
 export const TradeOrderTicket = ({
@@ -989,6 +951,7 @@ export const TradeOrderTicket = ({
   if (ticketIsOptions && !ticketInstrumentReady) {
     return (
       <div
+        data-testid="trade-order-ticket"
         style={{
           background: T.bg2,
           border: `1px solid ${T.border}`,
@@ -1690,20 +1653,22 @@ export const TradeOrderTicket = ({
 	    previewDisplayOrder?.auxPrice ??
 	    null;
 
-	  return (
+  return (
     <>
       <div
-      className="ra-panel-enter"
-      style={{
-        background: T.bg2,
-        border: `1px solid ${T.border}`,
-        borderRadius: dim(6),
-        padding: sp("8px 10px"),
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-      }}
-    >
+        data-testid="trade-order-ticket"
+        className="ra-panel-enter"
+        style={{
+          background: T.bg2,
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(6),
+          padding: sp("8px 10px"),
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          minWidth: 0,
+        }}
+      >
       <div
         style={{
           fontSize: fs(9),

@@ -18,6 +18,7 @@ import {
   tableHeaderStyle,
   toneForValue,
 } from "./accountUtils";
+import { closeDateMatchesPatternHour } from "./accountPatternLens";
 
 const SummaryCard = ({ label, value, tone = T.text }) => (
   <div
@@ -254,9 +255,10 @@ export const ClosedTradesPanel = ({
   maskValues = false,
 }) => {
   const rows = (query.data?.trades || []).filter((trade) =>
-    !sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
+    (!sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
       ? true
-      : trade.sourceType === filters.sourceType,
+      : trade.sourceType === filters.sourceType) &&
+    closeDateMatchesPatternHour(trade.closeDate, filters.closeHour),
   );
   return (
     <Panel

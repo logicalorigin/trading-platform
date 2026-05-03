@@ -88,15 +88,29 @@ const scopeBarStates = new Map<string, ChartBarScopeState>();
 const pendingLivePatchByScope = new Map<string, number>();
 const listeners = new Set<() => void>();
 let storeVersion = 0;
+let emitScheduled = false;
 
 const nowMs = (): number =>
   typeof performance !== "undefined" && Number.isFinite(performance.now())
     ? performance.now()
     : Date.now();
 
-const emitChange = () => {
+const flushListeners = () => {
+  emitScheduled = false;
   storeVersion += 1;
   Array.from(listeners).forEach((listener) => listener());
+};
+
+const emitChange = () => {
+  if (emitScheduled) {
+    return;
+  }
+  emitScheduled = true;
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(flushListeners);
+    return;
+  }
+  setTimeout(flushListeners, 0);
 };
 
 const pushSample = (
@@ -391,8 +405,12 @@ export const sanitizeChartHydrationStatsForDiagnostics = (
   scopes: snapshot.scopes.map(sanitizeScopeForDiagnostics),
 });
 
-export const useChartHydrationStats = () => {
-  useSyncExternalStore(subscribe, getSnapshot, () => 0);
+export const useChartHydrationStats = (enabled = true) => {
+  useSyncExternalStore(
+    enabled ? subscribe : () => () => {},
+    enabled ? getSnapshot : () => 0,
+    () => 0,
+  );
 
   return getChartHydrationStatsSnapshot();
 };

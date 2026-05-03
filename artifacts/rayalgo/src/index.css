@@ -1,8 +1,19 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600&display=swap");
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
 :root {
+  --ra-font-sans: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ra-font-display: var(--ra-font-sans);
+  --ra-font-data: var(--ra-font-sans);
+  --ra-font-code: var(--ra-font-sans);
+  --ra-type-micro: 10px;
+  --ra-type-label: 10px;
+  --ra-type-control: 10px;
+  --ra-type-body: 10px;
+  --ra-type-body-strong: 11px;
+  --ra-type-screen-title: 17px;
   --ra-motion-micro: 90ms;
   --ra-motion-fast: 140ms;
   --ra-motion-standard: 190ms;
@@ -18,9 +29,36 @@
 
 html, body, #root {
   height: 100%;
+  width: 100%;
   margin: 0;
   padding: 0;
   background: #080b12;
+  font-family: var(--ra-font-sans);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "kern" 1;
+  overflow: hidden;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  font-variant-numeric: inherit;
+  font-feature-settings: inherit;
+}
+
+body * {
+  font-family: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  max-width: 100%;
+  font: inherit;
+}
+
+table {
+  max-width: 100%;
 }
 
 .chart-widget-menu {
@@ -442,6 +480,126 @@ html, body, #root {
   .ra-account-detail-grid,
   .ra-account-support-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .ra-shell[data-layout="phone"] {
+    min-width: 0;
+    touch-action: manipulation;
+  }
+
+  .ra-shell[data-layout="phone"] button,
+  [data-trade-layout="phone"] button,
+  [data-testid="algo-screen"][data-layout="phone"] button,
+  [data-testid="settings-screen"][data-layout="phone"] button,
+  [data-testid="diagnostics-screen"][data-layout="phone"] button,
+  [data-testid="backtest-workspace"][data-layout="phone"] button,
+  .photonics-research-root button {
+    min-height: 32px;
+  }
+
+  .ra-shell[data-layout="phone"] [data-testid="platform-screen-nav"],
+  .ra-shell[data-layout="phone"] [data-testid="platform-header-controls"] {
+    width: 100%;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-top-zone"],
+  [data-trade-layout="phone"] [data-testid="trade-middle-zone"],
+  [data-trade-layout="phone"] [data-testid="trade-bottom-zone"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    height: auto !important;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-top-zone"] > *,
+  [data-trade-layout="phone"] [data-testid="trade-middle-zone"] > *,
+  [data-trade-layout="phone"] [data-testid="trade-bottom-zone"] > * {
+    min-width: 0 !important;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-equity-chart"],
+  [data-trade-layout="phone"] [data-testid="trade-contract-chart-panel"] {
+    min-height: min(70vh, 460px) !important;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-options-chain-panel"],
+  [data-trade-layout="phone"] [data-testid="trade-order-ticket"] {
+    min-height: 0 !important;
+  }
+
+  [data-trade-layout="phone"] [data-testid="trade-order-ticket"] [style*="grid-template-columns"],
+  [data-testid="account-screen"] [style*="grid-template-columns"],
+  [data-testid="algo-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="settings-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="diagnostics-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="backtest-workspace"][data-layout="phone"] [style*="grid-template-columns"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  [data-testid="account-screen"] {
+    min-width: 0;
+  }
+
+  [data-testid="account-screen"] > div {
+    padding: 5px !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="phone"] [style*="min-width"],
+  [data-testid="settings-screen"][data-layout="phone"] [style*="min-width"],
+  [data-testid="diagnostics-screen"][data-layout="phone"] [style*="min-width"],
+  [data-testid="backtest-workspace"][data-layout="phone"] [style*="min-width"],
+  .photonics-research-root [style*="min-width"] {
+    min-width: 0 !important;
+  }
+
+  .photonics-research-root {
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+  }
+
+  .photonics-research-root > div {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  .photonics-research-root [style*="display: flex"] {
+    min-width: 0;
+  }
+
+  .photonics-research-root [style*="grid-template-columns"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .photonics-research-root [style*="justify-content: space-between"] {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  .photonics-research-root table {
+    min-width: 520px;
+  }
+
+  .photonics-research-root [style*="overflow-x: auto"],
+  .photonics-research-root [style*="overflow-x:auto"] {
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  [data-trade-layout="tablet"] [data-testid="trade-top-zone"],
+  [data-trade-layout="tablet"] [data-testid="trade-middle-zone"],
+  [data-trade-layout="tablet"] [data-testid="trade-bottom-zone"] {
+    height: auto !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="tablet"] [style*="minmax(420px"],
+  [data-testid="algo-screen"][data-layout="tablet"] [style*="minmax(360px"],
+  [data-testid="backtest-workspace"][data-layout="tablet"] [style*="minmax(420px"],
+  [data-testid="backtest-workspace"][data-layout="tablet"] [style*="minmax(360px"],
+  [data-testid="backtest-workspace"][data-layout="tablet"] [style*="minmax(320px"],
+  [data-testid="settings-screen"][data-layout="tablet"] [style*="minmax(320px"],
+  [data-testid="diagnostics-screen"][data-layout="tablet"] [style*="minmax(320px"] {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 }
 

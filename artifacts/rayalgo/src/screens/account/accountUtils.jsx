@@ -1,4 +1,4 @@
-import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { MISSING_VALUE, T, dim, sp, textSize } from "../../lib/uiTokens";
 import { formatAppDateTime } from "../../lib/timeZone";
 export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
 
@@ -95,7 +95,7 @@ export const panelStyle = {
 
 export const sectionTitleStyle = {
   get fontSize() {
-    return fs(9);
+    return textSize("panelTitle");
   },
   get color() {
     return T.text;
@@ -110,7 +110,7 @@ export const sectionTitleStyle = {
 
 export const mutedLabelStyle = {
   get fontSize() {
-    return fs(7);
+    return textSize("label");
   },
   get color() {
     return T.textMuted;
@@ -169,8 +169,8 @@ export const denseButtonStyle = (active = false) => ({
   border: `1px solid ${active ? T.accent : T.border}`,
   background: active ? (T.bg1 === "#ffffff" ? T.bg1 : T.accent) : T.bg2,
   color: active ? (T.bg1 === "#ffffff" ? T.accent : "#ffffff") : T.textSec,
-  fontSize: fs(8),
-  fontFamily: T.mono,
+  fontSize: textSize("control"),
+  fontFamily: T.data,
   fontWeight: 800,
   cursor: "pointer",
   letterSpacing: "0.06em",
@@ -193,10 +193,10 @@ export const primaryButtonStyle = {
   },
   color: "#ffffff",
   get fontSize() {
-    return fs(8);
+    return textSize("control");
   },
   get fontFamily() {
-    return T.mono;
+    return T.data;
   },
   fontWeight: 800,
   cursor: "pointer",
@@ -224,10 +224,10 @@ export const secondaryButtonStyle = {
     return T.textSec;
   },
   get fontSize() {
-    return fs(8);
+    return textSize("control");
   },
   get fontFamily() {
-    return T.mono;
+    return T.data;
   },
   fontWeight: 800,
   cursor: "pointer",
@@ -253,7 +253,7 @@ export const ghostButtonStyle = {
     return T.textDim;
   },
   get fontSize() {
-    return fs(8);
+    return textSize("control");
   },
   get fontFamily() {
     return T.mono;
@@ -284,7 +284,7 @@ export const controlInputStyle = {
     return T.text;
   },
   get fontSize() {
-    return fs(8);
+    return textSize("control");
   },
   get fontFamily() {
     return T.sans;
@@ -312,7 +312,7 @@ export const controlSelectStyle = {
     return T.text;
   },
   get fontSize() {
-    return fs(8);
+    return textSize("control");
   },
   get fontFamily() {
     return T.sans;
@@ -332,7 +332,7 @@ export const tableHeaderStyle = {
     return T.textMuted;
   },
   get fontSize() {
-    return fs(7);
+    return textSize("tableHeader");
   },
   get fontFamily() {
     return T.sans;
@@ -353,7 +353,7 @@ export const tableCellStyle = {
     return `1px solid ${T.border}`;
   },
   get fontSize() {
-    return fs(8);
+    return textSize("tableCell");
   },
   get fontFamily() {
     return T.sans;
@@ -396,8 +396,8 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         border: `1px solid ${palette.border}`,
         background: palette.bg,
         color: palette.color,
-        fontSize: fs(7),
-        fontFamily: T.mono,
+        fontSize: textSize("label"),
+        fontFamily: T.data,
         fontWeight: 800,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
@@ -472,8 +472,8 @@ export const StatTile = ({
         style={{
           marginTop: sp(compact ? 1 : 4),
           color: palette.color === T.textDim ? T.text : palette.color,
-          fontSize: fs(compact ? 11 : 13),
-          fontFamily: T.mono,
+          fontSize: textSize(compact ? "metric" : "bodyStrong"),
+          fontFamily: T.data,
           fontWeight: 800,
           lineHeight: 1.1,
         }}
@@ -485,8 +485,8 @@ export const StatTile = ({
           style={{
             marginTop: sp(compact ? 1 : 3),
             color: T.textDim,
-            fontSize: fs(compact ? 8 : 9),
-            fontFamily: T.mono,
+            fontSize: textSize(compact ? "label" : "caption"),
+            fontFamily: T.data,
             lineHeight: 1.3,
           }}
         >
@@ -508,7 +508,7 @@ export const EmptyState = ({ title, body, action }) => (
       gap: sp(5),
       padding: sp(8),
       color: T.textDim,
-      fontSize: fs(10),
+      fontSize: textSize("body"),
       fontFamily: T.sans,
       border: `1px dashed ${T.border}`,
       borderRadius: dim(5),
@@ -576,8 +576,8 @@ export const Panel = ({
               <div
                 style={{
                   color: T.textDim,
-                  fontSize: fs(7),
-                  fontFamily: T.mono,
+                  fontSize: textSize("label"),
+                  fontFamily: T.data,
                   fontWeight: 800,
                 }}
               >
@@ -621,7 +621,7 @@ export const InlineError = ({ error, onRetry }) => (
       background: T.redBg,
       border: `1px solid ${T.red}55`,
       borderRadius: dim(5),
-      fontSize: fs(10),
+      fontSize: textSize("body"),
       fontFamily: T.sans,
       lineHeight: 1.5,
     }}

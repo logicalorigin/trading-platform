@@ -1,6 +1,7 @@
 import { logger } from "../lib/logger";
 import {
   getShadowAccountAllocation,
+  getShadowAccountClosedTrades,
   getShadowAccountEquityHistory,
   getShadowAccountOrders,
   getShadowAccountPositions,
@@ -9,6 +10,35 @@ import {
 } from "./shadow-account";
 
 type Unsubscribe = () => void;
+const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 2_000;
+
+type ShadowAccountSnapshotBase = {
+  summary: Awaited<ReturnType<typeof getShadowAccountSummary>>;
+  positions: Awaited<ReturnType<typeof getShadowAccountPositions>>;
+  workingOrders: Awaited<ReturnType<typeof getShadowAccountOrders>>;
+  historyOrders: Awaited<ReturnType<typeof getShadowAccountOrders>>;
+  allocation: Awaited<ReturnType<typeof getShadowAccountAllocation>>;
+  risk: Awaited<ReturnType<typeof getShadowAccountRisk>>;
+  updatedAt: string;
+};
+
+let shadowAccountSnapshotBaseCache:
+  | {
+      value: ShadowAccountSnapshotBase;
+      expiresAt: number;
+    }
+  | null = null;
+let shadowAccountSnapshotBaseInFlight: Promise<ShadowAccountSnapshotBase> | null =
+  null;
+let shadowAccountEquityHistoryAllCache:
+  | {
+      value: Awaited<ReturnType<typeof getShadowAccountEquityHistory>>;
+      expiresAt: number;
+    }
+  | null = null;
+let shadowAccountEquityHistoryAllInFlight:
+  | Promise<Awaited<ReturnType<typeof getShadowAccountEquityHistory>>>
+  | null = null;
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
@@ -108,39 +138,99 @@ export async function fetchShadowAccountSnapshotPayload(): Promise<{
   equityHistory: Awaited<ReturnType<typeof getShadowAccountEquityHistory>>;
   updatedAt: string;
 }> {
-  const [
-    summary,
-    positions,
-    workingOrders,
-    historyOrders,
-    allocation,
-    risk,
-    equityHistory,
-  ] = await Promise.all([
-    getShadowAccountSummary(),
-    getShadowAccountPositions({}),
-    getShadowAccountOrders({ tab: "working" }),
-    getShadowAccountOrders({ tab: "history" }),
-    getShadowAccountAllocation(),
-    getShadowAccountRisk(),
-    getShadowAccountEquityHistory({ range: "ALL" }),
+  const [baseSnapshot, equityHistory] = await Promise.all([
+    fetchShadowAccountSnapshotBase(),
+    fetchShadowAccountEquityHistoryAll(),
   ]);
-  const updatedAt = latestIsoTimestamp(
-    summary.updatedAt,
-    positions.updatedAt,
-    allocation.updatedAt,
-  );
 
   return {
-    summary,
-    positions,
-    workingOrders: stableShadowOrdersResponse(workingOrders, updatedAt),
-    historyOrders: stableShadowOrdersResponse(historyOrders, updatedAt),
-    allocation,
-    risk,
+    ...baseSnapshot,
     equityHistory,
-    updatedAt,
   };
+}
+
+export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSnapshotBase> {
+  const now = Date.now();
+  if (
+    shadowAccountSnapshotBaseCache &&
+    shadowAccountSnapshotBaseCache.expiresAt > now
+  ) {
+    return shadowAccountSnapshotBaseCache.value;
+  }
+  if (shadowAccountSnapshotBaseInFlight) {
+    return shadowAccountSnapshotBaseInFlight;
+  }
+
+  shadowAccountSnapshotBaseInFlight = (async () => {
+    const [summary, positions, workingOrders, historyOrders, allocation, closedTrades] =
+      await Promise.all([
+        getShadowAccountSummary(),
+        getShadowAccountPositions({}),
+        getShadowAccountOrders({ tab: "working" }),
+        getShadowAccountOrders({ tab: "history" }),
+        getShadowAccountAllocation(),
+        getShadowAccountClosedTrades({}),
+      ]);
+    const risk = await getShadowAccountRisk({
+      positionsResponse: positions,
+      closedTrades,
+    });
+    const updatedAt = latestIsoTimestamp(
+      summary.updatedAt,
+      positions.updatedAt,
+      allocation.updatedAt,
+      risk.updatedAt,
+    );
+    const value = {
+      summary,
+      positions,
+      workingOrders: stableShadowOrdersResponse(workingOrders, updatedAt),
+      historyOrders: stableShadowOrdersResponse(historyOrders, updatedAt),
+      allocation,
+      risk,
+      updatedAt,
+    } satisfies ShadowAccountSnapshotBase;
+    shadowAccountSnapshotBaseCache = {
+      value,
+      expiresAt: Date.now() + SHADOW_ACCOUNT_SNAPSHOT_TTL_MS,
+    };
+    return value;
+  })();
+
+  try {
+    return await shadowAccountSnapshotBaseInFlight;
+  } finally {
+    shadowAccountSnapshotBaseInFlight = null;
+  }
+}
+
+async function fetchShadowAccountEquityHistoryAll() {
+  const now = Date.now();
+  if (
+    shadowAccountEquityHistoryAllCache &&
+    shadowAccountEquityHistoryAllCache.expiresAt > now
+  ) {
+    return shadowAccountEquityHistoryAllCache.value;
+  }
+  if (shadowAccountEquityHistoryAllInFlight) {
+    return shadowAccountEquityHistoryAllInFlight;
+  }
+
+  shadowAccountEquityHistoryAllInFlight = getShadowAccountEquityHistory({
+    range: "ALL",
+  }).then((value) => {
+    shadowAccountEquityHistoryAllCache = {
+      value,
+      expiresAt: Date.now() + SHADOW_ACCOUNT_SNAPSHOT_TTL_MS,
+    };
+    return value;
+  });
+
+  try {
+    return await shadowAccountEquityHistoryAllInFlight;
+  } finally {
+    shadowAccountEquityHistoryAllInFlight = null;
+  }
 }
 
 export function subscribeShadowAccountSnapshots(

@@ -40,16 +40,12 @@ import {
   listIbkrPositions,
 } from "./ibkr-account-bridge";
 import {
-  getShadowAccountAllocation,
   getShadowAccountCashActivity,
   getShadowAccountClosedTrades,
   getShadowAccountEquityHistory,
-  getShadowAccountOrders,
-  getShadowAccountPositions,
-  getShadowAccountRisk,
-  getShadowAccountSummary,
   isShadowAccountId,
 } from "./shadow-account";
+import { fetchShadowAccountSnapshotBase } from "./shadow-account-streams";
 import {
   accountBenchmarkLimitForRange,
   accountBenchmarkTimeframeForRange,
@@ -1795,7 +1791,7 @@ export async function getAccountSummary(input: {
   mode?: RuntimeMode;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    return getShadowAccountSummary();
+    return (await fetchShadowAccountSnapshotBase()).summary;
   }
 
   const mode = input.mode ?? getRuntimeMode();
@@ -2367,7 +2363,7 @@ export async function getAccountAllocation(input: {
   mode?: RuntimeMode;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    return getShadowAccountAllocation();
+    return (await fetchShadowAccountSnapshotBase()).allocation;
   }
 
   const mode = input.mode ?? getRuntimeMode();
@@ -2450,9 +2446,18 @@ export async function getAccountPositions(input: {
   mode?: RuntimeMode;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    return getShadowAccountPositions({
-      assetClass: input.assetClass,
-    });
+    const positionsResponse = (await fetchShadowAccountSnapshotBase()).positions;
+    if (!input.assetClass || input.assetClass === "all") {
+      return positionsResponse;
+    }
+    return {
+      ...positionsResponse,
+      positions: positionsResponse.positions.filter(
+        (position) =>
+          String(position.assetClass || "").toLowerCase() ===
+          input.assetClass?.toLowerCase(),
+      ),
+    };
   }
 
   const mode = input.mode ?? getRuntimeMode();
@@ -2947,9 +2952,10 @@ export async function getAccountOrders(input: {
   mode?: RuntimeMode;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    return getShadowAccountOrders({
-      tab: input.tab,
-    });
+    const snapshot = await fetchShadowAccountSnapshotBase();
+    return input.tab === "history"
+      ? snapshot.historyOrders
+      : snapshot.workingOrders;
   }
 
   const mode = input.mode ?? getRuntimeMode();
@@ -3026,7 +3032,7 @@ export async function getAccountRisk(input: {
   mode?: RuntimeMode;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    return getShadowAccountRisk();
+    return (await fetchShadowAccountSnapshotBase()).risk;
   }
 
   const mode = input.mode ?? getRuntimeMode();

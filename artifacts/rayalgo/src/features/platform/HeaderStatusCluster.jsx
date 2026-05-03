@@ -20,7 +20,7 @@ import {
   useState,
 } from "react";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
-import { useIbkrLatencyStats } from "../charting";
+import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
 import {
   formatPreferenceDateTime,
   formatPreferenceTimeZoneLabel,
@@ -49,6 +49,7 @@ import {
 } from "./ibkrBridgeSession";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
 import { platformJsonRequest } from "./platformJsonRequest";
+import { useRuntimeWorkloadFlag } from "./workloadStats";
 
 const ET_CLOCK_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -799,8 +800,11 @@ export const HeaderStatusCluster = ({
 }) => {
   const queryClient = useQueryClient();
   const { preferences } = useUserPreferences();
+  const bridgeTriggerRef = useRef(null);
+  const bridgePopoverRef = useRef(null);
   const [marketClockNow, setMarketClockNow] = useState(() => Date.now());
   const [bridgePopoverOpen, setBridgePopoverOpen] = useState(false);
+  const [bridgePopoverPosition, setBridgePopoverPosition] = useState(null);
   const [bridgeLaunchUrl, setBridgeLaunchUrl] = useState(() =>
     readIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.launchUrl),
   );
@@ -850,6 +854,16 @@ export const HeaderStatusCluster = ({
     retry: false,
     staleTime: bridgePopoverOpen ? 2_000 : 10_000,
   });
+  useRuntimeWorkloadFlag(
+    "header:runtime-diagnostics",
+    gatewayDiagnosticsEnabled,
+    {
+      kind: "poll",
+      label: "Header runtime",
+      detail: bridgePopoverOpen ? "5s" : "15s",
+      priority: 7,
+    },
+  );
   const gatewayRuntimeError =
     gatewayRuntimeDiagnosticsQuery.error instanceof Error
       ? gatewayRuntimeDiagnosticsQuery.error.message
@@ -889,14 +903,21 @@ export const HeaderStatusCluster = ({
   const gatewayReconnectNeeded = Boolean(
     session?.configured?.ibkr && !gatewayConnectedForBridge,
   );
+  const gatewayBlockingIssueMessage =
+    gatewayPopoverModel.issue?.iconKey === "alert" &&
+    gatewayPopoverModel.issue?.key !== "stream-gaps" &&
+    gatewayPopoverModel.issue?.key !== "legacy-env"
+      ? gatewayPopoverModel.issue.label
+      : null;
   const bridgeLauncherMessage =
     bridgeLauncherError ||
     (bridgeLaunchInFlight
       ? "IB Gateway activation is running from the Windows helper. Wait for the bridge to attach before launching again."
       : null) ||
     (bridgeLaunchUrl && !gatewayConnectedForBridge
-      ? "Chrome should ask to open PowerShell for the RayAlgo IBKR bridge."
+      ? "Your browser should ask to open the RayAlgo IBKR PowerShell launcher."
       : null) ||
+    gatewayBlockingIssueMessage ||
     bridgeRuntimeMessage(session);
   const bridgeActionLabel =
     bridgeLauncherBusy
@@ -942,6 +963,37 @@ export const HeaderStatusCluster = ({
     whiteSpace: "nowrap",
   };
 
+  const updateBridgePopoverPosition = useCallback(() => {
+    if (typeof window === "undefined" || !bridgeTriggerRef.current) {
+      return;
+    }
+
+    const margin = dim(8);
+    const gap = dim(6);
+    const triggerRect = bridgeTriggerRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || 0;
+    const viewportHeight = window.innerHeight || 0;
+    const width = Math.max(
+      0,
+      Math.min(dim(408), Math.max(0, viewportWidth - margin * 2)),
+    );
+    const left = Math.min(
+      Math.max(margin, triggerRect.right - width),
+      Math.max(margin, viewportWidth - margin - width),
+    );
+    const top = Math.min(
+      Math.max(margin, triggerRect.bottom + gap),
+      Math.max(margin, viewportHeight - margin - dim(220)),
+    );
+
+    setBridgePopoverPosition({
+      left,
+      top,
+      width,
+      maxHeight: Math.max(dim(220), viewportHeight - top - margin),
+    });
+  }, []);
+
   useEffect(() => {
     if (!gatewayConnectedForBridge || bridgeLaunchInFlightUntil <= 0) {
       return;
@@ -949,6 +1001,46 @@ export const HeaderStatusCluster = ({
     setBridgeLaunchInFlightUntil(0);
     removeIbkrBridgeSessionValue(IBKR_BRIDGE_SESSION_KEYS.launchInFlightUntil);
   }, [bridgeLaunchInFlightUntil, gatewayConnectedForBridge]);
+
+  useEffect(() => {
+    if (!bridgePopoverOpen) {
+      setBridgePopoverPosition(null);
+      return;
+    }
+
+    updateBridgePopoverPosition();
+
+    const handlePointerDown = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (
+        bridgeTriggerRef.current?.contains(target) ||
+        bridgePopoverRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setBridgePopoverOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setBridgePopoverOpen(false);
+      }
+    };
+
+    window.addEventListener("resize", updateBridgePopoverPosition);
+    window.addEventListener("scroll", updateBridgePopoverPosition, true);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("resize", updateBridgePopoverPosition);
+      window.removeEventListener("scroll", updateBridgePopoverPosition, true);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [bridgePopoverOpen, updateBridgePopoverPosition]);
 
   const handleStartBridgeLauncher = useCallback(async () => {
     const protocolLauncher = openIbkrProtocolLauncher();
@@ -998,7 +1090,7 @@ export const HeaderStatusCluster = ({
 
   const handleDeactivate = useCallback(async () => {
     if (!bridgeManagementToken) {
-      setBridgeLauncherError("Launch a fresh bridge session before detaching.");
+      setBridgeLauncherError("Attach a Gateway bridge session before detaching.");
       return;
     }
 
@@ -1040,6 +1132,7 @@ export const HeaderStatusCluster = ({
     >
       <div style={{ position: "relative", display: "flex" }}>
         <button
+          ref={bridgeTriggerRef}
           type="button"
           aria-label="Open IB Gateway connection details"
           aria-expanded={bridgePopoverOpen}
@@ -1081,16 +1174,17 @@ export const HeaderStatusCluster = ({
 
         {bridgePopoverOpen ? (
           <div
+            ref={bridgePopoverRef}
             role="dialog"
             aria-label="IB Gateway bridge"
             style={{
-              position: "absolute",
-              top: `calc(100% + ${dim(6)})`,
-              right: 0,
+              position: "fixed",
+              top: bridgePopoverPosition?.top ?? dim(40),
+              left: bridgePopoverPosition?.left ?? dim(8),
               zIndex: 60,
-              width: `min(${dim(408)}px, calc(100vw - ${dim(16)}px))`,
+              width: bridgePopoverPosition?.width ?? dim(408),
               maxWidth: `calc(100vw - ${dim(16)}px)`,
-              maxHeight: `calc(100vh - ${dim(96)}px)`,
+              maxHeight: bridgePopoverPosition?.maxHeight ?? dim(520),
               overflowY: "auto",
               boxSizing: "border-box",
               padding: sp(10),
@@ -1157,7 +1251,11 @@ export const HeaderStatusCluster = ({
                 padding: sp("6px 8px"),
                 background: T.bg1,
                 border: `1px solid ${T.border}`,
-                color: bridgeLauncherError ? T.red : T.textSec,
+                color: bridgeLauncherError
+                  ? T.red
+                  : gatewayBlockingIssueMessage
+                    ? gatewayPopoverModel.issue.tone
+                    : T.textSec,
                 fontSize: fs(9),
                 lineHeight: 1.25,
                 fontFamily: T.mono,

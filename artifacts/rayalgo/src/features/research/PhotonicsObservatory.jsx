@@ -61,7 +61,7 @@ function applyResearchRuntimeData(data) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 // ───── SHARED STYLE CONSTANTS (module-level; used across multiple components) ─────
-const FONT_SANS = "Arial, Helvetica, sans-serif";
+const FONT_SANS = "var(--ra-font-sans)";
 const FALLBACK_THEME = {
   id: "ai",
   title: "Platform Research",
@@ -2978,10 +2978,10 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                           return (
                             <g opacity={dimmed ? 0.15 : 1} style={{ transition: "opacity 0.3s ease", pointerEvents: "none" }}>
                               <text x={lx} y={g.y + g.h / 2 - 4} fontSize={11} textAnchor={anchor}
-                                fontFamily="Arial, Helvetica, sans-serif" fill="#1a1a1a" fontWeight={700}
+                                fontFamily="var(--ra-font-sans)" fill="#1a1a1a" fontWeight={700}
                                 dominantBaseline="middle">{g.label}</text>
                               <text x={lx} y={g.y + g.h / 2 + 9} fontSize={9.5} textAnchor={anchor}
-                                fontFamily="Arial, Helvetica, sans-serif" dominantBaseline="middle">
+                                fontFamily="var(--ra-font-sans)" dominantBaseline="middle">
                                 <tspan fill="#333" fontWeight={600}>{pct}%</tspan>
                                 <tspan fill="#999"> · {fmtMC(g.rev)}</tspan>
                               </text>
@@ -3005,7 +3005,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                       .sort((a, b) => b.total - a.total).slice(0, 5)
                       .map((p, i) => (
                         <text key={"fl"+i} x={p.mx} y={p.my - 5} textAnchor="middle"
-                          fontSize={9} fill="#bbb" fontWeight={600} fontFamily="Arial, Helvetica, sans-serif"
+                          fontSize={9} fill="#bbb" fontWeight={600} fontFamily="var(--ra-font-sans)"
                           style={{ pointerEvents: "none" }}>{fmtMC(p.total)}</text>
                       ));
                   })()}
@@ -3024,7 +3024,7 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                         <text x={cx} y={27}
                           textAnchor={isLeft ? "start" : isRight ? "end" : "middle"}
                           fontSize={9.5} fill="#888" fontWeight={700}
-                          fontFamily="Arial, Helvetica, sans-serif"
+                          fontFamily="var(--ra-font-sans)"
                           style={{ letterSpacing: "0.08em", textTransform: "uppercase" }}>
                           {isLeft ? (
                             <tspan x={colX[i]}>{st.label.toUpperCase()}</tspan>
@@ -3356,7 +3356,7 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                       onMouseLeave={e => e.target.setAttribute("fill-opacity", "0.7")} />
                   ))}
                   <circle cx={cx} cy={cy} r={r - 2} fill="#ffffff" />
-                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700} fill="#333" fontFamily="Arial, Helvetica, sans-serif">{fmtMC(total)}</text>
+                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700} fill="#333" fontFamily="var(--ra-font-sans)">{fmtMC(total)}</text>
                 </svg>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
                   {data.map(d => (
@@ -3631,7 +3631,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
         .on("click", (e) => { e.stopPropagation(); setZoneHl(prev => prev === zi ? null : zi); });
       zg.append("rect").attr("x", 0).attr("y", y - 4).attr("width", 120).attr("height", 18).attr("fill", "transparent");
       zg.append("text").attr("x", x).attr("y", y + 4).text(label)
-        .attr("fill", "#aaa").attr("font-size", 10).attr("font-family", "Arial, Helvetica, sans-serif").attr("class", "zone-text");
+        .attr("fill", "#aaa").attr("font-size", 10).attr("font-family", "var(--ra-font-sans)").attr("class", "zone-text");
     });
 
     // Auto-layout fallback for meta-themes (empty POS) — see computeAutoPos helper above
@@ -3690,7 +3690,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .text(d => d.label || "")
       .attr("fill", "transparent")
       .attr("font-size", 8)
-      .attr("font-family", "Arial, Helvetica, sans-serif")
+      .attr("font-family", "var(--ra-font-sans)")
       .attr("text-anchor", "middle")
       .attr("pointer-events", "none");
 
@@ -3728,7 +3728,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("fill", "#fff")
       .attr("font-size", d => Math.max(5, Math.min(9, d.r * 0.55)))
       .attr("font-weight", 700)
-      .attr("font-family", "Arial, Helvetica, sans-serif")
+      .attr("font-family", "var(--ra-font-sans)")
       .attr("pointer-events", "none")
       .attr("class", "brand-text");
 
@@ -3739,7 +3739,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("dy", d => d.r + 9)
       .attr("fill", "#777")
       .attr("font-size", d => Math.max(8, Math.min(10, d.r * 0.6)))
-      .attr("font-family", "Arial, Helvetica, sans-serif").attr("font-weight", 600);
+      .attr("font-family", "var(--ra-font-sans)").attr("font-weight", 600);
 
     // Data sub-label (market cap for large, P/E for medium)
     node.filter(d => d.r >= 13).append("text")
@@ -3748,7 +3748,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       .attr("dy", d => d.r + 17)
       .attr("fill", "#aaa")
       .attr("font-size", 7)
-      .attr("font-family", "Arial, Helvetica, sans-serif");
+      .attr("font-family", "var(--ra-font-sans)");
 
     // Hover tooltip + connection highlighting
     node.on("mouseenter", (e, d) => {
@@ -3761,7 +3761,7 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
       const tipPrice = resolveResearchPrice(d, liveData[d.t]);
       // Green dot for live-sourced fields, gray for authored fallback
       const dot = (isLive) => `<span style="display:inline-block;width:4px;height:4px;border-radius:2px;background:${isLive ? '#1a8a5c' : 'rgba(0,0,0,.12)'};margin-left:4px;vertical-align:middle"></span>`;
-      tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:#fff;font-size:10px;font-weight:700;font-family:'SF Mono',monospace;">${br[1]}</span><span style="font-weight:700;color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight:700;color:#111;font-size:14px;margin-left:auto;font-family:'SF Mono',monospace;">${fmtPrice(tipPrice)}</span></div>` +
+      tip.innerHTML = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;background:${br[0]};color:#fff;font-size:10px;font-weight:700;font-family:var(--ra-font-sans);">${br[1]}</span><span style="font-weight:700;color:${vc.c};font-size:14px;">${d.cc || ""} $${d.t}</span><span style="font-weight:700;color:#111;font-size:14px;margin-left:auto;font-family:var(--ra-font-sans);">${fmtPrice(tipPrice)}</span></div>` +
         `<div style="color:#666;font-size:12px;margin:3px 0 5px">${d.nm} &middot; ${vc.n}</div>` +
         `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;font-size:12px;">` +
         `<span style="color:#999">Mkt Cap</span><span style="color:#333;font-weight:600">${fmtMC(d._mc)}${dot(d._mcIsLive)}</span>` +
@@ -4197,7 +4197,7 @@ function ResearchLoadingState({ theme }) {
                 flexShrink: 0,
               }}
             />
-            <div style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 28, color: "#111" }}>
+            <div style={{ fontFamily: "var(--ra-font-sans)", fontSize: 28, color: "#111" }}>
               Loading research workspace
             </div>
           </div>
@@ -4499,7 +4499,7 @@ export default function PhotonicsObservatory({
     <div data-testid="research-screen" className="photonics-research-root ra-panel-enter" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
       <style>{`
         .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: 0; }
-        .photonics-research-root { font-family: Arial, Helvetica, sans-serif; }
+        .photonics-research-root { font-family: var(--ra-font-sans); }
         .photonics-research-root button,
         .photonics-research-root input,
         .photonics-research-root textarea,
@@ -4552,7 +4552,7 @@ export default function PhotonicsObservatory({
             <div style={{ fontSize: 11, color: currentTheme.accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: 600 }}>
               {currentTheme.subtitle}
             </div>
-            <h1 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 28, fontWeight: 400, color: "#111", letterSpacing: 0, lineHeight: 1.05, marginTop: 2 }}>
+            <h1 style={{ fontFamily: "var(--ra-font-sans)", fontSize: 28, fontWeight: 400, color: "#111", letterSpacing: 0, lineHeight: 1.05, marginTop: 2 }}>
               {currentTheme.title}
             </h1>
           </div>
@@ -4683,7 +4683,7 @@ export default function PhotonicsObservatory({
         ) : themeUniverse.length === 0 ? (
           <div style={{ animation: "fadeIn 0.3s ease", maxWidth: 560, margin: "60px auto", textAlign: "center" }}>
             <div style={{ fontSize: 48, color: currentTheme.accent, marginBottom: 12, opacity: 0.4 }}>{currentTheme.icon}</div>
-            <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 26, fontWeight: 400, color: "#222", marginBottom: 8, letterSpacing: -0.5 }}>
+            <h2 style={{ fontFamily: "var(--ra-font-sans)", fontSize: 26, fontWeight: 400, color: "#222", marginBottom: 8, letterSpacing: -0.5 }}>
               {currentTheme.title}
             </h2>
             <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6, marginBottom: 18 }}>

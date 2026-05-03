@@ -1930,7 +1930,7 @@ export default function BloombergLiveDock() {
       video.load();
       void startPlayback();
     } else {
-      void import("hls.js")
+      void import("hls.js/light")
         .then(({ default: Hls }) => {
           if (disposed) return;
           if (!Hls.isSupported()) {

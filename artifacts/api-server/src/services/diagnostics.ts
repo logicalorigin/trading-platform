@@ -132,7 +132,26 @@ export type DiagnosticsLatestPayload = {
   snapshots: DiagnosticSnapshotPayload[];
   events: DiagnosticEventPayload[];
   thresholds: DiagnosticThreshold[];
+  footerMemoryPressure?: {
+    observedAt: string | null;
+    level: "normal" | "watch" | "high" | "critical";
+    trend: "steady" | "rising" | "recovering";
+    browserMemoryMb: number | null;
+    apiHeapUsedPercent: number | null;
+    sourceQuality: string | null;
+    dominantDrivers: Array<{
+      kind: string | null;
+      label: string | null;
+      level: string | null;
+      detail: string | null;
+      score: number | null;
+    }>;
+  };
 };
+
+type FooterMemoryPressureDriver = NonNullable<
+  DiagnosticsLatestPayload["footerMemoryPressure"]
+>["dominantDrivers"][number];
 
 const SNAPSHOT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_COLLECTION_INTERVAL_MS = 15_000;
@@ -155,6 +174,7 @@ type ClientDiagnosticsMetric = {
   observedAt: string;
   receivedAt: number;
   memory: JsonRecord;
+  memoryPressure: JsonRecord;
   isolation: JsonRecord;
   workload: JsonRecord;
   chartHydration: JsonRecord;
@@ -1351,7 +1371,7 @@ function buildIbkrDiagnosticEvents(
       category: "bridge-health",
       code: "ibkr_bridge_health_stale",
       severity: "warning",
-      message: "IB Gateway bridge health is stale; UI status should not be green until a fresh health check succeeds.",
+      message: "IB Gateway bridge health is pending; UI status should not be green until a current health check succeeds.",
       raw: ibkrRaw,
     });
   }
@@ -1747,10 +1767,51 @@ function classifyIsolationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   return "info";
 }
 
+function toResourcePressureLevel(
+  value: unknown,
+): ResourcePressureLevel | null {
+  const normalized = textValue(value);
+  if (normalized === "critical") return "critical";
+  if (normalized === "high" || normalized === "shed") return "shed";
+  if (normalized === "watch") return "watch";
+  if (normalized === "normal") return "normal";
+  return null;
+}
+
+function normalizeFooterPressureLevel(
+  value: unknown,
+): "normal" | "watch" | "high" | "critical" {
+  const normalized = textValue(value);
+  if (normalized === "critical") return "critical";
+  if (normalized === "high" || normalized === "shed") return "high";
+  if (normalized === "watch") return "watch";
+  return "normal";
+}
+
+function sanitizeDominantDrivers(
+  value: unknown,
+): FooterMemoryPressureDriver[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.slice(0, 4).map((entry) => {
+    const record = asJsonRecord(entry);
+    return {
+      kind: textValue(record["kind"]),
+      label: textValue(record["label"]),
+      level: textValue(record["level"]),
+      detail: textValue(record["detail"]),
+      score: numeric(record["score"]),
+    };
+  });
+}
+
 function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
   const api = buildApiMetrics(runtime);
   const latest = latestClientMetric();
   const browserMemory = asJsonRecord(latest?.memory);
+  const clientPressure = asJsonRecord(latest?.memoryPressure);
   const resourceCaches = asJsonRecord(asJsonRecord(runtime["api"])["resourceCaches"]);
   const heapUsedPercent = numeric(api["heapUsedPercent"]);
   const heapLevel = pressureLevelFromRatio(
@@ -1768,6 +1829,7 @@ function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
       : browserMemoryMb !== null && browserMemoryMb >= 1_500
         ? "watch"
         : "normal";
+  const clientLevel = toResourcePressureLevel(clientPressure["level"]);
   const cacheLevels = Object.values(resourceCaches).map((entry) => {
     const record = asJsonRecord(entry);
     const entries = numeric(record["entries"]);
@@ -1781,10 +1843,13 @@ function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
   const level = maxPressureLevel([
     heapLevel,
     browserLevel as ResourcePressureLevel,
+    ...(clientLevel ? [clientLevel] : []),
     ...cacheLevels,
   ]);
   return {
     pressureLevel: level,
+    clientPressureLevel: normalizeFooterPressureLevel(clientPressure["level"]),
+    clientPressureTrend: textValue(clientPressure["trend"]) ?? "steady",
     heapUsedPercent,
     heap_used_percent: heapUsedPercent,
     heapUsedMb: api["heapUsedMb"],
@@ -1795,7 +1860,12 @@ function buildResourcePressureMetrics(runtime: JsonRecord): JsonRecord {
     browser_memory_mb: browserMemoryMb,
     browserMemoryConfidence: browserMemory["confidence"] ?? null,
     browserMemorySource: browserMemory["source"] ?? null,
+    sourceQuality:
+      textValue(clientPressure["sourceQuality"]) ??
+      textValue(browserMemory["confidence"]),
+    dominantDrivers: sanitizeDominantDrivers(clientPressure["dominantDrivers"]),
     browserObservedAt: latest?.observedAt ?? null,
+    latestClientAt: latest?.observedAt ?? null,
     activeDiagnosticsClients: subscribers.size,
     cacheInventory: resourceCaches,
     v8HeapSpaces: v8.getHeapSpaceStatistics().map((space) => ({
@@ -2137,15 +2207,27 @@ function filterMemorySnapshots(input: {
   from: Date;
   to: Date;
   subsystem?: string | null;
+  limit?: number | null;
 }): DiagnosticSnapshotPayload[] {
-  return memorySnapshots.filter((snapshot) => {
-    const observedAt = Date.parse(snapshot.observedAt);
-    return (
-      observedAt >= input.from.getTime() &&
-      observedAt <= input.to.getTime() &&
-      (!input.subsystem || snapshot.subsystem === input.subsystem)
+  const snapshots = memorySnapshots
+    .filter((snapshot) => {
+      const observedAt = Date.parse(snapshot.observedAt);
+      return (
+        observedAt >= input.from.getTime() &&
+        observedAt <= input.to.getTime() &&
+        (!input.subsystem || snapshot.subsystem === input.subsystem)
+      );
+    })
+    .sort(
+      (left, right) =>
+        Date.parse(right.observedAt) - Date.parse(left.observedAt),
     );
-  });
+
+  if (input.limit && snapshots.length > input.limit) {
+    snapshots.length = input.limit;
+  }
+
+  return snapshots.reverse();
 }
 
 function filterMemoryEvents(input: {
@@ -2154,8 +2236,9 @@ function filterMemoryEvents(input: {
   subsystem?: string | null;
   severity?: string | null;
   status?: DiagnosticEventStatus | null;
+  limit?: number | null;
 }): DiagnosticEventPayload[] {
-  return Array.from(memoryEvents.values())
+  const events = Array.from(memoryEvents.values())
     .filter((event) => {
       const lastSeenAt = Date.parse(event.lastSeenAt);
       return (
@@ -2167,6 +2250,12 @@ function filterMemoryEvents(input: {
       );
     })
     .sort((left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt));
+
+  if (input.limit && events.length > input.limit) {
+    events.length = input.limit;
+  }
+
+  return events;
 }
 
 function resolveResolutionMs(from: Date, to: Date): number {
@@ -2364,8 +2453,29 @@ export async function recordBrowserDiagnosticEvent(input: {
   });
 }
 
+function buildFooterMemoryPressureSummary(
+  resourceMetrics: JsonRecord,
+): DiagnosticsLatestPayload["footerMemoryPressure"] {
+  return {
+    observedAt:
+      textValue(resourceMetrics["browserObservedAt"]) ??
+      textValue(resourceMetrics["latestClientAt"]) ??
+      null,
+    level: normalizeFooterPressureLevel(
+      resourceMetrics["clientPressureLevel"] ?? resourceMetrics["pressureLevel"],
+    ),
+    trend: (textValue(resourceMetrics["clientPressureTrend"]) ??
+      "steady") as "steady" | "rising" | "recovering",
+    browserMemoryMb: numeric(resourceMetrics["browserMemoryMb"]),
+    apiHeapUsedPercent: numeric(resourceMetrics["heapUsedPercent"]),
+    sourceQuality: textValue(resourceMetrics["sourceQuality"]),
+    dominantDrivers: sanitizeDominantDrivers(resourceMetrics["dominantDrivers"]),
+  };
+}
+
 export async function recordClientDiagnosticsMetrics(input: {
   memory?: JsonRecord;
+  memoryPressure?: JsonRecord;
   isolation?: JsonRecord;
   workload?: JsonRecord;
   chartHydration?: JsonRecord;
@@ -2379,6 +2489,7 @@ export async function recordClientDiagnosticsMetrics(input: {
     observedAt: nowIso(),
     receivedAt: Date.now(),
     memory: asJsonRecord(input.memory),
+    memoryPressure: asJsonRecord(input.memoryPressure),
     isolation: asJsonRecord(input.isolation),
     workload: asJsonRecord(input.workload),
     chartHydration: asJsonRecord(input.chartHydration),
@@ -2754,6 +2865,7 @@ export async function collectDiagnosticSnapshot(
     snapshots,
     events,
     thresholds: await getDiagnosticThresholds(),
+    footerMemoryPressure: buildFooterMemoryPressureSummary(resourceMetrics),
   };
   broadcast({ type: "snapshot", payload: latestPayload });
   return latestPayload;
@@ -2822,7 +2934,12 @@ export async function listDiagnosticHistory(input: {
   from: Date;
   to: Date;
   subsystem?: string | null;
+  limit?: number | null;
 }) {
+  const limit =
+    typeof input.limit === "number" && Number.isFinite(input.limit)
+      ? Math.max(1, Math.min(2_500, Math.floor(input.limit)))
+      : 500;
   const clauses: SQL[] = [
     gte(diagnosticSnapshotsTable.observedAt, input.from),
     lte(diagnosticSnapshotsTable.observedAt, input.to),
@@ -2838,14 +2955,14 @@ export async function listDiagnosticHistory(input: {
         .select()
         .from(diagnosticSnapshotsTable)
         .where(and(...clauses))
-        .orderBy(asc(diagnosticSnapshotsTable.observedAt))
-        .limit(2_500),
+        .orderBy(desc(diagnosticSnapshotsTable.observedAt))
+        .limit(limit),
     [],
   );
   const snapshots =
     rows.length > 0
-      ? rows.map(toSnapshotPayload)
-      : filterMemorySnapshots(input);
+      ? rows.map(toSnapshotPayload).reverse()
+      : filterMemorySnapshots({ ...input, limit });
   const resolutionMs = resolveResolutionMs(input.from, input.to);
   return {
     from: input.from.toISOString(),
@@ -2862,7 +2979,12 @@ export async function listDiagnosticEvents(input: {
   subsystem?: string | null;
   severity?: string | null;
   status?: DiagnosticEventStatus | null;
+  limit?: number | null;
 }) {
+  const limit =
+    typeof input.limit === "number" && Number.isFinite(input.limit)
+      ? Math.max(1, Math.min(1_000, Math.floor(input.limit)))
+      : 200;
   const clauses: SQL[] = [
     gte(diagnosticEventsTable.lastSeenAt, input.from),
     lte(diagnosticEventsTable.lastSeenAt, input.to),
@@ -2885,7 +3007,7 @@ export async function listDiagnosticEvents(input: {
         .from(diagnosticEventsTable)
         .where(and(...clauses))
         .orderBy(desc(diagnosticEventsTable.lastSeenAt))
-        .limit(500),
+        .limit(limit),
     [],
   );
   return {
@@ -2894,7 +3016,7 @@ export async function listDiagnosticEvents(input: {
     events:
       rows.length > 0
         ? rows.map(toEventPayload)
-        : filterMemoryEvents(input),
+        : filterMemoryEvents({ ...input, limit }),
   };
 }
 

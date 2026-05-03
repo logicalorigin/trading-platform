@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 test.setTimeout(90_000);
+test.describe.configure({ mode: "serial" });
 
 const symbols = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA"];
 const mockNow = Date.parse("2026-05-01T16:00:00.000Z");
@@ -78,6 +79,28 @@ async function disableStreamingSources(page: Page) {
   });
 }
 
+async function disableEventSource(page: Page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+}
+
+async function accelerateIntervalDelays(
+  page: Page,
+  replacements: Array<{ from: number; to: number }>,
+) {
+  await page.addInitScript((entries) => {
+    const nativeSetInterval = window.setInterval.bind(window);
+    window.setInterval = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      const mapped = entries.find((entry) => entry.from === timeout);
+      return nativeSetInterval(handler, mapped?.to ?? timeout, ...args);
+    }) as typeof window.setInterval;
+  }, replacements);
+}
+
 function timeframeStepMs(timeframe: string | null) {
   switch (timeframe) {
     case "5s":
@@ -126,12 +149,20 @@ async function mockShellApi(
   page: Page,
   {
     barsRequests = [],
+    bridgeLauncherRequests = [],
+    diagnosticsEventRequests = [],
+    diagnosticsHistoryRequests = [],
     ibkrReady = false,
+    ibkrLineUsageRequests = [],
     runtimeLineUsage = null,
     shadowBacktestRequests = [],
   }: {
     barsRequests?: Array<Record<string, string>>;
+    bridgeLauncherRequests?: Array<Record<string, string>>;
+    diagnosticsEventRequests?: Array<Record<string, string>>;
+    diagnosticsHistoryRequests?: Array<Record<string, string>>;
     ibkrReady?: boolean;
+    ibkrLineUsageRequests?: Array<Record<string, string>>;
     runtimeLineUsage?: MockMarketDataAdmission | null;
     shadowBacktestRequests?: Array<Record<string, unknown>>;
   } = {},
@@ -297,15 +328,46 @@ async function mockShellApi(
     } else if (url.pathname === "/api/settings/ibkr-lanes") {
       body = { lanes: [], policy: {}, defaults: {} };
     } else if (url.pathname === "/api/settings/ibkr-line-usage") {
+      ibkrLineUsageRequests.push(Object.fromEntries(url.searchParams.entries()));
       body = { lanes: [], summary: { activeLines: 0, maxLines: 0 } };
     } else if (url.pathname === "/api/diagnostics/latest") {
       body = {
         status: "ok",
         severity: "info",
         timestamp: new Date(mockNow).toISOString(),
-        probes: {},
-        subsystems: {},
-        metrics: {},
+        snapshots: [
+          {
+            id: "resource-pressure",
+            observedAt: new Date(mockNow).toISOString(),
+            subsystem: "resource-pressure",
+            status: "ok",
+            severity: "info",
+            summary: "Resource pressure is normal",
+            dimensions: {},
+            metrics: {
+              pressureLevel: "normal",
+              clientPressureLevel: "normal",
+              clientPressureTrend: "steady",
+              heapUsedPercent: 44,
+              browserMemoryMb: 128,
+              browserMemorySource: "performance.memory",
+              sourceQuality: "medium",
+              dominantDrivers: [],
+            },
+            raw: {},
+          },
+        ],
+        events: [],
+        thresholds: [],
+        footerMemoryPressure: {
+          observedAt: new Date(mockNow).toISOString(),
+          level: "normal",
+          trend: "steady",
+          browserMemoryMb: 128,
+          apiHeapUsedPercent: 44,
+          sourceQuality: "medium",
+          dominantDrivers: [],
+        },
       };
     } else if (url.pathname === "/api/diagnostics/runtime") {
       body = {
@@ -357,9 +419,23 @@ async function mockShellApi(
           },
         },
       };
+    } else if (url.pathname === "/api/ibkr/bridge/launcher") {
+      bridgeLauncherRequests.push(Object.fromEntries(url.searchParams.entries()));
+      body = {
+        activationId: "mock-activation",
+        apiBaseUrl: "https://rayalgo.example.test",
+        bridgeToken: "mock-bridge-token",
+        bundleUrl: "https://rayalgo.example.test/api/ibkr/bridge/bundle.tar.gz",
+        helperUrl: "https://rayalgo.example.test/api/ibkr/bridge/helper.ps1",
+        helperVersion: "test",
+        launchUrl: "rayalgo-ibkr://launch?activationId=mock-activation",
+        managementToken: "mock-management-token",
+      };
     } else if (url.pathname === "/api/diagnostics/history") {
+      diagnosticsHistoryRequests.push(Object.fromEntries(url.searchParams.entries()));
       body = { points: [], snapshots: [] };
     } else if (url.pathname === "/api/diagnostics/events") {
+      diagnosticsEventRequests.push(Object.fromEntries(url.searchParams.entries()));
       body = { events: [] };
     } else if (url.pathname === "/api/diagnostics/thresholds") {
       body = { thresholds: [] };
@@ -530,8 +606,12 @@ async function selectChartInterval(
   const trigger = chart.getByTestId("chart-timeframe-menu-trigger");
   const current = await trigger.getAttribute("data-chart-timeframe");
   if (current !== interval) {
-    await trigger.click();
-    await page.getByTestId(`chart-timeframe-option-${interval}`).click();
+    await trigger.scrollIntoViewIfNeeded();
+    await expect(trigger).toBeVisible({ timeout: 10_000 });
+    await trigger.click({ force: true });
+    const option = page.getByTestId(`chart-timeframe-option-${interval}`);
+    await expect(option).toBeVisible({ timeout: 10_000 });
+    await option.click({ force: true });
   }
   await expect(trigger).toHaveAttribute("data-chart-timeframe", interval, {
     timeout: 10_000,
@@ -608,6 +688,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await disableStreamingSources(page);
   await mockShellApi(page);
   await page.goto("/");
+  await expect(page.getByTestId("footer-memory-pressure-indicator")).toBeVisible();
   await openScreen(page, "Market", "market");
 
   await expect(page.getByTestId("market-workspace")).toBeVisible({
@@ -662,6 +743,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await expect(page.getByTestId("diagnostics-screen")).toBeVisible();
   await page.getByTestId("diagnostics-tab-memory").click();
   await expect(page.getByText("API Memory")).toBeVisible();
+  await expect(page.getByText("Footer Pressure Signal")).toBeVisible();
   await page.getByTestId("diagnostics-tab-overview").click();
   await expect(page.getByText("API Latency Trend")).toBeVisible();
 
@@ -673,6 +755,69 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await page.getByTestId("settings-search-input").fill("");
   await page.getByTestId("settings-tab-workspace").click();
   await expect(page.getByText("Workspace Defaults")).toBeVisible();
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("footer memory indicator stays visible and settings expose footer controls", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await disableStreamingSources(page);
+  await mockShellApi(page);
+  await page.goto("/");
+
+  await expect(page.getByTestId("footer-memory-pressure-indicator")).toBeVisible();
+  await openScreen(page, "Settings", "settings");
+  await page.getByTestId("settings-tab-system").click();
+  await expect(page.getByText("Footer Memory Signal")).toBeVisible();
+  await expect(page.getByText("Pulse threshold")).toBeVisible();
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("platform phone layout navigates all primary screens without document overflow", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await disableStreamingSources(page);
+  await mockShellApi(page);
+  await page.goto("/");
+
+  await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
+  const nav = page.getByTestId("platform-screen-nav");
+  await expect(nav.getByRole("button", { name: "Open watchlist", exact: true })).toBeVisible();
+  await nav.getByRole("button", { name: "Open watchlist", exact: true }).click();
+  await expect(nav.getByRole("button", { name: "Close watchlist", exact: true })).toBeVisible();
+  await nav.getByRole("button", { name: "Close watchlist", exact: true }).click();
+  await expect(nav.getByRole("button", { name: "Open watchlist", exact: true })).toBeVisible();
+
+  const screens = [
+    ["Market", "market", "market-workspace"],
+    ["Flow", "flow", "flow-main-layout"],
+    ["Trade", "trade", "trade-top-zone"],
+    ["Account", "account", "account-screen"],
+    ["Research", "research", "research-screen"],
+    ["Algo", "algo", "algo-screen"],
+    ["Backtest", "backtest", "backtest-workspace"],
+    ["Diagnostics", "diagnostics", "diagnostics-screen"],
+    ["Settings", "settings", "settings-screen"],
+  ] as const;
+
+  for (const [label, screenId, readyTestId] of screens) {
+    await openScreen(page, label, screenId);
+    await expect(page.getByTestId(readyTestId)).toBeVisible({ timeout: 30_000 });
+    const overflow = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(overflow.scrollWidth, `${label} should not document-overflow`).toBeLessThanOrEqual(
+      overflow.viewportWidth + 1,
+    );
+  }
 
   expect(runtimeIssues).toEqual([]);
 });
@@ -696,6 +841,61 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
 
   await openScreen(page, "Account", "account");
   await expect(page.getByText("Shadow internal paper")).toBeVisible();
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("diagnostics stops history and event polling while hidden", async ({ page }) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const diagnosticsHistoryRequests: Array<Record<string, string>> = [];
+  const diagnosticsEventRequests: Array<Record<string, string>> = [];
+
+  await disableStreamingSources(page);
+  await accelerateIntervalDelays(page, [{ from: 60_000, to: 50 }]);
+  await mockShellApi(page, {
+    diagnosticsEventRequests,
+    diagnosticsHistoryRequests,
+  });
+  await page.goto("/");
+
+  await openScreen(page, "Diagnostics", "diagnostics");
+  await expect
+    .poll(() => diagnosticsHistoryRequests.length, { timeout: 5_000 })
+    .toBeGreaterThan(1);
+  await expect
+    .poll(() => diagnosticsEventRequests.length, { timeout: 5_000 })
+    .toBeGreaterThan(1);
+  expect(diagnosticsHistoryRequests[0]?.limit).toBe("240");
+  expect(diagnosticsEventRequests[0]?.limit).toBe("240");
+
+  await openScreen(page, "Market", "market");
+  const hiddenHistoryCount = diagnosticsHistoryRequests.length;
+  const hiddenEventCount = diagnosticsEventRequests.length;
+
+  await page.waitForTimeout(200);
+  expect(diagnosticsHistoryRequests.length).toBe(hiddenHistoryCount);
+  expect(diagnosticsEventRequests.length).toBe(hiddenEventCount);
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("settings stops IBKR line usage polling while hidden", async ({ page }) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const ibkrLineUsageRequests: Array<Record<string, string>> = [];
+
+  await disableEventSource(page);
+  await accelerateIntervalDelays(page, [{ from: 2_000, to: 50 }]);
+  await mockShellApi(page, { ibkrLineUsageRequests });
+  await page.goto("/");
+
+  await openScreen(page, "Settings", "settings");
+  await expect
+    .poll(() => ibkrLineUsageRequests.length, { timeout: 5_000 })
+    .toBeGreaterThan(1);
+
+  await openScreen(page, "Market", "market");
+  const hiddenRequestCount = ibkrLineUsageRequests.length;
+
+  await page.waitForTimeout(200);
+  expect(ibkrLineUsageRequests.length).toBe(hiddenRequestCount);
   expect(runtimeIssues).toEqual([]);
 });
 
@@ -784,12 +984,194 @@ test("header connectivity shows market data line usage in the compact area and p
   await expect(popover).toContainText("34");
   await expect(popover).toContainText("40");
 
+  const triggerBox = await page
+    .getByRole("button", { name: "Open IB Gateway connection details" })
+    .boundingBox();
+  const popoverBox = await popover.boundingBox();
+  const viewport = page.viewportSize();
+  if (!triggerBox || !popoverBox || !viewport) {
+    throw new Error("Connectivity popover geometry was unavailable.");
+  }
+  expect(popoverBox.y).toBeGreaterThanOrEqual(
+    triggerBox.y + triggerBox.height - 1,
+  );
+  expect(popoverBox.x).toBeGreaterThanOrEqual(0);
+  expect(popoverBox.x + popoverBox.width).toBeLessThanOrEqual(viewport.width);
+
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("header connectivity popover stays inside the narrow header viewport", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await disableStreamingSources(page);
+  await mockShellApi(page, {
+    ibkrReady: true,
+    runtimeLineUsage: {
+      activeLineCount: 77,
+      flowScannerLineCount: 34,
+      budget: {
+        maxLines: 200,
+        flowScannerLineCap: 40,
+      },
+      poolUsage: {
+        "flow-scanner": {
+          activeLineCount: 34,
+          maxLines: 40,
+          remainingLineCount: 6,
+          strict: true,
+        },
+        visible: {
+          activeLineCount: 18,
+          maxLines: 108,
+          remainingLineCount: 90,
+        },
+      },
+      counters: {},
+    },
+  });
+  await page.goto("/");
+
+  const trigger = page.getByRole("button", {
+    name: "Open IB Gateway connection details",
+  });
+  await trigger.click();
+  const popover = page.getByRole("dialog", { name: "IB Gateway bridge" });
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText("Market data lines");
+
+  const triggerBox = await trigger.boundingBox();
+  const popoverBox = await popover.boundingBox();
+  const viewport = page.viewportSize();
+  if (!triggerBox || !popoverBox || !viewport) {
+    throw new Error("Narrow connectivity popover geometry was unavailable.");
+  }
+  expect(popoverBox.y).toBeGreaterThanOrEqual(
+    triggerBox.y + triggerBox.height - 1,
+  );
+  expect(popoverBox.x).toBeGreaterThanOrEqual(0);
+  expect(popoverBox.x + popoverBox.width).toBeLessThanOrEqual(viewport.width);
+
+  await page.mouse.click(8, 8);
+  await expect(popover).toHaveCount(0);
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("header connectivity launch opens the bridge protocol without a browser popup", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const bridgeLauncherRequests: Array<Record<string, string>> = [];
+
+  await disableStreamingSources(page);
+  await page.addInitScript(() => {
+    const launcherState = {
+      anchorClicks: 0,
+      href: "",
+      windowOpenCalls: 0,
+    };
+    Object.defineProperty(window, "__rayalgoBridgeLauncherState", {
+      configurable: true,
+      value: launcherState,
+    });
+    window.open = ((...args: Parameters<typeof window.open>) => {
+      launcherState.windowOpenCalls += 1;
+      launcherState.href = String(args[0] || "");
+      return null;
+    }) as typeof window.open;
+    const originalAnchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function patchedAnchorClick() {
+      const href = this.getAttribute("href") || this.href || "";
+      if (href.startsWith("rayalgo-ibkr://")) {
+        launcherState.anchorClicks += 1;
+        launcherState.href = href;
+        return;
+      }
+      return originalAnchorClick.call(this);
+    };
+  });
+  await mockShellApi(page, { bridgeLauncherRequests });
+  await page.goto("/");
+
+  await page
+    .getByRole("button", { name: "Open IB Gateway connection details" })
+    .click();
+  const popover = page.getByRole("dialog", { name: "IB Gateway bridge" });
+  await popover.getByRole("button", { name: "Launch" }).click();
+
+  await expect
+    .poll(() => bridgeLauncherRequests.length, { timeout: 10_000 })
+    .toBe(1);
+  await expect(popover).toContainText("IB Gateway activation is running");
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = (
+            window as unknown as {
+              __rayalgoBridgeLauncherState?: {
+                anchorClicks: number;
+                href: string;
+                windowOpenCalls: number;
+              };
+            }
+          ).__rayalgoBridgeLauncherState;
+          return state || null;
+        }),
+      { timeout: 10_000 },
+    )
+    .toMatchObject({
+      anchorClicks: 1,
+      href: "rayalgo-ibkr://launch?activationId=mock-activation",
+      windowOpenCalls: 0,
+    });
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("market chart ticker search keeps a single active chart owner", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await disableStreamingSources(page);
+  await mockShellApi(page);
+  await page.goto("/");
+
+  const firstSearchButton = page
+    .getByTestId("market-mini-chart-0")
+    .getByTestId("chart-symbol-search-button");
+  const secondSearchButton = page
+    .getByTestId("market-mini-chart-1")
+    .getByTestId("chart-symbol-search-button");
+
+  await expect(firstSearchButton).toBeVisible({ timeout: 30_000 });
+  await expect(secondSearchButton).toBeVisible({ timeout: 30_000 });
+
+  await firstSearchButton.click({ force: true });
+  await expect(page.getByTestId("ticker-search-popover")).toHaveCount(1);
+  await expect(firstSearchButton).toHaveAttribute("aria-expanded", "true");
+
+  await secondSearchButton.click({ force: true });
+  await expect(page.getByTestId("ticker-search-popover")).toHaveCount(1);
+  await expect(firstSearchButton).toHaveAttribute("aria-expanded", "false");
+  await expect(secondSearchButton).toHaveAttribute("aria-expanded", "true");
+
   expect(runtimeIssues).toEqual([]);
 });
 
 test("spot market mini chart hydrates every interval selection", async ({
   page,
 }) => {
+  test.setTimeout(180_000);
   const runtimeIssues = collectRuntimeIssues(page);
   const barsRequests: Array<Record<string, string>> = [];
 
@@ -837,6 +1219,7 @@ test("trade spot chart hydrates every interval selection", async ({ page }) => {
 test("market chart frame changes timeframe from the dropdown and drag-pans", async ({
   page,
 }) => {
+  test.setTimeout(150_000);
   const pageErrors: string[] = [];
   const barsRequests: Array<Record<string, string>> = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

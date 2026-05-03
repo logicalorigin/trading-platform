@@ -201,8 +201,12 @@ export const clearOptionHydrationDiagnosticsHistory = (): void => {
   emit();
 };
 
-export const useOptionHydrationDiagnostics = () => {
-  useSyncExternalStore(subscribe, getSnapshot, () => 0);
+export const useOptionHydrationDiagnostics = (enabled = true) => {
+  useSyncExternalStore(
+    enabled ? subscribe : () => () => {},
+    enabled ? getSnapshot : () => 0,
+    () => 0,
+  );
   return {
     state,
     metrics: Object.fromEntries(

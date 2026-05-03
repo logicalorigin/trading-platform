@@ -55,6 +55,17 @@ function readStatus(value: unknown): DiagnosticEventStatus | undefined {
   return undefined;
 }
 
+function readLimit(
+  value: unknown,
+  { fallback, max }: { fallback: number; max: number },
+): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(max, parsed);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -111,6 +122,7 @@ router.get("/diagnostics/history", async (req, res) => {
       from,
       to,
       subsystem: readString(req.query.subsystem),
+      limit: readLimit(req.query.limit, { fallback: 500, max: 2_500 }),
     }),
   );
 });
@@ -124,6 +136,7 @@ router.get("/diagnostics/events", async (req, res) => {
       subsystem: readString(req.query.subsystem),
       severity: readString(req.query.severity),
       status: readStatus(req.query.status),
+      limit: readLimit(req.query.limit, { fallback: 200, max: 1_000 }),
     }),
   );
 });

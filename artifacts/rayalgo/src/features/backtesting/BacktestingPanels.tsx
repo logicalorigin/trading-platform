@@ -67,14 +67,16 @@ import type {
   Watchlist,
 } from "@workspace/api-client-react";
 import type { TradeThresholdSegment } from "../charting/types";
+import { RayReplicaSettingsMenu } from "../charting/RayReplicaSettingsMenu";
+import { ResearchChartFrame } from "../charting/ResearchChartFrame";
 import {
-  RayReplicaSettingsMenu,
-  ResearchChartFrame,
   resolvePineScriptChartState,
-  resolveRayReplicaRuntimeSettings,
   useIndicatorLibrary,
-} from "../charting";
-import { RAY_REPLICA_PINE_SCRIPT_KEY } from "../charting/rayReplicaPineAdapter";
+} from "../charting/pineScripts";
+import {
+  RAY_REPLICA_PINE_SCRIPT_KEY,
+  resolveRayReplicaRuntimeSettings,
+} from "../charting/rayReplicaPineAdapter";
 import {
   buildBacktestChartModel,
   buildHydratedBacktestSpotChartModel,
@@ -88,6 +90,7 @@ import {
   formatAppDateTimeForPreferences,
   formatAppTimeForPreferences,
 } from "../../lib/timeZone";
+import { responsiveFlags, useElementSize } from "../../lib/responsive";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
 
 type ThemeTokens = {
@@ -1333,6 +1336,9 @@ export function BacktestWorkspace({
   defaultWatchlistId,
   isVisible = false,
 }: BacktestWorkspaceProps) {
+  const [backtestRootRef, backtestRootSize] = useElementSize();
+  const { isPhone: backtestIsPhone, isNarrow: backtestIsNarrow } =
+    responsiveFlags(backtestRootSize.width);
   const { preferences: userPreferences } = useUserPreferences();
   const formatBacktestDateTime = useCallback(
     (value: string | null | undefined) => formatDateTime(value, userPreferences),
@@ -2679,14 +2685,18 @@ export function BacktestWorkspace({
 
   return (
     <div
+      ref={backtestRootRef}
       data-testid="backtest-workspace"
+      data-layout={backtestIsPhone ? "phone" : backtestIsNarrow ? "tablet" : "desktop"}
       style={{
-        padding: scale.sp(8),
+        padding: scale.sp(backtestIsPhone ? 5 : 8),
         display: "flex",
         flexDirection: "column",
         gap: scale.sp(8),
         height: "100%",
+        width: "100%",
         overflowY: "auto",
+        minWidth: 0,
       }}
     >
       {banner ? (

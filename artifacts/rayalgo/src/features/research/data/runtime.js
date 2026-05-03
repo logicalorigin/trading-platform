@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { retryDynamicImport } from "../../../lib/dynamicImport";
 
 const EMPTY_RESEARCH_META = {
   AI_MACRO: [],
@@ -58,10 +59,15 @@ export function getResearchRuntimeData(themeId = null) {
 
 export async function loadResearchRuntimeMeta() {
   if (!cachedResearchMetaPromise) {
-    cachedResearchMetaPromise = import("./researchThemes.js").then((mod) => {
-      cachedResearchMeta = mapResearchMetaModule(mod);
-      return cachedResearchMeta;
-    });
+    cachedResearchMetaPromise = retryDynamicImport(
+      () => import("./researchThemes.js"),
+      { label: "researchThemes", reloadOnFailure: false },
+    )
+      .then((mod) => {
+        cachedResearchMeta = mapResearchMetaModule(mod);
+        return cachedResearchMeta;
+      })
+      .catch(() => EMPTY_RESEARCH_META);
   }
   return cachedResearchMetaPromise;
 }
@@ -85,12 +91,22 @@ export async function loadResearchThemeDataset(themeId) {
 
     cachedThemeDatasetPromises.set(
       normalizedThemeId,
-      loader().then((mod) => {
-        const data = mapThemeDatasetModule(normalizedThemeId, mod);
-        cachedThemeDatasets.set(normalizedThemeId, data);
-        cachedThemeDatasetPromises.delete(normalizedThemeId);
-        return data;
-      }),
+      retryDynamicImport(loader, {
+        label: `researchThemeDataset:${normalizedThemeId}`,
+        reloadOnFailure: false,
+      })
+        .then((mod) => {
+          const data = mapThemeDatasetModule(normalizedThemeId, mod);
+          cachedThemeDatasets.set(normalizedThemeId, data);
+          cachedThemeDatasetPromises.delete(normalizedThemeId);
+          return data;
+        })
+        .catch(() => {
+          const emptyData = { ...EMPTY_THEME_DATA, themeId: normalizedThemeId };
+          cachedThemeDatasets.set(normalizedThemeId, emptyData);
+          cachedThemeDatasetPromises.delete(normalizedThemeId);
+          return emptyData;
+        }),
     );
   }
 

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { AccountCashEvent } from './accountCashEvent';
+import type { AccountEquityHistoryResponseTerminalPointSource } from './accountEquityHistoryResponseTerminalPointSource';
 import type { AccountEquityPoint } from './accountEquityPoint';
 import type { AccountHistoryRange } from './accountHistoryRange';
 
@@ -20,7 +21,7 @@ export interface AccountEquityHistoryResponse {
   latestSnapshotAt: Date | null;
   isStale: boolean;
   staleReason: string | null;
-  terminalPointSource: 'live_account_summary' | 'persisted_snapshot' | 'flex' | 'shadow_ledger' | null;
+  terminalPointSource: AccountEquityHistoryResponseTerminalPointSource;
   liveTerminalIncluded: boolean;
   points: AccountEquityPoint[];
   events: AccountCashEvent[];

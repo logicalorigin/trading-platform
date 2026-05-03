@@ -592,6 +592,28 @@ export const Watchlist = ({
     [items],
   );
   const directionEnabled = WATCHLIST_DIRECTION_SORTS.has(sortMode);
+  const closeWatchlistMenu = () => setWatchlistMenuOpen(false);
+  const closeAddMode = ({ clearQuery = false } = {}) => {
+    setAddMode(false);
+    if (clearQuery) {
+      setAddQuery("");
+    }
+  };
+  const toggleWatchlistMenu = () => {
+    const nextOpen = !watchlistMenuOpen;
+    if (nextOpen) {
+      closeAddMode();
+    }
+    setWatchlistMenuOpen(nextOpen);
+  };
+  const toggleAddMode = () => {
+    const nextOpen = !addMode;
+    closeWatchlistMenu();
+    if (!nextOpen) {
+      setAddQuery("");
+    }
+    setAddMode(nextOpen);
+  };
 
   useEffect(() => {
     if (
@@ -605,15 +627,13 @@ export const Watchlist = ({
       if (rootRef.current?.contains(event.target)) {
         return;
       }
-      setWatchlistMenuOpen(false);
-      if (addMode) {
-        setAddMode(false);
-      }
+      closeWatchlistMenu();
+      closeAddMode();
     };
 
-    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown);
     return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [addMode, watchlistMenuOpen]);
 
@@ -651,8 +671,7 @@ export const Watchlist = ({
 
   const handleAddQuickSymbol = (symbol) => {
     onAddSymbol?.(symbol, symbol);
-    setAddMode(false);
-    setAddQuery("");
+    closeAddMode({ clearQuery: true });
   };
 
   const handleSelectSortMode = (nextMode) => {
@@ -701,10 +720,14 @@ export const Watchlist = ({
           gap: sp(4),
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
+        <div
+          style={{ display: "flex", alignItems: "center", gap: sp(6), position: "relative" }}
+        >
           <button
             type="button"
-            onClick={() => setWatchlistMenuOpen((open) => !open)}
+            data-testid="watchlist-menu-trigger"
+            aria-expanded={watchlistMenuOpen ? "true" : "false"}
+            onClick={toggleWatchlistMenu}
             style={{
               flex: 1,
               minWidth: 0,
@@ -735,6 +758,86 @@ export const Watchlist = ({
             </span>
             <ChevronDown size={13} style={{ color: T.textDim, flexShrink: 0 }} />
           </button>
+          {watchlistMenuOpen ? (
+            <div
+              data-testid="watchlist-menu"
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                left: 0,
+                right: 0,
+                zIndex: 20,
+                background: T.bg2,
+                border: `1px solid ${T.border}`,
+                borderRadius: 0,
+                boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
+                overflow: "hidden",
+              }}
+            >
+              {watchlists.map((watchlist) => (
+                <button
+                  key={watchlist.id}
+                  type="button"
+                  onClick={() => {
+                    onSelectWatchlist?.(watchlist.id);
+                    closeWatchlistMenu();
+                  }}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: sp(8),
+                    padding: sp("8px 10px"),
+                    background:
+                      watchlist.id === activeWatchlistId ? T.bg3 : "transparent",
+                    border: "none",
+                    borderBottom: `1px solid ${T.border}20`,
+                    color: T.text,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ minWidth: 0 }}>
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: fs(10),
+                        fontWeight: 700,
+                        fontFamily: T.mono,
+                        color: T.text,
+                      }}
+                    >
+                      {watchlist.name}
+                    </span>
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: fs(8),
+                        color: T.textDim,
+                        fontFamily: T.mono,
+                        marginTop: 1,
+                      }}
+                    >
+                      {countWatchlistSymbols(watchlist)} symbols
+                    </span>
+                  </span>
+                  {watchlist.isDefault ? (
+                    <span
+                      style={{
+                        color: T.green,
+                        fontSize: fs(8),
+                        fontFamily: T.mono,
+                        fontWeight: 700,
+                      }}
+                    >
+                      DEFAULT
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={handleCreateWatchlist}
@@ -909,6 +1012,7 @@ export const Watchlist = ({
 
         {addMode ? (
           <div
+            data-testid="watchlist-add-panel"
             style={{
               border: `1px solid ${T.border}`,
               borderRadius: 0,
@@ -942,8 +1046,7 @@ export const Watchlist = ({
               <button
                 type="button"
                 onClick={() => {
-                  setAddMode(false);
-                  setAddQuery("");
+                  closeAddMode({ clearQuery: true });
                 }}
                 title="Close add symbol"
                 style={{
@@ -969,8 +1072,7 @@ export const Watchlist = ({
                       type="button"
                       onClick={() => {
                         onAddSymbol?.(result.ticker, result.name || result.ticker, result);
-                        setAddMode(false);
-                        setAddQuery("");
+                        closeAddMode({ clearQuery: true });
                       }}
                       style={{
                         width: "100%",
@@ -1053,86 +1155,6 @@ export const Watchlist = ({
         ) : null}
       </div>
 
-      {watchlistMenuOpen ? (
-        <div
-          style={{
-            position: "absolute",
-            top: dim(42),
-            left: sp(9),
-            right: sp(9),
-            zIndex: 20,
-            background: T.bg2,
-            border: `1px solid ${T.border}`,
-            borderRadius: 0,
-            boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
-            overflow: "hidden",
-          }}
-        >
-          {watchlists.map((watchlist) => (
-            <button
-              key={watchlist.id}
-              type="button"
-              onClick={() => {
-                onSelectWatchlist?.(watchlist.id);
-                setWatchlistMenuOpen(false);
-              }}
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: sp(8),
-                padding: sp("8px 10px"),
-                background:
-                  watchlist.id === activeWatchlistId ? T.bg3 : "transparent",
-                border: "none",
-                borderBottom: `1px solid ${T.border}20`,
-                color: T.text,
-                cursor: "pointer",
-                textAlign: "left",
-              }}
-            >
-              <span style={{ minWidth: 0 }}>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: fs(10),
-                    fontWeight: 700,
-                    fontFamily: T.mono,
-                    color: T.text,
-                  }}
-                >
-                  {watchlist.name}
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: fs(8),
-                    color: T.textDim,
-                    fontFamily: T.mono,
-                    marginTop: 1,
-                  }}
-                >
-                  {countWatchlistSymbols(watchlist)} symbols
-                </span>
-              </span>
-              {watchlist.isDefault ? (
-                <span
-                  style={{
-                    color: T.green,
-                    fontSize: fs(8),
-                    fontFamily: T.mono,
-                    fontWeight: 700,
-                  }}
-                >
-                  DEFAULT
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       <div style={{ flex: 1, overflowY: "auto" }}>
         {sorted.map((item) => {
           const itemKey = item.key || item.id || item.sym;
@@ -1186,7 +1208,8 @@ export const Watchlist = ({
         </span>
         <button
           type="button"
-          onClick={() => setAddMode((current) => !current)}
+          data-testid="watchlist-add-toggle"
+          onClick={toggleAddMode}
           style={{
             display: "flex",
             alignItems: "center",

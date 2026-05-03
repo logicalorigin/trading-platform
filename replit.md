@@ -18,12 +18,13 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Key Commands
 
-- `pnpm run dev` — canonical Replit workspace run command; starts API, RayAlgo, and the backtest worker together
+- Replit Run button — canonical workspace dev entrypoint; the `Project` workflow starts the API server and RayAlgo web together
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
+- `pnpm --filter @workspace/rayalgo run dev` — run the RayAlgo web app locally
 - `pnpm --filter @workspace/backtest-worker run dev` — run the background backtest worker locally
 
 Account/Flex persistence note:
@@ -39,6 +40,19 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **backtest-worker** (`artifacts/backtest-worker`) — background job worker that claims queued backtest jobs, hydrates/caches datasets, runs studies and sweeps, and promotes persistent run artifacts into the database.
 - **ibkr-bridge** (`artifacts/ibkr-bridge`) — small HTTP service that runs beside the user's local Interactive Brokers Gateway/TWS socket. Built into `dist/index.mjs`; the Windows one-click helper exposes the bridge through Cloudflare, and the api-server's `IbkrBridgeClient` calls it for accounts, positions, bars, quotes, market depth, orders, and TWS contract search. All Date-typed fields are deserialized at the bridge-client boundary in `artifacts/api-server/src/providers/ibkr/bridge-client.ts` (HTTP JSON only carries strings).
 
+## Replit workflows
+
+The tracked `.replit` config intentionally keeps one user-facing run workflow:
+`Project`. It runs the API server on `8080` and RayAlgo web on `18747` in
+parallel, then prints a short reminder that IBKR bridge activation belongs in
+the RayAlgo header/Windows helper flow.
+
+Do not add a separate Replit `IBKR Bridge` workflow for TWS mode. The bridge
+runs beside IB Gateway/TWS on the Windows machine and is exposed through the
+activation helper. A generated or stale "configure your app" workflow in the
+Replit UI is not part of the repo config and should be removed from the
+Workflows pane rather than linked to `Project`.
+
 ## IBKR Live Data Setup (User-Side)
 
 ### IB Gateway/TWS live mode
@@ -49,7 +63,7 @@ mode streams watchlist/visible/selected instruments and falls back to
 vendor/cached data for over-budget symbols. Do not expose the raw TWS socket.
 
 Replit does not need IBKR bridge URL secrets for the normal live flow. Start
-IBKR activation from the RayAlgo header; the Windows helper posts the fresh
+IBKR activation from the RayAlgo header; the Windows helper posts the current
 Cloudflare bridge URL and bridge token back to the API, which stores them in the
 runtime override. Stale URL secrets such as `IBKR_BASE_URL`,
 `IBKR_API_BASE_URL`, `IB_GATEWAY_URL`, `IBKR_GATEWAY_URL`, `IBKR_BRIDGE_URL`,
@@ -72,7 +86,7 @@ Windows side:
    defaults to live mode, port `4001`, client id `101`, and live market data
    type `1`.
 3. The helper downloads the current served bridge bundle, starts the local
-   bridge, starts a fresh Cloudflare quick tunnel when needed, and records the
+   bridge, starts a new Cloudflare quick tunnel when needed, and records the
    active URL automatically.
 
 Security rule: when `IBKR_TRANSPORT=tws`, the bridge requires
@@ -121,7 +135,7 @@ What it does:
 1. Checks whether the IB Gateway/TWS socket is reachable.
 2. Self-updates the installed protocol handler when the served helper version changes.
 3. Opens the RayAlgo bridge with `IBKR_TRANSPORT=tws`.
-4. Clears stale quick-tunnel state, opens cloudflared, and posts the fresh bridge URL/token back to the API.
+4. Clears stale quick-tunnel state, opens cloudflared, and posts the current bridge URL/token back to the API.
 
 ### Verifying the chain from Replit
 
@@ -146,7 +160,7 @@ curl -sS "http://127.0.0.1:8080/api/bars?symbol=AAPL&timeframe=1m&limit=2"  # ex
 
 ## Server log noise (dev workflow)
 
-Both the API server and the IBKR Bridge use `pino-http` with a shared
+The API server and Windows-side IBKR bridge use `pino-http` with a shared
 `customLogLevel` policy in `artifacts/api-server/src/app.ts` and
 `artifacts/ibkr-bridge/src/app.ts`:
 
@@ -161,26 +175,24 @@ middleware ahead of `pinoHttp`, because `pino-http@10.5.0` does not
 expose `res.responseTime` to `customLogLevel` (and `autoLogging.ignore`
 fires at request start, before status/duration are known).
 
-The dev workflows pin `LOG_LEVEL=warn`:
+The Replit dev workflow pins API logging to warn-level:
 
-- IBKR Bridge: prefix on the `.replit` workflow command
-  (`PORT=3002 LOG_LEVEL=warn node ...`).
-- API Server: prefix on the `[services.development] run` line in
+- `Project` workflow API task: `PORT=8080 LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`.
+- API artifact metadata: prefix on the `[services.development] run` line in
   `artifacts/api-server/.replit-artifact/artifact.toml`
   (`LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`).
 
 To temporarily restore verbose per-request logging while debugging, drop
-the `LOG_LEVEL=warn` prefix in the relevant workflow command and restart
-that workflow. Production is unaffected: it runs raw JSON pino without
+the `LOG_LEVEL=warn` prefix in the API workflow command and restart
+`Project`. Production is unaffected: it runs raw JSON pino without
 `pino-pretty` and the `[services.production.run.env]` block does not set
-`LOG_LEVEL`. Any change to `artifacts/ibkr-bridge/src/**` still requires
-`pnpm --filter @workspace/ibkr-bridge run build` before restart since the
-bridge runs the compiled `dist/index.mjs`.
+`LOG_LEVEL`. Bridge verbosity is controlled by the Windows activation helper
+environment, not by a Replit workflow.
 
 ## Dev servers: single instance per workflow
 
-The dev workflows should own exactly one listener per pinned port: API on
-`8080` and rayalgo on `18747`. Older restarts could leave an orphan node process
+The `Project` workflow should own exactly one listener per pinned Replit dev
+port: API on `8080` and rayalgo on `18747`. Older restarts could leave an orphan node process
 holding the port, causing the next API start to fail with `EADDRINUSE` or vite to
 bind a fallback port that the preview proxy never used. Three fixes prevent the
 recurrence:
@@ -198,7 +210,7 @@ recurrence:
    `artifacts/api-server/package.json` (`exec node ... dist/index.mjs` in both
    `dev` and `start`).
 
-If a workflow restart still fails with `EADDRINUSE`, run the shared reaper for
+If `Project` restart still fails with `EADDRINUSE`, run the shared reaper for
 the conflicting pinned port and restart the workflow:
 
 ```bash
@@ -225,11 +237,12 @@ does not include the directive; rayalgo now matches. If preview reachability
 gating is ever needed again, prefer raising the proxy's tolerance over
 re-introducing a tight health probe.
 
-The `ibkr-bridge` runs as a direct `node ... dist/index.mjs` (no pnpm wrapper)
-and currently has no `SIGTERM` handler, so a restart during a long in-flight
-request (e.g. 30-60s `/options/chains` calls) can leave the previous process
-alive past the workflow restart timeout. Adding an explicit shutdown handler
-that calls `server.close()` and `process.exit()` is a known follow-up.
+The Windows-side `ibkr-bridge` runs as a direct `node ... dist/index.mjs` (no
+pnpm wrapper) and currently has no `SIGTERM` handler, so restarting it during a
+long in-flight request (e.g. 30-60s `/options/chains` calls) can leave the
+previous process alive past the helper's restart timeout. Adding an explicit
+shutdown handler that calls `server.close()` and `process.exit()` is a known
+follow-up.
 
 ## Snapshot quote pipeline (gray-screen fix)
 

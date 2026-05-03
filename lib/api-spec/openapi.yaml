@@ -368,6 +368,52 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountEquityHistoryResponse"
 
+  /accounts/{accountId}/trading-patterns:
+    get:
+      operationId: getAccountTradingPatterns
+      tags: [accounts]
+      summary: Get Shadow trading pattern analytics and AI packet
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: range
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AccountHistoryRange"
+        - name: snapshotId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trading pattern analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountTradingPatternsResponse"
+
+  /accounts/{accountId}/trading-patterns/snapshots:
+    post:
+      operationId: createAccountTradingPatternsSnapshot
+      tags: [accounts]
+      summary: Persist a Shadow trading pattern analysis snapshot
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccountTradingPatternsSnapshotRequest"
+      responses:
+        "201":
+          description: Persisted trading pattern analytics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountTradingPatternsResponse"
+
   /accounts/{accountId}/allocation:
     get:
       operationId: getAccountAllocation
@@ -4985,6 +5031,7 @@ components:
             - persisted_snapshot
             - flex
             - shadow_ledger
+            - shadow_watchlist_backtest
         liveTerminalIncluded:
           type: boolean
         points:
@@ -5010,6 +5057,67 @@ components:
         - liveTerminalIncluded
         - points
         - events
+
+    CreateAccountTradingPatternsSnapshotRequest:
+      type: object
+      properties:
+        range:
+          $ref: "#/components/schemas/AccountHistoryRange"
+
+    AccountTradingPatternsResponse:
+      type: object
+      properties:
+        snapshot:
+          $ref: "#/components/schemas/JsonObject"
+        context:
+          $ref: "#/components/schemas/JsonObject"
+        summary:
+          $ref: "#/components/schemas/JsonObject"
+        tickerStats:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        sourceStats:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        timeStats:
+          $ref: "#/components/schemas/JsonObject"
+        equityAnnotations:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        tradeEvents:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        roundTrips:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        openLots:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        anomalies:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        fullPacketIncluded:
+          type: boolean
+      required:
+        - snapshot
+        - context
+        - summary
+        - tickerStats
+        - sourceStats
+        - timeStats
+        - equityAnnotations
+        - tradeEvents
+        - roundTrips
+        - openLots
+        - anomalies
+        - fullPacketIncluded
 
     AccountAllocationBucket:
       type: object
@@ -5270,7 +5378,7 @@ components:
           type: string
         sourceType:
           type: string
-          enum: [manual, automation]
+          enum: [manual, automation, watchlist_backtest, mixed]
         strategyLabel:
           type: string
           nullable: true

@@ -191,6 +191,31 @@ const toneColor = (value) =>
       ? T.green
       : T.red;
 
+const equityEventColor = (event) => {
+  if (event?.type === "withdrawal") return T.red;
+  if (event?.type === "dividend") return T.accent;
+  if (event?.type === "trade_buy") return T.cyan;
+  if (event?.type === "trade_sell") return toneColor(event?.realizedPnl ?? event?.amount);
+  return T.green;
+};
+
+const equityEventRadius = (event, compact) =>
+  event?.type === "trade_buy" || event?.type === "trade_sell"
+    ? compact
+      ? 2.15
+      : 2.55
+    : compact
+      ? 2.6
+      : 3;
+
+const equityEventTitle = (event) => {
+  if (!event) return "Event";
+  if (event.symbol && event.side) {
+    return `${event.symbol} ${String(event.side).toUpperCase()}`;
+  }
+  return String(event.type || "event").replace(/_/g, " ").toUpperCase();
+};
+
 const finiteNumber = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
@@ -244,6 +269,7 @@ export const EquityCurvePanel = ({
   compact = false,
 }) => {
   const [showEvents, setShowEvents] = useState(true);
+  const [activeEvent, setActiveEvent] = useState(null);
   const [chartMode, setChartMode] = useState("nav");
   const [visibleBenchmarks, setVisibleBenchmarks] = useState({
     SPY: true,
@@ -312,7 +338,7 @@ export const EquityCurvePanel = ({
     ],
   );
   const events = useMemo(
-    () => mapEquityEventsToPoints(chartData?.events || [], data, range).slice(-12),
+    () => mapEquityEventsToPoints(chartData?.events || [], data, range),
     [chartData?.events, data, range],
   );
   const lastPoint = data[data.length - 1] || null;
@@ -486,7 +512,7 @@ export const EquityCurvePanel = ({
                 active={showEvents}
                 color={T.green}
                 onClick={() => setShowEvents((current) => !current)}
-                title="Show deposits, withdrawals, dividends, and cash events on the chart"
+                title="Show deposits, withdrawals, dividends, cash events, and trade events on the chart"
               >
                 Events
               </FlatChip>
@@ -620,22 +646,18 @@ export const EquityCurvePanel = ({
                   ) : null,
                 )}
                 {showEvents
-                  ? events.map((event) => (
+                  ? events.map((event, index) => (
                       (chartMode !== "pnl" || event.cumulativePnl != null) ? (
                         <ReferenceDot
-                          key={`${event.timestamp}:${event.type}`}
+                          key={`${event.timestamp}:${event.type}:${event.symbol || "cash"}:${index}`}
                           yAxisId="left"
                           x={event.timestampMs}
                           y={chartMode === "pnl" ? event.cumulativePnl : event.netLiquidation}
-                          r={3}
-                          fill={
-                            event.type === "withdrawal"
-                              ? T.red
-                              : event.type === "dividend"
-                                ? T.accent
-                                : T.green
-                          }
+                          r={equityEventRadius(event, compact)}
+                          fill={equityEventColor(event)}
                           stroke="none"
+                          onMouseEnter={() => setActiveEvent(event)}
+                          onMouseLeave={() => setActiveEvent(null)}
                         />
                       ) : null
                     ))
@@ -643,6 +665,44 @@ export const EquityCurvePanel = ({
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+
+          {activeEvent ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: sp("2px 8px"),
+                alignItems: "center",
+                color: T.textSec,
+                fontFamily: T.mono,
+                fontSize: fs(compact ? 7 : 8),
+                lineHeight: 1.25,
+                borderTop: `1px solid ${T.border}`,
+                paddingTop: sp(3),
+              }}
+            >
+              <span style={{ color: equityEventColor(activeEvent), fontWeight: 900 }}>
+                {equityEventTitle(activeEvent)}
+              </span>
+              <span>{formatAppDateTime(activeEvent.timestamp)}</span>
+              {activeEvent.quantity != null ? (
+                <span>{Number(activeEvent.quantity).toLocaleString()} sh</span>
+              ) : null}
+              {activeEvent.price != null ? (
+                <span>@ {formatAccountMoney(activeEvent.price, currency, true, maskValues)}</span>
+              ) : null}
+              {activeEvent.realizedPnl != null ? (
+                <span style={{ color: toneColor(activeEvent.realizedPnl), fontWeight: 900 }}>
+                  P&L {formatAccountSignedMoney(activeEvent.realizedPnl, currency, true, maskValues)}
+                </span>
+              ) : activeEvent.amount != null ? (
+                <span style={{ color: toneColor(activeEvent.amount), fontWeight: 900 }}>
+                  {formatAccountSignedMoney(activeEvent.amount, currency, true, maskValues)}
+                </span>
+              ) : null}
+              {activeEvent.source ? <span>{activeEvent.source}</span> : null}
+            </div>
+          ) : null}
 
           <div
             style={{

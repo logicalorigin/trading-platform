@@ -1,27 +1,35 @@
-import { Suspense, lazy, useEffect, type ComponentType } from "react";
+import { Suspense, useEffect, type ComponentType } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
+import { lazyWithRetry } from "../lib/dynamicImport";
+import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../lib/typography";
 
-const PlatformApp = lazy(async () => {
+const PlatformApp = lazyWithRetry(async () => {
   // @ts-expect-error JSX module has no declaration file in this TS config
   const mod = await import("../features/platform/PlatformApp.jsx");
 
   return { default: mod.default };
+}, {
+  label: "PlatformApp",
 });
 
-const ChartParityLab = lazy(async () => {
-  const mod = await import("../features/charting");
+const ChartParityLab = lazyWithRetry(async () => {
+  const mod = await import("../features/charting/ChartParityLab");
 
   return { default: mod.ChartParityLab };
+}, {
+  label: "ChartParityLab",
 });
 
-const TickerSearchLab = lazy(async () => {
+const TickerSearchLab = lazyWithRetry(async () => {
   // @ts-expect-error JSX module has no declaration file in this TS config
   const mod = (await import("../features/platform/tickerSearch/TickerSearch.jsx")) as {
     TickerSearchLab: ComponentType;
   };
 
   return { default: mod.TickerSearchLab };
+}, {
+  label: "TickerSearchLab",
 });
 
 const resolveLabMode = (): string | null => {
@@ -75,7 +83,7 @@ function AppLoadingFallback() {
         gridTemplateRows: "auto 1fr auto",
         background: "#080b12",
         color: "#cbd5e1",
-        fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+        fontFamily: FONT_CSS_VAR.sans,
         overflow: "hidden",
       }}
     >
@@ -117,7 +125,7 @@ function AppLoadingFallback() {
                 border: "1px solid #263449",
                 background: index === 0 ? "#182233" : "transparent",
                 color: index === 0 ? "#e2e8f0" : "#94a3b8",
-                fontSize: 10,
+                fontSize: TYPE_CSS_VAR.body,
                 fontWeight: 800,
                 whiteSpace: "nowrap",
               }}
@@ -152,7 +160,7 @@ function AppLoadingFallback() {
             gap: 5,
             alignItems: "center",
             color: "#94a3b8",
-            fontSize: 10,
+            fontSize: TYPE_CSS_VAR.body,
             fontWeight: 800,
             whiteSpace: "nowrap",
           }}
@@ -253,7 +261,7 @@ function AppLoadingFallback() {
           alignItems: "center",
           gap: 12,
           padding: "0 12px",
-          fontSize: 9,
+          fontSize: TYPE_CSS_VAR.label,
           fontWeight: 800,
         }}
       >

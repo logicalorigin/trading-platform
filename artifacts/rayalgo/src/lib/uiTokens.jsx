@@ -61,11 +61,32 @@ export const THEMES = {
   },
 };
 
+export const FONT_STACKS = {
+  sans: "'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  code: "'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+};
+
 export const TYPOGRAPHY = {
-  mono: "'Inter', system-ui, -apple-system, sans-serif",
-  code: "'JetBrains Mono', 'SF Mono', 'Menlo', monospace",
-  sans: "'Inter', system-ui, -apple-system, sans-serif",
-  display: "'Inter', system-ui, sans-serif",
+  mono: FONT_STACKS.sans,
+  data: FONT_STACKS.sans,
+  code: FONT_STACKS.code,
+  sans: FONT_STACKS.sans,
+  display: FONT_STACKS.sans,
+};
+
+export const TYPOGRAPHY_SIZES = {
+  micro: 7,
+  label: 8,
+  control: 8,
+  tableHeader: 7,
+  tableCell: 8,
+  caption: 9,
+  body: 10,
+  bodyStrong: 11,
+  metric: 10,
+  panelTitle: 9,
+  sectionTitle: 10,
+  screenTitle: 17,
 };
 
 export const SCALE_LEVELS = {
@@ -158,6 +179,15 @@ export const setCurrentDensity = (nextDensity) => {
 };
 
 export const fs = (n) => Math.max(10, Math.round(n * SCALE_FACTOR()));
+
+export const textSize = (role) => {
+  const baseSize =
+    typeof role === "string" && Object.prototype.hasOwnProperty.call(TYPOGRAPHY_SIZES, role)
+      ? TYPOGRAPHY_SIZES[role]
+      : Number(role);
+
+  return fs(Number.isFinite(baseSize) ? baseSize : TYPOGRAPHY_SIZES.body);
+};
 
 export const dim = (n) => Math.round(n * SCALE_FACTOR());
 

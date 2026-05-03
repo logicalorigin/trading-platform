@@ -6,18 +6,12 @@ export const IBKR_BRIDGE_SESSION_KEYS = {
 
 export const IBKR_BRIDGE_LAUNCH_COOLDOWN_MS = 90_000;
 
-export const openIbkrProtocolLauncher = () => null;
+export const openIbkrProtocolLauncher = () => {
+  return null;
+};
 
 export const closeIbkrProtocolLauncher = (launcher) => {
-  if (!launcher || launcher.closed) {
-    return;
-  }
-
-  try {
-    launcher.close();
-  } catch {
-    // Ignore popup cleanup failures.
-  }
+  void launcher;
 };
 
 export const navigateIbkrProtocolLauncher = (launcher, url) => {
@@ -26,20 +20,32 @@ export const navigateIbkrProtocolLauncher = (launcher, url) => {
     return false;
   }
 
-  if (launcher && !launcher.closed) {
-    try {
-      launcher.location.href = url;
-      return true;
-    } catch {
-      // Fall through to same-tab navigation.
-    }
+  if (!/^rayalgo-ibkr:\/\//i.test(String(url))) {
+    closeIbkrProtocolLauncher(launcher);
+    return false;
   }
 
   try {
-    window.location.href = url;
+    const anchor = window.document?.createElement?.("a");
+    if (!anchor) {
+      return false;
+    }
+    anchor.href = url;
+    anchor.rel = "noopener";
+    anchor.target = "_self";
+    anchor.style.display = "none";
+    const parent = window.document.body || window.document.documentElement;
+    parent?.appendChild(anchor);
+    anchor.click();
+    window.setTimeout(() => anchor.remove(), 250);
     return true;
   } catch {
-    return false;
+    try {
+      window.location.assign(url);
+      return true;
+    } catch {
+      return false;
+    }
   }
 };
 

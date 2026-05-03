@@ -5,6 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { BarsHistoryPageCacheStatus } from './barsHistoryPageCacheStatus';
+import type { BarsHistoryPageHydrationStatus } from './barsHistoryPageHydrationStatus';
 
 export interface BarsHistoryPage {
   /** @nullable */
@@ -30,7 +32,7 @@ export interface BarsHistoryPage {
   providerPageLimitReached?: boolean;
   /** @nullable */
   historyCursor?: string | null;
-  hydrationStatus?: 'cold' | 'partial' | 'warm' | 'warming' | 'exhausted';
+  hydrationStatus?: BarsHistoryPageHydrationStatus;
   /** @nullable */
-  cacheStatus?: 'hit' | 'miss' | 'partial' | null;
+  cacheStatus?: BarsHistoryPageCacheStatus;
 }

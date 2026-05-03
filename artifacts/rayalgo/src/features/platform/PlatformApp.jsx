@@ -28,11 +28,15 @@ import {
 } from "@workspace/api-client-react";
 import {
   getActiveChartBarStoreEntryCount,
+} from "../charting/activeChartBarStore";
+import {
   getChartHydrationStatsSnapshot,
   sanitizeChartHydrationStatsForDiagnostics,
+} from "../charting/chartHydrationStats";
+import {
   getBrokerStockAggregateDebugStats,
   setBrokerStockAggregateStreamPaused,
-} from "../charting";
+} from "../charting/useMassiveStockAggregateStream";
 import {
   INDICES,
   MARKET_SNAPSHOT_SYMBOLS,
@@ -113,6 +117,8 @@ import {
   _initialState,
   persistState,
 } from "../../lib/workspaceState";
+import { preloadDynamicImport } from "../../lib/dynamicImport";
+import { getMemoryPressureSnapshot } from "./memoryPressureStore";
 import {
   clampNumber,
   formatExpirationLabel,
@@ -128,6 +134,7 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 const FONT_CSS = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body,#root{width:100%;height:100%;overflow:hidden}
+body,button,input,select,textarea{font-family:var(--ra-font-sans,'IBM Plex Sans',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:#2a3348;border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:#3a4560}
@@ -278,6 +285,7 @@ export default function PlatformApp() {
         chartHydration: sanitizeChartHydrationStatsForDiagnostics(
           getChartHydrationStatsSnapshot(),
         ),
+        memoryPressure: getMemoryPressureSnapshot(),
         workload: getRuntimeWorkloadStats(),
         activeChartBarStoreEntries: getActiveChartBarStoreEntryCount(),
         marketFlowStoreEntries: getMarketFlowStoreEntryCount(),
@@ -303,6 +311,12 @@ export default function PlatformApp() {
   const sessionMetadataSettled = Boolean(
     sessionQuery.data || sessionQuery.isFetched || sessionQuery.isError,
   );
+  useRuntimeWorkloadFlag("platform:session", Boolean(pageVisible), {
+    kind: "poll",
+    label: "Session",
+    detail: "5s",
+    priority: 2,
+  });
   const watchlistsQuery = useListWatchlists({
     query: {
       staleTime: 60_000,
@@ -314,6 +328,12 @@ export default function PlatformApp() {
     () => watchlistsQuery.data?.watchlists || [],
     [watchlistsQuery.data],
   );
+  useRuntimeWorkloadFlag("platform:watchlists", Boolean(pageVisible), {
+    kind: "poll",
+    label: "Watchlists",
+    detail: "60s",
+    priority: 5,
+  });
   const defaultWatchlist = useMemo(() => {
     if (!watchlistsQuery.data?.watchlists?.length) return null;
     return (
@@ -1000,7 +1020,10 @@ export default function PlatformApp() {
           },
         ),
       );
-      void import("../research/PhotonicsObservatory");
+      preloadDynamicImport(
+        () => import("../research/PhotonicsObservatory.jsx"),
+        { label: "PhotonicsObservatoryPrefetch" },
+      );
     }, 1_000);
 
     return () => {
@@ -1121,6 +1144,12 @@ export default function PlatformApp() {
     },
   );
   const signalMonitorProfile = signalMonitorProfileQuery.data || null;
+  useRuntimeWorkloadFlag("signal-monitor:profile", Boolean(pageVisible), {
+    kind: "poll",
+    label: "Signal profile",
+    detail: "60s",
+    priority: 6,
+  });
   const signalMonitorPollMs = clampNumber(
     (signalMonitorProfile?.pollIntervalSeconds || 60) * 1000,
     15_000,

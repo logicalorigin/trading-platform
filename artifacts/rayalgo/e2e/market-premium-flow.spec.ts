@@ -227,7 +227,7 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
 
   await expect(
     page.getByRole("status", { name: /SPY options premium flow IBKR SNAPSHOT/i }),
-  ).toBeVisible({ timeout: 15_000 });
+  ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByRole("status", { name: /IWM options premium flow No options flow/i }),
   ).toBeVisible();

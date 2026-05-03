@@ -72,7 +72,16 @@ export const bridgeRuntimeMessage = (session) => {
   const marketDataMode = bridge?.marketDataMode || null;
   const streamState = bridge?.streamState;
   if (streamState === "reconnect_needed") {
-    return "Reconnect IBKR to create a fresh Gateway tunnel.";
+    if (
+      bridge?.strictReason === "gateway_socket_disconnected" ||
+      bridge?.streamStateReason === "gateway_socket_disconnected" ||
+      bridge?.socketConnected === false ||
+      bridge?.connected === false
+    ) {
+      const target = bridge?.connectionTarget ? ` at ${bridge.connectionTarget}` : "";
+      return `Bridge tunnel is reachable, but IB Gateway/TWS is disconnected${target}. Start or unlock Gateway, then reconnect.`;
+    }
+    return "Reconnect IBKR to attach the current Gateway tunnel.";
   }
   if (bridge?.connected === false) {
     if (bridge?.lastRecoveryError) {
@@ -84,7 +93,7 @@ export const bridgeRuntimeMessage = (session) => {
     return `${bridgeTransportLabel(session)} is not connected to the broker session.`;
   }
   if (bridge?.healthFresh === false && streamState !== "reconnect_needed") {
-    return "IBKR bridge status is stale; waiting for a fresh Gateway health check.";
+    return "IB Gateway health is pending; waiting for the next successful check.";
   }
 
   if (bridge?.authenticated) {
@@ -124,10 +133,21 @@ export const bridgeRuntimeMessage = (session) => {
       return `IBKR Gateway is connected via ${transportMeta}${accountMeta}; quote stream is reconnecting.`;
     }
     if (streamState === "reconnect_needed") {
-      return "Reconnect IBKR to create a fresh Gateway tunnel.";
+      if (
+        bridge?.strictReason === "gateway_socket_disconnected" ||
+        bridge?.streamStateReason === "gateway_socket_disconnected" ||
+        bridge?.socketConnected === false ||
+        bridge?.connected === false
+      ) {
+        const target = bridge?.connectionTarget
+          ? ` at ${bridge.connectionTarget}`
+          : "";
+        return `Bridge tunnel is reachable, but IB Gateway/TWS is disconnected${target}. Start or unlock Gateway, then reconnect.`;
+      }
+      return "Reconnect IBKR to attach the current Gateway tunnel.";
     }
     if (streamState === "stale" || bridge?.streamFresh === false) {
-      return `IBKR Gateway is connected via ${transportMeta}${accountMeta}; stream is stale and waiting for fresh events.`;
+      return `IBKR Gateway is connected via ${transportMeta}${accountMeta}; stream is waiting for the next live event.`;
     }
     return `IBKR bridge authenticated via ${transportMeta}${accountMeta}; waiting for strict stream proof.`;
   }
@@ -161,7 +181,7 @@ export const resolveGatewayTradingReadiness = (session) => {
     return {
       ready: false,
       reason: "bridge_health_unavailable",
-      message: "IB Gateway trading is unavailable until the bridge returns a fresh health check.",
+      message: "IB Gateway trading is unavailable until Gateway health is verified.",
     };
   }
 
@@ -177,7 +197,7 @@ export const resolveGatewayTradingReadiness = (session) => {
     return {
       ready: false,
       reason: "health_stale",
-      message: "IB Gateway trading is unavailable until the bridge status is fresh.",
+      message: "IB Gateway trading is unavailable until Gateway health is current.",
     };
   }
 

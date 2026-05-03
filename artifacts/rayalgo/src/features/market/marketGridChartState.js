@@ -24,6 +24,30 @@ export const normalizeMiniChartStudies = (
     : normalized;
 };
 
+export const buildMarketBarsPageQueryKey = ({
+  queryBase,
+  timeframe,
+  limit,
+  from,
+  to,
+  market = null,
+  assetClass = null,
+  providerContractId = null,
+  historyCursor = null,
+  preferCursor = false,
+}) => [
+  ...queryBase,
+  timeframe,
+  limit,
+  from,
+  to,
+  market,
+  assetClass,
+  providerContractId,
+  historyCursor,
+  Boolean(preferCursor),
+];
+
 export const buildMarketGridVisibleRangeSignature = (range) => {
   if (!range || typeof range !== "object") {
     return "";

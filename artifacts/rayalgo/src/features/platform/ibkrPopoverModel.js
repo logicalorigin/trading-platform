@@ -281,7 +281,12 @@ export const buildHeaderIbkrPopoverModel = ({
   );
   const strictReady = headerDetailValue(runtime?.strictReady, connection?.strictReady);
   const strictReason = headerDetailValue(runtime?.strictReason, connection?.strictReason);
-  const gatewaySocket = headerDetailValue(runtime?.connected, connection?.reachable);
+  const gatewaySocket = headerDetailValue(
+    runtime?.socketConnected,
+    runtime?.connected,
+    connection?.socketConnected,
+    connection?.reachable,
+  );
   const authenticated = headerDetailValue(
     runtime?.authenticated,
     connection?.authenticated,
@@ -298,12 +303,14 @@ export const buildHeaderIbkrPopoverModel = ({
     /backoff|backed off/i.test(
       `${runtime?.healthErrorCode || ""} ${healthErrorText || ""}`,
     );
-  const bridgeNotReachable =
-    runtime?.reachable === false ||
-    runtime?.bridgeReachable === false ||
-    runtime?.connected === false;
+  const bridgeReachable = headerDetailValue(
+    runtime?.bridgeReachable,
+    runtime?.reachable,
+    connection?.bridgeReachable,
+  );
+  const bridgeNotReachable = bridgeReachable === false;
   const actionableBridgeError =
-    governorLastFailure && (bridgeNotReachable || healthBackoff || healthFresh === false)
+    governorLastFailure && (bridgeNotReachable || healthBackoff)
       ? governorLastFailure
       : null;
   const lastError = headerDetailValue(
@@ -322,7 +329,6 @@ export const buildHeaderIbkrPopoverModel = ({
       : "loading";
   const gatewayConnected = gatewaySocket === true;
   const authenticatedReady = authenticated === true;
-  const bridgeReachable = runtime?.reachable;
   const streamConsumerCount = stream.activeConsumerCount;
   const streamSymbolCount = stream.unionSymbolCount;
   const streamGapCount = stream.streamGapCount;
@@ -364,7 +370,7 @@ export const buildHeaderIbkrPopoverModel = ({
       status: "ready",
       label: "Ready",
       color: T.green,
-      detail: "Gateway is authenticated and live stream events are fresh",
+      detail: "Gateway is authenticated and live stream events are current",
     };
   }
   const badges = getIbkrGatewayBadges({
@@ -571,7 +577,7 @@ export const buildHeaderIbkrPopoverModel = ({
             ]
           : []),
         {
-          label: "Health fresh",
+          label: "Health current",
           value: formatHeaderBool(healthFresh),
           tone: healthFresh ? T.green : healthFresh === false ? T.amber : T.textDim,
         },
@@ -691,7 +697,7 @@ export const buildHeaderIbkrPopoverModel = ({
             ]
           : []),
         {
-          label: "Fresh",
+          label: "Current",
           value: formatHeaderBool(streamFresh),
           tone: streamFresh ? T.green : streamFresh === false ? T.amber : T.textDim,
         },

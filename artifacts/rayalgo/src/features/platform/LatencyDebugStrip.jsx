@@ -1,4 +1,6 @@
-import { useChartHydrationStats, useIbkrLatencyStats } from "../charting";
+import { useChartHydrationStats } from "../charting/chartHydrationStats";
+import { useIbkrLatencyStats } from "../charting/useMassiveStockAggregateStream";
+import { T, textSize } from "../../lib/uiTokens";
 import { SCREENS } from "./screenRegistry.jsx";
 import { useRuntimeWorkloadStats } from "./workloadStats";
 const formatLatencyMetric = (value) => (
@@ -47,8 +49,8 @@ export const LatencyDebugStrip = ({ screen, mountedScreens }) => {
         border: "1px solid rgba(148,163,184,0.35)",
         background: "rgba(2,6,23,0.88)",
         color: "#dbeafe",
-        fontFamily: "'JetBrains Mono', monospace",
-        fontSize: 11,
+        fontFamily: T.data,
+        fontSize: textSize("bodyStrong"),
         boxShadow: "0 18px 45px rgba(0,0,0,0.35)",
         pointerEvents: "none",
       }}

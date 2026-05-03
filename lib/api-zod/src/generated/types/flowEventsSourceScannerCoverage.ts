@@ -38,7 +38,10 @@ export type FlowEventsSourceScannerCoverage = {
   degradedReason?: string | null;
   /** @minimum 0 */
   radarSelectedSymbols?: number;
-  /** @nullable, @minimum 0 */
+  /**
+   * @minimum 0
+   * @nullable
+   */
   radarEstimatedCycleMs?: number | null;
   /** @minimum 0 */
   radarBatchSize?: number;

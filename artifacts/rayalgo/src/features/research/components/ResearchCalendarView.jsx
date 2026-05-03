@@ -106,7 +106,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
           <div style={{ fontSize: 11, color: accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: 600 }}>
             Earnings & Catalysts
           </div>
-          <h2 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: 30, fontWeight: 400, color: "#111", letterSpacing: -0.8, lineHeight: 1.05, marginTop: 3 }}>
+          <h2 style={{ fontFamily: "var(--ra-font-sans)", fontSize: 30, fontWeight: 400, color: "#111", letterSpacing: -0.8, lineHeight: 1.05, marginTop: 3 }}>
             Catalyst Calendar
           </h2>
         </div>

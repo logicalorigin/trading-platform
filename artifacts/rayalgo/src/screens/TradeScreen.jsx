@@ -23,23 +23,27 @@ import {
   useIbkrQuoteSnapshotStream,
 } from "../features/platform/live-streams";
 import {
-  RayReplicaSettingsMenu,
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  ResearchChartFrame,
-  ResearchChartWidgetFooter,
-  ResearchChartWidgetHeader,
-  ResearchChartWidgetSidebar,
   getChartBarLimit,
   getChartTimeframeOptions,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
-  flowEventsToChartEvents,
-  recordChartBarScopeState,
+} from "../features/charting/timeframes";
+import { RayReplicaSettingsMenu } from "../features/charting/RayReplicaSettingsMenu";
+import { ResearchChartFrame } from "../features/charting/ResearchChartFrame";
+import {
+  ResearchChartWidgetFooter,
+  ResearchChartWidgetHeader,
+  ResearchChartWidgetSidebar,
+} from "../features/charting/ResearchChartWidgetChrome";
+import { flowEventsToChartEvents } from "../features/charting/chartEvents";
+import { recordChartBarScopeState } from "../features/charting/chartHydrationStats";
+import { resolveSpotChartFrameLayout } from "../features/charting/spotChartFrameLayout";
+import { useDrawingHistory } from "../features/charting/useDrawingHistory";
+import { useIndicatorLibrary } from "../features/charting/pineScripts";
+import {
+  RAY_REPLICA_PINE_SCRIPT_KEY,
   resolveRayReplicaRuntimeSettings,
-  resolveSpotChartFrameLayout,
-  useDrawingHistory,
-  useIndicatorLibrary,
-} from "../features/charting";
+} from "../features/charting/rayReplicaPineAdapter";
 import {
   useDebouncedVisibleRangeExpansion,
   useMeasuredChartModel,
@@ -129,6 +133,7 @@ import {
   getCurrentTheme,
   sp,
 } from "../lib/uiTokens";
+import { responsiveFlags, useElementSize } from "../lib/responsive";
 import {
   motionRowStyle,
   motionVars,
@@ -2422,6 +2427,27 @@ export const TradeScreen = ({
   const toast = useToast();
   const queryClient = useQueryClient();
   const positions = usePositions();
+  const [tradeRootRef, tradeRootSize] = useElementSize();
+  const tradeWidth = tradeRootSize.width;
+  const { isPhone: tradeIsPhone, isNarrow: tradeIsNarrow } =
+    responsiveFlags(tradeWidth);
+  const tradeLayout = tradeIsPhone ? "phone" : tradeIsNarrow ? "tablet" : "desktop";
+  const tradeTopGridTemplate = tradeIsPhone
+    ? "minmax(0, 1fr)"
+    : tradeIsNarrow
+      ? "minmax(0, 1fr) minmax(min(100%, 320px), 0.9fr)"
+      : "minmax(520px, 1.25fr) minmax(300px, 0.75fr) minmax(320px, 0.8fr)";
+  const tradeMiddleGridTemplate = tradeIsNarrow
+    ? "minmax(0, 1fr)"
+    : "1.55fr 0.95fr 1.2fr";
+  const tradeBottomGridTemplate = tradeIsPhone
+    ? "minmax(0, 1fr)"
+    : tradeIsNarrow
+      ? "minmax(0, 1fr) minmax(min(100%, 360px), 0.9fr)"
+      : "minmax(280px, 1fr) minmax(280px, 1fr) minmax(360px, 1.4fr)";
+  const tradeTopHeight = tradeIsNarrow ? "auto" : dim(560);
+  const tradeMiddleHeight = tradeIsNarrow ? "auto" : dim(320);
+  const tradeBottomHeight = tradeIsNarrow ? "auto" : dim(300);
   // Initialize from persisted state, falling back to sym prop or sensible defaults
   const initialTicker = (() => {
     const resolved = resolveInitialTradeTicker({
@@ -2983,12 +3009,16 @@ export const TradeScreen = ({
     }));
   return (
     <div
+      ref={tradeRootRef}
+      data-trade-layout={tradeLayout}
       className="ra-panel-enter"
       style={{
         height: "100%",
+        width: "100%",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        minWidth: 0,
       }}
     >
       {/* Tab strip */}
@@ -3036,11 +3066,12 @@ export const TradeScreen = ({
         className="ra-panel-enter"
         style={{
           flex: 1,
-          padding: sp(6),
+          padding: sp(tradeIsPhone ? 4 : 6),
           display: "flex",
           flexDirection: "column",
           gap: sp(6),
           overflow: "auto",
+          minWidth: 0,
         }}
       >
         {/* Compact ticker header */}
@@ -3148,11 +3179,12 @@ export const TradeScreen = ({
           className="ra-panel-enter"
           style={{
             display: "grid",
-            gridTemplateColumns:
-              "minmax(520px, 1.25fr) minmax(300px, 0.75fr) minmax(320px, 0.8fr)",
+            gridTemplateColumns: tradeTopGridTemplate,
             gap: sp(6),
-            height: dim(560),
+            height: tradeTopHeight,
             flexShrink: 0,
+            minWidth: 0,
+            alignItems: "stretch",
           }}
         >
           <MemoTradeEquityPanel
@@ -3200,10 +3232,12 @@ export const TradeScreen = ({
           className="ra-panel-enter"
           style={{
             display: "grid",
-            gridTemplateColumns: "1.55fr 0.95fr 1.2fr",
+            gridTemplateColumns: tradeMiddleGridTemplate,
             gap: sp(6),
-            height: dim(320),
+            height: tradeMiddleHeight,
             flexShrink: 0,
+            minWidth: 0,
+            alignItems: "stretch",
           }}
         >
           <MemoTradeChainPanel
@@ -3230,14 +3264,16 @@ export const TradeScreen = ({
         </div>
         {/* Bottom zone: Strategy/Greeks + L2/Tape/Flow tabs + Positions */}
         <div
+          data-testid="trade-bottom-zone"
           className="ra-panel-enter"
           style={{
             display: "grid",
-            gridTemplateColumns:
-              "minmax(280px, 1fr) minmax(280px, 1fr) minmax(360px, 1.4fr)",
+            gridTemplateColumns: tradeBottomGridTemplate,
             gap: sp(6),
-            height: dim(300),
+            height: tradeBottomHeight,
             flexShrink: 0,
+            minWidth: 0,
+            alignItems: "stretch",
           }}
         >
           <MemoTradeStrategyGreeksPanel

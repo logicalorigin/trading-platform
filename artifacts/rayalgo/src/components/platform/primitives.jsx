@@ -1,4 +1,4 @@
-import { T, dim, fs, sp } from "../../lib/uiTokens.jsx";
+import { T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 
 export const Pill = ({ children, active, onClick, color }) => (
@@ -8,7 +8,7 @@ export const Pill = ({ children, active, onClick, color }) => (
     style={{
       ...motionVars({ accent: color || T.accent }),
       padding: sp("3px 7px"),
-      fontSize: fs(11),
+      fontSize: textSize("bodyStrong"),
       fontFamily: T.sans,
       fontWeight: 600,
       border: `1px solid ${active ? color || T.accent : T.border}`,
@@ -29,9 +29,9 @@ export const Badge = ({ children, color = T.textDim }) => (
       display: "inline-block",
       padding: sp("1px 6px"),
       borderRadius: dim(3),
-      fontSize: fs(9),
+      fontSize: textSize("caption"),
       fontWeight: 700,
-      fontFamily: T.mono,
+      fontFamily: T.data,
       letterSpacing: "0.04em",
       background: `${color}18`,
       color,
@@ -99,7 +99,7 @@ export const DataUnavailableState = ({
       ) : null}
       <div
         style={{
-          fontSize: fs(10),
+          fontSize: textSize("body"),
           fontWeight: 700,
           color: tone || T.textSec,
           letterSpacing: "0.04em",
@@ -110,9 +110,9 @@ export const DataUnavailableState = ({
       <div
         style={{
           marginTop: sp(4),
-          fontSize: fs(9),
+          fontSize: textSize("caption"),
           lineHeight: 1.45,
-          fontFamily: T.mono,
+          fontFamily: T.data,
         }}
       >
         {detail}
@@ -150,7 +150,7 @@ export const CardTitle = ({ children, right }) => (
   >
     <span
       style={{
-        fontSize: fs(10),
+        fontSize: textSize("body"),
         fontWeight: 700,
         fontFamily: T.display,
         color: T.textSec,

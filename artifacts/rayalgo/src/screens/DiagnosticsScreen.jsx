@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  getBrokerStockAggregateDebugStats,
-  sanitizeChartHydrationStatsForDiagnostics,
   useChartHydrationStats,
+} from "../features/charting/chartHydrationStats";
+import {
   useIbkrLatencyStats,
-} from "../features/charting";
+} from "../features/charting/useMassiveStockAggregateStream";
 import {
   clearOptionHydrationDiagnosticsHistory,
   useOptionHydrationDiagnostics,
 } from "../features/platform/optionHydrationDiagnostics";
+import { collectBrowserResourceMetrics } from "../features/platform/memoryPressureClient";
+import { useMemoryPressureSnapshot } from "../features/platform/memoryPressureStore";
 import {
   maskIbkrAccountId,
   resolveIbkrGatewayHealth,
@@ -41,6 +43,7 @@ import {
 } from "../lib/motion";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
+import { responsiveFlags, useElementSize } from "../lib/responsive";
 
 const DIAGNOSTIC_ALERT_PREF_EVENT = "rayalgo:diagnostic-alert-preferences-updated";
 
@@ -190,81 +193,6 @@ function postClientMetrics(input) {
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(input),
   }).catch(() => {});
-}
-
-async function collectBrowserResourceMetrics({
-  workloadStats,
-  hydrationCoordinatorStats,
-  chartStats,
-  optionState,
-}) {
-  const isolation = {
-    crossOriginIsolated: Boolean(window.crossOriginIsolated),
-    memoryApiAvailable:
-      typeof performance.measureUserAgentSpecificMemory === "function",
-    memoryApiUsed: false,
-    userAgent: navigator.userAgent,
-  };
-  let memory = { source: "heuristic", confidence: "low" };
-  try {
-    if (
-      window.crossOriginIsolated &&
-      typeof performance.measureUserAgentSpecificMemory === "function"
-    ) {
-      const measured = await performance.measureUserAgentSpecificMemory();
-      memory = {
-        source: "measureUserAgentSpecificMemory",
-        confidence: "high",
-        bytes: measured?.bytes ?? null,
-        breakdownCount: Array.isArray(measured?.breakdown)
-          ? measured.breakdown.length
-          : 0,
-      };
-      isolation.memoryApiUsed = true;
-    } else if (performance.memory) {
-      memory = {
-        source: "performance.memory",
-        confidence: "medium",
-        usedJsHeapSize: performance.memory.usedJSHeapSize ?? null,
-        totalJsHeapSize: performance.memory.totalJSHeapSize ?? null,
-        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit ?? null,
-      };
-    }
-  } catch (error) {
-    memory = {
-      ...memory,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-  const storageEstimate =
-    navigator.storage?.estimate ? await navigator.storage.estimate().catch(() => null) : null;
-  const cacheNames = window.caches?.keys ? await window.caches.keys().catch(() => []) : [];
-  return {
-    chartHydration: sanitizeChartHydrationStatsForDiagnostics(chartStats),
-    memory,
-    isolation,
-    workload: {
-      workloadStats,
-      aggregateStream: getBrokerStockAggregateDebugStats(),
-      hydrationCoordinatorStats,
-      chartScopeCount: chartStats.activeScopeCount ?? chartStats.scopes.length,
-      optionSession: {
-        ticker: optionState.ticker,
-        expiration: optionState.expiration,
-        wsState: optionState.wsState,
-        degraded: optionState.degraded,
-      },
-    },
-    storage: {
-      estimate: storageEstimate,
-      localStorageKeys: window.localStorage?.length ?? null,
-      sessionStorageKeys: window.sessionStorage?.length ?? null,
-    },
-    caches: {
-      cacheStorageNames: cacheNames,
-      cacheStorageCount: cacheNames.length,
-    },
-  };
 }
 
 const JsonBlock = ({ value }) => (
@@ -604,7 +532,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
       <StateRow label="Runtime override" value={ibkr.runtimeOverrideActive ? "active" : "env"} tone={ibkr.runtimeOverrideActive ? T.green : T.textSec} />
       <StateRow label="Legacy env" value={ibkr.legacyIbkrEnvPresent ? "present" : "clear"} tone={ibkr.legacyIbkrEnvPresent ? T.amber : T.green} />
       <StateRow label="Bridge HTTP" value={metrics.reachable ? "reachable" : "offline"} tone={metrics.reachable ? T.green : T.red} />
-      <StateRow label="Health fresh" value={metrics.healthFresh == null ? MISSING_VALUE : metrics.healthFresh ? "yes" : "no"} tone={metrics.healthFresh ? T.green : metrics.healthFresh === false ? T.amber : T.textDim} />
+      <StateRow label="Health current" value={metrics.healthFresh == null ? MISSING_VALUE : metrics.healthFresh ? "yes" : "pending"} tone={metrics.healthFresh ? T.green : metrics.healthFresh === false ? T.amber : T.textDim} />
       <StateRow label="Health age" value={formatMs(metrics.healthAgeMs)} tone={(metrics.healthAgeMs ?? 0) > 10_000 ? T.amber : T.textSec} />
       <StateRow label="Gateway socket" value={metrics.connected ? "connected" : "disconnected"} tone={metrics.connected ? T.green : T.red} />
       <StateRow label="Authenticated" value={metrics.authenticated ? "yes" : "no"} tone={metrics.authenticated ? T.green : T.red} />
@@ -616,7 +544,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
       <StateRow label="Session mode" value={ibkr.sessionMode} />
       <StateRow label="Market data" value={ibkr.marketDataMode} />
       <StateRow label="Live mode" value={metrics.liveMarketDataAvailable == null ? MISSING_VALUE : metrics.liveMarketDataAvailable ? "yes" : "no"} tone={metrics.liveMarketDataAvailable ? T.textSec : metrics.liveMarketDataAvailable === false ? T.amber : T.textDim} />
-      <StateRow label="Stream fresh" value={metrics.streamFresh == null ? MISSING_VALUE : metrics.streamFresh ? "yes" : "no"} tone={metrics.streamFresh ? T.green : metrics.streamFresh === false ? T.amber : T.textDim} />
+      <StateRow label="Stream current" value={metrics.streamFresh == null ? MISSING_VALUE : metrics.streamFresh ? "yes" : "pending"} tone={metrics.streamFresh ? T.green : metrics.streamFresh === false ? T.amber : T.textDim} />
       <StateRow label="Stream age" value={formatMs(metrics.lastStreamEventAgeMs)} tone={(metrics.lastStreamEventAgeMs ?? 0) > 10_000 ? T.amber : T.textSec} />
       <StateRow label="Strict ready" value={metrics.strictReady == null ? MISSING_VALUE : metrics.strictReady ? "yes" : "no"} tone={metrics.strictReady ? T.green : metrics.strictReady === false ? T.amber : T.textDim} />
       <StateRow label="Ready reason" value={metrics.strictReason} tone={metrics.strictReason ? T.amber : T.textSec} />
@@ -629,14 +557,18 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
   );
 }
 
-export default function DiagnosticsScreen() {
+export default function DiagnosticsScreen({ isVisible = false } = {}) {
+  const [diagnosticsRootRef, diagnosticsRootSize] = useElementSize();
+  const { isPhone: diagnosticsIsPhone, isNarrow: diagnosticsIsNarrow } =
+    responsiveFlags(diagnosticsRootSize.width);
   const { preferences: userPreferences } = useUserPreferences();
   const notificationPreferences = userPreferences.notifications;
-  const { state, metrics, history } = useOptionHydrationDiagnostics();
-  const chartStats = useChartHydrationStats();
-  const latencyStats = useIbkrLatencyStats();
-  const workloadStats = useRuntimeWorkloadStats();
-  const hydrationCoordinatorStats = useHydrationCoordinatorStats();
+  const { state, metrics, history } = useOptionHydrationDiagnostics(isVisible);
+  const chartStats = useChartHydrationStats(isVisible);
+  const latencyStats = useIbkrLatencyStats(isVisible);
+  const workloadStats = useRuntimeWorkloadStats(isVisible);
+  const memoryPressureState = useMemoryPressureSnapshot(true);
+  const hydrationCoordinatorStats = useHydrationCoordinatorStats(isVisible);
   const [activeTab, setActiveTab] = useState("Overview");
   const [windowMinutes, setWindowMinutes] = useState(60);
   const [latest, setLatest] = useState(null);
@@ -649,11 +581,13 @@ export default function DiagnosticsScreen() {
   const [alertPreferences, setAlertPreferences] = useState(readLocalAlertPreferences);
   const audioContextRef = useRef(null);
   const alertsRef = useRef({});
+  const diagnosticsOpenLoggedRef = useRef(false);
   const browserMetricsInputRef = useRef({
     workloadStats,
     hydrationCoordinatorStats,
     chartStats,
     optionState: state,
+    memoryPressureState,
   });
   const audioEnabled = alertPreferences.audioEnabled;
   const alertVolume = Number.isFinite(Number(alertPreferences.alertVolume))
@@ -667,8 +601,9 @@ export default function DiagnosticsScreen() {
       hydrationCoordinatorStats,
       chartStats,
       optionState: state,
+      memoryPressureState,
     };
-  }, [chartStats, hydrationCoordinatorStats, state, workloadStats]);
+  }, [chartStats, hydrationCoordinatorStats, memoryPressureState, state, workloadStats]);
 
   useEffect(() => {
     alertsRef.current = alertsByKey;
@@ -760,6 +695,7 @@ export default function DiagnosticsScreen() {
     const params = new URLSearchParams({
       from: timeWindow.from.toISOString(),
       to: timeWindow.to.toISOString(),
+      limit: "240",
     });
     fetch(`/api/diagnostics/history?${params.toString()}`)
       .then((response) => response.json())
@@ -772,21 +708,40 @@ export default function DiagnosticsScreen() {
   }, [timeWindow.from, timeWindow.to]);
 
   useEffect(() => {
+    if (!isVisible) {
+      return undefined;
+    }
+
     loadHistoryAndEvents();
-    const interval = window.setInterval(loadHistoryAndEvents, 15_000);
+    const interval = window.setInterval(loadHistoryAndEvents, 60_000);
     return () => window.clearInterval(interval);
-  }, [loadHistoryAndEvents]);
+  }, [isVisible, loadHistoryAndEvents]);
 
   useEffect(() => {
+    if (!isVisible) {
+      diagnosticsOpenLoggedRef.current = false;
+    }
+  }, [isVisible]);
+
+  useEffect(() => {
+    if (!isVisible || diagnosticsOpenLoggedRef.current) {
+      return;
+    }
+
+    diagnosticsOpenLoggedRef.current = true;
     postClientEvent({
       category: "diagnostics-page",
       severity: "info",
       message: "Diagnostics page opened",
       raw: { userAgent: navigator.userAgent },
     });
-  }, []);
+  }, [isVisible]);
 
   useEffect(() => {
+    if (!isVisible) {
+      return undefined;
+    }
+
     let cancelled = false;
     const collect = () => {
       collectBrowserResourceMetrics(browserMetricsInputRef.current).then((payload) => {
@@ -801,9 +756,14 @@ export default function DiagnosticsScreen() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, []);
+  }, [isVisible]);
 
   useEffect(() => {
+    if (!isVisible) {
+      setStreamState("paused");
+      return undefined;
+    }
+
     if (typeof window.EventSource === "undefined") {
       setStreamState("polling");
       const poll = () => {
@@ -850,10 +810,10 @@ export default function DiagnosticsScreen() {
     });
     source.onerror = () => setStreamState("reconnecting");
     return () => source.close();
-  }, [syncLocalAlertsFromSnapshot, updateLocalAlerts]);
+  }, [isVisible, syncLocalAlertsFromSnapshot, updateLocalAlerts]);
 
   useEffect(() => {
-    if (!selectedEvent) {
+    if (!isVisible || !selectedEvent) {
       setEventDetail(null);
       return;
     }
@@ -861,7 +821,7 @@ export default function DiagnosticsScreen() {
       .then((response) => response.ok ? response.json() : null)
       .then((payload) => setEventDetail(payload))
       .catch(() => setEventDetail(null));
-  }, [selectedEvent]);
+  }, [isVisible, selectedEvent]);
 
   const overviewSnapshots = latest?.snapshots || [];
   const topSeverity = latest?.severity || "info";
@@ -881,6 +841,7 @@ export default function DiagnosticsScreen() {
   const browserMetrics = safeRecord(browserSnapshot?.metrics);
   const chartHydrationMetrics = safeRecord(chartHydrationSnapshot?.metrics);
   const resourcePressureMetrics = safeRecord(resourcePressureSnapshot?.metrics);
+  const footerMemoryMetrics = latest?.footerMemoryPressure || null;
   const isolationMetrics = safeRecord(isolationSnapshot?.metrics);
   const storageMetrics = safeRecord(storageSnapshot?.metrics);
   const accountMetrics = safeRecord(accountSnapshot?.metrics);
@@ -913,6 +874,45 @@ export default function DiagnosticsScreen() {
   const chartHydrationSeverity =
     chartHydrationSnapshot?.severity ||
     ((chartStats.counters?.payloadShapeError ?? 0) > 0 ? "warning" : "info");
+  const footerSignal = {
+    level:
+      memoryPressureState?.level ||
+      footerMemoryMetrics?.level ||
+      resourcePressureMetrics.clientPressureLevel ||
+      resourcePressureMetrics.pressureLevel ||
+      "normal",
+    trend:
+      memoryPressureState?.trend ||
+      footerMemoryMetrics?.trend ||
+      resourcePressureMetrics.clientPressureTrend ||
+      "steady",
+    sourceQuality:
+      memoryPressureState?.sourceQuality ||
+      footerMemoryMetrics?.sourceQuality ||
+      resourcePressureMetrics.sourceQuality ||
+      MISSING_VALUE,
+    browserMemoryMb:
+      memoryPressureState?.browserMemoryMb ??
+      footerMemoryMetrics?.browserMemoryMb ??
+      resourcePressureMetrics.browserMemoryMb,
+    apiHeapUsedPercent:
+      memoryPressureState?.apiHeapUsedPercent ??
+      footerMemoryMetrics?.apiHeapUsedPercent ??
+      resourcePressureMetrics.heapUsedPercent,
+    dominantDrivers:
+      memoryPressureState?.dominantDrivers?.length
+        ? memoryPressureState.dominantDrivers
+        : Array.isArray(footerMemoryMetrics?.dominantDrivers)
+          ? footerMemoryMetrics.dominantDrivers
+          : Array.isArray(resourcePressureMetrics.dominantDrivers)
+            ? resourcePressureMetrics.dominantDrivers
+            : [],
+    observedAt:
+      memoryPressureState?.observedAt ||
+      footerMemoryMetrics?.observedAt ||
+      resourcePressureMetrics.browserObservedAt ||
+      null,
+  };
 
   const selectMetric = (subsystem, metricKey) => {
     setActiveTab("Events");
@@ -994,14 +994,18 @@ export default function DiagnosticsScreen() {
 
   return (
     <div
+      ref={diagnosticsRootRef}
       data-testid="diagnostics-screen"
+      data-layout={diagnosticsIsPhone ? "phone" : diagnosticsIsNarrow ? "tablet" : "desktop"}
       style={{
         height: "100%",
+        width: "100%",
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(10),
+        padding: sp(diagnosticsIsPhone ? 6 : 10),
         fontFamily: T.sans,
+        minWidth: 0,
       }}
     >
       <div
@@ -1011,6 +1015,7 @@ export default function DiagnosticsScreen() {
           justifyContent: "space-between",
           gap: sp(12),
           marginBottom: sp(14),
+          flexDirection: diagnosticsIsPhone ? "column" : "row",
         }}
       >
         <div>
@@ -1019,7 +1024,7 @@ export default function DiagnosticsScreen() {
             Real-time SSE, 7-day history, per-subsystem uptime, events, probes, and thresholds
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: diagnosticsIsPhone ? "flex-start" : "flex-end", width: diagnosticsIsPhone ? "100%" : undefined }}>
           <span style={{ color: severityTone(topSeverity), fontFamily: T.mono, fontSize: fs(10), fontWeight: 900 }}>
             {statusLabel(latest?.status)}
           </span>
@@ -1364,8 +1369,17 @@ export default function DiagnosticsScreen() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: sp(14) }}>
           <Panel title="Pressure State">
             <StateRow label="Level" value={String(resourcePressureMetrics.pressureLevel || "normal").toUpperCase()} tone={severityTone(resourcePressureSnapshot?.severity)} />
+            <StateRow label="Footer signal" value={String(footerSignal.level || "normal").toUpperCase()} tone={footerSignal.level === "critical" ? T.red : footerSignal.level === "high" || footerSignal.level === "watch" ? T.amber : T.green} />
+            <StateRow label="Trend" value={String(footerSignal.trend || "steady").toUpperCase()} />
             <StateRow label="Recommended action" value={resourcePressureMetrics.recommendedAction} />
             <StateRow label="Diagnostics clients" value={formatCount(resourcePressureMetrics.activeDiagnosticsClients)} />
+          </Panel>
+          <Panel title="Footer Pressure Signal">
+            <StateRow label="Source quality" value={footerSignal.sourceQuality} />
+            <StateRow label="Browser estimate" value={formatMb(footerSignal.browserMemoryMb)} />
+            <StateRow label="API heap" value={formatPercent(footerSignal.apiHeapUsedPercent)} />
+            <StateRow label="Observed" value={footerSignal.observedAt ? formatAgo(footerSignal.observedAt) : MISSING_VALUE} />
+            <JsonBlock value={footerSignal.dominantDrivers} />
           </Panel>
           <Panel title="API Memory">
             <StateRow label="Heap used" value={formatMb(resourcePressureMetrics.heapUsedMb)} />
@@ -1376,7 +1390,7 @@ export default function DiagnosticsScreen() {
           </Panel>
           <Panel title="Browser Memory">
             <StateRow label="Estimate" value={formatMb(resourcePressureMetrics.browserMemoryMb)} onClick={() => selectMetric("resource-pressure", "resource_pressure.browser_memory_mb")} />
-            <StateRow label="Confidence" value={resourcePressureMetrics.browserMemoryConfidence} />
+            <StateRow label="Confidence" value={resourcePressureMetrics.sourceQuality || resourcePressureMetrics.browserMemoryConfidence} />
             <StateRow label="Source" value={resourcePressureMetrics.browserMemorySource} />
             <StateRow label="Observed" value={resourcePressureMetrics.browserObservedAt ? formatAgo(resourcePressureMetrics.browserObservedAt) : MISSING_VALUE} />
           </Panel>

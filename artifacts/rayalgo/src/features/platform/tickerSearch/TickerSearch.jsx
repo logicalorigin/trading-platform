@@ -25,6 +25,7 @@ import { _initialState, persistState } from "../../../lib/workspaceState";
 const FONT_CSS = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body,#root{width:100%;height:100%;overflow:hidden}
+body,button,input,select,textarea{font-family:var(--ra-font-sans,'IBM Plex Sans',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif)}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:#2a3348;border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:#3a4560}

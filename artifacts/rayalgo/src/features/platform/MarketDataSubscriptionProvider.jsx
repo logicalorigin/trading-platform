@@ -7,7 +7,7 @@ import {
 import {
   useBrokerStockAggregateStream,
   useStockMinuteAggregateSymbolsVersion,
-} from "../charting";
+} from "../charting/useMassiveStockAggregateStream";
 import { MARKET_PERFORMANCE_SYMBOLS } from "../market/marketReferenceData";
 import { useIbkrQuoteSnapshotStream } from "./live-streams";
 import { usePageVisible } from "./usePageVisible";

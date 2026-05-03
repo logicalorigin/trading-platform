@@ -44,6 +44,7 @@ import {
   type UserPreferences,
 } from "../preferences/userPreferenceModel";
 import { useUserPreferences } from "../preferences/useUserPreferences";
+import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
 import type { ChartSurfaceControls } from "./ResearchChartSurface";
 import type { StudySpec } from "./types";
 
@@ -346,7 +347,7 @@ const barButtonStyle = ({
       : theme.textDim || theme.textMuted,
   cursor: disabled ? "default" : "pointer",
   fontFamily: theme.mono,
-  fontSize: dense ? 9 : 12,
+  fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.bodyStrong,
   fontWeight: active ? 700 : 500,
   opacity: disabled ? 0.6 : 1,
   whiteSpace: "nowrap",
@@ -410,7 +411,7 @@ const legendChipStyle = ({
   boxShadow: palette.shadow,
   color: color || theme.textMuted,
   fontFamily: theme.mono,
-  fontSize: dense ? 9 : 11,
+  fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.bodyStrong,
   whiteSpace: "nowrap",
 });
 
@@ -432,7 +433,7 @@ const menuContentStyle = (
     "--chart-menu-hover": withAlpha(theme.text, "12"),
     "--chart-menu-muted": theme.textMuted,
     "--chart-menu-text": theme.text,
-    "--chart-menu-font": theme.display || "Inter, sans-serif",
+    "--chart-menu-font": theme.display || FONT_CSS_VAR.sans,
     minWidth,
     padding: 6,
     borderRadius: 6,
@@ -441,21 +442,21 @@ const menuContentStyle = (
     color: theme.text,
     boxShadow:
       "0 16px 32px rgba(0,0,0,0.36), 0 0 0 1px rgba(255,255,255,0.03)",
-    fontFamily: theme.display || "Inter, sans-serif",
+    fontFamily: theme.display || FONT_CSS_VAR.sans,
   } as CSSProperties);
 
 const menuItemStyle = (theme: WidgetTheme): CSSProperties => ({
   borderRadius: 4,
   color: theme.text,
-  fontFamily: theme.display || "Inter, sans-serif",
-  fontSize: 12,
+  fontFamily: theme.display || FONT_CSS_VAR.sans,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   fontWeight: 500,
 });
 
 const menuLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   color: theme.textMuted,
-  fontFamily: theme.display || "Inter, sans-serif",
-  fontSize: 11,
+  fontFamily: theme.display || FONT_CSS_VAR.sans,
+  fontSize: TYPE_CSS_VAR.body,
   fontWeight: 600,
   letterSpacing: 0,
   textTransform: "uppercase",
@@ -1378,7 +1379,7 @@ export const ResearchChartWidgetFooter = ({
     borderRadius: 0,
     cursor: "pointer",
     fontFamily: theme.mono,
-    fontSize: dense ? 8 : 10,
+    fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
     fontWeight: 700,
     padding: 0,
   });
@@ -1398,7 +1399,7 @@ export const ResearchChartWidgetFooter = ({
           padding: dense ? "0 8px" : "0 10px",
           gap: dense ? 6 : 10,
           fontFamily: theme.mono,
-          fontSize: dense ? 9 : 10,
+          fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
           color: theme.textMuted,
           pointerEvents: "auto",
           whiteSpace: "nowrap",
@@ -1448,7 +1449,7 @@ export const ResearchChartWidgetFooter = ({
             boxSizing: "border-box",
             padding: 0,
             fontFamily: theme.mono,
-            fontSize: dense ? 8 : 10,
+            fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
             pointerEvents: "auto",
             flexShrink: 0,
           }}

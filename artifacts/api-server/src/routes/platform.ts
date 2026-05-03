@@ -119,7 +119,9 @@ import {
 } from "../services/account";
 import type { AccountRange } from "../services/account-ranges";
 import {
+  getShadowTradingPatterns,
   placeShadowOrder,
+  persistShadowTradingPatternsSnapshot,
   previewShadowOrder,
   runShadowWatchlistBacktest,
   SHADOW_ACCOUNT_ID,
@@ -193,6 +195,38 @@ const SSE_DRAIN_TIMEOUT_MS = Math.max(
   Number.parseInt(process.env["IBKR_SSE_DRAIN_TIMEOUT_MS"] ?? "5000", 10) ||
     5_000,
 );
+const OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS = Math.max(
+  1_000,
+  Number.parseInt(
+    process.env["OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS"] ?? "15000",
+    10,
+  ) || 15_000,
+);
+const OPTION_CHART_BARS_ROUTE_STALE_TTL_MS = Math.max(
+  OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS,
+  Number.parseInt(
+    process.env["OPTION_CHART_BARS_ROUTE_STALE_TTL_MS"] ?? "120000",
+    10,
+  ) || 120_000,
+);
+type OptionChartBarsRouteResult = Awaited<
+  ReturnType<typeof getOptionChartBarsWithDebug>
+>;
+type OptionChartBarsRouteQuery = ReturnType<
+  typeof GetOptionChartBarsQueryParams.parse
+>;
+const optionChartBarsRouteCache = new Map<
+  string,
+  {
+    value: OptionChartBarsRouteResult;
+    expiresAt: number;
+    staleExpiresAt: number;
+  }
+>();
+const optionChartBarsRouteInFlight = new Map<
+  string,
+  Promise<OptionChartBarsRouteResult>
+>();
 
 async function readIbkrBridgeHelperScript(): Promise<string> {
   let lastError: unknown = null;
@@ -232,6 +266,126 @@ function isLoopbackHost(host: string): boolean {
 
 function getFirstHeaderValue(value: string | undefined): string | null {
   return value?.split(",")[0]?.trim() || null;
+}
+
+function buildOptionChartBarsRouteCacheKey(
+  query: OptionChartBarsRouteQuery,
+): string {
+  return JSON.stringify({
+    underlying: query.underlying,
+    expirationDate: query.expirationDate.toISOString(),
+    strike: query.strike,
+    right: query.right,
+    optionTicker: query.optionTicker ?? null,
+    providerContractId: query.providerContractId ?? null,
+    timeframe: query.timeframe,
+    limit: query.limit ?? null,
+    from: query.from?.toISOString() ?? null,
+    to: query.to?.toISOString() ?? null,
+    historyCursor: query.historyCursor ?? null,
+    preferCursor: Boolean(query.preferCursor),
+    outsideRth: Boolean(query.outsideRth),
+  });
+}
+
+function readCachedOptionChartBarsRouteResult(
+  key: string,
+  { allowStale = false }: { allowStale?: boolean } = {},
+): OptionChartBarsRouteResult | null {
+  const cached = optionChartBarsRouteCache.get(key);
+  if (!cached) {
+    return null;
+  }
+
+  const now = Date.now();
+  if (cached.staleExpiresAt <= now) {
+    optionChartBarsRouteCache.delete(key);
+    return null;
+  }
+  if (cached.expiresAt <= now && !allowStale) {
+    return null;
+  }
+
+  return cached.value;
+}
+
+function withCachedOptionChartBarsDebug(
+  value: OptionChartBarsRouteResult,
+  input: {
+    stale: boolean;
+    degraded?: boolean;
+    reason?: string | null;
+  },
+): OptionChartBarsRouteResult {
+  return {
+    ...value,
+    debug: {
+      ...value.debug,
+      cacheStatus: "hit",
+      stale: input.stale,
+      degraded:
+        input.degraded ?? value.debug.degraded ?? !value.bars.length,
+      reason: input.reason ?? value.debug.reason ?? null,
+    },
+  };
+}
+
+async function getCachedOptionChartBarsRouteResult(
+  query: OptionChartBarsRouteQuery,
+): Promise<OptionChartBarsRouteResult> {
+  const key = buildOptionChartBarsRouteCacheKey(query);
+  const fresh = readCachedOptionChartBarsRouteResult(key);
+  if (fresh) {
+    return withCachedOptionChartBarsDebug(fresh, {
+      stale: false,
+      degraded: fresh.debug.degraded,
+      reason: fresh.debug.reason ?? null,
+    });
+  }
+
+  const existing = optionChartBarsRouteInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const stale = readCachedOptionChartBarsRouteResult(key, { allowStale: true });
+  const promise = getOptionChartBarsWithDebug(query)
+    .then((value) => {
+      if (value.bars.length > 0) {
+        optionChartBarsRouteCache.set(key, {
+          value,
+          expiresAt: Date.now() + OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS,
+          staleExpiresAt: Date.now() + OPTION_CHART_BARS_ROUTE_STALE_TTL_MS,
+        });
+        return value;
+      }
+
+      if (stale && value.debug.degraded) {
+        return withCachedOptionChartBarsDebug(stale, {
+          stale: true,
+          degraded: true,
+          reason: value.debug.reason ?? "option_chart_stale_fallback",
+        });
+      }
+
+      return value;
+    })
+    .catch((error) => {
+      if (stale) {
+        return withCachedOptionChartBarsDebug(stale, {
+          stale: true,
+          degraded: true,
+          reason: "option_chart_stale_fallback",
+        });
+      }
+      throw error;
+    })
+    .finally(() => {
+      optionChartBarsRouteInFlight.delete(key);
+    });
+
+  optionChartBarsRouteInFlight.set(key, promise);
+  return promise;
 }
 
 function normalizeOrigin(rawOrigin: string): string | null {
@@ -821,6 +975,46 @@ router.get("/accounts/:accountId/equity-history", async (req, res) => {
   );
 });
 
+router.get("/accounts/:accountId/trading-patterns", async (req, res) => {
+  if (req.params.accountId !== SHADOW_ACCOUNT_ID) {
+    res.status(400).json({
+      code: "shadow_patterns_only",
+      message: "Trading pattern analysis is currently available for the Shadow account only.",
+    });
+    return;
+  }
+  res.json(
+    await getShadowTradingPatterns({
+      range:
+        typeof req.query.range === "string"
+          ? (req.query.range as AccountRange)
+          : undefined,
+      snapshotId:
+        typeof req.query.snapshotId === "string" ? req.query.snapshotId : "latest",
+    }),
+  );
+});
+
+router.post("/accounts/:accountId/trading-patterns/snapshots", async (req, res) => {
+  if (req.params.accountId !== SHADOW_ACCOUNT_ID) {
+    res.status(400).json({
+      code: "shadow_patterns_only",
+      message: "Trading pattern analysis snapshots are currently available for the Shadow account only.",
+    });
+    return;
+  }
+  res.status(201).json(
+    await persistShadowTradingPatternsSnapshot({
+      range:
+        typeof req.body?.range === "string"
+          ? (req.body.range as AccountRange)
+          : typeof req.query.range === "string"
+            ? (req.query.range as AccountRange)
+            : undefined,
+    }),
+  );
+});
+
 router.get("/accounts/:accountId/allocation", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(await getAccountAllocation({ accountId: req.params.accountId, mode }));
@@ -927,6 +1121,29 @@ router.post("/accounts/shadow/watchlist-backtest/runs", async (req, res) => {
         !Array.isArray(req.body.riskOverlay)
           ? req.body.riskOverlay
           : null,
+      sizingOverlay:
+        req.body?.sizingOverlay &&
+        typeof req.body.sizingOverlay === "object" &&
+        !Array.isArray(req.body.sizingOverlay)
+          ? req.body.sizingOverlay
+          : null,
+      selectionOverlay:
+        req.body?.selectionOverlay &&
+        typeof req.body.selectionOverlay === "object" &&
+        !Array.isArray(req.body.selectionOverlay)
+          ? req.body.selectionOverlay
+          : null,
+      regimeOverlay:
+        req.body?.regimeOverlay &&
+        typeof req.body.regimeOverlay === "object" &&
+        !Array.isArray(req.body.regimeOverlay)
+          ? req.body.regimeOverlay
+          : null,
+      persist: req.body?.persist,
+      sweep: req.body?.sweep,
+      exploratorySweep: req.body?.exploratorySweep,
+      maxDrawdownLimitPercent: req.body?.maxDrawdownLimitPercent,
+      targetOutperformanceMultiple: req.body?.targetOutperformanceMultiple,
     }),
   );
 });
@@ -1249,7 +1466,7 @@ router.get("/options/chart-bars", async (req, res) => {
   const query = GetOptionChartBarsQueryParams.parse(
     coerceBooleanQueryFields(dateCoercedQuery, ["outsideRth", "preferCursor"]),
   );
-  const raw = await getOptionChartBarsWithDebug(query);
+  const raw = await getCachedOptionChartBarsRouteResult(query);
   setRequestDebugHeaders(res, raw.debug);
   const data = GetOptionChartBarsResponse.parse(raw);
 

@@ -114,14 +114,3 @@ args = "PORT=18747 BASE_PATH=/ pnpm --filter @workspace/rayalgo run dev"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "echo 'IBKR live broker features use the Windows IB Gateway activation flow. Start activation from the RayAlgo header; do not store bridge URL secrets in Replit.'"
-
-[[workflows.workflow]]
-name = "IBKR Bridge"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "echo 'Do not run the IBKR bridge in Replit for TWS mode. Start activation from the RayAlgo header on the Windows machine running IB Gateway; the fresh tunnel URL is stored by activation.'"

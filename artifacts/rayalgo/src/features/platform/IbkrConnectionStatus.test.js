@@ -628,6 +628,61 @@ test("buildHeaderIbkrPopoverModel prefers governor root failures over health bac
   );
 });
 
+test("buildHeaderIbkrPopoverModel separates reachable bridge tunnels from disconnected Gateway sockets", () => {
+  const staleTunnelFailure =
+    "HTTP 502 Bad Gateway: old cloudflared origin failure";
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      bridgeReachable: true,
+      socketConnected: false,
+      healthFresh: true,
+      accountsLoaded: false,
+      streamFresh: false,
+      streamState: "reconnect_needed",
+      streamStateReason: "gateway_socket_disconnected",
+      strictReady: false,
+      strictReason: "gateway_socket_disconnected",
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        reachable: true,
+        bridgeReachable: true,
+        connected: false,
+        socketConnected: false,
+        authenticated: false,
+        healthFresh: true,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "reconnect_needed",
+        streamStateReason: "gateway_socket_disconnected",
+        strictReady: false,
+        strictReason: "gateway_socket_disconnected",
+        governor: {
+          health: {
+            lastFailure: staleTunnelFailure,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(model.issue.key, "reconnect_needed");
+  assert.match(model.issue.label, /IB Gateway\/TWS is disconnected/);
+  assert.doesNotMatch(model.issue.label, /not reachable/);
+  assert.equal(findPopoverDetailRow(model, "Bridge HTTP").value, "reachable");
+  assert.equal(findPopoverDetailRow(model, "Gateway").value, "disconnected");
+  assert.equal(
+    findPopoverDetailRow(model, "Ready reason").value,
+    "gateway_socket_disconnected",
+  );
+  assert.equal(findPopoverDetailRow(model, "Last error"), undefined);
+});
+
 test("buildHeaderIbkrPopoverModel keeps token state in details unless it causes a failure", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {

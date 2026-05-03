@@ -17,6 +17,7 @@ import { defaultIndicatorRegistry } from "./indicators";
 import { RayReplicaSettingsMenu } from "./RayReplicaSettingsMenu";
 import { useDrawingHistory } from "./useDrawingHistory";
 import type { ChartModel } from "./types";
+import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
 
 type DrawMode = "horizontal" | "vertical" | "box";
 type ResearchDrawing = {
@@ -48,9 +49,9 @@ const THEME = {
   red: "#ef4444",
   amber: "#f59e0b",
   purple: "#8b5cf6",
-  mono: "'JetBrains Mono', 'SF Mono', 'Menlo', monospace",
-  sans: "'Inter', system-ui, -apple-system, sans-serif",
-  display: "'Inter', system-ui, sans-serif",
+  mono: FONT_CSS_VAR.data,
+  sans: FONT_CSS_VAR.sans,
+  display: FONT_CSS_VAR.display,
 };
 
 const BUTTON_BASE = {
@@ -59,7 +60,7 @@ const BUTTON_BASE = {
   border: `1px solid ${THEME.border}`,
   background: THEME.bg3,
   color: THEME.textDim,
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: THEME.mono,
   cursor: "pointer",
 } as const;
@@ -107,11 +108,11 @@ const buildFrameHeader = ({
     }}
   >
     <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-      <span style={{ fontSize: 12, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>{symbol}</span>
-      <span style={{ fontSize: 10, fontFamily: THEME.mono, color: THEME.textDim }}>{subtitle}</span>
+      <span style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>{symbol}</span>
+      <span style={{ fontSize: TYPE_CSS_VAR.body, fontFamily: THEME.mono, color: THEME.textDim }}>{subtitle}</span>
     </div>
     <span style={{ flex: 1 }} />
-    <span style={{ fontSize: 10, color: THEME.textMuted, fontFamily: THEME.mono }}>{statusLabel}</span>
+    <span style={{ fontSize: TYPE_CSS_VAR.body, color: THEME.textMuted, fontFamily: THEME.mono }}>{statusLabel}</span>
     <div style={{ display: "flex", gap: 3 }}>
       {FRAME_TIMEFRAMES.map((option) => {
         const active = option.value === timeframe;
@@ -135,7 +136,7 @@ const buildFrameHeader = ({
       })}
     </div>
     {footerMeta ? (
-      <span style={{ fontSize: 10, fontFamily: THEME.mono, color: THEME.textMuted }}>
+      <span style={{ fontSize: TYPE_CSS_VAR.body, fontFamily: THEME.mono, color: THEME.textMuted }}>
         {footerMeta}
       </span>
     ) : null}
@@ -166,7 +167,7 @@ const buildStudyHeader = ({
         flexWrap: "wrap",
       }}
     >
-      <span style={{ fontSize: 10, color: THEME.textMuted, fontFamily: THEME.mono, letterSpacing: "0.06em" }}>
+      <span style={{ fontSize: TYPE_CSS_VAR.body, color: THEME.textMuted, fontFamily: THEME.mono, letterSpacing: "0.06em" }}>
         STUDIES
       </span>
       {availableIndicators.map((indicatorId) => {
@@ -229,10 +230,10 @@ const buildReferenceCard = ({
       }}
     >
       <div>
-        <div style={{ fontSize: 12, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>{label}</div>
-        <div style={{ fontSize: 10, color: THEME.textDim, fontFamily: THEME.sans }}>{description}</div>
+        <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>{label}</div>
+        <div style={{ fontSize: TYPE_CSS_VAR.body, color: THEME.textDim, fontFamily: THEME.sans }}>{description}</div>
       </div>
-      <span style={{ fontSize: 10, color: THEME.textMuted, fontFamily: THEME.mono }}>
+      <span style={{ fontSize: TYPE_CSS_VAR.body, color: THEME.textMuted, fontFamily: THEME.mono }}>
         {layout === "desktop" ? "reference desktop" : "reference narrow"}
       </span>
     </div>
@@ -452,10 +453,10 @@ export const ChartParityLab = () => {
           }}
         >
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 18, fontWeight: 800, fontFamily: THEME.display, color: THEME.text }}>Chart Parity Lab</span>
-            <span style={{ fontSize: 12, color: THEME.textDim }}>{scenario.description}</span>
+            <span style={{ fontSize: TYPE_CSS_VAR.screenTitle, fontWeight: 800, fontFamily: THEME.display, color: THEME.text }}>Chart Parity Lab</span>
+            <span style={{ fontSize: TYPE_CSS_VAR.bodyStrong, color: THEME.textDim }}>{scenario.description}</span>
             <span style={{ flex: 1 }} />
-            <a href="/" style={{ color: THEME.accent, fontFamily: THEME.mono, fontSize: 11 }}>back to app</a>
+            <a href="/" style={{ color: THEME.accent, fontFamily: THEME.mono, fontSize: TYPE_CSS_VAR.bodyStrong }}>back to app</a>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {chartParityScenarios.map((entry) => {
@@ -515,7 +516,7 @@ export const ChartParityLab = () => {
               />
             ) : null}
           </div>
-          <div style={{ fontSize: 11, color: THEME.textMuted, fontFamily: THEME.mono }}>
+          <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, color: THEME.textMuted, fontFamily: THEME.mono }}>
             Use <code>?lab=chart-parity</code> with optional <code>&amp;scenario=core</code>, <code>&amp;scenario=rayreplica</code>, or <code>&amp;layout=narrow</code> for direct review targets.
           </div>
         </div>
@@ -751,8 +752,8 @@ export const ChartParityLab = () => {
               padding: "12px 14px",
             }}
           >
-            <div style={{ fontSize: 12, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>E2E acceptance checks</div>
-            <ul style={{ margin: "10px 0 0 18px", display: "flex", flexDirection: "column", gap: 6, color: THEME.textSec, fontSize: 12 }}>
+            <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>E2E acceptance checks</div>
+            <ul style={{ margin: "10px 0 0 18px", display: "flex", flexDirection: "column", gap: 6, color: THEME.textSec, fontSize: TYPE_CSS_VAR.bodyStrong }}>
               <li>Primary and secondary chart frames render independently.</li>
               <li>Scenario and timeframe switches rebuild bars without destabilizing the shell.</li>
               <li>Study toggles remain isolated to the targeted frame.</li>
@@ -769,7 +770,7 @@ export const ChartParityLab = () => {
               padding: "12px 14px",
             }}
           >
-            <div style={{ fontSize: 12, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>Scenario notes</div>
+            <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontWeight: 800, fontFamily: THEME.mono, color: THEME.text }}>Scenario notes</div>
             {isRayReplicaScenario ? (
               <div
                 data-testid="rayreplica-diagnostics"
@@ -793,7 +794,7 @@ export const ChartParityLab = () => {
                       background: THEME.bg2,
                       borderRadius: 4,
                       fontFamily: THEME.mono,
-                      fontSize: 10,
+                      fontSize: TYPE_CSS_VAR.body,
                     }}
                   >
                     <span style={{ color: THEME.textMuted }}>{item.label}</span>
@@ -804,7 +805,7 @@ export const ChartParityLab = () => {
                 ))}
               </div>
             ) : null}
-            <div style={{ marginTop: 10, color: THEME.textSec, fontSize: 12, lineHeight: 1.55 }}>
+            <div style={{ marginTop: 10, color: THEME.textSec, fontSize: TYPE_CSS_VAR.bodyStrong, lineHeight: 1.55 }}>
               The reference surface is the official TradingView embed widget. The app frames remain our own implementation on top of lightweight-charts, broker-backed data, and our normalized chart model.
             </div>
           </div>

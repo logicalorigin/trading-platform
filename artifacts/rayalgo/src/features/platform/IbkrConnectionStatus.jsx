@@ -244,7 +244,7 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
         label: "online",
         status: "ready",
         healthLabel: "Ready",
-        detail: "Gateway is authenticated and live stream events are fresh",
+        detail: "Gateway is authenticated and live stream events are current",
         color: T.green,
         background: T.greenBg,
         Icon: CircleCheck,
@@ -308,7 +308,10 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
         label: "reconnect",
         status: "reconnect_needed",
         healthLabel: "Reconnect Needed",
-        detail: "Reconnect IBKR to create a fresh Gateway tunnel",
+        detail:
+          streamStateReason === "gateway_socket_disconnected"
+            ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
+            : "Reconnect IBKR to attach the current Gateway tunnel",
         color: T.amber,
         background: T.amberBg,
         Icon: PlugZap,
@@ -550,11 +553,16 @@ export const resolveIbkrGatewayHealth = ({
     runtime?.bridgeUrlConfigured,
   );
   const bridgeUrlConfigured = runtime?.bridgeUrlConfigured;
-  const bridgeReachable = runtime?.reachable;
-  const reachable = firstBoolean(
-    connection?.reachable,
+  const bridgeReachable = firstBoolean(
+    runtime?.bridgeReachable,
+    runtime?.reachable,
+    connection?.bridgeReachable,
+  );
+  const socketConnected = firstBoolean(
+    connection?.socketConnected,
+    runtime?.socketConnected,
     runtime?.connected,
-    bridgeReachable,
+    connection?.reachable,
   );
   const authenticated = firstBoolean(
     connection?.authenticated,
@@ -599,16 +607,36 @@ export const resolveIbkrGatewayHealth = ({
       status: "stale",
       label: "Stale",
       color: T.amber,
-      detail: "Gateway health is stale; waiting for a fresh bridge check",
+      detail: "Gateway health is pending; waiting for the next successful check",
     };
   }
 
-  if (bridgeReachable === false || !reachable) {
+  if (
+    bridgeReachable === false ||
+    (bridgeReachable !== true && socketConnected === false)
+  ) {
     return {
       status: "offline",
       label: "Offline",
       color: T.red,
       detail: "Gateway bridge is not reachable",
+    };
+  }
+
+  if (bridgeReachable === true && socketConnected === false) {
+    const streamMeta = getIbkrStreamStateMeta(
+      proof.streamState,
+      proof.streamStateReason,
+    );
+    return {
+      status: streamMeta?.status || "reconnect_needed",
+      label: streamMeta?.healthLabel || "Reconnect Needed",
+      color: streamMeta?.color || T.amber,
+      detail:
+        proof.strictReason === "gateway_socket_disconnected" ||
+        proof.streamStateReason === "gateway_socket_disconnected"
+          ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
+          : streamMeta?.detail || "Reconnect IBKR to attach the current Gateway tunnel",
     };
   }
 
@@ -826,10 +854,10 @@ export const buildIbkrGatewayTitle = ({
     details.push(`live data ${liveMarketDataAvailable ? "yes" : "no"}`);
   }
   if (proof.healthFresh != null) {
-    details.push(`health ${proof.healthFresh ? "fresh" : "stale"}`);
+    details.push(`health ${proof.healthFresh ? "current" : "pending"}`);
   }
   if (proof.streamFresh != null) {
-    details.push(`stream ${proof.streamFresh ? "fresh" : "stale"}`);
+    details.push(`stream ${proof.streamFresh ? "current" : "pending"}`);
   }
   if (proof.streamState) {
     details.push(`stream state ${proof.streamState}`);

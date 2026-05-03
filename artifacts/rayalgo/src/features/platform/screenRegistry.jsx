@@ -1,15 +1,35 @@
-import { lazy, memo } from "react";
+import { memo } from "react";
 import { T, sp } from "../../lib/uiTokens.jsx";
+import { lazyWithRetry } from "../../lib/dynamicImport";
 
-const MarketScreen = lazy(() => import("../../screens/MarketScreen"));
-const FlowScreen = lazy(() => import("../../screens/FlowScreen"));
-const TradeScreen = lazy(() => import("../../screens/TradeScreen"));
-const AccountScreen = lazy(() => import("../../screens/AccountScreen"));
-const ResearchScreen = lazy(() => import("../../screens/ResearchScreen"));
-const AlgoScreen = lazy(() => import("../../screens/AlgoScreen"));
-const BacktestScreen = lazy(() => import("../../screens/BacktestScreen"));
-const DiagnosticsScreen = lazy(() => import("../../screens/DiagnosticsScreen"));
-const SettingsScreen = lazy(() => import("../../screens/SettingsScreen"));
+const MarketScreen = lazyWithRetry(() => import("../../screens/MarketScreen.jsx"), {
+  label: "MarketScreen",
+});
+const FlowScreen = lazyWithRetry(() => import("../../screens/FlowScreen.jsx"), {
+  label: "FlowScreen",
+});
+const TradeScreen = lazyWithRetry(() => import("../../screens/TradeScreen.jsx"), {
+  label: "TradeScreen",
+});
+const AccountScreen = lazyWithRetry(() => import("../../screens/AccountScreen.jsx"), {
+  label: "AccountScreen",
+});
+const ResearchScreen = lazyWithRetry(() => import("../../screens/ResearchScreen.jsx"), {
+  label: "ResearchScreen",
+});
+const AlgoScreen = lazyWithRetry(() => import("../../screens/AlgoScreen.jsx"), {
+  label: "AlgoScreen",
+});
+const BacktestScreen = lazyWithRetry(() => import("../../screens/BacktestScreen.jsx"), {
+  label: "BacktestScreen",
+});
+const DiagnosticsScreen = lazyWithRetry(
+  () => import("../../screens/DiagnosticsScreen.jsx"),
+  { label: "DiagnosticsScreen" },
+);
+const SettingsScreen = lazyWithRetry(() => import("../../screens/SettingsScreen.jsx"), {
+  label: "SettingsScreen",
+});
 
 export const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },

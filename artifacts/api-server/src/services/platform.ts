@@ -2063,7 +2063,7 @@ export function resolveIbkrGatewayTradingReadinessForTests(input: {
   if (!health) {
     return gatewayTradingUnavailable(
       "bridge_health_unavailable",
-      "IB Gateway trading is unavailable until the bridge returns a fresh health check.",
+      "IB Gateway trading is unavailable until Gateway health is verified.",
     );
   }
 
@@ -2077,7 +2077,7 @@ export function resolveIbkrGatewayTradingReadinessForTests(input: {
   if (health.healthFresh === false) {
     return gatewayTradingUnavailable(
       "health_stale",
-      "IB Gateway trading is unavailable until the bridge status is fresh.",
+      "IB Gateway trading is unavailable until Gateway health is current.",
     );
   }
 
@@ -2145,7 +2145,7 @@ export async function assertIbkrGatewayTradingAvailable() {
     throwGatewayTradingUnavailable(
       gatewayTradingUnavailable(
         "bridge_health_unavailable",
-        "IB Gateway trading is unavailable until the bridge returns a fresh health check.",
+        "IB Gateway trading is unavailable until Gateway health is verified.",
       ),
       error,
     );

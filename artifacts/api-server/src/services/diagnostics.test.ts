@@ -520,6 +520,8 @@ test("diagnostics include resource pressure and browser isolation readiness", as
   assert.equal(resourcePressure?.status, "ok");
   assert.equal(resourcePressure?.metrics.browserMemoryMb, 256);
   assert.equal(resourcePressure?.metrics.browserMemoryConfidence, "high");
+  assert.equal(collected.footerMemoryPressure?.level, "normal");
+  assert.equal(collected.footerMemoryPressure?.browserMemoryMb, 256);
   assert.equal(isolation?.metrics.crossOriginIsolated, true);
   assert.equal(isolation?.metrics.memoryApiUsed, true);
 });

@@ -125,6 +125,7 @@ let eventSourceOpenedAtMs: number | null = null;
 let eventSourceLastSignalAtMs: number | null = null;
 let storeNotifyScheduled = false;
 let symbolStoreNotifyScheduled = false;
+let latencyNotifyScheduled = false;
 let streamPaused = false;
 const pendingSymbolNotifications = new Set<string>();
 
@@ -187,8 +188,20 @@ const notifySymbolStoreListeners = (symbol: string) => {
 };
 
 const notifyLatencyStoreListeners = () => {
-  latencyStoreVersion += 1;
-  Array.from(latencyStoreListeners).forEach((listener) => listener());
+  if (latencyNotifyScheduled) {
+    return;
+  }
+  latencyNotifyScheduled = true;
+  const flush = () => {
+    latencyNotifyScheduled = false;
+    latencyStoreVersion += 1;
+    Array.from(latencyStoreListeners).forEach((listener) => listener());
+  };
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(flush);
+    return;
+  }
+  setTimeout(flush, 0);
 };
 
 const subscribeToLatencyStore = (listener: () => void): (() => void) => {
@@ -757,10 +770,10 @@ export const useStockMinuteAggregateSymbolsVersion = (symbols: string[]): number
   );
 };
 
-export const useIbkrLatencyStats = () => {
+export const useIbkrLatencyStats = (enabled = true) => {
   useSyncExternalStore(
-    subscribeToLatencyStore,
-    getLatencyStoreSnapshot,
+    enabled ? subscribeToLatencyStore : () => () => {},
+    enabled ? getLatencyStoreSnapshot : () => 0,
     () => 0,
   );
 

@@ -20,6 +20,10 @@ import {
   resolveHeaderBroadcastSpeedPreset,
 } from "../features/platform/headerBroadcastModel";
 import {
+  useMemoryPressurePreferences,
+} from "../features/platform/memoryPressurePreferences";
+import { useMemoryPressureSnapshot } from "../features/platform/memoryPressureStore";
+import {
   getFlowScannerControlState,
   setFlowScannerControlState,
   useFlowScannerControlState,
@@ -27,7 +31,7 @@ import {
 import {
   getChartTimeframeOptions,
   resolveChartTimeframeFavorites,
-} from "../features/charting";
+} from "../features/charting/timeframes";
 import {
   DEFAULT_USER_PREFERENCES,
   MAX_CHART_FUTURE_EXPANSION_BARS,
@@ -38,6 +42,7 @@ import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThreshold
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import { MISSING_VALUE, RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
+import { responsiveFlags, useElementSize } from "../lib/responsive";
 
 const SETTINGS_TABS = [
   {
@@ -969,7 +974,7 @@ function useIbkrLaneSettings() {
   };
 }
 
-function useIbkrLineUsage() {
+function useIbkrLineUsage(isVisible = false) {
   const [snapshot, setSnapshot] = useState(null);
   const [error, setError] = useState(null);
 
@@ -990,6 +995,10 @@ function useIbkrLineUsage() {
   }, []);
 
   useEffect(() => {
+    if (!isVisible) {
+      return undefined;
+    }
+
     if (typeof window === "undefined" || typeof window.EventSource !== "function") {
       load();
       const interval = window.setInterval(load, 2_000);
@@ -1009,7 +1018,7 @@ function useIbkrLineUsage() {
       setError("IBKR line usage stream is reconnecting.");
     });
     return () => source.close();
-  }, [load]);
+  }, [isVisible, load]);
 
   return { snapshot, error, reload: load };
 }
@@ -2200,7 +2209,7 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
 
   const clearOverride = () => {
     const confirmed = window.confirm(
-      "Clear the persisted IBKR bridge override? This removes the current tunnel URL and requires a fresh Gateway bridge attach.",
+      "Clear the persisted IBKR bridge override? This removes the current tunnel URL and requires a new Gateway bridge attach.",
     );
     if (!confirmed) return;
 
@@ -2305,18 +2314,122 @@ function SettingsInventoryPanel() {
   );
 }
 
+function FooterMemorySignalSettingsPanel() {
+  const { preferences, updatePreferences } = useMemoryPressurePreferences();
+  const memoryPressure = useMemoryPressureSnapshot(true);
+
+  const thresholdOptions = ["watch", "high", "critical"];
+
+  return (
+    <Panel title="Footer Memory Signal">
+      <div style={{ display: "grid", gap: sp(10) }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+            gap: sp(8),
+          }}
+        >
+          <StateRow
+            label="Current level"
+            value={String(memoryPressure.level || "normal").toUpperCase()}
+            tone={
+              memoryPressure.level === "critical"
+                ? T.red
+                : memoryPressure.level === "high" ||
+                    memoryPressure.level === "watch"
+                  ? T.amber
+                  : T.green
+            }
+          />
+          <StateRow label="Trend" value={String(memoryPressure.trend || "steady").toUpperCase()} />
+          <StateRow label="Source" value={memoryPressure.browserSource || MISSING_VALUE} />
+          <StateRow label="Browser estimate" value={Number.isFinite(memoryPressure.browserMemoryMb) ? formatBytes(memoryPressure.browserMemoryMb * 1024 * 1024) : MISSING_VALUE} />
+        </div>
+
+        <div style={{ display: "grid", gap: sp(6) }}>
+          <div style={{ ...labelStyle(), gap: sp(6) }}>
+            Animation
+            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
+              {[
+                ["on", true],
+                ["off", false],
+              ].map(([label, value]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => updatePreferences({ animationEnabled: value })}
+                  style={smallButton({ active: preferences.animationEnabled === value })}
+                >
+                  {String(label).toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ ...labelStyle(), gap: sp(6) }}>
+            Compact label
+            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
+              {[
+                ["on", true],
+                ["off", false],
+              ].map(([label, value]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => updatePreferences({ showCompactLabel: value })}
+                  style={smallButton({ active: preferences.showCompactLabel === value })}
+                >
+                  {String(label).toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ ...labelStyle(), gap: sp(6) }}>
+            Pulse threshold
+            <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
+              {thresholdOptions.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => updatePreferences({ alertThreshold: level })}
+                  style={smallButton({ active: preferences.alertThreshold === level })}
+                >
+                  {level.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <JsonBlock
+          value={{
+            current: memoryPressure,
+            preferences,
+          }}
+        />
+      </div>
+    </Panel>
+  );
+}
+
 export default function SettingsScreen({
   theme = "dark",
   onToggleTheme,
   sidebarCollapsed = false,
   onToggleSidebar,
+  isVisible = false,
 } = {}) {
+  const [settingsRootRef, settingsRootSize] = useElementSize();
+  const { isPhone: settingsIsPhone, isNarrow: settingsIsNarrow } =
+    responsiveFlags(settingsRootSize.width);
   const [activeTab, setActiveTab] = useState(SETTINGS_TABS[0].id);
   const [settingsSearch, setSettingsSearch] = useState("");
   const backend = useBackendSettings();
   const userPreferences = useUserPreferences();
   const ibkr = useIbkrLaneSettings();
-  const ibkrLineUsage = useIbkrLineUsage();
+  const ibkrLineUsage = useIbkrLineUsage(isVisible);
   const { watchlists } = useWatchlists();
   const settings = backend.snapshot?.settings || [];
   const settingsByGroup = useMemo(() => {
@@ -2339,7 +2452,7 @@ export default function SettingsScreen({
   }, [settingsSearch]);
 
   const renderSettingGrid = (group) => (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", gap: sp(8), alignItems: "start" }}>
+    <div style={{ display: "grid", gridTemplateColumns: settingsIsPhone ? "minmax(0, 1fr)" : "repeat(auto-fit, minmax(min(100%, 270px), 1fr))", gap: sp(8), alignItems: "start" }}>
       {(settingsByGroup.get(group) || []).map((setting) => (
         <SettingCard
           key={setting.key}
@@ -2353,14 +2466,18 @@ export default function SettingsScreen({
 
   return (
     <div
+      ref={settingsRootRef}
       data-testid="settings-screen"
+      data-layout={settingsIsPhone ? "phone" : settingsIsNarrow ? "tablet" : "desktop"}
       style={{
         height: "100%",
+        width: "100%",
         overflow: "auto",
         background: T.bg0,
         color: T.text,
-        padding: sp(10),
+        padding: sp(settingsIsPhone ? 6 : 10),
         fontFamily: T.sans,
+        minWidth: 0,
       }}
     >
       <div
@@ -2370,6 +2487,7 @@ export default function SettingsScreen({
           justifyContent: "space-between",
           gap: sp(12),
           marginBottom: sp(14),
+          flexDirection: settingsIsPhone ? "column" : "row",
         }}
       >
         <div>
@@ -2378,7 +2496,7 @@ export default function SettingsScreen({
             Backend operational controls, guarded applies, restart-required runtime state
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: settingsIsPhone ? "flex-start" : "flex-end", width: settingsIsPhone ? "100%" : undefined }}>
           <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.mono, fontSize: fs(10), fontWeight: 900 }}>
             {summary.pendingRestartCount || 0} pending restart
           </span>
@@ -2413,9 +2531,12 @@ export default function SettingsScreen({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(190px, 230px) minmax(0, 1fr)",
+          gridTemplateColumns: settingsIsNarrow
+            ? "minmax(0, 1fr)"
+            : "minmax(190px, 230px) minmax(0, 1fr)",
           gap: sp(14),
           alignItems: "start",
+          minWidth: 0,
         }}
       >
         <aside
@@ -2426,8 +2547,9 @@ export default function SettingsScreen({
             padding: sp(10),
             display: "grid",
             gap: sp(8),
-            position: "sticky",
-            top: sp(10),
+            position: settingsIsNarrow ? "relative" : "sticky",
+            top: settingsIsNarrow ? undefined : sp(10),
+            minWidth: 0,
           }}
         >
           <input
@@ -2573,6 +2695,7 @@ export default function SettingsScreen({
               <DiagnosticThresholdSettingsPanel
                 description="These controls are shared with Diagnostics and persist through the diagnostics threshold service."
               />
+              <FooterMemorySignalSettingsPanel />
               <BrowserStorageFootprintPanel />
               <StoragePrunePanel />
               <Panel title="COOP / COEP Isolation Settings">{renderSettingGrid("isolation")}</Panel>

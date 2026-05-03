@@ -1572,7 +1572,10 @@ export type FlowEventsSourceScannerCoverage = {
   degradedReason?: string | null;
   /** @minimum 0 */
   radarSelectedSymbols?: number;
-  /** @nullable, @minimum 0 */
+  /**
+   * @minimum 0
+   * @nullable
+   */
   radarEstimatedCycleMs?: number | null;
   /** @minimum 0 */
   radarBatchSize?: number;
@@ -1743,6 +1746,17 @@ export interface AccountCashEvent {
   source: string;
 }
 
+export type AccountEquityHistoryResponseTerminalPointSource = typeof AccountEquityHistoryResponseTerminalPointSource[keyof typeof AccountEquityHistoryResponseTerminalPointSource] | null;
+
+
+export const AccountEquityHistoryResponseTerminalPointSource = {
+  live_account_summary: 'live_account_summary',
+  persisted_snapshot: 'persisted_snapshot',
+  flex: 'flex',
+  shadow_ledger: 'shadow_ledger',
+  shadow_watchlist_backtest: 'shadow_watchlist_backtest',
+} as const;
+
 export interface AccountEquityHistoryResponse {
   accountId: string;
   range: AccountHistoryRange;
@@ -1754,10 +1768,29 @@ export interface AccountEquityHistoryResponse {
   latestSnapshotAt: string | null;
   isStale: boolean;
   staleReason: string | null;
-  terminalPointSource: 'live_account_summary' | 'persisted_snapshot' | 'flex' | 'shadow_ledger' | null;
+  terminalPointSource: AccountEquityHistoryResponseTerminalPointSource;
   liveTerminalIncluded: boolean;
   points: AccountEquityPoint[];
   events: AccountCashEvent[];
+}
+
+export interface CreateAccountTradingPatternsSnapshotRequest {
+  range?: AccountHistoryRange;
+}
+
+export interface AccountTradingPatternsResponse {
+  snapshot: JsonObject;
+  context: JsonObject;
+  summary: JsonObject;
+  tickerStats: JsonObject[];
+  sourceStats: JsonObject[];
+  timeStats: JsonObject;
+  equityAnnotations: JsonObject[];
+  tradeEvents: JsonObject[];
+  roundTrips: JsonObject[];
+  openLots: JsonObject[];
+  anomalies: JsonObject[];
+  fullPacketIncluded: boolean;
 }
 
 export interface AccountAllocationBucket {
@@ -1863,6 +1896,8 @@ export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof 
 export const AccountTradeSourceType = {
   manual: 'manual',
   automation: 'automation',
+  watchlist_backtest: 'watchlist_backtest',
+  mixed: 'mixed',
 } as const;
 
 export interface AccountTrade {
@@ -2134,6 +2169,29 @@ export const BarsResponseMarketDataMode = {
   unknown: 'unknown',
 } as const;
 
+export type BarsHistoryPageHydrationStatus = typeof BarsHistoryPageHydrationStatus[keyof typeof BarsHistoryPageHydrationStatus];
+
+
+export const BarsHistoryPageHydrationStatus = {
+  cold: 'cold',
+  partial: 'partial',
+  warm: 'warm',
+  warming: 'warming',
+  exhausted: 'exhausted',
+} as const;
+
+/**
+ * @nullable
+ */
+export type BarsHistoryPageCacheStatus = typeof BarsHistoryPageCacheStatus[keyof typeof BarsHistoryPageCacheStatus] | null;
+
+
+export const BarsHistoryPageCacheStatus = {
+  hit: 'hit',
+  miss: 'miss',
+  partial: 'partial',
+} as const;
+
 export interface BarsHistoryPage {
   /** @nullable */
   requestedFrom: string | null;
@@ -2158,9 +2216,9 @@ export interface BarsHistoryPage {
   providerPageLimitReached?: boolean;
   /** @nullable */
   historyCursor?: string | null;
-  hydrationStatus?: 'cold' | 'partial' | 'warm' | 'warming' | 'exhausted';
+  hydrationStatus?: BarsHistoryPageHydrationStatus;
   /** @nullable */
-  cacheStatus?: 'hit' | 'miss' | 'partial' | null;
+  cacheStatus?: BarsHistoryPageCacheStatus;
 }
 
 export interface BarsResponse {
@@ -2479,7 +2537,10 @@ export interface FlowUniverseCoverage {
   degradedReason?: string | null;
   /** @minimum 0 */
   radarSelectedSymbols?: number;
-  /** @nullable, @minimum 0 */
+  /**
+   * @minimum 0
+   * @nullable
+   */
   radarEstimatedCycleMs?: number | null;
   /** @minimum 0 */
   radarBatchSize?: number;
@@ -3522,6 +3583,11 @@ benchmark?: string;
 mode?: EnvironmentMode;
 };
 
+export type GetAccountTradingPatternsParams = {
+range?: AccountHistoryRange;
+snapshotId?: string;
+};
+
 export type GetAccountAllocationParams = {
 mode?: EnvironmentMode;
 };
@@ -3658,7 +3724,13 @@ timeframe: BarTimeframe;
 limit?: number;
 from?: string;
 to?: string;
+/**
+ * Opaque server-issued cursor for provider-native historical continuation. Falls back to from/to when invalid or expired.
+ */
 historyCursor?: string | null;
+/**
+ * Prefer historyCursor continuation before the normal from/to window when a cursor is present.
+ */
 preferCursor?: boolean;
 assetClass?: AssetClass;
 /**
@@ -3737,7 +3809,13 @@ timeframe: BarTimeframe;
 limit?: number;
 from?: string;
 to?: string;
+/**
+ * Opaque server-issued cursor for provider-native historical continuation. Falls back to from/to when invalid or expired.
+ */
 historyCursor?: string | null;
+/**
+ * Prefer historyCursor continuation before the normal from/to window when a cursor is present.
+ */
 preferCursor?: boolean;
 outsideRth?: boolean;
 };

@@ -6,14 +6,20 @@ import {
 } from "react";
 import {
   ResearchChartFrame,
+} from "../charting/ResearchChartFrame";
+import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
+} from "../charting/ResearchChartWidgetChrome";
+import {
   getChartBarLimit,
   getChartTimeframeOptions,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
+} from "../charting/timeframes";
+import {
   recordChartBarScopeState,
-} from "../charting";
+} from "../charting/chartHydrationStats";
 import {
   buildChartBarScopeKey,
   useMeasuredChartModel,

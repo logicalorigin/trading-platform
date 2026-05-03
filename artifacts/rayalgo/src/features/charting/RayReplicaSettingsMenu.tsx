@@ -11,6 +11,7 @@ import {
   type RayReplicaRuntimeSettings,
   type RayReplicaSessionOption,
 } from "./rayReplicaPineAdapter";
+import { TYPE_CSS_VAR } from "../../lib/typography";
 
 type WidgetTheme = {
   bg3: string;
@@ -102,7 +103,7 @@ const triggerStyle = (
   background: disabled ? theme.bg3 : `${theme.bg4}e6`,
   color: disabled ? theme.textMuted : theme.text,
   fontFamily: theme.mono,
-  fontSize: dense ? 10 : 11,
+  fontSize: dense ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.bodyStrong,
   fontWeight: 700,
   letterSpacing: "0.04em",
   padding: dense ? "0 7px" : "0 9px",
@@ -138,7 +139,7 @@ const headerStyle = (theme: WidgetTheme): CSSProperties => ({
 });
 
 const titleKickerStyle = (theme: WidgetTheme): CSSProperties => ({
-  fontSize: 10,
+  fontSize: TYPE_CSS_VAR.label,
   color: theme.textMuted,
   fontFamily: theme.mono,
   fontWeight: 700,
@@ -147,7 +148,7 @@ const titleKickerStyle = (theme: WidgetTheme): CSSProperties => ({
 });
 
 const headerMetaStyle = (theme: WidgetTheme): CSSProperties => ({
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   color: theme.textMuted,
   fontFamily: theme.mono,
   lineHeight: 1.35,
@@ -158,7 +159,7 @@ const resetButtonStyle = (theme: WidgetTheme): CSSProperties => ({
   background: theme.bg3,
   color: theme.text,
   padding: "6px 10px",
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
   fontWeight: 700,
   cursor: "pointer",
@@ -177,7 +178,7 @@ const tabButtonStyle = (
   background: active ? `${theme.accent || theme.text}22` : theme.bg3,
   color: active ? theme.text : theme.textMuted,
   padding: "6px 10px",
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
   fontWeight: 700,
   cursor: "pointer",
@@ -191,14 +192,14 @@ const sectionStyle = (theme: WidgetTheme): CSSProperties => ({
 });
 
 const sectionTitleStyle = (theme: WidgetTheme): CSSProperties => ({
-  fontSize: 12,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   color: theme.text,
   fontFamily: theme.mono,
   fontWeight: 700,
 });
 
 const sectionDescriptionStyle = (theme: WidgetTheme): CSSProperties => ({
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.body,
   color: theme.textMuted,
   fontFamily: theme.mono,
   lineHeight: 1.4,
@@ -219,14 +220,14 @@ const labelBlockStyle: CSSProperties = {
 };
 
 const rowLabelStyle = (theme: WidgetTheme): CSSProperties => ({
-  fontSize: 12,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   color: theme.text,
   fontFamily: theme.mono,
   fontWeight: 600,
 });
 
 const rowHelperStyle = (theme: WidgetTheme): CSSProperties => ({
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.body,
   color: theme.textMuted,
   fontFamily: theme.mono,
   lineHeight: 1.35,
@@ -239,7 +240,7 @@ const inputStyle = (theme: WidgetTheme): CSSProperties => ({
   background: theme.bg3,
   color: theme.text,
   padding: "6px 8px",
-  fontSize: 12,
+  fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
   outline: "none",
 });
@@ -271,13 +272,13 @@ const inlineLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.body,
   color: theme.text,
   fontFamily: theme.mono,
 });
 
 const miniLabelStyle = (theme: WidgetTheme): CSSProperties => ({
-  fontSize: 10,
+  fontSize: TYPE_CSS_VAR.label,
   color: theme.textMuted,
   fontFamily: theme.mono,
   textTransform: "uppercase",
@@ -295,7 +296,7 @@ const noteBoxStyle = (theme: WidgetTheme): CSSProperties => ({
   border: `1px solid ${theme.border}`,
   background: theme.bg3,
   padding: "10px 12px",
-  fontSize: 11,
+  fontSize: TYPE_CSS_VAR.body,
   color: theme.textMuted,
   fontFamily: theme.mono,
   lineHeight: 1.4,
@@ -560,7 +561,7 @@ export function RayReplicaSettingsMenu({
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
             <div style={{ display: "grid", gap: 4 }}>
               <div style={titleKickerStyle(theme)}>RayReplica Settings</div>
-              <div style={{ fontSize: 13, fontFamily: theme.mono, fontWeight: 700 }}>
+              <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontFamily: theme.mono, fontWeight: 700 }}>
                 {activeBandProfile?.label || "Custom"} profile
               </div>
               <div style={headerMetaStyle(theme)}>

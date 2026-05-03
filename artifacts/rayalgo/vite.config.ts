@@ -100,31 +100,62 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
-    chunkSizeWarningLimit: 650,
+    chunkSizeWarningLimit: 350,
     rollupOptions: {
       output: {
         manualChunks(id) {
           const normalizedId = id.replaceAll("\\", "/");
+
+          if (
+            normalizedId.includes("/src/app/runtime-config") ||
+            normalizedId.includes("/src/lib/dynamicImport") ||
+            normalizedId.includes("/src/lib/typography")
+          ) {
+            return "app-runtime";
+          }
+
+          if (normalizedId.includes("/lib/api-client-react/")) {
+            return "api-client";
+          }
+
+          if (normalizedId.includes("/lib/rayreplica-core/")) {
+            return "rayreplica-core";
+          }
+
           const packageName = getNodeModulePackageName(normalizedId);
 
           if (packageName) {
+            if (packageName === "hls.js") {
+              return "vendor-hls";
+            }
+
+            if (packageName === "lightweight-charts") {
+              return "vendor-lightweight-charts";
+            }
+
             if (
-              packageName === "lightweight-charts" ||
               packageName === "recharts" ||
               packageName === "recharts-scale" ||
-              packageName === "react-resizable-panels" ||
               packageName === "react-smooth" ||
               packageName === "victory-vendor" ||
               packageName === "eventemitter3" ||
               packageName === "react-is" ||
-              packageName === "tiny-invariant" ||
-              packageName.startsWith("d3")
+              packageName === "tiny-invariant"
             ) {
-              return "chart-vendor";
+              return "vendor-recharts";
+            }
+
+            if (packageName.startsWith("d3")) {
+              return "vendor-d3";
+            }
+
+            if (packageName === "react-resizable-panels") {
+              return "vendor-chart-ui";
             }
 
             if (
               packageName.startsWith("@radix-ui/") ||
+              packageName.startsWith("@floating-ui/") ||
               packageName === "cmdk" ||
               packageName === "input-otp" ||
               packageName === "react-day-picker" ||
@@ -160,6 +191,14 @@ export default defineConfig({
             }
 
             if (
+              packageName === "clsx" ||
+              packageName === "tailwind-merge" ||
+              packageName === "class-variance-authority"
+            ) {
+              return "utility-vendor";
+            }
+
+            if (
               packageName === "react" ||
               packageName === "react-dom" ||
               packageName === "scheduler"
@@ -170,8 +209,25 @@ export default defineConfig({
             return "vendor";
           }
 
-          if (normalizedId.includes("/src/features/charting/")) {
-            return "feature-charting";
+          if (normalizedId.includes("/src/features/charting/ChartParityLab")) {
+            return "feature-charting-lab";
+          }
+
+          if (
+            normalizedId.includes("/src/features/charting/ResearchChartSurface") ||
+            normalizedId.includes("/src/features/charting/ResearchChartFrame") ||
+            normalizedId.includes("/src/features/charting/ResearchChartWidgetChrome") ||
+            normalizedId.includes("/src/features/charting/RayReplicaSettingsMenu") ||
+            normalizedId.includes("/src/features/charting/TradingViewWidgetReference")
+          ) {
+            return "feature-charting-surface";
+          }
+
+          if (
+            normalizedId.includes("/src/features/charting/ResearchMiniChart") ||
+            normalizedId.includes("/src/features/charting/ResearchSparkline")
+          ) {
+            return "feature-charting-mini";
           }
 
           if (normalizedId.includes("/src/features/backtesting/")) {

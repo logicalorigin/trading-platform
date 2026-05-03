@@ -288,3 +288,39 @@ test("watchlist row renders persisted identity metadata without clipping", async
     ),
   ).toBe(true);
 });
+
+test("watchlist selector menu is anchored, mutually exclusive with add mode, and dismisses outside", async ({
+  page,
+}) => {
+  await mockPlatformApi(page, {
+    watchlist: {
+      id: "default",
+      name: "Default",
+      isDefault: true,
+      items: [{ id: "spy-item", symbol: "SPY", name: "S&P 500", sortOrder: 0 }],
+    },
+  });
+  await openMarketWithWatchlist(page);
+
+  const trigger = page.getByTestId("watchlist-menu-trigger");
+  const menu = page.getByTestId("watchlist-menu");
+  const addToggle = page.getByTestId("watchlist-add-toggle");
+  const addPanel = page.getByTestId("watchlist-add-panel");
+
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+  await addToggle.click();
+  await expect(addPanel).toBeVisible();
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  await expect(addPanel).toHaveCount(0);
+
+  await page.getByTestId("market-workspace").click({ position: { x: 10, y: 10 } });
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+});

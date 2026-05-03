@@ -45,10 +45,24 @@ let storeVersion = 0;
 const listeners = new Set<() => void>();
 const hydrationIntents = new Map<string, StoredHydrationIntent>();
 let hydrationPressureState: HydrationPressureState = "normal";
+let emitScheduled = false;
 
-const emit = () => {
+const flushListeners = () => {
+  emitScheduled = false;
   storeVersion += 1;
   listeners.forEach((listener) => listener());
+};
+
+const emit = () => {
+  if (emitScheduled) {
+    return;
+  }
+  emitScheduled = true;
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(flushListeners);
+    return;
+  }
+  setTimeout(flushListeners, 0);
 };
 
 const subscribe = (listener: () => void) => {
@@ -195,7 +209,11 @@ export const getHydrationCoordinatorSnapshot = () => {
   };
 };
 
-export const useHydrationCoordinatorStats = () => {
-  const version = useSyncExternalStore(subscribe, getSnapshotVersion, () => 0);
+export const useHydrationCoordinatorStats = (enabled = true) => {
+  const version = useSyncExternalStore(
+    enabled ? subscribe : () => () => {},
+    enabled ? getSnapshotVersion : () => 0,
+    () => 0,
+  );
   return useMemo(() => getHydrationCoordinatorSnapshot(), [version]);
 };

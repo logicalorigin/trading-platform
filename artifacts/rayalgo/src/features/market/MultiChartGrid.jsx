@@ -6,31 +6,37 @@ import {
 } from "@workspace/api-client-react";
 import {
   DISPLAY_CHART_OUTSIDE_RTH,
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  RayReplicaSettingsMenu,
-  ResearchChartFrame,
+  resolveDisplayChartPrice,
+} from "../charting/displayChartSession";
+import { RayReplicaSettingsMenu } from "../charting/RayReplicaSettingsMenu";
+import { ResearchChartFrame } from "../charting/ResearchChartFrame";
+import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
+} from "../charting/ResearchChartWidgetChrome";
+import {
   expandLocalRollupLimit,
-  flowEventsToChartEvents,
+  resolveLocalRollupBaseTimeframe,
+  rollupMarketBars,
+} from "../charting/timeframeRollups";
+import { flowEventsToChartEvents } from "../charting/chartEvents";
+import {
   getChartBarLimit,
-  getChartTimeframeOptions,
   getChartTimeframeValues,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
   normalizeChartTimeframe,
-  recordChartBarScopeState,
-  resolveDisplayChartPrice,
-  resolveLocalRollupBaseTimeframe,
-  resolveSpotChartFrameLayout,
-  rollupMarketBars,
+} from "../charting/timeframes";
+import { recordChartBarScopeState } from "../charting/chartHydrationStats";
+import { resolveSpotChartFrameLayout } from "../charting/spotChartFrameLayout";
+import {
   useBrokerStreamedBars,
-  useDrawingHistory,
   useHistoricalBarStream,
-  useIndicatorLibrary,
   usePrependableHistoricalBars,
-} from "../charting";
+} from "../charting/useMassiveStreamedStockBars";
+import { useDrawingHistory } from "../charting/useDrawingHistory";
+import { useIndicatorLibrary } from "../charting/pineScripts";
 import {
   buildMiniChartBarsFromApi,
   describeBrokerChartSource,
@@ -74,6 +80,7 @@ import {
   writeMarketGridTrackSession,
 } from "./marketGridTrackState";
 import {
+  buildMarketBarsPageQueryKey as buildBarsPageQueryKey,
   buildMarketGridViewportIdentity,
   buildMarketGridViewportRevisionIdentity,
   buildMarketGridVisibleRangeSignature,
@@ -89,8 +96,6 @@ import { useHydrationIntent } from "../platform/hydrationCoordinator";
 import { useLiveMarketFlow } from "../platform/useLiveMarketFlow";
 import { useIbkrQuoteSnapshotStream } from "../platform/live-streams";
 import { USER_PREFERENCES_UPDATED_EVENT } from "../preferences/userPreferenceModel";
-import { MarketIdentityMark } from "../platform/marketIdentity";
-import { MiniChartTickerSearch } from "../platform/tickerSearch/TickerSearch.jsx";
 import {
   getTickerSearchRowStorageKey,
   normalizePersistedTickerSearchRows,
@@ -130,54 +135,10 @@ const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
 };
 
 const MINI_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
-const OPTION_CHART_TIMEFRAMES = getChartTimeframeOptions("option");
-const buildBarsPageQueryKey = ({
-  queryBase,
-  timeframe,
-  limit,
-  from,
-  to,
-  market = null,
-  assetClass = null,
-  providerContractId = null,
-  historyCursor = null,
-  preferCursor = false,
-}) => [
-  ...queryBase,
-  timeframe,
-  limit,
-  from,
-  to,
-  market,
-  assetClass,
-  providerContractId,
-  historyCursor,
-  Boolean(preferCursor),
-];
-const MARKET_CHART_STUDIES = [
-  { id: "ema-21", label: "E21" },
-  { id: "ema-55", label: "E55" },
-  { id: "vwap", label: "VWAP" },
-  { id: "rsi-14", label: "RSI" },
-  { id: "macd-12-26-9", label: "MACD" },
-];
 const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
 const MARKET_GRID_INDICATOR_PRESET_VERSION = 2;
-const TRADE_EQUITY_INDICATOR_PRESET_VERSION = 1;
-const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
-const DEFAULT_MINI_CHART_STUDIES = [
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  "ema-21",
-  "vwap",
-];
-const DEFAULT_TRADE_EQUITY_STUDIES = [
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  "ema-21",
-  "ema-55",
-];
-const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
 
 const buildDefaultMiniChartSymbols = (
   activeSym,
@@ -332,6 +293,7 @@ export const MultiChartGrid = ({
   const [chartViewportResetRevision, setChartViewportResetRevision] = useState(0);
   const [gridResizeHoverHandle, setGridResizeHoverHandle] = useState(null);
   const [gridResizeActiveHandle, setGridResizeActiveHandle] = useState(null);
+  const [openTickerSearchSlotIndex, setOpenTickerSearchSlotIndex] = useState(null);
   useEffect(() => {
     const handleWorkspaceSettings = (event) => {
       const nextLayout = event?.detail?.marketGridLayout;
@@ -406,6 +368,14 @@ export const MultiChartGrid = ({
       .slice(0, cfg.count)
       .map((slot, index) => ({ slot, index }));
   }, [cfg.count, layout, slots, soloSlotIndex]);
+  useEffect(() => {
+    setOpenTickerSearchSlotIndex((current) =>
+      current == null ||
+      visibleSlotEntries.some((entry) => entry.index === current)
+        ? current
+        : null,
+    );
+  }, [visibleSlotEntries]);
   const quoteSymbols = useMemo(
     () =>
       Array.from(
@@ -1108,6 +1078,12 @@ export const MultiChartGrid = ({
                 smartSuggestionSymbols={chartFlowSuggestionSymbols}
                 signalSuggestionSymbols={signalSuggestionSymbols}
                 onRememberTicker={rememberSearchRow}
+                tickerSearchOpen={openTickerSearchSlotIndex === index}
+                onTickerSearchOpenChange={(open) =>
+                  setOpenTickerSearchSlotIndex((current) =>
+                    open ? index : current === index ? null : current,
+                  )
+                }
               />
             );
           })}

@@ -7,14 +7,28 @@ import {
 let storeVersion = 0;
 const listeners = new Set();
 const workloadEntries = new Map();
+let emitScheduled = false;
 
-const emit = () => {
+const flushListeners = () => {
+  emitScheduled = false;
   storeVersion += 1;
   listeners.forEach((listener) => {
     try {
       listener();
     } catch {}
   });
+};
+
+const emit = () => {
+  if (emitScheduled) {
+    return;
+  }
+  emitScheduled = true;
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(flushListeners);
+    return;
+  }
+  setTimeout(flushListeners, 0);
 };
 
 const subscribe = (listener) => {
@@ -105,8 +119,12 @@ export const getRuntimeWorkloadStats = () => {
     };
 };
 
-export const useRuntimeWorkloadStats = () => {
-  const version = useSyncExternalStore(subscribe, getSnapshot, () => 0);
+export const useRuntimeWorkloadStats = (enabled = true) => {
+  const version = useSyncExternalStore(
+    enabled ? subscribe : () => () => {},
+    enabled ? getSnapshot : () => 0,
+    () => 0,
+  );
 
   return useMemo(() => getRuntimeWorkloadStats(), [version]);
 };

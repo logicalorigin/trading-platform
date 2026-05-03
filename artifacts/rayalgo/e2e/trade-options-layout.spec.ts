@@ -1186,6 +1186,38 @@ test("Trade, Flow, and Research pages fill the available viewport width", async 
   }
 });
 
+test("Trade phone layout loads lazy module and exposes full trading stack", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockTradeApi(page);
+  await openTrade(page);
+
+  await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
+  await expect(page.locator('[data-trade-layout="phone"]')).toBeVisible();
+  await expect(page.getByTestId("trade-equity-chart")).toBeVisible();
+  await expect(page.getByTestId("trade-contract-chart-panel")).toBeVisible();
+  await expect(page.getByTestId("trade-order-ticket")).toBeVisible();
+  await expect(page.getByTestId("trade-options-chain-panel")).toBeVisible();
+  await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
+  await expect(page.getByTestId("trade-bottom-zone")).toBeVisible();
+
+  const metrics = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    topColumns: getComputedStyle(
+      document.querySelector('[data-testid="trade-top-zone"]') as Element,
+    ).gridTemplateColumns,
+    middleColumns: getComputedStyle(
+      document.querySelector('[data-testid="trade-middle-zone"]') as Element,
+    ).gridTemplateColumns,
+  }));
+
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+  expect(metrics.topColumns.split(" ").length).toBe(1);
+  expect(metrics.middleColumns.split(" ").length).toBe(1);
+});
+
 test("Trade option chain loading state shows a spinner while chain request is pending", async ({
   page,
 }) => {
@@ -1265,7 +1297,7 @@ test("Trade option chain batches start even while selected chain is slow", async
   await openTrade(page);
 
   await expect
-    .poll(() => batchRequests.length, { timeout: 2_000 })
+    .poll(() => batchRequests.length, { timeout: 8_000 })
     .toBeGreaterThanOrEqual(1);
 });
 

@@ -142,7 +142,7 @@ export const PlatformScreenRouter = ({
         />
       );
     case "diagnostics":
-      return <MemoDiagnosticsScreen />;
+      return <MemoDiagnosticsScreen isVisible={screen === "diagnostics"} />;
     case "settings":
       return (
         <MemoSettingsScreen
@@ -150,6 +150,7 @@ export const PlatformScreenRouter = ({
           onToggleTheme={onToggleTheme}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={onToggleSidebar}
+          isVisible={screen === "settings"}
         />
       );
     default:

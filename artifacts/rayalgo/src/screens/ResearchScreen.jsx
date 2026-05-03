@@ -1,5 +1,4 @@
 import {
-  lazy,
   Suspense,
 } from "react";
 import {
@@ -8,9 +7,11 @@ import {
   fs,
   sp,
 } from "../lib/uiTokens";
+import { lazyWithRetry } from "../lib/dynamicImport";
 
-const PhotonicsObservatory = lazy(
-  () => import("../features/research/PhotonicsObservatory"),
+const PhotonicsObservatory = lazyWithRetry(
+  () => import("../features/research/PhotonicsObservatory.jsx"),
+  { label: "PhotonicsObservatory" },
 );
 
 const ResearchLoadingFallback = () => (

@@ -6,31 +6,37 @@ import {
 } from "@workspace/api-client-react";
 import {
   DISPLAY_CHART_OUTSIDE_RTH,
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  RayReplicaSettingsMenu,
-  ResearchChartFrame,
+  resolveDisplayChartPrice,
+} from "../charting/displayChartSession";
+import { RayReplicaSettingsMenu } from "../charting/RayReplicaSettingsMenu";
+import { ResearchChartFrame } from "../charting/ResearchChartFrame";
+import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
+} from "../charting/ResearchChartWidgetChrome";
+import {
   expandLocalRollupLimit,
-  flowEventsToChartEvents,
+  resolveLocalRollupBaseTimeframe,
+  rollupMarketBars,
+} from "../charting/timeframeRollups";
+import { flowEventsToChartEvents } from "../charting/chartEvents";
+import {
   getChartBarLimit,
-  getChartTimeframeOptions,
   getChartTimeframeValues,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
   normalizeChartTimeframe,
-  recordChartBarScopeState,
-  resolveDisplayChartPrice,
-  resolveLocalRollupBaseTimeframe,
-  resolveSpotChartFrameLayout,
-  rollupMarketBars,
+} from "../charting/timeframes";
+import { recordChartBarScopeState } from "../charting/chartHydrationStats";
+import { resolveSpotChartFrameLayout } from "../charting/spotChartFrameLayout";
+import {
   useBrokerStreamedBars,
-  useDrawingHistory,
   useHistoricalBarStream,
-  useIndicatorLibrary,
   usePrependableHistoricalBars,
-} from "../charting";
+} from "../charting/useMassiveStreamedStockBars";
+import { useDrawingHistory } from "../charting/useDrawingHistory";
+import { useIndicatorLibrary } from "../charting/pineScripts";
 import {
   buildMiniChartBarsFromApi,
   describeBrokerChartSource,
@@ -48,31 +54,12 @@ import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorit
 import {
   buildRayReplicaIndicatorSettings,
   isRayReplicaIndicatorSelected,
-  mergeIndicatorSelections,
-  normalizeIndicatorSelection,
-  resolvePersistedIndicatorPreset,
   resolvePersistedRayReplicaSettings,
 } from "../charting/chartIndicatorPersistence";
-import {
-  EMPTY_PREMIUM_FLOW_SUMMARY,
-  buildPremiumFlowBySymbol,
-  resolvePremiumFlowDisplayState,
-} from "../platform/premiumFlowIndicator";
 import {
   DEFAULT_WATCHLIST_BY_SYMBOL,
   WATCHLIST,
 } from "./marketReferenceData";
-import {
-  buildEqualTrackWeights,
-  buildMarketGridResizeHandleKey,
-  normalizeMarketGridTrackLayoutState,
-  normalizeMarketGridTrackPixels,
-  normalizeMarketGridTrackWeights,
-  readMarketGridTrackSession,
-  resizeMarketGridRowPixels,
-  resizeMarketGridTrackWeights,
-  writeMarketGridTrackSession,
-} from "./marketGridTrackState";
 import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
@@ -89,160 +76,20 @@ import {
   normalizePersistedTickerSearchRows,
   normalizeTickerSearchResultForStorage,
 } from "../platform/tickerSearch/TickerSearch.jsx";
-import { normalizeMiniChartStudies } from "./marketGridChartState";
+import {
+  buildMarketBarsPageQueryKey as buildBarsPageQueryKey,
+  normalizeMiniChartStudies,
+} from "./marketGridChartState";
 import {
   normalizeChartBarsPagePayload,
   normalizeLatestChartBarsPayload,
 } from "../charting/chartBarsPayloads";
 import { BARS_QUERY_DEFAULTS, BARS_REQUEST_PRIORITY, buildBarsRequestOptions } from "../platform/queryDefaults";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
-import { _initialState, persistState } from "../../lib/workspaceState";
-import { fmtM, isFiniteNumber } from "../../lib/formatters";
+import { isFiniteNumber } from "../../lib/formatters";
 import { T, dim, fs, getCurrentTheme, sp } from "../../lib/uiTokens";
-import { Card } from "../../components/platform/primitives.jsx";
-
-const MULTI_CHART_LAYOUTS = {
-  "1x1": { cols: 1, rows: 1, count: 1 },
-  "2x2": { cols: 2, rows: 2, count: 4 },
-  "2x3": { cols: 3, rows: 2, count: 6 },
-  "3x3": { cols: 3, rows: 3, count: 9 },
-};
-
-const MULTI_CHART_LAYOUT_CARD_WIDTH = {
-  "1x1": 720,
-  "2x2": 420,
-  "2x3": 360,
-  "3x3": 340,
-};
-
-const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
-  "1x1": 720,
-  "2x2": 410,
-  "2x3": 380,
-  "3x3": 340,
-};
 
 const MINI_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
-const OPTION_CHART_TIMEFRAMES = getChartTimeframeOptions("option");
-const buildBarsPageQueryKey = ({
-  queryBase,
-  timeframe,
-  limit,
-  from,
-  to,
-  market = null,
-  assetClass = null,
-  providerContractId = null,
-  historyCursor = null,
-  preferCursor = false,
-}) => [
-  ...queryBase,
-  timeframe,
-  limit,
-  from,
-  to,
-  market,
-  assetClass,
-  providerContractId,
-  historyCursor,
-  Boolean(preferCursor),
-];
-const MARKET_CHART_STUDIES = [
-  { id: "ema-21", label: "E21" },
-  { id: "ema-55", label: "E55" },
-  { id: "vwap", label: "VWAP" },
-  { id: "rsi-14", label: "RSI" },
-  { id: "macd-12-26-9", label: "MACD" },
-];
-const MAX_MULTI_CHART_SLOTS = Math.max(
-  ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
-);
-const MARKET_GRID_INDICATOR_PRESET_VERSION = 2;
-const TRADE_EQUITY_INDICATOR_PRESET_VERSION = 1;
-const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
-const DEFAULT_MINI_CHART_STUDIES = [
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  "ema-21",
-  "vwap",
-];
-const DEFAULT_TRADE_EQUITY_STUDIES = [
-  RAY_REPLICA_PINE_SCRIPT_KEY,
-  "ema-21",
-  "ema-55",
-];
-const DEFAULT_TRADE_OPTION_STUDIES = [RAY_REPLICA_PINE_SCRIPT_KEY];
-
-const buildDefaultMiniChartSymbols = (
-  activeSym,
-  count = MAX_MULTI_CHART_SLOTS,
-) => {
-  const seed = normalizeTickerSymbol(activeSym) || WATCHLIST[0]?.sym || "SPY";
-  const watchlistSymbols = WATCHLIST.map((item) =>
-    normalizeTickerSymbol(item.sym),
-  ).filter(Boolean);
-  const ordered = [
-    seed,
-    ...watchlistSymbols.filter((symbol) => symbol !== seed),
-  ];
-
-  return Array.from(
-    { length: count },
-    (_, index) => ordered[index] || ordered[index % ordered.length] || seed,
-  );
-};
-
-const hydrateMiniChartSlot = (
-  slot,
-  fallbackTicker,
-  includeRayReplicaByDefault = false,
-) => ({
-  ticker:
-    normalizeTickerSymbol(slot?.ticker) ||
-    fallbackTicker ||
-    WATCHLIST[0]?.sym ||
-    "SPY",
-  tf: MINI_CHART_TIMEFRAMES.includes(normalizeChartTimeframe(slot?.tf))
-    ? normalizeChartTimeframe(slot?.tf)
-    : "15m",
-  studies: normalizeMiniChartStudies(
-    slot?.studies,
-    includeRayReplicaByDefault,
-  ),
-  rayReplicaSettings: resolvePersistedRayReplicaSettings(
-    slot?.rayReplicaSettings,
-  ),
-  market: slot?.market || "stocks",
-  provider: slot?.provider || null,
-  providers: Array.isArray(slot?.providers) ? slot.providers.filter(Boolean) : [],
-  tradeProvider: slot?.tradeProvider || null,
-  dataProviderPreference: slot?.dataProviderPreference || null,
-  providerContractId: slot?.providerContractId || null,
-  exchange:
-    slot?.exchange ||
-    slot?.exchangeDisplay ||
-    slot?.normalizedExchangeMic ||
-    slot?.primaryExchange ||
-    null,
-  searchResult: normalizeTickerSearchResultForStorage(slot?.searchResult) || null,
-});
-
-const buildInitialMiniChartSlots = (activeSym) => {
-  const persisted = Array.isArray(_initialState.marketGridSlots)
-    ? _initialState.marketGridSlots
-    : [];
-  const defaults = buildDefaultMiniChartSymbols(
-    activeSym,
-    MAX_MULTI_CHART_SLOTS,
-  );
-  return defaults.map((fallbackTicker, index) =>
-    hydrateMiniChartSlot(
-      persisted[index],
-      fallbackTicker,
-      _initialState.marketGridIndicatorPresetVersion !==
-        MARKET_GRID_INDICATOR_PRESET_VERSION,
-    ),
-  );
-};
 
 const MARKET_CHART_INTERACTIVE_TARGET_SELECTOR = [
   "a[href]",
@@ -300,6 +147,8 @@ export const MiniChartCell = ({
   smartSuggestionSymbols = [],
   signalSuggestionSymbols = [],
   onRememberTicker,
+  tickerSearchOpen = false,
+  onTickerSearchOpenChange,
   isActive,
   dense = false,
   compactFlow = false,
@@ -334,7 +183,11 @@ export const MiniChartCell = ({
     () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
     [rayReplicaSettings],
   );
-  const [searchOpen, setSearchOpen] = useState(false);
+  const searchOpen = Boolean(tickerSearchOpen);
+  const setSearchOpen = useCallback(
+    (open) => onTickerSearchOpenChange?.(Boolean(open)),
+    [onTickerSearchOpenChange],
+  );
   const [drawMode, setDrawMode] = useState(null);
   const [plotViewportUserTouched, setPlotViewportUserTouched] = useState(false);
   const suppressNextFrameClickRef = useRef(false);

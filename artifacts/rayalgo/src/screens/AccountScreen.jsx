@@ -11,8 +11,10 @@ import {
   useGetAccountPositions,
   useGetAccountRisk,
   useGetAccountSummary,
+  useGetAccountTradingPatterns,
   useGetFlexHealth,
   useTestFlexToken,
+  useCreateAccountTradingPatternsSnapshot,
 } from "@workspace/api-client-react";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
@@ -24,11 +26,18 @@ import AccountReturnsPanel from "./account/AccountReturnsPanel";
 import EquityCurvePanel from "./account/EquityCurvePanel";
 import AllocationPanel from "./account/AllocationPanel";
 import PositionsPanel from "./account/PositionsPanel";
+import TradingPatternsPanel from "./account/TradingPatternsPanel";
 import RiskDashboardPanel from "./account/RiskDashboardPanel";
 import CashFundingPanel from "./account/CashFundingPanel";
 import SetupHealthPanel from "./account/SetupHealthPanel";
 import { ClosedTradesPanel, OrdersPanel } from "./account/TradesOrdersPanel";
 import { buildAccountReturnsModel } from "./account/accountReturnsModel";
+import {
+  applyPatternLensToTradeFilters,
+  buildAccountPatternLens,
+  clearPatternLensFromTradeFilters,
+  emptyAccountPatternLens,
+} from "./account/accountPatternLens";
 import { getOpenPositionRows } from "../features/account/accountPositionRows.js";
 import {
   ACCOUNT_RANGES,
@@ -147,6 +156,20 @@ const ShadowWatchlistBacktestPanel = ({
           >
             YTD
           </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({ timeframe: "5m", range: "ytd", sweep: true })}
+            disabled={running}
+            data-testid="shadow-watchlist-backtest-run-ytd-5m-sweep"
+            style={{
+              ...runButtonStyle,
+              borderColor: running ? T.textMuted : T.cyan,
+              background: running ? T.bg2 : `${T.cyan}22`,
+              color: running ? T.textMuted : T.cyan,
+            }}
+          >
+            5m Sweep
+          </button>
         </div>
       }
     >
@@ -154,13 +177,14 @@ const ShadowWatchlistBacktestPanel = ({
         <div style={{ display: "flex", flexWrap: "wrap", gap: sp(3) }}>
           <Pill tone="pink">Watchlist Backtest</Pill>
           <Pill tone="green">Spot Equity</Pill>
-          <Pill tone="cyan">15m RayReplica</Pill>
+          <Pill tone="cyan">{run?.timeframe || "15m"} RayReplica</Pill>
+          {run?.sweep ? <Pill tone="purple">Regime Sweep</Pill> : null}
           <Pill tone="purple">Ledger Synthetic</Pill>
         </div>
         <div style={{ color: T.textSec, fontSize: fs(9), lineHeight: 1.35 }}>
           Runs all saved watchlists from the New York regular-session open through
           the latest completed bar in the selected window. Rows are written as synthetic Shadow ledger
-          activity and kept separate from existing Shadow positions.
+          activity, isolated from prior backtest rows, and sized around current Shadow exposure.
         </div>
         {run ? (
           <>
@@ -217,7 +241,67 @@ const ShadowWatchlistBacktestPanel = ({
               <div>
                 Cap {formatAccountPercent((sizing.maxPositionFraction || 0) * 100, 0, maskValues)}
               </div>
+              <div>
+                Win {formatAccountPercent(summary.winRatePercent, 0, maskValues)}
+              </div>
+              <div>
+                Exp{" "}
+                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: 900 }}>
+                  {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
+                </span>
+              </div>
+              <div>Closed {formatNumber(summary.closedTrades || 0, 0)}</div>
+              <div>
+                NAV{" "}
+                <span style={{ color: T.green, fontWeight: 900 }}>
+                  {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
+                </span>
+              </div>
+              <div>
+                Max DD{" "}
+                <span style={{ color: T.red, fontWeight: 900 }}>
+                  {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
+                </span>
+              </div>
+              <div>Proxy fills {formatNumber(summary.proxyFills || 0, 0)}</div>
             </div>
+            {run.sweep ? (
+              <div
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(4),
+                  background: T.bg0,
+                  padding: sp(6),
+                  display: "grid",
+                  gap: sp(4),
+                }}
+              >
+                <div style={{ color: T.text, fontSize: fs(9), fontFamily: T.mono, fontWeight: 900 }}>
+                  Winner {run.sweep.winnerId || "n/a"} · {formatNumber(run.sweep.variantCount || 0, 0)} variants · highest NAV
+                </div>
+                {(run.sweep.variants || []).slice(0, 3).map((variant) => (
+                  <div
+                    key={variant.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1.5fr) repeat(4, minmax(0, 0.7fr))",
+                      gap: sp(4),
+                      color: variant.rank === 1 ? T.green : T.textSec,
+                      fontSize: fs(8),
+                      fontFamily: T.mono,
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      #{variant.rank} {variant.id}
+                    </span>
+                    <span>{formatAccountMoney(variant.summary?.endingNetLiquidation, currency, true, maskValues)}</span>
+                    <span>DD {formatAccountPercent(variant.summary?.maxDrawdownPercent, 1, maskValues)}</span>
+                    <span>Win {formatAccountPercent(variant.summary?.winRatePercent, 0, maskValues)}</span>
+                    <span>{formatNumber(variant.summary?.ordersCreated || 0, 0)} fills</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>
               {formatAppDateTime(run.window?.start)}
               {" -> "}
@@ -273,8 +357,10 @@ export const AccountScreen = ({
     sourceType: "all",
     from: "",
     to: "",
+    closeHour: null,
   });
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [selectedPatternLens, setSelectedPatternLens] = useState(emptyAccountPatternLens);
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
@@ -380,7 +466,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: Boolean(isVisible && accountRequestId),
+        enabled: accountQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -397,7 +483,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: Boolean(isVisible && accountRequestId && !shadowMode),
+        enabled: accountQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -414,7 +500,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: Boolean(isVisible && accountRequestId && !shadowMode),
+        enabled: accountQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -431,7 +517,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: Boolean(isVisible && accountRequestId && !shadowMode),
+        enabled: accountQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -514,12 +600,39 @@ export const AccountScreen = ({
       enabled: Boolean(isVisible && accountRequestId),
     },
   });
+  const tradingPatternsQuery = useGetAccountTradingPatterns(
+    accountRequestId,
+    {
+      range,
+      snapshotId: "latest",
+    },
+    {
+      query: {
+        ...equityHistoryQuerySettings,
+        refetchInterval: chartRefreshInterval,
+        enabled: Boolean(isVisible && shadowMode && accountRequestId),
+        placeholderData: (previousData) =>
+          previousData?.context?.range === range ? previousData : undefined,
+      },
+    },
+  );
+  const tradingPatternsSnapshotMutation = useCreateAccountTradingPatternsSnapshot({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          predicate: (query) =>
+            Array.isArray(query.queryKey) &&
+            String(query.queryKey[0] || "").includes("/api/accounts/shadow"),
+        });
+      },
+    },
+  });
   const shadowWatchlistBacktestMutation = useMutation({
     mutationFn: (payload = { timeframe: "15m" }) =>
       platformJsonRequest("/api/accounts/shadow/watchlist-backtest/runs", {
         method: "POST",
         body: payload,
-        timeoutMs: 120_000,
+        timeoutMs: payload?.sweep ? 600_000 : 120_000,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({
@@ -697,6 +810,8 @@ export const AccountScreen = ({
     setTradeFilters((current) => ({ ...current, ...patch }));
   };
   const handleTradeFilterReset = () => {
+    setSelectedPatternLens(emptyAccountPatternLens());
+    setSourceFilter("all");
     setTradeFilters({
       symbol: "",
       assetClass: "all",
@@ -704,7 +819,19 @@ export const AccountScreen = ({
       sourceType: "all",
       from: "",
       to: "",
+      closeHour: null,
     });
+  };
+  const handlePatternLensChange = (kind, input) => {
+    const lens = buildAccountPatternLens(kind, input);
+    setSelectedPatternLens(lens);
+    setTradeFilters((current) => applyPatternLensToTradeFilters(current, lens));
+    setSourceFilter(lens.sourceType || "all");
+  };
+  const handlePatternLensClear = () => {
+    setSelectedPatternLens(emptyAccountPatternLens());
+    setSourceFilter("all");
+    setTradeFilters((current) => clearPatternLensFromTradeFilters(current));
   };
   const accountSectionControl = (
     <div
@@ -764,8 +891,10 @@ export const AccountScreen = ({
       className="ra-panel-enter"
       style={{
         flex: 1,
+        width: "100%",
         overflow: "auto",
         background: T.bg1,
+        minWidth: 0,
       }}
     >
       <div
@@ -872,6 +1001,77 @@ export const AccountScreen = ({
           }
           maskValues={maskAccountValues}
         />
+
+        {shadowMode ? (
+          <TradingPatternsPanel
+            query={tradingPatternsQuery}
+            snapshotMutation={tradingPatternsSnapshotMutation}
+            accountId={SHADOW_ACCOUNT_ID}
+            range={range}
+            currency={currency}
+            maskValues={maskAccountValues}
+            onSymbolSelect={(symbol) =>
+              setTradeFilters((current) => ({
+                ...current,
+                symbol,
+              }))
+            }
+            selectedLens={selectedPatternLens}
+            onLensChange={handlePatternLensChange}
+          />
+        ) : null}
+
+        {shadowMode && selectedPatternLens.kind !== "none" ? (
+          <div
+            data-testid="account-pattern-lens-strip"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(6),
+              flexWrap: "wrap",
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(5),
+              background: T.bg2,
+              padding: sp("5px 7px"),
+              color: T.textSec,
+              fontFamily: T.data,
+              fontSize: fs(8),
+            }}
+          >
+            <div style={{ display: "flex", gap: sp(4), alignItems: "center", flexWrap: "wrap" }}>
+              <Pill tone="pink">Lens</Pill>
+              <span style={{ color: T.text, fontWeight: 900 }}>
+                {selectedPatternLens.label}
+              </span>
+              {selectedPatternLens.closeHour ? (
+                <span style={{ color: T.textDim }}>
+                  Closed trades filtered by New York close hour.
+                </span>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              className="ra-interactive"
+              onClick={handlePatternLensClear}
+              style={{
+                border: `1px solid ${T.border}`,
+                borderRadius: dim(4),
+                background: "transparent",
+                color: T.textSec,
+                height: dim(20),
+                padding: sp("0 7px"),
+                fontFamily: T.data,
+                fontSize: fs(8),
+                fontWeight: 900,
+                cursor: "pointer",
+                textTransform: "uppercase",
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        ) : null}
 
         <div
           className="ra-panel-enter ra-account-detail-grid"

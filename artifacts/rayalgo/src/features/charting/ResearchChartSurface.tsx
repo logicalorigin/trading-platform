@@ -52,6 +52,7 @@ import {
   type UserPreferences,
 } from "../preferences/userPreferenceModel";
 import { useUserPreferences } from "../preferences/useUserPreferences";
+import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -1821,7 +1822,7 @@ const buildChartOptions = (
     background: { type: ColorType.Solid, color: theme.bg2 },
     textColor: theme.textMuted,
     fontFamily: theme.mono,
-    fontSize: compact ? 8 : 11,
+    fontSize: compact ? TYPE_PX.label : TYPE_PX.bodyStrong,
     attributionLogo: showAttributionLogo,
   },
   localization: {
@@ -5313,7 +5314,7 @@ export const ResearchChartSurface = ({
         background: { type: ColorType.Solid, color: theme.bg2 },
         textColor: theme.textMuted,
         fontFamily: theme.mono,
-        fontSize: compact ? 8 : 11,
+        fontSize: compact ? TYPE_PX.label : TYPE_PX.bodyStrong,
       },
       localization: {
         timeFormatter: (value: unknown) =>
@@ -7016,7 +7017,7 @@ export const ResearchChartSurface = ({
                 style={{
                   paddingRight: 2,
                   color: withAlpha(theme.textMuted, "8c"),
-                  fontSize: 9,
+                  fontSize: TYPE_CSS_VAR.label,
                   fontFamily: theme.mono,
                   letterSpacing: "0.14em",
                   textTransform: "uppercase",
@@ -7049,7 +7050,7 @@ export const ResearchChartSurface = ({
                         : withAlpha(theme.textMuted, "d2"),
                       borderRadius: 999,
                       padding: "4px 10px",
-                      fontSize: 10,
+                      fontSize: TYPE_CSS_VAR.body,
                       lineHeight: 1,
                       fontFamily: theme.mono,
                       letterSpacing: "0.03em",
@@ -7080,7 +7081,7 @@ export const ResearchChartSurface = ({
             borderRadius: 6,
             color: theme.textMuted,
             fontFamily: theme.mono,
-            fontSize: 11,
+            fontSize: TYPE_CSS_VAR.bodyStrong,
             background: withAlpha(theme.bg3, "80"),
           }}
         >
@@ -7326,7 +7327,7 @@ export const ResearchChartSurface = ({
                         position: "absolute",
                         top: 2,
                         left: 4,
-                        fontSize: 9,
+                        fontSize: TYPE_CSS_VAR.label,
                         fontFamily: theme.mono,
                         color: theme.amber,
                         opacity: 0.9,
@@ -7355,7 +7356,7 @@ export const ResearchChartSurface = ({
                         position: "absolute",
                         top: -14,
                         left: 0,
-                        fontSize: 9,
+                        fontSize: TYPE_CSS_VAR.label,
                         fontFamily: theme.mono,
                         color: overlay.color,
                         whiteSpace: "nowrap",
@@ -7503,7 +7504,7 @@ export const ResearchChartSurface = ({
                       border: `1px solid ${withAlpha(color, "dd")}`,
                       color,
                       fontFamily: theme.mono,
-                      fontSize: overlay.placement === "timescale" ? 9 : 8,
+                      fontSize: TYPE_CSS_VAR.label,
                       fontWeight: 900,
                       lineHeight: 1,
                       boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
@@ -7547,7 +7548,7 @@ export const ResearchChartSurface = ({
                   >
                     <div
                       style={{
-                        fontSize: 11,
+                        fontSize: TYPE_CSS_VAR.bodyStrong,
                         fontWeight: 800,
                         lineHeight: 1.2,
                       }}
@@ -7556,7 +7557,7 @@ export const ResearchChartSurface = ({
                     </div>
                     <div
                       style={{
-                        fontSize: 10,
+                        fontSize: TYPE_CSS_VAR.body,
                         fontFamily: theme.mono,
                         color: theme.amber,
                         whiteSpace: "nowrap",
@@ -7570,7 +7571,7 @@ export const ResearchChartSurface = ({
                       display: "grid",
                       gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                       gap: "6px 10px",
-                      fontSize: 10,
+                      fontSize: TYPE_CSS_VAR.body,
                       lineHeight: 1.25,
                     }}
                   >
@@ -7594,7 +7595,7 @@ export const ResearchChartSurface = ({
                   <div
                     style={{
                       marginTop: 8,
-                      fontSize: 10,
+                      fontSize: TYPE_CSS_VAR.body,
                       lineHeight: 1.35,
                       color: theme.text,
                       overflowWrap: "anywhere",
@@ -7614,7 +7615,7 @@ export const ResearchChartSurface = ({
                   >
                     <span
                       style={{
-                        fontSize: 9,
+                        fontSize: TYPE_CSS_VAR.label,
                         fontFamily: theme.mono,
                         color: theme.amber,
                       }}
@@ -7625,7 +7626,7 @@ export const ResearchChartSurface = ({
                       <span
                         key={tag}
                         style={{
-                          fontSize: 9,
+                          fontSize: TYPE_CSS_VAR.label,
                           fontFamily: theme.mono,
                           color: theme.text,
                           padding: "2px 5px",
@@ -7649,7 +7650,7 @@ export const ResearchChartSurface = ({
                           color: theme.text,
                           borderRadius: 6,
                           padding: "3px 7px",
-                          fontSize: 10,
+                          fontSize: TYPE_CSS_VAR.body,
                           fontFamily: theme.mono,
                           cursor: "pointer",
                         }}
@@ -7743,7 +7744,7 @@ export const ResearchChartSurface = ({
                           : isTriangle
                             ? overlay.background
                             : overlay.textColor,
-                        fontSize: isSignal ? 10 : isTriangle ? 12 : isSwing ? 10 : 9,
+                        fontSize: isTriangle ? TYPE_CSS_VAR.bodyStrong : isSignal || isSwing ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.label,
                         fontFamily: theme.mono,
                         fontWeight: isSwing ? 800 : 700,
                         whiteSpace: "nowrap",
@@ -7797,7 +7798,7 @@ export const ResearchChartSurface = ({
                       border: `1px solid ${badge.borderColor}`,
                       background: badge.color,
                       color: theme.text,
-                      fontSize: 10,
+                      fontSize: TYPE_CSS_VAR.body,
                       fontFamily: theme.mono,
                       fontWeight: 700,
                       whiteSpace: "nowrap",
@@ -7825,7 +7826,7 @@ export const ResearchChartSurface = ({
                     border: `1px solid ${target.borderColor}`,
                     background: target.color,
                     color: target.borderColor,
-                    fontSize: 10,
+                    fontSize: TYPE_CSS_VAR.body,
                     fontFamily: theme.mono,
                     fontWeight: 700,
                     display: "flex",
@@ -7878,7 +7879,7 @@ export const ResearchChartSurface = ({
                 marginBottom: 8,
                 color: withAlpha(theme.textMuted, "8c"),
                 fontFamily: theme.mono,
-                fontSize: 9,
+                fontSize: TYPE_CSS_VAR.label,
                 letterSpacing: "0.16em",
                 textTransform: "uppercase",
               }}
@@ -7889,7 +7890,7 @@ export const ResearchChartSurface = ({
               style={{
                 color: theme.text,
                 fontFamily: theme.mono,
-                fontSize: 12,
+                fontSize: TYPE_CSS_VAR.bodyStrong,
                 lineHeight: 1.5,
               }}
             >
@@ -7900,7 +7901,7 @@ export const ResearchChartSurface = ({
                 marginTop: 6,
                 color: theme.textMuted,
                 fontFamily: theme.mono,
-                fontSize: 10,
+                fontSize: TYPE_CSS_VAR.body,
                 lineHeight: 1.5,
               }}
             >
@@ -8041,7 +8042,7 @@ export const ResearchChartSurface = ({
             left: 8 + chartInsetLeft,
             right: 12,
             zIndex: 18,
-            fontSize: compact ? 10 : 11,
+            fontSize: compact ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.bodyStrong,
             fontFamily: theme.mono,
             color: theme.textMuted,
             display: "flex",
@@ -8229,7 +8230,7 @@ export const ResearchChartSurface = ({
             border: `1px solid ${withAlpha(theme.amber, "66")}`,
             borderRadius: 4,
             padding: "3px 8px",
-            fontSize: 11,
+            fontSize: TYPE_CSS_VAR.bodyStrong,
             fontFamily: theme.mono,
             color: theme.amber,
             pointerEvents: "none",
