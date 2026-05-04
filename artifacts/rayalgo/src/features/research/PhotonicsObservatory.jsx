@@ -27,8 +27,11 @@ import {
   formatAppDateForPreferences,
   formatAppTimeForPreferences,
 } from "../../lib/timeZone";
+import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import * as d3 from "d3";
 import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis, LabelList } from "recharts";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 let {
   AI_MACRO,
@@ -868,13 +871,13 @@ function StackedBar({ data, color, height = 18 }) {
         {data.map(([label, val], i) => {
           const pct = val / total * 100;
           return (
-            <div key={label + i} title={`${label}: ${pct.toFixed(1)}%`} style={{
+            <AppTooltip key={label + i} content={`${label}: ${pct.toFixed(1)}%`}><div key={label + i} style={{
               width: pct + "%", background: shade(color, i),
               display: "flex", alignItems: "center", justifyContent: "center",
               borderRight: i < data.length - 1 ? "1px solid rgba(255,255,255,.4)" : "none",
             }}>
               {pct > 10 && <span style={{ fontSize: 9, color: "#fff", fontWeight: 700, letterSpacing: 0.3 }}>{Math.round(pct)}%</span>}
-            </div>
+            </div></AppTooltip>
           );
         })}
       </div>
@@ -1003,7 +1006,7 @@ function KeyRatios({ ratios, co, color }) {
         const t = trend(r.k, r.invert);
         const trendValues = ratios.map(x => x[r.k]);
         return (
-          <div key={r.k} title={r.tip} style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 6, padding: "5px 7px" }}>
+          <AppTooltip key={r.k} content={r.tip}><div key={r.k} style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 6, padding: "5px 7px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
               <span style={{ fontSize: 9, color: "#999", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600 }}>{r.l}</span>
               {t && <span style={{ fontSize: 9, color: t.good ? "#1a8a5c" : "#c44040", fontWeight: 700 }}>{t.dir === "up" ? "▲" : "▼"}</span>}
@@ -1012,7 +1015,7 @@ function KeyRatios({ ratios, co, color }) {
               <span style={{ fontSize: 13, fontWeight: 700, color: "#222" }}>{r.fmt(latest[r.k])}</span>
               <TrendSpark values={trendValues} color={color} width={40} height={16} suffix="" />
             </div>
-          </div>
+          </div></AppTooltip>
         );
       })}
     </div>
@@ -1243,9 +1246,9 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
     // Tighter price formatting: 2 decimals always; prices >$1000 show no decimals
     const priceStr = d.price >= 1000 ? "$" + d.price.toFixed(0) : "$" + d.price.toFixed(2);
     return (
-      <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.1)", borderRadius: 6, padding: "6px 10px", boxShadow: "0 4px 12px rgba(0,0,0,.08)" }}>
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 2 }}>{dateLabel}</div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#111", fontVariantNumeric: "tabular-nums" }}>{priceStr}</div>
+      <div style={{ ...chartTooltipContentStyle, padding: "6px 10px" }}>
+        <div style={{ fontSize: 10, color: "var(--ra-tooltip-muted)", marginBottom: 2 }}>{dateLabel}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ra-tooltip-text)", fontVariantNumeric: "tabular-nums" }}>{priceStr}</div>
         <div style={{ fontSize: 10, color: chgColor, fontWeight: 600, marginTop: 1, fontVariantNumeric: "tabular-nums" }}>
           {chg >= 0 ? "+" : ""}{chg.toFixed(2)}% vs {pricePeriod} start
         </div>
@@ -1295,10 +1298,10 @@ function PriceChart({ co, vc, price, wkLow, wkHigh }) {
             : histStatus === "nodata" ? { label: "NO BROKER DATA", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#888" }
             : { label: "WAITING", bg: "rgba(0,0,0,.04)", fg: "#888", dot: "#aaa" };
           return (
-            <span title={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 10, background: pill.bg, fontSize: 9, fontWeight: 700, color: pill.fg, letterSpacing: 0.5 }}>
+            <AppTooltip content={histStatus === "live" ? `${histSourceLabel} ${histInterval} price history via broker connectivity` : "Broker history is unavailable for this symbol and period."}><span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 10, background: pill.bg, fontSize: 9, fontWeight: 700, color: pill.fg, letterSpacing: 0.5 }}>
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: pill.dot, animation: pill.pulse ? "pulse 1.8s ease-in-out infinite" : "none" }} />
               {pill.label}
-            </span>
+            </span></AppTooltip>
           );
         })()}
         <span style={{ marginLeft: "auto", fontSize: 10, color: "#999", fontVariantNumeric: "tabular-nums" }}>
@@ -1438,7 +1441,7 @@ function PeerTable({ co, liveData, liveHist = {}, apiKey, onSelect, accent }) {
 
   // Live-data indicator — tiny dot that signals the cell is sourced from live API (not authored fallback)
   const Dot = ({ live }) => (
-    <span title={live ? "Live" : "Authored fallback"} style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: live ? "#1a8a5c" : "rgba(0,0,0,.12)", marginLeft: 4, verticalAlign: "middle" }} />
+    <AppTooltip content={live ? "Live" : "Authored fallback"}><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: live ? "#1a8a5c" : "rgba(0,0,0,.12)", marginLeft: 4, verticalAlign: "middle" }} /></AppTooltip>
   );
 
   return (
@@ -2011,7 +2014,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
               <span style={{ fontSize: 11, color: "#999" }}>{l}</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                 <span style={{ fontSize: 11, color: "#333", fontWeight: 600 }}>{v}</span>
-                {isLive && <span title="Live from FMP" style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: "#1a8a5c" }} />}
+                {isLive && <AppTooltip content="Live from FMP"><span style={{ display: "inline-block", width: 4, height: 4, borderRadius: 2, background: "#1a8a5c" }} /></AppTooltip>}
               </span>
             </div>
           ))}
@@ -2077,7 +2080,7 @@ function OverviewTab({ co, vc, price, apiKey, wkLow, wkHigh, live, focalFund, da
             <BarChart data={fd.years.map((y, i) => ({ year: y, rev: fd.revs[i] }))} margin={{ top: 5, right: 5, bottom: 5, left: -10 }}>
               <XAxis dataKey="year" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#e0e0e0" }} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: "#aaa" }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 6, fontSize: 11 }} formatter={(v) => [fmtMC(v), "Revenue"]} />
+              <Tooltip contentStyle={chartTooltipContentStyle} formatter={(v) => [fmtMC(v), "Revenue"]} />
               <Bar dataKey="rev" fill={vc.c} radius={[4, 4, 0, 0]} barSize={28} fillOpacity={0.7}>
                 {fd.years.map((y, i) => <Cell key={i} fill={y.includes("E") ? vc.c + "88" : vc.c} />)}
               </Bar>
@@ -2253,7 +2256,7 @@ function DetailFinancialsTab({ co, vc, fd, scenarioAdj }) {
 	                <BarChart data={fd.qEPS} margin={{ top: 6, right: 8, bottom: 5, left: -10 }}>
 	                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#999" }} axisLine={{ stroke: "#e0e0e0" }} tickLine={false} />
 	                  <YAxis tick={{ fontSize: 10, fill: "#aaa" }} axisLine={false} tickLine={false} tickFormatter={v => "$" + v.toFixed(2)} width={40} />
-	                  <Tooltip contentStyle={{ background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 6, fontSize: 11 }}
+	                  <Tooltip contentStyle={chartTooltipContentStyle}
 	                    formatter={(v, name) => [isFiniteNumber(v) ? "$" + v.toFixed(2) : "—", name]} />
 	                  <Bar dataKey="estimate" fill="#e8e8e8" radius={[2, 2, 0, 0]} barSize={10} name="Est" />
 	                  <Bar dataKey="actual" radius={[2, 2, 0, 0]} barSize={10} name="Actual">
@@ -2429,9 +2432,8 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
 
           {/* Export actions */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-            <button
+            <AppTooltip content="Open this symbol on the Trade tab"><button
               onClick={() => onJumpToTrade && onJumpToTrade(co.t)}
-              title="Open this symbol on the Trade tab"
               style={{
                 background: "#fff",
                 border: "1px solid rgba(0,0,0,.08)",
@@ -2448,8 +2450,8 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
             >
               <span>↗</span>
               <span>Open in Trade</span>
-            </button>
-            <button
+            </button></AppTooltip>
+            <AppTooltip content="Copy this company as memo-ready markdown"><button
               onClick={() => {
                 const md = companyToMarkdown(co, { live, focalFund, fd, price, dailyPct, wkLow, wkHigh });
                 if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2476,7 +2478,6 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
                   }
                 }
               }}
-              title="Copy this company as memo-ready markdown"
               style={{
                 background: copyStatus === "copied" ? "rgba(26,138,92,.12)" : copyStatus === "error" ? "rgba(196,64,64,.12)" : "#fff",
                 border: `1px solid ${copyStatus === "copied" ? "rgba(26,138,92,.35)" : copyStatus === "error" ? "rgba(196,64,64,.35)" : "rgba(0,0,0,.08)"}`,
@@ -2495,7 +2496,7 @@ function Detail({ co, onClose, onSelect, liveData = {}, liveHist = {}, apiKey, o
               ) : (
                 <><span>📋</span><span>Copy as Markdown</span></>
               )}
-            </button>
+            </button></AppTooltip>
           </div>
 
         </div>
@@ -3051,14 +3052,15 @@ function ValueStreamSankey({ theme, onSelect, liveData = {} }) {
                     <div style={{
                       position: "absolute", left: Math.min(Math.max(8, ax/W*100), 72)+"%",
                       top: Math.max(0, ay/H*100 - 8)+"%",
-                      background: "#fff", border: "1px solid " + (BRAND[hoverTicker]||["#888"])[0] + "44",
-                      borderRadius: 8, padding: "5px 8px", pointerEvents: "none",
-                      boxShadow: "0 4px 16px rgba(0,0,0,.12)", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                      ...chartTooltipContentStyle,
+                      border: "1px solid var(--ra-tooltip-border)",
+                      padding: "5px 8px", pointerEvents: "none",
+                      display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
                     }}>
                       <Logo ticker={hoverTicker} size={20} />
                       <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>{co.cc} {hoverTicker}</div>
-                        <div style={{ fontSize: 10, color: "#888" }}>{fmtPrice(price)} · {fmtMC(co.r)} rev</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--ra-tooltip-text)" }}>{co.cc} {hoverTicker}</div>
+                        <div style={{ fontSize: 10, color: "var(--ra-tooltip-muted)" }}>{fmtPrice(price)} · {fmtMC(co.r)} rev</div>
                       </div>
                     </div>
                   );
@@ -3449,11 +3451,11 @@ function MarketSummary({ onFilterVertical, onSelect, theme, liveData = {}, liveF
                 if (!payload?.[0]) return null;
                 const d = payload[0].payload;
                 return (
-                  <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.08)", borderRadius: 6, padding: "5px 7px", fontSize: 10 }}>
+                  <div style={{ ...chartTooltipContentStyle, padding: "5px 7px", fontSize: 10 }}>
                     <div style={{ fontWeight: 700, color: d.color, display: "flex", alignItems: "center", gap: 4 }}>
-                      <Logo ticker={d.name} size={14} />{d.cc} ${d.name} <span style={{ fontWeight: 400, color: "#999", fontSize: 10 }}>{d.v}</span>
+                      <Logo ticker={d.name} size={14} />{d.cc} ${d.name} <span style={{ fontWeight: 400, color: "var(--ra-tooltip-muted)", fontSize: 10 }}>{d.v}</span>
                     </div>
-                    <div style={{ color: "#555" }}>P/E: {d.pe}x &middot; Growth: {d.growth > 0 ? "+" : ""}{d.growth}% &middot; {fmtMC(d.mc)}</div>
+                    <div style={{ color: "var(--ra-tooltip-text)" }}>P/E: {d.pe}x &middot; Growth: {d.growth > 0 ? "+" : ""}{d.growth}% &middot; {fmtMC(d.mc)}</div>
                   </div>
                 );
               }} />
@@ -3565,7 +3567,7 @@ function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
           color: colorMode === id ? "#333" : "#aaa", fontWeight: 600,
         }}>{lb}</button>
       ))}
-      <button
+      <AppTooltip content="Unpin all nodes and reset to authored layout"><button
         onClick={(e) => {
           e.stopPropagation();
           // Unpin all dragged nodes and re-settle
@@ -3575,12 +3577,11 @@ function GraphToolbar({ colorMode, setColorMode, nodesRef, simRef }) {
             setTimeout(() => simRef.current && simRef.current.alphaTarget(0), 100);
           }
         }}
-        title="Unpin all nodes and reset to authored layout"
         style={{
           background: "transparent", border: "1px solid rgba(0,0,0,.08)", borderRadius: 4,
           padding: "1px 6px", fontSize: 10, cursor: "pointer", marginLeft: 6,
           color: "#888", fontWeight: 600,
-        }}>⟲ Reset</button>
+        }}>⟲ Reset</button></AppTooltip>
     </div>
   );
 }
@@ -4006,9 +4007,9 @@ function Graph({ cos, sel, onSel, vFilter, searchQuery, theme, liveData = {}, li
 
       {/* Hover tooltip */}
       <div ref={tipRef} style={{
-        display: "none", position: "absolute", background: "#fff", border: "1px solid rgba(0,0,0,.1)",
-        borderRadius: 10, padding: "10px 12px", pointerEvents: "none", zIndex: 10,
-        boxShadow: "0 6px 20px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06)",
+        ...chartTooltipContentStyle,
+        display: "none", position: "absolute",
+        padding: "10px 12px", pointerEvents: "none", zIndex: 10,
         maxWidth: 220, minWidth: 160,
       }} />
       {/* Legend */}
@@ -4496,7 +4497,7 @@ export default function PhotonicsObservatory({
   const subs = vf ? (currentTheme.verticals[vf]?.subs || []) : [];
 
   return (
-    <div data-testid="research-screen" className="photonics-research-root ra-panel-enter" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
+    <div data-testid="research-screen" className="photonics-research-root" style={{ background: "#ffffff", height: "100%", minHeight: 0, overflowY: "auto", color: "#222", backgroundImage: "radial-gradient(circle at 20% 50%, rgba(205,162,78,.02) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(94,148,232,.015) 0%, transparent 50%)" }}>
       <style>{`
         .photonics-research-root, .photonics-research-root * { box-sizing: border-box; margin: 0; padding: 0; }
         .photonics-research-root { font-family: var(--ra-font-sans); }
@@ -4569,10 +4570,9 @@ export default function PhotonicsObservatory({
                 color: dataStatus === "live" ? "#1a8a5c" : dataStatus === "loading" ? "#b8860b" : "#aaa",
               }}>{dataStatus === "live" ? "\u25CF LIVE" : dataStatus === "loading" ? "LOADING..." : "STATIC"}</span>
               {prefetchProgress.total > 0 && (
-                <span
-                  title={prefetchProgress.active
+                <AppTooltip content={prefetchProgress.active
                     ? `Prefetching TTM fundamentals: ${prefetchProgress.done}/${prefetchProgress.total} done`
-                    : `Fundamentals prefetch complete: ${prefetchProgress.done} companies refreshed`}
+                    : `Fundamentals prefetch complete: ${prefetchProgress.done} companies refreshed`}><span
                   style={{
                     fontSize: 10, padding: "1px 5px", borderRadius: 3, fontWeight: 600, marginLeft: 4,
                     background: prefetchProgress.active ? "rgba(94,148,232,.12)" : "rgba(26,138,92,.08)",
@@ -4581,13 +4581,12 @@ export default function PhotonicsObservatory({
                   {prefetchProgress.active
                     ? `\u29BF ${prefetchProgress.done}/${prefetchProgress.total}`
                     : `\u2713 ${prefetchProgress.done} TTM`}
-                </span>
+                </span></AppTooltip>
               )}
               {histPrefetchProgress.total > 0 && (
-                <span
-                  title={histPrefetchProgress.active
+                <AppTooltip content={histPrefetchProgress.active
                     ? `Prefetching intraday 1-hour bars: ${histPrefetchProgress.done}/${histPrefetchProgress.total} done`
-                    : `Intraday history prefetch complete: ${histPrefetchProgress.done} companies with 1H bars cached`}
+                    : `Intraday history prefetch complete: ${histPrefetchProgress.done} companies with 1H bars cached`}><span
                   style={{
                     fontSize: 10, padding: "1px 5px", borderRadius: 3, fontWeight: 600, marginLeft: 4,
                     background: histPrefetchProgress.active ? "rgba(142,68,173,.12)" : "rgba(26,138,92,.08)",
@@ -4596,7 +4595,7 @@ export default function PhotonicsObservatory({
                   {histPrefetchProgress.active
                     ? `\u29BF ${histPrefetchProgress.done}/${histPrefetchProgress.total} 1H`
                     : `\u2713 ${histPrefetchProgress.done} 1H`}
-                </span>
+                </span></AppTooltip>
               )}
               <button onClick={() => setShowSettings(s => !s)} style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 5, padding: "1px 6px", fontSize: 11, cursor: "pointer", color: "#888", marginLeft: 2 }}>\u2699</button>
             </div>

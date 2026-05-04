@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { ChartEvent } from "./chartEvents";
 import {
@@ -28,10 +29,14 @@ import {
   resolveSeriesTailUpdateMode,
   resolveZoomedVisibleRange,
   sanitizeStoredChartScalePrefs,
+  shouldApplyProgrammaticRangeSync,
   shouldAutoFollowLatestBars,
   writeStoredChartViewportSnapshot,
   resolveVisibleRangeSyncAction,
 } from "./ResearchChartSurface";
+
+const readResearchChartSurfaceSource = () =>
+  readFileSync(new URL("./ResearchChartSurface.tsx", import.meta.url), "utf8");
 
 const dashboardFixture = {
   id: "dashboard-1",
@@ -77,6 +82,18 @@ test("ResearchChartSurface keeps UOA chart events visible when execution markers
     }),
     [unusualFlowChartEvent],
   );
+});
+
+test("ResearchChartSurface publishes controlled viewport after prepending older bars", () => {
+  const source = readResearchChartSurfaceSource();
+  const prependAdjustment = source.match(
+    /const prependCount = model\.chartBars\.findIndex\([\s\S]*?previousFirstChartBarTimeRef\.current = nextFirstChartBarTime;/,
+  )?.[0];
+
+  assert.ok(prependAdjustment, "prepend adjustment effect must be present");
+  assert.match(prependAdjustment, /adjustedVisibleRange/);
+  assert.match(prependAdjustment, /visibleRangeChangeRef\.current\?\./);
+  assert.match(prependAdjustment, /publishViewportSnapshot/);
 });
 
 test("ResearchChartSurface clamps overlay rectangles inside the plot viewport", () => {
@@ -992,6 +1009,41 @@ test("ResearchChartSurface only follows latest bars while realtime follow is act
       visibleRange: { from: 40, to: 70 },
       previousBarCount: 100,
       nextBarCount: 101,
+    }),
+    false,
+  );
+});
+
+test("ResearchChartSurface defers programmatic range sync during active user gestures", () => {
+  assert.equal(
+    shouldApplyProgrammaticRangeSync({
+      interactionActive: false,
+      realtimeFollow: false,
+      followLatestBars: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldApplyProgrammaticRangeSync({
+      interactionActive: true,
+      realtimeFollow: false,
+      followLatestBars: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyProgrammaticRangeSync({
+      interactionActive: true,
+      realtimeFollow: true,
+      followLatestBars: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyProgrammaticRangeSync({
+      interactionActive: true,
+      realtimeFollow: true,
+      followLatestBars: false,
     }),
     false,
   );

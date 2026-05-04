@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const port = Number(process.env.PLAYWRIGHT_PORT || 18747);
 const baseURL = `http://127.0.0.1:${port}`;
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?.trim();
+const workers = Number(process.env.PLAYWRIGHT_WORKERS || 1);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -11,6 +12,7 @@ export default defineConfig({
     timeout: 10_000,
   },
   fullyParallel: true,
+  workers: Number.isFinite(workers) && workers > 0 ? workers : 1,
   retries: 0,
   reporter: [["list"]],
   use: {

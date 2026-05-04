@@ -150,6 +150,8 @@ import {
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 
 import { PayoffDiagram } from "./PayoffDiagram.jsx";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 export const TradeOrderTicket = ({
   slot,
   chainRows = [],
@@ -1778,7 +1780,7 @@ export const TradeOrderTicket = ({
                 >
                   {row.label.toUpperCase()}
                 </div>
-                <div
+                <AppTooltip content={`Plan: ${row.planned} / Current: ${row.current}`}><div
                   style={{
                     color: T.text,
                     fontFamily: T.mono,
@@ -1788,10 +1790,9 @@ export const TradeOrderTicket = ({
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
-                  title={`Plan: ${row.planned} / Current: ${row.current}`}
                 >
                   {row.planned} / {row.current}
-                </div>
+                </div></AppTooltip>
               </div>
             ))}
           </div>

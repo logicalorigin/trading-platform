@@ -37,6 +37,10 @@ test("account pattern lens clears only pattern-owned filters", () => {
   const filters = clearPatternLensFromTradeFilters({
     symbol: "SQQQ",
     sourceType: "manual",
+    side: "sell",
+    holdDuration: "intraday",
+    strategy: "Signal Bot",
+    feeDrag: "high",
     pnlSign: "losers",
     closeHour: "10",
     assetClass: "ETF",
@@ -46,11 +50,39 @@ test("account pattern lens clears only pattern-owned filters", () => {
   assert.deepEqual(filters, {
     symbol: "",
     sourceType: "all",
+    side: "all",
+    holdDuration: "all",
+    strategy: "all",
+    feeDrag: "all",
     pnlSign: "all",
     closeHour: null,
     assetClass: "ETF",
     from: "2026-01-01",
   });
+});
+
+test("account pattern lens maps extended account drilldowns", () => {
+  const holdLens = buildAccountPatternLens("holdDuration", {
+    holdDuration: "intraday-fast",
+  });
+  const strategyLens = buildAccountPatternLens("strategy", {
+    strategy: "Signal Bot",
+  });
+  const feeLens = buildAccountPatternLens("feeDrag", { feeDrag: "high" });
+  const assetLens = buildAccountPatternLens("assetClass", { assetClass: "Options" });
+
+  assert.equal(holdLens.label, "Hold <= 30m");
+  assert.equal(strategyLens.label, "Strategy Signal Bot");
+  assert.equal(feeLens.label, "High fee drag");
+  assert.equal(assetLens.label, "Asset Options");
+
+  const filters = applyPatternLensToTradeFilters({}, holdLens);
+  assert.equal(filters.holdDuration, "intraday-fast");
+
+  assert.equal(
+    clearPatternLensFromTradeFilters({ assetClass: "Options" }, assetLens).assetClass,
+    "all",
+  );
 });
 
 test("close-hour pattern matching uses New York market time", () => {

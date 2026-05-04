@@ -79,6 +79,7 @@ import {
 import {
   buildMarketBarsPageQueryKey as buildBarsPageQueryKey,
   normalizeMiniChartStudies,
+  resolveMarketGridChartProviderContractId,
 } from "./marketGridChartState";
 import {
   normalizeChartBarsPagePayload,
@@ -124,6 +125,8 @@ const MARKET_CHART_PLOT_FOCUS_MOVE_TOLERANCE = 6;
 
 
 import { MiniChartPremiumFlowIndicator } from "./MiniChartPremiumFlowIndicator.jsx";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 export const MiniChartCell = ({
   slot,
@@ -164,7 +167,8 @@ export const MiniChartCell = ({
     useIndicatorLibrary();
   const ticker = slot?.ticker || WATCHLIST[0]?.sym || "SPY";
   const signalState = useSignalMonitorStateForSymbol(ticker);
-  const slotMarket = slot?.market || "stocks";
+  const slotMarket = String(slot?.market || "stocks").trim() || "stocks";
+  const chartProviderContractId = resolveMarketGridChartProviderContractId(slot);
   const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
   const tf = MINI_CHART_TIMEFRAMES.includes(hydratedTimeframe)
     ? hydratedTimeframe
@@ -188,6 +192,7 @@ export const MiniChartCell = ({
     (open) => onTickerSearchOpenChange?.(Boolean(open)),
     [onTickerSearchOpenChange],
   );
+  const [pendingTickerSelection, setPendingTickerSelection] = useState(null);
   const [drawMode, setDrawMode] = useState(null);
   const [plotViewportUserTouched, setPlotViewportUserTouched] = useState(false);
   const suppressNextFrameClickRef = useRef(false);
@@ -231,13 +236,13 @@ export const MiniChartCell = ({
     "market-mini-bars",
     ticker,
     slotMarket,
-    slot?.providerContractId || null,
+    chartProviderContractId,
   );
   const baseBarsScopeKey = buildChartBarScopeKey(
     "market-mini-base-bars",
     ticker,
     slotMarket,
-    slot?.providerContractId || null,
+    chartProviderContractId,
     rollupBaseTimeframe,
   );
   const chartHydrationScopeKey = buildChartBarScopeKey(
@@ -245,7 +250,7 @@ export const MiniChartCell = ({
     ticker,
     normalizedTimeframe,
     slotMarket,
-    slot?.providerContractId || null,
+    chartProviderContractId,
   );
   useHydrationIntent({
     key: chartHydrationScopeKey,
@@ -277,7 +282,7 @@ export const MiniChartCell = ({
               rollupBaseTimeframe,
             ),
             slotMarket,
-            slot?.providerContractId || null,
+            chartProviderContractId,
           ],
           queryFn: () =>
             measureChartBarsRequest({
@@ -296,7 +301,7 @@ export const MiniChartCell = ({
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
                   allowHistoricalSynthesis: true,
-                  providerContractId: slot?.providerContractId || undefined,
+                  providerContractId: chartProviderContractId || undefined,
                 },
                 buildBarsRequestOptions(currentBarsPriority),
               ),
@@ -305,10 +310,10 @@ export const MiniChartCell = ({
         }),
       [
         chartHydrationScopeKey,
+        chartProviderContractId,
         normalizedTimeframe,
         queryClient,
         rollupBaseTimeframe,
-        slot?.providerContractId,
         slotMarket,
         tf,
         ticker,
@@ -332,7 +337,7 @@ export const MiniChartCell = ({
       rollupBaseTimeframe,
       baseRequestedLimit,
       slotMarket,
-      slot?.providerContractId || null,
+      chartProviderContractId,
     ],
     queryFn: () =>
       measureChartBarsRequest({
@@ -347,7 +352,7 @@ export const MiniChartCell = ({
             outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
             source: "trades",
             allowHistoricalSynthesis: true,
-            providerContractId: slot?.providerContractId || undefined,
+            providerContractId: chartProviderContractId || undefined,
           },
           buildBarsRequestOptions(currentBarsPriority),
         ),
@@ -387,11 +392,11 @@ export const MiniChartCell = ({
         queryKey: [
           "market-mini-bars",
           ticker,
-          favoriteBaseTimeframe,
-          favoriteLimit,
-          slotMarket,
-          slot?.providerContractId || null,
-        ],
+            favoriteBaseTimeframe,
+            favoriteLimit,
+            slotMarket,
+            chartProviderContractId,
+          ],
         queryFn: () =>
           measureChartBarsRequest({
             scopeKey: buildChartBarScopeKey(
@@ -399,7 +404,7 @@ export const MiniChartCell = ({
               ticker,
               favoriteTimeframe,
               slotMarket,
-              slot?.providerContractId || null,
+              chartProviderContractId,
             ),
             metric: "favoritePrewarmRequestMs",
             request: () =>
@@ -412,7 +417,7 @@ export const MiniChartCell = ({
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
                   allowHistoricalSynthesis: true,
-                  providerContractId: slot?.providerContractId || undefined,
+                  providerContractId: chartProviderContractId || undefined,
                 },
                 buildBarsRequestOptions(BARS_REQUEST_PRIORITY.favoritePrewarm),
               ),
@@ -422,9 +427,9 @@ export const MiniChartCell = ({
     },
     [
       chartLimitRole,
+      chartProviderContractId,
       normalizedTimeframe,
       queryClient,
-      slot?.providerContractId,
       slotMarket,
       ticker,
     ],
@@ -438,7 +443,7 @@ export const MiniChartCell = ({
       chartHydrationScopeKey,
       favoriteTimeframes.join(","),
       slotMarket,
-      slot?.providerContractId || "",
+      chartProviderContractId || "",
     ].join("::");
     if (prewarmedFavoriteTimeframesRef.current === prewarmKey) {
       return;
@@ -449,10 +454,10 @@ export const MiniChartCell = ({
   }, [
     barsQuery.data?.bars?.length,
     chartHydrationScopeKey,
+    chartProviderContractId,
     favoriteTimeframes,
     isActive,
     prewarmFavoriteTimeframe,
-    slot?.providerContractId,
     slotMarket,
   ]);
   const prependableBars = usePrependableHistoricalBars({
@@ -473,7 +478,7 @@ export const MiniChartCell = ({
             from: fromIso,
             to: toIso,
             market: slotMarket,
-            providerContractId: slot?.providerContractId || null,
+            providerContractId: chartProviderContractId,
             historyCursor: historyCursor || null,
             preferCursor: Boolean(historyCursor && preferCursor),
           }),
@@ -492,7 +497,7 @@ export const MiniChartCell = ({
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
                   allowHistoricalSynthesis: true,
-                  providerContractId: slot?.providerContractId || undefined,
+                  providerContractId: chartProviderContractId || undefined,
                   historyCursor: historyCursor || undefined,
                   preferCursor: historyCursor && preferCursor ? true : undefined,
                 },
@@ -509,10 +514,10 @@ export const MiniChartCell = ({
       },
       [
         chartHydrationScopeKey,
+        chartProviderContractId,
         currentBarsPriority,
         queryClient,
         rollupBaseTimeframe,
-        slot?.providerContractId,
         slotMarket,
         ticker,
       ],
@@ -556,7 +561,7 @@ export const MiniChartCell = ({
             outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
             source: "trades",
             allowHistoricalSynthesis: true,
-            providerContractId: slot?.providerContractId || undefined,
+            providerContractId: chartProviderContractId || undefined,
           },
           buildBarsRequestOptions(currentBarsPriority),
         ),
@@ -569,10 +574,10 @@ export const MiniChartCell = ({
   }, [
     baseRequestedLimit,
     chartHydrationScopeKey,
+    chartProviderContractId,
     currentBarsPriority,
     normalizedTimeframe,
     rollupBaseTimeframe,
-    slot?.providerContractId,
     slotMarket,
     ticker,
   ]);
@@ -586,7 +591,7 @@ export const MiniChartCell = ({
         normalizedTimeframe !== "1d" &&
         ["stocks", "etf", "otc"].includes(slotMarket),
     ),
-    providerContractId: slot?.providerContractId || null,
+    providerContractId: chartProviderContractId,
     outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
     source: "trades",
     instrumentationScope: chartHydrationScopeKey,
@@ -605,7 +610,7 @@ export const MiniChartCell = ({
   const displayPriceFallbackQuery = useDisplayChartPriceFallbackBars({
     symbol: ticker,
     market: slotMarket,
-    providerContractId: slot?.providerContractId || null,
+    providerContractId: chartProviderContractId,
     enabled: Boolean(ticker && !Number.isFinite(quote?.price)),
     scopeKey: chartHydrationScopeKey,
     priority: currentBarsPriority,
@@ -905,12 +910,9 @@ export const MiniChartCell = ({
   );
   const handleVisibleLogicalRangeChange = useCallback(
     (range) => {
-      if (!isActive) {
-        return;
-      }
       scheduleVisibleRangeExpansion(range);
     },
-    [isActive, scheduleVisibleRangeExpansion],
+    [scheduleVisibleRangeExpansion],
   );
   const rememberTicker = useCallback(
     (nextTickerOrRow) => {
@@ -925,6 +927,15 @@ export const MiniChartCell = ({
     },
     [onRememberTicker],
   );
+  useEffect(() => {
+    if (!pendingTickerSelection) {
+      return;
+    }
+    setSearchOpen(false);
+    rememberTicker(pendingTickerSelection.result);
+    onChangeTicker?.(pendingTickerSelection.ticker, pendingTickerSelection.result);
+    setPendingTickerSelection(null);
+  }, [onChangeTicker, pendingTickerSelection, rememberTicker, setSearchOpen]);
   const signalDirection = signalState?.currentSignalDirection;
   const hasSignalBorder =
     signalState?.fresh &&
@@ -1070,11 +1081,8 @@ export const MiniChartCell = ({
                       return;
                     }
                     ensureTradeTickerInfo(nextTicker, result?.name || nextTicker);
-                    rememberTicker(result);
-                    onChangeTicker?.(nextTicker, result);
-                    setSearchOpen(false);
+                    setPendingTickerSelection({ ticker: nextTicker, result });
                   }}
-                  onRememberTickerRow={rememberTicker}
                 />
               }
               dense={dense}
@@ -1104,9 +1112,8 @@ export const MiniChartCell = ({
                     gap: sp(dense ? 2 : 4),
                   }}
                 >
-                  <button
+                  <AppTooltip content="Reset chart view"><button
                     type="button"
-                    title="Reset chart view"
                     aria-label={`Reset ${ticker} chart view`}
                     data-testid="market-chart-reset-view"
                     onClick={(event) => {
@@ -1128,7 +1135,7 @@ export const MiniChartCell = ({
                     }}
                   >
                     RESET
-                  </button>
+                  </button></AppTooltip>
                   <RayReplicaSettingsMenu
                     theme={T}
                     settings={rayReplicaSettings}

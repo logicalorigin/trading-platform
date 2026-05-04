@@ -1,3 +1,4 @@
+import { AppTooltip } from "@/components/ui/tooltip";
 export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
   return (
     <div style={{ position: "relative", marginBottom: 14, paddingBottom: 10, borderBottom: "1px solid rgba(0,0,0,.05)" }}>
@@ -10,10 +11,9 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
           const active = tid === themeId;
           const unavailable = !t.available;
           return (
-            <button key={tid}
+            <AppTooltip key={tid} content={unavailable ? "Coming soon" : t.subtitle}><button key={tid}
               onClick={() => { if (t.available) setThemeId(tid); }}
               disabled={unavailable}
-              title={unavailable ? "Coming soon" : t.subtitle}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 5,
                 background: active ? "#fff" : unavailable ? "rgba(0,0,0,.015)" : t.meta ? "rgba(85,107,47,.04)" : "transparent",
@@ -28,7 +28,7 @@ export function ThemeSwitcher({ themeId, setThemeId, themes, themeOrder }) {
               <span style={{ fontSize: 11, color: active ? t.accent : unavailable ? "#ddd" : "#aaa" }}>{t.icon}</span>
               <span>{t.title.replace(/^The /, "")}</span>
               {unavailable && <span style={{ fontSize: 8, color: "#bbb", fontWeight: 600, marginLeft: 2 }}>soon</span>}
-            </button>
+            </button></AppTooltip>
           );
         })}
       </div>

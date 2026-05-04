@@ -15,6 +15,7 @@ export const PlatformScreenRouter = ({
   screen,
   sym,
   tradeSymPing,
+  marketSymPing,
   session,
   environment,
   accounts,
@@ -52,6 +53,7 @@ export const PlatformScreenRouter = ({
   const renderMarketScreen = () => (
     <MemoMarketScreen
       sym={sym}
+      marketSymPing={marketSymPing}
       onSymClick={onSelectSymbol}
       onChartFocus={onFocusMarketChart}
       symbols={watchlistSymbols}

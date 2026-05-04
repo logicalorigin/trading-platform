@@ -23,6 +23,8 @@ import {
   secondaryButtonStyle,
   toneForValue,
 } from "./accountUtils";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const SORT_OPTIONS = [
   { value: "realizedPnl", label: "P&L" },
@@ -65,6 +67,287 @@ const PatternMetric = ({ label, value, tone = T.text }) => (
     </div>
   </div>
 );
+
+const toneColor = (tone) =>
+  tone === "green"
+    ? T.green
+    : tone === "red"
+      ? T.red
+      : tone === "amber"
+        ? T.amber
+        : tone === "cyan"
+          ? T.cyan
+          : tone === "pink"
+            ? T.pink
+            : T.textSec;
+
+const AnalysisCard = ({
+  card,
+  currency,
+  maskValues,
+  onActivate,
+}) => {
+  if (!card) return null;
+  const color = toneColor(card.tone);
+  const disabled = card.disabled || !card.tradeId;
+  return (
+    <button
+      type="button"
+      className="ra-interactive"
+      disabled={disabled}
+      onClick={() => onActivate?.(card)}
+      style={{
+        border: `1px solid ${color}55`,
+        borderRadius: dim(5),
+        background: `${color}12`,
+        padding: sp("6px 7px"),
+        textAlign: "left",
+        display: "grid",
+        gap: sp(3),
+        color: T.textSec,
+        minWidth: 0,
+        opacity: disabled ? 0.76 : 1,
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: sp(6),
+          alignItems: "center",
+        }}
+      >
+        <span
+          style={{
+            color,
+            fontFamily: T.data,
+            fontWeight: 900,
+            fontSize: textSize("control"),
+            textTransform: "uppercase",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {card.label}
+        </span>
+        <span style={{ color: toneForValue(card.value), fontFamily: T.data, fontWeight: 900 }}>
+          {formatAccountMoney(card.value, currency, true, maskValues)}
+        </span>
+      </div>
+      <div style={{ fontSize: textSize("caption"), lineHeight: 1.3 }}>
+        {card.symbol ? `${card.symbol} · ` : ""}
+        {card.description}
+      </div>
+      {card.meta ? (
+        <div style={{ color: T.textDim, fontFamily: T.data, fontSize: textSize("label") }}>
+          {formatNumber(card.meta.count || 0, 0)} trades ·{" "}
+          {formatAccountPercent(card.meta.winRatePercent, 0, maskValues)}
+        </div>
+      ) : disabled ? (
+        <div style={{ color: T.textDim, fontFamily: T.data, fontSize: textSize("label") }}>
+          Waiting for ledger data
+        </div>
+      ) : null}
+    </button>
+  );
+};
+
+const readinessTone = (state) =>
+  state === "ready" ? T.green : state === "waiting" ? T.amber : T.textDim;
+
+const AnalysisReadinessStrip = ({ readiness = [] }) => {
+  const rows = arrayValue(readiness);
+  if (!rows.length) return null;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
+        gap: sp(4),
+      }}
+    >
+      {rows.map((row) => {
+        const color = readinessTone(row.state);
+        return (
+          <div
+            key={row.key}
+            style={{
+              border: `1px solid ${color}44`,
+              borderRadius: dim(4),
+              background: `${color}0f`,
+              padding: sp("4px 5px"),
+              display: "grid",
+              gap: sp(1),
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: sp(5),
+                minWidth: 0,
+              }}
+            >
+              <span style={{ ...mutedLabelStyle, color }}>{row.label}</span>
+              <span style={{ color, fontFamily: T.data, fontSize: textSize("label"), fontWeight: 900 }}>
+                {formatNumber(row.value || 0, 0)}
+              </span>
+            </div>
+            <div
+              style={{
+                color: T.textDim,
+                fontFamily: T.data,
+                fontSize: textSize("label"),
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {row.detail}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const lensInputForBucket = (group) => {
+  if (!group) return {};
+  if (group.kind === "side") return { side: group.key };
+  if (group.kind === "holdDuration") return { holdDuration: group.key };
+  if (group.kind === "feeDrag") return { feeDrag: group.key };
+  if (group.kind === "strategy") return { strategy: group.key, label: group.label };
+  if (group.kind === "assetClass") return { assetClass: group.key };
+  return {};
+};
+
+const lensMatchesBucket = (lens, group) => {
+  if (!lens || !group || lens.kind !== group.kind) return false;
+  if (group.kind === "side") return lens.side === group.key;
+  if (group.kind === "holdDuration") return lens.holdDuration === group.key;
+  if (group.kind === "feeDrag") return lens.feeDrag === group.key;
+  if (group.kind === "strategy") return lens.strategy === group.key;
+  if (group.kind === "assetClass") return lens.assetClass === group.key;
+  return false;
+};
+
+const BucketDrilldownStrip = ({
+  groups = [],
+  currency,
+  maskValues,
+  selectedLens,
+  onLensChange,
+}) => {
+  const rows = arrayValue(groups).filter((group) => group?.count).slice(0, 8);
+  if (!rows.length) return null;
+  return (
+    <div style={{ display: "grid", gap: sp(3) }}>
+      <div style={mutedLabelStyle}>BUCKET DRILLDOWN</div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gap: sp(4),
+        }}
+      >
+        {rows.map((group) => {
+          const active = lensMatchesBucket(selectedLens, group);
+          const pnlTone = toneForValue(group.realizedPnl);
+          return (
+            <button
+              type="button"
+              key={`${group.kind}:${group.key}`}
+              className="ra-interactive"
+              onClick={() => onLensChange?.(group.kind, lensInputForBucket(group))}
+              style={{
+                border: `1px solid ${active ? T.cyan : T.border}`,
+                borderRadius: dim(4),
+                background: active ? `${T.cyan}14` : T.bg0,
+                padding: sp("5px 6px"),
+                display: "grid",
+                gap: sp(2),
+                minWidth: 0,
+                textAlign: "left",
+                cursor: "pointer",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: sp(5),
+                  alignItems: "center",
+                  minWidth: 0,
+                }}
+              >
+                <span
+                  style={{
+                    color: active ? T.cyan : T.text,
+                    fontFamily: T.data,
+                    fontSize: textSize("control"),
+                    fontWeight: 900,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {group.label}
+                </span>
+                <span style={{ color: pnlTone, fontFamily: T.data, fontSize: textSize("label"), fontWeight: 900 }}>
+                  {formatAccountMoney(group.realizedPnl, currency, true, maskValues)}
+                </span>
+              </div>
+              <div style={{ color: T.textDim, fontFamily: T.data, fontSize: textSize("label") }}>
+                {formatNumber(group.count, 0)} trades ·{" "}
+                {formatAccountPercent(group.winRatePercent, 0, maskValues)}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const EMPTY_ANALYSIS_CARDS = [
+  {
+    key: "empty-best-winner",
+    label: "Best Winner",
+    description: "Waiting for closed trades",
+    value: null,
+    tone: "green",
+    disabled: true,
+  },
+  {
+    key: "empty-worst-loss",
+    label: "Worst Loss",
+    description: "Waiting for closed trades",
+    value: null,
+    tone: "red",
+    disabled: true,
+  },
+  {
+    key: "empty-fee-drag",
+    label: "Fee Drag",
+    description: "Waiting for commissions",
+    value: null,
+    tone: "amber",
+    disabled: true,
+  },
+  {
+    key: "empty-weak-bucket",
+    label: "Weak Bucket",
+    description: "Waiting for repeat patterns",
+    value: null,
+    tone: "cyan",
+    disabled: true,
+  },
+];
 
 const PatternTooltip = ({ active, payload, currency, maskValues }) => {
   if (!active || !payload?.length) return null;
@@ -189,6 +472,8 @@ export const TradingPatternsPanel = ({
   onSymbolSelect,
   selectedLens,
   onLensChange,
+  analysis,
+  onTradeSelect,
 }) => {
   const [sortKey, setSortKey] = useState("realizedPnl");
   const packet = query.data || {};
@@ -227,11 +512,43 @@ export const TradingPatternsPanel = ({
     onSymbolSelect?.(symbol);
     onLensChange?.("symbol", { symbol });
   };
+  const activateAnalysisCard = (card) => {
+    if (card?.disabled) return;
+    if (card?.lens?.kind) {
+      onLensChange?.(card.lens.kind, card.lens.input || {});
+    }
+    if (card?.tradeId) {
+      onTradeSelect?.(card.tradeId);
+    }
+  };
+  const representativeCards = arrayValue(analysis?.representativeTrades).slice(0, 4);
+  const issueCards = arrayValue(analysis?.issueCards).slice(0, 5);
+  const analysisCards = representativeCards.length || issueCards.length
+    ? [...representativeCards, ...issueCards]
+    : EMPTY_ANALYSIS_CARDS;
+  const readinessRows = arrayValue(analysis?.readiness);
+  const drilldownGroups = [
+    ...arrayValue(analysis?.bucketGroups?.side),
+    ...arrayValue(analysis?.bucketGroups?.holdDuration),
+    ...arrayValue(analysis?.bucketGroups?.feeDrag),
+    ...arrayValue(analysis?.bucketGroups?.strategy),
+  ]
+    .filter((group) => group?.key && group.key !== "unknown")
+    .sort((left, right) => Math.abs(right.realizedPnl || 0) - Math.abs(left.realizedPnl || 0));
+  const panelEmptyBody = snapshotMutation
+    ? "Persist or refresh a Shadow analysis snapshot after trades or a watchlist backtest."
+    : "Closed trades will populate account trading analysis once Flex or broker history is available.";
 
   return (
     <Panel
-      title="Trading Patterns"
-      rightRail={snapshot.persisted ? `Snapshot ${formatAppDateTime(snapshot.createdAt)}` : "Live packet"}
+      title="Trading Analysis"
+      rightRail={
+        loading
+          ? "Loading analysis packet"
+          : snapshot.persisted
+          ? `Snapshot ${formatAppDateTime(snapshot.createdAt)}`
+          : `Live packet · ${formatNumber(summary.closedTrades || summary.count || 0, 0)} closed trades`
+      }
       loading={loading}
       error={query.error || snapshotMutation?.error}
       onRetry={query.refetch}
@@ -263,35 +580,59 @@ export const TradingPatternsPanel = ({
           >
             Losers
           </button>
-          <button
-            type="button"
-            className="ra-interactive"
-            disabled={refreshing}
-            onClick={() =>
-              snapshotMutation?.mutate({
-                accountId,
-                data: { range },
-              })
-            }
-            style={{
-              ...secondaryButtonStyle,
-              color: refreshing ? T.textMuted : T.pink,
-              borderColor: refreshing ? T.border : T.pink,
-              cursor: refreshing ? "wait" : "pointer",
-            }}
-          >
-            {refreshing ? "Refreshing" : "Snapshot"}
-          </button>
+          {snapshotMutation ? (
+            <button
+              type="button"
+              className="ra-interactive"
+              disabled={refreshing}
+              onClick={() =>
+                snapshotMutation.mutate({
+                  accountId,
+                  data: { range },
+                })
+              }
+              style={{
+                ...secondaryButtonStyle,
+                color: refreshing ? T.textMuted : T.pink,
+                borderColor: refreshing ? T.border : T.pink,
+                cursor: refreshing ? "wait" : "pointer",
+              }}
+            >
+              {refreshing ? "Refreshing" : "Snapshot"}
+            </button>
+          ) : null}
         </div>
       }
     >
-      {!loading && !tickerRows.length ? (
-        <EmptyState
-          title="No Shadow pattern packet"
-          body="Persist or refresh a Shadow analysis snapshot after trades or a watchlist backtest."
+      <div style={{ display: "grid", gap: sp(7) }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+            gap: sp(5),
+          }}
+        >
+          {analysisCards.map((card) => (
+            <AnalysisCard
+              key={card.key}
+              card={card}
+              currency={currency}
+              maskValues={maskValues}
+              onActivate={activateAnalysisCard}
+            />
+          ))}
+        </div>
+
+        <AnalysisReadinessStrip readiness={readinessRows} />
+
+        <BucketDrilldownStrip
+          groups={drilldownGroups}
+          currency={currency}
+          maskValues={maskValues}
+          selectedLens={selectedLens}
+          onLensChange={onLensChange}
         />
-      ) : (
-        <div style={{ display: "grid", gap: sp(7) }}>
+
           <div
             style={{
               display: "grid",
@@ -329,6 +670,21 @@ export const TradingPatternsPanel = ({
             />
           </div>
 
+        {!tickerRows.length ? (
+          <div
+            style={{
+              border: `1px dashed ${T.border}`,
+              borderRadius: dim(5),
+              background: T.bg0,
+              padding: sp(10),
+            }}
+          >
+            <EmptyState
+              title="No trading analysis yet"
+              body={panelEmptyBody}
+            />
+          </div>
+        ) : (
           <div
             style={{
               display: "grid",
@@ -433,12 +789,11 @@ export const TradingPatternsPanel = ({
                 <div style={mutedLabelStyle}>CLOSE HOUR HEAT</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: sp(2) }}>
                   {hourRows.map((row) => (
-                    <button
+                    <AppTooltip key={row.hour} content={`${row.hour}:00 ${formatAccountMoney(row.realizedPnl, currency, true, maskValues)}`}><button
                       type="button"
                       key={row.hour}
                       onClick={() => onLensChange?.("hour", row)}
                       className="ra-interactive"
-                      title={`${row.hour}:00 ${formatAccountMoney(row.realizedPnl, currency, true, maskValues)}`}
                       style={{
                         minHeight: dim(22),
                         border: `1px solid ${
@@ -465,7 +820,7 @@ export const TradingPatternsPanel = ({
                       }}
                     >
                       {row.hour}
-                    </button>
+                    </button></AppTooltip>
                   ))}
                 </div>
               </div>
@@ -500,8 +855,8 @@ export const TradingPatternsPanel = ({
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </Panel>
   );
 };

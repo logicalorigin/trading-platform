@@ -50,6 +50,8 @@ import {
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
 import { platformJsonRequest } from "./platformJsonRequest";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const ET_CLOCK_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -548,9 +550,8 @@ const HeaderMarketDataLineBadge = ({ lineUsage }) => {
   const tone = totalRow?.tone || T.textSec;
 
   return (
-    <span
+    <AppTooltip content={`Market data lines ${lineUsage.summary}`}><span
       data-testid="header-market-data-line-usage"
-      title={`Market data lines ${lineUsage.summary}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -569,7 +570,7 @@ const HeaderMarketDataLineBadge = ({ lineUsage }) => {
     >
       <span style={{ color: T.textMuted }}>LINES</span>
       <span>{lineUsage.summary}</span>
-    </span>
+    </span></AppTooltip>
   );
 };
 
@@ -1224,9 +1225,8 @@ export const HeaderStatusCluster = ({
                   {bridgeTone.label.toUpperCase()}
                 </span>
               </div>
-              <button
+              <AppTooltip content="Close"><button
                 type="button"
-                title="Close"
                 onClick={() => setBridgePopoverOpen(false)}
                 style={{
                   width: dim(24),
@@ -1241,7 +1241,7 @@ export const HeaderStatusCluster = ({
                 }}
               >
                 <X size={dim(13)} strokeWidth={2.2} />
-              </button>
+              </button></AppTooltip>
             </div>
 
             <div
@@ -1353,8 +1353,7 @@ export const HeaderStatusCluster = ({
         ) : null}
       </div>
 
-      <div
-        title={`${marketClock.dateLabel} · ${marketClock.label}`}
+      <AppTooltip content={`${marketClock.dateLabel} · ${marketClock.label}`}><div
         style={{
           ...surfaceStyle,
           flexDirection: "column",
@@ -1406,14 +1405,13 @@ export const HeaderStatusCluster = ({
         >
           {marketClock.label.toUpperCase()} {marketClock.timerLabel}
         </div>
-      </div>
+      </div></AppTooltip>
 
-      <button
+      <AppTooltip content={
+          theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+        }><button
         type="button"
         onClick={onToggleTheme}
-        title={
-          theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
-        }
         style={{
           width: dim(30),
           minHeight: dim(32),
@@ -1439,7 +1437,7 @@ export const HeaderStatusCluster = ({
         }}
       >
         {theme === "dark" ? "☼" : "☾"}
-      </button>
+      </button></AppTooltip>
     </div>
   );
 };

@@ -8,6 +8,8 @@ import {
   formatAccountSignedMoney,
   metricTitle,
 } from "./accountUtils";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const isPaperAccount = (account) =>
   /du|paper/i.test(account?.id || "") || /paper/i.test(account?.accountType || "");
@@ -40,8 +42,7 @@ const badgeTone = (type) => {
 };
 
 const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) => (
-  <div
-    title={title}
+  <AppTooltip content={title}><div
     style={{
       display: "inline-flex",
       alignItems: "baseline",
@@ -79,7 +80,7 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
     >
       {value}
     </span>
-  </div>
+  </div></AppTooltip>
 );
 
 const AccountSwitcher = ({

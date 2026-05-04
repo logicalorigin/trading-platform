@@ -514,7 +514,43 @@ test("listFlowEvents applies request filters to IBKR-derived rows", async () => 
   );
 });
 
-test("listFlowEvents widens Polygon fallback candidates before applying narrow filters", async () => {
+test("listFlowEvents keeps realtime flow on IBKR by default when Polygon is configured", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  let polygonCalls = 0;
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getDerivedFlowEvents: async () => {
+          polygonCalls += 1;
+          return [polygonFlowEvent("SPY-POLYGON", 75_000)];
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const result = await listFlowEvents({
+    underlying: "SPY",
+    limit: 2,
+    minPremium: 50_000,
+  });
+  const parsed = ListFlowEventsResponse.parse(result);
+
+  assert.equal(polygonCalls, 0);
+  assert.equal(parsed.source.provider, "none");
+  assert.equal(parsed.source.fallbackUsed, false);
+  assert.equal(parsed.source.ibkrReason, "options_flow_no_expirations");
+  assert.deepEqual(parsed.events, []);
+});
+
+test("listFlowEvents widens explicit Polygon fallback candidates before applying narrow filters", async () => {
   process.env["POLYGON_API_KEY"] = "test";
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -545,6 +581,7 @@ test("listFlowEvents widens Polygon fallback candidates before applying narrow f
     underlying: "SPY",
     limit: 2,
     minPremium: 50_000,
+    allowPolygonFallback: true,
   });
   const parsed = ListFlowEventsResponse.parse(result);
 
@@ -554,6 +591,122 @@ test("listFlowEvents widens Polygon fallback candidates before applying narrow f
     parsed.events.map((event) => event.id),
     ["SPY-POLYGON-10"],
   );
+});
+
+test("listFlowEvents reports IBKR as source when a live snapshot is filtered empty", async () => {
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [optionContract("SPY")],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const parsed = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 5,
+      scope: "unusual",
+      unusualThreshold: 50,
+    }),
+  );
+
+  assert.deepEqual(parsed.events, []);
+  assert.equal(parsed.source.provider, "ibkr");
+  assert.equal(parsed.source.status, "empty");
+  assert.equal(parsed.source.fallbackUsed, false);
+  assert.equal(parsed.source.ibkrStatus, "loaded");
+  assert.ok((parsed.source.ibkrFilteredEventCount ?? 0) > 0);
+});
+
+test("listFlowEvents does not reuse explicit Polygon fallback cache for IBKR-only requests", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  let polygonCalls = 0;
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getDerivedFlowEvents: async () => {
+          polygonCalls += 1;
+          return [polygonFlowEvent("SPY-POLYGON-CACHED", 75_000)];
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const fallback = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 2,
+      minPremium: 50_000,
+      allowPolygonFallback: true,
+    }),
+  );
+  const ibkrOnly = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 2,
+      minPremium: 50_000,
+    }),
+  );
+
+  assert.equal(polygonCalls, 1);
+  assert.equal(fallback.source.provider, "polygon");
+  assert.equal(ibkrOnly.source.provider, "none");
+  assert.equal(ibkrOnly.source.fallbackUsed, false);
+  assert.deepEqual(ibkrOnly.events, []);
+});
+
+test("listFlowEvents does not reuse explicit Polygon fallback scanner snapshots for IBKR-only requests", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  let polygonCalls = 0;
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getDerivedFlowEvents: async () => {
+          polygonCalls += 1;
+          return [polygonFlowEvent("SPY-POLYGON-SNAPSHOT", 75_000)];
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const fallback = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 2,
+      allowPolygonFallback: true,
+    }),
+  );
+  const ibkrOnly = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 2,
+    }),
+  );
+
+  assert.equal(polygonCalls, 1);
+  assert.equal(fallback.source.provider, "polygon");
+  assert.equal(ibkrOnly.source.provider, "none");
+  assert.equal(ibkrOnly.source.fallbackUsed, false);
+  assert.deepEqual(ibkrOnly.events, []);
 });
 
 test("listFlowEvents hydrates multiple expirations before falling back", async () => {

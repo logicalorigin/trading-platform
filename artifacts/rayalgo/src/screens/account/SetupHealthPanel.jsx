@@ -12,10 +12,11 @@ import {
   primaryButtonStyle,
   secondaryButtonStyle,
 } from "./accountUtils";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const StatusRow = ({ label, ok, detail }) => (
-  <div
-    title={detail || label}
+  <AppTooltip content={detail || label}><div
     style={{
       display: "grid",
       gridTemplateColumns: "auto 1fr",
@@ -50,7 +51,7 @@ const StatusRow = ({ label, ok, detail }) => (
         {detail || (ok ? "Ready" : "Unavailable")}
       </div>
     </div>
-  </div>
+  </div></AppTooltip>
 );
 
 export const SetupHealthPanel = ({

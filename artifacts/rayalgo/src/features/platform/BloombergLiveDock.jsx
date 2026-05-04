@@ -28,6 +28,8 @@ import {
   sp,
 } from "../../lib/uiTokens";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const BLOOMBERG_LIVE_URL = "https://www.bloomberg.com/live/us";
 const BLOOMBERG_HLS_SOURCES = [
@@ -246,7 +248,7 @@ const RoundIconButton = ({
   const interactive = !disabled;
 
   return (
-    <button
+    <AppTooltip content={title}><button
       type="button"
       onClick={onClick}
       onMouseEnter={() => interactive && setHovered(true)}
@@ -263,7 +265,6 @@ const RoundIconButton = ({
       onPointerUp={() => setPressed(false)}
       onPointerCancel={() => setPressed(false)}
       disabled={disabled}
-      title={title}
       aria-label={ariaLabel || title}
       style={{
         width: dim(size),
@@ -304,7 +305,7 @@ const RoundIconButton = ({
       }}
     >
       <Icon size={dim(prominent ? 20 : 15)} strokeWidth={prominent ? 2.2 : 2} />
-    </button>
+    </button></AppTooltip>
   );
 };
 
@@ -373,13 +374,12 @@ const AudioControlButton = ({
         hideSlider();
       }}
     >
-      <button
+      <AppTooltip content={muted ? "Unmute Bloomberg audio" : "Mute Bloomberg audio"}><button
         type="button"
         onClick={onToggleMute}
         onPointerDown={() => setPressed(true)}
         onPointerUp={() => setPressed(false)}
         onPointerCancel={() => setPressed(false)}
-        title={muted ? "Unmute Bloomberg audio" : "Mute Bloomberg audio"}
         aria-label={muted ? "Unmute Bloomberg audio" : "Mute Bloomberg audio"}
         style={{
           width: dim(size),
@@ -414,7 +414,7 @@ const AudioControlButton = ({
         ) : (
           <Volume2 size={dim(15)} strokeWidth={2} />
         )}
-      </button>
+      </button></AppTooltip>
       <div
         aria-hidden="true"
         style={{
@@ -567,7 +567,7 @@ const MenuActionButton = ({
   const foregroundColor = active || hovered ? activeColor : idleColor;
 
   return (
-    <button
+    <AppTooltip content={title}><button
       type="button"
       onClick={disabled ? undefined : onClick}
       onMouseEnter={() => !disabled && setHovered(true)}
@@ -584,7 +584,6 @@ const MenuActionButton = ({
       onPointerUp={() => setPressed(false)}
       onPointerCancel={() => setPressed(false)}
       disabled={disabled}
-      title={title}
       aria-label={ariaLabel || title}
       style={{
         width: dim(54),
@@ -654,7 +653,7 @@ const MenuActionButton = ({
           </span>
         ) : null}
       </span>
-    </button>
+    </button></AppTooltip>
   );
 };
 
@@ -670,7 +669,7 @@ const MenuSpeedButton = ({
   const [pressed, setPressed] = useState(false);
 
   return (
-    <button
+    <AppTooltip content={title}><button
       type="button"
       onClick={onClick}
       onMouseEnter={() => !disabled && setHovered(true)}
@@ -687,7 +686,6 @@ const MenuSpeedButton = ({
       onPointerUp={() => setPressed(false)}
       onPointerCancel={() => setPressed(false)}
       disabled={disabled}
-      title={title}
       aria-label={ariaLabel || title}
       style={{
         minWidth: 0,
@@ -715,7 +713,7 @@ const MenuSpeedButton = ({
       }}
     >
       {children}
-    </button>
+    </button></AppTooltip>
   );
 };
 
@@ -2851,11 +2849,10 @@ export default function BloombergLiveDock() {
                       position: "relative",
                     }}
                   >
-                    <button
+                    <AppTooltip content="Jump to live edge"><button
                       type="button"
                       onClick={handleGoLive}
                       disabled={!hasBufferedWindow}
-                      title="Jump to live edge"
                       aria-label="Jump to live edge"
                       style={{
                         padding: sp("6px 10px"),
@@ -2880,7 +2877,7 @@ export default function BloombergLiveDock() {
                         : liveLagSeconds == null
                           ? "SYNC"
                           : `+${liveLagSeconds.toFixed(liveLagSeconds >= 10 ? 0 : 1)}s`}
-                    </button>
+                    </button></AppTooltip>
                     <RoundIconButton
                       onClick={() => setMoreMenuOpen((open) => !open)}
                       active={moreMenuOpen}

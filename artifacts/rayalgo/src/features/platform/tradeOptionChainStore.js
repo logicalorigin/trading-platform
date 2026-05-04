@@ -20,9 +20,12 @@ const EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT = Object.freeze({
 const storeEntries = new Map();
 export const TRADE_OPTION_CHAIN_STORE_ENTRY_CAP = 8;
 
-const evictOldestUnusedTradeOptionChainEntry = () => {
+const evictOldestUnusedTradeOptionChainEntry = (protectedKey = null) => {
   if (storeEntries.size <= TRADE_OPTION_CHAIN_STORE_ENTRY_CAP) return;
   for (const [key, value] of storeEntries) {
+    if (key === protectedKey) {
+      continue;
+    }
     if (!value.listeners || value.listeners.size === 0) {
       storeEntries.delete(key);
       return;
@@ -59,7 +62,7 @@ const ensureEntry = (ticker) => {
       snapshot: EMPTY_TRADE_OPTION_CHAIN_SNAPSHOT,
       listeners: new Set(),
     });
-    evictOldestUnusedTradeOptionChainEntry();
+    evictOldestUnusedTradeOptionChainEntry(normalizedTicker);
   } else {
     const existing = storeEntries.get(normalizedTicker);
     storeEntries.delete(normalizedTicker);

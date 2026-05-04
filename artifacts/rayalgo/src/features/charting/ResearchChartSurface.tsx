@@ -2,6 +2,7 @@ import {
   useEffect,
   useLayoutEffect,
   useCallback,
+  useDeferredValue,
   useMemo,
   useRef,
   useState,
@@ -53,6 +54,12 @@ import {
 } from "../preferences/userPreferenceModel";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
+import { AppTooltip } from "@/components/ui/tooltip";
+import {
+  recordChartHydrationCounter,
+  recordChartHydrationMetric,
+} from "./chartHydrationStats";
+
 
 type ResearchChartTheme = {
   bg2: string;
@@ -1481,6 +1488,18 @@ export const shouldAutoFollowLatestBars = ({
       }),
   );
 
+export const shouldApplyProgrammaticRangeSync = ({
+  interactionActive,
+  realtimeFollow: _realtimeFollow,
+  followLatestBars: _followLatestBars,
+}: {
+  interactionActive: boolean;
+  realtimeFollow: boolean;
+  followLatestBars?: boolean;
+}): boolean => {
+  return !interactionActive;
+};
+
 export const sanitizeStoredChartScalePrefs = (
   value: unknown,
 ): ChartScalePreferences => {
@@ -1595,6 +1614,35 @@ const syncSeriesData = (
   series.setData(next);
   return next;
 };
+
+const nowMs = (): number =>
+  typeof performance !== "undefined" && Number.isFinite(performance.now())
+    ? performance.now()
+    : Date.now();
+
+const hoverBarsEqual = (
+  left: HoverBar | null,
+  right: HoverBar | null,
+): boolean => (
+  left === right ||
+  Boolean(
+    left &&
+      right &&
+      left.index === right.index &&
+      left.time === right.time &&
+      left.volume === right.volume &&
+      left.accumulatedVolume === right.accumulatedVolume &&
+      left.vwap === right.vwap &&
+      left.sessionVwap === right.sessionVwap &&
+      left.averageTradeSize === right.averageTradeSize &&
+      left.source === right.source &&
+      left.previousClose === right.previousClose &&
+      left.open === right.open &&
+      left.high === right.high &&
+      left.low === right.low &&
+      left.close === right.close
+  )
+);
 
 export const expandStudySpecsForRender = (specs: StudySpec[]): StudySpec[] =>
   specs.flatMap((spec) => {
@@ -3920,6 +3968,8 @@ export const ResearchChartSurface = ({
     initialChartPreferencesRef.current = userPreferences.chart;
   }
   const initialChartPreferences = initialChartPreferencesRef.current;
+  const deferredModel = useDeferredValue(model);
+  const hydrationScopeKey = uiStateKey || rangeIdentityKey || null;
   const hasChartBars = model.chartBars.length > 0;
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
@@ -3998,8 +4048,8 @@ export const ResearchChartSurface = ({
     showExecutionMarkers: userPreferences.trading.showExecutionMarkers,
   });
   const flowChartBuckets = useMemo(
-    () => buildFlowChartBuckets(visibleChartEvents, model),
-    [visibleChartEvents, model],
+    () => buildFlowChartBuckets(visibleChartEvents, deferredModel),
+    [visibleChartEvents, deferredModel],
   );
   const showTradePositionOverlays = userPreferences.trading.showPositionLines;
   const [boxDrawingOverlays, setBoxDrawingOverlays] = useState<OverlayShape[]>(
@@ -4126,6 +4176,19 @@ export const ResearchChartSurface = ({
       tradeBadgeOverlaysEqual(current, next) ? current : next,
     );
   };
+  const isViewportInteractionActive = useCallback(() => {
+    const now = Date.now();
+    return Boolean(
+      viewportPointerActiveRef.current ||
+        plotPanRef.current ||
+        now - lastWheelViewportIntentAtRef.current <=
+          USER_VIEWPORT_INTENT_WINDOW_MS ||
+        now - lastPlotViewportIntentAtRef.current <=
+          USER_VIEWPORT_INTENT_WINDOW_MS ||
+        now - lastUserViewportIntentAtRef.current <=
+          USER_VIEWPORT_INTENT_WINDOW_MS,
+    );
+  }, []);
 
   useEffect(() => {
     if (!indicatorDashboardOverlay) {
@@ -4245,11 +4308,18 @@ export const ResearchChartSurface = ({
         return false;
       }
 
-      lastUserViewportIntentAtRef.current = Date.now();
+      const now = Date.now();
+      lastUserViewportIntentAtRef.current = now;
+      lastLocalUserViewportAtRef.current = now;
+      autoHydrationViewportRef.current = false;
+      realtimeFollowRef.current = false;
+      programmaticVisibleRangeSignatureRef.current = null;
+      viewportUserTouchedRef.current = true;
+      setViewportUserTouched((current) => (current ? current : true));
       if (mode === "pointer") {
         viewportPointerActiveRef.current = true;
       } else if (mode === "wheel") {
-        lastWheelViewportIntentAtRef.current = Date.now();
+        lastWheelViewportIntentAtRef.current = now;
       }
       return true;
     },
@@ -4730,17 +4800,41 @@ export const ResearchChartSurface = ({
       );
 
       if (prependCount > 0) {
-        visibleLogicalRangeRef.current = {
+        const adjustedVisibleRange = {
           from: visibleLogicalRangeRef.current.from + prependCount,
           to: visibleLogicalRangeRef.current.to + prependCount,
         };
+        visibleLogicalRangeRef.current = adjustedVisibleRange;
         pendingStoredRangeSyncRef.current = true;
+        visibleRangeChangeRef.current?.(adjustedVisibleRange);
+        publishViewportSnapshot(
+          buildViewportSnapshot({
+            visibleRange: adjustedVisibleRange,
+            userTouched: Boolean(
+              externalViewportUserTouched ||
+                viewportUserTouchedRef.current ||
+                viewportUserTouched ||
+                (effectiveViewportSnapshot?.identityKey ===
+                  rangeIdentityKeyRef.current &&
+                  effectiveViewportSnapshot.userTouched),
+            ),
+            realtimeFollow: realtimeFollowRef.current,
+          }),
+        );
         setOverlayRevision((value) => value + 1);
       }
     }
 
     previousFirstChartBarTimeRef.current = nextFirstChartBarTime;
-  }, [model.chartBars]);
+  }, [
+    buildViewportSnapshot,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.userTouched,
+    externalViewportUserTouched,
+    model.chartBars,
+    publishViewportSnapshot,
+    viewportUserTouched,
+  ]);
 
   useEffect(() => {
     if (!isFullscreen || typeof document === "undefined") {
@@ -4954,12 +5048,14 @@ export const ResearchChartSurface = ({
         const rawTime = param?.time;
         const time = typeof rawTime === "number" ? rawTime : null;
         if (time == null) {
-          setHoverBar(null);
+          setHoverBar((current) => (current === null ? current : null));
           return;
         }
 
         const bar = barLookupRef.current.get(time);
-        setHoverBar(bar || null);
+        setHoverBar((current) =>
+          hoverBarsEqual(current, bar || null) ? current : bar || null,
+        );
       };
       handleClick = (param: any) => {
         if (!interactionRef.current.drawMode || !param?.point) {
@@ -5137,6 +5233,7 @@ export const ResearchChartSurface = ({
     const areaSeries = areaSeriesRef.current;
     const baselineSeries = baselineSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
+    const seriesSyncStartedAt = nowMs();
     const pricePrecision = resolvePricePrecision(model.chartBars);
     const priceFormat = {
       type: "price",
@@ -5200,6 +5297,23 @@ export const ResearchChartSurface = ({
           defaultVisibleRange: model.defaultVisibleLogicalRange,
         })
       : null;
+    const interactionActive = isViewportInteractionActive();
+    const canApplyProgrammaticRangeSync = shouldApplyProgrammaticRangeSync({
+      interactionActive,
+      realtimeFollow: realtimeFollowRef.current,
+      followLatestBars: shouldFollowLatestBars,
+    });
+    const wantedProgrammaticRangeSync = Boolean(
+      autoHydrationVisibleRange ||
+        shouldFollowLatestBars ||
+        (initializedRangeRef.current &&
+          visibleRangeBeforeDataSync &&
+          Number.isFinite(visibleRangeBeforeDataSync.from) &&
+          Number.isFinite(visibleRangeBeforeDataSync.to)) ||
+        (initializedRangeRef.current &&
+          model.defaultVisibleLogicalRange &&
+          nextBarCount > 0),
+    );
 
     baseSeriesDataRef.current.candles = syncSeriesData(
       candleSeries,
@@ -5231,14 +5345,15 @@ export const ResearchChartSurface = ({
       baseSeriesDataRef.current.volume,
       volumeSeriesData,
     );
-    if (autoHydrationVisibleRange) {
+    if (autoHydrationVisibleRange && canApplyProgrammaticRangeSync) {
       setProgrammaticVisibleLogicalRange(autoHydrationVisibleRange, {
         markInitialized: true,
       });
-    } else if (shouldFollowLatestBars) {
+    } else if (shouldFollowLatestBars && canApplyProgrammaticRangeSync) {
       markProgrammaticViewportIntent();
       chartRef.current.timeScale().scrollToRealTime?.();
     } else if (
+      canApplyProgrammaticRangeSync &&
       initializedRangeRef.current &&
       visibleRangeBeforeDataSync &&
       Number.isFinite(visibleRangeBeforeDataSync.from) &&
@@ -5246,11 +5361,17 @@ export const ResearchChartSurface = ({
     ) {
       setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync);
     } else if (
+      canApplyProgrammaticRangeSync &&
       initializedRangeRef.current &&
       model.defaultVisibleLogicalRange &&
       nextBarCount > 0
     ) {
       setProgrammaticVisibleLogicalRange(model.defaultVisibleLogicalRange);
+    } else if (wantedProgrammaticRangeSync && !canApplyProgrammaticRangeSync) {
+      recordChartHydrationCounter(
+        "visibleRangeSyncDeferred",
+        hydrationScopeKey,
+      );
     }
 
     const effectivePriceLineVisibility = showPriceLine && showRightPriceScale;
@@ -5397,6 +5518,11 @@ export const ResearchChartSurface = ({
           baseline: baselineSeries,
         } satisfies Record<BaseSeriesType, any>
       )[baseSeriesType] || candleSeries;
+    recordChartHydrationMetric(
+      "seriesSyncMs",
+      nowMs() - seriesSyncStartedAt,
+      hydrationScopeKey,
+    );
   }, [
     baseSeriesType,
     crosshairMode,
@@ -5422,6 +5548,8 @@ export const ResearchChartSurface = ({
     theme.text,
     theme.textMuted,
     model.defaultVisibleLogicalRange,
+    hydrationScopeKey,
+    isViewportInteractionActive,
     markProgrammaticViewportIntent,
     setProgrammaticVisibleLogicalRange,
   ]);
@@ -5502,14 +5630,14 @@ export const ResearchChartSurface = ({
     studyRegistryRef.current = syncStudySeries(
       chartRef.current,
       studyRegistryRef.current,
-      model.studySpecs,
+      deferredModel.studySpecs,
     );
     applyChartPaneStretchFactors(chartRef.current, {
       compact,
-      lowerPaneCount: model.studyLowerPaneCount,
+      lowerPaneCount: deferredModel.studyLowerPaneCount,
     });
     setOverlayRevision((value) => value + 1);
-  }, [compact, model.studyLowerPaneCount, model.studySpecs]);
+  }, [compact, deferredModel.studyLowerPaneCount, deferredModel.studySpecs]);
 
   useLayoutEffect(() => {
     if (!markerApisRef.current.length) {
@@ -5519,14 +5647,14 @@ export const ResearchChartSurface = ({
     const visibleLogicalRange = visibleLogicalRangeRef.current;
     const chart = chartRef.current;
     const markers = [
-      ...model.indicatorMarkerPayload.overviewMarkers,
-      ...buildTradeMarkers(model, theme),
+      ...deferredModel.indicatorMarkerPayload.overviewMarkers,
+      ...buildTradeMarkers(deferredModel, theme),
     ]
       .filter((marker) =>
         isMarkerVisibleInLogicalRange(
           marker,
           visibleLogicalRange,
-          model.chartBars.length,
+          deferredModel.chartBars.length,
         ),
       )
       .filter((marker) => {
@@ -5557,9 +5685,9 @@ export const ResearchChartSurface = ({
       }));
     markerApisRef.current.forEach((markerApi) => markerApi.setMarkers(markers));
   }, [
-    model.chartBars.length,
-    model.indicatorMarkerPayload,
-    model.tradeMarkerGroups,
+    deferredModel.chartBars.length,
+    deferredModel.indicatorMarkerPayload,
+    deferredModel.tradeMarkerGroups,
     compact,
     overlayRevision,
     plotSize.height,
@@ -5605,7 +5733,7 @@ export const ResearchChartSurface = ({
       );
     };
 
-    const sessionOpen = model.chartBars[0]?.o;
+    const sessionOpen = deferredModel.chartBars[0]?.o;
     if (typeof sessionOpen === "number" && Number.isFinite(sessionOpen)) {
       const sessionLine = {
         price: sessionOpen,
@@ -5651,7 +5779,7 @@ export const ResearchChartSurface = ({
         };
         addPriceLine(referenceLine);
       });
-  }, [drawings, model.chartBars, referenceLines, theme.amber, theme.textMuted]);
+  }, [drawings, deferredModel.chartBars, referenceLines, theme.amber, theme.textMuted]);
 
   useLayoutEffect(() => {
     if (
@@ -5677,6 +5805,7 @@ export const ResearchChartSurface = ({
       return;
     }
 
+    const overlaySyncStartedAt = nowMs();
     const viewportWidth = resolveChartDrawableWidth(
       chartRef.current,
       containerRef.current.clientWidth,
@@ -5689,7 +5818,7 @@ export const ResearchChartSurface = ({
       setWindowOverlays,
       buildWindowOverlays(
         chartRef.current,
-        model,
+        deferredModel,
         theme,
         viewportWidth,
         viewportHeight,
@@ -5700,7 +5829,7 @@ export const ResearchChartSurface = ({
       buildZoneOverlays(
         chartRef.current,
         activePriceSeriesRef.current,
-        model,
+        deferredModel,
         theme,
         viewportWidth,
         viewportHeight,
@@ -5731,7 +5860,7 @@ export const ResearchChartSurface = ({
         ? buildTradeMarkerTargets(
             chartRef.current,
             activePriceSeriesRef.current,
-            model,
+            deferredModel,
             theme,
             viewportWidth,
             viewportHeight,
@@ -5741,7 +5870,7 @@ export const ResearchChartSurface = ({
     const indicatorEventOverlays = buildIndicatorEventOverlays(
       chartRef.current,
       activePriceSeriesRef.current,
-      model,
+      deferredModel,
       viewportWidth,
       viewportHeight,
     );
@@ -5754,7 +5883,7 @@ export const ResearchChartSurface = ({
       ...buildChartEventOverlays(
         chartRef.current,
         activePriceSeriesRef.current,
-        model,
+        deferredModel,
         nonFlowChartEvents,
         viewportWidth,
         viewportHeight,
@@ -5762,7 +5891,7 @@ export const ResearchChartSurface = ({
       ...buildFlowChartEventOverlays(
         chartRef.current,
         activePriceSeriesRef.current,
-        model,
+        deferredModel,
         flowChartBuckets,
         viewportWidth,
         viewportHeight,
@@ -5772,7 +5901,7 @@ export const ResearchChartSurface = ({
       showVolume
         ? buildFlowVolumeOverlays(
             chartRef.current,
-            model,
+            deferredModel,
             flowChartBuckets,
             viewportWidth,
             viewportHeight,
@@ -5784,7 +5913,7 @@ export const ResearchChartSurface = ({
       ? buildSelectedTradeOverlays(
           chartRef.current,
           activePriceSeriesRef.current,
-          model,
+          deferredModel,
           theme,
           viewportWidth,
           viewportHeight,
@@ -5799,17 +5928,23 @@ export const ResearchChartSurface = ({
     syncSelectedTradeConnectorState(selectedTradeOverlays.connector);
     syncSelectedTradeEntryBadgeState(selectedTradeOverlays.entryBadge);
     syncSelectedTradeExitBadgeState(selectedTradeOverlays.exitBadge);
+    recordChartHydrationMetric(
+      "deferredOverlayMs",
+      nowMs() - overlaySyncStartedAt,
+      hydrationScopeKey,
+    );
   }, [
     baseSeriesType,
     drawings,
     flowChartBuckets,
-    model.chartBars,
-    model.activeTradeSelectionId,
-    model.indicatorEvents,
-    model.tradeMarkerGroups,
-    model.tradeOverlays,
-    model.indicatorWindows,
-    model.indicatorZones,
+    deferredModel.chartBars,
+    deferredModel.activeTradeSelectionId,
+    deferredModel.indicatorEvents,
+    deferredModel.tradeMarkerGroups,
+    deferredModel.tradeOverlays,
+    deferredModel.indicatorWindows,
+    deferredModel.indicatorZones,
+    hydrationScopeKey,
     overlayRevision,
     plotSize.height,
     plotSize.width,
@@ -6043,7 +6178,7 @@ export const ResearchChartSurface = ({
   const legendStudyItems = useMemo(
     () =>
       buildChartLegendStudyItems({
-        studySpecs: model.studySpecs,
+        studySpecs: deferredModel.studySpecs,
         studies: legendStudies,
         selectedStudies: selectedLegendStudies,
         time: displayBar?.time,
@@ -6052,7 +6187,7 @@ export const ResearchChartSurface = ({
     [
       displayBar?.time,
       legendStudies,
-      model.studySpecs,
+      deferredModel.studySpecs,
       selectedLegendStudies,
       theme.accent,
       theme.text,
@@ -6564,7 +6699,7 @@ export const ResearchChartSurface = ({
   const moveMousePlotPan = (event: MouseEvent<HTMLDivElement>) => {
     markPlotViewportDragIntent(event);
     const pan = plotPanRef.current;
-    if (!pan || pan.pointerId !== -1) {
+    if (!pan || (event.buttons & 1) !== 1) {
       return;
     }
 
@@ -6585,7 +6720,7 @@ export const ResearchChartSurface = ({
     setAdjustedVisibleRange(next.visibleRange);
   };
   const endMousePlotPan = (event: MouseEvent<HTMLDivElement>) => {
-    if (plotPanRef.current?.pointerId !== -1) {
+    if (!plotPanRef.current) {
       return;
     }
     if (plotPanRef.current.active) {
@@ -6594,6 +6729,7 @@ export const ResearchChartSurface = ({
       reapplyFinalPlotPanRange();
     }
     plotPanRef.current = null;
+    cleanupPlotPanWindowListeners();
     cleanupPlotMousePanWindowListeners();
   };
   const takeSnapshot = () => {
@@ -7448,9 +7584,8 @@ export const ResearchChartSurface = ({
                         ? theme.amber
                         : theme.accent || theme.text;
                 return (
-                  <div
+                  <AppTooltip key={`chart-event-${overlay.id}`} content={overlay.title}><div
                     key={`chart-event-${overlay.id}`}
-                    title={overlay.title}
                     aria-label={overlay.title}
                     data-testid={
                       dataTestId ? `${dataTestId}-chart-event` : undefined
@@ -7513,7 +7648,7 @@ export const ResearchChartSurface = ({
                     }}
                   >
                     {overlay.label.slice(0, overlay.placement === "timescale" ? 2 : 4)}
-                  </div>
+                  </div></AppTooltip>
                 );
               })}
               {flowTooltip ? (
@@ -7526,13 +7661,14 @@ export const ResearchChartSurface = ({
                     top: flowTooltip.top,
                     width: 280,
                     maxWidth: "calc(100% - 16px)",
-                    borderRadius: 8,
+                    borderRadius: 6,
                     padding: "10px 11px",
                     boxSizing: "border-box",
-                    background: withAlpha(theme.bg3, "f4"),
-                    border: `1px solid ${withAlpha(theme.amber, "8c")}`,
-                    boxShadow: `0 14px 32px ${withAlpha(theme.bg4, "80")}`,
-                    color: theme.text,
+                    background: "var(--ra-tooltip-bg)",
+                    border: "1px solid var(--ra-tooltip-border)",
+                    boxShadow: "var(--ra-tooltip-shadow)",
+                    color: "var(--ra-tooltip-text)",
+                    fontFamily: "var(--ra-font-sans)",
                     pointerEvents: "auto",
                     zIndex: 8,
                   }}
@@ -7809,7 +7945,11 @@ export const ResearchChartSurface = ({
                   </div>
                 ))}
               {tradeMarkerTargets.map((target) => (
-                <button
+                <AppTooltip key={`trade-target-${target.id}`} content={
+                    target.tradeSelectionIds.length > 1
+                      ? `${target.tradeSelectionIds.length} overlapping trades`
+                      : "Select trade"
+                  }><button
                   key={`trade-target-${target.id}`}
                   type="button"
                   onClick={() =>
@@ -7836,14 +7976,9 @@ export const ResearchChartSurface = ({
                     cursor: "pointer",
                     boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
                   }}
-                  title={
-                    target.tradeSelectionIds.length > 1
-                      ? `${target.tradeSelectionIds.length} overlapping trades`
-                      : "Select trade"
-                  }
                 >
                   {target.label ?? "•"}
-                </button>
+                </button></AppTooltip>
               ))}
             </div>
           ) : null}
@@ -7948,14 +8083,13 @@ export const ResearchChartSurface = ({
             const isSubtitle = segment.kind === "subtitle";
             const segmentColor = segment.color || "#ffffff";
             return (
-              <div
-                key={segment.key}
-                title={
+              <AppTooltip key={segment.key} content={
                   segment.title ||
                   [segment.label, segment.value, segment.detail]
                     .filter(Boolean)
                     .join(" ")
-                }
+                }><div
+                key={segment.key}
                 style={{
                   minWidth: 0,
                   maxWidth: dashboardDensity.segmentMaxWidth,
@@ -8027,7 +8161,7 @@ export const ResearchChartSurface = ({
                     {segment.detail}
                   </span>
                 ) : null}
-              </div>
+              </div></AppTooltip>
             );
           })}
         </div>

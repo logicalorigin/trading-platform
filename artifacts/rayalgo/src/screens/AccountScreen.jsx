@@ -9,6 +9,7 @@ import {
   useGetAccountEquityHistory,
   useGetAccountOrders,
   useGetAccountPositions,
+  useGetAccountPositionsAtDate,
   useGetAccountRisk,
   useGetAccountSummary,
   useGetAccountTradingPatterns,
@@ -25,12 +26,16 @@ import AccountHeaderStrip from "./account/AccountHeaderStrip";
 import AccountReturnsPanel from "./account/AccountReturnsPanel";
 import EquityCurvePanel from "./account/EquityCurvePanel";
 import AllocationPanel from "./account/AllocationPanel";
-import PositionsPanel from "./account/PositionsPanel";
+import PositionsPanel, { PositionsAtDateInspector } from "./account/PositionsPanel";
 import TradingPatternsPanel from "./account/TradingPatternsPanel";
 import RiskDashboardPanel from "./account/RiskDashboardPanel";
 import CashFundingPanel from "./account/CashFundingPanel";
 import SetupHealthPanel from "./account/SetupHealthPanel";
-import { ClosedTradesPanel, OrdersPanel } from "./account/TradesOrdersPanel";
+import {
+  ClosedTradesPanel,
+  OrdersPanel,
+  SelectedTradeAnalysisPanel,
+} from "./account/TradesOrdersPanel";
 import { buildAccountReturnsModel } from "./account/accountReturnsModel";
 import {
   applyPatternLensToTradeFilters,
@@ -48,6 +53,7 @@ import {
   formatNumber,
   normalizeAccountRange,
 } from "./account/accountUtils";
+import { buildAccountTradingAnalysisModel } from "./account/accountTradingAnalysis";
 
 const QUERY_OPTIONS = {
   query: {
@@ -355,12 +361,19 @@ export const AccountScreen = ({
     assetClass: "all",
     pnlSign: "all",
     sourceType: "all",
+    side: "all",
+    holdDuration: "all",
+    strategy: "all",
+    feeDrag: "all",
     from: "",
     to: "",
     closeHour: null,
   });
   const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedPatternLens, setSelectedPatternLens] = useState(emptyAccountPatternLens);
+  const [selectedAccountTradeId, setSelectedAccountTradeId] = useState("");
+  const [hoveredEquityDate, setHoveredEquityDate] = useState(null);
+  const [pinnedEquityDate, setPinnedEquityDate] = useState(null);
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
@@ -544,6 +557,22 @@ export const AccountScreen = ({
       },
     },
   );
+  const activeEquityInspectionDate = pinnedEquityDate || hoveredEquityDate;
+  const positionsAtDateQuery = useGetAccountPositionsAtDate(
+    accountRequestId,
+    {
+      ...modeParams,
+      date: activeEquityInspectionDate || "1970-01-01",
+      assetClass: assetFilter === "all" ? undefined : assetFilter,
+    },
+    {
+      query: {
+        staleTime: 30_000,
+        retry: false,
+        enabled: Boolean(accountQueriesEnabled && activeEquityInspectionDate),
+      },
+    },
+  );
   const closedTradeParams = useMemo(
     () => ({
       ...modeParams,
@@ -555,6 +584,10 @@ export const AccountScreen = ({
       pnlSign:
         tradeFilters.pnlSign && tradeFilters.pnlSign !== "all"
           ? tradeFilters.pnlSign
+          : undefined,
+      holdDuration:
+        tradeFilters.holdDuration && tradeFilters.holdDuration !== "all"
+          ? tradeFilters.holdDuration
           : undefined,
       from: tradeFilters.from
         ? new Date(`${tradeFilters.from}T00:00:00.000Z`).toISOString()
@@ -736,6 +769,79 @@ export const AccountScreen = ({
     () => getOpenPositionRows(positionsQuery.data?.positions || []),
     [positionsQuery.data],
   );
+  const accountTradingAnalysis = useMemo(
+    () =>
+      buildAccountTradingAnalysisModel({
+        trades: tradesQuery.data?.trades || [],
+        orders: ordersQuery.data?.orders || [],
+        positions: openAccountPositions,
+        patternPacket: shadowMode ? tradingPatternsQuery.data : null,
+        selectedTradeId: selectedAccountTradeId,
+      }),
+    [
+      openAccountPositions,
+      ordersQuery.data,
+      selectedAccountTradeId,
+      shadowMode,
+      tradesQuery.data,
+      tradingPatternsQuery.data,
+    ],
+  );
+  const accountTradingPatternsQuery = useMemo(() => {
+    if (shadowMode) {
+      return tradingPatternsQuery;
+    }
+    const symbolRows = accountTradingAnalysis.bucketGroups.symbol.map((row) => ({
+      symbol: row.key,
+      realizedPnl: row.realizedPnl,
+      closedTrades: row.count,
+      winRatePercent: row.winRatePercent,
+      expectancy: row.expectancy,
+      profitFactor: row.profitFactor,
+      averageHoldMinutes: null,
+      openQuantity: openAccountPositions
+        .filter((position) => String(position.symbol || "").toUpperCase() === row.key)
+        .reduce((sum, position) => sum + Number(position.quantity || 0), 0),
+    }));
+    const sourceRows = accountTradingAnalysis.bucketGroups.source.map((row) => ({
+      key: row.key,
+      sourceType: row.key,
+      label: row.label,
+      realizedPnl: row.realizedPnl,
+      closedTrades: row.count,
+      winRatePercent: row.winRatePercent,
+      expectancy: row.expectancy,
+      profitFactor: row.profitFactor,
+    }));
+    return {
+      data: {
+        summary: {
+          ...accountTradingAnalysis.summary,
+          closedTrades: accountTradingAnalysis.summary.count,
+          tradeEvents: tradesQuery.data?.summary?.count || accountTradingAnalysis.summary.count,
+          symbolsTraded: symbolRows.length,
+        },
+        snapshot: { persisted: false },
+        tickerStats: symbolRows,
+        sourceStats: sourceRows,
+        timeStats: { byHour: [] },
+      },
+      isLoading: tradesQuery.isLoading,
+      isPending: tradesQuery.isPending,
+      error: tradesQuery.error,
+      refetch: tradesQuery.refetch,
+    };
+  }, [
+    accountTradingAnalysis,
+    openAccountPositions,
+    shadowMode,
+    tradesQuery.data,
+    tradesQuery.error,
+    tradesQuery.isLoading,
+    tradesQuery.isPending,
+    tradesQuery.refetch,
+    tradingPatternsQuery,
+  ]);
   const shadowAutomationAudit = {
     automationPositions: openAccountPositions.filter(
       (position) => position.sourceType === "automation",
@@ -817,10 +923,15 @@ export const AccountScreen = ({
       assetClass: "all",
       pnlSign: "all",
       sourceType: "all",
+      side: "all",
+      holdDuration: "all",
+      strategy: "all",
+      feeDrag: "all",
       from: "",
       to: "",
       closeHour: null,
     });
+    setSelectedAccountTradeId("");
   };
   const handlePatternLensChange = (kind, input) => {
     const lens = buildAccountPatternLens(kind, input);
@@ -831,7 +942,9 @@ export const AccountScreen = ({
   const handlePatternLensClear = () => {
     setSelectedPatternLens(emptyAccountPatternLens());
     setSourceFilter("all");
-    setTradeFilters((current) => clearPatternLensFromTradeFilters(current));
+    setTradeFilters((current) =>
+      clearPatternLensFromTradeFilters(current, selectedPatternLens),
+    );
   };
   const accountSectionControl = (
     <div
@@ -980,10 +1093,25 @@ export const AccountScreen = ({
               sourceLabel={shadowMode ? "Shadow" : "Flex"}
               maskValues={maskAccountValues}
               currentNetLiquidation={summaryQuery.data?.metrics?.netLiquidation?.value}
+              activeInspectionDate={activeEquityInspectionDate}
+              pinnedInspectionDate={pinnedEquityDate}
+              onHoverInspectionDate={setHoveredEquityDate}
+              onPinInspectionDate={setPinnedEquityDate}
               compact
             />
           </div>
         </div>
+
+        <PositionsAtDateInspector
+          query={positionsAtDateQuery}
+          activeDate={activeEquityInspectionDate}
+          pinnedDate={pinnedEquityDate}
+          currentPositionsCount={positionsQuery.data?.positions?.length || 0}
+          currency={currency}
+          maskValues={maskAccountValues}
+          onClearPin={() => setPinnedEquityDate(null)}
+          onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+        />
 
         <PositionsPanel
           query={positionsQuery}
@@ -1002,26 +1130,26 @@ export const AccountScreen = ({
           maskValues={maskAccountValues}
         />
 
-        {shadowMode ? (
-          <TradingPatternsPanel
-            query={tradingPatternsQuery}
-            snapshotMutation={tradingPatternsSnapshotMutation}
-            accountId={SHADOW_ACCOUNT_ID}
-            range={range}
-            currency={currency}
-            maskValues={maskAccountValues}
-            onSymbolSelect={(symbol) =>
-              setTradeFilters((current) => ({
-                ...current,
-                symbol,
-              }))
-            }
-            selectedLens={selectedPatternLens}
-            onLensChange={handlePatternLensChange}
-          />
-        ) : null}
+        <TradingPatternsPanel
+          query={accountTradingPatternsQuery}
+          snapshotMutation={shadowMode ? tradingPatternsSnapshotMutation : null}
+          accountId={accountRequestId}
+          range={range}
+          currency={currency}
+          maskValues={maskAccountValues}
+          onSymbolSelect={(symbol) =>
+            setTradeFilters((current) => ({
+              ...current,
+              symbol,
+            }))
+          }
+          selectedLens={selectedPatternLens}
+          onLensChange={handlePatternLensChange}
+          analysis={accountTradingAnalysis}
+          onTradeSelect={setSelectedAccountTradeId}
+        />
 
-        {shadowMode && selectedPatternLens.kind !== "none" ? (
+        {selectedPatternLens.kind !== "none" ? (
           <div
             data-testid="account-pattern-lens-strip"
             style={{
@@ -1083,12 +1211,23 @@ export const AccountScreen = ({
             onFiltersChange={handleTradeFilterChange}
             onResetFilters={handleTradeFilterReset}
             sourceFiltersEnabled={shadowMode}
+            selectedTradeId={
+              accountTradingAnalysis.selectedTradeDetail?.tradeId ||
+              selectedAccountTradeId
+            }
+            onTradeSelect={setSelectedAccountTradeId}
             emptyBody={
               shadowMode
                 ? "Shadow exits will appear here after a manual or automation sell closes part of a position."
                 : undefined
             }
             maskValues={maskAccountValues}
+          />
+          <SelectedTradeAnalysisPanel
+            analysis={accountTradingAnalysis}
+            currency={currency}
+            maskValues={maskAccountValues}
+            onJumpToChart={onJumpToTrade}
           />
           <OrdersPanel
             query={ordersQuery}

@@ -7,10 +7,15 @@ export type ChartHydrationMetricKey =
   | "prependRequestMs"
   | "modelBuildMs"
   | "firstPaintMs"
-  | "livePatchToPaintMs";
+  | "livePatchToPaintMs"
+  | "seriesSyncMs"
+  | "deferredOverlayMs";
 
 export type ChartHydrationCounterKey =
   | "payloadShapeError"
+  | "livePatchCoalesced"
+  | "livePatchDuplicate"
+  | "visibleRangeSyncDeferred"
   | "liveFallbackFetch"
   | "olderPageFetch"
   | "olderPageDuplicate"
@@ -73,10 +78,15 @@ const hydrationSamples: Record<ChartHydrationMetricKey, number[]> = {
   modelBuildMs: [],
   firstPaintMs: [],
   livePatchToPaintMs: [],
+  seriesSyncMs: [],
+  deferredOverlayMs: [],
 };
 const scopeHydrationMetrics = new Map<string, ScopeHydrationMetrics>();
 const hydrationCounters: Record<ChartHydrationCounterKey, number> = {
   payloadShapeError: 0,
+  livePatchCoalesced: 0,
+  livePatchDuplicate: 0,
+  visibleRangeSyncDeferred: 0,
   liveFallbackFetch: 0,
   olderPageFetch: 0,
   olderPageDuplicate: 0,
@@ -376,6 +386,8 @@ export const getChartHydrationStatsSnapshot = () => {
     modelBuildMs: summarizeBucket(hydrationSamples.modelBuildMs),
     firstPaintMs: summarizeBucket(hydrationSamples.firstPaintMs),
     livePatchToPaintMs: summarizeBucket(hydrationSamples.livePatchToPaintMs),
+    seriesSyncMs: summarizeBucket(hydrationSamples.seriesSyncMs),
+    deferredOverlayMs: summarizeBucket(hydrationSamples.deferredOverlayMs),
     sampleCount: Math.max(
       hydrationSamples.barsRequestMs.length,
       hydrationSamples.favoritePrewarmRequestMs.length,
@@ -384,6 +396,8 @@ export const getChartHydrationStatsSnapshot = () => {
       hydrationSamples.modelBuildMs.length,
       hydrationSamples.firstPaintMs.length,
       hydrationSamples.livePatchToPaintMs.length,
+      hydrationSamples.seriesSyncMs.length,
+      hydrationSamples.deferredOverlayMs.length,
     ),
     counters: { ...hydrationCounters },
     activeScopeCount: scopes.length,

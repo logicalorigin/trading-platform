@@ -68,6 +68,37 @@ test("buildAccountReturnsModel computes period return, benchmark deltas, and dra
   ]);
 });
 
+test("buildAccountReturnsModel rebases benchmark deltas to the first visible matched point", () => {
+  const model = buildAccountReturnsModel({
+    range: "1M",
+    equityHistory: {
+      range: "1M",
+      points: [
+        point("2026-04-01T00:00:00.000Z", 100_000, 0),
+        point("2026-04-04T00:00:00.000Z", 108_000, 8),
+      ],
+    },
+    benchmarkHistories: {
+      SPY: {
+        range: "1M",
+        points: [
+          point("2026-04-01T00:00:00.000Z", 100_000, 0, 2),
+          point("2026-04-04T00:00:00.000Z", 108_000, 8, 6),
+        ],
+      },
+    },
+  });
+
+  assert.deepEqual(model.equity.benchmarkDeltas, [
+    {
+      key: "SPY",
+      label: "SPY",
+      returnPercent: 4,
+      deltaPercent: 4,
+    },
+  ]);
+});
+
 test("buildAccountReturnsModel excludes external transfers from returns and P&L bars", () => {
   const model = buildAccountReturnsModel({
     range: "1M",

@@ -6,6 +6,7 @@ import {
   getTradeFlowStoreEntryCount,
   publishTradeFlowSnapshot,
   resetTradeFlowStoreForTests,
+  subscribeToTradeFlowSnapshotForTests,
 } from "./tradeFlowStore.js";
 
 const buildFlowSnapshot = (ticker) => ({
@@ -31,6 +32,30 @@ test("tradeFlowStore clears unused snapshots", () => {
   assert.equal(getTradeFlowStoreEntryCount(), 1);
 
   clearTradeFlowSnapshot("CLEARFLOW");
+
+  assert.equal(getTradeFlowStoreEntryCount(), 0);
+});
+
+test("tradeFlowStore does not evict a newly subscribed entry before listener registration", () => {
+  resetTradeFlowStoreForTests();
+
+  const unsubscribes = [];
+  for (let index = 0; index < TRADE_FLOW_STORE_ENTRY_CAP; index += 1) {
+    unsubscribes.push(
+      subscribeToTradeFlowSnapshotForTests(`ACTIVE${index}`, () => {}),
+    );
+  }
+
+  assert.equal(getTradeFlowStoreEntryCount(), TRADE_FLOW_STORE_ENTRY_CAP);
+
+  const unsubscribeExtra = subscribeToTradeFlowSnapshotForTests(
+    "EXTRA",
+    () => {},
+  );
+  assert.equal(getTradeFlowStoreEntryCount(), TRADE_FLOW_STORE_ENTRY_CAP + 1);
+
+  unsubscribeExtra();
+  unsubscribes.forEach((unsubscribe) => unsubscribe());
 
   assert.equal(getTradeFlowStoreEntryCount(), 0);
 });

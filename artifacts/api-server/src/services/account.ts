@@ -4,6 +4,7 @@ import {
   eq,
   gte,
   inArray,
+  lt,
   lte,
   sql,
 } from "drizzle-orm";
@@ -43,6 +44,7 @@ import {
   getShadowAccountCashActivity,
   getShadowAccountClosedTrades,
   getShadowAccountEquityHistory,
+  getShadowAccountPositionsAtDate,
   isShadowAccountId,
 } from "./shadow-account";
 import { fetchShadowAccountSnapshotBase } from "./shadow-account-streams";
@@ -550,6 +552,29 @@ function dateFromDateOnly(value: string | Date): Date {
     return value;
   }
   return new Date(`${value}T00:00:00.000Z`);
+}
+
+function dateWindowUtc(value: string | Date): {
+  date: string;
+  start: Date;
+  end: Date;
+} {
+  const parsed = value instanceof Date ? value : new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new HttpError(400, "Invalid inspection date.", {
+      code: "invalid_account_inspection_date",
+      expose: true,
+    });
+  }
+  const start = new Date(
+    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()),
+  );
+  const end = new Date(start.getTime() + 24 * 60 * 60_000);
+  return {
+    date: formatDateOnly(start),
+    start,
+    end,
+  };
 }
 
 function currencyOf(accounts: BrokerAccountSnapshot[]): string {
@@ -2713,6 +2738,231 @@ export async function getAccountPositions(input: {
       netExposure: exposure.netExposure,
     },
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
+  };
+}
+
+export async function getAccountPositionsAtDate(input: {
+  accountId: string;
+  date: string | Date;
+  assetClass?: string | null;
+  mode?: RuntimeMode;
+}) {
+  const window = dateWindowUtc(input.date);
+  if (isShadowAccountId(input.accountId)) {
+    return getShadowAccountPositionsAtDate({
+      date: window.date,
+      assetClass: input.assetClass,
+    });
+  }
+
+  const mode = input.mode ?? getRuntimeMode();
+  const universe = await getLiveAccountUniverse(input.accountId, mode);
+  const positionConditions = [
+    inArray(flexOpenPositionsTable.providerAccountId, universe.accountIds),
+    gte(flexOpenPositionsTable.asOf, window.start),
+    lt(flexOpenPositionsTable.asOf, window.end),
+  ];
+  if (input.assetClass && input.assetClass !== "all") {
+    positionConditions.push(eq(flexOpenPositionsTable.assetClass, input.assetClass));
+  }
+
+  const [positionRows, tradeRows, cashRows, dividendRows] = await Promise.all([
+    withOptionalAccountSchemaFallback({
+      tables: ["flex_open_positions"],
+      fallback: () => [],
+      run: async () =>
+        db
+          .select()
+          .from(flexOpenPositionsTable)
+          .where(and(...positionConditions))
+          .orderBy(flexOpenPositionsTable.asOf),
+    }),
+    withOptionalAccountSchemaFallback({
+      tables: ["flex_trades"],
+      fallback: () => [],
+      run: async () =>
+        db
+          .select()
+          .from(flexTradesTable)
+          .where(
+            and(
+              inArray(flexTradesTable.providerAccountId, universe.accountIds),
+              gte(flexTradesTable.tradeDate, window.start),
+              lt(flexTradesTable.tradeDate, window.end),
+            ),
+          )
+          .orderBy(flexTradesTable.tradeDate),
+    }),
+    withOptionalAccountSchemaFallback({
+      tables: ["flex_cash_activity"],
+      fallback: () => [],
+      run: async () =>
+        db
+          .select()
+          .from(flexCashActivityTable)
+          .where(
+            and(
+              inArray(flexCashActivityTable.providerAccountId, universe.accountIds),
+              gte(flexCashActivityTable.activityDate, window.start),
+              lt(flexCashActivityTable.activityDate, window.end),
+            ),
+          )
+          .orderBy(flexCashActivityTable.activityDate),
+    }),
+    withOptionalAccountSchemaFallback({
+      tables: ["flex_dividends"],
+      fallback: () => [],
+      run: async () =>
+        db
+          .select()
+          .from(flexDividendsTable)
+          .where(
+            and(
+              inArray(flexDividendsTable.providerAccountId, universe.accountIds),
+              gte(flexDividendsTable.paidDate, window.start),
+              lt(flexDividendsTable.paidDate, window.end),
+            ),
+          )
+          .orderBy(flexDividendsTable.paidDate),
+    }),
+  ]);
+
+  const nav = positionRows.reduce(
+    (sum, row) => sum + (toNumber(row.marketValue) ?? 0),
+    0,
+  );
+  const positions = positionRows.map((row) => {
+    const quantity = toNumber(row.quantity) ?? 0;
+    const costBasis = toNumber(row.costBasis) ?? 0;
+    const marketValue = toNumber(row.marketValue) ?? 0;
+    const averageCost =
+      Math.abs(quantity) > POSITION_QUANTITY_EPSILON
+        ? Math.abs(costBasis) / Math.abs(quantity)
+        : 0;
+    const mark =
+      Math.abs(quantity) > POSITION_QUANTITY_EPSILON
+        ? Math.abs(marketValue) / Math.abs(quantity)
+        : 0;
+    const unrealizedPnl = marketValue - costBasis;
+    return {
+      id: `FLEX:${row.providerAccountId}:${row.symbol}:${row.asOf.toISOString()}`,
+      accountId: row.providerAccountId,
+      accounts: [row.providerAccountId],
+      symbol: row.symbol,
+      description: row.description || row.symbol,
+      assetClass: normalizeTradeAssetClassLabel({
+        assetClass: row.assetClass,
+        symbol: row.symbol,
+      }),
+      optionContract: null,
+      sector: sectorForSymbol(row.symbol),
+      quantity,
+      averageCost,
+      mark,
+      dayChange: null,
+      dayChangePercent: null,
+      unrealizedPnl,
+      unrealizedPnlPercent: costBasis ? (unrealizedPnl / Math.abs(costBasis)) * 100 : 0,
+      marketValue,
+      weightPercent: weightPercent(marketValue, nav),
+      betaWeightedDelta: null,
+      lots: [
+        {
+          accountId: row.providerAccountId,
+          symbol: row.symbol,
+          quantity,
+          averageCost,
+          marketPrice: mark,
+          marketValue,
+          unrealizedPnl,
+          asOf: row.asOf,
+          source: "FLEX_OPEN_POSITIONS",
+        },
+      ],
+      openOrders: [],
+      source: "FLEX_OPEN_POSITIONS",
+      sourceType: "manual" as const,
+      strategyLabel: "Flex",
+      attributionStatus: "unknown" as const,
+      sourceAttribution: [],
+    };
+  });
+
+  const tradeActivity = tradeRows.map((row) => ({
+    id: `trade:${row.tradeId}`,
+    timestamp: row.tradeDate,
+    type: "trade",
+    symbol: row.symbol,
+    side: row.side,
+    amount: toNumber(row.amount),
+    quantity: toNumber(row.quantity),
+    price: toNumber(row.price),
+    realizedPnl: toNumber(row.realizedPnl),
+    fees: toNumber(row.commission),
+    currency: row.currency,
+    source: "FLEX_TRADES",
+  }));
+  const cashActivity = cashRows.map((row) => ({
+    id: `cash:${row.activityId}`,
+    timestamp: row.activityDate,
+    type: row.activityType,
+    symbol: null,
+    side: null,
+    amount: toNumber(row.amount),
+    quantity: null,
+    price: null,
+    realizedPnl: null,
+    fees: /fee|commission/i.test(`${row.activityType} ${row.description ?? ""}`)
+      ? Math.abs(toNumber(row.amount) ?? 0)
+      : null,
+    currency: row.currency,
+    source: "FLEX_CASH",
+  }));
+  const dividendActivity = dividendRows.map((row) => ({
+    id: `dividend:${row.dividendId}`,
+    timestamp: row.paidDate,
+    type: "dividend",
+    symbol: row.symbol,
+    side: null,
+    amount: toNumber(row.amount),
+    quantity: null,
+    price: null,
+    realizedPnl: null,
+    fees: null,
+    currency: row.currency,
+    source: "FLEX_DIVIDEND",
+  }));
+  const activity = [...tradeActivity, ...cashActivity, ...dividendActivity].sort(
+    (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
+  );
+  const snapshotDate = positionRows.reduce<Date | null>(
+    (latest, row) => (!latest || row.asOf.getTime() > latest.getTime() ? row.asOf : latest),
+    null,
+  );
+
+  return {
+    accountId: universe.requestedAccountId,
+    date: window.date,
+    currency: universe.primaryCurrency,
+    status: positions.length ? "historical" : "unavailable",
+    snapshotDate,
+    message: positions.length
+      ? null
+      : "No Flex open-position snapshot exists for this date.",
+    positions,
+    activity,
+    totals: {
+      weightPercent: positions.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
+      unrealizedPnl: positions.reduce((sum, row) => sum + row.unrealizedPnl, 0),
+      grossLong: positions
+        .filter((row) => row.marketValue > 0)
+        .reduce((sum, row) => sum + row.marketValue, 0),
+      grossShort: positions
+        .filter((row) => row.marketValue < 0)
+        .reduce((sum, row) => sum + Math.abs(row.marketValue), 0),
+      netExposure: nav,
+    },
+    updatedAt: new Date(),
   };
 }
 

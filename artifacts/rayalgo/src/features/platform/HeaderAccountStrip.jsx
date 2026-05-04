@@ -1,4 +1,6 @@
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
@@ -63,9 +65,8 @@ export const HeaderAccountStrip = ({
   };
 
   return (
-    <div
+    <AppTooltip content="Active broker account and account summary"><div
       data-testid="platform-header-account"
-      title="Active broker account and account summary"
       style={{
         ...surfaceStyle,
       }}
@@ -118,9 +119,8 @@ export const HeaderAccountStrip = ({
         )}
       </div>
       {metricItems.map((metric) => (
-        <div
+        <AppTooltip key={metric.label} content={metric.label}><div
           key={metric.label}
-          title={metric.label}
           style={{
             display: "flex",
             flexDirection: "column",
@@ -132,8 +132,8 @@ export const HeaderAccountStrip = ({
           <span style={{ ...valueStyle, color: metric.color }}>
             {metric.value}
           </span>
-        </div>
+        </div></AppTooltip>
       ))}
-    </div>
+    </div></AppTooltip>
   );
 };

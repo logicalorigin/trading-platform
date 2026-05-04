@@ -171,6 +171,12 @@ export const resolvePremiumFlowDisplayState = ({
     : null;
   const source = providerSummary?.sourcesBySymbol?.[normalizedSymbol] || null;
   const errorMessage = failure?.error || source?.errorMessage || null;
+  const sourceProvider = normalizePremiumFlowSymbol(source?.provider);
+  const sourceStatus = String(source?.status || "").toLowerCase();
+  const isLiveSource =
+    sourceProvider === "IBKR" &&
+    !source?.fallbackUsed &&
+    sourceStatus !== "error";
 
   if (failure && hasFlow) {
     return {
@@ -180,6 +186,9 @@ export const resolvePremiumFlowDisplayState = ({
       isQueued: false,
       isError: false,
       isStale: true,
+      isLiveSource: false,
+      sourceProvider,
+      sourceStatus,
       errorMessage,
     };
   }
@@ -192,6 +201,9 @@ export const resolvePremiumFlowDisplayState = ({
       isQueued: false,
       isError: true,
       isStale: false,
+      isLiveSource: false,
+      sourceProvider,
+      sourceStatus,
       errorMessage,
     };
   }
@@ -209,6 +221,9 @@ export const resolvePremiumFlowDisplayState = ({
       isQueued: false,
       isError: false,
       isStale: false,
+      isLiveSource,
+      sourceProvider,
+      sourceStatus,
       errorMessage: null,
     };
   }
@@ -221,6 +236,9 @@ export const resolvePremiumFlowDisplayState = ({
       isQueued: false,
       isError: false,
       isStale: false,
+      isLiveSource,
+      sourceProvider,
+      sourceStatus,
       errorMessage: null,
     };
   }
@@ -233,6 +251,9 @@ export const resolvePremiumFlowDisplayState = ({
       isQueued: false,
       isError: false,
       isStale: false,
+      isLiveSource,
+      sourceProvider,
+      sourceStatus,
       errorMessage: null,
     };
   }
@@ -244,6 +265,9 @@ export const resolvePremiumFlowDisplayState = ({
     isQueued: true,
     isError: false,
     isStale: false,
+    isLiveSource,
+    sourceProvider,
+    sourceStatus,
     errorMessage: null,
   };
 };

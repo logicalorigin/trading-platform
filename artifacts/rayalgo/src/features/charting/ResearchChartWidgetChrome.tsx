@@ -47,6 +47,8 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
 import type { ChartSurfaceControls } from "./ResearchChartSurface";
 import type { StudySpec } from "./types";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 type WidgetTheme = {
   bg2: string;
@@ -486,15 +488,17 @@ const SettingsMenu = ({
   dense: boolean;
 }) => (
   <DropdownMenu>
-    <DropdownMenuTrigger asChild>
-      <button
-        type="button"
-        style={barButtonStyle({ theme, palette, dense })}
-        title="Settings"
-      >
-        <Settings style={iconStyle(dense)} />
-      </button>
-    </DropdownMenuTrigger>
+    <AppTooltip content="Settings">
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Settings"
+          style={barButtonStyle({ theme, palette, dense })}
+        >
+          <Settings style={iconStyle(dense)} />
+        </button>
+      </DropdownMenuTrigger>
+    </AppTooltip>
     <DropdownMenuContent
       align="end"
       className={chartMenuContentClassName}
@@ -800,22 +804,23 @@ export const ResearchChartWidgetHeader = ({
       >
         {hasAnchoredSearch ? (
           <Popover open={Boolean(searchOpen)} onOpenChange={onSearchOpenChange}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                data-testid="chart-symbol-search-button"
-                style={{
-                  ...barButtonStyle({ theme, palette, dense }),
-                  color: theme.text,
-                  cursor: "pointer",
-                }}
-                title={`Search ${symbol}`}
-              >
-                {identitySlot ?? <Search style={iconStyle(dense)} />}
-                <span style={{ fontWeight: 700 }}>{symbol}</span>
-                <ChevronDown style={iconStyle(dense)} />
-              </button>
-            </PopoverTrigger>
+            <AppTooltip content={`Search ${symbol}`}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  data-testid="chart-symbol-search-button"
+                  style={{
+                    ...barButtonStyle({ theme, palette, dense }),
+                    color: theme.text,
+                    cursor: "pointer",
+                  }}
+                >
+                  {identitySlot ?? <Search style={iconStyle(dense)} />}
+                  <span style={{ fontWeight: 700 }}>{symbol}</span>
+                  <ChevronDown style={iconStyle(dense)} />
+                </button>
+              </PopoverTrigger>
+            </AppTooltip>
             <PopoverContent
               align="start"
               sideOffset={6}
@@ -833,7 +838,7 @@ export const ResearchChartWidgetHeader = ({
             </PopoverContent>
           </Popover>
         ) : (
-          <button
+          <AppTooltip content={canSearch ? `Search ${symbol}` : symbol}><button
             type="button"
             data-testid={canSearch ? "chart-symbol-search-button" : undefined}
             onClick={canSearch ? onOpenSearch : undefined}
@@ -842,29 +847,29 @@ export const ResearchChartWidgetHeader = ({
               color: theme.text,
               cursor: canSearch ? "pointer" : "default",
             }}
-            title={canSearch ? `Search ${symbol}` : symbol}
           >
             {identitySlot ?? (canSearch ? <Search style={iconStyle(dense)} /> : null)}
             <span style={{ fontWeight: 700 }}>{symbol}</span>
             {canSearch ? <ChevronDown style={iconStyle(dense)} /> : null}
-          </button>
+          </button></AppTooltip>
         )}
 
         <div style={dividerStyle(theme, dense)} />
 
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              data-testid="chart-timeframe-menu-trigger"
-              data-chart-timeframe={timeframe}
-              style={barButtonStyle({ theme, palette, dense })}
-              title="More timeframes"
-            >
-              <span>{timeframe}</span>
-              <ChevronDown style={iconStyle(dense)} />
-            </button>
-          </DropdownMenuTrigger>
+          <AppTooltip content="More timeframes">
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="chart-timeframe-menu-trigger"
+                data-chart-timeframe={timeframe}
+                style={barButtonStyle({ theme, palette, dense })}
+              >
+                <span>{timeframe}</span>
+                <ChevronDown style={iconStyle(dense)} />
+              </button>
+            </DropdownMenuTrigger>
+          </AppTooltip>
           <DropdownMenuContent
             align="start"
             className={chartMenuContentClassName}
@@ -943,17 +948,19 @@ export const ResearchChartWidgetHeader = ({
         </DropdownMenu>
 
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              style={barButtonStyle({ theme, palette, dense })}
-              title="Chart type"
-            >
-              <resolvedChartType.Icon style={iconStyle(dense)} />
-              {dense ? null : <span>{resolvedChartType.label}</span>}
-              <ChevronDown style={iconStyle(dense)} />
-            </button>
-          </DropdownMenuTrigger>
+          <AppTooltip content="Chart type">
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Chart type"
+                style={barButtonStyle({ theme, palette, dense })}
+              >
+                <resolvedChartType.Icon style={iconStyle(dense)} />
+                {dense ? null : <span>{resolvedChartType.label}</span>}
+                <ChevronDown style={iconStyle(dense)} />
+              </button>
+            </DropdownMenuTrigger>
+          </AppTooltip>
           <DropdownMenuContent
             align="start"
             className={chartMenuContentClassName}
@@ -992,25 +999,26 @@ export const ResearchChartWidgetHeader = ({
         </DropdownMenu>
 
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              style={barButtonStyle({ theme, palette, dense })}
-              title="Indicators"
-            >
-              <Plus style={iconStyle(dense)} />
-              <span>
-                {dense
-                  ? selectedStudies.length > 0
-                    ? `Ind ${selectedStudies.length}`
-                    : "Ind"
-                  : `Indicators ${
-                      selectedStudies.length > 0 ? selectedStudies.length : ""
-                    }`.trim()}
-              </span>
-              <ChevronDown style={iconStyle(dense)} />
-            </button>
-          </DropdownMenuTrigger>
+          <AppTooltip content="Indicators">
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                style={barButtonStyle({ theme, palette, dense })}
+              >
+                <Plus style={iconStyle(dense)} />
+                <span>
+                  {dense
+                    ? selectedStudies.length > 0
+                      ? `Ind ${selectedStudies.length}`
+                      : "Ind"
+                    : `Indicators ${
+                        selectedStudies.length > 0 ? selectedStudies.length : ""
+                      }`.trim()}
+                </span>
+                <ChevronDown style={iconStyle(dense)} />
+              </button>
+            </DropdownMenuTrigger>
+          </AppTooltip>
           <DropdownMenuContent
             align="start"
             className={chartMenuContentClassName}
@@ -1051,8 +1059,9 @@ export const ResearchChartWidgetHeader = ({
 
         {showUndoRedo ? (
           <>
-            <button
+            <AppTooltip content="Undo"><button
               type="button"
+              aria-label="Undo"
               onClick={onUndo}
               disabled={!canUndo}
               style={barButtonStyle({
@@ -1061,12 +1070,12 @@ export const ResearchChartWidgetHeader = ({
                 dense,
                 disabled: !canUndo,
               })}
-              title="Undo"
             >
               <Undo2 style={iconStyle(dense)} />
-            </button>
-            <button
+            </button></AppTooltip>
+            <AppTooltip content="Redo"><button
               type="button"
+              aria-label="Redo"
               onClick={onRedo}
               disabled={!canRedo}
               style={barButtonStyle({
@@ -1075,10 +1084,9 @@ export const ResearchChartWidgetHeader = ({
                 dense,
                 disabled: !canRedo,
               })}
-              title="Redo"
             >
               <Redo2 style={iconStyle(dense)} />
-            </button>
+            </button></AppTooltip>
           </>
         ) : null}
 
@@ -1087,8 +1095,9 @@ export const ResearchChartWidgetHeader = ({
         ) : null}
 
         {typeof onFocusChart === "function" ? (
-          <button
+          <AppTooltip content={focusChartTitle}><button
             type="button"
+            aria-label={focusChartTitle}
             onClick={onFocusChart}
             style={barButtonStyle({
               theme,
@@ -1096,34 +1105,33 @@ export const ResearchChartWidgetHeader = ({
               dense,
               active: focusChartActive,
             })}
-            title={focusChartTitle}
           >
             <Crosshair style={iconStyle(dense)} />
             {dense ? null : <span>Focus</span>}
-          </button>
+          </button></AppTooltip>
         ) : null}
 
         {typeof onEnterSoloMode === "function" ? (
-          <button
+          <AppTooltip content={soloChartTitle}><button
             type="button"
+            aria-label={soloChartTitle}
             onClick={onEnterSoloMode}
             style={barButtonStyle({ theme, palette, dense })}
-            title={soloChartTitle}
           >
             <Maximize2 style={iconStyle(dense)} />
             {dense ? null : <span>Solo</span>}
-          </button>
+          </button></AppTooltip>
         ) : null}
 
         {showSnapshotButton ? (
-          <button
+          <AppTooltip content="Screenshot"><button
             type="button"
+            aria-label="Screenshot"
             onClick={controls.takeSnapshot}
             style={barButtonStyle({ theme, palette, dense })}
-            title="Screenshot"
           >
             <Camera style={iconStyle(dense)} />
-          </button>
+          </button></AppTooltip>
         ) : null}
 
         {showSettingsButton ? (
@@ -1136,20 +1144,20 @@ export const ResearchChartWidgetHeader = ({
         ) : null}
 
         {showFullscreenButton ? (
-          <button
+          <AppTooltip content={
+              controls.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+            }><button
             type="button"
+            aria-label={controls.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
             onClick={controls.toggleFullscreen}
             style={barButtonStyle({ theme, palette, dense })}
-            title={
-              controls.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
-            }
           >
             {controls.isFullscreen ? (
               <Minimize2 style={iconStyle(dense)} />
             ) : (
               <Maximize2 style={iconStyle(dense)} />
             )}
-          </button>
+          </button></AppTooltip>
         ) : null}
 
         {rightSlot}
@@ -1407,8 +1415,7 @@ export const ResearchChartWidgetFooter = ({
         }}
       >
         {activeLabels.length ? (
-          <span
-            title={activeLabels.join(" · ")}
+          <AppTooltip content={activeLabels.join(" · ")}><span
             style={{
               minWidth: 0,
               overflow: "hidden",
@@ -1416,15 +1423,14 @@ export const ResearchChartWidgetFooter = ({
             }}
           >
             {activeLabels.join(" · ")}
-          </span>
+          </span></AppTooltip>
         ) : (
           <span style={{ flexShrink: 0 }}>{dense ? "Pan" : "Pan drag"}</span>
         )}
         {dense ? null : <span style={{ flexShrink: 0 }}>Zoom scroll</span>}
         <div style={{ flex: 1 }} />
         {statusText ? (
-          <span
-            title={statusText}
+          <AppTooltip content={statusText}><span
             style={{
               minWidth: 0,
               maxWidth: dense ? 90 : 180,
@@ -1434,7 +1440,7 @@ export const ResearchChartWidgetFooter = ({
             }}
           >
             {statusText}
-          </span>
+          </span></AppTooltip>
         ) : null}
         <div
           data-chart-footer-scale-controls
@@ -1460,18 +1466,17 @@ export const ResearchChartWidgetFooter = ({
                 ? controls.scaleMode === "linear"
                 : controls.scaleMode === mode.key;
             return (
-              <button
+              <AppTooltip key={mode.key} content={mode.title}><button
                 key={mode.key}
                 type="button"
                 onClick={mode.onClick}
-                title={mode.title}
                 style={scaleButtonStyle({
                   active,
                   wide: mode.key === "indexed" || mode.key === "linear",
                 })}
               >
                 {mode.label}
-              </button>
+              </button></AppTooltip>
             );
           })}
 
@@ -1484,19 +1489,17 @@ export const ResearchChartWidgetFooter = ({
             }}
           />
 
-          <button
+          <AppTooltip content="Auto-scale main price pane"><button
             type="button"
             onClick={() => controls.setAutoScale((value) => !value)}
-            title="Auto-scale main price pane"
             style={scaleButtonStyle({ active: controls.autoScale })}
           >
             A
-          </button>
+          </button></AppTooltip>
 
-          <button
+          <AppTooltip content="Invert scale"><button
             type="button"
             onClick={() => controls.setInvertScale((value) => !value)}
-            title="Invert scale"
             style={{
               ...scaleButtonStyle({ active: controls.invertScale }),
               display: "flex",
@@ -1505,7 +1508,7 @@ export const ResearchChartWidgetFooter = ({
             }}
           >
             <ArrowUpDown style={iconStyle(true)} />
-          </button>
+          </button></AppTooltip>
         </div>
       </div>
     </div>
@@ -1625,12 +1628,11 @@ export const ResearchChartWidgetSidebar = ({
           ) : null}
 
           {group.map((button) => (
-            <button
+            <AppTooltip key={button.key} content={button.title}><button
               key={button.key}
               type="button"
               aria-pressed={button.active}
               onClick={button.onClick}
-              title={button.title}
               style={railButtonStyle({
                 theme,
                 palette,
@@ -1639,22 +1641,21 @@ export const ResearchChartWidgetSidebar = ({
               })}
             >
               {button.icon}
-            </button>
+            </button></AppTooltip>
           ))}
         </div>
       ))}
 
       <div style={{ flex: 1, minHeight: 8 }} />
 
-      <button
-        type="button"
-        onClick={onClearDrawings}
-        disabled={!drawingCount}
-        title={
+      <AppTooltip content={
           drawingCount
             ? `Remove all drawings (${drawingCount})`
             : "No drawings to remove"
-        }
+        }><button
+        type="button"
+        onClick={onClearDrawings}
+        disabled={!drawingCount}
         style={railButtonStyle({
           theme,
           palette,
@@ -1664,7 +1665,7 @@ export const ResearchChartWidgetSidebar = ({
         })}
       >
         <Trash2 style={iconStyle(dense)} />
-      </button>
+      </button></AppTooltip>
     </div>
   );
 };

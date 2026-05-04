@@ -8,6 +8,8 @@ import {
   panelStyle,
   toneForValue,
 } from "./accountUtils";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const formatSignedPercent = (value, digits = 2, maskValues = false) => {
   if (maskValues) return "****";
@@ -36,8 +38,7 @@ const labelCapsStyle = {
 };
 
 const MetricCell = ({ label, value, tone = T.text, title }) => (
-  <div
-    title={title}
+  <AppTooltip content={title}><div
     style={{
       minWidth: 0,
       display: "grid",
@@ -75,7 +76,7 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
     >
       {value}
     </span>
-  </div>
+  </div></AppTooltip>
 );
 
 const formatAxisMoney = (value, currency, maskValues) =>
@@ -131,12 +132,11 @@ const PnlHistogram = ({ bars = [], currency, maskValues }) => {
     : "";
 
   return (
-    <div
-      title={
+    <AppTooltip content={
         bars.length
           ? "Transfer-adjusted point-to-point P&L histogram."
           : "P&L path unavailable until the selected range has at least two equity points."
-      }
+      }><div
       style={{
         border: `1px solid ${T.border}`,
         borderRadius: dim(4),
@@ -247,7 +247,7 @@ const PnlHistogram = ({ bars = [], currency, maskValues }) => {
           {lastLabel}
         </text>
       </svg>
-    </div>
+    </div></AppTooltip>
   );
 };
 
@@ -431,8 +431,7 @@ export const AccountReturnsPanel = ({
           <div style={labelCapsStyle}>
             P&L Δ
           </div>
-          <div
-            title="Transfer-adjusted P&L over the selected equity range. External deposits and withdrawals are excluded."
+          <AppTooltip content="Transfer-adjusted P&L over the selected equity range. External deposits and withdrawals are excluded."><div
             style={{
               color: metricTone(transferAdjustedPnl),
               fontSize: fs(compact ? 10 : 11),
@@ -444,7 +443,7 @@ export const AccountReturnsPanel = ({
             }}
           >
             {formatAccountSignedMoney(transferAdjustedPnl, currency, true, maskValues)}
-          </div>
+          </div></AppTooltip>
         </div>
       </header>
 

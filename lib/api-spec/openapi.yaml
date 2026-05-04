@@ -459,6 +459,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccountPositionsResponse"
 
+  /accounts/{accountId}/positions-at-date:
+    get:
+      operationId: getAccountPositionsAtDate
+      tags: [accounts]
+      summary: Get positions and activity for an account date
+      parameters:
+        - $ref: "#/components/parameters/AccountIdPath"
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+      responses:
+        "200":
+          description: Account positions and activity at selected date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountPositionsAtDateResponse"
+
   /accounts/{accountId}/closed-trades:
     get:
       operationId: getAccountClosedTrades
@@ -1527,6 +1558,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/SignalMonitorStateResponse"
 
+  /signal-monitor/matrix:
+    post:
+      operationId: evaluateSignalMonitorMatrix
+      tags: [signal-monitor]
+      summary: Evaluate RayReplica signal states for watchlist row timeframes
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvaluateSignalMonitorMatrixRequest"
+      responses:
+        "200":
+          description: Watchlist row signal matrix after evaluation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalMonitorMatrixResponse"
+
   /signal-monitor/state:
     get:
       operationId: getSignalMonitorState
@@ -2378,6 +2428,10 @@ components:
     SignalMonitorTimeframe:
       type: string
       enum: [1m, 5m, 15m, 1h, 1d]
+
+    SignalMonitorMatrixTimeframe:
+      type: string
+      enum: [2m, 5m, 15m]
 
     FlowSentiment:
       type: string
@@ -5330,6 +5384,100 @@ components:
         - totals
         - updatedAt
 
+    AccountPositionDateActivity:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        type:
+          type: string
+        symbol:
+          type: string
+          nullable: true
+        side:
+          type: string
+          nullable: true
+        amount:
+          type: number
+          nullable: true
+        quantity:
+          type: number
+          nullable: true
+        price:
+          type: number
+          nullable: true
+        realizedPnl:
+          type: number
+          nullable: true
+        fees:
+          type: number
+          nullable: true
+        currency:
+          type: string
+        source:
+          type: string
+      required:
+        - id
+        - timestamp
+        - type
+        - symbol
+        - side
+        - amount
+        - quantity
+        - price
+        - realizedPnl
+        - fees
+        - currency
+        - source
+
+    AccountPositionsAtDateResponse:
+      type: object
+      properties:
+        accountId:
+          type: string
+        date:
+          type: string
+          format: date
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [historical, current, unavailable]
+        snapshotDate:
+          type: string
+          format: date-time
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountPositionRow"
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountPositionDateActivity"
+        totals:
+          $ref: "#/components/schemas/JsonObject"
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - accountId
+        - date
+        - currency
+        - status
+        - snapshotDate
+        - message
+        - positions
+        - activity
+        - totals
+        - updatedAt
+
     AccountTrade:
       type: object
       properties:
@@ -6752,6 +6900,22 @@ components:
         watchlistId:
           type: [string, "null"]
 
+    EvaluateSignalMonitorMatrixRequest:
+      type: object
+      properties:
+        environment:
+          $ref: "#/components/schemas/EnvironmentMode"
+        watchlistId:
+          type: [string, "null"]
+        symbols:
+          type: array
+          items:
+            type: string
+        timeframes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
+
     SignalMonitorSymbolState:
       type: object
       properties:
@@ -6763,6 +6927,58 @@ components:
           type: string
         timeframe:
           $ref: "#/components/schemas/SignalMonitorTimeframe"
+        currentSignalDirection:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorDirection"
+            - type: "null"
+        currentSignalAt:
+          type: [string, "null"]
+          format: date-time
+        currentSignalPrice:
+          type: [number, "null"]
+        latestBarAt:
+          type: [string, "null"]
+          format: date-time
+        barsSinceSignal:
+          type: [integer, "null"]
+        fresh:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/SignalMonitorSymbolStatus"
+        active:
+          type: boolean
+        lastEvaluatedAt:
+          type: [string, "null"]
+          format: date-time
+        lastError:
+          type: [string, "null"]
+      required:
+        - id
+        - profileId
+        - symbol
+        - timeframe
+        - currentSignalDirection
+        - currentSignalAt
+        - currentSignalPrice
+        - latestBarAt
+        - barsSinceSignal
+        - fresh
+        - status
+        - active
+        - lastEvaluatedAt
+        - lastError
+
+    SignalMonitorMatrixState:
+      type: object
+      properties:
+        id:
+          type: string
+        profileId:
+          type: string
+        symbol:
+          type: string
+        timeframe:
+          $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
         currentSignalDirection:
           oneOf:
             - $ref: "#/components/schemas/SignalMonitorDirection"
@@ -6869,6 +7085,36 @@ components:
         - profile
         - states
         - evaluatedAt
+        - truncated
+        - skippedSymbols
+
+    SignalMonitorMatrixResponse:
+      type: object
+      properties:
+        profile:
+          $ref: "#/components/schemas/SignalMonitorProfile"
+        states:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorMatrixState"
+        evaluatedAt:
+          type: string
+          format: date-time
+        timeframes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
+        truncated:
+          type: boolean
+        skippedSymbols:
+          type: array
+          items:
+            type: string
+      required:
+        - profile
+        - states
+        - evaluatedAt
+        - timeframes
         - truncated
         - skippedSymbols
 

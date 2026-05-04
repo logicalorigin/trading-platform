@@ -130,17 +130,132 @@ type LiveBarStreamEntry = {
   reconnectTimer: number | null;
 };
 
+type LiveFrameSchedulerStats = {
+  queued: number;
+  applied: number;
+  coalesced: number;
+  duplicates: number;
+};
+
+type LiveFrameScheduler<T> = {
+  enqueue: (item: T) => void;
+  flush: () => void;
+  cancel: () => void;
+  pendingSize: () => number;
+};
+
 const HISTORICAL_BAR_STREAM_TIMEFRAMES = new Set(["5s", "1m", "5m", "15m", "1h", "1d"]);
 const MINUTE_AGGREGATE_PATCH_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "1d"]);
 const LIVE_BAR_STREAM_STALE_MS = 45_000;
 const LIVE_BAR_STREAM_RECONNECT_MS = 5_000;
 const LIVE_BAR_FALLBACK_DELAYS_MS = [0, 15_000, 30_000, 60_000] as const;
+const LIVE_BAR_FALLBACK_SUCCESS_COOLDOWN_MS = 15_000;
 const LIVE_BAR_STREAM_MAX_CONNECTIONS = 64;
 const INTRADAY_PREPEND_MIN_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1_000;
 const EMPTY_OLDER_HISTORY_WINDOW_EXHAUSTION_LIMIT = 120;
 
 const liveBarStreamEntries = new Map<string, LiveBarStreamEntry>();
 let nextLiveBarStreamListenerId = 1;
+
+const requestLiveFrame = (callback: () => void): ReturnType<typeof setTimeout> | number => {
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    return window.requestAnimationFrame(callback);
+  }
+
+  return setTimeout(callback, 0);
+};
+
+const cancelLiveFrame = (handle: ReturnType<typeof setTimeout> | number): void => {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.cancelAnimationFrame === "function" &&
+    typeof handle === "number"
+  ) {
+    window.cancelAnimationFrame(handle);
+    return;
+  }
+
+  clearTimeout(handle);
+};
+
+const createLiveBarFrameScheduler = <T,>({
+  getBucketKey,
+  getSignature,
+  apply,
+  requestFrame = requestLiveFrame,
+  cancelFrame = cancelLiveFrame,
+}: {
+  getBucketKey: (item: T) => string | null;
+  getSignature?: (item: T) => string;
+  apply: (items: T[], stats: LiveFrameSchedulerStats) => void;
+  requestFrame?: (callback: () => void) => ReturnType<typeof setTimeout> | number;
+  cancelFrame?: (handle: ReturnType<typeof setTimeout> | number) => void;
+}): LiveFrameScheduler<T> => {
+  const pendingByBucket = new Map<string, T>();
+  let queued = 0;
+  let duplicates = 0;
+  let frameHandle: ReturnType<typeof setTimeout> | number | null = null;
+
+  const flush = () => {
+    frameHandle = null;
+    if (!pendingByBucket.size) {
+      queued = 0;
+      duplicates = 0;
+      return;
+    }
+
+    const items = Array.from(pendingByBucket.values());
+    const stats = {
+      queued,
+      applied: items.length,
+      coalesced: Math.max(0, queued - items.length),
+      duplicates,
+    };
+    pendingByBucket.clear();
+    queued = 0;
+    duplicates = 0;
+    apply(items, stats);
+  };
+
+  const schedule = () => {
+    if (frameHandle !== null) {
+      return;
+    }
+    frameHandle = requestFrame(flush);
+  };
+
+  return {
+    enqueue: (item) => {
+      const bucketKey = getBucketKey(item);
+      if (!bucketKey) {
+        return;
+      }
+
+      const previous = pendingByBucket.get(bucketKey);
+      if (
+        previous &&
+        getSignature &&
+        getSignature(previous) === getSignature(item)
+      ) {
+        duplicates += 1;
+      }
+      pendingByBucket.set(bucketKey, item);
+      queued += 1;
+      schedule();
+    },
+    flush,
+    cancel: () => {
+      if (frameHandle !== null) {
+        cancelFrame(frameHandle);
+        frameHandle = null;
+      }
+      pendingByBucket.clear();
+      queued = 0;
+      duplicates = 0;
+    },
+    pendingSize: () => pendingByBucket.size,
+  };
+};
 
 const timeframeToStepMs = (timeframe: string): number => (
   getChartTimeframeStepMs(normalizeChartTimeframe(timeframe)) || 0
@@ -935,6 +1050,66 @@ const patchBarsWithHistoricalBarStream = (
   return mergePatchedBars(normalizedBars, [patchedBar], timeframe);
 };
 
+const buildPatchedBarFromHistoricalBarStream = (
+  nextBar: HistoricalBarStreamSnapshot | null | undefined,
+  timeframe: string,
+): MarketBar | null => {
+  if (!nextBar) {
+    return null;
+  }
+
+  const rawTimeMs = resolveTimestampMs(nextBar.timestamp);
+  if (rawTimeMs == null) {
+    return null;
+  }
+
+  const timeMs = normalizeTimeframeBucketStartMs(rawTimeMs, timeframe);
+  return {
+    timestamp: new Date(timeMs),
+    time: timeMs,
+    ts: new Date(timeMs).toISOString(),
+    open: nextBar.open,
+    high: nextBar.high,
+    low: nextBar.low,
+    close: nextBar.close,
+    volume: nextBar.volume,
+    source: nextBar.source ?? "ibkr-history",
+    freshness: nextBar.freshness,
+    marketDataMode: nextBar.marketDataMode,
+    dataUpdatedAt: nextBar.dataUpdatedAt,
+  };
+};
+
+const buildHistoricalBarStreamSignature = (
+  bar: HistoricalBarStreamSnapshot,
+): string => JSON.stringify({
+  timestamp: bar.timestamp instanceof Date ? bar.timestamp.toISOString() : String(bar.timestamp),
+  open: bar.open,
+  high: bar.high,
+  low: bar.low,
+  close: bar.close,
+  volume: bar.volume,
+  source: bar.source ?? "",
+  freshness: bar.freshness ?? "",
+  marketDataMode: bar.marketDataMode ?? "",
+  dataUpdatedAt:
+    bar.dataUpdatedAt instanceof Date
+      ? bar.dataUpdatedAt.toISOString()
+      : String(bar.dataUpdatedAt ?? ""),
+});
+
+const resolveHistoricalBarStreamBucketKey = (
+  bar: HistoricalBarStreamSnapshot,
+  timeframe: string,
+): string | null => {
+  const rawTimeMs = resolveTimestampMs(bar.timestamp);
+  if (rawTimeMs == null) {
+    return null;
+  }
+
+  return String(normalizeTimeframeBucketStartMs(rawTimeMs, timeframe));
+};
+
 const patchBarsWithLiveQuote = (
   bars: MarketBar[],
   timeframe: string,
@@ -1525,6 +1700,7 @@ export const useHistoricalBarStream = ({
     let fallbackTimer: number | null = null;
     let fallbackInFlight = false;
     let fallbackAttempt = 0;
+    let lastFallbackCompletedAt = 0;
     let streamIsLive = false;
 
     const clearFallbackTimer = () => {
@@ -1535,32 +1711,61 @@ export const useHistoricalBarStream = ({
       fallbackTimer = null;
     };
 
-    const applyStreamBar = (bar: HistoricalBarStreamSnapshot) => {
-      const nextSignature = JSON.stringify({
-        timestamp: bar.timestamp instanceof Date ? bar.timestamp.toISOString() : String(bar.timestamp),
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-      });
-      if (nextSignature === lastStreamSignatureRef.current) {
+    const applyStreamBars = (
+      bars: HistoricalBarStreamSnapshot[],
+      stats: LiveFrameSchedulerStats,
+    ) => {
+      if (!active || !bars.length) {
         return;
       }
-      lastStreamSignatureRef.current = nextSignature;
-
+      if (stats.coalesced > 0) {
+        recordChartHydrationCounter(
+          "livePatchCoalesced",
+          instrumentationScope,
+          stats.coalesced,
+        );
+      }
+      if (stats.duplicates > 0) {
+        recordChartHydrationCounter(
+          "livePatchDuplicate",
+          instrumentationScope,
+          stats.duplicates,
+        );
+      }
       markChartLivePatchPending(instrumentationScope);
       setStreamedBars((current) => {
+        const patchedBars = bars
+          .map((bar) => buildPatchedBarFromHistoricalBarStream(bar, timeframe))
+          .filter((bar): bar is MarketBar => Boolean(bar));
+        if (!patchedBars.length) {
+          return current;
+        }
         const next = capBarsToRecentLimit(
-          patchBarsWithHistoricalBarStream(
+          mergePatchedBars(
             current.length ? current : baseBarsRef.current,
-            bar,
+            patchedBars,
             timeframe,
           ),
           streamedBarLimit,
         );
         return areBarsEquivalent(current, next) ? current : next;
       });
+    };
+
+    const streamBarScheduler = createLiveBarFrameScheduler<HistoricalBarStreamSnapshot>({
+      getBucketKey: (bar) => resolveHistoricalBarStreamBucketKey(bar, timeframe),
+      getSignature: buildHistoricalBarStreamSignature,
+      apply: applyStreamBars,
+    });
+
+    const enqueueStreamBar = (bar: HistoricalBarStreamSnapshot) => {
+      const nextSignature = buildHistoricalBarStreamSignature(bar);
+      if (nextSignature === lastStreamSignatureRef.current) {
+        recordChartHydrationCounter("livePatchDuplicate", instrumentationScope);
+        return;
+      }
+      lastStreamSignatureRef.current = nextSignature;
+      streamBarScheduler.enqueue(bar);
     };
 
     const scheduleFallback = (delayMs?: number) => {
@@ -1574,10 +1779,14 @@ export const useHistoricalBarStream = ({
           : LIVE_BAR_FALLBACK_DELAYS_MS[
               Math.min(fallbackAttempt, LIVE_BAR_FALLBACK_DELAYS_MS.length - 1)
             ];
+      const cooldownRemaining = Math.max(
+        0,
+        lastFallbackCompletedAt + LIVE_BAR_FALLBACK_SUCCESS_COOLDOWN_MS - Date.now(),
+      );
       fallbackTimer = window.setTimeout(() => {
         fallbackTimer = null;
         void runFallback();
-      }, delay);
+      }, Math.max(delay, cooldownRemaining));
     };
 
     const runFallback = async () => {
@@ -1606,6 +1815,7 @@ export const useHistoricalBarStream = ({
           );
           return areBarsEquivalent(current, next) ? current : next;
         });
+        lastFallbackCompletedAt = Date.now();
       } finally {
         fallbackInFlight = false;
         fallbackAttempt += 1;
@@ -1620,7 +1830,7 @@ export const useHistoricalBarStream = ({
       onBar: (bar) => {
         fallbackAttempt = 0;
         clearFallbackTimer();
-        applyStreamBar(bar);
+        enqueueStreamBar(bar);
       },
       onStatus: (status) => {
         streamIsLive = status === "live";
@@ -1639,6 +1849,7 @@ export const useHistoricalBarStream = ({
     return () => {
       active = false;
       clearFallbackTimer();
+      streamBarScheduler.cancel();
       unsubscribe();
     };
   }, [
@@ -1666,6 +1877,10 @@ export const __chartStreamingTestInternals = {
   normalizeHistoricalBarsPayload,
   normalizeBaseBars,
   patchBarsWithHistoricalBarStream,
+  buildPatchedBarFromHistoricalBarStream,
+  buildHistoricalBarStreamSignature,
+  resolveHistoricalBarStreamBucketKey,
+  createLiveBarFrameScheduler,
   isHistoricalBarStreamPayloadForUrl,
   resolvePrependLookbackMs,
   resolvePrependRequestPageSize,

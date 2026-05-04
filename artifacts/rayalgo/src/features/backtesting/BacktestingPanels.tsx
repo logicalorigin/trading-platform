@@ -90,6 +90,7 @@ import {
   formatAppDateTimeForPreferences,
   formatAppTimeForPreferences,
 } from "../../lib/timeZone";
+import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { responsiveFlags, useElementSize } from "../../lib/responsive";
 import type { UserPreferences } from "../preferences/userPreferenceModel";
 
@@ -4406,13 +4407,7 @@ export function BacktestWorkspace({
                             }
                           />
                           <Tooltip
-                            contentStyle={{
-                              background: theme.bg4,
-                              border: `1px solid ${theme.border}`,
-                              borderRadius: scale.dim(6),
-                              color: theme.text,
-                              fontFamily: theme.mono,
-                            }}
+                            contentStyle={chartTooltipContentStyle}
                           />
                           <Bar
                             dataKey="netPnl"
@@ -5028,13 +5023,7 @@ export function BacktestWorkspace({
                           }
                         />
                         <Tooltip
-                          contentStyle={{
-                            background: theme.bg4,
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(6),
-                            color: theme.text,
-                            fontFamily: theme.mono,
-                          }}
+                          contentStyle={chartTooltipContentStyle}
                         />
                         <Bar
                           dataKey="netPnl"
@@ -5095,13 +5084,7 @@ export function BacktestWorkspace({
                           }
                         />
                         <Tooltip
-                          contentStyle={{
-                            background: theme.bg4,
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(6),
-                            color: theme.text,
-                            fontFamily: theme.mono,
-                          }}
+                          contentStyle={chartTooltipContentStyle}
                         />
                         <Bar
                           dataKey="netPnl"
@@ -5165,13 +5148,7 @@ export function BacktestWorkspace({
                           }}
                         />
                         <Tooltip
-                          contentStyle={{
-                            background: theme.bg4,
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(6),
-                            color: theme.text,
-                            fontFamily: theme.mono,
-                          }}
+                          contentStyle={chartTooltipContentStyle}
                         />
                         <Bar
                           dataKey="count"
@@ -5228,13 +5205,7 @@ export function BacktestWorkspace({
                           }}
                         />
                         <Tooltip
-                          contentStyle={{
-                            background: theme.bg4,
-                            border: `1px solid ${theme.border}`,
-                            borderRadius: scale.dim(6),
-                            color: theme.text,
-                            fontFamily: theme.mono,
-                          }}
+                          contentStyle={chartTooltipContentStyle}
                         />
                         <Bar
                           dataKey="count"

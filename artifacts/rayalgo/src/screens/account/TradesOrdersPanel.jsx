@@ -19,6 +19,13 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { closeDateMatchesPatternHour } from "./accountPatternLens";
+import {
+  feeDragBucket,
+  getAccountTradeId,
+  holdDurationBucket,
+} from "./accountTradingAnalysis";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const SummaryCard = ({ label, value, tone = T.text }) => (
   <div
@@ -52,7 +59,69 @@ const sourceTone = (sourceType) =>
       ? "purple"
       : sourceType === "mixed"
         ? "amber"
-        : "default";
+      : "default";
+
+const normalizeText = (value, fallback = "") => {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+};
+
+const normalizeSymbol = (value) => normalizeText(value).toUpperCase();
+
+const tradeStrategyValue = (trade) =>
+  normalizeText(
+    trade?.strategyLabel,
+    normalizeText(trade?.deploymentName, normalizeText(trade?.candidateId, "Unattributed")),
+  );
+
+const tradeMatchesExtendedFilters = (trade, filters = {}) => {
+  if (filters.symbol && normalizeSymbol(trade.symbol) !== normalizeSymbol(filters.symbol)) {
+    return false;
+  }
+  if (
+    filters.assetClass &&
+    filters.assetClass !== "all" &&
+    normalizeText(trade.assetClass).toLowerCase() !==
+      normalizeText(filters.assetClass).toLowerCase()
+  ) {
+    return false;
+  }
+  if (filters.pnlSign === "winners" && Number(trade.realizedPnl || 0) <= 0) {
+    return false;
+  }
+  if (filters.pnlSign === "losers" && Number(trade.realizedPnl || 0) >= 0) {
+    return false;
+  }
+  if (
+    filters.side &&
+    filters.side !== "all" &&
+    !normalizeText(trade.side).toLowerCase().includes(String(filters.side).toLowerCase())
+  ) {
+    return false;
+  }
+  if (
+    filters.holdDuration &&
+    filters.holdDuration !== "all" &&
+    holdDurationBucket(trade.holdDurationMinutes) !== filters.holdDuration
+  ) {
+    return false;
+  }
+  if (
+    filters.strategy &&
+    filters.strategy !== "all" &&
+    tradeStrategyValue(trade) !== filters.strategy
+  ) {
+    return false;
+  }
+  if (
+    filters.feeDrag &&
+    filters.feeDrag !== "all" &&
+    feeDragBucket(trade) !== filters.feeDrag
+  ) {
+    return false;
+  }
+  return closeDateMatchesPatternHour(trade.closeDate, filters.closeHour);
+};
 
 export const OrdersPanel = ({
   query,
@@ -174,11 +243,10 @@ export const OrdersPanel = ({
                         : "----"}
                     </td>
                     <td style={tableCellStyle}>
-                      <button
+                      <AppTooltip content={cancelDisabled ? cancelDisabledReason : "Cancel order"}><button
                         type="button"
                         className="ra-interactive"
                         disabled={cancelPending || cancelDisabled}
-                        title={cancelDisabled ? cancelDisabledReason : "Cancel order"}
                         onClick={() => onCancelOrder(order)}
                         style={{
                           ...secondaryButtonStyle,
@@ -193,7 +261,7 @@ export const OrdersPanel = ({
                         }}
                       >
                         Cancel
-                      </button>
+                      </button></AppTooltip>
                     </td>
                   </>
                 ) : (
@@ -253,12 +321,14 @@ export const ClosedTradesPanel = ({
   sourceFiltersEnabled = false,
   emptyBody = "Recent IBKR executions are shown live. Older lifetime trades appear after the Flex refresh imports the Trades section.",
   maskValues = false,
+  selectedTradeId = "",
+  onTradeSelect,
 }) => {
   const rows = (query.data?.trades || []).filter((trade) =>
     (!sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
       ? true
       : trade.sourceType === filters.sourceType) &&
-    closeDateMatchesPatternHour(trade.closeDate, filters.closeHour),
+    tradeMatchesExtendedFilters(trade, filters),
   );
   return (
     <Panel
@@ -288,6 +358,27 @@ export const ClosedTradesPanel = ({
                 onChange={(value) => onFiltersChange({ sourceType: value })}
               />
             ) : null}
+            <ToggleGroup
+              options={[
+                { value: "all", label: "All Holds" },
+                { value: "intraday-fast", label: "<=30m" },
+                { value: "intraday", label: "30m-4h" },
+                { value: "swing", label: "4h-1d" },
+                { value: "multi-day", label: "Multi-day" },
+              ]}
+              value={filters.holdDuration || "all"}
+              onChange={(value) => onFiltersChange({ holdDuration: value })}
+            />
+            <ToggleGroup
+              options={[
+                { value: "all", label: "All Fees" },
+                { value: "high", label: "High Fee" },
+                { value: "medium", label: "Med Fee" },
+                { value: "low", label: "Low Fee" },
+              ]}
+              value={filters.feeDrag || "all"}
+              onChange={(value) => onFiltersChange({ feeDrag: value })}
+            />
             <button type="button" onClick={onResetFilters} style={secondaryButtonStyle}>
               Reset
             </button>
@@ -386,85 +477,278 @@ export const ClosedTradesPanel = ({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((trade) => (
-                  <tr
-                    key={`${trade.source}:${trade.id}`}
-                    className="ra-table-row"
-                    tabIndex={0}
-                    onKeyDown={moveTableFocus}
-                  >
-                    <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
-                      <MarketIdentityInline
-                        item={{
-                          ticker: trade.symbol,
-                          market: marketForAssetClass(trade.assetClass),
-                        }}
-                        size={14}
-                        showMark={false}
-                        showChips
-                        style={{ maxWidth: dim(126) }}
-                      />
-                    </td>
-                    <td style={tableCellStyle}>
-                      <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>
-                    </td>
-                    <td style={tableCellStyle}>{formatNumber(trade.quantity, 3)}</td>
-                    <td style={tableCellStyle}>
-                      {formatAppDate(trade.openDate)}
-                    </td>
-                    <td style={tableCellStyle}>
-                      {formatAppDate(trade.closeDate)}
-                    </td>
-                    <td style={tableCellStyle}>
-                      {trade.avgOpen != null
-                        ? formatAccountMoney(trade.avgOpen, currency, false, maskValues)
-                        : "----"}
-                      {" / "}
-                      {trade.avgClose != null
-                        ? formatAccountMoney(trade.avgClose, currency, false, maskValues)
-                        : "----"}
-                    </td>
-                    <td style={{ ...tableCellStyle, color: toneForValue(trade.realizedPnl) }}>
-                      {formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}{" "}
-                      {trade.realizedPnlPercent != null
-                        ? `/ ${formatAccountPercent(trade.realizedPnlPercent, 2, maskValues)}`
-                        : ""}
-                      {trade.commissions != null ? (
-                        <span style={{ color: T.textDim }}>
-                          {" · "}
-                          {formatAccountMoney(trade.commissions, currency, false, maskValues)}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td style={tableCellStyle}>
-                      {trade.holdDurationMinutes != null
-                        ? `${Math.round(trade.holdDurationMinutes / 60)}h`
-                        : "----"}
-                    </td>
-                    <td style={tableCellStyle}>
-                      <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
-                        <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
-                          {trade.source}
-                        </Pill>
-                        {trade.sourceType ? (
-                          <Pill tone={sourceTone(trade.sourceType)}>
-                            {trade.strategyLabel || trade.sourceType}
-                          </Pill>
+                {rows.map((trade) => {
+                  const tradeId = getAccountTradeId(trade);
+                  const rowSelected = Boolean(selectedTradeId && tradeId === selectedTradeId);
+                  const selectedCellStyle = rowSelected
+                    ? {
+                        borderTop: `1px solid ${T.cyan}55`,
+                        borderBottom: `1px solid ${T.cyan}55`,
+                      }
+                    : {};
+                  return (
+                    <AppTooltip key={`${trade.source}:${trade.id}`} content={onTradeSelect ? "Inspect trade" : undefined}><tr
+                      key={`${trade.source}:${trade.id}`}
+                      className="ra-table-row"
+                      tabIndex={0}
+                      onClick={() => onTradeSelect?.(tradeId)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onTradeSelect?.(tradeId);
+                          return;
+                        }
+                        moveTableFocus(event);
+                      }}
+                      style={{
+                        background: rowSelected ? `${T.cyan}16` : "transparent",
+                        boxShadow: rowSelected ? `inset 3px 0 0 ${T.cyan}` : "none",
+                        cursor: onTradeSelect ? "pointer" : "default",
+                      }}
+                    >
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: 900 }}>
+                        <MarketIdentityInline
+                          item={{
+                            ticker: trade.symbol,
+                            market: marketForAssetClass(trade.assetClass),
+                          }}
+                          size={14}
+                          showMark={false}
+                          showChips
+                          style={{ maxWidth: dim(126) }}
+                        />
+                      </td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                        <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>
+                      </td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>{formatNumber(trade.quantity, 3)}</td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                        {formatAppDate(trade.openDate)}
+                      </td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                        {formatAppDate(trade.closeDate)}
+                      </td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                        {trade.avgOpen != null
+                          ? formatAccountMoney(trade.avgOpen, currency, false, maskValues)
+                          : "----"}
+                        {" / "}
+                        {trade.avgClose != null
+                          ? formatAccountMoney(trade.avgClose, currency, false, maskValues)
+                          : "----"}
+                      </td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: toneForValue(trade.realizedPnl) }}>
+                        {formatAccountMoney(trade.realizedPnl, trade.currency || currency, false, maskValues)}{" "}
+                        {trade.realizedPnlPercent != null
+                          ? `/ ${formatAccountPercent(trade.realizedPnlPercent, 2, maskValues)}`
+                          : ""}
+                        {trade.commissions != null ? (
+                          <span style={{ color: T.textDim }}>
+                            {" · "}
+                            {formatAccountMoney(trade.commissions, currency, false, maskValues)}
+                          </span>
                         ) : null}
-                      </div>
-                      {trade.candidateId ? (
-                        <div style={{ color: T.textDim, fontSize: fs(8), marginTop: 2 }}>
-                          {trade.deploymentName || trade.candidateId}
+                      </td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                        {trade.holdDurationMinutes != null
+                          ? `${Math.round(trade.holdDurationMinutes / 60)}h`
+                          : "----"}
+                      </td>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
+                        <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+                          <Pill tone={trade.source === "FLEX" ? "accent" : "green"}>
+                            {trade.source}
+                          </Pill>
+                          {trade.sourceType ? (
+                            <Pill tone={sourceTone(trade.sourceType)}>
+                              {trade.strategyLabel || trade.sourceType}
+                            </Pill>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
+                        {trade.candidateId ? (
+                          <div style={{ color: T.textDim, fontSize: fs(8), marginTop: 2 }}>
+                            {trade.deploymentName || trade.candidateId}
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr></AppTooltip>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
+    </Panel>
+  );
+};
+
+const DetailRow = ({ label, value, tone = T.textSec }) => (
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: "minmax(92px, 0.55fr) minmax(0, 1fr)",
+      gap: sp(5),
+      alignItems: "baseline",
+      minWidth: 0,
+    }}
+  >
+    <div style={mutedLabelStyle}>{label}</div>
+    <div
+      style={{
+        color: tone,
+        fontFamily: T.data,
+        fontSize: fs(9),
+        fontWeight: 800,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value ?? "----"}
+    </div>
+  </div>
+);
+
+export const SelectedTradeAnalysisPanel = ({
+  analysis,
+  currency,
+  maskValues = false,
+  onJumpToChart,
+}) => {
+  const detail = analysis?.selectedTradeDetail;
+  const trade = detail?.trade;
+  const lifecycleRows = analysis?.lifecycleRows || [];
+  return (
+    <Panel
+      title="Selected Trade"
+      rightRail={trade ? getAccountTradeId(trade) : "No trade selected"}
+      minHeight={170}
+      action={
+        trade?.symbol && onJumpToChart ? (
+          <button
+            type="button"
+            className="ra-interactive"
+            onClick={() => onJumpToChart(trade.symbol)}
+            style={secondaryButtonStyle}
+          >
+            Chart
+          </button>
+        ) : null
+      }
+    >
+      {!trade ? (
+        <EmptyState
+          title="No selected trade"
+          body="Select a closed trade or pattern card to inspect account impact."
+        />
+      ) : (
+        <div style={{ display: "grid", gap: sp(7) }}>
+          <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+            <Pill tone="cyan">{trade.symbol || "----"}</Pill>
+            <Pill tone={/sell|short/i.test(trade.side) ? "red" : "green"}>
+              {trade.side || "side"}
+            </Pill>
+            <Pill tone={sourceTone(trade.sourceType)}>
+              {trade.strategyLabel || trade.sourceType || trade.source || "source"}
+            </Pill>
+            {trade.assetClass ? <Pill tone="purple">{trade.assetClass}</Pill> : null}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+              gap: sp(5),
+            }}
+          >
+            <DetailRow
+              label="Realized"
+              value={formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
+              tone={toneForValue(trade.realizedPnl)}
+            />
+            <DetailRow
+              label="Commissions"
+              value={formatAccountMoney(trade.commissions, currency, true, maskValues)}
+            />
+            <DetailRow label="Quantity" value={formatNumber(trade.quantity, 3)} />
+            <DetailRow
+              label="Hold"
+              value={
+                trade.holdDurationMinutes == null
+                  ? "----"
+                  : `${formatNumber(trade.holdDurationMinutes / 60, 1)}h`
+              }
+            />
+            <DetailRow
+              label="Entry"
+              value={
+                trade.avgOpen == null
+                  ? "----"
+                  : formatAccountMoney(trade.avgOpen, currency, false, maskValues)
+              }
+            />
+            <DetailRow
+              label="Exit"
+              value={
+                trade.avgClose == null
+                  ? "----"
+                  : formatAccountMoney(trade.avgClose, currency, false, maskValues)
+              }
+            />
+            <DetailRow label="Opened" value={formatAppDateTime(trade.openDate)} />
+            <DetailRow label="Closed" value={formatAppDateTime(trade.closeDate)} />
+          </div>
+
+          <div style={{ display: "grid", gap: sp(4) }}>
+            <div style={mutedLabelStyle}>TRADE LIFECYCLE</div>
+            {lifecycleRows.map((row) => (
+              <div
+                key={row.key}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(82px, 0.35fr) minmax(0, 1fr) auto",
+                  gap: sp(5),
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(4),
+                  background: T.bg0,
+                  padding: sp("4px 5px"),
+                  alignItems: "center",
+                  minWidth: 0,
+                }}
+              >
+                <span style={{ color: T.text, fontFamily: T.data, fontWeight: 900, fontSize: fs(8) }}>
+                  {row.label}
+                </span>
+                <span
+                  style={{
+                    color: T.textSec,
+                    fontSize: fs(8),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {row.detail}
+                </span>
+                <span style={{ color: row.tone === "red" ? T.red : row.tone === "green" ? T.green : T.textDim, fontFamily: T.data, fontSize: fs(8), fontWeight: 900 }}>
+                  {row.value == null
+                    ? formatAppDate(row.at)
+                    : typeof row.value === "number"
+                      ? formatAccountMoney(row.value, currency, true, maskValues)
+                      : row.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", color: T.textDim, fontSize: fs(8), fontFamily: T.data }}>
+            <span>{detail.relatedOrders?.length || 0} related orders</span>
+            <span>{detail.relatedPositions?.length || 0} related open positions</span>
+            {trade.candidateId ? <span>candidate {trade.candidateId}</span> : null}
+          </div>
+        </div>
+      )}
     </Panel>
   );
 };

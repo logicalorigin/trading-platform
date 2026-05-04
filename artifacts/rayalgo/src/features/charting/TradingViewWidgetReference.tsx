@@ -1,5 +1,7 @@
 import { memo, useMemo } from "react";
 import { APP_FONT_FALLBACK } from "../../lib/typography";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 type TradingViewWidgetReferenceProps = {
   symbol?: string;
@@ -119,10 +121,9 @@ export const TradingViewWidgetReference = memo(({
   }, [interval, locale, symbol, theme]);
 
   return (
-    <iframe
+    <AppTooltip content="TradingView Widget Reference"><iframe
       data-testid={dataTestId}
       srcDoc={srcDoc}
-      title="TradingView Widget Reference"
       sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       style={{
         width: "100%",
@@ -131,7 +132,7 @@ export const TradingViewWidgetReference = memo(({
         display: "block",
         background: theme === "dark" ? "#131722" : "#ffffff",
       }}
-    />
+    /></AppTooltip>
   );
 });
 

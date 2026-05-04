@@ -120,6 +120,10 @@ function makeFlowEvents(symbol: string) {
 }
 
 async function mockMarketApi(page: Page) {
+  const observed = {
+    barsUrls: [] as string[],
+    streamUrls: [] as string[],
+  };
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     let body: unknown = {};
@@ -175,6 +179,7 @@ async function mockMarketApi(page: Page) {
         }),
       };
     } else if (url.pathname === "/api/bars") {
+      observed.barsUrls.push(url.toString());
       body = { bars: makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()) };
     } else if (url.pathname === "/api/flow/events") {
       body = {
@@ -191,7 +196,22 @@ async function mockMarketApi(page: Page) {
     } else if (url.pathname === "/api/research/earnings-calendar") {
       body = { entries: [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
-      body = { profile: { enabled: false, timeframe: "15m", watchlistId: null } };
+      body = {
+        id: "mock-signal-monitor-profile",
+        environment: "paper",
+        enabled: false,
+        watchlistId: null,
+        timeframe: "15m",
+        rayReplicaSettings: {},
+        freshWindowBars: 3,
+        pollIntervalSeconds: 60,
+        maxSymbols: 50,
+        evaluationConcurrency: 2,
+        lastEvaluatedAt: null,
+        lastError: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
     } else if (url.pathname === "/api/signal-monitor/state") {
       body = { states: [] };
     } else if (url.pathname === "/api/signal-monitor/events") {
@@ -199,6 +219,7 @@ async function mockMarketApi(page: Page) {
     } else if (url.pathname === "/api/charting/pine-scripts") {
       body = { scripts: [] };
     } else if (url.pathname.includes("/streams/")) {
+      observed.streamUrls.push(url.toString());
       await route.fulfill({ status: 204, body: "" });
       return;
     }
@@ -216,6 +237,7 @@ async function mockMarketApi(page: Page) {
       body: "",
     });
   });
+  return observed;
 }
 
 async function openMarket(page: Page, layout: string) {
@@ -232,9 +254,14 @@ async function openMarket(page: Page, layout: string) {
           theme: "dark",
           sidebarCollapsed: true,
           marketGridLayout: layout,
-          marketGridSlots: symbols.map((ticker: string) => ({
+          marketGridSlots: symbols.map((ticker: string, index: number) => ({
             ticker,
             tf: "15m",
+            market: "stocks",
+            provider: index % 2 === 0 ? "ibkr" : "polygon",
+            tradeProvider: "ibkr",
+            dataProviderPreference: "polygon",
+            providerContractId: String(320_000_000 + index),
             studies: ["ema21", "vwap", "rayReplica"],
           })),
         }),
@@ -366,7 +393,7 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
   });
 
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockMarketApi(page);
+  const observed = await mockMarketApi(page);
   await openMarket(page, "2x2");
 
   const chartSurfaces = page.locator(
@@ -375,6 +402,11 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
   await expect(chartSurfaces).toHaveCount(4);
   const inactiveSurface = chartSurfaces.nth(1);
   const inactivePlot = inactiveSurface.locator("[data-chart-plot-root]");
+  const inactiveIdentity = await inactiveSurface.getAttribute(
+    "data-chart-range-identity",
+  );
+  expect(inactiveIdentity).not.toContain("320000001");
+  expect(inactiveIdentity).not.toContain("polygon");
   await expect(inactiveSurface).toHaveAttribute(
     "data-chart-viewport-user-touched",
     "false",
@@ -430,6 +462,26 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
     settledRange,
     pannedRange,
   );
+  const stockBarsUrls = observed.barsUrls.filter((href) => {
+    const url = new URL(href);
+    return marketSymbols.includes((url.searchParams.get("symbol") || "").toUpperCase());
+  });
+  expect(stockBarsUrls.length).toBeGreaterThan(0);
+  expect(
+    stockBarsUrls.filter((href) => new URL(href).searchParams.has("providerContractId")),
+    "Market stock chart bar requests must match Trade's symbol-only equity path",
+  ).toEqual([]);
+  expect(
+    observed.streamUrls.filter((href) => {
+      const url = new URL(href);
+      return (
+        url.pathname === "/api/streams/bars" &&
+        marketSymbols.includes((url.searchParams.get("symbol") || "").toUpperCase()) &&
+        url.searchParams.has("providerContractId")
+      );
+    }),
+    "Market stock chart streams must not carry stale stock provider contracts",
+  ).toEqual([]);
 
   await inactivePlot.click();
   await expect

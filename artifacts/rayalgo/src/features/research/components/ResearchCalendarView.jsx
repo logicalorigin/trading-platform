@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchEarningsCalendar } from "../lib/researchApi";
 import { Logo } from "./ResearchLogo";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
   const [entries, setEntries] = useState(null); // null = loading, [] = no data, [...] = loaded
@@ -241,10 +243,10 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                     onMouseLeave={e => e.currentTarget.style.background = i % 2 ? "rgba(0,0,0,.008)" : "transparent"}
                   >
                     {/* Time badge */}
-                    <span title={tb.title} style={{
+                    <AppTooltip content={tb.title}><span style={{
                       display: "inline-block", padding: "2px 5px", borderRadius: 3,
                       background: tb.bg, color: tb.fg, fontSize: 9, fontWeight: 700, letterSpacing: .5, textAlign: "center",
-                    }}>{tb.label}</span>
+                    }}>{tb.label}</span></AppTooltip>
 
                     {/* Ticker + name + theme */}
                     <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>

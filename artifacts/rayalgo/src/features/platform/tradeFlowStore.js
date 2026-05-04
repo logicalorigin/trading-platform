@@ -8,9 +8,12 @@ const EMPTY_TRADE_FLOW_SNAPSHOT = Object.freeze({
 const tradeFlowEntries = new Map();
 export const TRADE_FLOW_STORE_ENTRY_CAP = 16;
 
-const evictOldestUnusedTradeFlowEntry = () => {
+const evictOldestUnusedTradeFlowEntry = (protectedKey = null) => {
   if (tradeFlowEntries.size <= TRADE_FLOW_STORE_ENTRY_CAP) return;
   for (const [key, value] of tradeFlowEntries) {
+    if (key === protectedKey) {
+      continue;
+    }
     if (!value.listeners || value.listeners.size === 0) {
       tradeFlowEntries.delete(key);
       return;
@@ -36,7 +39,7 @@ const ensureEntry = (ticker) => {
       snapshot: EMPTY_TRADE_FLOW_SNAPSHOT,
       listeners: new Set(),
     });
-    evictOldestUnusedTradeFlowEntry();
+    evictOldestUnusedTradeFlowEntry(normalizedTicker);
   } else {
     const existing = tradeFlowEntries.get(normalizedTicker);
     tradeFlowEntries.delete(normalizedTicker);
@@ -120,6 +123,7 @@ const subscribeToTradeFlowSnapshot = (ticker, listener) => {
     }
   };
 };
+export const subscribeToTradeFlowSnapshotForTests = subscribeToTradeFlowSnapshot;
 
 const getTradeFlowSnapshotVersion = (ticker) => ensureEntry(ticker).version;
 

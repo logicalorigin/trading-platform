@@ -56,6 +56,30 @@ test("flowEventsToChartEvents accepts symbol-only unusual flow payloads", () => 
   assert.equal(events[0].label, "CALL $640K");
 });
 
+test("flowEventsToChartEvents promotes high-premium non-unusual options flow", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "flow-premium",
+        ticker: "SPY",
+        cp: "P",
+        contract: "SPY 485P",
+        premium: 320_000,
+        unusualScore: 0.4,
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        isUnusual: false,
+        flowBias: "bearish",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].severity, "medium");
+  assert.equal(events[0].summary, "SPY 485P options flow $320K");
+  assert.equal(events[0].metadata.isUnusual, false);
+});
+
 test("earningsCalendarToChartEvents normalizes earnings into timescale events", () => {
   const events = earningsCalendarToChartEvents(
     [{ symbol: "MSFT", date: "2026-05-01", time: "amc" }],

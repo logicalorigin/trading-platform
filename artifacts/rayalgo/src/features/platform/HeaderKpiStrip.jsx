@@ -7,6 +7,8 @@ import {
 } from "../../lib/formatters";
 import { useRuntimeTickerSnapshot } from "./runtimeTickerStore";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const HEADER_KPI_CONFIG = [
   { symbol: "VIXY", label: "Volatility" },
@@ -97,10 +99,9 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
   const positive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
 
   return (
-    <button
+    <AppTooltip content={`${label} proxy · ${symbol}`}><button
       type="button"
       onClick={() => onSelect?.(symbol)}
-      title={`${label} proxy · ${symbol}`}
       style={{
         flex: "1 1 68px",
         minWidth: dim(64),
@@ -222,7 +223,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
           height={13}
         />
       </span>
-    </button>
+    </button></AppTooltip>
   );
 });
 

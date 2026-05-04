@@ -111,6 +111,73 @@ test("5m patched bar merging dedupes timestamps within the same interval", () =>
   assert.equal(patched[0]?.close, 101);
 });
 
+test("historical live patch scheduler coalesces one frame to latest bar per bucket", () => {
+  const callbacks: Array<() => void> = [];
+  const applied: Array<{
+    items: Array<{ timestamp: string; close: number }>;
+    stats: { queued: number; applied: number; coalesced: number; duplicates: number };
+  }> = [];
+  const scheduler = __chartStreamingTestInternals.createLiveBarFrameScheduler<{
+    timestamp: string;
+    close: number;
+  }>({
+    getBucketKey: (item) => item.timestamp,
+    getSignature: (item) => `${item.timestamp}:${item.close}`,
+    requestFrame: (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    },
+    cancelFrame: () => {},
+    apply: (items, stats) => {
+      applied.push({ items, stats });
+    },
+  });
+
+  scheduler.enqueue({ timestamp: "2026-04-27T13:30:00.000Z", close: 100 });
+  scheduler.enqueue({ timestamp: "2026-04-27T13:30:00.000Z", close: 101 });
+  scheduler.enqueue({ timestamp: "2026-04-27T13:31:00.000Z", close: 102 });
+
+  assert.equal(callbacks.length, 1);
+  callbacks[0]?.();
+
+  assert.equal(applied.length, 1);
+  assert.deepEqual(
+    applied[0]?.items.map((item) => item.close),
+    [101, 102],
+  );
+  assert.deepEqual(applied[0]?.stats, {
+    queued: 3,
+    applied: 2,
+    coalesced: 1,
+    duplicates: 0,
+  });
+});
+
+test("historical live patch scheduler counts duplicate pending bucket payloads", () => {
+  const scheduler =
+    __chartStreamingTestInternals.createLiveBarFrameScheduler<{
+      timestamp: string;
+      close: number;
+    }>({
+      getBucketKey: (item) => item.timestamp,
+      getSignature: (item) => `${item.timestamp}:${item.close}`,
+      requestFrame: () => 1,
+      cancelFrame: () => {},
+      apply: (_items, stats) => {
+        assert.deepEqual(stats, {
+          queued: 2,
+          applied: 1,
+          coalesced: 1,
+          duplicates: 1,
+        });
+      },
+    });
+
+  scheduler.enqueue({ timestamp: "2026-04-27T13:30:00.000Z", close: 100 });
+  scheduler.enqueue({ timestamp: "2026-04-27T13:30:00.000Z", close: 100 });
+  scheduler.flush();
+});
+
 test("daily live aggregate patch appends a missing current-session bar", () => {
   const dailyBars = [
     {

@@ -26,6 +26,7 @@ import type {
   AccountEquityHistoryResponse,
   AccountOrder,
   AccountOrdersResponse,
+  AccountPositionsAtDateResponse,
   AccountPositionsResponse,
   AccountRiskResponse,
   AccountSummaryResponse,
@@ -65,6 +66,7 @@ import type {
   DiagnosticThresholdsResponse,
   DiagnosticThresholdsUpdateRequest,
   DiagnosticsLatestResponse,
+  EvaluateSignalMonitorMatrixRequest,
   EvaluateSignalMonitorRequest,
   ExecutionEventsResponse,
   ExportDiagnosticsParams,
@@ -77,6 +79,7 @@ import type {
   GetAccountClosedTradesParams,
   GetAccountEquityHistoryParams,
   GetAccountOrdersParams,
+  GetAccountPositionsAtDateParams,
   GetAccountPositionsParams,
   GetAccountRiskParams,
   GetAccountSummaryParams,
@@ -140,6 +143,7 @@ import type {
   SearchUniverseTickersParams,
   SessionInfo,
   SignalMonitorEventsResponse,
+  SignalMonitorMatrixResponse,
   SignalMonitorProfile,
   SignalMonitorStateResponse,
   SignalOptionsAutomationState,
@@ -1887,6 +1891,93 @@ export function useGetAccountPositions<TData = Awaited<ReturnType<typeof getAcco
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAccountPositionsQueryOptions(accountId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get positions and activity for an account date
+ */
+export const getGetAccountPositionsAtDateUrl = (accountId: string,
+    params: GetAccountPositionsAtDateParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/accounts/${accountId}/positions-at-date?${stringifiedParams}` : `/api/accounts/${accountId}/positions-at-date`
+}
+
+export const getAccountPositionsAtDate = async (accountId: string,
+    params: GetAccountPositionsAtDateParams, options?: RequestInit): Promise<AccountPositionsAtDateResponse> => {
+
+  return customFetch<AccountPositionsAtDateResponse>(getGetAccountPositionsAtDateUrl(accountId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountPositionsAtDateQueryKey = (accountId: string,
+    params?: GetAccountPositionsAtDateParams,) => {
+    return [
+    `/api/accounts/${accountId}/positions-at-date`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAccountPositionsAtDateQueryOptions = <TData = Awaited<ReturnType<typeof getAccountPositionsAtDate>>, TError = ErrorType<unknown>>(accountId: string,
+    params: GetAccountPositionsAtDateParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountPositionsAtDate>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountPositionsAtDateQueryKey(accountId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountPositionsAtDate>>> = ({ signal }) => getAccountPositionsAtDate(accountId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(accountId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountPositionsAtDate>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountPositionsAtDateQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountPositionsAtDate>>>
+export type GetAccountPositionsAtDateQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get positions and activity for an account date
+ */
+
+export function useGetAccountPositionsAtDate<TData = Awaited<ReturnType<typeof getAccountPositionsAtDate>>, TError = ErrorType<unknown>>(
+ accountId: string,
+    params: GetAccountPositionsAtDateParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountPositionsAtDate>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountPositionsAtDateQueryOptions(accountId,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -4644,6 +4735,77 @@ export const useEvaluateSignalMonitor = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getEvaluateSignalMonitorMutationOptions(options));
+    }
+
+/**
+ * @summary Evaluate RayReplica signal states for watchlist row timeframes
+ */
+export const getEvaluateSignalMonitorMatrixUrl = () => {
+
+
+
+
+  return `/api/signal-monitor/matrix`
+}
+
+export const evaluateSignalMonitorMatrix = async (evaluateSignalMonitorMatrixRequest?: EvaluateSignalMonitorMatrixRequest, options?: RequestInit): Promise<SignalMonitorMatrixResponse> => {
+
+  return customFetch<SignalMonitorMatrixResponse>(getEvaluateSignalMonitorMatrixUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      evaluateSignalMonitorMatrixRequest,)
+  }
+);}
+
+
+
+
+export const getEvaluateSignalMonitorMatrixMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, TError,{data: BodyType<EvaluateSignalMonitorMatrixRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, TError,{data: BodyType<EvaluateSignalMonitorMatrixRequest>}, TContext> => {
+
+const mutationKey = ['evaluateSignalMonitorMatrix'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, {data: BodyType<EvaluateSignalMonitorMatrixRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  evaluateSignalMonitorMatrix(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EvaluateSignalMonitorMatrixMutationResult = NonNullable<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>>
+    export type EvaluateSignalMonitorMatrixMutationBody = BodyType<EvaluateSignalMonitorMatrixRequest>
+    export type EvaluateSignalMonitorMatrixMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Evaluate RayReplica signal states for watchlist row timeframes
+ */
+export const useEvaluateSignalMonitorMatrix = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>, TError,{data: BodyType<EvaluateSignalMonitorMatrixRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof evaluateSignalMonitorMatrix>>,
+        TError,
+        {data: BodyType<EvaluateSignalMonitorMatrixRequest>},
+        TContext
+      > => {
+      return useMutation(getEvaluateSignalMonitorMatrixMutationOptions(options));
     }
 
 /**

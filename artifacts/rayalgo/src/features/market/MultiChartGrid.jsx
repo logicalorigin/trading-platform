@@ -64,6 +64,7 @@ import {
   buildPremiumFlowBySymbol,
   resolvePremiumFlowDisplayState,
 } from "../platform/premiumFlowIndicator";
+import { FLOW_SCANNER_SCOPE } from "../platform/marketFlowScannerConfig";
 import {
   DEFAULT_WATCHLIST_BY_SYMBOL,
   WATCHLIST,
@@ -112,6 +113,8 @@ import { _initialState, persistState } from "../../lib/workspaceState";
 import { fmtM, isFiniteNumber } from "../../lib/formatters";
 import { T, dim, fs, getCurrentTheme, sp } from "../../lib/uiTokens";
 import { Card } from "../../components/platform/primitives.jsx";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const MULTI_CHART_LAYOUTS = {
   "1x1": { cols: 1, rows: 1, count: 1 },
@@ -139,6 +142,7 @@ const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
 const MARKET_GRID_INDICATOR_PRESET_VERSION = 2;
+const MARKET_CHART_FLOW_LIMIT = 80;
 
 const buildDefaultMiniChartSymbols = (
   activeSym,
@@ -245,6 +249,7 @@ const MARKET_CHART_PLOT_FOCUS_MOVE_TOLERANCE = 6;
 
 export const MultiChartGrid = ({
   activeSym,
+  externalSelection = null,
   onSymClick,
   watchlistSymbols = [],
   popularTickers = [],
@@ -404,12 +409,13 @@ export const MultiChartGrid = ({
     flowEvents: chartFlowEvents,
   } = useLiveMarketFlow(streamedSymbols, {
     enabled: Boolean(isVisible && streamedSymbols.length),
-    limit: 16,
+    limit: MARKET_CHART_FLOW_LIMIT,
     maxSymbols: MAX_MULTI_CHART_SLOTS,
     batchSize: MAX_MULTI_CHART_SLOTS,
     intervalMs: 10_000,
+    scope: FLOW_SCANNER_SCOPE.unusual,
     unusualThreshold,
-    workloadLabel: "Chart premium flow",
+    workloadLabel: "Chart unusual flow",
   });
   const premiumFlowBySymbol = useMemo(
     () => buildPremiumFlowBySymbol(chartFlowEvents, streamedSymbols),
@@ -777,15 +783,21 @@ export const MultiChartGrid = ({
     if (patch?.ticker) {
       rememberSearchRow(patch.searchResult || patch);
     }
-    if (
-      patch?.ticker ||
-      patch?.market ||
-      patch?.providerContractId ||
-      patch?.provider ||
-      patch?.tradeProvider ||
-      patch?.dataProviderPreference
-    ) {
-      clearViewportSnapshot(buildMarketGridViewportIdentity(slotIndex, slots[slotIndex]));
+    const currentSlot = slots[slotIndex];
+    const nextSlot = hydrateMiniChartSlot(
+      { ...currentSlot, ...patch },
+      defaults[slotIndex],
+    );
+    const previousViewportIdentity = buildMarketGridViewportIdentity(
+      slotIndex,
+      currentSlot,
+    );
+    const nextViewportIdentity = buildMarketGridViewportIdentity(
+      slotIndex,
+      nextSlot,
+    );
+    if (previousViewportIdentity !== nextViewportIdentity) {
+      clearViewportSnapshot(previousViewportIdentity);
     }
     setSlots((current) =>
       current.map((slot, index) =>
@@ -816,6 +828,91 @@ export const MultiChartGrid = ({
       ),
     );
   };
+  useEffect(() => {
+    const normalizedExternalSym =
+      externalSelection?.n > 0
+        ? normalizeTickerSymbol(externalSelection?.sym)
+        : "";
+    const normalizedActiveSym =
+      normalizedExternalSym || normalizeTickerSymbol(activeSym);
+    if (!normalizedActiveSym || !visibleSlotEntries.length) {
+      return;
+    }
+    const forcePrimarySlot = Boolean(
+      normalizedExternalSym &&
+        normalizedExternalSym === normalizedActiveSym,
+    );
+
+    const visibleHasActiveSymbol = visibleSlotEntries.some(
+      ({ slot }) => normalizeTickerSymbol(slot?.ticker) === normalizedActiveSym,
+    );
+    if (visibleHasActiveSymbol && !forcePrimarySlot) {
+      return;
+    }
+
+    const targetIndex =
+      layout === "1x1"
+        ? visibleSlotEntries[0]?.index ?? soloSlotIndex ?? 0
+        : visibleSlotEntries[0]?.index ?? 0;
+    const sourceIndex =
+      visibleSlotEntries.find(
+        ({ slot }) => normalizeTickerSymbol(slot?.ticker) === normalizedActiveSym,
+      )?.index ?? -1;
+    const currentSlot = slots[targetIndex];
+    if (normalizeTickerSymbol(currentSlot?.ticker) === normalizedActiveSym) {
+      return;
+    }
+
+    clearViewportSnapshot(buildMarketGridViewportIdentity(targetIndex, currentSlot));
+    if (forcePrimarySlot && sourceIndex >= 0 && sourceIndex !== targetIndex) {
+      clearViewportSnapshot(buildMarketGridViewportIdentity(sourceIndex, slots[sourceIndex]));
+    }
+    rememberSearchRow(normalizedActiveSym);
+    setSlots((current) => {
+      const sourceSlot = sourceIndex >= 0 ? current[sourceIndex] : null;
+      const targetSlot = current[targetIndex] || null;
+      return current.map((slot, index) => {
+        if (index === targetIndex) {
+          return hydrateMiniChartSlot(
+            {
+              ...(sourceSlot || slot),
+              ticker: normalizedActiveSym,
+              market: sourceSlot?.market || "stocks",
+              provider: sourceSlot?.provider || null,
+              providers: Array.isArray(sourceSlot?.providers)
+                ? sourceSlot.providers
+                : [],
+              tradeProvider: sourceSlot?.tradeProvider || null,
+              dataProviderPreference: sourceSlot?.dataProviderPreference || null,
+              providerContractId: sourceSlot?.providerContractId || null,
+              exchange: sourceSlot?.exchange || null,
+              searchResult: sourceSlot?.searchResult || null,
+            },
+            defaults[index],
+          );
+        }
+        if (
+          forcePrimarySlot &&
+          sourceIndex >= 0 &&
+          sourceIndex !== targetIndex &&
+          index === sourceIndex
+        ) {
+          return hydrateMiniChartSlot(targetSlot, defaults[index]);
+        }
+        return slot;
+      });
+    });
+  }, [
+    activeSym,
+    clearViewportSnapshot,
+    defaults,
+    externalSelection?.n,
+    externalSelection?.sym,
+    layout,
+    slots,
+    soloSlotIndex,
+    visibleSlotEntries,
+  ]);
   const focusedLabel =
     layout === "1x1"
       ? visibleSlotEntries[0]?.slot?.ticker || activeSym
@@ -969,10 +1066,9 @@ export const MultiChartGrid = ({
             }}
           >
             {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
-              <button
+              <AppTooltip key={key} content={`${MULTI_CHART_LAYOUTS[key].count} charts`}><button
                 key={key}
                 onClick={() => setLayout(key)}
-                title={`${MULTI_CHART_LAYOUTS[key].count} charts`}
                 style={{
                   padding: sp("3px 8px"),
                   fontSize: fs(9),
@@ -987,7 +1083,7 @@ export const MultiChartGrid = ({
                 }}
               >
                 {key}
-              </button>
+              </button></AppTooltip>
             ))}
           </div>
         </div>
@@ -1049,7 +1145,7 @@ export const MultiChartGrid = ({
                   setLayout("1x1");
                   onSymClick?.(slot.ticker);
                 }}
-                onChangeTicker={(ticker, result) =>
+                onChangeTicker={(ticker, result) => {
                   updateSlot(index, {
                     ticker,
                     market: result?.market || "stocks",
@@ -1064,8 +1160,9 @@ export const MultiChartGrid = ({
                       result?.primaryExchange ||
                       null,
                     searchResult: result || null,
-                  })
-                }
+                  });
+                  onSymClick?.(ticker);
+                }}
                 onChangeTimeframe={(tf) => updateSlotTimeframe(index, tf)}
                 onChangeStudies={(studies) => updateSlot(index, { studies })}
                 onChangeRayReplicaSettings={(rayReplicaSettings) =>
@@ -1079,11 +1176,17 @@ export const MultiChartGrid = ({
                 signalSuggestionSymbols={signalSuggestionSymbols}
                 onRememberTicker={rememberSearchRow}
                 tickerSearchOpen={openTickerSearchSlotIndex === index}
-                onTickerSearchOpenChange={(open) =>
-                  setOpenTickerSearchSlotIndex((current) =>
-                    open ? index : current === index ? null : current,
-                  )
-                }
+                onTickerSearchOpenChange={(open) => {
+                  const nextOpenSlotIndex = open
+                    ? index
+                    : openTickerSearchSlotIndex === index
+                      ? null
+                      : openTickerSearchSlotIndex;
+                  if (nextOpenSlotIndex === openTickerSearchSlotIndex) {
+                    return;
+                  }
+                  setOpenTickerSearchSlotIndex(nextOpenSlotIndex);
+                }}
               />
             );
           })}
@@ -1111,14 +1214,13 @@ export const MultiChartGrid = ({
                   ? gridResizeHoverColor
                   : gridResizeIdleColor;
               return (
-                <button
+                <AppTooltip key={handleKey} content="Drag to resize chart columns"><button
                   key={handleKey}
                   type="button"
                   data-grid-resize-handle={handleKey}
                   aria-label={`Resize market chart columns ${dividerIndex} and ${
                     dividerIndex + 1
                   }`}
-                  title="Drag to resize chart columns"
                   onPointerDown={(event) =>
                     startGridResize(
                       {
@@ -1173,7 +1275,7 @@ export const MultiChartGrid = ({
                         "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
                     }}
                   />
-                </button>
+                </button></AppTooltip>
               );
             })}
             {horizontalDividerOffsets.map(({ dividerIndex, offset }) => {
@@ -1190,14 +1292,13 @@ export const MultiChartGrid = ({
                   ? gridResizeHoverColor
                   : gridResizeIdleColor;
               return (
-                <button
+                <AppTooltip key={handleKey} content="Drag to resize chart rows"><button
                   key={handleKey}
                   type="button"
                   data-grid-resize-handle={handleKey}
                   aria-label={`Resize market chart rows ${dividerIndex} and ${
                     dividerIndex + 1
                   }`}
-                  title="Drag to resize chart rows"
                   onPointerDown={(event) =>
                     startGridResize(
                       {
@@ -1252,7 +1353,7 @@ export const MultiChartGrid = ({
                         "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
                     }}
                   />
-                </button>
+                </button></AppTooltip>
               );
             })}
             {verticalDividerOffsets.flatMap((verticalDivider) =>
@@ -1265,12 +1366,11 @@ export const MultiChartGrid = ({
                 const isActive = gridResizeActiveHandle === handleKey;
                 const isHovered = gridResizeHoverHandle === handleKey;
                 return (
-                  <button
+                  <AppTooltip key={handleKey} content="Drag diagonally to resize chart rows and columns"><button
                     key={handleKey}
                     type="button"
                     data-grid-resize-handle={handleKey}
                     aria-label={`Resize market chart rows and columns at divider ${verticalDivider.dividerIndex}-${horizontalDivider.dividerIndex}`}
-                    title="Drag diagonally to resize chart rows and columns"
                     onPointerDown={(event) =>
                       startGridResize(
                         {
@@ -1330,7 +1430,7 @@ export const MultiChartGrid = ({
                           "opacity 120ms ease, background 120ms ease, box-shadow 120ms ease",
                       }}
                     />
-                  </button>
+                  </button></AppTooltip>
                 );
               }),
             )}

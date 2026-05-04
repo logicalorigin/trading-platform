@@ -76,6 +76,7 @@ import {
   fs,
   sp,
 } from "../lib/uiTokens";
+import { chartTooltipContentStyle } from "../lib/tooltipStyles";
 import { formatAppTimeForPreferences, getAppTimeZoneLabel } from "../lib/timeZone";
 import {
   joinMotionClasses,
@@ -105,6 +106,8 @@ import {
   normalizeFlowSortDir,
   summarizeFlowSentiment,
 } from "../features/platform/flowTapeModel";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const UNUSUAL_SORT_OPTIONS = [
   { id: "ratio", label: "Vol/OI", numeric: true },
@@ -1854,12 +1857,11 @@ const FlowOverviewPanel = ({
       const ageMs = Math.max(0, flowNowMs - (Date.parse(event.occurredAt || "") || flowNowMs));
       const ageColor = ageMs < 60_000 ? T.green : ageMs < 300_000 ? T.textSec : T.textDim;
       return (
-        <span
-          title={occurredAt ? `${occurredAt} ${appTimeZoneLabel}` : undefined}
+        <AppTooltip content={occurredAt ? `${occurredAt} ${appTimeZoneLabel}` : undefined}><span
           style={{ color: ageColor, fontWeight: ageMs < 60_000 ? 700 : 500 }}
         >
           {ageLabel}
-        </span>
+        </span></AppTooltip>
       );
     }
     if (columnId === "ticker") {
@@ -1876,9 +1878,9 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "expiration") {
       return (
-        <span title={event.expirationDate || undefined} style={{ color: T.textDim }}>
+        <AppTooltip content={event.expirationDate || undefined}><span style={{ color: T.textDim }}>
           {formatExpirationLabel(event.expirationDate)}
-        </span>
+        </span></AppTooltip>
       );
     }
     if (columnId === "right") {
@@ -1910,8 +1912,7 @@ const FlowOverviewPanel = ({
             {event.strike}
           </span>
           {cluster ? (
-            <span
-              title={`${cluster.count} prints · ${fmtM(cluster.totalPrem)} total premium`}
+            <AppTooltip content={`${cluster.count} prints · ${fmtM(cluster.totalPrem)} total premium`}><span
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -1926,7 +1927,7 @@ const FlowOverviewPanel = ({
               }}
             >
               R{cluster.count}
-            </span>
+            </span></AppTooltip>
           ) : null}
         </div>
       );
@@ -1960,28 +1961,26 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "fill") {
       return (
-        <span
-          title={fillSpreadMeta.label}
+        <AppTooltip content={fillSpreadMeta.label}><span
           style={{ textAlign: "right", color: fillSpreadMeta.color }}
         >
           {isFiniteNumber(fillSpreadMeta.fill)
             ? `${formatOptionPrice(fillSpreadMeta.fill)} ${fillSpreadMeta.shortLabel}`
             : MISSING_VALUE}
-        </span>
+        </span></AppTooltip>
       );
     }
     if (columnId === "mark") {
       return (
-        <span
-          title={
+        <AppTooltip content={
             isFiniteNumber(event.mark)
               ? "Option mark"
               : "Option mark unavailable"
-          }
+          }><span
           style={{ textAlign: "right", color: T.textSec, fontWeight: 650 }}
         >
           {formatOptionPrice(event.mark)}
-        </span>
+        </span></AppTooltip>
       );
     }
     if (columnId === "bidAsk") {
@@ -1997,14 +1996,13 @@ const FlowOverviewPanel = ({
         ? Math.max(0, Math.min(100, ((fill - bid) / (ask - bid)) * 100))
         : null;
       return (
-        <div
-          title={
+        <AppTooltip content={
             fillSpreadMeta.crossed
               ? "Crossed NBBO"
               : hasRange
                 ? `${formatOptionPrice(bid)} bid · ${formatOptionPrice(fill)} fill · ${formatOptionPrice(ask)} ask`
                 : "Bid/ask unavailable"
-          }
+          }><div
           style={{
             width: "100%",
             minWidth: 0,
@@ -2063,7 +2061,7 @@ const FlowOverviewPanel = ({
               />
             ) : null}
           </div>
-        </div>
+        </div></AppTooltip>
       );
     }
     if (columnId === "bid") {
@@ -2082,14 +2080,13 @@ const FlowOverviewPanel = ({
     }
     if (columnId === "spread") {
       return (
-        <span
-          title={
+        <AppTooltip content={
             fillSpreadMeta.crossed
               ? "Crossed market"
               : isFiniteNumber(fillSpreadMeta.spreadPct)
                 ? `${fillSpreadMeta.spreadPct.toFixed(1)}% of midpoint`
                 : undefined
-          }
+          }><span
           style={{
             textAlign: "right",
             color:
@@ -2106,7 +2103,7 @@ const FlowOverviewPanel = ({
                 isFiniteNumber(fillSpreadMeta.spreadPct)
               ? `${fillSpreadMeta.spread.toFixed(2)}/${fillSpreadMeta.spreadPct.toFixed(1)}%`
               : MISSING_VALUE}
-        </span>
+        </span></AppTooltip>
       );
     }
     if (columnId === "size") {
@@ -2163,14 +2160,13 @@ const FlowOverviewPanel = ({
       const isAtOrInTheMoney =
         isFiniteNumber(event.otmPercent) && event.otmPercent === 0;
       return (
-        <span
-          title={
+        <AppTooltip content={
             isFiniteNumber(event.otmPercent)
               ? isAtOrInTheMoney
                 ? "At or in the money"
                 : `${event.otmPercent.toFixed(2)}% out of the money`
               : "Moneyness unavailable"
-          }
+          }><span
           style={{
             textAlign: "right",
             color: isAtOrInTheMoney ? T.green : T.amber,
@@ -2180,7 +2176,7 @@ const FlowOverviewPanel = ({
           {isFiniteNumber(event.otmPercent)
             ? `${event.otmPercent.toFixed(1)}%`
             : MISSING_VALUE}
-        </span>
+        </span></AppTooltip>
       );
     }
     if (columnId === "moneyness") {
@@ -2265,9 +2261,8 @@ const FlowOverviewPanel = ({
             gap: sp(2),
           }}
         >
-          <button
+          <AppTooltip content={isPinned ? "Unpin row" : "Pin row"}><button
             type="button"
-            title={isPinned ? "Unpin row" : "Pin row"}
             aria-label={isPinned ? "Unpin flow row" : "Pin flow row"}
             onClick={(clickEvent) => handleTogglePinned(clickEvent, event)}
             style={{
@@ -2284,10 +2279,9 @@ const FlowOverviewPanel = ({
             }}
           >
             {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
-          </button>
-          <button
+          </button></AppTooltip>
+          <AppTooltip content={copied ? "Copied" : "Copy contract"}><button
             type="button"
-            title={copied ? "Copied" : "Copy contract"}
             aria-label="Copy flow contract"
             onClick={(clickEvent) => handleCopyContract(clickEvent, event)}
             style={{
@@ -2304,10 +2298,9 @@ const FlowOverviewPanel = ({
             }}
           >
             <Copy size={12} />
-          </button>
-          <button
+          </button></AppTooltip>
+          <AppTooltip content="Open in Trade"><button
             type="button"
-            title="Open in Trade"
             aria-label="Open flow row in Trade"
             onClick={(clickEvent) => {
               clickEvent.stopPropagation();
@@ -2327,7 +2320,7 @@ const FlowOverviewPanel = ({
             }}
           >
             <ExternalLink size={12} />
-          </button>
+          </button></AppTooltip>
         </div>
       );
     }
@@ -2429,15 +2422,14 @@ const FlowOverviewPanel = ({
         <span style={{ fontSize: fs(11), fontWeight: 800, color: T.text }}>
           Filters
         </span>
-        <button
+        <AppTooltip content="Collapse filters"><button
           type="button"
           onClick={() => setFiltersOpen(false)}
           style={toolButtonStyle(false, T.textDim)}
           aria-label="Collapse Flow filters"
-          title="Collapse filters"
         >
           <PanelLeftClose size={13} />
-        </button>
+        </button></AppTooltip>
       </div>
 
       <label
@@ -2612,10 +2604,9 @@ const FlowOverviewPanel = ({
           <span style={panelLabelStyle}>PRESETS</span>
           <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4) }}>
             {savedScans.map((scan) => (
-              <div
+              <AppTooltip key={scan.id} content={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}><div
                 key={scan.id}
                 onClick={() => loadScan(scan)}
-                title={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -2652,7 +2643,7 @@ const FlowOverviewPanel = ({
                 >
                   x
                 </button>
-              </div>
+              </div></AppTooltip>
             ))}
           </div>
         </div>
@@ -2695,15 +2686,14 @@ const FlowOverviewPanel = ({
             Show, hide, and order the tape fields.
           </span>
         </div>
-        <button
+        <AppTooltip content="Close columns"><button
           type="button"
           onClick={() => setColumnsOpen(false)}
           style={toolButtonStyle(false, T.textDim)}
           aria-label="Close Flow column drawer"
-          title="Close columns"
         >
           x
-        </button>
+        </button></AppTooltip>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: sp(4) }}>
@@ -3153,7 +3143,7 @@ const FlowOverviewPanel = ({
               {feedStateLabel}
             </span>
             {pinnedEvent ? (
-              <button
+              <AppTooltip content={getFlowContractLabel(pinnedEvent)}><button
                 type="button"
                 data-testid="flow-pinned-row"
                 onClick={() => setSelectedEvt(pinnedEvent)}
@@ -3171,7 +3161,6 @@ const FlowOverviewPanel = ({
                   fontFamily: T.mono,
                   cursor: "pointer",
                 }}
-                title={getFlowContractLabel(pinnedEvent)}
               >
                 <Pin size={12} />
                 <span
@@ -3185,7 +3174,7 @@ const FlowOverviewPanel = ({
                   {pinnedEvent.ticker} {pinnedEvent.cp}
                   {pinnedEvent.strike} · {fmtM(pinnedEvent.premium)}
                 </span>
-              </button>
+              </button></AppTooltip>
             ) : null}
           </div>
           <div
@@ -3197,28 +3186,26 @@ const FlowOverviewPanel = ({
               justifyContent: "flex-end",
             }}
           >
-            <button
+            <AppTooltip content={filtersOpen ? "Hide filters" : "Show filters"}><button
               type="button"
               data-testid="flow-filter-toggle"
               onClick={() => setFiltersOpen((current) => !current)}
               style={toolButtonStyle(filtersOpen)}
               aria-label={filtersOpen ? "Hide Flow filters" : "Show Flow filters"}
-              title={filtersOpen ? "Hide filters" : "Show filters"}
             >
               {filtersOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
               Filters
-            </button>
-            <button
+            </button></AppTooltip>
+            <AppTooltip content="Configure columns"><button
               type="button"
               data-testid="flow-column-toggle"
               onClick={() => setColumnsOpen((current) => !current)}
               style={toolButtonStyle(columnsOpen)}
               aria-label="Configure Flow columns"
-              title="Configure columns"
             >
               <Columns3 size={14} />
               Columns
-            </button>
+            </button></AppTooltip>
             <button
               type="button"
               onClick={handleToggleLivePaused}
@@ -3496,10 +3483,9 @@ const FlowOverviewPanel = ({
                 PRESETS
               </span>
               {savedScans.map((scan) => (
-                <div
+                <AppTooltip key={scan.id} content={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}><div
                   key={scan.id}
                   onClick={() => loadScan(scan)}
-                  title={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -3533,7 +3519,7 @@ const FlowOverviewPanel = ({
                   >
                     ×
                   </button>
-                </div>
+                </div></AppTooltip>
               ))}
             </div>
           ) : null}
@@ -3665,8 +3651,7 @@ const FlowOverviewPanel = ({
                     alignItems: "center",
                   }}
                 >
-                  <div
-                    title={`${flowSentimentSummary.bullCount} bull · ${flowSentimentSummary.bearCount} bear · ${flowSentimentSummary.neutralCount} neutral`}
+                  <AppTooltip content={`${flowSentimentSummary.bullCount} bull · ${flowSentimentSummary.bearCount} bear · ${flowSentimentSummary.neutralCount} neutral`}><div
                     style={{
                       height: dim(8),
                       display: "flex",
@@ -3700,7 +3685,7 @@ const FlowOverviewPanel = ({
                         background: T.red,
                       }}
                     />
-                  </div>
+                  </div></AppTooltip>
                   {isMobileFlowLayout ? (
                     <div
                       data-testid="flow-mobile-sort-controls"
@@ -4754,13 +4739,7 @@ const FlowOverviewPanel = ({
                         tickFormatter={(value) => `${(value / 1e6).toFixed(1)}M`}
                       />
                       <Tooltip
-                        contentStyle={{
-                          background: T.bg4,
-                          border: `1px solid ${T.border}`,
-                          borderRadius: dim(6),
-                          fontSize: fs(10),
-                          fontFamily: T.mono,
-                        }}
+                        contentStyle={chartTooltipContentStyle}
                         formatter={(value) =>
                           `${value >= 0 ? "+" : ""}$${(value / 1e6).toFixed(2)}M`
                         }
@@ -4889,10 +4868,9 @@ const FlowOverviewPanel = ({
                                 ? `${(contract.vol / 1000).toFixed(1)}K`
                                 : `${contract.vol}`;
                             return (
-                              <div
+                              <AppTooltip key={`${ticker.sym}_${contract.key}`} content={`${ticker.sym} ${contract.strike}${contract.cp} · ${fmtM(contract.premium)}`}><div
                                 key={`${ticker.sym}_${contract.key}`}
                                 onClick={() => setSelectedEvt(contract.biggestEvt)}
-                                title={`${ticker.sym} ${contract.strike}${contract.cp} · ${fmtM(contract.premium)}`}
                                 style={{
                                   display: "flex",
                                   alignItems: "center",
@@ -4928,7 +4906,7 @@ const FlowOverviewPanel = ({
                                   <span>{volLabel}</span>
                                   <span>{contract.dte}d</span>
                                 </div>
-                              </div>
+                              </div></AppTooltip>
                             );
                           })}
                         </div>
@@ -5703,9 +5681,8 @@ const UnusualScannerSection = ({
                 ? `${symbol} · last scanned ${formatScannerAppTime(scannedAt)}`
                 : `${symbol} · not yet scanned`;
               return (
-                <span
+                <AppTooltip key={symbol} content={tooltip}><span
                   key={symbol}
-                  title={tooltip}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -5722,7 +5699,7 @@ const UnusualScannerSection = ({
                   <span style={{ fontWeight: 700 }}>{symbol}</span>
                   <span style={{ color: T.textMuted }}>·</span>
                   <span>{inFlight ? "scanning…" : labelText}</span>
-                </span>
+                </span></AppTooltip>
               );
             })}
           </div>
@@ -5917,7 +5894,7 @@ const UnusualScannerSection = ({
                       ? T.textSec
                       : T.textDim;
                 return (
-                  <button
+                  <AppTooltip key={event.id} content="Open underlying chart and option chain"><button
                     key={event.id}
                     type="button"
                     onClick={() => onJumpToTrade?.(event)}
@@ -5943,7 +5920,6 @@ const UnusualScannerSection = ({
                     onMouseLeave={(entry) => {
                       entry.currentTarget.style.background = T.bg0;
                     }}
-                    title="Open underlying chart and option chain"
                   >
                     <MarketIdentityInline
                       ticker={event.ticker}
@@ -6006,7 +5982,7 @@ const UnusualScannerSection = ({
                     <span style={{ textAlign: "right", color: T.textDim }}>
                       {event.time}
                     </span>
-                  </button>
+                  </button></AppTooltip>
                 );
               })}
             </div>

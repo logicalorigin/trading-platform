@@ -179,6 +179,34 @@ test("resolvePremiumFlowDisplayState distinguishes queued, error, and stale stat
   assert.equal(stale.isStale, true);
 });
 
+test("resolvePremiumFlowDisplayState preserves live IBKR source for empty scans", () => {
+  const empty = buildPremiumFlowSummary("IWM", []);
+  const state = resolvePremiumFlowDisplayState({
+    symbol: "IWM",
+    summary: empty,
+    flowStatus: "empty",
+    providerSummary: {
+      sourcesBySymbol: {
+        IWM: {
+          provider: "ibkr",
+          status: "empty",
+          fallbackUsed: false,
+        },
+      },
+      coverage: {
+        isFetching: false,
+        currentBatch: [],
+        lastScannedAt: { IWM: Date.now() },
+      },
+    },
+  });
+
+  assert.equal(state.label, "No options flow");
+  assert.equal(state.isLiveSource, true);
+  assert.equal(state.sourceProvider, "IBKR");
+  assert.equal(state.sourceStatus, "empty");
+});
+
 test("buildPremiumFlowTimeline creates chronological cumulative net points", () => {
   const timeline = buildPremiumFlowTimeline([
     event({ cp: "P", premium: 40_000, occurredAt: "2026-04-24T15:00:00.000Z" }),

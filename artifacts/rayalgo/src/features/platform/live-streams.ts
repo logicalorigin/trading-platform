@@ -1816,7 +1816,7 @@ export const useIbkrOptionQuoteStream = ({
             ? providerContractIdSignature.split("\u001f")
             : [],
         ),
-      ),
+      ).sort((left, right) => left.localeCompare(right)),
     [providerContractIdSignature],
   );
   const normalizedOwner = owner?.trim?.() || "";
@@ -1853,6 +1853,7 @@ export const useIbkrOptionQuoteStream = ({
     let firstQuoteStartedAt = Date.now();
     let firstQuoteRecorded = false;
     let lastWebSocketMessageAt = Date.now();
+    let socketGeneration = 0;
 
     const applyQuotesNow = (quotes: LiveOptionQuoteSnapshot[]) => {
       if (!quotes.length) {
@@ -2024,6 +2025,7 @@ export const useIbkrOptionQuoteStream = ({
 
       let ready = false;
       let fallbackStarted = false;
+      const generation = ++socketGeneration;
       firstQuoteStartedAt = Date.now();
       lastWebSocketMessageAt = Date.now();
       setOptionHydrationDiagnostics({
@@ -2055,11 +2057,20 @@ export const useIbkrOptionQuoteStream = ({
           return;
         }
         fallbackStarted = true;
-        socket?.close();
+        if (socket && socket.readyState === window.WebSocket.OPEN) {
+          socket.close();
+        }
+        if (socket && socket.readyState !== window.WebSocket.OPEN) {
+          socket = null;
+        }
         startRestFallback();
       };
 
       socket.addEventListener("open", () => {
+        if (closed || generation !== socketGeneration) {
+          socket?.close();
+          return;
+        }
         setOptionHydrationDiagnostics({ wsState: "open" });
         socket?.send(
           JSON.stringify({
@@ -2074,6 +2085,9 @@ export const useIbkrOptionQuoteStream = ({
       });
 
       socket.addEventListener("message", (event: MessageEvent<string>) => {
+        if (closed || generation !== socketGeneration) {
+          return;
+        }
         lastWebSocketMessageAt = Date.now();
         const payload = parseJsonPayload<OptionQuoteWebSocketPayload>(event.data);
         if (!payload) {
@@ -2122,13 +2136,23 @@ export const useIbkrOptionQuoteStream = ({
       });
 
       socket.addEventListener("error", () => {
+        if (generation !== socketGeneration) {
+          return;
+        }
         if (!ready) {
           fallbackToRest();
         }
       });
 
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
+        if (generation !== socketGeneration) {
+          return;
+        }
         stopStallWatchdog();
+        setOptionHydrationDiagnostics({
+          wsState: ready ? "closed" : "failed-before-ready",
+          pauseReason: event.reason || null,
+        });
         if (closed || fallbackStarted) {
           return;
         }

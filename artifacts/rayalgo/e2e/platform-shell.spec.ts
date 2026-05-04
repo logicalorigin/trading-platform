@@ -270,6 +270,42 @@ async function mockShellApi(
           fallbackUsed: false,
         },
       };
+    } else if (url.pathname === "/api/universe/tickers") {
+      const search = (url.searchParams.get("search") || "").trim().toUpperCase();
+      const names: Record<string, string> = {
+        AAPL: "Apple Inc.",
+        MSFT: "Microsoft Corp.",
+        NVDA: "NVIDIA Corp.",
+        QQQ: "Invesco QQQ Trust",
+        SPY: "SPDR S&P 500 ETF Trust",
+      };
+      body = {
+        results: symbols
+          .filter((symbol) => {
+            const name = names[symbol] || symbol;
+            return (
+              !search ||
+              symbol.includes(search) ||
+              name.toUpperCase().includes(search)
+            );
+          })
+          .map((symbol, index) => ({
+            ticker: symbol,
+            name: names[symbol] || symbol,
+            market: symbol === "SPY" || symbol === "QQQ" ? "etf" : "stocks",
+            rootSymbol: symbol,
+            primaryExchange: symbol === "SPY" || symbol === "QQQ" ? "ARCX" : "XNAS",
+            normalizedExchangeMic:
+              symbol === "SPY" || symbol === "QQQ" ? "ARCX" : "XNAS",
+            exchangeDisplay: symbol === "SPY" || symbol === "QQQ" ? "ARCA" : "NASDAQ",
+            providers: ["ibkr"],
+            provider: "ibkr",
+            tradeProvider: "ibkr",
+            dataProviderPreference: "ibkr",
+            providerContractId: String(1000 + index),
+            active: true,
+          })),
+      };
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
@@ -1168,6 +1204,189 @@ test("market chart ticker search keeps a single active chart owner", async ({
   expect(runtimeIssues).toEqual([]);
 });
 
+test("market chart ticker search updates the shared selected symbol", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await disableStreamingSources(page);
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "rayalgo:state:v1",
+      JSON.stringify({
+        screen: "market",
+        sym: "SPY",
+        theme: "dark",
+        sidebarCollapsed: false,
+        marketGridLayout: "1x1",
+        marketGridSoloSlotIndex: 0,
+        marketGridSlots: [{ ticker: "SPY", tf: "15m" }],
+      }),
+    );
+  });
+  await mockShellApi(page);
+  await page.goto("/");
+
+  const searchButton = page
+    .getByTestId("market-mini-chart-0")
+    .getByTestId("chart-symbol-search-button");
+  await expect(searchButton).toHaveAttribute("title", "Search SPY", {
+    timeout: 30_000,
+  });
+
+  await searchButton.click({ force: true });
+  await page.getByTestId("ticker-search-input").fill("Apple");
+  const aaplRow = page.locator(
+    '[data-testid="ticker-search-row"][data-ticker="AAPL"][data-provider-contract-id="1000"]',
+  );
+  await expect(aaplRow).toBeVisible({ timeout: 10_000 });
+  await aaplRow.click();
+
+  await expect(searchButton).toHaveAttribute("title", "Search AAPL", {
+    timeout: 15_000,
+  });
+  await expect(
+    page.locator('[data-testid="watchlist-row"][data-symbol="AAPL"]'),
+  ).toHaveClass(/ra-focus-rail/);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return state.sym || null;
+      }),
+    )
+    .toBe("AAPL");
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("market watchlist selection replaces the visible solo chart ticker", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const barsRequests: Array<Record<string, string>> = [];
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await disableStreamingSources(page);
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "rayalgo:state:v1",
+      JSON.stringify({
+        screen: "market",
+        sym: "SPY",
+        theme: "dark",
+        sidebarCollapsed: false,
+        marketGridLayout: "1x1",
+        marketGridSoloSlotIndex: 0,
+        marketGridSlots: [{ ticker: "SPY", tf: "15m" }],
+      }),
+    );
+  });
+  await mockShellApi(page, { barsRequests });
+  await page.goto("/");
+
+  const soloChart = page.getByTestId("market-mini-chart-0");
+  const searchButton = soloChart.getByTestId("chart-symbol-search-button");
+  await expect(searchButton).toHaveAttribute("title", "Search SPY", {
+    timeout: 30_000,
+  });
+
+  await page.locator('[data-testid="watchlist-row"][data-symbol="AAPL"]').click();
+
+  await expect(searchButton).toHaveAttribute("title", "Search AAPL", {
+    timeout: 15_000,
+  });
+  await expect
+    .poll(
+      () => barsRequests.some((request) => request.symbol === "AAPL"),
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return state.sym || null;
+      }),
+    )
+    .toBe("AAPL");
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("market watchlist selection promotes an already-visible ticker into the primary chart", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await disableStreamingSources(page);
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "rayalgo:state:v1",
+      JSON.stringify({
+        screen: "market",
+        sym: "SPY",
+        theme: "dark",
+        sidebarCollapsed: false,
+        marketGridLayout: "2x3",
+        marketGridSlots: [
+          { ticker: "SPY", tf: "15m" },
+          { ticker: "QQQ", tf: "15m" },
+          { ticker: "AAPL", tf: "15m" },
+          { ticker: "MSFT", tf: "15m" },
+          { ticker: "NVDA", tf: "15m" },
+          { ticker: "IWM", tf: "15m" },
+        ],
+      }),
+    );
+  });
+  await mockShellApi(page);
+  await page.goto("/");
+
+  const primarySearchButton = page
+    .getByTestId("market-mini-chart-0")
+    .getByTestId("chart-symbol-search-button");
+  const priorAaplSlotSearchButton = page
+    .getByTestId("market-mini-chart-2")
+    .getByTestId("chart-symbol-search-button");
+
+  await expect(primarySearchButton).toHaveAttribute("title", "Search SPY", {
+    timeout: 30_000,
+  });
+  await expect(priorAaplSlotSearchButton).toHaveAttribute("title", "Search AAPL");
+
+  await page.locator('[data-testid="watchlist-row"][data-symbol="AAPL"]').click();
+
+  await expect(primarySearchButton).toHaveAttribute("title", "Search AAPL", {
+    timeout: 15_000,
+  });
+  await expect(priorAaplSlotSearchButton).toHaveAttribute("title", "Search SPY");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return state.marketGridSlots?.[0]?.ticker || null;
+      }),
+    )
+    .toBe("AAPL");
+
+  expect(runtimeIssues).toEqual([]);
+});
+
 test("spot market mini chart hydrates every interval selection", async ({
   page,
 }) => {
@@ -1216,7 +1435,7 @@ test("trade spot chart hydrates every interval selection", async ({ page }) => {
   expect(runtimeIssues).toEqual([]);
 });
 
-test("market chart frame changes timeframe from the dropdown and drag-pans", async ({
+test("market chart frame changes timeframe from the dropdown and zooms", async ({
   page,
 }) => {
   test.setTimeout(150_000);
@@ -1224,6 +1443,10 @@ test("market chart frame changes timeframe from the dropdown and drag-pans", asy
   const barsRequests: Array<Record<string, string>> = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  });
   await disableStreamingSources(page);
   await mockShellApi(page, { barsRequests });
   await page.goto("/");
@@ -1252,20 +1475,19 @@ test("market chart frame changes timeframe from the dropdown and drag-pans", asy
     )
     .toBe(true);
 
-  const before = await surface.getAttribute("data-chart-visible-logical-range");
   const plot = page.getByTestId("market-mini-chart-0-surface-plot");
   const box = await plot.boundingBox();
   expect(box, "market chart plot should have a geometry box").not.toBeNull();
-  await page.mouse.move(box!.x + box!.width * 0.55, box!.y + box!.height * 0.5);
-  await page.mouse.down();
-  await page.mouse.move(box!.x + box!.width * 0.35, box!.y + box!.height * 0.5, {
-    steps: 8,
-  });
   await page.mouse.up();
-  await expect(surface).toHaveAttribute("data-chart-viewport-user-touched", "true");
+  await page.mouse.move(8, 8);
+
+  const initialRange = await surface.getAttribute("data-chart-visible-logical-range");
+  await page.mouse.move(box!.x + box!.width * 0.5, box!.y + box!.height * 0.5);
+  await page.mouse.wheel(0, -500);
   await expect
     .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
-    .not.toBe(before);
+    .not.toBe(initialRange);
+  await expect(surface).toHaveAttribute("data-chart-viewport-user-touched", "true");
 
   expect(pageErrors).toEqual([]);
 });

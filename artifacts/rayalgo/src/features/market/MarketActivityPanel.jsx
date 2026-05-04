@@ -37,6 +37,8 @@ import {
   buildMarketActivityLanes,
   normalizeSignalMonitorTimeframe,
 } from "../platform/marketActivityLaneModel";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 export const UNUSUAL_THRESHOLD_OPTIONS = [
   { value: 1, label: "1× OI" },
@@ -353,10 +355,9 @@ const MarketIconToolButton = ({
   title,
   onClick,
 }) => (
-  <button
+  <AppTooltip content={title || label}><button
     type="button"
     aria-label={label}
-    title={title || label}
     onClick={onClick}
     disabled={disabled}
     style={{
@@ -376,12 +377,11 @@ const MarketIconToolButton = ({
     }}
   >
     <Icon size={dim(13)} strokeWidth={2.4} />
-  </button>
+  </button></AppTooltip>
 );
 
 const MarketToolbarLabel = ({ Icon, label, tone = T.textDim }) => (
-  <span
-    title={label}
+  <AppTooltip content={label}><span
     style={{
       display: "inline-flex",
       alignItems: "center",
@@ -395,7 +395,7 @@ const MarketToolbarLabel = ({ Icon, label, tone = T.textDim }) => (
     }}
   >
     <Icon size={dim(13)} strokeWidth={2.4} />
-  </span>
+  </span></AppTooltip>
 );
 
 const getNotificationLaneTone = (item) => {
@@ -418,12 +418,11 @@ const getSignalLaneTone = (item) =>
 const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
   const tone = getSignalLaneTone(item);
   return (
-    <button
+    <AppTooltip key={item.id} content={item.title}><button
       key={item.id}
       type="button"
       className={joinMotionClasses("ra-row-enter", "ra-interactive")}
       onClick={onClick}
-      title={item.title}
       style={{
         ...motionRowStyle(index, maxItems, 100),
         ...motionVars({ accent: tone.color }),
@@ -507,7 +506,7 @@ const MarketSignalRow = ({ item, index, maxItems, onClick }) => {
       >
         {item.meta}
       </span>
-    </button>
+    </button></AppTooltip>
   );
 };
 
@@ -549,12 +548,11 @@ const getUnusualLaneTone = (item) => {
 const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
   const tone = getUnusualLaneTone(item);
   return (
-    <button
+    <AppTooltip key={item.id} content={item.title}><button
       key={item.id}
       type="button"
       className={joinMotionClasses("ra-row-enter", "ra-interactive")}
       onClick={onClick}
-      title={item.title}
       style={{
         ...motionRowStyle(index, maxItems, 100),
         ...motionVars({ accent: tone.color }),
@@ -638,7 +636,7 @@ const MarketUnusualRow = ({ item, index, maxItems, onClick }) => {
       >
         {item.meta}
       </span>
-    </button>
+    </button></AppTooltip>
   );
 };
 
@@ -651,12 +649,11 @@ const MarketNotificationRow = ({
 }) => {
   const tone = getNotificationLaneTone(item);
   return (
-    <button
+    <AppTooltip key={item.id} content={item.title}><button
       key={item.id}
       type="button"
       className={joinMotionClasses("ra-row-enter", "ra-interactive")}
       onClick={onClick}
-      title={item.title}
       style={{
         ...motionRowStyle(index, maxItems, 90),
         ...motionVars({ accent: tone.color }),
@@ -739,7 +736,7 @@ const MarketNotificationRow = ({
       >
         {item.meta}
       </span>
-    </button>
+    </button></AppTooltip>
   );
 };
 
@@ -1008,14 +1005,13 @@ export const MarketActivityPanel = ({
                 label="UOA threshold"
                 tone={T.amber}
               />
-              <select
+              <AppTooltip content="Volume / open interest ratio at which a print is flagged as unusual."><select
                 data-testid="market-uoa-threshold-select"
                 value={String(unusualThreshold)}
                 onChange={(event) =>
                   onChangeUnusualThreshold?.(Number(event.target.value))
                 }
                 aria-label="Unusual options activity threshold"
-                title="Volume / open interest ratio at which a print is flagged as unusual."
                 style={{
                   width: dim(76),
                   flex: "0 0 auto",
@@ -1035,16 +1031,15 @@ export const MarketActivityPanel = ({
                     {option.label}
                   </option>
                 ))}
-              </select>
+              </select></AppTooltip>
               {appliedThresholdLabel ? (
-                <span
-                  title={
+                <AppTooltip content={
                     thresholdMatches
                       ? "Server confirmed it applied your selected unusual-options threshold."
                       : appliedUnusualThresholdConsistent
                         ? "The live feed is using a different threshold than the one you selected."
                         : "Different symbols returned different applied thresholds; showing the most common one."
-                  }
+                  }><span
                   style={{
                     minWidth: 0,
                     flex: "1 1 auto",
@@ -1063,7 +1058,7 @@ export const MarketActivityPanel = ({
                   }}
                 >
                   {appliedThresholdLabel}
-                </span>
+                </span></AppTooltip>
               ) : null}
             </MarketLaneToolbar>
             {unusualRows.length ? (

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, type PropsWithChildren } from "react";
+import { TooltipProvider } from "../components/ui/tooltip";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,5 +60,11 @@ export function AppProviders({ children }: PropsWithChildren) {
     auditLocalStorageOnce();
   }, []);
 
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider delayDuration={500} skipDelayDuration={150}>
+        {children}
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
 }

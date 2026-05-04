@@ -4,6 +4,8 @@ import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { Card } from "../../components/platform/primitives.jsx";
 import { platformJsonRequest } from "../platform/platformJsonRequest";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const safeCount = (value) =>
   Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;
@@ -97,8 +99,7 @@ const ScannerMetric = ({ label, value, detail, tone = T.textSec }) => (
 );
 
 const TickerChip = ({ symbol, label, tone, title }) => (
-  <span
-    title={title}
+  <AppTooltip content={title}><span
     style={{
       display: "inline-flex",
       alignItems: "center",
@@ -116,7 +117,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
   >
     <span>{symbol}</span>
     {label ? <span style={{ color: T.textMuted }}>{label}</span> : null}
-  </span>
+  </span></AppTooltip>
 );
 
 export const FlowScannerStatusPanel = ({

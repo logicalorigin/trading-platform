@@ -57,17 +57,45 @@ export const buildMarketGridVisibleRangeSignature = (range) => {
   return `${from ?? ""}:${to ?? ""}`;
 };
 
+const MARKET_GRID_EQUITY_LIKE_MARKETS = new Set([
+  "stocks",
+  "etf",
+  "otc",
+  "indices",
+]);
+
+export const normalizeMarketGridSlotMarket = (slot = {}) =>
+  String(slot?.market || "stocks").trim() || "stocks";
+
+export const isMarketGridEquityLikeChartMarket = (market) =>
+  MARKET_GRID_EQUITY_LIKE_MARKETS.has(
+    String(market || "stocks").trim() || "stocks",
+  );
+
+export const shouldUseMarketGridProviderContractIdentity = (slot = {}) =>
+  !isMarketGridEquityLikeChartMarket(normalizeMarketGridSlotMarket(slot));
+
+export const resolveMarketGridChartProviderContractId = (slot = {}) => {
+  const providerContractId = String(slot?.providerContractId || "").trim();
+  return shouldUseMarketGridProviderContractIdentity(slot) && providerContractId
+    ? providerContractId
+    : null;
+};
+
 export const buildMarketGridViewportIdentity = (slotIndex, slot = {}) => {
   const ticker = normalizeTickerSymbol(slot?.ticker) || "SPY";
   const timeframe = String(slot?.tf || "15m").trim() || "15m";
-  const market = String(slot?.market || "stocks").trim() || "stocks";
-  const provider = String(
-    slot?.provider ||
-      slot?.tradeProvider ||
-      slot?.dataProviderPreference ||
-      "",
-  ).trim();
-  const contractId = String(slot?.providerContractId || "").trim();
+  const market = normalizeMarketGridSlotMarket(slot);
+  const useProviderIdentity = shouldUseMarketGridProviderContractIdentity(slot);
+  const provider = useProviderIdentity
+    ? String(
+        slot?.provider ||
+          slot?.tradeProvider ||
+          slot?.dataProviderPreference ||
+          "",
+      ).trim()
+    : "";
+  const contractId = resolveMarketGridChartProviderContractId(slot) || "";
   return [
     "market-grid",
     Number.isFinite(slotIndex) ? slotIndex : 0,

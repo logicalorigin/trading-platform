@@ -61,7 +61,22 @@ async function mockPlatformApi(page: Page) {
     } else if (url.pathname === "/api/research/earnings-calendar") {
       body = { entries: [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
-      body = { profile: { enabled: false, timeframe: "15m", watchlistId: null } };
+      body = {
+        id: "mock-signal-monitor-profile",
+        environment: "paper",
+        enabled: false,
+        watchlistId: null,
+        timeframe: "15m",
+        rayReplicaSettings: {},
+        freshWindowBars: 3,
+        pollIntervalSeconds: 60,
+        maxSymbols: 50,
+        evaluationConcurrency: 2,
+        lastEvaluatedAt: null,
+        lastError: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
     } else if (url.pathname === "/api/signal-monitor/state") {
       body = { states: [] };
     } else if (url.pathname === "/api/signal-monitor/events") {

@@ -133,13 +133,27 @@ export const joinBenchmarkPercentSeries = (
 ) => {
   const toleranceMs = equityJoinToleranceMs(range);
   const benchmarkSeries = normalizeBenchmarkSeries(benchmarkPoints);
-  return equityPoints.map((point) => {
+  const matchedSeries = equityPoints.map((point) => {
     const match = findNearestEquityPoint(
       benchmarkSeries,
       point.timestampMs,
       toleranceMs,
     );
     return match?.benchmarkPercent ?? null;
+  });
+  const baseline = matchedSeries.find((value) => value != null);
+  if (baseline == null) {
+    return matchedSeries;
+  }
+  return matchedSeries.map((value) => {
+    if (value == null) {
+      return null;
+    }
+    const rebased = value - baseline;
+    if (Math.abs(rebased) < 1e-9) {
+      return 0;
+    }
+    return Number(rebased.toFixed(10));
   });
 };
 
@@ -185,6 +199,47 @@ export const buildPaddedValueDomain = (
 
   const lower = min - padding;
   const upper = max + padding;
+  return [
+    floor === null ? lower : Math.max(floor, lower),
+    ceiling === null ? upper : Math.min(ceiling, upper),
+  ];
+};
+
+export const buildAnchoredValueDomain = (
+  values = [],
+  {
+    anchorValue = 0,
+    anchorRatio = 0.5,
+    paddingRatio = 0.08,
+    minPadding = 1,
+    floor = null,
+    ceiling = null,
+  } = {},
+) => {
+  const [baseMin, baseMax] = buildPaddedValueDomain(values, {
+    paddingRatio,
+    minPadding,
+    floor,
+    ceiling,
+  });
+  if (!Number.isFinite(baseMin) || !Number.isFinite(baseMax)) {
+    return [baseMin, baseMax];
+  }
+
+  const clampedRatio = Math.min(0.999, Math.max(0.001, Number(anchorRatio) || 0.5));
+  const neededAbove = Math.max(0, baseMax - anchorValue);
+  const neededBelow = Math.max(0, anchorValue - baseMin);
+  const scale = Math.max(
+    neededAbove / clampedRatio,
+    neededBelow / (1 - clampedRatio),
+  );
+
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return [baseMin, baseMax];
+  }
+
+  const upper = anchorValue + scale * clampedRatio;
+  const lower = anchorValue - scale * (1 - clampedRatio);
   return [
     floor === null ? lower : Math.max(floor, lower),
     ceiling === null ? upper : Math.min(ceiling, upper),

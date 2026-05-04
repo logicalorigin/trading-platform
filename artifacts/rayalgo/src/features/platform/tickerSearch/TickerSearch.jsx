@@ -21,6 +21,8 @@ import {
 import { T, dim, fs, sp } from "../../../lib/uiTokens";
 import { joinMotionClasses, motionVars } from "../../../lib/motion";
 import { _initialState, persistState } from "../../../lib/workspaceState";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const FONT_CSS = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -519,7 +521,7 @@ const TickerSearchRow = ({
   const identity = resolveMarketIdentity(result);
 
   return (
-    <button
+    <AppTooltip key={buildTickerSearchRowKey(result)} content={disabled ? "Search this symbol to resolve provider metadata" : undefined}><button
       key={buildTickerSearchRowKey(result)}
       id={id}
       role="option"
@@ -536,7 +538,6 @@ const TickerSearchRow = ({
       )}
       onClick={() => onSelect?.(result)}
       onMouseEnter={onMouseEnter}
-      title={disabled ? "Search this symbol to resolve provider metadata" : undefined}
       style={{
         ...motionVars({ accent: T.accent }),
         width: "100%",
@@ -675,7 +676,7 @@ const TickerSearchRow = ({
           {favorite ? "★" : "☆"}
         </span>
       </span>
-    </button>
+    </button></AppTooltip>
   );
 };
 
@@ -1138,14 +1139,14 @@ export const MiniChartTickerSearch = ({
       .filter(Boolean);
     if (!rows.length) return;
 
-    setRowCache((current) => {
-      const next = mergeTickerSearchCacheRows(current, rows);
-      persistState({
-        marketGridTickerSearchCache: compactTickerSearchCacheRows(next),
-      });
-      return next;
-    });
+    setRowCache((current) => mergeTickerSearchCacheRows(current, rows));
   }, [searchQuery.data?.results]);
+
+  useEffect(() => {
+    persistState({
+      marketGridTickerSearchCache: compactTickerSearchCacheRows(rowCache),
+    });
+  }, [rowCache]);
 
   useEffect(() => {
     if (!open) {
@@ -1425,11 +1426,10 @@ export const MiniChartTickerSearch = ({
             outline: "none",
           }}
         />
-        <button
+        <AppTooltip content="Close search"><button
           type="button"
           className="ra-interactive"
           onClick={onClose}
-          title="Close search"
           style={{
             background: "transparent",
             border: "none",
@@ -1441,7 +1441,7 @@ export const MiniChartTickerSearch = ({
           }}
         >
           ×
-        </button>
+        </button></AppTooltip>
       </div>
       <div
         id={listboxIdRef.current}
@@ -1695,9 +1695,8 @@ export function TickerSearchLab() {
             >
               Selected
             </div>
-            <div
+            <AppTooltip content={`Search ${selectedTicker}`}><div
               data-testid="ticker-search-selected"
-              title={`Search ${selectedTicker}`}
               style={{
                 fontSize: fs(16),
                 fontWeight: 800,
@@ -1706,7 +1705,7 @@ export function TickerSearchLab() {
               }}
             >
               {selectedTicker}
-            </div>
+            </div></AppTooltip>
             {selectedRow?.providerContractId ? (
               <div
                 style={{
@@ -1721,10 +1720,9 @@ export function TickerSearchLab() {
             ) : null}
           </div>
 
-          <button
+          <AppTooltip content={`Search ${selectedTicker}`}><button
             type="button"
             data-testid="chart-symbol-search-button"
-            title={`Search ${selectedTicker}`}
             onClick={() => setSearchOpen(true)}
             style={{
               border: `1px solid ${T.accent}`,
@@ -1739,7 +1737,7 @@ export function TickerSearchLab() {
             }}
           >
             Search Symbol
-          </button>
+          </button></AppTooltip>
         </div>
 
         <div
@@ -2025,7 +2023,7 @@ export const TickerUniverseSearchPanel = ({
               Provider-backed ticker search · multi-market
             </span>
           </div>
-          <button
+          <AppTooltip content="Close search"><button
             onClick={onClose}
             style={{
               background: "transparent",
@@ -2036,10 +2034,9 @@ export const TickerUniverseSearchPanel = ({
               lineHeight: 1,
               padding: 0,
             }}
-            title="Close search"
           >
             ×
-          </button>
+          </button></AppTooltip>
         </div>
         <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
           {TICKER_SEARCH_MARKET_FILTERS.map((filter) => {

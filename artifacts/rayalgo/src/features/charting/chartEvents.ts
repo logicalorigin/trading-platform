@@ -87,13 +87,34 @@ const normalizeBias = (value: unknown): ChartEventBias => {
   return "neutral";
 };
 
+const isFlowEventRecord = (event: unknown): event is Record<string, unknown> =>
+  Boolean(event && typeof event === "object" && !Array.isArray(event));
+
+const shouldRenderFlowOnSpotChart = (
+  event: unknown,
+): event is Record<string, unknown> => {
+  if (!isFlowEventRecord(event)) {
+    return false;
+  }
+  const premium = finiteNumber(event.premium) ?? 0;
+  const unusualScore = finiteNumber(event.unusualScore) ?? 0;
+  const side = String(event.side || "").trim().toLowerCase();
+  return (
+    Boolean(event.isUnusual) ||
+    Boolean(event.golden) ||
+    unusualScore >= 1 ||
+    premium >= 150_000 ||
+    (side === "buy" && premium >= 100_000)
+  );
+};
+
 export const flowEventsToChartEvents = (
   events: Array<Record<string, unknown>> = [],
   symbol?: string,
 ): ChartEvent[] => {
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
   return (Array.isArray(events) ? events : [])
-    .filter((event) => Boolean(event?.isUnusual))
+    .filter(shouldRenderFlowOnSpotChart)
     .map((event) => {
       const eventSymbol = String(
         event.ticker || event.underlying || event.symbol || normalizedSymbol,
@@ -108,6 +129,7 @@ export const flowEventsToChartEvents = (
       const contractLabel =
         String(event.contract || event.optionTicker || "").trim() ||
         [eventSymbol, strike ?? "", right].filter(Boolean).join(" ");
+      const flowKind = event.isUnusual ? "unusual flow" : "options flow";
 
       return {
         id: String(event.id || `${eventSymbol}:${occurredAt}:${contractLabel}`),
@@ -117,12 +139,18 @@ export const flowEventsToChartEvents = (
         placement: "bar",
         severity: resolveFlowSeverity({ premium, unusualScore }),
         label: `${right || "OPT"} ${compactPremium(premium)}`,
-        summary: `${contractLabel} unusual flow ${compactPremium(premium)}`,
+        summary: `${contractLabel} ${flowKind} ${compactPremium(premium)}`,
         source: String(event.provider || "flow"),
         confidence: Math.max(0, Math.min(1, unusualScore / 5)),
         bias: normalizeBias(event.flowBias || event.sentiment),
         actions: ["open_flow", "open_trade", "copy_contract", "add_alert"],
-        metadata: { ...event, premium, unusualScore, contractLabel },
+        metadata: {
+          ...event,
+          premium,
+          unusualScore,
+          isUnusual: Boolean(event.isUnusual),
+          contractLabel,
+        },
       } satisfies ChartEvent;
     })
     .filter((event) => !normalizedSymbol || event.symbol === normalizedSymbol);

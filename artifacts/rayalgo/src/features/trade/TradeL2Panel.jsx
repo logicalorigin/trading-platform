@@ -143,6 +143,8 @@ import {
   sp,
 } from "../../lib/uiTokens";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 export const TradeL2Panel = ({
   slot,
@@ -674,7 +676,7 @@ export const TradeL2Panel = ({
           <span style={{ textAlign: "right" }}>TIME</span>
         </div>
         {contractExecutions.map((execution) => (
-          <div
+          <AppTooltip key={execution.id} content={`${formatExecutionContractLabel(execution)}${execution.exchange ? ` · ${execution.exchange}` : ""}`}><div
             key={execution.id}
             style={{
               display: "grid",
@@ -686,7 +688,6 @@ export const TradeL2Panel = ({
               fontFamily: T.mono,
               borderBottom: `1px solid ${T.border}08`,
             }}
-            title={`${formatExecutionContractLabel(execution)}${execution.exchange ? ` · ${execution.exchange}` : ""}`}
           >
             <span
               style={{
@@ -730,7 +731,7 @@ export const TradeL2Panel = ({
             >
               {formatRelativeTimeShort(execution.executedAt)}
             </span>
-          </div>
+          </div></AppTooltip>
         ))}
       </div>
     );

@@ -10,6 +10,8 @@ import {
   Landmark,
 } from "lucide-react";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const EXCHANGE_COUNTRY_BY_KEY = {
   AMEX: "US",
@@ -399,8 +401,7 @@ export function MarketIdentityMark({
   }, [identity.logoUrl, identity.market, identity.ticker]);
 
   return (
-    <span
-      title={title || `${identity.ticker} ${identity.marketLabel}`}
+    <AppTooltip content={title || `${identity.ticker} ${identity.marketLabel}`}><span
       style={{
         width: dim(size),
         height: dim(size),
@@ -465,7 +466,7 @@ export function MarketIdentityMark({
           {identity.flag}
         </span>
       ) : null}
-    </span>
+    </span></AppTooltip>
   );
 }
 
@@ -504,9 +505,8 @@ export function MarketIdentityChips({
       }}
     >
       {chips.map((chip) => (
-        <span
+        <AppTooltip key={chip.key} content={chip.title}><span
           key={chip.key}
-          title={chip.title}
           style={{
             border: `1px solid ${T.border}`,
             color: T.textMuted,
@@ -524,7 +524,7 @@ export function MarketIdentityChips({
           }}
         >
           {chip.label}
-        </span>
+        </span></AppTooltip>
       ))}
     </span>
   );

@@ -200,11 +200,15 @@ async function fillAndWaitForTickerSearch(
   input: ReturnType<import("@playwright/test").Page["locator"]>,
   query: string,
 ) {
+  const normalizedQuery = query.toUpperCase();
   const responsePromise = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/universe/tickers") &&
-      response.url().includes(`search=${encodeURIComponent(query)}`) &&
-      response.status() === 200,
+    (response) => {
+      if (!response.url().includes("/api/universe/tickers") || response.status() !== 200) {
+        return false;
+      }
+      const url = new URL(response.url());
+      return (url.searchParams.get("search") || "").toUpperCase() === normalizedQuery;
+    },
     { timeout: 30_000 },
   );
 

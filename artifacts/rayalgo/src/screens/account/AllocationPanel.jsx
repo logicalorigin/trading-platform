@@ -1,4 +1,5 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   EmptyState,
@@ -84,13 +85,7 @@ const Donut = ({ title, data, currency, maskValues = false, compact = false }) =
               formatAccountMoney(value, currency, true, maskValues),
               `${item.payload.label} ${formatAccountPercent(item.payload.weightPercent, 1, maskValues)}`,
             ]}
-            contentStyle={{
-              background: T.bg0,
-              border: `1px solid ${T.border}`,
-              borderRadius: dim(5),
-              fontSize: fs(10),
-              color: T.text,
-            }}
+            contentStyle={chartTooltipContentStyle}
           />
         </PieChart>
       </ResponsiveContainer>

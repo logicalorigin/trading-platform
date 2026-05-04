@@ -18,10 +18,15 @@ import { useSignalMonitorStateForSymbol } from "./signalMonitorStore";
 import { normalizeTickerSymbol } from "./tickerIdentity";
 import {
   WATCHLIST_SORT_MODE,
+  WATCHLIST_SIGNAL_TIMEFRAMES,
+  buildSignalMatrixBySymbol,
   buildWatchlistRows,
   countWatchlistSymbols,
+  getBestWatchlistSignalState,
   sortWatchlistRows,
 } from "./watchlistModel";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const extractSparklineValues = (data = []) =>
   (Array.isArray(data) ? data : [])
@@ -113,6 +118,65 @@ const WATCHLIST_DIRECTION_SORTS = new Set([
 const isWatchlistSignalDirection = (value) =>
   value === "buy" || value === "sell";
 
+const getFallbackSignalForTimeframe = (fallbackState, timeframe) => {
+  if (!fallbackState || fallbackState.timeframe !== timeframe) return null;
+  return fallbackState;
+};
+
+const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onSelect }) => (
+  <span
+    data-testid="watchlist-signal-dots"
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: sp(3),
+      minWidth: dim(34),
+    }}
+  >
+    {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe) => {
+      const state =
+        statesByTimeframe?.[timeframe] ||
+        getFallbackSignalForTimeframe(fallbackState, timeframe);
+      const direction = state?.currentSignalDirection;
+      const hasDirection = isWatchlistSignalDirection(direction);
+      const color = direction === "buy" ? T.blue : direction === "sell" ? T.red : T.textMuted;
+      const fresh = Boolean(state?.fresh);
+      const status = state?.status || "unknown";
+      const label = hasDirection
+        ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+        : `${timeframe} no signal - ${status}`;
+
+      return (
+        <AppTooltip key={timeframe} content={state?.lastError ? `${label} - ${state.lastError}` : label}><button
+          key={timeframe}
+          type="button"
+          data-testid={`watchlist-signal-dot-${timeframe}`}
+          data-timeframe={timeframe}
+          data-direction={hasDirection ? direction : "none"}
+          aria-label={label}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (hasDirection) {
+              onSelect?.(state);
+            }
+          }}
+          style={{
+            width: dim(7),
+            height: dim(7),
+            borderRadius: "50%",
+            border: `1px solid ${hasDirection ? color : T.borderLight}`,
+            background: hasDirection ? color : "transparent",
+            opacity: hasDirection ? (fresh ? 1 : 0.42) : 0.55,
+            boxShadow: hasDirection && fresh ? `0 0 0 2px ${color}20` : "none",
+            cursor: hasDirection ? "pointer" : "default",
+            padding: 0,
+          }}
+        /></AppTooltip>
+      );
+    })}
+  </span>
+);
+
 const WatchlistRow = memo(
   ({
     item,
@@ -129,6 +193,7 @@ const WatchlistRow = memo(
     onAddSymbol,
     onRemoveSymbol,
     onSignalAction,
+    signalStatesByTimeframe = {},
     busy = false,
   }) => {
     const fallback = useMemo(
@@ -138,14 +203,18 @@ const WatchlistRow = memo(
     );
     const snapshot = useRuntimeTickerSnapshot(item.sym, fallback);
     const signalState = useSignalMonitorStateForSymbol(item.sym);
+    const bestSignalState = getBestWatchlistSignalState(
+      signalStatesByTimeframe,
+      signalState,
+    );
     const selectedRow = selected === item.sym;
-    const signalDirection = signalState?.currentSignalDirection;
+    const signalDirection = bestSignalState?.currentSignalDirection;
     const hasSignal =
       isWatchlistSignalDirection(signalDirection) &&
-      signalState?.status !== "error" &&
-      signalState?.status !== "unavailable";
-    const signalColor = signalDirection === "buy" ? T.green : T.red;
-    const signalFresh = Boolean(signalState?.fresh);
+      bestSignalState?.status !== "error" &&
+      bestSignalState?.status !== "unavailable";
+    const signalColor = signalDirection === "buy" ? T.blue : T.red;
+    const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
     const priceValue = isFiniteNumber(snapshot?.price)
       ? snapshot.price
@@ -247,7 +316,8 @@ const WatchlistRow = memo(
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "16px 18px minmax(42px, auto) auto auto minmax(0, 1fr)",
+              gridTemplateColumns:
+                "16px 18px minmax(42px, auto) auto auto auto minmax(0, 1fr)",
               alignItems: "center",
               gap: sp(4),
               minWidth: 0,
@@ -277,8 +347,7 @@ const WatchlistRow = memo(
               {item.sym}
             </span>
             {item.monitoredOnly ? (
-              <span
-                title="Signal-monitor symbol"
+              <AppTooltip content="Signal-monitor symbol"><span
                 style={{
                   border: `1px solid ${T.border}`,
                   color: T.textDim,
@@ -290,35 +359,43 @@ const WatchlistRow = memo(
                 }}
               >
                 MON
-              </span>
+              </span></AppTooltip>
             ) : null}
+            <WatchlistSignalDots
+              statesByTimeframe={signalStatesByTimeframe}
+              fallbackState={signalState}
+              onSelect={(state) => onSignalAction?.(item.sym, state)}
+            />
             {hasSignal ? (
-              <button
-                type="button"
-                data-testid="watchlist-signal-pill"
-                data-fresh={signalFresh ? "true" : "false"}
-                className={signalFresh ? "ra-status-pulse" : "ra-interactive"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSignalAction?.(item.sym, signalState);
-                }}
-                title={`${signalDirection.toUpperCase()} ${signalFresh ? "fresh" : "stale"} signal - ${signalState?.timeframe || "monitor"} - ${signalState?.barsSinceSignal ?? MISSING_VALUE} bars`}
-                style={{
-                  border: `1px solid ${signalFresh ? signalColor : `${signalColor}66`}`,
-                  background: signalFresh ? `${signalColor}1f` : `${signalColor}0f`,
-                  color: signalFresh ? signalColor : `${signalColor}bb`,
-                  cursor: "pointer",
-                  fontFamily: T.mono,
-                  fontSize: fs(7),
-                  fontWeight: 900,
-                  letterSpacing: "0.06em",
-                  lineHeight: 1,
-                  padding: sp("2px 3px"),
-                  borderRadius: 0,
-                }}
+              <AppTooltip
+                content={`${signalDirection.toUpperCase()} ${signalFresh ? "fresh" : "stale"} signal - ${bestSignalState?.timeframe || "monitor"} - ${bestSignalState?.barsSinceSignal ?? MISSING_VALUE} bars`}
               >
-                {signalDirection.toUpperCase()}
-              </button>
+                <button
+                  type="button"
+                  data-testid="watchlist-signal-pill"
+                  data-fresh={signalFresh ? "true" : "false"}
+                  className={signalFresh ? "ra-status-pulse" : "ra-interactive"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSignalAction?.(item.sym, bestSignalState);
+                  }}
+                  style={{
+                    border: `1px solid ${signalFresh ? signalColor : `${signalColor}66`}`,
+                    background: signalFresh ? `${signalColor}1f` : `${signalColor}0f`,
+                    color: signalFresh ? signalColor : `${signalColor}bb`,
+                    cursor: "pointer",
+                    fontFamily: T.mono,
+                    fontSize: fs(7),
+                    fontWeight: 900,
+                    letterSpacing: "0.06em",
+                    lineHeight: 1,
+                    padding: sp("2px 3px"),
+                    borderRadius: 0,
+                  }}
+                >
+                  {signalDirection.toUpperCase()}
+                </button>
+              </AppTooltip>
             ) : null}
             <span
               style={{
@@ -327,6 +404,7 @@ const WatchlistRow = memo(
                 fontSize: fs(11),
                 fontWeight: 700,
                 textAlign: "right",
+                justifySelf: "end",
                 minWidth: dim(52),
               }}
             >
@@ -343,8 +421,7 @@ const WatchlistRow = memo(
               minWidth: 0,
             }}
           >
-            <span
-              title={displayName}
+            <AppTooltip content={displayName}><span
               style={{
                 fontSize: fs(9),
                 color: T.textDim,
@@ -355,7 +432,7 @@ const WatchlistRow = memo(
               }}
             >
               {displayName}
-            </span>
+            </span></AppTooltip>
             <MarketIdentityChips
               item={identityItem}
               compact
@@ -388,8 +465,7 @@ const WatchlistRow = memo(
             >
               {formatSignedPercent(snapshot?.pct)}
             </span>
-            <span
-              title="Last quote update"
+            <AppTooltip content="Last quote update"><span
               style={{
                 fontSize: fs(8),
                 color: T.textMuted,
@@ -398,7 +474,7 @@ const WatchlistRow = memo(
               }}
             >
               {quoteAge}
-            </span>
+            </span></AppTooltip>
           </div>
           <div
             style={{
@@ -409,8 +485,7 @@ const WatchlistRow = memo(
               marginTop: sp(3),
             }}
           >
-            <span
-              title="Volume"
+            <AppTooltip content="Volume"><span
               style={{
                 color: T.textMuted,
                 fontFamily: T.mono,
@@ -419,7 +494,7 @@ const WatchlistRow = memo(
               }}
             >
               Vol {fmtQuoteVolume(snapshot?.volume)}
-            </span>
+            </span></AppTooltip>
             <MicroSparkline
               data={
                 snapshot?.sparkBars?.length
@@ -432,7 +507,13 @@ const WatchlistRow = memo(
             />
           </div>
         </div>
-        <button
+        <AppTooltip content={
+            item.monitoredOnly
+              ? `Add ${item.sym} to watchlist`
+              : item.canRemove
+                ? `Remove ${item.sym}`
+                : `${item.sym} cannot be removed from this source`
+          }><button
           type="button"
           data-testid={
             item.monitoredOnly ? "watchlist-add-symbol" : "watchlist-remove-symbol"
@@ -449,13 +530,6 @@ const WatchlistRow = memo(
             }
           }}
           disabled={item.monitoredOnly ? busy : activeActionDisabled}
-          title={
-            item.monitoredOnly
-              ? `Add ${item.sym} to watchlist`
-              : item.canRemove
-                ? `Remove ${item.sym}`
-                : `${item.sym} cannot be removed from this source`
-          }
           style={{
             width: dim(28),
             height: dim(28),
@@ -477,7 +551,7 @@ const WatchlistRow = memo(
           }}
         >
           {item.monitoredOnly ? <Plus size={14} /> : <Trash2 size={13} />}
-        </button>
+        </button></AppTooltip>
       </div>
     );
   },
@@ -489,6 +563,7 @@ export const Watchlist = ({
   items = [],
   selected,
   signalStates = [],
+  signalMatrixStates = [],
   onSelect,
   onSelectWatchlist,
   onCreateWatchlist,
@@ -547,6 +622,10 @@ export const Watchlist = ({
       ),
     [signalStates],
   );
+  const signalMatrixBySymbol = useMemo(
+    () => buildSignalMatrixBySymbol(signalMatrixStates),
+    [signalMatrixStates],
+  );
   const addSymbolSearch = useSearchUniverseTickers(
     addMode && deferredAddQuery.length > 0
       ? {
@@ -580,8 +659,16 @@ export const Watchlist = ({
         direction: sortDirection,
         snapshotsBySymbol,
         signalStatesBySymbol,
+        signalMatrixBySymbol,
       }),
-    [filtered, signalStatesBySymbol, snapshotsBySymbol, sortDirection, sortMode],
+    [
+      filtered,
+      signalMatrixBySymbol,
+      signalStatesBySymbol,
+      snapshotsBySymbol,
+      sortDirection,
+      sortMode,
+    ],
   );
   const itemOrder = useMemo(
     () => new Map(items.map((item, index) => [item.key || item.id || item.sym, index])),
@@ -838,10 +925,9 @@ export const Watchlist = ({
               ))}
             </div>
           ) : null}
-          <button
+          <AppTooltip content="New watchlist"><button
             type="button"
             onClick={handleCreateWatchlist}
-            title="New watchlist"
             style={{
               width: dim(26),
               height: dim(26),
@@ -855,7 +941,7 @@ export const Watchlist = ({
             }}
           >
             <Plus size={14} />
-          </button>
+          </button></AppTooltip>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: sp(3) }}>
@@ -931,12 +1017,11 @@ export const Watchlist = ({
           {WATCHLIST_SORT_OPTIONS.map((option) => {
             const active = sortMode === option.id;
             return (
-              <button
+              <AppTooltip key={option.id} content={`Sort by ${option.label}`}><button
                 key={option.id}
                 type="button"
                 data-testid={`watchlist-sort-${option.id}`}
                 onClick={() => handleSelectSortMode(option.id)}
-                title={`Sort by ${option.label}`}
                 style={{
                   padding: sp("3px 2px"),
                   borderRadius: 0,
@@ -951,7 +1036,7 @@ export const Watchlist = ({
                 }}
               >
                 {option.label}
-              </button>
+              </button></AppTooltip>
             );
           })}
         </div>
@@ -986,14 +1071,13 @@ export const Watchlist = ({
               }}
             />
           </div>
-          <button
+          <AppTooltip content={directionEnabled ? "Toggle sort direction" : "Sort direction unavailable"}><button
             type="button"
             onClick={() =>
               directionEnabled &&
               setSortDirection((current) => (current === "desc" ? "asc" : "desc"))
             }
             disabled={!directionEnabled}
-            title={directionEnabled ? "Toggle sort direction" : "Sort direction unavailable"}
             style={{
               width: dim(44),
               borderRadius: 0,
@@ -1007,7 +1091,7 @@ export const Watchlist = ({
             }}
           >
             {sortDirection === "desc" ? "DESC" : "ASC"}
-          </button>
+          </button></AppTooltip>
         </div>
 
         {addMode ? (
@@ -1043,12 +1127,11 @@ export const Watchlist = ({
                   color: T.text,
                 }}
               />
-              <button
+              <AppTooltip content="Close add symbol"><button
                 type="button"
                 onClick={() => {
                   closeAddMode({ clearQuery: true });
                 }}
-                title="Close add symbol"
                 style={{
                   width: dim(22),
                   height: dim(22),
@@ -1061,7 +1144,7 @@ export const Watchlist = ({
                 }}
               >
                 <X size={13} />
-              </button>
+              </button></AppTooltip>
             </div>
 
             <div style={{ maxHeight: dim(180), overflowY: "auto" }}>
@@ -1183,6 +1266,7 @@ export const Watchlist = ({
               onAddSymbol={onAddSymbol}
               onRemoveSymbol={onRemoveSymbol}
               onSignalAction={onSignalAction}
+              signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
               busy={busy}
             />
           );
@@ -1235,6 +1319,7 @@ const WatchlistContainer = ({
   activeWatchlist,
   watchlistSymbols,
   signalStates = [],
+  signalMatrixStates = [],
   ...rest
 }) => {
   const items = useMemo(() => {
@@ -1259,6 +1344,7 @@ const WatchlistContainer = ({
       activeWatchlistId={activeWatchlist?.id || null}
       items={items}
       signalStates={signalStates}
+      signalMatrixStates={signalMatrixStates}
       {...rest}
     />
   );

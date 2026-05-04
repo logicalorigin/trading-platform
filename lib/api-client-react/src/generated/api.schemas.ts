@@ -187,6 +187,15 @@ export const SignalMonitorTimeframe = {
   '1d': '1d',
 } as const;
 
+export type SignalMonitorMatrixTimeframe = typeof SignalMonitorMatrixTimeframe[keyof typeof SignalMonitorMatrixTimeframe];
+
+
+export const SignalMonitorMatrixTimeframe = {
+  '2m': '2m',
+  '5m': '5m',
+  '15m': '15m',
+} as const;
+
 export type FlowSentiment = typeof FlowSentiment[keyof typeof FlowSentiment];
 
 
@@ -1881,6 +1890,43 @@ export interface AccountPositionsResponse {
   updatedAt: string;
 }
 
+export interface AccountPositionDateActivity {
+  id: string;
+  timestamp: string;
+  type: string;
+  symbol: string | null;
+  side: string | null;
+  amount: number | null;
+  quantity: number | null;
+  price: number | null;
+  realizedPnl: number | null;
+  fees: number | null;
+  currency: string;
+  source: string;
+}
+
+export type AccountPositionsAtDateResponseStatus = typeof AccountPositionsAtDateResponseStatus[keyof typeof AccountPositionsAtDateResponseStatus];
+
+
+export const AccountPositionsAtDateResponseStatus = {
+  historical: 'historical',
+  current: 'current',
+  unavailable: 'unavailable',
+} as const;
+
+export interface AccountPositionsAtDateResponse {
+  accountId: string;
+  date: string;
+  currency: string;
+  status: AccountPositionsAtDateResponseStatus;
+  snapshotDate: string | null;
+  message: string | null;
+  positions: AccountPositionRow[];
+  activity: AccountPositionDateActivity[];
+  totals: JsonObject;
+  updatedAt: string;
+}
+
 export type AccountTradeSource = typeof AccountTradeSource[keyof typeof AccountTradeSource];
 
 
@@ -2643,11 +2689,42 @@ export interface EvaluateSignalMonitorRequest {
   watchlistId?: string | null;
 }
 
+export interface EvaluateSignalMonitorMatrixRequest {
+  environment?: EnvironmentMode;
+  /** @nullable */
+  watchlistId?: string | null;
+  symbols?: string[];
+  timeframes?: SignalMonitorMatrixTimeframe[];
+}
+
 export interface SignalMonitorSymbolState {
   id: string;
   profileId: string;
   symbol: string;
   timeframe: SignalMonitorTimeframe;
+  currentSignalDirection: SignalMonitorDirection | null;
+  /** @nullable */
+  currentSignalAt: string | null;
+  /** @nullable */
+  currentSignalPrice: number | null;
+  /** @nullable */
+  latestBarAt: string | null;
+  /** @nullable */
+  barsSinceSignal: number | null;
+  fresh: boolean;
+  status: SignalMonitorSymbolStatus;
+  active: boolean;
+  /** @nullable */
+  lastEvaluatedAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+}
+
+export interface SignalMonitorMatrixState {
+  id: string;
+  profileId: string;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
   currentSignalDirection: SignalMonitorDirection | null;
   /** @nullable */
   currentSignalAt: string | null;
@@ -2687,6 +2764,15 @@ export interface SignalMonitorStateResponse {
   profile: SignalMonitorProfile;
   states: SignalMonitorSymbolState[];
   evaluatedAt: string;
+  truncated: boolean;
+  skippedSymbols: string[];
+}
+
+export interface SignalMonitorMatrixResponse {
+  profile: SignalMonitorProfile;
+  states: SignalMonitorMatrixState[];
+  evaluatedAt: string;
+  timeframes: SignalMonitorMatrixTimeframe[];
   truncated: boolean;
   skippedSymbols: string[];
 }
@@ -3593,6 +3679,12 @@ mode?: EnvironmentMode;
 };
 
 export type GetAccountPositionsParams = {
+assetClass?: string;
+mode?: EnvironmentMode;
+};
+
+export type GetAccountPositionsAtDateParams = {
+date: string;
 assetClass?: string;
 mode?: EnvironmentMode;
 };

@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   CartesianGrid,
   ComposedChart,
   Line,
   ReferenceDot,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -23,12 +24,15 @@ import {
   formatAccountSignedMoney,
 } from "./accountUtils";
 import {
+  buildAnchoredValueDomain,
   buildPaddedValueDomain,
   buildTransferAdjustedPnlSeries,
   joinBenchmarkPercentSeries,
   mapEquityEventsToPoints,
   normalizeEquityPointSeries,
 } from "./equityCurveData";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const EQUITY_CHART_MODES = [
   { value: "nav", label: "NAV" },
@@ -88,9 +92,8 @@ const FlatChip = ({
   onClick,
   title,
 }) => (
-  <button
+  <AppTooltip content={title}><button
     type="button"
-    title={title}
     disabled={disabled}
     onClick={onClick}
     className={active ? "ra-focus-rail ra-interactive" : "ra-interactive"}
@@ -111,7 +114,7 @@ const FlatChip = ({
     }}
   >
     {children}
-  </button>
+  </button></AppTooltip>
 );
 
 const ChartTooltip = ({
@@ -255,6 +258,12 @@ const formatAxisTick = (value, range) =>
         day: "numeric",
       });
 
+const inspectionDateFromPoint = (point) => {
+  const timestampMs = finiteNumber(point?.timestampMs);
+  if (timestampMs == null) return null;
+  return new Date(timestampMs).toISOString().slice(0, 10);
+};
+
 export const EquityCurvePanel = ({
   query,
   benchmarkQueries,
@@ -266,11 +275,17 @@ export const EquityCurvePanel = ({
   sourceLabel = "Flex",
   maskValues = false,
   currentNetLiquidation = null,
+  activeInspectionDate = null,
+  pinnedInspectionDate = null,
+  onHoverInspectionDate,
+  onPinInspectionDate,
   compact = false,
 }) => {
   const [showEvents, setShowEvents] = useState(true);
-  const [activeEvent, setActiveEvent] = useState(null);
   const [chartMode, setChartMode] = useState("nav");
+  const [activeEvent, setActiveEvent] = useState(null);
+  const hoverRafRef = useRef(null);
+  const lastHoverDateRef = useRef(null);
   const [visibleBenchmarks, setVisibleBenchmarks] = useState({
     SPY: true,
     QQQ: false,
@@ -304,11 +319,55 @@ export const EquityCurvePanel = ({
   ];
   const queryRangeMatches = !query.data || query.data.range === range;
   const chartData = queryRangeMatches ? query.data : null;
+  const emitHoverInspectionDate = useCallback(
+    (point) => {
+      if (!onHoverInspectionDate) return;
+      const nextDate = inspectionDateFromPoint(point);
+      if (nextDate === lastHoverDateRef.current) return;
+      lastHoverDateRef.current = nextDate;
+      if (hoverRafRef.current) {
+        cancelAnimationFrame(hoverRafRef.current);
+      }
+      hoverRafRef.current = requestAnimationFrame(() => {
+        onHoverInspectionDate(nextDate);
+        hoverRafRef.current = null;
+      });
+    },
+    [onHoverInspectionDate],
+  );
+  const clearHoverInspectionDate = useCallback(() => {
+    if (hoverRafRef.current) {
+      cancelAnimationFrame(hoverRafRef.current);
+      hoverRafRef.current = null;
+    }
+    lastHoverDateRef.current = null;
+    onHoverInspectionDate?.(null);
+  }, [onHoverInspectionDate]);
+  const pinInspectionDate = useCallback(
+    (point) => {
+      const nextDate = inspectionDateFromPoint(point);
+      if (nextDate) {
+        onPinInspectionDate?.(nextDate);
+      }
+    },
+    [onPinInspectionDate],
+  );
+  useEffect(
+    () => () => {
+      if (hoverRafRef.current) {
+        cancelAnimationFrame(hoverRafRef.current);
+        hoverRafRef.current = null;
+      }
+    },
+    [],
+  );
   const data = useMemo(
     () => {
       const equityPoints = normalizeEquityPointSeries(chartData?.points || []);
       const pnlValues = buildTransferAdjustedPnlSeries(equityPoints);
-      const benchmarkValues = benchmarks.reduce((accumulator, benchmark) => {
+      const benchmarkValues = benchmarks
+        .filter((benchmark) => visibleBenchmarks[benchmark.key])
+        .reduce((accumulator, benchmark) => {
         accumulator[benchmark.key] = joinBenchmarkPercentSeries(
           equityPoints,
           benchmark.query?.data?.range === range
@@ -335,6 +394,7 @@ export const EquityCurvePanel = ({
       benchmarkQueries?.SPY?.data?.range,
       chartData?.points,
       range,
+      visibleBenchmarks,
     ],
   );
   const events = useMemo(
@@ -361,8 +421,10 @@ export const EquityCurvePanel = ({
     currentNetLiquidation != null && Number.isFinite(Number(currentNetLiquidation))
       ? Number(currentNetLiquidation)
       : lastPoint?.netLiquidation;
-  const availableBenchmarks = benchmarks.filter((benchmark) =>
-    data.some((point) => point[benchmark.dataKey] != null),
+  const availableBenchmarks = benchmarks.filter(
+    (benchmark) =>
+      benchmark.query?.data?.range === range &&
+      Boolean(benchmark.query?.data?.points?.length),
   );
   const hasPoints = data.length > 0;
   const chartDataKey = chartMode === "pnl" ? "cumulativePnl" : "netLiquidation";
@@ -378,17 +440,39 @@ export const EquityCurvePanel = ({
       ),
     [chartDataKey, chartMode, data],
   );
+  const benchmarkAnchorRatio = useMemo(() => {
+    const leftMin = Number(leftAxisDomain?.[0]);
+    const leftMax = Number(leftAxisDomain?.[1]);
+    const leftAnchor =
+      chartMode === "pnl"
+        ? finiteNumber(firstPoint?.cumulativePnl)
+        : finiteNumber(firstPoint?.netLiquidation);
+    if (
+      !Number.isFinite(leftMin) ||
+      !Number.isFinite(leftMax) ||
+      !Number.isFinite(leftAnchor) ||
+      leftMax === leftMin
+    ) {
+      return null;
+    }
+    return Math.min(0.999, Math.max(0.001, (leftMax - leftAnchor) / (leftMax - leftMin)));
+  }, [chartMode, firstPoint?.cumulativePnl, firstPoint?.netLiquidation, leftAxisDomain]);
   const rightAxisDomain = useMemo(
     () =>
-      buildPaddedValueDomain(
+      buildAnchoredValueDomain(
         data.flatMap((point) =>
           benchmarks
             .filter((benchmark) => visibleBenchmarks[benchmark.key])
             .map((benchmark) => point[benchmark.dataKey]),
         ),
-        { paddingRatio: 0.12, minPadding: 1 },
+        {
+          anchorValue: 0,
+          anchorRatio: benchmarkAnchorRatio ?? 0.5,
+          paddingRatio: 0.12,
+          minPadding: 1,
+        },
       ),
-    [data, visibleBenchmarks],
+    [benchmarkAnchorRatio, data, visibleBenchmarks],
   );
   const headlineValue =
     chartMode === "pnl" ? delta : headlineNetLiquidation;
@@ -396,6 +480,13 @@ export const EquityCurvePanel = ({
   const equityFillId = useMemo(
     () => `accountEquityFill-${String(accentColor).replace(/[^a-z0-9]/gi, "")}`,
     [accentColor],
+  );
+  const activeInspectionPoint = useMemo(
+    () =>
+      activeInspectionDate
+        ? data.find((point) => inspectionDateFromPoint(point) === activeInspectionDate) || null
+        : null,
+    [activeInspectionDate, data],
   );
 
   return (
@@ -563,6 +654,13 @@ export const EquityCurvePanel = ({
             <ResponsiveContainer>
               <ComposedChart
                 data={data}
+                onMouseMove={(state) => {
+                  emitHoverInspectionDate(state?.activePayload?.[0]?.payload);
+                }}
+                onMouseLeave={clearHoverInspectionDate}
+                onClick={(state) => {
+                  pinInspectionDate(state?.activePayload?.[0]?.payload);
+                }}
                 margin={{
                   top: compact ? 2 : 8,
                   right: compact ? 2 : 12,
@@ -619,6 +717,15 @@ export const EquityCurvePanel = ({
                     />
                   }
                 />
+                {activeInspectionPoint ? (
+                  <ReferenceLine
+                    yAxisId="left"
+                    x={activeInspectionPoint.timestampMs}
+                    stroke={pinnedInspectionDate ? T.accent : T.textMuted}
+                    strokeDasharray={pinnedInspectionDate ? "2 0" : "3 3"}
+                    ifOverflow="extendDomain"
+                  />
+                ) : null}
                 <Area
                   yAxisId="left"
                   type="monotone"

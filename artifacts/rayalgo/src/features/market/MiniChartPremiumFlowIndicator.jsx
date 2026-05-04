@@ -2,6 +2,8 @@ import { EMPTY_PREMIUM_FLOW_SUMMARY, resolvePremiumFlowDisplayState } from "../p
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { fmtM, formatRelativeTimeShort } from "../../lib/formatters";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const PremiumFlowSparkline = ({ timeline = [], color, dense = false }) => {
   const width = 96;
@@ -127,6 +129,10 @@ export const MiniChartPremiumFlowIndicator = ({
     flowStatus,
     providerSummary,
   });
+  const glyphState = {
+    ...displayState,
+    isScanning: displayState.kind === "scanning",
+  };
   const statusLabel = displayState.label;
   const statusTone = displayState.isError
     ? T.red
@@ -134,6 +140,8 @@ export const MiniChartPremiumFlowIndicator = ({
       ? T.amber
       : displayState.isScanning
         ? T.accent
+        : displayState.isLiveSource
+          ? T.green
         : T.textDim;
   const hasFlow = resolvedSummary.eventCount > 0;
   const callPct = !hasFlow
@@ -161,9 +169,19 @@ export const MiniChartPremiumFlowIndicator = ({
           : statusLabel;
 
   return (
-    <div
+    <AppTooltip content={`${normalizedSymbol} options premium flow: ${formatSignedPremiumFlow(
+        resolvedSummary.netPremium,
+      )} · ${statusLabel}${titleDetail}`}><div
       data-chart-control-root
       data-testid="market-premium-flow-strip"
+      data-flow-source-provider={displayState.sourceProvider || ""}
+      data-flow-source-status={displayState.sourceStatus || ""}
+      data-flow-source-live={displayState.isLiveSource ? "true" : "false"}
+      data-flow-fallback-used={
+        providerSummary?.fallbackUsed || displayState.sourceStatus === "fallback"
+          ? "true"
+          : "false"
+      }
       style={{
         height,
         flexShrink: 0,
@@ -178,9 +196,6 @@ export const MiniChartPremiumFlowIndicator = ({
         fontFamily: T.mono,
         overflow: "hidden",
       }}
-      title={`${normalizedSymbol} options premium flow: ${formatSignedPremiumFlow(
-        resolvedSummary.netPremium,
-      )} · ${statusLabel}${titleDetail}`}
     >
       <div
         style={{
@@ -198,7 +213,7 @@ export const MiniChartPremiumFlowIndicator = ({
       >
         <span style={{ color: T.textMuted }}>FLOW</span>
         <PremiumFlowStatusGlyph
-          state={displayState}
+          state={glyphState}
           dense={dense}
           color={statusTone}
         />
@@ -285,7 +300,7 @@ export const MiniChartPremiumFlowIndicator = ({
           </span>
         </div>
       ) : null}
-    </div>
+    </div></AppTooltip>
   );
 };
 

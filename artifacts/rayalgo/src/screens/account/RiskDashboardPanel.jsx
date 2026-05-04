@@ -14,6 +14,8 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { buildAccountRiskDisplayModel } from "../../features/account/accountPositionRows.js";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const ratioPercent = (value, maskValues = false) =>
   value == null || Number.isNaN(Number(value))
@@ -21,8 +23,7 @@ const ratioPercent = (value, maskValues = false) =>
     : formatAccountPercent(Number(value) * 100, 1, maskValues);
 
 const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
-  <div
-    title={title}
+  <AppTooltip content={title}><div
     style={{
       padding: sp("3px 0"),
       display: "grid",
@@ -36,7 +37,7 @@ const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
     {subvalue ? (
       <div style={{ color: T.textDim, fontSize: fs(8), fontFamily: T.mono }}>{subvalue}</div>
     ) : null}
-  </div>
+  </div></AppTooltip>
 );
 
 const MarginGauge = ({ value, maskValues = false }) => {

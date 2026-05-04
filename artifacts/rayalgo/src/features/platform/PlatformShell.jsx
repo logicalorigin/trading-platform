@@ -6,6 +6,8 @@ import { SCREENS, ScreenLoadingFallback } from "./screenRegistry.jsx";
 import { responsiveFlags, useViewportSize } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { useMemoryPressureMonitor } from "./useMemoryPressureSignal";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
 
@@ -27,6 +29,7 @@ export const PlatformShell = ({
   activeWatchlist,
   watchlistSymbols,
   signalMonitorStates,
+  signalMatrixStates,
   selectedSymbol,
   sidebarCollapsed,
   setSidebarCollapsed,
@@ -147,12 +150,11 @@ export const PlatformShell = ({
         }}
       >
         {isPhone ? (
-          <button
+          <AppTooltip content={sidebarCollapsed ? "Open watchlist" : "Close watchlist"}><button
             className="ra-interactive"
             type="button"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             aria-label={sidebarCollapsed ? "Open watchlist" : "Close watchlist"}
-            title={sidebarCollapsed ? "Open watchlist" : "Close watchlist"}
             style={{
               width: dim(32),
               minWidth: dim(32),
@@ -172,7 +174,7 @@ export const PlatformShell = ({
             }}
           >
             {sidebarCollapsed ? "☰" : "×"}
-          </button>
+          </button></AppTooltip>
         ) : null}
         {SCREENS.map((screen) => {
           const isTradeTab = screen.id === "trade";
@@ -187,7 +189,11 @@ export const PlatformShell = ({
               : "pulseAlert 1.8s ease-in-out infinite"
             : "none";
           return (
-            <button
+            <AppTooltip key={screen.id} content={
+                hasAlerts
+                  ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
+                  : screen.label
+              }><button
               key={screen.id}
               className={joinMotionClasses(
                 "ra-interactive",
@@ -226,11 +232,6 @@ export const PlatformShell = ({
                 event.currentTarget.style.background = "transparent";
                 event.currentTarget.style.borderColor = T.border;
               }}
-              title={
-                hasAlerts
-                  ? `${totalAlerts} position${totalAlerts === 1 ? "" : "s"} at alert threshold (${winAlerts} win · ${lossAlerts} loss)`
-                  : screen.label
-              }
             >
               {screen.label}
               {hasAlerts ? (
@@ -251,7 +252,7 @@ export const PlatformShell = ({
                   {totalAlerts}
                 </span>
               ) : null}
-            </button>
+            </button></AppTooltip>
           );
         })}
       </div>
@@ -400,6 +401,7 @@ export const PlatformShell = ({
               activeWatchlist={activeWatchlist}
               watchlistSymbols={watchlistSymbols}
               signalStates={signalMonitorStates}
+              signalMatrixStates={signalMatrixStates}
               selected={selectedSymbol}
               onSelect={onSelectSymbol}
               onChartFocus={onFocusMarketChart}
@@ -524,10 +526,9 @@ const ToastStack = ({ toasts, onDismiss }) => (
                 ? "⚠"
                 : "ⓘ";
       return (
-        <div
+        <AppTooltip key={toast.id} content="Click to dismiss"><div
           key={toast.id}
           onClick={() => onDismiss?.(toast.id)}
-          title="Click to dismiss"
           style={{
             background: T.bg2,
             border: `1px solid ${color}`,
@@ -608,7 +609,7 @@ const ToastStack = ({ toasts, onDismiss }) => (
               ✕
             </span>
           </div>
-        </div>
+        </div></AppTooltip>
       );
       })}
     </div>

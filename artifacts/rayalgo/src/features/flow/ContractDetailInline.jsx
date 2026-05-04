@@ -58,6 +58,8 @@ import {
   sp,
 } from "../../lib/uiTokens";
 import { flowProviderColor } from "./flowPresentation";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const OPTION_CHART_TIMEFRAMES = getChartTimeframeOptions("option");
 
@@ -441,9 +443,8 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           flexWrap: "wrap",
         }}
       >
-        <button
+        <AppTooltip content="Back to flow (Esc)"><button
           onClick={onBack}
-          title="Back to flow (Esc)"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -461,7 +462,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           }}
         >
           <span style={{ fontSize: fs(12) }}>←</span> Back to flow
-        </button>
+        </button></AppTooltip>
         <div
           style={{
             width: dim(1),
@@ -663,7 +664,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             color: flowProviderColor(evt.provider),
           },
         ].map((item) => (
-          <div
+          <AppTooltip key={item.label} content={item.label === "FILL" ? fillSpread.label : undefined}><div
             key={item.label}
             style={{
               padding: sp("6px 8px"),
@@ -672,7 +673,6 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               borderRadius: dim(3),
               minWidth: 0,
             }}
-            title={item.label === "FILL" ? fillSpread.label : undefined}
           >
             <div
               style={{
@@ -698,7 +698,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             >
               {item.value}
             </div>
-          </div>
+          </div></AppTooltip>
         ))}
       </div>
 

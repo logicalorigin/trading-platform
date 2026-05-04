@@ -2,6 +2,8 @@ import { Router, type IRouter } from "express";
 import {
   EvaluateSignalMonitorBody,
   EvaluateSignalMonitorResponse,
+  EvaluateSignalMonitorMatrixBody,
+  EvaluateSignalMonitorMatrixResponse,
   GetSignalMonitorProfileQueryParams,
   GetSignalMonitorProfileResponse,
   GetSignalMonitorStateQueryParams,
@@ -13,6 +15,7 @@ import {
 } from "@workspace/api-zod";
 import {
   evaluateSignalMonitor,
+  evaluateSignalMonitorMatrix,
   getSignalMonitorProfile,
   getSignalMonitorState,
   listSignalMonitorEvents,
@@ -43,6 +46,15 @@ router.post("/signal-monitor/evaluate", async (req, res) => {
   const body = EvaluateSignalMonitorBody.parse(req.body ?? {});
   const data = EvaluateSignalMonitorResponse.parse(
     await evaluateSignalMonitor(body),
+  );
+
+  res.json(data);
+});
+
+router.post("/signal-monitor/matrix", async (req, res) => {
+  const body = EvaluateSignalMonitorMatrixBody.parse(req.body ?? {});
+  const data = EvaluateSignalMonitorMatrixResponse.parse(
+    await evaluateSignalMonitorMatrix(body),
   );
 
   res.json(data);

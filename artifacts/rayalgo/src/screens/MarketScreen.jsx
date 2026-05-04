@@ -57,6 +57,8 @@ import {
   motionRowStyle,
 } from "../lib/motion";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
   return <MultiChartGrid {...props} />;
@@ -364,6 +366,7 @@ const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer(
 
 export const MarketScreen = ({
   sym,
+  marketSymPing,
   onSymClick,
   onChartFocus,
   symbols = [],
@@ -786,6 +789,7 @@ export const MarketScreen = ({
               <MemoMultiChartGrid
                 key={`market-chart-grid-${marketChartResetKey}-${marketChartRetryRevision}`}
                 activeSym={sym}
+                externalSelection={marketSymPing}
                 onSymClick={onChartFocus || onSymClick}
                 watchlistSymbols={symbols}
                 popularTickers={stablePopularTickers}
@@ -799,14 +803,13 @@ export const MarketScreen = ({
             <div style={{ minHeight: dim(340) }} />
           )}
           {!stackActivityPanel ? (
-            <div
+            <AppTooltip content="Drag to resize activity panel"><div
               role="separator"
               data-testid="market-activity-resize-separator"
               aria-label="Resize activity and notifications panel"
               tabIndex={0}
               className="ra-resize-handle"
               onPointerDown={handleStartActivityPanelResize}
-              title="Drag to resize activity panel"
               style={{
                 alignSelf: "stretch",
                 minHeight: dim(340),
@@ -815,7 +818,7 @@ export const MarketScreen = ({
                 borderLeft: `1px solid ${T.border}55`,
                 borderRight: `1px solid ${T.border}55`,
               }}
-            />
+            /></AppTooltip>
           ) : null}
           <div
             data-testid="market-activity-panel"
@@ -1233,7 +1236,7 @@ export const MarketScreen = ({
             </CardTitle>
             {newsItems.length ? (
               newsItems.map((item, index) => (
-                <div
+                <AppTooltip key={item.id} content={item.publisher || undefined}><div
                   key={item.id}
                   className={joinMotionClasses(
                     "ra-row-enter",
@@ -1266,7 +1269,6 @@ export const MarketScreen = ({
                       "noopener,noreferrer",
                     );
                   }}
-                  title={item.publisher || undefined}
                 >
                   <Badge color={T.accent}>{item.tag}</Badge>
                   <div
@@ -1305,7 +1307,7 @@ export const MarketScreen = ({
                   >
                     {item.time}
                   </span>
-                </div>
+                </div></AppTooltip>
               ))
             ) : (
               <DataUnavailableState

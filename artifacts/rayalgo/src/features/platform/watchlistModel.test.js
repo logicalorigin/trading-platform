@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  WATCHLIST_SIGNAL_TIMEFRAMES,
   WATCHLIST_SORT_MODE,
+  buildSignalMatrixBySymbol,
   buildWatchlistIdentityPayload,
   buildWatchlistRows,
   countWatchlistSymbols,
+  getBestWatchlistSignalState,
   sortWatchlistRows,
 } from "./watchlistModel.js";
 
@@ -179,5 +182,46 @@ test("sortWatchlistRows ranks fresh signals, stale signals, and quote fields", (
   assert.deepEqual(
     percentSorted.map((row) => row.sym),
     ["NVDA", "SPY", "QQQ"],
+  );
+});
+
+test("watchlist signal matrix groups timeframe dots by symbol", () => {
+  assert.deepEqual(WATCHLIST_SIGNAL_TIMEFRAMES, ["2m", "5m", "15m"]);
+  const matrix = buildSignalMatrixBySymbol([
+    { symbol: "spy", timeframe: "2m", currentSignalDirection: "buy", fresh: true },
+    { symbol: "SPY", timeframe: "5m", currentSignalDirection: "sell", fresh: false },
+    { symbol: "QQQ", timeframe: "1h", currentSignalDirection: "buy", fresh: true },
+  ]);
+
+  assert.equal(matrix.SPY["2m"].currentSignalDirection, "buy");
+  assert.equal(matrix.SPY["5m"].currentSignalDirection, "sell");
+  assert.equal(matrix.QQQ, undefined);
+});
+
+test("signal sort prefers fresh matrix dots over legacy monitor state", () => {
+  const rows = buildWatchlistRows({
+    activeWatchlist: { symbols: ["SPY", "QQQ", "NVDA"] },
+  });
+  const signalMatrixBySymbol = buildSignalMatrixBySymbol([
+    { symbol: "SPY", timeframe: "2m", currentSignalDirection: "buy", fresh: false, barsSinceSignal: 8 },
+    { symbol: "QQQ", timeframe: "15m", currentSignalDirection: "sell", fresh: true, barsSinceSignal: 0 },
+  ]);
+
+  assert.equal(
+    getBestWatchlistSignalState(signalMatrixBySymbol.SPY).currentSignalDirection,
+    "buy",
+  );
+
+  const sorted = sortWatchlistRows(rows, {
+    mode: WATCHLIST_SORT_MODE.SIGNAL,
+    signalStatesBySymbol: {
+      NVDA: { symbol: "NVDA", currentSignalDirection: "buy", fresh: true, barsSinceSignal: 1 },
+    },
+    signalMatrixBySymbol,
+  });
+
+  assert.deepEqual(
+    sorted.map((row) => row.sym),
+    ["QQQ", "NVDA", "SPY"],
   );
 });

@@ -8,6 +8,8 @@ import {
   RadioTower,
 } from "lucide-react";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const EMPTY_ACCOUNTS = [];
 
@@ -991,8 +993,7 @@ export const IbkrConnectionLane = ({
   const Icon = tone.Icon;
 
   return (
-    <div
-      title={buildIbkrGatewayTitle({ label, connection, tone })}
+    <AppTooltip content={buildIbkrGatewayTitle({ label, connection, tone })}><div
       style={{
         display: "grid",
         gridTemplateColumns: compact ? "auto 1fr auto" : "auto 1fr auto auto",
@@ -1042,7 +1043,7 @@ export const IbkrConnectionLane = ({
           {formatIbkrPingMs(connection?.lastPingMs)}
         </span>
       ) : null}
-    </div>
+    </div></AppTooltip>
   );
 };
 

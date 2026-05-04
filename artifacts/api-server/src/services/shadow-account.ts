@@ -153,6 +153,7 @@ type WatchlistBacktestRiskOverlay = {
   label: string;
   stopLossPercent: number | null;
   trailingStopPercent: number | null;
+  sellSignalTrailingStopPercent: number | null;
 };
 
 type WatchlistBacktestSizingOverlay = {
@@ -323,6 +324,28 @@ function marketMultiplier(input: {
 function optionDateKey(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
+}
+
+function shadowDateWindowUtc(value: string | Date): {
+  date: string;
+  start: Date;
+  end: Date;
+} {
+  const parsed = value instanceof Date ? value : new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new HttpError(400, "Invalid inspection date.", {
+      code: "invalid_shadow_inspection_date",
+      expose: true,
+    });
+  }
+  const start = new Date(
+    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()),
+  );
+  return {
+    date: start.toISOString().slice(0, 10),
+    start,
+    end: new Date(start.getTime() + 24 * 60 * 60_000),
+  };
 }
 
 function positionKey(input: {
@@ -2031,6 +2054,228 @@ export async function getShadowAccountPositions(input: {
   };
 }
 
+export async function getShadowAccountPositionsAtDate(input: {
+  date: string | Date;
+  assetClass?: string | null;
+}) {
+  const window = shadowDateWindowUtc(input.date);
+  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
+  const fills = await db
+    .select()
+    .from(shadowFillsTable)
+    .where(
+      and(
+        eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+        lte(shadowFillsTable.occurredAt, window.end),
+      ),
+    )
+    .orderBy(shadowFillsTable.occurredAt);
+  const orderIds = Array.from(new Set(fills.map((fill) => fill.orderId)));
+  const orders = orderIds.length
+    ? await db
+        .select()
+        .from(shadowOrdersTable)
+        .where(inArray(shadowOrdersTable.id, orderIds))
+    : [];
+  const ordersById = new Map(orders.map((order) => [order.id, order]));
+  const books = new Map<
+    string,
+    {
+      symbol: string;
+      assetClass: ShadowAssetClass;
+      optionContract: ShadowOptionContract | null;
+      quantity: number;
+      totalCost: number;
+      mark: number;
+      sourceType: string;
+      strategyLabel: string | null;
+    }
+  >();
+
+  fills.forEach((fill) => {
+    const contract = asOptionContract(fill.optionContract);
+    const assetClass = fill.assetClass as ShadowAssetClass;
+    const key = positionKey({
+      symbol: fill.symbol,
+      assetClass,
+      optionContract: contract,
+    });
+    const multiplier = marketMultiplier({ assetClass, optionContract: contract });
+    const quantity = Math.abs(toNumber(fill.quantity) ?? 0);
+    const price = toNumber(fill.price) ?? 0;
+    const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
+    const current = books.get(key) ?? {
+      symbol: fill.symbol,
+      assetClass,
+      optionContract: contract,
+      quantity: 0,
+      totalCost: 0,
+      mark: price,
+      sourceType: metadata.sourceType,
+      strategyLabel: metadata.strategyLabel,
+    };
+    if (fill.side === "buy") {
+      current.quantity += quantity;
+      current.totalCost += quantity * price * multiplier;
+    } else {
+      const closeQuantity = Math.min(quantity, Math.abs(current.quantity));
+      const averageCost =
+        Math.abs(current.quantity) > 0
+          ? current.totalCost / Math.abs(current.quantity)
+          : price * multiplier;
+      current.quantity -= closeQuantity;
+      current.totalCost = Math.max(0, current.totalCost - averageCost * closeQuantity);
+    }
+    current.mark = price;
+    current.sourceType = metadata.sourceType;
+    current.strategyLabel = metadata.strategyLabel;
+    books.set(key, current);
+  });
+
+  const cash =
+    (toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE) +
+    fills.reduce((sum, fill) => sum + (toNumber(fill.cashDelta) ?? 0), 0);
+  const rawPositions = Array.from(books.entries()).filter(
+    ([, book]) => Math.abs(book.quantity) > 1e-8,
+  );
+  const filteredPositions =
+    input.assetClass && input.assetClass !== "all"
+      ? rawPositions.filter(
+          ([, book]) =>
+            assetClassLabel(book).toLowerCase() === input.assetClass?.toLowerCase(),
+        )
+      : rawPositions;
+  const marketValueTotal = filteredPositions.reduce((sum, [, book]) => {
+    const multiplier = marketMultiplier({
+      assetClass: book.assetClass,
+      optionContract: book.optionContract,
+    });
+    return sum + book.quantity * book.mark * multiplier;
+  }, 0);
+  const nav = cash + marketValueTotal;
+  const positions = filteredPositions.map(([key, book]) => {
+    const multiplier = marketMultiplier({
+      assetClass: book.assetClass,
+      optionContract: book.optionContract,
+    });
+    const averageCost =
+      Math.abs(book.quantity) > 0 ? book.totalCost / Math.abs(book.quantity) / multiplier : 0;
+    const marketValue = book.quantity * book.mark * multiplier;
+    const unrealizedPnl = marketValue - book.totalCost;
+    return {
+      id: `SHADOW:${key}:${window.date}`,
+      accountId: SHADOW_ACCOUNT_ID,
+      accounts: [SHADOW_ACCOUNT_ID],
+      symbol: book.symbol,
+      description: book.optionContract
+        ? `${book.optionContract.underlying} ${optionDateKey(book.optionContract.expirationDate)} ${book.optionContract.strike} ${String(book.optionContract.right).toUpperCase()}`
+        : book.symbol,
+      assetClass: assetClassLabel(book),
+      optionContract: optionPayload(book.optionContract),
+      sector: "Shadow Holdings",
+      quantity: book.quantity,
+      averageCost,
+      mark: book.mark,
+      dayChange: null,
+      dayChangePercent: null,
+      unrealizedPnl,
+      unrealizedPnlPercent:
+        book.totalCost > 0 ? (unrealizedPnl / Math.abs(book.totalCost)) * 100 : 0,
+      marketValue,
+      weightPercent: weightPercent(marketValue, nav),
+      betaWeightedDelta: null,
+      lots: [
+        {
+          accountId: SHADOW_ACCOUNT_ID,
+          symbol: book.symbol,
+          quantity: book.quantity,
+          averageCost,
+          marketPrice: book.mark,
+          marketValue,
+          unrealizedPnl,
+          asOf: window.end,
+          source: "SHADOW_LEDGER",
+        },
+      ],
+      openOrders: [],
+      source: "SHADOW_LEDGER",
+      sourceType: book.sourceType,
+      strategyLabel: book.strategyLabel,
+      attributionStatus: book.sourceType ? "attributed" : "unknown",
+      sourceAttribution: [],
+    };
+  });
+  const dayFills = fills.filter(
+    (fill) =>
+      fill.occurredAt.getTime() >= window.start.getTime() &&
+      fill.occurredAt.getTime() < window.end.getTime(),
+  );
+  const activity = [
+    ...(account.createdAt.getTime() >= window.start.getTime() &&
+    account.createdAt.getTime() < window.end.getTime()
+      ? [
+          {
+            id: "shadow-starting-balance",
+            timestamp: account.createdAt,
+            type: "deposit",
+            symbol: null,
+            side: null,
+            amount: toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE,
+            quantity: null,
+            price: null,
+            realizedPnl: null,
+            fees: null,
+            currency: SHADOW_CURRENCY,
+            source: "SHADOW_LEDGER",
+          },
+        ]
+      : []),
+    ...dayFills.map((fill) => {
+      const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
+      return {
+        id: fill.id,
+        timestamp: fill.occurredAt,
+        type: fill.side === "buy" ? "trade_buy" : "trade_sell",
+        symbol: fill.symbol,
+        side: fill.side,
+        amount: toNumber(fill.cashDelta),
+        quantity: Math.abs(toNumber(fill.quantity) ?? 0),
+        price: toNumber(fill.price),
+        realizedPnl: toNumber(fill.realizedPnl),
+        fees: toNumber(fill.fees),
+        currency: SHADOW_CURRENCY,
+        source: metadata.strategyLabel || metadata.sourceType || "SHADOW_LEDGER",
+      };
+    }),
+  ].sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
+
+  return {
+    accountId: SHADOW_ACCOUNT_ID,
+    date: window.date,
+    currency: SHADOW_CURRENCY,
+    status: positions.length || activity.length ? "historical" : "unavailable",
+    snapshotDate: positions.length ? window.end : null,
+    message:
+      positions.length || activity.length
+        ? null
+        : "No shadow account positions or activity exist for this date.",
+    positions,
+    activity,
+    totals: {
+      weightPercent: positions.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
+      unrealizedPnl: positions.reduce((sum, row) => sum + row.unrealizedPnl, 0),
+      grossLong: positions
+        .filter((row) => row.marketValue > 0)
+        .reduce((sum, row) => sum + row.marketValue, 0),
+      grossShort: positions
+        .filter((row) => row.marketValue < 0)
+        .reduce((sum, row) => sum + Math.abs(row.marketValue), 0),
+      netExposure: positions.reduce((sum, row) => sum + row.marketValue, 0),
+    },
+    updatedAt: new Date(),
+  };
+}
+
 export async function getShadowAccountClosedTrades(input: {
   from?: Date | null;
   to?: Date | null;
@@ -3200,18 +3445,63 @@ function normalizeWatchlistBacktestRiskOverlay(
   }
   const stopLossPercent = normalizeRiskOverlayPercent(record.stopLossPercent);
   const trailingStopPercent = normalizeRiskOverlayPercent(record.trailingStopPercent);
-  if (!stopLossPercent && !trailingStopPercent) {
+  const sellSignalTrailingStopPercent = normalizeRiskOverlayPercent(
+    record.sellSignalTrailingStopPercent,
+  );
+  if (
+    !stopLossPercent &&
+    !trailingStopPercent &&
+    !sellSignalTrailingStopPercent
+  ) {
     return null;
   }
   const pieces = [
     stopLossPercent ? `SL${stopLossPercent}` : null,
     trailingStopPercent ? `TR${trailingStopPercent}` : null,
+    sellSignalTrailingStopPercent ? `SIG${sellSignalTrailingStopPercent}` : null,
   ].filter(Boolean);
   return {
     label: readString(record.label) || pieces.join("_"),
     stopLossPercent,
     trailingStopPercent,
+    sellSignalTrailingStopPercent,
   };
+}
+
+function normalizeWatchlistBacktestProxySymbols(
+  value: unknown,
+): WatchlistBacktestProxySymbol[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const symbols = Array.from(
+    new Set(
+      value.flatMap((entry) => {
+        const symbol = normalizeSymbol(String(entry ?? "")).toUpperCase();
+        return WATCHLIST_BACKTEST_PROXY_SYMBOLS.includes(
+          symbol as WatchlistBacktestProxySymbol,
+        )
+          ? [symbol as WatchlistBacktestProxySymbol]
+          : [];
+      }),
+    ),
+  );
+  return symbols.length ? symbols : null;
+}
+
+function normalizeWatchlistBacktestExcludedSymbols(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const symbols = Array.from(
+    new Set(
+      value.flatMap((entry) => {
+        const symbol = normalizeSymbol(String(entry ?? "")).toUpperCase();
+        return symbol ? [symbol] : [];
+      }),
+    ),
+  );
+  return symbols.length ? symbols : null;
 }
 
 function normalizeWatchlistBacktestSizingOverlay(
@@ -3484,6 +3774,10 @@ async function getHydratedWatchlistBacktestBars(input: {
   from: Date;
   to: Date;
 }) {
+  const storedBars = await loadStoredWatchlistBacktestBars(input);
+  if (storedBars.length) {
+    return { bars: storedBars, error: null };
+  }
   let lastError: unknown = null;
   const request = {
     symbol: input.symbol,
@@ -3501,6 +3795,10 @@ async function getHydratedWatchlistBacktestBars(input: {
     lastError = error;
     return null;
   });
+  const canonicalStoredBars = await loadStoredWatchlistBacktestBars(input);
+  if (canonicalStoredBars.length) {
+    return { bars: canonicalStoredBars, error: null };
+  }
   if (first?.bars.length) {
     return { bars: first.bars, error: null };
   }
@@ -3555,7 +3853,11 @@ function barsToBacktestRayReplicaBars(
 
 function collectWatchlistBacktestUniverse(
   watchlists: Awaited<ReturnType<typeof listWatchlists>>["watchlists"],
+  options: {
+    excludedSymbols?: string[] | null;
+  } = {},
 ) {
+  const excludedSymbols = new Set(options.excludedSymbols ?? []);
   const bySymbol = new Map<
     string,
     {
@@ -3566,7 +3868,7 @@ function collectWatchlistBacktestUniverse(
   for (const watchlist of watchlists) {
     for (const item of watchlist.items) {
       const symbol = normalizeSymbol(item.symbol).toUpperCase();
-      if (!symbol) {
+      if (!symbol || excludedSymbols.has(symbol)) {
         continue;
       }
       const current = bySymbol.get(symbol) ?? { symbol, watchlists: [] };
@@ -3583,9 +3885,15 @@ function collectWatchlistBacktestUniverse(
 
 function withWatchlistBacktestProxyUniverse(
   universe: ReturnType<typeof collectWatchlistBacktestUniverse>,
+  options: {
+    proxySymbols?: WatchlistBacktestProxySymbol[] | null;
+  } = {},
 ) {
   const bySymbol = new Map(universe.map((item) => [item.symbol, item]));
-  for (const proxySymbol of WATCHLIST_BACKTEST_PROXY_SYMBOLS) {
+  const proxySymbols = options.proxySymbols?.length
+    ? options.proxySymbols
+    : Array.from(WATCHLIST_BACKTEST_PROXY_SYMBOLS);
+  for (const proxySymbol of proxySymbols) {
     if (!bySymbol.has(proxySymbol)) {
       bySymbol.set(proxySymbol, {
         symbol: proxySymbol,
@@ -3958,6 +4266,7 @@ export function buildWatchlistBacktestFills(input: {
       averageCost: number;
       lastMark: number;
       highestMark: number;
+      activeTrailingStopPercent: number | null;
       lastStopCheckedAt: Date;
       nextBarIndex: number;
       positionKey: string;
@@ -4156,9 +4465,9 @@ export function buildWatchlistBacktestFills(input: {
             triggered.push({ price: stopPrice, source: "stop_loss" });
           }
         }
-        if (riskOverlay?.trailingStopPercent) {
+        if (position.activeTrailingStopPercent) {
           const trailingStopPrice =
-            position.highestMark * (1 - riskOverlay.trailingStopPercent / 100);
+            position.highestMark * (1 - position.activeTrailingStopPercent / 100);
           if (bar.l <= trailingStopPrice) {
             triggered.push({
               price: trailingStopPrice,
@@ -4376,6 +4685,7 @@ export function buildWatchlistBacktestFills(input: {
       averageCost: price,
       lastMark: price,
       highestMark: price,
+      activeTrailingStopPercent: riskOverlay?.trailingStopPercent ?? null,
       lastStopCheckedAt: candidate.placedAt,
       nextBarIndex: firstBarIndexAfter(candidate.symbol, candidate.placedAt),
       positionKey,
@@ -4404,6 +4714,29 @@ export function buildWatchlistBacktestFills(input: {
       regime: options.regime ?? null,
     });
     pushSnapshot(candidate.placedAt);
+  };
+
+  const tightenSellSignalTrail = (
+    candidate: WatchlistBacktestSignalCandidate,
+    current: NonNullable<ReturnType<typeof open.get>>,
+  ) => {
+    const sellSignalTrailingStopPercent =
+      riskOverlay?.sellSignalTrailingStopPercent ?? null;
+    if (
+      !sellSignalTrailingStopPercent ||
+      proxySymbolSet.has(candidate.symbol) ||
+      candidate.fillPrice <= current.averageCost
+    ) {
+      return false;
+    }
+    current.highestMark = Math.max(current.highestMark, candidate.fillPrice, current.lastMark);
+    current.lastMark = candidate.fillPrice;
+    current.lastStopCheckedAt = candidate.placedAt;
+    current.activeTrailingStopPercent =
+      current.activeTrailingStopPercent === null
+        ? sellSignalTrailingStopPercent
+        : Math.min(current.activeTrailingStopPercent, sellSignalTrailingStopPercent);
+    return true;
   };
 
   const activateRegime = (candidate: WatchlistBacktestSignalCandidate) => {
@@ -4579,6 +4912,9 @@ export function buildWatchlistBacktestFills(input: {
         signalAt: candidate.signalAt,
         watchlists: candidate.watchlists,
       });
+      continue;
+    }
+    if (tightenSellSignalTrail(candidate, current)) {
       continue;
     }
     sellOpenPosition({
@@ -4969,6 +5305,8 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   watchlistBacktestOrderMatchesRange,
   watchlistBacktestSnapshotSource,
   watchlistBacktestSnapshotSourcesForRange,
+  collectWatchlistBacktestUniverse,
+  withWatchlistBacktestProxyUniverse,
   computeWatchlistBacktestStartingBook,
   selectShadowEquityHistoryRows,
   buildShadowPositionDayChange,
@@ -5318,25 +5656,115 @@ function buildWatchlistBacktestSweepVariants(input: {
   exploratory?: boolean;
   baseSizingOverlay?: WatchlistBacktestSizingOverlay | null;
   baseSelectionOverlay?: WatchlistBacktestSelectionOverlay | null;
+  proxySymbols?: WatchlistBacktestProxySymbol[] | null;
 } = {}) {
   const baselineRiskOverlays: Array<WatchlistBacktestRiskOverlay | null> = [
     null,
-    { label: "TR3", stopLossPercent: null, trailingStopPercent: 3 },
-    { label: "TR5", stopLossPercent: null, trailingStopPercent: 5 },
-    { label: "TR8", stopLossPercent: null, trailingStopPercent: 8 },
-    { label: "SL6", stopLossPercent: 6, trailingStopPercent: null },
-    { label: "SL10", stopLossPercent: 10, trailingStopPercent: null },
+    {
+      label: "TR3",
+      stopLossPercent: null,
+      trailingStopPercent: 3,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "TR5",
+      stopLossPercent: null,
+      trailingStopPercent: 5,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "TR8",
+      stopLossPercent: null,
+      trailingStopPercent: 8,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "SL6",
+      stopLossPercent: 6,
+      trailingStopPercent: null,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "SL10",
+      stopLossPercent: 10,
+      trailingStopPercent: null,
+      sellSignalTrailingStopPercent: null,
+    },
   ];
   const exploratoryRiskOverlays: Array<WatchlistBacktestRiskOverlay | null> = [
     ...baselineRiskOverlays,
-    { label: "TR10", stopLossPercent: null, trailingStopPercent: 10 },
-    { label: "TR12", stopLossPercent: null, trailingStopPercent: 12 },
-    { label: "TR15", stopLossPercent: null, trailingStopPercent: 15 },
-    { label: "TR20", stopLossPercent: null, trailingStopPercent: 20 },
-    { label: "SL8", stopLossPercent: 8, trailingStopPercent: null },
-    { label: "SL12", stopLossPercent: 12, trailingStopPercent: null },
-    { label: "SL15", stopLossPercent: 15, trailingStopPercent: null },
-    { label: "SL8_TR15", stopLossPercent: 8, trailingStopPercent: 15 },
+    {
+      label: "TR10",
+      stopLossPercent: null,
+      trailingStopPercent: 10,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "TR12",
+      stopLossPercent: null,
+      trailingStopPercent: 12,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "TR15",
+      stopLossPercent: null,
+      trailingStopPercent: 15,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "TR20",
+      stopLossPercent: null,
+      trailingStopPercent: 20,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "SL8",
+      stopLossPercent: 8,
+      trailingStopPercent: null,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "SL12",
+      stopLossPercent: 12,
+      trailingStopPercent: null,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "SL15",
+      stopLossPercent: 15,
+      trailingStopPercent: null,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "SL8_TR15",
+      stopLossPercent: 8,
+      trailingStopPercent: 15,
+      sellSignalTrailingStopPercent: null,
+    },
+    {
+      label: "TR12_SIG8",
+      stopLossPercent: null,
+      trailingStopPercent: 12,
+      sellSignalTrailingStopPercent: 8,
+    },
+    {
+      label: "TR15_SIG10",
+      stopLossPercent: null,
+      trailingStopPercent: 15,
+      sellSignalTrailingStopPercent: 10,
+    },
+    {
+      label: "TR15_SIG8",
+      stopLossPercent: null,
+      trailingStopPercent: 15,
+      sellSignalTrailingStopPercent: 8,
+    },
+    {
+      label: "TR15_SIG5",
+      stopLossPercent: null,
+      trailingStopPercent: 15,
+      sellSignalTrailingStopPercent: 5,
+    },
   ];
   const riskOverlays = input.exploratory
     ? exploratoryRiskOverlays
@@ -5418,7 +5846,11 @@ function buildWatchlistBacktestSweepVariants(input: {
       }
     }
   }
-  const regimeInputs = input.exploratory
+  const proxySymbols = input.proxySymbols?.length
+    ? input.proxySymbols
+    : Array.from(WATCHLIST_BACKTEST_PROXY_SYMBOLS);
+  const proxySymbolSet = new Set(proxySymbols);
+  const regimeInputs = (input.exploratory
     ? [
         ["VXX", "1h", "exit_longs_buy_proxy", "session_close"],
         ["VXX", "1h", "exit_longs_buy_proxy", "fixed_12_5m_bars"],
@@ -5435,7 +5867,7 @@ function buildWatchlistBacktestSweepVariants(input: {
         ["SQQQ", "1h", "pause_new_longs", "session_close"],
         ["SQQQ", "1h", "pause_new_longs", "fixed_12_5m_bars"],
       ]
-    : WATCHLIST_BACKTEST_PROXY_SYMBOLS.flatMap((proxySymbol) =>
+    : proxySymbols.flatMap((proxySymbol) =>
         WATCHLIST_BACKTEST_PROXY_TIMEFRAMES.flatMap((signalTimeframe) =>
           WATCHLIST_BACKTEST_REGIME_ACTIONS.flatMap((action) =>
             WATCHLIST_BACKTEST_REGIME_EXPIRATIONS.map((expiration) => [
@@ -5446,8 +5878,18 @@ function buildWatchlistBacktestSweepVariants(input: {
             ]),
           ),
         ),
-      );
-  for (const [proxySymbol, signalTimeframe, action, expiration] of regimeInputs) {
+      )) as Array<
+    [
+      WatchlistBacktestProxySymbol,
+      ShadowWatchlistBacktestTimeframe,
+      WatchlistBacktestRegimeAction,
+      WatchlistBacktestRegimeExpiration,
+    ]
+  >;
+  const filteredRegimeInputs = regimeInputs.filter(([proxySymbol]) =>
+    proxySymbolSet.has(proxySymbol),
+  );
+  for (const [proxySymbol, signalTimeframe, action, expiration] of filteredRegimeInputs) {
     for (const sizingOverlay of sizingOverlays) {
       for (const selectionOverlay of selectionOverlays) {
         for (const riskOverlay of riskOverlays) {
@@ -5485,9 +5927,13 @@ function buildWatchlistBacktestSweepVariants(input: {
 
 async function collectWatchlistBacktestRegimeSignals(input: {
   window: ReturnType<typeof resolveWatchlistBacktestWindow>;
+  proxySymbols?: WatchlistBacktestProxySymbol[] | null;
 }) {
   const byKey = new Map<string, Awaited<ReturnType<typeof collectWatchlistBacktestSignals>>>();
-  for (const proxySymbol of WATCHLIST_BACKTEST_PROXY_SYMBOLS) {
+  const proxySymbols = input.proxySymbols?.length
+    ? input.proxySymbols
+    : Array.from(WATCHLIST_BACKTEST_PROXY_SYMBOLS);
+  for (const proxySymbol of proxySymbols) {
     for (const timeframe of WATCHLIST_BACKTEST_PROXY_TIMEFRAMES) {
       const scan = await collectWatchlistBacktestSignals({
         universe: [
@@ -5515,6 +5961,8 @@ export async function runShadowWatchlistBacktest(input: {
   sizingOverlay?: unknown;
   selectionOverlay?: unknown;
   regimeOverlay?: unknown;
+  proxySymbols?: unknown;
+  excludedSymbols?: unknown;
   persist?: unknown;
   sweep?: unknown;
   exploratorySweep?: unknown;
@@ -5530,6 +5978,10 @@ export async function runShadowWatchlistBacktest(input: {
     input.selectionOverlay,
   );
   const regimeOverlay = normalizeWatchlistBacktestRegimeOverlay(input.regimeOverlay);
+  const proxySymbols = normalizeWatchlistBacktestProxySymbols(input.proxySymbols);
+  const excludedSymbols = normalizeWatchlistBacktestExcludedSymbols(
+    input.excludedSymbols,
+  );
   const persist = input.persist !== false;
   const sweep = input.sweep === true;
   const exploratorySweep = input.exploratorySweep === true;
@@ -5552,7 +6004,8 @@ export async function runShadowWatchlistBacktest(input: {
   });
   const { watchlists } = await listWatchlists();
   const universe = withWatchlistBacktestProxyUniverse(
-    collectWatchlistBacktestUniverse(watchlists),
+    collectWatchlistBacktestUniverse(watchlists, { excludedSymbols }),
+    { proxySymbols },
   );
   const signalScanStartedAt = Date.now();
   const signalScan = await collectWatchlistBacktestSignals({
@@ -5575,7 +6028,10 @@ export async function runShadowWatchlistBacktest(input: {
 
   if (sweep) {
     const regimeScanStartedAt = Date.now();
-    const regimeSignalsByKey = await collectWatchlistBacktestRegimeSignals({ window });
+    const regimeSignalsByKey = await collectWatchlistBacktestRegimeSignals({
+      window,
+      proxySymbols,
+    });
     logger.info(
       {
         runId,
@@ -5610,6 +6066,7 @@ export async function runShadowWatchlistBacktest(input: {
       exploratory: exploratorySweep,
       baseSizingOverlay: sizingOverlay,
       baseSelectionOverlay: selectionOverlay,
+      proxySymbols,
     }).map((variant) => {
       const variantRunId = randomUUID();
       const regimeCandidates = variant.regimeOverlay

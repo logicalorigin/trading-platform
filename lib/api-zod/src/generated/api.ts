@@ -852,6 +852,118 @@ export const GetAccountPositionsResponse = zod.object({
 
 
 /**
+ * @summary Get positions and activity for an account date
+ */
+export const GetAccountPositionsAtDateParams = zod.object({
+  "accountId": zod.coerce.string().describe('IBKR account id or the virtual \"combined\" account id.')
+})
+
+export const GetAccountPositionsAtDateQueryParams = zod.object({
+  "date": zod.date(),
+  "assetClass": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional()
+})
+
+export const GetAccountPositionsAtDateResponse = zod.object({
+  "accountId": zod.string(),
+  "date": zod.coerce.date(),
+  "currency": zod.string(),
+  "status": zod.enum(['historical', 'current', 'unavailable']),
+  "snapshotDate": zod.coerce.date().nullable(),
+  "message": zod.string().nullable(),
+  "positions": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "accounts": zod.array(zod.string()),
+  "symbol": zod.string(),
+  "description": zod.string(),
+  "assetClass": zod.string(),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]).optional(),
+  "sector": zod.string(),
+  "quantity": zod.number(),
+  "averageCost": zod.number(),
+  "mark": zod.number(),
+  "dayChange": zod.number().nullable(),
+  "dayChangePercent": zod.number().nullable(),
+  "unrealizedPnl": zod.number(),
+  "unrealizedPnlPercent": zod.number(),
+  "marketValue": zod.number(),
+  "weightPercent": zod.number().nullable(),
+  "betaWeightedDelta": zod.number().nullable(),
+  "lots": zod.array(zod.object({
+  "accountId": zod.string(),
+  "symbol": zod.string(),
+  "quantity": zod.number(),
+  "averageCost": zod.number(),
+  "marketPrice": zod.number().nullable(),
+  "marketValue": zod.number().nullable(),
+  "unrealizedPnl": zod.number().nullable(),
+  "asOf": zod.coerce.date(),
+  "source": zod.string()
+})),
+  "openOrders": zod.array(zod.object({
+  "id": zod.string(),
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "confirm": zod.boolean().optional(),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "status": zod.enum(['pending_submit', 'submitted', 'accepted', 'partially_filled', 'filled', 'canceled', 'rejected', 'expired']),
+  "quantity": zod.number(),
+  "filledQuantity": zod.number(),
+  "limitPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "placedAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()])
+})),
+  "source": zod.string(),
+  "sourceType": zod.enum(['manual', 'automation', 'mixed']).optional(),
+  "strategyLabel": zod.string().nullish(),
+  "attributionStatus": zod.enum(['attributed', 'mixed', 'unknown']).optional(),
+  "sourceAttribution": zod.array(zod.record(zod.string(), zod.unknown())).optional()
+})),
+  "activity": zod.array(zod.object({
+  "id": zod.string(),
+  "timestamp": zod.coerce.date(),
+  "type": zod.string(),
+  "symbol": zod.string().nullable(),
+  "side": zod.string().nullable(),
+  "amount": zod.number().nullable(),
+  "quantity": zod.number().nullable(),
+  "price": zod.number().nullable(),
+  "realizedPnl": zod.number().nullable(),
+  "fees": zod.number().nullable(),
+  "currency": zod.string(),
+  "source": zod.string()
+})),
+  "totals": zod.record(zod.string(), zod.unknown()),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Get closed trades and recent live executions
  */
 export const GetAccountClosedTradesParams = zod.object({
@@ -2451,6 +2563,56 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "lastError": zod.string().nullable()
 })),
   "evaluatedAt": zod.coerce.date(),
+  "truncated": zod.boolean(),
+  "skippedSymbols": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Evaluate RayReplica signal states for watchlist row timeframes
+ */
+export const EvaluateSignalMonitorMatrixBody = zod.object({
+  "environment": zod.enum(['paper', 'live']).optional(),
+  "watchlistId": zod.string().nullish(),
+  "symbols": zod.array(zod.string()).optional(),
+  "timeframes": zod.array(zod.enum(['2m', '5m', '15m'])).optional()
+})
+
+export const EvaluateSignalMonitorMatrixResponse = zod.object({
+  "profile": zod.object({
+  "id": zod.string(),
+  "environment": zod.enum(['paper', 'live']),
+  "enabled": zod.boolean(),
+  "watchlistId": zod.string().nullable(),
+  "timeframe": zod.enum(['1m', '5m', '15m', '1h', '1d']),
+  "rayReplicaSettings": zod.record(zod.string(), zod.unknown()),
+  "freshWindowBars": zod.number(),
+  "pollIntervalSeconds": zod.number(),
+  "maxSymbols": zod.number(),
+  "evaluationConcurrency": zod.number(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "states": zod.array(zod.object({
+  "id": zod.string(),
+  "profileId": zod.string(),
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['2m', '5m', '15m']),
+  "currentSignalDirection": zod.union([zod.enum(['buy', 'sell']),zod.null()]),
+  "currentSignalAt": zod.coerce.date().nullable(),
+  "currentSignalPrice": zod.number().nullable(),
+  "latestBarAt": zod.coerce.date().nullable(),
+  "barsSinceSignal": zod.number().nullable(),
+  "fresh": zod.boolean(),
+  "status": zod.enum(['ok', 'stale', 'unavailable', 'error', 'unknown']),
+  "active": zod.boolean(),
+  "lastEvaluatedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable()
+})),
+  "evaluatedAt": zod.coerce.date(),
+  "timeframes": zod.array(zod.enum(['2m', '5m', '15m'])),
   "truncated": zod.boolean(),
   "skippedSymbols": zod.array(zod.string())
 })

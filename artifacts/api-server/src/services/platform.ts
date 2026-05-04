@@ -1021,6 +1021,22 @@ function hasNarrowFlowFilters(filters: FlowEventsFilters): boolean {
   return filters.scope !== "all" || filters.minPremium > 0 || filters.maxDte !== null;
 }
 
+function flowEventsSourceUsesPolygonFallback(source: unknown): boolean {
+  const candidate = source as Partial<FlowEventsSource> | null | undefined;
+  return candidate?.provider === "polygon" || candidate?.fallbackUsed === true;
+}
+
+function isFlowScannerSnapshotAllowedForFallbackPolicy(
+  snapshot: { source?: unknown } | null,
+  allowPolygonFallback: boolean,
+): boolean {
+  return Boolean(
+    snapshot &&
+      (allowPolygonFallback ||
+        !flowEventsSourceUsesPolygonFallback(snapshot.source)),
+  );
+}
+
 function flowSource(input: {
   provider: FlowSourceProvider;
   status: FlowSourceStatus;
@@ -9574,6 +9590,7 @@ export async function listFlowEvents(input: {
   maxDte?: number;
   unusualThreshold?: number;
   blocking?: boolean;
+  allowPolygonFallback?: boolean;
 }): Promise<FlowEventsResult> {
   const underlying = normalizeSymbol(input.underlying ?? "");
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
@@ -9599,13 +9616,20 @@ export async function listFlowEvents(input: {
     limit: Math.max(limit, getOptionsFlowRuntimeConfig().scannerLimit),
     unusualThreshold,
     lineBudget: getOptionsFlowRuntimeConfig().scannerLineBudget,
+    allowPolygonFallback: input.allowPolygonFallback ?? false,
   };
-  const scannerSnapshot = getOptionsFlowRuntimeConfig().scannerEnabled
+  const rawScannerSnapshot = getOptionsFlowRuntimeConfig().scannerEnabled
     ? optionsFlowScanner.getSnapshot(underlying, {
         limit: scannerRequest.limit,
         unusualThreshold,
         lineBudget: scannerRequest.lineBudget,
       })
+    : null;
+  const scannerSnapshot = isFlowScannerSnapshotAllowedForFallbackPolicy(
+    rawScannerSnapshot,
+    scannerRequest.allowPolygonFallback,
+  )
+    ? rawScannerSnapshot
     : null;
   if (scannerSnapshot?.freshness === "fresh") {
     return {
@@ -9627,7 +9651,9 @@ export async function listFlowEvents(input: {
 
   const cacheKey = `${underlying}:${limit}:${
     unusualThreshold ?? "default"
-  }:${flowEventsFilterCacheKey(filters)}`;
+  }:${flowEventsFilterCacheKey(filters)}:${
+    scannerRequest.allowPolygonFallback ? "polygon-fallback" : "ibkr-only"
+  }`;
   const requestedAt = Date.now();
   const cached = flowEventsCache.get(cacheKey);
   if (cached && cached.expiresAt > requestedAt) {
@@ -9669,6 +9695,7 @@ export async function listFlowEvents(input: {
         filters,
         unusualThreshold,
         lineBudget: scannerRequest.lineBudget,
+        allowPolygonFallback: scannerRequest.allowPolygonFallback,
       }).catch(() => {});
     }
     return cached.value;
@@ -9707,6 +9734,7 @@ export async function listFlowEvents(input: {
     filters,
     unusualThreshold,
     lineBudget: scannerRequest.lineBudget,
+    allowPolygonFallback: scannerRequest.allowPolygonFallback,
   });
   if (!blocking) {
     return deferredFlowEventsResult({
@@ -9729,6 +9757,7 @@ function refreshFlowEventsCache(
     filters: FlowEventsFilters;
     unusualThreshold?: number;
     lineBudget?: number;
+    allowPolygonFallback?: boolean;
   },
 ): Promise<FlowEventsResult> {
   const existing = flowEventsInFlight.get(cacheKey);
@@ -9746,6 +9775,7 @@ function refreshFlowEventsCache(
     });
     if (
       getOptionsFlowRuntimeConfig().scannerEnabled &&
+      input.allowPolygonFallback !== true &&
       !hasNarrowFlowFilters(input.filters)
     ) {
       optionsFlowScanner.storeSnapshot(
@@ -10163,7 +10193,11 @@ async function listFlowEventsUncached(input: {
     };
   }
 
-  if (getPolygonRuntimeConfig() && !attemptedProviders.includes("polygon")) {
+  if (
+    input.allowPolygonFallback !== false &&
+    getPolygonRuntimeConfig() &&
+    !attemptedProviders.includes("polygon")
+  ) {
     attemptedProviders.push("polygon");
     try {
       const polygonCandidateLimit = hasNarrowFlowFilters(input.filters)
@@ -10209,11 +10243,12 @@ async function listFlowEventsUncached(input: {
     }
   }
 
-  const errorMessage = polygonError ?? ibkrError;
+  const ibkrLoadedEmptySnapshot = ibkrStatus === "loaded";
+  const errorMessage = ibkrLoadedEmptySnapshot ? null : polygonError ?? ibkrError;
   return {
     events: [],
     source: flowSource({
-      provider: "none",
+      provider: ibkrLoadedEmptySnapshot ? "ibkr" : "none",
       status: errorMessage ? "error" : "empty",
       fallbackUsed: attemptedProviders.includes("polygon"),
       attemptedProviders,

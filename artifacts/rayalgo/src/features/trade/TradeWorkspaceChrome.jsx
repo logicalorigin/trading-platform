@@ -35,6 +35,8 @@ import {
   fs,
   sp,
 } from "../../lib/uiTokens";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const fmtQuoteVolume = (value) =>
   value == null || Number.isNaN(value) ? MISSING_VALUE : fmtCompactNumber(value);
@@ -69,7 +71,10 @@ const TickerTabStripItem = ({
   ].filter(Boolean).slice(0, 3);
 
   return (
-    <div
+    <AppTooltip content={[
+        ticker,
+        badges.length ? `Badges: ${badges.join(", ")}` : null,
+      ].filter(Boolean).join(" · ")}><div
       onClick={() => onSelect(ticker)}
       onPointerDown={(event) => onPointerDown?.(ticker, event)}
       onPointerMove={(event) => onPointerMove?.(ticker, event)}
@@ -78,10 +83,6 @@ const TickerTabStripItem = ({
       data-testid={`trade-tab-${ticker}`}
       data-trade-tab-ticker={ticker}
       className={joinMotionClasses("ra-interactive", isActive && "ra-focus-rail")}
-      title={[
-        ticker,
-        badges.length ? `Badges: ${badges.join(", ")}` : null,
-      ].filter(Boolean).join(" · ")}
       style={{
         ...motionVars({ accent: T.accent }),
         display: "flex",
@@ -160,14 +161,13 @@ const TickerTabStripItem = ({
         </span>
       ))}
       {showClose ? (
-        <button
+        <AppTooltip content="Close"><button
           data-testid={`trade-tab-close-${ticker}`}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             onClose?.(ticker);
           }}
-          title="Close"
           style={{
             background: "transparent",
             border: "none",
@@ -180,9 +180,9 @@ const TickerTabStripItem = ({
           }}
         >
           ×
-        </button>
+        </button></AppTooltip>
       ) : null}
-    </div>
+    </div></AppTooltip>
   );
 };
 
@@ -307,9 +307,8 @@ export const TickerTabStrip = ({
           onPointerCancel={clearDrag}
         />
       ))}
-      <button
+      <AppTooltip content="Add ticker"><button
         onClick={onAddNew}
-        title="Add ticker"
         style={{
           background: "transparent",
           border: "none",
@@ -322,7 +321,7 @@ export const TickerTabStrip = ({
         }}
       >
         +
-      </button>
+      </button></AppTooltip>
     </div>
   );
 };

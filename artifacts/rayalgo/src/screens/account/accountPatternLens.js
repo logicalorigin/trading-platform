@@ -2,7 +2,12 @@ const EMPTY_LENS = Object.freeze({
   kind: "none",
   label: "All patterns",
   symbol: "",
+  assetClass: "all",
   sourceType: "all",
+  side: "all",
+  holdDuration: "all",
+  strategy: "all",
+  feeDrag: "all",
   closeHour: null,
   pnlSign: "all",
 });
@@ -31,6 +36,11 @@ export const normalizeCloseHour = (value) => {
   return String(numeric).padStart(2, "0");
 };
 
+const normalizeSelectValue = (value) => {
+  const normalized = String(value || "").trim();
+  return normalized || "all";
+};
+
 export const buildAccountPatternLens = (kind, input = {}) => {
   if (kind === "symbol") {
     const symbol = String(input.symbol || "").trim().toUpperCase();
@@ -50,6 +60,72 @@ export const buildAccountPatternLens = (kind, input = {}) => {
       kind,
       label: `Source ${label || sourceType}`,
       sourceType,
+    };
+  }
+
+  if (kind === "assetClass") {
+    const assetClass = normalizeSelectValue(input.assetClass);
+    return {
+      ...emptyAccountPatternLens(),
+      kind,
+      label: assetClass === "all" ? "All assets" : `Asset ${assetClass}`,
+      assetClass,
+    };
+  }
+
+  if (kind === "side") {
+    const side = normalizeSelectValue(input.side).toLowerCase();
+    return {
+      ...emptyAccountPatternLens(),
+      kind,
+      label: side === "all" ? "All sides" : `Side ${side.toUpperCase()}`,
+      side,
+    };
+  }
+
+  if (kind === "holdDuration") {
+    const holdDuration = normalizeSelectValue(input.holdDuration);
+    const label =
+      {
+        "intraday-fast": "Hold <= 30m",
+        intraday: "Hold 30m-4h",
+        swing: "Hold 4h-1d",
+        "multi-day": "Hold multi-day",
+        unknown: "Hold unknown",
+      }[holdDuration] || `Hold ${holdDuration}`;
+    return {
+      ...emptyAccountPatternLens(),
+      kind,
+      label,
+      holdDuration,
+    };
+  }
+
+  if (kind === "strategy") {
+    const strategy = normalizeSelectValue(input.strategy);
+    const label = String(input.label || strategy).trim();
+    return {
+      ...emptyAccountPatternLens(),
+      kind,
+      label: strategy === "all" ? "All strategies" : `Strategy ${label}`,
+      strategy,
+    };
+  }
+
+  if (kind === "feeDrag") {
+    const feeDrag = normalizeSelectValue(input.feeDrag);
+    const label =
+      {
+        high: "High fee drag",
+        medium: "Medium fee drag",
+        low: "Low fee drag",
+        none: "No fee drag",
+      }[feeDrag] || "All fee drag";
+    return {
+      ...emptyAccountPatternLens(),
+      kind,
+      label,
+      feeDrag,
     };
   }
 
@@ -87,15 +163,25 @@ export const buildAccountPatternLens = (kind, input = {}) => {
 export const applyPatternLensToTradeFilters = (filters = {}, lens = EMPTY_LENS) => ({
   ...filters,
   symbol: lens.symbol || "",
-  sourceType: lens.sourceType || "all",
-  pnlSign: lens.pnlSign || "all",
+  assetClass: lens.kind === "assetClass" ? lens.assetClass : filters.assetClass || "all",
+  sourceType: lens.sourceType || filters.sourceType || "all",
+  side: lens.side || filters.side || "all",
+  holdDuration: lens.holdDuration || filters.holdDuration || "all",
+  strategy: lens.strategy || filters.strategy || "all",
+  feeDrag: lens.feeDrag || filters.feeDrag || "all",
+  pnlSign: lens.pnlSign || filters.pnlSign || "all",
   closeHour: lens.closeHour ?? null,
 });
 
-export const clearPatternLensFromTradeFilters = (filters = {}) => ({
+export const clearPatternLensFromTradeFilters = (filters = {}, lens = EMPTY_LENS) => ({
   ...filters,
   symbol: "",
+  assetClass: lens.kind === "assetClass" ? "all" : filters.assetClass,
   sourceType: "all",
+  side: "all",
+  holdDuration: "all",
+  strategy: "all",
+  feeDrag: "all",
   pnlSign: "all",
   closeHour: null,
 });

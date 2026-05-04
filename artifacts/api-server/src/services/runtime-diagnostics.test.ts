@@ -215,6 +215,10 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
   assert.equal(diagnostics.ibkr.orderCapability.diagnosticsMutateOrders, false);
   assert.equal(diagnostics.ibkr.selectedAccountId, "DU...4567");
   assert.equal(typeof diagnostics.ibkr.streams.bridgeQuote.streamActive, "boolean");
+  assert.equal(
+    typeof diagnostics.ibkr.streams.optionQuotes.activeConsumerCount,
+    "number",
+  );
   assert.equal(typeof diagnostics.ibkr.streams.stockAggregates.activeConsumerCount, "number");
   assert.equal(
     typeof diagnostics.ibkr.streams.marketDataAdmission.activeLineCount,

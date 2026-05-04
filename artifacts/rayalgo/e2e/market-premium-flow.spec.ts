@@ -118,10 +118,19 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
     } else if (url.pathname === "/api/flow/events") {
       flowUrls.push(url.toString());
       const symbol = (url.searchParams.get("underlying") || "SPY").toUpperCase();
+      const scope = url.searchParams.get("scope") || "all";
+      const limit = Number(url.searchParams.get("limit") || "0");
+      const unusualThreshold = Number(url.searchParams.get("unusualThreshold") || "0");
       await new Promise((resolve) => setTimeout(resolve, 450));
       const eventsBySymbol: Record<string, unknown[]> = {
         SPY: [
-          flowEvent("SPY", { premium: 350_000, strike: 510, right: "call" }),
+          flowEvent("SPY", {
+            premium: 350_000,
+            strike: 510,
+            right: "call",
+            isUnusual: true,
+            unusualScore: 2.4,
+          }),
           flowEvent("SPY", {
             premium: 90_000,
             strike: 505,
@@ -152,11 +161,15 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
         ],
       };
       body = {
-        events: eventsBySymbol[symbol] || [],
+        events:
+          scope === "unusual" && limit >= 80 && unusualThreshold === 2
+            ? eventsBySymbol[symbol] || []
+            : [],
         source: {
           provider: "ibkr",
           status: "live",
           fallbackUsed: false,
+          unusualThreshold: unusualThreshold || 1,
         },
       };
     } else if (url.pathname === "/api/news") {
@@ -195,6 +208,7 @@ async function openMarketGrid(page: Page) {
         sym: "SPY",
         theme: "dark",
         sidebarCollapsed: true,
+        marketUnusualThreshold: 2,
         marketGridLayout: "2x3",
         marketGridSlots: gridSymbols.map((ticker) => ({
           ticker,
@@ -231,7 +245,15 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
   await expect(
     page.getByRole("status", { name: /IWM options premium flow No options flow/i }),
   ).toBeVisible();
+  await expect(strips.nth(0)).toHaveAttribute("data-flow-source-provider", "IBKR");
+  await expect(strips.nth(0)).toHaveAttribute("data-flow-source-live", "true");
+  await expect(strips.nth(0)).toHaveAttribute("data-flow-fallback-used", "false");
+  await expect(strips.nth(5)).toHaveAttribute("data-flow-source-provider", "IBKR");
+  await expect(strips.nth(5)).toHaveAttribute("data-flow-source-live", "true");
   await expect(page.locator("[data-premium-flow-glyph]")).toHaveCount(0);
+  await expect(
+    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+  ).toBeVisible();
   await expect(
     page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
   ).toBeVisible();
@@ -239,12 +261,18 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
   expect(flowUrls.length).toBeGreaterThanOrEqual(6);
   const chartFlowUrls = flowUrls.filter((href) => {
     const params = new URL(href).searchParams;
-    return params.get("scope") !== "unusual";
+    return (
+      params.get("scope") === "unusual" &&
+      params.get("unusualThreshold") === "2" &&
+      Number(params.get("limit") || "0") >= 80
+    );
   });
   expect(chartFlowUrls.length).toBeGreaterThanOrEqual(6);
   expect(
-    chartFlowUrls.some((href) => new URL(href).searchParams.has("unusualThreshold")),
-  ).toBe(false);
+    chartFlowUrls.every(
+      (href) => new URL(href).searchParams.get("scope") === "unusual",
+    ),
+  ).toBe(true);
 
   const layout = await strips.evaluateAll((nodes) =>
     nodes.map((node) => {

@@ -139,6 +139,8 @@ import {
   motionVars,
 } from "../lib/motion";
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
   staleTime: 5 * 60_000,
@@ -1211,9 +1213,8 @@ const TradeContractDetailPanel = ({
             </div>
           ) : null}
           {displayBars.length && chartEvents.length ? (
-            <div
+            <AppTooltip content={chartEvents[0]?.summary || "Unusual options activity"}><div
               data-testid="trade-contract-option-chart-uoa-badge"
-              title={chartEvents[0]?.summary || "Unusual options activity"}
               style={{
                 position: "absolute",
                 right: dim(10),
@@ -1238,7 +1239,7 @@ const TradeContractDetailPanel = ({
               }}
             >
               UOA {chartEvents[0]?.label || chartEvents.length}
-            </div>
+            </div></AppTooltip>
           ) : null}
         </div>
         <div

@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
+import { formatAppDateTime } from "../../lib/timeZone";
 import {
   EmptyState,
   Panel,
@@ -17,6 +18,7 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { isOpenPositionRow } from "../../features/account/accountPositionRows.js";
+import { buildPositionsAtDateInspectorState } from "./positionsAtDateInspectorModel.js";
 
 const ASSET_FILTERS = [
   { value: "all", label: "All" },
@@ -78,6 +80,233 @@ const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
+
+const dateLabel = (date) => {
+  if (!date) return "Live";
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime())
+    ? date
+    : parsed.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+};
+
+const ActivityTone = ({ activity }) => {
+  const tone =
+    activity?.type === "trade_buy"
+      ? T.cyan
+      : activity?.type === "trade_sell"
+        ? toneForValue(activity.realizedPnl ?? activity.amount)
+        : toneForValue(activity.amount);
+  return (
+    <Pill tone={tone === T.red ? "red" : tone === T.green ? "green" : "cyan"}>
+      {String(activity?.type || "event").replace(/_/g, " ")}
+    </Pill>
+  );
+};
+
+export const PositionsAtDateInspector = ({
+  query,
+  activeDate,
+  pinnedDate,
+  currentPositionsCount = 0,
+  currency,
+  maskValues = false,
+  onClearPin,
+  onJumpToChart,
+}) => {
+  const data = query.data || null;
+  const inspecting = Boolean(activeDate);
+  const inspectorState = buildPositionsAtDateInspectorState({
+    activeDate,
+    pinnedDate,
+    response: data,
+    currentPositionsCount,
+  });
+  const positions = inspectorState.positions;
+  const activity = inspectorState.activity;
+  const title = pinnedDate
+    ? `Positions @ ${dateLabel(pinnedDate)}`
+    : activeDate
+      ? `Positions @ ${dateLabel(activeDate)}`
+      : inspectorState.title;
+
+  return (
+    <Panel
+      title={title}
+      rightRail={
+        inspecting
+          ? inspectorState.rightRail
+          : `${formatNumber(currentPositionsCount, 0)} current positions`
+      }
+      loading={Boolean(inspecting && query.isLoading)}
+      error={query.error}
+      onRetry={query.refetch}
+      minHeight={136}
+      action={
+        pinnedDate ? (
+          <button
+            type="button"
+            className="ra-interactive"
+            onClick={onClearPin}
+            style={secondaryButtonStyle}
+          >
+            Clear Pin
+          </button>
+        ) : null
+      }
+    >
+      {!inspecting ? (
+        <EmptyState
+          title="Move over the equity curve"
+          body="Hover a date to preview that day's positions and activity. Click the chart to pin the date for inspection."
+        />
+      ) : inspectorState.unavailable ? (
+        <EmptyState
+          title="No positions for this date"
+          body={inspectorState.message || "No historical position snapshot or account activity exists for the selected date."}
+        />
+      ) : (
+        <div style={{ display: "grid", gap: sp(6) }}>
+          <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
+            <Pill tone="cyan">
+              {positions.length} positions
+            </Pill>
+            <Pill tone="purple">
+              {activity.length} activity rows
+            </Pill>
+            {data?.snapshotDate ? (
+              <Pill tone="default">
+                as of {formatAppDateTime(data.snapshotDate)}
+              </Pill>
+            ) : null}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 0.8fr)",
+              gap: sp(7),
+              alignItems: "start",
+            }}
+          >
+            <div className="ra-hide-scrollbar" style={{ overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
+                <thead>
+                  <tr style={tableHeaderStyle}>
+                    {["Symbol", "Qty", "Mark", "Unreal P&L", "Mkt Value"].map((column) => (
+                      <th key={column} style={{ ...tableCellStyle, ...tableHeaderStyle }}>
+                        {column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.slice(0, 8).map((row) => (
+                    <tr key={row.id} className="ra-table-row">
+                      <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
+                        <button
+                          type="button"
+                          onClick={() => onJumpToChart?.(row.symbol)}
+                          style={{
+                            border: "none",
+                            padding: 0,
+                            background: "transparent",
+                            color: T.text,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <MarketIdentityInline
+                            item={{
+                              ticker: row.symbol,
+                              name: row.description || row.symbol,
+                              market: marketForAssetClass(row.assetClass),
+                            }}
+                            size={14}
+                            showMark={false}
+                            showChips
+                            style={{ maxWidth: dim(150) }}
+                          />
+                        </button>
+                      </td>
+                      <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        {formatNumber(row.quantity, 3)}
+                      </td>
+                      <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        {formatAccountMoney(row.mark, currency, false, maskValues)}
+                      </td>
+                      <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnl), fontWeight: 800 }}>
+                        {formatAccountMoney(row.unrealizedPnl, currency, false, maskValues)}
+                      </td>
+                      <td style={{ ...tableCellStyle, textAlign: "right", color: T.text }}>
+                        {formatAccountMoney(row.marketValue, currency, false, maskValues)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {positions.length > 8 ? (
+                <div style={{ color: T.textDim, fontSize: fs(8), marginTop: sp(3) }}>
+                  Showing 8 of {formatNumber(positions.length, 0)} positions.
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ display: "grid", gap: sp(4) }}>
+              <div style={mutedLabelStyle}>DATE ACTIVITY</div>
+              {activity.length ? (
+                activity.slice(0, 7).map((row) => (
+                  <div
+                    key={row.id}
+                    style={{
+                      border: `1px solid ${T.border}`,
+                      borderRadius: dim(4),
+                      background: T.bg0,
+                      padding: sp("4px 5px"),
+                      display: "grid",
+                      gap: sp(3),
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: sp(5) }}>
+                      <ActivityTone activity={row} />
+                      <span style={{ color: T.textDim, fontFamily: T.data, fontSize: fs(8) }}>
+                        {formatAppDateTime(row.timestamp)}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: sp(5),
+                        color: T.textSec,
+                        fontFamily: T.data,
+                        fontSize: fs(8),
+                      }}
+                    >
+                      <span>{row.symbol || row.source}</span>
+                      <span style={{ color: toneForValue(row.realizedPnl ?? row.amount), fontWeight: 900 }}>
+                        {row.realizedPnl != null
+                          ? formatAccountMoney(row.realizedPnl, currency, true, maskValues)
+                          : formatAccountMoney(row.amount, currency, true, maskValues)}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div style={{ color: T.textDim, fontSize: fs(9) }}>
+                  No account activity is recorded for this date.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+};
 
 export const PositionsPanel = ({
   query,

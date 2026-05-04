@@ -318,6 +318,7 @@ export const useLiveMarketFlow = (
     effectiveScannerConfig.scope,
     enabled,
     liveSymbolsKey,
+    normalizedThreshold,
     shouldSendUnusualThreshold,
   ]);
 
@@ -378,7 +379,12 @@ export const useLiveMarketFlow = (
         : "empty";
   const providerSummary = useMemo(() => {
     const events = aggregatedEvents;
-    const providerSet = new Set(events.map((event) => event.provider).filter(Boolean));
+    const providerSet = new Set(
+      [
+        ...events.map((event) => event.provider),
+        ...responses.map((response) => response.source?.provider),
+      ].filter((provider) => provider && provider !== "none"),
+    );
     const fallbackUsed = responses.some((response) =>
       Boolean(response.source?.fallbackUsed),
     );

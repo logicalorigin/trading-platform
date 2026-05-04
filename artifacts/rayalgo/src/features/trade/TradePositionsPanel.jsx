@@ -145,6 +145,8 @@ import {
   sp,
 } from "../../lib/uiTokens";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 export const TradePositionsPanel = ({
   accountId,
@@ -1060,7 +1062,11 @@ export const TradePositionsPanel = ({
                   p.contract && p.contract.match(/\d+\s[CP]\s/);
                 const closeDisabled = gatewayActionDisabled;
                 return (
-                  <div
+                  <AppTooltip key={p._id} content={
+                      isLoadable
+                        ? `Click to load ${p.ticker} ${p.contract} into Order Ticket`
+                        : `${p.ticker} equity position`
+                    }><div
                     key={p._id}
                     onClick={() => {
                       if (isLoadable) {
@@ -1068,11 +1074,6 @@ export const TradePositionsPanel = ({
                         onLoadPosition({ ticker: p.ticker, ...parsed });
                       }
                     }}
-                    title={
-                      isLoadable
-                        ? `Click to load ${p.ticker} ${p.contract} into Order Ticket`
-                        : `${p.ticker} equity position`
-                    }
                     style={{
                       display: "grid",
                       gridTemplateColumns:
@@ -1166,7 +1167,13 @@ export const TradePositionsPanel = ({
                     >
                       {formatSignedPercent(p.pct, 1)}
                     </span>
-                    <button
+                    <AppTooltip content={
+                        closeDisabled
+                          ? gatewayTradingMessage
+                          : p._isLive
+                            ? "Submit broker close-out order"
+                            : "Close position"
+                      }><button
                       disabled={closeDisabled}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -1176,13 +1183,6 @@ export const TradePositionsPanel = ({
                         }
                         closeRow(p);
                       }}
-                      title={
-                        closeDisabled
-                          ? gatewayTradingMessage
-                          : p._isLive
-                            ? "Submit broker close-out order"
-                            : "Close position"
-                      }
                       style={{
                         background: "transparent",
                         border: `1px solid ${T.red}40`,
@@ -1198,8 +1198,8 @@ export const TradePositionsPanel = ({
                       }}
                     >
                       ✕
-                    </button>
-                  </div>
+                    </button></AppTooltip>
+                  </div></AppTooltip>
                 );
               })}
             </>
@@ -1335,7 +1335,7 @@ export const TradePositionsPanel = ({
                   >
                     {execution.side}
                   </span>
-                  <span
+                  <AppTooltip content={execution.contract}><span
                     style={{
                       color: T.textSec,
                       fontSize: fs(8),
@@ -1343,10 +1343,9 @@ export const TradePositionsPanel = ({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
-                    title={execution.contract}
                   >
                     {execution.contract}
-                  </span>
+                  </span></AppTooltip>
                   <span style={{ color: T.textDim, textAlign: "right" }}>
                     {execution.qty}
                   </span>
@@ -1500,7 +1499,11 @@ export const TradePositionsPanel = ({
                 const cancelDisabled =
                   isTerminal || cancelOrderMutation.isPending || gatewayActionDisabled;
                 return (
-                  <div
+                  <AppTooltip key={order.id} content={
+                      isOption
+                        ? `Load ${order.symbol} ${order.optionContract.strike}${order.optionContract.right === "call" ? "C" : "P"} into Order Ticket`
+                        : order.id
+                    }><div
                     key={order.id}
                     onClick={() => {
                       if (!isOption) return;
@@ -1513,11 +1516,6 @@ export const TradePositionsPanel = ({
                         ),
                       });
                     }}
-                    title={
-                      isOption
-                        ? `Load ${order.symbol} ${order.optionContract.strike}${order.optionContract.right === "call" ? "C" : "P"} into Order Ticket`
-                        : order.id
-                    }
                     style={{
                       display: "grid",
                       gridTemplateColumns:
@@ -1570,19 +1568,18 @@ export const TradePositionsPanel = ({
                     >
                       {formatRelativeTimeShort(order.updatedAt)}
                     </span>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleCancelOrder(order);
-                      }}
-                      disabled={cancelDisabled}
-                      title={
+                    <AppTooltip content={
                         gatewayActionDisabled
                           ? gatewayTradingMessage
                           : isTerminal
                             ? "Terminal order"
                             : "Cancel order"
-                      }
+                      }><button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleCancelOrder(order);
+                      }}
+                      disabled={cancelDisabled}
                       style={{
                         background: "transparent",
                         border: `1px solid ${isTerminal ? T.border : T.red}40`,
@@ -1601,8 +1598,8 @@ export const TradePositionsPanel = ({
                       }}
                     >
                       ✕
-                    </button>
-                  </div>
+                    </button></AppTooltip>
+                  </div></AppTooltip>
                 );
               })}
             </>
@@ -1619,10 +1616,9 @@ export const TradePositionsPanel = ({
             marginTop: "auto",
           }}
         >
-          <button
+          <AppTooltip content={gatewayActionDisabled ? gatewayTradingMessage : "Close all positions"}><button
             onClick={handleCloseAll}
             disabled={gatewayActionDisabled}
-            title={gatewayActionDisabled ? gatewayTradingMessage : "Close all positions"}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -1638,11 +1634,10 @@ export const TradePositionsPanel = ({
             }}
           >
             Close All
-          </button>
-          <button
+          </button></AppTooltip>
+          <AppTooltip content={gatewayActionDisabled ? gatewayTradingMessage : "Set protective stops"}><button
             onClick={handleSetStops}
             disabled={gatewayActionDisabled}
-            title={gatewayActionDisabled ? gatewayTradingMessage : "Set protective stops"}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -1658,11 +1653,10 @@ export const TradePositionsPanel = ({
             }}
           >
             Set Stops
-          </button>
-          <button
+          </button></AppTooltip>
+          <AppTooltip content={gatewayActionDisabled ? gatewayTradingMessage : "Roll option positions"}><button
             onClick={handleRollAll}
             disabled={gatewayActionDisabled}
-            title={gatewayActionDisabled ? gatewayTradingMessage : "Roll option positions"}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -1686,7 +1680,7 @@ export const TradePositionsPanel = ({
             }}
           >
             Roll
-          </button>
+          </button></AppTooltip>
         </div>
       ) : (
         <div

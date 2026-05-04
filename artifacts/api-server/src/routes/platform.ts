@@ -112,6 +112,7 @@ import {
   getAccountEquityHistory,
   getAccountOrders,
   getAccountPositions,
+  getAccountPositionsAtDate,
   getAccountRisk,
   getAccountSummary,
   getFlexHealth,
@@ -1032,6 +1033,22 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
   );
 });
 
+router.get("/accounts/:accountId/positions-at-date", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  res.json(
+    await getAccountPositionsAtDate({
+      accountId: req.params.accountId,
+      date:
+        typeof req.query.date === "string" && req.query.date.trim()
+          ? req.query.date
+          : "",
+      assetClass:
+        typeof req.query.assetClass === "string" ? req.query.assetClass : null,
+      mode,
+    }),
+  );
+});
+
 router.get("/accounts/:accountId/closed-trades", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
   res.json(
@@ -1139,6 +1156,10 @@ router.post("/accounts/shadow/watchlist-backtest/runs", async (req, res) => {
         !Array.isArray(req.body.regimeOverlay)
           ? req.body.regimeOverlay
           : null,
+      proxySymbols: Array.isArray(req.body?.proxySymbols) ? req.body.proxySymbols : null,
+      excludedSymbols: Array.isArray(req.body?.excludedSymbols)
+        ? req.body.excludedSymbols
+        : null,
       persist: req.body?.persist,
       sweep: req.body?.sweep,
       exploratorySweep: req.body?.exploratorySweep,

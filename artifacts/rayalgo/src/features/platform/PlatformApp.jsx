@@ -17,6 +17,7 @@ import {
   getListBacktestDraftStrategiesQueryOptions,
   getListSignalMonitorEventsQueryKey,
   useEvaluateSignalMonitor,
+  useEvaluateSignalMonitorMatrix,
   useGetSignalMonitorProfile,
   useGetSignalMonitorState,
   useListSignalMonitorEvents,
@@ -248,6 +249,10 @@ export default function PlatformApp() {
     sym: _initialState.sym || "SPY",
     n: 0,
     contract: null,
+  });
+  const [marketSymPing, setMarketSymPing] = useState({
+    sym: _initialState.sym || "SPY",
+    n: 0,
   });
 
   useEffect(() => {
@@ -668,6 +673,7 @@ export default function PlatformApp() {
       if (variables?.symbol) {
         const nextSym = variables.symbol.toUpperCase();
         setSym(nextSym);
+        setMarketSymPing((prev) => ({ sym: nextSym, n: prev.n + 1 }));
         setTradeSymPing((prev) => ({
           sym: nextSym,
           n: prev.n + 1,
@@ -1256,6 +1262,66 @@ export default function PlatformApp() {
       },
     },
   });
+  const [signalMatrixSnapshot, setSignalMatrixSnapshot] = useState(() => ({
+    states: [],
+    timeframes: ["2m", "5m", "15m"],
+  }));
+  const signalMatrixEvaluationInFlightRef = useRef(false);
+  const signalMatrixSymbolsKey = useMemo(
+    () => watchlistSymbols.join(","),
+    [watchlistSymbols],
+  );
+  const evaluateSignalMonitorMatrixMutation = useEvaluateSignalMonitorMatrix({
+    mutation: {
+      onSuccess: (data) => {
+        setSignalMatrixSnapshot({
+          states: data?.states || [],
+          timeframes: data?.timeframes || ["2m", "5m", "15m"],
+          evaluatedAt: data?.evaluatedAt || null,
+          skippedSymbols: data?.skippedSymbols || [],
+          truncated: Boolean(data?.truncated),
+        });
+      },
+      onSettled: () => {
+        signalMatrixEvaluationInFlightRef.current = false;
+      },
+    },
+  });
+  const runSignalMatrixEvaluation = useCallback(() => {
+    if (signalMatrixEvaluationInFlightRef.current) {
+      return;
+    }
+    signalMatrixEvaluationInFlightRef.current = true;
+    evaluateSignalMonitorMatrixMutation.mutate({
+      data: {
+        environment,
+        watchlistId: activeWatchlist?.id || null,
+        symbols: activeWatchlist?.id ? undefined : watchlistSymbols,
+        timeframes: ["2m", "5m", "15m"],
+      },
+    });
+  }, [
+    activeWatchlist?.id,
+    environment,
+    evaluateSignalMonitorMatrixMutation.mutate,
+    signalMatrixSymbolsKey,
+    watchlistSymbols,
+  ]);
+  useEffect(() => {
+    if (!pageVisible || !watchlistSymbols.length) {
+      return undefined;
+    }
+
+    runSignalMatrixEvaluation();
+    const interval = window.setInterval(runSignalMatrixEvaluation, signalMonitorPollMs);
+    return () => window.clearInterval(interval);
+  }, [
+    pageVisible,
+    runSignalMatrixEvaluation,
+    signalMonitorPollMs,
+    signalMatrixSymbolsKey,
+    watchlistSymbols.length,
+  ]);
   const runSignalMonitorEvaluation = useCallback(
     (mode = "incremental") => {
       if (signalMonitorEvaluationInFlightRef.current) {
@@ -1336,6 +1402,13 @@ export default function PlatformApp() {
     persistState({ theme });
   }, [theme]);
   useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    document.documentElement.dataset.rayalgoTheme =
+      theme === "light" ? "light" : "dark";
+  }, [theme]);
+  useEffect(() => {
     if ((preferredTheme === "dark" || preferredTheme === "light") && preferredTheme !== theme) {
       setCurrentTheme(preferredTheme);
       setTheme(preferredTheme);
@@ -1386,6 +1459,7 @@ export default function PlatformApp() {
     }
     ensureTradeTickerInfo(normalized, normalized);
     setSym(normalized);
+    setMarketSymPing((prev) => ({ sym: normalized, n: prev.n + 1 }));
     setTradeSymPing((prev) => ({
       sym: normalized,
       n: prev.n + 1,
@@ -1635,6 +1709,7 @@ export default function PlatformApp() {
       screen={screen}
       sym={sym}
       tradeSymPing={tradeSymPing}
+      marketSymPing={marketSymPing}
       session={session}
       environment={environment}
       accounts={accounts}
@@ -1726,6 +1801,7 @@ export default function PlatformApp() {
             activeWatchlist={activeWatchlist}
             watchlistSymbols={watchlistSymbols}
             signalMonitorStates={signalMonitorStates}
+            signalMatrixStates={signalMatrixSnapshot.states}
             selectedSymbol={sym}
             sidebarCollapsed={sidebarCollapsed}
             setSidebarCollapsed={setSidebarCollapsed}

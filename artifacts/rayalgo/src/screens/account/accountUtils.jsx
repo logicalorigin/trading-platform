@@ -1,5 +1,7 @@
 import { MISSING_VALUE, T, dim, sp, textSize } from "../../lib/uiTokens";
 import { formatAppDateTime } from "../../lib/timeZone";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 export { ACCOUNT_RANGES, normalizeAccountRange } from "./accountRanges";
 
 export const formatMoney = (value, currency = "USD", compact = false) => {
@@ -384,8 +386,7 @@ export const Pill = ({ children, tone = "default", title, style }) => {
   const paletteMap = toneValueMap();
   const palette = paletteMap[tone] || paletteMap.default;
   return (
-    <span
-      title={title}
+    <AppTooltip content={title}><span
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -405,7 +406,7 @@ export const Pill = ({ children, tone = "default", title, style }) => {
       }}
     >
       {children}
-    </span>
+    </span></AppTooltip>
   );
 };
 
@@ -454,8 +455,7 @@ export const StatTile = ({
   const paletteMap = toneValueMap();
   const palette = paletteMap[tone] || paletteMap.default;
   return (
-    <div
-      title={title}
+    <AppTooltip content={title}><div
       className={className || (flat ? undefined : "ra-panel-enter")}
       style={{
         minWidth: dim(flat ? 0 : compact ? 86 : 108),
@@ -493,7 +493,7 @@ export const StatTile = ({
           {subvalue}
         </div>
       ) : null}
-    </div>
+    </div></AppTooltip>
   );
 };
 

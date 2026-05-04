@@ -165,9 +165,12 @@ export const buildMarketFlowStoreKey = (symbols = []) =>
 
 const normalizeStoreKey = (storeKey) => storeKey || "__empty__";
 
-const evictOldestUnusedMarketFlowEntry = () => {
+const evictOldestUnusedMarketFlowEntry = (protectedKey = null) => {
   if (storeEntries.size <= MARKET_FLOW_STORE_ENTRY_CAP) return;
   for (const [key, value] of storeEntries) {
+    if (key === protectedKey) {
+      continue;
+    }
     if (!value.listeners || value.listeners.size === 0) {
       storeEntries.delete(key);
       return;
@@ -191,7 +194,7 @@ const ensureEntry = (storeKey) => {
       snapshot: EMPTY_MARKET_FLOW_SNAPSHOT,
       listeners: new Set(),
     });
-    evictOldestUnusedMarketFlowEntry();
+    evictOldestUnusedMarketFlowEntry(normalizedKey);
   } else {
     const existing = storeEntries.get(normalizedKey);
     storeEntries.delete(normalizedKey);

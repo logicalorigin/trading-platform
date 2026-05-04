@@ -26,6 +26,8 @@ import {
   motionRowStyle,
   motionVars,
 } from "../../lib/motion";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const ROW_HEIGHT = 24;
 const HEADER_HEIGHT = 28;
@@ -345,9 +347,8 @@ const ChainSide = ({
           }}
         >
           {columns.map((column) => (
-            <span
+            <AppTooltip key={column.key} content={column.label}><span
               key={column.key}
-              title={column.label}
               style={{
                 padding: sp("0 6px"),
                 color: T.textMuted,
@@ -361,7 +362,7 @@ const ChainSide = ({
               }}
             >
               {column.label}
-            </span>
+            </span></AppTooltip>
           ))}
         </div>
         {topPadding > 0 ? (
@@ -412,11 +413,10 @@ const ChainSide = ({
               }}
             >
               {columns.map((column) => (
-                <span
-                  key={column.key}
-                  title={`${column.label} / ${formatFreshnessLabel(
+                <AppTooltip key={column.key} content={`${column.label} / ${formatFreshnessLabel(
                     getRowSideFreshness(row, side),
-                  )}`}
+                  )}`}><span
+                  key={column.key}
                   style={{
                     padding: sp("0 6px"),
                     color:
@@ -434,7 +434,7 @@ const ChainSide = ({
                   }}
                 >
                   {formatCellValue(row, column, held)}
-                </span>
+                </span></AppTooltip>
               ))}
             </div>
           );

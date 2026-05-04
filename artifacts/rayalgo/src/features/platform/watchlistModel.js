@@ -11,10 +11,16 @@ export const WATCHLIST_SORT_MODE = Object.freeze({
   ALPHA: "alpha",
 });
 
+export const WATCHLIST_SIGNAL_TIMEFRAMES = Object.freeze(["2m", "5m", "15m"]);
+
 export const normalizeWatchlistSymbol = (value) =>
   value?.trim?.().toUpperCase?.() || "";
 
 const isSignalDirection = (value) => value === "buy" || value === "sell";
+const normalizeSignalTimeframe = (value) =>
+  WATCHLIST_SIGNAL_TIMEFRAMES.includes(String(value || "").trim())
+    ? String(value || "").trim()
+    : "";
 
 const WATCHLIST_IDENTITY_EMPTY_FIELDS = Object.freeze({
   market: null,
@@ -69,6 +75,36 @@ export const getSignalSortBucket = (state) => {
     return 2;
   }
   return state.fresh ? 0 : 1;
+};
+
+export const buildSignalMatrixBySymbol = (states = []) => {
+  const bySymbol = {};
+  (states || []).forEach((state) => {
+    const symbol = normalizeWatchlistSymbol(state?.symbol);
+    const timeframe = normalizeSignalTimeframe(state?.timeframe);
+    if (!symbol || !timeframe) return;
+    bySymbol[symbol] = {
+      ...(bySymbol[symbol] || {}),
+      [timeframe]: state,
+    };
+  });
+  return bySymbol;
+};
+
+export const getBestWatchlistSignalState = (statesByTimeframe = {}, fallbackState = null) => {
+  const matrixStates = WATCHLIST_SIGNAL_TIMEFRAMES.map(
+    (timeframe) => statesByTimeframe?.[timeframe],
+  ).filter((state) => isSignalDirection(state?.currentSignalDirection));
+  const freshState = matrixStates.find((state) => state?.fresh);
+  if (freshState) return freshState;
+  const sorted = [...matrixStates].sort((left, right) => {
+    const leftBars = Number.isFinite(left?.barsSinceSignal) ? left.barsSinceSignal : Infinity;
+    const rightBars = Number.isFinite(right?.barsSinceSignal) ? right.barsSinceSignal : Infinity;
+    if (leftBars !== rightBars) return leftBars - rightBars;
+    return WATCHLIST_SIGNAL_TIMEFRAMES.indexOf(left?.timeframe) -
+      WATCHLIST_SIGNAL_TIMEFRAMES.indexOf(right?.timeframe);
+  });
+  return sorted[0] || fallbackState || null;
 };
 
 const normalizeWatchlistItem = (item, index) => {
@@ -193,6 +229,7 @@ export const sortWatchlistRows = (
     direction = "desc",
     snapshotsBySymbol = {},
     signalStatesBySymbol = {},
+    signalMatrixBySymbol = {},
   } = {},
 ) => {
   const indexed = (rows || []).map((row, index) => ({ row, index }));
@@ -209,8 +246,14 @@ export const sortWatchlistRows = (
 
   indexed.sort((left, right) => {
     if (mode === WATCHLIST_SORT_MODE.SIGNAL) {
-      const leftState = signalStatesBySymbol[left.row.sym];
-      const rightState = signalStatesBySymbol[right.row.sym];
+      const leftState = getBestWatchlistSignalState(
+        signalMatrixBySymbol[left.row.sym],
+        signalStatesBySymbol[left.row.sym],
+      );
+      const rightState = getBestWatchlistSignalState(
+        signalMatrixBySymbol[right.row.sym],
+        signalStatesBySymbol[right.row.sym],
+      );
       const bucketDelta =
         getSignalSortBucket(leftState) - getSignalSortBucket(rightState);
       if (bucketDelta) return bucketDelta;

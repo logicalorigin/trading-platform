@@ -12,6 +12,8 @@ import {
   type RayReplicaSessionOption,
 } from "./rayReplicaPineAdapter";
 import { TYPE_CSS_VAR } from "../../lib/typography";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 type WidgetTheme = {
   bg3: string;
@@ -361,13 +363,13 @@ function Row({
   children: ReactNode;
 }) {
   return (
-    <div style={rowStyle(theme)} title={tooltip}>
+    <AppTooltip content={tooltip}><div style={rowStyle(theme)}>
       <div style={labelBlockStyle}>
         <div style={rowLabelStyle(theme)}>{label}</div>
         {helper ? <div style={rowHelperStyle(theme)}>{helper}</div> : null}
       </div>
       <div>{children}</div>
-    </div>
+    </div></AppTooltip>
   );
 }
 
@@ -543,19 +545,25 @@ export function RayReplicaSettingsMenu({
 
   return (
     <Popover>
-      <PopoverTrigger asChild disabled={disabled}>
-        <button
-          type="button"
-          style={triggerStyle(theme, dense, disabled)}
-          title={
-            disabled
-              ? "Enable RayReplica to tune its overlay settings"
-              : "Tune RayReplica overlay settings"
-          }
-        >
-          {dense ? "RR" : "RayReplica"}
-        </button>
-      </PopoverTrigger>
+      <AppTooltip
+        content={
+          disabled
+            ? "Enable RayReplica to tune its overlay settings"
+            : "Tune RayReplica overlay settings"
+        }
+      >
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label="RayReplica overlay"
+            title="Tune RayReplica overlay settings"
+            disabled={disabled}
+            style={triggerStyle(theme, dense, disabled)}
+          >
+            {dense ? "RR" : "RayReplica"}
+          </button>
+        </PopoverTrigger>
+      </AppTooltip>
       <PopoverContent align="end" sideOffset={6} style={panelStyle(theme)}>
         <div style={headerStyle(theme)}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>

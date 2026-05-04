@@ -3,6 +3,8 @@ import {
   isPressureLevelAtLeast,
 } from "./memoryPressureModel";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const TONE_BY_LEVEL = {
   normal: T.green,
@@ -79,10 +81,9 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
     isPressureLevelAtLeast(level, preferences.alertThreshold);
 
   return (
-    <div
+    <AppTooltip content={buildTitle(signal)}><div
       data-testid="footer-memory-pressure-indicator"
       aria-label={buildTitle(signal)}
-      title={buildTitle(signal)}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -144,6 +145,6 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
           {driverLabel ? ` · Driver ${driverLabel}` : ""}
         </span>
       ) : null}
-    </div>
+    </div></AppTooltip>
   );
 };

@@ -11,13 +11,19 @@ import {
 test("chart hydration stats records extended request metrics", () => {
   recordChartHydrationMetric("favoritePrewarmRequestMs", 25, "AAPL:5m");
   recordChartHydrationMetric("liveFallbackRequestMs", 40, "AAPL:5m");
+  recordChartHydrationMetric("seriesSyncMs", 5, "AAPL:5m");
+  recordChartHydrationMetric("deferredOverlayMs", 7, "AAPL:5m");
 
   const snapshot = getChartHydrationStatsSnapshot();
 
   assert.equal(snapshot.favoritePrewarmRequestMs.count >= 1, true);
   assert.equal(snapshot.liveFallbackRequestMs.count >= 1, true);
+  assert.equal(snapshot.seriesSyncMs.count >= 1, true);
+  assert.equal(snapshot.deferredOverlayMs.count >= 1, true);
   assert.equal(snapshot.favoritePrewarmRequestMs.p50, 25);
   assert.equal(snapshot.liveFallbackRequestMs.p50, 40);
+  assert.equal(snapshot.seriesSyncMs.p50, 5);
+  assert.equal(snapshot.deferredOverlayMs.p50, 7);
 });
 
 test("chart hydration stats ignores unknown metrics without throwing", () => {

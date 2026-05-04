@@ -449,11 +449,56 @@ test("watchlist exploratory sweep includes wider stops and cash-only sizing vari
 
   assert.equal(ids.has("TR20:P20x5"), true);
   assert.equal(ids.has("SL8_TR15:P25x4"), true);
+  assert.equal(ids.has("TR15_SIG8:P25x4"), true);
   assert.equal(
     ids.has("VXX:15m:pause_new_longs:until_proxy_sell:TR12:P15x6"),
     true,
   );
   assert.equal(variants.length > 330, true);
+});
+
+test("watchlist sweep can restrict defensive proxy variants to inverse ETFs", () => {
+  const variants =
+    __shadowWatchlistBacktestInternalsForTests.buildWatchlistBacktestSweepVariants({
+      exploratory: true,
+      proxySymbols: ["SQQQ"],
+    });
+  const ids = new Set(variants.map((variant) => variant.id));
+
+  assert.equal(ids.has("SQQQ:1h:exit_longs_buy_proxy:until_proxy_sell:TR15_SIG8:P25x4:RANKB"), true);
+  assert.equal(
+    Array.from(ids).some((id) => id.startsWith("VXX:")),
+    false,
+  );
+});
+
+test("watchlist backtest universe can exclude symbols while preserving inverse proxies", () => {
+  const watchlists = [
+    {
+      id: "macro",
+      name: "Macro",
+      items: [{ symbol: "VIXY" }, { symbol: "GLD" }],
+    },
+  ];
+  const universe =
+    __shadowWatchlistBacktestInternalsForTests.collectWatchlistBacktestUniverse(
+      watchlists as never,
+      { excludedSymbols: ["VIXY"] },
+    );
+  const withProxy =
+    __shadowWatchlistBacktestInternalsForTests.withWatchlistBacktestProxyUniverse(
+      universe,
+      { proxySymbols: ["SQQQ"] },
+    );
+
+  assert.deepEqual(
+    universe.map((item) => item.symbol),
+    ["GLD"],
+  );
+  assert.deepEqual(
+    withProxy.map((item) => item.symbol),
+    ["GLD", "SQQQ"],
+  );
 });
 
 test("buildWatchlistBacktestFills sizes around existing baseline positions", () => {
@@ -563,6 +608,7 @@ test("buildWatchlistBacktestFills can stop out open longs before a RayReplica se
       label: "SL5",
       stopLossPercent: 5,
       trailingStopPercent: null,
+      sellSignalTrailingStopPercent: null,
     },
     barsBySymbol: new Map([
       [
@@ -590,6 +636,92 @@ test("buildWatchlistBacktestFills can stop out open longs before a RayReplica se
   assert.equal(result.fills[1]?.price, 95);
   assert.equal(result.fills[1]?.fillSource, "risk_stop_loss:SL5");
   assert.equal(result.fills[1]?.realizedPnl, -151);
+});
+
+test("buildWatchlistBacktestFills can tighten profitable sell signals into trailing exits", () => {
+  const result = buildWatchlistBacktestFills({
+    runId: "run-sell-tighten",
+    marketDate: "2026-05-01",
+    startingTotals: shadowTotals,
+    baseMarketValue: 0,
+    riskOverlay: {
+      label: "TR15_SIG5",
+      stopLossPercent: null,
+      trailingStopPercent: 15,
+      sellSignalTrailingStopPercent: 5,
+    },
+    barsBySymbol: new Map([
+      [
+        "AAPL",
+        [
+          {
+            time: Math.floor(new Date("2026-05-01T14:20:00.000Z").getTime() / 1000),
+            ts: "2026-05-01T14:20:00.000Z",
+            o: 103,
+            h: 115,
+            l: 102,
+            c: 114,
+            v: 1_000,
+          },
+          {
+            time: Math.floor(new Date("2026-05-01T14:30:00.000Z").getTime() / 1000),
+            ts: "2026-05-01T14:30:00.000Z",
+            o: 112,
+            h: 113,
+            l: 106,
+            c: 107,
+            v: 1_000,
+          },
+        ],
+      ],
+    ]),
+    windowEnd: new Date("2026-05-01T14:35:00.000Z"),
+    candidates: [
+      candidate({}),
+      candidate({
+        side: "sell",
+        fillPrice: 112,
+        placedAt: new Date("2026-05-01T14:25:00.000Z"),
+        signalAt: new Date("2026-05-01T14:20:00.000Z"),
+      }),
+    ] as never,
+  });
+
+  assert.equal(result.fills.length, 2);
+  assert.equal(result.fills[0]?.side, "buy");
+  assert.equal(result.fills[1]?.side, "sell");
+  assert.equal(result.fills[1]?.price, 109.25);
+  assert.equal(result.fills[1]?.fillSource, "risk_trailing_stop:TR15_SIG5");
+  assert.equal(result.fills[1]?.realizedPnl, 276.5);
+});
+
+test("buildWatchlistBacktestFills still exits losing sell signals immediately", () => {
+  const result = buildWatchlistBacktestFills({
+    runId: "run-sell-loss",
+    marketDate: "2026-05-01",
+    startingTotals: shadowTotals,
+    baseMarketValue: 0,
+    riskOverlay: {
+      label: "TR15_SIG5",
+      stopLossPercent: null,
+      trailingStopPercent: 15,
+      sellSignalTrailingStopPercent: 5,
+    },
+    candidates: [
+      candidate({}),
+      candidate({
+        side: "sell",
+        fillPrice: 96,
+        placedAt: new Date("2026-05-01T14:25:00.000Z"),
+        signalAt: new Date("2026-05-01T14:20:00.000Z"),
+      }),
+    ] as never,
+  });
+
+  assert.equal(result.fills.length, 2);
+  assert.equal(result.fills[1]?.price, 96);
+  assert.equal(result.fills[1]?.fillSource, "next_bar_open");
+  assert.equal(result.fills[1]?.realizedPnl, -121);
 });
 
 test("watchlist defensive regime can pause ordinary long entries", () => {

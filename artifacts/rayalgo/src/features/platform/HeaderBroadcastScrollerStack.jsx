@@ -33,6 +33,8 @@ import {
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig";
 import { useSignalMonitorSnapshot } from "./signalMonitorStore";
+import { AppTooltip } from "@/components/ui/tooltip";
+
 
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
@@ -52,13 +54,12 @@ const HeaderBroadcastSegment = ({
   const interactive = !duplicate && typeof onClick === "function";
   const Component = interactive ? "button" : "div";
 
-  return (
+  const segment = (
     <Component
       type={interactive ? "button" : undefined}
       aria-hidden={duplicate || undefined}
       tabIndex={interactive ? 0 : undefined}
       onClick={interactive ? () => onClick(item) : undefined}
-      title={interactive ? title : undefined}
       className={interactive ? "ra-interactive" : undefined}
       style={{
         ...motionVars({ accent: tone }),
@@ -84,6 +85,12 @@ const HeaderBroadcastSegment = ({
     >
       {children}
     </Component>
+  );
+
+  return interactive ? (
+    <AppTooltip content={title}>{segment}</AppTooltip>
+  ) : (
+    segment
   );
 };
 
@@ -1044,12 +1051,11 @@ export const HeaderBroadcastScrollerStack = memo(({
         }
         settingsContent={signalSettings}
         action={
-          <button
+          <AppTooltip content={signalToggleTitle}><button
             type="button"
             data-testid="header-signal-scan-toggle"
             aria-label={signalToggleTitle}
             aria-pressed={signalScanEnabled}
-            title={signalToggleTitle}
             disabled={signalBusy || !onToggleSignalScan}
             onClick={onToggleSignalScan}
             style={{
@@ -1066,7 +1072,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             }}
           >
             <RadioTower size={14} strokeWidth={2.4} />
-          </button>
+          </button></AppTooltip>
         }
       >
         {(item, duplicate) => (
@@ -1090,12 +1096,11 @@ export const HeaderBroadcastScrollerStack = memo(({
         }
         settingsContent={unusualSettings}
         action={
-          <button
+          <AppTooltip content={broadToggleTitle}><button
             type="button"
             data-testid="header-unusual-broad-toggle"
             aria-label={broadToggleTitle}
             aria-pressed={broadScanEnabled}
-            title={broadToggleTitle}
             onClick={toggleBroadScan}
             style={{
               width: dim(24),
@@ -1111,7 +1116,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             }}
           >
             <RadioTower size={14} strokeWidth={2.4} />
-          </button>
+          </button></AppTooltip>
         }
       >
         {(item, duplicate) => (
