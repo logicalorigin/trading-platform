@@ -162,8 +162,9 @@ export function getCurrentStockMinuteAggregates(
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
+  const provider = getPreferredStockAggregateStreamSource();
 
-  if (isPolygonDelayedWebSocketConfigured()) {
+  if (provider === "polygon-delayed-websocket") {
     return getCurrentPolygonStockMinuteAggregates(normalizedSymbols);
   }
 
@@ -305,11 +306,26 @@ export function isStockAggregateStreamingAvailable(): boolean {
 export function getPreferredStockAggregateStreamSource():
   | StockMinuteAggregateSource
   | "none" {
-  if (isPolygonDelayedWebSocketConfigured()) {
+  return resolvePreferredStockAggregateStreamSource({
+    ibkrConfigured: getProviderConfiguration().ibkr,
+    polygonDelayedConfigured: isPolygonDelayedWebSocketConfigured(),
+  });
+}
+
+export function resolvePreferredStockAggregateStreamSource({
+  ibkrConfigured,
+  polygonDelayedConfigured,
+}: {
+  ibkrConfigured: boolean;
+  polygonDelayedConfigured: boolean;
+}): StockMinuteAggregateSource | "none" {
+  if (ibkrConfigured) {
+    return "ibkr-websocket-derived";
+  }
+  if (polygonDelayedConfigured) {
     return "polygon-delayed-websocket";
   }
-
-  return getProviderConfiguration().ibkr ? "ibkr-websocket-derived" : "none";
+  return "none";
 }
 
 export function getStockAggregateStreamDiagnostics() {
