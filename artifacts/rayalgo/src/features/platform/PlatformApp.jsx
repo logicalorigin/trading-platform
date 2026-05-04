@@ -1774,7 +1774,7 @@ export default function PlatformApp() {
           sessionMetadataSettled && screenWarmupPhase !== "initial"
         }
         flowRuntimeEnabled={
-          sessionMetadataSettled && (marketScreenActive || flowScreenActive)
+          sessionMetadataSettled && flowScreenActive
         }
         flowRuntimeIntervalMs={
           marketScreenActive || flowScreenActive ? 10_000 : 30_000

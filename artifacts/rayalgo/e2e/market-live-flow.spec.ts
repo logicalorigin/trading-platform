@@ -138,6 +138,10 @@ test.describe("live Market unusual-flow validation", () => {
       })
       .toBe("IBKR");
     await expect(firstStrip).toHaveAttribute("data-flow-fallback-used", "false");
+    const uoaLane = page.getByTestId("market-activity-uoa-lane");
+    await expect(uoaLane).toHaveAttribute("data-flow-snapshot-source", "chart-grid");
+    await expect(uoaLane).toHaveAttribute("data-flow-source-provider", "IBKR");
+    await expect(uoaLane).toHaveAttribute("data-flow-source-live", "true");
 
     const returnedEventCount = chartFlowResponses.reduce(
       (sum, { body }) => sum + (Array.isArray(body?.events) ? body.events.length : 0),

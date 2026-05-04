@@ -63,9 +63,11 @@ const MarketActivityLaneSection = ({
   children,
   compact = false,
   testId,
+  dataAttrs,
 }) => (
   <section
     data-testid={testId}
+    {...(dataAttrs || {})}
     style={{
       minWidth: 0,
       minHeight: 0,
@@ -760,6 +762,9 @@ export const MarketActivityPanel = ({
   onChangeUnusualThreshold,
   appliedUnusualThreshold = null,
   appliedUnusualThresholdConsistent = true,
+  flowStatus = "loading",
+  flowProviderSummary = null,
+  flowSnapshotSource = "shared-runtime",
 }) => {
   const monitorTimeframe = normalizeSignalMonitorTimeframe(
     signalMonitorProfile?.timeframe,
@@ -811,6 +816,25 @@ export const MarketActivityPanel = ({
     Number.isFinite(appliedUnusualThreshold) &&
     Math.abs(appliedUnusualThreshold - requestedThreshold) < 0.001 &&
     appliedUnusualThresholdConsistent;
+  const flowProviders = Array.isArray(flowProviderSummary?.providers)
+    ? flowProviderSummary.providers.filter(Boolean)
+    : [];
+  const firstSymbolSource = Object.values(
+    flowProviderSummary?.sourcesBySymbol || {},
+  )[0];
+  const flowSourceProvider =
+    flowProviders.includes("polygon") && flowProviders.includes("ibkr")
+      ? "mixed"
+      : flowProviders[0] || firstSymbolSource?.provider || "";
+  const normalizedFlowSourceProvider =
+    String(flowSourceProvider || "").trim().toUpperCase() || "NONE";
+  const flowSourceLabel =
+    flowProviderSummary?.label ||
+    (flowStatus === "loading" ? "Loading flow" : "No IBKR flow");
+  const flowSourceLive =
+    normalizedFlowSourceProvider === "IBKR" &&
+    !flowProviderSummary?.fallbackUsed &&
+    flowStatus !== "offline";
 
   const renderEmptyLane = (title, detail) => (
     <DataUnavailableState title={title} detail={detail} />
@@ -996,8 +1020,16 @@ export const MarketActivityPanel = ({
 
           <MarketActivityLaneSection
             title="UOA"
-            meta={`${unusualRows.length} unusual prints`}
+            meta={`${unusualRows.length} unusual prints · ${flowSourceLabel}`}
             testId="market-activity-uoa-lane"
+            dataAttrs={{
+              "data-flow-snapshot-source": flowSnapshotSource,
+              "data-flow-source-provider": normalizedFlowSourceProvider,
+              "data-flow-source-live": flowSourceLive ? "true" : "false",
+              "data-flow-fallback-used": flowProviderSummary?.fallbackUsed
+                ? "true"
+                : "false",
+            }}
           >
             <MarketLaneToolbar>
               <MarketToolbarLabel

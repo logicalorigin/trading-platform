@@ -257,6 +257,7 @@ export const MultiChartGrid = ({
   stockAggregateStreamingEnabled = false,
   isVisible = false,
   unusualThreshold,
+  onChartFlowSnapshotChange,
 }) => {
   const queryClient = useQueryClient();
   const gridBodyRef = useRef(null);
@@ -403,11 +404,7 @@ export const MultiChartGrid = ({
       ),
     [visibleSlotEntries],
   );
-  const {
-    flowStatus: chartFlowStatus,
-    providerSummary: chartFlowProviderSummary,
-    flowEvents: chartFlowEvents,
-  } = useLiveMarketFlow(streamedSymbols, {
+  const chartFlowSnapshot = useLiveMarketFlow(streamedSymbols, {
     enabled: Boolean(isVisible && streamedSymbols.length),
     limit: MARKET_CHART_FLOW_LIMIT,
     maxSymbols: MAX_MULTI_CHART_SLOTS,
@@ -417,6 +414,61 @@ export const MultiChartGrid = ({
     unusualThreshold,
     workloadLabel: "Chart unusual flow",
   });
+  const {
+    flowStatus: chartFlowStatus,
+    providerSummary: chartFlowProviderSummary,
+    flowEvents: chartFlowEvents,
+  } = chartFlowSnapshot;
+  const streamedSymbolsKey = streamedSymbols.join(",");
+  const chartFlowSnapshotSignature = useMemo(() => {
+    const coverage = chartFlowProviderSummary?.coverage || {};
+    return [
+      streamedSymbolsKey,
+      chartFlowStatus,
+      chartFlowProviderSummary?.label || "",
+      (chartFlowProviderSummary?.providers || []).join(","),
+      chartFlowProviderSummary?.fallbackUsed ? "fallback" : "primary",
+      coverage.cycle ?? 0,
+      coverage.scannedSymbols ?? 0,
+      coverage.isFetching ? "fetching" : "idle",
+      coverage.newestScanAt ?? "",
+      (chartFlowEvents || [])
+        .map((event) => event?.id || `${event?.ticker || event?.underlying || ""}:${event?.occurredAt || ""}`)
+        .join(","),
+    ].join("|");
+  }, [
+    chartFlowEvents,
+    chartFlowProviderSummary,
+    chartFlowStatus,
+    streamedSymbolsKey,
+  ]);
+  useEffect(() => {
+    if (typeof onChartFlowSnapshotChange !== "function") {
+      return;
+    }
+    if (!isVisible || !streamedSymbols.length) {
+      onChartFlowSnapshotChange(null);
+      return;
+    }
+    onChartFlowSnapshotChange({
+      signature: chartFlowSnapshotSignature,
+      symbols: streamedSymbols,
+      snapshot: chartFlowSnapshot,
+    });
+  }, [
+    chartFlowSnapshotSignature,
+    isVisible,
+    onChartFlowSnapshotChange,
+    streamedSymbolsKey,
+  ]);
+  useEffect(
+    () => () => {
+      if (typeof onChartFlowSnapshotChange === "function") {
+        onChartFlowSnapshotChange(null);
+      }
+    },
+    [onChartFlowSnapshotChange],
+  );
   const premiumFlowBySymbol = useMemo(
     () => buildPremiumFlowBySymbol(chartFlowEvents, streamedSymbols),
     [chartFlowEvents, streamedSymbols],

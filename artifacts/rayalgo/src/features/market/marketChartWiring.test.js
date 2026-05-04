@@ -24,6 +24,15 @@ test("Market chart flow markers use the unusual-flow scanner contract", () => {
   assert.doesNotMatch(scannerCall, /limit:\s*16/);
 });
 
+test("Market chart flow snapshot is promoted for activity-panel agreement", () => {
+  const source = readLocalSource("./MultiChartGrid.jsx");
+
+  assert.match(source, /onChartFlowSnapshotChange/);
+  assert.match(source, /chartFlowSnapshotSignature/);
+  assert.match(source, /snapshot:\s*chartFlowSnapshot/);
+  assert.match(source, /symbols:\s*streamedSymbols/);
+});
+
 test("Market chart panning expands history for inactive charts too", () => {
   const source = readLocalSource("./MiniChartCell.jsx");
   const handler = source.match(

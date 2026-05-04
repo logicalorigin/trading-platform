@@ -66,3 +66,18 @@ test("flow scanner threshold changes are part of the live scanner effect contrac
     "scanner effect must rerun when unusualThreshold changes",
   );
 });
+
+test("Market avoids the shared all-flow runtime while chart UOA scanner owns Market flow", () => {
+  const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const flowRuntimeProp = source.match(
+    /flowRuntimeEnabled=\{[\s\S]*?\}\s*flowRuntimeIntervalMs=/,
+  )?.[0];
+
+  assert.ok(flowRuntimeProp, "PlatformApp must pass flowRuntimeEnabled");
+  assert.match(flowRuntimeProp, /flowScreenActive/);
+  assert.doesNotMatch(
+    flowRuntimeProp,
+    /marketScreenActive/,
+    "Market chart UOA scanner should own Market flow to avoid a second all-flow path",
+  );
+});

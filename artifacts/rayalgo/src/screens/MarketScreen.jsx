@@ -329,6 +329,9 @@ const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer(
   watchlists,
   unusualThreshold,
   onChangeUnusualThreshold,
+  flowStatus,
+  flowProviderSummary,
+  flowSnapshotSource,
 }) {
   const signalMonitorSnapshot = useSignalMonitorSnapshot({
     subscribeToUpdates: isVisible,
@@ -356,6 +359,9 @@ const MarketActivityPanelContainer = memo(function MarketActivityPanelContainer(
       onChangeMonitorWatchlist={onChangeMonitorWatchlist}
       unusualThreshold={unusualThreshold}
       onChangeUnusualThreshold={onChangeUnusualThreshold}
+      flowStatus={flowStatus}
+      flowProviderSummary={flowProviderSummary}
+      flowSnapshotSource={flowSnapshotSource}
       appliedUnusualThreshold={
         Number.isFinite(unusualThreshold) ? unusualThreshold : null
       }
@@ -396,6 +402,7 @@ export const MarketScreen = ({
       ? clampNumber(stored, 0.1, 100)
       : 1;
   });
+  const [chartFlowSnapshotState, setChartFlowSnapshotState] = useState(null);
   const [marketChartRetryRevision, setMarketChartRetryRevision] = useState(0);
   useEffect(() => {
     persistState({ marketActivityPanelWidth: activityPanelWidth });
@@ -448,6 +455,19 @@ export const MarketScreen = ({
     if (!Number.isFinite(next) || next <= 0) return;
     setUnusualThreshold(clampNumber(next, 0.1, 100));
   }, []);
+  const handleChartFlowSnapshotChange = useCallback((next) => {
+    setChartFlowSnapshotState((current) => {
+      if (!next) {
+        return current === null ? current : null;
+      }
+      return current?.signature === next.signature ? current : next;
+    });
+  }, []);
+  useEffect(() => {
+    if (!isVisible) {
+      setChartFlowSnapshotState(null);
+    }
+  }, [isVisible]);
   const marketChartResetKey = useMemo(
     () => `${sym || ""}:${symbols.join(",")}:${isVisible ? "visible" : "hidden"}`,
     [isVisible, sym, symbols],
@@ -495,13 +515,15 @@ export const MarketScreen = ({
   const flowSnapshot = useMarketFlowSnapshot(flowSymbols, {
     subscribe: isVisible,
   });
+  const chartFlowSnapshot = chartFlowSnapshotState?.snapshot || null;
+  const activityFlowSnapshot = chartFlowSnapshot || flowSnapshot;
   const {
     putCall,
     sectorFlow,
     flowStatus,
     flowEvents,
     providerSummary: flowProviderSummary,
-  } = flowSnapshot;
+  } = activityFlowSnapshot;
   const popularTickers = useMemo(() => {
     const bySymbol = new Map();
     for (const event of flowEvents || []) {
@@ -797,6 +819,7 @@ export const MarketScreen = ({
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
                 isVisible={isVisible}
                 unusualThreshold={chartFlowUnusualThreshold}
+                onChartFlowSnapshotChange={handleChartFlowSnapshotChange}
               />
             </MarketPanelErrorBoundary>
           ) : (
@@ -850,6 +873,11 @@ export const MarketScreen = ({
                 watchlists={watchlists}
                 unusualThreshold={unusualThreshold}
                 onChangeUnusualThreshold={handleChangeUnusualThreshold}
+                flowStatus={flowStatus}
+                flowProviderSummary={flowProviderSummary}
+                flowSnapshotSource={
+                  chartFlowSnapshot ? "chart-grid" : "shared-runtime"
+                }
               />
             </MarketPanelErrorBoundary>
           </div>
