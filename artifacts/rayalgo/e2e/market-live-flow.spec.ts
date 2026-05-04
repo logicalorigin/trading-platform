@@ -121,6 +121,17 @@ test.describe("live Market unusual-flow validation", () => {
 
     const firstStrip = page.getByTestId("market-premium-flow-strip").first();
     await expect(firstStrip).toBeVisible();
+    const firstSourceBadge = page.getByTestId("market-mini-chart-0-source-badge");
+    await expect(firstSourceBadge).toBeVisible();
+    await expect
+      .poll(() => firstSourceBadge.getAttribute("data-chart-source-live"), {
+        timeout: 60_000,
+      })
+      .toBe("true");
+    await expect(firstSourceBadge).toHaveAttribute(
+      "data-chart-source-degraded",
+      "false",
+    );
     await expect
       .poll(() => firstStrip.getAttribute("data-flow-source-provider"), {
         timeout: 45_000,

@@ -21,6 +21,8 @@ export type MarketBar = {
   freshness?: string;
   marketDataMode?: string | null;
   dataUpdatedAt?: number | string | Date | null;
+  ageMs?: number | null;
+  delayed?: boolean;
   studyFallback?: boolean;
 };
 
@@ -44,6 +46,11 @@ export type ChartBar = {
   accumulatedVolume?: number;
   averageTradeSize?: number;
   source?: string;
+  freshness?: string | null;
+  marketDataMode?: string | null;
+  dataUpdatedAt?: number | string | Date | null;
+  ageMs?: number | null;
+  delayed?: boolean;
   color?: string;
   borderColor?: string;
   wickColor?: string;

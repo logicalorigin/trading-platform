@@ -325,6 +325,11 @@ test("Market chart grid keeps touched viewports through layout changes and clear
     "data-chart-viewport-user-touched",
     "false",
   );
+  await expect(page.getByTestId("market-mini-chart-0-source-badge")).toBeVisible();
+  await expect(page.getByTestId("market-mini-chart-0-source-badge")).toHaveAttribute(
+    "data-chart-source-state",
+    "historical",
+  );
 
   const firstPlot = firstSurface.locator("[data-chart-plot-root]");
   const firstBox = await firstPlot.boundingBox();

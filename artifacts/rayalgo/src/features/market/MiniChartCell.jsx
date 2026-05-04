@@ -41,6 +41,7 @@ import {
   buildMiniChartBarsFromApi,
   describeBrokerChartSource,
   describeBrokerChartStatus,
+  resolveBrokerChartSourceState,
   useDisplayChartPriceFallbackBars,
 } from "../charting/chartApiBars";
 import {
@@ -122,6 +123,67 @@ const isMarketChartPlotTarget = (target) =>
   target instanceof Element &&
   Boolean(target.closest("[data-chart-plot-root]"));
 const MARKET_CHART_PLOT_FOCUS_MOVE_TOLERANCE = 6;
+
+const getChartSourceToneColor = (tone) => {
+  if (tone === "good") return T.green;
+  if (tone === "warn") return T.amber;
+  if (tone === "info") return T.accent;
+  if (tone === "neutral") return T.textSec;
+  return T.textDim;
+};
+
+const MiniChartSourceBadge = ({ state, dense = false, dataTestId }) => {
+  const toneColor = getChartSourceToneColor(state?.tone);
+  const label = dense ? state?.shortLabel : state?.label;
+  return (
+    <AppTooltip content={state?.detail || "Chart source"}>
+      <span
+        data-chart-control-root
+        data-testid={dataTestId ? `${dataTestId}-source-badge` : undefined}
+        data-chart-source-state={state?.state || ""}
+        data-chart-source-label={state?.label || ""}
+        data-chart-source-freshness={state?.freshness || ""}
+        data-chart-source-mode={state?.marketDataMode || ""}
+        data-chart-source-live={state?.isRealtime ? "true" : "false"}
+        data-chart-source-degraded={state?.isDegraded ? "true" : "false"}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
+          height: dense ? dim(17) : dim(20),
+          maxWidth: dense ? dim(58) : dim(92),
+          border: `1px solid ${toneColor}66`,
+          background: `${toneColor}14`,
+          color: toneColor,
+          fontFamily: T.mono,
+          fontSize: fs(dense ? 7 : 8),
+          fontWeight: 900,
+          lineHeight: 1,
+          padding: sp(dense ? "2px 4px" : "3px 5px"),
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          flexShrink: 0,
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            width: dense ? 5 : 6,
+            height: dense ? 5 : 6,
+            borderRadius: "50%",
+            background: toneColor,
+            boxShadow: state?.isRealtime ? `0 0 6px ${toneColor}` : "none",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+          {label || "SRC"}
+        </span>
+      </span>
+    </AppTooltip>
+  );
+};
 
 
 import { MiniChartPremiumFlowIndicator } from "./MiniChartPremiumFlowIndicator.jsx";
@@ -724,6 +786,21 @@ export const MiniChartCell = ({
         : null;
   const chartSourceLabel =
     describeBrokerChartSource(latestBar?.source) || barsStatus.toUpperCase();
+  const chartSourceState = useMemo(
+    () =>
+      resolveBrokerChartSourceState({
+        latestBar,
+        status: barsStatus,
+        timeframe: tf,
+        streamingEnabled: Boolean(
+          stockAggregateStreamingEnabled &&
+            ticker &&
+            ["stocks", "etf", "otc"].includes(slotMarket),
+        ),
+        market: slotMarket,
+      }),
+    [barsStatus, latestBar, slotMarket, stockAggregateStreamingEnabled, tf, ticker],
+  );
   const handleFramePointerDownCapture = useCallback(
     (event) => {
       if (isActive || typeof onFocus !== "function") {
@@ -1112,6 +1189,11 @@ export const MiniChartCell = ({
                     gap: sp(dense ? 2 : 4),
                   }}
                 >
+                  <MiniChartSourceBadge
+                    state={chartSourceState}
+                    dense={dense}
+                    dataTestId={dataTestId}
+                  />
                   <AppTooltip content="Reset chart view"><button
                     type="button"
                     aria-label={`Reset ${ticker} chart view`}

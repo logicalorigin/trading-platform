@@ -128,6 +128,18 @@ const buildChartBars = (
         accumulatedVolume: resolveNumber(rawBar.accumulatedVolume) ?? undefined,
         averageTradeSize: resolveNumber(rawBar.averageTradeSize) ?? undefined,
         source: typeof rawBar.source === "string" ? rawBar.source : undefined,
+        freshness:
+          typeof rawBar.freshness === "string" ? rawBar.freshness : undefined,
+        marketDataMode:
+          typeof rawBar.marketDataMode === "string"
+            ? rawBar.marketDataMode
+            : undefined,
+        dataUpdatedAt: rawBar.dataUpdatedAt ?? undefined,
+        ageMs:
+          typeof rawBar.ageMs === "number" && Number.isFinite(rawBar.ageMs)
+            ? rawBar.ageMs
+            : undefined,
+        delayed: Boolean(rawBar.delayed),
       });
       return bars;
     },
