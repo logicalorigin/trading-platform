@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatExpirationLabel, formatQuotePrice, formatRelativeTimeShort } from "../../lib/formatters";
 import { joinMotionClasses, motionRowStyle, motionVars } from "../../lib/motion.jsx";
+import { responsiveFlags, useViewportSize } from "../../lib/responsive";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   FLOW_BUILT_IN_PRESETS,
@@ -50,6 +51,7 @@ const HeaderBroadcastSegment = ({
   children,
   onClick,
   title,
+  compact = false,
 }) => {
   const interactive = !duplicate && typeof onClick === "function";
   const Component = interactive ? "button" : "div";
@@ -65,17 +67,17 @@ const HeaderBroadcastSegment = ({
         ...motionVars({ accent: tone }),
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(6),
-        height: dim(22),
-        maxWidth: dim(360),
-        padding: sp("0px 8px"),
+        gap: sp(compact ? 4 : 6),
+        height: dim(compact ? 18 : 22),
+        maxWidth: dim(compact ? 236 : 360),
+        padding: sp(compact ? "0px 5px" : "0px 8px"),
         border: `1px solid ${accent}`,
         borderLeft: `3px solid ${tone}`,
         borderRadius: dim(3),
         background: `${tone}10`,
         color: T.textSec,
         fontFamily: T.sans,
-        fontSize: fs(10),
+        fontSize: fs(compact ? 9 : 10),
         fontWeight: 700,
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -94,7 +96,7 @@ const HeaderBroadcastSegment = ({
   );
 };
 
-const HeaderSignalTapeItem = ({ item, duplicate = false, onClick }) => {
+const HeaderSignalTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
   const isSell = item.direction === "sell";
   const tone = isSell ? T.red : T.green;
   const priceLabel =
@@ -111,6 +113,7 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick }) => {
       accent={item.fresh ? tone : T.border}
       onClick={(selected) => onClick?.(selected.symbol, selected.raw)}
       title={title}
+      compact={compact}
     >
       <span style={{ color: tone, fontWeight: 900 }}>{item.directionLabel}</span>
       <span style={{ color: T.text }}>{item.symbol}</span>
@@ -131,7 +134,7 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick }) => {
   );
 };
 
-const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick }) => {
+const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = false }) => {
   const isPut =
     item.right === "P" ||
     String(item.sentiment || "").toLowerCase() === "bearish";
@@ -156,6 +159,7 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick }) => {
       accent={T.border}
       onClick={(selected) => onClick?.(selected.raw)}
       title={title}
+      compact={compact}
     >
       <span style={{ color: T.text }}>{item.symbol}</span>
       {contractLabel ? (
@@ -174,16 +178,16 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick }) => {
   );
 };
 
-const HeaderLaneSettingsPopover = ({ children, testId }) => (
+const HeaderLaneSettingsPopover = ({ children, testId, compact = false }) => (
   <div
     data-testid={testId}
     className="ra-popover-enter"
     style={{
-      position: "absolute",
-      top: 0,
-      left: `calc(100% + ${dim(4)}px)`,
+      position: compact ? "fixed" : "absolute",
+      top: compact ? dim(96) : 0,
+      left: compact ? dim(8) : `calc(100% + ${dim(4)}px)`,
       zIndex: 80,
-      width: dim(238),
+      width: compact ? `calc(100vw - ${dim(16)}px)` : dim(238),
       padding: sp(8),
       maxHeight: `calc(100vh - ${dim(18)}px)`,
       overflowY: "auto",
@@ -442,6 +446,7 @@ const HeaderBroadcastLane = ({
   settingsOpen = false,
   onToggleSettings,
   settingsContent,
+  compact = false,
 }) => {
   const shouldScroll = items.length >= 4;
   const renderedItems = shouldScroll ? [...items, ...items] : items;
@@ -451,9 +456,9 @@ const HeaderBroadcastLane = ({
       data-testid={testId}
       style={{
         display: "grid",
-        gridTemplateColumns: "72px minmax(0, 1fr) auto",
+        gridTemplateColumns: `${dim(compact ? 54 : 72)} minmax(0, 1fr) auto`,
         alignItems: "center",
-        minHeight: dim(25),
+        minHeight: dim(compact ? 21 : 25),
         minWidth: 0,
         borderBottom: `1px solid ${T.border}`,
       }}
@@ -469,6 +474,7 @@ const HeaderBroadcastLane = ({
         }}
       >
         <button
+          className="ra-interactive"
           type="button"
           data-testid={`${testId}-settings-trigger`}
           aria-expanded={settingsOpen}
@@ -485,7 +491,7 @@ const HeaderBroadcastLane = ({
             color: settingsOpen ? T.accent : T.textDim,
             cursor: "pointer",
             fontFamily: T.code,
-            fontSize: fs(9),
+            fontSize: fs(compact ? 8 : 9),
             fontWeight: 900,
             whiteSpace: "nowrap",
           }}
@@ -511,7 +517,7 @@ const HeaderBroadcastLane = ({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: sp(8),
+              gap: sp(compact ? 5 : 8),
               minWidth: "max-content",
               animation: shouldScroll
                 ? `headerBroadcastScroll ${durationSeconds}s linear infinite`
@@ -530,7 +536,7 @@ const HeaderBroadcastLane = ({
                     ...(duplicate ? null : motionRowStyle(index, 10, 90)),
                   }}
                 >
-                  {children(item, duplicate)}
+                  {children(item, duplicate, compact)}
                 </span>
               );
             })}
@@ -541,10 +547,10 @@ const HeaderBroadcastLane = ({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              height: dim(22),
+              height: dim(compact ? 18 : 22),
               color: T.textMuted,
               fontFamily: T.code,
-              fontSize: fs(10),
+              fontSize: fs(compact ? 9 : 10),
               fontWeight: 700,
               whiteSpace: "nowrap",
             }}
@@ -557,7 +563,7 @@ const HeaderBroadcastLane = ({
       <div
         style={{
           height: "100%",
-          minWidth: dim(28),
+          minWidth: dim(compact ? 24 : 28),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -582,6 +588,8 @@ export const HeaderBroadcastScrollerStack = memo(({
   onToggleSignalScan,
 }) => {
   const rootRef = useRef(null);
+  const viewport = useViewportSize();
+  const { isPhone } = responsiveFlags(viewport.width);
   const signalSnapshot = useSignalMonitorSnapshot({
     subscribeToUpdates: enabled,
   });
@@ -784,7 +792,10 @@ export const HeaderBroadcastScrollerStack = memo(({
       ?.lastEvaluatedAt ||
     null;
   const signalSettings = (
-    <HeaderLaneSettingsPopover testId="header-signal-settings-popover">
+    <HeaderLaneSettingsPopover
+      testId="header-signal-settings-popover"
+      compact={isPhone}
+    >
       <HeaderLaneSettingsTitle
         label="SIGNALS"
         status={signalStatusLabel}
@@ -843,7 +854,10 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? `${unusualCoverage.cycleScannedSymbols}/${unusualCoverage.totalSymbols || unusualCoverage.activeTargetSize || unusualCoverage.cycleScannedSymbols}`
       : MISSING_VALUE;
   const unusualSettings = (
-    <HeaderLaneSettingsPopover testId="header-unusual-settings-popover">
+    <HeaderLaneSettingsPopover
+      testId="header-unusual-settings-popover"
+      compact={isPhone}
+    >
       <HeaderLaneSettingsTitle
         label="FLOW"
         status={flowScanStatusLabel}
@@ -1030,10 +1044,12 @@ export const HeaderBroadcastScrollerStack = memo(({
     <div
       ref={rootRef}
       data-testid="header-broadcast-scrollers"
+      data-layout={isPhone ? "phone" : "desktop"}
       style={{
         flexShrink: 0,
         display: "grid",
         gridTemplateRows: "auto auto",
+        maxHeight: isPhone ? dim(44) : undefined,
         minWidth: 0,
         background: T.bg0,
         borderBottom: `1px solid ${T.border}`,
@@ -1050,8 +1066,10 @@ export const HeaderBroadcastScrollerStack = memo(({
           setOpenSettingsLane((lane) => (lane === "signals" ? null : "signals"))
         }
         settingsContent={signalSettings}
+        compact={isPhone}
         action={
           <AppTooltip content={signalToggleTitle}><button
+            className="ra-interactive"
             type="button"
             data-testid="header-signal-scan-toggle"
             aria-label={signalToggleTitle}
@@ -1059,8 +1077,8 @@ export const HeaderBroadcastScrollerStack = memo(({
             disabled={signalBusy || !onToggleSignalScan}
             onClick={onToggleSignalScan}
             style={{
-              width: dim(24),
-              height: dim(22),
+              width: dim(isPhone ? 22 : 24),
+              height: dim(isPhone ? 20 : 22),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1071,15 +1089,16 @@ export const HeaderBroadcastScrollerStack = memo(({
               cursor: signalBusy ? "wait" : onToggleSignalScan ? "pointer" : "default",
             }}
           >
-            <RadioTower size={14} strokeWidth={2.4} />
+            <RadioTower size={dim(isPhone ? 12 : 14)} strokeWidth={2.4} />
           </button></AppTooltip>
         }
       >
-        {(item, duplicate) => (
+        {(item, duplicate, compact) => (
           <HeaderSignalTapeItem
             item={item}
             duplicate={duplicate}
             onClick={onSignalAction}
+            compact={compact}
           />
         )}
       </HeaderBroadcastLane>
@@ -1095,16 +1114,18 @@ export const HeaderBroadcastScrollerStack = memo(({
           setOpenSettingsLane((lane) => (lane === "unusual" ? null : "unusual"))
         }
         settingsContent={unusualSettings}
+        compact={isPhone}
         action={
           <AppTooltip content={broadToggleTitle}><button
+            className="ra-interactive"
             type="button"
             data-testid="header-unusual-broad-toggle"
             aria-label={broadToggleTitle}
             aria-pressed={broadScanEnabled}
             onClick={toggleBroadScan}
             style={{
-              width: dim(24),
-              height: dim(22),
+              width: dim(isPhone ? 22 : 24),
+              height: dim(isPhone ? 20 : 22),
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1115,15 +1136,16 @@ export const HeaderBroadcastScrollerStack = memo(({
               cursor: "pointer",
             }}
           >
-            <RadioTower size={14} strokeWidth={2.4} />
+            <RadioTower size={dim(isPhone ? 12 : 14)} strokeWidth={2.4} />
           </button></AppTooltip>
         }
       >
-        {(item, duplicate) => (
+        {(item, duplicate, compact) => (
           <HeaderUnusualTapeItem
             item={item}
             duplicate={duplicate}
             onClick={onFlowAction}
+            compact={compact}
           />
         )}
       </HeaderBroadcastLane>

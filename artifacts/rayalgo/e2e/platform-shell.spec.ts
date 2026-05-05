@@ -895,6 +895,24 @@ test("platform shell icon controls and motion primitives respect reduced motion"
       .getByRole("button", { name: "Open watchlist" })
       .locator("svg"),
   ).toBeVisible();
+  await expect(page.getByTestId("header-broadcast-scrollers")).toHaveAttribute(
+    "data-layout",
+    "phone",
+  );
+  const broadcastMetrics = await page
+    .getByTestId("header-broadcast-scrollers")
+    .evaluate((element) => {
+      const root = element.getBoundingClientRect();
+      const lanes = Array.from(element.children).map((child) =>
+        Math.round(child.getBoundingClientRect().height),
+      );
+      return {
+        height: Math.round(root.height),
+        lanes,
+      };
+    });
+  expect(broadcastMetrics.height).toBeLessThanOrEqual(46);
+  expect(broadcastMetrics.lanes.every((height) => height <= 23)).toBe(true);
 
   const motionState = await page.evaluate(() => {
     const classNames = [
