@@ -1218,7 +1218,7 @@ test("Trade phone layout loads lazy module and exposes full trading stack", asyn
   expect(metrics.middleColumns.split(" ").length).toBe(1);
 });
 
-test("Trade option chain loading state shows a spinner while chain request is pending", async ({
+test("Trade option chain loading state shows skeleton status while chain request is pending", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -1228,8 +1228,9 @@ test("Trade option chain loading state shows a spinner while chain request is pe
   await expect(
     page
       .getByTestId("trade-options-chain-panel")
-      .getByTestId("loading-spinner"),
+      .getByTestId("chain-loading-skeleton"),
   ).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Loading option chain")).toBeVisible();
 });
 
 test("Trade option chain cold load hydrates full expiration batches", async ({

@@ -237,24 +237,29 @@ const ChainStatePanel = ({
       borderRadius: dim(4),
     }}
   >
-    <style>
-      {"@keyframes tradeChainSpin { to { transform: rotate(360deg); } }"}
-    </style>
     {loading ? (
-      <span
-        data-testid="loading-spinner"
-        role="status"
-        aria-label="Loading"
+      <div
+        data-testid="chain-loading-skeleton"
+        aria-hidden="true"
         style={{
-          width: dim(18),
-          height: dim(18),
-          borderRadius: "50%",
-          border: `2px solid ${T.border}`,
-          borderTopColor: T.accent,
-          animation: "tradeChainSpin 900ms linear infinite",
-          flexShrink: 0,
+          width: dim(172),
+          display: "grid",
+          gap: sp(5),
         }}
-      />
+      >
+        {[0, 1, 2].map((index) => (
+          <span
+            key={index}
+            className="ra-skeleton"
+            style={{
+              height: dim(index === 0 ? 18 : 12),
+              width: index === 2 ? "72%" : "100%",
+              borderRadius: dim(3),
+              background: `${T.border}70`,
+            }}
+          />
+        ))}
+      </div>
     ) : null}
     <span style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
       <span
