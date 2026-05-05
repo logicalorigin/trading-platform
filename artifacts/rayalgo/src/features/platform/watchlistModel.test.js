@@ -3,12 +3,16 @@ import test from "node:test";
 import {
   WATCHLIST_SIGNAL_TIMEFRAMES,
   WATCHLIST_SORT_MODE,
+  activeWatchlistSymbols,
+  allWatchlistSymbols,
   buildSignalMatrixBySymbol,
   buildWatchlistIdentityPayload,
   buildWatchlistRows,
   countWatchlistSymbols,
+  formatWatchlistSignalBars,
   getBestWatchlistSignalState,
   sortWatchlistRows,
+  widerUniverseSymbols,
 } from "./watchlistModel.js";
 
 test("buildWatchlistIdentityPayload normalizes ticker-search identity fields", () => {
@@ -130,6 +134,37 @@ test("buildWatchlistRows supports legacy symbol arrays", () => {
   assert.equal(countWatchlistSymbols({ symbols: ["SPY", "QQQ"] }), 2);
 });
 
+test("watchlist symbol helpers preserve priority and de-dupe symbols", () => {
+  const watchlists = [
+    {
+      id: "growth",
+      symbols: ["spy", "QQQ", "spy"],
+    },
+    {
+      id: "semis",
+      items: [
+        { symbol: "nvda" },
+        { sym: "AMD" },
+        { symbol: "qqq" },
+      ],
+    },
+  ];
+
+  assert.deepEqual(activeWatchlistSymbols(watchlists[0]), ["SPY", "QQQ"]);
+  assert.deepEqual(allWatchlistSymbols(watchlists), ["SPY", "QQQ", "NVDA", "AMD"]);
+  assert.deepEqual(
+    widerUniverseSymbols({
+      watchlists,
+      universeSymbols: ["AAPL", "NVDA", "MSFT"],
+    }),
+    ["SPY", "QQQ", "NVDA", "AMD", "AAPL", "MSFT"],
+  );
+  assert.deepEqual(
+    allWatchlistSymbols([], ["iwm", "SPY", ""]),
+    ["IWM", "SPY"],
+  );
+});
+
 test("buildWatchlistRows appends monitored-only symbols without duplicating active rows", () => {
   const rows = buildWatchlistRows({
     activeWatchlist: {
@@ -224,4 +259,12 @@ test("signal sort prefers fresh matrix dots over legacy monitor state", () => {
     sorted.map((row) => row.sym),
     ["QQQ", "NVDA", "SPY"],
   );
+});
+
+test("formatWatchlistSignalBars keeps compact badge labels", () => {
+  assert.equal(formatWatchlistSignalBars(0), "0");
+  assert.equal(formatWatchlistSignalBars(18.9), "18");
+  assert.equal(formatWatchlistSignalBars(99), "99");
+  assert.equal(formatWatchlistSignalBars(100), "99+");
+  assert.equal(formatWatchlistSignalBars(null), "-");
 });

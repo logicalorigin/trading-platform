@@ -58,9 +58,11 @@ async function mockPlatformApi(
   {
     watchlist,
     onReorder,
+    onSignalMatrixRequest,
   }: {
-    watchlist: unknown;
+    watchlist: unknown | unknown[];
     onReorder?: (payload: unknown) => void;
+    onSignalMatrixRequest?: (payload: unknown) => void;
   },
 ) {
   await page.route("**/api/**", async (route) => {
@@ -80,7 +82,7 @@ async function mockPlatformApi(
         marketDataProviders: {},
       };
     } else if (url.pathname === "/api/watchlists" && route.request().method() === "GET") {
-      body = { watchlists: [watchlist] };
+      body = { watchlists: Array.isArray(watchlist) ? watchlist : [watchlist] };
     } else if (
       url.pathname === "/api/watchlists/default/items/reorder" &&
       route.request().method() === "PUT"
@@ -123,6 +125,47 @@ async function mockPlatformApi(
       body = { entries: [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
       body = { enabled: true, timeframe: "15m", watchlistId: "default" };
+    } else if (
+      url.pathname === "/api/signal-monitor/matrix" &&
+      route.request().method() === "POST"
+    ) {
+      const payload = route.request().postDataJSON();
+      onSignalMatrixRequest?.(payload);
+      const requestedSymbols = Array.isArray(payload?.symbols)
+        ? payload.symbols.map((symbol: string) => symbol.toUpperCase())
+        : ["SPY", "QQQ", "NVDA"];
+      body = {
+        states: requestedSymbols.flatMap((symbol: string) => [
+          {
+            symbol,
+            timeframe: "2m",
+            currentSignalDirection: symbol === "QQQ" ? null : "buy",
+            currentSignalAt: new Date().toISOString(),
+            currentSignalPrice: quoteData[symbol]?.price ?? 100,
+            latestBarAt: new Date().toISOString(),
+            barsSinceSignal: symbol === "SPY" ? 0 : 12,
+            fresh: symbol === "SPY",
+            status: "ok",
+            lastEvaluatedAt: new Date().toISOString(),
+          },
+          {
+            symbol,
+            timeframe: "5m",
+            currentSignalDirection: symbol === "SPY" ? "sell" : null,
+            currentSignalAt: new Date().toISOString(),
+            currentSignalPrice: quoteData[symbol]?.price ?? 100,
+            latestBarAt: new Date().toISOString(),
+            barsSinceSignal: symbol === "SPY" ? 105 : null,
+            fresh: false,
+            status: "ok",
+            lastEvaluatedAt: new Date().toISOString(),
+          },
+        ]),
+        timeframes: ["2m", "5m", "15m"],
+        evaluatedAt: new Date().toISOString(),
+        skippedSymbols: [],
+        truncated: false,
+      };
     } else if (url.pathname === "/api/signal-monitor/state") {
       body = { states: signalStates };
     } else if (url.pathname === "/api/signal-monitor/events") {
@@ -192,6 +235,32 @@ test("watchlist displays legacy symbols plus signal-monitor rows and signal sort
 
   await expect(page.locator('[data-testid="watchlist-signal-pill"][data-fresh="true"]')).toHaveCount(1);
   await expect(page.locator('[data-testid="watchlist-signal-pill"][data-fresh="false"]')).toHaveCount(1);
+  const spyRow = page.locator('[data-testid="watchlist-row"][data-symbol="SPY"]');
+  await expect(spyRow.locator('[data-testid="watchlist-signal-dot-2m"]')).toHaveText("0");
+  await expect(spyRow.locator('[data-testid="watchlist-signal-dot-5m"]')).toHaveText("99+");
+  await expect(spyRow.locator('[data-testid="watchlist-signal-dot-2m"]')).toHaveAttribute(
+    "aria-label",
+    /2m BUY fresh - 0 bars/,
+  );
+  const signalBadgeBoxes = await spyRow.evaluate((row) => {
+    const rowBox = row.getBoundingClientRect();
+    return Array.from(
+      row.querySelectorAll('[data-testid^="watchlist-signal-dot-"]'),
+    ).map((badge) => {
+      const box = badge.getBoundingClientRect();
+      return {
+        left: box.left - rowBox.left,
+        right: rowBox.right - box.right,
+        top: box.top - rowBox.top,
+        bottom: rowBox.bottom - box.bottom,
+      };
+    });
+  });
+  expect(
+    signalBadgeBoxes.every(
+      (box) => box.left >= 0 && box.right >= 0 && box.top >= 0 && box.bottom >= 0,
+    ),
+  ).toBe(true);
 
   await page.getByTestId("watchlist-sort-signal").click();
   await expect
@@ -236,6 +305,34 @@ test("watchlist drag and drop reorders canonical rows in manual mode", async ({ 
   await expect
     .poll(() => reorderPayload)
     .toEqual({ itemIds: ["qqq-item", "spy-item", "nvda-item"] });
+});
+
+test("signal matrix scans all watchlists, not only the active watchlist", async ({ page }) => {
+  let matrixPayload: unknown = null;
+  await mockPlatformApi(page, {
+    watchlist: [
+      {
+        id: "default",
+        name: "Default",
+        isDefault: true,
+        symbols: ["SPY"],
+      },
+      {
+        id: "semis",
+        name: "Semis",
+        isDefault: false,
+        symbols: ["NVDA", "AMD"],
+      },
+    ],
+    onSignalMatrixRequest: (payload) => {
+      matrixPayload = payload;
+    },
+  });
+  await openMarketWithWatchlist(page);
+
+  await expect
+    .poll(() => (matrixPayload as { symbols?: string[] } | null)?.symbols)
+    .toEqual(["SPY", "NVDA", "AMD"]);
 });
 
 test("watchlist row renders persisted identity metadata without clipping", async ({ page }) => {

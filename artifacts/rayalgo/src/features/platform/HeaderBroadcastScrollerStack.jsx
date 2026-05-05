@@ -29,7 +29,7 @@ import {
 } from "./marketFlowStore";
 import {
   FLOW_SCANNER_CONFIG_LIMITS,
-  FLOW_SCANNER_MODE,
+  FLOW_SCANNER_MODE_OPTIONS,
   FLOW_SCANNER_SCOPE,
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig";
@@ -938,10 +938,7 @@ export const HeaderBroadcastScrollerStack = memo(({
         value={flowScannerConfig.mode}
         onChange={(value) => changeFlowScannerConfig({ mode: value })}
         testId="header-flow-scan-mode"
-        options={[
-          { value: FLOW_SCANNER_MODE.market, label: "Market" },
-          { value: FLOW_SCANNER_MODE.watchlist, label: "Watchlist" },
-        ]}
+        options={FLOW_SCANNER_MODE_OPTIONS}
       />
       <HeaderLaneSelectControl
         label="Scope"

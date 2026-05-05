@@ -33,12 +33,14 @@ export const SharedMarketFlowRuntime = memo(({
 
 export const BroadFlowScannerRuntime = memo(({
   symbols = [],
+  activeSymbols = symbols,
   enabled = true,
 }) => {
   const flowScannerControl = useFlowScannerControlState();
   const scannerEnabled = Boolean(flowScannerControl.enabled);
   const runtimeActive = Boolean(enabled && scannerEnabled);
   const snapshot = useLiveMarketFlow(symbols, {
+    activeSymbols,
     enabled: runtimeActive,
     scannerConfig: flowScannerControl.config,
   });

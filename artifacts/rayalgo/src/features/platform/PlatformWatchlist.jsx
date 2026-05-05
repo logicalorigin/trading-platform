@@ -22,6 +22,7 @@ import {
   buildSignalMatrixBySymbol,
   buildWatchlistRows,
   countWatchlistSymbols,
+  formatWatchlistSignalBars,
   getBestWatchlistSignalState,
   sortWatchlistRows,
 } from "./watchlistModel";
@@ -118,6 +119,13 @@ const WATCHLIST_DIRECTION_SORTS = new Set([
 const isWatchlistSignalDirection = (value) =>
   value === "buy" || value === "sell";
 
+const formatSignalFreshnessLabel = (state) => {
+  if (!state) return "unknown freshness";
+  if (state.status === "error") return "error";
+  if (state.status === "unavailable") return "unavailable";
+  return state.fresh ? "fresh" : "stale";
+};
+
 const getFallbackSignalForTimeframe = (fallbackState, timeframe) => {
   if (!fallbackState || fallbackState.timeframe !== timeframe) return null;
   return fallbackState;
@@ -129,8 +137,8 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
     style={{
       display: "inline-flex",
       alignItems: "center",
-      gap: sp(3),
-      minWidth: dim(34),
+      gap: sp(2),
+      minWidth: dim(58),
     }}
   >
     {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe) => {
@@ -142,8 +150,14 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
       const color = direction === "buy" ? T.blue : direction === "sell" ? T.red : T.textMuted;
       const fresh = Boolean(state?.fresh);
       const status = state?.status || "unknown";
+      const barsLabel = hasDirection
+        ? formatWatchlistSignalBars(state?.barsSinceSignal)
+        : "-";
+      const fullBarsLabel = Number.isFinite(state?.barsSinceSignal)
+        ? `${state.barsSinceSignal} bars`
+        : "no bar count";
       const label = hasDirection
-        ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+        ? `${timeframe} ${direction.toUpperCase()} ${formatSignalFreshnessLabel(state)} - ${fullBarsLabel}`
         : `${timeframe} no signal - ${status}`;
 
       return (
@@ -153,6 +167,7 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
           data-testid={`watchlist-signal-dot-${timeframe}`}
           data-timeframe={timeframe}
           data-direction={hasDirection ? direction : "none"}
+          data-bars-since-signal={hasDirection ? barsLabel : ""}
           aria-label={label}
           onClick={(event) => {
             event.stopPropagation();
@@ -161,17 +176,27 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
             }
           }}
           style={{
-            width: dim(7),
-            height: dim(7),
-            borderRadius: "50%",
+            minWidth: dim(18),
+            height: dim(14),
+            borderRadius: dim(2),
             border: `1px solid ${hasDirection ? color : T.borderLight}`,
-            background: hasDirection ? color : "transparent",
+            background: hasDirection ? `${color}${fresh ? "24" : "12"}` : "transparent",
+            color: hasDirection ? color : T.textMuted,
             opacity: hasDirection ? (fresh ? 1 : 0.42) : 0.55,
             boxShadow: hasDirection && fresh ? `0 0 0 2px ${color}20` : "none",
             cursor: hasDirection ? "pointer" : "default",
-            padding: 0,
+            padding: sp("0 3px"),
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontFamily: T.mono,
+            fontSize: fs(7),
+            fontWeight: 900,
+            lineHeight: 1,
           }}
-        /></AppTooltip>
+        >
+          {barsLabel}
+        </button></AppTooltip>
       );
     })}
   </span>

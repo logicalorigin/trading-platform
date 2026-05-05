@@ -42,7 +42,7 @@ test("normalizeFlowScannerConfig applies defaults and clamps capacity settings",
       maxDte: "",
     }),
     {
-      mode: FLOW_SCANNER_MODE.market,
+      mode: FLOW_SCANNER_MODE.allWatchlists,
       scope: FLOW_SCANNER_SCOPE.unusual,
       maxSymbols: 2000,
       batchSize: 250,
@@ -56,32 +56,54 @@ test("normalizeFlowScannerConfig applies defaults and clamps capacity settings",
   );
 });
 
-test("normalizeFlowScannerConfig aliases legacy hybrid mode to market mode", () => {
+test("normalizeFlowScannerConfig aliases legacy scanner modes", () => {
   assert.equal(
     normalizeFlowScannerConfig({ mode: "hybrid" }).mode,
-    FLOW_SCANNER_MODE.market,
+    FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+  );
+  assert.equal(
+    normalizeFlowScannerConfig({ mode: "market" }).mode,
+    FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+  );
+  assert.equal(
+    normalizeFlowScannerConfig({ mode: "watchlist" }).mode,
+    FLOW_SCANNER_MODE.activeWatchlist,
   );
 });
 
-test("buildFlowScannerSymbols pins watchlist symbols before market symbols", () => {
+test("buildFlowScannerSymbols pins all watchlist symbols before market symbols", () => {
   assert.deepEqual(
     buildFlowScannerSymbols({
       watchlistSymbols: ["msft", "spy", "MSFT"],
       marketSymbols: ["SPY", "NVDA", "AAPL"],
-      config: { mode: FLOW_SCANNER_MODE.market, maxSymbols: 4 },
+      config: { mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse, maxSymbols: 4 },
     }),
     ["MSFT", "SPY", "NVDA", "AAPL"],
   );
 });
 
-test("buildFlowScannerSymbols can scan only the watchlist", () => {
+test("buildFlowScannerSymbols can scan only the active watchlist", () => {
   assert.deepEqual(
     buildFlowScannerSymbols({
+      activeWatchlistSymbols: ["spy", "msft"],
       watchlistSymbols: ["msft", "nvda"],
       marketSymbols: ["SPY", "QQQ"],
-      config: { mode: FLOW_SCANNER_MODE.watchlist, maxSymbols: 10 },
+      config: { mode: FLOW_SCANNER_MODE.activeWatchlist, maxSymbols: 10 },
     }),
-    ["MSFT", "NVDA"],
+    ["SPY", "MSFT"],
+  );
+});
+
+test("default flow scanner scans all watchlists without market universe fallback", () => {
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.mode, FLOW_SCANNER_MODE.allWatchlists);
+  assert.deepEqual(
+    buildFlowScannerSymbols({
+      activeWatchlistSymbols: ["SPY"],
+      watchlistSymbols: ["SPY", "NVDA", "AAPL"],
+      marketSymbols: ["QQQ", "IWM"],
+      config: DEFAULT_FLOW_SCANNER_CONFIG,
+    }),
+    ["SPY", "NVDA", "AAPL"],
   );
 });
 

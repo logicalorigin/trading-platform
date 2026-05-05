@@ -85,7 +85,7 @@ test("flow scanner control state normalizes and shares scanner settings", () => 
   const state = getFlowScannerControlState();
   assert.equal(state.enabled, true);
   assert.equal(state.ownerActive, true);
-  assert.equal(state.config.mode, FLOW_SCANNER_MODE.market);
+  assert.equal(state.config.mode, FLOW_SCANNER_MODE.allWatchlistsPlusUniverse);
   assert.equal(state.config.maxSymbols, 2000);
   assert.equal(state.config.batchSize, 250);
 });

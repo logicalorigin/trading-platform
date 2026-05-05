@@ -87,6 +87,7 @@ import {
 } from "../lib/motion";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
+  formatFlowScannerModeLabel,
 } from "../features/platform/marketFlowScannerConfig";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import {
@@ -1106,10 +1107,7 @@ const FlowOverviewPanel = ({
     coverage.selectedSymbols || totalCoverageSymbols;
   const scannedCoverageSymbols =
     coverage.cycleScannedSymbols ?? coverage.scannedSymbols ?? 0;
-  const coverageModeLabel =
-    coverage.mode === "market" || coverage.mode === "hybrid"
-      ? "market-wide"
-      : "watchlist";
+  const coverageModeLabel = formatFlowScannerModeLabel(coverage.mode);
   const oldestScanAt = useMemo(() => {
     const timestamps = Object.values(coverage.lastScannedAt || {});
     return timestamps.length ? Math.min(...timestamps) : null;
@@ -5569,10 +5567,7 @@ const UnusualScannerSection = ({
     coverage.selectedSymbols || totalCoverageSymbols;
   const scannedCoverageSymbols =
     coverage.cycleScannedSymbols ?? coverage.scannedSymbols ?? 0;
-  const coverageModeLabel =
-    coverage.mode === "market" || coverage.mode === "hybrid"
-      ? "market-wide"
-      : "watchlist";
+  const coverageModeLabel = formatFlowScannerModeLabel(coverage.mode);
   const oldestScanAt = useMemo(() => {
     const stamps = Object.values(coverage.lastScannedAt || {});
     if (!stamps.length) return null;

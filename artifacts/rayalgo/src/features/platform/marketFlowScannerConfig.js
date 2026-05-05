@@ -4,9 +4,38 @@ export const UNUSUAL_SCANNER_MAX_WATCHLIST = Number.POSITIVE_INFINITY;
 export const UNUSUAL_SCANNER_INTERVAL_MS = 15_000;
 
 export const FLOW_SCANNER_MODE = Object.freeze({
-  watchlist: "watchlist",
-  market: "market",
+  activeWatchlist: "active_watchlist",
+  allWatchlists: "all_watchlists",
+  allWatchlistsPlusUniverse: "all_watchlists_plus_universe",
+  // Legacy property aliases used by older persisted state and tests.
+  watchlist: "active_watchlist",
+  market: "all_watchlists_plus_universe",
 });
+
+export const FLOW_SCANNER_LEGACY_MODE_ALIASES = Object.freeze({
+  watchlist: FLOW_SCANNER_MODE.activeWatchlist,
+  market: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+  hybrid: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+});
+
+export const FLOW_SCANNER_MODE_OPTIONS = Object.freeze([
+  {
+    value: FLOW_SCANNER_MODE.activeWatchlist,
+    label: "Active watchlist",
+  },
+  {
+    value: FLOW_SCANNER_MODE.allWatchlists,
+    label: "All watchlists",
+  },
+  {
+    value: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+    label: "All + universe",
+  },
+]);
+
+const FLOW_SCANNER_MODE_LABELS = Object.freeze(
+  Object.fromEntries(FLOW_SCANNER_MODE_OPTIONS.map((option) => [option.value, option.label])),
+);
 
 export const FLOW_SCANNER_SCOPE = Object.freeze({
   all: "all",
@@ -25,7 +54,7 @@ export const FLOW_SCANNER_CONFIG_LIMITS = Object.freeze({
 });
 
 export const DEFAULT_FLOW_SCANNER_CONFIG = Object.freeze({
-  mode: FLOW_SCANNER_MODE.market,
+  mode: FLOW_SCANNER_MODE.allWatchlists,
   scope: FLOW_SCANNER_SCOPE.unusual,
   maxSymbols: 500,
   batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
@@ -86,14 +115,23 @@ const normalizeOptionalNumber = (value, { min, max }) => {
   return Math.min(max, Math.max(min, Math.round(parsed)));
 };
 
+export const normalizeFlowScannerMode = (mode) => {
+  const rawMode = String(mode || "").trim();
+  const aliasedMode = FLOW_SCANNER_LEGACY_MODE_ALIASES[rawMode] || rawMode;
+  return FLOW_SCANNER_MODE_OPTIONS.some((option) => option.value === aliasedMode)
+    ? aliasedMode
+    : DEFAULT_FLOW_SCANNER_CONFIG.mode;
+};
+
+export const flowScannerModeUsesMarketUniverse = (mode) =>
+  normalizeFlowScannerMode(mode) === FLOW_SCANNER_MODE.allWatchlistsPlusUniverse;
+
+export const formatFlowScannerModeLabel = (mode) =>
+  FLOW_SCANNER_MODE_LABELS[normalizeFlowScannerMode(mode)] || "Flow scanner";
+
 export const normalizeFlowScannerConfig = (value = {}) => {
   const input = value && typeof value === "object" ? value : {};
-  const mode =
-    input.mode === "hybrid"
-      ? FLOW_SCANNER_MODE.market
-      : Object.values(FLOW_SCANNER_MODE).includes(input.mode)
-        ? input.mode
-        : DEFAULT_FLOW_SCANNER_CONFIG.mode;
+  const mode = normalizeFlowScannerMode(input.mode);
   const scope = Object.values(FLOW_SCANNER_SCOPE).includes(input.scope)
     ? input.scope
     : DEFAULT_FLOW_SCANNER_CONFIG.scope;
@@ -146,17 +184,25 @@ export const normalizeFlowScannerConfig = (value = {}) => {
 };
 
 export const buildFlowScannerSymbols = ({
+  activeWatchlistSymbols = [],
   watchlistSymbols = [],
   marketSymbols = FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS,
   config = DEFAULT_FLOW_SCANNER_CONFIG,
 } = {}) => {
   const resolved = normalizeFlowScannerConfig(config);
-  const watchlist = uniqueSymbols(watchlistSymbols);
+  const allWatchlists = uniqueSymbols(watchlistSymbols);
+  const activeWatchlist = uniqueSymbols(
+    Array.isArray(activeWatchlistSymbols) && activeWatchlistSymbols.length
+      ? activeWatchlistSymbols
+      : watchlistSymbols,
+  );
   const market = uniqueSymbols(marketSymbols);
-  const symbols =
-    resolved.mode === FLOW_SCANNER_MODE.watchlist
-      ? watchlist
-      : [...watchlist, ...market];
+  let symbols = allWatchlists;
+  if (resolved.mode === FLOW_SCANNER_MODE.activeWatchlist) {
+    symbols = activeWatchlist;
+  } else if (resolved.mode === FLOW_SCANNER_MODE.allWatchlistsPlusUniverse) {
+    symbols = [...allWatchlists, ...market];
+  }
 
   return uniqueSymbols(symbols).slice(0, resolved.maxSymbols);
 };

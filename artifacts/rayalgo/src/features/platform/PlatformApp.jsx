@@ -98,6 +98,8 @@ import {
   publishSignalMonitorSnapshot,
 } from "./signalMonitorStore";
 import {
+  activeWatchlistSymbols as buildActiveWatchlistSymbols,
+  allWatchlistSymbols as buildAllWatchlistSymbols,
   buildWatchlistIdentityPayload,
   buildWatchlistRows,
 } from "./watchlistModel";
@@ -402,19 +404,16 @@ export default function PlatformApp() {
     const fallback = watchlistsQuery.data?.watchlists?.length
       ? []
       : WATCHLIST.map((item) => item.sym);
-    const unique = [
-      ...new Set(
-        buildWatchlistRows({
-          activeWatchlist,
-          fallbackSymbols: fallback,
-          signalStates: [],
-        })
-          .map((item) => item.sym)
-          .filter(Boolean),
-      ),
-    ];
+    const unique = buildActiveWatchlistSymbols(activeWatchlist, fallback);
     return unique.length ? unique : ["SPY"];
   }, [activeWatchlist, watchlistsQuery.data]);
+  const allWatchlistSymbolList = useMemo(() => {
+    const fallback = watchlistsQuery.data?.watchlists?.length
+      ? []
+      : WATCHLIST.map((item) => item.sym);
+    const unique = buildAllWatchlistSymbols(watchlists, fallback);
+    return unique.length ? unique : watchlistSymbols;
+  }, [watchlistSymbols, watchlists, watchlistsQuery.data]);
   const marketScreenWarm = Boolean(mountedScreens.market);
   const marketScreenActive = screen === "market";
   const flowScreenActive = screen === "flow";
@@ -1306,9 +1305,17 @@ export default function PlatformApp() {
     timeframes: ["2m", "5m", "15m"],
   }));
   const signalMatrixEvaluationInFlightRef = useRef(false);
+  const signalMatrixSymbols = useMemo(() => {
+    const maxSymbols = clampNumber(
+      Number(signalMonitorProfile?.maxSymbols) || 50,
+      1,
+      250,
+    );
+    return allWatchlistSymbolList.slice(0, maxSymbols);
+  }, [allWatchlistSymbolList, signalMonitorProfile?.maxSymbols]);
   const signalMatrixSymbolsKey = useMemo(
-    () => watchlistSymbols.join(","),
-    [watchlistSymbols],
+    () => signalMatrixSymbols.join(","),
+    [signalMatrixSymbols],
   );
   const evaluateSignalMonitorMatrixMutation = useEvaluateSignalMonitorMatrix({
     mutation: {
@@ -1334,20 +1341,19 @@ export default function PlatformApp() {
     evaluateSignalMonitorMatrixMutation.mutate({
       data: {
         environment,
-        watchlistId: activeWatchlist?.id || null,
-        symbols: activeWatchlist?.id ? undefined : watchlistSymbols,
+        watchlistId: null,
+        symbols: signalMatrixSymbols,
         timeframes: ["2m", "5m", "15m"],
       },
     });
   }, [
-    activeWatchlist?.id,
     environment,
     evaluateSignalMonitorMatrixMutation.mutate,
     signalMatrixSymbolsKey,
-    watchlistSymbols,
+    signalMatrixSymbols,
   ]);
   useEffect(() => {
-    if (!pageVisible || !watchlistSymbols.length) {
+    if (!pageVisible || !signalMatrixSymbols.length) {
       return undefined;
     }
 
@@ -1359,7 +1365,7 @@ export default function PlatformApp() {
     runSignalMatrixEvaluation,
     signalMonitorPollMs,
     signalMatrixSymbolsKey,
-    watchlistSymbols.length,
+    signalMatrixSymbols.length,
   ]);
   const runSignalMonitorEvaluation = useCallback(
     (mode = "incremental") => {
@@ -1393,6 +1399,10 @@ export default function PlatformApp() {
   const runtimeWatchlistSymbols = useMemo(
     () => [...new Set([...watchlistSymbols, ...signalMonitorSymbols])],
     [signalMonitorSymbols, watchlistSymbols],
+  );
+  const broadFlowWatchlistSymbols = useMemo(
+    () => [...new Set(allWatchlistSymbolList)],
+    [allWatchlistSymbolList],
   );
   const runtimeQuoteSymbols = useMemo(
     () => [...new Set([...quoteSymbols, ...signalMonitorSymbols])],
@@ -2043,6 +2053,8 @@ export default function PlatformApp() {
         SharedMarketFlowRuntimeComponent={SharedMarketFlowRuntime}
         BroadFlowScannerRuntimeComponent={BroadFlowScannerRuntime}
         watchlistSymbols={runtimeWatchlistSymbols}
+        broadFlowWatchlistSymbols={broadFlowWatchlistSymbols}
+        broadFlowActiveSymbols={watchlistSymbols}
         activeWatchlistItems={activeWatchlist?.items}
         quoteSymbols={runtimeQuoteSymbols}
         sparklineSymbols={runtimeSparklineSymbols}

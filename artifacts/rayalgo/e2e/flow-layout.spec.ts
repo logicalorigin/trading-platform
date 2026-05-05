@@ -603,7 +603,7 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await expect(scannerStatusPanel).toBeVisible();
   await expect(
     scannerStatusPanel.getByTestId("flow-scanner-status-panel-source-chip"),
-  ).toContainText(/Watchlist|Market-wide/);
+  ).toContainText(/watchlist|universe/i);
   await expect(
     scannerStatusPanel.getByTestId("flow-scanner-status-panel-cap-chip"),
   ).toContainText(/cap/i);

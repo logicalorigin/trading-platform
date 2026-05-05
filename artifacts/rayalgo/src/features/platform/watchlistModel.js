@@ -16,6 +16,14 @@ export const WATCHLIST_SIGNAL_TIMEFRAMES = Object.freeze(["2m", "5m", "15m"]);
 export const normalizeWatchlistSymbol = (value) =>
   value?.trim?.().toUpperCase?.() || "";
 
+const uniqueNormalizedWatchlistSymbols = (symbols = []) => [
+  ...new Set(
+    (symbols || [])
+      .map((symbol) => normalizeWatchlistSymbol(symbol))
+      .filter(Boolean),
+  ),
+];
+
 const isSignalDirection = (value) => value === "buy" || value === "sell";
 const normalizeSignalTimeframe = (value) =>
   WATCHLIST_SIGNAL_TIMEFRAMES.includes(String(value || "").trim())
@@ -160,6 +168,38 @@ export const getWatchlistSourceItems = (watchlist, fallbackSymbols = []) => {
   return fallbackSymbols;
 };
 
+const watchlistItemsToSymbols = (items = []) =>
+  uniqueNormalizedWatchlistSymbols(
+    (items || []).map((item) =>
+      typeof item === "string" ? item : item?.symbol || item?.sym,
+    ),
+  );
+
+export const activeWatchlistSymbols = (activeWatchlist, fallbackSymbols = []) =>
+  watchlistItemsToSymbols(getWatchlistSourceItems(activeWatchlist, fallbackSymbols));
+
+export const allWatchlistSymbols = (watchlists = [], fallbackSymbols = []) => {
+  const sourceWatchlists = Array.isArray(watchlists) ? watchlists : [];
+  if (!sourceWatchlists.length) {
+    return activeWatchlistSymbols(null, fallbackSymbols);
+  }
+  return uniqueNormalizedWatchlistSymbols(
+    sourceWatchlists.flatMap((watchlist) =>
+      watchlistItemsToSymbols(getWatchlistSourceItems(watchlist)),
+    ),
+  );
+};
+
+export const widerUniverseSymbols = ({
+  watchlists = [],
+  fallbackSymbols = [],
+  universeSymbols = [],
+} = {}) =>
+  uniqueNormalizedWatchlistSymbols([
+    ...allWatchlistSymbols(watchlists, fallbackSymbols),
+    ...universeSymbols,
+  ]);
+
 export const countWatchlistSymbols = (watchlist) =>
   getWatchlistSourceItems(watchlist).reduce(
     (count, item) =>
@@ -209,6 +249,18 @@ export const buildWatchlistRows = ({
   });
 
   return rows;
+};
+
+export const formatWatchlistSignalBars = (barsSinceSignal) => {
+  const value =
+    typeof barsSinceSignal === "string"
+      ? Number(barsSinceSignal)
+      : barsSinceSignal;
+  if (!Number.isFinite(value) || value < 0) {
+    return "-";
+  }
+  const whole = Math.floor(value);
+  return whole > 99 ? "99+" : String(whole);
 };
 
 const compareDefinedNumber = (left, right, direction) => {

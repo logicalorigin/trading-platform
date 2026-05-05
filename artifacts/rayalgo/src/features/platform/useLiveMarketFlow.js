@@ -12,6 +12,7 @@ import {
   FLOW_SCANNER_SCOPE,
   buildFlowScannerSymbols,
   filterFlowScannerEvents,
+  flowScannerModeUsesMarketUniverse,
   normalizeFlowScannerConfig,
   runFlowScannerBatch,
 } from "./marketFlowScannerConfig";
@@ -50,6 +51,7 @@ let liveMarketFlowInstanceCounter = 0;
 export const useLiveMarketFlow = (
   symbols = [],
   {
+    activeSymbols = symbols,
     enabled = true,
     limit = 16,
     maxSymbols = 8,
@@ -58,7 +60,7 @@ export const useLiveMarketFlow = (
     lineBudget,
     minPremium,
     maxDte,
-    mode = FLOW_SCANNER_MODE.watchlist,
+    mode = FLOW_SCANNER_MODE.activeWatchlist,
     scope = FLOW_SCANNER_SCOPE.all,
     concurrency,
     scannerConfig,
@@ -103,7 +105,7 @@ export const useLiveMarketFlow = (
     ],
   );
   const shouldLoadMarketUniverse =
-    enabled && effectiveScannerConfig.mode !== FLOW_SCANNER_MODE.watchlist;
+    enabled && flowScannerModeUsesMarketUniverse(effectiveScannerConfig.mode);
   const marketUniverseQuery = useQuery({
     queryKey: FLOW_SCANNER_UNIVERSE_QUERY_KEY,
     queryFn: fetchFlowScannerUniverse,
@@ -117,13 +119,14 @@ export const useLiveMarketFlow = (
   const liveSymbols = useMemo(
     () =>
       buildFlowScannerSymbols({
+        activeWatchlistSymbols: activeSymbols,
         watchlistSymbols: symbols,
         marketSymbols: backendMarketSymbols.length
           ? backendMarketSymbols
           : undefined,
         config: effectiveScannerConfig,
       }),
-    [symbols, backendMarketSymbols, effectiveScannerConfig],
+    [activeSymbols, symbols, backendMarketSymbols, effectiveScannerConfig],
   );
   const liveSymbolsKey = liveSymbols.join(",");
   const effectiveBatchSize = Math.max(

@@ -11,7 +11,7 @@ import { IbkrLaneArchitecturePanel } from "./settings/IbkrLaneArchitecturePanel"
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
   FLOW_SCANNER_CONFIG_LIMITS,
-  FLOW_SCANNER_MODE,
+  FLOW_SCANNER_MODE_OPTIONS,
   FLOW_SCANNER_SCOPE,
   normalizeFlowScannerConfig,
 } from "../features/platform/marketFlowScannerConfig";
@@ -2028,7 +2028,7 @@ function FlowScannerSettingsPanel() {
           label="Universe"
           value={config.mode}
           onChange={(value) => updateConfig({ mode: value })}
-          options={Object.values(FLOW_SCANNER_MODE)}
+          options={FLOW_SCANNER_MODE_OPTIONS}
         />
         <SelectField
           label="Scope"

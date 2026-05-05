@@ -3,6 +3,8 @@ export const PlatformRuntimeLayer = ({
   SharedMarketFlowRuntimeComponent,
   BroadFlowScannerRuntimeComponent,
   watchlistSymbols,
+  broadFlowWatchlistSymbols = watchlistSymbols,
+  broadFlowActiveSymbols = watchlistSymbols,
   activeWatchlistItems,
   quoteSymbols,
   sparklineSymbols,
@@ -33,7 +35,8 @@ export const PlatformRuntimeLayer = ({
       intervalMs={flowRuntimeIntervalMs}
     />
     <BroadFlowScannerRuntimeComponent
-      symbols={watchlistSymbols}
+      symbols={broadFlowWatchlistSymbols}
+      activeSymbols={broadFlowActiveSymbols}
       enabled={broadFlowRuntimeEnabled}
     />
     {children}
