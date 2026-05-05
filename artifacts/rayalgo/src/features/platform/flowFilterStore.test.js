@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  FLOW_BUILT_IN_PRESETS,
   buildFlowTapePresetPatch,
+  flowEventMatchesBuiltInPreset,
   getFlowTapeFilterState,
   normalizeFlowTapeFilterState,
   resetFlowTapeFilterStateForTests,
@@ -80,5 +82,86 @@ test("buildFlowTapePresetPatch mirrors Flow page preset behavior", () => {
       minPrem: 250_000,
     }),
     { activeFlowPresetId: null },
+  );
+});
+
+test("Flow built-in presets include Phase 10 scanner modes", () => {
+  const presetIds = FLOW_BUILT_IN_PRESETS.map((preset) => preset.id);
+  assert.deepEqual(
+    [
+      "momentum",
+      "earnings-week",
+      "unusual-calls",
+      "unusual-puts",
+      "high-rvol",
+      "held-positions",
+    ].filter((id) => presetIds.includes(id)),
+    [
+      "momentum",
+      "earnings-week",
+      "unusual-calls",
+      "unusual-puts",
+      "high-rvol",
+      "held-positions",
+    ],
+  );
+
+  assert.deepEqual(
+    buildFlowTapePresetPatch("unusual-calls", {
+      activeFlowPresetId: null,
+      filter: "all",
+      minPrem: 0,
+    }),
+    {
+      activeFlowPresetId: "unusual-calls",
+      filter: "unusual",
+      minPrem: 0,
+    },
+  );
+});
+
+test("flowEventMatchesBuiltInPreset evaluates scanner preset semantics", () => {
+  assert.equal(
+    flowEventMatchesBuiltInPreset("unusual-calls", {
+      cp: "C",
+      isUnusual: true,
+    }),
+    true,
+  );
+  assert.equal(
+    flowEventMatchesBuiltInPreset("unusual-puts", {
+      right: "put",
+      isUnusual: true,
+    }),
+    true,
+  );
+  assert.equal(
+    flowEventMatchesBuiltInPreset("momentum", {
+      score: 80,
+    }),
+    true,
+  );
+  assert.equal(
+    flowEventMatchesBuiltInPreset("earnings-week", {
+      earningsWithinDays: 5,
+    }),
+    true,
+  );
+  assert.equal(
+    flowEventMatchesBuiltInPreset("held-positions", {
+      positionQuantity: -2,
+    }),
+    true,
+  );
+  assert.equal(
+    flowEventMatchesBuiltInPreset("repeats", { id: "one" }, () => ({ count: 2 })),
+    true,
+  );
+  assert.equal(
+    flowEventMatchesBuiltInPreset("unusual-calls", {
+      cp: "P",
+      isUnusual: true,
+    }),
+    false,
   );
 });

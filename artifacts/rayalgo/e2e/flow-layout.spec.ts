@@ -656,6 +656,22 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   );
   await expect(page.getByTestId("flow-filter-panel")).not.toContainText("SORT");
 
+  await expect(page.getByTestId("flow-built-in-preset-momentum")).toBeVisible();
+  await expect(page.getByTestId("flow-built-in-preset-earnings-week")).toBeVisible();
+  await expect(page.getByTestId("flow-built-in-preset-unusual-calls")).toBeVisible();
+  await expect(page.getByTestId("flow-built-in-preset-unusual-puts")).toBeVisible();
+  await expect(page.getByTestId("flow-built-in-preset-high-rvol")).toBeVisible();
+  await expect(page.getByTestId("flow-built-in-preset-held-positions")).toBeVisible();
+  await page.getByTestId("flow-built-in-preset-unusual-calls").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
+        return state.flowActivePresetId;
+      }),
+    )
+    .toBe("unusual-calls");
+
   await page.getByTestId("flow-built-in-preset-premium-250k").click();
   await expect
     .poll(() =>

@@ -20,6 +20,12 @@ export const FLOW_MIN_PREMIUM_OPTIONS = Object.freeze([
 ]);
 
 export const FLOW_BUILT_IN_PRESETS = Object.freeze([
+  { id: "momentum", label: "Momentum", sortBy: "score" },
+  { id: "earnings-week", label: "Earnings Wk", sortBy: "premium" },
+  { id: "unusual-calls", label: "Unusual Calls", filter: "unusual", sortBy: "premium" },
+  { id: "unusual-puts", label: "Unusual Puts", filter: "unusual", sortBy: "premium" },
+  { id: "high-rvol", label: "High RelVol", sortBy: "ratio" },
+  { id: "held-positions", label: "Held Pos", sortBy: "premium" },
   { id: "ask-calls", label: "Ask Calls", sortBy: "premium" },
   { id: "bid-puts", label: "Bid Puts", sortBy: "premium" },
   { id: "zero-dte", label: "0DTE", sortBy: "premium" },
@@ -158,6 +164,81 @@ export const resetFlowTapeFilterStateForTests = (
 
 export const getFlowBuiltInPreset = (presetId) =>
   FLOW_BUILT_IN_PRESETS.find((preset) => preset.id === presetId) || null;
+
+const flowOptionRight = (event) => {
+  const raw = String(event?.cp || event?.right || "").toUpperCase();
+  if (raw.startsWith("P")) return "P";
+  if (raw.startsWith("C")) return "C";
+  return "";
+};
+
+const hasEarningsWeekSignal = (event) =>
+  Boolean(
+    event?.earningsSoon ||
+      event?.earningsThisWeek ||
+      event?.hasEarningsThisWeek ||
+      event?.earningsWithinDays <= 7 ||
+      event?.calendarEventType === "earnings",
+  );
+
+const hasHeldPositionSignal = (event) =>
+  Boolean(
+    event?.heldPosition ||
+      event?.hasOpenPosition ||
+      event?.positionOpen ||
+      event?.positionQuantity,
+  );
+
+export const flowEventMatchesBuiltInPreset = (
+  presetId,
+  event,
+  clusterFor = () => null,
+) => {
+  if (!presetId) return true;
+  const right = flowOptionRight(event);
+  const side = String(event?.side || "").toUpperCase();
+  if (presetId === "momentum") {
+    return Boolean(event?.golden) || Number(event?.score || 0) >= 75;
+  }
+  if (presetId === "earnings-week") {
+    return hasEarningsWeekSignal(event);
+  }
+  if (presetId === "unusual-calls") {
+    return right === "C" && Boolean(event?.isUnusual);
+  }
+  if (presetId === "unusual-puts") {
+    return right === "P" && Boolean(event?.isUnusual);
+  }
+  if (presetId === "high-rvol") {
+    return Boolean(event?.isUnusual) || Number(event?.unusualScore || 0) >= 1;
+  }
+  if (presetId === "held-positions") {
+    return hasHeldPositionSignal(event);
+  }
+  if (presetId === "ask-calls") {
+    return right === "C" && side === "BUY";
+  }
+  if (presetId === "bid-puts") {
+    return right === "P" && side === "SELL";
+  }
+  if (presetId === "zero-dte") {
+    return Number.isFinite(event?.dte) && event.dte <= 1;
+  }
+  if (presetId === "premium-50k") {
+    return Number(event?.premium || 0) >= 50_000;
+  }
+  if (presetId === "premium-250k") {
+    return Number(event?.premium || 0) >= 250_000;
+  }
+  if (presetId === "vol-oi") {
+    return Boolean(event?.isUnusual) || Number(event?.unusualScore || 0) >= 1;
+  }
+  if (presetId === "sweeps") return event?.type === "SWEEP";
+  if (presetId === "blocks") return event?.type === "BLOCK";
+  if (presetId === "repeats") return clusterFor(event) !== null;
+  if (presetId === "golden") return Boolean(event?.golden);
+  return true;
+};
 
 export const buildFlowTapePresetPatch = (presetId, currentState) => {
   const current = normalizeFlowTapeFilterState(currentState);

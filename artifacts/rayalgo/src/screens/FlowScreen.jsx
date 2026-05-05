@@ -105,6 +105,7 @@ import {
   FLOW_MIN_PREMIUM_OPTIONS,
   FLOW_TAPE_FILTER_OPTIONS,
   buildFlowTapePresetPatch,
+  flowEventMatchesBuiltInPreset,
   getFlowBuiltInPreset,
   setFlowTapeFilterState,
   useFlowTapeFilterState,
@@ -396,6 +397,12 @@ const parseTickerTokens = (value) =>
   );
 
 const FLOW_PRESET_COLORS = Object.freeze({
+  momentum: T.green,
+  "earnings-week": T.purple,
+  "unusual-calls": T.green,
+  "unusual-puts": T.red,
+  "high-rvol": T.cyan,
+  "held-positions": T.accent,
   "ask-calls": T.green,
   "bid-puts": T.red,
   "zero-dte": T.amber,
@@ -407,33 +414,6 @@ const FLOW_PRESET_COLORS = Object.freeze({
   repeats: T.cyan,
   golden: T.amber,
 });
-
-const flowPresetMatches = (presetId, event, clusterFor) => {
-  if (!presetId) return true;
-  if (presetId === "ask-calls") {
-    return event.cp === "C" && event.side === "BUY";
-  }
-  if (presetId === "bid-puts") {
-    return event.cp === "P" && event.side === "SELL";
-  }
-  if (presetId === "zero-dte") {
-    return Number.isFinite(event.dte) && event.dte <= 1;
-  }
-  if (presetId === "premium-50k") {
-    return event.premium >= 50_000;
-  }
-  if (presetId === "premium-250k") {
-    return event.premium >= 250_000;
-  }
-  if (presetId === "vol-oi") {
-    return Boolean(event.isUnusual) || (event.unusualScore || 0) >= 1;
-  }
-  if (presetId === "sweeps") return event.type === "SWEEP";
-  if (presetId === "blocks") return event.type === "BLOCK";
-  if (presetId === "repeats") return clusterFor(event) !== null;
-  if (presetId === "golden") return Boolean(event.golden);
-  return true;
-};
 
 const getFlowSourceBasisMeta = (value) => {
   if (value === "confirmed_trade") {
@@ -1305,7 +1285,7 @@ const FlowOverviewPanel = ({
         return true;
       })
       .filter((event) =>
-        flowPresetMatches(activeFlowPresetId, event, clusterFor),
+        flowEventMatchesBuiltInPreset(activeFlowPresetId, event, clusterFor),
       )
       .filter((event) => event.premium >= minPrem);
 
