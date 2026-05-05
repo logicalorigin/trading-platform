@@ -794,11 +794,15 @@ export const MultiChartGrid = ({
     if (normalizeTickerSymbol(currentSlot?.ticker) === normalizedActiveSym) {
       return;
     }
+    const sourceSlotBeforeSelection = sourceIndex >= 0 ? slots[sourceIndex] : null;
+    const targetSlotBeforeSelection = slots[targetIndex] || null;
 
     rememberSearchRow(normalizedActiveSym);
     setSlots((current) => {
-      const sourceSlot = sourceIndex >= 0 ? current[sourceIndex] : null;
-      const targetSlot = current[targetIndex] || null;
+      const sourceSlot =
+        sourceSlotBeforeSelection ||
+        (sourceIndex >= 0 ? current[sourceIndex] : null);
+      const targetSlot = targetSlotBeforeSelection || current[targetIndex] || null;
       return current.map((slot, index) => {
         if (index === targetIndex) {
           return hydrateMiniChartSlot(
