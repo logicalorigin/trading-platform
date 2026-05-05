@@ -27,6 +27,7 @@ import AccountHeaderStrip from "./account/AccountHeaderStrip";
 import AccountReturnsPanel from "./account/AccountReturnsPanel";
 import EquityCurvePanel from "./account/EquityCurvePanel";
 import AllocationPanel from "./account/AllocationPanel";
+import PortfolioRiskStrip from "./account/PortfolioRiskStrip";
 import PositionsPanel, { PositionsAtDateInspector } from "./account/PositionsPanel";
 import TradingPatternsPanel from "./account/TradingPatternsPanel";
 import RiskDashboardPanel from "./account/RiskDashboardPanel";
@@ -1061,6 +1062,21 @@ export const AccountScreen = ({
           />
         </div>
 
+        <PortfolioRiskStrip
+          summary={summaryQuery.data}
+          riskData={riskQuery.data}
+          positionsResponse={positionsQuery.data}
+          accountMode={shadowMode ? "shadow" : "real"}
+          brokerAuthenticated={shadowMode || brokerAuthenticated}
+          gatewayTradingReady={shadowMode || gatewayTradingReady}
+          isLoading={
+            summaryQuery.isLoading ||
+            riskQuery.isLoading ||
+            positionsQuery.isLoading
+          }
+          maskValues={maskAccountValues}
+        />
+
         <div
           className="ra-panel-enter ra-account-overview-grid"
         >
@@ -1230,6 +1246,7 @@ export const AccountScreen = ({
               selectedAccountTradeId
             }
             onTradeSelect={setSelectedAccountTradeId}
+            onJumpToChart={onJumpToTrade}
             emptyBody={
               shadowMode
                 ? "Shadow exits will appear here after a manual or automation sell closes part of a position."
@@ -1254,6 +1271,7 @@ export const AccountScreen = ({
             cancelDisabledReason={gatewayTradingMessage}
             sourceFilter={shadowMode ? sourceFilter : "all"}
             onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
+            onJumpToChart={onJumpToTrade}
             emptyBody={
               shadowMode
                 ? "Shadow orders fill immediately into the internal ledger, so working orders are normally empty."

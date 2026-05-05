@@ -45,6 +45,30 @@ const SummaryCard = ({ label, value, tone = T.text }) => (
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
 
+const TradeContextButton = ({ symbol, onJumpToChart, testId }) =>
+  symbol && onJumpToChart ? (
+    <AppTooltip content={`Open ${symbol} in Trade`}>
+      <button
+        type="button"
+        data-testid={testId}
+        className="ra-interactive"
+        onClick={(event) => {
+          event.stopPropagation();
+          onJumpToChart(symbol);
+        }}
+        style={{
+          ...secondaryButtonStyle,
+          height: dim(19),
+          padding: sp("0 6px"),
+          color: T.accent,
+          flexShrink: 0,
+        }}
+      >
+        Trade
+      </button>
+    </AppTooltip>
+  ) : null;
+
 const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
@@ -134,6 +158,7 @@ export const OrdersPanel = ({
   cancelDisabledReason = "IB Gateway must be connected before trading.",
   sourceFilter = "all",
   onSourceFilterChange,
+  onJumpToChart,
   emptyBody = "Working orders update from the IBKR order stream. Historical rows appear as orders reach a terminal status.",
   maskValues = false,
 }) => {
@@ -196,19 +221,27 @@ export const OrdersPanel = ({
                 key={order.id}
                 className="ra-table-row"
                 tabIndex={0}
+                onDoubleClick={() => onJumpToChart?.(order.symbol)}
                 onKeyDown={moveTableFocus}
               >
                 <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
-                  <MarketIdentityInline
-                    item={{
-                      ticker: order.symbol,
-                      market: marketForAssetClass(order.assetClass),
-                    }}
-                    size={14}
-                    showMark={false}
-                    showChips
-                    style={{ maxWidth: dim(126) }}
-                  />
+                  <div style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
+                    <MarketIdentityInline
+                      item={{
+                        ticker: order.symbol,
+                        market: marketForAssetClass(order.assetClass),
+                      }}
+                      size={14}
+                      showMark={false}
+                      showChips
+                      style={{ maxWidth: dim(126), minWidth: 0 }}
+                    />
+                    <TradeContextButton
+                      symbol={order.symbol}
+                      onJumpToChart={onJumpToChart}
+                      testId={`account-order-trade-${order.id}`}
+                    />
+                  </div>
                 </td>
                 <td style={tableCellStyle}>
                   <Pill tone={/buy|long/i.test(order.side) ? "green" : "red"}>{order.side}</Pill>
@@ -323,6 +356,7 @@ export const ClosedTradesPanel = ({
   maskValues = false,
   selectedTradeId = "",
   onTradeSelect,
+  onJumpToChart,
 }) => {
   const rows = (query.data?.trades || []).filter((trade) =>
     (!sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
@@ -492,6 +526,7 @@ export const ClosedTradesPanel = ({
                       className="ra-table-row"
                       tabIndex={0}
                       onClick={() => onTradeSelect?.(tradeId)}
+                      onDoubleClick={() => onJumpToChart?.(trade.symbol)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
@@ -507,16 +542,23 @@ export const ClosedTradesPanel = ({
                       }}
                     >
                       <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: 900 }}>
-                        <MarketIdentityInline
-                          item={{
-                            ticker: trade.symbol,
-                            market: marketForAssetClass(trade.assetClass),
-                          }}
-                          size={14}
-                          showMark={false}
-                          showChips
-                          style={{ maxWidth: dim(126) }}
-                        />
+                        <div style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
+                          <MarketIdentityInline
+                            item={{
+                              ticker: trade.symbol,
+                              market: marketForAssetClass(trade.assetClass),
+                            }}
+                            size={14}
+                            showMark={false}
+                            showChips
+                            style={{ maxWidth: dim(126), minWidth: 0 }}
+                          />
+                          <TradeContextButton
+                            symbol={trade.symbol}
+                            onJumpToChart={onJumpToChart}
+                            testId={`account-closed-trade-trade-${tradeId}`}
+                          />
+                        </div>
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
                         <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>

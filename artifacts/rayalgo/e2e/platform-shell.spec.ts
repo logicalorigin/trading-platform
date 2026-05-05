@@ -44,6 +44,19 @@ type MockMarketDataAdmission = {
   counters?: Record<string, Record<string, number>>;
 };
 
+type MockAccountFixtures = {
+  summary?: unknown;
+  allocation?: unknown;
+  positions?: unknown;
+  positionsAtDate?: unknown;
+  orders?: unknown;
+  closedTrades?: unknown;
+  risk?: unknown;
+  cash?: unknown;
+  equityHistory?: unknown;
+  tradingPatterns?: unknown;
+};
+
 async function disableStreamingSources(page: Page) {
   await page.addInitScript(() => {
     class MockEventSource extends EventTarget {
@@ -198,6 +211,7 @@ async function mockShellApi(
     failurePaths = [],
     runtimeLineUsage = null,
     shadowBacktestRequests = [],
+    accountFixtures,
   }: {
     barsRequests?: Array<Record<string, string>>;
     bridgeLauncherRequests?: Array<Record<string, string>>;
@@ -208,6 +222,7 @@ async function mockShellApi(
     failurePaths?: string[];
     runtimeLineUsage?: MockMarketDataAdmission | null;
     shadowBacktestRequests?: Array<Record<string, unknown>>;
+    accountFixtures?: MockAccountFixtures;
   } = {},
 ) {
   await page.route("**/api/**", async (route) => {
@@ -686,7 +701,45 @@ async function mockShellApi(
         updatedAt: new Date(mockNow).toISOString(),
       };
     } else if (url.pathname.includes("/account/") || url.pathname.includes("/accounts/")) {
-      body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
+      if (!accountFixtures) {
+        body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
+      } else if (url.pathname.endsWith("/summary")) {
+        body = accountFixtures.summary ?? { metrics: {}, accounts: [] };
+      } else if (url.pathname.endsWith("/allocation")) {
+        body = accountFixtures.allocation ?? { allocations: [] };
+      } else if (url.pathname.endsWith("/positions-at-date")) {
+        body = accountFixtures.positionsAtDate ?? { positions: [] };
+      } else if (url.pathname.endsWith("/positions")) {
+        body = accountFixtures.positions ?? { positions: [] };
+      } else if (url.pathname.endsWith("/orders")) {
+        body = accountFixtures.orders ?? { orders: [] };
+      } else if (url.pathname.endsWith("/closed-trades")) {
+        body = accountFixtures.closedTrades ?? { trades: [], summary: { count: 0 } };
+      } else if (url.pathname.endsWith("/risk")) {
+        body =
+          accountFixtures.risk ??
+          {
+            concentration: {},
+            winnersLosers: {},
+            margin: {},
+            greeks: {},
+            expiryConcentration: {},
+          };
+      } else if (url.pathname.endsWith("/cash-activity")) {
+        body = accountFixtures.cash ?? { activities: [], dividends: [] };
+      } else if (url.pathname.endsWith("/equity-history")) {
+        body =
+          accountFixtures.equityHistory ??
+          {
+            points: [],
+            range: url.searchParams.get("range") || "ALL",
+            currency: "USD",
+          };
+      } else if (url.pathname.endsWith("/trading-patterns")) {
+        body = accountFixtures.tradingPatterns ?? { summary: {}, tickerStats: [] };
+      } else {
+        body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
+      }
     }
 
     await route.fulfill({
@@ -1170,6 +1223,179 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
 
   await openScreen(page, "Account", "account");
   await expect(page.getByText("Shadow internal paper")).toBeVisible();
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("account risk strip and row handoffs open Trade context", async ({ page }) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const updatedAt = new Date(mockNow).toISOString();
+  const metric = (value: number | null, field: string, currency: string | null = "USD") => ({
+    value,
+    currency,
+    source: "IBKR_ACCOUNT_SUMMARY",
+    field,
+    updatedAt,
+  });
+
+  await disableStreamingSources(page);
+  await mockShellApi(page, {
+    ibkrReady: true,
+    accountFixtures: {
+      summary: {
+        accountId: "combined",
+        isCombined: true,
+        mode: "paper",
+        currency: "USD",
+        accounts: [
+          {
+            id: "DU1234567",
+            displayName: "Paper",
+            currency: "USD",
+            live: true,
+            accountType: "Margin",
+            updatedAt,
+          },
+        ],
+        updatedAt,
+        fx: { baseCurrency: "USD", timestamp: updatedAt, rates: { USD: 1 }, warning: null },
+        badges: { accountTypes: ["Margin"] },
+        metrics: {
+          netLiquidation: metric(100_000, "NetLiquidation"),
+          buyingPower: metric(25_000, "BuyingPower"),
+          marginUsed: metric(12_000, "InitMarginReq"),
+          maintenanceMargin: metric(8_000, "MaintMarginReq"),
+          maintenanceMarginCushionPercent: metric(0.62, "Cushion", null),
+          dayPnl: metric(850, "QuoteChange"),
+          dayPnlPercent: metric(0.85, "QuoteChange/NetLiquidation", null),
+          totalPnl: metric(4_250, "ChangeInNAV"),
+          totalPnlPercent: metric(4.25, "ChangeInNAV/InitialNAV", null),
+          totalCash: metric(20_000, "TotalCashValue"),
+          settledCash: metric(19_000, "SettledCash"),
+        },
+      },
+      positions: {
+        positions: [
+          {
+            id: "pos-nvda",
+            accountId: "DU1234567",
+            symbol: "NVDA",
+            assetClass: "Stocks",
+            quantity: 10,
+            marketValue: 41_000,
+            weightPercent: 41,
+            unrealizedPnl: 500,
+            sector: "Technology",
+          },
+          {
+            id: "pos-qqq",
+            accountId: "DU1234567",
+            symbol: "QQQ",
+            assetClass: "ETF",
+            quantity: 5,
+            marketValue: 9_000,
+            weightPercent: 9,
+            unrealizedPnl: 120,
+            sector: "ETF",
+          },
+        ],
+      },
+      orders: {
+        orders: [
+          {
+            id: "ord-nvda",
+            accountId: "DU1234567",
+            symbol: "NVDA",
+            assetClass: "Stocks",
+            side: "BUY",
+            type: "LMT",
+            quantity: 10,
+            filledQuantity: 0,
+            limitPrice: 410,
+            stopPrice: null,
+            timeInForce: "DAY",
+            status: "working",
+            placedAt: updatedAt,
+            averageFillPrice: null,
+            sourceType: "manual",
+            source: "manual",
+          },
+        ],
+        updatedAt,
+      },
+      closedTrades: {
+        summary: {
+          count: 1,
+          winners: 1,
+          losers: 0,
+          realizedPnl: 150,
+          commissions: 1,
+        },
+        trades: [
+          {
+            id: "trade-aapl",
+            source: "FLEX",
+            sourceType: "manual",
+            symbol: "AAPL",
+            assetClass: "Stocks",
+            side: "Long",
+            quantity: 3,
+            openDate: new Date(mockNow - 86_400_000).toISOString(),
+            closeDate: updatedAt,
+            avgOpen: 180,
+            avgClose: 230,
+            realizedPnl: 150,
+            realizedPnlPercent: 5,
+            commissions: 1,
+            currency: "USD",
+          },
+        ],
+      },
+      risk: {
+        accountId: "combined",
+        currency: "USD",
+        concentration: {
+          topPositions: [{ symbol: "NVDA", marketValue: 41_000, weightPercent: 0.41 }],
+          sectors: [{ sector: "Technology", value: 41_000, weightPercent: 41 }],
+        },
+        winnersLosers: {},
+        margin: {
+          leverageRatio: 0.5,
+          marginUsed: 12_000,
+          marginAvailable: 25_000,
+          maintenanceMargin: 8_000,
+          maintenanceCushionPercent: 0.62,
+          providerFields: {},
+        },
+        greeks: {},
+        expiryConcentration: {},
+        updatedAt,
+      },
+      allocation: { allocations: [] },
+      equityHistory: { points: [], range: "ALL", currency: "USD" },
+      cash: { activities: [], dividends: [] },
+    },
+  });
+  await page.goto("/");
+
+  await openScreen(page, "Account", "account");
+  await expect(page.getByTestId("account-portfolio-risk-strip")).toBeVisible();
+  await expect(page.getByTestId("account-risk-strip-buying-power")).toContainText("$25.0K");
+  await expect(page.getByTestId("account-risk-strip-open-risk")).toContainText("$50.0K");
+  await expect(page.getByTestId("account-risk-strip-live-state")).toContainText("Live");
+
+  await page.getByTestId("account-order-trade-ord-nvda").click();
+  await expect(page.getByTestId("screen-host-trade")).toHaveAttribute("aria-hidden", "false");
+  await expect(
+    page.getByTestId("trade-equity-chart").getByTestId("chart-symbol-search-button"),
+  ).toHaveAttribute("title", "Search NVDA", { timeout: 15_000 });
+
+  await openScreen(page, "Account", "account");
+  await page.getByTestId("account-closed-trade-trade-FLEX:trade-aapl").click();
+  await expect(page.getByTestId("screen-host-trade")).toHaveAttribute("aria-hidden", "false");
+  await expect(
+    page.getByTestId("trade-equity-chart").getByTestId("chart-symbol-search-button"),
+  ).toHaveAttribute("title", "Search AAPL", { timeout: 15_000 });
+
   expect(runtimeIssues).toEqual([]);
 });
 
