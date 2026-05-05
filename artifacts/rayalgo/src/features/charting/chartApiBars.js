@@ -101,7 +101,18 @@ export const describeBrokerChartSource = (source) => {
 export const describeBrokerChartStatus = (status, timeframe) =>
   status === "live" ? `IBKR ${timeframe}` : status;
 
-const intradayTimeframes = new Set(["5s", "1m", "5m", "15m", "1h"]);
+const intradayTimeframes = new Set([
+  "5s",
+  "15s",
+  "30s",
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "30m",
+  "1h",
+  "4h",
+]);
 
 const normalizeText = (value) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -115,6 +126,7 @@ export const resolveBrokerChartSourceState = ({
   nowMs = Date.now(),
 } = {}) => {
   const source = normalizeText(latestBar?.source);
+  const baseSource = source.replace(/:rollup$/, "");
   const freshness = normalizeText(latestBar?.freshness);
   const marketDataMode = normalizeText(latestBar?.marketDataMode);
   const sourceLabel = describeBrokerChartSource(latestBar?.source);
@@ -165,22 +177,24 @@ export const resolveBrokerChartSourceState = ({
     marketDataMode === "stale" ||
     statusText === "stale";
   const isIbkr =
-    source.startsWith("ibkr") ||
+    baseSource.startsWith("ibkr") ||
     marketDataMode === "live" ||
     sourceLabel === "IBKR" ||
+    sourceLabel === "IBKR ROLL" ||
     sourceLabel === "WS" ||
+    sourceLabel === "WS ROLL" ||
     sourceLabel === "LIVE";
   const isRealtime =
     !isDelayed &&
     !isStale &&
-    (source === "ibkr-websocket-derived" ||
-      source === "ibkr-option-quote-derived" ||
-      (source !== "ibkr-history" &&
+    (baseSource === "ibkr-websocket-derived" ||
+      baseSource === "ibkr-option-quote-derived" ||
+      (baseSource !== "ibkr-history" &&
         isIbkr &&
         marketDataMode === "live" &&
         freshness !== "stale"));
   const historicalButExpectedLive =
-    Boolean(streamingEnabled && isEquityLike && isIntraday && source === "ibkr-history");
+    Boolean(streamingEnabled && isEquityLike && isIntraday && baseSource === "ibkr-history");
   const isDegraded = isStale || isDelayed || isFallback || historicalButExpectedLive;
 
   let state = "historical";
@@ -190,8 +204,8 @@ export const resolveBrokerChartSourceState = ({
 
   if (isRealtime) {
     state = "live";
-    label = source === "ibkr-websocket-derived" ? "IBKR WS" : "IBKR LIVE";
-    shortLabel = source === "ibkr-websocket-derived" ? "WS" : "LIVE";
+    label = baseSource === "ibkr-websocket-derived" ? "IBKR WS" : "IBKR LIVE";
+    shortLabel = baseSource === "ibkr-websocket-derived" ? "WS" : "LIVE";
     tone = "good";
   } else if (isStale) {
     state = "stale";
@@ -203,12 +217,12 @@ export const resolveBrokerChartSourceState = ({
     label = "DELAYED";
     shortLabel = "DELAY";
     tone = "warn";
-  } else if (source === "ibkr-history") {
+  } else if (baseSource === "ibkr-history") {
     state = historicalButExpectedLive ? "degraded" : "historical";
-    label = "IBKR HIST";
-    shortLabel = "HIST";
+    label = source.endsWith(":rollup") ? "IBKR HIST ROLL" : "IBKR HIST";
+    shortLabel = source.endsWith(":rollup") ? "HIST ROLL" : "HIST";
     tone = historicalButExpectedLive ? "warn" : "neutral";
-  } else if (source === "ibkr+massive-gap-fill") {
+  } else if (baseSource === "ibkr+massive-gap-fill") {
     state = "fallback";
     label = "IBKR + GAP";
     shortLabel = "GAP";

@@ -315,6 +315,7 @@ export type ChartLegendMetadata = {
   name?: string | null;
   timeframe?: string | null;
   statusLabel?: string | null;
+  statusTone?: "good" | "warn" | "bad" | "neutral" | "muted" | "info";
   priceLabel?: string | null;
   price?: number | null;
   changePercent?: number | null;
@@ -6378,9 +6379,17 @@ export const ResearchChartSurface = ({
     legend?.meta?.sourceLabel,
   );
   const legendStatusColor =
-    legend?.statusLabel && /live|open|stream|massive|ibkr/i.test(legend.statusLabel)
+    legend?.statusTone === "good"
       ? theme.green
-      : theme.textMuted;
+      : legend?.statusTone === "warn"
+        ? theme.amber
+        : legend?.statusTone === "bad"
+          ? theme.red
+          : legend?.statusTone === "neutral" || legend?.statusTone === "info"
+            ? (theme.accent || theme.text)
+            : legend?.statusLabel && /live|open|stream|massive|ibkr/i.test(legend.statusLabel)
+              ? theme.green
+              : theme.textMuted;
   const emptyStateEyebrow = emptyState?.eyebrow || "Chart feed";
   const emptyStateTitle =
     emptyState?.title ||

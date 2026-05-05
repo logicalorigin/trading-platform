@@ -102,6 +102,7 @@ type ResearchChartWidgetHeaderProps = {
   priceLabel?: string | null;
   changePercent?: number | null;
   statusLabel?: string | null;
+  statusTone?: "good" | "warn" | "bad" | "neutral" | "muted" | "info";
   timeframe: string;
   timeframeOptions: TimeframeOption[];
   favoriteTimeframes?: string[];
@@ -658,6 +659,7 @@ export const ResearchChartWidgetHeader = ({
   priceLabel = null,
   changePercent,
   statusLabel,
+  statusTone,
   timeframe,
   timeframeOptions,
   favoriteTimeframes,
@@ -738,9 +740,17 @@ export const ResearchChartWidgetHeader = ({
   const positive = (changePercent ?? 0) >= 0;
   const changeColor = positive ? theme.green : theme.red;
   const statusColor =
-    statusLabel && /live|open|stream|massive|ibkr/i.test(statusLabel)
+    statusTone === "good"
       ? theme.green
-      : theme.textDim || theme.textMuted;
+      : statusTone === "warn"
+        ? theme.amber
+        : statusTone === "bad"
+          ? theme.red
+          : statusTone === "neutral" || statusTone === "info"
+            ? (theme.accent ?? theme.text)
+            : statusLabel && /live|open|stream|massive|ibkr/i.test(statusLabel)
+              ? theme.green
+              : theme.textDim || theme.textMuted;
   const showTrailingActions =
     showSnapshotButton ||
     showSettingsButton ||

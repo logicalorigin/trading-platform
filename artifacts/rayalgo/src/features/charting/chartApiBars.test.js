@@ -53,21 +53,45 @@ test("resolveBrokerChartSourceState marks IBKR websocket bars as live", () => {
   assert.equal(state.isDegraded, false);
 });
 
+test("resolveBrokerChartSourceState keeps rolled IBKR websocket bars live", () => {
+  const state = resolveBrokerChartSourceState({
+    latestBar: {
+      source: "ibkr-websocket-derived:rollup",
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: "2026-05-04T14:30:00.000Z",
+    },
+    status: "live",
+    timeframe: "30m",
+    streamingEnabled: true,
+    market: "stocks",
+    nowMs: Date.parse("2026-05-04T14:30:10.000Z"),
+  });
+
+  assert.equal(state.state, "live");
+  assert.equal(state.label, "IBKR WS");
+  assert.equal(state.sourceLabel, "WS ROLL");
+  assert.equal(state.tone, "good");
+  assert.equal(state.isRealtime, true);
+  assert.equal(state.isDegraded, false);
+});
+
 test("resolveBrokerChartSourceState warns when an intraday stock chart is stuck on history", () => {
   const state = resolveBrokerChartSourceState({
     latestBar: {
-      source: "ibkr-history",
+      source: "ibkr-history:rollup",
       freshness: "live",
       marketDataMode: "live",
     },
     status: "live",
-    timeframe: "15m",
+    timeframe: "30m",
     streamingEnabled: true,
     market: "stocks",
   });
 
   assert.equal(state.state, "degraded");
-  assert.equal(state.label, "IBKR HIST");
+  assert.equal(state.label, "IBKR HIST ROLL");
+  assert.equal(state.sourceLabel, "IBKR ROLL");
   assert.equal(state.tone, "warn");
   assert.equal(state.isDegraded, true);
 });

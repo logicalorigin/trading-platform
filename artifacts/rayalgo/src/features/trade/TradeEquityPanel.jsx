@@ -37,6 +37,7 @@ import {
   buildTradeBarsFromApi,
   describeBrokerChartSource,
   describeBrokerChartStatus,
+  resolveBrokerChartSourceState,
   useDisplayChartPriceFallbackBars,
 } from "../charting/chartApiBars";
 import {
@@ -635,8 +636,17 @@ export const TradeEquityPanel = ({
       ? (displayChange / previousClose) * 100
       : null;
   const equityChartName = ticker ? `${ticker} spot` : "Spot chart";
-  const equityChartStatus = describeBrokerChartStatus(barsStatus, tf);
-  const equityChartSource = describeBrokerChartSource(latestBar?.source);
+  const equityChartSourceState = resolveBrokerChartSourceState({
+    latestBar,
+    status: barsStatus,
+    timeframe: tf,
+    streamingEnabled: stockAggregateStreamingEnabled,
+    market: "stocks",
+  });
+  const equityChartStatus =
+    equityChartSourceState.label || describeBrokerChartStatus(barsStatus, tf);
+  const equityChartSource =
+    equityChartSourceState.sourceLabel || describeBrokerChartSource(latestBar?.source);
   const callFlows = markers.filter((m) => m.cp === "C").length;
   const putFlows = markers.filter((m) => m.cp === "P").length;
   const toggleIndicator = (indicatorId) => {
@@ -705,6 +715,7 @@ export const TradeEquityPanel = ({
         name: equityChartName,
         timeframe: tf,
         statusLabel: equityChartStatus,
+        statusTone: equityChartSourceState.tone,
         priceLabel: "Spot",
         price: displayPrice,
         changePercent: displayPct,
@@ -743,6 +754,7 @@ export const TradeEquityPanel = ({
           price={displayPrice}
           changePercent={displayPct}
           statusLabel={equityChartStatus}
+          statusTone={equityChartSourceState.tone}
           timeframe={tf}
           showInlineLegend={false}
           timeframeOptions={TRADE_TIMEFRAMES.map((timeframe) => ({
