@@ -1110,6 +1110,7 @@ export const AccountScreen = ({
               rightRail={shadowMode ? "Internal ledger" : undefined}
               maskValues={maskAccountValues}
               compact
+              onSymbolSelect={handleAccountSymbolSelect}
             />
           </div>
           <div className="ra-account-overview-cell ra-account-overview-equity">
@@ -1156,6 +1157,8 @@ export const AccountScreen = ({
           sourceFilter={shadowMode ? sourceFilter : "all"}
           onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
           onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+          symbolFilter={tradeFilters.symbol}
+          onClearSymbolFilter={() => handleTradeFilterChange({ symbol: "" })}
           rightRail={shadowMode ? "Shadow positions + marks" : undefined}
           emptyBody={
             shadowMode
@@ -1272,6 +1275,8 @@ export const AccountScreen = ({
             sourceFilter={shadowMode ? sourceFilter : "all"}
             onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
             onJumpToChart={onJumpToTrade}
+            symbolFilter={tradeFilters.symbol}
+            onClearSymbolFilter={() => handleTradeFilterChange({ symbol: "" })}
             emptyBody={
               shadowMode
                 ? "Shadow orders fill immediately into the internal ledger, so working orders are normally empty."

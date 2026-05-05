@@ -95,6 +95,7 @@ const RankedList = ({
   valueKey,
   emptyLabel = "No rows",
   maskValues = false,
+  onSymbolSelect,
 }) => (
   <div
     style={{
@@ -120,13 +121,38 @@ const RankedList = ({
         >
           <span style={{ color: T.text, minWidth: 0 }}>
             {row.symbol ? (
-              <MarketIdentityInline
-                item={{ ticker: row.symbol, market: "stocks" }}
-                size={14}
-                showMark={false}
-                showChips
-                style={{ maxWidth: dim(120) }}
-              />
+              onSymbolSelect ? (
+                <button
+                  type="button"
+                  data-testid={`account-risk-symbol-${row.symbol}`}
+                  className="ra-interactive"
+                  onClick={() => onSymbolSelect(row.symbol)}
+                  style={{
+                    border: "none",
+                    padding: 0,
+                    background: "transparent",
+                    color: T.text,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <MarketIdentityInline
+                    item={{ ticker: row.symbol, market: "stocks" }}
+                    size={14}
+                    showMark={false}
+                    showChips
+                    style={{ maxWidth: dim(120) }}
+                  />
+                </button>
+              ) : (
+                <MarketIdentityInline
+                  item={{ ticker: row.symbol, market: "stocks" }}
+                  size={14}
+                  showMark={false}
+                  showChips
+                  style={{ maxWidth: dim(120) }}
+                />
+              )
             ) : (
               row.sector
             )}
@@ -155,6 +181,7 @@ export const RiskDashboardPanel = ({
   rightRail,
   maskValues = false,
   compact = false,
+  onSymbolSelect,
 }) => {
   const data = buildAccountRiskDisplayModel(query.data, positionsResponse);
   const margin = data?.margin || {};
@@ -269,6 +296,7 @@ export const RiskDashboardPanel = ({
               currency={currency}
               valueKey="marketValue"
               maskValues={maskValues}
+              onSymbolSelect={onSymbolSelect}
             />
           </div>
         </div>
@@ -389,6 +417,7 @@ export const RiskDashboardPanel = ({
                   rows={data.concentration?.topPositions || []}
                   currency={currency}
                   valueKey="marketValue"
+                  onSymbolSelect={onSymbolSelect}
                 />
                 <RankedList
                   title="Sector Concentration"
@@ -415,6 +444,7 @@ export const RiskDashboardPanel = ({
               currency={currency}
               valueKey="unrealizedPnl"
               maskValues={maskValues}
+              onSymbolSelect={onSymbolSelect}
             />
             <RankedList
               title="Today Losers"
@@ -422,6 +452,7 @@ export const RiskDashboardPanel = ({
               currency={currency}
               valueKey="unrealizedPnl"
               maskValues={maskValues}
+              onSymbolSelect={onSymbolSelect}
             />
             <RankedList
               title="All-Time Winners"
@@ -429,6 +460,7 @@ export const RiskDashboardPanel = ({
               currency={currency}
               valueKey="unrealizedPnl"
               maskValues={maskValues}
+              onSymbolSelect={onSymbolSelect}
             />
             <RankedList
               title="All-Time Losers"
@@ -436,6 +468,7 @@ export const RiskDashboardPanel = ({
               currency={currency}
               valueKey="unrealizedPnl"
               maskValues={maskValues}
+              onSymbolSelect={onSymbolSelect}
             />
           </div>
 

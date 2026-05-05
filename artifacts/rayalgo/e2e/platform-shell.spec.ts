@@ -1383,6 +1383,10 @@ test("account risk strip and row handoffs open Trade context", async ({ page }) 
   await expect(page.getByTestId("account-risk-strip-open-risk")).toContainText("$50.0K");
   await expect(page.getByTestId("account-risk-strip-live-state")).toContainText("Live");
 
+  await page.getByTestId("account-risk-symbol-NVDA").first().click();
+  await expect(page.getByText("Current Positions · 1")).toBeVisible();
+  await expect(page.getByText("Showing working · NVDA")).toBeVisible();
+
   await page.getByTestId("account-order-trade-ord-nvda").click();
   await expect(page.getByTestId("screen-host-trade")).toHaveAttribute("aria-hidden", "false");
   await expect(
@@ -1390,6 +1394,8 @@ test("account risk strip and row handoffs open Trade context", async ({ page }) 
   ).toHaveAttribute("title", "Search NVDA", { timeout: 15_000 });
 
   await openScreen(page, "Account", "account");
+  await page.getByTestId("account-symbol-filter-clear").click();
+  await expect(page.getByText("Current Positions · 2")).toBeVisible();
   await page.getByTestId("account-closed-trade-trade-FLEX:trade-aapl").click();
   await expect(page.getByTestId("screen-host-trade")).toHaveAttribute("aria-hidden", "false");
   await expect(

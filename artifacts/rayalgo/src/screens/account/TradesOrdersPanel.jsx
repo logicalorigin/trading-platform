@@ -92,6 +92,17 @@ const normalizeText = (value, fallback = "") => {
 
 const normalizeSymbol = (value) => normalizeText(value).toUpperCase();
 
+const orderMatchesSymbol = (order, symbolFilter) => {
+  const normalized = normalizeSymbol(symbolFilter);
+  if (!normalized) {
+    return true;
+  }
+  return [order?.symbol, order?.optionContract?.underlying]
+    .map(normalizeSymbol)
+    .filter(Boolean)
+    .includes(normalized);
+};
+
 const tradeStrategyValue = (trade) =>
   normalizeText(
     trade?.strategyLabel,
@@ -159,16 +170,24 @@ export const OrdersPanel = ({
   sourceFilter = "all",
   onSourceFilterChange,
   onJumpToChart,
+  symbolFilter = "",
+  onClearSymbolFilter,
   emptyBody = "Working orders update from the IBKR order stream. Historical rows appear as orders reach a terminal status.",
   maskValues = false,
 }) => {
+  const normalizedSymbolFilter = normalizeSymbol(symbolFilter);
   const orders = (query.data?.orders || []).filter((order) =>
-    sourceFilter === "all" ? true : order.sourceType === sourceFilter,
+    (sourceFilter === "all" ? true : order.sourceType === sourceFilter) &&
+    orderMatchesSymbol(order, normalizedSymbolFilter),
   );
   return (
   <Panel
     title="Orders"
-    rightRail={`Showing ${tab}`}
+    rightRail={
+      normalizedSymbolFilter
+        ? `Showing ${tab} · ${normalizedSymbolFilter}`
+        : `Showing ${tab}`
+    }
     loading={query.isLoading}
     error={query.error}
     onRetry={query.refetch}
@@ -191,14 +210,33 @@ export const OrdersPanel = ({
             onChange={onSourceFilterChange}
           />
         ) : null}
+        {normalizedSymbolFilter ? (
+          <button
+            type="button"
+            data-testid="account-orders-symbol-filter-clear"
+            className="ra-interactive"
+            onClick={onClearSymbolFilter}
+            style={secondaryButtonStyle}
+          >
+            Clear {normalizedSymbolFilter}
+          </button>
+        ) : null}
       </div>
     }
   >
     {!orders.length ? (
       <div style={{ padding: sp(7) }}>
         <EmptyState
-          title={`No ${tab} orders`}
-          body={emptyBody}
+          title={
+            normalizedSymbolFilter
+              ? `No ${normalizedSymbolFilter} ${tab} orders`
+              : `No ${tab} orders`
+          }
+          body={
+            normalizedSymbolFilter
+              ? "Risk drilldown is active; clear the symbol filter to return to all orders."
+              : emptyBody
+          }
         />
       </div>
     ) : (

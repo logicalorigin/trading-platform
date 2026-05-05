@@ -81,6 +81,19 @@ const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
 
+const normalizeSymbolFilter = (value) => String(value || "").trim().toUpperCase();
+
+const positionMatchesSymbol = (row, symbolFilter) => {
+  const normalized = normalizeSymbolFilter(symbolFilter);
+  if (!normalized) {
+    return true;
+  }
+  return [row?.symbol, row?.optionContract?.underlying]
+    .map(normalizeSymbolFilter)
+    .filter(Boolean)
+    .includes(normalized);
+};
+
 const dateLabel = (date) => {
   if (!date) return "Live";
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -316,14 +329,18 @@ export const PositionsPanel = ({
   sourceFilter = "all",
   onSourceFilterChange,
   onJumpToChart,
+  symbolFilter = "",
+  onClearSymbolFilter,
   rightRail = "IBKR positions + lots",
   emptyBody = "Positions from the IBKR account stream will appear here. Tax lots fill in from the local ledger as fills are observed.",
   maskValues = false,
 }) => {
   const [sort, setSort] = useState({ id: "marketValue", dir: "desc" });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
+  const normalizedSymbolFilter = normalizeSymbolFilter(symbolFilter);
   const rows = (query.data?.positions || [])
     .filter(isOpenPositionRow)
+    .filter((row) => positionMatchesSymbol(row, normalizedSymbolFilter))
     .filter((row) =>
       sourceFilter === "all" ? true : row.sourceType === sourceFilter,
     );
@@ -362,7 +379,9 @@ export const PositionsPanel = ({
   return (
     <Panel
       title={`Current Positions · ${rows.length}`}
-      rightRail={rightRail}
+      rightRail={
+        normalizedSymbolFilter ? `${rightRail} · ${normalizedSymbolFilter}` : rightRail
+      }
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
@@ -378,14 +397,33 @@ export const PositionsPanel = ({
               onChange={onSourceFilterChange}
             />
           ) : null}
+          {normalizedSymbolFilter ? (
+            <button
+              type="button"
+              data-testid="account-symbol-filter-clear"
+              className="ra-interactive"
+              onClick={onClearSymbolFilter}
+              style={secondaryButtonStyle}
+            >
+              Clear {normalizedSymbolFilter}
+            </button>
+          ) : null}
         </div>
       }
     >
       {!rows.length ? (
         <div style={{ padding: sp(7) }}>
           <EmptyState
-            title="No open positions"
-            body={emptyBody}
+            title={
+              normalizedSymbolFilter
+                ? `No open ${normalizedSymbolFilter} positions`
+                : "No open positions"
+            }
+            body={
+              normalizedSymbolFilter
+                ? "Risk drilldown is active; clear the symbol filter to return to all positions."
+                : emptyBody
+            }
           />
         </div>
       ) : (
