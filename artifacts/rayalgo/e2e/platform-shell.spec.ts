@@ -128,28 +128,60 @@ function timeframeStepMs(timeframe: string | null) {
   }
 }
 
+const brokerLiveEdgeWindowMinutesByTimeframe: Record<string, number> = {
+  "5s": 60,
+  "15s": 60,
+  "30s": 60,
+  "1m": 240,
+  "2m": 240,
+  "5m": 240,
+  "15m": 720,
+  "30m": 720,
+  "1h": 2_880,
+  "4h": 2_880,
+  "1d": 14_400,
+};
+
 function expectedBrokerRecentWindowMinutes(request: Record<string, string>) {
   const stepMs = timeframeStepMs(request.timeframe || null);
   const limit = Number(request.limit || "0");
   if (!stepMs || !Number.isFinite(limit) || limit <= 0) {
     return 0;
   }
-  return Math.ceil((stepMs * limit) / 60_000);
+  const horizonMinutes = Math.ceil((stepMs * (limit + 2)) / 60_000);
+  const liveEdgeWindowMinutes =
+    brokerLiveEdgeWindowMinutesByTimeframe[request.timeframe || ""] ?? 240;
+  return Math.max(1, Math.min(horizonMinutes, liveEdgeWindowMinutes));
 }
 
-function makeBars(symbol: string, timeframe = "5m") {
+function makeBars(
+  symbol: string,
+  timeframe = "5m",
+  {
+    limit = 80,
+    brokerRecentWindowMinutes = 60,
+  }: { limit?: number; brokerRecentWindowMinutes?: number } = {},
+) {
   const stepMs = timeframeStepMs(timeframe);
+  const barCount = Math.max(20, Math.min(Number.isFinite(limit) ? limit : 80, 120));
+  const liveEdgeWindowMs = Math.max(0, brokerRecentWindowMinutes) * 60_000;
   const base = 100 + symbols.indexOf(symbol) * 25;
-  return Array.from({ length: 80 }, (_, index) => {
+  return Array.from({ length: barCount }, (_, index) => {
+    const timestampMs = mockNow - (barCount - 1 - index) * stepMs;
     const close = base + Math.sin(index / 6) * 1.5 + index * 0.03;
+    const isLiveEdge = timestampMs >= mockNow - liveEdgeWindowMs;
     return {
-      timestamp: new Date(mockNow - (79 - index) * stepMs).toISOString(),
+      timestamp: new Date(timestampMs).toISOString(),
       open: close - 0.4,
       high: close + 1,
       low: close - 1,
       close,
       volume: 100_000 + index * 1_000,
-      source: "mock",
+      source: isLiveEdge ? "ibkr-history" : "massive-history",
+      freshness: isLiveEdge ? "live" : "delayed",
+      marketDataMode: isLiveEdge ? "live" : "delayed",
+      dataUpdatedAt: new Date(isLiveEdge ? mockNow : timestampMs).toISOString(),
+      delayed: !isLiveEdge,
     };
   });
 }
@@ -263,11 +295,23 @@ async function mockShellApi(
     } else if (url.pathname === "/api/bars") {
       const params = Object.fromEntries(url.searchParams.entries());
       barsRequests.push(params);
+      const requestLimit = Number(url.searchParams.get("limit") || "80");
+      const brokerRecentWindowMinutes = Number(
+        url.searchParams.get("brokerRecentWindowMinutes") || "60",
+      );
       body = {
         bars: makeBars(
           (url.searchParams.get("symbol") || "SPY").toUpperCase(),
           url.searchParams.get("timeframe") || "5m",
+          {
+            limit: requestLimit,
+            brokerRecentWindowMinutes,
+          },
         ),
+        dataSource: "ibkr-history",
+        historySource: "ibkr-history",
+        freshness: "live",
+        marketDataMode: "live",
       };
     } else if (url.pathname === "/api/flow/events") {
       body = {
@@ -679,6 +723,21 @@ async function expectChartHydrated(page: Page, surfaceTestId: string) {
     .toBeGreaterThan(1);
 }
 
+async function expectChartLiveEdgeSource(page: Page, surfaceTestId: string) {
+  const surface = page.getByTestId(surfaceTestId);
+  await expect(surface).toHaveAttribute(
+    "data-chart-latest-source",
+    /^ibkr-history(?::rollup)?$/,
+    { timeout: 15_000 },
+  );
+  await expect(surface).toHaveAttribute("data-chart-latest-freshness", "live");
+  await expect(surface).toHaveAttribute(
+    "data-chart-latest-market-data-mode",
+    "live",
+  );
+  await expect(surface).toHaveAttribute("data-chart-latest-delayed", "false");
+}
+
 async function expectSpotBarsRequestForInterval(
   barsRequests: Array<Record<string, string>>,
   interval: (typeof spotChartIntervals)[number],
@@ -691,12 +750,33 @@ async function expectSpotBarsRequestForInterval(
           (request) =>
             request.timeframe === expectedTimeframe &&
             Number(request.limit || "0") > 1 &&
-            Number(request.brokerRecentWindowMinutes || "0") >=
+            Number(request.brokerRecentWindowMinutes || "0") ===
               expectedBrokerRecentWindowMinutes(request),
         ),
       { timeout: 10_000 },
     )
     .toBeTruthy();
+  const chartRequestsForTimeframe = barsRequests.filter(
+    (request) =>
+      request.timeframe === expectedTimeframe &&
+      Number(request.limit || "0") > 1 &&
+      request.brokerRecentWindowMinutes != null,
+  );
+  expect(chartRequestsForTimeframe.length).toBeGreaterThan(0);
+  expect(
+    chartRequestsForTimeframe.every(
+      (request) => {
+        const brokerRecentWindowMinutes = Number(
+          request.brokerRecentWindowMinutes || "0",
+        );
+        return (
+          brokerRecentWindowMinutes === 0 ||
+          brokerRecentWindowMinutes === expectedBrokerRecentWindowMinutes(request)
+        );
+      },
+    ),
+    `${interval} spot chart requests should keep IBKR bounded to the live edge`,
+  ).toBe(true);
 }
 
 test("platform shell keeps shared chrome while switching primary screens", async ({ page }) => {
@@ -1417,6 +1497,7 @@ test("spot market mini chart hydrates every interval selection", async ({
     await selectChartInterval(page, "market-mini-chart-0", interval);
     await expectSpotBarsRequestForInterval(barsRequests, interval);
     await expectChartHydrated(page, "market-mini-chart-0-surface");
+    await expectChartLiveEdgeSource(page, "market-mini-chart-0-surface");
   }
 
   expect(barsRequests.length).toBeGreaterThan(0);
@@ -1440,6 +1521,7 @@ test("trade spot chart hydrates every interval selection", async ({ page }) => {
     await selectChartInterval(page, "trade-equity-chart", interval);
     await expectSpotBarsRequestForInterval(barsRequests, interval);
     await expectChartHydrated(page, "trade-equity-chart-surface");
+    await expectChartLiveEdgeSource(page, "trade-equity-chart-surface");
   }
 
   expect(barsRequests.length).toBeGreaterThan(0);

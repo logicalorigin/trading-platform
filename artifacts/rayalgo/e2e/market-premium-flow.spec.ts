@@ -260,8 +260,23 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
   ).toBeVisible();
   await expect(
+    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-event-type", "unusual_flow");
+  await expect(
+    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-event-symbol", "SPY");
+  await expect(
+    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-event-source", "ibkr");
+  await expect(
     page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
   ).toBeVisible();
+  await expect(
+    page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-event-type", "unusual_flow");
+  await expect(
+    page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-event-symbol", "QQQ");
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(6);
   const chartFlowUrls = flowUrls.filter((href) => {

@@ -413,6 +413,10 @@ type ChartEventOverlay = {
   top: number;
   label: string;
   title: string;
+  eventType?: string;
+  source?: string;
+  severity?: string;
+  symbol?: string;
   tone: "bullish" | "bearish" | "neutral";
   placement: "bar" | "timescale";
   count?: number;
@@ -3244,6 +3248,10 @@ const buildChartEventOverlays = (
       top,
       label,
       title: event.summary || label,
+      eventType: event.eventType,
+      source: event.source,
+      severity: event.severity,
+      symbol: event.symbol,
       tone: event.bias,
       placement: event.placement,
     });
@@ -3304,6 +3312,10 @@ const buildFlowChartEventOverlays = (
       top,
       label: bucket.count > 1 ? String(Math.min(bucket.count, 9)) : right || "F",
       title: `${tooltip.title}: ${tooltip.summary}`,
+      eventType: bucket.topEvent.eventType,
+      source: bucket.topEvent.source,
+      severity: bucket.severity,
+      symbol: bucket.topEvent.symbol,
       tone: bucket.bias,
       placement: "bar",
       count: bucket.count,
@@ -7220,6 +7232,10 @@ export const ResearchChartSurface = ({
   const activeViewportRangeSignature = buildVisibleRangeSignature(
     visibleLogicalRangeRef.current ?? activeViewportSnapshot?.visibleLogicalRange,
   );
+  const latestRenderedBar =
+    model.chartBars.length > 0
+      ? model.chartBars[model.chartBars.length - 1]
+      : null;
 
   return (
     <div
@@ -7236,6 +7252,10 @@ export const ResearchChartSurface = ({
       }
       data-chart-visible-logical-range={activeViewportRangeSignature}
       data-chart-rendered-bar-count={model.chartBars.length}
+      data-chart-latest-source={latestRenderedBar?.source || ""}
+      data-chart-latest-freshness={latestRenderedBar?.freshness || ""}
+      data-chart-latest-market-data-mode={latestRenderedBar?.marketDataMode || ""}
+      data-chart-latest-delayed={latestRenderedBar?.delayed ? "true" : "false"}
       onPointerDownCapture={handleRootPointerDownCapture}
       onPointerMoveCapture={handleRootPointerMoveCapture}
       onPointerUpCapture={handleRootPointerUpCapture}
@@ -7760,6 +7780,10 @@ export const ResearchChartSurface = ({
                     data-testid={
                       dataTestId ? `${dataTestId}-chart-event` : undefined
                     }
+                    data-chart-event-type={overlay.eventType || undefined}
+                    data-chart-event-source={overlay.source || undefined}
+                    data-chart-event-severity={overlay.severity || undefined}
+                    data-chart-event-symbol={overlay.symbol || undefined}
                     onPointerEnter={
                       overlay.tooltip
                         ? () =>
