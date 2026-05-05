@@ -47,22 +47,58 @@ export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
     data-testid="loading-spinner"
     role="status"
     aria-label="Loading"
+    className="ra-refresh-spin"
     style={{
       width: dim(size),
       height: dim(size),
       borderRadius: "50%",
       border: `2px solid ${T.border}`,
       borderTopColor: color,
-      animation: "premiumFlowSpin 820ms linear infinite",
       flexShrink: 0,
     }}
   />
+);
+
+export const LoadingSkeletonRows = ({
+  rows = 3,
+  width = 210,
+  tone = T.accent,
+}) => (
+  <div
+    data-testid="data-unavailable-loading-skeleton"
+    aria-hidden="true"
+    style={{
+      width: "100%",
+      maxWidth: dim(width),
+      display: "grid",
+      gap: sp(5),
+      margin: sp("0 auto 8px"),
+    }}
+  >
+    {Array.from({ length: rows }).map((_, index) => (
+      <span
+        key={index}
+        className="ra-skeleton"
+        style={{
+          height: dim(index === 0 ? 18 : 11),
+          width: index === rows - 1 ? "68%" : "100%",
+          borderRadius: dim(3),
+          background:
+            index === 0
+              ? `${tone}1f`
+              : `linear-gradient(90deg, ${T.bg2}, ${T.bg3}, ${T.bg2})`,
+          border: `1px solid ${index === 0 ? `${tone}33` : T.border}`,
+        }}
+      />
+    ))}
+  </div>
 );
 
 export const DataUnavailableState = ({
   title = "No live data",
   detail = "This panel is waiting on a live provider response.",
   loading = false,
+  loadingMode = "skeleton",
   tone,
   fill = false,
   minHeight = 72,
@@ -86,7 +122,7 @@ export const DataUnavailableState = ({
     }}
   >
     <div style={{ maxWidth: dim(260) }}>
-      {loading ? (
+      {loading && loadingMode === "spinner" ? (
         <div
           style={{
             display: "flex",
@@ -96,6 +132,8 @@ export const DataUnavailableState = ({
         >
           <LoadingSpinner color={tone || T.accent} />
         </div>
+      ) : loading ? (
+        <LoadingSkeletonRows tone={tone || T.accent} />
       ) : null}
       <div
         style={{
