@@ -5289,6 +5289,10 @@ const BARS_PROVIDER_BUDGET_MS = readPositiveIntegerEnv(
   "BARS_PROVIDER_BUDGET_MS",
   3_000,
 );
+const BARS_IN_FLIGHT_STALE_MS = readPositiveIntegerEnv(
+  "BARS_IN_FLIGHT_STALE_MS",
+  Math.max(30_000, BARS_PROVIDER_BUDGET_MS * 4),
+);
 const CHART_HISTORY_CURSOR_TTL_MS = readPositiveIntegerEnv(
   "CHART_HISTORY_CURSOR_TTL_MS",
   10 * 60_000,
@@ -5327,7 +5331,7 @@ const barsCache = new Map<
 >();
 const barsInFlight = new Map<
   string,
-  { input: GetBarsInput; promise: Promise<GetBarsResult> }
+  { input: GetBarsInput; promise: Promise<GetBarsResult>; startedAt: number }
 >();
 
 function pruneBarsCache(now: number): void {
@@ -5386,6 +5390,13 @@ function buildBarsScopeKey(input: GetBarsInput): string {
     allowStudyFallback: input.allowStudyFallback ?? null,
     brokerRecentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
   });
+}
+
+function isBarsInFlightStale(
+  entry: { startedAt: number },
+  now = Date.now(),
+): boolean {
+  return now - entry.startedAt > BARS_IN_FLIGHT_STALE_MS;
 }
 
 function isChartHydrationCursorEnabled(): boolean {
@@ -5596,8 +5607,14 @@ function findReusableBarsInFlight(
   }
   const scopeKey = buildBarsScopeKey(input);
   const desiredLimit = input.limit ?? DEFAULT_BARS_LIMIT;
+  const now = Date.now();
 
-  for (const [, entry] of barsInFlight) {
+  for (const [key, entry] of barsInFlight) {
+    if (isBarsInFlightStale(entry, now)) {
+      barsInFlight.delete(key);
+      continue;
+    }
+
     if (buildBarsScopeKey(entry.input) !== scopeKey) {
       continue;
     }
@@ -5744,14 +5761,18 @@ export async function getBarsWithDebug(
   }
   const inFlight = barsInFlight.get(key);
   if (inFlight) {
-    barsHydrationCounters.inFlightJoin += 1;
-    const value = await inFlight.promise;
-    return withBarsDebug(value, {
-      cacheStatus: "inflight",
-      totalMs: Math.max(0, Date.now() - requestedAt),
-      upstreamMs: null,
-      gapFilled: value.gapFilled,
-    });
+    if (isBarsInFlightStale(inFlight, requestedAt)) {
+      barsInFlight.delete(key);
+    } else {
+      barsHydrationCounters.inFlightJoin += 1;
+      const value = await inFlight.promise;
+      return withBarsDebug(value, {
+        cacheStatus: "inflight",
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        gapFilled: value.gapFilled,
+      });
+    }
   }
 
   const upstreamStartedAt = Date.now();
@@ -5771,11 +5792,15 @@ function refreshBarsCache(
   input: GetBarsInput,
 ): Promise<GetBarsResult> {
   const existing = barsInFlight.get(key);
-  if (existing) {
+  if (existing && !isBarsInFlightStale(existing)) {
     return existing.promise;
   }
+  if (existing) {
+    barsInFlight.delete(key);
+  }
 
-  const promise = (async () => {
+  let promise: Promise<GetBarsResult> | null = null;
+  promise = (async () => {
     try {
       const value = await getBarsImpl(input);
       const settledAt = Date.now();
@@ -5789,13 +5814,17 @@ function refreshBarsCache(
       pruneBarsCache(settledAt);
       return value;
     } finally {
-      barsInFlight.delete(key);
+      const current = barsInFlight.get(key);
+      if (promise && current?.promise === promise) {
+        barsInFlight.delete(key);
+      }
     }
   })();
 
   barsInFlight.set(key, {
     input,
     promise,
+    startedAt: Date.now(),
   });
   return promise;
 }
@@ -6311,20 +6340,24 @@ async function getBarsImpl(input: GetBarsInput) {
   }
   const storedHistoricalBars = restrictHistoricalSynthesisToBrokerBackfill(
     input,
-    await loadStoredMarketBars({
-      symbol: input.symbol,
-      timeframe: input.timeframe,
-      limit: input.limit,
-      from: input.from,
-      to: input.to,
-      assetClass: input.assetClass,
-      market: input.market,
-      providerContractId: input.providerContractId,
-      outsideRth,
-      source: input.source,
-      recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
-      sourceName: historicalStoreSource,
-    }),
+    await resolveWithin(
+      loadStoredMarketBars({
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        from: input.from,
+        to: input.to,
+        assetClass: input.assetClass,
+        market: input.market,
+        providerContractId: input.providerContractId,
+        outsideRth,
+        source: input.source,
+        recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+        sourceName: historicalStoreSource,
+      }),
+      BARS_PROVIDER_BUDGET_MS,
+      [],
+    ),
     ibkrBars,
   );
   const desiredBars = Math.max(

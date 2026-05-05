@@ -649,6 +649,74 @@ test("getBarsWithDebug keeps delayed synthesis out of the IBKR live edge", async
   );
 });
 
+test("getBarsWithDebug starts fresh after a stale in-flight bar request", async () => {
+  const originalNow = Date.now;
+  let now = Date.parse("2026-05-01T20:00:00.000Z");
+  let historyCalls = 0;
+  let releaseFirstHistory: ((bars: BrokerBarSnapshot[]) => void) | null = null;
+  let firstReleased = false;
+  let firstRequest: ReturnType<typeof getBarsWithDebug> | null = null;
+  const releaseFirst = (bars: BrokerBarSnapshot[]) => {
+    if (firstReleased) return;
+    firstReleased = true;
+    releaseFirstHistory?.(bars);
+  };
+
+  Date.now = () => now;
+  const firstHistory = new Promise<BrokerBarSnapshot[]>((resolve) => {
+    releaseFirstHistory = resolve;
+  });
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async () => {
+          historyCalls += 1;
+          if (historyCalls === 1) {
+            return firstHistory;
+          }
+          return [brokerBar(null, 502)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  try {
+    const input = {
+      symbol: "STALEJOIN",
+      timeframe: "1m" as const,
+      limit: 1,
+      assetClass: "equity" as const,
+      allowHistoricalSynthesis: false,
+    };
+
+    firstRequest = getBarsWithDebug(input);
+    await wait(0);
+    assert.equal(historyCalls, 1);
+
+    now += 31_000;
+    const second = await getBarsWithDebug(input);
+
+    assert.equal(historyCalls, 2);
+    assert.equal(second.debug.cacheStatus, "miss");
+    assert.equal(second.bars.length, 1);
+    assert.equal(second.bars[0]?.close, 502);
+
+    releaseFirst([]);
+    const first = await firstRequest;
+    assert.equal(first.bars.length, 0);
+  } finally {
+    Date.now = originalNow;
+    releaseFirst([]);
+    if (firstRequest) {
+      await firstRequest.catch(() => undefined);
+    }
+  }
+});
+
 test("batchOptionChains dedupes dates and caps upstream concurrency", async () => {
   const calls: string[] = [];
   let active = 0;
