@@ -117,7 +117,7 @@ test("IBKR bridge launcher returns only the one-click protocol contract", () => 
   assert.match(launcher.launchUrl, /^rayalgo-ibkr:\/\/launch\?/);
   const launchParams = new URL(launcher.launchUrl).searchParams;
   assert.equal(launcher.activationId, launchParams.get("activationId"));
-  assert.equal(launcher.helperVersion, "2026-04-30.order-cache-v10");
+  assert.equal(launcher.helperVersion, "2026-05-05.gateway-launch-v11");
   assert.match(launchParams.get("activationId") ?? "", /^[a-f0-9]{32}$/);
   assert.match(launchParams.get("callbackSecret") ?? "", /^[a-f0-9]{64}$/);
   assert.equal(launchParams.get("apiBaseUrl"), "https://rayalgo.example.com");

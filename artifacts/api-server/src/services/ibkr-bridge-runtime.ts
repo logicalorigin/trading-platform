@@ -8,7 +8,7 @@ import {
 
 const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
-const BRIDGE_HELPER_VERSION = "2026-04-30.order-cache-v10";
+const BRIDGE_HELPER_VERSION = "2026-05-05.gateway-launch-v11";
 
 type LauncherResult = {
   activationId: string;

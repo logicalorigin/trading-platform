@@ -33,7 +33,7 @@ $BuildRefFile = Join-Path $StateDir 'bridge-build-ref.txt'
 $BridgeBundleHashFile = Join-Path $StateDir 'bridge-bundle.sha256'
 $LockHashFile = Join-Path $StateDir 'pnpm-lock.sha256'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-04-30.order-cache-v10'
+$HelperVersion = '2026-05-05.gateway-launch-v11'
 $script:BridgeBundleHash = ''
 
 New-Item -ItemType Directory -Force -Path $StateDir, $LogDir | Out-Null
@@ -391,28 +391,6 @@ function Get-IBGatewayProcessSummary {
             if (-not $seen.ContainsKey($pidText)) {
                 $seen[$pidText] = $true
                 $summaries.Add(("pid={0} name={1}" -f $process.Id, $process.ProcessName))
-            }
-        }
-
-        $cimProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            $name = [string]$_.Name
-            $commandLine = [string]$_.CommandLine
-            $executablePath = [string]$_.ExecutablePath
-            $name -ieq 'ibgateway.exe' -or
-                $commandLine -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)' -or
-                $commandLine -match '(?i)ibgateway(\.exe|\\|/)' -or
-                $executablePath -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)'
-        })
-
-        foreach ($process in $cimProcesses) {
-            $pidText = [string]$process.ProcessId
-            if (-not $seen.ContainsKey($pidText)) {
-                $seen[$pidText] = $true
-                $processName = [string]$process.Name
-                if (-not $processName) {
-                    $processName = 'process'
-                }
-                $summaries.Add(("pid={0} name={1}" -f $process.ProcessId, $processName))
             }
         }
 
