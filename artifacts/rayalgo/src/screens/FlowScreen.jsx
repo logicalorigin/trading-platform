@@ -82,6 +82,7 @@ import {
   joinMotionClasses,
   motionRowStyle,
   motionVars,
+  useListMotionKeys,
 } from "../lib/motion";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
@@ -1249,6 +1250,10 @@ const FlowOverviewPanel = ({
   ]);
 
   const visibleFlowRows = filtered.slice(0, rowsPerPage);
+  const visibleFlowRowMotion = useListMotionKeys(
+    visibleFlowRows,
+    (event) => event.id,
+  );
   const denseRows = density === "compact";
   const orderedOptionalColumns = columnOrder
     .map((columnId) => FLOW_COLUMN_BY_ID.get(columnId))
@@ -2803,9 +2808,10 @@ const FlowOverviewPanel = ({
     </Card>
   ) : null;
 
-  const renderFlowMobileCard = (event, index = 0) => {
+  const renderFlowMobileCard = (event, index = 0, rowMotion = null) => {
     const selected = selectedEvt?.id === event.id;
     const pinned = pinnedEventId === event.id;
+    const isNewRow = rowMotion?.isNew ?? true;
     const executionMeta = getFlowExecutionMeta(event);
     const premiumLabel =
       event.premium >= 1e6
@@ -2821,6 +2827,7 @@ const FlowOverviewPanel = ({
       <div
         key={event.id}
         data-testid="flow-row-card"
+        data-flow-row-new={isNewRow ? "true" : "false"}
         role="button"
         tabIndex={0}
         onClick={() =>
@@ -2837,12 +2844,12 @@ const FlowOverviewPanel = ({
           }
         }}
         className={joinMotionClasses(
-          "ra-row-enter",
+          isNewRow && "ra-row-enter",
           "ra-interactive",
           (selected || pinned) && "ra-focus-rail",
         )}
         style={{
-          ...motionRowStyle(index, 10, 140),
+          ...(isNewRow ? motionRowStyle(index, 10, 140) : null),
           ...motionVars({
             accent: selected
               ? T.accent
@@ -3623,6 +3630,7 @@ const FlowOverviewPanel = ({
                 <div
                   style={{
                     display: "flex",
+                    alignItems: "center",
                     gap: sp(8),
                     flexWrap: "wrap",
                     fontSize: fs(8),
@@ -3630,6 +3638,31 @@ const FlowOverviewPanel = ({
                     color: T.textDim,
                   }}
                 >
+                  <AppTooltip content={`${flowDisplayLabel} · ${feedStateLabel}`}>
+                    <span
+                      data-testid="flow-tape-feed-state"
+                      className={joinMotionClasses(
+                        (hasLiveFlow || flowStatus === "loading") &&
+                          "ra-status-pulse",
+                      )}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: sp(4),
+                        padding: sp("2px 6px"),
+                        borderRadius: dim(3),
+                        border: `1px solid ${feedStateColor}30`,
+                        background: `${feedStateColor}12`,
+                        color: feedStateColor,
+                        fontSize: fs(8),
+                        fontFamily: T.mono,
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {feedStateLabel}
+                    </span>
+                  </AppTooltip>
                   <span>
                     Bull{" "}
                     <span style={{ color: T.green, fontWeight: 700 }}>
@@ -3790,7 +3823,11 @@ const FlowOverviewPanel = ({
                           style={{ flex: 1, overflowY: "auto" }}
                         >
                           {visibleFlowRows.map((event, index) =>
-                            renderFlowMobileCard(event, index),
+                            renderFlowMobileCard(
+                              event,
+                              index,
+                              visibleFlowRowMotion[index],
+                            ),
                           )}
                         </div>
                         {filtered.length > rowsPerPage ? (
@@ -3915,13 +3952,16 @@ const FlowOverviewPanel = ({
                             {visibleFlowRows.map((event, index) => {
                               const selected = selectedEvt?.id === event.id;
                               const pinned = pinnedEventId === event.id;
+                              const rowMotion = visibleFlowRowMotion[index];
+                              const isNewRow = rowMotion?.isNew ?? true;
                               const executionMeta = getFlowExecutionMeta(event);
                               return (
                                 <div
                                   key={event.id}
                                   data-testid="flow-tape-row"
+                                  data-flow-row-new={isNewRow ? "true" : "false"}
                                   className={joinMotionClasses(
-                                    "ra-row-enter",
+                                    isNewRow && "ra-row-enter",
                                     "ra-interactive",
                                     (selected || pinned) && "ra-focus-rail",
                                   )}
@@ -3932,7 +3972,7 @@ const FlowOverviewPanel = ({
                                   }
                                   onDoubleClick={() => onJumpToTrade?.(event)}
                                   style={{
-                                    ...motionRowStyle(index, 7, 120),
+                                    ...(isNewRow ? motionRowStyle(index, 7, 120) : null),
                                     ...motionVars({
                                       accent: selected
                                         ? T.accent

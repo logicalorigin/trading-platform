@@ -614,6 +614,13 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await expect(page.getByTestId("flow-preset-bar")).toBeVisible();
   await expect(page.getByTestId("flow-ticker-lens")).toBeVisible();
   await expect(page.getByTestId("flow-tape-row").first()).toBeVisible();
+  await expect(page.getByTestId("flow-tape-feed-state")).toContainText(
+    /Live|Loading|Degraded|Paused/,
+  );
+  await expect(page.getByTestId("flow-tape-row").first()).toHaveAttribute(
+    "data-flow-row-new",
+    /true|false/,
+  );
   await expect(page.getByTestId("flow-sentiment-bar")).toBeVisible();
   await expect(page.getByTestId("flow-tape-header-time")).toContainText("AGE");
   await expect(page.getByTestId("flow-tape-header-expiration")).toBeVisible();
@@ -845,6 +852,7 @@ test("Flow mobile renders row cards with filter overlay, column drawer, copy, an
   await expect(page.getByTestId("flow-mobile-card-list")).toBeVisible();
   const firstCard = page.getByTestId("flow-row-card").first();
   await expect(firstCard).toBeVisible();
+  await expect(firstCard).toHaveAttribute("data-flow-row-new", /true|false/);
 
   await page.getByTestId("flow-filter-toggle").click();
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
