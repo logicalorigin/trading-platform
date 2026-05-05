@@ -332,6 +332,7 @@ export const TradeTickerHeader = ({
   chainRows = [],
   expirationValue = "",
   chainStatus = "empty",
+  linkChip = null,
 }) => {
   const fallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
@@ -460,6 +461,7 @@ export const TradeTickerHeader = ({
         </span>
       </div>
       <span style={{ flex: 1 }} />
+      {linkChip}
       <div
         style={{
           display: "flex",

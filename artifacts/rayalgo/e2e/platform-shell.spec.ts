@@ -1660,6 +1660,137 @@ test("market watchlist selection promotes an already-visible ticker into the pri
   expect(runtimeIssues).toEqual([]);
 });
 
+test("linked workspace keeps Market and Trade in sync until a panel is unlinked", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await disableStreamingSources(page);
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "rayalgo:state:v1",
+      JSON.stringify({
+        screen: "market",
+        sym: "SPY",
+        marketActiveSymbol: "SPY",
+        tradeActiveTicker: "SPY",
+        theme: "dark",
+        sidebarCollapsed: false,
+        marketGridLayout: "1x1",
+        marketGridSoloSlotIndex: 0,
+        marketGridSlots: [{ ticker: "SPY", tf: "15m" }],
+        tradeRecentTickers: ["SPY"],
+        tradeWorkspaces: {
+          SPY: {
+            ticker: "SPY",
+            equityChart: { timeframe: "15m" },
+            selectedContract: { strike: null, cp: "C", exp: "" },
+          },
+        },
+        linkedWorkspace: {
+          version: 1,
+          activeGroup: "A",
+          panels: {
+            market: "A",
+            trade: "A",
+            flow: "A",
+            account: "A",
+            research: "A",
+          },
+          groups: {
+            A: { symbol: "SPY", timeframe: "15m" },
+            B: { symbol: "NVDA", timeframe: "5m" },
+            C: { symbol: "MSFT", timeframe: "1h" },
+          },
+        },
+      }),
+    );
+  });
+  await mockShellApi(page);
+  await page.goto("/");
+
+  const marketChart = page.getByTestId("market-mini-chart-0");
+  const marketSearchButton = marketChart.getByTestId("chart-symbol-search-button");
+  await expect(marketSearchButton).toHaveAttribute("title", "Search SPY", {
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId("workspace-link-chip-market").first()).toHaveAttribute(
+    "data-linked-workspace-group",
+    "A",
+  );
+
+  await page.locator('[data-testid="watchlist-row"][data-symbol="AAPL"]').click();
+  await expect(marketSearchButton).toHaveAttribute("title", "Search AAPL", {
+    timeout: 15_000,
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return state.linkedWorkspace?.groups?.A?.symbol || null;
+      }),
+    )
+    .toBe("AAPL");
+
+  await selectChartInterval(page, "market-mini-chart-0", "1h");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return state.linkedWorkspace?.groups?.A?.timeframe || null;
+      }),
+    )
+    .toBe("1h");
+
+  await openScreen(page, "Trade", "trade");
+  const tradeChart = page.getByTestId("trade-equity-chart");
+  const tradeSearchButton = tradeChart.getByTestId("chart-symbol-search-button");
+  await expect(tradeSearchButton).toHaveAttribute("title", "Search AAPL", {
+    timeout: 15_000,
+  });
+  await expect(tradeChart.getByTestId("chart-timeframe-menu-trigger")).toHaveAttribute(
+    "data-chart-timeframe",
+    "1h",
+  );
+
+  await page.getByTestId("workspace-link-chip-trade-unlink").click({ force: true });
+  await expect(page.getByTestId("workspace-link-chip-trade")).toHaveAttribute(
+    "data-linked-workspace-group",
+    "none",
+  );
+
+  await openScreen(page, "Market", "market");
+  await page.locator('[data-testid="watchlist-row"][data-symbol="MSFT"]').click();
+  await expect(marketSearchButton).toHaveAttribute("title", "Search MSFT", {
+    timeout: 15_000,
+  });
+
+  await openScreen(page, "Trade", "trade");
+  await expect(tradeSearchButton).toHaveAttribute("title", "Search AAPL");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        const panels = state.linkedWorkspace?.panels || {};
+        return Object.prototype.hasOwnProperty.call(panels, "trade")
+          ? panels.trade
+          : "__missing__";
+      }),
+    )
+    .toBeNull();
+
+  expect(runtimeIssues).toEqual([]);
+});
+
 test("spot market mini chart hydrates every interval selection", async ({
   page,
 }) => {

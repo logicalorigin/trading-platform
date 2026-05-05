@@ -29,6 +29,7 @@ import {
 } from "../platform/tickerSearch/TickerSearch.jsx";
 import { MiniChartCell } from "./MiniChartCell.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
+import { WorkspaceLinkChip } from "../platform/WorkspaceLinkChip.jsx";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import { Card } from "../../components/platform/primitives.jsx";
@@ -162,6 +163,9 @@ export const MultiChartGrid = ({
   isVisible = false,
   unusualThreshold,
   onChartFlowSnapshotChange,
+  linkedContext = null,
+  onLinkedWorkspaceGroupChange,
+  onLinkedContextChange,
 }) => {
   const gridBodyRef = useRef(null);
   const defaultSymbolsRef = useRef(
@@ -700,6 +704,50 @@ export const MultiChartGrid = ({
     );
   };
   useEffect(() => {
+    if (!linkedContext?.linked) {
+      return;
+    }
+    const linkedSymbol = normalizeTickerSymbol(linkedContext.symbol);
+    const linkedTimeframe = normalizeChartTimeframe(linkedContext.timeframe);
+    if (!linkedSymbol && !linkedTimeframe) {
+      return;
+    }
+    setSlots((current) => {
+      const targetIndex =
+        layout === "1x1"
+          ? visibleSlotEntries[0]?.index ?? soloSlotIndex ?? 0
+          : visibleSlotEntries[0]?.index ?? 0;
+      let changed = false;
+      const next = current.map((slot, index) => {
+        if (index !== targetIndex) {
+          return slot;
+        }
+        const patch = {
+          ...slot,
+          ticker: linkedSymbol || slot.ticker,
+          tf: linkedTimeframe || slot.tf,
+        };
+        const hydrated = hydrateMiniChartSlot(patch, defaults[index]);
+        changed =
+          changed ||
+          hydrated.ticker !== slot.ticker ||
+          hydrated.tf !== slot.tf;
+        return hydrated;
+      });
+      return changed ? next : current;
+    });
+  }, [
+    defaults,
+    layout,
+    linkedContext?.broadcastSequence,
+    linkedContext?.groupId,
+    linkedContext?.linked,
+    linkedContext?.symbol,
+    linkedContext?.timeframe,
+    soloSlotIndex,
+    visibleSlotEntries,
+  ]);
+  useEffect(() => {
     const normalizedExternalSym =
       externalSelection?.n > 0
         ? normalizeTickerSymbol(externalSelection?.sym)
@@ -994,7 +1042,7 @@ export const MultiChartGrid = ({
                 onEnterSoloMode={() => {
                   setSoloSlotIndex(index);
                   setLayout("1x1");
-                  onSymClick?.(slot.ticker);
+                  onSymClick?.(slot.ticker, { timeframe: slot.tf });
                 }}
                 onChangeTicker={(ticker, result) => {
                   updateSlot(index, {
@@ -1012,9 +1060,30 @@ export const MultiChartGrid = ({
                       null,
                     searchResult: result || null,
                   });
-                  onSymClick?.(ticker);
+                  onSymClick?.(ticker, { timeframe: slot.tf });
                 }}
-                onChangeTimeframe={(tf) => updateSlotTimeframe(index, tf)}
+                onChangeTimeframe={(tf) => {
+                  updateSlotTimeframe(index, tf);
+                  const isLinkedActiveFrame =
+                    linkedContext?.linked &&
+                    (index === visibleSlotEntries[0]?.index ||
+                      normalizeTickerSymbol(slot.ticker) ===
+                        normalizeTickerSymbol(activeSym));
+                  if (isLinkedActiveFrame) {
+                    onLinkedContextChange?.({
+                      symbol: slot.ticker,
+                      timeframe: tf,
+                    });
+                  }
+                }}
+                linkChip={
+                  <WorkspaceLinkChip
+                    panelId="market"
+                    context={linkedContext}
+                    compact
+                    onChangeGroup={onLinkedWorkspaceGroupChange}
+                  />
+                }
                 recentTickers={recentTickers}
                 recentTickerRows={recentTickerRows}
                 watchlistSymbols={watchlistSymbols}

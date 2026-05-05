@@ -102,6 +102,14 @@ import {
   buildWatchlistRows,
 } from "./watchlistModel";
 import {
+  applyLinkedWorkspaceBroadcast,
+  getLinkedWorkspacePanelsForGroup,
+  normalizeLinkedWorkspaceState,
+  resolveLinkedWorkspacePanelContext,
+  setLinkedWorkspaceActiveGroup,
+  setLinkedWorkspacePanelGroup,
+} from "./linkedWorkspaceModel";
+import {
   getTradeFlowStoreEntryCount,
 } from "./tradeFlowStore";
 import {
@@ -226,6 +234,19 @@ export default function PlatformApp() {
   );
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
   const [sym, setSym] = useState(_initialState.sym || "SPY");
+  const [marketSym, setMarketSym] = useState(
+    _initialState.marketActiveSymbol || _initialState.sym || "SPY",
+  );
+  const [linkedWorkspace, setLinkedWorkspace] = useState(() =>
+    normalizeLinkedWorkspaceState(_initialState.linkedWorkspace, {
+      symbol: _initialState.sym || "SPY",
+      timeframe:
+        _initialState.marketGridSlots?.[0]?.tf ||
+        _initialState.tradeWorkspaces?.[_initialState.tradeActiveTicker]?.equityChart?.timeframe ||
+        "15m",
+    }),
+  );
+  const linkedWorkspaceRef = useRef(linkedWorkspace);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
   );
@@ -671,14 +692,15 @@ export default function PlatformApp() {
       upsertWatchlistInCache(watchlist);
       invalidateWatchlists();
       if (variables?.symbol) {
-        const nextSym = variables.symbol.toUpperCase();
-        setSym(nextSym);
-        setMarketSymPing((prev) => ({ sym: nextSym, n: prev.n + 1 }));
-        setTradeSymPing((prev) => ({
-          sym: nextSym,
-          n: prev.n + 1,
-          contract: null,
-        }));
+        const nextSym = normalizeTickerSymbol(variables.symbol);
+        if (nextSym) {
+          ensureTradeTickerInfo(nextSym, nextSym);
+          broadcastLinkedWorkspace({
+            sourcePanel: "watchlist",
+            symbol: nextSym,
+            updatedAt: new Date().toISOString(),
+          });
+        }
       }
       pushToast({
         title: `Added ${variables?.symbol?.toUpperCase?.() || "symbol"}`,
@@ -822,6 +844,7 @@ export default function PlatformApp() {
 
     const nextSym = watchlistSymbols[0];
     setSym(nextSym);
+    setMarketSym(nextSym);
     setTradeSymPing((prev) => ({ sym: nextSym, n: prev.n + 1 }));
   }, [screen, watchlistSymbols, sym]);
 
@@ -1396,6 +1419,13 @@ export default function PlatformApp() {
     persistState({ sym });
   }, [sym]);
   useEffect(() => {
+    persistState({ marketActiveSymbol: marketSym });
+  }, [marketSym]);
+  useEffect(() => {
+    linkedWorkspaceRef.current = linkedWorkspace;
+    persistState({ linkedWorkspace });
+  }, [linkedWorkspace]);
+  useEffect(() => {
     persistState({ sidebarCollapsed });
   }, [sidebarCollapsed]);
   useEffect(() => {
@@ -1445,6 +1475,87 @@ export default function PlatformApp() {
     setTheme(next);
     userPreferences.patch({ appearance: { theme: next } });
   }, [theme, userPreferences]);
+  const marketLinkedContext = useMemo(
+    () =>
+      resolveLinkedWorkspacePanelContext(linkedWorkspace, "market", {
+        symbol: marketSym,
+        timeframe: _initialState.marketGridSlots?.[0]?.tf || "15m",
+      }),
+    [linkedWorkspace, marketSym],
+  );
+  const tradeLinkedContext = useMemo(
+    () =>
+      resolveLinkedWorkspacePanelContext(linkedWorkspace, "trade", {
+        symbol: tradeSymPing.sym || sym,
+        timeframe:
+          _initialState.tradeWorkspaces?.[tradeSymPing.sym]?.equityChart?.timeframe ||
+          "5m",
+      }),
+    [linkedWorkspace, sym, tradeSymPing.sym],
+  );
+  const handleSetLinkedWorkspacePanelGroup = useCallback((panelId, groupId) => {
+    let next = setLinkedWorkspacePanelGroup(
+      linkedWorkspaceRef.current,
+      panelId,
+      groupId,
+    );
+    if (groupId) {
+      next = setLinkedWorkspaceActiveGroup(next, groupId);
+    }
+    linkedWorkspaceRef.current = next;
+    setLinkedWorkspace(next);
+    const group = groupId ? next.groups[groupId] : null;
+    if (!group?.symbol) {
+      return;
+    }
+    setSym(group.symbol);
+    if (panelId === "market") {
+      setMarketSym(group.symbol);
+      setMarketSymPing((prev) => ({ sym: group.symbol, n: prev.n + 1 }));
+    }
+    if (panelId === "trade") {
+      ensureTradeTickerInfo(group.symbol, group.symbol);
+      setTradeSymPing((prev) => ({
+        sym: group.symbol,
+        n: prev.n + 1,
+        contract: null,
+      }));
+    }
+  }, []);
+  const applyLinkedSymbolContext = useCallback((nextState, options = {}) => {
+    const groupId = nextState.lastBroadcast?.groupId || nextState.activeGroup;
+    const group = nextState.groups[groupId];
+    if (!group?.symbol) {
+      return;
+    }
+    const linkedPanels = new Set(getLinkedWorkspacePanelsForGroup(nextState, groupId));
+    setSym(group.symbol);
+    if (linkedPanels.has("market")) {
+      setMarketSym(group.symbol);
+      setMarketSymPing((prev) => ({ sym: group.symbol, n: prev.n + 1 }));
+    }
+    if (linkedPanels.has("trade")) {
+      ensureTradeTickerInfo(group.symbol, group.symbol);
+      setTradeSymPing((prev) => ({
+        sym: group.symbol,
+        n: prev.n + 1,
+        contract: options.contract ?? null,
+        ...(Object.prototype.hasOwnProperty.call(options, "automationCandidate")
+          ? { automationCandidate: options.automationCandidate }
+          : {}),
+      }));
+    }
+  }, []);
+  const broadcastLinkedWorkspace = useCallback((payload, options = {}) => {
+    const next = applyLinkedWorkspaceBroadcast(
+      linkedWorkspaceRef.current,
+      payload,
+    );
+    linkedWorkspaceRef.current = next;
+    setLinkedWorkspace(next);
+    applyLinkedSymbolContext(next, options);
+    return next;
+  }, [applyLinkedSymbolContext]);
 
   const handleSelectWatchlist = useCallback((watchlistId) => {
     setActiveWatchlistId(watchlistId);
@@ -1458,21 +1569,30 @@ export default function PlatformApp() {
       return;
     }
     ensureTradeTickerInfo(normalized, normalized);
-    setSym(normalized);
-    setMarketSymPing((prev) => ({ sym: normalized, n: prev.n + 1 }));
-    setTradeSymPing((prev) => ({
-      sym: normalized,
-      n: prev.n + 1,
-      contract: null,
-    }));
-  }, []);
-  const handleFocusMarketChart = useCallback((newSym) => {
+    broadcastLinkedWorkspace({
+      sourcePanel: "watchlist",
+      symbol: normalized,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [broadcastLinkedWorkspace]);
+  const handleFocusMarketChart = useCallback((newSym, context = {}) => {
     const normalized = normalizeTickerSymbol(newSym);
     if (!normalized) {
       return;
     }
-    setSym(normalized);
-  }, []);
+    const marketGroup = linkedWorkspaceRef.current?.panels?.market || null;
+    if (!marketGroup) {
+      setMarketSym(normalized);
+      setSym(normalized);
+      return;
+    }
+    broadcastLinkedWorkspace({
+      sourcePanel: "market",
+      symbol: normalized,
+      timeframe: context?.timeframe,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [broadcastLinkedWorkspace]);
 
   const handleSignalAction = useCallback((ticker, signal) => {
     const normalized = normalizeTickerSymbol(ticker);
@@ -1481,12 +1601,12 @@ export default function PlatformApp() {
     }
 
     ensureTradeTickerInfo(normalized, normalized);
-    setSym(normalized);
-    setTradeSymPing((prev) => ({
-      sym: normalized,
-      n: prev.n + 1,
-      contract: null,
-    }));
+    broadcastLinkedWorkspace({
+      sourcePanel: "market",
+      symbol: normalized,
+      timeframe: signal?.timeframe,
+      updatedAt: new Date().toISOString(),
+    });
     setScreen("trade");
     pushToast({
       title: `${normalized} ${String(signal?.currentSignalDirection || signal?.direction || "signal").toUpperCase()} signal`,
@@ -1499,7 +1619,7 @@ export default function PlatformApp() {
           : "success",
       duration: 2600,
     });
-  }, [pushToast]);
+  }, [broadcastLinkedWorkspace, pushToast]);
 
   const handleToggleSignalMonitor = useCallback(() => {
     const nextEnabled = !signalMonitorProfile?.enabled;
@@ -1637,18 +1757,19 @@ export default function PlatformApp() {
     if (!ticker) return;
 
     ensureTradeTickerInfo(ticker, ticker);
-    setSym(ticker);
-    setTradeSymPing((prev) => ({
-      sym: ticker,
-      n: prev.n + 1,
+    broadcastLinkedWorkspace({
+      sourcePanel: "flow",
+      symbol: ticker,
+      updatedAt: new Date().toISOString(),
+    }, {
       contract: {
         strike: evt.strike,
         cp: evt.cp,
         exp: formatExpirationLabel(evt.expirationDate || evt.exp),
       },
-    }));
+    });
     setScreen("trade");
-  }, []);
+  }, [broadcastLinkedWorkspace]);
 
   const handleJumpToTradeFromSignalOptionsCandidate = useCallback((candidate) => {
     const ticker = candidate?.symbol?.toUpperCase?.() || candidate?.symbol;
@@ -1661,10 +1782,12 @@ export default function PlatformApp() {
     const right = selectedContract.right === "put" ? "P" : "C";
 
     ensureTradeTickerInfo(ticker, ticker);
-    setSym(ticker);
-    setTradeSymPing((prev) => ({
-      sym: ticker,
-      n: prev.n + 1,
+    broadcastLinkedWorkspace({
+      sourcePanel: "algo",
+      symbol: ticker,
+      timeframe: candidate?.timeframe,
+      updatedAt: new Date().toISOString(),
+    }, {
       contract: {
         strike: Number.isFinite(strike) ? strike : null,
         cp: right,
@@ -1672,7 +1795,7 @@ export default function PlatformApp() {
         providerContractId: selectedContract.providerContractId || null,
       },
       automationCandidate: candidate,
-    }));
+    });
     setScreen("trade");
     pushToast({
       title: `${ticker} signal-option context loaded`,
@@ -1680,7 +1803,7 @@ export default function PlatformApp() {
       kind: "info",
       duration: 2600,
     });
-  }, [pushToast]);
+  }, [broadcastLinkedWorkspace, pushToast]);
 
   // Jump to Trade tab from Research with a ticker preloaded.
   // Research passes a plain ticker string rather than a flow event.
@@ -1689,25 +1812,49 @@ export default function PlatformApp() {
     if (!normalized) return;
 
     ensureTradeTickerInfo(normalized, normalized);
-    setSym(normalized);
-    setTradeSymPing((prev) => ({
-      sym: normalized,
-      n: prev.n + 1,
-      contract: null,
-    }));
+    broadcastLinkedWorkspace({
+      sourcePanel: "research",
+      symbol: normalized,
+      updatedAt: new Date().toISOString(),
+    });
     setScreen("trade");
-  }, []);
+  }, [broadcastLinkedWorkspace]);
 
   const handleAccountJumpToTrade = useCallback((symbol) => {
     handleSelectSymbol(symbol);
     setScreen("trade");
   }, [handleSelectSymbol]);
+  const handleTradeLinkedContextChange = useCallback(({ symbol, timeframe }) => {
+    const normalized = normalizeTickerSymbol(symbol);
+    if (!normalized && !timeframe) {
+      return;
+    }
+    broadcastLinkedWorkspace({
+      sourcePanel: "trade",
+      symbol: normalized || undefined,
+      timeframe,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [broadcastLinkedWorkspace]);
+  const handleMarketLinkedContextChange = useCallback(({ symbol, timeframe }) => {
+    const normalized = normalizeTickerSymbol(symbol);
+    if (!normalized && !timeframe) {
+      return;
+    }
+    broadcastLinkedWorkspace({
+      sourcePanel: "market",
+      symbol: normalized || undefined,
+      timeframe,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [broadcastLinkedWorkspace]);
 
   const renderScreenById = (screenId) => (
     <PlatformScreenRouter
       screenId={screenId}
       screen={screen}
-      sym={sym}
+      sym={marketSym}
+      tradeSym={tradeSymPing.sym || sym}
       tradeSymPing={tradeSymPing}
       marketSymPing={marketSymPing}
       session={session}
@@ -1743,6 +1890,11 @@ export default function PlatformApp() {
       onJumpToTradeFromSignalOptionsCandidate={
         handleJumpToTradeFromSignalOptionsCandidate
       }
+      marketLinkedContext={marketLinkedContext}
+      tradeLinkedContext={tradeLinkedContext}
+      onSetLinkedWorkspacePanelGroup={handleSetLinkedWorkspacePanelGroup}
+      onMarketLinkedContextChange={handleMarketLinkedContextChange}
+      onTradeLinkedContextChange={handleTradeLinkedContextChange}
       onToggleTheme={toggleTheme}
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
     />

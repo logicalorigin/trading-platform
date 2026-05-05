@@ -387,6 +387,9 @@ export const MarketScreen = ({
   onChangeMonitorTimeframe,
   onChangeMonitorWatchlist,
   watchlists = [],
+  linkedContext = null,
+  onLinkedWorkspaceGroupChange,
+  onLinkedContextChange,
 }) => {
   const queryClient = useQueryClient();
   const marketWorkspaceRef = useRef(null);
@@ -820,6 +823,9 @@ export const MarketScreen = ({
                 isVisible={isVisible}
                 unusualThreshold={chartFlowUnusualThreshold}
                 onChartFlowSnapshotChange={handleChartFlowSnapshotChange}
+                linkedContext={linkedContext}
+                onLinkedWorkspaceGroupChange={onLinkedWorkspaceGroupChange}
+                onLinkedContextChange={onLinkedContextChange}
               />
             </MarketPanelErrorBoundary>
           ) : (

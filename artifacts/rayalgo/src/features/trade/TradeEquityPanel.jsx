@@ -96,6 +96,7 @@ export const TradeEquityPanel = ({
   workspaceChart = null,
   onWorkspaceChartChange,
   referenceLines = [],
+  linkChip = null,
 }) => {
   const queryClient = useQueryClient();
   const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
@@ -807,12 +808,15 @@ export const TradeEquityPanel = ({
           studySpecs={chartModel.studySpecs}
           onToggleStudy={toggleIndicator}
           rightSlot={
-            <RayReplicaSettingsMenu
-              theme={T}
-              settings={rayReplicaSettings}
-              onChange={setRayReplicaSettings}
-              disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
-            />
+            <>
+              {linkChip}
+              <RayReplicaSettingsMenu
+                theme={T}
+                settings={rayReplicaSettings}
+                onChange={setRayReplicaSettings}
+                disabled={!isRayReplicaIndicatorSelected(selectedIndicators)}
+              />
+            </>
           }
           meta={{
             open: latestBar?.o,

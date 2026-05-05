@@ -68,6 +68,7 @@ export const MiniChartCell = ({
   compactFlow = false,
   stockAggregateStreamingEnabled = false,
   dataTestId,
+  linkChip = null,
 }) => {
   const ticker = normalizeTickerSymbol(slot?.ticker) || WATCHLIST[0]?.sym || "SPY";
   const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
@@ -168,10 +169,10 @@ export const MiniChartCell = ({
       !isMarketChartShellControlTarget(event.target)
     ) {
       suppressNextClickRef.current = true;
-      onFocus(ticker);
+      onFocus(ticker, { timeframe });
     }
     pendingPointerRef.current = null;
-  }, [isActive, onFocus, ticker]);
+  }, [isActive, onFocus, ticker, timeframe]);
   const handleFramePointerCancel = useCallback(() => {
     pendingPointerRef.current = null;
     suppressNextClickRef.current = true;
@@ -188,9 +189,9 @@ export const MiniChartCell = ({
       if (isMarketChartShellControlTarget(event.target)) {
         return;
       }
-      onFocus(ticker);
+      onFocus(ticker, { timeframe });
     },
-    [isActive, onFocus, ticker],
+    [isActive, onFocus, ticker, timeframe],
   );
   const handleDoubleClick = useCallback(
     (event) => {
@@ -297,6 +298,7 @@ export const MiniChartCell = ({
           }
           workspaceChart={{ timeframe }}
           onWorkspaceChartChange={handleWorkspaceChartChange}
+          linkChip={linkChip}
         />
       </div>
       <MiniChartPremiumFlowIndicator

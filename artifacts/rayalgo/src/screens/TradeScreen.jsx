@@ -84,6 +84,7 @@ import {
   ensureTradeTickerInfo,
   publishRuntimeTickerSnapshot,
 } from "../features/platform/runtimeTickerStore";
+import { WorkspaceLinkChip } from "../features/platform/WorkspaceLinkChip.jsx";
 import {
   HEAVY_PAYLOAD_GC_MS,
   QUERY_DEFAULTS,
@@ -2454,6 +2455,9 @@ export const TradeScreen = ({
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   isVisible = false,
+  linkedContext = null,
+  onLinkedWorkspaceGroupChange,
+  onLinkedContextChange,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -2587,6 +2591,37 @@ export const TradeScreen = ({
       return next;
     });
   }, []);
+  const activeEquityChart = useMemo(
+    () => ({
+      ...activeWorkspace.equityChart,
+      ...(linkedContext?.linked && linkedContext.timeframe
+        ? { timeframe: linkedContext.timeframe }
+        : {}),
+    }),
+    [activeWorkspace.equityChart, linkedContext?.linked, linkedContext?.timeframe],
+  );
+  const handleEquityWorkspaceChartChange = useCallback(
+    (patch) => {
+      upsertTradeWorkspace(activeTicker, {
+        equityChart: {
+          ...activeWorkspace.equityChart,
+          ...patch,
+        },
+      });
+      if (patch?.timeframe) {
+        onLinkedContextChange?.({
+          symbol: activeTicker,
+          timeframe: patch.timeframe,
+        });
+      }
+    },
+    [
+      activeTicker,
+      activeWorkspace.equityChart,
+      onLinkedContextChange,
+      upsertTradeWorkspace,
+    ],
+  );
   const updateContract = useCallback(
     (patch) => {
       const nextContract = { ...contract, ...patch };
@@ -3109,6 +3144,14 @@ export const TradeScreen = ({
         <MemoTradeTickerHeader
           ticker={activeTicker}
           expirationValue={contract.exp}
+          linkChip={
+            <WorkspaceLinkChip
+              panelId="trade"
+              context={linkedContext}
+              compact
+              onChangeGroup={onLinkedWorkspaceGroupChange}
+            />
+          }
         />
         {automationContextVisible && (
           <div
@@ -3228,15 +3271,8 @@ export const TradeScreen = ({
             searchContent={renderTradeTickerSearch(
               tradeTickerSearchAnchor === "equity",
             )}
-            workspaceChart={activeWorkspace.equityChart}
-            onWorkspaceChartChange={(patch) =>
-              upsertTradeWorkspace(activeTicker, {
-                equityChart: {
-                  ...activeWorkspace.equityChart,
-                  ...patch,
-                },
-              })
-            }
+            workspaceChart={activeEquityChart}
+            onWorkspaceChartChange={handleEquityWorkspaceChartChange}
             referenceLines={workspaceReferenceLines}
           />
           <MemoTradeContractDetailPanel

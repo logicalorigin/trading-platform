@@ -228,12 +228,17 @@ export function resolveLinkedWorkspacePanelContext(
     };
   }
   const group = normalized.groups[groupId];
+  const broadcastSequence =
+    normalized.lastBroadcast?.groupId === groupId
+      ? normalized.lastBroadcast.sequence || 0
+      : 0;
   return {
     linked: true,
     groupId,
     symbol: group.symbol,
     timeframe: group.timeframe,
     updatedAt: group.updatedAt,
+    broadcastSequence,
   };
 }
 

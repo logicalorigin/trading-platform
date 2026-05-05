@@ -14,6 +14,7 @@ export const PlatformScreenRouter = ({
   screenId,
   screen,
   sym,
+  tradeSym,
   tradeSymPing,
   marketSymPing,
   session,
@@ -47,6 +48,11 @@ export const PlatformScreenRouter = ({
   onJumpToTradeFromAccount,
   onJumpToTradeFromResearch,
   onJumpToTradeFromSignalOptionsCandidate,
+  marketLinkedContext,
+  tradeLinkedContext,
+  onSetLinkedWorkspacePanelGroup,
+  onMarketLinkedContextChange,
+  onTradeLinkedContextChange,
   onToggleTheme,
   onToggleSidebar,
 }) => {
@@ -70,6 +76,9 @@ export const PlatformScreenRouter = ({
       onChangeMonitorTimeframe={onChangeMonitorTimeframe}
       onChangeMonitorWatchlist={onChangeMonitorWatchlist}
       watchlists={watchlists}
+      linkedContext={marketLinkedContext}
+      onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
+      onLinkedContextChange={onMarketLinkedContextChange}
     />
   );
 
@@ -89,7 +98,7 @@ export const PlatformScreenRouter = ({
     case "trade":
       return (
         <MemoTradeScreen
-          sym={sym}
+          sym={tradeSym || sym}
           symPing={tradeSymPing}
           session={session}
           environment={environment}
@@ -99,6 +108,9 @@ export const PlatformScreenRouter = ({
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "trade"}
+          linkedContext={tradeLinkedContext}
+          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
+          onLinkedContextChange={onTradeLinkedContextChange}
         />
       );
     case "account":

@@ -91,6 +91,7 @@ test("panel context follows linked group but unlinked panels keep local fallback
       symbol: "MSFT",
       timeframe: "1h",
       updatedAt: "2026-05-05T15:00:00Z",
+      broadcastSequence: 1,
     },
   );
   assert.deepEqual(
