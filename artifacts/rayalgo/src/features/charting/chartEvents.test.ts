@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   clusterChartEvents,
   earningsCalendarToChartEvents,
+  earningsEventsToChartEvents,
   flowEventsToChartEvents,
   getChartEventLookbackWindow,
 } from "./chartEvents";
@@ -90,6 +91,33 @@ test("earningsCalendarToChartEvents normalizes earnings into timescale events", 
   assert.equal(events[0].eventType, "earnings");
   assert.equal(events[0].placement, "timescale");
   assert.equal(events[0].label, "E");
+});
+
+test("earningsEventsToChartEvents keeps provider metadata for chart markers", () => {
+  const events = earningsEventsToChartEvents(
+    [
+      {
+        symbol: "NVDA",
+        date: "2026-05-20T00:00:00.000Z",
+        reportingTime: "amc",
+        provider: "fmp",
+        epsEstimated: 5.22,
+        epsActual: 5.48,
+        revenueEstimated: 38_000_000_000,
+        revenueActual: 39_300_000_000,
+        fiscalPeriod: "Q1",
+        status: "confirmed",
+      },
+    ],
+    "NVDA",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].id, "earnings:NVDA:2026-05-20:amc");
+  assert.equal(events[0].time, "2026-05-20");
+  assert.equal(events[0].source, "fmp");
+  assert.equal(events[0].actions.includes("open_trade"), true);
+  assert.equal(events[0].metadata.epsActual, 5.48);
 });
 
 test("getChartEventLookbackWindow uses timeframe-aware extended history", () => {

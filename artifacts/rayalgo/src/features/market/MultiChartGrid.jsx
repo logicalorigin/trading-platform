@@ -160,6 +160,7 @@ export const MultiChartGrid = ({
   popularTickers = [],
   signalSuggestionSymbols = [],
   stockAggregateStreamingEnabled = false,
+  earningsEventsEnabled = false,
   isVisible = false,
   unusualThreshold,
   onChartFlowSnapshotChange,
@@ -1050,6 +1051,7 @@ export const MultiChartGrid = ({
                 dense={denseGrid}
                 compactFlow={compactPremiumFlow}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+                earningsEventsEnabled={earningsEventsEnabled}
                 onFocus={onSymClick}
                 viewportResetRevision={chartViewportResetRevision}
                 onEnterSoloMode={() => {

@@ -107,6 +107,20 @@ const formatCurrencyCompact = (value) => {
   return `$${fmtCompactNumber(value)}`;
 };
 
+const formatEstimateActual = (estimate, actual, formatter) => {
+  const estimateLabel = formatter(estimate);
+  const actualLabel = formatter(actual);
+  if (actualLabel !== MISSING_VALUE && estimateLabel !== MISSING_VALUE) {
+    return `${actualLabel} / ${estimateLabel}`;
+  }
+  return actualLabel !== MISSING_VALUE ? actualLabel : estimateLabel;
+};
+
+const formatEps = (value) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? `$${value.toFixed(2)}`
+    : MISSING_VALUE;
+
 const formatFiscalDate = (value) => (value ? formatCalendarMeta(value) : MISSING_VALUE);
 
 const formatDateHeading = (value) => {
@@ -688,19 +702,26 @@ export const MarketCalendarOverlay = ({
                     <EventDetailMetric label="Timing" value={selectedEvent.timingLabel} />
                     <EventDetailMetric
                       label="Fiscal"
-                      value={formatFiscalDate(selectedEvent.fiscalDateEnding)}
-                    />
-                    <EventDetailMetric
-                      label="EPS est"
                       value={
-                        typeof selectedEvent.epsEstimated === "number"
-                          ? `$${selectedEvent.epsEstimated.toFixed(2)}`
-                          : MISSING_VALUE
+                        selectedEvent.fiscalPeriod ||
+                        formatFiscalDate(selectedEvent.fiscalDateEnding)
                       }
                     />
                     <EventDetailMetric
-                      label="Revenue est"
-                      value={formatCurrencyCompact(selectedEvent.revenueEstimated)}
+                      label="EPS"
+                      value={formatEstimateActual(
+                        selectedEvent.epsEstimated,
+                        selectedEvent.epsActual,
+                        formatEps,
+                      )}
+                    />
+                    <EventDetailMetric
+                      label="Revenue"
+                      value={formatEstimateActual(
+                        selectedEvent.revenueEstimated,
+                        selectedEvent.revenueActual,
+                        formatCurrencyCompact,
+                      )}
                     />
                     <EventDetailMetric label="Provider" value={selectedEvent.provider.toUpperCase()} />
                     <EventDetailMetric label="State" value={providerStatus.label.toUpperCase()} />
@@ -747,6 +768,7 @@ export const MarketCalendarOverlay = ({
                       ticker={selectedEvent.symbol}
                       flowEvents={[]}
                       historicalDataEnabled
+                      earningsEventsEnabled={researchConfigured}
                       stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
                       dataTestId="market-calendar-detail-chart"
                       compact

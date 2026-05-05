@@ -854,6 +854,7 @@ export const MarketScreen = ({
                 popularTickers={stablePopularTickers}
                 signalSuggestionSymbols={signalSuggestionSymbols}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+                earningsEventsEnabled={researchConfigured}
                 isVisible={isVisible}
                 unusualThreshold={chartFlowUnusualThreshold}
                 onChartFlowSnapshotChange={handleChartFlowSnapshotChange}

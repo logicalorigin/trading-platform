@@ -92,6 +92,7 @@ import type {
   GetOptionExpirationsParams,
   GetQuoteSnapshotsParams,
   GetResearchEarningsCalendarParams,
+  GetResearchEarningsEventsParams,
   GetResearchFinancialsParams,
   GetResearchFundamentalsParams,
   GetResearchSecFilingsParams,
@@ -131,6 +132,7 @@ import type {
   QuoteSnapshotsResponse,
   ReplaceOrderRequest,
   ResearchCalendarResponse,
+  ResearchEarningsEventsResponse,
   ResearchFilingsResponse,
   ResearchFinancialsResponse,
   ResearchFundamentalsResponse,
@@ -5368,6 +5370,88 @@ export function useGetResearchEarningsCalendar<TData = Awaited<ReturnType<typeof
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetResearchEarningsCalendarQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get provider-backed earnings events for a symbol
+ */
+export const getGetResearchEarningsEventsUrl = (params: GetResearchEarningsEventsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/research/earnings-events?${stringifiedParams}` : `/api/research/earnings-events`
+}
+
+export const getResearchEarningsEvents = async (params: GetResearchEarningsEventsParams, options?: RequestInit): Promise<ResearchEarningsEventsResponse> => {
+
+  return customFetch<ResearchEarningsEventsResponse>(getGetResearchEarningsEventsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetResearchEarningsEventsQueryKey = (params?: GetResearchEarningsEventsParams,) => {
+    return [
+    `/api/research/earnings-events`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetResearchEarningsEventsQueryOptions = <TData = Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError = ErrorType<unknown>>(params: GetResearchEarningsEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetResearchEarningsEventsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getResearchEarningsEvents>>> = ({ signal }) => getResearchEarningsEvents(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetResearchEarningsEventsQueryResult = NonNullable<Awaited<ReturnType<typeof getResearchEarningsEvents>>>
+export type GetResearchEarningsEventsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get provider-backed earnings events for a symbol
+ */
+
+export function useGetResearchEarningsEvents<TData = Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError = ErrorType<unknown>>(
+ params: GetResearchEarningsEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetResearchEarningsEventsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

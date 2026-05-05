@@ -87,6 +87,14 @@ const normalizeBias = (value: unknown): ChartEventBias => {
   return "neutral";
 };
 
+const normalizeDateOnly = (value: unknown): string => {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
+};
+
 const isFlowEventRecord = (event: unknown): event is Record<string, unknown> =>
   Boolean(event && typeof event === "object" && !Array.isArray(event));
 
@@ -166,8 +174,8 @@ export const earningsCalendarToChartEvents = (
       const eventSymbol = String(entry.symbol || normalizedSymbol)
         .trim()
         .toUpperCase();
-      const date = String(entry.date || "");
-      const timing = String(entry.time || "").trim();
+      const date = normalizeDateOnly(entry.date);
+      const timing = String(entry.reportingTime || entry.time || "").trim();
       return {
         id: `earnings:${eventSymbol}:${date}:${timing || "unknown"}`,
         symbol: eventSymbol,
@@ -177,10 +185,10 @@ export const earningsCalendarToChartEvents = (
         severity: "medium",
         label: "E",
         summary: `${eventSymbol} earnings${timing ? ` ${timing}` : ""}`,
-        source: "research-calendar",
+        source: String(entry.provider || "research-calendar"),
         confidence: 1,
         bias: "neutral",
-        actions: ["add_alert"],
+        actions: ["open_trade", "add_alert"],
         metadata: { ...entry },
       } satisfies ChartEvent;
     })
@@ -188,6 +196,8 @@ export const earningsCalendarToChartEvents = (
       (event) => event.time && (!normalizedSymbol || event.symbol === normalizedSymbol),
     );
 };
+
+export const earningsEventsToChartEvents = earningsCalendarToChartEvents;
 
 export const getChartEventLookbackWindow = (
   timeframe: string,

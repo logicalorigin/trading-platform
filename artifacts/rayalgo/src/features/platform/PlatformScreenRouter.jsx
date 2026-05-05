@@ -119,6 +119,7 @@ export const PlatformScreenRouter = ({
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "trade"}
+          researchConfigured={researchConfigured}
           linkedContext={tradeLinkedContext}
           onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
           onLinkedContextChange={onTradeLinkedContextChange}

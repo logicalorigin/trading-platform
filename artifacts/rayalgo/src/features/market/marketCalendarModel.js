@@ -185,7 +185,7 @@ export const normalizeMarketCalendarEvent = (
   const normalizedEventType = normalizeMarketCalendarEventType(
     entry?.eventType || eventType,
   );
-  const timing = normalizeMarketCalendarTiming(entry?.time);
+  const timing = normalizeMarketCalendarTiming(entry?.reportingTime || entry?.time);
   const timingLabel = formatMarketCalendarTimingLabel(timing);
   const eventTypeLabel = formatMarketCalendarEventTypeLabel(normalizedEventType);
 
@@ -199,18 +199,22 @@ export const normalizeMarketCalendarEvent = (
     ].join(":"),
     symbol,
     date,
-    time: normalizeString(entry?.time) || null,
+    time: normalizeString(entry?.reportingTime || entry?.time) || null,
     timing,
     timingLabel,
     eventType: normalizedEventType,
     eventTypeLabel,
     title: `${symbol} ${eventTypeLabel.toLowerCase()}`,
-    provider,
+    provider: normalizeString(entry?.provider) || provider,
     providerState,
     fetchedAt,
     epsEstimated: finiteNumberOrNull(entry?.epsEstimated),
+    epsActual: finiteNumberOrNull(entry?.epsActual),
     revenueEstimated: finiteNumberOrNull(entry?.revenueEstimated),
+    revenueActual: finiteNumberOrNull(entry?.revenueActual),
+    fiscalPeriod: normalizeString(entry?.fiscalPeriod) || null,
     fiscalDateEnding: normalizeDateKey(entry?.fiscalDateEnding) || null,
+    status: normalizeString(entry?.status) || "estimated",
     metadata: { ...(entry || {}) },
   };
 };

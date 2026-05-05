@@ -67,6 +67,7 @@ export const MiniChartCell = ({
   dense = false,
   compactFlow = false,
   stockAggregateStreamingEnabled = false,
+  earningsEventsEnabled = false,
   dataTestId,
   viewportResetRevision = 0,
   linkChip = null,
@@ -269,6 +270,7 @@ export const MiniChartCell = ({
           ticker={ticker}
           flowEvents={flowEvents}
           historicalDataEnabled
+          earningsEventsEnabled={earningsEventsEnabled}
           stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           dataTestId={dataTestId}
           compact={dense}

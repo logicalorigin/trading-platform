@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getBars as getBarsRequest } from "@workspace/api-client-react";
+import {
+  getBars as getBarsRequest,
+  useGetResearchEarningsEvents,
+} from "@workspace/api-client-react";
 import {
   DISPLAY_CHART_OUTSIDE_RTH,
   resolveDisplayChartPrice,
@@ -19,7 +22,11 @@ import {
   resolveLocalRollupBaseTimeframe,
   rollupMarketBars,
 } from "../charting/timeframeRollups";
-import { flowEventsToChartEvents } from "../charting/chartEvents";
+import {
+  earningsEventsToChartEvents,
+  flowEventsToChartEvents,
+  getChartEventLookbackWindow,
+} from "../charting/chartEvents";
 import {
   getChartBarLimit,
   getChartBrokerRecentWindowMinutes,
@@ -81,10 +88,13 @@ import {
 import { _initialState, persistState } from "../../lib/workspaceState";
 import { T, getCurrentTheme } from "../../lib/uiTokens";
 
+const toApiDate = (date) => date.toISOString().slice(0, 10);
+
 export const TradeEquityPanel = ({
   ticker,
   flowEvents,
   historicalDataEnabled = true,
+  earningsEventsEnabled = true,
   stockAggregateStreamingEnabled = false,
   dataTestId = "trade-equity-chart",
   compact = false,
@@ -590,9 +600,40 @@ export const TradeEquityPanel = ({
       }),
     [bars, markers, ticker],
   );
+  const earningsEventWindow = useMemo(
+    () => getChartEventLookbackWindow(tf),
+    [tf],
+  );
+  const earningsEventParams = useMemo(
+    () => ({
+      symbol: ticker || "",
+      from: toApiDate(earningsEventWindow.from),
+      to: toApiDate(earningsEventWindow.to),
+    }),
+    [earningsEventWindow, ticker],
+  );
+  const earningsEventsQuery = useGetResearchEarningsEvents(earningsEventParams, {
+    query: {
+      enabled: Boolean(
+        earningsEventsEnabled &&
+          historicalDataEnabled &&
+          ticker &&
+          earningsEventParams.from &&
+          earningsEventParams.to,
+      ),
+      staleTime: 300_000,
+      retry: false,
+    },
+  });
   const chartEvents = useMemo(
-    () => flowEventsToChartEvents(effectiveFlowEvents || [], ticker),
-    [effectiveFlowEvents, ticker],
+    () => [
+      ...flowEventsToChartEvents(effectiveFlowEvents || [], ticker),
+      ...earningsEventsToChartEvents(
+        earningsEventsQuery.data?.events || [],
+        ticker,
+      ),
+    ],
+    [earningsEventsQuery.data?.events, effectiveFlowEvents, ticker],
   );
   const chartModel = useMeasuredChartModel({
     scopeKey: chartHydrationScopeKey,

@@ -2883,6 +2883,36 @@ export const GetResearchEarningsCalendarResponse = zod.object({
 
 
 /**
+ * @summary Get provider-backed earnings events for a symbol
+ */
+export const GetResearchEarningsEventsQueryParams = zod.object({
+  "symbol": zod.coerce.string(),
+  "from": zod.date(),
+  "to": zod.date()
+})
+
+export const GetResearchEarningsEventsResponse = zod.object({
+  "symbol": zod.string(),
+  "from": zod.coerce.date(),
+  "to": zod.coerce.date(),
+  "events": zod.array(zod.object({
+  "symbol": zod.string(),
+  "date": zod.coerce.date().nullable(),
+  "reportingTime": zod.string().nullable(),
+  "provider": zod.string(),
+  "epsEstimated": zod.number().nullable(),
+  "epsActual": zod.number().nullable(),
+  "revenueEstimated": zod.number().nullable(),
+  "revenueActual": zod.number().nullable(),
+  "fiscalPeriod": zod.string().nullable(),
+  "fiscalDateEnding": zod.coerce.date().nullable(),
+  "status": zod.enum(['confirmed', 'estimated']),
+  "fetchedAt": zod.coerce.date()
+}))
+})
+
+
+/**
  * @summary Get recent SEC filings for a symbol
  */
 export const getResearchSecFilingsQueryLimitMax = 100;

@@ -247,6 +247,43 @@ async function mockMarketApi(
           return (!from || date >= from) && (!to || date <= to);
         }),
       };
+    } else if (url.pathname === "/api/research/earnings-events") {
+      const symbol = (url.searchParams.get("symbol") || "").toUpperCase();
+      const from = url.searchParams.get("from") || "";
+      const to = url.searchParams.get("to") || "";
+      const events = (options.earningsEntries || [])
+        .filter((entry) => {
+          const date = String(entry.date || "");
+          const entrySymbol = String(entry.symbol || "").toUpperCase();
+          return (
+            (!symbol || entrySymbol === symbol) &&
+            (!from || date >= from) &&
+            (!to || date <= to)
+          );
+        })
+        .map((entry) => ({
+          symbol: String(entry.symbol || "").toUpperCase(),
+          date: entry.date,
+          reportingTime: entry.time || null,
+          provider: "fmp",
+          epsEstimated: entry.epsEstimated ?? null,
+          epsActual: entry.epsActual ?? null,
+          revenueEstimated: entry.revenueEstimated ?? null,
+          revenueActual: entry.revenueActual ?? null,
+          fiscalPeriod: entry.fiscalPeriod ?? null,
+          fiscalDateEnding: entry.fiscalDateEnding ?? null,
+          status:
+            entry.epsActual !== undefined || entry.revenueActual !== undefined
+              ? "confirmed"
+              : "estimated",
+          fetchedAt: new Date().toISOString(),
+        }));
+      body = {
+        symbol,
+        from,
+        to,
+        events,
+      };
     } else if (url.pathname === "/api/research/status") {
       body = {
         configured: Boolean(options.researchConfigured),
@@ -433,12 +470,21 @@ test("Market calendar overlay renders month events, detail chart, and Trade hand
     }
   });
 
-  const nvdaDate = currentMonthIsoDate(18);
+  const todayDate = new Date().toISOString().slice(0, 10);
+  const nvdaDate = todayDate;
   const aaplDate = currentMonthIsoDate(8);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await mockMarketApi(page, {
     researchConfigured: true,
     earningsEntries: [
+      {
+        symbol: "SPY",
+        date: todayDate,
+        time: "bmo",
+        epsEstimated: 0,
+        revenueEstimated: 0,
+        fiscalDateEnding: todayDate,
+      },
       {
         symbol: "NVDA",
         date: nvdaDate,
@@ -458,6 +504,11 @@ test("Market calendar overlay renders month events, detail chart, and Trade hand
     ],
   });
   await openMarket(page, "1x1");
+  await expect(
+    page.locator(
+      '[data-testid="market-mini-chart-0-surface-chart-event"][data-chart-event-type="earnings"]',
+    ),
+  ).toBeVisible({ timeout: 20_000 });
 
   await page.getByTestId("market-calendar-open").click();
   await expect(page.getByTestId("market-calendar-overlay")).toBeVisible();
@@ -468,7 +519,7 @@ test("Market calendar overlay renders month events, detail chart, and Trade hand
   await expect(page.getByTestId("market-calendar-month-grid")).toBeVisible();
   await page.getByText("NVDA AMC").click();
   await expect(page.getByTestId("market-calendar-detail")).toContainText("NVDA");
-  await expect(page.getByTestId("market-calendar-detail")).toContainText("Revenue est");
+  await expect(page.getByTestId("market-calendar-detail")).toContainText("Revenue");
   await expect(page.getByTestId("market-calendar-detail-mini-chart")).toBeVisible();
   await expect(page.getByTestId("market-calendar-detail-chart")).toBeVisible({
     timeout: 20_000,

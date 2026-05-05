@@ -1734,6 +1734,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResearchCalendarResponse"
 
+  /research/earnings-events:
+    get:
+      operationId: getResearchEarningsEvents
+      tags: [research]
+      summary: Get provider-backed earnings events for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Provider-backed symbol earnings events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchEarningsEventsResponse"
+
   /research/sec-filings:
     get:
       operationId: getResearchSecFilings
@@ -3575,6 +3606,51 @@ components:
         - revenueEstimated
         - fiscalDateEnding
 
+    ResearchEarningsEvent:
+      type: object
+      properties:
+        symbol:
+          type: string
+        date:
+          type: [string, "null"]
+          format: date
+        reportingTime:
+          type: [string, "null"]
+        provider:
+          type: string
+        epsEstimated:
+          type: [number, "null"]
+        epsActual:
+          type: [number, "null"]
+        revenueEstimated:
+          type: [number, "null"]
+        revenueActual:
+          type: [number, "null"]
+        fiscalPeriod:
+          type: [string, "null"]
+        fiscalDateEnding:
+          type: [string, "null"]
+          format: date
+        status:
+          type: string
+          enum: [confirmed, estimated]
+        fetchedAt:
+          type: string
+          format: date-time
+      required:
+        - symbol
+        - date
+        - reportingTime
+        - provider
+        - epsEstimated
+        - epsActual
+        - revenueEstimated
+        - revenueActual
+        - fiscalPeriod
+        - fiscalDateEnding
+        - status
+        - fetchedAt
+
     ResearchFiling:
       type: object
       properties:
@@ -3680,6 +3756,27 @@ components:
             $ref: "#/components/schemas/ResearchCalendarEntry"
       required:
         - entries
+
+    ResearchEarningsEventsResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchEarningsEvent"
+      required:
+        - symbol
+        - from
+        - to
+        - events
 
     ResearchFilingsResponse:
       type: object

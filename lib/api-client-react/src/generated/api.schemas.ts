@@ -917,6 +917,37 @@ export interface ResearchCalendarEntry {
   fiscalDateEnding: string | null;
 }
 
+export type ResearchEarningsEventStatus = typeof ResearchEarningsEventStatus[keyof typeof ResearchEarningsEventStatus];
+
+
+export const ResearchEarningsEventStatus = {
+  confirmed: 'confirmed',
+  estimated: 'estimated',
+} as const;
+
+export interface ResearchEarningsEvent {
+  symbol: string;
+  /** @nullable */
+  date: string | null;
+  /** @nullable */
+  reportingTime: string | null;
+  provider: string;
+  /** @nullable */
+  epsEstimated: number | null;
+  /** @nullable */
+  epsActual: number | null;
+  /** @nullable */
+  revenueEstimated: number | null;
+  /** @nullable */
+  revenueActual: number | null;
+  /** @nullable */
+  fiscalPeriod: string | null;
+  /** @nullable */
+  fiscalDateEnding: string | null;
+  status: ResearchEarningsEventStatus;
+  fetchedAt: string;
+}
+
 export interface ResearchFiling {
   symbol: string;
   /** @nullable */
@@ -968,6 +999,13 @@ export interface ResearchSnapshotsResponse {
 
 export interface ResearchCalendarResponse {
   entries: ResearchCalendarEntry[];
+}
+
+export interface ResearchEarningsEventsResponse {
+  symbol: string;
+  from: string;
+  to: string;
+  events: ResearchEarningsEvent[];
 }
 
 export interface ResearchFilingsResponse {
@@ -4020,6 +4058,12 @@ symbols: string;
 };
 
 export type GetResearchEarningsCalendarParams = {
+from: string;
+to: string;
+};
+
+export type GetResearchEarningsEventsParams = {
+symbol: string;
 from: string;
 to: string;
 };

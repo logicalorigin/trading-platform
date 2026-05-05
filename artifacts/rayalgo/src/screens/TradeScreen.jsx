@@ -2455,6 +2455,7 @@ export const TradeScreen = ({
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   isVisible = false,
+  researchConfigured = false,
   linkedContext = null,
   onLinkedWorkspaceGroupChange,
   onLinkedContextChange,
@@ -3278,6 +3279,7 @@ export const TradeScreen = ({
           <MemoTradeEquityPanel
             ticker={activeTicker}
             historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
+            earningsEventsEnabled={researchConfigured}
             stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
             onOpenSearch={openEquitySearch}
             searchOpen={tradeTickerSearchAnchor === "equity"}
