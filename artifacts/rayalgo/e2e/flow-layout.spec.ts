@@ -706,6 +706,8 @@ test("Flow row action rail charts options and mutes tickers", async ({ page }) =
 
   await firstRow.getByTestId("flow-action-chart-option").click();
   await expect(page.getByTestId("flow-inline-execution-quality")).toBeVisible();
+  await expect(page.getByTestId("flow-related-prints")).toBeVisible();
+  await expect(page.getByTestId("flow-related-print-row")).toHaveCount(2);
   await expectChartCanvasDrawn(page, "flow-inspection-option-chart");
 
   await firstRow.getByTestId("flow-action-mute-ticker").click();

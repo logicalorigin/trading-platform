@@ -111,7 +111,12 @@ const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) 
   };
 };
 
-export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
+export const ContractDetailInline = ({
+  evt,
+  relatedEvents = [],
+  onBack,
+  onJumpToTrade,
+}) => {
   const toast = useToast();
   const [alertSet, setAlertSet] = useState(false);
 
@@ -427,6 +432,22 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
       </span>
     </div>
   );
+  const relatedFlowRows = Array.isArray(relatedEvents)
+    ? relatedEvents.slice(0, 6)
+    : [];
+  const formatRelatedEventTime = (event) => {
+    if (event?.time) return event.time;
+    const raw = event?.occurredAt || event?.timestamp || event?.timeIso;
+    const date = raw ? new Date(raw) : null;
+    if (!date || Number.isNaN(date.getTime())) return MISSING_VALUE;
+    return `${date.toISOString().slice(11, 16)}Z`;
+  };
+  const getRelatedOptionRight = (event) => {
+    const raw = String(event?.cp || event?.right || "").toUpperCase();
+    if (raw.startsWith("P")) return "P";
+    if (raw.startsWith("C")) return "C";
+    return MISSING_VALUE;
+  };
 
   return (
     <div style={{ animation: "fadeIn 0.15s ease-out" }}>
@@ -813,6 +834,124 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               </div>
             </div>
           </Card>
+
+          {relatedFlowRows.length ? (
+            <Card data-testid="flow-related-prints" style={{ padding: sp(8) }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: sp(8),
+                  marginBottom: sp(4),
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: fs(10),
+                    fontWeight: 700,
+                    fontFamily: T.display,
+                    color: T.textSec,
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  RELATED PRINTS
+                </div>
+                <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+                  {relatedFlowRows.length} nearby
+                </span>
+              </div>
+              <div style={{ display: "grid", gap: sp(4) }}>
+                {relatedFlowRows.map((related) => {
+                  const relationshipColor =
+                    related.relationship === "same_contract" ? T.cyan : T.textDim;
+                  const relatedRight = getRelatedOptionRight(related);
+                  return (
+                    <div
+                      key={related.id || `${related.ticker}-${related.occurredAt}`}
+                      data-testid="flow-related-print-row"
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "48px minmax(0, 1fr) 72px auto",
+                        gap: sp(6),
+                        alignItems: "center",
+                        padding: sp("5px 6px"),
+                        border: `1px solid ${T.border}`,
+                        background: T.bg2,
+                        borderRadius: dim(3),
+                        minWidth: 0,
+                      }}
+                    >
+                      <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8) }}>
+                        {formatRelatedEventTime(related)}
+                      </span>
+                      <span
+                        style={{
+                          color: T.text,
+                          fontFamily: T.mono,
+                          fontSize: fs(9),
+                          fontWeight: 800,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {related.ticker || related.underlying} {related.strike}
+                        {relatedRight} · {related.type || related.basis || "FLOW"}
+                      </span>
+                      <span
+                        style={{
+                          color: relationshipColor,
+                          fontFamily: T.mono,
+                          fontSize: fs(8),
+                          fontWeight: 800,
+                          textTransform: "uppercase",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {related.relationship === "same_contract" ? "CONTRACT" : "UNDERLYING"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onJumpToTrade?.(related)}
+                        style={{
+                          border: `1px solid ${T.border}`,
+                          background: T.bg0,
+                          color: T.accent,
+                          borderRadius: dim(3),
+                          padding: sp("3px 5px"),
+                          fontFamily: T.mono,
+                          fontSize: fs(8),
+                          fontWeight: 900,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Trade
+                      </button>
+                      <span
+                        style={{
+                          gridColumn: "2 / 4",
+                          color: T.textDim,
+                          fontFamily: T.mono,
+                          fontSize: fs(8),
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {isFiniteNumber(related.premium)
+                          ? fmtM(related.premium)
+                          : MISSING_VALUE}{" "}
+                        · Fill{" "}
+                        {formatQuotePrice(related.premiumPrice ?? related.price ?? related.mark)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          ) : null}
         </div>
 
         <Card

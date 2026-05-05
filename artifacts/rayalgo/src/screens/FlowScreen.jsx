@@ -38,6 +38,7 @@ import {
 } from "../features/platform/marketFlowStore";
 import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
 import { FlowScannerStatusPanel } from "../features/flow/FlowScannerStatusPanel.jsx";
+import { buildRelatedFlowEvents } from "../features/flow/flowRelatedEventsModel";
 import {
   buildDteBucketsFromEvents,
   buildFlowClockFromEvents,
@@ -1376,6 +1377,15 @@ const FlowOverviewPanel = ({
       filtered.find((event) => event.id === pinnedEventId) ||
       null,
     [filtered, flowEvents, pinnedEventId],
+  );
+  const selectedRelatedFlowEvents = useMemo(
+    () =>
+      buildRelatedFlowEvents({
+        event: selectedEvt,
+        events: flowEvents,
+        limit: 6,
+      }),
+    [flowEvents, selectedEvt],
   );
   const flowSentimentSummary = useMemo(
     () => summarizeFlowSentiment(filtered),
@@ -3685,6 +3695,7 @@ const FlowOverviewPanel = ({
             {selectedEvt ? (
               <ContractDetailInline
                 evt={selectedEvt}
+                relatedEvents={selectedRelatedFlowEvents}
                 onBack={() => setSelectedEvt(null)}
                 onJumpToTrade={(event) => {
                   setSelectedEvt(null);
