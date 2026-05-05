@@ -46,6 +46,8 @@ export const PlatformShell = ({
   watchlistSymbols,
   signalMonitorStates,
   signalMatrixStates,
+  watchlistEarningsSymbols,
+  watchlistPositionSymbols,
   selectedSymbol,
   sidebarCollapsed,
   setSidebarCollapsed,
@@ -434,6 +436,8 @@ export const PlatformShell = ({
               watchlistSymbols={watchlistSymbols}
               signalStates={signalMonitorStates}
               signalMatrixStates={signalMatrixStates}
+              earningsSymbols={watchlistEarningsSymbols}
+              positionSymbols={watchlistPositionSymbols}
               selected={selectedSymbol}
               onSelect={onSelectSymbol}
               onChartFocus={onFocusMarketChart}

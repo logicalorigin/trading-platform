@@ -18,6 +18,7 @@ import {
   getListSignalMonitorEventsQueryKey,
   useEvaluateSignalMonitor,
   useEvaluateSignalMonitorMatrix,
+  useGetResearchEarningsCalendar,
   useGetSignalMonitorProfile,
   useGetSignalMonitorState,
   useListSignalMonitorEvents,
@@ -103,7 +104,9 @@ import {
 import {
   activeWatchlistSymbols as buildActiveWatchlistSymbols,
   allWatchlistSymbols as buildAllWatchlistSymbols,
+  buildWatchlistEarningsSymbols,
   buildWatchlistIdentityPayload,
+  buildWatchlistPositionSymbols,
   buildWatchlistRows,
 } from "./watchlistModel";
 import {
@@ -890,6 +893,29 @@ export default function PlatformApp() {
     selectedAccountId ||
     null;
   const researchConfigured = Boolean(session?.configured?.research);
+  const watchlistEarningsQuery = useGetResearchEarningsCalendar(
+    preloadCalendarWindow,
+    {
+      query: {
+        enabled: Boolean(
+          pageVisible &&
+            researchConfigured &&
+            preloadCalendarWindow.from &&
+            preloadCalendarWindow.to,
+        ),
+        staleTime: 300_000,
+        refetchInterval: pageVisible ? 300_000 : false,
+        retry: false,
+      },
+    },
+  );
+  const watchlistEarningsSymbols = useMemo(
+    () =>
+      buildWatchlistEarningsSymbols(watchlistEarningsQuery.data?.entries || [], {
+        horizonDays: 14,
+      }),
+    [watchlistEarningsQuery.data],
+  );
 
   useEffect(() => {
     setBrokerStockAggregateStreamPaused(!pageVisible);
@@ -1094,6 +1120,10 @@ export default function PlatformApp() {
         refetchInterval: false,
       },
     },
+  );
+  const watchlistPositionSymbols = useMemo(
+    () => buildWatchlistPositionSymbols(positionAlertsQuery.data?.positions || []),
+    [positionAlertsQuery.data],
   );
   const alertingPositions = useMemo(() => {
     if (!brokerConfigured || !brokerAuthenticated || !primaryAccountId) {
@@ -2137,6 +2167,8 @@ export default function PlatformApp() {
             watchlistSymbols={watchlistSymbols}
             signalMonitorStates={signalMonitorStates}
             signalMatrixStates={signalMatrixSnapshot.states}
+            watchlistEarningsSymbols={watchlistEarningsSymbols}
+            watchlistPositionSymbols={watchlistPositionSymbols}
             selectedSymbol={sym}
             sidebarCollapsed={sidebarCollapsed}
             setSidebarCollapsed={setSidebarCollapsed}

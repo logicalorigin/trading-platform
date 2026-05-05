@@ -16,9 +16,12 @@ export const WATCHLIST_SIGNAL_TIMEFRAMES = Object.freeze(["2m", "5m", "15m"]);
 export const normalizeWatchlistSymbol = (value) =>
   value?.trim?.().toUpperCase?.() || "";
 
+const normalizeSymbolListInput = (symbols = []) =>
+  Array.isArray(symbols) ? symbols : Array.from(symbols || []);
+
 const uniqueNormalizedWatchlistSymbols = (symbols = []) => [
   ...new Set(
-    (symbols || [])
+    normalizeSymbolListInput(symbols)
       .map((symbol) => normalizeWatchlistSymbol(symbol))
       .filter(Boolean),
   ),
@@ -261,6 +264,221 @@ export const formatWatchlistSignalBars = (barsSinceSignal) => {
   }
   const whole = Math.floor(value);
   return whole > 99 ? "99+" : String(whole);
+};
+
+const normalizeBadgeSymbolSet = (symbols = []) =>
+  new Set(uniqueNormalizedWatchlistSymbols(symbols));
+
+const hasQuoteData = (snapshot) =>
+  Number.isFinite(snapshot?.price) ||
+  Number.isFinite(snapshot?.chg) ||
+  Number.isFinite(snapshot?.pct) ||
+  Number.isFinite(snapshot?.volume);
+
+const readFlowSummary = (flowBySymbol, symbol) => {
+  if (!flowBySymbol || !symbol) return null;
+  if (flowBySymbol instanceof Map) {
+    return flowBySymbol.get(symbol) || null;
+  }
+  return flowBySymbol[symbol] || null;
+};
+
+const parseTimeMs = (value) => {
+  if (!value) return NaN;
+  const parsed = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const getFlowEventSymbol = (event) =>
+  normalizeWatchlistSymbol(
+    event?.ticker ||
+      event?.underlying ||
+      event?.underlyingSymbol ||
+      event?.symbol ||
+      "",
+  );
+
+export const buildWatchlistFlowBySymbol = (
+  flowEvents = [],
+  {
+    minPremium = 250_000,
+    minUnusualScore = 1,
+    maxAgeMs = 45 * 60_000,
+    nowMs = Date.now(),
+  } = {},
+) => {
+  const bySymbol = {};
+  (Array.isArray(flowEvents) ? flowEvents : []).forEach((event) => {
+    const symbol = getFlowEventSymbol(event);
+    if (!symbol) return;
+
+    const premium = Number(event?.premium || 0);
+    const unusualScore = Number(event?.unusualScore || 0);
+    const occurredAtMs = parseTimeMs(
+      event?.occurredAt || event?.timestamp || event?.updatedAt || event?.createdAt,
+    );
+    if (
+      Number.isFinite(occurredAtMs) &&
+      Number.isFinite(nowMs) &&
+      maxAgeMs > 0 &&
+      nowMs - occurredAtMs > maxAgeMs
+    ) {
+      return;
+    }
+
+    const isFlowSpike =
+      Boolean(event?.isUnusual) ||
+      (Number.isFinite(unusualScore) && unusualScore >= minUnusualScore) ||
+      (Number.isFinite(premium) && premium >= minPremium);
+    if (!isFlowSpike) return;
+
+    const current = bySymbol[symbol] || {
+      symbol,
+      count: 0,
+      premium: 0,
+      maxUnusualScore: null,
+      latestAt: null,
+    };
+    current.count += 1;
+    if (Number.isFinite(premium)) {
+      current.premium += premium;
+    }
+    if (Number.isFinite(unusualScore)) {
+      current.maxUnusualScore =
+        current.maxUnusualScore == null
+          ? unusualScore
+          : Math.max(current.maxUnusualScore, unusualScore);
+    }
+    if (
+      Number.isFinite(occurredAtMs) &&
+      (!current.latestAt || occurredAtMs > parseTimeMs(current.latestAt))
+    ) {
+      current.latestAt = new Date(occurredAtMs).toISOString();
+    }
+    bySymbol[symbol] = current;
+  });
+  return bySymbol;
+};
+
+export const buildWatchlistPositionSymbols = (positions = []) =>
+  uniqueNormalizedWatchlistSymbols(
+    (Array.isArray(positions) ? positions : []).flatMap((position) => {
+      const underlying =
+        position?.optionContract?.underlying ||
+        position?.underlying ||
+        position?.underlyingSymbol;
+      return [underlying || position?.symbol];
+    }),
+  );
+
+export const buildWatchlistEarningsSymbols = (
+  entries = [],
+  { nowMs = Date.now(), horizonDays = 14 } = {},
+) => {
+  const today = new Date(nowMs);
+  const startKey = Number.isFinite(today.getTime())
+    ? today.toISOString().slice(0, 10)
+    : "";
+  const horizon = new Date(today);
+  horizon.setUTCDate(horizon.getUTCDate() + horizonDays);
+  const endKey = Number.isFinite(horizon.getTime())
+    ? horizon.toISOString().slice(0, 10)
+    : "";
+
+  return uniqueNormalizedWatchlistSymbols(
+    (Array.isArray(entries) ? entries : []).flatMap((entry) => {
+      const symbol = normalizeWatchlistSymbol(entry?.symbol);
+      const dateKey = String(entry?.date || "").slice(0, 10);
+      if (!symbol || !dateKey) return [];
+      if (startKey && dateKey < startKey) return [];
+      if (endKey && dateKey > endKey) return [];
+      return [symbol];
+    }),
+  );
+};
+
+export const buildWatchlistBadges = ({
+  symbol,
+  selectedSymbol = null,
+  snapshot = null,
+  signalState = null,
+  earningsSymbols = [],
+  flowBySymbol = {},
+  positionSymbols = [],
+  nowMs = Date.now(),
+} = {}) => {
+  const normalizedSymbol = normalizeWatchlistSymbol(symbol);
+  if (!normalizedSymbol) return [];
+
+  const badges = [];
+  const earningsSet = normalizeBadgeSymbolSet(earningsSymbols);
+  const positionSet = normalizeBadgeSymbolSet(positionSymbols);
+  const selected = normalizeWatchlistSymbol(selectedSymbol);
+  const flow = readFlowSummary(flowBySymbol, normalizedSymbol);
+  const quoteTimestamp = snapshot?.updatedAt
+    ? new Date(snapshot.updatedAt).getTime()
+    : NaN;
+  const quoteAgeMs = Number.isFinite(quoteTimestamp)
+    ? Math.max(0, nowMs - quoteTimestamp)
+    : null;
+
+  if (selected && selected === normalizedSymbol) {
+    badges.push({
+      id: "linked",
+      label: "LINK",
+      tone: "linked",
+      detail: "Linked workspace target",
+    });
+  }
+  if (earningsSet.has(normalizedSymbol)) {
+    badges.push({
+      id: "earnings",
+      label: "EARN",
+      tone: "earnings",
+      detail: "Earnings soon",
+    });
+  }
+  if (signalState?.currentSignalDirection === "buy" || signalState?.currentSignalDirection === "sell") {
+    badges.push({
+      id: "signal",
+      label: signalState.currentSignalDirection === "buy" ? "BUY" : "SELL",
+      tone: signalState.currentSignalDirection,
+      detail: `${signalState.fresh ? "Fresh" : "Stale"} ${signalState.currentSignalDirection} signal`,
+    });
+  }
+  if (flow && (Number(flow.premium) > 0 || Number(flow.count) > 0)) {
+    badges.push({
+      id: "flow",
+      label: Number(flow.premium) >= 250_000 ? "FLOW+" : "FLOW",
+      tone: "flow",
+      detail: `${Number(flow.count || 0)} flow print${Number(flow.count || 0) === 1 ? "" : "s"}`,
+    });
+  }
+  if (positionSet.has(normalizedSymbol)) {
+    badges.push({
+      id: "position",
+      label: "POS",
+      tone: "position",
+      detail: "Open position",
+    });
+  }
+  if (!hasQuoteData(snapshot)) {
+    badges.push({
+      id: "no-data",
+      label: "NO DATA",
+      tone: "stale",
+      detail: "No quote data",
+    });
+  } else if (quoteAgeMs != null && quoteAgeMs > 15 * 60_000) {
+    badges.push({
+      id: "stale",
+      label: "STALE",
+      tone: "stale",
+      detail: "Quote is older than 15 minutes",
+    });
+  }
+
+  return badges;
 };
 
 const compareDefinedNumber = (left, right, direction) => {

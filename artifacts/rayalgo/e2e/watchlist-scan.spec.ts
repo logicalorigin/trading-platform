@@ -57,11 +57,19 @@ async function mockPlatformApi(
   page: Page,
   {
     watchlist,
+    earningsEntries = [],
+    flowEvents = [],
     onReorder,
+    positions = [],
+    researchConfigured = false,
     onSignalMatrixRequest,
   }: {
     watchlist: unknown | unknown[];
+    earningsEntries?: unknown[];
+    flowEvents?: unknown[];
     onReorder?: (payload: unknown) => void;
+    positions?: unknown[];
+    researchConfigured?: boolean;
     onSignalMatrixRequest?: (payload: unknown) => void;
   },
 ) {
@@ -71,16 +79,42 @@ async function mockPlatformApi(
 
     if (url.pathname === "/api/session") {
       body = {
-        configured: { ibkr: false, research: false },
-        ibkrBridge: {
-          authenticated: false,
-          connected: false,
-          liveMarketDataAvailable: false,
-          transport: "ib-gateway",
+        configured: {
+          ibkr: positions.length > 0,
+          research: researchConfigured,
         },
+        ibkrBridge: positions.length
+          ? {
+              authenticated: true,
+              connected: true,
+              healthFresh: true,
+              selectedAccountId: "DU123",
+              accounts: [{ accountId: "DU123" }],
+              liveMarketDataAvailable: true,
+              transport: "ib-gateway",
+            }
+          : {
+              authenticated: false,
+              connected: false,
+              liveMarketDataAvailable: false,
+              transport: "ib-gateway",
+            },
         environment: "paper",
         marketDataProviders: {},
       };
+    } else if (url.pathname === "/api/accounts") {
+      body = {
+        accounts: positions.length
+          ? [{ id: "DU123", accountId: "DU123", label: "Mock account" }]
+          : [],
+      };
+    } else if (
+      url.pathname.startsWith("/api/accounts/") &&
+      url.pathname.endsWith("/positions")
+    ) {
+      body = { positions };
+    } else if (url.pathname === "/api/positions") {
+      body = { positions };
     } else if (url.pathname === "/api/watchlists" && route.request().method() === "GET") {
       body = { watchlists: Array.isArray(watchlist) ? watchlist : [watchlist] };
     } else if (
@@ -118,11 +152,19 @@ async function mockPlatformApi(
     } else if (url.pathname === "/api/bars") {
       body = { bars: makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()) };
     } else if (url.pathname === "/api/flow/events") {
-      body = { events: [] };
+      body = {
+        events: flowEvents,
+        source: {
+          provider: "ibkr",
+          status: flowEvents.length ? "live" : "empty",
+          fallbackUsed: false,
+          unusualThreshold: 1,
+        },
+      };
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
-      body = { entries: [] };
+      body = { entries: earningsEntries };
     } else if (url.pathname === "/api/signal-monitor/profile") {
       body = { enabled: true, timeframe: "15m", watchlistId: "default" };
     } else if (
@@ -275,6 +317,66 @@ test("watchlist displays legacy symbols plus signal-monitor rows and signal sort
     "draggable",
     "false",
   );
+});
+
+test("watchlist badges surface linked, signal, flow, earnings, and position state", async ({
+  page,
+}) => {
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  await mockPlatformApi(page, {
+    watchlist: {
+      id: "default",
+      name: "Default",
+      isDefault: true,
+      symbols: ["SPY", "QQQ"],
+    },
+    researchConfigured: true,
+    earningsEntries: [{ symbol: "SPY", date: tomorrow, time: "bmo" }],
+    flowEvents: [
+      {
+        id: "spy-flow",
+        underlying: "SPY",
+        right: "call",
+        strike: 510,
+        expirationDate: tomorrow,
+        occurredAt: new Date().toISOString(),
+        premium: 350_000,
+        isUnusual: true,
+        unusualScore: 2.4,
+        provider: "ibkr",
+      },
+    ],
+    positions: [{ id: "pos-spy", symbol: "SPY", quantity: 10 }],
+  });
+  await openMarketWithWatchlist(page);
+
+  const spyRow = page.locator('[data-testid="watchlist-row"][data-symbol="SPY"]');
+  await expect(spyRow.getByTestId("watchlist-badge-linked")).toBeVisible();
+  await expect(spyRow.getByTestId("watchlist-badge-signal")).toBeVisible();
+  await expect(spyRow.getByTestId("watchlist-badge-flow")).toBeVisible();
+  await expect(spyRow.getByTestId("watchlist-badge-earnings")).toBeVisible();
+  await expect(spyRow.getByTestId("watchlist-badge-position")).toBeVisible();
+  await expect(spyRow).toHaveAttribute("data-watchlist-badge-count", "5");
+
+  const badgeBoxes = await spyRow.evaluate((row) => {
+    const rowBox = row.getBoundingClientRect();
+    return Array.from(row.querySelectorAll("[data-watchlist-badge]")).map((badge) => {
+      const box = badge.getBoundingClientRect();
+      return {
+        left: box.left - rowBox.left,
+        right: rowBox.right - box.right,
+        top: box.top - rowBox.top,
+        bottom: rowBox.bottom - box.bottom,
+      };
+    });
+  });
+  expect(
+    badgeBoxes.every(
+      (box) => box.left >= 0 && box.right >= 0 && box.top >= 0 && box.bottom >= 0,
+    ),
+  ).toBe(true);
 });
 
 test("watchlist drag and drop reorders canonical rows in manual mode", async ({ page }) => {

@@ -20,12 +20,18 @@ import {
   WATCHLIST_SORT_MODE,
   WATCHLIST_SIGNAL_TIMEFRAMES,
   buildSignalMatrixBySymbol,
+  buildWatchlistBadges,
+  buildWatchlistFlowBySymbol,
   buildWatchlistRows,
   countWatchlistSymbols,
   formatWatchlistSignalBars,
   getBestWatchlistSignalState,
   sortWatchlistRows,
 } from "./watchlistModel";
+import {
+  BROAD_MARKET_FLOW_STORE_KEY,
+  useMarketFlowSnapshotForStoreKey,
+} from "./marketFlowStore";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -202,6 +208,92 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
   </span>
 );
 
+const MAX_VISIBLE_WATCHLIST_BADGES = 5;
+
+const getWatchlistBadgeColor = (tone) => {
+  if (tone === "buy" || tone === "linked") return T.blue;
+  if (tone === "sell") return T.red;
+  if (tone === "earnings") return T.amber;
+  if (tone === "flow") return T.cyan;
+  if (tone === "position") return T.green;
+  if (tone === "stale") return T.amber;
+  return T.textDim;
+};
+
+const WatchlistBadgeStrip = ({ badges = [] }) => {
+  if (!badges.length) return null;
+
+  const visibleBadges = badges.slice(0, MAX_VISIBLE_WATCHLIST_BADGES);
+  const hiddenBadges = badges.slice(MAX_VISIBLE_WATCHLIST_BADGES);
+  const hiddenDetail = hiddenBadges.map((badge) => badge.detail || badge.label).join(" · ");
+
+  return (
+    <div
+      data-testid="watchlist-badge-strip"
+      data-watchlist-badge-count={badges.length}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: sp(3),
+        marginTop: sp(3),
+        minWidth: 0,
+        overflow: "hidden",
+      }}
+    >
+      {visibleBadges.map((badge) => {
+        const color = getWatchlistBadgeColor(badge.tone);
+        return (
+          <AppTooltip key={badge.id} content={badge.detail || badge.label}>
+            <span
+              data-testid={`watchlist-badge-${badge.id}`}
+              data-watchlist-badge={badge.id}
+              style={{
+                minWidth: 0,
+                maxWidth: dim(48),
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                border: `1px solid ${color}66`,
+                background: `${color}14`,
+                color,
+                fontFamily: T.mono,
+                fontSize: fs(7),
+                fontWeight: 900,
+                lineHeight: 1,
+                padding: sp("2px 3px"),
+                borderRadius: 0,
+              }}
+            >
+              {badge.label}
+            </span>
+          </AppTooltip>
+        );
+      })}
+      {hiddenBadges.length ? (
+        <AppTooltip content={hiddenDetail}>
+          <span
+            data-testid="watchlist-badge-overflow"
+            style={{
+              border: `1px solid ${T.border}`,
+              background: T.bg2,
+              color: T.textMuted,
+              fontFamily: T.mono,
+              fontSize: fs(7),
+              fontWeight: 900,
+              lineHeight: 1,
+              padding: sp("2px 3px"),
+              borderRadius: 0,
+              whiteSpace: "nowrap",
+            }}
+          >
+            +{hiddenBadges.length}
+          </span>
+        </AppTooltip>
+      ) : null}
+    </div>
+  );
+};
+
 const WatchlistRow = memo(
   ({
     item,
@@ -219,6 +311,9 @@ const WatchlistRow = memo(
     onRemoveSymbol,
     onSignalAction,
     signalStatesByTimeframe = {},
+    earningsSymbols = [],
+    flowSummary = null,
+    positionSymbols = [],
     busy = false,
   }) => {
     const fallback = useMemo(
@@ -231,6 +326,27 @@ const WatchlistRow = memo(
     const bestSignalState = getBestWatchlistSignalState(
       signalStatesByTimeframe,
       signalState,
+    );
+    const badges = useMemo(
+      () =>
+        buildWatchlistBadges({
+          symbol: item.sym,
+          selectedSymbol: selected,
+          snapshot,
+          signalState: bestSignalState,
+          earningsSymbols,
+          flowBySymbol: flowSummary ? { [item.sym]: flowSummary } : {},
+          positionSymbols,
+        }),
+      [
+        bestSignalState,
+        earningsSymbols,
+        flowSummary,
+        item.sym,
+        positionSymbols,
+        selected,
+        snapshot,
+      ],
     );
     const selectedRow = selected === item.sym;
     const signalDirection = bestSignalState?.currentSignalDirection;
@@ -274,6 +390,7 @@ const WatchlistRow = memo(
         data-testid="watchlist-row"
         data-symbol={item.sym}
         data-source={item.source}
+        data-watchlist-badge-count={badges.length}
         className={joinMotionClasses(
           "ra-row-enter",
           "ra-interactive",
@@ -501,6 +618,7 @@ const WatchlistRow = memo(
               {quoteAge}
             </span></AppTooltip>
           </div>
+          <WatchlistBadgeStrip badges={badges} />
           <div
             style={{
               display: "flex",
@@ -589,6 +707,8 @@ export const Watchlist = ({
   selected,
   signalStates = [],
   signalMatrixStates = [],
+  earningsSymbols = [],
+  positionSymbols = [],
   onSelect,
   onSelectWatchlist,
   onCreateWatchlist,
@@ -638,6 +758,13 @@ export const Watchlist = ({
     [items],
   );
   const snapshotsBySymbol = useRuntimeTickerSnapshots(itemSymbols);
+  const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
+    BROAD_MARKET_FLOW_STORE_KEY,
+  );
+  const flowBySymbol = useMemo(
+    () => buildWatchlistFlowBySymbol(broadFlowSnapshot.flowEvents),
+    [broadFlowSnapshot.flowEvents],
+  );
   const signalStatesBySymbol = useMemo(
     () =>
       Object.fromEntries(
@@ -1292,6 +1419,9 @@ export const Watchlist = ({
               onRemoveSymbol={onRemoveSymbol}
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
+              earningsSymbols={earningsSymbols}
+              flowSummary={flowBySymbol[item.sym] || null}
+              positionSymbols={positionSymbols}
               busy={busy}
             />
           );
