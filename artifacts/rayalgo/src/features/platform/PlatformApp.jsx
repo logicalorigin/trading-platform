@@ -1940,6 +1940,20 @@ export default function PlatformApp() {
     setScreen("trade");
   }, [broadcastLinkedWorkspace]);
 
+  const handleJumpToTradeFromMarket = useCallback((ticker) => {
+    const normalized = normalizeTickerSymbol(ticker);
+    if (!normalized) {
+      return;
+    }
+    ensureTradeTickerInfo(normalized, normalized);
+    broadcastLinkedWorkspace({
+      sourcePanel: "market",
+      symbol: normalized,
+      updatedAt: new Date().toISOString(),
+    });
+    setScreen("trade");
+  }, [broadcastLinkedWorkspace]);
+
   const handleAccountJumpToTrade = useCallback((symbol) => {
     const normalized = normalizeTickerSymbol(symbol);
     if (!normalized) {
@@ -2015,6 +2029,7 @@ export default function PlatformApp() {
       onToggleMonitor={handleToggleSignalMonitor}
       onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
       onChangeMonitorWatchlist={handleChangeSignalMonitorWatchlist}
+      onJumpToTradeFromMarket={handleJumpToTradeFromMarket}
       onJumpToTradeFromFlow={handleJumpToTradeFromFlow}
       onSelectTradingAccount={setSelectedAccountId}
       onJumpToTradeFromAccount={handleAccountJumpToTrade}

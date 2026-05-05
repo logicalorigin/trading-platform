@@ -119,12 +119,27 @@ function makeFlowEvents(symbol: string) {
   ];
 }
 
+function currentMonthIsoDate(dayPreference: number) {
+  const now = new Date();
+  const lastDay = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  const day = Math.max(1, Math.min(lastDay, dayPreference));
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day),
+  )
+    .toISOString()
+    .slice(0, 10);
+}
+
 async function mockMarketApi(
   page: Page,
   options: {
     ibkrStreaming?: boolean;
     advanceBarsOnRequest?: boolean;
     initialBarCount?: number;
+    researchConfigured?: boolean;
+    earningsEntries?: Array<Record<string, unknown>>;
   } = {},
 ) {
   const observed = {
@@ -146,7 +161,11 @@ async function mockMarketApi(
           historical: "ibkr",
           research: "fmp",
         },
-        configured: { polygon: false, ibkr: Boolean(options.ibkrStreaming), research: false },
+        configured: {
+          polygon: false,
+          ibkr: Boolean(options.ibkrStreaming),
+          research: Boolean(options.researchConfigured),
+        },
         ibkrBridge: options.ibkrStreaming
           ? {
               authenticated: true,
@@ -219,7 +238,20 @@ async function mockMarketApi(
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
-      body = { entries: [] };
+      const from = url.searchParams.get("from") || "";
+      const to = url.searchParams.get("to") || "";
+      const entries = options.earningsEntries || [];
+      body = {
+        entries: entries.filter((entry) => {
+          const date = String(entry.date || "");
+          return (!from || date >= from) && (!to || date <= to);
+        }),
+      };
+    } else if (url.pathname === "/api/research/status") {
+      body = {
+        configured: Boolean(options.researchConfigured),
+        provider: options.researchConfigured ? "fmp" : null,
+      };
     } else if (url.pathname === "/api/signal-monitor/profile") {
       body = {
         id: "mock-signal-monitor-profile",
@@ -386,6 +418,75 @@ async function expectNoElementOverflow(page: Page, selector: string) {
     expect(entry.overflowY, `${entry.text} should not overflow vertically`).toBe(false);
   });
 }
+
+test("Market calendar overlay renders month events, detail chart, and Trade handoff", async ({
+  page,
+}) => {
+  const runtimeIssues: string[] = [];
+  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning") &&
+      !isIgnorableConsoleMessage(message)
+    ) {
+      runtimeIssues.push(message.text());
+    }
+  });
+
+  const nvdaDate = currentMonthIsoDate(18);
+  const aaplDate = currentMonthIsoDate(8);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockMarketApi(page, {
+    researchConfigured: true,
+    earningsEntries: [
+      {
+        symbol: "NVDA",
+        date: nvdaDate,
+        time: "amc",
+        epsEstimated: 5.22,
+        revenueEstimated: 38_000_000_000,
+        fiscalDateEnding: nvdaDate,
+      },
+      {
+        symbol: "AAPL",
+        date: aaplDate,
+        time: "bmo",
+        epsEstimated: 1.48,
+        revenueEstimated: 94_000_000_000,
+        fiscalDateEnding: aaplDate,
+      },
+    ],
+  });
+  await openMarket(page, "1x1");
+
+  await page.getByTestId("market-calendar-open").click();
+  await expect(page.getByTestId("market-calendar-overlay")).toBeVisible();
+  await expect(page.getByTestId("market-calendar-provider-status")).toContainText(
+    /earnings live/i,
+    { timeout: 15_000 },
+  );
+  await expect(page.getByTestId("market-calendar-month-grid")).toBeVisible();
+  await page.getByText("NVDA AMC").click();
+  await expect(page.getByTestId("market-calendar-detail")).toContainText("NVDA");
+  await expect(page.getByTestId("market-calendar-detail")).toContainText("Revenue est");
+  await expect(page.getByTestId("market-calendar-detail-mini-chart")).toBeVisible();
+  await expect(page.getByTestId("market-calendar-detail-chart")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  await page.getByTestId("market-calendar-scope-all_watchlists").click();
+  await expect(page.getByTestId("market-calendar-detail")).toContainText("NVDA");
+
+  await page
+    .getByTestId("market-calendar-detail")
+    .getByRole("button", { name: /trade/i })
+    .click();
+  await expect(page.getByTestId("market-calendar-overlay")).toBeHidden();
+  await expect(page.getByTestId("trade-tab-NVDA")).toBeVisible({
+    timeout: 20_000,
+  });
+  expect(runtimeIssues, "Market calendar overlay should not emit runtime issues").toEqual([]);
+});
 
 test("Market chart grid lets chart surfaces own touched viewports and clears them on reset", async ({
   page,

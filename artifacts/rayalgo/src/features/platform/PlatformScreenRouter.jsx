@@ -43,6 +43,7 @@ export const PlatformScreenRouter = ({
   onToggleMonitor,
   onChangeMonitorTimeframe,
   onChangeMonitorWatchlist,
+  onJumpToTradeFromMarket,
   onJumpToTradeFromFlow,
   onSelectTradingAccount,
   onJumpToTradeFromAccount,
@@ -81,6 +82,7 @@ export const PlatformScreenRouter = ({
       onToggleMonitor={onToggleMonitor}
       onChangeMonitorTimeframe={onChangeMonitorTimeframe}
       onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+      onOpenTrade={onJumpToTradeFromMarket}
       watchlists={watchlists}
       linkedContext={marketLinkedContext}
       onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
