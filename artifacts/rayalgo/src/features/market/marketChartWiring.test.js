@@ -48,22 +48,22 @@ test("Market chart panning expands history for inactive charts too", () => {
   );
 });
 
-test("Market chart frames reuse self-owned chart viewport state", () => {
+test("Market chart frames use lightweight snapshots only for layout persistence", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const cellSource = readLocalSource("./MiniChartCell.jsx");
 
   assert.match(gridSource, /chartViewportResetRevision/);
   assert.match(gridSource, /buildMarketGridViewportRevisionIdentity/);
+  assert.match(gridSource, /rememberViewportSnapshot/);
+  assert.match(gridSource, /chartViewportSnapshots/);
   assert.match(
     cellSource,
     /rangeIdentityKey=\{chartViewportIdentityKey \|\| chartHydrationScopeKey\}/,
   );
+  assert.match(cellSource, /viewportSnapshot=\{viewportSnapshot\}/);
+  assert.match(cellSource, /onViewportSnapshotChange=\{onViewportSnapshotChange\}/);
   assert.match(cellSource, /persistScalePrefs=\{false\}/);
-  assert.doesNotMatch(gridSource, /chartViewportSnapshots/);
-  assert.doesNotMatch(gridSource, /rememberViewportSnapshot/);
   assert.doesNotMatch(gridSource, /clearViewportSnapshot/);
-  assert.doesNotMatch(cellSource, /viewportSnapshot/);
-  assert.doesNotMatch(cellSource, /onViewportSnapshotChange/);
   assert.doesNotMatch(cellSource, /viewportUserTouched/);
 });
 

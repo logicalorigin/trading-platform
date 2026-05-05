@@ -1,145 +1,35 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  getBars as getBarsRequest,
-  useCancelOrder,
-  useListOrders,
-  useListPositions,
-  usePlaceOrder,
-  usePreviewOrder,
-  useReplaceOrder,
-  useSubmitOrders,
-} from "@workspace/api-client-react";
-import {
-  DISPLAY_CHART_OUTSIDE_RTH,
-  resolveDisplayChartPrice,
-} from "../charting/displayChartSession";
-import { RayReplicaSettingsMenu } from "../charting/RayReplicaSettingsMenu";
-import { ResearchChartFrame } from "../charting/ResearchChartFrame";
-import {
-  ResearchChartWidgetFooter,
-  ResearchChartWidgetHeader,
-  ResearchChartWidgetSidebar,
-} from "../charting/ResearchChartWidgetChrome";
-import {
-  expandLocalRollupLimit,
-  resolveLocalRollupBaseTimeframe,
-  rollupMarketBars,
-} from "../charting/timeframeRollups";
-import { flowEventsToChartEvents } from "../charting/chartEvents";
-import {
-  getInitialChartBarLimit,
-  normalizeChartTimeframe,
-} from "../charting/timeframes";
-import { recordChartBarScopeState } from "../charting/chartHydrationStats";
-import { resolveSpotChartFrameLayout } from "../charting/spotChartFrameLayout";
-import {
-  useBrokerStreamedBars,
-  useHistoricalBarStream,
-  usePrependableHistoricalBars,
-} from "../charting/useMassiveStreamedStockBars";
-import { useDrawingHistory } from "../charting/useDrawingHistory";
-import { useIndicatorLibrary } from "../charting/pineScripts";
-import {
-  buildTradeBarsFromApi,
-  describeBrokerChartSource,
-  describeBrokerChartStatus,
-  useDisplayChartPriceFallbackBars,
-} from "../charting/chartApiBars";
-import {
-  buildRayReplicaIndicatorSettings,
-  isRayReplicaIndicatorSelected,
-  resolvePersistedIndicatorPreset,
-  resolvePersistedRayReplicaSettings,
-} from "../charting/chartIndicatorPersistence";
-import {
-  buildChartBarScopeKey,
-  measureChartBarsRequest,
-  useDebouncedVisibleRangeExpansion,
-  useMeasuredChartModel,
-  useProgressiveChartBarLimit,
-} from "../charting/chartHydrationRuntime";
-import {
-  normalizeChartBarsPagePayload,
-  normalizeLatestChartBarsPayload,
-} from "../charting/chartBarsPayloads";
-import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorites";
-import {
-  BARS_QUERY_DEFAULTS,
-  BARS_REQUEST_PRIORITY,
   HEAVY_PAYLOAD_GC_MS,
   QUERY_DEFAULTS,
-  buildBarsRequestOptions,
 } from "../platform/queryDefaults";
-import {
-  ensureTradeTickerInfo,
-  useRuntimeTickerSnapshot,
-} from "../platform/runtimeTickerStore";
 import {
   resolveTradeOptionChainSnapshot,
   useTradeOptionChainSnapshot,
 } from "../platform/tradeOptionChainStore";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
 import { usePageVisible } from "../platform/usePageVisible";
-import { usePositions, useToast } from "../platform/platformContexts.jsx";
-import { useUserPreferences } from "../preferences/useUserPreferences";
 import {
-  DEFAULT_TRADE_EQUITY_STUDIES,
-  TRADE_EQUITY_INDICATOR_PRESET_VERSION,
-  TRADE_TIMEFRAMES,
-  buildTradeBarsPageQueryKey as buildBarsPageQueryKey,
-  buildTradeFlowMarkersFromEvents,
-} from "./tradeChartState";
-import {
-  TICKET_ASSET_MODES,
-  TICKET_ORDER_TYPES,
-  TRADING_EXECUTION_MODES,
-  buildTwsBracketOrders,
-  formatTicketOrderType,
-  getDefaultTicketRiskPrices,
-  isTwsStructuredOrderPayload,
-  normalizeTicketAssetMode,
-  normalizeTicketOrderType,
-  normalizeTradingExecutionMode,
-  resolveTicketOrderPrices,
-  validateTicketBracket,
-} from "./ibkrOrderTicketModel";
-import {
-  BrokerActionConfirmDialog,
-  formatLiveBrokerActionError,
-} from "./BrokerActionConfirmDialog.jsx";
-import {
-  FINAL_ORDER_STATUSES,
   formatExecutionContractLabel,
   getBrokerMarketDepthRequest,
   listBrokerExecutionsRequest,
-  orderStatusColor,
-  sameOptionContract,
 } from "./tradeBrokerRequests";
 import { buildMarketOrderFlowFromEvents } from "../flow/flowAnalytics";
 import {
   OrderFlowDonut,
   SizeBucketRow,
 } from "../flow/OrderFlowVisuals.jsx";
-import { isOpenPositionRow } from "../account/accountPositionRows.js";
-import { _initialState, persistState } from "../../lib/workspaceState";
 import {
-  daysToExpiration,
-  fmtCompactNumber,
-  formatEnumLabel,
-  formatExpirationLabel,
   formatQuotePrice,
   formatRelativeTimeShort,
-  formatSignedPercent,
   isFiniteNumber,
-  parseExpirationValue,
 } from "../../lib/formatters";
 import {
   MISSING_VALUE,
   T,
   dim,
   fs,
-  getCurrentTheme,
   sp,
 } from "../../lib/uiTokens";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";

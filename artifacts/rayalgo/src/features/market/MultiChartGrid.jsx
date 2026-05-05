@@ -141,6 +141,15 @@ const MAX_MULTI_CHART_SLOTS = Math.max(
 const MARKET_GRID_INDICATOR_PRESET_VERSION = 2;
 const MARKET_CHART_FLOW_LIMIT = 80;
 
+const buildViewportRangeSignature = (range) => {
+  if (!range || typeof range !== "object") {
+    return "none";
+  }
+  const from = Number.isFinite(range.from) ? range.from : "";
+  const to = Number.isFinite(range.to) ? range.to : "";
+  return `${from}:${to}`;
+};
+
 const buildDefaultMiniChartSymbols = (
   activeSym,
   count = MAX_MULTI_CHART_SLOTS,
@@ -292,6 +301,8 @@ export const MultiChartGrid = ({
   const [marketGridTrackState, setMarketGridTrackState] = useState(() =>
     readMarketGridTrackSession(),
   );
+  const [chartViewportSnapshots, setChartViewportSnapshots] = useState({});
+  const chartViewportSnapshotsRef = useRef({});
   const [chartViewportResetRevision, setChartViewportResetRevision] = useState(0);
   const [gridResizeHoverHandle, setGridResizeHoverHandle] = useState(null);
   const [gridResizeActiveHandle, setGridResizeActiveHandle] = useState(null);
@@ -677,7 +688,36 @@ export const MultiChartGrid = ({
     });
   }, [baseCellHeight, renderedCols, renderedRows, setLayoutTrackState]);
   const resetGridChartViews = useCallback(() => {
+    chartViewportSnapshotsRef.current = {};
+    setChartViewportSnapshots({});
     setChartViewportResetRevision((revision) => revision + 1);
+  }, []);
+  const rememberViewportSnapshot = useCallback((identityKey, snapshot) => {
+    if (!identityKey || !snapshot || snapshot.identityKey !== identityKey) {
+      return;
+    }
+
+    const current = chartViewportSnapshotsRef.current || {};
+    const existing = current[identityKey];
+    if (
+      existing &&
+      existing.userTouched === snapshot.userTouched &&
+      existing.realtimeFollow === snapshot.realtimeFollow &&
+      existing.scaleMode === snapshot.scaleMode &&
+      existing.autoScale === snapshot.autoScale &&
+      existing.invertScale === snapshot.invertScale &&
+      buildViewportRangeSignature(existing.visibleLogicalRange) ===
+        buildViewportRangeSignature(snapshot.visibleLogicalRange)
+    ) {
+      return;
+    }
+
+    const next = {
+      ...current,
+      [identityKey]: snapshot,
+    };
+    chartViewportSnapshotsRef.current = next;
+    setChartViewportSnapshots(next);
   }, []);
   const startGridResize = useCallback(
     ({ mode, colGapIndex = null, rowGapIndex = null, handleKey }, event) => {
@@ -1113,6 +1153,14 @@ export const MultiChartGrid = ({
                 compactFlow={compactPremiumFlow}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
                 chartViewportIdentityKey={viewportIdentityKey}
+                viewportSnapshot={
+                  chartViewportSnapshots[viewportIdentityKey] ||
+                  chartViewportSnapshotsRef.current?.[viewportIdentityKey] ||
+                  null
+                }
+                onViewportSnapshotChange={(snapshot) =>
+                  rememberViewportSnapshot(viewportIdentityKey, snapshot)
+                }
                 favoriteTimeframes={miniFavoriteTimeframes}
                 onToggleFavoriteTimeframe={toggleMiniFavoriteTimeframe}
                 onFocus={onSymClick}

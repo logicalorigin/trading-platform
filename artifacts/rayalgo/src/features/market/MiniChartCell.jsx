@@ -218,6 +218,8 @@ export const MiniChartCell = ({
   compactFlow = false,
   stockAggregateStreamingEnabled = false,
   chartViewportIdentityKey = null,
+  viewportSnapshot = null,
+  onViewportSnapshotChange,
   dataTestId,
 }) => {
   const queryClient = useQueryClient();
@@ -1099,6 +1101,8 @@ export const MiniChartCell = ({
             boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
           }}
           onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
+          viewportSnapshot={viewportSnapshot}
+          onViewportSnapshotChange={onViewportSnapshotChange}
           persistScalePrefs={false}
           surfaceTopOverlay={(controls) => (
             <ResearchChartWidgetHeader
