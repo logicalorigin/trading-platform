@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useGetQuoteSnapshots } from "@workspace/api-client-react";
 import {
   getChartTimeframeValues,
   normalizeChartTimeframe,
 } from "../charting/timeframes";
 import { clearStoredChartViewportSnapshot } from "../charting/ResearchChartSurface";
 import { buildChartBarScopeKey } from "../charting/chartHydrationRuntime";
-import {
-  resolvePersistedRayReplicaSettings,
-} from "../charting/chartIndicatorPersistence";
 import { buildPremiumFlowBySymbol } from "../platform/premiumFlowIndicator";
 import { FLOW_SCANNER_SCOPE } from "../platform/marketFlowScannerConfig";
 import { WATCHLIST } from "./marketReferenceData";
@@ -23,7 +19,6 @@ import {
   resizeMarketGridTrackWeights,
   writeMarketGridTrackSession,
 } from "./marketGridTrackState";
-import { normalizeMiniChartStudies } from "./marketGridChartState";
 import { useLiveMarketFlow } from "../platform/useLiveMarketFlow";
 import { useIbkrQuoteSnapshotStream } from "../platform/live-streams";
 import { USER_PREFERENCES_UPDATED_EVENT } from "../preferences/userPreferenceModel";
@@ -65,7 +60,6 @@ const MINI_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
 const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
-const MARKET_GRID_INDICATOR_PRESET_VERSION = 2;
 const MARKET_CHART_FLOW_LIMIT = 80;
 
 const buildDefaultMiniChartSymbols = (
@@ -87,11 +81,7 @@ const buildDefaultMiniChartSymbols = (
   );
 };
 
-const hydrateMiniChartSlot = (
-  slot,
-  fallbackTicker,
-  includeRayReplicaByDefault = false,
-) => ({
+const hydrateMiniChartSlot = (slot, fallbackTicker) => ({
   ticker:
     normalizeTickerSymbol(slot?.ticker) ||
     fallbackTicker ||
@@ -100,13 +90,6 @@ const hydrateMiniChartSlot = (
   tf: MINI_CHART_TIMEFRAMES.includes(normalizeChartTimeframe(slot?.tf))
     ? normalizeChartTimeframe(slot?.tf)
     : "15m",
-  studies: normalizeMiniChartStudies(
-    slot?.studies,
-    includeRayReplicaByDefault,
-  ),
-  rayReplicaSettings: resolvePersistedRayReplicaSettings(
-    slot?.rayReplicaSettings,
-  ),
   market: slot?.market || "stocks",
   provider: slot?.provider || null,
   providers: Array.isArray(slot?.providers) ? slot.providers.filter(Boolean) : [],
@@ -131,12 +114,7 @@ const buildInitialMiniChartSlots = (activeSym) => {
     MAX_MULTI_CHART_SLOTS,
   );
   return defaults.map((fallbackTicker, index) =>
-    hydrateMiniChartSlot(
-      persisted[index],
-      fallbackTicker,
-      _initialState.marketGridIndicatorPresetVersion !==
-        MARKET_GRID_INDICATOR_PRESET_VERSION,
-    ),
+    hydrateMiniChartSlot(persisted[index], fallbackTicker),
   );
 };
 
@@ -300,17 +278,6 @@ export const MultiChartGrid = ({
         : null,
     );
   }, [visibleSlotEntries]);
-  const quoteSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          visibleSlotEntries
-            .map((entry) => entry.slot?.ticker)
-            .filter(Boolean),
-        ),
-      ).join(","),
-    [visibleSlotEntries],
-  );
   const streamedSymbols = useMemo(
     () =>
       Array.from(
@@ -420,30 +387,10 @@ export const MultiChartGrid = ({
       ).slice(0, 12),
     [chartFlowEvents],
   );
-  const gridQuotesQuery = useGetQuoteSnapshots(
-    quoteSymbols ? { symbols: quoteSymbols } : undefined,
-    {
-      query: {
-        enabled: Boolean(quoteSymbols),
-        staleTime: 60_000,
-        retry: false,
-      },
-    },
-  );
   useIbkrQuoteSnapshotStream({
     symbols: streamedSymbols,
     enabled: Boolean(stockAggregateStreamingEnabled && streamedSymbols.length > 0),
   });
-  const quotesBySymbol = useMemo(
-    () =>
-      Object.fromEntries(
-        (gridQuotesQuery.data?.quotes || []).map((quote) => [
-          normalizeTickerSymbol(quote.symbol),
-          quote,
-        ]),
-      ),
-    [gridQuotesQuery.data],
-  );
 
   useEffect(() => {
     setSlots((current) => {
@@ -454,11 +401,7 @@ export const MultiChartGrid = ({
         if (
           !previous ||
           previous.ticker !== hydrated.ticker ||
-          previous.tf !== hydrated.tf ||
-          JSON.stringify(previous.studies || []) !==
-            JSON.stringify(hydrated.studies || []) ||
-          JSON.stringify(previous.rayReplicaSettings || {}) !==
-            JSON.stringify(hydrated.rayReplicaSettings || {})
+          previous.tf !== hydrated.tf
         ) {
           changed = true;
         }
@@ -473,7 +416,6 @@ export const MultiChartGrid = ({
       marketGridLayout: layout,
       marketGridSoloSlotIndex: soloSlotIndex,
       marketGridSyncTimeframes: syncTimeframes,
-      marketGridIndicatorPresetVersion: MARKET_GRID_INDICATOR_PRESET_VERSION,
       marketGridSlots: slots,
       marketGridRecentTickers: recentTickers,
       marketGridRecentTickerRows: recentTickerRows,
@@ -1038,7 +980,6 @@ export const MultiChartGrid = ({
                 key={`market-chart-slot-${index}-${chartViewportResetRevision}`}
                 dataTestId={`market-mini-chart-${index}`}
                 slot={slot}
-                quote={quotesBySymbol[slot.ticker]}
                 premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}
                 flowEvents={flowEventsBySymbol[normalizeTickerSymbol(slot.ticker)] || []}
                 premiumFlowStatus={chartFlowStatus}
@@ -1072,10 +1013,6 @@ export const MultiChartGrid = ({
                   onSymClick?.(ticker);
                 }}
                 onChangeTimeframe={(tf) => updateSlotTimeframe(index, tf)}
-                onChangeStudies={(studies) => updateSlot(index, { studies })}
-                onChangeRayReplicaSettings={(rayReplicaSettings) =>
-                  updateSlot(index, { rayReplicaSettings })
-                }
                 recentTickers={recentTickers}
                 recentTickerRows={recentTickerRows}
                 watchlistSymbols={watchlistSymbols}

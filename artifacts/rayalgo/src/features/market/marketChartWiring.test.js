@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import {
-  buildMarketGridViewportIdentity,
-  resolveMarketGridChartProviderContractId,
-} from "./marketGridChartState.js";
 
 const readLocalSource = (path) =>
   readFileSync(new URL(path, import.meta.url), "utf8");
@@ -43,6 +39,9 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.match(source, /surfaceUiStateKey="market-spot-chart"/);
   assert.match(source, /workspaceChart=\{\{ timeframe \}\}/);
   assert.match(source, /onWorkspaceChartChange=\{handleWorkspaceChartChange\}/);
+  assert.doesNotMatch(source, /quote/);
+  assert.doesNotMatch(source, /onChangeStudies/);
+  assert.doesNotMatch(source, /onChangeRayReplicaSettings/);
   assert.doesNotMatch(source, /getBarsRequest/);
   assert.doesNotMatch(source, /ResearchChartFrame/);
   assert.doesNotMatch(source, /useHistoricalBarStream/);
@@ -58,6 +57,9 @@ test("Market chart flow events are passed raw into the Trade spot chart path", (
   assert.match(gridSource, /const flowEventsBySymbol = useMemo/);
   assert.match(gridSource, /flowEvents=\{flowEventsBySymbol/);
   assert.match(cellSource, /flowEvents=\{flowEvents\}/);
+  assert.doesNotMatch(gridSource, /quote=\{/);
+  assert.doesNotMatch(gridSource, /onChangeStudies=\{/);
+  assert.doesNotMatch(gridSource, /onChangeRayReplicaSettings=\{/);
   assert.doesNotMatch(gridSource, /flowEventsToChartEvents/);
 });
 
@@ -66,6 +68,8 @@ test("Market chart frames leave viewport ownership inside the Trade spot chart",
   const cellSource = readLocalSource("./MiniChartCell.jsx");
 
   assert.match(gridSource, /chartViewportResetRevision/);
+  assert.match(gridSource, /clearStoredChartViewportSnapshot/);
+  assert.match(gridSource, /buildChartBarScopeKey\("trade-equity-chart"/);
   assert.doesNotMatch(gridSource, /buildMarketGridViewportRevisionIdentity/);
   assert.doesNotMatch(cellSource, /rangeIdentityKey/);
   assert.doesNotMatch(cellSource, /persistScalePrefs/);
@@ -75,59 +79,6 @@ test("Market chart frames leave viewport ownership inside the Trade spot chart",
   assert.doesNotMatch(cellSource, /viewportSnapshot/);
   assert.doesNotMatch(cellSource, /onViewportSnapshotChange/);
   assert.doesNotMatch(cellSource, /viewportUserTouched/);
-});
-
-test("Market stock chart identity ignores provider metadata that can hydrate later", () => {
-  const stockSlot = {
-    ticker: "QQQ",
-    tf: "15m",
-    market: "stocks",
-    provider: "polygon",
-    tradeProvider: "ibkr",
-    dataProviderPreference: "polygon",
-    providerContractId: "320227571",
-  };
-  const plainStockSlot = {
-    ticker: "QQQ",
-    tf: "15m",
-    market: "stocks",
-  };
-
-  assert.equal(resolveMarketGridChartProviderContractId(stockSlot), null);
-  assert.equal(
-    buildMarketGridViewportIdentity(1, stockSlot),
-    buildMarketGridViewportIdentity(1, plainStockSlot),
-  );
-  assert.equal(
-    resolveMarketGridChartProviderContractId({
-      ticker: "SPX",
-      market: "indices",
-      providerContractId: "416904",
-    }),
-    null,
-  );
-});
-
-test("Market non-equity chart identity preserves provider contracts", () => {
-  const futuresSlot = {
-    ticker: "ES",
-    tf: "15m",
-    market: "futures",
-    provider: "ibkr",
-    providerContractId: "ESM6",
-  };
-
-  assert.equal(
-    resolveMarketGridChartProviderContractId(futuresSlot),
-    "ESM6",
-  );
-  assert.notEqual(
-    buildMarketGridViewportIdentity(2, futuresSlot),
-    buildMarketGridViewportIdentity(2, {
-      ...futuresSlot,
-      providerContractId: null,
-    }),
-  );
 });
 
 test("Market mini chart no longer owns a provider-contract chart data path", () => {
