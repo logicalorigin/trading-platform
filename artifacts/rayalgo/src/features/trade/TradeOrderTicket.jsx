@@ -37,6 +37,9 @@ import {
 import {
   buildTradePreviewLaneLevels,
 } from "./tradePreviewLaneModel";
+import {
+  buildTradeTicketReadiness,
+} from "./tradeTicketReadinessModel";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   daysToExpiration,
@@ -101,7 +104,6 @@ export const TradeOrderTicket = ({
       ? (spread / prem) * 100
       : null;
   const delta = isFiniteNumber(rawDelta) ? Math.abs(rawDelta) : null;
-  const contractColor = slot.cp === "C" ? T.green : T.red;
   const expInfo = expiration || {
     value: slot.exp,
     label: slot.exp,
@@ -110,6 +112,10 @@ export const TradeOrderTicket = ({
   };
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
+  const selectedOptionQuoteFreshness =
+    slot.cp === "C" ? row?.cFreshness : row?.pFreshness;
+  const selectedOptionMarketDataMode =
+    slot.cp === "C" ? row?.cMarketDataMode : row?.pMarketDataMode;
   const [ticketAssetMode, setTicketAssetMode] = useState("option");
   const normalizedTicketAssetMode = normalizeTicketAssetMode(ticketAssetMode);
   const ticketIsShares = normalizedTicketAssetMode === "equity";
@@ -387,6 +393,151 @@ export const TradeOrderTicket = ({
         ? T.green
         : T.amber
       : T.textDim;
+  const ticketReadiness = useMemo(
+    () =>
+      buildTradeTicketReadiness({
+        accountId,
+        brokerConfigured,
+        cp: slot.cp,
+        dte: expInfo.dte,
+        environment,
+        equityPrice,
+        equityQuoteReady,
+        expirationLabel: expInfo.label || slot.exp,
+        gatewayTradingMessage,
+        gatewayTradingReady,
+        optionQuoteReady,
+        optionTicketReady,
+        providerContractId: selectedContractMeta?.providerContractId,
+        quoteFreshness: selectedOptionQuoteFreshness,
+        quoteMarketDataMode: selectedOptionMarketDataMode,
+        strike: slot.strike,
+        ticketIsShares,
+        ticker: slot.ticker,
+        tradingExecutionMode: executionMode,
+      }),
+    [
+      accountId,
+      brokerConfigured,
+      environment,
+      equityPrice,
+      equityQuoteReady,
+      executionMode,
+      expInfo.dte,
+      expInfo.label,
+      gatewayTradingMessage,
+      gatewayTradingReady,
+      optionQuoteReady,
+      optionTicketReady,
+      selectedContractMeta?.providerContractId,
+      selectedOptionMarketDataMode,
+      selectedOptionQuoteFreshness,
+      slot.cp,
+      slot.exp,
+      slot.strike,
+      slot.ticker,
+      ticketIsShares,
+    ],
+  );
+  const ticketReadinessTone = (tone) => {
+    if (tone === "good") return T.green;
+    if (tone === "warn") return T.amber;
+    if (tone === "bad") return T.red;
+    if (tone === "info") return T.cyan;
+    if (tone === "shadow") return T.pink;
+    if (tone === "accent") return T.accent;
+    return T.textSec;
+  };
+  const renderTicketReadinessStrip = () => (
+    <div
+      data-testid="trade-ticket-readiness-strip"
+      data-ticket-readiness-state={ticketReadiness.state}
+      data-ticket-readiness-blocker={ticketReadiness.blockedReason || ""}
+      title={ticketReadiness.blockedReason || "Ready for guarded preview and confirmation."}
+      style={{
+        border: `1px solid ${
+          ticketReadiness.state === "ready" ? `${T.green}35` : `${T.amber}45`
+        }`,
+        background:
+          ticketReadiness.state === "ready" ? `${T.green}08` : `${T.amber}10`,
+        borderRadius: dim(3),
+        padding: sp("2px 4px"),
+        display: "grid",
+        gridTemplateColumns: "minmax(74px, 1.15fr) repeat(4, minmax(42px, 0.85fr))",
+        alignItems: "center",
+        gap: sp(3),
+        minWidth: 0,
+      }}
+    >
+      <div
+        style={{
+          minWidth: 0,
+        }}
+      >
+        <div
+          data-testid="trade-ticket-readiness-instrument"
+          style={{
+            color: T.text,
+            fontFamily: T.display,
+            fontSize: fs(10),
+            fontWeight: 800,
+            lineHeight: 1.05,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {ticketReadiness.instrumentLabel}
+        </div>
+        <div
+          title={ticketReadiness.instrumentDetail}
+          style={{
+            display: "none",
+            color: T.textDim,
+            fontFamily: T.mono,
+            fontSize: 8,
+            marginTop: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {ticketReadiness.instrumentDetail}
+        </div>
+      </div>
+      {ticketReadiness.chips.map((chip) => {
+        const color = ticketReadinessTone(chip.tone);
+        return (
+          <div
+            key={chip.id}
+            data-testid={`trade-ticket-readiness-${chip.id}`}
+            title={`${chip.label}: ${chip.value}`}
+            style={{
+              border: `1px solid ${color}30`,
+              background: `${color}10`,
+              borderRadius: dim(3),
+              padding: sp("1px 3px"),
+              minWidth: 0,
+              color: chip.id === "quote" ? color : T.text,
+              fontFamily: T.mono,
+              fontSize: 8,
+              fontWeight: 900,
+              lineHeight: 1.1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              textTransform: "uppercase",
+            }}
+          >
+            {chip.value}
+          </div>
+        );
+      })}
+      <div data-testid="trade-ticket-readiness-blocker" style={{ display: "none" }}>
+        {ticketReadiness.state}
+      </div>
+    </div>
+  );
   const renderTicketAssetModeControls = () => (
     <div
       data-testid="trade-ticket-asset-mode"
@@ -907,6 +1058,7 @@ export const TradeOrderTicket = ({
         </div>
         {renderTicketAssetModeControls()}
         {renderExecutionModeControls()}
+        {renderTicketReadinessStrip()}
         {renderLockedTicketControls()}
         <DataUnavailableState
           title="No live contract quote"
@@ -1765,34 +1917,7 @@ export const TradeOrderTicket = ({
         </div>
       ) : null}
       {renderExecutionModeControls()}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-        <span
-          style={{
-            fontSize: fs(13),
-            fontWeight: 800,
-            fontFamily: T.mono,
-            color: T.text,
-          }}
-        >
-          {slot.ticker}
-        </span>
-        {ticketIsOptions ? (
-          <span
-            style={{
-              fontSize: fs(12),
-              fontWeight: 700,
-              fontFamily: T.mono,
-              color: contractColor,
-            }}
-          >
-            {slot.strike}
-            {slot.cp}
-          </span>
-        ) : null}
-        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>
-          {ticketInstrumentDetail}
-        </span>
-      </div>
+      {renderTicketReadinessStrip()}
       {ticketIsShares ? (
         <div
           data-testid="trade-preview-lane"

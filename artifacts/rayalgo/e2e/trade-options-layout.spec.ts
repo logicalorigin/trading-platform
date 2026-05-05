@@ -769,8 +769,12 @@ test("Trade ticket blocks execution when IB Gateway is disconnected but allows I
   await openTrade(page);
 
   await expect(
-    page.getByTestId("trade-top-zone").getByText("IB Gateway is disconnected."),
+    page.getByTestId("trade-top-zone").getByText("IB Gateway is disconnected.").first(),
   ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("trade-ticket-readiness-strip")).toHaveAttribute(
+    "data-ticket-readiness-blocker",
+    /IB Gateway is disconnected\./,
+  );
   await expect(
     page.getByRole("button", { name: "PREVIEW SHADOW" }),
   ).toBeDisabled();
@@ -815,6 +819,19 @@ test("Trade ticket toggles between option contracts and shares", async ({
   await expect(
     page.getByTestId("trade-ticket-asset-mode-equity"),
   ).toBeVisible();
+  await expect(page.getByTestId("trade-ticket-readiness-strip")).toHaveAttribute(
+    "data-ticket-readiness-state",
+    "ready",
+  );
+  await expect(page.getByTestId("trade-ticket-readiness-instrument")).toContainText(
+    "SPY 500C",
+  );
+  await expect(page.getByTestId("trade-ticket-readiness-quote")).toContainText(
+    "live option quote",
+  );
+  await expect(page.getByTestId("trade-ticket-readiness-provider")).toContainText(
+    "IBKR",
+  );
   await expect(page.getByText("MID", { exact: true })).toBeVisible();
   await expect(page.getByTestId("trade-preview-lane")).toHaveAttribute(
     "data-trade-preview-only",
@@ -827,6 +844,12 @@ test("Trade ticket toggles between option contracts and shares", async ({
   expect(shadowPreviewRequests).toHaveLength(0);
 
   await page.getByTestId("trade-ticket-asset-mode-equity").click();
+  await expect(page.getByTestId("trade-ticket-readiness-instrument")).toContainText(
+    "SPY",
+  );
+  await expect(page.getByTestId("trade-ticket-readiness-quote")).toContainText(
+    "stock quote ready",
+  );
   await expect(page.getByText("LAST", { exact: true })).toBeVisible();
   await expect(page.getByTestId("trade-preview-lane-last")).toBeVisible();
   await expect(
