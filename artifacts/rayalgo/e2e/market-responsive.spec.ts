@@ -50,15 +50,15 @@ function expectLogicalRangesClose(
   expect(Math.abs(actual!.to - expected!.to)).toBeLessThanOrEqual(tolerance);
 }
 
-function makeBars(symbol: string) {
-  const now = Date.now();
+function makeBars(symbol: string, version = 0, count = 120) {
+  const now = Date.now() + version * 15 * 60_000;
   const base = basePrices[symbol] ?? 100;
-  return Array.from({ length: 120 }, (_, index) => {
+  return Array.from({ length: count }, (_, index) => {
     const wave = Math.sin(index / 4) * 1.8;
     const close = base + wave + index * 0.02;
     const open = close - Math.cos(index / 5) * 0.7;
     return {
-      timestamp: new Date(now - (119 - index) * 15 * 60_000).toISOString(),
+      timestamp: new Date(now - (count - 1 - index) * 15 * 60_000).toISOString(),
       open,
       high: Math.max(open, close) + 1.2,
       low: Math.min(open, close) - 1.2,
@@ -119,11 +119,19 @@ function makeFlowEvents(symbol: string) {
   ];
 }
 
-async function mockMarketApi(page: Page) {
+async function mockMarketApi(
+  page: Page,
+  options: {
+    ibkrStreaming?: boolean;
+    advanceBarsOnRequest?: boolean;
+    initialBarCount?: number;
+  } = {},
+) {
   const observed = {
     barsUrls: [] as string[],
     streamUrls: [] as string[],
   };
+  const barRequestCounts = new Map<string, number>();
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     let body: unknown = {};
@@ -138,8 +146,16 @@ async function mockMarketApi(page: Page) {
           historical: "ibkr",
           research: "fmp",
         },
-        configured: { polygon: false, ibkr: false, research: false },
-        ibkrBridge: null,
+        configured: { polygon: false, ibkr: Boolean(options.ibkrStreaming), research: false },
+        ibkrBridge: options.ibkrStreaming
+          ? {
+              authenticated: true,
+              healthFresh: true,
+              selectedAccountId: "DU1234567",
+              transport: "tws",
+              marketDataMode: "live",
+            }
+          : null,
         timestamp: new Date().toISOString(),
       };
     } else if (url.pathname === "/api/watchlists") {
@@ -180,7 +196,16 @@ async function mockMarketApi(page: Page) {
       };
     } else if (url.pathname === "/api/bars") {
       observed.barsUrls.push(url.toString());
-      body = { bars: makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()) };
+      const symbol = (url.searchParams.get("symbol") || "SPY").toUpperCase();
+      const currentCount = barRequestCounts.get(symbol) || 0;
+      barRequestCounts.set(symbol, currentCount + 1);
+      body = {
+        bars: makeBars(
+          symbol,
+          options.advanceBarsOnRequest ? currentCount : 0,
+          options.initialBarCount ?? 120,
+        ),
+      };
     } else if (url.pathname === "/api/flow/events") {
       body = {
         events: makeFlowEvents((url.searchParams.get("underlying") || "SPY").toUpperCase()),
@@ -273,6 +298,70 @@ async function openMarket(page: Page, layout: string) {
   await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("market-chart-grid")).toBeVisible();
   await page.getByRole("button", { name: layout }).click();
+}
+
+async function installControllableEventSource(page: Page) {
+  await page.addInitScript(() => {
+    class TestEventSource {
+      static instances: TestEventSource[] = [];
+      url: string;
+      readyState = 0;
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      private listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+
+      constructor(url: string) {
+        this.url = url;
+        TestEventSource.instances.push(this);
+        setTimeout(() => {
+          this.readyState = 1;
+          this.onopen?.(new Event("open"));
+          this.emit("ready", {});
+        }, 0);
+      }
+
+      addEventListener(type: string, listener: (event: MessageEvent) => void) {
+        const listeners = this.listeners.get(type) || new Set();
+        listeners.add(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      removeEventListener(type: string, listener: (event: MessageEvent) => void) {
+        this.listeners.get(type)?.delete(listener);
+      }
+
+      close() {
+        this.readyState = 2;
+      }
+
+      emit(type: string, payload: unknown) {
+        const event = new MessageEvent(type, {
+          data:
+            typeof payload === "string" ? payload : JSON.stringify(payload),
+        });
+        this.listeners.get(type)?.forEach((listener) => listener(event));
+      }
+    }
+
+    (window as unknown as { EventSource: typeof TestEventSource }).EventSource =
+      TestEventSource;
+    (window as unknown as {
+      __RAYALGO_TEST_EMIT_EVENT_SOURCE__: (
+        urlIncludes: string,
+        type: string,
+        payload: unknown,
+      ) => void;
+      __RAYALGO_TEST_EVENT_SOURCE_URLS__: () => string[];
+    }).__RAYALGO_TEST_EMIT_EVENT_SOURCE__ = (urlIncludes, type, payload) => {
+      TestEventSource.instances
+        .filter((source) => source.url.includes(urlIncludes))
+        .forEach((source) => source.emit(type, payload));
+    };
+    (window as unknown as {
+      __RAYALGO_TEST_EVENT_SOURCE_URLS__: () => string[];
+    }).__RAYALGO_TEST_EVENT_SOURCE_URLS__ = () =>
+      TestEventSource.instances.map((source) => source.url);
+  });
 }
 
 async function expectNoElementOverflow(page: Page, selector: string) {
@@ -500,6 +589,136 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
     )
     .toBe("QQQ");
   expect(runtimeIssues, "Market chart drag-pan test should not emit runtime issues").toEqual([]);
+});
+
+test("Market chart grid keeps active plot pans through live bar refreshes", async ({
+  page,
+}) => {
+  const runtimeIssues: string[] = [];
+  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning") &&
+      !isIgnorableConsoleMessage(message)
+    ) {
+      runtimeIssues.push(message.text());
+    }
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await installControllableEventSource(page);
+  await mockMarketApi(page, {
+    ibkrStreaming: true,
+    initialBarCount: 119,
+  });
+  await openMarket(page, "2x2");
+
+  const chartSurfaces = page.locator(
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
+  );
+  await expect(chartSurfaces).toHaveCount(4);
+  const activeSurface = chartSurfaces.first();
+  const activePlot = activeSurface.locator("[data-chart-plot-root]");
+  await expect
+    .poll(() => activeSurface.getAttribute("data-chart-visible-logical-range"))
+    .not.toBe("none");
+
+  const beforeRange = await activeSurface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
+  const plotBox = await activePlot.boundingBox();
+  expect(plotBox, "active chart plot should have a geometry box").not.toBeNull();
+  const dragStartPoint = {
+    x: plotBox!.x + plotBox!.width * 0.3,
+    y: plotBox!.y + plotBox!.height * 0.55,
+  };
+  const renderedCountBefore = Number(
+    await activeSurface.getAttribute("data-chart-rendered-bar-count"),
+  );
+  expect(renderedCountBefore).toBeGreaterThan(0);
+
+  await page.mouse.move(
+    dragStartPoint.x,
+    dragStartPoint.y,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    plotBox!.x + plotBox!.width * 0.72,
+    plotBox!.y + plotBox!.height * 0.55,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+
+  await expect(activeSurface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "true",
+    { timeout: 10_000 },
+  );
+  await expect
+    .poll(() => activeSurface.getAttribute("data-chart-visible-logical-range"))
+    .not.toBe(beforeRange);
+  const pannedRange = await activeSurface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
+
+  await page.evaluate(() => {
+    const emit = (window as unknown as {
+      __RAYALGO_TEST_EMIT_EVENT_SOURCE__?: (
+        urlIncludes: string,
+        type: string,
+        payload: unknown,
+      ) => void;
+    }).__RAYALGO_TEST_EMIT_EVENT_SOURCE__;
+    emit?.("symbol=SPY", "bar", {
+      symbol: "SPY",
+      timeframe: "15m",
+      bar: {
+        timestamp: new Date(Date.now() + 15 * 60_000).toISOString(),
+        open: 126,
+        high: 128,
+        low: 125,
+        close: 127,
+        volume: 250_000,
+        source: "ibkr-history",
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date().toISOString(),
+      },
+    });
+  });
+
+  await expect
+    .poll(
+      async () =>
+        Number(await activeSurface.getAttribute("data-chart-rendered-bar-count")),
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThan(renderedCountBefore);
+  const eventSourceUrls = await page.evaluate(() => {
+    const getUrls = (window as unknown as {
+      __RAYALGO_TEST_EVENT_SOURCE_URLS__?: () => string[];
+    }).__RAYALGO_TEST_EVENT_SOURCE_URLS__;
+    return getUrls?.() || [];
+  });
+  expect(
+    eventSourceUrls.filter((href) => {
+      const url = new URL(href, "http://rayalgo.local");
+      return (
+        url.pathname === "/api/streams/bars" &&
+        (url.searchParams.get("symbol") || "").toUpperCase() === "SPY" &&
+        url.searchParams.has("providerContractId")
+      );
+    }),
+    "Active Market stock chart stream must stay on the symbol-only IBKR path",
+  ).toEqual([]);
+
+  await page.waitForTimeout(900);
+  expectLogicalRangesClose(
+    await activeSurface.getAttribute("data-chart-visible-logical-range"),
+    pannedRange,
+    2.5,
+  );
+  expect(runtimeIssues, "Market active chart pan test should not emit runtime issues").toEqual([]);
 });
 
 for (const testcase of layoutCases) {

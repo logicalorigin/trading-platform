@@ -5226,6 +5226,57 @@ function buildRecentBrokerHistoryInput(
   };
 }
 
+function shouldRestrictHistoricalSynthesisToBrokerBackfill(
+  input: GetBarsInput,
+  brokerBars: BrokerBarSnapshot[],
+): boolean {
+  return Boolean(
+    brokerBars.length &&
+      input.assetClass !== "option" &&
+      input.market !== "futures",
+  );
+}
+
+function isHistoricalSynthesisBar(bar: BrokerBarSnapshot): boolean {
+  const source =
+    typeof bar.source === "string" ? bar.source.trim().toLowerCase() : "";
+  return (
+    source === "massive-history" ||
+    source === "polygon-history" ||
+    source.includes("massive") ||
+    source.includes("polygon") ||
+    Boolean(bar.delayed)
+  );
+}
+
+function restrictHistoricalSynthesisToBrokerBackfill(
+  input: GetBarsInput,
+  synthesisBars: BrokerBarSnapshot[],
+  brokerBars: BrokerBarSnapshot[],
+): BrokerBarSnapshot[] {
+  if (
+    !synthesisBars.length ||
+    !shouldRestrictHistoricalSynthesisToBrokerBackfill(input, brokerBars)
+  ) {
+    return synthesisBars;
+  }
+
+  const oldestBrokerTimestampMs = brokerBars.reduce((oldest, bar) => {
+    const timestampMs = bar.timestamp.getTime();
+    return Number.isFinite(timestampMs) ? Math.min(oldest, timestampMs) : oldest;
+  }, Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(oldestBrokerTimestampMs)) {
+    return synthesisBars;
+  }
+
+  return synthesisBars.filter((bar) => {
+    if (!isHistoricalSynthesisBar(bar)) {
+      return true;
+    }
+    return bar.timestamp.getTime() < oldestBrokerTimestampMs;
+  });
+}
+
 // Coalesce identical /api/bars requests so multiple chart panels
 // (or refetches racing each other) share a single upstream IBKR/Polygon
 // fetch. The bridge can hold an upstream history slot for 7-15s, so even
@@ -6257,20 +6308,24 @@ async function getBarsImpl(input: GetBarsInput) {
       ibkrBars = [];
     }
   }
-  const storedHistoricalBars = await loadStoredMarketBars({
-    symbol: input.symbol,
-    timeframe: input.timeframe,
-    limit: input.limit,
-    from: input.from,
-    to: input.to,
-    assetClass: input.assetClass,
-    market: input.market,
-    providerContractId: input.providerContractId,
-    outsideRth,
-    source: input.source,
-    recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
-    sourceName: historicalStoreSource,
-  });
+  const storedHistoricalBars = restrictHistoricalSynthesisToBrokerBackfill(
+    input,
+    await loadStoredMarketBars({
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      limit: input.limit,
+      from: input.from,
+      to: input.to,
+      assetClass: input.assetClass,
+      market: input.market,
+      providerContractId: input.providerContractId,
+      outsideRth,
+      source: input.source,
+      recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+      sourceName: historicalStoreSource,
+    }),
+    ibkrBars,
+  );
   const desiredBars = Math.max(
     input.limit ?? (ibkrBars.length + storedHistoricalBars.length),
     1,
@@ -6367,6 +6422,11 @@ async function getBarsImpl(input: GetBarsInput) {
       sourceName: historicalStoreSource,
       bars: polygonBars,
     });
+    const mergeablePolygonBars = restrictHistoricalSynthesisToBrokerBackfill(
+      input,
+      polygonBars,
+      ibkrBars,
+    );
     const merged = new Map<number, BrokerBarSnapshot>();
 
     // Tag each bar honestly with its actual source so the chart UI / debugging
@@ -6375,7 +6435,7 @@ async function getBarsImpl(input: GetBarsInput) {
     storedHistoricalBars.forEach((bar) => {
       merged.set(bar.timestamp.getTime(), bar);
     });
-    polygonBars.forEach((bar) => {
+    mergeablePolygonBars.forEach((bar) => {
       gapFilled = true;
       merged.set(bar.timestamp.getTime(), {
         ...bar,

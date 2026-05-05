@@ -421,6 +421,141 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
   assert.equal(result.emptyReason, null);
 });
 
+test("getBarsWithDebug keeps delayed synthesis out of the IBKR live edge", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.massive.com";
+  const symbol = "TSTLIVEEDGE";
+  const stepMs = 15 * 60_000;
+  const anchorMs = Math.floor(Date.now() / stepMs) * stepMs;
+  const oldestIbkrMs = anchorMs - stepMs;
+  const ibkrBars = [
+    {
+      timestamp: new Date(oldestIbkrMs),
+      open: 599,
+      high: 603,
+      low: 598,
+      close: 602,
+      volume: 120_000,
+      source: "ibkr-history",
+      providerContractId: null,
+      outsideRth: true,
+      partial: false,
+      transport: "tws",
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: new Date(oldestIbkrMs),
+      ageMs: null,
+    },
+    {
+      timestamp: new Date(anchorMs),
+      open: 602,
+      high: 606,
+      low: 601,
+      close: 605,
+      volume: 140_000,
+      source: "ibkr-history",
+      providerContractId: null,
+      outsideRth: true,
+      partial: false,
+      transport: "tws",
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: new Date(anchorMs),
+      ageMs: null,
+    },
+  ] satisfies BrokerBarSnapshot[];
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async () => ibkrBars,
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getBarsPage: async () => ({
+          bars: [
+            {
+              timestamp: new Date(oldestIbkrMs - stepMs),
+              open: 590,
+              high: 596,
+              low: 589,
+              close: 595,
+              volume: 90_000,
+            },
+            {
+              timestamp: new Date(oldestIbkrMs),
+              open: 596,
+              high: 600,
+              low: 595,
+              close: 599,
+              volume: 95_000,
+            },
+            {
+              timestamp: new Date(anchorMs),
+              open: 599,
+              high: 602,
+              low: 598,
+              close: 601,
+              volume: 100_000,
+            },
+            {
+              timestamp: new Date(anchorMs + stepMs),
+              open: 601,
+              high: 604,
+              low: 600,
+              close: 603,
+              volume: 110_000,
+            },
+          ],
+          nextUrl: null,
+          pageCount: 1,
+          pageLimitReached: false,
+          requestedFrom: new Date(oldestIbkrMs - stepMs),
+          requestedTo: new Date(anchorMs + stepMs),
+        }),
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const result = await getBarsWithDebug({
+    symbol,
+    timeframe: "15m",
+    limit: 6,
+    from: new Date(oldestIbkrMs - 2 * stepMs),
+    to: new Date(anchorMs + stepMs),
+    assetClass: "equity",
+    allowHistoricalSynthesis: true,
+    brokerRecentWindowMinutes: 240,
+  });
+
+  assert.equal(result.bars.at(-1)?.source, "ibkr-history");
+  assert.equal(result.bars.at(-1)?.close, 605);
+  assert.equal(result.historySource, "ibkr-history");
+  assert.equal(
+    result.bars.some(
+      (bar) =>
+        bar.timestamp.getTime() >= oldestIbkrMs &&
+        (bar.delayed || String(bar.source).includes("massive")),
+    ),
+    false,
+  );
+  assert.equal(
+    result.bars.some(
+      (bar) =>
+        bar.timestamp.getTime() < oldestIbkrMs &&
+        bar.source === "massive-history",
+    ),
+    true,
+  );
+});
+
 test("batchOptionChains dedupes dates and caps upstream concurrency", async () => {
   const calls: string[] = [];
   let active = 0;

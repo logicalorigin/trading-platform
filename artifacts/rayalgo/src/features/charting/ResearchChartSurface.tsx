@@ -125,6 +125,22 @@ export const buildVisibleRangeSignature = (
   return visibleRange ? `${visibleRange.from}:${visibleRange.to}` : "none";
 };
 
+const visibleLogicalRangesClose = (
+  left: VisibleLogicalRange | null | undefined,
+  right: VisibleLogicalRange | null | undefined,
+  tolerance = 0.001,
+): boolean => {
+  const normalizedLeft = normalizeVisibleLogicalRange(left);
+  const normalizedRight = normalizeVisibleLogicalRange(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return normalizedLeft === normalizedRight;
+  }
+  return (
+    Math.abs(normalizedLeft.from - normalizedRight.from) <= tolerance &&
+    Math.abs(normalizedLeft.to - normalizedRight.to) <= tolerance
+  );
+};
+
 export const resolveVisibleRangePublishDecision = ({
   lastSignature,
   visibleRange,
@@ -4585,7 +4601,7 @@ export const ResearchChartSurface = ({
       }
       if (
         previousSignature !== signature ||
-        (source === "user" && shouldPublish)
+        source === "user"
       ) {
         setOverlayRevision((value) => value + 1);
       }
@@ -4666,11 +4682,11 @@ export const ResearchChartSurface = ({
       buildViewportSnapshot({
         visibleRange: normalizeVisibleLogicalRange(visibleLogicalRangeRef.current),
         userTouched: Boolean(
-          externalViewportUserTouched ||
           viewportUserTouchedRef.current ||
-          viewportUserTouched ||
-          effectiveViewportSnapshot?.identityKey === rangeIdentityKeyRef.current &&
-            effectiveViewportSnapshot.userTouched,
+            viewportUserTouched ||
+            (effectiveViewportSnapshot?.identityKey ===
+              rangeIdentityKeyRef.current &&
+              effectiveViewportSnapshot.userTouched)
         ),
         realtimeFollow: realtimeFollowRef.current,
       }),
@@ -4678,7 +4694,6 @@ export const ResearchChartSurface = ({
   }, [
     autoScale,
     buildViewportSnapshot,
-    externalViewportUserTouched,
     invertScale,
     publishViewportSnapshot,
     rangeIdentityKey,
@@ -4811,8 +4826,7 @@ export const ResearchChartSurface = ({
           buildViewportSnapshot({
             visibleRange: adjustedVisibleRange,
             userTouched: Boolean(
-              externalViewportUserTouched ||
-                viewportUserTouchedRef.current ||
+              viewportUserTouchedRef.current ||
                 viewportUserTouched ||
                 (effectiveViewportSnapshot?.identityKey ===
                   rangeIdentityKeyRef.current &&
@@ -4830,7 +4844,6 @@ export const ResearchChartSurface = ({
     buildViewportSnapshot,
     effectiveViewportSnapshot?.identityKey,
     effectiveViewportSnapshot?.userTouched,
-    externalViewportUserTouched,
     model.chartBars,
     publishViewportSnapshot,
     viewportUserTouched,
@@ -5020,9 +5033,22 @@ export const ResearchChartSurface = ({
       activePriceSeriesRef.current = candleSeries;
 
       handleVisibleRangeChange = (range: any) => {
-        const signature = buildVisibleRangeSignature(
-          normalizeVisibleLogicalRange(range),
-        );
+        const normalizedRange = normalizeVisibleLogicalRange(range);
+        const activePlotPanRange =
+          (plotPanRef.current?.active ||
+            Date.now() - lastPlotViewportIntentAtRef.current <=
+              USER_VIEWPORT_INTENT_WINDOW_MS)
+            ? lastPlotPanVisibleRangeRef.current
+            : null;
+        if (activePlotPanRange) {
+          if (
+            !normalizedRange ||
+            !visibleLogicalRangesClose(normalizedRange, activePlotPanRange, 0.01)
+          ) {
+            return;
+          }
+        }
+        const signature = buildVisibleRangeSignature(normalizedRange);
         const resizeIntent =
           !viewportPointerActiveRef.current &&
           Date.now() - lastPlotResizeAtRef.current <=
@@ -5285,18 +5311,30 @@ export const ResearchChartSurface = ({
     if (rawVisibleRangeBeforeDataSync && !visibleRangeBeforeDataSync) {
       visibleLogicalRangeRef.current = null;
     }
+    const userViewportTouched = Boolean(
+      externalViewportUserTouched ||
+        viewportUserTouchedRef.current ||
+        viewportUserTouched ||
+        (effectiveViewportSnapshot?.identityKey ===
+          rangeIdentityKeyRef.current &&
+          effectiveViewportSnapshot.userTouched),
+    );
+    if (userViewportTouched) {
+      autoHydrationViewportRef.current = false;
+    }
     const shouldFollowLatestBars = shouldAutoFollowLatestBars({
       realtimeFollow: realtimeFollowRef.current,
       visibleRange: visibleRangeBeforeDataSync,
       previousBarCount,
       nextBarCount,
     });
-    const autoHydrationVisibleRange = autoHydrationViewportRef.current
-      ? resolveAutoHydrationVisibleRange({
-          barCount: nextBarCount,
-          defaultVisibleRange: model.defaultVisibleLogicalRange,
-        })
-      : null;
+    const autoHydrationVisibleRange =
+      autoHydrationViewportRef.current && !userViewportTouched
+        ? resolveAutoHydrationVisibleRange({
+            barCount: nextBarCount,
+            defaultVisibleRange: model.defaultVisibleLogicalRange,
+          })
+        : null;
     const interactionActive = isViewportInteractionActive();
     const canApplyProgrammaticRangeSync = shouldApplyProgrammaticRangeSync({
       interactionActive,
@@ -5310,7 +5348,8 @@ export const ResearchChartSurface = ({
           visibleRangeBeforeDataSync &&
           Number.isFinite(visibleRangeBeforeDataSync.from) &&
           Number.isFinite(visibleRangeBeforeDataSync.to)) ||
-        (initializedRangeRef.current &&
+        (!userViewportTouched &&
+          initializedRangeRef.current &&
           model.defaultVisibleLogicalRange &&
           nextBarCount > 0),
     );
@@ -5362,6 +5401,7 @@ export const ResearchChartSurface = ({
       setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync);
     } else if (
       canApplyProgrammaticRangeSync &&
+      !userViewportTouched &&
       initializedRangeRef.current &&
       model.defaultVisibleLogicalRange &&
       nextBarCount > 0
@@ -5539,8 +5579,12 @@ export const ResearchChartSurface = ({
     showTimeScaleState,
     chartTimeScaleRightOffset,
     compact,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.userTouched,
+    externalViewportUserTouched,
     hideTimeScale,
     userPreferences,
+    viewportUserTouched,
     theme.border,
     theme.accent,
     theme.green,
@@ -5572,6 +5616,14 @@ export const ResearchChartSurface = ({
       initialized: initializedRangeRef.current,
       pendingStoredRangeSync: pendingStoredRangeSyncRef.current,
     });
+    const userViewportTouched = Boolean(
+      externalViewportUserTouched ||
+        viewportUserTouchedRef.current ||
+        viewportUserTouched ||
+        (effectiveViewportSnapshot?.identityKey ===
+          rangeIdentityKeyRef.current &&
+          effectiveViewportSnapshot.userTouched),
+    );
 
     if (action === "noop") {
       return;
@@ -5579,7 +5631,11 @@ export const ResearchChartSurface = ({
 
     if (action === "stored" && storedVisibleRange) {
       setProgrammaticVisibleLogicalRange(storedVisibleRange);
-    } else if (action === "default" && model.defaultVisibleLogicalRange) {
+    } else if (
+      action === "default" &&
+      model.defaultVisibleLogicalRange &&
+      !userViewportTouched
+    ) {
       const nextDefaultRange = autoHydrationViewportRef.current
         ? resolveAutoHydrationVisibleRange({
             barCount: model.chartBars.length,
@@ -5599,8 +5655,12 @@ export const ResearchChartSurface = ({
     model.chartBars.length,
     model.chartBars[0]?.time,
     model.defaultVisibleLogicalRange,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.userTouched,
+    externalViewportUserTouched,
     markProgrammaticViewportIntent,
     setProgrammaticVisibleLogicalRange,
+    viewportUserTouched,
   ]);
 
   useLayoutEffect(() => {
@@ -6510,7 +6570,8 @@ export const ResearchChartSurface = ({
     }
     const currentRange =
       visibleLogicalRangeRef.current ||
-      chartRef.current.timeScale?.().getVisibleLogicalRange?.();
+      chartRef.current.timeScale?.().getVisibleLogicalRange?.() ||
+      model.defaultVisibleLogicalRange;
     plotPanRef.current = resolveChartPlotPanStart({
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -6654,7 +6715,8 @@ export const ResearchChartSurface = ({
     }
     const currentRange =
       visibleLogicalRangeRef.current ||
-      chartRef.current.timeScale?.().getVisibleLogicalRange?.();
+      chartRef.current.timeScale?.().getVisibleLogicalRange?.() ||
+      model.defaultVisibleLogicalRange;
 
     plotPanRef.current = resolveChartPlotPanStart({
       pointerId: -1,

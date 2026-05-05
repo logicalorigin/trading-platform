@@ -803,9 +803,6 @@ export const MiniChartCell = ({
   );
   const handleFramePointerDownCapture = useCallback(
     (event) => {
-      if (isActive || typeof onFocus !== "function") {
-        return;
-      }
       if (event.button != null && event.button !== 0) {
         return;
       }
@@ -819,6 +816,9 @@ export const MiniChartCell = ({
           y: event.clientY,
         };
         suppressNextFrameClickRef.current = true;
+        return;
+      }
+      if (isActive || typeof onFocus !== "function") {
         return;
       }
       suppressNextFrameClickRef.current = true;
@@ -878,9 +878,6 @@ export const MiniChartCell = ({
   }, []);
   const handleFrameMouseDownCapture = useCallback(
     (event) => {
-      if (isActive || typeof onFocus !== "function") {
-        return;
-      }
       if (event.button != null && event.button !== 0) {
         return;
       }
@@ -895,7 +892,7 @@ export const MiniChartCell = ({
         suppressNextFrameClickRef.current = true;
       }
     },
-    [isActive, onFocus],
+    [],
   );
   const handleFrameMouseMoveCapture = useCallback((event) => {
     const pending = pendingPlotMouseFocusRef.current;
