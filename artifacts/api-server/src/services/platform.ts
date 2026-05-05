@@ -99,6 +99,7 @@ import {
 } from "./market-data-store";
 import {
   admitMarketDataLeases,
+  getMarketDataAdmissionBudget,
   getMarketDataAdmissionDiagnostics,
   recordMarketDataFallback,
   releaseMarketDataLeases,
@@ -6877,6 +6878,29 @@ export function getOptionsFlowRuntimeConfig(): OptionsFlowRuntimeConfig {
   });
 }
 
+export function resolveOptionsFlowScannerEffectiveConcurrency(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): number {
+  const configuredConcurrency = Math.max(
+    1,
+    Math.floor(config.scannerConcurrency || 1),
+  );
+  const scannerLineBudget = Math.max(
+    1,
+    Math.floor(config.scannerLineBudget || 1),
+  );
+  const admissionBudget = getMarketDataAdmissionBudget();
+  const flowScannerLineCap = Math.max(
+    1,
+    Math.floor(admissionBudget.flowScannerLineCap || scannerLineBudget),
+  );
+  const poolSafeConcurrency = Math.max(
+    1,
+    Math.floor(flowScannerLineCap / scannerLineBudget),
+  );
+  return Math.max(1, Math.min(configuredConcurrency, poolSafeConcurrency));
+}
+
 export function getOptionsFlowRuntimeConfigSnapshot(): OptionsFlowRuntimeConfigSnapshot {
   const current = getOptionsFlowRuntimeConfig();
   return {
@@ -6911,7 +6935,9 @@ export function setOptionsFlowRuntimeOverrides(
       : optionsFlowRuntimeOverrides.universeMarkets,
   };
   const next = getOptionsFlowRuntimeConfig();
-  optionsFlowScanner.setMaxConcurrency(next.scannerConcurrency);
+  optionsFlowScanner.setMaxConcurrency(
+    resolveOptionsFlowScannerEffectiveConcurrency(next),
+  );
   flowUniverseManager.updateConfig({
     mode: next.universeMode,
     targetSize:
@@ -6938,7 +6964,9 @@ export function resetOptionsFlowRuntimeOverrides(
     });
   }
   const next = getOptionsFlowRuntimeConfig();
-  optionsFlowScanner.setMaxConcurrency(next.scannerConcurrency);
+  optionsFlowScanner.setMaxConcurrency(
+    resolveOptionsFlowScannerEffectiveConcurrency(next),
+  );
   flowUniverseManager.updateConfig({
     mode: next.universeMode,
     targetSize:
@@ -7017,7 +7045,9 @@ const flowUniverseManager = createFlowUniverseManager({
 });
 const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   normalizeSymbol,
-  maxConcurrency: initialOptionsFlowConfig.scannerConcurrency,
+  maxConcurrency: resolveOptionsFlowScannerEffectiveConcurrency(
+    initialOptionsFlowConfig,
+  ),
   snapshotTtlMs: FLOW_EVENTS_CACHE_TTL_MS,
   snapshotStaleTtlMs: FLOW_EVENTS_CACHE_STALE_TTL_MS,
   preferredTransport: "tws",
@@ -7161,7 +7191,9 @@ export function startOptionsFlowScanner(): void {
     return;
   }
 
-  optionsFlowScanner.setMaxConcurrency(config.scannerConcurrency);
+  const effectiveScannerConcurrency =
+    resolveOptionsFlowScannerEffectiveConcurrency(config);
+  optionsFlowScanner.setMaxConcurrency(effectiveScannerConcurrency);
   const resolveRadarIntervalMs = () => getOptionsFlowRadarIntervalMs();
   const resolveDeepIntervalMs = () => getOptionsFlowDeepScannerIntervalMs();
   if (config.radarEnabled) {
@@ -7208,6 +7240,7 @@ export function startOptionsFlowScanner(): void {
       radarDeepLineBudget: config.radarDeepLineBudget,
       batchSize: config.scannerBatchSize,
       concurrency: config.scannerConcurrency,
+      effectiveConcurrency: effectiveScannerConcurrency,
       lineBudget: config.scannerLineBudget,
       strikeCoverage: config.scannerStrikeCoverage,
       intervalMs: config.scannerIntervalMs,
@@ -9649,6 +9682,7 @@ export async function listFlowEvents(input: {
   minPremium?: number;
   maxDte?: number;
   unusualThreshold?: number;
+  lineBudget?: number;
   blocking?: boolean;
   allowPolygonFallback?: boolean;
 }): Promise<FlowEventsResult> {
@@ -9675,7 +9709,16 @@ export async function listFlowEvents(input: {
   const scannerRequest = {
     limit: Math.max(limit, getOptionsFlowRuntimeConfig().scannerLimit),
     unusualThreshold,
-    lineBudget: getOptionsFlowRuntimeConfig().scannerLineBudget,
+    lineBudget:
+      Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0
+        ? Math.max(
+            1,
+            Math.min(
+              Math.floor(input.lineBudget as number),
+              getOptionsFlowRuntimeConfig().scannerLineBudget,
+            ),
+          )
+        : getOptionsFlowRuntimeConfig().scannerLineBudget,
     allowPolygonFallback: input.allowPolygonFallback ?? false,
   };
   const rawScannerSnapshot = getOptionsFlowRuntimeConfig().scannerEnabled

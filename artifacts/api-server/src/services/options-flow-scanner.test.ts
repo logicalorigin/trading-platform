@@ -36,6 +36,7 @@ const {
   __setIbkrBridgeClientFactoryForTests,
   __setPolygonMarketDataClientFactoryForTests,
   getOptionsFlowRuntimeConfig,
+  resolveOptionsFlowScannerEffectiveConcurrency,
   listFlowEvents,
 } = platformModule;
 const {
@@ -164,6 +165,23 @@ test("options flow runtime defaults scan one symbol at a time through the reserv
 
   assert.equal(config.scannerLineBudget, 40);
   assert.equal(config.scannerConcurrency, 1);
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 1);
+  assert.equal(
+    resolveOptionsFlowScannerEffectiveConcurrency({
+      ...config,
+      scannerConcurrency: 8,
+      scannerLineBudget: 40,
+    }),
+    1,
+  );
+  assert.equal(
+    resolveOptionsFlowScannerEffectiveConcurrency({
+      ...config,
+      scannerConcurrency: 8,
+      scannerLineBudget: 20,
+    }),
+    2,
+  );
 });
 
 test("options flow scanner skips fan-out when transport is unavailable", async () => {

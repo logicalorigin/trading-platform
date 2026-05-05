@@ -31,6 +31,7 @@ import {
   sanitizeStoredChartScalePrefs,
   shouldApplyProgrammaticRangeSync,
   shouldAutoFollowLatestBars,
+  shouldPreserveUserViewportRange,
   writeStoredChartViewportSnapshot,
   resolveVisibleRangeSyncAction,
 } from "./ResearchChartSurface";
@@ -584,6 +585,39 @@ test("ResearchChartSurface suppresses duplicate visible range publications", () 
       signature: "12:49",
       shouldPublish: true,
     },
+  );
+});
+
+test("ResearchChartSurface preserves user-panned ranges from delayed programmatic snaps", () => {
+  assert.equal(
+    shouldPreserveUserViewportRange({
+      source: "programmatic",
+      activeUserTouchedViewport: true,
+      hasRecentProgrammaticIntent: false,
+      currentUserRange: { from: 20, to: 70 },
+      nextRange: { from: 50, to: 100 },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldPreserveUserViewportRange({
+      source: "programmatic",
+      activeUserTouchedViewport: true,
+      hasRecentProgrammaticIntent: true,
+      currentUserRange: { from: 20, to: 70 },
+      nextRange: { from: 50, to: 100 },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldPreserveUserViewportRange({
+      source: "user",
+      activeUserTouchedViewport: true,
+      hasRecentProgrammaticIntent: false,
+      currentUserRange: { from: 20, to: 70 },
+      nextRange: { from: 50, to: 100 },
+    }),
+    false,
   );
 });
 

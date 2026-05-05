@@ -29,6 +29,7 @@ export const buildTradeBarsPageQueryKey = ({
   to,
   historyCursor,
   preferCursor,
+  brokerRecentWindowMinutes = null,
 }) => [
   ...queryBase,
   timeframe,
@@ -37,6 +38,7 @@ export const buildTradeBarsPageQueryKey = ({
   to || null,
   historyCursor || null,
   preferCursor ? "cursor" : "window",
+  brokerRecentWindowMinutes,
 ];
 
 export const buildTradeFlowMarkersFromEvents = (events, barsLength) => {

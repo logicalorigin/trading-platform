@@ -4,7 +4,9 @@ import test from "node:test";
 import { buildResearchChartModel } from "./model";
 import {
   getChartBarLimit,
+  getChartBrokerRecentWindowMinutes,
   getMaxChartBarLimit,
+  getChartTimeframeStepMs,
   getChartTimeframeOptions,
   resolveChartTimeframeFavorites,
   toggleChartTimeframeFavorite,
@@ -271,6 +273,42 @@ test("seconds rollup limits stay under the 5s base cap", () => {
       "5s",
     ) <= getMaxChartBarLimit("5s", "option"),
   );
+});
+
+test("chart broker recent windows cover the requested base interval horizon", () => {
+  for (const { value: timeframe } of getChartTimeframeOptions("mini")) {
+    const targetLimit = getChartBarLimit(timeframe, "mini");
+    const baseTimeframe = resolveLocalRollupBaseTimeframe(
+      timeframe,
+      targetLimit,
+      "mini",
+    );
+    const baseLimit = expandLocalRollupLimit(
+      targetLimit,
+      timeframe,
+      baseTimeframe,
+    );
+    const windowMinutes = getChartBrokerRecentWindowMinutes(
+      baseTimeframe,
+      baseLimit,
+    );
+    const horizonMinutes = Math.ceil(
+      (getChartTimeframeStepMs(baseTimeframe) * baseLimit) / 60_000,
+    );
+
+    assert.ok(
+      windowMinutes && windowMinutes >= horizonMinutes,
+      `${timeframe} market charts should ask broker history for the requested base horizon`,
+    );
+    if (horizonMinutes > 60) {
+      assert.ok(
+        windowMinutes > 60,
+        `${timeframe} market charts should not fall back to the API's 60-minute broker clip`,
+      );
+    }
+  }
+
+  assert.equal(getChartBrokerRecentWindowMinutes("5m", 900), 4510);
 });
 
 test("rollupMarketBars builds derived candles from base bars", () => {

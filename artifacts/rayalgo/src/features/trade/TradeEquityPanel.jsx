@@ -1,15 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  getBars as getBarsRequest,
-  useCancelOrder,
-  useListOrders,
-  useListPositions,
-  usePlaceOrder,
-  usePreviewOrder,
-  useReplaceOrder,
-  useSubmitOrders,
-} from "@workspace/api-client-react";
+import { getBars as getBarsRequest } from "@workspace/api-client-react";
 import {
   DISPLAY_CHART_OUTSIDE_RTH,
   resolveDisplayChartPrice,
@@ -29,6 +20,7 @@ import {
 import { flowEventsToChartEvents } from "../charting/chartEvents";
 import {
   getChartBarLimit,
+  getChartBrokerRecentWindowMinutes,
   getInitialChartBarLimit,
   normalizeChartTimeframe,
 } from "../charting/timeframes";
@@ -59,6 +51,7 @@ import {
   useDebouncedVisibleRangeExpansion,
   useMeasuredChartModel,
   useProgressiveChartBarLimit,
+  useUnderfilledChartBackfill,
 } from "../charting/chartHydrationRuntime";
 import {
   normalizeChartBarsPagePayload,
@@ -68,22 +61,13 @@ import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorit
 import {
   BARS_QUERY_DEFAULTS,
   BARS_REQUEST_PRIORITY,
-  HEAVY_PAYLOAD_GC_MS,
-  QUERY_DEFAULTS,
   buildBarsRequestOptions,
 } from "../platform/queryDefaults";
 import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
 } from "../platform/runtimeTickerStore";
-import {
-  resolveTradeOptionChainSnapshot,
-  useTradeOptionChainSnapshot,
-} from "../platform/tradeOptionChainStore";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
-import { usePageVisible } from "../platform/usePageVisible";
-import { usePositions, useToast } from "../platform/platformContexts.jsx";
-import { useUserPreferences } from "../preferences/useUserPreferences";
 import {
   DEFAULT_TRADE_EQUITY_STUDIES,
   TRADE_EQUITY_INDICATOR_PRESET_VERSION,
@@ -91,65 +75,17 @@ import {
   buildTradeBarsPageQueryKey as buildBarsPageQueryKey,
   buildTradeFlowMarkersFromEvents,
 } from "./tradeChartState";
-import {
-  TICKET_ASSET_MODES,
-  TICKET_ORDER_TYPES,
-  TRADING_EXECUTION_MODES,
-  buildTwsBracketOrders,
-  formatTicketOrderType,
-  getDefaultTicketRiskPrices,
-  isTwsStructuredOrderPayload,
-  normalizeTicketAssetMode,
-  normalizeTicketOrderType,
-  normalizeTradingExecutionMode,
-  resolveTicketOrderPrices,
-  validateTicketBracket,
-} from "./ibkrOrderTicketModel";
-import {
-  BrokerActionConfirmDialog,
-  formatLiveBrokerActionError,
-} from "./BrokerActionConfirmDialog.jsx";
-import {
-  FINAL_ORDER_STATUSES,
-  formatExecutionContractLabel,
-  getBrokerMarketDepthRequest,
-  listBrokerExecutionsRequest,
-  orderStatusColor,
-  sameOptionContract,
-} from "./tradeBrokerRequests";
-import { buildMarketOrderFlowFromEvents } from "../flow/flowAnalytics";
-import {
-  OrderFlowDonut,
-  SizeBucketRow,
-} from "../flow/OrderFlowVisuals.jsx";
-import { isOpenPositionRow } from "../account/accountPositionRows.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
-import {
-  daysToExpiration,
-  fmtCompactNumber,
-  formatEnumLabel,
-  formatExpirationLabel,
-  formatQuotePrice,
-  formatRelativeTimeShort,
-  formatSignedPercent,
-  isFiniteNumber,
-  parseExpirationValue,
-} from "../../lib/formatters";
-import {
-  MISSING_VALUE,
-  T,
-  dim,
-  fs,
-  getCurrentTheme,
-  sp,
-} from "../../lib/uiTokens";
-import { DataUnavailableState } from "../../components/platform/primitives.jsx";
+import { T, getCurrentTheme } from "../../lib/uiTokens";
 
 export const TradeEquityPanel = ({
   ticker,
   flowEvents,
   historicalDataEnabled = true,
   stockAggregateStreamingEnabled = false,
+  dataTestId = "trade-equity-chart",
+  compact = false,
+  surfaceUiStateKey = "trade-equity-chart",
   onOpenSearch,
   searchOpen,
   onSearchOpenChange,
@@ -192,7 +128,7 @@ export const TradeEquityPanel = ({
       setTf(workspaceChart.timeframe);
     }
   }, [ticker, workspaceChart?.timeframe]);
-  const spotChartFrameLayout = resolveSpotChartFrameLayout(false);
+  const spotChartFrameLayout = resolveSpotChartFrameLayout(compact);
   const indicatorSettings = useMemo(
     () => buildRayReplicaIndicatorSettings(rayReplicaSettings),
     [rayReplicaSettings],
@@ -225,13 +161,25 @@ export const TradeEquityPanel = ({
     role: "primary",
     enabled: Boolean(historicalDataEnabled && ticker),
     warmTargetLimit: useCallback(
-      (limit) =>
-        queryClient.prefetchQuery({
+      (limit) => {
+        const expandedLimit = expandLocalRollupLimit(
+          limit,
+          tf,
+          rollupBaseTimeframe,
+        );
+        const brokerRecentWindowMinutes =
+          getChartBrokerRecentWindowMinutes(
+            rollupBaseTimeframe,
+            expandedLimit,
+          );
+
+        return queryClient.prefetchQuery({
           queryKey: [
             "trade-equity-bars",
             ticker,
             rollupBaseTimeframe,
-            expandLocalRollupLimit(limit, tf, rollupBaseTimeframe),
+            expandedLimit,
+            brokerRecentWindowMinutes,
           ],
           queryFn: () =>
             measureChartBarsRequest({
@@ -241,16 +189,18 @@ export const TradeEquityPanel = ({
                 getBarsRequest({
                   symbol: ticker,
                   timeframe: rollupBaseTimeframe,
-                  limit: expandLocalRollupLimit(limit, tf, rollupBaseTimeframe),
+                  limit: expandedLimit,
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
                   allowHistoricalSynthesis: true,
+                  brokerRecentWindowMinutes,
                 },
                 buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
               ),
             }),
           ...BARS_QUERY_DEFAULTS,
-        }),
+        });
+      },
       [chartHydrationScopeKey, queryClient, rollupBaseTimeframe, tf, ticker],
     ),
   });
@@ -263,12 +213,21 @@ export const TradeEquityPanel = ({
       ),
     [progressiveBars.requestedLimit, rollupBaseTimeframe, tf],
   );
+  const baseBrokerRecentWindowMinutes = useMemo(
+    () =>
+      getChartBrokerRecentWindowMinutes(
+        rollupBaseTimeframe,
+        baseRequestedLimit,
+      ),
+    [baseRequestedLimit, rollupBaseTimeframe],
+  );
   const barsQuery = useQuery({
     queryKey: [
       "trade-equity-bars",
       ticker,
       rollupBaseTimeframe,
       baseRequestedLimit,
+      baseBrokerRecentWindowMinutes,
     ],
     queryFn: () =>
       measureChartBarsRequest({
@@ -282,6 +241,7 @@ export const TradeEquityPanel = ({
             outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
             source: "trades",
             allowHistoricalSynthesis: true,
+            brokerRecentWindowMinutes: baseBrokerRecentWindowMinutes,
           },
           buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
         ),
@@ -316,6 +276,11 @@ export const TradeEquityPanel = ({
         favoriteTimeframe,
         favoriteBaseTimeframe,
       );
+      const favoriteBrokerRecentWindowMinutes =
+        getChartBrokerRecentWindowMinutes(
+          favoriteBaseTimeframe,
+          favoriteLimit,
+        );
 
       queryClient.prefetchQuery({
         queryKey: [
@@ -323,6 +288,7 @@ export const TradeEquityPanel = ({
           ticker,
           favoriteBaseTimeframe,
           favoriteLimit,
+          favoriteBrokerRecentWindowMinutes,
         ],
         queryFn: () =>
           measureChartBarsRequest({
@@ -341,6 +307,8 @@ export const TradeEquityPanel = ({
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
                   allowHistoricalSynthesis: true,
+                  brokerRecentWindowMinutes:
+                    favoriteBrokerRecentWindowMinutes,
                 },
                 buildBarsRequestOptions(BARS_REQUEST_PRIORITY.favoritePrewarm),
               ),
@@ -386,6 +354,7 @@ export const TradeEquityPanel = ({
       async ({ from, to, limit, historyCursor, preferCursor }) => {
         const fromIso = from.toISOString();
         const toIso = to.toISOString();
+        const brokerRecentWindowMinutes = 0;
         const payload = await queryClient.fetchQuery({
           queryKey: buildBarsPageQueryKey({
             queryBase: ["trade-equity-bars-prepend", ticker],
@@ -395,6 +364,7 @@ export const TradeEquityPanel = ({
             to: toIso,
             historyCursor: historyCursor || null,
             preferCursor: Boolean(historyCursor && preferCursor),
+            brokerRecentWindowMinutes,
           }),
           queryFn: () =>
             measureChartBarsRequest({
@@ -412,6 +382,7 @@ export const TradeEquityPanel = ({
                   allowHistoricalSynthesis: true,
                   historyCursor: historyCursor || undefined,
                   preferCursor: historyCursor && preferCursor ? true : undefined,
+                  brokerRecentWindowMinutes,
                 },
                 buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
               ),
@@ -426,6 +397,18 @@ export const TradeEquityPanel = ({
       },
       [chartHydrationScopeKey, queryClient, rollupBaseTimeframe, ticker],
     ),
+  });
+  useUnderfilledChartBackfill({
+    scopeKey: baseBarsScopeKey,
+    enabled: Boolean(
+      historicalDataEnabled && ticker && barsQuery.data?.bars?.length,
+    ),
+    loadedBarCount: prependableBars.loadedBarCount,
+    requestedLimit: baseRequestedLimit,
+    minPageSize: getInitialChartBarLimit(tf, "primary"),
+    isPrependingOlder: prependableBars.isPrependingOlder,
+    hasExhaustedOlderHistory: prependableBars.hasExhaustedOlderHistory,
+    prependOlderBars: prependableBars.prependOlderBars,
   });
   const streamedSourceBars = useBrokerStreamedBars({
     symbol: ticker,
@@ -448,6 +431,8 @@ export const TradeEquityPanel = ({
   );
   const fetchLatestLiveBars = useCallback(async () => {
     const fallbackLimit = Math.max(2, Math.min(baseRequestedLimit, 500));
+    const fallbackBrokerRecentWindowMinutes =
+      getChartBrokerRecentWindowMinutes(rollupBaseTimeframe, fallbackLimit);
     const payload = await measureChartBarsRequest({
       scopeKey: chartHydrationScopeKey,
       metric: "liveFallbackRequestMs",
@@ -460,6 +445,7 @@ export const TradeEquityPanel = ({
             outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
             source: "trades",
             allowHistoricalSynthesis: true,
+            brokerRecentWindowMinutes: fallbackBrokerRecentWindowMinutes,
           },
           buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
         ),
@@ -704,12 +690,13 @@ export const TradeEquityPanel = ({
   return (
     <ResearchChartFrame
       key={chartHydrationScopeKey}
-      dataTestId="trade-equity-chart"
+      dataTestId={dataTestId}
       theme={T}
       themeKey={getCurrentTheme()}
-      surfaceUiStateKey="trade-equity-chart"
+      surfaceUiStateKey={surfaceUiStateKey}
       rangeIdentityKey={chartHydrationScopeKey}
       model={chartModel}
+      compact={compact}
       chartEvents={chartEvents}
       showSurfaceToolbar={false}
       showLegend
@@ -770,6 +757,7 @@ export const TradeEquityPanel = ({
           searchOpen={searchOpen}
           onSearchOpenChange={onSearchOpenChange}
           searchContent={searchContent}
+          dense={compact}
           onUndo={undo}
           onRedo={redo}
           canUndo={canUndo}
@@ -814,6 +802,7 @@ export const TradeEquityPanel = ({
             clearDrawings();
             setDrawMode(null);
           }}
+          dense={compact}
         />
       )}
       surfaceLeftOverlayWidth={spotChartFrameLayout.surfaceLeftOverlayWidth}
@@ -825,6 +814,7 @@ export const TradeEquityPanel = ({
           selectedStudies={selectedIndicators}
           studySpecs={chartModel.studySpecs}
           onToggleStudy={toggleIndicator}
+          dense={compact}
           statusText={`${equityChartStatus}  C ${callFlows}  P ${putFlows}  UOA amber`}
         />
       )}

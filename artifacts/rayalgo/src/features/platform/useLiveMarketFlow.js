@@ -55,6 +55,7 @@ export const useLiveMarketFlow = (
     maxSymbols = 8,
     batchSize,
     unusualThreshold,
+    lineBudget,
     minPremium,
     maxDte,
     mode = FLOW_SCANNER_MODE.watchlist,
@@ -91,6 +92,7 @@ export const useLiveMarketFlow = (
       concurrency,
       intervalMs,
       limit,
+      lineBudget,
       maxDte,
       maxSymbols,
       minPremium,
@@ -129,6 +131,10 @@ export const useLiveMarketFlow = (
     Math.min(effectiveScannerConfig.batchSize, liveSymbols.length || 1),
   );
   const effectiveLimit = effectiveScannerConfig.limit;
+  const effectiveLineBudget =
+    Number.isFinite(lineBudget) && lineBudget > 0
+      ? Math.max(1, Math.floor(lineBudget))
+      : undefined;
   const effectiveIntervalMs = effectiveScannerConfig.intervalMs;
   const effectiveConcurrency = effectiveScannerConfig.concurrency;
   const normalizedThreshold =
@@ -236,6 +242,9 @@ export const useLiveMarketFlow = (
             ...(shouldSendUnusualThreshold
               ? { unusualThreshold: normalizedThreshold }
               : {}),
+            ...(effectiveLineBudget !== undefined
+              ? { lineBudget: effectiveLineBudget }
+              : {}),
             ...(effectiveMinPremium !== undefined
               ? { minPremium: effectiveMinPremium }
               : {}),
@@ -313,6 +322,7 @@ export const useLiveMarketFlow = (
     effectiveConcurrency,
     effectiveIntervalMs,
     effectiveLimit,
+    effectiveLineBudget,
     effectiveMaxDte,
     effectiveMinPremium,
     effectiveScannerConfig.scope,

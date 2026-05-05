@@ -387,7 +387,7 @@ async function expectNoElementOverflow(page: Page, selector: string) {
   });
 }
 
-test("Market chart grid keeps touched viewports through layout changes and clears them on reset", async ({
+test("Market chart grid lets chart surfaces own touched viewports and clears them on reset", async ({
   page,
 }) => {
   const runtimeIssues: string[] = [];
@@ -406,18 +406,13 @@ test("Market chart grid keeps touched viewports through layout changes and clear
   await openMarket(page, "2x2");
 
   const chartSurfaces = page.locator(
-    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="trade-equity-chart"]',
   );
   await expect(chartSurfaces).toHaveCount(4);
   const firstSurface = chartSurfaces.first();
   await expect(firstSurface).toHaveAttribute(
     "data-chart-viewport-user-touched",
     "false",
-  );
-  await expect(page.getByTestId("market-mini-chart-0-source-badge")).toBeVisible();
-  await expect(page.getByTestId("market-mini-chart-0-source-badge")).toHaveAttribute(
-    "data-chart-source-state",
-    "historical",
   );
 
   const firstPlot = firstSurface.locator("[data-chart-plot-root]");
@@ -438,37 +433,24 @@ test("Market chart grid keeps touched viewports through layout changes and clear
   );
   expect(touchedRange).not.toBe("none");
 
-  await page.getByRole("button", { name: "3x3" }).click();
-  const expandedChartSurfaces = page.locator(
-    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
-  );
-  await expect(expandedChartSurfaces).toHaveCount(9);
-  await expect(expandedChartSurfaces.first()).toHaveAttribute(
-    "data-chart-viewport-user-touched",
-    "true",
-  );
-  await expect
-    .poll(() =>
-      expandedChartSurfaces.first().getAttribute("data-chart-visible-logical-range"),
-    )
-    .not.toBe("none");
+  await page.waitForTimeout(350);
   expectLogicalRangesClose(
-    await expandedChartSurfaces.first().getAttribute("data-chart-visible-logical-range"),
+    await firstSurface.getAttribute("data-chart-visible-logical-range"),
     touchedRange,
     2.5,
   );
 
   await page.getByTestId("market-chart-reset-views").click();
-  await expect(expandedChartSurfaces.first()).toHaveAttribute(
+  await expect(firstSurface).toHaveAttribute(
     "data-chart-viewport-user-touched",
     "false",
   );
-  const touchedFlags = await expandedChartSurfaces.evaluateAll((elements) =>
+  const touchedFlags = await chartSurfaces.evaluateAll((elements) =>
     elements.map((element) =>
       element.getAttribute("data-chart-viewport-user-touched"),
     ),
   );
-  expect(touchedFlags).toEqual(Array(9).fill("false"));
+  expect(touchedFlags).toEqual(Array(4).fill("false"));
   expect(runtimeIssues, "Market chart viewport test should not emit runtime issues").toEqual([]);
 });
 
@@ -491,7 +473,7 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
   await openMarket(page, "2x2");
 
   const chartSurfaces = page.locator(
-    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="trade-equity-chart"]',
   );
   await expect(chartSurfaces).toHaveCount(4);
   const inactiveSurface = chartSurfaces.nth(1);
@@ -614,7 +596,7 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
   await openMarket(page, "2x2");
 
   const chartSurfaces = page.locator(
-    '[data-testid="market-chart-grid"] [data-chart-range-identity^="market-grid"]',
+    '[data-testid="market-chart-grid"] [data-chart-range-identity^="trade-equity-chart"]',
   );
   await expect(chartSurfaces).toHaveCount(4);
   const activeSurface = chartSurfaces.first();
@@ -660,6 +642,8 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
   const pannedRange = await activeSurface.getAttribute(
     "data-chart-visible-logical-range",
   );
+  await page.mouse.move(12, 12);
+  await page.waitForTimeout(16_000);
 
   await page.evaluate(() => {
     const emit = (window as unknown as {

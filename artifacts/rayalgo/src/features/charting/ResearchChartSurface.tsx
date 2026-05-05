@@ -158,6 +158,37 @@ export const resolveVisibleRangePublishDecision = ({
   };
 };
 
+export const shouldPreserveUserViewportRange = ({
+  source,
+  activeUserTouchedViewport,
+  hasRecentProgrammaticIntent,
+  currentUserRange,
+  nextRange,
+}: {
+  source: "programmatic" | "user";
+  activeUserTouchedViewport: boolean;
+  hasRecentProgrammaticIntent: boolean;
+  currentUserRange: VisibleLogicalRange | null | undefined;
+  nextRange: VisibleLogicalRange | null | undefined;
+}): boolean => {
+  if (
+    source !== "programmatic" ||
+    !activeUserTouchedViewport ||
+    hasRecentProgrammaticIntent
+  ) {
+    return false;
+  }
+
+  const currentRange = resolveViewportVisibleLogicalRange(currentUserRange);
+  const incomingRange = resolveViewportVisibleLogicalRange(nextRange);
+  return Boolean(
+    currentRange &&
+      incomingRange &&
+      buildVisibleRangeSignature(currentRange) !==
+        buildVisibleRangeSignature(incomingRange),
+  );
+};
+
 export const resolveVisibleRangeChangeSource = ({
   initialized,
   nextSignature,
@@ -4574,13 +4605,43 @@ export const ResearchChartSurface = ({
         lastSignature: lastPublishedVisibleRangeSignatureRef.current,
         visibleRange,
       });
+      const hasRecentProgrammaticIntent = hasRecentProgrammaticViewportIntent();
+      const hasMatchingProgrammaticIntent =
+        hasRecentProgrammaticIntent &&
+        programmaticVisibleRangeSignatureRef.current === signature;
+      const lockedUserRange =
+        activeUserTouchedViewport
+          ? resolveViewportVisibleLogicalRange(lastUserVisibleRangeRef.current) ||
+            resolveViewportVisibleLogicalRange(visibleLogicalRangeRef.current)
+          : null;
+      if (
+        shouldPreserveUserViewportRange({
+          source,
+          activeUserTouchedViewport,
+          hasRecentProgrammaticIntent: hasMatchingProgrammaticIntent,
+          currentUserRange: lockedUserRange,
+          nextRange: visibleRange,
+        }) &&
+        lockedUserRange
+      ) {
+        const lockedSignature = buildVisibleRangeSignature(lockedUserRange);
+        if (typeof window !== "undefined") {
+          markProgrammaticViewportIntent(lockedSignature);
+          window.requestAnimationFrame(() => {
+            chartRef.current
+              ?.timeScale?.()
+              .setVisibleLogicalRange?.(lockedUserRange);
+          });
+        }
+        return lockedUserRange;
+      }
       const recentLocalUserViewport =
         Date.now() - lastLocalUserViewportAtRef.current <=
         LOCAL_VIEWPORT_TOUCH_SYNC_GRACE_MS;
       if (
         source === "programmatic" &&
         recentLocalUserViewport &&
-        !hasRecentProgrammaticViewportIntent() &&
+        !hasMatchingProgrammaticIntent &&
         visibleLogicalRangeRef.current &&
         buildVisibleRangeSignature(visibleLogicalRangeRef.current) !== signature
       ) {
@@ -4627,6 +4688,7 @@ export const ResearchChartSurface = ({
       effectiveViewportSnapshot?.userTouched,
       externalViewportUserTouched,
       hasRecentProgrammaticViewportIntent,
+      markProgrammaticViewportIntent,
       markViewportUserTouched,
       publishViewportSnapshot,
       viewportUserTouched,

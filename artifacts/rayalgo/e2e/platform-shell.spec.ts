@@ -128,6 +128,15 @@ function timeframeStepMs(timeframe: string | null) {
   }
 }
 
+function expectedBrokerRecentWindowMinutes(request: Record<string, string>) {
+  const stepMs = timeframeStepMs(request.timeframe || null);
+  const limit = Number(request.limit || "0");
+  if (!stepMs || !Number.isFinite(limit) || limit <= 0) {
+    return 0;
+  }
+  return Math.ceil((stepMs * limit) / 60_000);
+}
+
 function makeBars(symbol: string, timeframe = "5m") {
   const stepMs = timeframeStepMs(timeframe);
   const base = 100 + symbols.indexOf(symbol) * 25;
@@ -681,7 +690,9 @@ async function expectSpotBarsRequestForInterval(
         barsRequests.some(
           (request) =>
             request.timeframe === expectedTimeframe &&
-            Number(request.limit || "0") > 1,
+            Number(request.limit || "0") > 1 &&
+            Number(request.brokerRecentWindowMinutes || "0") >=
+              expectedBrokerRecentWindowMinutes(request),
         ),
       { timeout: 10_000 },
     )

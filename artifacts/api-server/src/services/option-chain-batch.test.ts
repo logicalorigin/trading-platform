@@ -421,6 +421,99 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
   assert.equal(result.emptyReason, null);
 });
 
+test("getBarsWithDebug lets chart callers size the broker live-edge window", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  process.env["POLYGON_BASE_URL"] = "https://api.massive.com";
+  const seenBrokerLimits: Array<number | undefined> = [];
+  let polygonCalls = 0;
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async (input: { limit?: number }) => {
+          seenBrokerLimits.push(input.limit);
+          const limit = input.limit ?? 0;
+          return Array.from({ length: limit }, (_, index) => {
+            const close = 510 + index * 0.1;
+            const timestamp = new Date(
+              Date.parse("2026-05-01T20:00:00.000Z") -
+                (limit - index - 1) * 5 * 60_000,
+            );
+            return {
+              timestamp,
+              open: close - 0.2,
+              high: close + 0.4,
+              low: close - 0.4,
+              close,
+              volume: 100_000 + index,
+              source: "ibkr-history",
+              providerContractId: null,
+              outsideRth: true,
+              partial: false,
+              transport: "tws",
+              delayed: false,
+              freshness: "live",
+              marketDataMode: "live",
+              dataUpdatedAt: timestamp,
+              ageMs: null,
+            } satisfies BrokerBarSnapshot;
+          });
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getBarsPage: async () => {
+          polygonCalls += 1;
+          return {
+            bars: [],
+            nextUrl: null,
+            pageCount: 1,
+            pageLimitReached: false,
+            requestedFrom: null,
+            requestedTo: null,
+          };
+        },
+      }) as unknown as PolygonMarketDataClient,
+  );
+
+  const clipped = await getBarsWithDebug({
+    symbol: "SPY",
+    timeframe: "5m",
+    limit: 900,
+    assetClass: "equity",
+    allowHistoricalSynthesis: true,
+  });
+  assert.ok(
+    (seenBrokerLimits[0] ?? 0) < 900,
+    "default synthesis path should still clip the first broker request",
+  );
+  assert.equal(clipped.bars.length, 900);
+
+  seenBrokerLimits.length = 0;
+  polygonCalls = 0;
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+
+  const chartHydrated = await getBarsWithDebug({
+    symbol: "SPY",
+    timeframe: "5m",
+    limit: 900,
+    assetClass: "equity",
+    allowHistoricalSynthesis: true,
+    brokerRecentWindowMinutes: 4510,
+  });
+
+  assert.equal(seenBrokerLimits[0], 900);
+  assert.equal(polygonCalls, 0);
+  assert.equal(chartHydrated.bars.length, 900);
+  assert.equal(chartHydrated.historySource, "ibkr-history");
+});
+
 test("getBarsWithDebug keeps delayed synthesis out of the IBKR live edge", async () => {
   process.env["POLYGON_API_KEY"] = "test";
   process.env["POLYGON_BASE_URL"] = "https://api.massive.com";

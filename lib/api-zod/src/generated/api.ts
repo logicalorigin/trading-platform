@@ -2243,6 +2243,9 @@ export const listFlowEventsQueryMinPremiumMax = 50000000;
 export const listFlowEventsQueryMaxDteMin = 0;
 export const listFlowEventsQueryMaxDteMax = 730;
 
+export const listFlowEventsQueryLineBudgetMin = 1;
+export const listFlowEventsQueryLineBudgetMax = 150;
+
 
 
 export const ListFlowEventsQueryParams = zod.object({
@@ -2251,7 +2254,8 @@ export const ListFlowEventsQueryParams = zod.object({
   "unusualThreshold": zod.coerce.number().min(listFlowEventsQueryUnusualThresholdMin).max(listFlowEventsQueryUnusualThresholdMax).optional().describe('Volume \/ open-interest ratio at which a print is flagged as unusual. Defaults to 1 (volume meets prior open interest). Higher values (e.g. 2 or 5) restrict the badge to larger multiples favoured by sweep\/swing desks.'),
   "scope": zod.enum(['all', 'unusual']).optional().describe('Return all flow or only contracts that match the unusual-flow threshold.'),
   "minPremium": zod.coerce.number().min(listFlowEventsQueryMinPremiumMin).max(listFlowEventsQueryMinPremiumMax).optional().describe('Minimum option premium, in dollars, required for each returned flow row.'),
-  "maxDte": zod.coerce.number().min(listFlowEventsQueryMaxDteMin).max(listFlowEventsQueryMaxDteMax).optional().describe('Maximum days to expiration to include in the flow scan.')
+  "maxDte": zod.coerce.number().min(listFlowEventsQueryMaxDteMin).max(listFlowEventsQueryMaxDteMax).optional().describe('Maximum days to expiration to include in the flow scan.'),
+  "lineBudget": zod.coerce.number().min(listFlowEventsQueryLineBudgetMin).max(listFlowEventsQueryLineBudgetMax).optional().describe('Maximum IBKR option quote lines this request may use.')
 })
 
 export const listFlowEventsResponseSourceIbkrExpirationCountMin = 0;

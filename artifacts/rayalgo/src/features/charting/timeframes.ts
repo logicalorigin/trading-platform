@@ -303,6 +303,26 @@ export const getChartTimeframeStepMs = (
   timeframe: string | null | undefined,
 ): number => getChartTimeframeDefinition(timeframe)?.stepMs || 0;
 
+export const getChartBrokerRecentWindowMinutes = (
+  timeframe: string | null | undefined,
+  limit: number | null | undefined,
+): number | undefined => {
+  const stepMs = getChartTimeframeStepMs(timeframe);
+  const barCount =
+    typeof limit === "number" && Number.isFinite(limit)
+      ? Math.max(1, Math.ceil(limit))
+      : 0;
+  if (!stepMs || !barCount) {
+    return undefined;
+  }
+
+  // The API defaults to a 60-minute broker live edge when delayed historical
+  // synthesis is configured. Chart callers need a broker window that matches
+  // the requested interval horizon so a successful response cannot hydrate only
+  // the latest candle and leave the rest to delayed history.
+  return Math.max(1, Math.ceil((stepMs * (barCount + 2)) / minuteMs));
+};
+
 export const getChartBaseTimeframe = (
   timeframe: string | null | undefined,
 ): string => getChartTimeframeDefinition(timeframe)?.baseTimeframe || normalizeChartTimeframe(timeframe);

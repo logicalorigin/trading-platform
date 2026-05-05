@@ -283,6 +283,74 @@ export const useDebouncedVisibleRangeExpansion = (
   );
 };
 
+export const useUnderfilledChartBackfill = ({
+  scopeKey,
+  enabled = true,
+  loadedBarCount = 0,
+  requestedLimit = 0,
+  minPageSize = 0,
+  isPrependingOlder = false,
+  hasExhaustedOlderHistory = false,
+  prependOlderBars,
+  maxAttempts = 2,
+}) => {
+  const attemptsRef = useRef({ key: "", count: 0 });
+
+  useEffect(() => {
+    const normalizedScopeKey =
+      typeof scopeKey === "string" ? scopeKey.trim() : "";
+    const desiredLoadedCount = Math.max(
+      2,
+      Math.ceil(Number.isFinite(requestedLimit) ? requestedLimit : 0),
+    );
+    const currentLoadedCount = Math.max(
+      0,
+      Math.floor(Number.isFinite(loadedBarCount) ? loadedBarCount : 0),
+    );
+    const attemptKey = `${normalizedScopeKey}::${desiredLoadedCount}`;
+
+    if (attemptsRef.current.key !== attemptKey) {
+      attemptsRef.current = { key: attemptKey, count: 0 };
+    }
+
+    if (
+      !enabled ||
+      !normalizedScopeKey ||
+      typeof prependOlderBars !== "function" ||
+      currentLoadedCount <= 0 ||
+      currentLoadedCount >= desiredLoadedCount ||
+      isPrependingOlder ||
+      hasExhaustedOlderHistory ||
+      attemptsRef.current.count >= maxAttempts
+    ) {
+      return;
+    }
+
+    attemptsRef.current = {
+      key: attemptKey,
+      count: attemptsRef.current.count + 1,
+    };
+    const missingBars = Math.max(0, desiredLoadedCount - currentLoadedCount);
+    const pageSize = Math.max(
+      Math.ceil(Number.isFinite(minPageSize) ? minPageSize : 0),
+      missingBars,
+      Math.ceil(desiredLoadedCount * 0.5),
+    );
+
+    Promise.resolve(prependOlderBars({ pageSize })).catch(() => {});
+  }, [
+    enabled,
+    hasExhaustedOlderHistory,
+    isPrependingOlder,
+    loadedBarCount,
+    maxAttempts,
+    minPageSize,
+    prependOlderBars,
+    requestedLimit,
+    scopeKey,
+  ]);
+};
+
 export const measureChartBarsRequest = async ({
   scopeKey,
   metric,

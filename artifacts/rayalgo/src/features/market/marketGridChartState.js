@@ -35,6 +35,7 @@ export const buildMarketBarsPageQueryKey = ({
   providerContractId = null,
   historyCursor = null,
   preferCursor = false,
+  brokerRecentWindowMinutes = null,
 }) => [
   ...queryBase,
   timeframe,
@@ -46,6 +47,7 @@ export const buildMarketBarsPageQueryKey = ({
   providerContractId,
   historyCursor,
   Boolean(preferCursor),
+  brokerRecentWindowMinutes,
 ];
 
 const MARKET_GRID_EQUITY_LIKE_MARKETS = new Set([

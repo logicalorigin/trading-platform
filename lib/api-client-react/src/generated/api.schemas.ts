@@ -3973,6 +3973,12 @@ minPremium?: number;
  * @maximum 730
  */
 maxDte?: number;
+/**
+ * Maximum IBKR option quote lines this request may use.
+ * @minimum 1
+ * @maximum 150
+ */
+lineBudget?: number;
 };
 
 export type ListFlowEventsScope = typeof ListFlowEventsScope[keyof typeof ListFlowEventsScope];

@@ -234,11 +234,7 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
 
   const strips = page.getByTestId("market-premium-flow-strip");
   await expect(strips).toHaveCount(6);
-  await expect(page.getByTestId("market-mini-chart-0-source-badge")).toBeVisible();
-  await expect(page.getByTestId("market-mini-chart-0-source-badge")).toHaveAttribute(
-    "data-chart-source-degraded",
-    "false",
-  );
+  await expect(page.getByTestId("market-mini-chart-0")).toBeVisible();
   await expect(
     page.getByRole("status", { name: /SPY options premium flow Scanning/i }),
   ).toBeVisible();

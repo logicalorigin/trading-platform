@@ -1,74 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useGetQuoteSnapshots } from "@workspace/api-client-react";
 import {
-  getBars as getBarsRequest,
-  useGetQuoteSnapshots,
-} from "@workspace/api-client-react";
-import {
-  DISPLAY_CHART_OUTSIDE_RTH,
-  resolveDisplayChartPrice,
-} from "../charting/displayChartSession";
-import { RayReplicaSettingsMenu } from "../charting/RayReplicaSettingsMenu";
-import { ResearchChartFrame } from "../charting/ResearchChartFrame";
-import {
-  ResearchChartWidgetFooter,
-  ResearchChartWidgetHeader,
-  ResearchChartWidgetSidebar,
-} from "../charting/ResearchChartWidgetChrome";
-import {
-  expandLocalRollupLimit,
-  resolveLocalRollupBaseTimeframe,
-  rollupMarketBars,
-} from "../charting/timeframeRollups";
-import { flowEventsToChartEvents } from "../charting/chartEvents";
-import {
-  getChartBarLimit,
   getChartTimeframeValues,
-  getInitialChartBarLimit,
-  getMaxChartBarLimit,
   normalizeChartTimeframe,
 } from "../charting/timeframes";
-import { recordChartBarScopeState } from "../charting/chartHydrationStats";
-import { resolveSpotChartFrameLayout } from "../charting/spotChartFrameLayout";
+import { clearStoredChartViewportSnapshot } from "../charting/ResearchChartSurface";
+import { buildChartBarScopeKey } from "../charting/chartHydrationRuntime";
 import {
-  useBrokerStreamedBars,
-  useHistoricalBarStream,
-  usePrependableHistoricalBars,
-} from "../charting/useMassiveStreamedStockBars";
-import { useDrawingHistory } from "../charting/useDrawingHistory";
-import { useIndicatorLibrary } from "../charting/pineScripts";
-import {
-  buildMiniChartBarsFromApi,
-  describeBrokerChartSource,
-  describeBrokerChartStatus,
-  useDisplayChartPriceFallbackBars,
-} from "../charting/chartApiBars";
-import {
-  buildChartBarScopeKey,
-  measureChartBarsRequest,
-  useDebouncedVisibleRangeExpansion,
-  useMeasuredChartModel,
-  useProgressiveChartBarLimit,
-} from "../charting/chartHydrationRuntime";
-import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorites";
-import {
-  buildRayReplicaIndicatorSettings,
-  isRayReplicaIndicatorSelected,
-  mergeIndicatorSelections,
-  normalizeIndicatorSelection,
-  resolvePersistedIndicatorPreset,
   resolvePersistedRayReplicaSettings,
 } from "../charting/chartIndicatorPersistence";
-import {
-  EMPTY_PREMIUM_FLOW_SUMMARY,
-  buildPremiumFlowBySymbol,
-  resolvePremiumFlowDisplayState,
-} from "../platform/premiumFlowIndicator";
+import { buildPremiumFlowBySymbol } from "../platform/premiumFlowIndicator";
 import { FLOW_SCANNER_SCOPE } from "../platform/marketFlowScannerConfig";
-import {
-  DEFAULT_WATCHLIST_BY_SYMBOL,
-  WATCHLIST,
-} from "./marketReferenceData";
+import { WATCHLIST } from "./marketReferenceData";
 import {
   buildEqualTrackWeights,
   buildMarketGridResizeHandleKey,
@@ -80,17 +23,7 @@ import {
   resizeMarketGridTrackWeights,
   writeMarketGridTrackSession,
 } from "./marketGridTrackState";
-import {
-  buildMarketBarsPageQueryKey as buildBarsPageQueryKey,
-  buildMarketGridViewportRevisionIdentity,
-  normalizeMiniChartStudies,
-} from "./marketGridChartState";
-import {
-  ensureTradeTickerInfo,
-  useRuntimeTickerSnapshot,
-} from "../platform/runtimeTickerStore";
-import { useSignalMonitorStateForSymbol } from "../platform/signalMonitorStore";
-import { useHydrationIntent } from "../platform/hydrationCoordinator";
+import { normalizeMiniChartStudies } from "./marketGridChartState";
 import { useLiveMarketFlow } from "../platform/useLiveMarketFlow";
 import { useIbkrQuoteSnapshotStream } from "../platform/live-streams";
 import { USER_PREFERENCES_UPDATED_EVENT } from "../preferences/userPreferenceModel";
@@ -100,15 +33,9 @@ import {
   normalizeTickerSearchResultForStorage,
 } from "../platform/tickerSearch/TickerSearch.jsx";
 import { MiniChartCell } from "./MiniChartCell.jsx";
-import {
-  normalizeChartBarsPagePayload,
-  normalizeLatestChartBarsPayload,
-} from "../charting/chartBarsPayloads";
-import { BARS_QUERY_DEFAULTS, BARS_REQUEST_PRIORITY, buildBarsRequestOptions } from "../platform/queryDefaults";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { _initialState, persistState } from "../../lib/workspaceState";
-import { fmtM, isFiniteNumber } from "../../lib/formatters";
-import { T, dim, fs, getCurrentTheme, sp } from "../../lib/uiTokens";
+import { T, dim, fs, sp } from "../../lib/uiTokens";
 import { Card } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -140,15 +67,6 @@ const MAX_MULTI_CHART_SLOTS = Math.max(
 );
 const MARKET_GRID_INDICATOR_PRESET_VERSION = 2;
 const MARKET_CHART_FLOW_LIMIT = 80;
-
-const buildViewportRangeSignature = (range) => {
-  if (!range || typeof range !== "object") {
-    return "none";
-  }
-  const from = Number.isFinite(range.from) ? range.from : "";
-  const to = Number.isFinite(range.to) ? range.to : "";
-  return `${from}:${to}`;
-};
 
 const buildDefaultMiniChartSymbols = (
   activeSym,
@@ -265,7 +183,6 @@ export const MultiChartGrid = ({
   unusualThreshold,
   onChartFlowSnapshotChange,
 }) => {
-  const queryClient = useQueryClient();
   const gridBodyRef = useRef(null);
   const defaultSymbolsRef = useRef(
     buildDefaultMiniChartSymbols(activeSym, MAX_MULTI_CHART_SLOTS),
@@ -276,10 +193,6 @@ export const MultiChartGrid = ({
       ? Math.max(0, _initialState.marketGridSoloSlotIndex)
       : 0,
   );
-  const {
-    favoriteTimeframes: miniFavoriteTimeframes,
-    toggleFavoriteTimeframe: toggleMiniFavoriteTimeframe,
-  } = useChartTimeframeFavorites("mini");
   const [syncTimeframes, setSyncTimeframes] = useState(
     Boolean(_initialState.marketGridSyncTimeframes),
   );
@@ -301,8 +214,6 @@ export const MultiChartGrid = ({
   const [marketGridTrackState, setMarketGridTrackState] = useState(() =>
     readMarketGridTrackSession(),
   );
-  const [chartViewportSnapshots, setChartViewportSnapshots] = useState({});
-  const chartViewportSnapshotsRef = useRef({});
   const [chartViewportResetRevision, setChartViewportResetRevision] = useState(0);
   const [gridResizeHoverHandle, setGridResizeHoverHandle] = useState(null);
   const [gridResizeActiveHandle, setGridResizeActiveHandle] = useState(null);
@@ -416,7 +327,8 @@ export const MultiChartGrid = ({
     limit: MARKET_CHART_FLOW_LIMIT,
     maxSymbols: MAX_MULTI_CHART_SLOTS,
     batchSize: MAX_MULTI_CHART_SLOTS,
-    concurrency: 1,
+    concurrency: 2,
+    lineBudget: 20,
     intervalMs: 10_000,
     scope: FLOW_SCANNER_SCOPE.unusual,
     unusualThreshold,
@@ -481,10 +393,19 @@ export const MultiChartGrid = ({
     () => buildPremiumFlowBySymbol(chartFlowEvents, streamedSymbols),
     [chartFlowEvents, streamedSymbols],
   );
-  const chartEventsBySymbol = useMemo(() => {
+  const flowEventsBySymbol = useMemo(() => {
     const grouped = {};
     streamedSymbols.forEach((symbol) => {
-      grouped[symbol] = flowEventsToChartEvents(chartFlowEvents, symbol);
+      grouped[symbol] = [];
+    });
+    (chartFlowEvents || []).forEach((event) => {
+      const symbol = normalizeTickerSymbol(
+        event?.ticker || event?.underlying || event?.symbol,
+      );
+      if (!symbol || !Object.prototype.hasOwnProperty.call(grouped, symbol)) {
+        return;
+      }
+      grouped[symbol].push(event);
     });
     return grouped;
   }, [chartFlowEvents, streamedSymbols]);
@@ -689,37 +610,15 @@ export const MultiChartGrid = ({
     });
   }, [baseCellHeight, renderedCols, renderedRows, setLayoutTrackState]);
   const resetGridChartViews = useCallback(() => {
-    chartViewportSnapshotsRef.current = {};
-    setChartViewportSnapshots({});
+    visibleSlotEntries.forEach(({ slot }) => {
+      const ticker = normalizeTickerSymbol(slot?.ticker) || "SPY";
+      const timeframe = normalizeChartTimeframe(slot?.tf) || "5m";
+      clearStoredChartViewportSnapshot(
+        buildChartBarScopeKey("trade-equity-chart", ticker, timeframe),
+      );
+    });
     setChartViewportResetRevision((revision) => revision + 1);
-  }, []);
-  const rememberViewportSnapshot = useCallback((identityKey, snapshot) => {
-    if (!identityKey || !snapshot || snapshot.identityKey !== identityKey) {
-      return;
-    }
-
-    const current = chartViewportSnapshotsRef.current || {};
-    const existing = current[identityKey];
-    if (
-      existing &&
-      existing.userTouched === snapshot.userTouched &&
-      existing.realtimeFollow === snapshot.realtimeFollow &&
-      existing.scaleMode === snapshot.scaleMode &&
-      existing.autoScale === snapshot.autoScale &&
-      existing.invertScale === snapshot.invertScale &&
-      buildViewportRangeSignature(existing.visibleLogicalRange) ===
-        buildViewportRangeSignature(snapshot.visibleLogicalRange)
-    ) {
-      return;
-    }
-
-    const next = {
-      ...current,
-      [identityKey]: snapshot,
-    };
-    chartViewportSnapshotsRef.current = next;
-    setChartViewportSnapshots(next);
-  }, []);
+  }, [visibleSlotEntries]);
   const startGridResize = useCallback(
     ({ mode, colGapIndex = null, rowGapIndex = null, handleKey }, event) => {
       event.preventDefault();
@@ -1134,11 +1033,6 @@ export const MultiChartGrid = ({
           }}
         >
           {visibleSlotEntries.map(({ slot, index }) => {
-            const viewportIdentityKey = buildMarketGridViewportRevisionIdentity(
-              index,
-              slot,
-              chartViewportResetRevision,
-            );
             return (
               <MiniChartCell
                 key={`market-chart-slot-${index}-${chartViewportResetRevision}`}
@@ -1146,24 +1040,13 @@ export const MultiChartGrid = ({
                 slot={slot}
                 quote={quotesBySymbol[slot.ticker]}
                 premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}
-                chartEvents={chartEventsBySymbol[normalizeTickerSymbol(slot.ticker)] || []}
+                flowEvents={flowEventsBySymbol[normalizeTickerSymbol(slot.ticker)] || []}
                 premiumFlowStatus={chartFlowStatus}
                 premiumFlowProviderSummary={chartFlowProviderSummary}
                 isActive={slot.ticker === activeSym}
                 dense={denseGrid}
                 compactFlow={compactPremiumFlow}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-                chartViewportIdentityKey={viewportIdentityKey}
-                viewportSnapshot={
-                  chartViewportSnapshots[viewportIdentityKey] ||
-                  chartViewportSnapshotsRef.current?.[viewportIdentityKey] ||
-                  null
-                }
-                onViewportSnapshotChange={(snapshot) =>
-                  rememberViewportSnapshot(viewportIdentityKey, snapshot)
-                }
-                favoriteTimeframes={miniFavoriteTimeframes}
-                onToggleFavoriteTimeframe={toggleMiniFavoriteTimeframe}
                 onFocus={onSymClick}
                 onEnterSoloMode={() => {
                   setSoloSlotIndex(index);
