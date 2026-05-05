@@ -427,7 +427,7 @@ export const PositionsPanel = ({
           />
         </div>
       ) : (
-        <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: "34vh" }}>
+        <div className="ra-hide-scrollbar ra-account-table-scroll" style={{ overflow: "auto", maxHeight: "34vh" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1160 }}>
             <thead>
               <tr style={tableHeaderStyle}>

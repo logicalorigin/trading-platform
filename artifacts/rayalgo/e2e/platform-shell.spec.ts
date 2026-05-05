@@ -1226,7 +1226,7 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
   expect(runtimeIssues).toEqual([]);
 });
 
-test("account risk strip and row handoffs open Trade context", async ({ page }) => {
+test("account risk strip and row handoffs open Trade context", async ({ page }, testInfo) => {
   const runtimeIssues = collectRuntimeIssues(page);
   const updatedAt = new Date(mockNow).toISOString();
   const metric = (value: number | null, field: string, currency: string | null = "USD") => ({
@@ -1237,6 +1237,7 @@ test("account risk strip and row handoffs open Trade context", async ({ page }) 
     updatedAt,
   });
 
+  await page.setViewportSize({ width: 390, height: 844 });
   await disableStreamingSources(page);
   await mockShellApi(page, {
     ibkrReady: true,
@@ -1378,10 +1379,60 @@ test("account risk strip and row handoffs open Trade context", async ({ page }) 
   await page.goto("/");
 
   await openScreen(page, "Account", "account");
+  await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
+  await expect(page.getByTestId("account-screen")).toHaveAttribute("data-layout", "phone");
+  await expect(page.getByTestId("account-mobile-section-rail")).toBeVisible();
+  await expect(page.getByTestId("account-header-metrics").locator(":scope > *")).toHaveCount(4);
   await expect(page.getByTestId("account-portfolio-risk-strip")).toBeVisible();
   await expect(page.getByTestId("account-risk-strip-buying-power")).toContainText("$25.0K");
   await expect(page.getByTestId("account-risk-strip-open-risk")).toContainText("$50.0K");
   await expect(page.getByTestId("account-risk-strip-live-state")).toContainText("Live");
+  const mobileAccountLayout = await page.evaluate(() => {
+    const riskStrip = document.querySelector(
+      '[data-testid="account-portfolio-risk-strip"]',
+    ) as HTMLElement | null;
+    const positions = document.querySelector(
+      '[data-testid="account-mobile-section-positions"]',
+    ) as HTMLElement | null;
+    const detailGrid = document.querySelector(
+      '[data-testid="account-screen"] .ra-account-detail-grid',
+    ) as HTMLElement | null;
+    const orders = document.querySelector(
+      '[data-testid="account-mobile-section-orders"]',
+    ) as HTMLElement | null;
+    const trades = document.querySelector(
+      '[data-testid="account-mobile-section-trades"]',
+    ) as HTMLElement | null;
+    return {
+      riskColumns: riskStrip
+        ? getComputedStyle(riskStrip).gridTemplateColumns.split(" ").filter(Boolean).length
+        : 0,
+      positionsOrder: positions ? getComputedStyle(positions).order : "",
+      detailGridOrder: detailGrid ? getComputedStyle(detailGrid).order : "",
+      ordersOrder: orders ? getComputedStyle(orders).order : "",
+      tradesOrder: trades ? getComputedStyle(trades).order : "",
+      viewportWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    };
+  });
+  expect(mobileAccountLayout.riskColumns).toBe(2);
+  expect(mobileAccountLayout.positionsOrder).toBe("3");
+  expect(mobileAccountLayout.detailGridOrder).toBe("4");
+  expect(mobileAccountLayout.ordersOrder).toBe("1");
+  expect(mobileAccountLayout.tradesOrder).toBe("3");
+  expect(mobileAccountLayout.scrollWidth).toBeLessThanOrEqual(
+    mobileAccountLayout.viewportWidth + 1,
+  );
+
+  await page.getByTestId("account-mobile-jump-positions").click();
+  await expect(page.getByTestId("account-mobile-section-positions")).toBeInViewport({
+    ratio: 0.15,
+  });
+  await page.getByTestId("account-mobile-jump-orders").click();
+  await expect(page.getByTestId("account-mobile-section-orders")).toBeInViewport({
+    ratio: 0.15,
+  });
+  await attachPhase0Screenshot(page, testInfo, "phone-account-orders");
 
   await page.getByTestId("account-risk-symbol-NVDA").first().click();
   await expect(page.getByText("Current Positions · 1")).toBeVisible();

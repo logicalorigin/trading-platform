@@ -52,6 +52,7 @@ export const PortfolioRiskStrip = ({
   gatewayTradingReady = false,
   isLoading = false,
   maskValues = false,
+  compact = false,
 }) => {
   const model = buildPortfolioRiskStripModel({
     summary,
@@ -69,12 +70,14 @@ export const PortfolioRiskStrip = ({
       className="ra-panel-enter"
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(126px, 1fr))",
-        gap: sp(4),
+        gridTemplateColumns: compact
+          ? "repeat(2, minmax(0, 1fr))"
+          : "repeat(auto-fit, minmax(126px, 1fr))",
+        gap: sp(compact ? 3 : 4),
         border: `1px solid ${T.border}`,
         borderRadius: dim(5),
         background: T.bg0,
-        padding: sp(4),
+        padding: sp(compact ? 3 : 4),
         minWidth: 0,
       }}
     >
@@ -83,12 +86,12 @@ export const PortfolioRiskStrip = ({
           <div
             data-testid={`account-risk-strip-${card.id}`}
             style={{
-              minHeight: dim(42),
+              minHeight: dim(compact ? 38 : 42),
               minWidth: 0,
               display: "grid",
               alignContent: "center",
               gap: sp(2),
-              padding: sp("4px 6px"),
+              padding: sp(compact ? "3px 5px" : "4px 6px"),
               borderLeft: `2px solid ${toneColor(card.tone)}`,
               background:
                 card.tone === "default" ? "transparent" : `${toneColor(card.tone)}12`,
@@ -113,7 +116,7 @@ export const PortfolioRiskStrip = ({
               <div
                 style={{
                   color: toneColor(card.tone),
-                  fontSize: fs(11),
+                  fontSize: fs(compact ? 10 : 11),
                   fontFamily: T.mono,
                   fontWeight: 900,
                   overflow: "hidden",

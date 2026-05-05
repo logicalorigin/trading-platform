@@ -240,7 +240,7 @@ export const OrdersPanel = ({
         />
       </div>
     ) : (
-      <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 248 }}>
+      <div className="ra-hide-scrollbar ra-account-table-scroll" style={{ overflow: "auto", maxHeight: 248 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 940 }}>
           <thead>
             <tr style={tableHeaderStyle}>
@@ -527,7 +527,7 @@ export const ClosedTradesPanel = ({
             body={emptyBody}
           />
         ) : (
-          <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 278 }}>
+          <div className="ra-hide-scrollbar ra-account-table-scroll" style={{ overflow: "auto", maxHeight: 278 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1040 }}>
               <thead>
                 <tr style={tableHeaderStyle}>

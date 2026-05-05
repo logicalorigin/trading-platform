@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getGetAccountEquityHistoryQueryOptions,
@@ -56,6 +56,7 @@ import {
   normalizeAccountRange,
 } from "./account/accountUtils";
 import { buildAccountTradingAnalysisModel } from "./account/accountTradingAnalysis";
+import { responsiveFlags, useElementSize } from "../lib/responsive";
 
 const QUERY_OPTIONS = {
   query: {
@@ -69,6 +70,13 @@ const SHADOW_ACCOUNT_ID = "shadow";
 const ACCOUNT_SECTIONS = [
   { value: "real", label: "Real" },
   { value: "shadow", label: "Shadow" },
+];
+
+const MOBILE_SECTION_JUMPS = [
+  { id: "risk", label: "Risk", targetId: "account-risk-summary" },
+  { id: "positions", label: "Positions", targetId: "account-positions-section" },
+  { id: "orders", label: "Orders", targetId: "account-orders-section" },
+  { id: "trades", label: "Trades", targetId: "account-trades-section" },
 ];
 
 const readAccountWorkspaceDefault = (key, fallback) => {
@@ -91,6 +99,26 @@ const writeAccountWorkspaceDefault = (key, value) => {
     );
   } catch {}
 };
+
+const AccountMobileSectionRail = ({ onJump }) => (
+  <nav
+    data-testid="account-mobile-section-rail"
+    className="ra-account-mobile-section-rail ra-hide-scrollbar"
+    aria-label="Account mobile sections"
+  >
+    {MOBILE_SECTION_JUMPS.map((item) => (
+      <button
+        key={item.id}
+        type="button"
+        data-testid={`account-mobile-jump-${item.id}`}
+        className="ra-interactive"
+        onClick={() => onJump(item.targetId)}
+      >
+        {item.label}
+      </button>
+    ))}
+  </nav>
+);
 
 const ShadowWatchlistBacktestPanel = ({
   mutation,
@@ -347,6 +375,10 @@ export const AccountScreen = ({
 }) => {
   const queryClient = useQueryClient();
   const { preferences: userPreferences } = useUserPreferences();
+  const [accountRootRef, accountRootSize] = useElementSize();
+  const { isPhone: accountIsPhone, isNarrow: accountIsNarrow } =
+    responsiveFlags(accountRootSize.width);
+  const accountLayout = accountIsPhone ? "phone" : accountIsNarrow ? "tablet" : "desktop";
   const maskAccountValues = Boolean(
     userPreferences.appearance.maskBalances ||
       userPreferences.privacy.hideAccountValues,
@@ -382,6 +414,13 @@ export const AccountScreen = ({
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
+  const handleMobileSectionJump = useCallback((targetId) => {
+    document.getElementById(targetId)?.scrollIntoView({
+      block: "start",
+      inline: "nearest",
+      behavior: "auto",
+    });
+  }, []);
 
   useEffect(() => {
     writeAccountWorkspaceDefault("accountRange", range);
@@ -1012,7 +1051,9 @@ export const AccountScreen = ({
 
   return (
     <div
+      ref={accountRootRef}
       data-testid="account-screen"
+      data-layout={accountLayout}
       className="ra-panel-enter"
       style={{
         flex: 1,
@@ -1059,23 +1100,35 @@ export const AccountScreen = ({
                 onChangeGroup={onLinkedWorkspaceGroupChange}
               />
             }
+            compact={accountIsPhone}
           />
         </div>
 
-        <PortfolioRiskStrip
-          summary={summaryQuery.data}
-          riskData={riskQuery.data}
-          positionsResponse={positionsQuery.data}
-          accountMode={shadowMode ? "shadow" : "real"}
-          brokerAuthenticated={shadowMode || brokerAuthenticated}
-          gatewayTradingReady={shadowMode || gatewayTradingReady}
-          isLoading={
-            summaryQuery.isLoading ||
-            riskQuery.isLoading ||
-            positionsQuery.isLoading
-          }
-          maskValues={maskAccountValues}
-        />
+        <div
+          id="account-risk-summary"
+          data-testid="account-mobile-section-risk"
+          className="ra-account-section ra-account-risk-strip-section"
+        >
+          <PortfolioRiskStrip
+            summary={summaryQuery.data}
+            riskData={riskQuery.data}
+            positionsResponse={positionsQuery.data}
+            accountMode={shadowMode ? "shadow" : "real"}
+            brokerAuthenticated={shadowMode || brokerAuthenticated}
+            gatewayTradingReady={shadowMode || gatewayTradingReady}
+            isLoading={
+              summaryQuery.isLoading ||
+              riskQuery.isLoading ||
+              positionsQuery.isLoading
+            }
+            maskValues={maskAccountValues}
+            compact={accountIsPhone}
+          />
+        </div>
+
+        {accountIsPhone ? (
+          <AccountMobileSectionRail onJump={handleMobileSectionJump} />
+        ) : null}
 
         <div
           className="ra-panel-enter ra-account-overview-grid"
@@ -1138,53 +1191,64 @@ export const AccountScreen = ({
           </div>
         </div>
 
-        <PositionsAtDateInspector
-          query={positionsAtDateQuery}
-          activeDate={activeEquityInspectionDate}
-          pinnedDate={pinnedEquityDate}
-          currentPositionsCount={positionsQuery.data?.positions?.length || 0}
-          currency={currency}
-          maskValues={maskAccountValues}
-          onClearPin={() => setPinnedEquityDate(null)}
-          onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
-        />
+        <div className="ra-account-section ra-account-date-inspector-section">
+          <PositionsAtDateInspector
+            query={positionsAtDateQuery}
+            activeDate={activeEquityInspectionDate}
+            pinnedDate={pinnedEquityDate}
+            currentPositionsCount={positionsQuery.data?.positions?.length || 0}
+            currency={currency}
+            maskValues={maskAccountValues}
+            onClearPin={() => setPinnedEquityDate(null)}
+            onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+          />
+        </div>
 
-        <PositionsPanel
-          query={positionsQuery}
-          currency={currency}
-          assetFilter={assetFilter}
-          onAssetFilterChange={setAssetFilter}
-          sourceFilter={shadowMode ? sourceFilter : "all"}
-          onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
-          onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
-          symbolFilter={tradeFilters.symbol}
-          onClearSymbolFilter={() => handleTradeFilterChange({ symbol: "" })}
-          rightRail={shadowMode ? "Shadow positions + marks" : undefined}
-          emptyBody={
-            shadowMode
-              ? "Shadow fills from automation and manual tickets will appear here as segregated internal positions."
-              : undefined
-          }
-          maskValues={maskAccountValues}
-        />
+        <div
+          id="account-positions-section"
+          data-testid="account-mobile-section-positions"
+          className="ra-account-section ra-account-positions-section"
+        >
+          <PositionsPanel
+            query={positionsQuery}
+            currency={currency}
+            assetFilter={assetFilter}
+            onAssetFilterChange={setAssetFilter}
+            sourceFilter={shadowMode ? sourceFilter : "all"}
+            onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
+            onJumpToChart={(symbol) => onJumpToTrade?.(symbol)}
+            symbolFilter={tradeFilters.symbol}
+            onClearSymbolFilter={() => handleTradeFilterChange({ symbol: "" })}
+            rightRail={shadowMode ? "Shadow positions + marks" : undefined}
+            emptyBody={
+              shadowMode
+                ? "Shadow fills from automation and manual tickets will appear here as segregated internal positions."
+                : undefined
+            }
+            maskValues={maskAccountValues}
+          />
+        </div>
 
-        <TradingPatternsPanel
-          query={accountTradingPatternsQuery}
-          snapshotMutation={shadowMode ? tradingPatternsSnapshotMutation : null}
-          accountId={accountRequestId}
-          range={range}
-          currency={currency}
-          maskValues={maskAccountValues}
-          onSymbolSelect={handleAccountSymbolSelect}
-          selectedLens={selectedPatternLens}
-          onLensChange={handlePatternLensChange}
-          analysis={accountTradingAnalysis}
-          onTradeSelect={setSelectedAccountTradeId}
-        />
+        <div className="ra-account-section ra-account-trading-patterns-section">
+          <TradingPatternsPanel
+            query={accountTradingPatternsQuery}
+            snapshotMutation={shadowMode ? tradingPatternsSnapshotMutation : null}
+            accountId={accountRequestId}
+            range={range}
+            currency={currency}
+            maskValues={maskAccountValues}
+            onSymbolSelect={handleAccountSymbolSelect}
+            selectedLens={selectedPatternLens}
+            onLensChange={handlePatternLensChange}
+            analysis={accountTradingAnalysis}
+            onTradeSelect={setSelectedAccountTradeId}
+          />
+        </div>
 
         {selectedPatternLens.kind !== "none" ? (
           <div
             data-testid="account-pattern-lens-strip"
+            className="ra-account-section ra-account-pattern-lens-section"
             style={{
               display: "flex",
               alignItems: "center",
@@ -1237,53 +1301,67 @@ export const AccountScreen = ({
         <div
           className="ra-panel-enter ra-account-detail-grid"
         >
-          <ClosedTradesPanel
-            query={tradesQuery}
-            currency={currency}
-            filters={tradeFilters}
-            onFiltersChange={handleTradeFilterChange}
-            onResetFilters={handleTradeFilterReset}
-            sourceFiltersEnabled={shadowMode}
-            selectedTradeId={
-              accountTradingAnalysis.selectedTradeDetail?.tradeId ||
-              selectedAccountTradeId
-            }
-            onTradeSelect={setSelectedAccountTradeId}
-            onJumpToChart={onJumpToTrade}
-            emptyBody={
-              shadowMode
-                ? "Shadow exits will appear here after a manual or automation sell closes part of a position."
-                : undefined
-            }
-            maskValues={maskAccountValues}
-          />
-          <SelectedTradeAnalysisPanel
-            analysis={accountTradingAnalysis}
-            currency={currency}
-            maskValues={maskAccountValues}
-            onJumpToChart={onJumpToTrade}
-          />
-          <OrdersPanel
-            query={ordersQuery}
-            tab={orderTab}
-            onTabChange={setOrderTab}
-            currency={currency}
-            onCancelOrder={handleCancelOrder}
-            cancelPending={cancelOrderMutation.isPending}
-            cancelDisabled={!gatewayTradingReady}
-            cancelDisabledReason={gatewayTradingMessage}
-            sourceFilter={shadowMode ? sourceFilter : "all"}
-            onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
-            onJumpToChart={onJumpToTrade}
-            symbolFilter={tradeFilters.symbol}
-            onClearSymbolFilter={() => handleTradeFilterChange({ symbol: "" })}
-            emptyBody={
-              shadowMode
-                ? "Shadow orders fill immediately into the internal ledger, so working orders are normally empty."
-                : undefined
-            }
-            maskValues={maskAccountValues}
-          />
+          <div
+            id="account-trades-section"
+            data-testid="account-mobile-section-trades"
+            className="ra-account-section ra-account-trades-section"
+          >
+            <ClosedTradesPanel
+              query={tradesQuery}
+              currency={currency}
+              filters={tradeFilters}
+              onFiltersChange={handleTradeFilterChange}
+              onResetFilters={handleTradeFilterReset}
+              sourceFiltersEnabled={shadowMode}
+              selectedTradeId={
+                accountTradingAnalysis.selectedTradeDetail?.tradeId ||
+                selectedAccountTradeId
+              }
+              onTradeSelect={setSelectedAccountTradeId}
+              onJumpToChart={onJumpToTrade}
+              emptyBody={
+                shadowMode
+                  ? "Shadow exits will appear here after a manual or automation sell closes part of a position."
+                  : undefined
+              }
+              maskValues={maskAccountValues}
+            />
+          </div>
+          <div className="ra-account-section ra-account-selected-trade-section">
+            <SelectedTradeAnalysisPanel
+              analysis={accountTradingAnalysis}
+              currency={currency}
+              maskValues={maskAccountValues}
+              onJumpToChart={onJumpToTrade}
+            />
+          </div>
+          <div
+            id="account-orders-section"
+            data-testid="account-mobile-section-orders"
+            className="ra-account-section ra-account-orders-section"
+          >
+            <OrdersPanel
+              query={ordersQuery}
+              tab={orderTab}
+              onTabChange={setOrderTab}
+              currency={currency}
+              onCancelOrder={handleCancelOrder}
+              cancelPending={cancelOrderMutation.isPending}
+              cancelDisabled={!gatewayTradingReady}
+              cancelDisabledReason={gatewayTradingMessage}
+              sourceFilter={shadowMode ? sourceFilter : "all"}
+              onSourceFilterChange={shadowMode ? setSourceFilter : undefined}
+              onJumpToChart={onJumpToTrade}
+              symbolFilter={tradeFilters.symbol}
+              onClearSymbolFilter={() => handleTradeFilterChange({ symbol: "" })}
+              emptyBody={
+                shadowMode
+                  ? "Shadow orders fill immediately into the internal ledger, so working orders are normally empty."
+                  : undefined
+              }
+              maskValues={maskAccountValues}
+            />
+          </div>
         </div>
 
         <div
