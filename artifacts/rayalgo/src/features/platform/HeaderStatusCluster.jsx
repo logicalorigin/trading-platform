@@ -5,10 +5,12 @@ import {
   ChevronDown,
   CircleCheck,
   Gauge,
+  Moon,
   Power,
   RadioTower,
   RefreshCw,
   ShieldCheck,
+  Sun,
   X,
 } from "lucide-react";
 import {
@@ -49,6 +51,7 @@ import {
 } from "./ibkrBridgeSession";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
 import { platformJsonRequest } from "./platformJsonRequest";
+import { buildShellStateLabel } from "./shellStatusModel";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -200,10 +203,10 @@ const resolveHeaderIbkrPingMs = (connection, latencyStats) => {
 
 const resolveHeaderDataModeLabel = (session) => {
   const liveAvailable = session?.ibkrBridge?.liveMarketDataAvailable;
-  if (liveAvailable === false) return "DELAYED DATA";
-  if (liveAvailable === true) return "LIVE DATA";
+  if (liveAvailable === false) return `${buildShellStateLabel("delayed").label} DATA`;
+  if (liveAvailable === true) return `${buildShellStateLabel("live").label} DATA`;
   const provider = session?.marketDataProviders?.live;
-  return provider ? "LIVE DATA" : MISSING_VALUE;
+  return provider ? `${buildShellStateLabel("live").label} DATA` : MISSING_VALUE;
 };
 
 const HeaderIbkrStatusChip = ({
@@ -1191,6 +1194,7 @@ export const HeaderStatusCluster = ({
 
         {bridgePopoverOpen ? (
           <div
+            className="ra-popover-enter"
             ref={bridgePopoverRef}
             role="dialog"
             aria-label="IB Gateway bridge"
@@ -1242,6 +1246,7 @@ export const HeaderStatusCluster = ({
                 </span>
               </div>
               <AppTooltip content="Close"><button
+                className="ra-interactive"
                 type="button"
                 onClick={() => setBridgePopoverOpen(false)}
                 style={{
@@ -1294,6 +1299,7 @@ export const HeaderStatusCluster = ({
               }}
             >
               <button
+                className="ra-interactive"
                 type="button"
                 onClick={handleStartBridgeLauncher}
                 disabled={bridgeActionDisabled}
@@ -1321,11 +1327,9 @@ export const HeaderStatusCluster = ({
                 {bridgeLauncherBusy ? (
                   <RefreshCw
                     data-ibkr-bridge-spinner
+                    className="ra-refresh-spin"
                     size={dim(13)}
                     strokeWidth={2.2}
-                    style={{
-                      animation: "premiumFlowSpin 820ms linear infinite",
-                    }}
                   />
                 ) : gatewayConnectedForBridge ? (
                   <CircleCheck size={dim(13)} strokeWidth={2.2} />
@@ -1339,6 +1343,7 @@ export const HeaderStatusCluster = ({
 
               {canDeactivate ? (
                 <button
+                  className="ra-interactive"
                   type="button"
                   onClick={handleDeactivate}
                   disabled={bridgeLauncherBusy}
@@ -1426,12 +1431,16 @@ export const HeaderStatusCluster = ({
       <AppTooltip content={
           theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
         }><button
+        className="ra-interactive"
         type="button"
         onClick={onToggleTheme}
         style={{
           width: dim(30),
           minHeight: dim(32),
           padding: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
           background: T.bg1,
           border: `1px solid ${T.border}`,
           borderRadius: 0,
@@ -1452,7 +1461,11 @@ export const HeaderStatusCluster = ({
           event.currentTarget.style.borderColor = T.border;
         }}
       >
-        {theme === "dark" ? "☼" : "☾"}
+        {theme === "dark" ? (
+          <Sun size={dim(14)} strokeWidth={2.2} />
+        ) : (
+          <Moon size={dim(14)} strokeWidth={2.2} />
+        )}
       </button></AppTooltip>
     </div>
   );

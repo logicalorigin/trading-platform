@@ -1,4 +1,14 @@
 import { Suspense, useEffect, useRef } from "react";
+import {
+  CircleCheck,
+  CircleX,
+  Info,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import BloombergLiveDock from "./BloombergLiveDock";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
@@ -173,7 +183,11 @@ export const PlatformShell = ({
               zIndex: isPhone ? 150 : undefined,
             }}
           >
-            {sidebarCollapsed ? "☰" : "×"}
+            {sidebarCollapsed ? (
+              <Menu size={dim(16)} strokeWidth={2.3} />
+            ) : (
+              <X size={dim(16)} strokeWidth={2.3} />
+            )}
           </button></AppTooltip>
         ) : null}
         {SCREENS.map((screen) => {
@@ -318,6 +332,7 @@ export const PlatformShell = ({
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}>
       {isPhone && !sidebarCollapsed ? (
         <button
+          className="ra-mobile-overlay-enter"
           type="button"
           aria-label="Dismiss watchlist overlay"
           onClick={() => setSidebarCollapsed(true)}
@@ -332,9 +347,9 @@ export const PlatformShell = ({
         />
       ) : null}
       <div
+        className="ra-sidebar-shell"
         style={{
           width: sidebarWidth,
-          transition: "width 0.2s",
           flexShrink: 0,
           overflow: "hidden",
           position: isPhone ? "fixed" : undefined,
@@ -358,25 +373,32 @@ export const PlatformShell = ({
               paddingTop: sp(8),
             }}
           >
-            <button
+            <AppTooltip content="Open watchlist"><button
+              className="ra-interactive"
+              type="button"
+              aria-label="Open watchlist"
               onClick={() => setSidebarCollapsed(false)}
               style={{
                 width: dim(28),
                 height: dim(28),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 border: "none",
                 borderRadius: 0,
                 background: T.bg2,
                 color: T.textDim,
                 cursor: "pointer",
-                fontSize: fs(12),
               }}
             >
-              ☰
-            </button>
+              <PanelLeftOpen size={dim(14)} strokeWidth={2.3} />
+            </button></AppTooltip>
           </div>
         ) : (
           <div style={{ position: "relative", height: "100%" }}>
-            <button
+            <AppTooltip content={isPhone ? "Close watchlist" : "Collapse watchlist"}><button
+              className="ra-interactive"
+              type="button"
               onClick={() => setSidebarCollapsed(true)}
               aria-label={isPhone ? "Close watchlist panel" : "Collapse watchlist"}
               style={{
@@ -394,8 +416,12 @@ export const PlatformShell = ({
                 fontSize: fs(isPhone ? 13 : 9),
               }}
             >
-              {isPhone ? "×" : "◂"}
-            </button>
+              {isPhone ? (
+                <X size={dim(14)} strokeWidth={2.3} />
+              ) : (
+                <PanelLeftClose size={dim(12)} strokeWidth={2.3} />
+              )}
+            </button></AppTooltip>
             <WatchlistComponent
               watchlists={watchlists}
               activeWatchlist={activeWatchlist}
@@ -517,14 +543,14 @@ const ToastStack = ({ toasts, onDismiss }) => (
               : toast.kind === "warn"
                 ? T.amber
                 : T.accent;
-        const icon =
+        const ToastIcon =
           toast.kind === "success"
-            ? "✓"
+            ? CircleCheck
             : toast.kind === "error"
-              ? "✕"
+              ? CircleX
               : toast.kind === "warn"
-                ? "⚠"
-                : "ⓘ";
+                ? TriangleAlert
+                : Info;
       return (
         <AppTooltip key={toast.id} content="Click to dismiss"><div
           key={toast.id}
@@ -563,14 +589,18 @@ const ToastStack = ({ toasts, onDismiss }) => (
           >
             <span
               style={{
-                fontSize: fs(14),
                 color,
-                fontWeight: 700,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: dim(16),
+                height: dim(16),
                 lineHeight: 1,
                 marginTop: 1,
+                flexShrink: 0,
               }}
             >
-              {icon}
+              <ToastIcon size={dim(15)} strokeWidth={2.3} />
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
@@ -598,15 +628,16 @@ const ToastStack = ({ toasts, onDismiss }) => (
             </div>
             <span
               style={{
-                fontSize: fs(11),
                 color: T.textMuted,
-                fontWeight: 600,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 opacity: 0.6,
                 marginLeft: sp(4),
                 marginTop: 1,
               }}
             >
-              ✕
+              <X size={dim(13)} strokeWidth={2.2} />
             </span>
           </div>
         </div></AppTooltip>

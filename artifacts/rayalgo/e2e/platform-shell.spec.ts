@@ -875,6 +875,59 @@ test("platform shell keeps shared chrome while switching primary screens", async
   expect(pageErrors).toEqual([]);
 });
 
+test("platform shell icon controls and motion primitives respect reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await disableStreamingSources(page);
+  await mockShellApi(page, { ibkrReady: true });
+  await page.goto("/");
+
+  await expect(page.getByTestId("platform-compact-header")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Switch to light theme/i }).locator("svg"),
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page
+      .getByTestId("platform-screen-nav")
+      .getByRole("button", { name: "Open watchlist" })
+      .locator("svg"),
+  ).toBeVisible();
+
+  const motionState = await page.evaluate(() => {
+    const classNames = [
+      "ra-panel-enter",
+      "ra-popover-enter",
+      "ra-mobile-overlay-enter",
+      "ra-refresh-spin",
+    ];
+    const result: Record<string, string> = {};
+    for (const className of classNames) {
+      const node = document.createElement("div");
+      node.className = className;
+      document.body.appendChild(node);
+      result[className] = window.getComputedStyle(node).animationName;
+      node.remove();
+    }
+
+    const sidebar = document.createElement("div");
+    sidebar.className = "ra-sidebar-shell";
+    document.body.appendChild(sidebar);
+    result["ra-sidebar-shell-duration"] =
+      window.getComputedStyle(sidebar).transitionDuration;
+    sidebar.remove();
+    return result;
+  });
+
+  expect(motionState["ra-panel-enter"]).toBe("none");
+  expect(motionState["ra-popover-enter"]).toBe("none");
+  expect(motionState["ra-mobile-overlay-enter"]).toBe("none");
+  expect(motionState["ra-refresh-spin"]).toBe("none");
+  expect(motionState["ra-sidebar-shell-duration"]).toContain("0.001s");
+});
+
 test("platform pages render page-by-page and keep primary controls interactive", async ({
   page,
 }, testInfo) => {

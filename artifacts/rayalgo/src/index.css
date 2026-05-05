@@ -195,6 +195,21 @@ table {
   }
 }
 
+@keyframes raMobileOverlayEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes raRefreshSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes raValueFlashUp {
   0% {
     background-color: rgba(16, 185, 129, 0);
@@ -326,6 +341,21 @@ table {
   animation: raPopoverEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
   transform-origin: top right;
   will-change: opacity, transform;
+}
+
+.ra-mobile-overlay-enter {
+  animation: raMobileOverlayEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
+}
+
+.ra-sidebar-shell {
+  transition:
+    width var(--ra-motion-standard) var(--ra-motion-ease),
+    box-shadow var(--ra-motion-standard) var(--ra-motion-ease);
+}
+
+.ra-refresh-spin {
+  animation: raRefreshSpin 820ms linear infinite;
+  transform-origin: center;
 }
 
 .ra-row-enter {
@@ -653,7 +683,9 @@ table {
 @media (prefers-reduced-motion: reduce) {
   .ra-panel-enter,
   .ra-popover-enter,
+  .ra-mobile-overlay-enter,
   .ra-row-enter,
+  .ra-refresh-spin,
   .ra-value-flash-up,
   .ra-value-flash-down,
   .ra-status-pulse,
@@ -667,6 +699,10 @@ table {
   }
 
   .ra-interactive {
+    transition-duration: 1ms !important;
+  }
+
+  .ra-sidebar-shell {
     transition-duration: 1ms !important;
   }
 
@@ -686,7 +722,9 @@ table {
 
 html[data-rayalgo-reduced-motion="on"] .ra-panel-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-popover-enter,
+html[data-rayalgo-reduced-motion="on"] .ra-mobile-overlay-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-row-enter,
+html[data-rayalgo-reduced-motion="on"] .ra-refresh-spin,
 html[data-rayalgo-reduced-motion="on"] .ra-value-flash-up,
 html[data-rayalgo-reduced-motion="on"] .ra-value-flash-down,
 html[data-rayalgo-reduced-motion="on"] .ra-status-pulse,
@@ -700,6 +738,10 @@ html[data-rayalgo-reduced-motion="on"] .ra-bar-fill {
 }
 
 html[data-rayalgo-reduced-motion="on"] .ra-interactive {
+  transition-duration: 1ms !important;
+}
+
+html[data-rayalgo-reduced-motion="on"] .ra-sidebar-shell {
   transition-duration: 1ms !important;
 }
 
