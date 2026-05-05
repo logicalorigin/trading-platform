@@ -269,6 +269,7 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     return (
       params.get("scope") === "unusual" &&
       params.get("unusualThreshold") === "2" &&
+      params.get("lineBudget") === "40" &&
       Number(params.get("limit") || "0") >= 80
     );
   });

@@ -14,12 +14,15 @@ test("Market chart flow markers use the unusual-flow scanner contract", () => {
   assert.ok(scannerCall, "Market chart grid must wire a live flow scanner");
   assert.match(source, /import \{ FLOW_SCANNER_SCOPE \}/);
   assert.match(source, /const MARKET_CHART_FLOW_LIMIT = 80;/);
+  assert.match(source, /const MARKET_CHART_FLOW_LINE_BUDGET = 40;/);
+  assert.match(source, /const MARKET_CHART_FLOW_CONCURRENCY = 1;/);
   assert.match(scannerCall, /limit:\s*MARKET_CHART_FLOW_LIMIT/);
   assert.match(scannerCall, /scope:\s*FLOW_SCANNER_SCOPE\.unusual/);
-  assert.match(scannerCall, /concurrency:\s*2/);
-  assert.match(scannerCall, /lineBudget:\s*20/);
+  assert.match(scannerCall, /concurrency:\s*MARKET_CHART_FLOW_CONCURRENCY/);
+  assert.match(scannerCall, /lineBudget:\s*MARKET_CHART_FLOW_LINE_BUDGET/);
   assert.match(scannerCall, /unusualThreshold/);
   assert.doesNotMatch(scannerCall, /limit:\s*16/);
+  assert.doesNotMatch(scannerCall, /lineBudget:\s*20/);
 });
 
 test("Market chart flow snapshot is promoted for activity-panel agreement", () => {

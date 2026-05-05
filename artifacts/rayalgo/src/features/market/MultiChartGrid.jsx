@@ -61,6 +61,8 @@ const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
 const MARKET_CHART_FLOW_LIMIT = 80;
+const MARKET_CHART_FLOW_LINE_BUDGET = 40;
+const MARKET_CHART_FLOW_CONCURRENCY = 1;
 
 const buildDefaultMiniChartSymbols = (
   activeSym,
@@ -294,8 +296,8 @@ export const MultiChartGrid = ({
     limit: MARKET_CHART_FLOW_LIMIT,
     maxSymbols: MAX_MULTI_CHART_SLOTS,
     batchSize: MAX_MULTI_CHART_SLOTS,
-    concurrency: 2,
-    lineBudget: 20,
+    concurrency: MARKET_CHART_FLOW_CONCURRENCY,
+    lineBudget: MARKET_CHART_FLOW_LINE_BUDGET,
     intervalMs: 10_000,
     scope: FLOW_SCANNER_SCOPE.unusual,
     unusualThreshold,
