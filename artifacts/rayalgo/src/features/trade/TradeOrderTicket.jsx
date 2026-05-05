@@ -587,6 +587,7 @@ export const TradeOrderTicket = ({
         }}
       >
         <span
+          data-testid="trade-ticket-execution-label"
           style={{
             fontSize: fs(8),
             color: selectedExecutionColor,

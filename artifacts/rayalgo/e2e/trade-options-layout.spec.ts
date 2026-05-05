@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 test.setTimeout(90_000);
 
@@ -589,7 +589,9 @@ test("Trade swaps contract chart above options chain and removes placeholder cop
       .getByTestId("trade-contract-chart-panel")
       .getByText("CONTRACT", { exact: true }),
   ).toHaveCount(0);
-  await expect(page.getByText("SHADOW PAPER")).toBeVisible();
+  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText(
+    "SHADOW PAPER",
+  );
   await expect(
     page.getByRole("button", { name: "SHADOW", exact: true }),
   ).toBeVisible();
@@ -640,7 +642,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   await expect(page.getByText("ORDER TICKET", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByText("SHADOW PAPER")).toBeVisible({
+  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText("SHADOW PAPER", {
     timeout: 30_000,
   });
   await expect(
@@ -663,11 +665,11 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   expect(shadowPreviewRequests[0]?.accountId).toBe("shadow");
   await expect(page.getByText("CONID")).toBeVisible();
 
-	  await page.getByRole("button", { name: "REAL", exact: true }).click();
-	  await expect(page.getByText("IBKR PAPER")).toBeVisible();
-	  await expect(
-	    page.getByRole("button", { name: "PREVIEW IBKR" }),
-	  ).toBeVisible();
+  await page.getByRole("button", { name: "REAL", exact: true }).click();
+  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText("IBKR PAPER");
+  await expect(
+    page.getByRole("button", { name: "PREVIEW IBKR" }),
+  ).toBeVisible();
   await expect(page.getByTestId("trade-ticket-stop-loss-toggle")).toBeEnabled();
   await expect(page.getByTestId("trade-ticket-take-profit-toggle")).toBeEnabled();
 
@@ -690,7 +692,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   await expect(page.getByTestId("trade-top-zone")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByText("IBKR PAPER")).toBeVisible({
+  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText("IBKR PAPER", {
     timeout: 30_000,
   });
   await expect(
@@ -698,7 +700,9 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   ).toBeVisible();
 
   await page.getByRole("button", { name: "SHADOW", exact: true }).click();
-  await expect(page.getByText("SHADOW PAPER")).toBeVisible();
+  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText(
+    "SHADOW PAPER",
+  );
   await expect(
     page.getByRole("button", { name: "PREVIEW SHADOW" }),
   ).toBeVisible();
@@ -1224,13 +1228,14 @@ test("Trade, Flow, and Research pages fill the available viewport width", async 
 
 test("Trade phone layout loads lazy module and exposes full trading stack", async ({
   page,
-}) => {
+}, testInfo: TestInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockTradeApi(page);
   await openTrade(page);
 
   await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
   await expect(page.locator('[data-trade-layout="phone"]')).toBeVisible();
+  await expect(page.getByTestId("trade-mobile-section-rail")).toBeVisible();
   await expect(page.getByTestId("trade-equity-chart")).toBeVisible();
   await expect(page.getByTestId("trade-contract-chart-panel")).toBeVisible();
   await expect(page.getByTestId("trade-order-ticket")).toBeVisible();
@@ -1252,6 +1257,23 @@ test("Trade phone layout loads lazy module and exposes full trading stack", asyn
   expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
   expect(metrics.topColumns.split(" ").length).toBe(1);
   expect(metrics.middleColumns.split(" ").length).toBe(1);
+
+  await page.getByTestId("trade-mobile-jump-ticket").click();
+  await expect(page.getByTestId("trade-order-ticket")).toBeInViewport({
+    ratio: 0.2,
+  });
+  await page.getByTestId("trade-mobile-jump-chain").click();
+  await expect(page.getByTestId("trade-options-chain-panel")).toBeInViewport({
+    ratio: 0.2,
+  });
+  await page.getByTestId("trade-mobile-jump-account").click();
+  await expect(page.getByTestId("trade-bottom-zone")).toBeInViewport({
+    ratio: 0.1,
+  });
+  await testInfo.attach("phase12-phone-trade-stack.png", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
 });
 
 test("Trade option chain loading state shows skeleton status while chain request is pending", async ({

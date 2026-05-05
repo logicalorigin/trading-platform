@@ -144,6 +144,59 @@ import {
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
+const TRADE_MOBILE_SECTION_JUMPS = Object.freeze([
+  { id: "chart", label: "Chart", targetTestId: "trade-equity-chart" },
+  { id: "ticket", label: "Ticket", targetTestId: "trade-order-ticket" },
+  { id: "chain", label: "Chain", targetTestId: "trade-options-chain-panel" },
+  { id: "account", label: "Account", targetTestId: "trade-bottom-zone" },
+]);
+
+const TradeMobileSectionRail = ({ onJump }) => (
+  <nav
+    data-testid="trade-mobile-section-rail"
+    aria-label="Trade mobile sections"
+    className="ra-hide-scrollbar"
+    style={{
+      position: "sticky",
+      top: 0,
+      zIndex: 5,
+      display: "flex",
+      alignItems: "center",
+      gap: sp(4),
+      overflowX: "auto",
+      padding: sp("4px"),
+      border: `1px solid ${T.border}`,
+      borderRadius: dim(5),
+      background: `${T.bg1}f2`,
+      backdropFilter: "blur(10px)",
+    }}
+  >
+    {TRADE_MOBILE_SECTION_JUMPS.map((item) => (
+      <button
+        key={item.id}
+        type="button"
+        data-testid={`trade-mobile-jump-${item.id}`}
+        className="ra-interactive"
+        onClick={() => onJump(item.targetTestId)}
+        style={{
+          flex: "0 0 auto",
+          minHeight: dim(28),
+          minWidth: 0,
+          padding: sp("0 9px"),
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(4),
+          background: "transparent",
+          color: T.textSec,
+          font: `900 ${fs(8)}px ${T.mono}`,
+          textTransform: "uppercase",
+          cursor: "pointer",
+        }}
+      >
+        {item.label}
+      </button>
+    ))}
+  </nav>
+);
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
   staleTime: 5 * 60_000,
@@ -2484,6 +2537,15 @@ export const TradeScreen = ({
   const tradeTopHeight = tradeIsNarrow ? "auto" : dim(560);
   const tradeMiddleHeight = tradeIsNarrow ? "auto" : dim(320);
   const tradeBottomHeight = tradeIsNarrow ? "auto" : dim(300);
+  const handleTradeMobileSectionJump = useCallback((targetTestId) => {
+    document
+      .querySelector(`[data-testid="${targetTestId}"]`)
+      ?.scrollIntoView({
+        block: "start",
+        inline: "nearest",
+        behavior: "auto",
+      });
+  }, []);
   // Initialize from persisted state, falling back to sym prop or sensible defaults
   const initialTicker = (() => {
     const resolved = resolveInitialTradeTicker({
@@ -3168,6 +3230,9 @@ export const TradeScreen = ({
             />
           }
         />
+        {tradeIsPhone ? (
+          <TradeMobileSectionRail onJump={handleTradeMobileSectionJump} />
+        ) : null}
         {automationContextVisible && (
           <div
             className="ra-panel-enter ra-focus-rail"
