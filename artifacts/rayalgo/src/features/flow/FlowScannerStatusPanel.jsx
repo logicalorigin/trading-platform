@@ -1,19 +1,15 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
+import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { Card } from "../../components/platform/primitives.jsx";
 import { platformJsonRequest } from "../platform/platformJsonRequest";
 import { AppTooltip } from "@/components/ui/tooltip";
-
-
-const safeCount = (value) =>
-  Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;
-
-const formatCount = (value) => {
-  const count = safeCount(value);
-  return count == null ? MISSING_VALUE : count.toLocaleString();
-};
+import {
+  formatScannerCount,
+  resolveFlowScannerProgress,
+} from "./flowScannerStatusModel.js";
 
 const formatRelative = (value) => {
   const timestamp = Number(value);
@@ -29,19 +25,6 @@ const lineTone = (used, cap) => {
   if (ratio >= 0.95) return T.red;
   if (ratio >= 0.75) return T.amber;
   return T.textSec;
-};
-
-const buildRecentSymbols = (lastScannedAt = {}, currentBatch = []) => {
-  const active = new Set(currentBatch);
-  return Object.entries(lastScannedAt)
-    .filter(([symbol]) => !active.has(symbol))
-    .map(([symbol, scannedAt]) => ({
-      symbol,
-      scannedAt: Number(scannedAt),
-    }))
-    .filter((entry) => Number.isFinite(entry.scannedAt))
-    .sort((left, right) => right.scannedAt - left.scannedAt)
-    .slice(0, 12);
 };
 
 const ScannerMetric = ({ label, value, detail, tone = T.textSec }) => (
@@ -96,6 +79,41 @@ const ScannerMetric = ({ label, value, detail, tone = T.textSec }) => (
       </div>
     ) : null}
   </div>
+);
+
+const ScannerStatusChip = ({ label, value, tone = T.textSec, testId, title }) => (
+  <AppTooltip content={title || `${label}: ${value}`}>
+    <span
+      data-testid={testId}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(4),
+        minHeight: dim(20),
+        maxWidth: "100%",
+        padding: sp("2px 6px"),
+        border: `1px solid ${tone}32`,
+        background: `${tone}12`,
+        color: tone,
+        fontFamily: T.mono,
+        fontSize: fs(8),
+        fontWeight: 900,
+        lineHeight: 1,
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ color: T.textMuted }}>{label}</span>
+      <span
+        style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {value}
+      </span>
+    </span>
+  </AppTooltip>
 );
 
 const TickerChip = ({ symbol, label, tone, title }) => (
@@ -157,40 +175,77 @@ export const FlowScannerStatusPanel = ({
   const scannerFree = admission?.flowScannerRemainingLineCount;
   const totalUsed = admission?.activeLineCount;
   const totalCap = admission?.budget?.maxLines;
-  const currentBatch = Array.isArray(coverage.currentBatch)
-    ? coverage.currentBatch.filter(Boolean)
-    : [];
-  const recentSymbols = useMemo(
-    () => buildRecentSymbols(coverage.lastScannedAt, currentBatch),
-    [coverage.lastScannedAt, currentBatch],
+  const progress = useMemo(
+    () =>
+      resolveFlowScannerProgress({
+        coverage,
+        coverageModeLabel,
+        scannerConfig,
+        scannedCoverageSymbols,
+        totalCoverageSymbols,
+        intendedCoverageSymbols,
+        selectedCoverageSymbols,
+      }),
+    [
+      coverage,
+      coverageModeLabel,
+      intendedCoverageSymbols,
+      scannedCoverageSymbols,
+      scannerConfig,
+      selectedCoverageSymbols,
+      totalCoverageSymbols,
+    ],
   );
-  const pendingCount = Math.max(
-    0,
-    (safeCount(totalCoverageSymbols) ?? 0) -
-      Math.max(currentBatch.length + recentSymbols.length, safeCount(scannedCoverageSymbols) ?? 0),
-  );
+  const {
+    batchLabel,
+    capLabel,
+    currentBatch,
+    cycleLabel,
+    pendingCount,
+    progressText,
+    queueLabel,
+    recentSymbols,
+    scopeLabel,
+    selectedDetail,
+    sourceModeLabel,
+  } = progress;
   const latestLabel = newestScanAt ? `latest ${formatRelative(newestScanAt)}` : "latest --";
   const oldestLabel =
     oldestScanAt && oldestScanAt !== newestScanAt
       ? `oldest ${formatRelative(oldestScanAt)}`
       : null;
-  const selectedDetail =
-    intendedCoverageSymbols > selectedCoverageSymbols
-      ? `selected ${formatCount(selectedCoverageSymbols)}/${formatCount(intendedCoverageSymbols)}`
-      : coverage.isRotating
-        ? `rotating ${formatCount(coverage.batchSize || scannerConfig.batchSize)}/cycle`
-        : coverageModeLabel;
   const sourceTone = flowDisplayColor || T.textSec;
+  const diagnosticsLoading =
+    !runtimeDiagnosticsQuery.data &&
+    (runtimeDiagnosticsQuery.isPending || runtimeDiagnosticsQuery.isLoading);
+  const diagnosticsDetail = diagnosticsLoading
+    ? "checking runtime diagnostics"
+    : runtimeDiagnosticsQuery.isError
+      ? "runtime diagnostics unavailable"
+      : Number.isFinite(totalUsed) || Number.isFinite(totalCap)
+        ? `app ${formatScannerCount(totalUsed)}/${formatScannerCount(totalCap)} · free ${formatScannerCount(scannerFree)}`
+        : "runtime diagnostics";
+  const lineValue =
+    Number.isFinite(scannerUsed) || Number.isFinite(scannerCap)
+      ? `${formatScannerCount(scannerUsed)}/${formatScannerCount(scannerCap)}`
+      : MISSING_VALUE;
+  const scanSweepActive = Boolean(enabled && coverage.isFetching);
   const statusLabel = enabled
-    ? ownerActive
-      ? "Scanning"
+    ? coverage.isFetching
+      ? "Fetching"
+      : ownerActive
+        ? "Scanning"
       : "Idle"
     : "Off";
 
   return (
     <Card
+      className="ra-panel-enter"
       data-testid={testId}
+      data-scanner-state={statusLabel.toLowerCase()}
+      data-source-mode={sourceModeLabel.toLowerCase()}
       style={{
+        ...motionVars({ accent: toggleTone }),
         padding: dense ? sp("7px 8px") : sp("8px 10px"),
         display: "grid",
         gap: sp(7),
@@ -244,6 +299,20 @@ export const FlowScannerStatusPanel = ({
           >
             {flowDisplayLabel || "Flow source"}
           </span>
+          <ScannerStatusChip
+            label="Source"
+            value={scopeLabel ? `${sourceModeLabel} · ${scopeLabel}` : sourceModeLabel}
+            tone={sourceTone}
+            testId={`${testId}-source-chip`}
+            title={`Scanner source ${sourceModeLabel}${scopeLabel ? `, ${scopeLabel}` : ""}`}
+          />
+          <ScannerStatusChip
+            label="Cap"
+            value={capLabel}
+            tone={T.textSec}
+            testId={`${testId}-cap-chip`}
+            title={`Scanner symbol cap ${capLabel}`}
+          />
         </div>
         <div
           style={{
@@ -259,7 +328,7 @@ export const FlowScannerStatusPanel = ({
           <span>
             Cycle{" "}
             <span style={{ color: T.text, fontWeight: 900 }}>
-              {formatCount(scannedCoverageSymbols)}/{formatCount(totalCoverageSymbols || scannedCoverageSymbols)}
+              {cycleLabel}
             </span>
           </span>
           <span>{latestLabel}</span>
@@ -288,6 +357,47 @@ export const FlowScannerStatusPanel = ({
       </div>
 
       <div
+        className={joinMotionClasses(scanSweepActive && "ra-scan-sweep")}
+        data-testid={`${testId}-progress-strip`}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(8),
+          minWidth: 0,
+          padding: sp("4px 6px"),
+          border: `1px solid ${scanSweepActive ? `${toggleTone}55` : T.border}`,
+          background: scanSweepActive ? `${toggleTone}10` : T.bg0,
+          color: T.textDim,
+          fontFamily: T.mono,
+          fontSize: fs(8),
+          lineHeight: 1.25,
+        }}
+      >
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {progressText}
+        </span>
+        <span
+          style={{
+            flexShrink: 0,
+            color: scanSweepActive ? toggleTone : T.textMuted,
+            fontWeight: 900,
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {queueLabel}
+        </span>
+      </div>
+
+      <div
         style={{
           display: "grid",
           gridTemplateColumns: dense
@@ -298,7 +408,7 @@ export const FlowScannerStatusPanel = ({
       >
         <ScannerMetric
           label="Coverage"
-          value={`${formatCount(scannedCoverageSymbols)}/${formatCount(totalCoverageSymbols || scannedCoverageSymbols)}`}
+          value={cycleLabel}
           detail={selectedDetail}
           tone={T.textSec}
         />
@@ -308,22 +418,14 @@ export const FlowScannerStatusPanel = ({
           detail={
             currentBatch.length > 3
               ? `+${currentBatch.length - 3} active`
-              : `${formatCount(scannerConfig.batchSize || coverage.batchSize)} batch / ${formatCount(scannerConfig.concurrency || coverage.concurrency)} conc`
+              : batchLabel
           }
           tone={currentBatch.length ? T.accent : T.textDim}
         />
         <ScannerMetric
           label="Lines"
-          value={
-            Number.isFinite(scannerUsed) || Number.isFinite(scannerCap)
-              ? `${formatCount(scannerUsed)}/${formatCount(scannerCap)}`
-              : MISSING_VALUE
-          }
-          detail={
-            Number.isFinite(totalUsed) || Number.isFinite(totalCap)
-              ? `app ${formatCount(totalUsed)}/${formatCount(totalCap)} · free ${formatCount(scannerFree)}`
-              : "runtime diagnostics"
-          }
+          value={lineValue}
+          detail={diagnosticsDetail}
           tone={lineTone(scannerUsed, scannerCap)}
         />
         <ScannerMetric
@@ -370,10 +472,10 @@ export const FlowScannerStatusPanel = ({
           ))}
           {pendingCount > 0 ? (
             <TickerChip
-              symbol={`+${formatCount(pendingCount)}`}
+              symbol={`+${formatScannerCount(pendingCount)}`}
               label="pending"
               tone={T.textMuted}
-              title={`${formatCount(pendingCount)} symbols pending in this cycle`}
+              title={`${formatScannerCount(pendingCount)} symbols pending in this cycle`}
             />
           ) : null}
         </div>

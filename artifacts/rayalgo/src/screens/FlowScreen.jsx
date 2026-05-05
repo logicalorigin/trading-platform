@@ -320,6 +320,28 @@ const getFlowContractLabel = (event) => {
     .join(" | ");
 };
 
+const writeFlowContractToClipboard = async (value) => {
+  if (!value) return;
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  if (typeof document === "undefined") return;
+  const textArea = document.createElement("textarea");
+  textArea.value = value;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "0";
+  document.body.appendChild(textArea);
+  textArea.select();
+  try {
+    document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textArea);
+  }
+};
+
 const parseTickerTokens = (value) =>
   Array.from(
     new Set(
@@ -1676,23 +1698,21 @@ const FlowOverviewPanel = ({
     setLivePaused(true);
   };
 
-  const handleCopyContract = async (event, contractEvent) => {
+  const showCopiedStatus = useCallback((eventId) => {
+    setCopiedEventId(eventId);
+    if (copyStatusTimerRef.current) {
+      clearTimeout(copyStatusTimerRef.current);
+    }
+    copyStatusTimerRef.current = setTimeout(() => {
+      setCopiedEventId(null);
+    }, 1400);
+  }, []);
+
+  const handleCopyContract = (event, contractEvent) => {
     event.stopPropagation();
     const contractLabel = getFlowContractLabel(contractEvent);
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(contractLabel);
-      }
-      setCopiedEventId(contractEvent.id);
-      if (copyStatusTimerRef.current) {
-        clearTimeout(copyStatusTimerRef.current);
-      }
-      copyStatusTimerRef.current = setTimeout(() => {
-        setCopiedEventId(null);
-      }, 1400);
-    } catch (_error) {
-      setCopiedEventId(contractEvent.id);
-    }
+    showCopiedStatus(contractEvent.id);
+    void writeFlowContractToClipboard(contractLabel).catch(() => {});
   };
 
   const handleTogglePinned = (event, contractEvent) => {

@@ -126,6 +126,22 @@ async function mockFlowApi(
         environment: "paper",
         marketDataProviders: {},
       };
+    } else if (url.pathname === "/api/diagnostics/runtime") {
+      body = {
+        ibkr: {
+          streams: {
+            marketDataAdmission: {
+              activeLineCount: 18,
+              flowScannerLineCount: 6,
+              flowScannerRemainingLineCount: 34,
+              budget: {
+                maxLines: 100,
+                flowScannerLineCap: 40,
+              },
+            },
+          },
+        },
+      };
     } else if (url.pathname === "/api/watchlists") {
       body = {
         watchlists: [
@@ -583,7 +599,18 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await openFlow(page);
 
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
-  await expect(page.getByTestId("flow-scanner-status-panel")).toBeVisible();
+  const scannerStatusPanel = page.getByTestId("flow-scanner-status-panel");
+  await expect(scannerStatusPanel).toBeVisible();
+  await expect(
+    scannerStatusPanel.getByTestId("flow-scanner-status-panel-source-chip"),
+  ).toContainText(/Watchlist|Market-wide/);
+  await expect(
+    scannerStatusPanel.getByTestId("flow-scanner-status-panel-cap-chip"),
+  ).toContainText(/cap/i);
+  await expect(
+    scannerStatusPanel.getByTestId("flow-scanner-status-panel-progress-strip"),
+  ).toContainText(/scanned/);
+  await expect(scannerStatusPanel.getByTestId("loading-spinner")).toHaveCount(0);
   await expect(page.getByTestId("flow-preset-bar")).toBeVisible();
   await expect(page.getByTestId("flow-ticker-lens")).toBeVisible();
   await expect(page.getByTestId("flow-tape-row").first()).toBeVisible();
