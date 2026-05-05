@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 test.setTimeout(90_000);
 test.describe.configure({ mode: "serial" });
@@ -1001,7 +1001,7 @@ test("Flow inspection keeps the chart frame visible for empty option history", a
 
 test("Flow mobile renders row cards with filter overlay, column drawer, copy, and pin actions", async ({
   page,
-}) => {
+}, testInfo: TestInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFlowApi(page);
   await openFlow(page);
@@ -1044,4 +1044,8 @@ test("Flow mobile renders row cards with filter overlay, column drawer, copy, an
   });
   expect(detailAboveCards).toBe(true);
   await expectNoDocumentOverflow(page);
+  await testInfo.attach("phase12-phone-flow-card-tape.png", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
 });
