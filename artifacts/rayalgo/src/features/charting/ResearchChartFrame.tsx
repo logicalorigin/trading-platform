@@ -83,6 +83,7 @@ type ResearchChartFrameProps = {
   viewportSnapshot?: ChartViewportSnapshot | null;
   viewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
+  viewportResetRevision?: number;
   persistScalePrefs?: boolean;
 };
 
@@ -120,6 +121,7 @@ export const ResearchChartFrame = ({
   viewportSnapshot,
   viewportUserTouched = false,
   onViewportSnapshotChange,
+  viewportResetRevision = 0,
   persistScalePrefs,
 }: ResearchChartFrameProps) => (
   <div
@@ -169,6 +171,7 @@ export const ResearchChartFrame = ({
         viewportSnapshot={viewportSnapshot}
         externalViewportUserTouched={viewportUserTouched}
         onViewportSnapshotChange={onViewportSnapshotChange}
+        viewportResetRevision={viewportResetRevision}
         persistScalePrefs={persistScalePrefs}
       />
     </div>

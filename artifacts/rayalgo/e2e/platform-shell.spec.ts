@@ -1811,6 +1811,172 @@ test("linked workspace keeps Market and Trade in sync until a panel is unlinked"
   expect(runtimeIssues).toEqual([]);
 });
 
+test("workspace presets switch screens, restore defaults, and persist lightweight state", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await disableStreamingSources(page);
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "rayalgo:state:v1",
+      JSON.stringify({
+        screen: "market",
+        sym: "SPY",
+        marketActiveSymbol: "SPY",
+        theme: "dark",
+        sidebarCollapsed: false,
+        marketGridLayout: "3x3",
+        marketGridSoloSlotIndex: 0,
+        linkedWorkspace: {
+          version: 1,
+          activeGroup: "A",
+          panels: {
+            market: "A",
+            trade: "A",
+            flow: "A",
+            account: "A",
+            research: "A",
+          },
+          groups: {
+            A: { symbol: "SPY", timeframe: "15m" },
+            B: { symbol: "NVDA", timeframe: "5m" },
+            C: { symbol: "MSFT", timeframe: "1h" },
+          },
+        },
+        workspacePresets: {
+          version: 1,
+          activePresetId: "market_monitor",
+          presets: {
+            flow_review: {
+              screen: "flow",
+              sidebarCollapsed: false,
+              flowActivePresetId: "blocks",
+              flowFilter: "block",
+              flowMinPrem: 0,
+              flowSortBy: "ratio",
+              flowSortDir: "desc",
+              flowColumnsOpen: false,
+              activeLinkedGroup: "C",
+            },
+          },
+        },
+      }),
+    );
+  });
+  await mockShellApi(page);
+  await page.goto("/");
+
+  const presetSelect = page.getByTestId("workspace-preset-select");
+  await expect(presetSelect).toBeVisible();
+  await expect(presetSelect).toHaveValue("market_monitor");
+
+  await presetSelect.selectOption("flow_review");
+  await expect(page.getByTestId("screen-host-flow")).toHaveAttribute(
+    "aria-hidden",
+    "false",
+  );
+  await expect(page.getByTestId("flow-main-layout")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return {
+          activePresetId: state.workspacePresets?.activePresetId,
+          savedMarketLayout:
+            state.workspacePresets?.presets?.market_monitor?.marketGridLayout,
+          flowPreset: state.flowActivePresetId,
+          flowFilter: state.flowFilter,
+          flowColumnsOpen: state.flowColumnsOpen,
+          activeGroup: state.linkedWorkspace?.activeGroup,
+          sidebarCollapsed: state.sidebarCollapsed,
+        };
+      }),
+    )
+    .toEqual({
+      activePresetId: "flow_review",
+      savedMarketLayout: "3x3",
+      flowPreset: "blocks",
+      flowFilter: "block",
+      flowColumnsOpen: false,
+      activeGroup: "C",
+      sidebarCollapsed: false,
+    });
+
+  await page.getByTestId("workspace-preset-restore").click();
+  await expect(presetSelect).toHaveValue("flow_review");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return {
+          activePresetId: state.workspacePresets?.activePresetId,
+          savedFlowPreset:
+            state.workspacePresets?.presets?.flow_review || null,
+          flowPreset: state.flowActivePresetId,
+          flowMinPrem: state.flowMinPrem,
+          flowColumnsOpen: state.flowColumnsOpen,
+          activeGroup: state.linkedWorkspace?.activeGroup,
+        };
+      }),
+    )
+    .toEqual({
+      activePresetId: "flow_review",
+      savedFlowPreset: null,
+      flowPreset: "premium-250k",
+      flowMinPrem: 250_000,
+      flowColumnsOpen: true,
+      activeGroup: "B",
+    });
+
+  await presetSelect.selectOption("options_trade");
+  await expect(page.getByTestId("screen-host-trade")).toHaveAttribute(
+    "aria-hidden",
+    "false",
+  );
+  await expect(page.getByTestId("trade-top-zone")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(
+          window.localStorage.getItem("rayalgo:state:v1") || "{}",
+        );
+        return {
+          screen: state.screen,
+          activePresetId: state.workspacePresets?.activePresetId,
+          savedFlowPreset:
+            state.workspacePresets?.presets?.flow_review?.flowActivePresetId,
+          sidebarCollapsed: state.sidebarCollapsed,
+          activeGroup: state.linkedWorkspace?.activeGroup,
+          tradeL2Tab: state.tradeL2Tab,
+          tradePositionsTab: state.tradePositionsTab,
+        };
+      }),
+    )
+    .toEqual({
+      screen: "trade",
+      activePresetId: "options_trade",
+      savedFlowPreset: "premium-250k",
+      sidebarCollapsed: true,
+      activeGroup: "A",
+      tradeL2Tab: "book",
+      tradePositionsTab: "open",
+    });
+
+  expect(runtimeIssues).toEqual([]);
+});
+
 test("spot market mini chart hydrates every interval selection", async ({
   page,
 }) => {

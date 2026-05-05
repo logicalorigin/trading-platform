@@ -95,6 +95,7 @@ export const TradeEquityPanel = ({
   searchContent,
   workspaceChart = null,
   onWorkspaceChartChange,
+  viewportResetRevision = 0,
   referenceLines = [],
   linkChip = null,
 }) => {
@@ -725,6 +726,7 @@ export const TradeEquityPanel = ({
       themeKey={getCurrentTheme()}
       surfaceUiStateKey={surfaceUiStateKey}
       rangeIdentityKey={chartHydrationScopeKey}
+      viewportResetRevision={viewportResetRevision}
       model={chartModel}
       compact={compact}
       subHeader={

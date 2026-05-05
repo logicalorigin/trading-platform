@@ -204,9 +204,21 @@ export const MultiChartGrid = ({
   const [openTickerSearchSlotIndex, setOpenTickerSearchSlotIndex] = useState(null);
   useEffect(() => {
     const handleWorkspaceSettings = (event) => {
-      const nextLayout = event?.detail?.marketGridLayout;
+      const state = event?.detail || {};
+      const nextLayout = state.marketGridLayout;
       if (nextLayout && MULTI_CHART_LAYOUTS[nextLayout]) {
         setLayout((current) => (current === nextLayout ? current : nextLayout));
+      }
+      if (Number.isFinite(state.marketGridSoloSlotIndex)) {
+        setSoloSlotIndex(
+          Math.max(
+            0,
+            Math.min(MAX_MULTI_CHART_SLOTS - 1, state.marketGridSoloSlotIndex),
+          ),
+        );
+      }
+      if (typeof state.marketGridSyncTimeframes === "boolean") {
+        setSyncTimeframes(state.marketGridSyncTimeframes);
       }
     };
     window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
@@ -1027,7 +1039,7 @@ export const MultiChartGrid = ({
           {visibleSlotEntries.map(({ slot, index }) => {
             return (
               <MiniChartCell
-                key={`market-chart-slot-${index}-${chartViewportResetRevision}`}
+                key={`market-chart-slot-${index}`}
                 dataTestId={`market-mini-chart-${index}`}
                 slot={slot}
                 premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}
@@ -1039,6 +1051,7 @@ export const MultiChartGrid = ({
                 compactFlow={compactPremiumFlow}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
                 onFocus={onSymClick}
+                viewportResetRevision={chartViewportResetRevision}
                 onEnterSoloMode={() => {
                   setSoloSlotIndex(index);
                   setLayout("1x1");

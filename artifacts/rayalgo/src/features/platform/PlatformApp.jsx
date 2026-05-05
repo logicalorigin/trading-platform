@@ -110,6 +110,15 @@ import {
   setLinkedWorkspacePanelGroup,
 } from "./linkedWorkspaceModel";
 import {
+  WORKSPACE_PRESET_DEFINITIONS,
+  buildWorkspacePresetStoragePatch,
+  captureWorkspacePresetSnapshot,
+  normalizeWorkspacePresetsState,
+  restoreWorkspacePresetDefaults,
+  switchWorkspacePreset,
+} from "./workspacePresetModel";
+import { setFlowTapeFilterState } from "./flowFilterStore";
+import {
   getTradeFlowStoreEntryCount,
 } from "./tradeFlowStore";
 import {
@@ -125,6 +134,7 @@ import {
 import {
   _initialState,
   persistState,
+  readPersistedState,
 } from "../../lib/workspaceState";
 import { preloadDynamicImport } from "../../lib/dynamicImport";
 import { getMemoryPressureSnapshot } from "./memoryPressureStore";
@@ -213,6 +223,10 @@ export default function PlatformApp() {
   const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
   const userPreferences = useUserPreferences();
+  const initialScreen =
+    _initialState.screen === "unusual"
+      ? "flow"
+      : _initialState.screen || "market";
   const previousPageVisibleRef = useRef(pageVisible);
   const latencyDebugEnabled = useMemo(
     () =>
@@ -220,17 +234,9 @@ export default function PlatformApp() {
       new URLSearchParams(window.location.search).get("latency") === "1",
     [],
   );
-  const [screen, setScreen] = useState(() =>
-    _initialState.screen === "unusual"
-      ? "flow"
-      : _initialState.screen || "market",
-  );
+  const [screen, setScreen] = useState(() => initialScreen);
   const [mountedScreens, setMountedScreens] = useState(() =>
-    buildMountedScreenState(
-      _initialState.screen === "unusual"
-        ? "flow"
-        : _initialState.screen || "market",
-    ),
+    buildMountedScreenState(initialScreen),
   );
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
   const [sym, setSym] = useState(_initialState.sym || "SPY");
@@ -250,6 +256,16 @@ export default function PlatformApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
   );
+  const [workspacePresetState, setWorkspacePresetState] = useState(() =>
+    normalizeWorkspacePresetsState(_initialState.workspacePresets, {
+      screen: initialScreen,
+      sidebarCollapsed: Boolean(_initialState.sidebarCollapsed),
+      linkedWorkspace: _initialState.linkedWorkspace,
+      workspaceState: _initialState,
+    }),
+  );
+  const workspacePresetStateRef = useRef(workspacePresetState);
+  const [workspacePresetRevision, setWorkspacePresetRevision] = useState(0);
   const [theme, setTheme] = useState(_initialState.theme || "dark");
   const [, setUiPreferenceRevision] = useState(0);
   const appearancePreferences = userPreferences.preferences?.appearance || {};
@@ -1426,6 +1442,9 @@ export default function PlatformApp() {
     persistState({ linkedWorkspace });
   }, [linkedWorkspace]);
   useEffect(() => {
+    workspacePresetStateRef.current = workspacePresetState;
+  }, [workspacePresetState]);
+  useEffect(() => {
     persistState({ sidebarCollapsed });
   }, [sidebarCollapsed]);
   useEffect(() => {
@@ -1580,6 +1599,73 @@ export default function PlatformApp() {
     applyLinkedSymbolContext(next, options);
     return next;
   }, [applyLinkedSymbolContext]);
+
+  const buildCurrentWorkspacePresetSnapshot = useCallback(
+    (presetId = workspacePresetStateRef.current.activePresetId) =>
+      captureWorkspacePresetSnapshot(
+        {
+          screen,
+          sidebarCollapsed,
+          linkedWorkspace: linkedWorkspaceRef.current,
+          workspaceState: readPersistedState(),
+        },
+        presetId,
+      ),
+    [screen, sidebarCollapsed],
+  );
+
+  const applyWorkspacePresetSnapshot = useCallback((snapshot, nextPresetState) => {
+    const storagePatch = buildWorkspacePresetStoragePatch(snapshot);
+    const nextLinkedWorkspace = setLinkedWorkspaceActiveGroup(
+      linkedWorkspaceRef.current,
+      snapshot.activeLinkedGroup,
+    );
+
+    linkedWorkspaceRef.current = nextLinkedWorkspace;
+    setLinkedWorkspace(nextLinkedWorkspace);
+    setFlowTapeFilterState({
+      activeFlowPresetId: storagePatch.flowActivePresetId,
+      filter: storagePatch.flowFilter,
+      minPrem: storagePatch.flowMinPrem,
+      includeQuery: storagePatch.flowIncludeQuery,
+      excludeQuery: storagePatch.flowExcludeQuery,
+    });
+
+    startTransition(() => {
+      setScreen(storagePatch.screen);
+      setSidebarCollapsed(storagePatch.sidebarCollapsed);
+    });
+    persistState({
+      ...storagePatch,
+      linkedWorkspace: nextLinkedWorkspace,
+      workspacePresets: nextPresetState,
+    });
+    setWorkspacePresetRevision((revision) => revision + 1);
+  }, []);
+
+  const handleWorkspacePresetChange = useCallback(
+    (presetId) => {
+      const currentState = workspacePresetStateRef.current;
+      const currentSnapshot = buildCurrentWorkspacePresetSnapshot(
+        currentState.activePresetId,
+      );
+      const result = switchWorkspacePreset(currentState, presetId, currentSnapshot);
+      workspacePresetStateRef.current = result.state;
+      setWorkspacePresetState(result.state);
+      applyWorkspacePresetSnapshot(result.snapshot, result.state);
+    },
+    [applyWorkspacePresetSnapshot, buildCurrentWorkspacePresetSnapshot],
+  );
+
+  const handleRestoreWorkspacePreset = useCallback(() => {
+    const result = restoreWorkspacePresetDefaults(
+      workspacePresetStateRef.current,
+      workspacePresetStateRef.current.activePresetId,
+    );
+    workspacePresetStateRef.current = result.state;
+    setWorkspacePresetState(result.state);
+    applyWorkspacePresetSnapshot(result.snapshot, result.state);
+  }, [applyWorkspacePresetSnapshot]);
 
   const handleSelectWatchlist = useCallback((watchlistId) => {
     setActiveWatchlistId(watchlistId);
@@ -1982,6 +2068,11 @@ export default function PlatformApp() {
             mountedScreens={mountedScreens}
             setScreen={setScreen}
             renderScreenById={renderScreenById}
+            workspacePresets={WORKSPACE_PRESET_DEFINITIONS}
+            activeWorkspacePresetId={workspacePresetState.activePresetId}
+            workspacePresetRevision={workspacePresetRevision}
+            onWorkspacePresetChange={handleWorkspacePresetChange}
+            onRestoreWorkspacePreset={handleRestoreWorkspacePreset}
             fontCss={FONT_CSS}
             toasts={toasts}
             onDismissToast={dismissToast}

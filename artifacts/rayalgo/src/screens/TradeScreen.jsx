@@ -2723,6 +2723,20 @@ export const TradeScreen = ({
     persistState({ tradeChainHeatmapEnabled });
   }, [tradeChainHeatmapEnabled]);
   useEffect(() => {
+    const handleWorkspaceSettings = (event) => {
+      const state = event?.detail || {};
+      if (typeof state.tradeChainHeatmapEnabled === "boolean") {
+        setTradeChainHeatmapEnabled(state.tradeChainHeatmapEnabled);
+      }
+    };
+    window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
+    return () =>
+      window.removeEventListener(
+        "rayalgo:workspace-settings-updated",
+        handleWorkspaceSettings,
+      );
+  }, []);
+  useEffect(() => {
     setVisibleOptionChainRows([]);
   }, [activeTicker, contract.exp]);
   useEffect(() => {

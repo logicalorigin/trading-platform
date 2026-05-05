@@ -311,6 +311,12 @@ const normalizeFlowVisibleColumns = (value) => {
   ];
 };
 
+const sameStringArray = (left = [], right = []) =>
+  Array.isArray(left) &&
+  Array.isArray(right) &&
+  left.length === right.length &&
+  left.every((value, index) => value === right[index]);
+
 const getFlowContractLabel = (event) => {
   if (!event) return "";
   const expiration = formatExpirationLabel(event.expirationDate);
@@ -795,11 +801,44 @@ const FlowOverviewPanel = ({
   useEffect(() => {
     const handleWorkspaceSettings = (event) => {
       const state = event?.detail || {};
+      if (state.flowSortBy) {
+        const nextSortBy = normalizeFlowSortBy(state.flowSortBy);
+        setSortBy(nextSortBy);
+        setSortDir(normalizeFlowSortDir(state.flowSortDir, nextSortBy));
+      } else if (state.flowSortDir) {
+        setSortDir(() => normalizeFlowSortDir(state.flowSortDir, sortBy));
+      }
       if (state.flowDensity === "compact" || state.flowDensity === "comfortable") {
         setDensity(state.flowDensity);
       }
       if (FLOW_ROWS_OPTIONS.includes(Number(state.flowRowsPerPage))) {
         setRowsPerPage(Number(state.flowRowsPerPage));
+      }
+      if (typeof state.flowLivePaused === "boolean") {
+        setLivePaused(state.flowLivePaused);
+      }
+      if (typeof state.flowShowUnusualScanner === "boolean") {
+        setShowUnusualScanner(state.flowShowUnusualScanner);
+      }
+      if (typeof state.flowFiltersOpen === "boolean") {
+        setFiltersOpen(state.flowFiltersOpen);
+      }
+      if (typeof state.flowColumnsOpen === "boolean") {
+        setColumnsOpen(state.flowColumnsOpen);
+      }
+      if (Array.isArray(state.flowColumnOrder)) {
+        const nextColumnOrder = normalizeFlowColumnOrder(state.flowColumnOrder);
+        setColumnOrder((current) =>
+          sameStringArray(current, nextColumnOrder) ? current : nextColumnOrder,
+        );
+      }
+      if (Array.isArray(state.flowVisibleColumns)) {
+        const nextVisibleColumns = normalizeFlowVisibleColumns(state.flowVisibleColumns);
+        setVisibleColumns((current) =>
+          sameStringArray(current, nextVisibleColumns)
+            ? current
+            : nextVisibleColumns,
+        );
       }
     };
     window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
@@ -808,7 +847,7 @@ const FlowOverviewPanel = ({
         "rayalgo:workspace-settings-updated",
         handleWorkspaceSettings,
       );
-  }, []);
+  }, [sortBy]);
 
   useEffect(() => {
     persistState({ flowSavedScans: savedScans });

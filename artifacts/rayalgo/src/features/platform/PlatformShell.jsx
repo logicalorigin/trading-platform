@@ -6,6 +6,7 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  RotateCcw,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -26,6 +27,11 @@ export const PlatformShell = ({
   mountedScreens,
   setScreen,
   renderScreenById,
+  workspacePresets = [],
+  activeWorkspacePresetId = "",
+  workspacePresetRevision = 0,
+  onWorkspacePresetChange,
+  onRestoreWorkspacePreset,
   fontCss,
   toasts,
   onDismissToast,
@@ -506,6 +512,13 @@ export const PlatformShell = ({
         WL {(activeWatchlist?.name || "Core").toUpperCase()}
       </span>
       <span style={{ color: T.textMuted }}>SYM {selectedSymbol}</span>
+      <WorkspacePresetSwitcher
+        presets={workspacePresets}
+        activePresetId={activeWorkspacePresetId}
+        revision={workspacePresetRevision}
+        onChange={onWorkspacePresetChange}
+        onRestore={onRestoreWorkspacePreset}
+      />
       <span style={{ color: session?.configured?.ibkr ? T.green : T.red }}>
         HIST {(session?.marketDataProviders?.historical || MISSING_VALUE).toUpperCase()}
       </span>
@@ -517,6 +530,93 @@ export const PlatformShell = ({
     </div>
     <BloombergLiveDock />
   </div>
+  );
+};
+
+const WorkspacePresetSwitcher = ({
+  presets,
+  activePresetId,
+  revision,
+  onChange,
+  onRestore,
+}) => {
+  const activePreset = presets.find((preset) => preset.id === activePresetId);
+  if (!presets.length) return null;
+  return (
+    <span
+      key={revision}
+      data-testid="workspace-preset-switcher"
+      className="ra-focus-rail"
+      style={{
+        ...motionVars({ accent: T.accent }),
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(4),
+        paddingLeft: sp(7),
+        color: T.textMuted,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          fontSize: fs(8),
+          fontWeight: 800,
+          color: T.textMuted,
+          fontFamily: T.mono,
+        }}
+      >
+        WS
+      </span>
+      <select
+        data-testid="workspace-preset-select"
+        aria-label="Workspace preset"
+        value={activePreset?.id || presets[0]?.id || ""}
+        onChange={(event) => onChange?.(event.target.value)}
+        style={{
+          height: dim(20),
+          maxWidth: dim(160),
+          border: `1px solid ${T.border}`,
+          background: T.bg2,
+          color: T.textSec,
+          fontSize: fs(9),
+          fontWeight: 700,
+          fontFamily: T.sans,
+          borderRadius: 0,
+          padding: sp("0 18px 0 5px"),
+          outline: "none",
+        }}
+      >
+        {presets.map((preset) => (
+          <option key={preset.id} value={preset.id}>
+            {preset.label}
+          </option>
+        ))}
+      </select>
+      <AppTooltip content="Restore preset defaults">
+        <button
+          data-testid="workspace-preset-restore"
+          className="ra-interactive"
+          type="button"
+          aria-label="Restore workspace preset defaults"
+          onClick={() => onRestore?.()}
+          style={{
+            width: dim(20),
+            height: dim(20),
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: `1px solid ${T.border}`,
+            background: T.bg2,
+            color: T.textDim,
+            borderRadius: 0,
+            cursor: "pointer",
+            flex: "0 0 auto",
+          }}
+        >
+          <RotateCcw size={dim(12)} strokeWidth={2.3} />
+        </button>
+      </AppTooltip>
+    </span>
   );
 };
 

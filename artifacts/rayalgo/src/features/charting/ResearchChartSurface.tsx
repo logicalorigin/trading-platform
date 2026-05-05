@@ -977,6 +977,7 @@ type ResearchChartSurfaceProps = {
   viewportSnapshot?: ChartViewportSnapshot | null;
   externalViewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
+  viewportResetRevision?: number;
   persistScalePrefs?: boolean;
 };
 
@@ -3934,6 +3935,7 @@ export const ResearchChartSurface = ({
   viewportSnapshot = null,
   externalViewportUserTouched = false,
   onViewportSnapshotChange,
+  viewportResetRevision = 0,
   persistScalePrefs = true,
 }: ResearchChartSurfaceProps) => {
   const { preferences: userPreferences } = useUserPreferences();
@@ -3981,6 +3983,8 @@ export const ResearchChartSurface = ({
   const lastPublishedVisibleRangeSignatureRef = useRef<string | null>(null);
   const programmaticVisibleRangeSignatureRef = useRef<string | null>(null);
   const lastProgrammaticViewportIntentAtRef = useRef(0);
+  const viewportResetRevisionRef = useRef(viewportResetRevision);
+  const pendingViewportResetPublishRef = useRef<number | null>(null);
   const autoHydrationViewportRef = useRef(true);
   const previousFirstChartBarTimeRef = useRef<number | null>(null);
   const initializedRangeRef = useRef(false);
@@ -4346,6 +4350,29 @@ export const ResearchChartSurface = ({
     lastWheelViewportIntentAtRef.current = 0;
     viewportPointerActiveRef.current = false;
   }, []);
+
+  useEffect(() => {
+    if (viewportResetRevision === viewportResetRevisionRef.current) {
+      return;
+    }
+    viewportResetRevisionRef.current = viewportResetRevision;
+    pendingViewportResetPublishRef.current = viewportResetRevision;
+    clearUserViewportIntent();
+    lastLocalUserViewportAtRef.current = 0;
+    lastUserVisibleRangeRef.current = null;
+    visibleLogicalRangeRef.current = null;
+    realtimeFollowRef.current = true;
+    autoHydrationViewportRef.current = true;
+    programmaticVisibleRangeSignatureRef.current = null;
+    lastProgrammaticViewportIntentAtRef.current = 0;
+    syncViewportUserTouched(false, { force: true });
+    lastPublishedVisibleRangeSignatureRef.current = null;
+    clearStoredChartViewportSnapshot(rangeIdentityKeyRef.current);
+  }, [
+    clearUserViewportIntent,
+    syncViewportUserTouched,
+    viewportResetRevision,
+  ]);
 
   const markUserViewportIntent = useCallback(
     (
@@ -4781,6 +4808,17 @@ export const ResearchChartSurface = ({
     if (!rangeIdentityKeyRef.current) {
       return;
     }
+    if (pendingViewportResetPublishRef.current === viewportResetRevision) {
+      pendingViewportResetPublishRef.current = null;
+      publishViewportSnapshot(
+        buildViewportSnapshot({
+          visibleRange: null,
+          userTouched: false,
+          realtimeFollow: true,
+        }),
+      );
+      return;
+    }
     publishViewportSnapshot(
       buildViewportSnapshot({
         visibleRange: normalizeVisibleLogicalRange(visibleLogicalRangeRef.current),
@@ -4810,6 +4848,7 @@ export const ResearchChartSurface = ({
     scaleMode,
     effectiveViewportSnapshot?.identityKey,
     effectiveViewportSnapshot?.userTouched,
+    viewportResetRevision,
     viewportUserTouched,
   ]);
 

@@ -68,6 +68,7 @@ export const MiniChartCell = ({
   compactFlow = false,
   stockAggregateStreamingEnabled = false,
   dataTestId,
+  viewportResetRevision = 0,
   linkChip = null,
 }) => {
   const ticker = normalizeTickerSymbol(slot?.ticker) || WATCHLIST[0]?.sym || "SPY";
@@ -298,6 +299,7 @@ export const MiniChartCell = ({
           }
           workspaceChart={{ timeframe }}
           onWorkspaceChartChange={handleWorkspaceChartChange}
+          viewportResetRevision={viewportResetRevision}
           linkChip={linkChip}
         />
       </div>
