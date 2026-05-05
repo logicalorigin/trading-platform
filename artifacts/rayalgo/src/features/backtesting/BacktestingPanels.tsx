@@ -133,6 +133,7 @@ type BacktestWorkspaceProps = {
   watchlists: Watchlist[];
   defaultWatchlistId: string | null;
   isVisible?: boolean;
+  onJumpToTrade?: (symbol: string) => void;
 };
 
 type AlgoDraftStrategiesPanelProps = {
@@ -1336,6 +1337,7 @@ export function BacktestWorkspace({
   watchlists,
   defaultWatchlistId,
   isVisible = false,
+  onJumpToTrade,
 }: BacktestWorkspaceProps) {
   const [backtestRootRef, backtestRootSize] = useElementSize();
   const { isPhone: backtestIsPhone, isNarrow: backtestIsNarrow } =
@@ -1652,6 +1654,8 @@ export function BacktestWorkspace({
       ) ?? null
     );
   }, [activeTradeSelectionId, tradeRows]);
+  const selectedTradeSymbol =
+    selectedTradeRecord?.symbol ?? activeTradeOverlay?.symbol ?? null;
   const selectedTradeDiagnostics = selectedTradeRecord?.diagnostics ?? null;
   const selectedTradeExitConsequences =
     selectedTradeDiagnostics?.exitConsequences ?? null;
@@ -4432,13 +4436,31 @@ export function BacktestWorkspace({
                 >
                   <div
                     style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: scale.sp(8),
                       fontSize: scale.fs(10),
                       fontWeight: 700,
                       color: theme.textSec,
                       marginBottom: scale.sp(8),
                     }}
                   >
-                    Selected Trade
+                    <span>Selected Trade</span>
+                    {selectedTradeSymbol && onJumpToTrade ? (
+                      <button
+                        type="button"
+                        data-testid="backtest-selected-trade-open-trade"
+                        onClick={() => onJumpToTrade(selectedTradeSymbol)}
+                        style={{
+                          ...buttonStyle(theme, scale, "ghost"),
+                          minHeight: scale.dim(22),
+                          padding: scale.sp("0 8px"),
+                        }}
+                      >
+                        Open in Trade
+                      </button>
+                    ) : null}
                   </div>
                   {!selectedTradeRecord && !activeTradeOverlay ? (
                     <div

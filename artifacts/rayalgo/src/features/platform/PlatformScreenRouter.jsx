@@ -48,6 +48,7 @@ export const PlatformScreenRouter = ({
   onSelectTradingAccount,
   onJumpToTradeFromAccount,
   onJumpToTradeFromResearch,
+  onJumpToTradeFromBacktest,
   onJumpToTradeFromSignalOptionsCandidate,
   marketLinkedContext,
   tradeLinkedContext,
@@ -171,6 +172,7 @@ export const PlatformScreenRouter = ({
           watchlists={watchlists}
           defaultWatchlistId={defaultWatchlist?.id || null}
           isVisible={screen === "backtest"}
+          onJumpToTrade={onJumpToTradeFromBacktest}
         />
       );
     case "diagnostics":

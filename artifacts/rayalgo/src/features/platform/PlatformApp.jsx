@@ -2020,6 +2020,19 @@ export default function PlatformApp() {
     });
     setScreen("trade");
   }, [broadcastLinkedWorkspace]);
+  const handleJumpToTradeFromBacktest = useCallback((symbol) => {
+    const normalized = normalizeTickerSymbol(symbol);
+    if (!normalized) {
+      return;
+    }
+    ensureTradeTickerInfo(normalized, normalized);
+    broadcastLinkedWorkspace({
+      sourcePanel: "external",
+      symbol: normalized,
+      updatedAt: new Date().toISOString(),
+    });
+    setScreen("trade");
+  }, [broadcastLinkedWorkspace]);
   const broadcastPanelLinkedContext = useCallback((sourcePanel, { symbol, timeframe }) => {
     const normalized = normalizeTickerSymbol(symbol);
     if (!normalized && !timeframe) {
@@ -2087,6 +2100,7 @@ export default function PlatformApp() {
       onSelectTradingAccount={setSelectedAccountId}
       onJumpToTradeFromAccount={handleAccountJumpToTrade}
       onJumpToTradeFromResearch={handleJumpToTradeFromResearch}
+      onJumpToTradeFromBacktest={handleJumpToTradeFromBacktest}
       onJumpToTradeFromSignalOptionsCandidate={
         handleJumpToTradeFromSignalOptionsCandidate
       }
