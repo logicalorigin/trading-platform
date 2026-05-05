@@ -17,6 +17,7 @@ test("default flow scanner covers 500 symbols inside five minutes", () => {
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols, 500);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.batchSize, UNUSUAL_SCANNER_BATCH_SIZE);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.intervalMs, UNUSUAL_SCANNER_INTERVAL_MS);
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.concurrency, 1);
   assert.ok(
     Math.ceil(
       DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols / DEFAULT_FLOW_SCANNER_CONFIG.batchSize,

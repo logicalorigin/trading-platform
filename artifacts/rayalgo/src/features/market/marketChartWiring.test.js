@@ -20,6 +20,7 @@ test("Market chart flow markers use the unusual-flow scanner contract", () => {
   assert.match(source, /const MARKET_CHART_FLOW_LIMIT = 80;/);
   assert.match(scannerCall, /limit:\s*MARKET_CHART_FLOW_LIMIT/);
   assert.match(scannerCall, /scope:\s*FLOW_SCANNER_SCOPE\.unusual/);
+  assert.match(scannerCall, /concurrency:\s*1/);
   assert.match(scannerCall, /unusualThreshold/);
   assert.doesNotMatch(scannerCall, /limit:\s*16/);
 });

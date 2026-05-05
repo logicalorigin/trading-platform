@@ -416,6 +416,7 @@ export const MultiChartGrid = ({
     limit: MARKET_CHART_FLOW_LIMIT,
     maxSymbols: MAX_MULTI_CHART_SLOTS,
     batchSize: MAX_MULTI_CHART_SLOTS,
+    concurrency: 1,
     intervalMs: 10_000,
     scope: FLOW_SCANNER_SCOPE.unusual,
     unusualThreshold,

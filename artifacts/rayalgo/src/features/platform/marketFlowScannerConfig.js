@@ -30,7 +30,7 @@ export const DEFAULT_FLOW_SCANNER_CONFIG = Object.freeze({
   maxSymbols: 500,
   batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
   intervalMs: UNUSUAL_SCANNER_INTERVAL_MS,
-  concurrency: 2,
+  concurrency: 1,
   limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
   unusualThreshold: 1,
   minPremium: 0,

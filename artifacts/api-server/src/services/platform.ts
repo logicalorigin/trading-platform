@@ -6782,7 +6782,7 @@ const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_CONCURRENCY",
-  2,
+  1,
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",
