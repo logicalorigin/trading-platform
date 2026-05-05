@@ -46,6 +46,10 @@
       "entry": ["src/index.ts"],
       "project": "src/**/*.ts"
     },
+    "lib/rayreplica-core": {
+      "entry": ["src/index.ts"],
+      "project": "src/**/*.ts"
+    },
     "lib/ibkr-contracts": {
       "entry": ["src/index.ts"],
       "project": "src/**/*.ts"

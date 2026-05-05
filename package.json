@@ -6,7 +6,7 @@
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "deadcode": "PORT=18747 BASE_PATH=/ knip --include files,dependencies,catalog --no-config-hints",
-    "deadcode:prod": "PORT=18747 BASE_PATH=/ knip --production --include files --no-config-hints --workspace @workspace/rayalgo --workspace @workspace/api-server --workspace @workspace/ibkr-bridge --workspace @workspace/backtest-worker --workspace @workspace/api-client-react --workspace @workspace/api-zod --workspace @workspace/api-spec --workspace @workspace/db --workspace @workspace/backtest-core --workspace @workspace/ibkr-contracts",
+    "deadcode:prod": "PORT=18747 BASE_PATH=/ knip --production --include files --no-config-hints --workspace @workspace/rayalgo --workspace @workspace/api-server --workspace @workspace/ibkr-bridge --workspace @workspace/backtest-worker --workspace @workspace/api-client-react --workspace @workspace/api-zod --workspace @workspace/api-spec --workspace @workspace/db --workspace @workspace/backtest-core --workspace @workspace/rayreplica-core --workspace @workspace/ibkr-contracts",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
