@@ -34,6 +34,7 @@ import {
   shouldPreserveUserViewportRange,
   writeStoredChartViewportSnapshot,
   resolveVisibleRangeSyncAction,
+  resolveWheelZoomFactor,
 } from "./ResearchChartSurface";
 
 const readResearchChartSurfaceSource = () =>
@@ -775,6 +776,13 @@ test("ResearchChartSurface zooms around the current viewport center", () => {
     }),
     { from: 45, to: 53 },
   );
+});
+
+test("ResearchChartSurface resolves mouse-wheel zoom direction", () => {
+  assert.equal(resolveWheelZoomFactor(-500), 0.8);
+  assert.equal(resolveWheelZoomFactor(500), 1.25);
+  assert.equal(resolveWheelZoomFactor(0.25), null);
+  assert.equal(resolveWheelZoomFactor(Number.NaN), null);
 });
 
 test("ResearchChartSurface restores matching user-touched viewport snapshots", () => {

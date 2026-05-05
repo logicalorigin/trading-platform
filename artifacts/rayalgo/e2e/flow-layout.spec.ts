@@ -461,6 +461,12 @@ async function expectChartCanvasDrawn(page: Page, chartTestId: string) {
     .toBe(true);
 }
 
+async function clickFlowTapeRow(page: Page, rowIndex = 0) {
+  await page.getByTestId("flow-tape-row").nth(rowIndex).click({
+    position: { x: 18, y: 10 },
+  });
+}
+
 test("Flow scanner keeps scanning after leaving the Flow page", async ({
   page,
 }) => {
@@ -681,6 +687,81 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await expectNoDocumentOverflow(page);
 });
 
+test("Flow row action rail charts options and mutes tickers", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockFlowApi(page);
+  await openFlow(page);
+
+  const firstRow = page.getByTestId("flow-tape-row").first();
+  await expect(firstRow).toBeVisible();
+  const ticker = await firstRow.getAttribute("data-flow-row-ticker");
+  expect(ticker).toBeTruthy();
+
+  await expect(firstRow.getByTestId("flow-action-chart-option")).toBeVisible();
+  await expect(firstRow.getByTestId("flow-action-open-underlying")).toBeVisible();
+  await expect(firstRow.getByTestId("flow-action-send-ticket")).toBeVisible();
+  await expect(firstRow.getByTestId("flow-action-copy-contract")).toBeVisible();
+  await expect(firstRow.getByTestId("flow-action-pin")).toBeVisible();
+  await expect(firstRow.getByTestId("flow-action-mute-ticker")).toBeVisible();
+
+  await firstRow.getByTestId("flow-action-chart-option").click();
+  await expect(page.getByTestId("flow-inline-execution-quality")).toBeVisible();
+  await expectChartCanvasDrawn(page, "flow-inspection-option-chart");
+
+  await firstRow.getByTestId("flow-action-mute-ticker").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
+        return state.flowExcludeQuery || "";
+      }),
+    )
+    .toContain(ticker!);
+});
+
+test("Flow underlying and ticket actions focus Trade predictably", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockFlowApi(page);
+  await openFlow(page);
+
+  const firstRow = page.getByTestId("flow-tape-row").first();
+  await expect(firstRow).toBeVisible();
+  const ticker = await firstRow.getAttribute("data-flow-row-ticker");
+  expect(ticker).toBeTruthy();
+
+  await firstRow.getByTestId("flow-action-open-underlying").click();
+  await expect(page.getByTestId("screen-host-trade")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId("trade-equity-chart")).toBeVisible();
+
+  await openFlowWithState(page, {});
+  const ticketRow = page.getByTestId("flow-tape-row").first();
+  const ticketTicker = await ticketRow.getAttribute("data-flow-row-ticker");
+  await ticketRow.getByTestId("flow-action-send-ticket").click();
+  await expect(page.getByTestId("screen-host-trade")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(() =>
+      page.evaluate((symbol) => {
+        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
+        return state.tradeContracts?.[symbol || ""]?.providerContractId || "";
+      }, ticketTicker),
+    )
+    .toMatch(/^\d+$/);
+  await expect
+    .poll(() =>
+      page.evaluate((symbol) => {
+        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
+        return state.tradeContracts?.[symbol || ""]?.cp || "";
+      }, ticketTicker),
+    )
+    .toMatch(/^[CP]$/);
+});
+
 test("Flow tape repairs persisted column state to show the visual bid ask column", async ({
   page,
 }) => {
@@ -743,7 +824,7 @@ test("Flow inspection requests and renders option charts for several clicked flo
       return url.pathname === "/api/options/chart-bars";
     });
 
-    await page.getByTestId("flow-tape-row").nth(rowIndex).click();
+    await clickFlowTapeRow(page, rowIndex);
     await expect(page.getByTestId("flow-contract-drawer")).toHaveCount(0);
     await expect(page.getByTestId("flow-inline-execution-quality")).toBeVisible();
     const request = await chartRequest;
@@ -768,7 +849,7 @@ test("Flow inspection hydrates fallback flow contracts through the shared option
     );
   });
 
-  await page.getByTestId("flow-tape-row").first().click();
+  await clickFlowTapeRow(page);
   await chartRequest;
   await expectChartCanvasDrawn(page, "flow-inspection-option-chart");
   await expect(page.getByText("Option contract lookup unavailable")).toHaveCount(0);
@@ -789,7 +870,7 @@ test("Flow inspection sends non-IBKR fallback ids to the shared option chart end
     return url.pathname === "/api/options/chart-bars";
   });
 
-  await page.getByTestId("flow-tape-row").first().click();
+  await clickFlowTapeRow(page);
   const request = await chartRequest;
   const url = new URL(request.url());
   expect(url.searchParams.has("providerContractId")).toBe(false);
@@ -822,7 +903,7 @@ test("Flow inspection does not call the legacy option bars route when shared cha
     return url.pathname === "/api/options/chart-bars";
   });
 
-  await page.getByTestId("flow-tape-row").first().click();
+  await clickFlowTapeRow(page);
   await chartRequest;
   await expect(page.getByText("Option contract lookup unavailable")).toBeVisible();
   expect(legacyOptionBarsRequests).toHaveLength(0);
@@ -835,7 +916,7 @@ test("Flow inspection keeps the chart frame visible for empty option history", a
   await mockFlowApi(page, { emptyOptionBars: true });
   await openFlow(page);
 
-  await page.getByTestId("flow-tape-row").first().click();
+  await clickFlowTapeRow(page);
   await expect(page.getByText("No option trades in this window")).toBeVisible();
   await expect(page.getByTestId("flow-inspection-option-chart")).toBeVisible();
   await expect(page.getByTestId("flow-inspection-option-chart-surface")).toBeVisible();

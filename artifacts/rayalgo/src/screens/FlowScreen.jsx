@@ -15,6 +15,8 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Ban,
+  ChartCandlestick,
   Columns3,
   Copy,
   ExternalLink,
@@ -23,6 +25,7 @@ import {
   Pin,
   PinOff,
   Play,
+  Send,
   SlidersHorizontal,
 } from "lucide-react";
 import { useGetNews } from "@workspace/api-client-react";
@@ -89,6 +92,12 @@ import {
   DEFAULT_FLOW_SCANNER_CONFIG,
   formatFlowScannerModeLabel,
 } from "../features/platform/marketFlowScannerConfig";
+import {
+  appendFlowExcludeTicker,
+  buildFlowRowActions,
+  getFlowEventTicker,
+} from "../features/platform/flowActionModel";
+import { useToast } from "../features/platform/platformContexts.jsx";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import {
   FLOW_BUILT_IN_PRESETS,
@@ -166,8 +175,32 @@ const FLOW_FIXED_COLUMNS = Object.freeze([
   { id: "strike", label: "STRIKE", width: "64px" },
   { id: "otmPercent", label: "% OTM", width: "58px" },
   { id: "mark", label: "MARK", width: "62px" },
-  { id: "actions", label: "ACTIONS", width: "76px" },
+  { id: "actions", label: "ACTIONS", width: "146px" },
 ]);
+const FLOW_ROW_ACTION_TONES = Object.freeze({
+  accent: T.accent,
+  bad: T.red,
+  good: T.green,
+  info: T.cyan,
+  muted: T.textDim,
+  warn: T.amber,
+});
+const FLOW_ROW_ACTION_TEST_IDS = Object.freeze({
+  copy_contract: "flow-action-copy-contract",
+  inspect_option: "flow-action-chart-option",
+  mute_ticker: "flow-action-mute-ticker",
+  open_underlying: "flow-action-open-underlying",
+  pin: "flow-action-pin",
+  send_to_ticket: "flow-action-send-ticket",
+});
+const getFlowRowActionIcon = (action) => {
+  if (action.id === "inspect_option") return ChartCandlestick;
+  if (action.id === "open_underlying") return ExternalLink;
+  if (action.id === "send_to_ticket") return Send;
+  if (action.id === "copy_contract") return Copy;
+  if (action.id === "mute_ticker") return Ban;
+  return action.active ? PinOff : Pin;
+};
 
 const getMergedFlowEventKey = (event) =>
   event?.id ||
@@ -730,6 +763,7 @@ const FlowOverviewPanel = ({
   onLinkedWorkspaceGroupChange,
   onLinkedContextChange,
 }) => {
+  const toast = useToast();
   const { preferences: userPreferences } = useUserPreferences();
   const appTimeZoneLabel = getAppTimeZoneLabel(userPreferences);
   const formatFlowAppTime = useCallback(
@@ -1302,8 +1336,12 @@ const FlowOverviewPanel = ({
     .filter((column) => column && visibleColumns.includes(column.id));
   const tapeColumns = [...FLOW_FIXED_COLUMNS, ...orderedOptionalColumns];
   const tapeGridTemplate = tapeColumns.map((column) => column.width).join(" ");
+  const fixedColumnsWidth = FLOW_FIXED_COLUMNS.reduce((sum, column) => {
+    const width = Number.parseInt(column.width, 10);
+    return sum + (Number.isFinite(width) ? width : 0);
+  }, 0);
   const tapeTableMinWidth = dim(
-    472 +
+    fixedColumnsWidth +
       orderedOptionalColumns.reduce((sum, column) => {
         const width = Number.parseInt(column.width, 10);
         return sum + (Number.isFinite(width) ? width : 72);
@@ -1766,20 +1804,6 @@ const FlowOverviewPanel = ({
     }, 1400);
   }, []);
 
-  const handleCopyContract = (event, contractEvent) => {
-    event.stopPropagation();
-    const contractLabel = getFlowContractLabel(contractEvent);
-    showCopiedStatus(contractEvent.id);
-    void writeFlowContractToClipboard(contractLabel).catch(() => {});
-  };
-
-  const handleTogglePinned = (event, contractEvent) => {
-    event.stopPropagation();
-    setPinnedEventId((current) =>
-      current === contractEvent.id ? null : contractEvent.id,
-    );
-  };
-
   const updateFlowTapeFilters = useCallback((patch, { clearPreset = true } = {}) => {
     setActiveScanId(null);
     setFlowTapeFilterState({
@@ -1787,6 +1811,57 @@ const FlowOverviewPanel = ({
       ...(clearPreset ? { activeFlowPresetId: null } : {}),
     });
   }, []);
+
+  const handleFlowRowAction = useCallback(
+    (event, actionId, contractEvent) => {
+      event.stopPropagation();
+      if (!contractEvent) return;
+
+      if (actionId === "inspect_option") {
+        setSelectedEvt(contractEvent);
+        return;
+      }
+      if (actionId === "open_underlying") {
+        onJumpToTrade?.(contractEvent, { mode: "underlying" });
+        return;
+      }
+      if (actionId === "send_to_ticket") {
+        onJumpToTrade?.(contractEvent, { mode: "ticket" });
+        return;
+      }
+      if (actionId === "copy_contract") {
+        const contractLabel = getFlowContractLabel(contractEvent);
+        showCopiedStatus(contractEvent.id);
+        void writeFlowContractToClipboard(contractLabel).catch(() => {});
+        return;
+      }
+      if (actionId === "pin") {
+        setPinnedEventId((current) =>
+          current === contractEvent.id ? null : contractEvent.id,
+        );
+        return;
+      }
+      if (actionId === "mute_ticker") {
+        const ticker = getFlowEventTicker(contractEvent);
+        if (!ticker) return;
+        const nextExcludeQuery = appendFlowExcludeTicker(excludeQuery, ticker);
+        updateFlowTapeFilters({ excludeQuery: nextExcludeQuery });
+        toast.push({
+          kind: "info",
+          title: `${ticker} muted`,
+          body: "Flow filters now exclude this ticker. Clear the exclude filter to restore it.",
+          duration: 2600,
+        });
+      }
+    },
+    [
+      excludeQuery,
+      onJumpToTrade,
+      showCopiedStatus,
+      toast,
+      updateFlowTapeFilters,
+    ],
+  );
 
   const markScannerEdited = () => {
     setActiveScanId(null);
@@ -2330,6 +2405,13 @@ const FlowOverviewPanel = ({
     if (columnId === "actions") {
       const isPinned = pinnedEventId === event.id;
       const copied = copiedEventId === event.id;
+      const ticker = getFlowEventTicker(event);
+      const actions = buildFlowRowActions({
+        event,
+        isCopied: copied,
+        isMuted: ticker ? excludeTokens.includes(ticker) : false,
+        isPinned,
+      });
       return (
         <div
           style={{
@@ -2339,66 +2421,38 @@ const FlowOverviewPanel = ({
             gap: sp(2),
           }}
         >
-          <AppTooltip content={isPinned ? "Unpin row" : "Pin row"}><button
-            type="button"
-            aria-label={isPinned ? "Unpin flow row" : "Pin flow row"}
-            onClick={(clickEvent) => handleTogglePinned(clickEvent, event)}
-            style={{
-              width: dim(22),
-              height: dim(22),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: `1px solid ${isPinned ? T.amber : T.border}`,
-              background: isPinned ? `${T.amber}18` : T.bg2,
-              color: isPinned ? T.amber : T.textDim,
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
-          </button></AppTooltip>
-          <AppTooltip content={copied ? "Copied" : "Copy contract"}><button
-            type="button"
-            aria-label="Copy flow contract"
-            onClick={(clickEvent) => handleCopyContract(clickEvent, event)}
-            style={{
-              width: dim(22),
-              height: dim(22),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: `1px solid ${copied ? T.green : T.border}`,
-              background: copied ? `${T.green}18` : T.bg2,
-              color: copied ? T.green : T.textDim,
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            <Copy size={12} />
-          </button></AppTooltip>
-          <AppTooltip content="Open in Trade"><button
-            type="button"
-            aria-label="Open flow row in Trade"
-            onClick={(clickEvent) => {
-              clickEvent.stopPropagation();
-              onJumpToTrade?.(event);
-            }}
-            style={{
-              width: dim(22),
-              height: dim(22),
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: `1px solid ${T.border}`,
-              background: T.bg2,
-              color: T.textDim,
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            <ExternalLink size={12} />
-          </button></AppTooltip>
+          {actions.map((action) => {
+            const Icon = getFlowRowActionIcon(action);
+            const color = FLOW_ROW_ACTION_TONES[action.tone] || T.textDim;
+            return (
+              <AppTooltip key={action.id} content={action.label}><button
+                type="button"
+                data-testid={FLOW_ROW_ACTION_TEST_IDS[action.id]}
+                aria-label={action.ariaLabel}
+                disabled={action.disabled}
+                onClick={(clickEvent) =>
+                  handleFlowRowAction(clickEvent, action.id, event)
+                }
+                style={{
+                  width: dim(22),
+                  height: dim(22),
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: `1px solid ${
+                    action.active ? `${color}66` : T.border
+                  }`,
+                  background: action.active ? `${color}18` : T.bg2,
+                  color: action.disabled ? T.textMuted : color,
+                  cursor: action.disabled ? "not-allowed" : "pointer",
+                  opacity: action.disabled ? 0.45 : 1,
+                  padding: 0,
+                }}
+              >
+                <Icon size={12} />
+              </button></AppTooltip>
+            );
+          })}
         </div>
       );
     }
@@ -2881,6 +2935,7 @@ const FlowOverviewPanel = ({
         key={event.id}
         data-testid="flow-row-card"
         data-flow-row-new={isNewRow ? "true" : "false"}
+        data-flow-row-ticker={getFlowEventTicker(event)}
         role="button"
         tabIndex={0}
         onClick={() =>
@@ -4013,6 +4068,7 @@ const FlowOverviewPanel = ({
                                   key={event.id}
                                   data-testid="flow-tape-row"
                                   data-flow-row-new={isNewRow ? "true" : "false"}
+                                  data-flow-row-ticker={getFlowEventTicker(event)}
                                   className={joinMotionClasses(
                                     isNewRow && "ra-row-enter",
                                     "ra-interactive",

@@ -1370,6 +1370,22 @@ export const resolveZoomedVisibleRange = ({
   };
 };
 
+export const resolveWheelZoomFactor = (
+  deltaY: number,
+  {
+    zoomInFactor = 0.8,
+    zoomOutFactor = 1.25,
+  }: {
+    zoomInFactor?: number;
+    zoomOutFactor?: number;
+  } = {},
+): number | null => {
+  if (!Number.isFinite(deltaY) || Math.abs(deltaY) < 1) {
+    return null;
+  }
+  return deltaY < 0 ? zoomInFactor : zoomOutFactor;
+};
+
 export const isVisibleRangeNearRealtime = ({
   visibleRange,
   barCount,
@@ -3974,6 +3990,15 @@ export const ResearchChartSurface = ({
   const viewportSnapshotChangeRef = useRef(onViewportSnapshotChange);
   const lastUserViewportIntentAtRef = useRef(0);
   const lastWheelViewportIntentAtRef = useRef(0);
+  const wheelZoomFallbackIntentRef = useRef<{
+    at: number;
+    beforeSignature: string;
+  } | null>(null);
+  const lastWheelNativeRangeRef = useRef<{
+    at: number;
+    beforeSignature: string;
+    visibleRange: VisibleLogicalRange;
+  } | null>(null);
   const viewportPointerActiveRef = useRef(false);
   const lastPlotViewportIntentAtRef = useRef(0);
   const lastPlotResizeAtRef = useRef(0);
@@ -4369,10 +4394,23 @@ export const ResearchChartSurface = ({
         viewportPointerActiveRef.current = true;
       } else if (mode === "wheel") {
         lastWheelViewportIntentAtRef.current = now;
+        const wheelRange =
+          normalizeVisibleLogicalRange(
+            chartRef.current?.timeScale?.().getVisibleLogicalRange?.(),
+          ) ||
+          normalizeVisibleLogicalRange(visibleLogicalRangeRef.current) ||
+          normalizeVisibleLogicalRange(model.defaultVisibleLogicalRange);
+        if (wheelRange) {
+          wheelZoomFallbackIntentRef.current = {
+            at: now,
+            beforeSignature: buildVisibleRangeSignature(wheelRange),
+          };
+          lastWheelNativeRangeRef.current = null;
+        }
       }
       return true;
     },
-    [],
+    [model.defaultVisibleLogicalRange],
   );
 
   useEffect(() => {
@@ -4386,6 +4424,7 @@ export const ResearchChartSurface = ({
         clientX: event.clientX,
         clientY: event.clientY,
       });
+      scheduleWheelZoomFallback(event);
     };
     const handleNativePointerDown = (event: globalThis.PointerEvent) => {
       markUserViewportIntent(event.target, "pointer", {
@@ -5173,6 +5212,22 @@ export const ResearchChartSurface = ({
         const wheelIntent =
           Date.now() - lastWheelViewportIntentAtRef.current <=
           USER_VIEWPORT_INTENT_WINDOW_MS;
+        if (wheelIntent && normalizedRange) {
+          const wheelFallbackIntent = wheelZoomFallbackIntentRef.current;
+          const rangeSignature = buildVisibleRangeSignature(normalizedRange);
+          if (
+            !wheelFallbackIntent ||
+            rangeSignature !== wheelFallbackIntent.beforeSignature
+          ) {
+            if (wheelFallbackIntent) {
+              lastWheelNativeRangeRef.current = {
+                at: wheelFallbackIntent.at,
+                beforeSignature: wheelFallbackIntent.beforeSignature,
+                visibleRange: normalizedRange,
+              };
+            }
+          }
+        }
         const userIntent =
           (viewportPointerActiveRef.current ||
             Boolean(plotPanRef.current) ||
@@ -6539,11 +6594,109 @@ export const ResearchChartSurface = ({
     chartRef.current?.timeScale?.().scrollToRealTime?.();
     clearRememberedViewport(null);
   };
+  // Lightweight Charts can occasionally emit an unchanged wheel range or snap it back;
+  // keep the wheel viewport user-owned by replaying the native range or a single fallback zoom.
+  function scheduleWheelZoomFallback(event: {
+    target: EventTarget | null;
+    clientX: number;
+    clientY: number;
+    deltaY: number;
+  }) {
+    if (
+      !enableInteractions ||
+      drawMode ||
+      isChartControlEventTarget(event.target)
+    ) {
+      return;
+    }
+
+    const chart = chartRef.current;
+    const container = containerRef.current;
+    const factor = resolveWheelZoomFactor(event.deltaY);
+    if (!chart || !container || !factor || typeof window === "undefined") {
+      return;
+    }
+    const wheelIntentAt = lastWheelViewportIntentAtRef.current;
+
+    const rect = container.getBoundingClientRect();
+    const priceScaleWidth = chart.priceScale?.("right", 0)?.width?.() || 0;
+    const insidePlot = isPointInsideRect({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+    });
+    const insideRightPriceScale = isPointInsideRightPriceScale({
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+      priceScaleWidth,
+    });
+    if (!insidePlot || insideRightPriceScale) {
+      return;
+    }
+
+    const beforeRange =
+      normalizeVisibleLogicalRange(
+        chart.timeScale?.().getVisibleLogicalRange?.(),
+      ) ||
+      normalizeVisibleLogicalRange(visibleLogicalRangeRef.current) ||
+      normalizeVisibleLogicalRange(model.defaultVisibleLogicalRange);
+    if (!beforeRange) {
+      return;
+    }
+    const beforeSignature = buildVisibleRangeSignature(beforeRange);
+    wheelZoomFallbackIntentRef.current = {
+      at: wheelIntentAt,
+      beforeSignature,
+    };
+    const applyFallback = () => {
+      const currentIntent = wheelZoomFallbackIntentRef.current;
+      if (
+        !currentIntent ||
+        currentIntent.at !== wheelIntentAt ||
+        currentIntent.beforeSignature !== beforeSignature
+      ) {
+        return;
+      }
+      const activeRange =
+        normalizeVisibleLogicalRange(
+          chartRef.current?.timeScale?.().getVisibleLogicalRange?.(),
+        ) ||
+        normalizeVisibleLogicalRange(visibleLogicalRangeRef.current) ||
+        beforeRange;
+      if (
+        !activeRange ||
+        buildVisibleRangeSignature(activeRange) !== beforeSignature
+      ) {
+        return;
+      }
+
+      const nativeRange = lastWheelNativeRangeRef.current;
+      if (
+        nativeRange?.at === wheelIntentAt &&
+        nativeRange.beforeSignature === beforeSignature
+      ) {
+        setAdjustedVisibleRange(nativeRange.visibleRange);
+        return;
+      }
+
+      setAdjustedVisibleRange(
+        resolveZoomedVisibleRange({
+          currentRange: activeRange,
+          factor,
+        }),
+      );
+    };
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(applyFallback);
+    });
+  }
   const handleRootWheelCapture = (event: WheelEvent<HTMLDivElement>) => {
     markUserViewportIntent(event.target, "wheel", {
       clientX: event.clientX,
       clientY: event.clientY,
     });
+    scheduleWheelZoomFallback(event);
   };
   const handleRootClickCapture = (event: MouseEvent<HTMLDivElement>) => {
     if (isChartControlEventTarget(event.target)) {

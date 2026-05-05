@@ -93,6 +93,9 @@ import {
 import {
   normalizeSignalMonitorTimeframe,
 } from "./marketActivityLaneModel";
+import {
+  getFlowEventOptionCp,
+} from "./flowActionModel";
 import { publishMarketAlertsSnapshot } from "./marketAlertsStore";
 import {
   publishSignalMonitorSnapshot,
@@ -1871,25 +1874,45 @@ export default function PlatformApp() {
     });
   }, [activeWatchlist, reorderWatchlistMutation]);
 
-  // Jump to Trade tab from Flow drawer with a contract preloaded
-  const handleJumpToTradeFromFlow = useCallback((evt) => {
-    const ticker = evt.ticker?.toUpperCase?.() || evt.ticker;
+  // Jump to Trade tab from Flow with either the underlying chart or the contract ticket preloaded.
+  const handleJumpToTradeFromFlow = useCallback((evt, options = {}) => {
+    const ticker = normalizeTickerSymbol(
+      evt?.ticker || evt?.underlying || evt?.symbol,
+    );
     if (!ticker) return;
+    const mode = options?.mode === "underlying" ? "underlying" : "ticket";
+    const cp = getFlowEventOptionCp(evt);
+    const contract =
+      mode === "ticket"
+        ? {
+            strike: evt?.strike,
+            cp: cp || "C",
+            exp: formatExpirationLabel(evt?.expirationDate || evt?.exp),
+            providerContractId: evt?.providerContractId || null,
+            optionTicker: evt?.optionTicker || evt?.contract || null,
+          }
+        : null;
 
     ensureTradeTickerInfo(ticker, ticker);
     broadcastLinkedWorkspace({
       sourcePanel: "flow",
       symbol: ticker,
       updatedAt: new Date().toISOString(),
-    }, {
-      contract: {
-        strike: evt.strike,
-        cp: evt.cp,
-        exp: formatExpirationLabel(evt.expirationDate || evt.exp),
-      },
-    });
+    }, contract ? { contract } : {});
     setScreen("trade");
-  }, [broadcastLinkedWorkspace]);
+    pushToast({
+      title:
+        mode === "underlying"
+          ? `${ticker} chart opened from Flow`
+          : `${ticker} flow contract sent to Trade`,
+      body:
+        mode === "underlying"
+          ? "Trade is focused on the underlying equity chart."
+          : "Trade preloaded the flow contract in the selected option context.",
+      kind: "info",
+      duration: 2400,
+    });
+  }, [broadcastLinkedWorkspace, pushToast]);
 
   const handleJumpToTradeFromSignalOptionsCandidate = useCallback((candidate) => {
     const ticker = candidate?.symbol?.toUpperCase?.() || candidate?.symbol;
