@@ -84,6 +84,25 @@ const persistFlowTapeFilterState = (state) => {
 const normalizeOptionalString = (value) =>
   typeof value === "string" ? value : value == null ? "" : String(value);
 
+const normalizeFlowPresetSymbol = (value) =>
+  value?.trim?.().toUpperCase?.() || "";
+
+const normalizeFlowPresetSymbolSet = (symbols = []) =>
+  new Set(
+    (Array.isArray(symbols) ? symbols : Array.from(symbols || []))
+      .map((symbol) => normalizeFlowPresetSymbol(symbol))
+      .filter(Boolean),
+  );
+
+const getFlowPresetEventTicker = (event) =>
+  normalizeFlowPresetSymbol(
+    event?.ticker ||
+      event?.underlying ||
+      event?.underlyingSymbol ||
+      event?.symbol ||
+      "",
+  );
+
 const normalizeMinPremium = (value) => {
   const parsed = typeof value === "string" ? Number(value) : value;
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 0;
@@ -188,6 +207,31 @@ const hasHeldPositionSignal = (event) =>
       event?.positionOpen ||
       event?.positionQuantity,
   );
+
+export const decorateFlowEventsWithPresetContext = (
+  events = [],
+  { earningsSymbols = [], positionSymbols = [] } = {},
+) => {
+  const earningsSet = normalizeFlowPresetSymbolSet(earningsSymbols);
+  const positionSet = normalizeFlowPresetSymbolSet(positionSymbols);
+  if (!earningsSet.size && !positionSet.size) {
+    return Array.isArray(events) ? events : [];
+  }
+
+  return (Array.isArray(events) ? events : []).map((event) => {
+    const ticker = getFlowPresetEventTicker(event);
+    if (!ticker) return event;
+    const patch = {};
+    if (earningsSet.has(ticker) && !hasEarningsWeekSignal(event)) {
+      patch.earningsSoon = true;
+      patch.earningsWithinDays = 7;
+    }
+    if (positionSet.has(ticker) && !hasHeldPositionSignal(event)) {
+      patch.heldPosition = true;
+    }
+    return Object.keys(patch).length ? { ...event, ...patch } : event;
+  });
+};
 
 export const flowEventMatchesBuiltInPreset = (
   presetId,

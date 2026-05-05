@@ -103,9 +103,12 @@ async function mockFlowApi(
   page: Page,
   options: {
     emptyOptionBars?: boolean;
+    earningsEntries?: unknown[];
     invalidFirstProviderContractId?: boolean;
     missingFirstProviderContractId?: boolean;
     onFlowEventsRequest?: (url: URL) => void;
+    positions?: unknown[];
+    researchConfigured?: boolean;
     resolveContractFailure?: boolean;
     skipChainMatch?: boolean;
   } = {},
@@ -116,16 +119,42 @@ async function mockFlowApi(
 
     if (url.pathname === "/api/session") {
       body = {
-        configured: { ibkr: false, research: false },
-        ibkrBridge: {
-          authenticated: false,
-          connected: false,
-          liveMarketDataAvailable: false,
-          transport: "client-portal",
+        configured: {
+          ibkr: Boolean(options.positions?.length),
+          research: Boolean(options.researchConfigured),
         },
+        ibkrBridge: options.positions?.length
+          ? {
+              authenticated: true,
+              connected: true,
+              healthFresh: true,
+              selectedAccountId: "DU123",
+              accounts: [{ accountId: "DU123" }],
+              liveMarketDataAvailable: true,
+              transport: "client-portal",
+            }
+          : {
+              authenticated: false,
+              connected: false,
+              liveMarketDataAvailable: false,
+              transport: "client-portal",
+            },
         environment: "paper",
         marketDataProviders: {},
       };
+    } else if (url.pathname === "/api/accounts") {
+      body = {
+        accounts: options.positions?.length
+          ? [{ id: "DU123", accountId: "DU123", label: "Mock account" }]
+          : [],
+      };
+    } else if (url.pathname === "/api/positions") {
+      body = { positions: options.positions || [] };
+    } else if (
+      url.pathname.startsWith("/api/accounts/") &&
+      url.pathname.endsWith("/positions")
+    ) {
+      body = { positions: options.positions || [] };
     } else if (url.pathname === "/api/diagnostics/runtime") {
       body = {
         ibkr: {
@@ -335,7 +364,7 @@ async function mockFlowApi(
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
-      body = { entries: [] };
+      body = { entries: options.earningsEntries || [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
       body = {
         id: "mock-signal-monitor-profile",
@@ -701,6 +730,36 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
     )
     .toBe(false);
   await expectNoDocumentOverflow(page);
+});
+
+test("Flow earnings and held-position presets use app state when flow rows lack flags", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  await mockFlowApi(page, {
+    researchConfigured: true,
+    earningsEntries: [{ symbol: "QQQ", date: tomorrow, time: "amc" }],
+    positions: [{ id: "pos-spy", symbol: "SPY", quantity: 10 }],
+  });
+  await openFlow(page);
+
+  const visibleTickers = () =>
+    page.getByTestId("flow-tape-row").evaluateAll((rows) => [
+      ...new Set(
+        rows
+          .map((row) => row.getAttribute("data-flow-row-ticker"))
+          .filter(Boolean),
+      ),
+    ]);
+
+  await page.getByTestId("flow-built-in-preset-held-positions").click();
+  await expect.poll(visibleTickers).toEqual(["SPY"]);
+
+  await page.getByTestId("flow-built-in-preset-earnings-week").click();
+  await expect.poll(visibleTickers).toEqual(["QQQ"]);
 });
 
 test("Flow row action rail charts options and mutes tickers", async ({ page }) => {

@@ -28,7 +28,11 @@ import {
   Send,
   SlidersHorizontal,
 } from "lucide-react";
-import { useGetNews } from "@workspace/api-client-react";
+import {
+  useGetNews,
+  useGetResearchEarningsCalendar,
+  useListPositions,
+} from "@workspace/api-client-react";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   setFlowScannerControlState,
@@ -70,6 +74,7 @@ import {
   fmtCompactNumber,
   fmtM,
   formatExpirationLabel,
+  formatIsoDate,
   formatRelativeTimeShort,
   isFiniteNumber,
   mapNewsSentimentToScore,
@@ -105,11 +110,16 @@ import {
   FLOW_MIN_PREMIUM_OPTIONS,
   FLOW_TAPE_FILTER_OPTIONS,
   buildFlowTapePresetPatch,
+  decorateFlowEventsWithPresetContext,
   flowEventMatchesBuiltInPreset,
   getFlowBuiltInPreset,
   setFlowTapeFilterState,
   useFlowTapeFilterState,
 } from "../features/platform/flowFilterStore";
+import {
+  buildWatchlistEarningsSymbols,
+  buildWatchlistPositionSymbols,
+} from "../features/platform/watchlistModel";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import {
   classifyFlowSentiment,
@@ -1002,6 +1012,67 @@ const FlowOverviewPanel = ({
     return () => clearTimeout(timeoutId);
   }, [activateNews, isVisible]);
 
+  const environment = session?.environment || "paper";
+  const researchConfigured = Boolean(session?.configured?.research);
+  const brokerAuthenticated = Boolean(
+    session?.ibkrBridge?.authenticated &&
+      session?.ibkrBridge?.healthFresh !== false,
+  );
+  const primaryAccountId =
+    session?.ibkrBridge?.selectedAccountId ||
+    session?.ibkrBridge?.accounts?.[0]?.accountId ||
+    null;
+  const flowPresetCalendarWindow = useMemo(() => {
+    const from = new Date();
+    const to = new Date(from);
+    to.setUTCDate(to.getUTCDate() + 14);
+    return {
+      from: formatIsoDate(from),
+      to: formatIsoDate(to),
+    };
+  }, []);
+  const flowPresetEarningsQuery = useGetResearchEarningsCalendar(
+    flowPresetCalendarWindow,
+    {
+      query: {
+        enabled: Boolean(
+          isVisible &&
+            researchConfigured &&
+            flowPresetCalendarWindow.from &&
+            flowPresetCalendarWindow.to,
+        ),
+        staleTime: 300_000,
+        refetchInterval: isVisible ? 300_000 : false,
+        retry: false,
+      },
+    },
+  );
+  const flowPresetEarningsSymbols = useMemo(
+    () =>
+      buildWatchlistEarningsSymbols(flowPresetEarningsQuery.data?.entries || [], {
+        horizonDays: 14,
+      }),
+    [flowPresetEarningsQuery.data],
+  );
+  const flowPresetPositionsQuery = useListPositions(
+    primaryAccountId
+      ? { accountId: primaryAccountId, mode: environment }
+      : { mode: environment },
+    {
+      query: {
+        enabled: Boolean(isVisible && brokerAuthenticated && primaryAccountId),
+        staleTime: 30_000,
+        refetchInterval: false,
+        retry: false,
+      },
+    },
+  );
+  const flowPresetPositionSymbols = useMemo(
+    () =>
+      buildWatchlistPositionSymbols(flowPresetPositionsQuery.data?.positions || []),
+    [flowPresetPositionsQuery.data],
+  );
+
   const sharedFlowSnapshot = useMarketFlowSnapshot(symbols, {
     subscribe: isVisible && !livePaused,
   });
@@ -1077,13 +1148,18 @@ const FlowOverviewPanel = ({
   } = flowSnapshot;
 
   const flowEvents = useMemo(
-    () =>
-      rawFlowEvents.map((event) => ({
+    () => {
+      const normalizedEvents = rawFlowEvents.map((event) => ({
         ...event,
         mark: resolveFlowMark(event),
         otmPercent: resolveFlowOtmPercent(event),
-      })),
-    [rawFlowEvents],
+      }));
+      return decorateFlowEventsWithPresetContext(normalizedEvents, {
+        earningsSymbols: flowPresetEarningsSymbols,
+        positionSymbols: flowPresetPositionSymbols,
+      });
+    },
+    [flowPresetEarningsSymbols, flowPresetPositionSymbols, rawFlowEvents],
   );
 
   useEffect(() => {

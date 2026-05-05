@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   FLOW_BUILT_IN_PRESETS,
   buildFlowTapePresetPatch,
+  decorateFlowEventsWithPresetContext,
   flowEventMatchesBuiltInPreset,
   getFlowTapeFilterState,
   normalizeFlowTapeFilterState,
@@ -164,4 +165,23 @@ test("flowEventMatchesBuiltInPreset evaluates scanner preset semantics", () => {
     }),
     false,
   );
+});
+
+test("decorateFlowEventsWithPresetContext wires app state into preset semantics", () => {
+  const [earningsEvent, heldEvent, untouchedEvent] = decorateFlowEventsWithPresetContext(
+    [
+      { id: "earnings", ticker: "SPY" },
+      { id: "held", underlying: "NVDA" },
+      { id: "other", ticker: "AAPL" },
+    ],
+    {
+      earningsSymbols: ["spy"],
+      positionSymbols: new Set(["nvda"]),
+    },
+  );
+
+  assert.equal(flowEventMatchesBuiltInPreset("earnings-week", earningsEvent), true);
+  assert.equal(flowEventMatchesBuiltInPreset("held-positions", heldEvent), true);
+  assert.equal(flowEventMatchesBuiltInPreset("earnings-week", untouchedEvent), false);
+  assert.equal(flowEventMatchesBuiltInPreset("held-positions", untouchedEvent), false);
 });
