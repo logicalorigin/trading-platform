@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 test.setTimeout(90_000);
 test.describe.configure({ mode: "serial" });
@@ -195,6 +195,7 @@ async function mockShellApi(
     diagnosticsHistoryRequests = [],
     ibkrReady = false,
     ibkrLineUsageRequests = [],
+    failurePaths = [],
     runtimeLineUsage = null,
     shadowBacktestRequests = [],
   }: {
@@ -204,6 +205,7 @@ async function mockShellApi(
     diagnosticsHistoryRequests?: Array<Record<string, string>>;
     ibkrReady?: boolean;
     ibkrLineUsageRequests?: Array<Record<string, string>>;
+    failurePaths?: string[];
     runtimeLineUsage?: MockMarketDataAdmission | null;
     shadowBacktestRequests?: Array<Record<string, unknown>>;
   } = {},
@@ -213,6 +215,17 @@ async function mockShellApi(
 
     if (url.pathname.includes("/streams/")) {
       await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+
+    if (failurePaths.includes(url.pathname)) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          detail: `Mock unavailable: ${url.pathname}`,
+        }),
+      });
       return;
     }
 
@@ -700,6 +713,39 @@ function collectRuntimeIssues(page: Page) {
   return issues;
 }
 
+async function assertNoDevErrorOverlay(page: Page) {
+  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+  const overlayText = await page.evaluate(() => {
+    const overlaySelectors = [
+      "vite-error-overlay",
+      "[data-vite-error-overlay]",
+      "[data-testid*='error-overlay']",
+      "[class*='runtime-error']",
+      "[id*='runtime-error']",
+    ];
+    const overlayContent = overlaySelectors
+      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+      .map((element) => element.textContent || "")
+      .join("\n");
+    return `${document.body?.innerText || ""}\n${overlayContent}`;
+  });
+  expect(overlayText).not.toMatch(
+    /\[plugin:runtime-error-plugin\]|maximum update depth exceeded|react limits the number of nested updates|failed to compile/i,
+  );
+}
+
+async function attachPhase0Screenshot(
+  page: Page,
+  testInfo: TestInfo,
+  label: string,
+) {
+  await assertNoDevErrorOverlay(page);
+  await testInfo.attach(`phase0-${label}.png`, {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
+}
+
 async function openScreen(page: Page, label: string, screenId: string) {
   const nav = page.getByTestId("platform-screen-nav");
   await nav.getByRole("button", { name: new RegExp(`^${label}`) }).click();
@@ -831,7 +877,7 @@ test("platform shell keeps shared chrome while switching primary screens", async
 
 test("platform pages render page-by-page and keep primary controls interactive", async ({
   page,
-}) => {
+}, testInfo) => {
   const runtimeIssues = collectRuntimeIssues(page);
 
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -846,6 +892,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
   });
   await expect(page.getByTestId("market-chart-grid")).toBeVisible();
   await expect(page.getByTestId("market-activity-panel")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-market");
 
   await openScreen(page, "Flow", "flow");
   await expect(page.getByTestId("flow-main-layout")).toBeVisible();
@@ -853,11 +900,13 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await expect(page.getByTestId("flow-filter-toggle")).toBeVisible();
   await page.getByTestId("flow-column-toggle").click();
   await expect(page.getByTestId("flow-column-drawer")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-flow");
 
   await openScreen(page, "Trade", "trade");
   await expect(page.getByTestId("trade-top-zone")).toBeVisible();
   await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
   await expect(page.getByTestId("trade-options-chain-panel")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-trade");
 
   await openScreen(page, "Account", "account");
   await expect(page.getByTestId("account-screen")).toBeVisible();
@@ -865,6 +914,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await expect(page.getByText("Shadow internal paper")).toBeVisible();
   await page.getByTestId("account-section-real").click();
   await expect(page.getByText("Aggregated real accounts")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-account");
 
   await openScreen(page, "Research", "research");
   await expect(page.getByTestId("research-screen")).toBeVisible();
@@ -878,16 +928,19 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await page.getByTestId("research-view-graph").click();
   await page.getByTestId("research-search-input").fill("NVDA");
   await expect(page.getByText(/match(?:es)?/)).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-research");
 
   await openScreen(page, "Algo", "algo");
   await expect(page.getByTestId("algo-screen")).toBeVisible();
   await expect(page.getByText("Execution Control Plane")).toBeVisible();
   await expect(page.getByText("No promoted draft strategies").first()).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-algo");
 
   await openScreen(page, "Backtest", "backtest");
   await expect(page.getByTestId("backtest-workspace")).toBeVisible();
   await expect(page.getByText("Research Workbench")).toBeVisible();
   await expect(page.getByText("Backtest Inputs")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-backtest");
 
   await openScreen(page, "Diagnostics", "diagnostics");
   await expect(page.getByTestId("diagnostics-screen")).toBeVisible();
@@ -896,6 +949,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await expect(page.getByText("Footer Pressure Signal")).toBeVisible();
   await page.getByTestId("diagnostics-tab-overview").click();
   await expect(page.getByText("API Latency Trend")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-diagnostics");
 
   await openScreen(page, "Settings", "settings");
   await expect(page.getByTestId("settings-screen")).toBeVisible();
@@ -905,6 +959,7 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await page.getByTestId("settings-search-input").fill("");
   await page.getByTestId("settings-tab-workspace").click();
   await expect(page.getByText("Workspace Defaults")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "desktop-settings");
 
   expect(runtimeIssues).toEqual([]);
 });
@@ -923,6 +978,38 @@ test("footer memory indicator stays visible and settings expose footer controls"
   await page.getByTestId("settings-tab-system").click();
   await expect(page.getByText("Footer Memory Signal")).toBeVisible();
   await expect(page.getByText("Pulse threshold")).toBeVisible();
+
+  expect(runtimeIssues).toEqual([]);
+});
+
+test("platform shows contextual degraded states when APIs or broker auth are unavailable", async ({
+  page,
+}, testInfo) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+
+  await disableStreamingSources(page);
+  await mockShellApi(page, {
+    failurePaths: ["/api/settings/backend"],
+  });
+  await page.goto("/");
+
+  await openScreen(page, "Account", "account");
+  await expect(page.getByTestId("account-screen")).toBeVisible();
+  await expect(page.getByText("Setup & Health")).toBeVisible();
+  await expect(page.getByText("Bridge unavailable or not authenticated")).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "degraded-account");
+
+  await openScreen(page, "Market", "market");
+  await expect(page.getByText("No live calendar data")).toBeVisible();
+  await expect(
+    page.getByText("Research calendar access is not configured for this environment."),
+  ).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "degraded-market");
+
+  await openScreen(page, "Settings", "settings");
+  await expect(page.getByTestId("settings-screen")).toBeVisible();
+  await expect(page.getByText(/Mock unavailable: \/api\/settings\/backend/)).toBeVisible();
+  await attachPhase0Screenshot(page, testInfo, "degraded-settings");
 
   expect(runtimeIssues).toEqual([]);
 });
@@ -960,6 +1047,7 @@ test("platform phone layout navigates all primary screens without document overf
   for (const [label, screenId, readyTestId] of screens) {
     await openScreen(page, label, screenId);
     await expect(page.getByTestId(readyTestId)).toBeVisible({ timeout: 30_000 });
+    await assertNoDevErrorOverlay(page);
     const overflow = await page.evaluate(() => ({
       viewportWidth: window.innerWidth,
       scrollWidth: document.documentElement.scrollWidth,
