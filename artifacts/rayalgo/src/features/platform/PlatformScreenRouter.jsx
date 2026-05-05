@@ -50,9 +50,15 @@ export const PlatformScreenRouter = ({
   onJumpToTradeFromSignalOptionsCandidate,
   marketLinkedContext,
   tradeLinkedContext,
+  flowLinkedContext,
+  accountLinkedContext,
+  researchLinkedContext,
   onSetLinkedWorkspacePanelGroup,
   onMarketLinkedContextChange,
   onTradeLinkedContextChange,
+  onFlowLinkedContextChange,
+  onAccountLinkedContextChange,
+  onResearchLinkedContextChange,
   onToggleTheme,
   onToggleSidebar,
 }) => {
@@ -93,6 +99,9 @@ export const PlatformScreenRouter = ({
           symbols={runtimeWatchlistSymbols}
           isVisible={flowScreenActive}
           onJumpToTrade={onJumpToTradeFromFlow}
+          linkedContext={flowLinkedContext}
+          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
+          onLinkedContextChange={onFlowLinkedContextChange}
         />
       );
     case "trade":
@@ -127,6 +136,9 @@ export const PlatformScreenRouter = ({
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "account"}
           onJumpToTrade={onJumpToTradeFromAccount}
+          linkedContext={accountLinkedContext}
+          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
+          onLinkedContextChange={onAccountLinkedContextChange}
         />
       );
     case "research":
@@ -134,6 +146,9 @@ export const PlatformScreenRouter = ({
         <MemoResearchScreen
           isVisible={screen === "research"}
           onJumpToTrade={onJumpToTradeFromResearch}
+          linkedContext={researchLinkedContext}
+          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
+          onLinkedContextChange={onResearchLinkedContextChange}
         />
       );
     case "algo":

@@ -1493,6 +1493,30 @@ export default function PlatformApp() {
       }),
     [linkedWorkspace, sym, tradeSymPing.sym],
   );
+  const flowLinkedContext = useMemo(
+    () =>
+      resolveLinkedWorkspacePanelContext(linkedWorkspace, "flow", {
+        symbol: sym,
+        timeframe: marketLinkedContext.timeframe || "15m",
+      }),
+    [linkedWorkspace, marketLinkedContext.timeframe, sym],
+  );
+  const accountLinkedContext = useMemo(
+    () =>
+      resolveLinkedWorkspacePanelContext(linkedWorkspace, "account", {
+        symbol: sym,
+        timeframe: tradeLinkedContext.timeframe || "5m",
+      }),
+    [linkedWorkspace, sym, tradeLinkedContext.timeframe],
+  );
+  const researchLinkedContext = useMemo(
+    () =>
+      resolveLinkedWorkspacePanelContext(linkedWorkspace, "research", {
+        symbol: sym,
+        timeframe: marketLinkedContext.timeframe || "15m",
+      }),
+    [linkedWorkspace, marketLinkedContext.timeframe, sym],
+  );
   const handleSetLinkedWorkspacePanelGroup = useCallback((panelId, groupId) => {
     let next = setLinkedWorkspacePanelGroup(
       linkedWorkspaceRef.current,
@@ -1821,33 +1845,45 @@ export default function PlatformApp() {
   }, [broadcastLinkedWorkspace]);
 
   const handleAccountJumpToTrade = useCallback((symbol) => {
-    handleSelectSymbol(symbol);
+    const normalized = normalizeTickerSymbol(symbol);
+    if (!normalized) {
+      return;
+    }
+    ensureTradeTickerInfo(normalized, normalized);
+    broadcastLinkedWorkspace({
+      sourcePanel: "account",
+      symbol: normalized,
+      updatedAt: new Date().toISOString(),
+    });
     setScreen("trade");
-  }, [handleSelectSymbol]);
+  }, [broadcastLinkedWorkspace]);
+  const broadcastPanelLinkedContext = useCallback((sourcePanel, { symbol, timeframe }) => {
+    const normalized = normalizeTickerSymbol(symbol);
+    if (!normalized && !timeframe) {
+      return;
+    }
+    broadcastLinkedWorkspace({
+      sourcePanel,
+      symbol: normalized || undefined,
+      timeframe,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [broadcastLinkedWorkspace]);
   const handleTradeLinkedContextChange = useCallback(({ symbol, timeframe }) => {
-    const normalized = normalizeTickerSymbol(symbol);
-    if (!normalized && !timeframe) {
-      return;
-    }
-    broadcastLinkedWorkspace({
-      sourcePanel: "trade",
-      symbol: normalized || undefined,
-      timeframe,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [broadcastLinkedWorkspace]);
+    broadcastPanelLinkedContext("trade", { symbol, timeframe });
+  }, [broadcastPanelLinkedContext]);
   const handleMarketLinkedContextChange = useCallback(({ symbol, timeframe }) => {
-    const normalized = normalizeTickerSymbol(symbol);
-    if (!normalized && !timeframe) {
-      return;
-    }
-    broadcastLinkedWorkspace({
-      sourcePanel: "market",
-      symbol: normalized || undefined,
-      timeframe,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [broadcastLinkedWorkspace]);
+    broadcastPanelLinkedContext("market", { symbol, timeframe });
+  }, [broadcastPanelLinkedContext]);
+  const handleFlowLinkedContextChange = useCallback(({ symbol, timeframe }) => {
+    broadcastPanelLinkedContext("flow", { symbol, timeframe });
+  }, [broadcastPanelLinkedContext]);
+  const handleAccountLinkedContextChange = useCallback(({ symbol, timeframe }) => {
+    broadcastPanelLinkedContext("account", { symbol, timeframe });
+  }, [broadcastPanelLinkedContext]);
+  const handleResearchLinkedContextChange = useCallback(({ symbol, timeframe }) => {
+    broadcastPanelLinkedContext("research", { symbol, timeframe });
+  }, [broadcastPanelLinkedContext]);
 
   const renderScreenById = (screenId) => (
     <PlatformScreenRouter
@@ -1892,9 +1928,15 @@ export default function PlatformApp() {
       }
       marketLinkedContext={marketLinkedContext}
       tradeLinkedContext={tradeLinkedContext}
+      flowLinkedContext={flowLinkedContext}
+      accountLinkedContext={accountLinkedContext}
+      researchLinkedContext={researchLinkedContext}
       onSetLinkedWorkspacePanelGroup={handleSetLinkedWorkspacePanelGroup}
       onMarketLinkedContextChange={handleMarketLinkedContextChange}
       onTradeLinkedContextChange={handleTradeLinkedContextChange}
+      onFlowLinkedContextChange={handleFlowLinkedContextChange}
+      onAccountLinkedContextChange={handleAccountLinkedContextChange}
+      onResearchLinkedContextChange={handleResearchLinkedContextChange}
       onToggleTheme={toggleTheme}
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
     />

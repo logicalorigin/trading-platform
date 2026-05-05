@@ -8,6 +8,7 @@ import {
 } from "../lib/uiTokens";
 import { lazyWithRetry } from "../lib/dynamicImport";
 import { PanelLoadingState } from "../components/platform/primitives.jsx";
+import { WorkspaceLinkChip } from "../features/platform/WorkspaceLinkChip.jsx";
 
 const PhotonicsObservatory = lazyWithRetry(
   () => import("../features/research/PhotonicsObservatory.jsx"),
@@ -40,10 +41,37 @@ const ResearchLoadingFallback = () => (
   </div>
 );
 
-export const ResearchScreen = ({ onJumpToTrade, isVisible = false }) => (
-  <Suspense fallback={<ResearchLoadingFallback />}>
-    <PhotonicsObservatory onJumpToTrade={onJumpToTrade} isVisible={isVisible} />
-  </Suspense>
+export const ResearchScreen = ({
+  onJumpToTrade,
+  isVisible = false,
+  linkedContext = null,
+  onLinkedWorkspaceGroupChange,
+  onLinkedContextChange,
+}) => (
+  <div style={{ position: "relative", height: "100%", minHeight: 0 }}>
+    <div
+      style={{
+        position: "absolute",
+        top: sp(8),
+        right: sp(8),
+        zIndex: 20,
+      }}
+    >
+      <WorkspaceLinkChip
+        panelId="research"
+        context={linkedContext}
+        compact
+        onChangeGroup={onLinkedWorkspaceGroupChange}
+      />
+    </div>
+    <Suspense fallback={<ResearchLoadingFallback />}>
+      <PhotonicsObservatory
+        onJumpToTrade={onJumpToTrade}
+        isVisible={isVisible}
+        onLinkedContextChange={onLinkedContextChange}
+      />
+    </Suspense>
+  </div>
 );
 
 export default ResearchScreen;

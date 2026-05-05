@@ -963,12 +963,20 @@ test("platform pages render page-by-page and keep primary controls interactive",
   });
   await expect(page.getByTestId("market-chart-grid")).toBeVisible();
   await expect(page.getByTestId("market-activity-panel")).toBeVisible();
+  await expect(page.getByTestId("workspace-link-chip-market").first()).toHaveAttribute(
+    "data-linked-workspace-group",
+    "A",
+  );
   await attachPhase0Screenshot(page, testInfo, "desktop-market");
 
   await openScreen(page, "Flow", "flow");
   await expect(page.getByTestId("flow-main-layout")).toBeVisible();
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
   await expect(page.getByTestId("flow-filter-toggle")).toBeVisible();
+  await expect(page.getByTestId("workspace-link-chip-flow")).toHaveAttribute(
+    "data-linked-workspace-group",
+    "A",
+  );
   await page.getByTestId("flow-column-toggle").click();
   await expect(page.getByTestId("flow-column-drawer")).toBeVisible();
   await attachPhase0Screenshot(page, testInfo, "desktop-flow");
@@ -977,10 +985,18 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await expect(page.getByTestId("trade-top-zone")).toBeVisible();
   await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
   await expect(page.getByTestId("trade-options-chain-panel")).toBeVisible();
+  await expect(page.getByTestId("workspace-link-chip-trade")).toHaveAttribute(
+    "data-linked-workspace-group",
+    "A",
+  );
   await attachPhase0Screenshot(page, testInfo, "desktop-trade");
 
   await openScreen(page, "Account", "account");
   await expect(page.getByTestId("account-screen")).toBeVisible();
+  await expect(page.getByTestId("workspace-link-chip-account")).toHaveAttribute(
+    "data-linked-workspace-group",
+    "A",
+  );
   await page.getByTestId("account-section-shadow").click();
   await expect(page.getByText("Shadow internal paper")).toBeVisible();
   await page.getByTestId("account-section-real").click();
@@ -989,6 +1005,10 @@ test("platform pages render page-by-page and keep primary controls interactive",
 
   await openScreen(page, "Research", "research");
   await expect(page.getByTestId("research-screen")).toBeVisible();
+  await expect(page.getByTestId("workspace-link-chip-research")).toHaveAttribute(
+    "data-linked-workspace-group",
+    "A",
+  );
   await expect(page.getByTestId("research-search-input")).toBeEnabled({
     timeout: 30_000,
   });

@@ -336,6 +336,7 @@ export const AccountHeaderStrip = ({
   showCombined = true,
   maskValues = false,
   sectionControl,
+  linkChip = null,
 }) => {
   const metrics = summary?.metrics || {};
   const currency = summary?.currency || accounts[0]?.currency || "USD";
@@ -389,6 +390,7 @@ export const AccountHeaderStrip = ({
         }}
       >
         {sectionControl}
+        {linkChip}
         <AccountSwitcher
           accountId={accountId}
           onAccountIdChange={onAccountIdChange}

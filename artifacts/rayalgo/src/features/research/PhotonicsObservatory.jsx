@@ -4238,6 +4238,7 @@ function ResearchLoadingState({ theme }) {
 export default function PhotonicsObservatory({
   onJumpToTrade,
   isVisible = false,
+  onLinkedContextChange,
 }) {
   const [themeId, setThemeId] = useState("ai");
   const {
@@ -4261,6 +4262,13 @@ export default function PhotonicsObservatory({
   const [showSettings, setShowSettings] = useState(false);
   const graphRef = useRef();
   const detailRef = useRef();
+  useEffect(() => {
+    const symbol = String(sel || "").trim().toUpperCase();
+    if (!symbol) {
+      return;
+    }
+    onLinkedContextChange?.({ symbol });
+  }, [onLinkedContextChange, sel]);
   useRuntimeWorkloadFlag("research:stream", isVisible, {
     kind: "stream",
     label: "Research live quotes",

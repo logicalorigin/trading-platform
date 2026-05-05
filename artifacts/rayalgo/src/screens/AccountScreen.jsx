@@ -20,6 +20,7 @@ import {
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
+import { WorkspaceLinkChip } from "../features/platform/WorkspaceLinkChip.jsx";
 import { RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppDateTime } from "../lib/timeZone";
 import AccountHeaderStrip from "./account/AccountHeaderStrip";
@@ -339,6 +340,9 @@ export const AccountScreen = ({
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   isVisible = false,
   onJumpToTrade,
+  linkedContext = null,
+  onLinkedWorkspaceGroupChange,
+  onLinkedContextChange,
 }) => {
   const queryClient = useQueryClient();
   const { preferences: userPreferences } = useUserPreferences();
@@ -946,6 +950,13 @@ export const AccountScreen = ({
       clearPatternLensFromTradeFilters(current, selectedPatternLens),
     );
   };
+  const handleAccountSymbolSelect = (symbol) => {
+    setTradeFilters((current) => ({
+      ...current,
+      symbol,
+    }));
+    onLinkedContextChange?.({ symbol });
+  };
   const accountSectionControl = (
     <div
       style={{
@@ -1039,6 +1050,14 @@ export const AccountScreen = ({
             showCombined={!shadowMode}
             maskValues={maskAccountValues}
             sectionControl={accountSectionControl}
+            linkChip={
+              <WorkspaceLinkChip
+                panelId="account"
+                context={linkedContext}
+                compact
+                onChangeGroup={onLinkedWorkspaceGroupChange}
+              />
+            }
           />
         </div>
 
@@ -1137,12 +1156,7 @@ export const AccountScreen = ({
           range={range}
           currency={currency}
           maskValues={maskAccountValues}
-          onSymbolSelect={(symbol) =>
-            setTradeFilters((current) => ({
-              ...current,
-              symbol,
-            }))
-          }
+          onSymbolSelect={handleAccountSymbolSelect}
           selectedLens={selectedPatternLens}
           onLensChange={handlePatternLensChange}
           analysis={accountTradingAnalysis}

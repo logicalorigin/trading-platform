@@ -53,6 +53,7 @@ import {
   bridgeRuntimeMessage,
 } from "../features/platform/bridgeRuntimeModel";
 import { normalizeTickerSymbol } from "../features/platform/tickerIdentity";
+import { WorkspaceLinkChip } from "../features/platform/WorkspaceLinkChip.jsx";
 import {
   Badge,
   Card,
@@ -718,6 +719,9 @@ const FlowOverviewPanel = ({
   session,
   symbols = [],
   isVisible = false,
+  linkedContext = null,
+  onLinkedWorkspaceGroupChange,
+  onLinkedContextChange,
 }) => {
   const { preferences: userPreferences } = useUserPreferences();
   const appTimeZoneLabel = getAppTimeZoneLabel(userPreferences);
@@ -749,6 +753,7 @@ const FlowOverviewPanel = ({
     ),
   );
   const [selectedEvt, setSelectedEvt] = useState(null);
+  const lastLinkedSelectionRef = useRef("");
   const [density, setDensity] = useState(
     _initialState.flowDensity || "compact",
   );
@@ -1428,6 +1433,17 @@ const FlowOverviewPanel = ({
       watchlistSymbols[0] ||
       "",
   );
+  useEffect(() => {
+    if (!linkedContext?.linked || !selectedEvt?.ticker) {
+      return;
+    }
+    const symbol = normalizeTickerSymbol(selectedEvt.ticker);
+    if (!symbol || lastLinkedSelectionRef.current === symbol) {
+      return;
+    }
+    lastLinkedSelectionRef.current = symbol;
+    onLinkedContextChange?.({ symbol });
+  }, [linkedContext?.linked, onLinkedContextChange, selectedEvt?.ticker]);
   const selectedTickerEvents = useMemo(
     () =>
       flowEvents.filter(
@@ -4250,9 +4266,23 @@ const FlowOverviewPanel = ({
                 >
                   <CardTitle
                     right={
-                      <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-                        {selectedTickerEvents.length} rows
-                      </span>
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: sp(4),
+                        }}
+                      >
+                        <WorkspaceLinkChip
+                          panelId="flow"
+                          context={linkedContext}
+                          compact
+                          onChangeGroup={onLinkedWorkspaceGroupChange}
+                        />
+                        <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                          {selectedTickerEvents.length} rows
+                        </span>
+                      </div>
                     }
                   >
                     Ticker Flow Lens
@@ -6063,12 +6093,18 @@ export const FlowScreen = ({
   session,
   symbols = [],
   isVisible = false,
+  linkedContext = null,
+  onLinkedWorkspaceGroupChange,
+  onLinkedContextChange,
 }) => (
   <FlowOverviewPanel
     onJumpToTrade={onJumpToTrade}
     session={session}
     symbols={symbols}
     isVisible={isVisible}
+    linkedContext={linkedContext}
+    onLinkedWorkspaceGroupChange={onLinkedWorkspaceGroupChange}
+    onLinkedContextChange={onLinkedContextChange}
   />
 );
 
