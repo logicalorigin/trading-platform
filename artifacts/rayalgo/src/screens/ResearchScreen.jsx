@@ -4,10 +4,10 @@ import {
 import {
   T,
   dim,
-  fs,
   sp,
 } from "../lib/uiTokens";
 import { lazyWithRetry } from "../lib/dynamicImport";
+import { PanelLoadingState } from "../components/platform/primitives.jsx";
 
 const PhotonicsObservatory = lazyWithRetry(
   () => import("../features/research/PhotonicsObservatory.jsx"),
@@ -20,36 +20,23 @@ const ResearchLoadingFallback = () => (
       height: "100%",
       minHeight: dim(240),
       display: "flex",
-      alignItems: "center",
+      alignItems: "stretch",
       justifyContent: "center",
-      gap: sp(10),
+      padding: sp(16),
       background: T.bg0,
       color: T.textDim,
       fontFamily: T.sans,
     }}
   >
-    <style>
-      {"@keyframes researchScreenSpin { to { transform: rotate(360deg); } }"}
-    </style>
-    <span
-      style={{
-        width: dim(20),
-        height: dim(20),
-        borderRadius: "50%",
-        border: `2px solid ${T.border}`,
-        borderTopColor: T.accent,
-        animation: "researchScreenSpin 900ms linear infinite",
-      }}
-    />
-    <span
-      style={{
-        fontSize: fs(11),
-        fontWeight: 700,
-        color: T.textSec,
-      }}
-    >
-      Loading research workspace
-    </span>
+    <div style={{ width: "min(100%, 620px)", alignSelf: "center" }}>
+      <PanelLoadingState
+        testId="research-suspense-loading"
+        title="Loading research workspace"
+        detail="Fetching the authored research shell and theme universe."
+        rows={3}
+        tone={T.accent}
+      />
+    </div>
   </div>
 );
 

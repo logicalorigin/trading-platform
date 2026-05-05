@@ -39,6 +39,7 @@ import {
 } from "../features/preferences/userPreferenceModel";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
+import { PanelLoadingState } from "../components/platform/primitives.jsx";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import { MISSING_VALUE, RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
@@ -2087,9 +2088,13 @@ function SignalMonitorSettingsPanel({ watchlists }) {
           </div>
         )}
         {!draft ? (
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
-            Loading signal monitor profile.
-          </div>
+          <PanelLoadingState
+            testId="signal-monitor-loading-state"
+            title="Loading signal monitor profile"
+            detail="Fetching watchlist scope, scan cadence, and signal freshness settings."
+            rows={3}
+            tone={T.amber}
+          />
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: sp(10) }}>
             <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center" }}>
@@ -2194,10 +2199,22 @@ function ResearchProviderPanel({ backendSnapshot }) {
           {research.error}
         </div>
       )}
-      <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? T.green : T.amber} />
-      <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? T.green : T.amber} />
-      <StateRow label="Market data provider" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? T.green : T.amber} />
-      <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? T.green : T.amber} />
+      {!research.status && !research.error ? (
+        <PanelLoadingState
+          testId="research-provider-loading-state"
+          title="Fetching research provider status"
+          detail="Checking API provider configuration, market-data wiring, and broker availability."
+          rows={3}
+          tone={T.accent}
+        />
+      ) : (
+        <>
+          <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? T.green : T.amber} />
+          <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? T.green : T.amber} />
+          <StateRow label="Market data provider" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? T.green : T.amber} />
+          <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? T.green : T.amber} />
+        </>
+      )}
     </Panel>
   );
 }

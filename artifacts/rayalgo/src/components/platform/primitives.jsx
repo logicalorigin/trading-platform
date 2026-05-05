@@ -94,6 +94,93 @@ export const LoadingSkeletonRows = ({
   </div>
 );
 
+export const PanelLoadingState = ({
+  title = "Loading panel",
+  detail = "Fetching the latest provider state.",
+  rows = 3,
+  tone = T.accent,
+  status = "Loading",
+  testId = "panel-loading-state",
+}) => (
+  <div
+    data-testid={testId}
+    role="status"
+    aria-live="polite"
+    style={{
+      border: `1px dashed ${T.border}`,
+      background: T.bg0,
+      borderRadius: dim(5),
+      padding: sp(10),
+      display: "grid",
+      gap: sp(8),
+      width: "100%",
+      minWidth: 0,
+    }}
+  >
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        gap: sp(10),
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            color: T.textSec,
+            fontFamily: T.mono,
+            fontSize: textSize("bodyStrong"),
+            fontWeight: 900,
+          }}
+        >
+          {title}
+        </div>
+        <div
+          style={{
+            marginTop: sp(3),
+            color: T.textDim,
+            fontFamily: T.mono,
+            fontSize: textSize("caption"),
+            lineHeight: 1.45,
+          }}
+        >
+          {detail}
+        </div>
+      </div>
+      <span
+        style={{
+          padding: sp("2px 7px"),
+          border: `1px solid ${tone}35`,
+          background: `${tone}12`,
+          color: tone,
+          borderRadius: dim(3),
+          fontFamily: T.mono,
+          fontSize: textSize("caption"),
+          fontWeight: 900,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {status}
+      </span>
+    </div>
+    <div style={{ display: "grid", gap: sp(6) }} aria-hidden="true">
+      {Array.from({ length: rows }).map((_, index) => (
+        <div
+          key={index}
+          className="ra-skeleton"
+          style={{
+            height: dim(index === 0 ? 32 : 24),
+            borderRadius: dim(4),
+            border: `1px solid ${T.border}`,
+          }}
+        />
+      ))}
+    </div>
+  </div>
+);
+
 export const DataUnavailableState = ({
   title = "No live data",
   detail = "This panel is waiting on a live provider response.",
