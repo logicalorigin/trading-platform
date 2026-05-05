@@ -303,10 +303,25 @@ export const getChartTimeframeStepMs = (
   timeframe: string | null | undefined,
 ): number => getChartTimeframeDefinition(timeframe)?.stepMs || 0;
 
+const BROKER_LIVE_EDGE_WINDOW_MINUTES_BY_TIMEFRAME: Record<string, number> = {
+  "5s": 60,
+  "15s": 60,
+  "30s": 60,
+  "1m": 240,
+  "2m": 240,
+  "5m": 240,
+  "15m": 720,
+  "30m": 720,
+  "1h": 2_880,
+  "4h": 2_880,
+  "1d": 14_400,
+};
+
 export const getChartBrokerRecentWindowMinutes = (
   timeframe: string | null | undefined,
   limit: number | null | undefined,
 ): number | undefined => {
+  const normalizedTimeframe = normalizeChartTimeframe(timeframe);
   const stepMs = getChartTimeframeStepMs(timeframe);
   const barCount =
     typeof limit === "number" && Number.isFinite(limit)
@@ -316,11 +331,17 @@ export const getChartBrokerRecentWindowMinutes = (
     return undefined;
   }
 
-  // The API defaults to a 60-minute broker live edge when delayed historical
-  // synthesis is configured. Chart callers need a broker window that matches
-  // the requested interval horizon so a successful response cannot hydrate only
-  // the latest candle and leave the rest to delayed history.
-  return Math.max(1, Math.ceil((stepMs * (barCount + 2)) / minuteMs));
+  const requestedHorizonMinutes = Math.max(
+    1,
+    Math.ceil((stepMs * (barCount + 2)) / minuteMs),
+  );
+  const liveEdgeWindowMinutes =
+    BROKER_LIVE_EDGE_WINDOW_MINUTES_BY_TIMEFRAME[normalizedTimeframe] ?? 240;
+
+  // Keep IBKR authoritative for the live edge, but do not ask it to hydrate the
+  // whole chart body. Older candles can fill through the faster historical
+  // provider/cache path while delayed synthesis stays out of the live edge.
+  return Math.max(1, Math.min(requestedHorizonMinutes, liveEdgeWindowMinutes));
 };
 
 export const getChartBaseTimeframe = (

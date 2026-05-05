@@ -275,40 +275,48 @@ test("seconds rollup limits stay under the 5s base cap", () => {
   );
 });
 
-test("chart broker recent windows cover the requested base interval horizon", () => {
-  for (const { value: timeframe } of getChartTimeframeOptions("mini")) {
-    const targetLimit = getChartBarLimit(timeframe, "mini");
-    const baseTimeframe = resolveLocalRollupBaseTimeframe(
-      timeframe,
-      targetLimit,
-      "mini",
-    );
-    const baseLimit = expandLocalRollupLimit(
-      targetLimit,
-      timeframe,
-      baseTimeframe,
-    );
-    const windowMinutes = getChartBrokerRecentWindowMinutes(
-      baseTimeframe,
-      baseLimit,
-    );
-    const horizonMinutes = Math.ceil(
-      (getChartTimeframeStepMs(baseTimeframe) * baseLimit) / 60_000,
-    );
-
-    assert.ok(
-      windowMinutes && windowMinutes >= horizonMinutes,
-      `${timeframe} market charts should ask broker history for the requested base horizon`,
-    );
-    if (horizonMinutes > 60) {
-      assert.ok(
-        windowMinutes > 60,
-        `${timeframe} market charts should not fall back to the API's 60-minute broker clip`,
+test("chart broker recent windows stay bounded to the live edge", () => {
+  for (const role of ["mini", "primary"] as const) {
+    for (const { value: timeframe } of getChartTimeframeOptions(role)) {
+      const targetLimit = getChartBarLimit(timeframe, role);
+      const baseTimeframe = resolveLocalRollupBaseTimeframe(
+        timeframe,
+        targetLimit,
+        role,
       );
+      const baseLimit = expandLocalRollupLimit(
+        targetLimit,
+        timeframe,
+        baseTimeframe,
+      );
+      const windowMinutes = getChartBrokerRecentWindowMinutes(
+        baseTimeframe,
+        baseLimit,
+      );
+      const horizonMinutes = Math.ceil(
+        (getChartTimeframeStepMs(baseTimeframe) * (baseLimit + 2)) / 60_000,
+      );
+
+      assert.ok(
+        windowMinutes && windowMinutes >= 1,
+        `${role} ${timeframe} charts should request a broker live-edge window`,
+      );
+      assert.ok(
+        windowMinutes <= horizonMinutes,
+        `${role} ${timeframe} charts should not request more broker history than the visible horizon`,
+      );
+      if (horizonMinutes > 240) {
+        assert.ok(
+          windowMinutes < horizonMinutes,
+          `${role} ${timeframe} charts should keep older hydration on the historical provider/cache path`,
+        );
+      }
     }
   }
 
-  assert.equal(getChartBrokerRecentWindowMinutes("5m", 900), 4510);
+  assert.equal(getChartBrokerRecentWindowMinutes("5s", 900), 60);
+  assert.equal(getChartBrokerRecentWindowMinutes("5m", 900), 240);
+  assert.equal(getChartBrokerRecentWindowMinutes("5m", 2), 20);
 });
 
 test("rollupMarketBars builds derived candles from base bars", () => {
