@@ -59,6 +59,14 @@ import {
   recordChartHydrationCounter,
   recordChartHydrationMetric,
 } from "./chartHydrationStats";
+import {
+  countChartValueDecimals,
+  formatChartPrice,
+  formatChartSignedPrice,
+  formatCompactChartValue,
+  resolveChartOverlayLabelBudget,
+  resolveChartPricePrecisionForBars,
+} from "./chartNumberFormat";
 
 
 type ResearchChartTheme = {
@@ -2111,17 +2119,6 @@ export const buildChartLegendStudyItems = ({
   }, []);
 };
 
-const formatCompactNumber = (value: number): string => {
-  if (!Number.isFinite(value)) {
-    return "0";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    notation: "compact",
-    maximumFractionDigits: value >= 1_000_000 ? 2 : 1,
-  }).format(value);
-};
-
 const formatLegendTimestamp = (
   value: string,
   preferences: UserPreferences,
@@ -2149,11 +2146,7 @@ const formatLegendSignedNumber = (
   value: number | null | undefined,
   digits = 2,
 ): string => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "—";
-  }
-
-  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
+  return formatChartSignedPrice(value, { precision: digits, missing: "—" });
 };
 
 const formatLegendPercent = (value: number | null | undefined): string => {
@@ -2165,7 +2158,7 @@ const formatLegendPercent = (value: number | null | undefined): string => {
 };
 
 const formatLegendStudyValue = (value: number): string => {
-  const digits = Math.min(4, Math.max(2, countValueDecimals(value)));
+  const digits = Math.min(4, Math.max(2, countChartValueDecimals(value)));
   return formatLegendNumber(value, digits);
 };
 
@@ -2190,39 +2183,6 @@ const formatLegendSourceLabel = (
   }
 
   return fallback || null;
-};
-
-const countValueDecimals = (value: number): number => {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  const text = value.toString().toLowerCase();
-  if (text.includes("e-")) {
-    const [, exponentText = "0"] = text.split("e-");
-    return Number.parseInt(exponentText, 10) || 0;
-  }
-
-  const [, decimals = ""] = text.split(".");
-  return decimals.replace(/0+$/, "").length;
-};
-
-const resolvePricePrecision = (bars: ChartModel["chartBars"]): number => {
-  const maxDecimals = bars.reduce(
-    (result, bar) =>
-      Math.max(
-        result,
-        countValueDecimals(bar.o),
-        countValueDecimals(bar.h),
-        countValueDecimals(bar.l),
-        countValueDecimals(bar.c),
-        countValueDecimals(bar.vwap ?? Number.NaN),
-        countValueDecimals(bar.sessionVwap ?? Number.NaN),
-      ),
-    0,
-  );
-
-  return Math.min(4, Math.max(2, maxDecimals));
 };
 
 const numbersClose = (left: number, right: number, epsilon = 0.5): boolean =>
@@ -5417,7 +5377,9 @@ export const ResearchChartSurface = ({
     const baselineSeries = baselineSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
     const seriesSyncStartedAt = nowMs();
-    const pricePrecision = resolvePricePrecision(model.chartBars);
+    const pricePrecision = resolveChartPricePrecisionForBars(model.chartBars, {
+      compact,
+    });
     const priceFormat = {
       type: "price",
       precision: pricePrecision,
@@ -6386,11 +6348,15 @@ export const ResearchChartSurface = ({
     ? (displayBar.open + displayBar.high + displayBar.low + displayBar.close) /
       4
     : null;
-  const pricePrecision = resolvePricePrecision(model.chartBars);
-  const formatPrice = (value: number | null | undefined): string =>
-    typeof value === "number" && Number.isFinite(value)
-      ? value.toFixed(pricePrecision)
-      : "—";
+  const pricePrecision = resolveChartPricePrecisionForBars(model.chartBars, {
+    compact,
+  });
+  const formatSurfacePrice = (value: number | null | undefined): string =>
+    formatChartPrice(value, {
+      precision: pricePrecision,
+      compact,
+      missing: "—",
+    });
   const deltaColor = (displayDeltaValue ?? 0) >= 0 ? theme.green : theme.red;
   const legendStudies = legend?.studies || EMPTY_LEGEND_STUDIES;
   const selectedLegendStudies =
@@ -7284,6 +7250,21 @@ export const ResearchChartSurface = ({
     model.chartBars.length > 0
       ? model.chartBars[model.chartBars.length - 1]
       : null;
+  const overlayLabelBudgetSource = [
+    ...zoneOverlays,
+    ...boxDrawingOverlays,
+  ].filter((overlay) => Boolean(overlay.label));
+  const overlayLabelBudget = resolveChartOverlayLabelBudget({
+    compact,
+    plotWidth: plotSize.width,
+    plotHeight: plotSize.height,
+    overlayCount: overlayLabelBudgetSource.length,
+  });
+  const visibleOverlayLabelIds = new Set(
+    overlayLabelBudgetSource
+      .slice(0, overlayLabelBudget)
+      .map((overlay) => overlay.id),
+  );
 
   return (
     <div
@@ -7575,7 +7556,7 @@ export const ResearchChartSurface = ({
                       overflow: "visible",
                     }}
                   >
-                    {overlay.label ? (
+                    {overlay.label && visibleOverlayLabelIds.has(overlay.id) ? (
                       <div
                         style={{
                           position: "absolute",
@@ -7641,7 +7622,7 @@ export const ResearchChartSurface = ({
                       opacity: overlay.opacity ?? 1,
                     }}
                   >
-                    {overlay.label ? (
+                    {overlay.label && visibleOverlayLabelIds.has(overlay.id) ? (
                       <div
                         style={{
                           position: "absolute",
@@ -7695,7 +7676,7 @@ export const ResearchChartSurface = ({
                     overflow: "hidden",
                   }}
                 >
-                  {overlay.label ? (
+                  {overlay.label && visibleOverlayLabelIds.has(overlay.id) ? (
                     <div
                       style={{
                         position: "absolute",
@@ -8471,18 +8452,18 @@ export const ResearchChartSurface = ({
               }}
             >
               <span>
-                O <span style={{ color: theme.text }}>{formatPrice(displayBar.open)}</span>
+                O <span style={{ color: theme.text }}>{formatSurfacePrice(displayBar.open)}</span>
               </span>
               <span>
-                H <span style={{ color: theme.green }}>{formatPrice(displayBar.high)}</span>
+                H <span style={{ color: theme.green }}>{formatSurfacePrice(displayBar.high)}</span>
               </span>
               <span>
-                L <span style={{ color: theme.red }}>{formatPrice(displayBar.low)}</span>
+                L <span style={{ color: theme.red }}>{formatSurfacePrice(displayBar.low)}</span>
               </span>
               <span>
                 C{" "}
                 <span style={{ color: theme.text }}>
-                  {formatPrice(displayBar.close)}
+                  {formatSurfacePrice(displayBar.close)}
                 </span>
               </span>
               <span style={{ color: deltaColor }}>
@@ -8495,20 +8476,20 @@ export const ResearchChartSurface = ({
                 <span>
                   Vol{" "}
                   <span style={{ color: theme.text }}>
-                    {formatCompactNumber(displayBar.volume)}
+                    {formatCompactChartValue(displayBar.volume, { missing: "—" })}
                   </span>
                 </span>
               ) : null}
               {!legendCompactMode && displayBar.vwap != null ? (
                 <span>
-                  VWAP <span style={{ color: theme.text }}>{formatPrice(displayBar.vwap)}</span>
+                  VWAP <span style={{ color: theme.text }}>{formatSurfacePrice(displayBar.vwap)}</span>
                 </span>
               ) : null}
               {!legendCompactMode && displayBar.sessionVwap != null ? (
                 <span>
                   SVWAP{" "}
                   <span style={{ color: theme.text }}>
-                    {formatPrice(displayBar.sessionVwap)}
+                    {formatSurfacePrice(displayBar.sessionVwap)}
                   </span>
                 </span>
               ) : null}
@@ -8516,7 +8497,7 @@ export const ResearchChartSurface = ({
                 <span>
                   AV{" "}
                   <span style={{ color: theme.text }}>
-                    {formatCompactNumber(displayBar.accumulatedVolume)}
+                    {formatCompactChartValue(displayBar.accumulatedVolume, { missing: "—" })}
                   </span>
                 </span>
               ) : null}
