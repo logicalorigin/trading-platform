@@ -30,6 +30,7 @@ import {
 } from "../features/charting/timeframes";
 import { RayReplicaSettingsMenu } from "../features/charting/RayReplicaSettingsMenu";
 import { ResearchChartFrame } from "../features/charting/ResearchChartFrame";
+import { ChartHydrationStatusStrip } from "../features/charting/ChartHydrationStatusStrip";
 import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
@@ -37,6 +38,7 @@ import {
 } from "../features/charting/ResearchChartWidgetChrome";
 import { flowEventsToChartEvents } from "../features/charting/chartEvents";
 import { recordChartBarScopeState } from "../features/charting/chartHydrationStats";
+import { resolveChartLoadingStatus } from "../features/charting/chartLoadingStatusModel";
 import { resolveSpotChartFrameLayout } from "../features/charting/spotChartFrameLayout";
 import { useDrawingHistory } from "../features/charting/useDrawingHistory";
 import { useIndicatorLibrary } from "../features/charting/pineScripts";
@@ -901,6 +903,26 @@ const TradeContractDetailPanel = ({
           : chartEmptyReason
             ? chartEmptyReason.replaceAll("-", " ")
             : "no option bars";
+  const optionChartHydrationStatus = resolveChartLoadingStatus({
+    symbol: ticker || "OPTION",
+    timeframe: optionChartTimeframe,
+    providerLabel: statusLabel,
+    statusLabel,
+    renderedBarCount: displayBars.length,
+    hydratedBaseCount: baseBars.length,
+    livePatchedBarCount: Math.max(0, streamedBars.length - baseBars.length),
+    requestedLimit: optionBarsLimit,
+    targetLimit: getChartBarLimit(optionChartTimeframe, "option"),
+    maxLimit: getMaxChartBarLimit(optionChartTimeframe, "option"),
+    isInitialLoading: chartRequestLoading && !displayBars.length,
+    isFetching: chartRequestLoading,
+    isHydratingFullWindow:
+      displayBars.length > 0 &&
+      optionBarsLimit < getChartBarLimit(optionChartTimeframe, "option"),
+    isPrependingOlder,
+    hasExhaustedOlderHistory,
+    emptyReason: chartEmptyReason,
+  });
   const optionChartEmptyCopy = getOptionChartEmptyCopy({
     emptyReason: chartEmptyReason,
     requestFailed: chartRequestFailed,
@@ -1059,6 +1081,14 @@ const TradeContractDetailPanel = ({
             rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
             model={chartModel}
             chartEvents={chartEvents}
+            subHeader={
+              <ChartHydrationStatusStrip
+                compact={false}
+                dataTestId="trade-contract-option-chart-hydration-status"
+                status={optionChartHydrationStatus}
+                theme={T}
+              />
+            }
             drawings={drawings}
             drawMode={drawMode}
             onAddDrawing={addDrawing}

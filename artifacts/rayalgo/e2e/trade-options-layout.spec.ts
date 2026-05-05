@@ -939,6 +939,9 @@ test("Trade switches between ticker tabs without showing the prior ticker", asyn
   await openTrade(page);
 
   const tradeChart = page.getByTestId("trade-equity-chart");
+  await expect(
+    tradeChart.getByTestId("trade-equity-chart-hydration-status"),
+  ).toContainText(/bars|Streaming|Loaded|Hydrating|Fetching/i);
   await expect(tradeChart.getByTestId("chart-symbol-search-button")).toHaveAttribute(
     "title",
     "Search SPY",
@@ -1360,6 +1363,9 @@ test("Trade option chain selects a hydrated conid and renders option chart bars"
   ).toHaveAttribute("data-chart-visible-logical-range", /^(?!none$).+/, {
     timeout: 10_000,
   });
+  await expect(
+    chart.getByTestId("trade-contract-option-chart-hydration-status"),
+  ).toContainText(/bars|Streaming|Loaded|Hydrating|Fetching/i);
   await expect(contractChartPanel.getByText(/^MARK$/)).toHaveCount(0);
   await expect(contractChartPanel.getByText(/^BID$/)).toHaveCount(0);
   await expect(contractChartPanel.getByText(/^ASK$/)).toHaveCount(0);

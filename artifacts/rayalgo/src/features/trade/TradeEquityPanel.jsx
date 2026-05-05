@@ -12,6 +12,8 @@ import {
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
 } from "../charting/ResearchChartWidgetChrome";
+import { ChartHydrationStatusStrip } from "../charting/ChartHydrationStatusStrip";
+import { resolveChartLoadingStatus } from "../charting/chartLoadingStatusModel";
 import {
   expandLocalRollupLimit,
   resolveLocalRollupBaseTimeframe,
@@ -647,6 +649,23 @@ export const TradeEquityPanel = ({
     equityChartSourceState.label || describeBrokerChartStatus(barsStatus, tf);
   const equityChartSource =
     equityChartSourceState.sourceLabel || describeBrokerChartSource(latestBar?.source);
+  const equityChartHydrationStatus = resolveChartLoadingStatus({
+    symbol: ticker,
+    timeframe: tf,
+    providerLabel: equityChartSource,
+    statusLabel: equityChartStatus,
+    renderedBarCount: bars.length,
+    hydratedBaseCount: hydratedBaseBars.length,
+    livePatchedBarCount: Math.max(0, bars.length - hydratedBaseBars.length),
+    requestedLimit: progressiveBars.requestedLimit,
+    targetLimit: progressiveBars.targetLimit,
+    maxLimit: progressiveBars.maxLimit,
+    isInitialLoading: barsQuery.isPending && !bars.length,
+    isFetching: barsQuery.fetchStatus === "fetching",
+    isHydratingFullWindow: progressiveBars.isHydratingFullWindow,
+    isPrependingOlder: prependableBars.isPrependingOlder,
+    hasExhaustedOlderHistory: prependableBars.hasExhaustedOlderHistory,
+  });
   const callFlows = markers.filter((m) => m.cp === "C").length;
   const putFlows = markers.filter((m) => m.cp === "P").length;
   const toggleIndicator = (indicatorId) => {
@@ -707,6 +726,14 @@ export const TradeEquityPanel = ({
       rangeIdentityKey={chartHydrationScopeKey}
       model={chartModel}
       compact={compact}
+      subHeader={
+        <ChartHydrationStatusStrip
+          compact={compact}
+          dataTestId={`${dataTestId}-hydration-status`}
+          status={equityChartHydrationStatus}
+          theme={T}
+        />
+      }
       chartEvents={chartEvents}
       showSurfaceToolbar={false}
       showLegend
