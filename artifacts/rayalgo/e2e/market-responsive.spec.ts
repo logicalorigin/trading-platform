@@ -1,4 +1,4 @@
-import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
+import { expect, test, type ConsoleMessage, type Page, type TestInfo } from "@playwright/test";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(90_000);
@@ -537,6 +537,114 @@ test("Market calendar overlay renders month events, detail chart, and Trade hand
     timeout: 20_000,
   });
   expect(runtimeIssues, "Market calendar overlay should not emit runtime issues").toEqual([]);
+});
+
+test("Market calendar overlay uses phone agenda, detail chart, and Trade handoff", async ({
+  page,
+}, testInfo: TestInfo) => {
+  const runtimeIssues: string[] = [];
+  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning") &&
+      !isIgnorableConsoleMessage(message)
+    ) {
+      runtimeIssues.push(message.text());
+    }
+  });
+
+  const todayDate = new Date().toISOString().slice(0, 10);
+  const aaplDate = currentMonthIsoDate(8);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockMarketApi(page, {
+    researchConfigured: true,
+    earningsEntries: [
+      {
+        symbol: "SPY",
+        date: todayDate,
+        time: "bmo",
+        epsEstimated: 0,
+        revenueEstimated: 0,
+        fiscalDateEnding: todayDate,
+      },
+      {
+        symbol: "NVDA",
+        date: todayDate,
+        time: "amc",
+        epsEstimated: 5.22,
+        revenueEstimated: 38_000_000_000,
+        fiscalDateEnding: todayDate,
+      },
+      {
+        symbol: "AAPL",
+        date: aaplDate,
+        time: "bmo",
+        epsEstimated: 1.48,
+        revenueEstimated: 94_000_000_000,
+        fiscalDateEnding: aaplDate,
+      },
+    ],
+  });
+  await openMarket(page, "1x1");
+
+  await page.getByTestId("market-calendar-open").click();
+  await expect(page.getByTestId("market-calendar-overlay")).toHaveAttribute(
+    "data-layout",
+    "phone",
+  );
+  await expect(page.getByTestId("market-calendar-provider-status")).toContainText(
+    /earnings live/i,
+    { timeout: 15_000 },
+  );
+  await expect(page.getByTestId("market-calendar-agenda")).toBeVisible();
+  await expect(page.getByTestId("market-calendar-month-grid")).toHaveCount(0);
+
+  await page
+    .locator('[data-testid^="market-calendar-event-"]')
+    .filter({ hasText: "NVDA" })
+    .first()
+    .click();
+  await expect(page.getByTestId("market-calendar-detail")).toContainText("NVDA");
+  await expect(page.getByTestId("market-calendar-detail")).toContainText("Revenue");
+  await expect(page.getByTestId("market-calendar-detail-mini-chart")).toBeVisible();
+  await expect(page.getByTestId("market-calendar-detail-chart")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const overlayMetrics = await page.getByTestId("market-calendar-overlay").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+    };
+  });
+  expect(overlayMetrics.documentScrollWidth).toBeLessThanOrEqual(
+    overlayMetrics.viewportWidth + 1,
+  );
+  expect(overlayMetrics.left).toBeGreaterThanOrEqual(0);
+  expect(overlayMetrics.right).toBeLessThanOrEqual(overlayMetrics.viewportWidth);
+  expect(overlayMetrics.top).toBeGreaterThanOrEqual(0);
+  expect(overlayMetrics.bottom).toBeLessThanOrEqual(overlayMetrics.viewportHeight);
+
+  await testInfo.attach("phase12-phone-market-calendar.png", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
+
+  await page
+    .getByTestId("market-calendar-detail")
+    .getByRole("button", { name: /trade/i })
+    .click();
+  await expect(page.getByTestId("market-calendar-overlay")).toBeHidden();
+  await expect(page.getByTestId("trade-tab-NVDA")).toBeVisible({
+    timeout: 20_000,
+  });
+  expect(runtimeIssues, "Market calendar phone overlay should not emit runtime issues").toEqual([]);
 });
 
 test("Market chart grid lets chart surfaces own touched viewports and clears them on reset", async ({

@@ -21,6 +21,7 @@ import {
   fs,
   sp,
 } from "../../lib/uiTokens";
+import { responsiveFlags, useViewportSize } from "../../lib/responsive";
 import {
   activeWatchlistSymbols,
   allWatchlistSymbols,
@@ -146,22 +147,24 @@ const formatMonthDay = (value) => {
   }).format(parsed);
 };
 
-const MarketCalendarSkeleton = () => (
+const MarketCalendarSkeleton = ({ compact = false }) => (
   <div
     data-testid="market-calendar-month-skeleton"
     aria-hidden="true"
     style={{
       display: "grid",
-      gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+      gridTemplateColumns: compact
+        ? "minmax(0, 1fr)"
+        : "repeat(7, minmax(0, 1fr))",
       gap: sp(4),
     }}
   >
-    {Array.from({ length: 42 }).map((_, index) => (
+    {Array.from({ length: compact ? 6 : 42 }).map((_, index) => (
       <div
         key={index}
         className="ra-skeleton"
         style={{
-          minHeight: dim(82),
+          minHeight: dim(compact ? 52 : 82),
           border: `1px solid ${T.border}`,
           background: T.bg2,
         }}
@@ -220,6 +223,8 @@ export const MarketCalendarOverlay = ({
   onLinkedContextChange,
   stockAggregateStreamingEnabled = false,
 }) => {
+  const viewport = useViewportSize();
+  const { isPhone } = responsiveFlags(viewport.width);
   const [scope, setScope] = useState("universe");
   const [eventTypeFilter, setEventTypeFilter] = useState("earnings");
   const [timingFilter, setTimingFilter] = useState("all");
@@ -300,6 +305,11 @@ export const MarketCalendarOverlay = ({
       }),
     [calendarEvents, universePage],
   );
+  const agendaDays = useMemo(
+    () =>
+      monthGrid.days.filter((day) => day.inMonth && day.events.length),
+    [monthGrid.days],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -336,6 +346,7 @@ export const MarketCalendarOverlay = ({
   return (
     <div
       data-testid="market-calendar-overlay"
+      data-layout={isPhone ? "phone" : "desktop"}
       role="dialog"
       aria-modal="true"
       aria-label="Market calendar"
@@ -344,17 +355,17 @@ export const MarketCalendarOverlay = ({
         inset: 0,
         zIndex: 10040,
         display: "flex",
-        alignItems: "center",
+        alignItems: isPhone ? "stretch" : "center",
         justifyContent: "center",
-        padding: sp(12),
+        padding: sp(isPhone ? 4 : 12),
         background: "rgba(0,0,0,.58)",
       }}
     >
       <div
         className="ra-modal-enter"
         style={{
-          width: "min(1180px, calc(100vw - 24px))",
-          maxHeight: "calc(100vh - 24px)",
+          width: isPhone ? "100%" : "min(1180px, calc(100vw - 24px))",
+          maxHeight: isPhone ? "calc(100dvh - 8px)" : "calc(100vh - 24px)",
           display: "flex",
           flexDirection: "column",
           border: `1px solid ${T.borderStrong}`,
@@ -367,11 +378,12 @@ export const MarketCalendarOverlay = ({
           style={{
             display: "flex",
             justifyContent: "space-between",
-            alignItems: "center",
-            gap: sp(8),
-            padding: sp("9px 10px"),
+            alignItems: isPhone ? "flex-start" : "center",
+            gap: sp(isPhone ? 6 : 8),
+            padding: sp(isPhone ? "7px 8px" : "9px 10px"),
             borderBottom: `1px solid ${T.border}`,
             background: T.bg2,
+            flexWrap: isPhone ? "wrap" : "nowrap",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: sp(9), minWidth: 0 }}>
@@ -380,7 +392,7 @@ export const MarketCalendarOverlay = ({
               <div
                 style={{
                   color: T.text,
-                  font: `900 ${fs(14)}px ${T.display}`,
+                  font: `900 ${fs(isPhone ? 12 : 14)}px ${T.display}`,
                   letterSpacing: "0.03em",
                   textTransform: "uppercase",
                 }}
@@ -398,7 +410,7 @@ export const MarketCalendarOverlay = ({
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
+          <div style={{ display: "flex", alignItems: "center", gap: sp(6), marginLeft: "auto" }}>
             <span
               data-testid="market-calendar-provider-status"
               style={{
@@ -441,10 +453,10 @@ export const MarketCalendarOverlay = ({
         <div
           style={{
             display: "flex",
-            gap: sp(8),
+            gap: sp(isPhone ? 5 : 8),
             flexWrap: "wrap",
             alignItems: "center",
-            padding: sp("8px 10px"),
+            padding: sp(isPhone ? "6px 8px" : "8px 10px"),
             borderBottom: `1px solid ${T.border}`,
             background: T.bg1,
           }}
@@ -488,7 +500,8 @@ export const MarketCalendarOverlay = ({
           </select>
           <div
             style={{
-              marginLeft: "auto",
+              marginLeft: isPhone ? 0 : "auto",
+              width: isPhone ? "100%" : undefined,
               color: T.textDim,
               font: `800 ${fs(8)}px ${T.mono}`,
               textTransform: "uppercase",
@@ -502,41 +515,114 @@ export const MarketCalendarOverlay = ({
         <div
           style={{
             overflow: "auto",
-            padding: sp(10),
-            display: "flex",
-            alignItems: "stretch",
-            gap: sp(10),
-            flexWrap: "wrap",
+            padding: sp(isPhone ? 8 : 10),
+            display: "grid",
+            gridTemplateColumns: isPhone
+              ? "minmax(0, 1fr)"
+              : "minmax(0, 1fr) minmax(300px, 360px)",
+            alignItems: "start",
+            gap: sp(isPhone ? 8 : 10),
           }}
         >
           <div
             style={{
-              flex: "1 1 610px",
               minWidth: 0,
               display: "grid",
               gap: sp(8),
               alignContent: "start",
             }}
           >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-                gap: sp(4),
-                color: T.textDim,
-                font: `900 ${fs(8)}px ${T.mono}`,
-                textTransform: "uppercase",
-              }}
-            >
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                <div key={day} style={{ padding: sp("0 4px") }}>
-                  {day}
-                </div>
-              ))}
-            </div>
+            {isPhone ? null : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+                  gap: sp(4),
+                  color: T.textDim,
+                  font: `900 ${fs(8)}px ${T.mono}`,
+                  textTransform: "uppercase",
+                }}
+              >
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                  <div key={day} style={{ padding: sp("0 4px") }}>
+                    {day}
+                  </div>
+                ))}
+              </div>
+            )}
             {earningsPending ? (
-              <MarketCalendarSkeleton />
-            ) : filteredEvents.length ? (
+              <MarketCalendarSkeleton compact={isPhone} />
+            ) : isPhone && agendaDays.length ? (
+              <div
+                data-testid="market-calendar-agenda"
+                style={{
+                  display: "grid",
+                  gap: sp(6),
+                }}
+              >
+                {agendaDays.map((day) => (
+                  <div
+                    key={day.date}
+                    data-testid={`market-calendar-agenda-day-${day.date}`}
+                    style={{
+                      border: `1px solid ${day.isToday ? `${T.accent}80` : T.border}`,
+                      background: day.isToday ? `${T.accent}10` : T.bg2,
+                      padding: sp(6),
+                      display: "grid",
+                      gap: sp(5),
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        color: day.isToday ? T.accent : T.textSec,
+                        font: `900 ${fs(9)}px ${T.mono}`,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      <span>{formatDateHeading(day.date)}</span>
+                      <span style={{ color: T.textDim }}>{day.events.length} evt</span>
+                    </div>
+                    <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
+                      {day.events.map((event) => (
+                        <button
+                          key={event.id}
+                          type="button"
+                          data-testid={`market-calendar-event-${event.id}`}
+                          onClick={() => setSelectedEventId(event.id)}
+                          className="ra-interactive"
+                          style={{
+                            border: `1px solid ${selectedEventId === event.id ? `${T.accent}88` : T.border}`,
+                            background:
+                              selectedEventId === event.id ? `${T.accent}14` : T.bg1,
+                            color: selectedEventId === event.id ? T.accent : T.textSec,
+                            cursor: "pointer",
+                            minHeight: dim(34),
+                            minWidth: 0,
+                            display: "grid",
+                            gridTemplateColumns: "64px minmax(0, 1fr) 48px",
+                            alignItems: "center",
+                            gap: sp(5),
+                            textAlign: "left",
+                            font: `900 ${fs(9)}px ${T.mono}`,
+                            padding: sp("4px 6px"),
+                          }}
+                        >
+                          <span>{event.symbol}</span>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {event.eventTypeLabel}
+                          </span>
+                          <span style={{ color: T.textDim, textAlign: "right" }}>
+                            {event.timingLabel}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : !isPhone && filteredEvents.length ? (
               <div
                 data-testid="market-calendar-month-grid"
                 style={{
@@ -630,10 +716,9 @@ export const MarketCalendarOverlay = ({
 
           <aside
             style={{
-              flex: "0 1 360px",
-              minWidth: "min(100%, 300px)",
+              minWidth: 0,
               display: "grid",
-              gap: sp(8),
+              gap: sp(isPhone ? 6 : 8),
               alignContent: "start",
             }}
           >
@@ -642,9 +727,9 @@ export const MarketCalendarOverlay = ({
               style={{
                 border: `1px solid ${T.border}`,
                 background: T.bg2,
-                padding: sp(8),
+                padding: sp(isPhone ? 7 : 8),
                 display: "grid",
-                gap: sp(8),
+                gap: sp(isPhone ? 7 : 8),
               }}
             >
               {selectedEvent ? (
@@ -759,8 +844,8 @@ export const MarketCalendarOverlay = ({
                   <div
                     data-testid="market-calendar-detail-mini-chart"
                     style={{
-                      height: dim(230),
-                      minHeight: dim(210),
+                      height: dim(isPhone ? 180 : 230),
+                      minHeight: dim(isPhone ? 170 : 210),
                       background: T.bg1,
                     }}
                   >
@@ -792,7 +877,7 @@ export const MarketCalendarOverlay = ({
               style={{
                 border: `1px solid ${T.border}`,
                 background: T.bg2,
-                padding: sp(8),
+                padding: sp(isPhone ? 7 : 8),
                 display: "grid",
                 gap: sp(7),
               }}
@@ -839,7 +924,9 @@ export const MarketCalendarOverlay = ({
                       }}
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "54px minmax(0, 1fr) 54px",
+                        gridTemplateColumns: isPhone
+                          ? "48px minmax(0, 1fr) 44px"
+                          : "54px minmax(0, 1fr) 54px",
                         alignItems: "center",
                         gap: sp(6),
                         border: `1px solid ${T.border}`,
