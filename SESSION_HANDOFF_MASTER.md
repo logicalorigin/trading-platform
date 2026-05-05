@@ -6,7 +6,7 @@ Index of durable per-session handoff files. Keep detailed notes in each session 
 
 | Last Updated (MT) | Session ID | Handoff | Workstream | Branch | HEAD | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2026-05-05 02:52:38 MDT | `019df4c1-053f-7843-9b61-cd88874b8bbc` | `SESSION_HANDOFF_2026-05-04_019df4c1-053f-7843-9b61-cd88874b8bbc.md` | trading workspace plan phases 0-12 + regression audit | main | `f4b784e5c8c6` | Complete audit documented; mobile visual artifacts and phase validation passed |
+| 2026-05-05 02:54:41 MDT | `019df4c1-053f-7843-9b61-cd88874b8bbc` | `SESSION_HANDOFF_2026-05-04_019df4c1-053f-7843-9b61-cd88874b8bbc.md` | trading workspace plan phases 0-12 + regression audit | main | `322284b24fb5` | Complete audit documented; mobile visual artifacts and phase validation passed |
 | 2026-05-03 09:49:00 MDT | `019dee5f-5399-7441-82ee-6c647710995e` | `SESSION_HANDOFF_2026-05-03_019dee5f-5399-7441-82ee-6c647710995e.md` | install skills and deps (remove bad ones for both). then find our most recent in flight sessions in our tracked/untrack… | main | `0897ecb108ed` | Saved; see handoff |
 | 2026-05-02 20:16:39 MDT | `019deb17-ef76-71c1-9350-920233518b54` | `SESSION_HANDOFF_2026-05-02_019deb17-ef76-71c1-9350-920233518b54.md` | 5m YTD watchlist backtest sweep with VXX/SQQQ defensive regimes | main | `0897ecb108ed` | SIVEF/backtest source mixing fixed; corrected isolated YTD run persisted |
 | 2026-05-01 17:33:06 MDT | `019de5d4-7629-74f1-a291-d77bb7376926` | `SESSION_HANDOFF_2026-05-01_019de5d4-7629-74f1-a291-d77bb7376926.md` | what happened? we dropped two sessions, one was some updates to the flow apge area and the other was soak and fix | main | `a650e1af06de` | Saved; see handoff |
