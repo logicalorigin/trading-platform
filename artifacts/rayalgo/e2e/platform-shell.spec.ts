@@ -418,7 +418,30 @@ async function mockShellApi(
       body = { lanes: [], policy: {}, defaults: {} };
     } else if (url.pathname === "/api/settings/ibkr-line-usage") {
       ibkrLineUsageRequests.push(Object.fromEntries(url.searchParams.entries()));
-      body = { lanes: [], summary: { activeLines: 0, maxLines: 0 } };
+      const admission = runtimeLineUsage || {
+        activeLineCount: 0,
+        flowScannerLineCount: 0,
+        budget: { maxLines: 0, flowScannerLineCap: 0 },
+        poolUsage: {},
+        counters: {},
+      };
+      body = {
+        updatedAt: new Date(mockNow).toISOString(),
+        admission,
+        bridge: {
+          diagnostics: null,
+          error: null,
+          activeLineCount: null,
+          lineBudget: null,
+          remainingLineCount: null,
+        },
+        streams: {
+          quoteStreams: {},
+          optionQuoteStreams: {},
+          stockAggregates: {},
+        },
+        drift: { admissionVsBridgeLineDelta: null },
+      };
     } else if (url.pathname === "/api/diagnostics/latest") {
       body = {
         status: "ok",

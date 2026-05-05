@@ -1097,6 +1097,54 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
   );
 });
 
+test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are unavailable", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    runtimeError: "Request timed out after 6500ms",
+    lineUsageSnapshot: {
+      admission: {
+        activeLineCount: 77,
+        flowScannerLineCount: 34,
+        budget: {
+          maxLines: 200,
+          flowScannerLineCap: 40,
+        },
+        poolUsage: {
+          "flow-scanner": {
+            activeLineCount: 34,
+            maxLines: 40,
+            remainingLineCount: 6,
+            strict: true,
+          },
+        },
+        counters: {},
+      },
+    },
+  });
+
+  assert.equal(model.lineUsage.available, true);
+  assert.equal(model.lineUsage.summary, "77 / 200");
+  assert.deepEqual(
+    model.lineUsage.rows
+      .filter((row) => row.id === "flow-scanner" || row.id === "total")
+      .map((row) => [row.id, row.used, row.cap, row.free]),
+    [
+      ["flow-scanner", 34, 40, 6],
+      ["total", 77, 200, 123],
+    ],
+  );
+});
+
 test("buildHeaderIbkrPopoverModel shows missing quote subscribers when no quote stream subscribers are active", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {

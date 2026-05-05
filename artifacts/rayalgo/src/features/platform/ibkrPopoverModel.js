@@ -217,6 +217,7 @@ export const buildHeaderIbkrPopoverModel = ({
   latencyStats,
   runtimeDiagnostics,
   runtimeError,
+  lineUsageSnapshot,
 }) => {
   const runtime = runtimeDiagnostics?.ibkr;
   const detailConnection = runtime
@@ -392,7 +393,7 @@ export const buildHeaderIbkrPopoverModel = ({
     runtimeDiagnostics,
   });
   const lineUsage = buildLineUsageRows(
-    runtime?.streams?.marketDataAdmission,
+    runtime?.streams?.marketDataAdmission ?? lineUsageSnapshot?.admission,
   );
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);

@@ -844,7 +844,7 @@ export const HeaderStatusCluster = ({
   const gatewayRuntimeDiagnosticsQuery = useQuery({
     queryKey: ["platform-runtime-diagnostics", "ibkr-popover"],
     queryFn: () =>
-      platformJsonRequest("/api/diagnostics/runtime", { timeoutMs: 0 }),
+      platformJsonRequest("/api/diagnostics/runtime", { timeoutMs: 6_500 }),
     enabled: gatewayDiagnosticsEnabled,
     refetchInterval: gatewayDiagnosticsEnabled
       ? bridgePopoverOpen
@@ -854,6 +854,20 @@ export const HeaderStatusCluster = ({
     placeholderData: (previousData) => previousData,
     retry: false,
     staleTime: bridgePopoverOpen ? 2_000 : 10_000,
+  });
+  const gatewayLineUsageQuery = useQuery({
+    queryKey: ["settings", "ibkr-line-usage", "header"],
+    queryFn: () =>
+      platformJsonRequest("/api/settings/ibkr-line-usage", { timeoutMs: 3_000 }),
+    enabled: gatewayDiagnosticsEnabled,
+    refetchInterval: gatewayDiagnosticsEnabled
+      ? bridgePopoverOpen
+        ? 2_000
+        : 10_000
+      : false,
+    placeholderData: (previousData) => previousData,
+    retry: false,
+    staleTime: bridgePopoverOpen ? 1_000 : 5_000,
   });
   useRuntimeWorkloadFlag(
     "header:runtime-diagnostics",
@@ -878,12 +892,14 @@ export const HeaderStatusCluster = ({
         latencyStats: gatewayLatencyStats,
         runtimeDiagnostics: gatewayRuntimeDiagnosticsQuery.data,
         runtimeError: gatewayRuntimeError,
+        lineUsageSnapshot: gatewayLineUsageQuery.data,
       }),
     [
       gatewayConnection,
       gatewayLatencyStats,
       gatewayRuntimeDiagnosticsQuery.data,
       gatewayRuntimeError,
+      gatewayLineUsageQuery.data,
     ],
   );
   const canDeactivate = Boolean(
