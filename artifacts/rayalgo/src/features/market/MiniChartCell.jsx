@@ -20,7 +20,6 @@ import {
   resolveLocalRollupBaseTimeframe,
   rollupMarketBars,
 } from "../charting/timeframeRollups";
-import { flowEventsToChartEvents } from "../charting/chartEvents";
 import {
   getChartBarLimit,
   getChartTimeframeValues,
@@ -219,9 +218,6 @@ export const MiniChartCell = ({
   compactFlow = false,
   stockAggregateStreamingEnabled = false,
   chartViewportIdentityKey = null,
-  viewportSnapshot = null,
-  onViewportSnapshotChange,
-  onResetViewport,
   dataTestId,
 }) => {
   const queryClient = useQueryClient();
@@ -256,7 +252,6 @@ export const MiniChartCell = ({
   );
   const [pendingTickerSelection, setPendingTickerSelection] = useState(null);
   const [drawMode, setDrawMode] = useState(null);
-  const [plotViewportUserTouched, setPlotViewportUserTouched] = useState(false);
   const suppressNextFrameClickRef = useRef(false);
   const pendingPlotFocusRef = useRef(null);
   const pendingPlotMouseFocusRef = useRef(null);
@@ -281,9 +276,6 @@ export const MiniChartCell = ({
     sector: slot?.searchResult?.sector || null,
     industry: slot?.searchResult?.industry || null,
   };
-  useEffect(() => {
-    setPlotViewportUserTouched(false);
-  }, [chartViewportIdentityKey]);
   const normalizedTimeframe = normalizeChartTimeframe(tf);
   const rollupBaseTimeframe = useMemo(
     () =>
@@ -842,7 +834,6 @@ export const MiniChartCell = ({
         moved: true,
       };
       suppressNextFrameClickRef.current = true;
-      setPlotViewportUserTouched(true);
     }
   }, []);
   const handleFramePointerUpCapture = useCallback(
@@ -910,7 +901,6 @@ export const MiniChartCell = ({
         moved: true,
       };
       suppressNextFrameClickRef.current = true;
-      setPlotViewportUserTouched(true);
     }
   }, []);
   const handleFrameMouseUpCapture = useCallback((event) => {
@@ -1109,9 +1099,6 @@ export const MiniChartCell = ({
             boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
           }}
           onVisibleLogicalRangeChange={handleVisibleLogicalRangeChange}
-          viewportSnapshot={viewportSnapshot}
-          viewportUserTouched={plotViewportUserTouched}
-          onViewportSnapshotChange={onViewportSnapshotChange}
           persistScalePrefs={false}
           surfaceTopOverlay={(controls) => (
             <ResearchChartWidgetHeader
@@ -1198,7 +1185,6 @@ export const MiniChartCell = ({
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      onResetViewport?.();
                       controls.reset();
                     }}
                     style={{

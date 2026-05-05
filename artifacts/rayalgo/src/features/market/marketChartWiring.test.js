@@ -48,24 +48,23 @@ test("Market chart panning expands history for inactive charts too", () => {
   );
 });
 
-test("Market slot metadata updates clear viewports only after identity changes", () => {
-  const source = readLocalSource("./MultiChartGrid.jsx");
-  const updateSlot = source.match(
-    /const updateSlot = \(slotIndex, patch\) => \{[\s\S]*?\n  \};\n  const updateSlotTimeframe/,
-  )?.[0];
+test("Market chart frames reuse self-owned chart viewport state", () => {
+  const gridSource = readLocalSource("./MultiChartGrid.jsx");
+  const cellSource = readLocalSource("./MiniChartCell.jsx");
 
-  assert.ok(updateSlot, "MultiChartGrid must define updateSlot");
-  assert.match(updateSlot, /previousViewportIdentity/);
-  assert.match(updateSlot, /nextViewportIdentity/);
+  assert.match(gridSource, /chartViewportResetRevision/);
+  assert.match(gridSource, /buildMarketGridViewportRevisionIdentity/);
   assert.match(
-    updateSlot,
-    /previousViewportIdentity !== nextViewportIdentity/,
+    cellSource,
+    /rangeIdentityKey=\{chartViewportIdentityKey \|\| chartHydrationScopeKey\}/,
   );
-  assert.doesNotMatch(
-    updateSlot,
-    /patch\?\.providerContractId[\s\S]*clearViewportSnapshot/,
-    "provider-only stock metadata patches should not force viewport resets",
-  );
+  assert.match(cellSource, /persistScalePrefs=\{false\}/);
+  assert.doesNotMatch(gridSource, /chartViewportSnapshots/);
+  assert.doesNotMatch(gridSource, /rememberViewportSnapshot/);
+  assert.doesNotMatch(gridSource, /clearViewportSnapshot/);
+  assert.doesNotMatch(cellSource, /viewportSnapshot/);
+  assert.doesNotMatch(cellSource, /onViewportSnapshotChange/);
+  assert.doesNotMatch(cellSource, /viewportUserTouched/);
 });
 
 test("Market stock chart identity ignores provider metadata that can hydrate later", () => {

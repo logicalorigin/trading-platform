@@ -48,15 +48,6 @@ export const buildMarketBarsPageQueryKey = ({
   Boolean(preferCursor),
 ];
 
-export const buildMarketGridVisibleRangeSignature = (range) => {
-  if (!range || typeof range !== "object") {
-    return "";
-  }
-  const from = Number.isFinite(range.from) ? range.from : null;
-  const to = Number.isFinite(range.to) ? range.to : null;
-  return `${from ?? ""}:${to ?? ""}`;
-};
-
 const MARKET_GRID_EQUITY_LIKE_MARKETS = new Set([
   "stocks",
   "etf",
@@ -115,18 +106,3 @@ export const buildMarketGridViewportRevisionIdentity = (
   `${buildMarketGridViewportIdentity(slotIndex, slot)}|revision:${
     Number.isFinite(revision) ? revision : 0
   }`;
-
-export const deleteMarketGridViewportSnapshots = (snapshots, identityKey) => {
-  if (!snapshots || typeof snapshots !== "object" || !identityKey) {
-    return false;
-  }
-  let changed = false;
-  const revisionPrefix = `${identityKey}|revision:`;
-  Object.keys(snapshots).forEach((key) => {
-    if (key === identityKey || key.startsWith(revisionPrefix)) {
-      delete snapshots[key];
-      changed = true;
-    }
-  });
-  return changed;
-};

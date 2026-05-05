@@ -82,10 +82,7 @@ import {
 } from "./marketGridTrackState";
 import {
   buildMarketBarsPageQueryKey as buildBarsPageQueryKey,
-  buildMarketGridViewportIdentity,
   buildMarketGridViewportRevisionIdentity,
-  buildMarketGridVisibleRangeSignature,
-  deleteMarketGridViewportSnapshots,
   normalizeMiniChartStudies,
 } from "./marketGridChartState";
 import {
@@ -295,7 +292,6 @@ export const MultiChartGrid = ({
   const [marketGridTrackState, setMarketGridTrackState] = useState(() =>
     readMarketGridTrackSession(),
   );
-  const [chartViewportSnapshots, setChartViewportSnapshots] = useState({});
   const [chartViewportResetRevision, setChartViewportResetRevision] = useState(0);
   const [gridResizeHoverHandle, setGridResizeHoverHandle] = useState(null);
   const [gridResizeActiveHandle, setGridResizeActiveHandle] = useState(null);
@@ -681,40 +677,7 @@ export const MultiChartGrid = ({
     });
   }, [baseCellHeight, renderedCols, renderedRows, setLayoutTrackState]);
   const resetGridChartViews = useCallback(() => {
-    setChartViewportSnapshots({});
     setChartViewportResetRevision((revision) => revision + 1);
-  }, []);
-  const rememberViewportSnapshot = useCallback((identityKey, snapshot) => {
-    if (!identityKey || !snapshot || snapshot.identityKey !== identityKey) {
-      return;
-    }
-    setChartViewportSnapshots((current) => {
-      const existing = current?.[identityKey];
-      if (
-        existing &&
-        existing.userTouched === snapshot.userTouched &&
-        existing.realtimeFollow === snapshot.realtimeFollow &&
-        existing.scaleMode === snapshot.scaleMode &&
-        existing.autoScale === snapshot.autoScale &&
-        existing.invertScale === snapshot.invertScale &&
-        buildMarketGridVisibleRangeSignature(existing.visibleLogicalRange) ===
-          buildMarketGridVisibleRangeSignature(snapshot.visibleLogicalRange)
-      ) {
-        return current;
-      }
-      return {
-        ...(current || {}),
-        [identityKey]: snapshot,
-      };
-    });
-  }, []);
-  const clearViewportSnapshot = useCallback((identityKey) => {
-    if (!identityKey) return;
-    setChartViewportSnapshots((current) => {
-      const next = { ...(current || {}) };
-      if (!deleteMarketGridViewportSnapshots(next, identityKey)) return current;
-      return next;
-    });
   }, []);
   const startGridResize = useCallback(
     ({ mode, colGapIndex = null, rowGapIndex = null, handleKey }, event) => {
@@ -835,22 +798,6 @@ export const MultiChartGrid = ({
     if (patch?.ticker) {
       rememberSearchRow(patch.searchResult || patch);
     }
-    const currentSlot = slots[slotIndex];
-    const nextSlot = hydrateMiniChartSlot(
-      { ...currentSlot, ...patch },
-      defaults[slotIndex],
-    );
-    const previousViewportIdentity = buildMarketGridViewportIdentity(
-      slotIndex,
-      currentSlot,
-    );
-    const nextViewportIdentity = buildMarketGridViewportIdentity(
-      slotIndex,
-      nextSlot,
-    );
-    if (previousViewportIdentity !== nextViewportIdentity) {
-      clearViewportSnapshot(previousViewportIdentity);
-    }
     setSlots((current) =>
       current.map((slot, index) =>
         index === slotIndex
@@ -860,18 +807,6 @@ export const MultiChartGrid = ({
     );
   };
   const updateSlotTimeframe = (slotIndex, tf) => {
-    setChartViewportSnapshots((current) => {
-      const next = { ...(current || {}) };
-      slots.forEach((slot, index) => {
-        if (syncTimeframes || index === slotIndex) {
-          deleteMarketGridViewportSnapshots(
-            next,
-            buildMarketGridViewportIdentity(index, slot),
-          );
-        }
-      });
-      return next;
-    });
     setSlots((current) =>
       current.map((slot, index) =>
         syncTimeframes || index === slotIndex
@@ -915,10 +850,6 @@ export const MultiChartGrid = ({
       return;
     }
 
-    clearViewportSnapshot(buildMarketGridViewportIdentity(targetIndex, currentSlot));
-    if (forcePrimarySlot && sourceIndex >= 0 && sourceIndex !== targetIndex) {
-      clearViewportSnapshot(buildMarketGridViewportIdentity(sourceIndex, slots[sourceIndex]));
-    }
     rememberSearchRow(normalizedActiveSym);
     setSlots((current) => {
       const sourceSlot = sourceIndex >= 0 ? current[sourceIndex] : null;
@@ -956,7 +887,6 @@ export const MultiChartGrid = ({
     });
   }, [
     activeSym,
-    clearViewportSnapshot,
     defaults,
     externalSelection?.n,
     externalSelection?.sym,
@@ -1077,7 +1007,6 @@ export const MultiChartGrid = ({
                 const next = !current;
                 if (next) {
                   const anchorTf = visibleSlotEntries[0]?.slot?.tf || "15m";
-                  setChartViewportSnapshots({});
                   setSlots((slotList) =>
                     slotList.map((slot, index) =>
                       hydrateMiniChartSlot(
@@ -1184,11 +1113,6 @@ export const MultiChartGrid = ({
                 compactFlow={compactPremiumFlow}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
                 chartViewportIdentityKey={viewportIdentityKey}
-                viewportSnapshot={chartViewportSnapshots[viewportIdentityKey] || null}
-                onViewportSnapshotChange={(snapshot) =>
-                  rememberViewportSnapshot(viewportIdentityKey, snapshot)
-                }
-                onResetViewport={() => clearViewportSnapshot(viewportIdentityKey)}
                 favoriteTimeframes={miniFavoriteTimeframes}
                 onToggleFavoriteTimeframe={toggleMiniFavoriteTimeframe}
                 onFocus={onSymClick}
