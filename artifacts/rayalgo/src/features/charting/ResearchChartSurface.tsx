@@ -1444,7 +1444,9 @@ export const resolveViewportRestoreState = ({
   return {
     matchingSnapshot,
     visibleLogicalRange,
-    realtimeFollow: matchingSnapshot?.realtimeFollow ?? true,
+    realtimeFollow: matchingSnapshot?.userTouched
+      ? false
+      : matchingSnapshot?.realtimeFollow ?? true,
     autoHydration: !visibleLogicalRange,
     scaleMode:
       matchingSnapshot?.scaleMode ??
@@ -4548,11 +4550,23 @@ export const ResearchChartSurface = ({
       } = {},
     ): VisibleLogicalRange | null => {
       const source = options.source || "user";
-      const { visibleRange, realtimeFollow } = resolveVisibleRangePublishState({
+      const publishState = resolveVisibleRangePublishState({
         range,
         barCount: chartBarCountRef.current,
         source,
       });
+      const visibleRange = publishState.visibleRange;
+      const activeUserTouchedViewport = Boolean(
+        viewportUserTouchedRef.current ||
+          viewportUserTouched ||
+          externalViewportUserTouched ||
+          (effectiveViewportSnapshot?.identityKey ===
+            rangeIdentityKeyRef.current &&
+            effectiveViewportSnapshot.userTouched),
+      );
+      const realtimeFollow = activeUserTouchedViewport
+        ? false
+        : publishState.realtimeFollow;
       const previousSignature = buildVisibleRangeSignature(
         visibleLogicalRangeRef.current,
       );
@@ -4609,9 +4623,13 @@ export const ResearchChartSurface = ({
     },
     [
       buildViewportSnapshot,
+      effectiveViewportSnapshot?.identityKey,
+      effectiveViewportSnapshot?.userTouched,
+      externalViewportUserTouched,
       hasRecentProgrammaticViewportIntent,
       markViewportUserTouched,
       publishViewportSnapshot,
+      viewportUserTouched,
     ],
   );
 
@@ -4620,6 +4638,7 @@ export const ResearchChartSurface = ({
       nextRange: VisibleLogicalRange | null | undefined,
       options: {
         markInitialized?: boolean;
+        markProgrammaticIntent?: boolean;
         respectRecentUserRange?: boolean;
       } = {},
     ): VisibleLogicalRange | null => {
@@ -4636,7 +4655,9 @@ export const ResearchChartSurface = ({
         return null;
       }
 
-      markProgrammaticViewportIntent(buildVisibleRangeSignature(visibleRange));
+      if (options.markProgrammaticIntent !== false) {
+        markProgrammaticViewportIntent(buildVisibleRangeSignature(visibleRange));
+      }
       chartRef.current.timeScale().setVisibleLogicalRange(visibleRange);
       return publishVisibleLogicalRange(visibleRange, {
         ...options,
@@ -4656,11 +4677,18 @@ export const ResearchChartSurface = ({
     setScaleMode(effectiveViewportSnapshot.scaleMode);
     setAutoScale(effectiveViewportSnapshot.autoScale);
     setInvertScale(effectiveViewportSnapshot.invertScale);
+    if (effectiveViewportSnapshot.userTouched) {
+      realtimeFollowRef.current = false;
+      autoHydrationViewportRef.current = false;
+    } else {
+      realtimeFollowRef.current = effectiveViewportSnapshot.realtimeFollow;
+    }
     syncViewportUserTouched(Boolean(effectiveViewportSnapshot.userTouched));
   }, [
     effectiveViewportSnapshot?.autoScale,
     effectiveViewportSnapshot?.identityKey,
     effectiveViewportSnapshot?.invertScale,
+    effectiveViewportSnapshot?.realtimeFollow,
     effectiveViewportSnapshot?.scaleMode,
     effectiveViewportSnapshot?.userTouched,
     syncViewportUserTouched,
@@ -4688,7 +4716,14 @@ export const ResearchChartSurface = ({
               rangeIdentityKeyRef.current &&
               effectiveViewportSnapshot.userTouched)
         ),
-        realtimeFollow: realtimeFollowRef.current,
+        realtimeFollow:
+          viewportUserTouchedRef.current ||
+          viewportUserTouched ||
+          (effectiveViewportSnapshot?.identityKey ===
+            rangeIdentityKeyRef.current &&
+            effectiveViewportSnapshot.userTouched)
+            ? false
+            : realtimeFollowRef.current,
       }),
     );
   }, [
@@ -4773,6 +4808,7 @@ export const ResearchChartSurface = ({
     if (matchingStoredRange) {
       setProgrammaticVisibleLogicalRange(matchingStoredRange, {
         markInitialized: true,
+        markProgrammaticIntent: !restoreState.matchingSnapshot?.userTouched,
       });
     } else if (model.defaultVisibleLogicalRange) {
       setProgrammaticVisibleLogicalRange(model.defaultVisibleLogicalRange, {
@@ -4832,7 +4868,14 @@ export const ResearchChartSurface = ({
                   rangeIdentityKeyRef.current &&
                   effectiveViewportSnapshot.userTouched),
             ),
-            realtimeFollow: realtimeFollowRef.current,
+            realtimeFollow:
+              viewportUserTouchedRef.current ||
+              viewportUserTouched ||
+              (effectiveViewportSnapshot?.identityKey ===
+                rangeIdentityKeyRef.current &&
+                effectiveViewportSnapshot.userTouched)
+                ? false
+                : realtimeFollowRef.current,
           }),
         );
         setOverlayRevision((value) => value + 1);
@@ -5323,7 +5366,7 @@ export const ResearchChartSurface = ({
       autoHydrationViewportRef.current = false;
     }
     const shouldFollowLatestBars = shouldAutoFollowLatestBars({
-      realtimeFollow: realtimeFollowRef.current,
+      realtimeFollow: !userViewportTouched && realtimeFollowRef.current,
       visibleRange: visibleRangeBeforeDataSync,
       previousBarCount,
       nextBarCount,
@@ -5398,7 +5441,9 @@ export const ResearchChartSurface = ({
       Number.isFinite(visibleRangeBeforeDataSync.from) &&
       Number.isFinite(visibleRangeBeforeDataSync.to)
     ) {
-      setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync);
+      setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync, {
+        markProgrammaticIntent: !userViewportTouched,
+      });
     } else if (
       canApplyProgrammaticRangeSync &&
       !userViewportTouched &&
@@ -6160,6 +6205,7 @@ export const ResearchChartSurface = ({
 
     setProgrammaticVisibleLogicalRange(snapshotRange, {
       markInitialized: true,
+      markProgrammaticIntent: !effectiveViewportSnapshot.userTouched,
     });
   }, [
     effectiveViewportSnapshot?.identityKey,

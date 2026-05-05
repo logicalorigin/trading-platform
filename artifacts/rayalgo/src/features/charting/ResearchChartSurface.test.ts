@@ -779,6 +779,37 @@ test("ResearchChartSurface restores matching user-touched viewport snapshots", (
   );
 });
 
+test("ResearchChartSurface treats user-touched snapshots as realtime-follow opt-outs", () => {
+  const snapshot = {
+    identityKey: "market-grid-slot::0::NVDA::15m",
+    visibleLogicalRange: { from: 92, to: 119 },
+    userTouched: true,
+    realtimeFollow: true,
+    scaleMode: "linear",
+    autoScale: true,
+    invertScale: false,
+    updatedAt: 1,
+  } as const;
+
+  assert.deepEqual(
+    resolveViewportRestoreState({
+      identityKey: "market-grid-slot::0::NVDA::15m",
+      viewportSnapshot: snapshot,
+      defaultScaleMode: "log",
+      barCount: 120,
+    }),
+    {
+      matchingSnapshot: snapshot,
+      visibleLogicalRange: { from: 92, to: 119 },
+      realtimeFollow: false,
+      autoHydration: false,
+      scaleMode: "linear",
+      autoScale: true,
+      invertScale: false,
+    },
+  );
+});
+
 test("ResearchChartSurface keeps untouched viewport snapshots auto-hydrated while restoring scale state", () => {
   const snapshot = {
     identityKey: "market-grid-slot::1::QQQ::15m",

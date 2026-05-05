@@ -669,22 +669,25 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
         payload: unknown,
       ) => void;
     }).__RAYALGO_TEST_EMIT_EVENT_SOURCE__;
-    emit?.("symbol=SPY", "bar", {
-      symbol: "SPY",
-      timeframe: "15m",
-      bar: {
-        timestamp: new Date(Date.now() + 15 * 60_000).toISOString(),
-        open: 126,
-        high: 128,
-        low: 125,
-        close: 127,
-        volume: 250_000,
-        source: "ibkr-history",
-        freshness: "live",
-        marketDataMode: "live",
-        dataUpdatedAt: new Date().toISOString(),
-      },
-    });
+    const baseTimestamp = Date.now() + 15 * 60_000;
+    for (let index = 0; index < 4; index += 1) {
+      emit?.("symbol=SPY", "bar", {
+        symbol: "SPY",
+        timeframe: "15m",
+        bar: {
+          timestamp: new Date(baseTimestamp + index * 15 * 60_000).toISOString(),
+          open: 126 + index,
+          high: 128 + index,
+          low: 125 + index,
+          close: 127 + index,
+          volume: 250_000 + index * 10_000,
+          source: "ibkr-history",
+          freshness: "live",
+          marketDataMode: "live",
+          dataUpdatedAt: new Date().toISOString(),
+        },
+      });
+    }
   });
 
   await expect
@@ -693,7 +696,7 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
         Number(await activeSurface.getAttribute("data-chart-rendered-bar-count")),
       { timeout: 10_000 },
     )
-    .toBeGreaterThan(renderedCountBefore);
+    .toBeGreaterThanOrEqual(renderedCountBefore + 4);
   const eventSourceUrls = await page.evaluate(() => {
     const getUrls = (window as unknown as {
       __RAYALGO_TEST_EVENT_SOURCE_URLS__?: () => string[];
