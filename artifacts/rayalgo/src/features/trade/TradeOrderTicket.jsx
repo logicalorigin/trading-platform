@@ -34,6 +34,9 @@ import {
   BrokerActionConfirmDialog,
   formatLiveBrokerActionError,
 } from "./BrokerActionConfirmDialog.jsx";
+import {
+  buildTradePreviewLaneLevels,
+} from "./tradePreviewLaneModel";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   daysToExpiration,
@@ -830,6 +833,26 @@ export const TradeOrderTicket = ({
   const bidFlashClass = useValueFlash(ticketIsShares ? equityPrice : bid);
   const midFlashClass = useValueFlash(ticketReferencePrice);
   const askFlashClass = useValueFlash(ticketIsShares ? equityPrice : ask);
+  const previewLaneLevels = useMemo(
+    () =>
+      buildTradePreviewLaneLevels({
+        ticketIsShares,
+        equityPrice,
+        bid,
+        mid: ticketReferencePrice,
+        ask,
+      }),
+    [ask, bid, equityPrice, ticketIsShares, ticketReferencePrice],
+  );
+  const applyPreviewLaneLevel = (level) => {
+    if (!level || level.disabled || !isFiniteNumber(level.price)) {
+      return;
+    }
+    setOrderType("LMT");
+    setLimitPrice(level.price.toFixed(2));
+  };
+  const getPreviewLaneLevel = (levelId) =>
+    previewLaneLevels.find((level) => level.id === levelId) || null;
   const closeLiveConfirm = () => {
     if (liveConfirmPending) {
       return;
@@ -1772,6 +1795,8 @@ export const TradeOrderTicket = ({
       </div>
       {ticketIsShares ? (
         <div
+          data-testid="trade-preview-lane"
+          data-trade-preview-only="true"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr",
@@ -1782,7 +1807,22 @@ export const TradeOrderTicket = ({
             fontFamily: T.mono,
           }}
         >
-          <div className={midFlashClass}>
+          <button
+            type="button"
+            className={midFlashClass}
+            data-testid="trade-preview-lane-last"
+            disabled={getPreviewLaneLevel("last")?.disabled}
+            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("last"))}
+            style={{
+              textAlign: "left",
+              border: 0,
+              background: "transparent",
+              color: "inherit",
+              font: "inherit",
+              padding: 0,
+              cursor: getPreviewLaneLevel("last")?.disabled ? "not-allowed" : "pointer",
+            }}
+          >
             <div
               style={{
                 fontSize: fs(6),
@@ -1802,7 +1842,7 @@ export const TradeOrderTicket = ({
             >
               {equityQuoteReady ? `$${equityPrice.toFixed(2)}` : MISSING_VALUE}
             </div>
-          </div>
+          </button>
           <div style={{ textAlign: "center" }}>
             <div
               style={{
@@ -1860,6 +1900,8 @@ export const TradeOrderTicket = ({
         </div>
       ) : (
         <div
+          data-testid="trade-preview-lane"
+          data-trade-preview-only="true"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr",
@@ -1870,7 +1912,22 @@ export const TradeOrderTicket = ({
             fontFamily: T.mono,
           }}
         >
-          <div className={bidFlashClass}>
+          <button
+            type="button"
+            className={bidFlashClass}
+            data-testid="trade-preview-lane-bid"
+            disabled={getPreviewLaneLevel("bid")?.disabled}
+            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("bid"))}
+            style={{
+              textAlign: "left",
+              border: 0,
+              background: "transparent",
+              color: "inherit",
+              font: "inherit",
+              padding: 0,
+              cursor: getPreviewLaneLevel("bid")?.disabled ? "not-allowed" : "pointer",
+            }}
+          >
             <div
               style={{
                 fontSize: fs(6),
@@ -1890,8 +1947,23 @@ export const TradeOrderTicket = ({
             >
               ${bid.toFixed(2)}
             </div>
-          </div>
-          <div className={midFlashClass} style={{ textAlign: "center" }}>
+          </button>
+          <button
+            type="button"
+            className={midFlashClass}
+            data-testid="trade-preview-lane-mid"
+            disabled={getPreviewLaneLevel("mid")?.disabled}
+            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("mid"))}
+            style={{
+              textAlign: "center",
+              border: 0,
+              background: "transparent",
+              color: "inherit",
+              font: "inherit",
+              padding: 0,
+              cursor: getPreviewLaneLevel("mid")?.disabled ? "not-allowed" : "pointer",
+            }}
+          >
             <div
               style={{
                 fontSize: fs(6),
@@ -1921,8 +1993,23 @@ export const TradeOrderTicket = ({
                 ? `${spread.toFixed(2)} (${spreadPct.toFixed(1)}%)`
                 : MISSING_VALUE}
             </div>
-          </div>
-          <div className={askFlashClass} style={{ textAlign: "right" }}>
+          </button>
+          <button
+            type="button"
+            className={askFlashClass}
+            data-testid="trade-preview-lane-ask"
+            disabled={getPreviewLaneLevel("ask")?.disabled}
+            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("ask"))}
+            style={{
+              textAlign: "right",
+              border: 0,
+              background: "transparent",
+              color: "inherit",
+              font: "inherit",
+              padding: 0,
+              cursor: getPreviewLaneLevel("ask")?.disabled ? "not-allowed" : "pointer",
+            }}
+          >
             <div
               style={{
                 fontSize: fs(6),
@@ -1942,7 +2029,7 @@ export const TradeOrderTicket = ({
             >
               ${ask.toFixed(2)}
             </div>
-          </div>
+          </button>
         </div>
       )}
       {/* Side + Order type */}
@@ -2114,6 +2201,7 @@ export const TradeOrderTicket = ({
           <input
             type="number"
             step="0.01"
+            data-testid="trade-ticket-parent-price-input"
             aria-label={`${parentPriceLabel.toLowerCase()} price`}
             value={parentPriceValue}
             disabled={parentPriceDisabled}

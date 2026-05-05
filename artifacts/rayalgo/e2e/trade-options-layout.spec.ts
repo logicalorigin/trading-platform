@@ -816,9 +816,19 @@ test("Trade ticket toggles between option contracts and shares", async ({
     page.getByTestId("trade-ticket-asset-mode-equity"),
   ).toBeVisible();
   await expect(page.getByText("MID", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("trade-preview-lane")).toHaveAttribute(
+    "data-trade-preview-only",
+    "true",
+  );
+  await page.getByTestId("trade-preview-lane-bid").click();
+  await expect(page.getByTestId("trade-ticket-parent-price-input")).toHaveValue(
+    "7.95",
+  );
+  expect(shadowPreviewRequests).toHaveLength(0);
 
   await page.getByTestId("trade-ticket-asset-mode-equity").click();
   await expect(page.getByText("LAST", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("trade-preview-lane-last")).toBeVisible();
   await expect(
     page.getByTestId("trade-top-zone").getByText("VOL", { exact: true }),
   ).toBeVisible();
