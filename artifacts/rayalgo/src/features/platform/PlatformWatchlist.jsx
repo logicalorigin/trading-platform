@@ -831,6 +831,10 @@ export const Watchlist = ({
     [items],
   );
   const directionEnabled = WATCHLIST_DIRECTION_SORTS.has(sortMode);
+  const activeSortOption =
+    WATCHLIST_SORT_OPTIONS.find((option) => option.id === sortMode) ||
+    WATCHLIST_SORT_OPTIONS[0];
+  const searchTerm = search.trim();
   const closeWatchlistMenu = () => setWatchlistMenuOpen(false);
   const closeAddMode = ({ clearQuery = false } = {}) => {
     setAddMode(false);
@@ -1244,6 +1248,92 @@ export const Watchlist = ({
           >
             {sortDirection === "desc" ? "DESC" : "ASC"}
           </button></AppTooltip>
+        </div>
+
+        <div
+          data-testid="watchlist-active-state"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+            gap: sp(4),
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              border: `1px solid ${T.border}`,
+              background: T.bg2,
+              color: T.textDim,
+              fontFamily: T.mono,
+              fontSize: fs(7),
+              fontWeight: 900,
+              lineHeight: 1,
+              padding: sp("4px 5px"),
+            }}
+          >
+            SORT {activeSortOption.label}
+            {directionEnabled ? ` ${sortDirection.toUpperCase()}` : ""}
+          </span>
+          {searchTerm ? (
+            <AppTooltip content="Clear watchlist filter">
+              <button
+                type="button"
+                data-testid="watchlist-filter-clear"
+                onClick={() => setSearch("")}
+                style={{
+                  minWidth: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: sp(4),
+                  border: `1px solid ${T.accent}`,
+                  background: `${T.accent}12`,
+                  color: T.accent,
+                  fontFamily: T.mono,
+                  fontSize: fs(7),
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  padding: sp("3px 5px"),
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  FILTER {searchTerm.toUpperCase()}
+                </span>
+                <X size={10} style={{ flexShrink: 0 }} />
+              </button>
+            </AppTooltip>
+          ) : (
+            <span
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                border: `1px solid ${T.border}`,
+                background: T.bg2,
+                color: T.textMuted,
+                fontFamily: T.mono,
+                fontSize: fs(7),
+                fontWeight: 900,
+                lineHeight: 1,
+                padding: sp("4px 5px"),
+              }}
+            >
+              FILTER ALL
+            </span>
+          )}
         </div>
 
         {addMode ? (

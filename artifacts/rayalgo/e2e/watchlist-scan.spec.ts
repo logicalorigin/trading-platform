@@ -305,6 +305,7 @@ test("watchlist displays legacy symbols plus signal-monitor rows and signal sort
   ).toBe(true);
 
   await page.getByTestId("watchlist-sort-signal").click();
+  await expect(page.getByTestId("watchlist-active-state")).toContainText("SORT Signal");
   await expect
     .poll(async () =>
       page
@@ -317,6 +318,13 @@ test("watchlist displays legacy symbols plus signal-monitor rows and signal sort
     "draggable",
     "false",
   );
+
+  await page.getByPlaceholder("Filter...").fill("QQQ");
+  await expect(page.getByTestId("watchlist-active-state")).toContainText("FILTER QQQ");
+  await expect(page.locator('[data-testid="watchlist-row"]')).toHaveCount(1);
+  await page.getByTestId("watchlist-filter-clear").click();
+  await expect(page.getByPlaceholder("Filter...")).toHaveValue("");
+  await expect(page.getByTestId("watchlist-active-state")).toContainText("FILTER ALL");
 });
 
 test("watchlist badges surface linked, signal, flow, earnings, and position state", async ({
