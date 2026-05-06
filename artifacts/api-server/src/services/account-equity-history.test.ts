@@ -258,3 +258,118 @@ test("account history excludes local snapshots on Flex external-transfer dates",
     ],
   );
 });
+
+test("account history filters zero-only account placeholders before compaction", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const filter =
+    __accountEquityHistoryInternalsForTests.filterPlaceholderZeroEquitySnapshotRows;
+  const compact = __accountEquityHistoryInternalsForTests.compactEquitySnapshotRows;
+  const rows = [
+    {
+      providerAccountId: "FUNDED",
+      asOf: new Date("2026-05-01T16:35:47.497Z"),
+      currency: "USD",
+      netLiquidation: "5734.56",
+      cash: "4461.44",
+      buyingPower: "19151.10",
+    },
+    {
+      providerAccountId: "EMPTY",
+      asOf: new Date("2026-05-01T16:37:59.576Z"),
+      currency: "USD",
+      netLiquidation: "0",
+      cash: "0",
+      buyingPower: "0",
+    },
+    {
+      providerAccountId: "FUNDED",
+      asOf: new Date("2026-05-01T16:38:47.492Z"),
+      currency: "USD",
+      netLiquidation: "5730.54",
+      cash: "4461.44",
+      buyingPower: "19145.83",
+    },
+  ];
+
+  const compacted = compact(filter(rows), "1W");
+
+  assert.deepEqual(
+    compacted.map((row) => ({
+      account: row.providerAccountId,
+      timestamp: row.asOf.toISOString(),
+      netLiquidation: row.netLiquidation,
+    })),
+    [
+      {
+        account: "FUNDED",
+        timestamp: "2026-05-01T16:35:00.000Z",
+        netLiquidation: "5734.56",
+      },
+      {
+        account: "FUNDED",
+        timestamp: "2026-05-01T16:38:00.000Z",
+        netLiquidation: "5730.54",
+      },
+    ],
+  );
+});
+
+test("account history filters transient all-zero balance rows for funded accounts", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const filter =
+    __accountEquityHistoryInternalsForTests.filterPlaceholderZeroEquitySnapshotRows;
+  const rows = [
+    {
+      providerAccountId: "FUNDED",
+      asOf: new Date("2026-05-01T16:35:47.497Z"),
+      currency: "USD",
+      netLiquidation: "5734.56",
+      cash: "4461.44",
+      buyingPower: "19151.10",
+    },
+    {
+      providerAccountId: "FUNDED",
+      asOf: new Date("2026-05-01T16:36:47.497Z"),
+      currency: "USD",
+      netLiquidation: "0",
+      cash: "0",
+      buyingPower: "0",
+    },
+    {
+      providerAccountId: "FUNDED",
+      asOf: new Date("2026-05-01T16:37:47.497Z"),
+      currency: "USD",
+      netLiquidation: "5735.11",
+      cash: "4461.44",
+      buyingPower: "19152.00",
+    },
+  ];
+
+  assert.deepEqual(
+    filter(rows).map((row) => row.netLiquidation),
+    ["5734.56", "5735.11"],
+  );
+});
+
+test("account history recognizes all-zero live account summaries as placeholders", async () => {
+  const { __accountEquityHistoryInternalsForTests } = await import("./account");
+  const isPlaceholder =
+    __accountEquityHistoryInternalsForTests.isPlaceholderZeroAccountSnapshot;
+
+  assert.equal(
+    isPlaceholder({
+      netLiquidation: 0,
+      cash: 0,
+      buyingPower: 0,
+    }),
+    true,
+  );
+  assert.equal(
+    isPlaceholder({
+      netLiquidation: 0,
+      cash: 500,
+      buyingPower: 0,
+    }),
+    false,
+  );
+});

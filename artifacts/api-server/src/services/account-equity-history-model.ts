@@ -11,6 +11,8 @@ export type EquitySnapshotRow = {
   asOf: Date;
   currency: string;
   netLiquidation: string | null;
+  cash?: string | null;
+  buyingPower?: string | null;
 };
 
 export type PersistedAccountSnapshotRow = EquitySnapshotRow & {
@@ -67,6 +69,40 @@ function externalTransferAmount(
   point: Pick<AccountEquityHistorySeedPoint, "deposits" | "withdrawals">,
 ): number {
   return (point.deposits ?? 0) - (point.withdrawals ?? 0);
+}
+
+function isZeroHistoryNumber(value: unknown): boolean {
+  const numeric = toHistoryNumber(value);
+  return numeric !== null && Math.abs(numeric) === 0;
+}
+
+export function isPlaceholderZeroBalanceSnapshot(
+  row: Pick<EquitySnapshotRow, "netLiquidation" | "cash" | "buyingPower">,
+): boolean {
+  return (
+    isZeroHistoryNumber(row.netLiquidation) &&
+    isZeroHistoryNumber(row.cash) &&
+    isZeroHistoryNumber(row.buyingPower)
+  );
+}
+
+export function isPlaceholderZeroAccountSnapshot(
+  account: Pick<
+    BrokerAccountSnapshot,
+    "netLiquidation" | "cash" | "buyingPower"
+  >,
+): boolean {
+  return (
+    isZeroHistoryNumber(account.netLiquidation) &&
+    isZeroHistoryNumber(account.cash) &&
+    isZeroHistoryNumber(account.buyingPower)
+  );
+}
+
+export function filterPlaceholderZeroEquitySnapshotRows(
+  rows: EquitySnapshotRow[],
+): EquitySnapshotRow[] {
+  return rows.filter((row) => !isPlaceholderZeroBalanceSnapshot(row));
 }
 
 export function calculateTransferAdjustedReturnPoints(

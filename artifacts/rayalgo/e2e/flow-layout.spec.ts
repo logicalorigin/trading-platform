@@ -131,6 +131,7 @@ function makePremiumWidget(symbol: string, index: number) {
     premiumTotal: inflow + outflow + neutral,
     classifiedPremium: inflow + outflow,
     classificationCoverage: (inflow + outflow) / (inflow + outflow + neutral),
+    classificationConfidence: "high",
     netPremium: inflow - outflow,
     inflowPremium: inflow,
     outflowPremium: outflow,
@@ -244,6 +245,7 @@ async function mockFlowApi(
             0,
           ),
           classificationCoverage: 0.96,
+          classificationConfidence: "high",
           candidateDate: "2026-05-06",
           candidateCount: flowSymbols.length,
           rankedCount: flowSymbols.length,
@@ -582,6 +584,7 @@ test("Flow premium distribution renders six compact Webull-style widgets", async
   await expect(strip.locator('section[aria-label="Inflow order bars"]')).toHaveCount(6);
   await expect(strip.locator('section[aria-label="Outflow order bars"]')).toHaveCount(6);
   await expect(strip.getByTestId("flow-premium-bucket-row")).toHaveCount(36);
+  await expect(strip.getByText(/High confidence/)).toBeVisible();
   await expect(strip.getByText("Kilo USD", { exact: true })).toHaveCount(6);
   await expect(strip.getByRole("img", { name: "Order flow distribution donut chart" })).toHaveCount(6);
   await expect(strip.locator("svg text").filter({ hasText: /%/ })).toHaveCount(0);

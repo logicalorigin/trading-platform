@@ -49,16 +49,32 @@ function makeDistribution(input: {
   volume: number | null | undefined;
   timeframe: "today" | "week" | undefined;
   premiumTotal?: number;
+  classifiedPremium?: number;
+  classificationConfidence?: "high" | "medium" | "low" | "very_low" | "none";
+  sideBasis?: "quote_match" | "tick_test" | "mixed" | "none";
+  quoteAccess?: "available" | "unavailable" | "forbidden" | "unknown";
+  tradeAccess?: "available" | "unavailable" | "forbidden" | "unknown";
 }) {
   const premiumTotal = input.premiumTotal ?? 100_000;
+  const classifiedPremium = Math.max(0, input.classifiedPremium ?? 0);
+  const neutralPremium = Math.max(0, premiumTotal - classifiedPremium);
   const bucket = {
+    inflowPremium: classifiedPremium,
+    outflowPremium: 0,
+    buyPremium: classifiedPremium,
+    sellPremium: 0,
+    neutralPremium,
+    totalPremium: premiumTotal,
+    count: 1,
+  };
+  const emptyBucket = {
     inflowPremium: 0,
     outflowPremium: 0,
     buyPremium: 0,
     sellPremium: 0,
-    neutralPremium: premiumTotal,
-    totalPremium: premiumTotal,
-    count: 1,
+    neutralPremium: 0,
+    totalPremium: 0,
+    count: 0,
   };
 
   return {
@@ -70,29 +86,30 @@ function makeDistribution(input: {
     marketCapTier: "small_or_unknown",
     bucketThresholds: { smallMin: 0, mediumMin: 5_000, largeMin: 25_000 },
     premiumTotal,
-    classifiedPremium: 0,
-    classificationCoverage: 0,
-    netPremium: 0,
-    inflowPremium: 0,
+    classifiedPremium,
+    classificationCoverage: premiumTotal > 0 ? classifiedPremium / premiumTotal : 0,
+    classificationConfidence: input.classificationConfidence ?? "none",
+    netPremium: classifiedPremium,
+    inflowPremium: classifiedPremium,
     outflowPremium: 0,
-    buyPremium: 0,
+    buyPremium: classifiedPremium,
     sellPremium: 0,
-    neutralPremium: premiumTotal,
+    neutralPremium,
     callPremium: premiumTotal,
     putPremium: 0,
     buckets: {
-      small: { ...bucket, neutralPremium: 0, totalPremium: 0, count: 0 },
-      medium: { ...bucket, neutralPremium: 0, totalPremium: 0, count: 0 },
+      small: emptyBucket,
+      medium: emptyBucket,
       large: bucket,
     },
     contractCount: 1,
-    tradeCount: 0,
-    classifiedTradeCount: 0,
-    quoteMatchedCount: 0,
+    tradeCount: classifiedPremium > 0 ? 1 : 0,
+    classifiedTradeCount: classifiedPremium > 0 ? 1 : 0,
+    quoteMatchedCount: classifiedPremium > 0 ? 1 : 0,
     tickTestMatchedCount: 0,
-    sideBasis: "none",
-    quoteAccess: "unavailable",
-    tradeAccess: "unavailable",
+    sideBasis: input.sideBasis ?? (classifiedPremium > 0 ? "quote_match" : "none"),
+    quoteAccess: input.quoteAccess ?? (classifiedPremium > 0 ? "available" : "unavailable"),
+    tradeAccess: input.tradeAccess ?? "unavailable",
     source: "polygon-options-snapshot",
     confidence: "partial",
     delayed: false,
@@ -141,6 +158,7 @@ test("flow premium distribution uses aggressive default Polygon snapshot budget"
   assert.equal(response.source.providerHost, "api.polygon.io");
   assert.equal(response.source.sideBasis, "none");
   assert.equal(response.source.tradeAccess, "unavailable");
+  assert.equal(response.source.classificationConfidence, "none");
   assert.equal(response.widgets.length, 6);
   assert.equal(premiumCalls.length, 24);
   assert.deepEqual(
@@ -152,6 +170,45 @@ test("flow premium distribution uses aggressive default Polygon snapshot budget"
     response.widgets.map((widget) => widget.symbol),
     symbols.slice(0, 6),
   );
+});
+
+test("flow premium distribution source reports very low classification confidence", async () => {
+  configurePolygonEnv();
+  const symbols = Array.from({ length: 7 }, (_, index) => `AAD${index}`);
+
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getGroupedDailyStockAggregates: async () =>
+          symbols.map((symbol, index) => makeAggregate(symbol, index)),
+        getOptionPremiumDistribution: async (input: {
+          underlying: string;
+          stockDayVolume?: number | null;
+          timeframe?: "today" | "week";
+        }) =>
+          makeDistribution({
+            symbol: input.underlying,
+            volume: input.stockDayVolume,
+            timeframe: input.timeframe,
+            premiumTotal: 100_000,
+            classifiedPremium: 100,
+            classificationConfidence: "very_low",
+            sideBasis: "quote_match",
+            quoteAccess: "available",
+            tradeAccess: "available",
+          }),
+      }) as any,
+  );
+
+  const response = await getFlowPremiumDistribution({
+    candidateLimit: 7,
+    limit: 6,
+    timeframe: "week",
+  });
+
+  assert.equal(response.source.sideBasis, "quote_match");
+  assert.equal(response.source.classificationCoverage, 0.001);
+  assert.equal(response.source.classificationConfidence, "very_low");
 });
 
 test("flow premium distribution coalesces in-flight cache-key requests", async () => {

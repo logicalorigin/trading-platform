@@ -76,6 +76,8 @@ import {
   classifyExternalCashTransfer,
   compactEquitySnapshotRows,
   filterSnapshotsOnFlexTransferDates,
+  filterPlaceholderZeroEquitySnapshotRows,
+  isPlaceholderZeroAccountSnapshot,
   persistedAccountRowsToSnapshots,
   trimLeadingInactiveEquityPoints,
   type AccountEquityHistorySeedPoint,
@@ -1747,7 +1749,18 @@ export async function recordAccountSnapshots(
     return;
   }
 
-  const mode = dueAccounts[0]?.mode ?? getRuntimeMode();
+  const persistableDueAccounts = dueAccounts.filter(
+    (account) => !isPlaceholderZeroAccountSnapshot(account),
+  );
+  dueAccounts
+    .filter((account) => isPlaceholderZeroAccountSnapshot(account))
+    .forEach((account) => snapshotWriteTimestamps.set(account.id, now));
+
+  if (!persistableDueAccounts.length) {
+    return;
+  }
+
+  const mode = persistableDueAccounts[0]?.mode ?? getRuntimeMode();
   const [connection] = await db
     .insert(brokerConnectionsTable)
     .values({
@@ -1772,7 +1785,7 @@ export async function recordAccountSnapshots(
     })
     .returning({ id: brokerConnectionsTable.id });
 
-  for (const account of dueAccounts) {
+  for (const account of persistableDueAccounts) {
     const [brokerAccount] = await db
       .insert(brokerAccountsTable)
       .values({
@@ -2150,6 +2163,8 @@ export async function getAccountEquityHistory(input: {
       asOf: balanceSnapshotsTable.asOf,
       currency: balanceSnapshotsTable.currency,
       netLiquidation: balanceSnapshotsTable.netLiquidation,
+      cash: balanceSnapshotsTable.cash,
+      buyingPower: balanceSnapshotsTable.buyingPower,
     })
     .from(balanceSnapshotsTable)
     .innerJoin(
@@ -2158,7 +2173,10 @@ export async function getAccountEquityHistory(input: {
     )
     .where(and(...snapshotConditions))
     .orderBy(balanceSnapshotsTable.asOf);
-  const snapshotRows = compactEquitySnapshotRows(rawSnapshotRows, range);
+  const snapshotRows = compactEquitySnapshotRows(
+    filterPlaceholderZeroEquitySnapshotRows(rawSnapshotRows),
+    range,
+  );
 
   const byTimestamp = new Map<string, AccountEquityHistorySeedPoint>();
 
@@ -2257,11 +2275,18 @@ export async function getAccountEquityHistory(input: {
     });
   });
 
+  const liveEquityAccounts =
+    universe.source === "live"
+      ? universe.accounts.filter(
+          (account) => !isPlaceholderZeroAccountSnapshot(account),
+        )
+      : [];
   const currentNetLiquidation =
     universe.source === "live"
-      ? sumAccounts(universe.accounts, "netLiquidation")
+      ? sumAccounts(liveEquityAccounts, "netLiquidation")
       : null;
-  const currentTimestamp = accountMetricUpdatedAt(universe.accounts) ?? new Date();
+  const currentTimestamp =
+    accountMetricUpdatedAt(liveEquityAccounts) ?? new Date();
   const liveTerminalIncluded =
     currentNetLiquidation !== null &&
     (!start || currentTimestamp.getTime() >= start.getTime());
@@ -3825,7 +3850,10 @@ export async function testFlexToken() {
 export const __accountEquityHistoryInternalsForTests = {
   calculateTransferAdjustedReturnPoints,
   classifyExternalCashTransfer,
+  compactEquitySnapshotRows,
+  filterPlaceholderZeroEquitySnapshotRows,
   filterSnapshotsOnFlexTransferDates,
+  isPlaceholderZeroAccountSnapshot,
   persistedAccountRowsToSnapshots,
 };
 
