@@ -864,7 +864,9 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
       (message.type() === "error" || message.type() === "warning") &&
       !isIgnorableConsoleMessage(message)
     ) {
-      runtimeIssues.push(message.text());
+      const location = message.location();
+      const locationUrl = location?.url ? ` (${location.url})` : "";
+      runtimeIssues.push(`${message.text()}${locationUrl}`);
     }
   });
   page.on("response", async (response) => {
@@ -892,6 +894,7 @@ test("keeps heap and DOM bounded while cycling Market, Trade, and Flow", async (
       type: "requestfailed",
       method: request.method(),
       url: request.url(),
+      resourceType: request.resourceType(),
       errorText: request.failure()?.errorText ?? null,
     });
   });

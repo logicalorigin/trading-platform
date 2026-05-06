@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  clearChartHydrationScope,
   getChartHydrationStatsSnapshot,
   recordChartBarScopeState,
   recordChartHydrationCounter,
@@ -87,4 +88,35 @@ test("chart hydration stats derives scope counts and sanitizes cursor URLs", () 
   assert.equal("olderHistoryProviderCursor" in (scoped ?? {}), false);
   assert.equal("olderHistoryProviderNextUrl" in (scoped ?? {}), false);
   assert.equal("olderHistoryCursor" in (scoped ?? {}), false);
+});
+
+test("chart hydration stats clears unmounted scopes", () => {
+  const scope = "SPY:5m:unmounted";
+
+  recordChartHydrationMetric("modelBuildMs", 12, scope);
+  recordChartBarScopeState(scope, {
+    timeframe: "5m",
+    role: "primary",
+    requestedLimit: 500,
+    initialLimit: 500,
+    targetLimit: 1000,
+    maxLimit: 5000,
+    hydratedBaseCount: 500,
+    renderedBarCount: 500,
+    livePatchedBarCount: 0,
+    oldestLoadedAt: "2026-05-06T13:30:00.000Z",
+    isPrependingOlder: false,
+    hasExhaustedOlderHistory: false,
+  });
+
+  assert.ok(
+    getChartHydrationStatsSnapshot().scopes.some((entry) => entry.scope === scope),
+  );
+
+  clearChartHydrationScope(scope);
+
+  assert.equal(
+    getChartHydrationStatsSnapshot().scopes.some((entry) => entry.scope === scope),
+    false,
+  );
 });

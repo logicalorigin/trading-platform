@@ -379,6 +379,7 @@ export const useMeasuredChartModel = ({
     hasRecordedFirstPaintRef.current = false;
     previousBuildStateRef.current = null;
     clearChartHydrationScope(scopeKey);
+    return () => clearChartHydrationScope(scopeKey);
   }, [scopeKey]);
 
   const chartModel = useMemo(() => {

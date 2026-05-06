@@ -51,6 +51,12 @@ Thumbs.db
 # local agent/tool settings
 .claude/settings.local.json
 
+# local vendored/runtime experiments
+.vendor/
+
+# pasted prompt/review attachments
+attached_assets/
+
 # local run artifacts and screenshots
 output/
 
