@@ -26,6 +26,44 @@ This inventory records the evidence used for the May 6 cleanup pass.
 - Oversized live modules: inventoried but not refactored in this cleanup pass. The largest retained source files are active research/charting/platform modules and generated API clients.
 - Flow snapshot queue refresh control: preserved and committed before deeper cleanup. `GET /flow/events` supports `queueRefresh=false` so nonblocking broad scanner reads can avoid enqueueing deep scans.
 
+## Current Protected WIP Boundary
+
+The following dirty or untracked work is protected WIP, not cleanup debt. Do not delete, stage, or refactor these files as part of repo cleanup unless that specific feature workstream is being completed:
+
+- Polygon premium-distribution API/spec/client work: `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/**`, `lib/api-zod/src/generated/**`, `artifacts/api-server/src/providers/polygon/market-data.ts`, `artifacts/api-server/src/providers/polygon/market-data.test.ts`, `artifacts/api-server/src/routes/platform.ts`, and `artifacts/api-server/src/services/platform.ts`.
+- Premium/order-intent work: `artifacts/api-server/src/services/option-order-intent.ts` and `lib/ibkr-contracts/src/client.ts`.
+- Chart/flow recovered WIP: `artifacts/rayalgo/src/features/charting/ResearchChartDashboardStrip.ts`, `artifacts/rayalgo/src/features/flow/flowTapeColumns.js`, and `artifacts/rayalgo/src/features/flow/flowTapeColumns.test.js`.
+- Flow scanner/platform recovery work currently in the tree, including `artifacts/rayalgo/src/screens/FlowScreen.jsx`, should remain isolated from chart cleanup commits.
+
+Mini-chart premium flow currently comes from broad scanner flow events. The Polygon premium-distribution endpoint/client work above is a separate in-flight backend surface and should not be wired into mini charts without an explicit product decision.
+
+## Chart Ownership Boundary
+
+The active broker-facing chart surface is intentionally shared:
+
+- Market mini charts: `MiniChartCell` -> `TradeEquityPanel` -> `ResearchChartFrame` -> `ResearchChartSurface`.
+- Trade spot charts: `TradeEquityPanel` -> `ResearchChartFrame` -> `ResearchChartSurface`.
+- Trade option charts, Flow contract inspection option charts, and Backtesting spot/options charts use `ResearchChartFrame`.
+
+These wrappers are not dead code. A React chart cleanup pass must not remove `ResearchChartSurface` or `ResearchChartFrame` wrappers unless all consumers are replaced in one coordinated pass with equivalent behavior and tests.
+
+The remaining chart-like surfaces are intentional separate surfaces:
+
+- `PhotonicsObservatory` uses Recharts/D3 for the authored research workspace.
+- `ChartParityLab` keeps `TradingViewWidgetReference` as a parity reference and still renders local comparison charts through `ResearchChartFrame`.
+
+## Current Validation Boundary
+
+While the protected WIP above remains in the tree, full repo checks that traverse untracked WIP are diagnostic only, not cleanup gates. Use targeted validation for the cleanup scope plus `pnpm --filter @workspace/rayalgo run typecheck` for frontend-only chart cleanup commits.
+
+Current diagnostic status for this boundary pass:
+
+- `pnpm --filter @workspace/rayalgo run typecheck`: passed.
+- `pnpm --filter @workspace/api-server run typecheck`: passed.
+- `pnpm run deadcode`: fails on protected WIP file `artifacts/rayalgo/src/features/charting/ResearchChartDashboardStrip.ts`.
+
+Do not claim full repo health until that WIP is completed, removed, or intentionally excluded from the relevant checks.
+
 ## Validation Notes
 
 - Passed: `pnpm run deadcode`, `pnpm run deadcode:prod`, `pnpm run typecheck`.
