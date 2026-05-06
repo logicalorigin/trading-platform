@@ -119,10 +119,21 @@ test("Flow page scanner uses one broad scanner panel and no active-symbol merge"
     new URL("../../screens/FlowScreen.jsx", import.meta.url),
     "utf8",
   );
+  const settingsSource = readFileSync(
+    new URL("../../screens/SettingsScreen.jsx", import.meta.url),
+    "utf8",
+  );
   const scannerPanelRenders = source.match(/<FlowScannerStatusPanel\b/g) || [];
+  const legacyScannerRenders = source.match(/<UnusualScannerSection\b/g) || [];
 
   assert.equal(scannerPanelRenders.length, 1);
+  assert.equal(legacyScannerRenders.length, 0);
+  assert.doesNotMatch(source, /const UnusualScannerSection/);
   assert.doesNotMatch(source, />\s*Flow Scanner\s*</);
+  assert.doesNotMatch(source, /flowScannerPanelVisible/);
+  assert.doesNotMatch(source, /flowShowUnusualScanner/);
+  assert.doesNotMatch(settingsSource, /flowShowUnusualScanner/);
+  assert.doesNotMatch(settingsSource, /Show Flow scanner by default/);
   assert.doesNotMatch(source, /mergeFlowEventFeeds/);
   assert.doesNotMatch(source, /useMarketFlowSnapshot\(symbols/);
   assert.match(source, /useMarketFlowSnapshotForStoreKey\(\s*BROAD_MARKET_FLOW_STORE_KEY/);

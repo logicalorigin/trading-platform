@@ -1781,7 +1781,6 @@ function WorkspaceDefaultsPanel() {
                 "flowDensity",
                 "flowRowsPerPage",
                 "flowLivePaused",
-                "flowShowUnusualScanner",
                 "flowFiltersOpen",
                 "flowColumnsOpen",
                 "marketGridLayout",
@@ -1920,14 +1919,6 @@ function WorkspaceDefaultsPanel() {
               onChange={(event) => workspace.patch({ flowLivePaused: event.target.checked })}
             />
             Flow starts paused
-          </label>
-          <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center", marginTop: sp(18) }}>
-            <input
-              type="checkbox"
-              checked={state.flowShowUnusualScanner !== false}
-              onChange={(event) => workspace.patch({ flowShowUnusualScanner: event.target.checked })}
-            />
-            Show Flow scanner by default
           </label>
           <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center", marginTop: sp(18) }}>
             <input
