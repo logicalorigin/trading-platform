@@ -18,7 +18,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Key Commands
 
-- Replit Run button — canonical native workspace dev entrypoint; `.replit` runs `scripts/run-replit-dev.sh`, which starts the API server and RayAlgo web together
+- Replit Run button — starts the per-artifact workflows (`artifacts/api-server: API Server` on port `8080` and `artifacts/rayalgo: web` on port `18747`). `.replit` no longer pins a `run = [...]` line; the artifact stack auto-discovers each artifact's `[services.development] run` command from its `.replit-artifact/artifact.toml`
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
@@ -42,17 +42,22 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 ## Replit Run
 
-The tracked `.replit` config intentionally uses Replit's native run command:
-`run = ["bash", "scripts/run-replit-dev.sh"]`. Select "Run Replit App" in the
-Run button dropdown. The native run script starts the API server on `8080` and
-RayAlgo web on `18747`, then lets Replit Stop terminate both child processes.
+The tracked `.replit` has no `run = [...]` line. With `[agent] stack =
+"PNPM_WORKSPACE"` the Run button starts the per-artifact workflows defined by
+each artifact's `.replit-artifact/artifact.toml` `[services.development] run`:
 
-Do not assign a named workflow to the Run button for the app startup path; that
-replaces the default `.replit` run behavior. Do not add a separate Replit `IBKR
-Bridge` workflow for TWS mode. The bridge runs beside IB Gateway/TWS on the
-Windows machine and is exposed through the activation helper. A generated or
-stale workflow in the Replit UI is not part of the repo config and should be
-removed from the Workflows pane rather than linked to app startup.
+- `artifacts/api-server: API Server` — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
+- `artifacts/rayalgo: web` — `pnpm --filter @workspace/rayalgo run dev` on port `18747`.
+
+Both artifact dev scripts already call `scripts/reap-dev-port.mjs` and `exec`
+their server, so SIGTERM/orphan cleanup works without a shared coordinator
+script. The previous `scripts/run-replit-dev.sh` was deleted with this switch.
+
+Do not add a separate Replit `IBKR Bridge` workflow for TWS mode. The bridge
+runs beside IB Gateway/TWS on the Windows machine and is exposed through the
+activation helper. A generated or stale workflow in the Replit UI is not part
+of the repo config and should be removed from the Workflows pane rather than
+linked to app startup.
 
 Publishing note: the API artifact production build runs
 `pnpm run build:api-deployment`, which builds the API, builds
@@ -183,27 +188,25 @@ middleware ahead of `pinoHttp`, because `pino-http@10.5.0` does not
 expose `res.responseTime` to `customLogLevel` (and `autoLogging.ignore`
 fires at request start, before status/duration are known).
 
-The Replit native dev runner pins API logging to warn-level:
-
-- `scripts/run-replit-dev.sh`: `PORT=8080 LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`.
-- API artifact metadata: prefix on the `[services.development] run` line in
-  `artifacts/api-server/.replit-artifact/artifact.toml`
-  (`LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`).
+The API artifact pins dev logging to warn-level via the `LOG_LEVEL=warn`
+prefix on the `[services.development] run` line in
+`artifacts/api-server/.replit-artifact/artifact.toml`
+(`LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`).
 
 To temporarily restore verbose per-request logging while debugging, drop
-the `LOG_LEVEL=warn` prefix in the native run script and restart the Replit app.
-Production is unaffected: it runs raw JSON pino without `pino-pretty` and the
-`[services.production.run.env]` block does not set `LOG_LEVEL`. Bridge verbosity
-is controlled by the Windows activation helper environment, not by a Replit
-workflow.
+the `LOG_LEVEL=warn` prefix in that artifact.toml and restart the
+`artifacts/api-server: API Server` workflow. Production is unaffected: it runs
+raw JSON pino without `pino-pretty` and the `[services.production.run.env]`
+block does not set `LOG_LEVEL`. Bridge verbosity is controlled by the Windows
+activation helper environment, not by a Replit workflow.
 
-## Dev servers: single instance per native run
+## Dev servers: single instance per artifact workflow
 
-The native Replit run command should own exactly one listener per pinned Replit
-dev port: API on `8080` and rayalgo on `18747`. Older restarts could leave an orphan node process
-holding the port, causing the next API start to fail with `EADDRINUSE` or vite to
-bind a fallback port that the preview proxy never used. Three fixes prevent the
-recurrence:
+Each artifact workflow should own exactly one listener on its pinned Replit
+dev port: API on `8080` and rayalgo on `18747`. Older restarts could leave an
+orphan node process holding the port, causing the next API start to fail with
+`EADDRINUSE` or vite to bind a fallback port the preview proxy never used.
+Three fixes prevent the recurrence:
 
 1. **Shared port reaper** in `scripts/reap-dev-port.mjs`, run by both
    `artifacts/api-server/package.json` and `artifacts/rayalgo/package.json`
@@ -212,14 +215,14 @@ recurrence:
 2. **`strictPort: true`** on both `server` and `preview` blocks of
    `artifacts/rayalgo/vite.config.ts` so vite exits with an error instead of
    silently falling back to the next port.
-3. **`exec` in the dev scripts** so SIGTERM from Replit Stop propagates
+3. **`exec` in the dev scripts** so SIGTERM from a workflow restart propagates
    through the `pnpm` wrapper to the actual node process. Applied to both
    `artifacts/rayalgo/package.json` (`exec vite ...`) and
    `artifacts/api-server/package.json` (`exec node ... dist/index.mjs` in both
    `dev` and `start`).
 
-If native run restart still fails with `EADDRINUSE`, run the shared reaper for
-the conflicting pinned port and restart the Replit app:
+If a workflow restart still fails with `EADDRINUSE`, run the shared reaper for
+the conflicting pinned port and restart the affected workflow:
 
 ```bash
 PORT=8080 node scripts/reap-dev-port.mjs    # API

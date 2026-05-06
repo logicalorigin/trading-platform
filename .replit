@@ -1,6 +1,5 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-3.11"]
 audio = true
-run = ["bash", "scripts/run-replit-dev.sh"]
 
 [deployment]
 router = "application"
