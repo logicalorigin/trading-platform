@@ -16,6 +16,7 @@ const unitTestFiles = [
   "src/services/account-trade-annotations.test.ts",
   "src/services/backtesting-strategies.test.ts",
   "src/services/diagnostics.test.ts",
+  "src/services/flow-events-model.test.ts",
   "src/services/bridge-governor.test.ts",
   "src/services/bridge-option-quote-stream.test.ts",
   "src/services/ibkr-bridge-runtime.test.ts",
