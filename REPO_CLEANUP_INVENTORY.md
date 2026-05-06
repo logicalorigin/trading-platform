@@ -15,15 +15,16 @@ This inventory records the evidence used for the May 6 cleanup pass.
 - Unlisted tests: preserved and wired into package `test:unit` scripts after focused runs passed. They cover active account, IBKR, market-session, and flow-filter code.
 - `attached_assets/**`: removed from Git and ignored. No source imports referenced the `@assets` Vite alias; the alias was removed.
 - `.vendor/ubuntu-glib/**`: removed from Git and ignored. No runtime or build code referenced it; it was local environment/debug payload.
-- Session handoffs: kept `SESSION_HANDOFF_MASTER.md` plus May 1-May 6 canonical handoffs. Removed April/legacy handoffs and stale live notes from the repo root.
+- Session handoffs: kept `SESSION_HANDOFF_MASTER.md` plus current May 6 recovery handoffs. Removed April/legacy handoffs, stale live notes, and May 1-May 5 handoff bodies from the repo root; Git history is the archive for older bodies.
 - Generated API clients/types: kept. They are owned by `lib/api-spec/openapi.yaml` and Orval codegen.
 - `artifacts/ibgateway-bridge-windows-current.tar.gz`: externalized. The API route still serves a local copy when present, but otherwise redirects to `IBKR_BRIDGE_BUNDLE_URL` or `RAYALGO_IBKR_BRIDGE_BUNDLE_URL`. The removed tracked bundle was 1,542,958 bytes with SHA-256 `29a82d80c27f476c462f0d8de11d54084e5eaa851bbf47b8f734b752d8698a91`.
 - Pine script data under `artifacts/api-server/data/**`: kept. It is loaded by the Pine script service at runtime.
 - Chart hydration cleanup: preserved a recovered low-risk lifecycle fix that clears chart hydration scope state on unmount, plus a unit test and richer memory-soak diagnostics.
 - Unit test commands: replaced long inline package scripts with package-local `scripts/runUnitTests.mjs` manifests that preserve the same test files.
 - RayAlgo dev-port wrapper: removed `artifacts/rayalgo/scripts/reapDevPort.mjs`; it only imported the root `scripts/reap-dev-port.mjs`, and the package script already calls the root helper directly.
-- Retained May handoffs: left in place as historical recovery notes. Some may reference older handoff files removed from the repo root; current recovery should start from `SESSION_HANDOFF_MASTER.md` plus the retained May handoffs.
+- Retained May handoffs: kept only May 6 recovery notes. Some may reference older handoff files removed from the repo root; current recovery should start from `SESSION_HANDOFF_MASTER.md` plus the retained May 6 handoffs.
 - Oversized live modules: inventoried but not refactored in this cleanup pass. The largest retained source files are active research/charting/platform modules and generated API clients.
+- Flow snapshot queue refresh control: preserved and committed before deeper cleanup. `GET /flow/events` supports `queueRefresh=false` so nonblocking broad scanner reads can avoid enqueueing deep scans.
 
 ## Validation Notes
 
