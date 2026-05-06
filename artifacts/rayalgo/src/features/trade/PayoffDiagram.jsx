@@ -126,13 +126,13 @@ export const PayoffDiagram = ({
         <span>P&L AT EXPIRATION</span>
         <span style={{ display: "flex", gap: sp(6) }}>
           <span>
-            <span style={{ color: T.accent }}>━</span> now $
+            <span style={{ color: T.accent }}>━</span> now{" "}
             {isFiniteNumber(currentPrice)
               ? currentPrice.toFixed(2)
               : MISSING_VALUE}
           </span>
           <span>
-            <span style={{ color: T.amber }}>┃</span> strike ${strike}
+            <span style={{ color: T.amber }}>┃</span> strike {strike}
           </span>
         </span>
       </div>
@@ -207,9 +207,9 @@ export const PayoffDiagram = ({
               fontFamily={T.mono}
               fill={T.textDim}
               textAnchor="middle"
-              fontWeight={600}
+              fontWeight={400}
             >
-              BE ${breakeven.toFixed(2)}
+              {`BE ${breakeven.toFixed(2)}`}
             </text>
           </>
         )}
@@ -256,7 +256,7 @@ export const PayoffDiagram = ({
           fontFamily={T.mono}
           fill={T.green}
           textAnchor="end"
-          fontWeight={700}
+          fontWeight={400}
         >
           {maxProfitUnlimited ? "Max +∞" : `Max +${fmtMoney(visibleMaxProfit)}`}
         </text>
@@ -268,7 +268,7 @@ export const PayoffDiagram = ({
           fontFamily={T.mono}
           fill={T.red}
           textAnchor="end"
-          fontWeight={700}
+          fontWeight={400}
         >
           {maxLossUnlimited ? "Max −∞" : `Max ${fmtMoney(visibleMaxLoss)}`}
         </text>
@@ -290,7 +290,7 @@ export const PayoffDiagram = ({
           fontFamily={T.mono}
           fill={T.textMuted}
         >
-          ${xMin.toFixed(0)}
+          {xMin.toFixed(0)}
         </text>
         <text
           x={padL + innerW}
@@ -300,7 +300,7 @@ export const PayoffDiagram = ({
           fill={T.textMuted}
           textAnchor="end"
         >
-          ${xMax.toFixed(0)}
+          {xMax.toFixed(0)}
         </text>
       </svg>
     </div>

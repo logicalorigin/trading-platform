@@ -173,7 +173,7 @@ export const PositionTreemapPanel = ({
                       textAnchor="middle"
                       fontSize={labelSize}
                       fontFamily={T.sans}
-                      fontWeight={800}
+                      fontWeight={400}
                       fill={labelFill}
                       style={{ pointerEvents: "none" }}
                     >
@@ -189,7 +189,7 @@ export const PositionTreemapPanel = ({
                       textAnchor="middle"
                       fontSize={11}
                       fontFamily={T.mono}
-                      fontWeight={700}
+                      fontWeight={400}
                       fill={subLabelFill}
                       style={{ pointerEvents: "none" }}
                     >

@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ThemeContext } from "../../features/platform/platformContexts";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   ToggleGroup,
@@ -10,6 +12,14 @@ import {
   panelStyle,
   toneForValue,
 } from "./accountUtils";
+import {
+  PNL_CALENDAR_WEEKDAYS,
+  addCalendarMonths,
+  buildMonthPnlCalendarModel,
+  buildYearPnlCalendarModel,
+  findLatestCalendarActivityDate,
+  formatCalendarPnlValue,
+} from "./accountPnlCalendarModel.js";
 import { buildTradeOutcomeHistogramModel } from "./tradeOutcomeHistogramModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -34,7 +44,7 @@ const labelCapsStyle = {
   color: T.textMuted,
   fontSize: fs(7),
   fontFamily: T.sans,
-  fontWeight: 900,
+  fontWeight: 400,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
   lineHeight: 1.25,
@@ -68,7 +78,7 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
         color: tone,
         fontSize: fs(8),
         fontFamily: T.mono,
-        fontWeight: 900,
+        fontWeight: 400,
         lineHeight: 1.25,
         textAlign: "right",
         fontVariantNumeric: "tabular-nums",
@@ -81,145 +91,6 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
     </span>
   </div></AppTooltip>
 );
-
-const TRADING_DAY_COUNT = 30;
-
-const startOfDay = (input) => {
-  const d = input instanceof Date ? new Date(input.getTime()) : new Date(input);
-  if (Number.isNaN(d.getTime())) return null;
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-
-const isoDay = (date) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
-const buildEquityDailyMap = (equityPoints) => {
-  // Returns Map<iso-day, { eodNav, transfers }>. Last point of each day wins
-  // for eodNav; transfers sum over all points in the day.
-  const byDay = new Map();
-  (equityPoints || []).forEach((point) => {
-    const day = startOfDay(point?.timestamp ?? point?.timestampMs);
-    if (!day) return;
-    const nav = Number(point?.netLiquidation);
-    if (!Number.isFinite(nav)) return;
-    const key = isoDay(day);
-    const deposits = Number(point?.deposits);
-    const withdrawals = Number(point?.withdrawals);
-    const transferDelta =
-      (Number.isFinite(deposits) ? deposits : 0) -
-      (Number.isFinite(withdrawals) ? withdrawals : 0);
-    const ts = day.getTime();
-    const current = byDay.get(key) || {
-      iso: key,
-      eodNav: null,
-      eodTs: -Infinity,
-      transfers: 0,
-    };
-    if (ts >= current.eodTs) {
-      current.eodNav = nav;
-      current.eodTs = ts;
-    }
-    current.transfers += transferDelta;
-    byDay.set(key, current);
-  });
-  return byDay;
-};
-
-const buildDailyPnlSeries = (trades, equityPoints) => {
-  const tradesByDay = new Map();
-  (trades || []).forEach((trade) => {
-    const day = startOfDay(trade?.closeDate);
-    if (!day) return;
-    const pnl = Number(trade?.pnl);
-    if (!Number.isFinite(pnl)) return;
-    const key = isoDay(day);
-    const current = tradesByDay.get(key) || {
-      iso: key,
-      realized: 0,
-      trades: 0,
-    };
-    current.realized += pnl;
-    current.trades += 1;
-    tradesByDay.set(key, current);
-  });
-
-  const equityByDay = buildEquityDailyMap(equityPoints);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const out = [];
-  const cursor = new Date(today);
-  // Track previous eod NAV walking *backwards* — we need the prior trading
-  // day's NAV to compute today's total P&L. Build the trading-day list
-  // forward first so we can walk it forward to compute daily totals.
-  const tradingDays = [];
-  while (tradingDays.length < TRADING_DAY_COUNT) {
-    const dayOfWeek = cursor.getDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      tradingDays.unshift({ iso: isoDay(cursor), date: new Date(cursor) });
-    }
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  // Find the most recent equity point strictly before our window so the
-  // first day's total P&L can be anchored.
-  const sortedEquityDays = Array.from(equityByDay.values())
-    .filter((entry) => entry.eodNav != null)
-    .sort((a, b) => a.eodTs - b.eodTs);
-  const windowStartIso = tradingDays[0]?.iso;
-  let priorNav = null;
-  for (const entry of sortedEquityDays) {
-    if (entry.iso < windowStartIso) {
-      priorNav = entry.eodNav;
-    } else {
-      break;
-    }
-  }
-
-  tradingDays.forEach((day) => {
-    const tradeRow = tradesByDay.get(day.iso);
-    const equityRow = equityByDay.get(day.iso);
-    const realized = tradeRow?.realized ?? 0;
-    const tradeCount = tradeRow?.trades ?? 0;
-    let total = null;
-    if (equityRow?.eodNav != null && priorNav != null) {
-      total = equityRow.eodNav - priorNav - (equityRow.transfers || 0);
-    }
-    const unrealized = total != null ? total - realized : null;
-    out.push({
-      iso: day.iso,
-      date: day.date,
-      realized,
-      unrealized,
-      total,
-      trades: tradeCount,
-    });
-    if (equityRow?.eodNav != null) {
-      priorNav = equityRow.eodNav;
-    }
-  });
-
-  return out;
-};
-
-const CALENDAR_MODE_OPTIONS = [
-  { value: "total", label: "Total" },
-  { value: "realized", label: "Real" },
-  { value: "unrealized", label: "Unreal" },
-];
-
-const valueForMode = (entry, mode) => {
-  if (mode === "realized") return entry.realized ?? 0;
-  if (mode === "unrealized") return entry.unrealized;
-  if (entry.total != null) return entry.total;
-  // Fall back to realized when total is unavailable so the chart still draws.
-  return entry.realized ?? 0;
-};
 
 const bucketColor = (side) => (side === "loss" ? T.red : side === "win" ? T.green : T.textMuted);
 
@@ -299,19 +170,19 @@ const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
           }}
         >
           <span>
-            <span style={{ color: T.green, fontWeight: 800 }}>{summary.winners}W</span>
+            <span style={{ color: T.green, fontWeight: 400 }}>{summary.winners}W</span>
             <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
-            <span style={{ color: T.red, fontWeight: 800 }}>{summary.losers}L</span>
+            <span style={{ color: T.red, fontWeight: 400 }}>{summary.losers}L</span>
           </span>
           <span>
             μW{" "}
-            <span style={{ color: T.green, fontWeight: 800 }}>
+            <span style={{ color: T.green, fontWeight: 400 }}>
               {formatAccountSignedMoney(summary.averageWin, currency, true, maskValues)}
             </span>
           </span>
           <span>
             μL{" "}
-            <span style={{ color: T.red, fontWeight: 800 }}>
+            <span style={{ color: T.red, fontWeight: 400 }}>
               {formatAccountSignedMoney(summary.averageLoss, currency, true, maskValues)}
             </span>
           </span>
@@ -325,7 +196,7 @@ const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
                     : summary.profitFactor >= 1
                       ? T.green
                       : T.red,
-                fontWeight: 800,
+                fontWeight: 400,
               }}
             >
               {summary.profitFactor == null
@@ -339,177 +210,584 @@ const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
   );
 };
 
+const CALENDAR_VIEW_OPTIONS = [
+  { value: "month", label: "Month" },
+  { value: "year", label: "Year" },
+];
+
+const CALENDAR_PROFIT_BG = "#d7f7df";
+const CALENDAR_LOSS_BG = "#ffd6d6";
+const CALENDAR_ACTIVE_TEXT = "#0b0f14";
+const CALENDAR_PROFIT_TEXT = "#047857";
+const CALENDAR_LOSS_TEXT = "#b91c1c";
+
+const calendarThemeStyle = (theme) => {
+  const isLight = theme === "light" || T.bg1 === "#ffffff";
+  if (isLight) {
+    return {
+      gridLine: "#eef2f6",
+      neutralBg: "#f6f8fa",
+      mutedNeutralBg: "#fbfcfd",
+      dayText: "#667085",
+      mutedDayText: "#c2cad4",
+      zeroValueText: "transparent",
+      positive: CALENDAR_PROFIT_BG,
+      negative: CALENDAR_LOSS_BG,
+      positiveText: CALENDAR_PROFIT_TEXT,
+      negativeText: CALENDAR_LOSS_TEXT,
+      activeText: CALENDAR_ACTIVE_TEXT,
+      activeDayText: CALENDAR_ACTIVE_TEXT,
+      shadow: "none",
+      border: "#eef2f6",
+      navBg: "#ffffff",
+      navText: "#475569",
+    };
+  }
+  return {
+    gridLine: T.border,
+    neutralBg: T.bg3,
+    mutedNeutralBg: T.bg2,
+    dayText: T.textSec,
+    mutedDayText: T.textMuted,
+    zeroValueText: "transparent",
+    positive: CALENDAR_PROFIT_BG,
+    negative: CALENDAR_LOSS_BG,
+    positiveText: CALENDAR_PROFIT_TEXT,
+    negativeText: CALENDAR_LOSS_TEXT,
+    activeText: CALENDAR_ACTIVE_TEXT,
+    activeDayText: CALENDAR_ACTIVE_TEXT,
+    shadow: "none",
+    border: T.border,
+    navBg: T.bg2,
+    navText: T.textSec,
+  };
+};
+
+const calendarButtonStyle = (style) => ({
+  width: dim(24),
+  height: dim(24),
+  display: "inline-grid",
+  placeItems: "center",
+  border: `1px solid ${style.border}`,
+  borderRadius: dim(4),
+  background: style.navBg,
+  color: style.navText,
+  padding: 0,
+  cursor: "pointer",
+});
+
+const formatCalendarCellValue = (value, maskValues) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return "";
+  return formatCalendarPnlValue(value, maskValues);
+};
+
+const calendarCellTone = (value, muted = false, style = calendarThemeStyle()) => {
+  const numeric = Number(value || 0);
+  if (numeric > 0) {
+    return {
+      background: style.positive,
+      color: style.activeText,
+      dayColor: style.activeDayText,
+      borderColor: "transparent",
+      boxShadow: style.shadow,
+    };
+  }
+  if (numeric < 0) {
+    return {
+      background: style.negative,
+      color: style.activeText,
+      dayColor: style.activeDayText,
+      borderColor: "transparent",
+      boxShadow: style.shadow,
+    };
+  }
+  return {
+    background: muted ? style.mutedNeutralBg : style.neutralBg,
+    color: style.zeroValueText,
+    dayColor: muted ? style.mutedDayText : style.dayText,
+    borderColor: "transparent",
+    boxShadow: "none",
+  };
+};
+
+const calendarMoneyOrDash = (value, currency, maskValues) =>
+  value == null ? "----" : formatAccountSignedMoney(value, currency, true, maskValues);
+
+const dayTooltip = (day, currency, maskValues) => {
+  const pnlFmt = formatAccountSignedMoney(day.pnl || 0, currency, true, maskValues);
+  const realFmt = formatAccountSignedMoney(day.realized || 0, currency, true, maskValues);
+  const totalFmt = calendarMoneyOrDash(day.total, currency, maskValues);
+  const unrealFmt = calendarMoneyOrDash(day.unrealized, currency, maskValues);
+  const source = day.pnlSource === "total" ? "NAV total" : "realized fallback";
+  return [
+    day.iso,
+    `P&L ${pnlFmt} (${source})`,
+    `Total ${totalFmt}`,
+    `Realized ${realFmt}`,
+    `Unrealized ${unrealFmt}`,
+    `${day.trades} trade${day.trades === 1 ? "" : "s"}`,
+  ].join("\n");
+};
+
+const CalendarNavButton = ({ label, onClick, children, calendarStyle }) => (
+  <AppTooltip content={label}>
+    <button
+      type="button"
+      className="ra-interactive"
+      aria-label={label}
+      onClick={onClick}
+      style={calendarButtonStyle(calendarStyle)}
+    >
+      {children}
+    </button>
+  </AppTooltip>
+);
+
+const MonthCalendarGrid = ({ model, currency, maskValues, calendarStyle }) => (
+  <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+        gap: sp(2),
+      }}
+    >
+      {PNL_CALENDAR_WEEKDAYS.map((day) => (
+        <div
+          key={day}
+          style={{
+            color: T.textMuted,
+            fontSize: fs(7),
+            fontFamily: T.sans,
+            fontWeight: 400,
+            lineHeight: 1,
+            textAlign: "center",
+            padding: sp("1px 0 3px"),
+          }}
+        >
+          {day}
+        </div>
+      ))}
+    </div>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+        gap: 1,
+        background: calendarStyle.gridLine,
+        borderRadius: dim(4),
+        overflow: "hidden",
+      }}
+    >
+      {model.days.map((day) => {
+        const dayNumber = String(day.date.getDate());
+        const displayPnl = day.inMonth ? day.pnl : 0;
+        const tone = calendarCellTone(
+          displayPnl,
+          !day.inMonth,
+          calendarStyle,
+        );
+        return (
+          <AppTooltip key={day.iso} content={dayTooltip(day, currency, maskValues)}>
+            <div
+              style={{
+                minWidth: 0,
+                minHeight: dim(38),
+                display: "grid",
+                gridTemplateRows: "auto minmax(0, 1fr)",
+                alignItems: "stretch",
+                gap: sp(2),
+                padding: sp("4px 4px 3px"),
+                border: `1px solid ${tone.borderColor}`,
+                borderRadius: 0,
+                background: tone.background,
+                boxShadow: tone.boxShadow,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  color: tone.dayColor,
+                  fontSize: fs(7),
+                  fontFamily: T.mono,
+                  fontWeight: 400,
+                  lineHeight: 1,
+                  textAlign: "left",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "clip",
+                }}
+              >
+                {dayNumber}
+              </div>
+              <div
+                style={{
+                  color: tone.color,
+                  fontSize: fs(8),
+                  fontFamily: T.mono,
+                  fontWeight: 400,
+                  lineHeight: 1,
+                  textAlign: "center",
+                  alignSelf: "end",
+                  justifySelf: "center",
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                  minHeight: dim(9),
+                  overflow: "hidden",
+                  textOverflow: "clip",
+                }}
+              >
+                {formatCalendarCellValue(displayPnl, maskValues)}
+              </div>
+            </div>
+          </AppTooltip>
+        );
+      })}
+    </div>
+  </div>
+);
+
+const YearCalendarGrid = ({ model, currency, maskValues, onSelectMonth, calendarStyle }) => (
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: 1,
+      background: calendarStyle.gridLine,
+      borderRadius: dim(4),
+      overflow: "hidden",
+      minWidth: 0,
+    }}
+  >
+    {model.months.map((month) => {
+      const summary = month.summary;
+      const tone = calendarCellTone(
+        summary.pnl,
+        false,
+        calendarStyle,
+      );
+      const value =
+        summary.trades || summary.pnl !== 0
+          ? formatAccountSignedMoney(summary.pnl, currency, true, maskValues)
+          : "----";
+      const realizedValue = formatAccountSignedMoney(
+        summary.realized,
+        currency,
+        true,
+        maskValues,
+      );
+      const tooltip = [
+        `${month.label} ${model.year}`,
+        `P&L ${value}`,
+        `Realized ${realizedValue}`,
+        `${summary.wins}W / ${summary.losses}L`,
+        `${summary.trades} trade${summary.trades === 1 ? "" : "s"}`,
+      ].join("\n");
+      return (
+        <AppTooltip
+          key={month.key}
+          content={tooltip}
+        >
+          <button
+            type="button"
+            className="ra-interactive"
+            onClick={() => onSelectMonth(month.date)}
+            style={{
+              minWidth: 0,
+              minHeight: dim(43),
+              display: "grid",
+              alignContent: "center",
+              gap: sp(2),
+              padding: sp("4px 3px"),
+              border: `1px solid ${
+                month.isCurrentMonth ? calendarStyle.border : tone.borderColor
+              }`,
+              borderRadius: 0,
+              background: tone.background,
+              color: T.textSec,
+              boxShadow: tone.boxShadow,
+              overflow: "hidden",
+              cursor: "pointer",
+            }}
+          >
+            <span
+              style={{
+                minWidth: 0,
+                color:
+                  summary.pnl !== 0
+                    ? tone.dayColor
+                    : month.isCurrentMonth
+                      ? T.text
+                      : T.textSec,
+                fontSize: fs(8),
+                fontFamily: T.mono,
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "clip",
+              }}
+            >
+              {month.label}
+            </span>
+            <span
+              style={{
+                minWidth: 0,
+                color: tone.color,
+                fontSize: fs(8),
+                fontFamily: T.mono,
+                fontWeight: 400,
+                lineHeight: 1,
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "clip",
+              }}
+            >
+              {formatCalendarPnlValue(summary.pnl, maskValues)}
+            </span>
+            <span
+              style={{
+                minWidth: 0,
+                color: T.textMuted,
+                fontSize: fs(7),
+                fontFamily: T.mono,
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "clip",
+              }}
+            >
+              {summary.wins}W/{summary.losses}L
+            </span>
+          </button>
+        </AppTooltip>
+      );
+    })}
+  </div>
+);
+
+const CalendarSummary = ({ summary, currency, maskValues, calendarStyle }) => {
+  const total =
+    summary.trades || summary.pnl !== 0
+      ? formatAccountSignedMoney(summary.pnl, currency, true, maskValues)
+      : "----";
+  const totalTone =
+    summary.trades || summary.pnl !== 0
+      ? summary.pnl >= 0
+        ? calendarStyle.positiveText
+        : calendarStyle.negativeText
+      : T.textDim;
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        paddingTop: sp(1),
+        fontSize: fs(7),
+        fontFamily: T.mono,
+        color: calendarStyle.dayText,
+        gap: sp(4),
+        flexWrap: "wrap",
+      }}
+    >
+      <span>
+        P&L{" "}
+        <span style={{ color: totalTone, fontWeight: 400 }}>
+          {total}
+        </span>
+      </span>
+      <span>
+        <span style={{ color: calendarStyle.positiveText, fontWeight: 400 }}>{summary.wins}W</span>
+        <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
+        <span style={{ color: calendarStyle.negativeText, fontWeight: 400 }}>
+          {summary.losses}L
+        </span>
+      </span>
+      <span>
+        BEST{" "}
+        <span style={{ color: calendarStyle.positiveText, fontWeight: 400 }}>
+          {summary.best
+            ? formatAccountSignedMoney(summary.best.pnl, currency, true, maskValues)
+            : "----"}
+        </span>
+      </span>
+      <span>
+        WORST{" "}
+        <span style={{ color: calendarStyle.negativeText, fontWeight: 400 }}>
+          {summary.worst
+            ? formatAccountSignedMoney(summary.worst.pnl, currency, true, maskValues)
+            : "----"}
+        </span>
+      </span>
+    </div>
+  );
+};
+
 const DailyPnlCalendar = ({
   trades = [],
   equityPoints = [],
   currency,
   maskValues,
 }) => {
-  const [mode, setMode] = useState("total");
-  const days = useMemo(
-    () => buildDailyPnlSeries(trades, equityPoints),
+  const { theme } = useContext(ThemeContext);
+  const calendarStyle = useMemo(() => calendarThemeStyle(theme), [theme]);
+  const today = useMemo(() => new Date(), []);
+  const [view, setView] = useState("month");
+  const [visibleMonth, setVisibleMonth] = useState(
+    () => new Date(today.getFullYear(), today.getMonth(), 1),
+  );
+  const [visibleYear, setVisibleYear] = useState(() => today.getFullYear());
+  const userSelectedCalendarRef = useRef(false);
+  const latestActivityDate = useMemo(
+    () => findLatestCalendarActivityDate({ trades, equityPoints }),
     [trades, equityPoints],
   );
-
-  const totalAvailable = days.some((d) => d.total != null);
-  const effectiveMode = mode === "total" && !totalAvailable ? "realized" : mode;
-
-  const valueForDay = (d) => valueForMode(d, effectiveMode);
-
-  const wins = days.filter((d) => {
-    const v = valueForDay(d);
-    return v != null && v > 0;
-  }).length;
-  const losses = days.filter((d) => {
-    const v = valueForDay(d);
-    return v != null && v < 0;
-  }).length;
-  const max =
-    days.reduce((m, d) => {
-      const v = valueForDay(d);
-      return v != null && Math.abs(v) > m ? Math.abs(v) : m;
-    }, 0) || 1;
-  const best = days.reduce((acc, d) => {
-    const v = valueForDay(d);
-    if (v == null) return acc;
-    if (!acc) return d;
-    const av = valueForDay(acc) ?? -Infinity;
-    return v > av ? d : acc;
-  }, null);
-  const worst = days.reduce((acc, d) => {
-    const v = valueForDay(d);
-    if (v == null) return acc;
-    if (!acc) return d;
-    const av = valueForDay(acc) ?? Infinity;
-    return v < av ? d : acc;
-  }, null);
-
-  const hasAnyData = days.some(
-    (d) => (d.realized && d.realized !== 0) || d.total != null || d.trades > 0,
+  const monthModel = useMemo(
+    () =>
+      buildMonthPnlCalendarModel({
+        trades,
+        equityPoints,
+        monthDate: visibleMonth,
+        today,
+      }),
+    [trades, equityPoints, visibleMonth, today],
   );
-
-  if (!hasAnyData) {
-    return (
-      <AppTooltip content="30-day P&L calendar will populate once closed trades or NAV snapshots are recorded.">
-        <div
-          style={{
-            border: `1px dashed ${T.border}`,
-            borderRadius: dim(4),
-            background: T.bg0,
-            color: T.textMuted,
-            fontSize: fs(8),
-            fontFamily: T.mono,
-            padding: sp(6),
-            textAlign: "center",
-          }}
-        >
-          No P&L in last 30 trading days
-        </div>
-      </AppTooltip>
+  const yearModel = useMemo(
+    () =>
+      buildYearPnlCalendarModel({
+        trades,
+        equityPoints,
+        year: visibleYear,
+        today,
+      }),
+    [trades, equityPoints, visibleYear, today],
+  );
+  const activeLabel = view === "month" ? monthModel.label : yearModel.label;
+  const activeSummary = view === "month" ? monthModel.summary : yearModel.summary;
+  useEffect(() => {
+    if (!latestActivityDate || userSelectedCalendarRef.current) return;
+    const latestMonth = new Date(
+      latestActivityDate.getFullYear(),
+      latestActivityDate.getMonth(),
+      1,
     );
-  }
-
-  const modeLabel =
-    effectiveMode === "realized"
-      ? "real"
-      : effectiveMode === "unrealized"
-        ? "unreal"
-        : "total";
+    setVisibleMonth((current) =>
+      current.getFullYear() === latestMonth.getFullYear() &&
+      current.getMonth() === latestMonth.getMonth()
+        ? current
+        : latestMonth,
+    );
+    setVisibleYear((current) =>
+      current === latestActivityDate.getFullYear()
+        ? current
+        : latestActivityDate.getFullYear(),
+    );
+  }, [latestActivityDate]);
+  const handleViewChange = (nextView) => {
+    if (nextView === "year") {
+      setVisibleYear(visibleMonth.getFullYear());
+    } else {
+      setVisibleMonth((current) => new Date(visibleYear, current.getMonth(), 1));
+    }
+    setView(nextView);
+  };
+  const shiftCalendar = (delta) => {
+    userSelectedCalendarRef.current = true;
+    if (view === "month") {
+      setVisibleMonth((current) => addCalendarMonths(current, delta));
+      return;
+    }
+    setVisibleYear((current) => current + delta);
+  };
+  const selectYearMonth = (date) => {
+    userSelectedCalendarRef.current = true;
+    setVisibleMonth(date);
+    setVisibleYear(date.getFullYear());
+    setView("month");
+  };
 
   return (
-    <div style={{ display: "grid", gap: sp(3) }}>
+    <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          fontSize: fs(8),
-          fontFamily: T.mono,
-          color: T.textMuted,
           gap: sp(4),
           flexWrap: "wrap",
+          minWidth: 0,
         }}
       >
-        <span>
-          <span style={{ color: T.green, fontWeight: 800 }}>{wins}W</span>
-          <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
-          <span style={{ color: T.red, fontWeight: 800 }}>{losses}L</span>
-          <span style={{ marginLeft: sp(4), color: T.textDim }}>{modeLabel}</span>
-        </span>
-        <ToggleGroup
-          options={CALENDAR_MODE_OPTIONS}
-          value={effectiveMode}
-          onChange={setMode}
+        <div style={{ minWidth: 0, display: "grid", gap: sp(2) }}>
+          <span style={mutedLabelStyle}>P&L Calendar</span>
+          <span
+            style={{
+              color: T.text,
+              fontSize: fs(10),
+              fontFamily: T.mono,
+              fontWeight: 400,
+              lineHeight: 1,
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {activeLabel}
+          </span>
+        </div>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(3),
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
+          <ToggleGroup options={CALENDAR_VIEW_OPTIONS} value={view} onChange={handleViewChange} />
+          <span style={{ display: "inline-flex", gap: 1 }}>
+            <CalendarNavButton
+              label="Previous period"
+              onClick={() => shiftCalendar(-1)}
+              calendarStyle={calendarStyle}
+            >
+              <ChevronLeft size={dim(14)} strokeWidth={2.3} />
+            </CalendarNavButton>
+            <CalendarNavButton
+              label="Next period"
+              onClick={() => shiftCalendar(1)}
+              calendarStyle={calendarStyle}
+            >
+              <ChevronRight size={dim(14)} strokeWidth={2.3} />
+            </CalendarNavButton>
+          </span>
+        </div>
+      </div>
+      {view === "month" ? (
+        <MonthCalendarGrid
+          model={monthModel}
+          currency={currency}
+          maskValues={maskValues}
+          calendarStyle={calendarStyle}
         />
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(10, 1fr)",
-          gap: 2,
-        }}
-      >
-        {days.map((d) => {
-          const value = valueForDay(d);
-          const intensity = value != null ? Math.abs(value) / max : 0;
-          const baseColor =
-            value == null || value === 0
-              ? T.bg3
-              : value > 0
-                ? T.green
-                : T.red;
-          const opacity = value == null || value === 0 ? 0.2 : 0.25 + intensity * 0.7;
-          const realFmt = formatAccountSignedMoney(d.realized || 0, currency, true, maskValues);
-          const unrealFmt =
-            d.unrealized == null
-              ? "----"
-              : formatAccountSignedMoney(d.unrealized, currency, true, maskValues);
-          const totalFmt =
-            d.total == null
-              ? "----"
-              : formatAccountSignedMoney(d.total, currency, true, maskValues);
-          return (
-            <div
-              key={d.iso}
-              title={`${d.iso}\nTotal ${totalFmt}\nReal ${realFmt}\nUnreal ${unrealFmt}\n${d.trades} trade${d.trades === 1 ? "" : "s"}`}
-              style={{
-                aspectRatio: "1",
-                borderRadius: 2,
-                background: baseColor,
-                opacity,
-              }}
-            />
-          );
-        })}
-      </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: fs(7),
-          fontFamily: T.mono,
-          color: T.textMuted,
-          gap: sp(4),
-          flexWrap: "wrap",
-        }}
-      >
-        <span>
-          BEST{" "}
-          <span style={{ color: T.green, fontWeight: 800 }}>
-            {best && valueForDay(best) != null
-              ? formatAccountSignedMoney(valueForDay(best), currency, true, maskValues)
-              : "----"}
-          </span>
-        </span>
-        <span>
-          WORST{" "}
-          <span style={{ color: T.red, fontWeight: 800 }}>
-            {worst && valueForDay(worst) != null
-              ? formatAccountSignedMoney(valueForDay(worst), currency, true, maskValues)
-              : "----"}
-          </span>
-        </span>
-      </div>
+      ) : (
+        <YearCalendarGrid
+          model={yearModel}
+          currency={currency}
+          maskValues={maskValues}
+          onSelectMonth={selectYearMonth}
+          calendarStyle={calendarStyle}
+        />
+      )}
+      <CalendarSummary
+        summary={activeSummary}
+        currency={currency}
+        maskValues={maskValues}
+        calendarStyle={calendarStyle}
+      />
     </div>
   );
 };
@@ -681,7 +959,7 @@ export const AccountReturnsPanel = ({
               color: metricTone(equity.returnPercent),
               fontSize: fs(compact ? 15 : 17),
               fontFamily: T.mono,
-              fontWeight: 950,
+              fontWeight: 400,
               lineHeight: 1,
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",
@@ -701,7 +979,7 @@ export const AccountReturnsPanel = ({
               color: metricTone(transferAdjustedPnl),
               fontSize: fs(compact ? 10 : 11),
               fontFamily: T.mono,
-              fontWeight: 900,
+              fontWeight: 400,
               lineHeight: 1.2,
               fontVariantNumeric: "tabular-nums",
               whiteSpace: "nowrap",

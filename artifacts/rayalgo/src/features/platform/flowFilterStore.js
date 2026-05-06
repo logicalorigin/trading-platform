@@ -254,6 +254,17 @@ export const filterFlowTapeEvents = (
   );
 };
 
+export const flowTapeFiltersAreActive = (filters = DEFAULT_FLOW_TAPE_FILTER_STATE) => {
+  const resolved = normalizeFlowTapeFilterState(filters);
+  return Boolean(
+    resolved.activeFlowPresetId ||
+      resolved.filter !== "all" ||
+      resolved.minPrem > 0 ||
+      resolved.includeQuery.trim() ||
+      resolved.excludeQuery.trim(),
+  );
+};
+
 export const normalizeFlowTapeFilterState = (value = {}) => {
   const input = value && typeof value === "object" ? value : {};
   const filter = FLOW_TAPE_FILTER_IDS.has(input.filter) ? input.filter : "all";

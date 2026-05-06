@@ -38,6 +38,15 @@ export const formatNumber = (value, digits = 2) => {
   });
 };
 
+export const formatAccountPrice = (value, digits = 2, maskValues = false) => {
+  if (maskValues) return ACCOUNT_VALUE_MASK;
+  if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
+  return Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+};
+
 export const formatPercent = (value, digits = 2) => {
   if (value == null || Number.isNaN(Number(value))) return MISSING_VALUE;
   return `${Number(value).toFixed(digits)}%`;
@@ -105,7 +114,7 @@ export const sectionTitleStyle = {
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 900,
+  fontWeight: 400,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
 };
@@ -120,7 +129,7 @@ export const mutedLabelStyle = {
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 800,
+  fontWeight: 400,
   letterSpacing: "0.12em",
   textTransform: "uppercase",
 };
@@ -173,7 +182,7 @@ export const denseButtonStyle = (active = false) => ({
   color: active ? (T.bg1 === "#ffffff" ? T.accent : "#ffffff") : T.textSec,
   fontSize: textSize("control"),
   fontFamily: T.data,
-  fontWeight: 800,
+  fontWeight: 400,
   cursor: "pointer",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
@@ -200,7 +209,7 @@ export const primaryButtonStyle = {
   get fontFamily() {
     return T.data;
   },
-  fontWeight: 800,
+  fontWeight: 400,
   cursor: "pointer",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
@@ -231,7 +240,7 @@ export const secondaryButtonStyle = {
   get fontFamily() {
     return T.data;
   },
-  fontWeight: 800,
+  fontWeight: 400,
   cursor: "pointer",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
@@ -260,7 +269,7 @@ export const ghostButtonStyle = {
   get fontFamily() {
     return T.mono;
   },
-  fontWeight: 800,
+  fontWeight: 400,
   cursor: "pointer",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
@@ -339,7 +348,7 @@ export const tableHeaderStyle = {
   get fontFamily() {
     return T.sans;
   },
-  fontWeight: 900,
+  fontWeight: 400,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
   get borderBottom() {
@@ -399,7 +408,7 @@ export const Pill = ({ children, tone = "default", title, style }) => {
         color: palette.color,
         fontSize: textSize("label"),
         fontFamily: T.data,
-        fontWeight: 800,
+        fontWeight: 400,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
         ...style,
@@ -474,7 +483,7 @@ export const StatTile = ({
           color: palette.color === T.textDim ? T.text : palette.color,
           fontSize: textSize(compact ? "metric" : "bodyStrong"),
           fontFamily: T.data,
-          fontWeight: 800,
+          fontWeight: 400,
           lineHeight: 1.1,
         }}
       >
@@ -515,7 +524,7 @@ export const EmptyState = ({ title, body, action }) => (
       background: `${T.bg0}aa`,
     }}
   >
-    <div style={{ color: T.text, fontWeight: 800 }}>{title}</div>
+    <div style={{ color: T.text, fontWeight: 400 }}>{title}</div>
     <div style={{ lineHeight: 1.5 }}>{body}</div>
     {action}
   </div>
@@ -578,7 +587,7 @@ export const Panel = ({
                   color: T.textDim,
                   fontSize: textSize("label"),
                   fontFamily: T.data,
-                  fontWeight: 800,
+                  fontWeight: 400,
                 }}
               >
                 {rightRail}

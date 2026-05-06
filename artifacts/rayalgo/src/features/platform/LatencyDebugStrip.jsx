@@ -55,7 +55,7 @@ export const LatencyDebugStrip = ({ screen, mountedScreens }) => {
         pointerEvents: "none",
       }}
     >
-      <strong style={{ color: "#93c5fd", fontWeight: 700 }}>Latency</strong>
+      <strong style={{ color: "#93c5fd", fontWeight: 400 }}>Latency</strong>
       {cells.map(([label, metric]) => (
         <span key={label} style={{ whiteSpace: "nowrap" }}>
           {label} p50 {formatLatencyMetric(metric.p50)} p95{" "}

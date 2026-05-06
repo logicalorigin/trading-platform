@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   LOCAL_ALERT_STORAGE_KEY,
@@ -9,6 +10,9 @@ import {
   syncDiagnosticSnapshotAlerts,
   writeLocalAlertPreferences,
 } from "./localAlerts.js";
+
+const readSource = (path) =>
+  readFileSync(new URL(path, import.meta.url), "utf8");
 
 const warningEvent = {
   id: "event-1",
@@ -207,4 +211,39 @@ test("alert preferences persist with expired records pruned", () => {
   const persisted = JSON.parse(storage.get(LOCAL_ALERT_STORAGE_KEY));
   assert.deepEqual(Object.keys(persisted.dismissedAlerts), ["active"]);
   assert.equal(readLocalAlertPreferences(fakeStorage).audioEnabled, false);
+});
+
+test("diagnostics surfaces use generated clients for generated REST endpoints", () => {
+  const diagnosticsScreen = readSource("../DiagnosticsScreen.jsx");
+  const thresholdsPanel = readSource(
+    "../settings/DiagnosticThresholdSettingsPanel.jsx",
+  );
+  const runtimeControl = readSource(
+    "../../features/platform/useRuntimeControlSnapshot.js",
+  );
+  const memoryPressure = readSource(
+    "../../features/platform/useMemoryPressureSignal.js",
+  );
+
+  assert.match(diagnosticsScreen, /listDiagnosticHistory/);
+  assert.match(diagnosticsScreen, /listDiagnosticEvents/);
+  assert.match(diagnosticsScreen, /getLatestDiagnostics/);
+  assert.match(diagnosticsScreen, /getDiagnosticEventDetail/);
+  assert.match(diagnosticsScreen, /recordClientDiagnosticEvent/);
+  assert.doesNotMatch(diagnosticsScreen, /fetch\(`\/api\/diagnostics\/history/);
+  assert.doesNotMatch(diagnosticsScreen, /fetch\(`\/api\/diagnostics\/events/);
+  assert.doesNotMatch(diagnosticsScreen, /fetch\("\/api\/diagnostics\/latest"/);
+  assert.doesNotMatch(diagnosticsScreen, /fetch\("\/api\/diagnostics\/client-events"/);
+  assert.match(diagnosticsScreen, /new EventSource\("\/api\/diagnostics\/stream"\)/);
+  assert.match(diagnosticsScreen, /fetch\("\/api\/diagnostics\/client-metrics"/);
+
+  assert.match(thresholdsPanel, /useGetDiagnosticThresholds/);
+  assert.match(thresholdsPanel, /useUpdateDiagnosticThresholds/);
+  assert.doesNotMatch(thresholdsPanel, /fetch\("\/api\/diagnostics\/thresholds"/);
+
+  assert.match(runtimeControl, /getRuntimeDiagnostics/);
+  assert.doesNotMatch(runtimeControl, /platformJsonRequest\("\/api\/diagnostics\/runtime"/);
+
+  assert.match(memoryPressure, /getLatestDiagnostics/);
+  assert.doesNotMatch(memoryPressure, /platformJsonRequest\("\/api\/diagnostics\/latest"/);
 });

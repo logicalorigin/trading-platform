@@ -16,6 +16,7 @@ import {
 
 test("default flow scanner covers 500 symbols inside five minutes", () => {
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols, 500);
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.scope, FLOW_SCANNER_SCOPE.all);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.batchSize, UNUSUAL_SCANNER_BATCH_SIZE);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.intervalMs, UNUSUAL_SCANNER_INTERVAL_MS);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.concurrency, 1);
@@ -44,7 +45,7 @@ test("normalizeFlowScannerConfig applies defaults and clamps capacity settings",
     }),
     {
       mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
-      scope: FLOW_SCANNER_SCOPE.unusual,
+      scope: FLOW_SCANNER_SCOPE.all,
       maxSymbols: 2000,
       batchSize: 250,
       intervalMs: 2500,
@@ -108,6 +109,20 @@ test("default flow scanner scans all watchlists plus the market universe", () =>
       config: DEFAULT_FLOW_SCANNER_CONFIG,
     }),
     ["SPY", "NVDA", "AAPL", "QQQ", "IWM"],
+  );
+});
+
+test("default flow scanner keeps routine flow visible for Flow tape filters", () => {
+  const events = [
+    { id: "routine", isUnusual: false, unusualScore: 0.2, premium: 15_000, dte: 14 },
+    { id: "unusual", isUnusual: true, unusualScore: 2, premium: 75_000, dte: 7 },
+  ];
+
+  assert.deepEqual(
+    filterFlowScannerEvents(events, DEFAULT_FLOW_SCANNER_CONFIG).map(
+      (event) => event.id,
+    ),
+    ["routine", "unusual"],
   );
 });
 

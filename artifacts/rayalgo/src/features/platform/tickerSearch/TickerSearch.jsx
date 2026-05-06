@@ -567,7 +567,7 @@ const TickerSearchRow = ({
           <span
             style={{
               fontSize: fs(10),
-              fontWeight: 800,
+              fontWeight: 400,
               fontFamily: T.sans,
               color: T.text,
             }}
@@ -1307,7 +1307,7 @@ export const MiniChartTickerSearch = ({
               fontSize: fs(8),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 700,
+              fontWeight: 400,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -1525,7 +1525,7 @@ export const MiniChartTickerSearch = ({
               fontSize: fs(8),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 700,
+              fontWeight: 400,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -1657,7 +1657,7 @@ export function TickerSearchLab() {
           <div
             style={{
               fontSize: fs(13),
-              fontWeight: 800,
+              fontWeight: 400,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -1699,7 +1699,7 @@ export function TickerSearchLab() {
               data-testid="ticker-search-selected"
               style={{
                 fontSize: fs(16),
-                fontWeight: 800,
+                fontWeight: 400,
                 color: T.text,
                 fontFamily: T.mono,
               }}
@@ -1730,7 +1730,7 @@ export function TickerSearchLab() {
               color: T.accent,
               padding: sp("8px 12px"),
               fontSize: fs(10),
-              fontWeight: 700,
+              fontWeight: 400,
               cursor: "pointer",
               textTransform: "uppercase",
               letterSpacing: "0.08em",
@@ -1946,7 +1946,7 @@ export const TickerUniverseSearchPanel = ({
               fontSize: fs(8),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 700,
+              fontWeight: 400,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
             }}
@@ -2009,7 +2009,7 @@ export const TickerUniverseSearchPanel = ({
             <span
               style={{
                 fontSize: fs(10),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.display,
                 color: T.textSec,
                 letterSpacing: "0.06em",

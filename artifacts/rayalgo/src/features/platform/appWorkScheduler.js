@@ -76,9 +76,7 @@ export const buildPlatformWorkSchedule = ({
       memoryAllowsBackground &&
       isBackgroundWorkAllowed(ibkrWorkPressure),
   );
-  const broadFlowAllowed = Boolean(
-    visible && sessionReady && memoryAllowsForeground,
-  );
+  const broadFlowAllowed = true;
   const market = screen === "market";
   const flow = screen === "flow";
   const trade = screen === "trade";

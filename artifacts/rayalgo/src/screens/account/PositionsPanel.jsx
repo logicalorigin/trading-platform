@@ -9,6 +9,7 @@ import {
   ToggleGroup,
   formatAccountMoney,
   formatAccountPercent,
+  formatAccountPrice,
   formatNumber,
   moveTableFocus,
   mutedLabelStyle,
@@ -207,7 +208,7 @@ export const PositionsAtDateInspector = ({
                 <tbody>
                   {positions.slice(0, 8).map((row) => (
                     <tr key={row.id} className="ra-table-row">
-                      <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
+                      <td style={{ ...tableCellStyle, color: T.text, fontWeight: 400 }}>
                         <button
                           type="button"
                           onClick={() => onJumpToChart?.(row.symbol)}
@@ -236,9 +237,9 @@ export const PositionsAtDateInspector = ({
                         {formatNumber(row.quantity, 3)}
                       </td>
                       <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                        {formatAccountMoney(row.mark, currency, false, maskValues)}
+                        {formatAccountPrice(row.mark, 2, maskValues)}
                       </td>
-                      <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnl), fontWeight: 800 }}>
+                      <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnl), fontWeight: 400 }}>
                         {formatAccountMoney(row.unrealizedPnl, currency, false, maskValues)}
                       </td>
                       <td style={{ ...tableCellStyle, textAlign: "right", color: T.text }}>
@@ -287,7 +288,7 @@ export const PositionsAtDateInspector = ({
                       }}
                     >
                       <span>{row.symbol || row.source}</span>
-                      <span style={{ color: toneForValue(row.realizedPnl ?? row.amount), fontWeight: 900 }}>
+                      <span style={{ color: toneForValue(row.realizedPnl ?? row.amount), fontWeight: 400 }}>
                         {row.realizedPnl != null
                           ? formatAccountMoney(row.realizedPnl, currency, true, maskValues)
                           : formatAccountMoney(row.amount, currency, true, maskValues)}
@@ -457,7 +458,7 @@ export const PositionsPanel = ({
                             color: T.textSec,
                             cursor: "pointer",
                             fontSize: fs(9),
-                            fontWeight: 900,
+                            fontWeight: 400,
                             flexShrink: 0,
                           }}
                         >
@@ -476,7 +477,7 @@ export const PositionsPanel = ({
                               background: "transparent",
                               color: T.text,
                               fontSize: fs(10),
-                              fontWeight: 900,
+                              fontWeight: 400,
                               cursor: "pointer",
                               textAlign: "left",
                             }}
@@ -517,10 +518,10 @@ export const PositionsPanel = ({
                       {formatNumber(row.quantity, 4)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                      {formatAccountMoney(row.averageCost, currency, false, maskValues)}
+                      {formatAccountPrice(row.averageCost, 2, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: T.text }}>
-                      {formatAccountMoney(row.mark, currency, false, maskValues)}
+                      {formatAccountPrice(row.mark, 2, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.dayChangePercent) }}>
                       {formatAccountPercent(row.dayChangePercent, 2, maskValues)}
@@ -528,7 +529,7 @@ export const PositionsPanel = ({
                     <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.dayChange) }}>
                       {formatAccountMoney(row.dayChange, currency, false, maskValues)}
                     </td>
-                    <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnl), fontWeight: 800 }}>
+                    <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnl), fontWeight: 400 }}>
                       {formatAccountMoney(row.unrealizedPnl, currency, false, maskValues)}
                     </td>
                     <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(row.unrealizedPnlPercent) }}>
@@ -611,7 +612,7 @@ export const PositionsPanel = ({
                                             {formatNumber(lot.quantity, 4)}
                                           </td>
                                           <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                                            {formatAccountMoney(lot.averageCost, currency, false, maskValues)}
+                                            {formatAccountPrice(lot.averageCost, 2, maskValues)}
                                           </td>
                                           <td style={{ ...tableCellStyle, textAlign: "right" }}>
                                             {formatAccountMoney(lot.marketValue, currency, false, maskValues)}
@@ -706,9 +707,9 @@ export const PositionsPanel = ({
                                       >
                                         {formatNumber(order.quantity, 2)} @{" "}
                                         {order.limitPrice != null
-                                          ? formatAccountMoney(order.limitPrice, currency, false, maskValues)
+                                          ? formatAccountPrice(order.limitPrice, 2, maskValues)
                                           : order.stopPrice != null
-                                            ? formatAccountMoney(order.stopPrice, currency, false, maskValues)
+                                            ? formatAccountPrice(order.stopPrice, 2, maskValues)
                                             : "Market"}
                                       </div>
                                       <div
@@ -756,10 +757,10 @@ export const PositionsPanel = ({
                   zIndex: 1,
                 }}
               >
-                <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }} colSpan={5}>
+                <td style={{ ...tableCellStyle, color: T.text, fontWeight: 400 }} colSpan={5}>
                   Totals
                 </td>
-                <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(totalDayChange), fontWeight: 800 }}>
+                <td style={{ ...tableCellStyle, textAlign: "right", color: toneForValue(totalDayChange), fontWeight: 400 }}>
                   {formatAccountMoney(totalDayChange, currency, false, maskValues)}
                 </td>
                 <td
@@ -767,16 +768,16 @@ export const PositionsPanel = ({
                     ...tableCellStyle,
                     textAlign: "right",
                     color: toneForValue(query.data?.totals?.unrealizedPnl),
-                    fontWeight: 800,
+                    fontWeight: 400,
                   }}
                 >
                   {formatAccountMoney(query.data?.totals?.unrealizedPnl, currency, false, maskValues)}
                 </td>
                 <td />
-                <td style={{ ...tableCellStyle, textAlign: "right", color: T.text, fontWeight: 800 }}>
+                <td style={{ ...tableCellStyle, textAlign: "right", color: T.text, fontWeight: 400 }}>
                   {formatAccountMoney(query.data?.totals?.netExposure, currency, true, maskValues)}
                 </td>
-                <td style={{ ...tableCellStyle, textAlign: "right", fontWeight: 800 }}>
+                <td style={{ ...tableCellStyle, textAlign: "right", fontWeight: 400 }}>
                   {formatAccountPercent(query.data?.totals?.weightPercent, 2, maskValues)}
                 </td>
                 <td style={{ ...tableCellStyle, textAlign: "right" }}>

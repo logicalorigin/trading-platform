@@ -52,6 +52,18 @@ test("TradeScreen option price chart lets the chart surface own empty state", ()
   assert.doesNotMatch(source, /aria-label="Contract chart empty state"/);
 });
 
+test("TradeScreen hydrates option charts from complete option identity without waiting for broker id", () => {
+  assert.doesNotMatch(source, /requireProviderContractId:\s*true/);
+  assert.doesNotMatch(source, /requireMarketIdentifier:\s*true/);
+});
+
+test("TradeScreen keeps option chain snapshots warm while hidden", () => {
+  assert.doesNotMatch(
+    source,
+    /if \(isVisible\) \{\s*return;\s*\}[\s\S]*?clearTradeOptionChainSnapshot\(activeTicker\);/,
+  );
+});
+
 test("Platform does not passively reset Trade to the first active watchlist item", () => {
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\.some\(\(item\) => item\.symbol === sym\)/);
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\[0\]\?\.symbol/);

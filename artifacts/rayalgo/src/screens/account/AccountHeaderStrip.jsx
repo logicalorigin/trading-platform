@@ -60,7 +60,7 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
         color: T.textMuted,
         fontSize: fs(6),
         fontFamily: T.sans,
-        fontWeight: 900,
+        fontWeight: 400,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
         flexShrink: 0,
@@ -73,7 +73,7 @@ const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) =>
         color: tone,
         fontSize: fs(strong ? 10 : 9),
         fontFamily: T.mono,
-        fontWeight: 900,
+        fontWeight: 400,
         overflow: "hidden",
         textOverflow: "ellipsis",
       }}
@@ -169,7 +169,7 @@ const AccountSwitcher = ({
               color: T.text,
               fontSize: fs(9),
               fontFamily: T.sans,
-              fontWeight: 900,
+              fontWeight: 400,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -242,7 +242,7 @@ const AccountSwitcher = ({
                   style={{
                     color: T.text,
                     fontSize: fs(10),
-                    fontWeight: 900,
+                    fontWeight: 400,
                   }}
                 >
                   All accounts
@@ -301,7 +301,7 @@ const AccountSwitcher = ({
                     style={{
                       color: T.text,
                       fontSize: fs(9),
-                      fontWeight: 900,
+                      fontWeight: 400,
                     }}
                   >
                     {account.displayName || account.id}

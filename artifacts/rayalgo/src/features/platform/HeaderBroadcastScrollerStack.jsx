@@ -1,7 +1,11 @@
 import { RadioTower } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
-import { formatExpirationLabel, formatQuotePrice, formatRelativeTimeShort } from "../../lib/formatters";
+import {
+  formatOptionContractLabel,
+  formatQuotePrice,
+  formatRelativeTimeShort,
+} from "../../lib/formatters";
 import { joinMotionClasses, motionRowStyle, motionVars } from "../../lib/motion.jsx";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
@@ -10,6 +14,7 @@ import {
   FLOW_TAPE_FILTER_OPTIONS,
   buildFlowTapePresetPatch,
   filterFlowTapeEvents,
+  flowTapeFiltersAreActive,
   setFlowTapeFilterState,
   useFlowTapeFilterState,
 } from "./flowFilterStore";
@@ -77,7 +82,7 @@ const HeaderBroadcastSegment = ({
         color: T.textSec,
         fontFamily: T.sans,
         fontSize: fs(10),
-        fontWeight: 700,
+        fontWeight: 400,
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -113,7 +118,7 @@ const HeaderSignalTapeItem = ({ item, duplicate = false, onClick }) => {
       onClick={(selected) => onClick?.(selected.symbol, selected.raw)}
       title={title}
     >
-      <span style={{ color: tone, fontWeight: 900 }}>{item.directionLabel}</span>
+      <span style={{ color: tone, fontWeight: 400 }}>{item.directionLabel}</span>
       <span style={{ color: T.text }}>{item.symbol}</span>
       {item.timeframe ? (
         <span style={{ color: T.textDim, fontFamily: T.code }}>
@@ -137,15 +142,13 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick }) => {
     item.right === "P" ||
     String(item.sentiment || "").toLowerCase() === "bearish";
   const tone = isPut ? T.red : T.green;
+  const formattedContractLabel = formatOptionContractLabel(item, {
+    includeSymbol: false,
+    fallback: "",
+  });
   const contractLabel =
-    item.contract ||
-    [
-      item.strike != null ? String(item.strike) : "",
-      item.right,
-      formatExpirationLabel(item.expirationDate),
-    ]
-      .filter((part) => part && part !== MISSING_VALUE)
-      .join(" ");
+    formattedContractLabel ||
+    String(item.contract || "").replace(new RegExp(`^${item.symbol}\\s+`, "i"), "");
   const scoreLabel = item.score ? `${item.score.toFixed(1)}x` : null;
   const title = `${item.symbol} unusual ${contractLabel}`.trim();
 
@@ -214,7 +217,7 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
         color: T.textSec,
         fontFamily: T.code,
         fontSize: fs(9),
-        fontWeight: 900,
+        fontWeight: 400,
       }}
     >
       {label}
@@ -224,7 +227,7 @@ const HeaderLaneSettingsTitle = ({ label, status, tone = T.textDim }) => (
         color: tone,
         fontFamily: T.code,
         fontSize: fs(8),
-        fontWeight: 800,
+        fontWeight: 400,
         whiteSpace: "nowrap",
       }}
     >
@@ -244,7 +247,7 @@ const HeaderLaneInfoRow = ({ label, value, tone = T.textSec }) => (
       color: T.textDim,
       fontFamily: T.code,
       fontSize: fs(8),
-      fontWeight: 700,
+      fontWeight: 400,
     }}
   >
     <span>{label}</span>
@@ -260,7 +263,7 @@ const HeaderLaneSectionLabel = ({ children }) => (
       color: T.textMuted,
       fontFamily: T.code,
       fontSize: fs(7),
-      fontWeight: 900,
+      fontWeight: 400,
       letterSpacing: "0.08em",
     }}
   >
@@ -298,7 +301,7 @@ const HeaderLaneSegmentedControl = ({ value, onChange }) => (
             cursor: "pointer",
             fontFamily: T.code,
             fontSize: fs(8),
-            fontWeight: 900,
+            fontWeight: 400,
           }}
         >
           {config.label}
@@ -337,7 +340,7 @@ const HeaderLaneToggleButton = ({
       cursor: disabled ? "default" : "pointer",
       fontFamily: T.sans,
       fontSize: fs(9),
-      fontWeight: 800,
+      fontWeight: 400,
     }}
   >
     <RadioTower size={dim(12)} strokeWidth={2.3} />
@@ -353,7 +356,7 @@ const headerLaneControlInputStyle = {
   color: T.textSec,
   fontFamily: T.code,
   fontSize: fs(8),
-  fontWeight: 800,
+  fontWeight: 400,
   padding: sp("3px 5px"),
   outline: "none",
 };
@@ -369,7 +372,7 @@ const HeaderLaneControlRow = ({ label, children }) => (
       color: T.textDim,
       fontFamily: T.code,
       fontSize: fs(8),
-      fontWeight: 800,
+      fontWeight: 400,
     }}
   >
     <span>{label}</span>
@@ -487,7 +490,7 @@ const HeaderBroadcastLane = ({
             cursor: "pointer",
             fontFamily: T.code,
             fontSize: fs(9),
-            fontWeight: 900,
+            fontWeight: 400,
             whiteSpace: "nowrap",
           }}
         >
@@ -546,7 +549,7 @@ const HeaderBroadcastLane = ({
               color: T.textMuted,
               fontFamily: T.code,
               fontSize: fs(10),
-              fontWeight: 700,
+              fontWeight: 400,
               whiteSpace: "nowrap",
             }}
           >
@@ -672,16 +675,24 @@ export const HeaderBroadcastScrollerStack = memo(({
     () => buildHeaderSignalTapeItems(signalSnapshot),
     [signalSnapshot],
   );
-  const unusualEvents = useMemo(
+  const rawUnusualEvents = useMemo(
     () =>
       broadScanSnapshotActive
-        ? filterFlowTapeEvents(broadFlowSnapshot.flowEvents || [], flowTapeFilters)
+        ? broadFlowSnapshot.flowEvents || []
         : [],
-    [
-      broadFlowSnapshot.flowEvents,
-      broadScanSnapshotActive,
-      flowTapeFilters,
-    ],
+    [broadFlowSnapshot.flowEvents, broadScanSnapshotActive],
+  );
+  const unusualEvents = useMemo(
+    () =>
+      rawUnusualEvents.length
+        ? filterFlowTapeEvents(rawUnusualEvents, flowTapeFilters)
+        : [],
+    [flowTapeFilters, rawUnusualEvents],
+  );
+  const flowEventsFilteredOut = Boolean(
+    rawUnusualEvents.length &&
+      !unusualEvents.length &&
+      flowTapeFiltersAreActive(flowTapeFilters),
   );
   const unusualItems = useMemo(
     () => buildHeaderUnusualTapeItems(unusualEvents),
@@ -701,6 +712,8 @@ export const HeaderBroadcastScrollerStack = memo(({
         : "SIGNALS OFF";
   const flowStatus = unusualEvents.length
     ? "live"
+    : rawUnusualEvents.length
+      ? "live"
     : broadScanSnapshotActive
       ? broadFlowSnapshot.flowStatus
       : "empty";
@@ -730,16 +743,19 @@ export const HeaderBroadcastScrollerStack = memo(({
         ? "FLOW OFFLINE"
         : flowDegraded
           ? "FLOW DEGRADED"
+        : flowEventsFilteredOut
+          ? "FLOW FILTERED"
         : unusualEvents.length
           ? "NO UNUSUAL FLOW"
           : "NO FLOW";
 
+  // Status color semantics: green=active, accent=updating, amber=degraded, red=error.
   const flowScanTone = flowScanHasError
     ? T.red
     : flowScanDegraded
       ? T.amber
     : flowScanBusy
-      ? T.amber
+      ? T.accent
       : broadScanSnapshotActive
         ? T.green
         : broadScanEnabled
@@ -765,12 +781,12 @@ export const HeaderBroadcastScrollerStack = memo(({
       : broadScanSnapshotActive
         ? "Flow scan active"
         : broadScanEnabled
-          ? "Flow scan waiting for app visibility"
+          ? "Flow scan enabled"
         : "Start Flow scan";
   const signalScanTone = signalHasError
     ? T.red
     : signalBusy
-      ? T.amber
+      ? T.accent
       : signalScanEnabled
         ? T.green
         : T.textMuted;
@@ -1015,7 +1031,7 @@ export const HeaderBroadcastScrollerStack = memo(({
       <HeaderLaneInfoRow
         label="Flow"
         value={flowStatus.toUpperCase()}
-        tone={flowHasError ? T.red : flowStatus === "loading" ? T.amber : T.textSec}
+        tone={flowHasError ? T.red : flowStatus === "loading" ? T.accent : T.textSec}
       />
       <HeaderLaneInfoRow
         label="Scanned"

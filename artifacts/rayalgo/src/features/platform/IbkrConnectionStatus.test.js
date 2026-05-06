@@ -14,6 +14,7 @@ import {
   maskIbkrAccountId,
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus.jsx";
+import { bridgeRuntimeTone } from "./bridgeRuntimeModel.js";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel.js";
 import { T } from "../../lib/uiTokens.jsx";
 
@@ -193,6 +194,147 @@ test("getIbkrConnectionTone maps configured connection states", () => {
   );
 });
 
+test("getIbkrConnectionTone maps status colors", () => {
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      healthFresh: true,
+      streamFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      strictReady: true,
+    }).color,
+    T.green,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      healthFresh: true,
+      accountsLoaded: false,
+      strictReady: false,
+    }).color,
+    T.accent,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
+      authenticated: false,
+    }).color,
+    T.amber,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      healthFresh: true,
+      liveMarketDataAvailable: false,
+      configuredLiveMarketDataMode: false,
+      accountsLoaded: true,
+    }).color,
+    T.amber,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      healthFresh: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: false,
+      streamState: "stale",
+      accountsLoaded: true,
+      strictReady: false,
+    }).color,
+    T.amber,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      healthFresh: false,
+      configuredLiveMarketDataMode: true,
+      streamFresh: false,
+      streamState: "capacity_limited",
+      streamStateReason: "backpressure",
+      accountsLoaded: true,
+      strictReady: false,
+    }).color,
+    T.amber,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      healthFresh: false,
+      configuredLiveMarketDataMode: true,
+      streamFresh: false,
+      streamState: "reconnect_needed",
+      accountsLoaded: true,
+      strictReady: false,
+    }).color,
+    T.amber,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: false,
+      authenticated: false,
+      lastError: "socket closed",
+    }).color,
+    T.red,
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: false,
+      authenticated: false,
+    }).color,
+    T.red,
+  );
+});
+
+test("bridgeRuntimeTone maps in-progress bridge states to accent", () => {
+  assert.equal(
+    bridgeRuntimeTone({
+      configured: { ibkr: true },
+      ibkrBridge: {
+        connected: true,
+        authenticated: true,
+        accountsLoaded: false,
+      },
+    }).color,
+    T.accent,
+  );
+  assert.equal(
+    bridgeRuntimeTone({
+      configured: { ibkr: true },
+      ibkrBridge: {
+        connected: true,
+        authenticated: true,
+      },
+    }).color,
+    T.accent,
+  );
+  assert.equal(
+    bridgeRuntimeTone({
+      configured: { ibkr: true },
+      ibkrBridge: {
+        connected: true,
+        authenticated: false,
+      },
+    }).color,
+    T.amber,
+  );
+});
+
 test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
   assert.deepEqual(
     [
@@ -365,6 +507,28 @@ test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
         configured: true,
         reachable: true,
         authenticated: true,
+        accountsLoaded: false,
+      },
+    }).status,
+    "checking",
+  );
+  assert.equal(
+    resolveIbkrGatewayHealth({
+      connection: {
+        configured: true,
+        reachable: true,
+        authenticated: true,
+        accountsLoaded: false,
+      },
+    }).color,
+    T.accent,
+  );
+  assert.equal(
+    resolveIbkrGatewayHealth({
+      connection: {
+        configured: true,
+        reachable: true,
+        authenticated: true,
         healthFresh: true,
         liveMarketDataAvailable: false,
         configuredLiveMarketDataMode: false,
@@ -519,6 +683,17 @@ test("getIbkrGatewayBadges surfaces live data and stream gaps", () => {
       },
     }).map((badge) => badge.label),
     ["DELAYED"],
+  );
+  assert.deepEqual(
+    getIbkrGatewayBadges({
+      connection: {
+        configured: true,
+        reachable: true,
+        authenticated: true,
+        accountsLoaded: false,
+      },
+    }).map((badge) => badge.label),
+    ["CHECKING"],
   );
   assert.deepEqual(
     getIbkrGatewayBadges({

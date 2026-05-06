@@ -418,7 +418,7 @@ export function MarketIdentityMark({
         boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.12)",
         fontFamily: T.mono,
         fontSize: fs(size <= 14 ? 6 : size <= 20 ? 8 : 9),
-        fontWeight: 900,
+        fontWeight: 400,
         lineHeight: 1,
         flexShrink: 0,
         ...style,
@@ -513,7 +513,7 @@ export function MarketIdentityChips({
             background: compact ? "transparent" : T.bg2,
             fontSize: fs(compact ? 7 : 8),
             fontFamily: T.mono,
-            fontWeight: 800,
+            fontWeight: 400,
             lineHeight: 1,
             padding: sp(compact ? "2px 3px" : "2px 4px"),
             textTransform: chip.key === "country" ? "none" : "uppercase",
@@ -559,7 +559,7 @@ export function MarketIdentityInline({
           whiteSpace: "nowrap",
           color: T.text,
           fontFamily: T.mono,
-          fontWeight: 800,
+          fontWeight: 400,
         }}
       >
         {identity.ticker}

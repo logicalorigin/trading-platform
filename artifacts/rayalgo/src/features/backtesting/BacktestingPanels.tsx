@@ -1036,7 +1036,7 @@ function buttonStyle(
     padding: scale.sp("6px 9px"),
     fontFamily: theme.sans,
     fontSize: scale.fs(10),
-    fontWeight: 700,
+    fontWeight: 400,
     cursor: "pointer",
   };
 }
@@ -1056,7 +1056,7 @@ function fieldLabelStyle(
 ): CSSProperties {
   return {
     fontSize: scale.fs(9),
-    fontWeight: 700,
+    fontWeight: 400,
     color: theme.textMuted,
     letterSpacing: "0.06em",
     marginBottom: scale.sp(4),
@@ -1093,7 +1093,7 @@ function SectionCard({
         <div
           style={{
             fontSize: scale.fs(12),
-            fontWeight: 700,
+            fontWeight: 400,
             fontFamily: theme.display,
             color: theme.text,
           }}
@@ -1133,7 +1133,7 @@ function StatusBadge({
         background: `${color}18`,
         color,
         fontSize: scale.fs(9),
-        fontWeight: 700,
+        fontWeight: 400,
         fontFamily: theme.mono,
         textTransform: "uppercase",
       }}
@@ -1187,7 +1187,7 @@ function MetricCard({
       <div
         style={{
           fontSize: scale.fs(16),
-          fontWeight: 700,
+          fontWeight: 400,
           fontFamily: theme.mono,
           color: accent,
         }}
@@ -1253,7 +1253,7 @@ function DraftStrategiesList({
               <div
                 style={{
                   fontSize: scale.fs(11),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.text,
                 }}
               >
@@ -1410,6 +1410,7 @@ export function AlgoDraftStrategiesPanel({
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       queryKey: getListBacktestDraftStrategiesQueryKey(),
+      enabled: Boolean(isVisible),
       staleTime: 5_000,
       refetchInterval: isVisible ? 10_000 : false,
     },
@@ -1435,7 +1436,7 @@ export function AlgoDraftStrategiesPanel({
         <div
           style={{
             fontSize: scale.fs(12),
-            fontWeight: 700,
+            fontWeight: 400,
             fontFamily: theme.display,
             color: theme.text,
           }}
@@ -1493,12 +1494,14 @@ export function BacktestWorkspace({
   const strategiesQuery = useListBacktestStrategies({
     query: {
       queryKey: getListBacktestStrategiesQueryKey(),
+      enabled: Boolean(isVisible),
       staleTime: 30_000,
     },
   });
   const studiesQuery = useListBacktestStudies({
     query: {
       queryKey: getListBacktestStudiesQueryKey(),
+      enabled: Boolean(isVisible),
       staleTime: 5_000,
       refetchInterval: isVisible ? 15_000 : false,
     },
@@ -1506,6 +1509,7 @@ export function BacktestWorkspace({
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       queryKey: getListBacktestDraftStrategiesQueryKey(),
+      enabled: Boolean(isVisible),
       staleTime: 5_000,
       refetchInterval: isVisible ? 10_000 : false,
     },
@@ -1635,7 +1639,7 @@ export function BacktestWorkspace({
         queryKey: getListBacktestRunsQueryKey(
           selectedStudyId ? { studyId: selectedStudyId } : undefined,
         ),
-        enabled: Boolean(selectedStudyId),
+        enabled: Boolean(isVisible && selectedStudyId),
         staleTime: 2_000,
         refetchInterval: isVisible ? 5_000 : false,
       },
@@ -1644,6 +1648,7 @@ export function BacktestWorkspace({
   const jobsQuery = useListBacktestJobs({
     query: {
       queryKey: getListBacktestJobsQueryKey(),
+      enabled: Boolean(isVisible),
       staleTime: 2_000,
       refetchInterval: isVisible ? 5_000 : false,
     },
@@ -1651,7 +1656,7 @@ export function BacktestWorkspace({
   const runDetailQuery = useGetBacktestRun(selectedRunId || "", {
     query: {
       queryKey: getGetBacktestRunQueryKey(selectedRunId || ""),
-      enabled: Boolean(selectedRunId),
+      enabled: Boolean(isVisible && selectedRunId),
       staleTime: 2_000,
       refetchInterval: isVisible ? 5_000 : false,
     },
@@ -1668,7 +1673,7 @@ export function BacktestWorkspace({
           symbol: selectedRunChartSymbol || undefined,
           selectedTradeId: selectedTradeSelectionId || undefined,
         }),
-        enabled: Boolean(selectedRunId),
+        enabled: Boolean(isVisible && selectedRunId),
         staleTime: 2_000,
         refetchInterval: isVisible ? 5_000 : false,
       },
@@ -1681,7 +1686,7 @@ export function BacktestWorkspace({
         queryKey: getGetBacktestStudyPreviewChartQueryKey(
           selectedStudyId || "",
         ),
-        enabled: Boolean(selectedStudyId),
+        enabled: Boolean(isVisible && selectedStudyId),
         staleTime: 2_000,
         refetchInterval: isVisible ? 5_000 : false,
       },
@@ -2889,7 +2894,7 @@ export function BacktestWorkspace({
           <div
             style={{
               fontSize: scale.fs(11),
-              fontWeight: 700,
+              fontWeight: 400,
               color: theme.text,
             }}
           >
@@ -2938,7 +2943,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(13),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: theme.display,
                   color: theme.text,
                 }}
@@ -3119,7 +3124,7 @@ export function BacktestWorkspace({
             style={{
               cursor: "pointer",
               fontSize: scale.fs(10),
-              fontWeight: 700,
+              fontWeight: 400,
               color: theme.textSec,
             }}
           >
@@ -3368,7 +3373,7 @@ export function BacktestWorkspace({
                 <span
                   style={{
                     color: spotChartModel ? theme.green : theme.textDim,
-                    fontWeight: 700,
+                    fontWeight: 400,
                     fontFamily: theme.mono,
                   }}
                 >
@@ -3400,7 +3405,7 @@ export function BacktestWorkspace({
                     color: optionChartHasRenderablePayload
                       ? theme.green
                       : theme.amber,
-                    fontWeight: 700,
+                    fontWeight: 400,
                     fontFamily: theme.mono,
                   }}
                 >
@@ -3571,7 +3576,7 @@ export function BacktestWorkspace({
                   <div
                     style={{
                       fontSize: scale.fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       color: theme.textSec,
                     }}
                   >
@@ -3710,7 +3715,7 @@ export function BacktestWorkspace({
                   <div
                     style={{
                       fontSize: scale.fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       color: theme.textSec,
                     }}
                   >
@@ -3733,7 +3738,7 @@ export function BacktestWorkspace({
                       ? theme.green
                       : theme.amber,
                     fontFamily: theme.mono,
-                    fontWeight: 700,
+                    fontWeight: 400,
                   }}
                 >
                   {optionChartHasRenderablePayload ? "READY" : "PENDING"}
@@ -3770,7 +3775,7 @@ export function BacktestWorkspace({
                     <div
                       style={{
                         fontSize: scale.fs(12),
-                        fontWeight: 700,
+                        fontWeight: 400,
                         color: theme.text,
                       }}
                     >
@@ -3902,7 +3907,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.textSec,
                     marginBottom: scale.sp(8),
                   }}
@@ -3959,7 +3964,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.textSec,
                     marginBottom: scale.sp(8),
                   }}
@@ -4011,7 +4016,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.textSec,
                     marginBottom: scale.sp(8),
                   }}
@@ -4034,7 +4039,7 @@ export function BacktestWorkspace({
                           fontSize: scale.fs(9),
                         }}
                       >
-                        <span style={{ color: theme.text, fontWeight: 700 }}>
+                        <span style={{ color: theme.text, fontWeight: 400 }}>
                           {benchmark.symbol}
                         </span>
                         <span style={{ color: theme.textSec }}>
@@ -4061,7 +4066,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.amber,
                     marginBottom: scale.sp(8),
                   }}
@@ -4284,7 +4289,7 @@ export function BacktestWorkspace({
                   <div
                     style={{
                       fontSize: scale.fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       color: theme.textSec,
                       marginBottom: scale.sp(8),
                     }}
@@ -4329,7 +4334,7 @@ export function BacktestWorkspace({
                               <div
                                 style={{
                                   fontSize: scale.fs(10),
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                   color: theme.text,
                                 }}
                               >
@@ -4348,7 +4353,7 @@ export function BacktestWorkspace({
                             <div
                               style={{
                                 fontSize: scale.fs(10),
-                                fontWeight: 700,
+                                fontWeight: 400,
                                 color:
                                   trade.netPnl >= 0 ? theme.green : theme.red,
                                 fontFamily: theme.mono,
@@ -4369,7 +4374,7 @@ export function BacktestWorkspace({
                   <div
                     style={{
                       fontSize: scale.fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       color: theme.textSec,
                       marginBottom: scale.sp(8),
                     }}
@@ -4446,7 +4451,7 @@ export function BacktestWorkspace({
                     <div
                       style={{
                         fontSize: scale.fs(10),
-                        fontWeight: 700,
+                        fontWeight: 400,
                         color: theme.textSec,
                       }}
                     >
@@ -4528,7 +4533,7 @@ export function BacktestWorkspace({
                               <div
                                 style={{
                                   fontSize: scale.fs(10),
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                   color: theme.text,
                                 }}
                               >
@@ -4548,7 +4553,7 @@ export function BacktestWorkspace({
                             <div
                               style={{
                                 fontSize: scale.fs(10),
-                                fontWeight: 700,
+                                fontWeight: 400,
                                 color:
                                   trade.netPnl >= 0 ? theme.green : theme.red,
                                 fontFamily: theme.mono,
@@ -4571,7 +4576,7 @@ export function BacktestWorkspace({
                   <div
                     style={{
                       fontSize: scale.fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       color: theme.textSec,
                       marginBottom: scale.sp(8),
                     }}
@@ -4632,7 +4637,7 @@ export function BacktestWorkspace({
                   <div
                     style={{
                       fontSize: scale.fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       color: theme.textSec,
                       marginBottom: scale.sp(8),
                     }}
@@ -4866,7 +4871,7 @@ export function BacktestWorkspace({
                                       <div
                                         style={{
                                           fontSize: scale.fs(9),
-                                          fontWeight: 700,
+                                          fontWeight: 400,
                                           color: theme.text,
                                         }}
                                       >
@@ -5002,7 +5007,7 @@ export function BacktestWorkspace({
                                 <div
                                   style={{
                                     fontSize: scale.fs(9),
-                                    fontWeight: 700,
+                                    fontWeight: 400,
                                     color: theme.text,
                                   }}
                                 >
@@ -5050,7 +5055,7 @@ export function BacktestWorkspace({
                                 <div
                                   style={{
                                     fontSize: scale.fs(9),
-                                    fontWeight: 700,
+                                    fontWeight: 400,
                                     color: theme.text,
                                   }}
                                 >
@@ -5213,7 +5218,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.textSec,
                     marginBottom: scale.sp(8),
                   }}
@@ -5274,7 +5279,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.textSec,
                     marginBottom: scale.sp(8),
                   }}
@@ -5334,7 +5339,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.textSec,
                     marginBottom: scale.sp(8),
                   }}
@@ -5398,7 +5403,7 @@ export function BacktestWorkspace({
                 <div
                   style={{
                     fontSize: scale.fs(10),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     color: theme.textSec,
                     marginBottom: scale.sp(8),
                   }}
@@ -5716,7 +5721,7 @@ export function BacktestWorkspace({
                                 <div
                                   style={{
                                     color: theme.text,
-                                    fontWeight: 700,
+                                    fontWeight: 400,
                                   }}
                                 >
                                   {trade.underlying ?? trade.symbol}
@@ -5751,7 +5756,7 @@ export function BacktestWorkspace({
                                   borderBottom: `1px solid ${theme.border}`,
                                   fontSize: scale.fs(9),
                                   color: theme.text,
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                 }}
                               >
                                 {trade.side}
@@ -5821,7 +5826,7 @@ export function BacktestWorkspace({
                                   padding: scale.sp("10px 12px"),
                                   borderBottom: `1px solid ${theme.border}`,
                                   fontSize: scale.fs(10),
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                   color:
                                     trade.netPnl >= 0 ? theme.green : theme.red,
                                   fontFamily: theme.mono,
@@ -5989,7 +5994,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                   marginBottom: scale.sp(8),
                 }}
@@ -6030,7 +6035,7 @@ export function BacktestWorkspace({
                         style={{
                           fontSize: scale.fs(10),
                           color: theme.text,
-                          fontWeight: phase.active ? 700 : 500,
+                          fontWeight: 400,
                         }}
                       >
                         {phase.label}
@@ -6045,7 +6050,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                   marginBottom: scale.sp(8),
                 }}
@@ -6079,7 +6084,7 @@ export function BacktestWorkspace({
             <div
               style={{
                 fontSize: scale.fs(10),
-                fontWeight: 700,
+                fontWeight: 400,
                 color: theme.textSec,
                 marginBottom: scale.sp(8),
               }}
@@ -6156,7 +6161,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                   marginBottom: scale.sp(8),
                 }}
@@ -6199,7 +6204,7 @@ export function BacktestWorkspace({
                           <div
                             style={{
                               fontSize: scale.fs(10),
-                              fontWeight: 700,
+                              fontWeight: 400,
                               color: theme.text,
                             }}
                           >
@@ -6231,7 +6236,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                   marginBottom: scale.sp(8),
                 }}
@@ -6274,7 +6279,7 @@ export function BacktestWorkspace({
                           <div
                             style={{
                               fontSize: scale.fs(10),
-                              fontWeight: 700,
+                              fontWeight: 400,
                               color: theme.text,
                             }}
                           >
@@ -6339,7 +6344,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                   marginBottom: scale.sp(8),
                 }}
@@ -6374,7 +6379,7 @@ export function BacktestWorkspace({
                           <div
                             style={{
                               fontSize: scale.fs(10),
-                              fontWeight: 700,
+                              fontWeight: 400,
                               color: theme.text,
                             }}
                           >
@@ -6406,7 +6411,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                   marginBottom: scale.sp(8),
                 }}
@@ -6424,7 +6429,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                   marginBottom: scale.sp(8),
                 }}
@@ -6533,7 +6538,7 @@ export function BacktestWorkspace({
               <div
                 style={{
                   fontSize: scale.fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: theme.textSec,
                 }}
               >
@@ -6589,7 +6594,7 @@ export function BacktestWorkspace({
                         <div
                           style={{
                             fontSize: scale.fs(11),
-                            fontWeight: 700,
+                            fontWeight: 400,
                             color: theme.text,
                           }}
                         >
@@ -6638,7 +6643,7 @@ export function BacktestWorkspace({
                               ? theme.green
                               : theme.amber,
                             fontSize: scale.fs(8),
-                            fontWeight: 700,
+                            fontWeight: 400,
                             fontFamily: theme.mono,
                             textTransform: "uppercase",
                           }}
@@ -6790,7 +6795,7 @@ export function BacktestWorkspace({
                     <div
                       style={{
                         fontSize: scale.fs(11),
-                        fontWeight: 700,
+                        fontWeight: 400,
                         color: theme.text,
                       }}
                     >

@@ -37,10 +37,11 @@ export function useValueFlash(value, options = {}) {
     enabled = true,
     durationMs = DEFAULT_FLASH_MS,
     classify,
-  } = options;
-  const previousRef = useRef(undefined);
-  const timerRef = useRef(null);
-  const [flashClassName, setFlashClassName] = useState("");
+	  } = options;
+	  const previousRef = useRef(undefined);
+	  const timerRef = useRef(null);
+	  const frameRef = useRef(null);
+	  const [flashClassName, setFlashClassName] = useState("");
 
   useEffect(() => {
     if (!enabled) {
@@ -71,23 +72,28 @@ export function useValueFlash(value, options = {}) {
       return undefined;
     }
 
-    window.clearTimeout(timerRef.current);
-    setFlashClassName(
-      direction === "up" ? "ra-value-flash-up" : "ra-value-flash-down",
-    );
-    timerRef.current = window.setTimeout(() => {
-      setFlashClassName("");
-    }, durationMs);
+	    const nextClassName =
+	      direction === "up" ? "ra-value-flash-up" : "ra-value-flash-down";
+	    window.clearTimeout(timerRef.current);
+	    window.cancelAnimationFrame(frameRef.current);
+	    setFlashClassName("");
+	    frameRef.current = window.requestAnimationFrame(() => {
+	      setFlashClassName(nextClassName);
+	      timerRef.current = window.setTimeout(() => {
+	        setFlashClassName("");
+	      }, durationMs);
+	    });
 
     return undefined;
   }, [classify, durationMs, enabled, value]);
 
-  useEffect(
-    () => () => {
-      window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
+	  useEffect(
+	    () => () => {
+	      window.clearTimeout(timerRef.current);
+	      window.cancelAnimationFrame(frameRef.current);
+	    },
+	    [],
+	  );
 
   return flashClassName;
 }

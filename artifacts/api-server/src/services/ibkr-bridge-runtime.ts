@@ -8,13 +8,13 @@ import {
 
 const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
-const BRIDGE_HELPER_VERSION = "2026-05-05.gateway-launch-v11";
+const BRIDGE_HELPER_VERSION = "2026-05-06.gateway-reuse-v13";
 
 type LauncherResult = {
   activationId: string;
   apiBaseUrl: string;
   bridgeToken: string;
-  bundleUrl: string;
+  bundleUrl: string | null;
   helperUrl: string;
   helperVersion: string;
   launchUrl: string;
@@ -66,6 +66,25 @@ function normalizeBaseUrl(rawBaseUrl: string): string {
   url.search = "";
   url.hash = "";
   return stripTrailingSlash(url.toString());
+}
+
+function normalizeOptionalHttpUrl(rawUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new HttpError(400, "Bridge URL is not valid.", {
+      code: "invalid_ibkr_bridge_launcher_url",
+    });
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new HttpError(400, "Bridge URL must use HTTP or HTTPS.", {
+      code: "invalid_ibkr_bridge_launcher_url",
+    });
+  }
+
+  return url.toString();
 }
 
 function asString(
@@ -375,7 +394,7 @@ function buildProtocolLaunchUrl(input: {
   activationId: string;
   apiBaseUrl: string;
   bridgeToken: string;
-  bundleUrl: string;
+  bundleUrl: string | null;
   callbackSecret: string;
   helperUrl: string;
   managementToken: string;
@@ -386,12 +405,15 @@ function buildProtocolLaunchUrl(input: {
     bridgeToken: input.bridgeToken,
     callbackSecret: input.callbackSecret,
     managementToken: input.managementToken,
-    bundleUrl: input.bundleUrl,
     helperUrl: input.helperUrl,
     helperVersion: BRIDGE_HELPER_VERSION,
-    requiredCapability: "bridgeBundle",
     forceFreshTunnel: "1",
   });
+
+  if (input.bundleUrl) {
+    params.set("bundleUrl", input.bundleUrl);
+    params.set("requiredCapability", "bridgeBundle");
+  }
 
   const repoUrl = process.env["IBKR_BRIDGE_REPO_URL"]?.trim();
   if (repoUrl) {
@@ -408,10 +430,16 @@ function buildProtocolLaunchUrl(input: {
 
 export function getIbkrBridgeLauncher(input: {
   apiBaseUrl: string;
+  bundleUrl?: string | null;
 }): LauncherResult {
   const apiBaseUrl = normalizeBaseUrl(input.apiBaseUrl);
   const helperUrl = `${apiBaseUrl}/api/ibkr/bridge/helper.ps1`;
-  const bundleUrl = `${apiBaseUrl}/api/ibkr/bridge/bundle.tar.gz`;
+  const bundleUrl =
+    input.bundleUrl === undefined
+      ? `${apiBaseUrl}/api/ibkr/bridge/bundle.tar.gz`
+      : input.bundleUrl
+        ? normalizeOptionalHttpUrl(input.bundleUrl)
+        : null;
   const bridgeToken = randomBytes(32).toString("hex");
   const managementToken = randomBytes(32).toString("hex");
   const legacyActivation = createLegacyBridgeActivation({

@@ -134,6 +134,7 @@ export const MarketDataSubscriptionProvider = ({
     { symbols: quoteSymbols.join(",") },
     {
       query: {
+        enabled: Boolean(pageVisible && quoteSymbols.length > 0),
         staleTime: 60_000,
         retry: false,
       },

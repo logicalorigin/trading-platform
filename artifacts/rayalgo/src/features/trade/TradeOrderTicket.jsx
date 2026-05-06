@@ -30,6 +30,7 @@ import {
   resolveTicketOrderPrices,
   validateTicketBracket,
 } from "./ibkrOrderTicketModel";
+import { resolveSellCallTicketIntent } from "./optionSellCallIntent.js";
 import {
   BrokerActionConfirmDialog,
   formatLiveBrokerActionError,
@@ -39,6 +40,7 @@ import {
   daysToExpiration,
   fmtQuoteVolume,
   formatEnumLabel,
+  formatOptionContractLabel,
   formatPriceValue,
   isFiniteNumber,
   parseExpirationValue,
@@ -65,6 +67,10 @@ export const TradeOrderTicket = ({
   environment,
   brokerConfigured,
   brokerAuthenticated,
+  brokerPositions = [],
+  brokerOrders = [],
+  brokerPositionContextReady = false,
+  brokerOrderContextReady = false,
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   automationContext = null,
@@ -126,9 +132,30 @@ export const TradeOrderTicket = ({
   const ticketInstrumentReady = ticketIsShares
     ? shareTicketReady
     : optionTicketReady;
+  const ticketOptionContract = selectedContractMeta || {
+    ticker: slot.ticker,
+    symbol: slot.ticker,
+    expirationDate: expInfo.actualDate || slot.exp,
+    exp: expInfo.label || slot.exp,
+    strike: slot.strike,
+    right: slot.cp,
+    cp: slot.cp,
+  };
+  const ticketOptionContractLabel = formatOptionContractLabel(ticketOptionContract, {
+    symbol: slot.ticker,
+    fallback: `${slot.ticker} ${slot.strike}${slot.cp}`,
+  });
+  const ticketOptionContractShortLabel = formatOptionContractLabel(
+    ticketOptionContract,
+    {
+      symbol: slot.ticker,
+      includeSymbol: false,
+      fallback: `${slot.strike}${slot.cp}`,
+    },
+  );
   const ticketInstrumentLabel = ticketIsShares
     ? slot.ticker
-    : `${slot.ticker} ${slot.strike}${slot.cp}`;
+    : ticketOptionContractLabel;
   const ticketInstrumentDetail = ticketIsShares
     ? "SHARES"
     : `${expInfo.label || slot.exp} · ${expInfo.dte}d`;
@@ -245,7 +272,7 @@ export const TradeOrderTicket = ({
       toast.push({
         kind: "success",
         title: `Shadow filled ${ticketInstrumentLabel}`,
-        body: `${order.filledQuantity || order.quantity} × ${String(order.side).toUpperCase()} @ $${Number(order.averageFillPrice || 0).toFixed(2)}`,
+        body: `${order.filledQuantity || order.quantity} × ${String(order.side).toUpperCase()} @ ${Number(order.averageFillPrice || 0).toFixed(2)}`,
       });
     },
     onError: (error) => {
@@ -328,7 +355,7 @@ export const TradeOrderTicket = ({
       toast.push({
         kind: "success",
         title: "Shadow preview ready",
-        body: `${preview.symbol} · ${preview.accountId} · est $${Number(preview.fillPrice || 0).toFixed(2)}`,
+        body: `${preview.symbol} · ${preview.accountId} · est fill ${Number(preview.fillPrice || 0).toFixed(2)}`,
       });
     },
     onError: (error) => {
@@ -384,6 +411,21 @@ export const TradeOrderTicket = ({
         ? T.green
         : T.amber
       : T.textDim;
+  const ticketEntryReferencePrice = ticketIsOptions
+    ? side === "SELL"
+      ? isFiniteNumber(bid)
+        ? bid
+        : ticketReferencePrice
+      : isFiniteNumber(ask)
+        ? ask
+        : ticketReferencePrice
+    : ticketReferencePrice;
+  const selectSide = (nextSide) => {
+    setSide(nextSide);
+    if (ticketIsOptions && slot.cp === "C" && nextSide === "SELL") {
+      setOrderType("LMT");
+    }
+  };
   const renderTicketAssetModeControls = () => (
     <div
       data-testid="trade-ticket-asset-mode"
@@ -410,7 +452,7 @@ export const TradeOrderTicket = ({
               padding: sp("6px 0"),
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 900,
+              fontWeight: 400,
               cursor: "pointer",
               letterSpacing: "0.04em",
             }}
@@ -437,7 +479,7 @@ export const TradeOrderTicket = ({
             fontSize: fs(8),
             color: selectedExecutionColor,
             fontFamily: T.mono,
-            fontWeight: 700,
+            fontWeight: 400,
           }}
         >
           {selectedExecutionLabel}
@@ -469,7 +511,7 @@ export const TradeOrderTicket = ({
                 padding: sp("5px 0"),
                 fontFamily: T.mono,
                 fontSize: fs(8),
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor: "pointer",
                 letterSpacing: "0.04em",
               }}
@@ -527,7 +569,7 @@ export const TradeOrderTicket = ({
             color: T.text,
             fontFamily: T.display,
             fontSize: fs(11),
-            fontWeight: 800,
+            fontWeight: 400,
           }}
         >
           {ticketInstrumentLabel}
@@ -543,7 +585,7 @@ export const TradeOrderTicket = ({
           <button
             key={value}
             type="button"
-            onClick={() => setSide(value)}
+            onClick={() => selectSide(value)}
             style={{
               border: `1px solid ${
                 side === value
@@ -566,7 +608,7 @@ export const TradeOrderTicket = ({
               padding: sp("6px 0"),
               fontFamily: T.mono,
               fontSize: fs(9),
-              fontWeight: 900,
+              fontWeight: 400,
               cursor: "pointer",
             }}
           >
@@ -594,7 +636,7 @@ export const TradeOrderTicket = ({
               padding: sp("5px 0"),
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 900,
+              fontWeight: 400,
               cursor: "pointer",
             }}
           >
@@ -616,7 +658,7 @@ export const TradeOrderTicket = ({
             color: T.textMuted,
             fontFamily: T.mono,
             fontSize: fs(7),
-            fontWeight: 900,
+            fontWeight: 400,
           }}
         >
           {ticketIsShares ? "SHARES" : "CONTRACTS"}
@@ -644,7 +686,7 @@ export const TradeOrderTicket = ({
             color: T.textMuted,
             fontFamily: T.mono,
             fontSize: fs(7),
-            fontWeight: 900,
+            fontWeight: 400,
           }}
         >
           LIMIT
@@ -675,7 +717,7 @@ export const TradeOrderTicket = ({
             color: T.textMuted,
             fontFamily: T.mono,
             fontSize: fs(7),
-            fontWeight: 900,
+            fontWeight: 400,
           }}
         >
           STOP
@@ -722,7 +764,7 @@ export const TradeOrderTicket = ({
               padding: sp("4px 0"),
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 900,
+              fontWeight: 400,
               cursor: "pointer",
             }}
           >
@@ -744,7 +786,7 @@ export const TradeOrderTicket = ({
             padding: sp("7px 0"),
             fontFamily: T.sans,
             fontSize: fs(10),
-            fontWeight: 800,
+            fontWeight: 400,
           }}
         >
           PREVIEW LOCKED
@@ -760,7 +802,7 @@ export const TradeOrderTicket = ({
             padding: sp("7px 0"),
             fontFamily: T.sans,
             fontSize: fs(10),
-            fontWeight: 800,
+            fontWeight: 400,
           }}
         >
           QUOTE REQUIRED
@@ -771,12 +813,16 @@ export const TradeOrderTicket = ({
   // When the instrument or side changes, reset prices while preserving quantity.
   useEffect(() => {
     const riskPrices = getDefaultTicketRiskPrices(
-      ticketReferencePrice,
+      ticketEntryReferencePrice,
       side,
       normalizedTicketAssetMode,
     );
-    setLimitPrice(isFiniteNumber(ticketReferencePrice) ? ticketReferencePrice : "");
-    setStopPrice(isFiniteNumber(ticketReferencePrice) ? ticketReferencePrice : "");
+    setLimitPrice(
+      isFiniteNumber(ticketEntryReferencePrice) ? ticketEntryReferencePrice : "",
+    );
+    setStopPrice(
+      isFiniteNumber(ticketEntryReferencePrice) ? ticketEntryReferencePrice : "",
+    );
     setStopLoss(riskPrices.stopLoss);
     setTakeProfit(riskPrices.takeProfit);
   }, [
@@ -785,7 +831,7 @@ export const TradeOrderTicket = ({
     slot.ticker,
     slot.strike,
     slot.cp,
-    ticketReferencePrice,
+    ticketEntryReferencePrice,
   ]);
 
   useEffect(() => {
@@ -816,6 +862,11 @@ export const TradeOrderTicket = ({
     executionMode,
     normalizedTicketAssetMode,
     ticketReferencePrice,
+    ticketEntryReferencePrice,
+    brokerPositions.length,
+    brokerOrders.length,
+    brokerPositionContextReady,
+    brokerOrderContextReady,
     slot.ticker,
     slot.strike,
     slot.cp,
@@ -872,7 +923,7 @@ export const TradeOrderTicket = ({
         <div
           style={{
             fontSize: fs(9),
-            fontWeight: 700,
+            fontWeight: 400,
             color: T.textSec,
             fontFamily: T.display,
             letterSpacing: "0.08em",
@@ -899,21 +950,21 @@ export const TradeOrderTicket = ({
     orderType,
     limitPrice,
     stopPrice,
-    fallbackPrice: ticketReferencePrice,
+    fallbackPrice: ticketEntryReferencePrice,
   });
   const fillPrice = orderPrices.fillPrice;
   const orderTypeLabel = formatTicketOrderType(orderType);
   const cost = fillPrice * qtyNum * ticketMultiplier;
   const hasPositiveFillPrice = Number.isFinite(fillPrice) && fillPrice > 0;
   const fillPriceDisplay = hasPositiveFillPrice
-    ? `$${fillPrice.toFixed(2)}`
+    ? fillPrice.toFixed(2)
     : orderType === "MKT"
       ? "MKT"
       : MISSING_VALUE;
   const stopLimitPriceDisplay =
     Number.isFinite(orderPrices.stopPrice) &&
     Number.isFinite(orderPrices.limitPrice)
-      ? `$${Number(orderPrices.stopPrice).toFixed(2)} / $${Number(orderPrices.limitPrice).toFixed(2)}`
+      ? `${Number(orderPrices.stopPrice).toFixed(2)} / ${Number(orderPrices.limitPrice).toFixed(2)}`
       : MISSING_VALUE;
   const costDisplay =
     Number.isFinite(cost) && hasPositiveFillPrice
@@ -966,51 +1017,6 @@ export const TradeOrderTicket = ({
           providerContractId: selectedContractMeta.providerContractId,
         }
       : null;
-  const orderRequest = liveOrderPayloadReady
-    ? {
-        accountId,
-        mode: environment,
-        symbol: slot.ticker,
-        assetClass: ticketAssetClass,
-        side: side.toLowerCase(),
-        type: normalizeTicketOrderType(orderType),
-        quantity: qtyNum,
-        limitPrice: orderPrices.limitPrice,
-        stopPrice: orderPrices.stopPrice,
-        timeInForce: tif.toLowerCase(),
-        optionContract: optionOrderContract,
-        payload: automationOrderPayload
-          ? {
-              ...automationOrderPayload,
-              source: "trade_broker_order",
-            }
-          : undefined,
-      }
-    : null;
-  const shadowExecutionReady = ticketIsShares
-    ? Boolean(slot.ticker)
-    : Boolean(selectedContractMeta && expInfo.actualDate);
-  const shadowOrderRequest = shadowExecutionReady
-    ? {
-        accountId: "shadow",
-        mode: "paper",
-        symbol: slot.ticker,
-        assetClass: ticketAssetClass,
-        side: side.toLowerCase(),
-        type: normalizeTicketOrderType(orderType),
-        quantity: qtyNum,
-        limitPrice: orderPrices.limitPrice,
-        stopPrice: orderPrices.stopPrice,
-        timeInForce: tif.toLowerCase(),
-        optionContract: optionOrderContract,
-        payload: automationOrderPayload
-          ? {
-              ...automationOrderPayload,
-              source: "trade_shadow_fill",
-            }
-          : undefined,
-      }
-    : null;
   const automationShadowLink = objectValue(automationTicketContext?.shadowLink);
   const automationAlreadyShadowFilled = Boolean(
     ticketIsOptions && (automationShadowLink.orderId || automationShadowLink.fillId),
@@ -1038,6 +1044,89 @@ export const TradeOrderTicket = ({
     ticketIsOptions &&
     matchingShadowOptionPositions.length > 0 &&
     matchingShadowQuantity > 0;
+  const sellCallIntent = resolveSellCallTicketIntent({
+    side,
+    assetMode: normalizedTicketAssetMode,
+    selectedContract: optionOrderContract,
+    symbol: slot.ticker,
+    quantity: qtyNum,
+    positions: brokerPositions,
+    orders: brokerOrders,
+    executionMode,
+    brokerPositionContextReady,
+    brokerOrderContextReady,
+    shadowPositionContextReady: Boolean(shadowExposureQuery.data),
+    shadowMatchingQuantity,
+  });
+  const ticketActionLabel =
+    side === "BUY"
+      ? ticketIsOptions
+        ? "BUY TO OPEN"
+        : "BUY"
+      : sellCallIntent.applies
+        ? sellCallIntent.actionLabel
+        : "SELL";
+  const includeSellCallIntentFields =
+    sellCallIntent.applies && sellCallIntent.allowed;
+  const optionOrderIntentFields = {
+    ...(includeSellCallIntentFields && sellCallIntent.positionEffect
+      ? { positionEffect: sellCallIntent.positionEffect }
+      : {}),
+    ...(includeSellCallIntentFields && sellCallIntent.strategyIntent
+      ? { strategyIntent: sellCallIntent.strategyIntent }
+      : {}),
+  };
+  const shadowSellToCloseIntent =
+    sellCallIntent.applies && sellCallIntent.strategyIntent === "sell_to_close";
+  const shadowAddExposureWarningActive =
+    sameShadowContractExposure && !shadowSellToCloseIntent;
+  const orderRequest = liveOrderPayloadReady
+    ? {
+        accountId,
+        mode: environment,
+        symbol: slot.ticker,
+        assetClass: ticketAssetClass,
+        side: side.toLowerCase(),
+        type: normalizeTicketOrderType(orderType),
+        quantity: qtyNum,
+        limitPrice: orderPrices.limitPrice,
+        stopPrice: orderPrices.stopPrice,
+        timeInForce: tif.toLowerCase(),
+        optionContract: optionOrderContract,
+        ...optionOrderIntentFields,
+        payload: automationOrderPayload
+          ? {
+              ...automationOrderPayload,
+              source: "trade_broker_order",
+            }
+          : undefined,
+      }
+    : null;
+  const shadowExecutionReady = ticketIsShares
+    ? Boolean(slot.ticker)
+    : Boolean(selectedContractMeta && expInfo.actualDate);
+  const shadowOrderRequest = shadowExecutionReady
+    ? {
+        accountId: "shadow",
+        mode: "paper",
+        symbol: slot.ticker,
+        assetClass: ticketAssetClass,
+        side: side.toLowerCase(),
+        type: normalizeTicketOrderType(orderType),
+        quantity: qtyNum,
+        limitPrice: orderPrices.limitPrice,
+        stopPrice: orderPrices.stopPrice,
+        timeInForce: tif.toLowerCase(),
+        optionContract: optionOrderContract,
+        ...optionOrderIntentFields,
+        payload: automationOrderPayload
+          ? {
+              ...automationOrderPayload,
+              source: "trade_shadow_fill",
+            }
+          : undefined,
+      }
+    : null;
   const comparisonRequest =
     executionMode === "shadow"
       ? shadowOrderRequest
@@ -1049,6 +1138,10 @@ export const TradeOrderTicket = ({
   const formatTicketMoney = (value, digits = 2) =>
     Number.isFinite(Number(value))
       ? `$${Number(value).toFixed(digits)}`
+      : MISSING_VALUE;
+  const formatTicketPrice = (value, digits = 2) =>
+    Number.isFinite(Number(value))
+      ? Number(value).toFixed(digits)
       : MISSING_VALUE;
   const hasAttachedExits =
     !executionIsShadow && (attachStopLoss || attachTakeProfit);
@@ -1062,8 +1155,8 @@ export const TradeOrderTicket = ({
           ? "TARGET"
           : "SINGLE";
   const attachedExitPreviewLabel = [
-    attachStopLoss ? `SL ${formatTicketMoney(stopLoss)}` : null,
-    attachTakeProfit ? `TP ${formatTicketMoney(takeProfit)}` : null,
+    attachStopLoss ? `SL ${formatTicketPrice(stopLoss)}` : null,
+    attachTakeProfit ? `TP ${formatTicketPrice(takeProfit)}` : null,
   ]
     .filter(Boolean)
     .join(" / ");
@@ -1117,6 +1210,18 @@ export const TradeOrderTicket = ({
         kind: "info",
         title: "Contract loading",
         body: "Wait for the selected option contract to finish loading before previewing or submitting.",
+      });
+      return false;
+    }
+    if (sellCallIntent.applies && !sellCallIntent.allowed) {
+      toast.push({
+        kind: sellCallIntent.contextPending ? "info" : "warn",
+        title: sellCallIntent.contextPending
+          ? "Call coverage loading"
+          : "Call sale blocked",
+        body:
+          sellCallIntent.blockedReason ||
+          "This call sale cannot be routed with the current account coverage.",
       });
       return false;
     }
@@ -1250,11 +1355,7 @@ export const TradeOrderTicket = ({
     }
 
     if (hasAttachedExits) {
-      const preview =
-        previewSnapshot &&
-        isTwsStructuredOrderPayload(previewSnapshot.orderPayload)
-          ? previewSnapshot
-          : await previewOrderMutation.mutateAsync({ data: orderRequest });
+      const preview = await previewOrderMutation.mutateAsync({ data: orderRequest });
 
       if (!isTwsStructuredOrderPayload(preview?.orderPayload)) {
         toast.push({
@@ -1270,6 +1371,7 @@ export const TradeOrderTicket = ({
           accountId,
           mode: environment,
           confirm: true,
+          parentOrderRequest: orderRequest,
           ibkrOrders: buildTwsBracketOrders({
             previewPayload: preview.orderPayload,
             side,
@@ -1342,13 +1444,13 @@ export const TradeOrderTicket = ({
     }
 
     setLiveConfirmState({
-      title: `${side} ${ticketInstrumentLabel}`,
+      title: `${ticketActionLabel} ${ticketInstrumentLabel}`,
       detail: hasAttachedExits
         ? `Submit this ${environment.toUpperCase()} IBKR parent order with ${attachedExitCount} attached exit order${attachedExitCount === 1 ? "" : "s"}.`
         : `Submit this ${environment.toUpperCase()} broker order to Interactive Brokers for immediate routing.`,
       confirmLabel: hasAttachedExits
-        ? `${side} IBKR + ${attachedExitLabel}`
-        : `${side} IBKR ORDER`,
+        ? `${ticketActionLabel} IBKR + ${attachedExitLabel}`
+        : `${ticketActionLabel} IBKR ORDER`,
       confirmTone: isLong ? T.green : T.red,
       lines: [
         { label: "ACCOUNT", value: accountId || MISSING_VALUE },
@@ -1357,7 +1459,7 @@ export const TradeOrderTicket = ({
           ? [
               {
                 label: "CONTRACT",
-                value: `${slot.strike}${slot.cp} ${expInfo.label || slot.exp}`,
+                value: ticketOptionContractShortLabel,
               },
             ]
           : [{ label: "ASSET", value: "SHARES" }]),
@@ -1388,7 +1490,7 @@ export const TradeOrderTicket = ({
           ? [
               {
                 label: "STOP LOSS",
-                value: formatTicketMoney(stopLoss),
+                value: formatTicketPrice(stopLoss),
                 valueColor: T.red,
               },
             ]
@@ -1397,8 +1499,20 @@ export const TradeOrderTicket = ({
           ? [
               {
                 label: "TAKE PROFIT",
-                value: formatTicketMoney(takeProfit),
+                value: formatTicketPrice(takeProfit),
                 valueColor: T.green,
+              },
+            ]
+          : []),
+        ...(sellCallIntent.applies
+          ? [
+              { label: "INTENT", value: sellCallIntent.intentLabel },
+              {
+                label: "COVERAGE",
+                value:
+                  sellCallIntent.strategyIntent === "covered_call"
+                    ? `${sellCallIntent.coverage.coveredCallCapacity} covered / ${sellCallIntent.coverage.reservedShares} reserved sh`
+                    : `${sellCallIntent.coverage.availableMatchingLongCallContracts} available long call(s)`,
               },
             ]
           : []),
@@ -1432,7 +1546,7 @@ export const TradeOrderTicket = ({
       });
       return;
     }
-    if (sameShadowContractExposure && !shadowExposureAcknowledged) {
+    if (shadowAddExposureWarningActive && !shadowExposureAcknowledged) {
       setShadowExposureAcknowledged(true);
       toast.push({
         kind: "warn",
@@ -1455,18 +1569,20 @@ export const TradeOrderTicket = ({
   };
 
   const automationContract = objectValue(automationTicketContext?.selectedContract);
-  const plannedContractLabel = [
-    automationContract.expirationDate,
-    automationContract.strike,
-    automationContract.right
-      ? String(automationContract.right).toUpperCase()
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const currentContractLabel = `${expInfo.label || slot.exp} ${slot.strike}${slot.cp}`;
-	  const comparisonRows = automationTicketContext
-	    ? [
+  const plannedContractLabel = formatOptionContractLabel(automationContract, {
+    includeSymbol: false,
+    fallback: "",
+  });
+  const currentContractLabel = formatOptionContractLabel(
+    {
+      exp: expInfo.label || slot.exp,
+      strike: slot.strike,
+      cp: slot.cp,
+    },
+    { includeSymbol: false },
+  );
+  const comparisonRows = automationTicketContext
+    ? [
         {
           label: "Contract",
           planned: plannedContractLabel || MISSING_VALUE,
@@ -1487,49 +1603,55 @@ export const TradeOrderTicket = ({
         },
         {
           label: "Limit",
-          planned: formatTicketMoney(automationOrderPlan.entryLimitPrice),
+          planned: formatTicketPrice(automationOrderPlan.entryLimitPrice),
           current:
             orderType === "LMT"
-              ? formatTicketMoney(fillPrice)
+              ? formatTicketPrice(fillPrice)
               : orderType,
           changed:
             liveDeviationFields.includes("limit_price") ||
             liveDeviationFields.includes("order_type"),
         },
-	      ]
-	    : [];
-	  const parentPriceLabel =
-	    orderType === "MKT"
-	      ? ticketIsShares
-          ? "LAST"
-          : "MID"
-	      : orderType === "STP"
-	        ? "STOP"
-	        : "LIMIT";
-	  const parentPriceValue =
-	    orderType === "MKT"
-	      ? isFiniteNumber(ticketReferencePrice)
-          ? formatPriceValue(ticketReferencePrice)
-          : ""
-	      : orderType === "STP"
-	        ? stopPrice
-	        : limitPrice;
-	  const parentPriceDisabled = orderType === "MKT";
+      ]
+    : [];
+  const parentPriceLabel =
+    orderType === "MKT"
+      ? ticketIsShares
+        ? "LAST"
+        : side === "SELL"
+          ? "BID"
+          : "ASK"
+      : orderType === "STP"
+        ? "STOP"
+        : "LIMIT";
+  const parentPriceValue =
+    orderType === "MKT"
+      ? isFiniteNumber(ticketEntryReferencePrice)
+        ? formatPriceValue(ticketEntryReferencePrice)
+        : ""
+      : orderType === "STP"
+        ? stopPrice
+        : limitPrice;
+  const parentPriceDisabled = orderType === "MKT";
   const qtyPresets = ticketIsShares ? [1, 10, 25, 50, 100] : [1, 3, 5, 10];
-	  const isSubmittingOrder =
-	    placeOrderMutation.isPending || submitOrdersMutation.isPending;
+  const isSubmittingOrder =
+    placeOrderMutation.isPending || submitOrdersMutation.isPending;
   const previewIsPending =
     previewOrderMutation.isPending || previewShadowOrderMutation.isPending;
   const primarySubmitPending = executionIsShadow
     ? placeShadowOrderMutation.isPending
     : isSubmittingOrder;
+  const sellCallSubmitBlocked = sellCallIntent.applies && !sellCallIntent.allowed;
   const primarySubmitDisabled = executionIsShadow
     ? placeShadowOrderMutation.isPending ||
       automationAlreadyShadowFilled ||
-      gatewayTradingBlocked
-    : isSubmittingOrder || gatewayTradingBlocked;
+      gatewayTradingBlocked ||
+      sellCallSubmitBlocked
+    : isSubmittingOrder || gatewayTradingBlocked || sellCallSubmitBlocked;
   const previewDisabled =
-    previewIsPending || (executionIsShadow && gatewayTradingBlocked);
+    previewIsPending ||
+    sellCallSubmitBlocked ||
+    (executionIsShadow && gatewayTradingBlocked);
   const primarySubmitColor = executionIsShadow ? T.pink : isLong ? T.green : T.red;
   const primarySubmitLabel = executionIsShadow
     ? gatewayTradingBlocked
@@ -1538,16 +1660,20 @@ export const TradeOrderTicket = ({
       ? "FILLING..."
       : automationAlreadyShadowFilled
         ? "SHADOW FILLED"
-	        : sameShadowContractExposure && !shadowExposureAcknowledged
+        : sellCallSubmitBlocked
+          ? sellCallIntent.actionLabel
+	        : shadowAddExposureWarningActive && !shadowExposureAcknowledged
 	          ? "ADD EXPOSURE?"
-	        : sameShadowContractExposure
+	        : shadowAddExposureWarningActive
 	            ? "CONFIRM ADD EXPOSURE"
-	            : `${side} SHADOW ${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay}`
+	            : `${ticketActionLabel} SHADOW ${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay}`
     : gatewayTradingBlocked
       ? "GATEWAY REQUIRED"
       : isSubmittingOrder
       ? "SUBMITTING..."
-      : `${side} ${hasAttachedExits ? `${attachedExitLabel} ` : ""}${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay} · ${signedCostDisplay}`;
+      : sellCallSubmitBlocked
+        ? sellCallIntent.actionLabel
+      : `${ticketActionLabel} ${hasAttachedExits ? `${attachedExitLabel} ` : ""}${qtyNum || 0} ${ticketIsShares ? "sh" : "ct"} × ${fillPriceDisplay} · ${signedCostDisplay}`;
 	  const previewIsTwsStructured =
 	    isTwsStructuredOrderPayload(previewOrderPayload);
 	  const previewDisplayOrder = previewIsTwsStructured
@@ -1559,6 +1685,35 @@ export const TradeOrderTicket = ({
 	    previewDisplayOrder?.lmtPrice ??
 	    previewDisplayOrder?.auxPrice ??
 	    null;
+  const sellCallStatusColor = !sellCallIntent.applies
+    ? T.textDim
+    : sellCallIntent.allowed
+      ? sellCallIntent.strategyIntent === "covered_call"
+        ? T.cyan
+        : T.green
+      : sellCallIntent.contextPending
+        ? T.amber
+        : T.red;
+  const sellCallCoverageRows = sellCallIntent.applies
+    ? [
+        [
+          "AVAIL CALLS",
+          `${sellCallIntent.coverage.availableMatchingLongCallContracts.toFixed(2)} ct`,
+        ],
+        [
+          "SHARES",
+          `${Math.floor(sellCallIntent.coverage.longUnderlyingShares)} sh`,
+        ],
+        [
+          "RESERVED",
+          `${Math.floor(sellCallIntent.coverage.reservedShares)} sh`,
+        ],
+        [
+          "CAPACITY",
+          `${sellCallIntent.coverage.coveredCallCapacity.toFixed(2)} ct`,
+        ],
+      ]
+    : [];
 
   return (
     <>
@@ -1579,7 +1734,7 @@ export const TradeOrderTicket = ({
       <div
         style={{
           fontSize: fs(9),
-          fontWeight: 700,
+          fontWeight: 400,
           color: T.textSec,
           fontFamily: T.display,
           letterSpacing: "0.08em",
@@ -1619,7 +1774,7 @@ export const TradeOrderTicket = ({
                   color: T.text,
                   fontFamily: T.display,
                   fontSize: fs(10),
-                  fontWeight: 800,
+                  fontWeight: 400,
                 }}
               >
                 Signal-options plan
@@ -1649,7 +1804,7 @@ export const TradeOrderTicket = ({
                 color: T.cyan,
                 fontFamily: T.mono,
                 fontSize: fs(8),
-                fontWeight: 900,
+                fontWeight: 400,
                 padding: sp("5px 7px"),
                 cursor: "pointer",
               }}
@@ -1680,7 +1835,7 @@ export const TradeOrderTicket = ({
                     color: row.changed ? T.amber : T.textMuted,
                     fontFamily: T.mono,
                     fontSize: fs(7),
-                    fontWeight: 900,
+                    fontWeight: 400,
                   }}
                 >
                   {row.label.toUpperCase()}
@@ -1703,7 +1858,7 @@ export const TradeOrderTicket = ({
           </div>
         </div>
       ) : null}
-      {sameShadowContractExposure ? (
+      {shadowAddExposureWarningActive ? (
         <div
           style={{
             border: `1px solid ${T.amber}55`,
@@ -1719,7 +1874,7 @@ export const TradeOrderTicket = ({
               color: T.amber,
               fontFamily: T.display,
               fontSize: fs(10),
-              fontWeight: 800,
+              fontWeight: 400,
             }}
           >
             Shadow exposure exists
@@ -1746,7 +1901,7 @@ export const TradeOrderTicket = ({
         <span
           style={{
             fontSize: fs(13),
-            fontWeight: 800,
+            fontWeight: 400,
             fontFamily: T.mono,
             color: T.text,
           }}
@@ -1757,7 +1912,7 @@ export const TradeOrderTicket = ({
           <span
             style={{
               fontSize: fs(12),
-              fontWeight: 700,
+              fontWeight: 400,
               fontFamily: T.mono,
               color: contractColor,
             }}
@@ -1795,12 +1950,12 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 700,
+                fontWeight: 400,
                 color: T.text,
                 lineHeight: 1,
               }}
             >
-              {equityQuoteReady ? `$${equityPrice.toFixed(2)}` : MISSING_VALUE}
+              {equityQuoteReady ? equityPrice.toFixed(2) : MISSING_VALUE}
             </div>
           </div>
           <div style={{ textAlign: "center" }}>
@@ -1816,7 +1971,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 700,
+                fontWeight: 400,
                 color:
                   Number(info?.chg) > 0
                     ? T.green
@@ -1827,7 +1982,7 @@ export const TradeOrderTicket = ({
               }}
             >
               {Number.isFinite(Number(info?.chg))
-                ? `${Number(info.chg) >= 0 ? "+" : ""}${Number(info.chg).toFixed(2)}`
+                ? `${Number(info.chg) >= 0 ? "+" : "-"}${Math.abs(Number(info.chg)).toFixed(2)}`
                 : MISSING_VALUE}
             </div>
             <div style={{ fontSize: fs(7), color: T.textDim }}>
@@ -1849,7 +2004,7 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 700,
+                fontWeight: 400,
                 color: T.textSec,
                 lineHeight: 1,
               }}
@@ -1883,12 +2038,12 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 700,
+                fontWeight: 400,
                 color: T.red,
                 lineHeight: 1,
               }}
             >
-              ${bid.toFixed(2)}
+              {bid.toFixed(2)}
             </div>
           </div>
           <div className={midFlashClass} style={{ textAlign: "center" }}>
@@ -1904,12 +2059,12 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 700,
+                fontWeight: 400,
                 color: T.text,
                 lineHeight: 1,
               }}
             >
-              ${prem.toFixed(2)}
+              {prem.toFixed(2)}
             </div>
             <div
               style={{
@@ -1935,12 +2090,12 @@ export const TradeOrderTicket = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 700,
+                fontWeight: 400,
                 color: T.green,
                 lineHeight: 1,
               }}
             >
-              ${ask.toFixed(2)}
+              {ask.toFixed(2)}
             </div>
           </div>
         </div>
@@ -1949,7 +2104,7 @@ export const TradeOrderTicket = ({
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
         <div style={{ display: "flex", gap: 2 }}>
           <button
-            onClick={() => setSide("BUY")}
+            onClick={() => selectSide("BUY")}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -1957,16 +2112,17 @@ export const TradeOrderTicket = ({
               border: `1px solid ${isLong ? T.green + "60" : T.border}`,
               borderRadius: dim(3),
               color: isLong ? T.green : T.textDim,
-              fontSize: fs(10),
+              fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
-              fontWeight: 700,
+              fontWeight: 400,
+              lineHeight: 1.15,
               cursor: "pointer",
             }}
           >
-            BUY
+            {ticketIsOptions ? "BUY TO OPEN" : "BUY"}
           </button>
           <button
-            onClick={() => setSide("SELL")}
+            onClick={() => selectSide("SELL")}
             style={{
               flex: 1,
               padding: sp("4px 0"),
@@ -1974,13 +2130,14 @@ export const TradeOrderTicket = ({
               border: `1px solid ${!isLong ? T.red + "60" : T.border}`,
               borderRadius: dim(3),
               color: !isLong ? T.red : T.textDim,
-              fontSize: fs(10),
+              fontSize: fs(ticketIsOptions ? 8 : 10),
               fontFamily: T.sans,
-              fontWeight: !isLong ? 700 : 600,
+              fontWeight: 400,
+              lineHeight: 1.15,
               cursor: "pointer",
             }}
           >
-            SELL
+            {sellCallIntent.applies ? sellCallIntent.actionLabel : "SELL"}
           </button>
         </div>
         <div style={{ display: "flex", gap: 2 }}>
@@ -1997,7 +2154,7 @@ export const TradeOrderTicket = ({
                 color: orderType === t ? T.accent : T.textDim,
                 fontSize: fs(t === "STP_LMT" ? 7 : 9),
                 fontFamily: T.mono,
-                fontWeight: 600,
+                fontWeight: 400,
                 cursor: "pointer",
               }}
             >
@@ -2006,6 +2163,86 @@ export const TradeOrderTicket = ({
           ))}
         </div>
       </div>
+      {sellCallIntent.applies ? (
+        <div
+          style={{
+            border: `1px solid ${sellCallStatusColor}55`,
+            background: `${sellCallStatusColor}12`,
+            borderRadius: dim(4),
+            padding: sp("6px 7px"),
+            display: "grid",
+            gap: sp(5),
+            fontFamily: T.mono,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: sp(8),
+              alignItems: "baseline",
+            }}
+          >
+            <span
+              style={{
+                color: sellCallStatusColor,
+                fontSize: fs(8),
+                fontWeight: 400,
+              }}
+            >
+              {sellCallIntent.intentLabel}
+            </span>
+            <span style={{ color: T.textDim, fontSize: fs(7), fontWeight: 400 }}>
+              {sellCallIntent.coverage.underlying || slot.ticker}
+            </span>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+              gap: sp(4),
+            }}
+          >
+            {sellCallCoverageRows.map(([label, value]) => (
+              <div key={label} style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    color: T.textMuted,
+                    fontSize: fs(6),
+                    fontWeight: 400,
+                  }}
+                >
+                  {label}
+                </div>
+                <div
+                  style={{
+                    color: T.text,
+                    fontSize: fs(8),
+                    fontWeight: 400,
+                    marginTop: sp(1),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+          {!sellCallIntent.allowed ? (
+            <div
+              style={{
+                color: sellCallStatusColor,
+                fontSize: fs(7),
+                lineHeight: 1.35,
+              }}
+            >
+              {sellCallIntent.blockedReason}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {/* QTY presets + input + LIMIT */}
       <div
         style={{
@@ -2029,7 +2266,7 @@ export const TradeOrderTicket = ({
                 color: qtyNum === n ? T.accent : T.textDim,
                 fontSize: fs(9),
                 fontFamily: T.mono,
-                fontWeight: 700,
+                fontWeight: 400,
                 cursor: "pointer",
               }}
             >
@@ -2065,7 +2302,7 @@ export const TradeOrderTicket = ({
               color: T.text,
               fontSize: fs(11),
               fontFamily: T.mono,
-              fontWeight: 600,
+              fontWeight: 400,
             }}
           />
         </div>
@@ -2095,7 +2332,7 @@ export const TradeOrderTicket = ({
                 color: T.text,
                 fontSize: fs(11),
                 fontFamily: T.mono,
-                fontWeight: 600,
+                fontWeight: 400,
               }}
             />
           </div>
@@ -2131,7 +2368,7 @@ export const TradeOrderTicket = ({
               color: parentPriceDisabled ? T.textDim : T.text,
               fontSize: fs(11),
               fontFamily: T.mono,
-              fontWeight: 600,
+              fontWeight: 400,
             }}
           />
         </div>
@@ -2163,7 +2400,7 @@ export const TradeOrderTicket = ({
                 color: attachStopLoss ? T.red : T.textDim,
                 fontFamily: T.mono,
                 fontSize: fs(7),
-                fontWeight: 900,
+                fontWeight: 400,
                 padding: sp("1px 5px"),
                 cursor: executionIsShadow ? "not-allowed" : "pointer",
                 opacity: executionIsShadow ? 0.45 : 1,
@@ -2187,7 +2424,7 @@ export const TradeOrderTicket = ({
               color: stopLossExitDisabled ? T.textDim : T.red,
               fontSize: fs(11),
               fontFamily: T.mono,
-              fontWeight: 600,
+              fontWeight: 400,
               opacity: stopLossExitDisabled ? 0.65 : 1,
             }}
           />
@@ -2196,7 +2433,7 @@ export const TradeOrderTicket = ({
               color: attachStopLoss ? T.red : T.textDim,
               fontFamily: T.mono,
               fontSize: fs(7),
-              fontWeight: 800,
+              fontWeight: 400,
               marginTop: sp(2),
             }}
           >
@@ -2230,7 +2467,7 @@ export const TradeOrderTicket = ({
                 color: attachTakeProfit ? T.green : T.textDim,
                 fontFamily: T.mono,
                 fontSize: fs(7),
-                fontWeight: 900,
+                fontWeight: 400,
                 padding: sp("1px 5px"),
                 cursor: executionIsShadow ? "not-allowed" : "pointer",
                 opacity: executionIsShadow ? 0.45 : 1,
@@ -2254,7 +2491,7 @@ export const TradeOrderTicket = ({
               color: takeProfitExitDisabled ? T.textDim : T.green,
               fontSize: fs(11),
               fontFamily: T.mono,
-              fontWeight: 600,
+              fontWeight: 400,
               opacity: takeProfitExitDisabled ? 0.65 : 1,
             }}
           />
@@ -2263,7 +2500,7 @@ export const TradeOrderTicket = ({
               color: attachTakeProfit ? T.green : T.textDim,
               fontFamily: T.mono,
               fontSize: fs(7),
-              fontWeight: 800,
+              fontWeight: 400,
               marginTop: sp(2),
             }}
           >
@@ -2288,7 +2525,7 @@ export const TradeOrderTicket = ({
               color: tif === t ? T.accent : T.textDim,
               fontSize: fs(8),
               fontFamily: T.mono,
-              fontWeight: 600,
+              fontWeight: 400,
               cursor: "pointer",
             }}
           >
@@ -2317,8 +2554,8 @@ export const TradeOrderTicket = ({
           >
             <span style={{ color: T.textMuted }}>
               BE{" "}
-              <span style={{ color: T.text, fontWeight: 600 }}>
-                ${breakeven.toFixed(2)}
+              <span style={{ color: T.text, fontWeight: 400 }}>
+                {breakeven.toFixed(2)}
               </span>{" "}
               <span style={{ color: T.textDim }}>
                 {beMovePct == null
@@ -2328,7 +2565,7 @@ export const TradeOrderTicket = ({
             </span>
             <span style={{ color: T.textMuted }}>
               {isLong ? "Risk" : "Credit"}{" "}
-              <span style={{ color: isLong ? T.red : T.green, fontWeight: 600 }}>
+              <span style={{ color: isLong ? T.red : T.green, fontWeight: 400 }}>
                 ${cost.toFixed(0)}
               </span>
             </span>
@@ -2343,7 +2580,7 @@ export const TradeOrderTicket = ({
                       : pop >= 30
                         ? T.amber
                         : T.red,
-                  fontWeight: 600,
+                  fontWeight: 400,
                 }}
               >
                 {isFiniteNumber(pop) ? `${pop.toFixed(0)}%` : MISSING_VALUE}
@@ -2382,7 +2619,7 @@ export const TradeOrderTicket = ({
                 style={{
                   color: T.textMuted,
                   fontSize: fs(7),
-                  fontWeight: 900,
+                  fontWeight: 400,
                 }}
               >
                 {label}
@@ -2391,7 +2628,7 @@ export const TradeOrderTicket = ({
                 style={{
                   color,
                   fontSize: fs(10),
-                  fontWeight: 800,
+                  fontWeight: 400,
                   marginTop: sp(2),
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -2420,13 +2657,13 @@ export const TradeOrderTicket = ({
         >
           <div>
             <span style={{ color: T.textMuted }}>PREVIEW</span>{" "}
-            <span style={{ color: T.text, fontWeight: 700 }}>
+            <span style={{ color: T.text, fontWeight: 400 }}>
               {previewSnapshot.accountId}
             </span>
           </div>
           <div>
             <span style={{ color: T.textMuted }}>CONID</span>{" "}
-            <span style={{ color: T.accent, fontWeight: 700 }}>
+            <span style={{ color: T.accent, fontWeight: 400 }}>
               {previewSnapshot.resolvedContractId}
             </span>
           </div>
@@ -2451,7 +2688,9 @@ export const TradeOrderTicket = ({
             <span style={{ color: T.textSec }}>
               {String(previewDisplayOrder?.side || previewDisplayOrder?.action || side).toUpperCase()}{" "}
               {previewDisplayOrder?.quantity ?? previewDisplayOrder?.totalQuantity ?? qtyNum} {previewSnapshot.symbol}
-              {previewDisplayPrice != null ? ` @ ${previewDisplayPrice}` : ""}
+              {Number.isFinite(Number(previewDisplayPrice))
+                ? ` @ ${Number(previewDisplayPrice).toFixed(2)}`
+                : ""}
             </span>
           </div>
           {hasAttachedExits ? (
@@ -2485,7 +2724,7 @@ export const TradeOrderTicket = ({
             color: T.textSec,
             fontSize: fs(10),
             fontFamily: T.sans,
-            fontWeight: 700,
+            fontWeight: 400,
             cursor: previewIsPending
               ? "wait"
               : previewDisabled
@@ -2512,9 +2751,12 @@ export const TradeOrderTicket = ({
             border: "none",
             borderRadius: dim(4),
             color: primarySubmitDisabled ? T.textDim : "#fff",
-            fontSize: fs(11),
+            fontSize: fs(ticketIsOptions ? 9 : 11),
             fontFamily: T.sans,
-            fontWeight: 700,
+            fontWeight: 400,
+            lineHeight: 1.15,
+            minHeight: 34,
+            overflowWrap: "anywhere",
 	            cursor: primarySubmitPending ? "wait" : primarySubmitDisabled ? "not-allowed" : "pointer",
 	            letterSpacing: "0.04em",
 	            opacity: primarySubmitPending || primarySubmitDisabled ? 0.7 : 1,

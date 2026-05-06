@@ -263,31 +263,13 @@ export const filterFlowEventsForOptionContract = (
   });
 };
 
-const shouldRenderFlowOnSpotChart = (
-  event: unknown,
-): event is Record<string, unknown> => {
-  if (!isFlowEventRecord(event)) {
-    return false;
-  }
-  const premium = finiteNumber(event.premium) ?? 0;
-  const unusualScore = finiteNumber(event.unusualScore) ?? 0;
-  const side = String(event.side || "").trim().toLowerCase();
-  return (
-    Boolean(event.isUnusual) ||
-    Boolean(event.golden) ||
-    unusualScore >= 1 ||
-    premium >= 150_000 ||
-    (side === "buy" && premium >= 100_000)
-  );
-};
-
 export const flowEventsToChartEvents = (
   events: Array<Record<string, unknown>> = [],
   symbol?: string,
 ): ChartEvent[] => {
   const normalizedSymbol = normalizeSymbol(symbol);
   return (Array.isArray(events) ? events : [])
-    .filter(shouldRenderFlowOnSpotChart)
+    .filter(isFlowEventRecord)
     .map((event) => {
       const eventSymbol = String(
         event.ticker || event.underlying || event.symbol || normalizedSymbol,
@@ -335,7 +317,10 @@ export const flowEventsToChartEvents = (
         },
       } satisfies ChartEvent;
     })
-    .filter((event) => !normalizedSymbol || event.symbol === normalizedSymbol);
+    .filter(
+      (event) =>
+        event.time && (!normalizedSymbol || event.symbol === normalizedSymbol),
+    );
 };
 
 export const earningsCalendarToChartEvents = (

@@ -112,10 +112,10 @@ export const IntradayPnlPanel = ({
             <span
               style={{
                 fontSize: fs(17),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.mono,
                 color: lineColor,
-                letterSpacing: "-0.02em",
+                letterSpacing: 0,
               }}
             >
               {formatAccountSignedMoney(stats.last.pnl, currency, false, maskValues)}
@@ -199,17 +199,17 @@ export const IntradayPnlPanel = ({
           >
             <span style={{ color: T.textMuted }}>
               HIGH{" "}
-              <span style={{ color: T.green, fontWeight: 700 }}>
+              <span style={{ color: T.green, fontWeight: 400 }}>
                 {formatAccountSignedMoney(stats.high, currency, false, maskValues)}
               </span>
             </span>
             <span style={{ color: T.textMuted }}>
               SAMPLES{" "}
-              <span style={{ color: T.text, fontWeight: 700 }}>{series.length}</span>
+              <span style={{ color: T.text, fontWeight: 400 }}>{series.length}</span>
             </span>
             <span style={{ color: T.textMuted }}>
               LOW{" "}
-              <span style={{ color: T.red, fontWeight: 700 }}>
+              <span style={{ color: T.red, fontWeight: 400 }}>
                 {formatAccountSignedMoney(stats.low, currency, false, maskValues)}
               </span>
             </span>

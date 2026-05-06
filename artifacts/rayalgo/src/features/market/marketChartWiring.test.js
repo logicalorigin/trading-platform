@@ -21,10 +21,12 @@ test("Market chart flow markers use the unusual-flow scanner contract", () => {
   assert.match(source, /const MARKET_CHART_FLOW_LINE_BUDGET = 40;/);
   assert.match(source, /const MARKET_CHART_FLOW_CONCURRENCY = 1;/);
   assert.match(scannerCall, /limit:\s*MARKET_CHART_FLOW_LIMIT/);
+  assert.match(scannerCall, /enabled:\s*Boolean\(isVisible && streamedSymbols\.length\)/);
   assert.match(scannerCall, /scope:\s*FLOW_SCANNER_SCOPE\.unusual/);
   assert.match(scannerCall, /concurrency:\s*MARKET_CHART_FLOW_CONCURRENCY/);
   assert.match(scannerCall, /lineBudget:\s*MARKET_CHART_FLOW_LINE_BUDGET/);
   assert.match(scannerCall, /unusualThreshold/);
+  assert.match(scannerCall, /workloadLabel:\s*"Chart unusual flow"/);
   assert.doesNotMatch(scannerCall, /limit:\s*16/);
   assert.doesNotMatch(scannerCall, /lineBudget:\s*20/);
 });
@@ -101,6 +103,30 @@ test("Market chart flow events are passed raw into the Trade spot chart path", (
   assert.doesNotMatch(gridSource, /onChangeStudies=\{/);
   assert.doesNotMatch(gridSource, /onChangeRayReplicaSettings=\{/);
   assert.doesNotMatch(gridSource, /flowEventsToChartEvents/);
+});
+
+test("Flow chart markers honor the shared Flow tape filters", () => {
+  const chartEventsSource = readLocalSource("../charting/chartEvents.ts");
+  const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
+  const tradeScreenSource = readLocalSource("../../screens/TradeScreen.jsx");
+
+  assert.doesNotMatch(chartEventsSource, /shouldRenderFlowOnSpotChart/);
+  assert.match(tradeSpotSource, /useFlowTapeFilterState\(\)/);
+  assert.match(tradeSpotSource, /filterFlowTapeEvents\(effectiveFlowEvents,\s*flowTapeFilters\)/);
+  assert.match(
+    tradeSpotSource,
+    /flowEventsToChartEvents\(filteredFlowEvents \|\| \[\],\s*ticker\)/,
+  );
+  assert.match(tradeScreenSource, /useFlowTapeFilterState\(\)/);
+  assert.match(tradeScreenSource, /filterFlowTapeEvents\(mergedFlowEvents,\s*flowTapeFilters\)/);
+  assert.match(
+    tradeScreenSource,
+    /filterFlowEventsForOptionContract\(filteredFlowEvents,\s*\{/,
+  );
+  assert.match(
+    tradeScreenSource,
+    /flowEventsToChartEvents\(selectedContractFlowEvents,\s*ticker\)/,
+  );
 });
 
 test("Market chart frames leave viewport ownership inside the Trade spot chart", () => {

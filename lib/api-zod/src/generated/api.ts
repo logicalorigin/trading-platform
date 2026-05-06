@@ -1289,6 +1289,8 @@ export const PlaceOrderBody = zod.object({
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
 }),zod.null()]),
+  "positionEffect": zod.enum(['open', 'close']).optional(),
+  "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -1320,6 +1322,8 @@ export const PreviewOrderBody = zod.object({
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
 }),zod.null()]),
+  "positionEffect": zod.enum(['open', 'close']).optional(),
+  "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -1459,6 +1463,7 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "accountId": zod.string().nullish(),
   "mode": zod.union([zod.enum(['paper', 'live']),zod.null()]).optional(),
   "confirm": zod.boolean().optional(),
+  "parentOrderRequest": PlaceOrderBody.nullish(),
   "ibkrOrders": zod.array(zod.record(zod.string(), zod.unknown()))
 })])
 
@@ -2226,6 +2231,137 @@ export const StreamAccountsQueryParams = zod.object({
  */
 export const StreamStockAggregatesQueryParams = zod.object({
   "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.')
+})
+
+
+/**
+ * @summary Get Polygon-backed top options premium distribution widgets
+ */
+export const getFlowPremiumDistributionQueryLimitMax = 6;
+
+export const getFlowPremiumDistributionQueryCandidateLimitMin = 6;
+export const getFlowPremiumDistributionQueryCandidateLimitMax = 60;
+
+
+
+export const GetFlowPremiumDistributionQueryParams = zod.object({
+  "limit": zod.coerce.number().min(1).max(getFlowPremiumDistributionQueryLimitMax).optional().describe('Number of premium distribution widgets to return.'),
+  "candidateLimit": zod.coerce.number().min(getFlowPremiumDistributionQueryCandidateLimitMin).max(getFlowPremiumDistributionQueryCandidateLimitMax).optional().describe('Number of high-volume stock candidates to score through Polygon options snapshots.'),
+  "timeframe": zod.enum(['today', 'week']).optional().describe('Candidate-volume timeframe for ranking the six widgets.')
+})
+
+export const getFlowPremiumDistributionResponseSourceCandidateCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceRankedCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceErrorCountMin = 0;
+
+
+export const getFlowPremiumDistributionResponseWidgetsItemBucketsSmallCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemBucketsMediumCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemBucketsLargeCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemContractCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemTradeCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemQuoteMatchedCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemPageCountMin = 0;
+
+
+
+export const GetFlowPremiumDistributionResponse = zod.object({
+  "status": zod.enum(['ok', 'empty', 'degraded', 'unconfigured']),
+  "asOf": zod.coerce.date(),
+  "timeframe": zod.enum(['today', 'week']),
+  "source": zod.object({
+  "provider": zod.enum(['polygon']),
+  "label": zod.string(),
+  "timeframe": zod.enum(['today', 'week']),
+  "providerHost": zod.string().nullable(),
+  "sideBasis": zod.enum(['quote_match', 'tick_test', 'mixed', 'none']),
+  "quoteAccess": zod.enum(['available', 'unavailable', 'forbidden', 'unknown']),
+  "tradeAccess": zod.enum(['available', 'unavailable', 'forbidden', 'unknown']),
+  "classifiedPremium": zod.number(),
+  "classificationCoverage": zod.number(),
+  "classificationConfidence": zod.enum(['high', 'medium', 'low', 'very_low', 'none']),
+  "candidateDate": zod.string().nullable(),
+  "candidateCount": zod.number().min(getFlowPremiumDistributionResponseSourceCandidateCountMin),
+  "rankedCount": zod.number().min(getFlowPremiumDistributionResponseSourceRankedCountMin),
+  "errorCount": zod.number().min(getFlowPremiumDistributionResponseSourceErrorCountMin),
+  "errorMessage": zod.string().nullable(),
+  "cache": zod.enum(['fresh', 'stale', 'miss'])
+}),
+  "widgets": zod.array(zod.object({
+  "rank": zod.number().min(1),
+  "symbol": zod.string(),
+  "asOf": zod.coerce.date(),
+  "timeframe": zod.enum(['today', 'week']),
+  "stockDayVolume": zod.number().nullable(),
+  "marketCap": zod.number().nullable(),
+  "marketCapTier": zod.enum(['mega', 'large', 'mid', 'small_or_unknown']),
+  "bucketThresholds": zod.object({
+  "smallMin": zod.number(),
+  "mediumMin": zod.number(),
+  "largeMin": zod.number()
+}),
+  "premiumTotal": zod.number(),
+  "classifiedPremium": zod.number(),
+  "classificationCoverage": zod.number(),
+  "classificationConfidence": zod.enum(['high', 'medium', 'low', 'very_low', 'none']),
+  "netPremium": zod.number(),
+  "inflowPremium": zod.number(),
+  "outflowPremium": zod.number(),
+  "buyPremium": zod.number(),
+  "sellPremium": zod.number(),
+  "neutralPremium": zod.number(),
+  "callPremium": zod.number(),
+  "putPremium": zod.number(),
+  "buckets": zod.object({
+  "small": zod.object({
+  "inflowPremium": zod.number(),
+  "outflowPremium": zod.number(),
+  "buyPremium": zod.number(),
+  "sellPremium": zod.number(),
+  "neutralPremium": zod.number(),
+  "totalPremium": zod.number(),
+  "count": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemBucketsSmallCountMin)
+}),
+  "medium": zod.object({
+  "inflowPremium": zod.number(),
+  "outflowPremium": zod.number(),
+  "buyPremium": zod.number(),
+  "sellPremium": zod.number(),
+  "neutralPremium": zod.number(),
+  "totalPremium": zod.number(),
+  "count": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemBucketsMediumCountMin)
+}),
+  "large": zod.object({
+  "inflowPremium": zod.number(),
+  "outflowPremium": zod.number(),
+  "buyPremium": zod.number(),
+  "sellPremium": zod.number(),
+  "neutralPremium": zod.number(),
+  "totalPremium": zod.number(),
+  "count": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemBucketsLargeCountMin)
+})
+}),
+  "contractCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemContractCountMin),
+  "tradeCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemTradeCountMin),
+  "classifiedTradeCount": zod.number().min(0),
+  "quoteMatchedCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemQuoteMatchedCountMin),
+  "tickTestMatchedCount": zod.number().min(0),
+  "sideBasis": zod.enum(['quote_match', 'tick_test', 'mixed', 'none']),
+  "quoteAccess": zod.enum(['available', 'unavailable', 'forbidden', 'unknown']),
+  "tradeAccess": zod.enum(['available', 'unavailable', 'forbidden', 'unknown']),
+  "source": zod.enum(['polygon-options-snapshot']),
+  "confidence": zod.enum(['snapshot', 'partial']),
+  "delayed": zod.boolean(),
+  "pageCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemPageCountMin)
+}))
 })
 
 

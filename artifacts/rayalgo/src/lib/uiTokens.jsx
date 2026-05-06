@@ -74,6 +74,12 @@ export const TYPOGRAPHY = {
   display: FONT_STACKS.sans,
 };
 
+export const FONT_WEIGHTS = {
+  regular: 400,
+  label: 600,
+  emphasis: 700,
+};
+
 export const TYPOGRAPHY_SIZES = {
   micro: 7,
   label: 8,

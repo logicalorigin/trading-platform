@@ -37,7 +37,7 @@ const StatusRow = ({ label, ok, detail }) => (
       }}
     />
     <div style={{ minWidth: 0 }}>
-      <div style={{ color: T.text, fontSize: fs(8), fontWeight: 800 }}>{label}</div>
+      <div style={{ color: T.text, fontSize: fs(8), fontWeight: 400 }}>{label}</div>
       <div
         style={{
           marginTop: sp(2),

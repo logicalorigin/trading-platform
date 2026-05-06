@@ -47,7 +47,7 @@ const PatternMetric = ({ label, value, tone = T.text }) => (
       style={{
         color: tone,
         fontFamily: T.data,
-        fontWeight: 900,
+        fontWeight: 400,
         fontSize: textSize("metric"),
         lineHeight: 1.15,
         overflow: "hidden",
@@ -114,7 +114,7 @@ const AnalysisCard = ({
           style={{
             color,
             fontFamily: T.data,
-            fontWeight: 900,
+            fontWeight: 400,
             fontSize: textSize("control"),
             textTransform: "uppercase",
             overflow: "hidden",
@@ -124,7 +124,7 @@ const AnalysisCard = ({
         >
           {card.label}
         </span>
-        <span style={{ color: toneForValue(card.value), fontFamily: T.data, fontWeight: 900 }}>
+        <span style={{ color: toneForValue(card.value), fontFamily: T.data, fontWeight: 400 }}>
           {formatAccountMoney(card.value, currency, true, maskValues)}
         </span>
       </div>
@@ -185,7 +185,7 @@ const AnalysisReadinessStrip = ({ readiness = [] }) => {
               }}
             >
               <span style={{ ...mutedLabelStyle, color }}>{row.label}</span>
-              <span style={{ color, fontFamily: T.data, fontSize: textSize("label"), fontWeight: 900 }}>
+              <span style={{ color, fontFamily: T.data, fontSize: textSize("label"), fontWeight: 400 }}>
                 {formatNumber(row.value || 0, 0)}
               </span>
             </div>
@@ -282,7 +282,7 @@ const BucketDrilldownStrip = ({
                     color: active ? T.cyan : T.text,
                     fontFamily: T.data,
                     fontSize: textSize("control"),
-                    fontWeight: 900,
+                    fontWeight: 400,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
@@ -290,7 +290,7 @@ const BucketDrilldownStrip = ({
                 >
                   {group.label}
                 </span>
-                <span style={{ color: pnlTone, fontFamily: T.data, fontSize: textSize("label"), fontWeight: 900 }}>
+                <span style={{ color: pnlTone, fontFamily: T.data, fontSize: textSize("label"), fontWeight: 400 }}>
                   {formatAccountMoney(group.realizedPnl, currency, true, maskValues)}
                 </span>
               </div>
@@ -421,7 +421,7 @@ const WeeklyPnlBars = ({ trades = [], currency, maskValues }) => {
         <div style={mutedLabelStyle}>WEEKLY P&L · LAST {WEEKS_TO_RENDER}W</div>
         <div style={{ fontSize: textSize("label"), fontFamily: T.data, color: T.textDim }}>
           {totalTradedWeeks}/{WEEKS_TO_RENDER} traded ·{" "}
-          <span style={{ color: toneForValue(totalPnl), fontWeight: 900 }}>
+          <span style={{ color: toneForValue(totalPnl), fontWeight: 400 }}>
             {formatAccountSignedMoney(totalPnl, currency, true, maskValues)}
           </span>
         </div>
@@ -552,7 +552,7 @@ const HorizontalPnlHistogram = ({ trades = [], currency, maskValues, lensActive 
                 <span
                   style={{
                     color: color,
-                    fontWeight: 900,
+                    fontWeight: 400,
                     textAlign: "right",
                     whiteSpace: "nowrap",
                     overflow: "hidden",
@@ -629,7 +629,7 @@ const TickerRows = ({
                   : "transparent",
             }}
           >
-            <td style={{ padding: sp("5px"), color: T.text, fontFamily: T.data, fontWeight: 900 }}>
+            <td style={{ padding: sp("5px"), color: T.text, fontFamily: T.data, fontWeight: 400 }}>
               <button
                 type="button"
                 onClick={() => onSymbolSelect?.(row.symbol)}
@@ -639,7 +639,7 @@ const TickerRows = ({
                   background: "transparent",
                   color: T.cyan,
                   fontFamily: T.data,
-                  fontWeight: 900,
+                  fontWeight: 400,
                   cursor: "pointer",
                   padding: 0,
                 }}
@@ -969,7 +969,7 @@ export const TradingPatternsPanel = ({
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {row.label || row.sourceType}
                     </span>
-                    <span style={{ color: toneForValue(row.realizedPnl), fontWeight: 900 }}>
+                    <span style={{ color: toneForValue(row.realizedPnl), fontWeight: 400 }}>
                       {formatAccountMoney(row.realizedPnl, currency, true, maskValues)}
                     </span>
                   </button>
@@ -1005,7 +1005,7 @@ export const TradingPatternsPanel = ({
                         placeItems: "center",
                         fontFamily: T.data,
                         fontSize: textSize("label"),
-                        fontWeight: 900,
+                        fontWeight: 400,
                         cursor: "pointer",
                       }}
                     >

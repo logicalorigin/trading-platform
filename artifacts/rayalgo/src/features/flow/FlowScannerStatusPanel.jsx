@@ -38,7 +38,7 @@ const ScannerMetric = ({ label, value, detail, tone = T.textSec }) => (
       style={{
         color: T.textMuted,
         fontSize: fs(7),
-        fontWeight: 900,
+        fontWeight: 400,
         letterSpacing: "0.05em",
         textTransform: "uppercase",
         lineHeight: 1,
@@ -51,7 +51,7 @@ const ScannerMetric = ({ label, value, detail, tone = T.textSec }) => (
         marginTop: sp(3),
         color: tone,
         fontSize: fs(11),
-        fontWeight: 900,
+        fontWeight: 400,
         lineHeight: 1,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -91,7 +91,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
       color: tone,
       fontFamily: T.mono,
       fontSize: fs(8),
-      fontWeight: 800,
+      fontWeight: 400,
       whiteSpace: "nowrap",
     }}
   >
@@ -198,7 +198,7 @@ export const FlowScannerStatusPanel = ({
               color: T.textSec,
               fontFamily: T.display,
               fontSize: fs(11),
-              fontWeight: 800,
+              fontWeight: 400,
               whiteSpace: "nowrap",
             }}
           >
@@ -209,7 +209,7 @@ export const FlowScannerStatusPanel = ({
               color: statusTone,
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 900,
+              fontWeight: 400,
               textTransform: "uppercase",
               whiteSpace: "nowrap",
             }}
@@ -221,7 +221,7 @@ export const FlowScannerStatusPanel = ({
               color: sourceTone,
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 800,
+              fontWeight: 400,
               minWidth: 0,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -244,7 +244,7 @@ export const FlowScannerStatusPanel = ({
         >
           <span>
             Cycle{" "}
-            <span style={{ color: T.text, fontWeight: 900 }}>
+            <span style={{ color: T.text, fontWeight: 400 }}>
               {formatCount(scannedCoverageSymbols)}/{formatCount(totalCoverageSymbols || scannedCoverageSymbols)}
             </span>
           </span>
@@ -262,7 +262,7 @@ export const FlowScannerStatusPanel = ({
                 color: toggleTone,
                 fontFamily: T.mono,
                 fontSize: fs(8),
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor: "pointer",
                 whiteSpace: "nowrap",
               }}

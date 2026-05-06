@@ -57,6 +57,8 @@ const isQuoteStandbyState = (proof) =>
   proof?.streamState === "quiet" &&
   proof?.streamStateReason === NO_ACTIVE_QUOTE_CONSUMERS_REASON;
 
+// Status color semantics: green=healthy, accent=in progress, amber=attention, red=error.
+
 const resolveConnectionProof = (connection, runtime) => {
   const accountCount = firstValue(
     runtime?.accountCount,
@@ -376,8 +378,8 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
         status: "checking",
         healthLabel: "Checking",
         detail: "Gateway is authenticated; waiting for account and stream proof",
-        color: T.amber,
-        background: T.amberBg,
+        color: T.accent,
+        background: `${T.accent}14`,
         Icon: Activity,
         wave: "flat",
         badge: "CHECKING",
@@ -480,7 +482,7 @@ export const getIbkrConnectionTone = (connection) => {
     if (proof.accountsLoaded === false) {
       return {
         label: "checking",
-        color: T.amber,
+        color: T.accent,
         Icon: Activity,
         wave: "flat",
       };
@@ -514,7 +516,7 @@ export const getIbkrConnectionTone = (connection) => {
           : streamStale
             ? "stale"
             : "checking",
-      color: ready ? T.green : T.amber,
+      color: ready ? T.green : streamStale ? T.amber : T.accent,
       Icon: ready ? CircleCheck : Activity,
       wave: ready ? "fast" : "flat",
     };
@@ -697,6 +699,15 @@ export const resolveIbkrGatewayHealth = ({
     };
   }
 
+  if (proof.accountsLoaded === false) {
+    return {
+      status: "checking",
+      label: "Checking",
+      color: T.accent,
+      detail: "Gateway is authenticated; waiting for account and stream proof",
+    };
+  }
+
   if (
     proof.configuredLiveMarketDataMode === false ||
     liveMarketDataAvailable === false
@@ -822,6 +833,12 @@ export const getIbkrGatewayBadges = ({
     badges.push({ label: "CLOSED", color: T.textSec, background: T.bg2 });
   } else if (status.status === "quiet") {
     badges.push({ label: "QUIET STREAM", color: T.textSec, background: T.bg2 });
+  } else if (status.status === "checking") {
+    badges.push({
+      label: "CHECKING",
+      color: T.accent,
+      background: `${T.accent}14`,
+    });
   } else if (status.status === "delayed") {
     badges.push({ label: "DELAYED", color: T.amber, background: T.amberBg });
   } else if (status.status === "stale" || status.status === "stale_stream") {
@@ -1057,7 +1074,7 @@ export const IbkrConnectionLane = ({
           minWidth: 0,
           color: T.text,
           fontSize: fs(9),
-          fontWeight: 800,
+          fontWeight: 400,
           fontFamily: T.sans,
           letterSpacing: "0.04em",
           whiteSpace: "nowrap",
@@ -1068,7 +1085,7 @@ export const IbkrConnectionLane = ({
           style={{
             color: tone.color,
             fontSize: fs(8),
-            fontWeight: 800,
+            fontWeight: 400,
           }}
         >
           {tone.label.toUpperCase()}

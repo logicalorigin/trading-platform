@@ -1,4 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  getGetSignalMonitorProfileQueryKey,
+  getGetSignalMonitorStateQueryKey,
+  getListSignalMonitorEventsQueryKey,
+  useEvaluateSignalMonitor,
+  useGetSignalMonitorProfile,
+  useGetSignalMonitorState,
+  useListSignalMonitorEvents,
+  useUpdateSignalMonitorProfile,
+} from "@workspace/api-client-react";
 import {
   buildLanePresetPatch,
   normalizeLaneSymbolList,
@@ -213,7 +224,7 @@ function smallButton({ active = false, danger = false } = {}) {
     padding: sp("6px 9px"),
     fontFamily: T.mono,
     fontSize: fs(9),
-    fontWeight: 900,
+    fontWeight: 400,
     cursor: "pointer",
   };
 }
@@ -240,7 +251,7 @@ function labelStyle() {
     color: T.textDim,
     fontFamily: T.mono,
     fontSize: fs(9),
-    fontWeight: 800,
+    fontWeight: 400,
     minWidth: 0,
   };
 }
@@ -267,7 +278,7 @@ function Panel({ title, action, children }) {
           marginBottom: sp(10),
         }}
       >
-        <div style={{ fontSize: fs(12), fontWeight: 800 }}>{title}</div>
+        <div style={{ fontSize: fs(12), fontWeight: 400 }}>{title}</div>
         {action}
       </div>
       {children}
@@ -293,7 +304,7 @@ function StateRow({ label, value, tone = T.textSec }) {
       <span
         style={{
           color: tone,
-          fontWeight: 800,
+          fontWeight: 400,
           textAlign: "right",
           minWidth: 0,
           overflowWrap: "anywhere",
@@ -404,7 +415,7 @@ function SourceBadge({ setting }) {
         padding: sp("2px 5px"),
         fontFamily: T.mono,
         fontSize: fs(8),
-        fontWeight: 900,
+        fontWeight: 400,
         textTransform: "uppercase",
       }}
     >
@@ -430,7 +441,7 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(8) }}>
-        <div style={{ color: T.text, fontWeight: 900, fontSize: fs(11) }}>
+        <div style={{ color: T.text, fontWeight: 400, fontSize: fs(11) }}>
           {setting.label}
         </div>
         <SourceBadge setting={setting} />
@@ -572,62 +583,135 @@ function useWatchlists() {
 }
 
 function useSignalMonitorSettings() {
-  const [profile, setProfile] = useState(null);
+  const queryClient = useQueryClient();
   const [draft, setDraft] = useState(null);
-  const [state, setState] = useState(null);
-  const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [evaluating, setEvaluating] = useState(false);
-  const [error, setError] = useState(null);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    Promise.all([
-      fetch("/api/signal-monitor/profile", { headers: { Accept: "application/json" } }).then((response) =>
-        response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)),
-      ),
-      fetch("/api/signal-monitor/state", { headers: { Accept: "application/json" } }).then((response) =>
-        response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)),
-      ),
-      fetch("/api/signal-monitor/events?limit=20", { headers: { Accept: "application/json" } }).then((response) =>
-        response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)),
-      ),
-    ])
-      .then(([nextProfile, nextState, nextEvents]) => {
-        setProfile(nextProfile);
-        setDraft(nextProfile);
-        setState(nextState);
-        setEvents(nextEvents.events || []);
-      })
-      .catch((err) => {
-        setError(err?.detail || err?.message || "Signal monitor settings are unavailable.");
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const [localError, setLocalError] = useState(null);
+  const lastProfileJsonRef = useRef(null);
+  const signalMonitorEventsParams = useMemo(() => ({ limit: 20 }), []);
+  const profileQuery = useGetSignalMonitorProfile(undefined, {
+    query: {
+      staleTime: 15_000,
+      retry: false,
+    },
+  });
+  const stateQuery = useGetSignalMonitorState(undefined, {
+    query: {
+      staleTime: 15_000,
+      retry: false,
+    },
+  });
+  const eventsQuery = useListSignalMonitorEvents(signalMonitorEventsParams, {
+    query: {
+      staleTime: 15_000,
+      retry: false,
+    },
+  });
+  const profile = profileQuery.data || null;
+  const state = stateQuery.data || null;
+  const events = eventsQuery.data?.events || [];
 
   const dirty = useMemo(
     () => JSON.stringify(profile || {}) !== JSON.stringify(draft || {}),
     [draft, profile],
   );
 
+  useEffect(() => {
+    if (!profile) return;
+    const nextProfileJson = JSON.stringify(profile);
+    setDraft((current) => {
+      const currentJson = JSON.stringify(current || {});
+      const shouldReplace =
+        !current || currentJson === (lastProfileJsonRef.current || "{}");
+      return shouldReplace ? profile : current;
+    });
+    lastProfileJsonRef.current = nextProfileJson;
+  }, [profile]);
+
+  const describeError = useCallback(
+    (err, fallback) => err?.detail || err?.message || fallback,
+    [],
+  );
+
+  const load = useCallback(() => {
+    setLocalError(null);
+    return Promise.all([
+      profileQuery.refetch(),
+      stateQuery.refetch(),
+      eventsQuery.refetch(),
+    ])
+      .then(([nextProfile]) => {
+        if (nextProfile.data) {
+          setDraft(nextProfile.data);
+        }
+      })
+      .catch((err) => {
+        setLocalError(describeError(err, "Signal monitor settings are unavailable."));
+      });
+  }, [describeError, eventsQuery, profileQuery, stateQuery]);
+
   const patchDraft = useCallback((patch) => {
     setDraft((current) => ({ ...(current || {}), ...patch }));
   }, []);
 
+  const updateProfileMutation = useUpdateSignalMonitorProfile({
+    mutation: {
+      onSuccess: (payload) => {
+        queryClient.setQueryData(getGetSignalMonitorProfileQueryKey(), payload);
+        if (payload.environment) {
+          queryClient.setQueryData(
+            getGetSignalMonitorProfileQueryKey({ environment: payload.environment }),
+            payload,
+          );
+        }
+        setDraft(payload);
+      },
+      onError: (err) => {
+        setLocalError(describeError(err, "Failed to save signal monitor settings."));
+      },
+    },
+  });
+
+  const evaluateMutation = useEvaluateSignalMonitor({
+    mutation: {
+      onSuccess: (payload) => {
+        queryClient.setQueryData(getGetSignalMonitorStateQueryKey(), payload);
+        if (payload.profile?.environment) {
+          queryClient.setQueryData(
+            getGetSignalMonitorStateQueryKey({ environment: payload.profile.environment }),
+            payload,
+          );
+          queryClient.invalidateQueries({
+            queryKey: getListSignalMonitorEventsQueryKey({
+              environment: payload.profile.environment,
+              limit: signalMonitorEventsParams.limit,
+            }),
+          });
+        }
+        queryClient.invalidateQueries({
+          queryKey: getListSignalMonitorEventsQueryKey(signalMonitorEventsParams),
+        });
+        if (payload.profile) {
+          queryClient.setQueryData(getGetSignalMonitorProfileQueryKey(), payload.profile);
+          if (payload.profile.environment) {
+            queryClient.setQueryData(
+              getGetSignalMonitorProfileQueryKey({ environment: payload.profile.environment }),
+              payload.profile,
+            );
+          }
+          setDraft(payload.profile);
+        }
+      },
+      onError: (err) => {
+        setLocalError(describeError(err, "Signal monitor evaluation failed."));
+      },
+    },
+  });
+
   const save = useCallback(() => {
     if (!draft) return;
-    setSaving(true);
-    setError(null);
-    fetch("/api/signal-monitor/profile", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
+    setLocalError(null);
+    updateProfileMutation.mutate({
+      data: {
         environment: draft.environment,
         enabled: Boolean(draft.enabled),
         watchlistId: draft.watchlistId || null,
@@ -637,40 +721,23 @@ function useSignalMonitorSettings() {
         maxSymbols: Number(draft.maxSymbols),
         evaluationConcurrency: Number(draft.evaluationConcurrency),
         rayReplicaSettings: draft.rayReplicaSettings || {},
-      }),
-    })
-      .then((response) =>
-        response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setProfile(payload);
-        setDraft(payload);
-      })
-      .catch((err) => setError(err?.detail || err?.message || "Failed to save signal monitor settings."))
-      .finally(() => setSaving(false));
-  }, [draft]);
+      },
+    });
+  }, [draft, updateProfileMutation]);
 
   const evaluate = useCallback((mode = "incremental") => {
-    setEvaluating(true);
-    setError(null);
-    fetch("/api/signal-monitor/evaluate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ environment: draft?.environment || profile?.environment, mode }),
-    })
-      .then((response) =>
-        response.ok ? response.json() : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setState(payload);
-        if (payload.profile) {
-          setProfile(payload.profile);
-          setDraft(payload.profile);
-        }
-      })
-      .catch((err) => setError(err?.detail || err?.message || "Signal monitor evaluation failed."))
-      .finally(() => setEvaluating(false));
-  }, [draft?.environment, profile?.environment]);
+    setLocalError(null);
+    evaluateMutation.mutate({
+      data: {
+        environment: draft?.environment || profile?.environment,
+        mode,
+      },
+    });
+  }, [draft?.environment, evaluateMutation, profile?.environment]);
+
+  const queryError = profileQuery.error || stateQuery.error || eventsQuery.error;
+  const loading =
+    profileQuery.isFetching || stateQuery.isFetching || eventsQuery.isFetching;
 
   return {
     profile,
@@ -678,10 +745,14 @@ function useSignalMonitorSettings() {
     state,
     events,
     loading,
-    saving,
-    evaluating,
+    saving: updateProfileMutation.isPending,
+    evaluating: evaluateMutation.isPending,
     dirty,
-    error,
+    error:
+      localError ||
+      (queryError
+        ? describeError(queryError, "Signal monitor settings are unavailable.")
+        : null),
     patchDraft,
     save,
     discard: () => setDraft(profile),
@@ -1063,8 +1134,8 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: sp(8), marginTop: sp(12) }}>
           {lineUsage.rows.map((pool) => (
             <div key={pool.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(5), padding: sp(9), background: T.bg2 }}>
-              <div style={{ color: T.text, fontSize: fs(10), fontWeight: 900 }}>{pool.label}</div>
-              <div style={{ color: Number(pool.used) > Number(pool.cap) ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(11), fontWeight: 900, marginTop: sp(4) }}>
+              <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{pool.label}</div>
+              <div style={{ color: Number(pool.used) > Number(pool.cap) ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(11), fontWeight: 400, marginTop: sp(4) }}>
                 {formatCount(pool.used)} / {formatCount(pool.cap)}
               </div>
               <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
@@ -1079,8 +1150,8 @@ function IbkrLineUsagePanel({ runtimeControl }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: sp(8), marginTop: sp(12) }}>
           {governorRows.map(([id, lane]) => (
             <div key={id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(5), padding: sp(9), background: T.bg2 }}>
-              <div style={{ color: T.text, fontSize: fs(10), fontWeight: 900 }}>{id}</div>
-              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(10), fontWeight: 900, marginTop: sp(4) }}>
+              <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>{id}</div>
+              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(10), fontWeight: 400, marginTop: sp(4) }}>
                 {formatCount(lane.active)} active / {formatCount(lane.queued)} queued
               </div>
               <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
@@ -1140,7 +1211,7 @@ function StoragePrunePanel() {
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 220px) 1fr", gap: sp(10), alignItems: "end" }}>
-        <label style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 800 }}>
+        <label style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
           Older Than Days
           <input
             type="number"
@@ -1197,7 +1268,7 @@ function BrowserStorageFootprintPanel() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: sp(12) }}>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 900, marginBottom: sp(6) }}>
+          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
             Largest Local Keys
           </div>
           {localEntries.map((entry) => (
@@ -1206,7 +1277,7 @@ function BrowserStorageFootprintPanel() {
           {!localEntries.length && <StateRow label="No local storage keys" value="empty" />}
         </div>
         <div>
-          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 900, marginBottom: sp(6) }}>
+          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400, marginBottom: sp(6) }}>
             Largest Session Keys
           </div>
           {sessionEntries.map((entry) => (
@@ -1653,7 +1724,7 @@ function ChartTimeframeFavoritesPanel() {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: sp(10) }}>
-                <div style={{ color: T.text, fontWeight: 900, fontSize: fs(11) }}>{role.label}</div>
+                <div style={{ color: T.text, fontWeight: 400, fontSize: fs(11) }}>{role.label}</div>
                 <button type="button" onClick={() => resetRole(role.value)} style={smallButton()}>
                   Reset
                 </button>
@@ -2172,10 +2243,10 @@ function SettingsStatusStrip({ summary, dirtyCount }) {
             minWidth: 0,
           }}
         >
-          <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 900 }}>
+          <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
             {item.label}
           </span>
-          <span style={{ color: item.tone, fontFamily: T.mono, fontSize: fs(11), fontWeight: 900 }}>
+          <span style={{ color: item.tone, fontFamily: T.mono, fontSize: fs(11), fontWeight: 400 }}>
             {item.value}
           </span>
         </div>
@@ -2496,13 +2567,13 @@ export default function SettingsScreen({
         }}
       >
         <div>
-          <div style={{ fontSize: fs(18), fontWeight: 900 }}>Settings</div>
+          <div style={{ fontSize: fs(18), fontWeight: 400 }}>Settings</div>
           <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>
             Backend operational controls, guarded applies, restart-required runtime state
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: settingsIsPhone ? "flex-start" : "flex-end", width: settingsIsPhone ? "100%" : undefined }}>
-          <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.mono, fontSize: fs(10), fontWeight: 900 }}>
+          <span style={{ color: summary.pendingRestartCount > 0 ? T.amber : T.green, fontFamily: T.mono, fontSize: fs(10), fontWeight: 400 }}>
             {summary.pendingRestartCount || 0} pending restart
           </span>
           <button type="button" onClick={backend.reload} disabled={backend.loading} style={smallButton()}>
@@ -2581,7 +2652,7 @@ export default function SettingsScreen({
                 cursor: "pointer",
               }}
             >
-              <div style={{ fontFamily: T.mono, fontSize: fs(9), fontWeight: 900 }}>
+              <div style={{ fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
                 {tab.label}
               </div>
               <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(2) }}>
@@ -2715,7 +2786,7 @@ export default function SettingsScreen({
                       cursor: "pointer",
                       fontFamily: T.mono,
                       fontSize: fs(10),
-                      fontWeight: 900,
+                      fontWeight: 400,
                     }}
                   >
                     View raw backend payload

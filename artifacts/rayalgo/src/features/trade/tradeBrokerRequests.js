@@ -1,4 +1,7 @@
-import { formatIsoDate } from "../../lib/formatters";
+import {
+  formatIsoDate,
+  formatOptionContractLabel,
+} from "../../lib/formatters";
 import { MISSING_VALUE, T } from "../../lib/uiTokens";
 
 const buildApiUrl = (path, params = {}) => {
@@ -38,7 +41,10 @@ export const FINAL_ORDER_STATUSES = new Set([
 export const formatExecutionContractLabel = (execution) => {
   if (!execution) return MISSING_VALUE;
   if (execution.assetClass === "option") {
-    return execution.contractDescription || `${execution.symbol} OPTION`;
+    return formatOptionContractLabel(execution.optionContract || execution, {
+      symbol: execution.symbol,
+      fallback: execution.contractDescription || `${execution.symbol} OPTION`,
+    });
   }
   return "EQUITY";
 };

@@ -99,6 +99,66 @@ function makeFlowEvents(
   }));
 }
 
+function makePremiumWidget(symbol: string, index: number) {
+  const inflow = 1_900_000 - index * 120_000;
+  const outflow = 1_050_000 + index * 80_000;
+  const neutral = index % 2 === 0 ? 110_000 : 55_000;
+  const smallInflow = 180_000 - index * 9_000;
+  const mediumInflow = 520_000 - index * 28_000;
+  const largeInflow = inflow - smallInflow - mediumInflow;
+  const smallOutflow = 150_000 + index * 6_000;
+  const mediumOutflow = 340_000 + index * 18_000;
+  const largeOutflow = outflow - smallOutflow - mediumOutflow;
+  const bucket = (inflowPremium: number, outflowPremium: number, neutralPremium: number) => ({
+    inflowPremium,
+    outflowPremium,
+    buyPremium: inflowPremium,
+    sellPremium: outflowPremium,
+    neutralPremium,
+    totalPremium: inflowPremium + outflowPremium + neutralPremium,
+    count: Math.max(1, Math.round((inflowPremium + outflowPremium) / 75_000)),
+  });
+
+  return {
+    rank: index + 1,
+    symbol,
+    asOf: new Date().toISOString(),
+    timeframe: "today",
+    stockDayVolume: 180_000_000 - index * 15_000_000,
+    marketCap: 500_000_000_000 - index * 45_000_000_000,
+    marketCapTier: index < 3 ? "mega" : "large",
+    bucketThresholds: { smallMin: 0, mediumMin: 50_000, largeMin: 250_000 },
+    premiumTotal: inflow + outflow + neutral,
+    classifiedPremium: inflow + outflow,
+    classificationCoverage: (inflow + outflow) / (inflow + outflow + neutral),
+    netPremium: inflow - outflow,
+    inflowPremium: inflow,
+    outflowPremium: outflow,
+    buyPremium: inflow,
+    sellPremium: outflow,
+    neutralPremium: neutral,
+    callPremium: inflow * 0.62 + outflow * 0.38,
+    putPremium: inflow * 0.38 + outflow * 0.62,
+    buckets: {
+      large: bucket(largeInflow, largeOutflow, neutral * 0.45),
+      medium: bucket(mediumInflow, mediumOutflow, neutral * 0.35),
+      small: bucket(smallInflow, smallOutflow, neutral * 0.2),
+    },
+    contractCount: 92 - index * 4,
+    tradeCount: 72 - index * 3,
+    classifiedTradeCount: 68 - index * 3,
+    quoteMatchedCount: 68 - index * 3,
+    tickTestMatchedCount: 0,
+    sideBasis: "quote_match",
+    quoteAccess: "available",
+    tradeAccess: "available",
+    source: "polygon-options-snapshot",
+    confidence: index < 4 ? "snapshot" : "partial",
+    delayed: false,
+    pageCount: 1,
+  };
+}
+
 async function mockFlowApi(
   page: Page,
   options: {
@@ -161,6 +221,40 @@ async function mockFlowApi(
             : null,
           promotedSymbols: options.flowPromotedSymbols || [],
         },
+      };
+    } else if (url.pathname === "/api/flow/premium-distribution") {
+      const timeframe =
+        url.searchParams.get("timeframe") === "week" ? "week" : "today";
+      body = {
+        status: "ok",
+        asOf: new Date().toISOString(),
+        timeframe,
+        source: {
+          provider: "polygon",
+          label: "Polygon premium snapshots",
+          timeframe,
+          providerHost: "api.polygon.io",
+          sideBasis: "quote_match",
+          quoteAccess: "available",
+          tradeAccess: "available",
+          classifiedPremium: flowSymbols.reduce(
+            (sum, symbol, index) =>
+              sum +
+              makePremiumWidget(symbol, index).classifiedPremium,
+            0,
+          ),
+          classificationCoverage: 0.96,
+          candidateDate: "2026-05-06",
+          candidateCount: flowSymbols.length,
+          rankedCount: flowSymbols.length,
+          errorCount: 0,
+          errorMessage: null,
+          cache: "miss",
+        },
+        widgets: flowSymbols.map((symbol, index) => ({
+          ...makePremiumWidget(symbol, index),
+          timeframe,
+        })),
       };
     } else if (url.pathname === "/api/quotes/snapshot") {
       const requested = (url.searchParams.get("symbols") || "SPY")
@@ -475,6 +569,53 @@ async function expectChartCanvasDrawn(page: Page, chartTestId: string) {
     .toBe(true);
 }
 
+test("Flow premium distribution renders six compact Webull-style widgets", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockFlowApi(page);
+  await openFlow(page);
+
+  const strip = page.getByTestId("flow-premium-distribution-strip");
+  await expect(strip).toBeVisible();
+  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(6);
+  await expect(strip.locator('section[aria-label="Inflow order bars"]')).toHaveCount(6);
+  await expect(strip.locator('section[aria-label="Outflow order bars"]')).toHaveCount(6);
+  await expect(strip.getByTestId("flow-premium-bucket-row")).toHaveCount(36);
+  await expect(strip.getByText("Kilo USD", { exact: true })).toHaveCount(6);
+  await expect(strip.getByRole("img", { name: "Order flow distribution donut chart" })).toHaveCount(6);
+  await expect(strip.locator("svg text").filter({ hasText: /%/ })).toHaveCount(0);
+  await expect(strip.getByText(/cls · N/)).toHaveCount(0);
+  await expect(strip.getByText(/trades · Vol/)).toHaveCount(0);
+  await expect(strip.getByText(/L>=/)).toHaveCount(0);
+  await expect(strip.getByText("XL")).toHaveCount(0);
+  await expect(strip.getByRole("button", { name: "Today" })).toBeVisible();
+  const desktopBoxes = await page
+    .getByTestId("flow-premium-distribution-widget")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const rect = node.getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      }),
+    );
+  expect(Math.max(...desktopBoxes.map((box) => box.width))).toBeLessThanOrEqual(230);
+  expect(Math.max(...desktopBoxes.map((box) => box.height))).toBeLessThanOrEqual(220);
+  await strip.screenshot({
+    path: testInfo.outputPath("flow-premium-distribution-desktop.png"),
+  });
+
+  await strip.getByRole("button", { name: "Week" }).click();
+  await expect(strip.getByRole("button", { name: "Week" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expect(strip).toBeVisible();
+  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(6);
+  await strip.screenshot({
+    path: testInfo.outputPath("flow-premium-distribution-mobile.png"),
+  });
+  await expectNoDocumentOverflow(page);
+});
+
 test("Flow scanner keeps scanning after leaving the Flow page", async ({
   page,
 }) => {
@@ -483,7 +624,7 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
   await mockFlowApi(page, {
     onFlowEventsRequest: (url) => {
       if (
-        url.searchParams.get("scope") === "unusual" &&
+        url.searchParams.get("scope") === "all" &&
         url.searchParams.get("limit") === "25"
       ) {
         broadScanRequests.push(
@@ -660,7 +801,6 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await expect(page.getByTestId("flow-scanner-status-panel")).toBeVisible();
   await expect(flowHost.getByText("Flow Scanner", { exact: true })).toHaveCount(1);
   await expect(flowHost.getByText("Options Flow Tape", { exact: true })).toBeVisible();
-  await expect(flowHost.getByText("Scanner Results", { exact: true })).toBeVisible();
   await expect(page.getByTestId("flow-preset-bar")).toBeVisible();
   await expect(page.getByTestId("flow-ticker-lens")).toBeVisible();
   await expect(page.getByTestId("flow-tape-row").first()).toBeVisible();
@@ -898,6 +1038,8 @@ test("Flow mobile renders row cards with filter overlay, column drawer, copy, an
   await expect(page.getByTestId("flow-mobile-card-list")).toBeVisible();
   const firstCard = page.getByTestId("flow-row-card").first();
   await expect(firstCard).toBeVisible();
+  await page.getByRole("button", { name: "Pause" }).first().click();
+  await expect(page.getByRole("button", { name: "Resume" }).first()).toBeVisible();
 
   await page.getByTestId("flow-filter-toggle").click();
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();

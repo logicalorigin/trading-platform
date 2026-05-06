@@ -25,7 +25,10 @@ import {
   Play,
   SlidersHorizontal,
 } from "lucide-react";
-import { useGetNews } from "@workspace/api-client-react";
+import {
+  useGetFlowPremiumDistribution,
+  useGetNews,
+} from "@workspace/api-client-react";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   setFlowScannerControlState,
@@ -70,6 +73,7 @@ import {
   fmtCompactNumber,
   fmtM,
   formatExpirationLabel,
+  formatOptionContractLabel,
   formatRelativeTimeShort,
   isFiniteNumber,
   mapNewsSentimentToScore,
@@ -96,6 +100,7 @@ import {
   buildFlowTapeEventClusters,
   buildFlowTapePresetPatch,
   filterFlowTapeEvents,
+  flowTapeFiltersAreActive,
   getFlowTapeEventCluster,
   getFlowBuiltInPreset,
   parseFlowTapeTickerTokens,
@@ -126,6 +131,17 @@ const getDisplayableFlowError = (providerSummary) => {
   return message;
 };
 const FLOW_ROWS_OPTIONS = [24, 40, 60, 100];
+const FLOW_PREMIUM_WIDGET_COUNT = 6;
+const FLOW_PREMIUM_WIDGET_REFRESH_MS = 30_000;
+const FLOW_PREMIUM_WIDGET_BUCKETS = [
+  ["Large", "large"],
+  ["Medium", "medium"],
+  ["Small", "small"],
+];
+const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
+  ["today", "Today"],
+  ["week", "Week"],
+];
 const FLOW_TAPE_OPTIONAL_COLUMNS = Object.freeze([
   { id: "side", label: "SIDE", toggleLabel: "Side", width: "56px" },
   { id: "execution", label: "EXEC", toggleLabel: "Exec", width: "56px" },
@@ -298,13 +314,11 @@ const normalizeFlowVisibleColumns = (value) => {
 
 const getFlowContractLabel = (event) => {
   if (!event) return "";
-  const expiration = formatExpirationLabel(event.expirationDate);
-  return [
-    event.optionTicker,
-    `${event.ticker} ${expiration} ${event.strike}${event.cp}`,
-  ]
-    .filter(Boolean)
-    .join(" | ");
+  return formatOptionContractLabel(event, {
+    symbol: event.ticker,
+    includeSymbol: true,
+    fallback: String(event.optionTicker || ""),
+  });
 };
 
 const FLOW_PRESET_COLORS = Object.freeze({
@@ -624,7 +638,7 @@ const FlowPlaceholderCard = ({
       <span
         style={{
           fontSize: fs(10),
-          fontWeight: 700,
+          fontWeight: 400,
           fontFamily: T.display,
           color: T.textSec,
         }}
@@ -642,6 +656,814 @@ const FlowPlaceholderCard = ({
     ))}
   </Card>
 );
+
+const premiumToKiloUsd = (value) => (isFiniteNumber(value) ? value / 1_000 : 0);
+
+const formatKiloUsd = (value) =>
+  Math.round(Math.max(0, isFiniteNumber(value) ? value : 0)).toLocaleString(
+    "en-US",
+  );
+
+const formatSignedPremium = (value) => {
+  if (!isFiniteNumber(value)) return MISSING_VALUE;
+  const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${prefix}${fmtM(Math.abs(value))}`;
+};
+
+const formatCoveragePercent = (value) => {
+  if (!isFiniteNumber(value)) return "0%";
+  const bounded = Math.max(0, Math.min(1, value));
+  if (bounded > 0 && bounded < 0.01) return "<1%";
+  return `${Math.round(bounded * 100)}%`;
+};
+
+const getPremiumSideBasisMeta = (value) => {
+  if (value === "quote_match") {
+    return { label: "Quote matched", color: T.green };
+  }
+  if (value === "tick_test") {
+    return { label: "Trade tick-test", color: T.amber };
+  }
+  if (value === "mixed") {
+    return { label: "Mixed side", color: T.accent };
+  }
+  return { label: "Unclassified", color: T.textDim };
+};
+
+const getPremiumClassificationConfidenceMeta = (value) => {
+  if (value === "high") {
+    return { label: "High confidence", color: T.green, muted: false };
+  }
+  if (value === "medium") {
+    return { label: "Medium confidence", color: T.accent, muted: false };
+  }
+  if (value === "low") {
+    return { label: "Low confidence", color: T.amber, muted: true };
+  }
+  if (value === "very_low") {
+    return { label: "Very low confidence", color: T.amber, muted: true };
+  }
+  return { label: "No side confidence", color: T.textDim, muted: true };
+};
+
+const inferPremiumClassificationConfidence = (coverage) => {
+  if (!isFiniteNumber(coverage) || coverage <= 0) return "none";
+  if (coverage < 0.01) return "very_low";
+  if (coverage < 0.1) return "low";
+  if (coverage < 0.35) return "medium";
+  return "high";
+};
+
+const hasLowPremiumClassificationConfidence = (widget) => {
+  const confidence =
+    widget?.classificationConfidence ??
+    inferPremiumClassificationConfidence(widget?.classificationCoverage);
+  return confidence === "none" || confidence === "very_low";
+};
+
+const getPremiumInflow = (value) =>
+  isFiniteNumber(value?.inflowPremium) ? value.inflowPremium : value?.buyPremium;
+
+const getPremiumOutflow = (value) =>
+  isFiniteNumber(value?.outflowPremium) ? value.outflowPremium : value?.sellPremium;
+
+const FLOW_PREMIUM_SEGMENT_CONFIG = [
+  {
+    key: "outflow.large",
+    flow: "outflow",
+    bucket: "large",
+    label: "Outflow Large",
+    color: "#d64f61",
+  },
+  {
+    key: "outflow.medium",
+    flow: "outflow",
+    bucket: "medium",
+    label: "Outflow Medium",
+    color: "#fb8b55",
+  },
+  {
+    key: "outflow.small",
+    flow: "outflow",
+    bucket: "small",
+    label: "Outflow Small",
+    color: "#f5ba42",
+  },
+  {
+    key: "inflow.small",
+    flow: "inflow",
+    bucket: "small",
+    label: "Inflow Small",
+    color: "#7dba63",
+  },
+  {
+    key: "inflow.medium",
+    flow: "inflow",
+    bucket: "medium",
+    label: "Inflow Medium",
+    color: "#58bd75",
+  },
+  {
+    key: "inflow.large",
+    flow: "inflow",
+    bucket: "large",
+    label: "Inflow Large",
+    color: "#4fb58d",
+  },
+];
+
+const FLOW_PREMIUM_BUCKET_LABELS = {
+  large: "L",
+  medium: "M",
+  small: "S",
+};
+
+const buildPremiumDistributionRows = (widget) => {
+  const rows = FLOW_PREMIUM_SEGMENT_CONFIG.map((segment) => {
+    const bucket = widget?.buckets?.[segment.bucket] || {};
+    const rawValue =
+      segment.flow === "inflow"
+        ? getPremiumInflow(bucket)
+        : getPremiumOutflow(bucket);
+    return {
+      ...segment,
+      valueKiloUsd: premiumToKiloUsd(rawValue),
+    };
+  });
+  const totalKiloUsd = rows.reduce(
+    (sum, row) => sum + Math.max(0, row.valueKiloUsd),
+    0,
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    percent: totalKiloUsd ? (row.valueKiloUsd / totalKiloUsd) * 100 : 0,
+  }));
+};
+
+const getPremiumNeutralPremium = (widget) => {
+  if (isFiniteNumber(widget?.neutralPremium)) return widget.neutralPremium;
+  return Object.values(widget?.buckets || {}).reduce(
+    (sum, bucket) =>
+      sum + (isFiniteNumber(bucket?.neutralPremium) ? bucket.neutralPremium : 0),
+    0,
+  );
+};
+
+const premiumPolarToCartesian = (cx, cy, radius, angleInDegrees) => {
+  const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180;
+  return {
+    x: cx + radius * Math.cos(angleInRadians),
+    y: cy + radius * Math.sin(angleInRadians),
+  };
+};
+
+const describePremiumArc = (cx, cy, radius, startAngle, endAngle) => {
+  const start = premiumPolarToCartesian(cx, cy, radius, endAngle);
+  const end = premiumPolarToCartesian(cx, cy, radius, startAngle);
+  const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+  return [
+    "M",
+    start.x,
+    start.y,
+    "A",
+    radius,
+    radius,
+    0,
+    largeArcFlag,
+    0,
+    end.x,
+    end.y,
+  ].join(" ");
+};
+
+const PremiumDistributionDonut = ({ rows, neutralKiloUsd }) => {
+  const cx = 90;
+  const cy = 37;
+  const radius = 22;
+  const outerRadius = 31;
+  const strokeWidth = 12;
+  const activeRows = rows.filter((row) => row.valueKiloUsd > 0);
+  const activeTotal = activeRows.reduce(
+    (sum, row) => sum + row.valueKiloUsd,
+    0,
+  );
+  let angle = 0;
+
+  if (!activeRows.length) {
+    const hasNeutral = neutralKiloUsd > 0;
+    return (
+      <svg
+        role="img"
+        aria-label={
+          hasNeutral
+            ? `Neutral premium ${formatKiloUsd(neutralKiloUsd)} Kilo USD`
+            : "No classified premium available"
+        }
+        viewBox="0 0 180 76"
+        style={{
+          display: "block",
+          width: "100%",
+          height: "100%",
+          overflow: "visible",
+        }}
+      >
+        <circle
+          cx={cx}
+          cy={cy}
+          r={radius}
+          fill="none"
+          stroke={hasNeutral ? T.textMuted : `${T.borderLight}88`}
+          strokeWidth={strokeWidth}
+          opacity={hasNeutral ? 0.7 : 0.42}
+        />
+        <text
+          x={cx}
+          y={cy - (hasNeutral ? 5 : 0)}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill={T.text}
+          fontSize={hasNeutral ? 8 : 9}
+          fontWeight={400}
+          fontFamily={T.display}
+        >
+          {hasNeutral ? "Neutral" : "Orders"}
+        </text>
+        {hasNeutral ? (
+          <text
+            x={cx}
+            y={cy + 9}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill={T.textDim}
+            fontSize={7}
+            fontWeight={400}
+            fontFamily={T.mono}
+          >
+            {formatKiloUsd(neutralKiloUsd)}
+          </text>
+        ) : null}
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      role="img"
+      aria-label="Order flow distribution donut chart"
+      viewBox="0 0 180 76"
+      style={{
+        display: "block",
+        width: "100%",
+        height: "100%",
+        overflow: "visible",
+      }}
+    >
+      <circle
+        cx={cx}
+        cy={cy}
+        r={radius}
+        fill="none"
+        stroke={`${T.borderLight}66`}
+        strokeWidth={strokeWidth}
+      />
+      {activeRows.flatMap((row) => {
+        const sweep = activeTotal ? (row.valueKiloUsd / activeTotal) * 360 : 0;
+        const start = angle;
+        const end = angle + sweep;
+        const mid = start + sweep / 2;
+        angle = end;
+        const labelPoint = premiumPolarToCartesian(cx, cy, outerRadius + 12, mid);
+        const rightSide = labelPoint.x >= cx;
+        const textX = rightSide ? labelPoint.x + 3 : labelPoint.x - 3;
+        const anchor = rightSide ? "start" : "end";
+        const valueLabel = formatKiloUsd(row.valueKiloUsd);
+        const showLabel = row.percent >= 8;
+        const segmentLabel = `${row.label}: ${valueLabel} Kilo USD`;
+        const segmentNode =
+          sweep >= 359.99 ? (
+            <circle
+              key={`${row.key}_arc`}
+              cx={cx}
+              cy={cy}
+              r={radius}
+              fill="none"
+              stroke={row.color}
+              strokeWidth={strokeWidth}
+            >
+              <title>{segmentLabel}</title>
+            </circle>
+          ) : (
+            <path
+              key={`${row.key}_arc`}
+              d={describePremiumArc(cx, cy, radius, start, end)}
+              fill="none"
+              stroke={row.color}
+              strokeWidth={strokeWidth}
+              strokeLinecap="butt"
+            >
+              <title>{segmentLabel}</title>
+            </path>
+          );
+
+        return [
+          segmentNode,
+          showLabel ? (
+            <g key={`${row.key}_label`} aria-hidden="true">
+              <text
+                x={textX}
+                y={labelPoint.y}
+                textAnchor={anchor}
+                dominantBaseline="middle"
+                fill={row.color}
+                fontSize={8}
+                fontWeight={400}
+                fontFamily={T.mono}
+              >
+                {valueLabel}
+              </text>
+            </g>
+          ) : null,
+        ];
+      })}
+      <text
+        x={cx}
+        y={cy}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={T.text}
+        fontSize={9}
+        fontWeight={400}
+        fontFamily={T.display}
+      >
+        Orders
+      </text>
+    </svg>
+  );
+};
+
+const PremiumFlowBarPanel = ({ flow, rows, maxKiloUsd, mutedSignal = false }) => {
+  const isInflow = flow === "inflow";
+  const flowRows = FLOW_PREMIUM_WIDGET_BUCKETS
+    .map(([label, bucket]) => ({
+      label,
+      row: rows.find((row) => row.flow === flow && row.bucket === bucket),
+    }))
+    .map(({ label, row }) => (row ? { ...row, bucketLabel: label } : null))
+    .filter(Boolean);
+  const totalKiloUsd = flowRows.reduce(
+    (sum, row) => sum + Math.max(0, row.valueKiloUsd),
+    0,
+  );
+  const flowColor = isInflow ? "#58bd75" : "#d64f61";
+  const displayFlowColor = mutedSignal ? T.textMuted : flowColor;
+  const safeMaxKiloUsd = Math.max(1, maxKiloUsd || 1);
+
+  return (
+    <section
+      aria-label={`${isInflow ? "Inflow" : "Outflow"} order bars`}
+      style={{
+        minWidth: 0,
+        padding: isInflow ? "0 4px 0 0" : "0 0 0 4px",
+        borderLeft: isInflow ? "none" : `1px solid ${T.borderLight}aa`,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: sp(2),
+          minHeight: dim(13),
+          minWidth: 0,
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            width: dim(6),
+            height: dim(6),
+            borderRadius: "50%",
+            background: displayFlowColor,
+            boxShadow: `0 0 0 2px ${displayFlowColor}22`,
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
+            color: T.text,
+            fontFamily: T.display,
+            fontSize: fs(8),
+            fontWeight: 400,
+            minWidth: 0,
+          }}
+        >
+          {isInflow ? "In" : "Out"}
+        </span>
+        <span
+          style={{
+            marginLeft: "auto",
+            color: displayFlowColor,
+            fontFamily: T.mono,
+            fontSize: fs(8),
+            fontWeight: 400,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatKiloUsd(totalKiloUsd)}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: sp(3),
+          padding: sp("2px 0 0"),
+          minHeight: dim(58),
+          minWidth: 0,
+        }}
+      >
+        {flowRows.map((row) => {
+          const barHeight = Math.max(
+            row.valueKiloUsd > 0 ? 4 : 1,
+            Math.round((row.valueKiloUsd / safeMaxKiloUsd) * 34),
+          );
+          const valueLabel = formatKiloUsd(row.valueKiloUsd);
+          const rowColor = mutedSignal ? T.textMuted : row.color;
+          return (
+            <div
+              key={row.key}
+              data-testid="flow-premium-bucket-row"
+              title={`${row.label}: ${valueLabel} Kilo USD${
+                mutedSignal ? " (low classification confidence)" : ""
+              }`}
+              style={{
+                display: "grid",
+                gridTemplateRows: `${dim(12)}px ${dim(36)}px ${dim(10)}px`,
+                alignItems: "end",
+                justifyItems: "center",
+                gap: sp(1),
+                minWidth: 0,
+                minHeight: dim(58),
+              }}
+            >
+              <span
+                style={{
+                  color: row.valueKiloUsd > 0 ? rowColor : T.textMuted,
+                  fontFamily: T.mono,
+                  fontSize: fs(7),
+                  fontWeight: 400,
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                  lineHeight: 1,
+                }}
+              >
+                {valueLabel}
+              </span>
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "flex-end",
+                  justifyContent: "center",
+                  width: "100%",
+                  height: "100%",
+                  borderBottom: `1px solid ${T.borderLight}88`,
+                }}
+              >
+                <span
+                  style={{
+                    width: dim(11),
+                    height: dim(barHeight),
+                    minHeight: row.valueKiloUsd > 0 ? dim(3) : dim(1),
+                    borderRadius: `${dim(3)}px ${dim(3)}px 0 0`,
+                    opacity: mutedSignal && row.valueKiloUsd > 0 ? 0.55 : 1,
+                    background:
+                      row.valueKiloUsd > 0
+                        ? `linear-gradient(180deg, ${rowColor}, ${rowColor}cc)`
+                        : `${T.textMuted}55`,
+                  }}
+                />
+              </span>
+              <span
+                style={{
+                  color: T.textDim,
+                  fontFamily: T.display,
+                  fontSize: fs(7),
+                  fontWeight: 400,
+                  whiteSpace: "nowrap",
+                  lineHeight: 1,
+                }}
+              >
+                {FLOW_PREMIUM_BUCKET_LABELS[row.bucket]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
+
+const PremiumDistributionWidget = ({
+  widget,
+  loading = false,
+  index = 0,
+  onSelectTicker,
+}) => {
+  if (loading || !widget) {
+    return (
+      <Card
+        data-testid="flow-premium-distribution-widget"
+        className="ra-panel-enter"
+        style={{
+          padding: "8px",
+          display: "flex",
+          flexDirection: "column",
+          gap: sp(4),
+          minWidth: 0,
+          minHeight: dim(176),
+          borderRadius: dim(8),
+          background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
+        }}
+      >
+        <FlowLoadingBlock width="42%" height={dim(9)} />
+        <FlowLoadingBlock width="86%" height={dim(58)} />
+        <FlowLoadingBlock width="100%" height={dim(1)} />
+        <FlowLoadingBlock width="100%" height={dim(50)} />
+      </Card>
+    );
+  }
+
+  const netColor =
+    widget.netPremium > 0
+      ? T.green
+      : widget.netPremium < 0
+        ? T.red
+        : T.textDim;
+  const rows = buildPremiumDistributionRows(widget);
+  const maxKiloUsd = Math.max(1, ...rows.map((row) => row.valueKiloUsd));
+  const neutralKiloUsd = premiumToKiloUsd(getPremiumNeutralPremium(widget));
+  const lowClassificationConfidence = hasLowPremiumClassificationConfidence(widget);
+
+  return (
+    <Card
+      data-testid="flow-premium-distribution-widget"
+      className="ra-panel-enter"
+      style={{
+        ...motionVars({ accent: netColor }),
+        padding: "6px",
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(3),
+        minWidth: 0,
+        minHeight: dim(176),
+        borderRadius: dim(8),
+        background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
+        boxShadow: `0 8px 20px ${T.bg0}32`,
+      }}
+    >
+      <button
+        type="button"
+        aria-label={`Filter Flow tape to ${widget.symbol} premium distribution`}
+        onClick={() => onSelectTicker?.(widget.symbol)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(4),
+          padding: 0,
+          border: "none",
+          background: "transparent",
+          color: "inherit",
+          cursor: "pointer",
+          minWidth: 0,
+          textAlign: "left",
+        }}
+      >
+        <span style={{ display: "flex", alignItems: "center", gap: sp(3), minWidth: 0 }}>
+          <span
+            style={{
+              color: T.textMuted,
+              fontFamily: T.mono,
+              fontSize: fs(7),
+              fontWeight: 400,
+            }}
+          >
+            #{widget.rank || index + 1}
+          </span>
+          <MarketIdentityInline
+            ticker={widget.symbol}
+            size={12}
+            showChips={false}
+          />
+        </span>
+        <span style={{ display: "flex", alignItems: "flex-end", flexDirection: "column" }}>
+          <span
+            style={{
+              color: netColor,
+              fontFamily: T.mono,
+              fontSize: fs(8),
+              fontWeight: 400,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {formatSignedPremium(widget.netPremium)}
+          </span>
+          <span
+            style={{
+              color: T.textMuted,
+              fontFamily: T.display,
+              fontSize: fs(6),
+              fontWeight: 400,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Kilo USD
+          </span>
+        </span>
+      </button>
+
+      <div
+        style={{
+          position: "relative",
+          display: "grid",
+          placeItems: "center",
+          minHeight: dim(58),
+          minWidth: 0,
+        }}
+      >
+        <PremiumDistributionDonut
+          rows={rows}
+          neutralKiloUsd={neutralKiloUsd}
+        />
+      </div>
+
+      <div style={{ height: 1, background: `${T.borderLight}88` }} />
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+          gap: 0,
+          minWidth: 0,
+        }}
+      >
+        <PremiumFlowBarPanel
+          flow="inflow"
+          rows={rows}
+          maxKiloUsd={maxKiloUsd}
+          mutedSignal={lowClassificationConfidence}
+        />
+        <PremiumFlowBarPanel
+          flow="outflow"
+          rows={rows}
+          maxKiloUsd={maxKiloUsd}
+          mutedSignal={lowClassificationConfidence}
+        />
+      </div>
+    </Card>
+  );
+};
+
+const PremiumDistributionStrip = ({
+  query,
+  timeframe,
+  onTimeframeChange,
+  onSelectTicker,
+}) => {
+  const widgets = query.data?.widgets || [];
+  const loading = query.isLoading || query.isPending;
+  const empty =
+    !loading &&
+    !widgets.length &&
+    (query.isError || query.data?.status === "unconfigured" || query.data?.status === "empty");
+  const detail = query.isError
+    ? "Premium distribution is unavailable."
+    : query.data?.source?.errorMessage ||
+      "Polygon premium snapshots have not produced ranked symbols yet.";
+  const sourceMeta = getPremiumSideBasisMeta(query.data?.source?.sideBasis);
+  const sourceCoverage = isFiniteNumber(query.data?.source?.classificationCoverage)
+    ? query.data.source.classificationCoverage
+    : 0;
+  const sourceConfidence =
+    query.data?.source?.classificationConfidence ??
+    inferPremiumClassificationConfidence(sourceCoverage);
+  const sourceConfidenceMeta =
+    getPremiumClassificationConfidenceMeta(sourceConfidence);
+  const sourceTone = sourceConfidenceMeta.muted
+    ? sourceConfidenceMeta.color
+    : sourceMeta.color;
+
+  if (empty) {
+    return (
+      <Card
+        data-testid="flow-premium-distribution-empty"
+        style={{ padding: "8px 10px" }}
+      >
+        <DataUnavailableState
+          title="Premium distribution unavailable"
+          detail={detail}
+          tone={query.data?.status === "unconfigured" ? T.amber : T.textDim}
+          minHeight={96}
+        />
+      </Card>
+    );
+  }
+
+  return (
+    <div
+      data-testid="flow-premium-distribution-strip"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(4),
+        minWidth: 0,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: sp(8),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            color: sourceTone,
+            fontFamily: T.mono,
+            fontSize: fs(7),
+            fontWeight: 400,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {sourceMeta.label} · {sourceConfidenceMeta.label} ·{" "}
+          {formatCoveragePercent(sourceCoverage)} classified
+        </span>
+        <div
+          data-testid="flow-premium-distribution-timeframe"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(2),
+            padding: 2,
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(4),
+            background: T.bg2,
+          }}
+        >
+          {FLOW_PREMIUM_TIMEFRAME_OPTIONS.map(([value, label]) => {
+            const active = timeframe === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onTimeframeChange?.(value)}
+                style={{
+                  border: "none",
+                  borderRadius: dim(3),
+                  background: active ? T.bg3 : "transparent",
+                  color: active ? T.text : T.textMuted,
+                  cursor: "pointer",
+                  fontFamily: T.mono,
+                  fontSize: fs(8),
+                  fontWeight: 400,
+                  padding: "3px 7px",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 184px), 1fr))",
+          gap: 6,
+          minWidth: 0,
+        }}
+      >
+        {Array.from({ length: FLOW_PREMIUM_WIDGET_COUNT }).map((_, index) => (
+          <PremiumDistributionWidget
+            key={widgets[index]?.symbol || `premium_${index}`}
+            widget={widgets[index]}
+            loading={loading && !widgets[index]}
+            index={index}
+            onSelectTicker={onSelectTicker}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
 
 const FlowOverviewPanel = ({
   onJumpToTrade,
@@ -661,6 +1483,8 @@ const FlowOverviewPanel = ({
   const [activeScanId, setActiveScanId] = useState(
     _initialState.flowActiveScanId || null,
   );
+  const [premiumDistributionTimeframe, setPremiumDistributionTimeframe] =
+    useState("today");
   const flowTapeFilters = useFlowTapeFilterState();
   const {
     activeFlowPresetId,
@@ -989,6 +1813,21 @@ const FlowOverviewPanel = ({
       },
     },
   );
+  const premiumDistributionQuery = useGetFlowPremiumDistribution(
+    {
+      limit: FLOW_PREMIUM_WIDGET_COUNT,
+      timeframe: premiumDistributionTimeframe,
+    },
+    {
+      query: {
+        enabled: isVisible,
+        staleTime: 15_000,
+        refetchInterval:
+          isVisible && !livePaused ? FLOW_PREMIUM_WIDGET_REFRESH_MS : false,
+        retry: false,
+      },
+    },
+  );
   const newsItems = useMemo(() => {
     const articles = newsQuery.data?.articles || [];
     return articles.map((article) => ({
@@ -1043,6 +1882,11 @@ const FlowOverviewPanel = ({
     sortBy,
     sortDir,
   ]);
+  const flowEventsFilteredOut = Boolean(
+    flowEvents.length &&
+      !filtered.length &&
+      flowTapeFiltersAreActive(flowTapeFilters),
+  );
   const filteredFlowAnalytics = useMemo(
     () => ({
       flowTide: buildFlowTideFromEvents(filtered),
@@ -1244,18 +2088,28 @@ const FlowOverviewPanel = ({
   const displayableFlowError = getDisplayableFlowError(providerSummary);
   const feedStateLabel = livePaused
     ? "Paused"
-    : hasLiveFlow
+    : flowEventsFilteredOut
+      ? "Filtered"
+      : hasLiveFlow
       ? "Live"
       : flowStatus === "loading"
         ? "Loading"
-        : "Degraded";
+        : flowQuality?.label === "Degraded"
+          ? "Degraded"
+          : flowQuality?.label === "Stale"
+            ? "Stale"
+            : "No Flow";
   const feedStateColor = livePaused
     ? T.amber
-    : hasLiveFlow
+    : flowEventsFilteredOut
+      ? T.amber
+      : hasLiveFlow
       ? T.green
       : flowStatus === "loading"
         ? T.accent
-        : T.red;
+        : flowQuality?.label === "Degraded"
+          ? T.red
+          : flowQuality?.color || T.textDim;
   const emptyFlowDetail =
     flowStatus === "loading"
       ? "Waiting on current options activity snapshots for the tracked symbols."
@@ -1552,23 +2406,25 @@ const FlowOverviewPanel = ({
     setLivePaused(true);
   };
 
-  const handleCopyContract = async (event, contractEvent) => {
+  const handleCopyContract = (event, contractEvent) => {
     event.stopPropagation();
     const contractLabel = getFlowContractLabel(contractEvent);
+    setCopiedEventId(contractEvent.id);
+    if (copyStatusTimerRef.current) {
+      clearTimeout(copyStatusTimerRef.current);
+    }
+    copyStatusTimerRef.current = setTimeout(() => {
+      setCopiedEventId(null);
+    }, 1400);
+
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(contractLabel);
+        const writeResult = navigator.clipboard.writeText(contractLabel);
+        if (writeResult?.catch) {
+          writeResult.catch(() => {});
+        }
       }
-      setCopiedEventId(contractEvent.id);
-      if (copyStatusTimerRef.current) {
-        clearTimeout(copyStatusTimerRef.current);
-      }
-      copyStatusTimerRef.current = setTimeout(() => {
-        setCopiedEventId(null);
-      }, 1400);
-    } catch (_error) {
-      setCopiedEventId(contractEvent.id);
-    }
+    } catch (_error) {}
   };
 
   const handleTogglePinned = (event, contractEvent) => {
@@ -1735,7 +2591,7 @@ const FlowOverviewPanel = ({
       return (
         <AppTooltip content={occurredAt ? `${occurredAt} ${appTimeZoneLabel}` : undefined}><span
           data-testid="flow-tape-cell-time"
-          style={{ color: ageColor, fontWeight: ageMs < 60_000 ? 700 : 500 }}
+          style={{ color: ageColor, fontWeight: 400}}
         >
           {ageLabel}
         </span></AppTooltip>
@@ -1783,7 +2639,7 @@ const FlowOverviewPanel = ({
               alignItems: "center",
               minWidth: 0,
               color: T.textSec,
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
             {event.strike}
@@ -1800,7 +2656,7 @@ const FlowOverviewPanel = ({
                 background: `${T.cyan}14`,
                 color: T.cyan,
                 fontSize: fs(8),
-                fontWeight: 700,
+                fontWeight: 400,
               }}
             >
               R{cluster.count}
@@ -1829,7 +2685,7 @@ const FlowOverviewPanel = ({
                 : event.premium > 100000
                   ? T.text
                   : T.textSec,
-            fontWeight: 700,
+            fontWeight: 400,
           }}
         >
           {premiumLabel}
@@ -1898,10 +2754,10 @@ const FlowOverviewPanel = ({
               lineHeight: 1,
             }}
           >
-            <span style={{ color: T.red, fontWeight: 700 }}>
+            <span style={{ color: T.red, fontWeight: 400 }}>
               B {formatOptionPrice(bid)}
             </span>
-            <span style={{ color: event.cp === "P" ? T.red : T.green, fontWeight: 700 }}>
+            <span style={{ color: event.cp === "P" ? T.red : T.green, fontWeight: 400 }}>
               A {formatOptionPrice(ask)}
             </span>
           </div>
@@ -2003,7 +2859,7 @@ const FlowOverviewPanel = ({
           style={{
             textAlign: "right",
             color: isFiniteNumber(volToOi) && volToOi > 1 ? T.amber : T.textDim,
-            fontWeight: isFiniteNumber(volToOi) && volToOi > 1 ? 700 : 400,
+            fontWeight: 400,
           }}
         >
           {isFiniteNumber(volToOi) ? volToOi.toFixed(2) : MISSING_VALUE}
@@ -2047,7 +2903,7 @@ const FlowOverviewPanel = ({
           style={{
             textAlign: "right",
             color: isAtOrInTheMoney ? T.green : T.amber,
-            fontWeight: 700,
+            fontWeight: 400,
           }}
         >
           {isFiniteNumber(event.otmPercent)
@@ -2066,7 +2922,7 @@ const FlowOverviewPanel = ({
               ? T.textSec
               : T.textDim;
       return (
-        <span style={{ textAlign: "right", color, fontWeight: 700 }}>
+        <span style={{ textAlign: "right", color, fontWeight: 400 }}>
           {event.moneyness && event.moneyness !== "UNKNOWN"
             ? event.moneyness
             : MISSING_VALUE}
@@ -2219,7 +3075,7 @@ const FlowOverviewPanel = ({
     fontSize: fs(8),
     color: T.textDim,
     fontFamily: T.mono,
-    fontWeight: 700,
+    fontWeight: 400,
     letterSpacing: "0.05em",
   };
 
@@ -2269,7 +3125,7 @@ const FlowOverviewPanel = ({
       color: active ? T.text : T.textMuted,
       cursor: sortable ? "pointer" : "default",
       font: "inherit",
-      fontWeight: active ? 800 : 700,
+      fontWeight: 400,
       letterSpacing: "0.08em",
     };
   };
@@ -2296,7 +3152,7 @@ const FlowOverviewPanel = ({
           gap: sp(6),
         }}
       >
-        <span style={{ fontSize: fs(11), fontWeight: 800, color: T.text }}>
+        <span style={{ fontSize: fs(11), fontWeight: 400, color: T.text }}>
           Filters
         </span>
         <AppTooltip content="Collapse filters"><button
@@ -2556,7 +3412,7 @@ const FlowOverviewPanel = ({
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: sp(1) }}>
-          <span style={{ fontSize: fs(11), fontWeight: 800, color: T.text }}>
+          <span style={{ fontSize: fs(11), fontWeight: 400, color: T.text }}>
             Columns
           </span>
           <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
@@ -2741,7 +3597,7 @@ const FlowOverviewPanel = ({
             <span
               style={{
                 fontSize: fs(12),
-                fontWeight: 800,
+                fontWeight: 400,
                 color: T.text,
                 fontFamily: T.mono,
               }}
@@ -2767,7 +3623,7 @@ const FlowOverviewPanel = ({
               fontSize: fs(12),
               color: event.premium >= 250000 ? T.amber : T.text,
               fontFamily: T.mono,
-              fontWeight: 800,
+              fontWeight: 400,
               whiteSpace: "nowrap",
             }}
           >
@@ -2816,7 +3672,7 @@ const FlowOverviewPanel = ({
           }}
         >
           Fill{" "}
-          <span style={{ color: fillSpreadMeta.color, fontWeight: 700 }}>
+          <span style={{ color: fillSpreadMeta.color, fontWeight: 400 }}>
             {formatOptionPrice(fillSpreadMeta.fill)} {fillSpreadMeta.shortLabel}
           </span>{" "}
           · Bid/Ask {formatOptionPrice(fillSpreadMeta.bid)}/
@@ -2870,7 +3726,7 @@ const FlowOverviewPanel = ({
           fontSize: fs(8),
           color: T.textDim,
           fontFamily: T.mono,
-          fontWeight: 800,
+          fontWeight: 400,
         }}
       >
         PRESET SCANS
@@ -2891,7 +3747,7 @@ const FlowOverviewPanel = ({
               color: active ? presetColor : T.textSec,
               fontSize: fs(8),
               fontFamily: T.mono,
-              fontWeight: active ? 800 : 600,
+              fontWeight: 400,
               cursor: "pointer",
             }}
           >
@@ -2982,7 +3838,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: fs(12),
-                  fontWeight: 800,
+                  fontWeight: 400,
                   fontFamily: T.display,
                   color: T.text,
                 }}
@@ -3013,7 +3869,7 @@ const FlowOverviewPanel = ({
                 color: feedStateColor,
                 fontSize: fs(8),
                 fontFamily: T.mono,
-                fontWeight: 700,
+                fontWeight: 400,
                 whiteSpace: "nowrap",
               }}
             >
@@ -3094,6 +3950,15 @@ const FlowOverviewPanel = ({
           </div>
         </Card>
 
+        <PremiumDistributionStrip
+          query={premiumDistributionQuery}
+          timeframe={premiumDistributionTimeframe}
+          onTimeframeChange={setPremiumDistributionTimeframe}
+          onSelectTicker={(symbol) => {
+            updateFlowTapeFilters({ includeQuery: symbol || "" });
+          }}
+        />
+
         {showOverlayFilterPanel ? (
           <div
             style={{
@@ -3166,7 +4031,7 @@ const FlowOverviewPanel = ({
                   <span
                     style={{
                       fontSize: fs(11),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       fontFamily: T.display,
                       color: T.text,
                     }}
@@ -3197,13 +4062,13 @@ const FlowOverviewPanel = ({
                 >
                   <span>
                     Bull{" "}
-                    <span style={{ color: T.green, fontWeight: 700 }}>
+                    <span style={{ color: T.green, fontWeight: 400 }}>
                       {fmtM(flowSentimentSummary.bullPremium)}
                     </span>
                   </span>
                   <span>
                     Bear{" "}
-                    <span style={{ color: T.red, fontWeight: 700 }}>
+                    <span style={{ color: T.red, fontWeight: 400 }}>
                       {fmtM(flowSentimentSummary.bearPremium)}
                     </span>
                   </span>
@@ -3217,7 +4082,7 @@ const FlowOverviewPanel = ({
                             : flowSentimentSummary.netPremium < 0
                               ? T.red
                               : T.textDim,
-                        fontWeight: 700,
+                        fontWeight: 400,
                       }}
                     >
                       {fmtM(flowSentimentSummary.netPremium)}
@@ -3376,12 +4241,16 @@ const FlowOverviewPanel = ({
                       <div style={{ padding: sp(12) }}>
                         <DataUnavailableState
                           title={
-                            flowEvents.length
+                            flowEventsFilteredOut
+                              ? "No prints match Flow filters"
+                              : flowEvents.length
                               ? "No prints match this scanner"
                               : "No live options activity"
                           }
                           detail={
-                            flowEvents.length
+                            flowEventsFilteredOut
+                              ? "Clear include/exclude tickers, presets, minimum premium, or flow-type filters to show the live feed."
+                              : flowEvents.length
                               ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
                               : emptyFlowDetail
                           }
@@ -3397,7 +4266,7 @@ const FlowOverviewPanel = ({
                           gridTemplateColumns: tapeGridTemplate,
                           padding: sp("6px 10px"),
                           fontSize: fs(8),
-                          fontWeight: 700,
+                          fontWeight: 400,
                           color: T.textMuted,
                           letterSpacing: "0.08em",
                           borderBottom: `1px solid ${T.border}`,
@@ -3677,7 +4546,7 @@ const FlowOverviewPanel = ({
                     <div
                       style={{
                         fontSize: fs(11),
-                        fontWeight: 800,
+                        fontWeight: 400,
                         color: metric.color,
                         fontFamily: T.mono,
                       }}
@@ -3709,7 +4578,7 @@ const FlowOverviewPanel = ({
                         <span
                           style={{
                             fontSize: fs(11),
-                            fontWeight: 700,
+                            fontWeight: 400,
                             fontFamily: T.mono,
                             color: T.text,
                           }}
@@ -3829,7 +4698,7 @@ const FlowOverviewPanel = ({
                         <div
                           style={{
                             fontSize: fs(11),
-                            fontWeight: 800,
+                            fontWeight: 400,
                             fontFamily: T.mono,
                             color: metric.color,
                             marginTop: sp(1),
@@ -3871,7 +4740,7 @@ const FlowOverviewPanel = ({
                               cursor: "pointer",
                             }}
                           >
-                            <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800 }}>
+                            <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
                               {expiry.label}
                             </span>
                             <span style={{ display: "flex", height: dim(6), background: T.bg3, overflow: "hidden" }}>
@@ -3959,7 +4828,7 @@ const FlowOverviewPanel = ({
                 ].map((metric) => (
                   <div key={metric.label} style={{ padding: sp("6px 7px"), background: T.bg1, border: `1px solid ${T.border}` }}>
                     <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>{metric.label.toUpperCase()}</div>
-                    <div style={{ fontSize: fs(12), fontWeight: 800, fontFamily: T.mono, color: metric.color, marginTop: sp(1) }}>{metric.value}</div>
+                    <div style={{ fontSize: fs(12), fontWeight: 400, fontFamily: T.mono, color: metric.color, marginTop: sp(1) }}>{metric.value}</div>
                     <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>{metric.sub}</div>
                   </div>
                 ))}
@@ -3967,7 +4836,7 @@ const FlowOverviewPanel = ({
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(6) }}>
                 <div style={{ padding: sp("6px 7px"), background: T.bg1, border: `1px solid ${T.border}` }}>
                   <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>SWEEP / BLOCK</div>
-                  <div style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.mono, color: T.text }}>
+                  <div style={{ fontSize: fs(10), fontWeight: 400, fontFamily: T.mono, color: T.text }}>
                     {executionStats.sweepCount} / {executionStats.blockCount}
                   </div>
                   <div style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
@@ -3976,7 +4845,7 @@ const FlowOverviewPanel = ({
                 </div>
                 <div style={{ padding: sp("6px 7px"), background: T.bg1, border: `1px solid ${T.border}` }}>
                   <div style={{ fontSize: fs(7), color: T.textDim, fontFamily: T.mono }}>AVG SIZE / TOP EXP</div>
-                  <div style={{ fontSize: fs(10), fontWeight: 700, fontFamily: T.mono, color: T.text }}>
+                  <div style={{ fontSize: fs(10), fontWeight: 400, fontFamily: T.mono, color: T.text }}>
                     {isFiniteNumber(executionStats.avgSize)
                       ? fmtCompactNumber(executionStats.avgSize)
                       : MISSING_VALUE}
@@ -4019,11 +4888,11 @@ const FlowOverviewPanel = ({
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                        <span style={{ fontSize: fs(10), fontWeight: 800, fontFamily: T.mono, color: T.text }}>
+                        <span style={{ fontSize: fs(10), fontWeight: 400, fontFamily: T.mono, color: T.text }}>
                           {event.ticker} {event.cp}
                           {event.strike}
                         </span>
-                        <span style={{ fontSize: fs(8), fontFamily: T.mono, color: T.amber, fontWeight: 700 }}>
+                        <span style={{ fontSize: fs(8), fontFamily: T.mono, color: T.amber, fontWeight: 400 }}>
                           {actionScore.toFixed(0)}
                         </span>
                       </div>
@@ -4163,7 +5032,7 @@ const FlowOverviewPanel = ({
                       <span
                         style={{
                           fontSize: fs(9),
-                          fontWeight: 700,
+                          fontWeight: 400,
                           fontFamily: T.mono,
                           color: strike.event.cp === "C" ? T.green : T.red,
                         }}
@@ -4231,7 +5100,7 @@ const FlowOverviewPanel = ({
                   <div
                     style={{
                       fontSize: fs(7),
-                      fontWeight: 600,
+                      fontWeight: 400,
                       color: T.textDim,
                       letterSpacing: "0.06em",
                       fontVariant: "all-small-caps",
@@ -4245,7 +5114,7 @@ const FlowOverviewPanel = ({
                   <div
                     style={{
                       fontSize: fs(16),
-                      fontWeight: 800,
+                      fontWeight: 400,
                       fontFamily: T.mono,
                       color: card.color,
                       marginTop: sp(2),
@@ -4289,7 +5158,7 @@ const FlowOverviewPanel = ({
                   <span
                     style={{
                       fontSize: fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       fontFamily: T.display,
                       color: T.textSec,
                     }}
@@ -4306,7 +5175,7 @@ const FlowOverviewPanel = ({
                   >
                     <span style={{ color: T.green }}>■ Calls {fmtM(totalCallPrem)}</span>
                     <span style={{ color: T.red }}>■ Puts {fmtM(totalPutPrem)}</span>
-                    <span style={{ color: T.accent, fontWeight: 700 }}>
+                    <span style={{ color: T.accent, fontWeight: 400 }}>
                       Net {netPrem >= 0 ? "+" : ""}
                       {fmtM(Math.abs(netPrem))}
                     </span>
@@ -4321,7 +5190,7 @@ const FlowOverviewPanel = ({
                       />
                       <YAxis
                         tick={{ fontSize: fs(9), fill: T.textMuted }}
-                        tickFormatter={(value) => `${(value / 1e6).toFixed(1)}M`}
+                        tickFormatter={(value) => `$${(value / 1e6).toFixed(1)}M`}
                       />
                       <Tooltip
                         contentStyle={chartTooltipContentStyle}
@@ -4359,7 +5228,7 @@ const FlowOverviewPanel = ({
                   <span
                     style={{
                       fontSize: fs(10),
-                      fontWeight: 700,
+                      fontWeight: 400,
                       fontFamily: T.display,
                       color: T.textSec,
                     }}
@@ -4409,7 +5278,7 @@ const FlowOverviewPanel = ({
                         <span
                           style={{
                             color: net >= 0 ? T.green : T.red,
-                            fontWeight: 600,
+                            fontWeight: 400,
                           }}
                         >
                           {net >= 0 ? "+" : "-"}
@@ -4470,7 +5339,7 @@ const FlowOverviewPanel = ({
                                 <span
                                   style={{
                                     fontSize: fs(10),
-                                    fontWeight: 800,
+                                    fontWeight: 400,
                                     fontFamily: T.mono,
                                     color: cpColor,
                                   }}
@@ -4528,7 +5397,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: T.display,
                   color: T.textSec,
                 }}
@@ -4617,13 +5486,13 @@ const FlowOverviewPanel = ({
             >
               <span>
                 Peak{" "}
-                <span style={{ color: T.amber, fontWeight: 600 }}>
+                <span style={{ color: T.amber, fontWeight: 400 }}>
                   {flowClockPeak}
                 </span>
               </span>
               <span>
                 Avg{" "}
-                <span style={{ color: T.textSec, fontWeight: 600 }}>
+                <span style={{ color: T.textSec, fontWeight: 400 }}>
                   {flowClockAverage}/30m
                 </span>
               </span>
@@ -4649,7 +5518,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: T.display,
                   color: T.textSec,
                 }}
@@ -4720,10 +5589,10 @@ const FlowOverviewPanel = ({
                           fontSize: fs(10),
                         }}
                       >
-                        <span style={{ color: T.green, fontWeight: 700 }}>
+                        <span style={{ color: T.green, fontWeight: 400 }}>
                           ${buy.toFixed(0)}M
                         </span>
-                        <span style={{ color: T.red, fontWeight: 700 }}>
+                        <span style={{ color: T.red, fontWeight: 400 }}>
                           ${sell.toFixed(0)}M
                         </span>
                       </div>
@@ -4762,7 +5631,7 @@ const FlowOverviewPanel = ({
                         <span
                           style={{
                             color: buy >= sell ? T.green : T.red,
-                            fontWeight: 600,
+                            fontWeight: 400,
                           }}
                         >
                           {buy >= sell ? "BULLISH" : "BEARISH"}
@@ -4825,7 +5694,7 @@ const FlowOverviewPanel = ({
               <span
                 style={{
                   fontSize: fs(10),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: T.display,
                   color: T.textSec,
                 }}
@@ -4862,7 +5731,7 @@ const FlowOverviewPanel = ({
                         marginBottom: 1,
                       }}
                     >
-                      <span style={{ color: T.textSec, fontWeight: 600 }}>
+                      <span style={{ color: T.textSec, fontWeight: 400 }}>
                         {bucket.bucket === "0DTE" ? (
                           <span style={{ color: T.amber, marginRight: 3 }}>⚡</span>
                         ) : null}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { getRuntimeDiagnostics } from "@workspace/api-client-react";
 import { useBrokerStreamFreshnessSnapshot } from "./live-streams";
 import { useFlowScannerControlState } from "./marketFlowStore";
 import { platformJsonRequest } from "./platformJsonRequest";
@@ -7,6 +8,32 @@ import { buildRuntimeControlSnapshot } from "./runtimeControlModel.js";
 
 const readLineUsageSnapshot = () =>
   platformJsonRequest("/api/settings/ibkr-line-usage", { timeoutMs: 3_000 });
+
+const readRuntimeDiagnosticsSnapshot = async (timeoutMs = 6_500) => {
+  const controller =
+    timeoutMs > 0 && typeof AbortController !== "undefined"
+      ? new AbortController()
+      : null;
+  const timeoutId =
+    controller && timeoutMs > 0
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+
+  try {
+    return await getRuntimeDiagnostics(
+      controller ? { signal: controller.signal } : undefined,
+    );
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId != null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+};
 
 export const useRuntimeControlSnapshot = ({
   enabled = true,
@@ -28,8 +55,7 @@ export const useRuntimeControlSnapshot = ({
   );
   const runtimeDiagnosticsQuery = useQuery({
     queryKey: ["platform-runtime-diagnostics", runtimeDiagnosticsQueryKey],
-    queryFn: () =>
-      platformJsonRequest("/api/diagnostics/runtime", { timeoutMs: 6_500 }),
+    queryFn: () => readRuntimeDiagnosticsSnapshot(6_500),
     enabled: shouldFetchRuntimeDiagnostics,
     refetchInterval: shouldFetchRuntimeDiagnostics
       ? runtimeDiagnosticsRefetchInterval

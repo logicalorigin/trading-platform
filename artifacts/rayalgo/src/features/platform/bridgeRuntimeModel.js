@@ -2,6 +2,7 @@ import { T } from "../../lib/uiTokens";
 import { getIbkrStreamStateMeta } from "./IbkrConnectionStatus";
 
 export const bridgeRuntimeTone = (session) => {
+  // Status color semantics: green=healthy, accent=in progress, amber=attention, red=error.
   if (!session?.configured?.ibkr) return { label: "offline", color: T.red };
   const bridge = session?.ibkrBridge;
   if (bridge?.competing) {
@@ -37,7 +38,7 @@ export const bridgeRuntimeTone = (session) => {
     return { label: "login required", color: T.amber };
   }
   if (bridge?.authenticated && bridge?.accountsLoaded === false) {
-    return { label: "checking", color: T.amber };
+    return { label: "checking", color: T.accent };
   }
   if (
     bridge?.authenticated &&
@@ -59,7 +60,7 @@ export const bridgeRuntimeTone = (session) => {
   if (bridge?.authenticated && bridge?.streamFresh === false) {
     return { label: "stale", color: T.amber, pulse: true };
   }
-  if (bridge?.authenticated) return { label: "waiting", color: T.amber };
+  if (bridge?.authenticated) return { label: "waiting", color: T.accent };
   if (bridge?.lastError) return { label: "error", color: T.red };
   return { label: "configured", color: T.textDim };
 };

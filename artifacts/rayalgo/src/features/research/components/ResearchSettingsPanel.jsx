@@ -1,7 +1,7 @@
 export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatus }) {
   return (
     <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, padding: 12, marginBottom: 10, animation: "fadeIn 0.2s ease", boxShadow: "0 2px 8px rgba(0,0,0,.04)" }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "#999", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>Platform Wiring</div>
+      <div style={{ fontSize: 11, fontWeight: 400, color: "#999", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>Platform Wiring</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
         <div>
           <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 1 }}>Market data</div>
@@ -15,7 +15,7 @@ export function SettingsPanel({ refreshData, dataStatus, liveData, researchStatu
         </div>
         <button onClick={refreshData} disabled={dataStatus === "loading"} style={{
           background: dataStatus === "loading" ? "rgba(0,0,0,.04)" : "#1a8a5c", border: "none", borderRadius: 5,
-          padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: dataStatus === "loading" ? "default" : "pointer",
+          padding: "5px 10px", fontSize: 11, fontWeight: 400, cursor: dataStatus === "loading" ? "default" : "pointer",
           color: dataStatus === "loading" ? "#aaa" : "#fff",
         }}>{dataStatus === "loading" ? "Fetching..." : "Refresh"}</button>
       </div>

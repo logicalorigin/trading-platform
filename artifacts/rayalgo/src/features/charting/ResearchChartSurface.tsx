@@ -8071,7 +8071,7 @@ export const ResearchChartSurface = ({
                       color,
                       fontFamily: theme.mono,
                       fontSize: TYPE_CSS_VAR.label,
-                      fontWeight: 900,
+                      fontWeight: 400,
                       lineHeight: 1,
                       boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "cc")}`,
                       pointerEvents: "auto",
@@ -8116,7 +8116,7 @@ export const ResearchChartSurface = ({
                     <div
                       style={{
                         fontSize: TYPE_CSS_VAR.bodyStrong,
-                        fontWeight: 800,
+                        fontWeight: 400,
                         lineHeight: 1.2,
                       }}
                     >
@@ -8313,7 +8313,7 @@ export const ResearchChartSurface = ({
                             : overlay.textColor,
                         fontSize: isTriangle ? TYPE_CSS_VAR.bodyStrong : isSignal || isSwing ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.label,
                         fontFamily: theme.mono,
-                        fontWeight: isSwing ? 800 : 700,
+                        fontWeight: 400,
                         whiteSpace: "nowrap",
                         boxShadow: isSwing || isTriangle
                           ? "none"
@@ -8367,7 +8367,7 @@ export const ResearchChartSurface = ({
                       color: theme.text,
                       fontSize: TYPE_CSS_VAR.body,
                       fontFamily: theme.mono,
-                      fontWeight: 700,
+                      fontWeight: 400,
                       whiteSpace: "nowrap",
                       boxShadow: `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
                     }}
@@ -8399,7 +8399,7 @@ export const ResearchChartSurface = ({
                     color: target.borderColor,
                     fontSize: TYPE_CSS_VAR.body,
                     fontFamily: theme.mono,
-                    fontWeight: 700,
+                    fontWeight: 400,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -8547,7 +8547,7 @@ export const ResearchChartSurface = ({
                     : isSubtitle
                       ? dashboardDensity.subtitleSize
                       : dashboardDensity.bodySize,
-                  fontWeight: isTitle ? 800 : 700,
+                  fontWeight: 400,
                   lineHeight: 1,
                   whiteSpace: "nowrap",
                   overflow: "hidden",
@@ -8560,7 +8560,7 @@ export const ResearchChartSurface = ({
                     style={{
                       flexShrink: 0,
                       color: "#9ca3af",
-                      fontWeight: 700,
+                      fontWeight: 400,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
@@ -8584,7 +8584,7 @@ export const ResearchChartSurface = ({
                       minWidth: 0,
                       color: "#6b7280",
                       fontSize: dashboardDensity.detailSize,
-                      fontWeight: 600,
+                      fontWeight: 400,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
@@ -8631,7 +8631,7 @@ export const ResearchChartSurface = ({
             }}
           >
             {legend?.symbol ? (
-              <span style={{ color: theme.text, fontWeight: 800 }}>
+              <span style={{ color: theme.text, fontWeight: 400 }}>
                 {legend.symbol}
               </span>
             ) : null}

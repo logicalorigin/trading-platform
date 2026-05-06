@@ -9,7 +9,12 @@ import {
   formatSignedPercent,
   isFiniteNumber,
 } from "../../lib/formatters";
-import { joinMotionClasses, motionRowStyle, motionVars } from "../../lib/motion.jsx";
+import {
+  joinMotionClasses,
+  motionRowStyle,
+  motionVars,
+  useValueFlash,
+} from "../../lib/motion.jsx";
 import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
@@ -216,10 +221,14 @@ const WatchlistRow = memo(
     const signalColor = signalDirection === "buy" ? T.blue : T.red;
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
-    const priceValue = isFiniteNumber(snapshot?.price)
-      ? snapshot.price
-      : signalState?.currentSignalPrice;
-    const displayName = item.name || snapshot?.name || fallback.name || item.sym;
+	    const priceValue = isFiniteNumber(snapshot?.price)
+	      ? snapshot.price
+	      : signalState?.currentSignalPrice;
+	    const quotePriceForFlash = isFiniteNumber(snapshot?.price)
+	      ? snapshot.price
+	      : null;
+	    const priceFlashClassName = useValueFlash(quotePriceForFlash);
+	    const displayName = item.name || snapshot?.name || fallback.name || item.sym;
     const quoteAge = formatRelativeTimeShort(
       snapshot?.updatedAt ||
         signalState?.latestBarAt ||
@@ -333,19 +342,24 @@ const WatchlistRow = memo(
               }}
             />
             <MarketIdentityMark item={identityItem} size={16} />
-            <span
-              style={{
-                fontSize: fs(12),
-                fontWeight: 800,
-                fontFamily: T.mono,
-                color: T.text,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {item.sym}
-            </span>
+	            <span
+	              className={priceFlashClassName}
+	              style={{
+	                display: "inline-flex",
+	                alignItems: "center",
+	                fontSize: fs(12),
+	                fontWeight: 400,
+	                fontFamily: T.mono,
+	                color: T.text,
+	                overflow: "hidden",
+	                textOverflow: "ellipsis",
+	                whiteSpace: "nowrap",
+	                padding: sp("1px 3px"),
+	                borderRadius: dim(3),
+	              }}
+	            >
+	              {item.sym}
+	            </span>
             {item.monitoredOnly ? (
               <AppTooltip content="Signal-monitor symbol"><span
                 style={{
@@ -353,7 +367,7 @@ const WatchlistRow = memo(
                   color: T.textDim,
                   fontFamily: T.mono,
                   fontSize: fs(7),
-                  fontWeight: 800,
+                  fontWeight: 400,
                   lineHeight: 1,
                   padding: sp("2px 3px"),
                 }}
@@ -386,7 +400,7 @@ const WatchlistRow = memo(
                     cursor: "pointer",
                     fontFamily: T.mono,
                     fontSize: fs(7),
-                    fontWeight: 900,
+                    fontWeight: 400,
                     letterSpacing: "0.06em",
                     lineHeight: 1,
                     padding: sp("2px 3px"),
@@ -397,17 +411,23 @@ const WatchlistRow = memo(
                 </button>
               </AppTooltip>
             ) : null}
-            <span
-              style={{
-                color: T.text,
-                fontFamily: T.mono,
-                fontSize: fs(11),
-                fontWeight: 700,
-                textAlign: "right",
-                justifySelf: "end",
-                minWidth: dim(52),
-              }}
-            >
+	            <span
+	              className={priceFlashClassName}
+	              style={{
+	                display: "inline-flex",
+	                alignItems: "center",
+	                justifyContent: "flex-end",
+	                color: T.text,
+	                fontFamily: T.mono,
+	                fontSize: fs(11),
+	                fontWeight: 400,
+	                textAlign: "right",
+	                justifySelf: "end",
+	                minWidth: dim(52),
+	                padding: sp("1px 3px"),
+	                borderRadius: dim(3),
+	              }}
+	            >
               {formatQuotePrice(priceValue)}
             </span>
           </div>
@@ -447,7 +467,7 @@ const WatchlistRow = memo(
                 color:
                   pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
                 fontFamily: T.mono,
-                fontWeight: 700,
+                fontWeight: 400,
                 whiteSpace: "nowrap",
               }}
             >
@@ -459,7 +479,7 @@ const WatchlistRow = memo(
                 color:
                   pctPositive == null ? T.textMuted : pctPositive ? T.green : T.red,
                 fontFamily: T.mono,
-                fontWeight: 800,
+                fontWeight: 400,
                 whiteSpace: "nowrap",
               }}
             >
@@ -830,7 +850,7 @@ export const Watchlist = ({
               cursor: "pointer",
               fontFamily: T.mono,
               fontSize: fs(10),
-              fontWeight: 800,
+              fontWeight: 400,
             }}
           >
             <span
@@ -890,7 +910,7 @@ export const Watchlist = ({
                       style={{
                         display: "block",
                         fontSize: fs(10),
-                        fontWeight: 700,
+                        fontWeight: 400,
                         fontFamily: T.mono,
                         color: T.text,
                       }}
@@ -915,7 +935,7 @@ export const Watchlist = ({
                         color: T.green,
                         fontSize: fs(8),
                         fontFamily: T.mono,
-                        fontWeight: 700,
+                        fontWeight: 400,
                       }}
                     >
                       DEFAULT
@@ -958,7 +978,7 @@ export const Watchlist = ({
               cursor: activeWatchlist && !busy ? "pointer" : "default",
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
             RENAME
@@ -979,7 +999,7 @@ export const Watchlist = ({
                   : "default",
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
             {activeWatchlist?.isDefault ? "DEFAULT" : "DEFAULT"}
@@ -1000,7 +1020,7 @@ export const Watchlist = ({
                   : "default",
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
             DELETE
@@ -1031,7 +1051,7 @@ export const Watchlist = ({
                   cursor: "pointer",
                   fontFamily: T.mono,
                   fontSize: fs(7),
-                  fontWeight: 800,
+                  fontWeight: 400,
                   whiteSpace: "nowrap",
                 }}
               >
@@ -1087,7 +1107,7 @@ export const Watchlist = ({
               cursor: directionEnabled ? "pointer" : "default",
               fontFamily: T.mono,
               fontSize: fs(8),
-              fontWeight: 800,
+              fontWeight: 400,
             }}
           >
             {sortDirection === "desc" ? "DESC" : "ASC"}
@@ -1174,7 +1194,7 @@ export const Watchlist = ({
                       <span
                         style={{
                           fontSize: fs(10),
-                          fontWeight: 700,
+                          fontWeight: 400,
                           fontFamily: T.mono,
                           color: T.text,
                         }}
@@ -1304,7 +1324,7 @@ export const Watchlist = ({
             cursor: "pointer",
             fontFamily: T.mono,
             fontSize: fs(9),
-            fontWeight: 800,
+            fontWeight: 400,
           }}
         >
           {addMode ? <X size={12} /> : <Plus size={12} />}

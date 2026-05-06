@@ -38,7 +38,7 @@ export const HeaderAccountStrip = ({
   const labelStyle = {
     fontSize: fs(7),
     color: T.textMuted,
-    fontWeight: 800,
+    fontWeight: 400,
     letterSpacing: "0.05em",
     fontFamily: T.sans,
     lineHeight: 1.05,
@@ -47,7 +47,7 @@ export const HeaderAccountStrip = ({
   const valueStyle = {
     fontSize: fs(9),
     fontFamily: T.sans,
-    fontWeight: 800,
+    fontWeight: 400,
     lineHeight: 1.1,
     whiteSpace: "nowrap",
   };
@@ -100,7 +100,7 @@ export const HeaderAccountStrip = ({
               color: T.text,
               fontSize: fs(9),
               fontFamily: T.sans,
-              fontWeight: 800,
+              fontWeight: 400,
               outline: "none",
               padding: 0,
               lineHeight: 1.1,

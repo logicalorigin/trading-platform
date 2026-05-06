@@ -21,6 +21,7 @@ import {
   ToggleGroup,
   formatAccountMoney,
   formatAccountPercent,
+  formatAccountPrice,
   formatAccountSignedMoney,
 } from "./accountUtils";
 import {
@@ -71,7 +72,7 @@ const FlatToggle = ({ options, value, onChange, compact = false }) => (
             padding: sp(compact ? "0 5px" : "0 7px"),
             fontSize: fs(compact ? 7 : 8),
             fontFamily: T.mono,
-            fontWeight: 900,
+            fontWeight: 400,
             cursor: "pointer",
             letterSpacing: 0,
             whiteSpace: "nowrap",
@@ -106,7 +107,7 @@ const FlatChip = ({
       padding: sp("0 6px"),
       fontSize: fs(8),
       fontFamily: T.mono,
-      fontWeight: 900,
+      fontWeight: 400,
       cursor: disabled ? "default" : "pointer",
       opacity: disabled ? 0.45 : 1,
       letterSpacing: 0,
@@ -168,7 +169,7 @@ const ChartTooltip = ({
           ? formatAxisTick(tooltipTimestamp, range)
           : formatAppDateTime(tooltipTimestamp)}
       </div>
-      <div style={{ marginTop: sp(4), fontWeight: 900 }}>
+      <div style={{ marginTop: sp(4), fontWeight: 400 }}>
         {chartMode === "pnl"
           ? formatAccountSignedMoney(pnl, currency, false, maskValues)
           : formatAccountMoney(nav, currency, false, maskValues)}
@@ -549,7 +550,7 @@ export const EquityCurvePanel = ({
                   color: T.text,
                   fontSize: fs(compact ? 16 : 15),
                   fontFamily: T.mono,
-                  fontWeight: 900,
+                  fontWeight: 400,
                   letterSpacing: 0,
                   lineHeight: 1,
                   whiteSpace: "nowrap",
@@ -566,7 +567,7 @@ export const EquityCurvePanel = ({
                   color: toneColor(deltaPercent ?? delta),
                   fontSize: fs(compact ? 8 : 9),
                   fontFamily: T.mono,
-                  fontWeight: 800,
+                  fontWeight: 400,
                   lineHeight: 1.25,
                   whiteSpace: "nowrap",
                 }}
@@ -788,7 +789,7 @@ export const EquityCurvePanel = ({
                 paddingTop: sp(3),
               }}
             >
-              <span style={{ color: equityEventColor(activeEvent), fontWeight: 900 }}>
+              <span style={{ color: equityEventColor(activeEvent), fontWeight: 400 }}>
                 {equityEventTitle(activeEvent)}
               </span>
               <span>{formatAppDateTime(activeEvent.timestamp)}</span>
@@ -796,14 +797,14 @@ export const EquityCurvePanel = ({
                 <span>{Number(activeEvent.quantity).toLocaleString()} sh</span>
               ) : null}
               {activeEvent.price != null ? (
-                <span>@ {formatAccountMoney(activeEvent.price, currency, true, maskValues)}</span>
+                <span>@ {formatAccountPrice(activeEvent.price, 2, maskValues)}</span>
               ) : null}
               {activeEvent.realizedPnl != null ? (
-                <span style={{ color: toneColor(activeEvent.realizedPnl), fontWeight: 900 }}>
+                <span style={{ color: toneColor(activeEvent.realizedPnl), fontWeight: 400 }}>
                   P&L {formatAccountSignedMoney(activeEvent.realizedPnl, currency, true, maskValues)}
                 </span>
               ) : activeEvent.amount != null ? (
-                <span style={{ color: toneColor(activeEvent.amount), fontWeight: 900 }}>
+                <span style={{ color: toneColor(activeEvent.amount), fontWeight: 400 }}>
                   {formatAccountSignedMoney(activeEvent.amount, currency, true, maskValues)}
                 </span>
               ) : null}

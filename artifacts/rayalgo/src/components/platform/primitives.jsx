@@ -10,7 +10,7 @@ export const Pill = ({ children, active, onClick, color }) => (
       padding: sp("3px 7px"),
       fontSize: textSize("bodyStrong"),
       fontFamily: T.sans,
-      fontWeight: 600,
+      fontWeight: 400,
       border: `1px solid ${active ? color || T.accent : T.border}`,
       borderRadius: dim(4),
       cursor: "pointer",
@@ -30,7 +30,7 @@ export const Badge = ({ children, color = T.textDim }) => (
       padding: sp("1px 6px"),
       borderRadius: dim(3),
       fontSize: textSize("caption"),
-      fontWeight: 700,
+      fontWeight: 400,
       fontFamily: T.data,
       letterSpacing: "0.04em",
       background: `${color}18`,
@@ -100,7 +100,7 @@ export const DataUnavailableState = ({
       <div
         style={{
           fontSize: textSize("body"),
-          fontWeight: 700,
+          fontWeight: 400,
           color: tone || T.textSec,
           letterSpacing: "0.04em",
         }}
@@ -151,7 +151,7 @@ export const CardTitle = ({ children, right }) => (
     <span
       style={{
         fontSize: textSize("body"),
-        fontWeight: 700,
+        fontWeight: 400,
         fontFamily: T.display,
         color: T.textSec,
         letterSpacing: "0.03em",

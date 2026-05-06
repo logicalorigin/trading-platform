@@ -116,7 +116,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
         <span style={mutedLabelStyle}>Options Expiry · Next 45 Trading Days</span>
         <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>
           {activeCount} expiry day{activeCount === 1 ? "" : "s"} ·{" "}
-          <span style={{ color: T.text, fontWeight: 700 }}>
+          <span style={{ color: T.text, fontWeight: 400 }}>
             {formatAccountMoney(total, currency, true, maskValues)}
           </span>{" "}
           notional
@@ -144,7 +144,7 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                   fontSize: fs(8),
                   color: T.textMuted,
                   fontFamily: T.mono,
-                  fontWeight: 700,
+                  fontWeight: 400,
                   height: dim(14),
                   lineHeight: `${dim(14)}px`,
                 }}
@@ -291,8 +291,8 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
         {peak ? (
           <span>
             next peak:{" "}
-            <span style={{ color: T.text, fontWeight: 700 }}>{peak.iso}</span> ·{" "}
-            <span style={{ color: T.amber, fontWeight: 700 }}>
+            <span style={{ color: T.text, fontWeight: 400 }}>{peak.iso}</span> ·{" "}
+            <span style={{ color: T.amber, fontWeight: 400 }}>
               {formatAccountMoney(peak.notional, currency, true, maskValues)}
             </span>
           </span>

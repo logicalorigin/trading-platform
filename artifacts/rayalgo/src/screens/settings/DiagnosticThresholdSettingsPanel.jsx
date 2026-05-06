@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useGetDiagnosticThresholds,
+  useUpdateDiagnosticThresholds,
+} from "@workspace/api-client-react";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 
 const THRESHOLD_EVENT = "rayalgo:diagnostic-thresholds-updated";
@@ -12,7 +16,7 @@ function smallButton({ active = false } = {}) {
     padding: sp("5px 8px"),
     fontFamily: T.mono,
     fontSize: fs(9),
-    fontWeight: 900,
+    fontWeight: 400,
     cursor: "pointer",
   };
 }
@@ -25,7 +29,7 @@ function inputLabel() {
     color: T.textDim,
     fontFamily: T.mono,
     fontSize: fs(9),
-    fontWeight: 800,
+    fontWeight: 400,
   };
 }
 
@@ -45,32 +49,52 @@ function inputStyle() {
 export function useDiagnosticThresholdSettings() {
   const [thresholds, setThresholds] = useState([]);
   const [drafts, setDrafts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const thresholdsQuery = useGetDiagnosticThresholds({
+    query: {
+      refetchOnWindowFocus: false,
+      retry: false,
+    },
+  });
+  const applyThresholdPayload = useCallback((payload) => {
+    const next = payload?.thresholds || [];
+    setThresholds(next);
+    setDrafts(next);
+  }, []);
+  const updateThresholdsMutation = useUpdateDiagnosticThresholds({
+    mutation: {
+      onSuccess: (payload) => {
+        applyThresholdPayload(payload);
+        setError(null);
+        window.dispatchEvent(new CustomEvent(THRESHOLD_EVENT));
+      },
+      onError: (err) => {
+        setError(err?.detail || err?.message || "Failed to save diagnostic thresholds.");
+      },
+    },
+  });
+
+  useEffect(() => {
+    if (thresholdsQuery.data) {
+      applyThresholdPayload(thresholdsQuery.data);
+    }
+  }, [applyThresholdPayload, thresholdsQuery.data]);
 
   const load = useCallback(() => {
-    setLoading(true);
     setError(null);
-    fetch("/api/diagnostics/thresholds", { headers: { Accept: "application/json" } })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        const next = payload.thresholds || [];
-        setThresholds(next);
-        setDrafts(next);
+    return thresholdsQuery
+      .refetch()
+      .then((result) => {
+        if (result.data) {
+          applyThresholdPayload(result.data);
+        }
       })
       .catch((err) => {
         setError(err?.detail || err?.message || "Diagnostic thresholds are unavailable.");
-      })
-      .finally(() => setLoading(false));
-  }, []);
+      });
+  }, [applyThresholdPayload, thresholdsQuery]);
 
   useEffect(() => {
-    load();
     const listener = () => load();
     window.addEventListener(THRESHOLD_EVENT, listener);
     return () => window.removeEventListener(THRESHOLD_EVENT, listener);
@@ -103,36 +127,22 @@ export function useDiagnosticThresholdSettings() {
   }, [thresholds]);
 
   const save = useCallback(() => {
-    setSaving(true);
     setError(null);
-    fetch("/api/diagnostics/thresholds", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ thresholds: drafts }),
-    })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        const next = payload.thresholds || [];
-        setThresholds(next);
-        setDrafts(next);
-        window.dispatchEvent(new CustomEvent(THRESHOLD_EVENT));
-      })
-      .catch((err) => {
-        setError(err?.detail || err?.message || "Failed to save diagnostic thresholds.");
-      })
-      .finally(() => setSaving(false));
-  }, [drafts]);
+    updateThresholdsMutation.mutate({ data: { thresholds: drafts } });
+  }, [drafts, updateThresholdsMutation]);
 
   return {
     thresholds,
     drafts,
-    loading,
-    saving,
-    error,
+    loading: thresholdsQuery.isFetching,
+    saving: updateThresholdsMutation.isPending,
+    error:
+      error ||
+      (thresholdsQuery.error
+        ? thresholdsQuery.error?.detail ||
+          thresholdsQuery.error?.message ||
+          "Diagnostic thresholds are unavailable."
+        : null),
     dirtyCount,
     updateDraft,
     discard,
@@ -179,7 +189,7 @@ export function DiagnosticThresholdSettingsPanel({
         }}
       >
         <div>
-          <div style={{ fontSize: fs(12), fontWeight: 800 }}>{title}</div>
+          <div style={{ fontSize: fs(12), fontWeight: 400 }}>{title}</div>
           {description && (
             <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginTop: sp(4) }}>
               {description}
@@ -235,7 +245,7 @@ export function DiagnosticThresholdSettingsPanel({
                 background: T.bg2,
               }}
             >
-              <div style={{ color: T.text, fontWeight: 800, fontSize: fs(11), marginBottom: sp(6) }}>
+              <div style={{ color: T.text, fontWeight: 400, fontSize: fs(11), marginBottom: sp(6) }}>
                 {threshold.label || threshold.metricKey}
               </div>
               <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(8) }}>

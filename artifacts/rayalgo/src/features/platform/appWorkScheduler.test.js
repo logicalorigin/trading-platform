@@ -94,7 +94,7 @@ test("memory watch pressure blocks low-priority background hydration first", () 
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
 });
 
-test("critical memory pressure pauses broad scanner and hidden preload", () => {
+test("critical memory pressure pauses hidden preload but keeps broad flow runtime", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "flow",
@@ -106,10 +106,32 @@ test("critical memory pressure pauses broad scanner and hidden preload", () => {
   });
 
   assert.equal(schedule.hydrationPressure, "stalled");
-  assert.equal(schedule.streams.broadFlowRuntime, false);
+  assert.equal(schedule.streams.broadFlowRuntime, true);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.resume.backgroundRefresh, false);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
+});
+
+test("keeps broad flow runtime on while page is hidden", () => {
+  const schedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    pageVisible: false,
+    activeScreen: "account",
+  });
+
+  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.accountRealtime, false);
+  assert.equal(schedule.streams.marketStockAggregates, false);
+});
+
+test("keeps broad flow runtime on before session metadata settles", () => {
+  const schedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    sessionMetadataSettled: false,
+    activeScreen: "trade",
+  });
+
+  assert.equal(schedule.streams.broadFlowRuntime, true);
 });
 
 test("waits for a first memory sample before starting background work", () => {

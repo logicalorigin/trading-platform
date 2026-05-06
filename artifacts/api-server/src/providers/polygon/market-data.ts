@@ -18,6 +18,7 @@ type BarTimeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "1d";
 type OptionRight = "call" | "put";
 type FlowSentiment = "bullish" | "bearish" | "neutral";
 const POLYGON_TICKER_LOGO_CACHE_TTL_MS = 10 * 60 * 1_000;
+const POLYGON_TICKER_DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 export type UniverseMarket =
   | "stocks"
   | "etf"
@@ -186,6 +187,120 @@ export type FlowEvent = {
   sourceBasis?: "confirmed_trade" | "snapshot_activity" | "fallback_estimate";
 };
 
+export type StockGroupedDailyAggregate = {
+  symbol: string;
+  volume: number;
+  vwap: number | null;
+  transactions: number | null;
+  timestamp: Date | null;
+  otc: boolean;
+};
+
+export type PremiumDistributionSide = "buy" | "sell" | "neutral";
+export type PremiumDistributionSideBasis =
+  | "quote_match"
+  | "tick_test"
+  | "mixed"
+  | "none";
+export type PremiumDistributionClassificationConfidence =
+  | "high"
+  | "medium"
+  | "low"
+  | "very_low"
+  | "none";
+export type PremiumDistributionDataAccess =
+  | "available"
+  | "unavailable"
+  | "forbidden"
+  | "unknown";
+export type PremiumDistributionBucketName = "small" | "medium" | "large";
+export type PremiumDistributionTimeframe = "today" | "week";
+export type PremiumDistributionMarketCapTier =
+  | "mega"
+  | "large"
+  | "mid"
+  | "small_or_unknown";
+
+export type PremiumDistributionBucketThresholds = {
+  smallMin: number;
+  mediumMin: number;
+  largeMin: number;
+};
+
+export type PremiumDistributionBucket = {
+  inflowPremium: number;
+  outflowPremium: number;
+  buyPremium: number;
+  sellPremium: number;
+  neutralPremium: number;
+  totalPremium: number;
+  count: number;
+};
+
+export type OptionPremiumDistribution = {
+  symbol: string;
+  asOf: Date;
+  timeframe: PremiumDistributionTimeframe;
+  stockDayVolume: number | null;
+  marketCap: number | null;
+  marketCapTier: PremiumDistributionMarketCapTier;
+  bucketThresholds: PremiumDistributionBucketThresholds;
+  premiumTotal: number;
+  classifiedPremium: number;
+  classificationCoverage: number;
+  classificationConfidence: PremiumDistributionClassificationConfidence;
+  netPremium: number;
+  inflowPremium: number;
+  outflowPremium: number;
+  buyPremium: number;
+  sellPremium: number;
+  neutralPremium: number;
+  callPremium: number;
+  putPremium: number;
+  buckets: Record<PremiumDistributionBucketName, PremiumDistributionBucket>;
+  contractCount: number;
+  tradeCount: number;
+  classifiedTradeCount: number;
+  quoteMatchedCount: number;
+  tickTestMatchedCount: number;
+  sideBasis: PremiumDistributionSideBasis;
+  quoteAccess: PremiumDistributionDataAccess;
+  tradeAccess: PremiumDistributionDataAccess;
+  source: "polygon-options-snapshot";
+  confidence: "snapshot" | "partial";
+  delayed: boolean;
+  pageCount: number;
+};
+
+type PremiumDistributionTradeBucket = {
+  buyPremium: number;
+  sellPremium: number;
+  count: number;
+};
+
+type PremiumDistributionTradeBuckets = Record<
+  PremiumDistributionBucketName,
+  PremiumDistributionTradeBucket
+>;
+
+export type PremiumDistributionTradeClassification = {
+  buyPremium: number;
+  sellPremium: number;
+  tradeCount: number;
+  tickTestMatchedCount: number;
+  buckets?: PremiumDistributionTradeBuckets;
+};
+
+/*
+Polygon/Massive premium distribution mapping:
+- Options snapshots provide the session/day price and volume used for total premium.
+- Snapshot last_quote plus last_trade classifies only the latest bid/ask-matched print.
+- Options trades provide the tick-test fallback for top contracts; condition and exchange
+  codes are retained for audits but are not side signals yet.
+- Grouped daily stock aggregates only choose candidate underlyings. Bucket thresholds are
+  RayAlgo display heuristics, not vendor-defined Webull buckets.
+*/
+
 export type PolygonApiDiagnosticsStatus =
   | "ok"
   | "degraded"
@@ -286,6 +401,9 @@ const OPTION_AGGREGATE_INTRADAY_LOOKBACK_MS = 10 * 24 * 60 * 60 * 1_000;
 const OPTION_FLOW_EXPIRATION_LOOKAHEAD_DAYS = 60;
 const OPTION_FLOW_SNAPSHOT_PAGE_LIMIT = 250;
 const OPTION_FLOW_SNAPSHOT_MAX_PAGES = 12;
+const OPTION_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT = 8;
+const OPTION_PREMIUM_DISTRIBUTION_TRADE_LIMIT = 250;
+const OPTION_PREMIUM_DISTRIBUTION_TRADE_CONCURRENCY = 4;
 
 function isIntradayTimeframe(timeframe: BarTimeframe): boolean {
   return timeframe !== "1d";
@@ -548,6 +666,30 @@ function mapAggregateBar(result: unknown): BarSnapshot | null {
   };
 }
 
+function mapGroupedDailyAggregate(result: unknown): StockGroupedDailyAggregate | null {
+  const record = asRecord(result);
+
+  if (!record) {
+    return null;
+  }
+
+  const symbol = normalizeSymbol(asString(record["T"] ?? record["ticker"]) ?? "");
+  const volume = asNumber(record["v"] ?? record["volume"]);
+
+  if (!symbol || volume === null) {
+    return null;
+  }
+
+  return {
+    symbol,
+    volume,
+    vwap: asNumber(record["vw"] ?? record["vwap"]),
+    transactions: asNumber(record["n"] ?? record["transactions"]),
+    timestamp: toDate(record["t"] ?? record["timestamp"]),
+    otc: Boolean(record["otc"]),
+  };
+}
+
 function normalizeOptionRight(value: string | null): OptionRight | null {
   if (!value) {
     return null;
@@ -700,6 +842,726 @@ function inferTradeSide(lastTradePrice: number, bid: number, ask: number): strin
   }
 
   return "mid";
+}
+
+function inferPremiumDistributionSide(
+  lastTradePrice: number,
+  bid: number,
+  ask: number,
+): PremiumDistributionSide {
+  if (bid <= 0 || ask <= 0 || ask < bid || lastTradePrice <= 0) {
+    return "neutral";
+  }
+
+  const spread = ask - bid;
+  const tolerance = Math.max(0.01, spread * 0.1);
+  const midpointPrice = (bid + ask) / 2;
+  const atAsk = lastTradePrice >= ask - tolerance;
+  const atBid = lastTradePrice <= bid + tolerance;
+
+  if (atAsk && atBid) {
+    return lastTradePrice >= midpointPrice ? "buy" : "sell";
+  }
+
+  if (atAsk) return "buy";
+  if (atBid) return "sell";
+  return "neutral";
+}
+
+function resolveMarketCapTier(
+  marketCap: number | null | undefined,
+): PremiumDistributionMarketCapTier {
+  if (!marketCap || marketCap < 2_000_000_000) return "small_or_unknown";
+  if (marketCap >= 200_000_000_000) return "mega";
+  if (marketCap >= 10_000_000_000) return "large";
+  return "mid";
+}
+
+function resolvePremiumBucketThresholds(
+  marketCapTier: PremiumDistributionMarketCapTier,
+): PremiumDistributionBucketThresholds {
+  if (marketCapTier === "mega") {
+    return { smallMin: 0, mediumMin: 50_000, largeMin: 250_000 };
+  }
+
+  if (marketCapTier === "large") {
+    return { smallMin: 0, mediumMin: 25_000, largeMin: 100_000 };
+  }
+
+  if (marketCapTier === "mid") {
+    return { smallMin: 0, mediumMin: 10_000, largeMin: 50_000 };
+  }
+
+  return { smallMin: 0, mediumMin: 5_000, largeMin: 25_000 };
+}
+
+function premiumBucketForValue(
+  value: number,
+  thresholds: PremiumDistributionBucketThresholds,
+): PremiumDistributionBucketName {
+  if (value >= thresholds.largeMin) return "large";
+  if (value >= thresholds.mediumMin) return "medium";
+  return "small";
+}
+
+function emptyPremiumBuckets(): Record<PremiumDistributionBucketName, PremiumDistributionBucket> {
+  return {
+    small: {
+      inflowPremium: 0,
+      outflowPremium: 0,
+      buyPremium: 0,
+      sellPremium: 0,
+      neutralPremium: 0,
+      totalPremium: 0,
+      count: 0,
+    },
+    medium: {
+      inflowPremium: 0,
+      outflowPremium: 0,
+      buyPremium: 0,
+      sellPremium: 0,
+      neutralPremium: 0,
+      totalPremium: 0,
+      count: 0,
+    },
+    large: {
+      inflowPremium: 0,
+      outflowPremium: 0,
+      buyPremium: 0,
+      sellPremium: 0,
+      neutralPremium: 0,
+      totalPremium: 0,
+      count: 0,
+    },
+  };
+}
+
+function emptyPremiumTradeBuckets(): PremiumDistributionTradeBuckets {
+  return {
+    small: { buyPremium: 0, sellPremium: 0, count: 0 },
+    medium: { buyPremium: 0, sellPremium: 0, count: 0 },
+    large: { buyPremium: 0, sellPremium: 0, count: 0 },
+  };
+}
+
+function addPremiumToTradeBucket(input: {
+  buckets: PremiumDistributionTradeBuckets;
+  thresholds: PremiumDistributionBucketThresholds;
+  side: Exclude<PremiumDistributionSide, "neutral">;
+  premium: number;
+  count?: number;
+}): void {
+  if (!Number.isFinite(input.premium) || input.premium <= 0) {
+    return;
+  }
+
+  const bucketName = premiumBucketForValue(input.premium, input.thresholds);
+  const bucket = input.buckets[bucketName];
+  if (input.side === "buy") {
+    bucket.buyPremium += input.premium;
+  } else {
+    bucket.sellPremium += input.premium;
+  }
+  bucket.count += Math.max(1, Math.floor(input.count ?? 1));
+}
+
+function buildAggregateClassifiedBuckets(input: {
+  thresholds: PremiumDistributionBucketThresholds;
+  buyPremium: number;
+  sellPremium: number;
+}): PremiumDistributionTradeBuckets {
+  const buckets = emptyPremiumTradeBuckets();
+  addPremiumToTradeBucket({
+    buckets,
+    thresholds: input.thresholds,
+    side: "buy",
+    premium: input.buyPremium,
+  });
+  addPremiumToTradeBucket({
+    buckets,
+    thresholds: input.thresholds,
+    side: "sell",
+    premium: input.sellPremium,
+  });
+  return buckets;
+}
+
+function scalePremiumTradeBuckets(input: {
+  buckets: PremiumDistributionTradeBuckets;
+  buyScale: number;
+  sellScale: number;
+}): PremiumDistributionTradeBuckets {
+  const output = emptyPremiumTradeBuckets();
+  (["small", "medium", "large"] as const).forEach((bucketName) => {
+    const bucket = input.buckets[bucketName];
+    output[bucketName] = {
+      buyPremium: bucket.buyPremium * input.buyScale,
+      sellPremium: bucket.sellPremium * input.sellScale,
+      count: bucket.count,
+    };
+  });
+  return output;
+}
+
+function readQuoteBid(record: Record<string, unknown> | null): number {
+  return (
+    firstDefined(
+      getNumberPath(record, ["bid_price"]),
+      getNumberPath(record, ["bidPrice"]),
+      getNumberPath(record, ["bid"]),
+      getNumberPath(record, ["bp"]),
+      getNumberPath(record, ["p"]),
+    ) ?? 0
+  );
+}
+
+function readQuoteAsk(record: Record<string, unknown> | null): number {
+  return (
+    firstDefined(
+      getNumberPath(record, ["ask_price"]),
+      getNumberPath(record, ["askPrice"]),
+      getNumberPath(record, ["ask"]),
+      getNumberPath(record, ["ap"]),
+      getNumberPath(record, ["P"]),
+    ) ?? 0
+  );
+}
+
+function readOptionSnapshotTicker(snapshot: unknown): string | null {
+  const record = asRecord(snapshot);
+  const details = asRecord(record?.["details"]) ?? record;
+  return asString(details?.["ticker"]);
+}
+
+function readOptionSnapshotSharesPerContract(snapshot: unknown): number {
+  const record = asRecord(snapshot);
+  const details = asRecord(record?.["details"]) ?? record;
+  const sharesPerContract =
+    asNumber(details?.["shares_per_contract"]) ??
+    asNumber(details?.["multiplier"]) ??
+    100;
+  return sharesPerContract > 0 ? sharesPerContract : 100;
+}
+
+function clampClassifiedPremium(
+  totalPremium: number,
+  buyPremium: number,
+  sellPremium: number,
+): { buyPremium: number; sellPremium: number; classifiedPremium: number } {
+  const safeBuy = Math.max(0, Number.isFinite(buyPremium) ? buyPremium : 0);
+  const safeSell = Math.max(0, Number.isFinite(sellPremium) ? sellPremium : 0);
+  const clampedBuy = Math.min(totalPremium, safeBuy);
+  const clampedSell = Math.min(Math.max(0, totalPremium - clampedBuy), safeSell);
+  return {
+    buyPremium: clampedBuy,
+    sellPremium: clampedSell,
+    classifiedPremium: clampedBuy + clampedSell,
+  };
+}
+
+function getOptionSnapshotPremium(
+  snapshot: unknown,
+  tradeClassification?: PremiumDistributionTradeClassification,
+  bucketThresholds: PremiumDistributionBucketThresholds = resolvePremiumBucketThresholds(
+    "small_or_unknown",
+  ),
+): {
+  totalPremium: number;
+  classifiedPremium: number;
+  buyPremium: number;
+  sellPremium: number;
+  neutralPremium: number;
+  classifiedBuckets: PremiumDistributionTradeBuckets;
+  right: OptionRight | null;
+  tradeCount: number;
+  quoteMatchedCount: number;
+  tickTestMatchedCount: number;
+  sideBasis: Exclude<PremiumDistributionSideBasis, "mixed">;
+  hasQuote: boolean;
+} | null {
+  const record = asRecord(snapshot);
+
+  if (!record) {
+    return null;
+  }
+
+  const details = asRecord(record["details"]) ?? record;
+  const right = normalizeOptionRight(asString(details["contract_type"]));
+  const sharesPerContract =
+    asNumber(details["shares_per_contract"]) ??
+    asNumber(details["multiplier"]) ??
+    100;
+  const day = asRecord(record["day"]);
+  const session = asRecord(record["session"]);
+  const lastTrade = asRecord(record["last_trade"]);
+  const lastQuote = asRecord(record["last_quote"]);
+  const totalPrice =
+    firstDefined(
+      getNumberPath(session, ["vwap"]),
+      getNumberPath(session, ["vw"]),
+      getNumberPath(day, ["vw"]),
+      getNumberPath(day, ["vwap"]),
+      getNumberPath(day, ["close"]),
+      getNumberPath(day, ["c"]),
+    ) ?? null;
+  const totalVolume =
+    firstDefined(
+      getNumberPath(session, ["volume"]),
+      getNumberPath(session, ["v"]),
+      getNumberPath(day, ["volume"]),
+      getNumberPath(day, ["v"]),
+    ) ?? null;
+
+  if (
+    totalPrice === null ||
+    totalVolume === null ||
+    totalPrice <= 0 ||
+    totalVolume <= 0 ||
+    sharesPerContract <= 0
+  ) {
+    return null;
+  }
+
+  const totalPremium = totalPrice * totalVolume * sharesPerContract;
+  const bid = readQuoteBid(lastQuote);
+  const ask = readQuoteAsk(lastQuote);
+  const hasQuote = bid > 0 && ask > 0;
+  const explicitLastTradePrice =
+    firstDefined(
+      getNumberPath(lastTrade, ["price"]),
+      getNumberPath(lastTrade, ["p"]),
+    ) ?? null;
+  const explicitLastTradeSize =
+    firstDefined(
+      getNumberPath(lastTrade, ["size"]),
+      getNumberPath(lastTrade, ["s"]),
+    ) ?? null;
+  const hasTrade =
+    explicitLastTradePrice !== null &&
+    explicitLastTradePrice > 0 &&
+    explicitLastTradeSize !== null &&
+    explicitLastTradeSize > 0;
+  const side = hasTrade
+    ? inferPremiumDistributionSide(explicitLastTradePrice, bid, ask)
+    : "neutral";
+
+  if (hasTrade && side !== "neutral") {
+    const rawClassifiedPremium =
+      explicitLastTradePrice * explicitLastTradeSize * sharesPerContract;
+    const classified = clampClassifiedPremium(
+      totalPremium,
+      side === "buy" ? rawClassifiedPremium : 0,
+      side === "sell" ? rawClassifiedPremium : 0,
+    );
+    const classifiedBuckets = emptyPremiumTradeBuckets();
+    if (classified.buyPremium > 0) {
+      addPremiumToTradeBucket({
+        buckets: classifiedBuckets,
+        thresholds: bucketThresholds,
+        side: "buy",
+        premium: classified.buyPremium,
+      });
+    }
+    if (classified.sellPremium > 0) {
+      addPremiumToTradeBucket({
+        buckets: classifiedBuckets,
+        thresholds: bucketThresholds,
+        side: "sell",
+        premium: classified.sellPremium,
+      });
+    }
+    return {
+      totalPremium,
+      ...classified,
+      neutralPremium: Math.max(0, totalPremium - classified.classifiedPremium),
+      classifiedBuckets,
+      right,
+      tradeCount: 1,
+      quoteMatchedCount: 1,
+      tickTestMatchedCount: 0,
+      sideBasis: "quote_match",
+      hasQuote,
+    };
+  }
+
+  if (tradeClassification && tradeClassification.tradeCount > 0) {
+    const classified = clampClassifiedPremium(
+      totalPremium,
+      tradeClassification.buyPremium,
+      tradeClassification.sellPremium,
+    );
+    const sourceBuckets =
+      tradeClassification.buckets ??
+      buildAggregateClassifiedBuckets({
+        thresholds: bucketThresholds,
+        buyPremium: tradeClassification.buyPremium,
+        sellPremium: tradeClassification.sellPremium,
+      });
+    const classifiedBuckets = scalePremiumTradeBuckets({
+      buckets: sourceBuckets,
+      buyScale:
+        tradeClassification.buyPremium > 0
+          ? classified.buyPremium / tradeClassification.buyPremium
+          : 0,
+      sellScale:
+        tradeClassification.sellPremium > 0
+          ? classified.sellPremium / tradeClassification.sellPremium
+          : 0,
+    });
+    return {
+      totalPremium,
+      ...classified,
+      neutralPremium: Math.max(0, totalPremium - classified.classifiedPremium),
+      classifiedBuckets,
+      right,
+      tradeCount: tradeClassification.tradeCount,
+      quoteMatchedCount: 0,
+      tickTestMatchedCount: tradeClassification.tickTestMatchedCount,
+      sideBasis: classified.classifiedPremium > 0 ? "tick_test" : "none",
+      hasQuote,
+    };
+  }
+
+  return {
+    totalPremium,
+    classifiedPremium: 0,
+    buyPremium: 0,
+    sellPremium: 0,
+    neutralPremium: totalPremium,
+    classifiedBuckets: emptyPremiumTradeBuckets(),
+    right,
+    tradeCount: hasTrade ? 1 : 0,
+    quoteMatchedCount: 0,
+    tickTestMatchedCount: 0,
+    sideBasis: "none",
+    hasQuote,
+  };
+}
+
+function combinePremiumDistributionSideBasis(input: {
+  quoteMatchedCount: number;
+  tickTestMatchedCount: number;
+}): PremiumDistributionSideBasis {
+  if (input.quoteMatchedCount > 0 && input.tickTestMatchedCount > 0) {
+    return "mixed";
+  }
+  if (input.quoteMatchedCount > 0) return "quote_match";
+  if (input.tickTestMatchedCount > 0) return "tick_test";
+  return "none";
+}
+
+export function resolvePremiumDistributionClassificationConfidence(input: {
+  classificationCoverage: number;
+  sideBasis: PremiumDistributionSideBasis;
+  quoteAccess: PremiumDistributionDataAccess;
+  tradeAccess: PremiumDistributionDataAccess;
+}): PremiumDistributionClassificationConfidence {
+  const coverage = Number.isFinite(input.classificationCoverage)
+    ? Math.max(0, Math.min(1, input.classificationCoverage))
+    : 0;
+
+  if (input.sideBasis === "none" || coverage <= 0) {
+    return "none";
+  }
+  if (coverage < 0.01) {
+    return "very_low";
+  }
+  if (coverage < 0.1) {
+    return "low";
+  }
+  if (coverage < 0.35) {
+    return "medium";
+  }
+  return "high";
+}
+
+type OptionPremiumTradePrint = {
+  price: number;
+  size: number;
+  occurredAt: Date;
+  sequenceNumber: number | null;
+  conditionCodes: string[];
+  exchange: string | null;
+};
+
+function mapOptionPremiumTradePrint(result: unknown): OptionPremiumTradePrint | null {
+  const record = asRecord(result);
+  if (!record) return null;
+
+  const price =
+    firstDefined(
+      getNumberPath(record, ["price"]),
+      getNumberPath(record, ["p"]),
+    ) ?? null;
+  const size =
+    firstDefined(
+      getNumberPath(record, ["size"]),
+      getNumberPath(record, ["s"]),
+    ) ?? null;
+  const occurredAt =
+    firstDefined(
+      toDate(getNumberPath(record, ["sip_timestamp"])),
+      toDate(getNumberPath(record, ["participant_timestamp"])),
+      toDate(getNumberPath(record, ["t"])),
+    ) ?? null;
+
+  if (
+    price === null ||
+    price <= 0 ||
+    size === null ||
+    size <= 0 ||
+    !occurredAt
+  ) {
+    return null;
+  }
+
+  return {
+    price,
+    size,
+    occurredAt,
+    sequenceNumber: asNumber(record["sequence_number"]),
+    conditionCodes: [
+      ...new Set(
+        asArray(record["conditions"])
+          .map((condition) => asString(condition))
+          .filter((condition): condition is string => condition !== null),
+      ),
+    ],
+    exchange:
+      firstDefined(asString(record["exchange"]), asString(record["x"])) ?? null,
+  };
+}
+
+function classifyOptionPremiumTradePrints(input: {
+  trades: unknown[];
+  sharesPerContract: number;
+  bucketThresholds: PremiumDistributionBucketThresholds;
+}): PremiumDistributionTradeClassification {
+  const trades = compact(input.trades.map(mapOptionPremiumTradePrint)).sort(
+    (left, right) => {
+      const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
+      if (timeDelta !== 0) return timeDelta;
+      return (left.sequenceNumber ?? 0) - (right.sequenceNumber ?? 0);
+    },
+  );
+  const sharesPerContract =
+    input.sharesPerContract > 0 ? input.sharesPerContract : 100;
+  let previousPrice: number | null = null;
+  let previousSide: PremiumDistributionSide = "neutral";
+  let buyPremium = 0;
+  let sellPremium = 0;
+  let tickTestMatchedCount = 0;
+  const buckets = emptyPremiumTradeBuckets();
+
+  trades.forEach((trade) => {
+    let side: PremiumDistributionSide = "neutral";
+    if (previousPrice !== null) {
+      if (trade.price > previousPrice) {
+        side = "buy";
+      } else if (trade.price < previousPrice) {
+        side = "sell";
+      } else {
+        side = previousSide;
+      }
+    }
+
+    if (side !== "neutral") {
+      const premium = trade.price * trade.size * sharesPerContract;
+      if (side === "buy") {
+        buyPremium += premium;
+        addPremiumToTradeBucket({
+          buckets,
+          thresholds: input.bucketThresholds,
+          side: "buy",
+          premium,
+        });
+      }
+      if (side === "sell") {
+        sellPremium += premium;
+        addPremiumToTradeBucket({
+          buckets,
+          thresholds: input.bucketThresholds,
+          side: "sell",
+          premium,
+        });
+      }
+      tickTestMatchedCount += 1;
+      previousSide = side;
+    }
+    previousPrice = trade.price;
+  });
+
+  return {
+    buyPremium,
+    sellPremium,
+    tradeCount: trades.length,
+    tickTestMatchedCount,
+    buckets,
+  };
+}
+
+async function mapWithLocalConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index], index);
+      }
+    }),
+  );
+
+  return results;
+}
+
+function isHttpStatus(error: unknown, statusCode: number): boolean {
+  return (
+    Boolean(error) &&
+    typeof error === "object" &&
+    (error as { statusCode?: unknown }).statusCode === statusCode
+  );
+}
+
+export function aggregateOptionPremiumDistributionSnapshots(input: {
+  underlying: string;
+  snapshots: unknown[];
+  tradeClassifications?: ReadonlyMap<string, PremiumDistributionTradeClassification>;
+  stockDayVolume?: number | null;
+  timeframe?: PremiumDistributionTimeframe;
+  marketCap?: number | null;
+  asOf?: Date;
+  delayed?: boolean;
+  tradeAccess?: PremiumDistributionDataAccess;
+  pageCount?: number;
+}): OptionPremiumDistribution {
+  const marketCap =
+    input.marketCap && input.marketCap > 0 ? input.marketCap : null;
+  const marketCapTier = resolveMarketCapTier(marketCap);
+  const bucketThresholds = resolvePremiumBucketThresholds(marketCapTier);
+  const buckets = emptyPremiumBuckets();
+  let premiumTotal = 0;
+  let buyPremium = 0;
+  let sellPremium = 0;
+  let neutralPremium = 0;
+  let callPremium = 0;
+  let putPremium = 0;
+  let contractCount = 0;
+  let tradeCount = 0;
+  let classifiedTradeCount = 0;
+  let quoteMatchedCount = 0;
+  let tickTestMatchedCount = 0;
+  let quoteSampleCount = 0;
+
+  input.snapshots.forEach((snapshot) => {
+    const ticker = readOptionSnapshotTicker(snapshot);
+    const premium = getOptionSnapshotPremium(
+      snapshot,
+      ticker ? input.tradeClassifications?.get(ticker) : undefined,
+      bucketThresholds,
+    );
+    if (!premium) {
+      return;
+    }
+
+    contractCount += 1;
+    tradeCount += premium.tradeCount;
+    classifiedTradeCount +=
+      premium.quoteMatchedCount + premium.tickTestMatchedCount;
+    quoteMatchedCount += premium.quoteMatchedCount;
+    tickTestMatchedCount += premium.tickTestMatchedCount;
+    if (premium.hasQuote) quoteSampleCount += 1;
+
+    premiumTotal += premium.totalPremium;
+    if (premium.right === "call") callPremium += premium.totalPremium;
+    if (premium.right === "put") putPremium += premium.totalPremium;
+
+    buyPremium += premium.buyPremium;
+    sellPremium += premium.sellPremium;
+    neutralPremium += premium.neutralPremium;
+
+    (["small", "medium", "large"] as const).forEach((bucketName) => {
+      const classifiedBucket = premium.classifiedBuckets[bucketName];
+      const bucket = buckets[bucketName];
+      bucket.inflowPremium += classifiedBucket.buyPremium;
+      bucket.buyPremium += classifiedBucket.buyPremium;
+      bucket.outflowPremium += classifiedBucket.sellPremium;
+      bucket.sellPremium += classifiedBucket.sellPremium;
+      bucket.totalPremium +=
+        classifiedBucket.buyPremium + classifiedBucket.sellPremium;
+      bucket.count += classifiedBucket.count;
+    });
+
+    const neutralBucket =
+      buckets[premiumBucketForValue(premium.totalPremium, bucketThresholds)];
+    neutralBucket.neutralPremium += premium.neutralPremium;
+    neutralBucket.totalPremium += premium.neutralPremium;
+    if (premium.neutralPremium > 0) {
+      neutralBucket.count += 1;
+    }
+  });
+
+  const classifiedPremium = buyPremium + sellPremium;
+  const sideBasis = combinePremiumDistributionSideBasis({
+    quoteMatchedCount,
+    tickTestMatchedCount,
+  });
+  const classificationCoverage =
+    premiumTotal > 0 ? classifiedPremium / premiumTotal : 0;
+  const quoteAccess: PremiumDistributionDataAccess =
+    quoteSampleCount > 0 ? "available" : "unavailable";
+  const tradeAccess: PremiumDistributionDataAccess =
+    input.tradeAccess ?? (tradeCount > 0 ? "available" : "unavailable");
+  const classificationConfidence =
+    resolvePremiumDistributionClassificationConfidence({
+      classificationCoverage,
+      sideBasis,
+      quoteAccess,
+      tradeAccess,
+    });
+
+  return {
+    symbol: normalizeSymbol(input.underlying),
+    asOf: input.asOf ?? new Date(),
+    timeframe: input.timeframe ?? "today",
+    stockDayVolume: input.stockDayVolume ?? null,
+    marketCap,
+    marketCapTier,
+    bucketThresholds,
+    premiumTotal,
+    classifiedPremium,
+    classificationCoverage,
+    classificationConfidence,
+    netPremium: buyPremium - sellPremium,
+    inflowPremium: buyPremium,
+    outflowPremium: sellPremium,
+    buyPremium,
+    sellPremium,
+    neutralPremium,
+    callPremium,
+    putPremium,
+    buckets,
+    contractCount,
+    tradeCount,
+    classifiedTradeCount,
+    quoteMatchedCount,
+    tickTestMatchedCount,
+    sideBasis,
+    quoteAccess,
+    tradeAccess,
+    source: "polygon-options-snapshot",
+    confidence:
+      contractCount > 0 && quoteMatchedCount === contractCount ? "snapshot" : "partial",
+    delayed: Boolean(input.delayed),
+    pageCount: Math.max(0, Math.floor(input.pageCount ?? 0)),
+  };
 }
 
 function inferSentiment(right: OptionRight, side: string): FlowSentiment {
@@ -1026,6 +1888,10 @@ export class PolygonMarketDataClient {
     string,
     { expiresAt: number; logoUrl: string | null }
   >();
+  private readonly tickerMarketCapCache = new Map<
+    string,
+    { expiresAt: number; marketCap: number | null }
+  >();
 
   constructor(private readonly config: PolygonRuntimeConfig) {}
 
@@ -1080,6 +1946,31 @@ export class PolygonMarketDataClient {
       const snapshot = bySymbol.get(symbol);
       return snapshot ? [snapshot] : [];
     });
+  }
+
+  async getGroupedDailyStockAggregates(input: {
+    date: Date;
+    adjusted?: boolean;
+    includeOtc?: boolean;
+  }): Promise<StockGroupedDailyAggregate[]> {
+    const payload = await this.fetchJson<unknown>(
+      this.buildUrl(
+        `/v2/aggs/grouped/locale/us/market/stocks/${encodeURIComponent(
+          toIsoDateString(input.date),
+        )}`,
+        {
+          adjusted: input.adjusted ?? true,
+          include_otc: input.includeOtc ?? false,
+        },
+      ),
+    );
+    const record = asRecord(payload);
+
+    return compact(
+      asArray(record?.["results"])
+        .map(mapGroupedDailyAggregate)
+        .filter((aggregate) => aggregate && !aggregate.otc),
+    );
   }
 
   async getBarsPage(input: {
@@ -1483,6 +2374,38 @@ export class PolygonMarketDataClient {
     return logoUrl;
   }
 
+  async getTickerMarketCap(
+    ticker: string,
+    signal?: AbortSignal,
+  ): Promise<number | null> {
+    const normalizedTicker = normalizeSymbol(ticker);
+    if (!normalizedTicker) return null;
+
+    const cached = this.tickerMarketCapCache.get(normalizedTicker);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.marketCap;
+    }
+
+    const payload = await this.fetchJson<unknown>(
+      this.buildUrl(`/v3/reference/tickers/${encodeURIComponent(normalizedTicker)}`),
+      { signal },
+    );
+    const record = asRecord(payload);
+    const results = asRecord(record?.["results"]);
+    const marketCap = firstDefined(
+      asNumber(results?.["market_cap"]),
+      asNumber(results?.["marketCap"]),
+    );
+    const normalizedMarketCap =
+      marketCap !== null && marketCap > 0 ? marketCap : null;
+
+    this.tickerMarketCapCache.set(normalizedTicker, {
+      expiresAt: Date.now() + POLYGON_TICKER_DETAILS_CACHE_TTL_MS,
+      marketCap: normalizedMarketCap,
+    });
+    return normalizedMarketCap;
+  }
+
   async enrichUniverseTickerLogos(
     input: UniverseTicker[],
     limit = 10,
@@ -1535,13 +2458,133 @@ export class PolygonMarketDataClient {
 
   private async fetchChainPage(
     nextUrl: string,
+    signal?: AbortSignal,
   ): Promise<{ results: unknown[]; nextUrl: string | null }> {
-    const payload = await this.fetchJson<unknown>(this.buildUrl(nextUrl));
+    const payload = await this.fetchJson<unknown>(this.buildUrl(nextUrl), { signal });
     const record = asRecord(payload);
 
     return {
       results: asArray(record?.["results"]),
       nextUrl: asString(record?.["next_url"]),
+    };
+  }
+
+  private async fetchOptionTradePrints(input: {
+    optionTicker: string;
+    since: Date;
+    signal?: AbortSignal;
+  }): Promise<unknown[]> {
+    const payload = await this.fetchJson<unknown>(
+      this.buildUrl(`/v3/trades/${encodeURIComponent(input.optionTicker)}`, {
+        "timestamp.gte": toIsoDateString(input.since),
+        order: "asc",
+        sort: "timestamp",
+        limit: OPTION_PREMIUM_DISTRIBUTION_TRADE_LIMIT,
+      }),
+      { signal: input.signal },
+    );
+    const record = asRecord(payload);
+    return asArray(record?.["results"]);
+  }
+
+  private async fetchOptionPremiumTradeClassifications(input: {
+    snapshots: unknown[];
+    timeframe: PremiumDistributionTimeframe;
+    bucketThresholds: PremiumDistributionBucketThresholds;
+    now: Date;
+    signal?: AbortSignal;
+  }): Promise<{
+    tradeClassifications: Map<string, PremiumDistributionTradeClassification>;
+    tradeAccess: PremiumDistributionDataAccess;
+  }> {
+    const candidatesByTicker = new Map<
+      string,
+      { ticker: string; sharesPerContract: number; totalPremium: number }
+    >();
+
+    input.snapshots.forEach((snapshot) => {
+      const ticker = readOptionSnapshotTicker(snapshot);
+      const premium = getOptionSnapshotPremium(
+        snapshot,
+        undefined,
+        input.bucketThresholds,
+      );
+      if (!ticker || !premium || premium.totalPremium <= 0) {
+        return;
+      }
+
+      const existing = candidatesByTicker.get(ticker);
+      if (!existing || premium.totalPremium > existing.totalPremium) {
+        candidatesByTicker.set(ticker, {
+          ticker,
+          sharesPerContract: readOptionSnapshotSharesPerContract(snapshot),
+          totalPremium: premium.totalPremium,
+        });
+      }
+    });
+
+    const candidates = [...candidatesByTicker.values()]
+      .sort((left, right) => right.totalPremium - left.totalPremium)
+      .slice(0, OPTION_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT);
+
+    if (!candidates.length) {
+      return {
+        tradeClassifications: new Map(),
+        tradeAccess: "unavailable",
+      };
+    }
+
+    const since =
+      input.timeframe === "week" ? addUtcDays(input.now, -7) : input.now;
+    let forbiddenCount = 0;
+    let errorCount = 0;
+    const summaries = await mapWithLocalConcurrency(
+      candidates,
+      OPTION_PREMIUM_DISTRIBUTION_TRADE_CONCURRENCY,
+      async (candidate) => {
+        try {
+          const trades = await this.fetchOptionTradePrints({
+            optionTicker: candidate.ticker,
+            since,
+            signal: input.signal,
+          });
+          return {
+            ticker: candidate.ticker,
+            summary: classifyOptionPremiumTradePrints({
+              trades,
+              sharesPerContract: candidate.sharesPerContract,
+              bucketThresholds: input.bucketThresholds,
+            }),
+          };
+        } catch (error) {
+          if (isHttpStatus(error, 403)) {
+            forbiddenCount += 1;
+          } else {
+            errorCount += 1;
+          }
+          return null;
+        }
+      },
+    );
+
+    const tradeClassifications = new Map<
+      string,
+      PremiumDistributionTradeClassification
+    >();
+    summaries.forEach((entry) => {
+      if (entry?.summary.tradeCount) {
+        tradeClassifications.set(entry.ticker, entry.summary);
+      }
+    });
+
+    return {
+      tradeClassifications,
+      tradeAccess:
+        tradeClassifications.size > 0
+          ? "available"
+          : forbiddenCount > 0 && forbiddenCount >= candidates.length - errorCount
+            ? "forbidden"
+            : "unavailable",
     };
   }
 
@@ -1652,8 +2695,8 @@ export class PolygonMarketDataClient {
         limit: OPTION_FLOW_SNAPSHOT_PAGE_LIMIT,
       },
     ).toString();
-    const results: unknown[] = [];
-    let pageCount = 0;
+	    const results: unknown[] = [];
+	    let pageCount = 0;
 
     while (nextUrl && pageCount < OPTION_FLOW_SNAPSHOT_MAX_PAGES) {
       const page = await this.fetchChainPage(nextUrl);
@@ -1721,5 +2764,82 @@ export class PolygonMarketDataClient {
       })
       .slice(0, limit)
       .map(({ event }) => event);
+  }
+
+  async getOptionPremiumDistribution(input: {
+    underlying: string;
+    stockDayVolume?: number | null;
+    timeframe?: PremiumDistributionTimeframe;
+    marketCap?: number | null;
+    maxPages?: number;
+    enrichTrades?: boolean;
+    signal?: AbortSignal;
+  }): Promise<OptionPremiumDistribution> {
+    const underlying = normalizeSymbol(input.underlying);
+    const maxPages = Math.max(1, Math.min(input.maxPages ?? 1, 4));
+    const now = new Date();
+    let nextUrl: string | null = this.buildUrl(
+      `/v3/snapshot/options/${encodeURIComponent(underlying)}`,
+      {
+        "expiration_date.gte": toIsoDateString(now),
+        "expiration_date.lte": toIsoDateString(
+          addUtcDays(now, OPTION_FLOW_EXPIRATION_LOOKAHEAD_DAYS),
+        ),
+        order: "asc",
+        sort: "expiration_date",
+        limit: OPTION_FLOW_SNAPSHOT_PAGE_LIMIT,
+      },
+    ).toString();
+    const results: unknown[] = [];
+    let pageCount = 0;
+
+    while (nextUrl && pageCount < maxPages) {
+      const page = await this.fetchChainPage(nextUrl, input.signal);
+      results.push(...page.results);
+      nextUrl = page.nextUrl;
+      pageCount += 1;
+    }
+
+    let marketCap = input.marketCap ?? null;
+    if (input.marketCap === undefined) {
+      try {
+        marketCap = await this.getTickerMarketCap(underlying, input.signal);
+      } catch {
+        marketCap = null;
+      }
+    }
+    const bucketThresholds = resolvePremiumBucketThresholds(
+      resolveMarketCapTier(marketCap),
+    );
+
+    const tradeClassificationResult =
+      input.enrichTrades === false
+        ? {
+            tradeClassifications: new Map<
+              string,
+              PremiumDistributionTradeClassification
+            >(),
+            tradeAccess: "unknown" as PremiumDistributionDataAccess,
+          }
+        : await this.fetchOptionPremiumTradeClassifications({
+            snapshots: results,
+            timeframe: input.timeframe ?? "today",
+            bucketThresholds,
+            now,
+            signal: input.signal,
+          });
+
+    return aggregateOptionPremiumDistributionSnapshots({
+      underlying,
+      snapshots: results,
+      tradeClassifications: tradeClassificationResult.tradeClassifications,
+      stockDayVolume: input.stockDayVolume,
+      timeframe: input.timeframe,
+      marketCap,
+      asOf: now,
+      delayed: this.config.baseUrl.includes("massive.com"),
+      tradeAccess: tradeClassificationResult.tradeAccess,
+      pageCount,
+    });
   }
 }

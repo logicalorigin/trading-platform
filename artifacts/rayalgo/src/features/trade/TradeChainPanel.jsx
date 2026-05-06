@@ -248,7 +248,7 @@ const ChainStatePanel = ({
       <span
         style={{
           fontSize: fs(10),
-          fontWeight: 700,
+          fontWeight: 400,
           color: tone,
         }}
       >
@@ -268,7 +268,7 @@ const ChainStatePanel = ({
           padding: sp("4px 8px"),
           fontSize: fs(9),
           fontFamily: T.mono,
-          fontWeight: 700,
+          fontWeight: 400,
           cursor: "pointer",
         }}
       >
@@ -347,7 +347,7 @@ const ChainSide = forwardRef(function ChainSide({
                 padding: sp("0 6px"),
                 color: T.textMuted,
                 fontSize: fs(8),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.sans,
                 textAlign: side === "C" ? "right" : "left",
                 whiteSpace: "nowrap",
@@ -421,8 +421,7 @@ const ChainSide = forwardRef(function ChainSide({
                           ? T.amber
                           : T.textSec,
                     fontSize: fs(9),
-                    fontWeight:
-                      selectedSide || column.type === "price" ? 700 : 500,
+                    fontWeight: 400,
                     fontFamily: T.mono,
                     textAlign: side === "C" ? "right" : "left",
                     whiteSpace: "nowrap",
@@ -471,7 +470,7 @@ const StrikeColumn = ({
         color: T.textMuted,
         fontSize: fs(8),
         fontFamily: T.sans,
-        fontWeight: 800,
+        fontWeight: 400,
       }}
     >
       Strike
@@ -496,7 +495,7 @@ const StrikeColumn = ({
             color: isAtmRow ? T.amber : T.text,
             fontFamily: T.mono,
             fontSize: fs(10),
-            fontWeight: 800,
+            fontWeight: 400,
           }}
         >
           {row.k}
@@ -906,7 +905,7 @@ export const TradeChainPanel = ({
         <span
           style={{
             fontSize: fs(10),
-            fontWeight: 700,
+            fontWeight: 400,
             fontFamily: T.display,
             color: T.textSec,
           }}
@@ -927,7 +926,7 @@ export const TradeChainPanel = ({
             color: hasExpirationOptions ? T.text : T.textDim,
             fontSize: fs(9),
             fontFamily: T.mono,
-            fontWeight: 600,
+            fontWeight: 400,
             cursor: hasExpirationOptions ? "pointer" : "default",
             padding: sp("2px 6px"),
             borderRadius: dim(3),
@@ -969,7 +968,7 @@ export const TradeChainPanel = ({
             color: T.textSec,
             fontSize: fs(9),
             fontFamily: T.mono,
-            fontWeight: 700,
+            fontWeight: 400,
             cursor: onChangeChainCoverage ? "pointer" : "default",
             padding: sp("2px 6px"),
             borderRadius: dim(3),
@@ -986,14 +985,14 @@ export const TradeChainPanel = ({
         {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
         <span style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textDim }}>
           IMP{" "}
-          <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 700 }}>
+          <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 400 }}>
             {impMove != null ? `+/-$${impMove.toFixed(2)}` : MISSING_VALUE}
           </span>{" "}
           {impPct != null ? `(${impPct.toFixed(2)}%)` : ""}
         </span>
         <span style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textDim }}>
           ATM{" "}
-          <span style={{ color: T.accent, fontWeight: 700 }}>
+          <span style={{ color: T.accent, fontWeight: 400 }}>
             {atmStrike ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
           </span>
         </span>
@@ -1003,7 +1002,7 @@ export const TradeChainPanel = ({
             fontSize: fs(8),
             color: statusColor,
             fontFamily: T.mono,
-            fontWeight: 700,
+            fontWeight: 400,
           }}
         >
           {statusLabel}

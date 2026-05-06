@@ -351,7 +351,7 @@ const barButtonStyle = ({
   cursor: disabled ? "default" : "pointer",
   fontFamily: theme.mono,
   fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.bodyStrong,
-  fontWeight: active ? 700 : 500,
+  fontWeight: 400,
   opacity: disabled ? 0.6 : 1,
   whiteSpace: "nowrap",
 });
@@ -453,14 +453,14 @@ const menuItemStyle = (theme: WidgetTheme): CSSProperties => ({
   color: theme.text,
   fontFamily: theme.display || FONT_CSS_VAR.sans,
   fontSize: TYPE_CSS_VAR.bodyStrong,
-  fontWeight: 500,
+  fontWeight: 400,
 });
 
 const menuLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   color: theme.textMuted,
   fontFamily: theme.display || FONT_CSS_VAR.sans,
   fontSize: TYPE_CSS_VAR.body,
-  fontWeight: 600,
+  fontWeight: 400,
   letterSpacing: 0,
   textTransform: "uppercase",
 });
@@ -826,7 +826,7 @@ export const ResearchChartWidgetHeader = ({
                   }}
                 >
                   {identitySlot ?? <Search style={iconStyle(dense)} />}
-                  <span style={{ fontWeight: 700 }}>{symbol}</span>
+                  <span style={{ fontWeight: 400 }}>{symbol}</span>
                   <ChevronDown style={iconStyle(dense)} />
                 </button>
               </PopoverTrigger>
@@ -859,7 +859,7 @@ export const ResearchChartWidgetHeader = ({
             }}
           >
             {identitySlot ?? (canSearch ? <Search style={iconStyle(dense)} /> : null)}
-            <span style={{ fontWeight: 700 }}>{symbol}</span>
+            <span style={{ fontWeight: 400 }}>{symbol}</span>
             {canSearch ? <ChevronDown style={iconStyle(dense)} /> : null}
           </button></AppTooltip>
         )}
@@ -911,7 +911,7 @@ export const ResearchChartWidgetHeader = ({
                     justifyContent: "space-between",
                     gap: 8,
                     background: active ? withAlpha(theme.accent || theme.text, "20") : undefined,
-                    fontWeight: active ? 700 : 500,
+                    fontWeight: 400,
                     cursor: "pointer",
                   }}
                 >
@@ -1203,7 +1203,7 @@ export const ResearchChartWidgetHeader = ({
               dense,
             })}
           >
-            <span style={{ fontWeight: 700 }}>{symbol}</span>
+            <span style={{ fontWeight: 400 }}>{symbol}</span>
             {name && !dense ? (
               <span style={{ color: theme.textMuted }}>{name}</span>
             ) : null}
@@ -1225,7 +1225,7 @@ export const ResearchChartWidgetHeader = ({
               <span style={{ color: theme.textMuted }}>{priceLabel}</span>
             ) : null}
             <span>{formatPrice(displayPrice)}</span>
-            <span style={{ color: changeColor, fontWeight: 700 }}>
+            <span style={{ color: changeColor, fontWeight: 400 }}>
               {formatPercent(changePercent)}
             </span>
           </span>
@@ -1398,7 +1398,7 @@ export const ResearchChartWidgetFooter = ({
     cursor: "pointer",
     fontFamily: theme.mono,
     fontSize: dense ? TYPE_CSS_VAR.label : TYPE_CSS_VAR.body,
-    fontWeight: 700,
+    fontWeight: 400,
     padding: 0,
   });
 

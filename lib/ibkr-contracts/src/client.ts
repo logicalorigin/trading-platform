@@ -7,6 +7,12 @@ import type {
 export type AssetClass = "equity" | "option";
 export type OptionRight = "call" | "put";
 export type OrderSide = "buy" | "sell";
+export type OptionOrderPositionEffect = "open" | "close";
+export type OptionOrderStrategyIntent =
+  | "long_option"
+  | "sell_to_close"
+  | "covered_call"
+  | "uncovered_short_call";
 export type OrderStatus =
   | "pending_submit"
   | "submitted"
@@ -130,6 +136,8 @@ export type PlaceOrderInput = {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContractSnapshot | null;
+  positionEffect?: OptionOrderPositionEffect;
+  strategyIntent?: OptionOrderStrategyIntent;
 };
 
 export type QuoteSnapshot = {

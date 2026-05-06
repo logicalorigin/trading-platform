@@ -14,6 +14,13 @@ import type { OrderType } from './orderType';
 import type { PlaceOrderRequestSource } from './placeOrderRequestSource';
 import type { TimeInForce } from './timeInForce';
 
+export type PlaceOrderRequestPositionEffect = 'open' | 'close';
+export type PlaceOrderRequestStrategyIntent =
+  | 'long_option'
+  | 'sell_to_close'
+  | 'covered_call'
+  | 'uncovered_short_call';
+
 export interface PlaceOrderRequest {
   accountId: string;
   mode: EnvironmentMode;
@@ -26,6 +33,8 @@ export interface PlaceOrderRequest {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContract | null;
+  positionEffect?: PlaceOrderRequestPositionEffect;
+  strategyIntent?: PlaceOrderRequestStrategyIntent;
   source?: PlaceOrderRequestSource;
   sourceEventId?: string | null;
   clientOrderId?: string | null;

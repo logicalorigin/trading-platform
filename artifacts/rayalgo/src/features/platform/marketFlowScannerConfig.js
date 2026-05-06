@@ -55,7 +55,7 @@ export const FLOW_SCANNER_CONFIG_LIMITS = Object.freeze({
 
 export const DEFAULT_FLOW_SCANNER_CONFIG = Object.freeze({
   mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
-  scope: FLOW_SCANNER_SCOPE.unusual,
+  scope: FLOW_SCANNER_SCOPE.all,
   maxSymbols: 500,
   batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
   intervalMs: UNUSUAL_SCANNER_INTERVAL_MS,

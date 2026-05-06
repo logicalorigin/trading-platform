@@ -205,7 +205,7 @@ export const MiniChartPremiumFlowIndicator = ({
           minWidth: 0,
           color: T.textSec,
           fontSize: fs(dense ? 8 : 9),
-          fontWeight: 800,
+          fontWeight: 400,
           letterSpacing: "0.04em",
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -233,7 +233,7 @@ export const MiniChartPremiumFlowIndicator = ({
           aria-label={`${normalizedSymbol} options premium flow ${statusLabel}`}
           style={{
             color: statusTone,
-            fontWeight: 600,
+            fontWeight: 400,
             overflow: "hidden",
             textOverflow: "ellipsis",
             minWidth: 0,

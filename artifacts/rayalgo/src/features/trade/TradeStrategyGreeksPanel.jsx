@@ -104,7 +104,7 @@ export const TradeStrategyGreeksPanel = ({
         <div
           style={{
             fontSize: fs(9),
-            fontWeight: 700,
+            fontWeight: 400,
             color: T.textSec,
             fontFamily: T.display,
             letterSpacing: "0.08em",
@@ -147,7 +147,7 @@ export const TradeStrategyGreeksPanel = ({
         <div
           style={{
             fontSize: fs(9),
-            fontWeight: 700,
+            fontWeight: 400,
             color: T.textSec,
             fontFamily: T.display,
             letterSpacing: "0.08em",
@@ -184,7 +184,7 @@ export const TradeStrategyGreeksPanel = ({
             fontSize: fs(9),
             color: T.textSec,
             fontFamily: T.mono,
-            fontWeight: 600,
+            fontWeight: 400,
           }}
         >
           {label}
@@ -231,7 +231,7 @@ export const TradeStrategyGreeksPanel = ({
               transform: value < 0 ? "translateX(-100%)" : "none",
               fontSize: fs(8),
               fontFamily: T.mono,
-              fontWeight: 700,
+              fontWeight: 400,
               color: T.text,
               display: "flex",
               alignItems: "center",
@@ -274,7 +274,7 @@ export const TradeStrategyGreeksPanel = ({
         <div
           style={{
             fontSize: fs(9),
-            fontWeight: 700,
+            fontWeight: 400,
             color: T.textSec,
             fontFamily: T.display,
             letterSpacing: "0.08em",
@@ -308,13 +308,13 @@ export const TradeStrategyGreeksPanel = ({
                 color: T.text,
                 fontSize: fs(9),
                 fontFamily: T.sans,
-                fontWeight: 600,
+                fontWeight: 400,
                 textAlign: "left",
                 cursor: "pointer",
                 lineHeight: 1.2,
               }}
             >
-              <div style={{ color: strategy.color, fontWeight: 700 }}>
+              <div style={{ color: strategy.color, fontWeight: 400 }}>
                 {strategy.name}
               </div>
               <div
@@ -335,7 +335,7 @@ export const TradeStrategyGreeksPanel = ({
         <div
           style={{
             fontSize: fs(9),
-            fontWeight: 700,
+            fontWeight: 400,
             color: T.textSec,
             fontFamily: T.display,
             letterSpacing: "0.08em",
@@ -406,25 +406,25 @@ export const TradeStrategyGreeksPanel = ({
         >
           <div>
             <span style={{ color: T.textDim, fontSize: fs(7) }}>Δ </span>
-            <span style={{ color: T.accent, fontWeight: 700 }}>
+            <span style={{ color: T.accent, fontWeight: 400 }}>
               {(delta * qty).toFixed(2)}
             </span>
           </div>
           <div>
             <span style={{ color: T.textDim, fontSize: fs(7) }}>Γ </span>
-            <span style={{ color: T.purple, fontWeight: 700 }}>
+            <span style={{ color: T.purple, fontWeight: 400 }}>
               {(gamma * qty).toFixed(2)}
             </span>
           </div>
           <div>
             <span style={{ color: T.textDim, fontSize: fs(7) }}>Θ </span>
-            <span style={{ color: T.red, fontWeight: 700 }}>
+            <span style={{ color: T.red, fontWeight: 400 }}>
               {(theta * qty).toFixed(2)}
             </span>
           </div>
           <div>
             <span style={{ color: T.textDim, fontSize: fs(7) }}>V </span>
-            <span style={{ color: T.cyan, fontWeight: 700 }}>
+            <span style={{ color: T.cyan, fontWeight: 400 }}>
               {(vega * qty).toFixed(2)}
             </span>
           </div>

@@ -14,6 +14,7 @@ import {
   listFlowEvents as listFlowEventsRequest,
   useGetOptionExpirations,
   useGetQuoteSnapshots,
+  useListOrders,
   useListPositions,
 } from "@workspace/api-client-react";
 import {
@@ -100,6 +101,7 @@ import { _initialState, persistState } from "../lib/workspaceState";
 import {
   daysToExpiration,
   formatExpirationLabel,
+  formatOptionContractLabel,
   formatRelativeTimeShort,
   getAtmStrikeFromPrice,
   isFiniteNumber,
@@ -130,6 +132,10 @@ import {
   publishTradeFlowSnapshot,
   useTradeFlowSnapshot,
 } from "../features/platform/tradeFlowStore";
+import {
+  filterFlowTapeEvents,
+  useFlowTapeFilterState,
+} from "../features/platform/flowFilterStore";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   useMarketFlowSnapshotForStoreKey,
@@ -445,10 +451,11 @@ const asRecord = (value) =>
 
 const getContractLabel = (contract, ticker) => {
   if (!contract) return `${ticker || MISSING_VALUE} CONTRACT`;
-  const strike = contract.strike ?? contract.k ?? MISSING_VALUE;
-  const side = contract.cp || contract.right || contract.type || "";
-  const expiration = contract.exp || contract.expirationDate || "";
-  return [ticker, expiration, strike, side].filter(Boolean).join(" ");
+  return formatOptionContractLabel(contract, {
+    symbol: ticker,
+    includeSymbol: true,
+    fallback: `${ticker || MISSING_VALUE} CONTRACT`,
+  });
 };
 
 const getOptionMark = (bid, ask, last) => {
@@ -575,7 +582,7 @@ const TradePanelShell = ({
           style={{
             color: T.text,
             fontSize: fs(10),
-            fontWeight: 800,
+            fontWeight: 400,
             letterSpacing: "0.05em",
           }}
         >
@@ -617,6 +624,7 @@ const TradeContractDetailPanel = ({
 }) => {
   const chainSnapshot = useTradeOptionChainSnapshot(ticker);
   const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
+  const flowTapeFilters = useFlowTapeFilterState();
   const {
     favoriteTimeframes: optionFavoriteTimeframes,
     toggleFavoriteTimeframe: toggleOptionFavoriteTimeframe,
@@ -836,9 +844,13 @@ const TradeContractDetailPanel = ({
     () => mergeFlowEventFeeds(tradeFlowSnapshot.events || [], flowEvents || []),
     [flowEvents, tradeFlowSnapshot.events],
   );
+  const filteredFlowEvents = useMemo(
+    () => filterFlowTapeEvents(mergedFlowEvents, flowTapeFilters),
+    [flowTapeFilters, mergedFlowEvents],
+  );
   const selectedContractFlowEvents = useMemo(
     () =>
-      filterFlowEventsForOptionContract(mergedFlowEvents, {
+      filterFlowEventsForOptionContract(filteredFlowEvents, {
         symbol: ticker,
         providerContractId,
         optionTicker,
@@ -848,7 +860,7 @@ const TradeContractDetailPanel = ({
       }),
     [
       contract.strike,
-      mergedFlowEvents,
+      filteredFlowEvents,
       optionExpirationIso,
       optionRight,
       optionTicker,
@@ -1233,7 +1245,7 @@ const TradeContractDetailPanel = ({
                 padding: sp("4px 6px"),
                 fontFamily: T.mono,
                 fontSize: fs(8),
-                fontWeight: 900,
+                fontWeight: 400,
                 pointerEvents: "auto",
                 boxShadow: `0 0 0 1px ${T.bg4}cc`,
               }}
@@ -1315,7 +1327,7 @@ const TradeSpotFlowPanel = ({ ticker }) => {
         >
           {latest ? (
             <div>
-              <div style={{ color: T.text, fontWeight: 800 }}>
+              <div style={{ color: T.text, fontWeight: 400 }}>
                 {latest.side || "flow"}{" "}
                 {latest.contract || latest.ticker || ticker}
               </div>
@@ -2430,6 +2442,16 @@ export const TradeScreen = ({
       },
     },
   );
+  const tradeOrdersQuery = useListOrders(
+    { accountId, mode: environment },
+    {
+      query: {
+        enabled: Boolean(isVisible && brokerAuthenticated && accountId),
+        ...QUERY_DEFAULTS,
+        refetchInterval: false,
+      },
+    },
+  );
   const heldContracts = useMemo(() => {
     if (brokerConfigured) {
       if (!brokerAuthenticated || !accountId) {
@@ -2806,7 +2828,6 @@ export const TradeScreen = ({
       predicate: (query) => isTradeHeavyQueryKey(query.queryKey, activeTicker),
       type: "inactive",
     });
-    clearTradeOptionChainSnapshot(activeTicker);
     clearTradeFlowSnapshot(activeTicker);
   }, [activeTicker, isVisible, queryClient]);
 
@@ -2944,7 +2965,7 @@ export const TradeScreen = ({
                     color: T.text,
                     fontFamily: T.display,
                     fontSize: fs(11),
-                    fontWeight: 800,
+                    fontWeight: 400,
                   }}
                 >
                   Signal-options context
@@ -2954,7 +2975,7 @@ export const TradeScreen = ({
                     color: automationContractMatches ? T.cyan : T.amber,
                     fontFamily: T.mono,
                     fontSize: fs(8),
-                    fontWeight: 900,
+                    fontWeight: 400,
                   }}
                 >
                   {automationContractMatches ? "MATCHED" : "MANUAL OVERRIDE"}
@@ -2973,16 +2994,21 @@ export const TradeScreen = ({
               >
                 {automationContext.direction?.toUpperCase?.() || "SIGNAL"} ·{" "}
                 {automationContext.timeframe || "timeframe"} · planned{" "}
-                {[automationContractExp, automationContract.strike, automationContractCp]
-                  .filter(Boolean)
-                  .join(" ")}{" "}
+                {formatOptionContractLabel(
+                  {
+                    exp: automationContractExp,
+                    strike: automationContract.strike,
+                    cp: automationContractCp,
+                  },
+                  { includeSymbol: false },
+                )}{" "}
                 · fill{" "}
                 {Number.isFinite(
                   Number(asRecord(automationContext.orderPlan).simulatedFillPrice),
                 )
-                  ? `$${Number(
+                  ? Number(
                       asRecord(automationContext.orderPlan).simulatedFillPrice,
-                    ).toFixed(2)}`
+                    ).toFixed(2)
                   : MISSING_VALUE}
               </div>
             </div>
@@ -2997,7 +3023,7 @@ export const TradeScreen = ({
                 color: T.textDim,
                 fontFamily: T.mono,
                 fontSize: fs(8),
-                fontWeight: 800,
+                fontWeight: 400,
                 cursor: "pointer",
               }}
             >
@@ -3057,6 +3083,17 @@ export const TradeScreen = ({
             brokerAuthenticated={brokerAuthenticated}
             gatewayTradingReady={gatewayTradingReady}
             gatewayTradingMessage={gatewayTradingMessage}
+            brokerPositions={tradePositionsQuery.data?.positions || []}
+            brokerOrders={tradeOrdersQuery.data?.orders || []}
+            brokerPositionContextReady={Boolean(
+              brokerAuthenticated && accountId && tradePositionsQuery.data,
+            )}
+            brokerOrderContextReady={Boolean(
+              brokerAuthenticated &&
+                accountId &&
+                tradeOrdersQuery.data &&
+                !tradeOrdersQuery.data.degraded,
+            )}
             automationContext={automationContextVisible ? automationContext : null}
           />
         </div>
@@ -3120,6 +3157,7 @@ export const TradeScreen = ({
             accountId={accountId}
             brokerConfigured={brokerConfigured}
             brokerAuthenticated={brokerAuthenticated}
+            isVisible={isVisible}
             streamingPaused={!tradeBrokerStreamingEnabled}
           />
           <MemoTradePositionsPanel
@@ -3129,6 +3167,7 @@ export const TradeScreen = ({
             brokerAuthenticated={brokerAuthenticated}
             gatewayTradingReady={gatewayTradingReady}
             gatewayTradingMessage={gatewayTradingMessage}
+            isVisible={isVisible}
             streamingPaused={!tradeBrokerStreamingEnabled}
             onLoadPosition={handleLoadPosition}
           />

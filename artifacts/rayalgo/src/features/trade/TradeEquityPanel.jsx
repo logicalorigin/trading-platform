@@ -70,6 +70,10 @@ import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
 } from "../platform/runtimeTickerStore";
+import {
+  filterFlowTapeEvents,
+  useFlowTapeFilterState,
+} from "../platform/flowFilterStore";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
 import {
   DEFAULT_TRADE_EQUITY_STUDIES,
@@ -99,9 +103,14 @@ export const TradeEquityPanel = ({
 }) => {
   const queryClient = useQueryClient();
   const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
+  const flowTapeFilters = useFlowTapeFilterState();
   const effectiveFlowEvents = useMemo(
     () => mergeFlowEventFeeds(tradeFlowSnapshot.events || [], flowEvents || []),
     [flowEvents, tradeFlowSnapshot.events],
+  );
+  const filteredFlowEvents = useMemo(
+    () => filterFlowTapeEvents(effectiveFlowEvents, flowTapeFilters),
+    [effectiveFlowEvents, flowTapeFilters],
   );
   const tickerFallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
@@ -540,8 +549,8 @@ export const TradeEquityPanel = ({
       ? "stale"
       : "live";
   const chartEvents = useMemo(
-    () => flowEventsToChartEvents(effectiveFlowEvents || [], ticker),
-    [effectiveFlowEvents, ticker],
+    () => flowEventsToChartEvents(filteredFlowEvents || [], ticker),
+    [filteredFlowEvents, ticker],
   );
   const chartModel = useMeasuredChartModel({
     scopeKey: chartHydrationScopeKey,

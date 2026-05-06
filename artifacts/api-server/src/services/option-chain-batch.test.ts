@@ -1281,6 +1281,58 @@ test("getOptionChartBarsWithDebug uses a provided provider contract id before lo
   assert.equal(result.bars[0].close, 2.15);
 });
 
+test("getOptionChartBarsWithDebug still resolves a broker contract when only an option ticker is supplied", async () => {
+  const expirationDate = new Date("2026-12-18T00:00:00.000Z");
+  let historicalProviderContractId: string | null | undefined;
+  let optionChainFetches = 0;
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getOptionChain: async () => {
+          optionChainFetches += 1;
+          const base = optionContract(expirationDate, 970);
+          return [
+            {
+              ...base,
+              contract: {
+                ...base.contract,
+                ticker: "O:SPY261218C00970000",
+                providerContractId: "chain-conid",
+              },
+            },
+          ];
+        },
+        getHistoricalBars: async (input: { providerContractId?: string | null }) => {
+          historicalProviderContractId = input.providerContractId;
+          return [brokerBar(input.providerContractId ?? null, 2.2)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const result = await getOptionChartBarsWithDebug({
+    underlying: "SPY",
+    expirationDate,
+    strike: 970,
+    right: "call",
+    optionTicker: "O:SPY261218C00970000",
+    timeframe: "1m",
+    limit: 5,
+    outsideRth: false,
+  });
+
+  assert.equal(optionChainFetches, 1);
+  assert.equal(historicalProviderContractId, "chain-conid");
+  assert.equal(result.providerContractId, "chain-conid");
+  assert.equal(result.resolutionSource, "chain");
+  assert.equal(result.dataSource, "ibkr-history");
+  assert.equal(result.bars.length, 1);
+});
+
 test("getOptionChartBarsWithDebug preserves IBKR bars cache metadata", async () => {
   let historicalCalls = 0;
   __setIbkrBridgeClientFactoryForTests(

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  getDiagnosticEventDetail,
+  getLatestDiagnostics,
+  listDiagnosticEvents,
+  listDiagnosticHistory,
+  recordClientDiagnosticEvent,
+} from "@workspace/api-client-react";
+import {
   useChartHydrationStats,
 } from "../features/charting/chartHydrationStats";
 import {
@@ -188,11 +195,7 @@ function snapshotBySubsystem(latest, subsystem) {
 }
 
 function postClientEvent(input) {
-  fetch("/api/diagnostics/client-events", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(input),
-  }).catch(() => {});
+  recordClientDiagnosticEvent(input).catch(() => {});
 }
 
 function postClientMetrics(input) {
@@ -241,7 +244,7 @@ const Panel = ({ title, action, children }) => (
         marginBottom: sp(10),
       }}
     >
-      <div style={{ fontSize: fs(12), fontWeight: 800 }}>{title}</div>
+      <div style={{ fontSize: fs(12), fontWeight: 400 }}>{title}</div>
       {action}
     </div>
     {children}
@@ -274,7 +277,7 @@ const StateRow = ({ label, value, tone = T.textSec, onClick }) => (
     <span
       style={{
         color: tone,
-        fontWeight: 800,
+        fontWeight: 400,
         textAlign: "right",
         minWidth: 0,
         overflowWrap: "anywhere",
@@ -309,7 +312,7 @@ const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
     <span style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>
       {label}
     </span>
-    <span style={{ color: severityTone(severity), fontSize: fs(17), fontWeight: 900 }}>
+    <span style={{ color: severityTone(severity), fontSize: fs(17), fontWeight: 400 }}>
       {value ?? MISSING_VALUE}
     </span>
     <span style={{ color: T.textSec, fontSize: fs(9), fontFamily: T.mono }}>
@@ -393,11 +396,11 @@ const EventList = ({ events, onSelect }) => (
             cursor: "pointer",
           }}
         >
-          <span style={{ color: severityTone(event.severity), fontFamily: T.mono, fontSize: fs(9), fontWeight: 900 }}>
+          <span style={{ color: severityTone(event.severity), fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
             {event.severity.toUpperCase()}
           </span>
           <span style={{ minWidth: 0 }}>
-            <div style={{ color: T.text, fontSize: fs(11), fontWeight: 800, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+            <div style={{ color: T.text, fontSize: fs(11), fontWeight: 400, whiteSpace: "normal", overflowWrap: "anywhere" }}>
               {event.message}
             </div>
             <div style={{ color: T.textDim, fontSize: fs(9), fontFamily: T.mono }}>
@@ -449,11 +452,11 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
         cursor: "pointer",
       }}
     >
-      <span style={{ color: severityTone(alert.severity), fontFamily: T.mono, fontSize: fs(9), fontWeight: 900 }}>
+      <span style={{ color: severityTone(alert.severity), fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
         {alert.severity.toUpperCase()}
       </span>
       <span style={{ minWidth: 0 }}>
-        <div style={{ color: T.text, fontSize: fs(11), fontWeight: 800, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+        <div style={{ color: T.text, fontSize: fs(11), fontWeight: 400, whiteSpace: "normal", overflowWrap: "anywhere" }}>
           {alert.message}
         </div>
         <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -527,7 +530,7 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
             color: health.color,
             fontFamily: T.mono,
             fontSize: fs(9),
-            fontWeight: 900,
+            fontWeight: 400,
             padding: sp("3px 6px"),
           }}
         >
@@ -700,17 +703,15 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
   }, [alertPreferences.dismissedAlerts]);
 
   const loadHistoryAndEvents = useCallback(() => {
-    const params = new URLSearchParams({
+    const params = {
       from: timeWindow.from.toISOString(),
       to: timeWindow.to.toISOString(),
-      limit: "240",
-    });
-    fetch(`/api/diagnostics/history?${params.toString()}`)
-      .then((response) => response.json())
+      limit: 240,
+    };
+    listDiagnosticHistory(params)
       .then((payload) => setHistoryData(payload))
       .catch(() => {});
-    fetch(`/api/diagnostics/events?${params.toString()}`)
-      .then((response) => response.json())
+    listDiagnosticEvents(params)
       .then((payload) => setEvents(payload.events || []))
       .catch(() => {});
   }, [timeWindow.from, timeWindow.to]);
@@ -775,8 +776,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
     if (typeof window.EventSource === "undefined") {
       setStreamState("polling");
       const poll = () => {
-        fetch("/api/diagnostics/latest")
-          .then((response) => response.json())
+        getLatestDiagnostics()
           .then((payload) => {
             setLatest(payload);
             syncLocalAlertsFromSnapshot(payload.events || []);
@@ -825,8 +825,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
       setEventDetail(null);
       return;
     }
-    fetch(`/api/diagnostics/events/${encodeURIComponent(selectedEvent.id || selectedEvent.incidentKey)}`)
-      .then((response) => response.ok ? response.json() : null)
+    getDiagnosticEventDetail(selectedEvent.id || selectedEvent.incidentKey)
       .then((payload) => setEventDetail(payload))
       .catch(() => setEventDetail(null));
   }, [isVisible, selectedEvent]);
@@ -938,13 +937,12 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
 
   const selectMetric = (subsystem, metricKey) => {
     setActiveTab("Events");
-    const params = new URLSearchParams({
+    const params = {
       from: timeWindow.from.toISOString(),
       to: timeWindow.to.toISOString(),
       subsystem,
-    });
-    fetch(`/api/diagnostics/events?${params.toString()}`)
-      .then((response) => response.json())
+    };
+    listDiagnosticEvents(params)
       .then((payload) => setEvents(payload.events || []))
       .catch(() => {});
     setSelectedEvent({
@@ -1041,13 +1039,13 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         }}
       >
         <div>
-          <div style={{ fontSize: fs(18), fontWeight: 900 }}>Diagnostics</div>
+          <div style={{ fontSize: fs(18), fontWeight: 400 }}>Diagnostics</div>
           <div style={{ color: T.textDim, fontSize: fs(10), fontFamily: T.mono }}>
             Real-time SSE, 7-day history, per-subsystem uptime, events, probes, and thresholds
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: sp(8), flexWrap: "wrap", justifyContent: diagnosticsIsPhone ? "flex-start" : "flex-end", width: diagnosticsIsPhone ? "100%" : undefined }}>
-          <span style={{ color: severityTone(topSeverity), fontFamily: T.mono, fontSize: fs(10), fontWeight: 900 }}>
+          <span style={{ color: severityTone(topSeverity), fontFamily: T.mono, fontSize: fs(10), fontWeight: 400 }}>
             {statusLabel(latest?.status)}
           </span>
           <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
@@ -1066,7 +1064,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
                 padding: sp("5px 8px"),
                 fontFamily: T.mono,
                 fontSize: fs(9),
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor: "pointer",
               }}
             >
@@ -1085,7 +1083,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               padding: sp("5px 8px"),
               fontFamily: T.mono,
               fontSize: fs(9),
-              fontWeight: 900,
+              fontWeight: 400,
               textDecoration: "none",
             }}
           >
@@ -1114,7 +1112,7 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
               padding: sp("7px 10px"),
               fontFamily: T.mono,
               fontSize: fs(9),
-              fontWeight: 900,
+              fontWeight: 400,
               cursor: "pointer",
             }}
           >
@@ -1578,7 +1576,7 @@ function smallButton() {
     padding: sp("5px 8px"),
     fontFamily: T.mono,
     fontSize: fs(9),
-    fontWeight: 900,
+    fontWeight: 400,
     cursor: "pointer",
   };
 }

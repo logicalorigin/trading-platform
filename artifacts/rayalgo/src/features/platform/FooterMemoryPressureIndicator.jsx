@@ -95,7 +95,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
         color: tone,
         fontFamily: T.mono,
         fontSize: fs(8),
-        fontWeight: 900,
+        fontWeight: 400,
         flexShrink: 0,
         maxWidth: "min(58vw, 430px)",
       }}

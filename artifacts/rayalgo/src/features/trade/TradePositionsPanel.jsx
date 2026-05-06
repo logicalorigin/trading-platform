@@ -29,6 +29,7 @@ import { isOpenPositionRow } from "../account/accountPositionRows.js";
 import {
   formatEnumLabel,
   formatExpirationLabel,
+  formatOptionContractLabel,
   formatPriceValue,
   formatRelativeTimeShort,
   formatSignedPercent,
@@ -54,6 +55,7 @@ export const TradePositionsPanel = ({
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   onLoadPosition,
+  isVisible = false,
   streamingPaused = false,
 }) => {
   const toast = useToast();
@@ -61,11 +63,12 @@ export const TradePositionsPanel = ({
   const pos = usePositions();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("open");
+  const brokerPanelEnabled = Boolean(isVisible && brokerAuthenticated && accountId);
   const positionsQuery = useListPositions(
     { accountId, mode: environment },
     {
       query: {
-        enabled: Boolean(brokerAuthenticated && accountId),
+        enabled: brokerPanelEnabled,
         ...QUERY_DEFAULTS,
         refetchInterval: false,
       },
@@ -75,7 +78,7 @@ export const TradePositionsPanel = ({
     { accountId, mode: environment },
     {
       query: {
-        enabled: Boolean(brokerAuthenticated && accountId),
+        enabled: brokerPanelEnabled,
         ...QUERY_DEFAULTS,
         refetchInterval: false,
       },
@@ -89,7 +92,7 @@ export const TradePositionsPanel = ({
         days: 7,
         limit: 64,
       }),
-    enabled: Boolean(brokerAuthenticated && accountId),
+    enabled: brokerPanelEnabled,
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
@@ -99,6 +102,7 @@ export const TradePositionsPanel = ({
     if (
       !brokerAuthenticated ||
       !accountId ||
+      !isVisible ||
       streamingPaused ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -127,7 +131,7 @@ export const TradePositionsPanel = ({
       source.removeEventListener("executions", handleExecutions);
       source.close();
     };
-  }, [accountId, brokerAuthenticated, environment, queryClient, streamingPaused]);
+  }, [accountId, brokerAuthenticated, environment, isVisible, queryClient, streamingPaused]);
   const refreshBrokerQueries = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
     queryClient.invalidateQueries({ queryKey: ["/api/positions"] });
@@ -212,11 +216,10 @@ export const TradePositionsPanel = ({
 
       return (positionsQuery.data?.positions || []).filter(isOpenPositionRow).map((position) => {
         const isOption = Boolean(position.optionContract);
-        const expiration = isOption
-          ? formatExpirationLabel(position.optionContract.expirationDate)
-          : "EQUITY";
         const contract = isOption
-          ? `${position.optionContract.strike} ${position.optionContract.right === "call" ? "C" : "P"} ${expiration}`
+          ? formatOptionContractLabel(position.optionContract, {
+              includeSymbol: false,
+            })
           : "EQUITY";
 
         return {
@@ -227,6 +230,13 @@ export const TradePositionsPanel = ({
           ticker: position.symbol,
           side: position.quantity >= 0 ? "LONG" : "SHORT",
           contract,
+          optionLoadContract: isOption
+            ? {
+                strike: position.optionContract.strike,
+                cp: position.optionContract.right === "call" ? "C" : "P",
+                exp: formatExpirationLabel(position.optionContract.expirationDate),
+              }
+            : null,
           qty: Math.abs(position.quantity),
           entry: position.averagePrice,
           mark: position.marketPrice,
@@ -238,7 +248,31 @@ export const TradePositionsPanel = ({
       });
     }
 
-    return pos.positions.map((p) => ({
+    return pos.positions.map((p) => {
+      const optionLoadContract =
+        p.kind === "option"
+          ? {
+              strike: p.strike,
+              cp: p.cp,
+              exp: p.exp,
+            }
+          : null;
+      const optionContractLabel = optionLoadContract
+        ? formatOptionContractLabel(
+            {
+              ticker: p.ticker,
+              symbol: p.ticker,
+              expirationDate: p.exp,
+              exp: p.exp,
+              strike: p.strike,
+              right: p.cp,
+              cp: p.cp,
+            },
+            { includeSymbol: false },
+          )
+        : null;
+
+      return {
         _isUser: true,
         _isLive: false,
         _id: p.id,
@@ -248,8 +282,9 @@ export const TradePositionsPanel = ({
           p.kind === "option" ? (p.side === "BUY" ? "LONG" : "SHORT") : p.side,
         contract:
           p.kind === "option"
-            ? `${p.strike} ${p.cp} ${p.exp}`
+            ? optionContractLabel
             : `${p.side} EQUITY`,
+        optionLoadContract,
         qty: p.qty,
         entry: p.entry,
         mark: null,
@@ -257,7 +292,8 @@ export const TradePositionsPanel = ({
         pct: null,
         sl: p.stopLoss ?? +(p.entry * 0.65).toFixed(2),
         tp: p.takeProfit ?? +(p.entry * 1.75).toFixed(2),
-      }));
+      };
+    });
   }, [
     accountId,
     brokerAuthenticated,
@@ -300,10 +336,6 @@ export const TradePositionsPanel = ({
   const pendingOrderCount = liveOrders.filter(
     (order) => !FINAL_ORDER_STATUSES.has(order.status),
   ).length;
-  const parseContract = (str) => {
-    const parts = str.split(" ");
-    return { strike: parseFloat(parts[0]), cp: parts[1], exp: parts[2] };
-  };
   const buildOptionContractPayload = (optionContract) =>
     optionContract
       ? {
@@ -774,7 +806,7 @@ export const TradePositionsPanel = ({
               border: "none",
               padding: sp(0),
               fontSize: fs(9),
-              fontWeight: 700,
+              fontWeight: 400,
               color: tab === "open" ? T.text : T.textMuted,
               fontFamily: T.display,
               letterSpacing: "0.04em",
@@ -799,7 +831,7 @@ export const TradePositionsPanel = ({
               border: "none",
               padding: sp(0),
               fontSize: fs(9),
-              fontWeight: 700,
+              fontWeight: 400,
               color: tab === "history" ? T.text : T.textMuted,
               fontFamily: T.display,
               letterSpacing: "0.04em",
@@ -824,7 +856,7 @@ export const TradePositionsPanel = ({
               border: "none",
               padding: sp(0),
               fontSize: fs(9),
-              fontWeight: 700,
+              fontWeight: 400,
               color: tab === "orders" ? T.text : T.textMuted,
               fontFamily: T.display,
               letterSpacing: "0.04em",
@@ -846,7 +878,7 @@ export const TradePositionsPanel = ({
         <span
           style={{
             fontSize: fs(10),
-            fontWeight: 700,
+            fontWeight: 400,
             fontFamily: T.mono,
             color: headerSummaryColor,
             whiteSpace: "nowrap",
@@ -956,8 +988,7 @@ export const TradePositionsPanel = ({
                 <span></span>
               </div>
               {openPositions.map((p) => {
-                const isLoadable =
-                  p.contract && p.contract.match(/\d+\s[CP]\s/);
+                const isLoadable = Boolean(p.optionLoadContract);
                 const closeDisabled = gatewayActionDisabled;
                 return (
                   <AppTooltip key={p._id} content={
@@ -968,8 +999,10 @@ export const TradePositionsPanel = ({
                     key={p._id}
                     onClick={() => {
                       if (isLoadable) {
-                        const parsed = parseContract(p.contract);
-                        onLoadPosition({ ticker: p.ticker, ...parsed });
+                        onLoadPosition({
+                          ticker: p.ticker,
+                          ...p.optionLoadContract,
+                        });
                       }
                     }}
                     style={{
@@ -995,13 +1028,13 @@ export const TradePositionsPanel = ({
                         : "transparent")
                     }
                   >
-                    <span style={{ fontWeight: 700, color: T.text }}>
+                    <span style={{ fontWeight: 400, color: T.text }}>
                       {p.ticker}
                     </span>
                     <span
                       style={{
                         color: p.side === "LONG" ? T.green : T.red,
-                        fontWeight: 600,
+                        fontWeight: 400,
                         fontSize: fs(7),
                         padding: sp("1px 4px"),
                         background:
@@ -1021,17 +1054,17 @@ export const TradePositionsPanel = ({
                       {p.qty}
                     </span>
                     <span style={{ color: T.textDim, textAlign: "right" }}>
-                      {formatPriceValue(p.entry)}
+                      {isFiniteNumber(p.entry) ? formatPriceValue(p.entry) : MISSING_VALUE}
                     </span>
                     <span
                       style={{
                         color: T.text,
-                        fontWeight: 600,
+                        fontWeight: 400,
                         textAlign: "right",
                       }}
                     >
                       {isFiniteNumber(p.mark)
-                        ? `$${p.mark.toFixed(2)}`
+                        ? p.mark.toFixed(2)
                         : MISSING_VALUE}
                     </span>
                     <span
@@ -1042,7 +1075,7 @@ export const TradePositionsPanel = ({
                             : p.pnl >= 0
                               ? T.green
                               : T.red,
-                        fontWeight: 700,
+                        fontWeight: 400,
                         textAlign: "right",
                       }}
                     >
@@ -1058,7 +1091,7 @@ export const TradePositionsPanel = ({
                             : p.pct >= 0
                               ? T.green
                               : T.red,
-                        fontWeight: 600,
+                        fontWeight: 400,
                         textAlign: "right",
                         fontSize: fs(8),
                       }}
@@ -1087,7 +1120,7 @@ export const TradePositionsPanel = ({
                         color: T.red,
                         fontSize: fs(9),
                         fontFamily: T.mono,
-                        fontWeight: 700,
+                        fontWeight: 400,
                         borderRadius: dim(2),
                         cursor: closeDisabled ? "not-allowed" : "pointer",
                         padding: sp("1px 0"),
@@ -1222,13 +1255,13 @@ export const TradePositionsPanel = ({
                     alignItems: "center",
                   }}
                 >
-                  <span style={{ fontWeight: 700, color: T.text }}>
+                  <span style={{ fontWeight: 400, color: T.text }}>
                     {execution.ticker}
                   </span>
                   <span
                     style={{
                       color: execution.side === "BUY" ? T.green : T.red,
-                      fontWeight: 700,
+                      fontWeight: 400,
                     }}
                   >
                     {execution.side}
@@ -1249,7 +1282,7 @@ export const TradePositionsPanel = ({
                   </span>
                   <span style={{ color: T.textDim, textAlign: "right" }}>
                     {isFiniteNumber(execution.price)
-                      ? `$${execution.price.toFixed(2)}`
+                      ? execution.price.toFixed(2)
                       : MISSING_VALUE}
                   </span>
                   <span
@@ -1399,7 +1432,9 @@ export const TradePositionsPanel = ({
                 return (
                   <AppTooltip key={order.id} content={
                       isOption
-                        ? `Load ${order.symbol} ${order.optionContract.strike}${order.optionContract.right === "call" ? "C" : "P"} into Order Ticket`
+                        ? `Load ${formatOptionContractLabel(order.optionContract, {
+                            symbol: order.symbol,
+                          })} into Order Ticket`
                         : order.id
                     }><div
                     key={order.id}
@@ -1427,13 +1462,13 @@ export const TradePositionsPanel = ({
                       alignItems: "center",
                     }}
                   >
-                    <span style={{ fontWeight: 700, color: T.text }}>
+                    <span style={{ fontWeight: 400, color: T.text }}>
                       {order.symbol}
                     </span>
                     <span
                       style={{
                         color: order.side === "buy" ? T.green : T.red,
-                        fontWeight: 700,
+                        fontWeight: 400,
                       }}
                     >
                       {order.side === "buy" ? "BUY" : "SELL"}
@@ -1452,7 +1487,7 @@ export const TradePositionsPanel = ({
                         color: orderStatusColor(order.status),
                         textAlign: "right",
                         fontSize: fs(8),
-                        fontWeight: 700,
+                        fontWeight: 400,
                       }}
                     >
                       {formatEnumLabel(order.status)}
@@ -1484,7 +1519,7 @@ export const TradePositionsPanel = ({
                         color: isTerminal ? T.textDim : T.red,
                         fontSize: fs(9),
                         fontFamily: T.mono,
-                        fontWeight: 700,
+                        fontWeight: 400,
                         borderRadius: dim(2),
                         cursor:
                           cancelDisabled
@@ -1526,7 +1561,7 @@ export const TradePositionsPanel = ({
               color: T.red,
               fontSize: fs(9),
               fontFamily: T.sans,
-              fontWeight: 600,
+              fontWeight: 400,
               cursor: gatewayActionDisabled ? "not-allowed" : "pointer",
               opacity: gatewayActionDisabled ? 0.55 : 1,
             }}
@@ -1545,7 +1580,7 @@ export const TradePositionsPanel = ({
               color: T.textSec,
               fontSize: fs(9),
               fontFamily: T.sans,
-              fontWeight: 600,
+              fontWeight: 400,
               cursor: gatewayActionDisabled ? "not-allowed" : "pointer",
               opacity: gatewayActionDisabled ? 0.55 : 1,
             }}
@@ -1564,7 +1599,7 @@ export const TradePositionsPanel = ({
               color: T.amber,
               fontSize: fs(9),
               fontFamily: T.sans,
-              fontWeight: 600,
+              fontWeight: 400,
               cursor:
                 gatewayActionDisabled ||
                 (brokerConfigured && brokerAuthenticated && accountId)

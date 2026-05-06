@@ -995,6 +995,19 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
       expose: true,
     });
   }
+  if (
+    input.assetClass === "option" &&
+    input.side === "sell" &&
+    input.optionContract?.right === "call" &&
+    (input.positionEffect === "open" ||
+      input.strategyIntent === "covered_call" ||
+      input.strategyIntent === "uncovered_short_call")
+  ) {
+    throw new HttpError(409, "Shadow covered-call and uncovered-call sell-to-open fills are not enabled yet.", {
+      code: "shadow_short_call_open_disabled",
+      expose: true,
+    });
+  }
 
   const fill = await resolveFillPrice(input);
   const multiplier = marketMultiplier({

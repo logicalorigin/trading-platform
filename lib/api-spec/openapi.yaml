@@ -1429,6 +1429,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/SseStream"
 
+  /flow/premium-distribution:
+    get:
+      operationId: getFlowPremiumDistribution
+      tags: [flow]
+      summary: Get Polygon-backed top options premium distribution widgets
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Number of premium distribution widgets to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 6
+        - name: candidateLimit
+          in: query
+          required: false
+          description: Number of high-volume stock candidates to score through Polygon options snapshots.
+          schema:
+            type: integer
+            minimum: 6
+            maximum: 60
+        - name: timeframe
+          in: query
+          required: false
+          description: Candidate-volume timeframe for ranking the six widgets.
+          schema:
+            type: string
+            enum: [today, week]
+      responses:
+        "200":
+          description: Top options premium distribution widgets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlowPremiumDistributionResponse"
+
   /flow/events:
     get:
       operationId: listFlowEvents
@@ -2437,6 +2474,14 @@ components:
     OrderSide:
       type: string
       enum: [buy, sell]
+
+    OptionOrderPositionEffect:
+      type: string
+      enum: [open, close]
+
+    OptionOrderStrategyIntent:
+      type: string
+      enum: [long_option, sell_to_close, covered_call, uncovered_short_call]
 
     OrderType:
       type: string
@@ -4474,6 +4519,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        positionEffect:
+          $ref: "#/components/schemas/OptionOrderPositionEffect"
+        strategyIntent:
+          $ref: "#/components/schemas/OptionOrderStrategyIntent"
         source:
           type: string
           enum: [manual, automation]
@@ -4535,6 +4584,10 @@ components:
             - type: "null"
         confirm:
           type: boolean
+        parentOrderRequest:
+          oneOf:
+            - $ref: "#/components/schemas/PlaceOrderRequest"
+            - type: "null"
         ibkrOrders:
           type: array
           items:
@@ -4592,6 +4645,271 @@ components:
         - accountId
         - message
         - submittedAt
+
+    FlowPremiumDistributionBucket:
+      type: object
+      properties:
+        inflowPremium:
+          type: number
+        outflowPremium:
+          type: number
+        buyPremium:
+          type: number
+        sellPremium:
+          type: number
+        neutralPremium:
+          type: number
+        totalPremium:
+          type: number
+        count:
+          type: integer
+          minimum: 0
+      required:
+        - inflowPremium
+        - outflowPremium
+        - buyPremium
+        - sellPremium
+        - neutralPremium
+        - totalPremium
+        - count
+
+    FlowPremiumDistributionBuckets:
+      type: object
+      properties:
+        small:
+          $ref: "#/components/schemas/FlowPremiumDistributionBucket"
+        medium:
+          $ref: "#/components/schemas/FlowPremiumDistributionBucket"
+        large:
+          $ref: "#/components/schemas/FlowPremiumDistributionBucket"
+      required:
+        - small
+        - medium
+        - large
+
+    FlowPremiumDistributionBucketThresholds:
+      type: object
+      properties:
+        smallMin:
+          type: number
+        mediumMin:
+          type: number
+        largeMin:
+          type: number
+      required:
+        - smallMin
+        - mediumMin
+        - largeMin
+
+    FlowPremiumDistributionClassificationConfidence:
+      type: string
+      enum: [high, medium, low, very_low, none]
+
+    FlowPremiumDistributionWidget:
+      type: object
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+        symbol:
+          type: string
+        asOf:
+          type: string
+          format: date-time
+        timeframe:
+          type: string
+          enum: [today, week]
+        stockDayVolume:
+          type: [number, "null"]
+        marketCap:
+          type: [number, "null"]
+        marketCapTier:
+          type: string
+          enum: [mega, large, mid, small_or_unknown]
+        bucketThresholds:
+          $ref: "#/components/schemas/FlowPremiumDistributionBucketThresholds"
+        premiumTotal:
+          type: number
+        classifiedPremium:
+          type: number
+        classificationCoverage:
+          type: number
+        classificationConfidence:
+          $ref: "#/components/schemas/FlowPremiumDistributionClassificationConfidence"
+        netPremium:
+          type: number
+        inflowPremium:
+          type: number
+        outflowPremium:
+          type: number
+        buyPremium:
+          type: number
+        sellPremium:
+          type: number
+        neutralPremium:
+          type: number
+        callPremium:
+          type: number
+        putPremium:
+          type: number
+        buckets:
+          $ref: "#/components/schemas/FlowPremiumDistributionBuckets"
+        contractCount:
+          type: integer
+          minimum: 0
+        tradeCount:
+          type: integer
+          minimum: 0
+        classifiedTradeCount:
+          type: integer
+          minimum: 0
+        quoteMatchedCount:
+          type: integer
+          minimum: 0
+        tickTestMatchedCount:
+          type: integer
+          minimum: 0
+        sideBasis:
+          type: string
+          enum: [quote_match, tick_test, mixed, none]
+        quoteAccess:
+          type: string
+          enum: [available, unavailable, forbidden, unknown]
+        tradeAccess:
+          type: string
+          enum: [available, unavailable, forbidden, unknown]
+        source:
+          type: string
+          enum: [polygon-options-snapshot]
+        confidence:
+          type: string
+          enum: [snapshot, partial]
+        delayed:
+          type: boolean
+        pageCount:
+          type: integer
+          minimum: 0
+      required:
+        - rank
+        - symbol
+        - asOf
+        - timeframe
+        - stockDayVolume
+        - marketCap
+        - marketCapTier
+        - bucketThresholds
+        - premiumTotal
+        - classifiedPremium
+        - classificationCoverage
+        - classificationConfidence
+        - netPremium
+        - inflowPremium
+        - outflowPremium
+        - buyPremium
+        - sellPremium
+        - neutralPremium
+        - callPremium
+        - putPremium
+        - buckets
+        - contractCount
+        - tradeCount
+        - classifiedTradeCount
+        - quoteMatchedCount
+        - tickTestMatchedCount
+        - sideBasis
+        - quoteAccess
+        - tradeAccess
+        - source
+        - confidence
+        - delayed
+        - pageCount
+
+    FlowPremiumDistributionSource:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [polygon]
+        label:
+          type: string
+        timeframe:
+          type: string
+          enum: [today, week]
+        providerHost:
+          type: [string, "null"]
+        sideBasis:
+          type: string
+          enum: [quote_match, tick_test, mixed, none]
+        quoteAccess:
+          type: string
+          enum: [available, unavailable, forbidden, unknown]
+        tradeAccess:
+          type: string
+          enum: [available, unavailable, forbidden, unknown]
+        classifiedPremium:
+          type: number
+        classificationCoverage:
+          type: number
+        classificationConfidence:
+          $ref: "#/components/schemas/FlowPremiumDistributionClassificationConfidence"
+        candidateDate:
+          type: [string, "null"]
+        candidateCount:
+          type: integer
+          minimum: 0
+        rankedCount:
+          type: integer
+          minimum: 0
+        errorCount:
+          type: integer
+          minimum: 0
+        errorMessage:
+          type: [string, "null"]
+        cache:
+          type: string
+          enum: [fresh, stale, miss]
+      required:
+        - provider
+        - label
+        - timeframe
+        - providerHost
+        - sideBasis
+        - quoteAccess
+        - tradeAccess
+        - classifiedPremium
+        - classificationCoverage
+        - classificationConfidence
+        - candidateDate
+        - candidateCount
+        - rankedCount
+        - errorCount
+        - errorMessage
+        - cache
+
+    FlowPremiumDistributionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, empty, degraded, unconfigured]
+        asOf:
+          type: string
+          format: date-time
+        timeframe:
+          type: string
+          enum: [today, week]
+        source:
+          $ref: "#/components/schemas/FlowPremiumDistributionSource"
+        widgets:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowPremiumDistributionWidget"
+      required:
+        - status
+        - asOf
+        - timeframe
+        - source
+        - widgets
 
     FlowEvent:
       type: object

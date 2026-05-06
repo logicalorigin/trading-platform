@@ -22,7 +22,7 @@ const SummaryMetric = ({ label, value, tone = T.text, subvalue }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(11), fontFamily: T.mono, fontWeight: 900 }}>
+    <div style={{ color: tone, fontSize: fs(11), fontFamily: T.mono, fontWeight: 400 }}>
       {value}
     </div>
     {subvalue ? (
@@ -174,7 +174,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: sp(6) }}>
-                    <div style={{ color: T.text, fontWeight: 900, minWidth: 0 }}>
+                    <div style={{ color: T.text, fontWeight: 400, minWidth: 0 }}>
                       {dividend.symbol ? (
                         <MarketIdentityInline
                           item={{
@@ -191,7 +191,7 @@ export const CashFundingPanel = ({ query, currency, maskValues = false }) => (
                         "Cash"
                       )}
                     </div>
-                    <div style={{ color: T.green, fontWeight: 900 }}>
+                    <div style={{ color: T.green, fontWeight: 400 }}>
                       {formatAccountMoney(dividend.amount, dividend.currency, false, maskValues)}
                     </div>
                   </div>

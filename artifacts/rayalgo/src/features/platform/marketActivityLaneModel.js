@@ -1,3 +1,5 @@
+import { formatOptionContractLabel } from "../../lib/formatters";
+
 export const SIGNAL_MONITOR_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
 export const MARKET_ACTIVITY_RECENT_SIGNAL_MS = 2 * 24 * 60 * 60 * 1000;
 
@@ -163,11 +165,14 @@ export const buildUnusualLaneRows = (
     const timeMs = parseActivityTimeMs(time);
     const score = Number(event?.unusualScore ?? event?.score ?? 0);
     const premium = Number(event?.premium ?? 0);
+    const formattedContract = formatOptionContractLabel(event, {
+      includeSymbol: false,
+      fallback: "",
+    });
+    const rawContract = String(event?.contract || event?.optionTicker || "").trim();
     const contract =
-      event?.contract ||
-      [event?.strike, event?.cp || event?.right, event?.expirationDate || event?.exp]
-        .filter(Boolean)
-        .join(" ");
+      formattedContract ||
+      rawContract.replace(new RegExp(`^${symbol}\\s+`, "i"), "");
     const key =
       event?.id ||
       [symbol, contract || event?.optionTicker || "flow", timeMs || time].join("|");

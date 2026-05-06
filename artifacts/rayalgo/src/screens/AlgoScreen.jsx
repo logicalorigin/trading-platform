@@ -1,6 +1,5 @@
 import {
   useMutation,
-  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
@@ -10,13 +9,17 @@ import {
 } from "react";
 import {
   getGetAlgoDeploymentCockpitQueryKey,
+  getGetSignalOptionsAutomationStateQueryKey,
   useCreateAlgoDeployment,
   useEnableAlgoDeployment,
   useGetAlgoDeploymentCockpit,
+  useGetSignalOptionsAutomationState,
   useListAlgoDeployments,
   useListBacktestDraftStrategies,
   useListExecutionEvents,
   usePauseAlgoDeployment,
+  useRunSignalOptionsShadowScan,
+  useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
 import {
   AlgoDraftStrategiesPanel,
@@ -37,6 +40,7 @@ import { useToast } from "../features/platform/platformContexts.jsx";
 import { Badge } from "../components/platform/primitives.jsx";
 import {
   formatEnumLabel,
+  formatOptionContractLabel,
   formatRelativeTimeShort,
   parseSymbolUniverseInput,
 } from "../lib/formatters";
@@ -244,7 +248,7 @@ const formatMoney = (value, digits = 0) =>
       })}`
     : MISSING_VALUE;
 
-const formatNumber = (value, digits = 2) =>
+const formatPlainPrice = (value, digits = 2) =>
   Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : MISSING_VALUE;
 
 const formatPct = (value, digits = 1) =>
@@ -273,12 +277,11 @@ const parseChaseSteps = (value, fallback = []) => {
 };
 
 const formatContractLabel = (contract) => {
-  const value = asRecord(contract);
-  const right = String(value.right || "").toUpperCase();
-  const strike = Number.isFinite(Number(value.strike))
-    ? Number(value.strike).toLocaleString()
-    : MISSING_VALUE;
-  return [value.expirationDate, strike, right].filter(Boolean).join(" ");
+  const label = formatOptionContractLabel(asRecord(contract), {
+    includeSymbol: false,
+    fallback: "",
+  });
+  return label || MISSING_VALUE;
 };
 
 const signalOptionsActionColor = (status) => {
@@ -399,6 +402,7 @@ export const AlgoScreen = ({
   const draftsQuery = useListBacktestDraftStrategies({
     query: {
       ...QUERY_DEFAULTS,
+      enabled: Boolean(isVisible),
       refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
       retry: false,
     },
@@ -408,6 +412,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
+        enabled: Boolean(isVisible),
         refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
         retry: false,
       },
@@ -434,26 +439,24 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
+        enabled: Boolean(isVisible),
         refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
         retry: false,
       },
     },
   );
   const events = eventsQuery.data?.events || [];
-  const signalOptionsStateQuery = useQuery({
-    queryKey: [
-      "signal-options-state",
-      focusedDeployment?.id || "__none__",
-    ],
-    queryFn: () =>
-      signalOptionsApi(
-        `/api/algo/deployments/${encodeURIComponent(focusedDeployment.id)}/signal-options/state`,
-      ),
-    enabled: Boolean(isVisible && focusedDeployment?.id),
-    ...QUERY_DEFAULTS,
-    refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
-    retry: false,
-  });
+  const signalOptionsStateQuery = useGetSignalOptionsAutomationState(
+    focusedDeployment?.id || "",
+    {
+      query: {
+        ...QUERY_DEFAULTS,
+        enabled: Boolean(isVisible && focusedDeployment?.id),
+        refetchInterval: isVisible ? QUERY_DEFAULTS.refetchInterval : false,
+        retry: false,
+      },
+    },
+  );
   const cockpitQuery = useGetAlgoDeploymentCockpit(focusedDeployment?.id || "", {
     query: {
       ...QUERY_DEFAULTS,
@@ -597,7 +600,7 @@ export const AlgoScreen = ({
     queryClient.invalidateQueries({ queryKey: ["/api/session"] });
     if (focusedDeployment?.id) {
       queryClient.invalidateQueries({
-        queryKey: ["signal-options-state", focusedDeployment.id],
+        queryKey: getGetSignalOptionsAutomationStateQueryKey(focusedDeployment.id),
       });
       queryClient.invalidateQueries({
         queryKey: getGetAlgoDeploymentCockpitQueryKey(focusedDeployment.id),
@@ -664,54 +667,45 @@ export const AlgoScreen = ({
     startGatewayBridgeMutation.isPending || bridgeLaunchInFlight,
   );
 
-  const runShadowScanMutation = useMutation({
-    mutationFn: (deploymentId) =>
-      signalOptionsApi(
-        `/api/algo/deployments/${encodeURIComponent(deploymentId)}/signal-options/shadow-scan`,
-        { method: "POST" },
-      ),
-    onSuccess: (state) => {
-      refreshAlgoQueries();
-      setSelectedCandidateId(state?.candidates?.[0]?.id || null);
-      toast.push({
-        kind: "success",
-        title: "Shadow scan complete",
-        body: `${state?.candidates?.length || 0} signal-option candidates in the queue.`,
-      });
-    },
-    onError: (error) => {
-      toast.push({
-        kind: "error",
-        title: "Shadow scan failed",
-        body: error?.message || "The signal-options scan could not finish.",
-      });
+  const runShadowScanMutation = useRunSignalOptionsShadowScan({
+    mutation: {
+      onSuccess: (state) => {
+        refreshAlgoQueries();
+        setSelectedCandidateId(state?.candidates?.[0]?.id || null);
+        toast.push({
+          kind: "success",
+          title: "Shadow scan complete",
+          body: `${state?.candidates?.length || 0} signal-option candidates in the queue.`,
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "Shadow scan failed",
+          body: error?.message || "The signal-options scan could not finish.",
+        });
+      },
     },
   });
 
-  const updateProfileMutation = useMutation({
-    mutationFn: ({ deploymentId, profile }) =>
-      signalOptionsApi(
-        `/api/algo/deployments/${encodeURIComponent(deploymentId)}/signal-options/profile`,
-        {
-          method: "PATCH",
-          body: JSON.stringify(profile),
-        },
-      ),
-    onSuccess: (state) => {
-      refreshAlgoQueries();
-      setProfileDraft(cloneProfile(state?.profile));
-      toast.push({
-        kind: "success",
-        title: "Profile saved",
-        body: "Signal-options automation settings were updated.",
-      });
-    },
-    onError: (error) => {
-      toast.push({
-        kind: "error",
-        title: "Profile save failed",
-        body: error?.message || "The signal-options profile could not be saved.",
-      });
+  const updateProfileMutation = useUpdateSignalOptionsExecutionProfile({
+    mutation: {
+      onSuccess: (state) => {
+        refreshAlgoQueries();
+        setProfileDraft(cloneProfile(state?.profile));
+        toast.push({
+          kind: "success",
+          title: "Profile saved",
+          body: "Signal-options automation settings were updated.",
+        });
+      },
+      onError: (error) => {
+        toast.push({
+          kind: "error",
+          title: "Profile save failed",
+          body: error?.message || "The signal-options profile could not be saved.",
+        });
+      },
     },
   });
 
@@ -885,7 +879,7 @@ export const AlgoScreen = ({
       handleStartGatewayBridge();
       return;
     }
-    runShadowScanMutation.mutate(focusedDeployment.id);
+    runShadowScanMutation.mutate({ deploymentId: focusedDeployment.id });
   };
 
   const patchProfileDraft = (section, key, value) => {
@@ -904,7 +898,7 @@ export const AlgoScreen = ({
     }
     updateProfileMutation.mutate({
       deploymentId: focusedDeployment.id,
-      profile: profileDraft,
+      data: profileDraft,
     });
   };
 
@@ -982,7 +976,7 @@ export const AlgoScreen = ({
             <span
               style={{
                 fontSize: fs(11),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.display,
                 color: T.amber,
                 letterSpacing: "0.05em",
@@ -1034,7 +1028,7 @@ export const AlgoScreen = ({
                 color: T.amber,
                 fontFamily: T.mono,
                 fontSize: fs(8),
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor:
                   gatewayBridgeLaunching ? "wait" : "pointer",
                 opacity: gatewayBridgeLaunching ? 0.72 : 1,
@@ -1072,7 +1066,7 @@ export const AlgoScreen = ({
         <div
           style={{
             fontSize: fs(12),
-            fontWeight: 700,
+            fontWeight: 400,
             fontFamily: T.display,
             color: T.text,
             marginBottom: 10,
@@ -1174,7 +1168,7 @@ export const AlgoScreen = ({
                 <span
                   style={{
                     fontSize: fs(9),
-                    fontWeight: 700,
+                    fontWeight: 400,
                     fontFamily: T.sans,
                     color: T.text,
                   }}
@@ -1185,7 +1179,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   fontSize: fs(11),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: T.mono,
                   color: metric.color,
                   marginBottom: 3,
@@ -1238,7 +1232,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   fontSize: fs(12),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: T.display,
                   color: T.text,
                 }}
@@ -1309,7 +1303,7 @@ export const AlgoScreen = ({
                     color: T.text,
                     fontSize: fs(10),
                     fontFamily: T.mono,
-                    fontWeight: 600,
+                    fontWeight: 400,
                     outline: "none",
                   }}
                 >
@@ -1438,7 +1432,7 @@ export const AlgoScreen = ({
                   color: "#fff",
                   fontSize: fs(10),
                   fontFamily: T.sans,
-                  fontWeight: 700,
+                  fontWeight: 400,
                   cursor: createDeploymentMutation.isPending
                     ? "wait"
                     : "pointer",
@@ -1477,7 +1471,7 @@ export const AlgoScreen = ({
               <div
                 style={{
                   fontSize: fs(12),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: T.display,
                   color: T.text,
                 }}
@@ -1567,7 +1561,7 @@ export const AlgoScreen = ({
                         <span
                           style={{
                             fontSize: fs(10),
-                            fontWeight: 700,
+                            fontWeight: 400,
                             fontFamily: T.sans,
                             color: T.text,
                           }}
@@ -1656,7 +1650,7 @@ export const AlgoScreen = ({
                         color: deployment.enabled ? T.amber : "#fff",
                         fontSize: fs(9),
                         fontFamily: T.sans,
-                        fontWeight: 700,
+                        fontWeight: 400,
                         cursor:
                           enableDeploymentMutation.isPending ||
                           pauseDeploymentMutation.isPending ||
@@ -1720,7 +1714,7 @@ export const AlgoScreen = ({
               <span
                 style={{
                   fontSize: fs(12),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   fontFamily: T.display,
                   color: T.text,
                 }}
@@ -1756,7 +1750,7 @@ export const AlgoScreen = ({
                 color: T.textSec,
                 fontSize: fs(8),
                 fontFamily: T.mono,
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor:
                   deploymentsQuery.isFetching || cockpitQuery.isFetching
                     ? "wait"
@@ -1795,7 +1789,7 @@ export const AlgoScreen = ({
                 color: focusedDeployment?.enabled ? T.amber : "#fff",
                 fontSize: fs(8),
                 fontFamily: T.mono,
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor:
                   enableDeploymentMutation.isPending ||
                   pauseDeploymentMutation.isPending ||
@@ -1829,7 +1823,7 @@ export const AlgoScreen = ({
                 color: T.amber,
                 fontSize: fs(8),
                 fontFamily: T.mono,
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor: focusedDeployment ? "pointer" : "not-allowed",
                 opacity: focusedDeployment ? 1 : 0.6,
               }}
@@ -1850,7 +1844,7 @@ export const AlgoScreen = ({
                   color: automationTab === tab ? T.text : T.textSec,
                   fontSize: fs(8),
                   fontFamily: T.mono,
-                  fontWeight: 800,
+                  fontWeight: 400,
                   cursor: "pointer",
                 }}
               >
@@ -1877,7 +1871,7 @@ export const AlgoScreen = ({
                 color: "#031216",
                 fontSize: fs(8),
                 fontFamily: T.mono,
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor:
                   runShadowScanMutation.isPending ||
                   gatewayBridgeLaunching
@@ -1980,7 +1974,7 @@ export const AlgoScreen = ({
                   color: metric.color,
                   fontFamily: T.mono,
                   fontSize: fs(12),
-                  fontWeight: 900,
+                  fontWeight: 400,
                   marginTop: 2,
                 }}
               >
@@ -2033,7 +2027,7 @@ export const AlgoScreen = ({
                     color: T.text,
                     fontFamily: T.display,
                     fontSize: fs(11),
-                    fontWeight: 800,
+                    fontWeight: 400,
                   }}
                 >
                   Pipeline
@@ -2060,7 +2054,7 @@ export const AlgoScreen = ({
                   padding: sp("5px 8px"),
                   fontSize: fs(8),
                   fontFamily: T.mono,
-                  fontWeight: 900,
+                  fontWeight: 400,
                   cursor: "pointer",
                 }}
               >
@@ -2126,7 +2120,7 @@ export const AlgoScreen = ({
                           color: T.text,
                           fontSize: fs(8),
                           fontFamily: T.sans,
-                          fontWeight: 900,
+                          fontWeight: 400,
                           lineHeight: 1.2,
                         }}
                       >
@@ -2147,7 +2141,7 @@ export const AlgoScreen = ({
                         color,
                         fontFamily: T.mono,
                         fontSize: fs(13),
-                        fontWeight: 900,
+                        fontWeight: 400,
                       }}
                     >
                       {stage.count}
@@ -2198,7 +2192,7 @@ export const AlgoScreen = ({
                   color: T.text,
                   fontFamily: T.display,
                   fontSize: fs(11),
-                  fontWeight: 800,
+                  fontWeight: 400,
                 }}
               >
                 Attention
@@ -2261,7 +2255,7 @@ export const AlgoScreen = ({
                           color,
                           fontFamily: T.mono,
                           fontSize: fs(8),
-                          fontWeight: 900,
+                          fontWeight: 400,
                         }}
                       >
                         {item.symbol || formatEnumLabel(item.stage)}
@@ -2281,7 +2275,7 @@ export const AlgoScreen = ({
                         color: T.text,
                         fontFamily: T.sans,
                         fontSize: fs(9),
-                        fontWeight: 800,
+                        fontWeight: 400,
                         marginTop: sp(4),
                         lineHeight: 1.3,
                       }}
@@ -2338,7 +2332,7 @@ export const AlgoScreen = ({
                 color: T.text,
                 fontFamily: T.display,
                 fontSize: fs(11),
-                fontWeight: 800,
+                fontWeight: 400,
                 marginBottom: sp(8),
               }}
             >
@@ -2390,7 +2384,7 @@ export const AlgoScreen = ({
                       color: T.text,
                       fontFamily: T.mono,
                       fontSize: fs(10),
-                      fontWeight: 900,
+                      fontWeight: 400,
                       marginTop: sp(3),
                     }}
                   >
@@ -2414,7 +2408,7 @@ export const AlgoScreen = ({
                 color: T.text,
                 fontFamily: T.display,
                 fontSize: fs(11),
-                fontWeight: 800,
+                fontWeight: 400,
                 marginBottom: sp(8),
               }}
             >
@@ -2493,7 +2487,7 @@ export const AlgoScreen = ({
                       color: T.text,
                       fontFamily: T.mono,
                       fontSize: fs(10),
-                      fontWeight: 900,
+                      fontWeight: 400,
                       marginTop: sp(3),
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -2586,7 +2580,7 @@ export const AlgoScreen = ({
                             color: T.text,
                             fontFamily: T.mono,
                             fontSize: fs(10),
-                            fontWeight: 900,
+                            fontWeight: 400,
                           }}
                         >
                           {candidate.symbol} {candidate.optionRight?.toUpperCase()}
@@ -2657,7 +2651,7 @@ export const AlgoScreen = ({
                           color: T.text,
                           fontFamily: T.display,
                           fontSize: fs(14),
-                          fontWeight: 800,
+                          fontWeight: 400,
                         }}
                       >
                         {selectedCandidate.symbol}{" "}
@@ -2673,7 +2667,7 @@ export const AlgoScreen = ({
                       >
                         {selectedCandidate.timeframe} · signal{" "}
                         {formatRelativeTimeShort(selectedCandidate.signalAt)} ·
-                            spot {formatNumber(selectedCandidate.signalPrice)}
+                            spot {formatPlainPrice(selectedCandidate.signalPrice, 2)}
                         </div>
                         <div
                           style={{
@@ -2724,7 +2718,7 @@ export const AlgoScreen = ({
                         color: T.text,
                         fontFamily: T.mono,
                         fontSize: fs(8),
-                        fontWeight: 900,
+                        fontWeight: 400,
                         cursor: "pointer",
                         opacity:
                           !asRecord(selectedCandidate.selectedContract).strike
@@ -2846,7 +2840,7 @@ export const AlgoScreen = ({
                             color: T.text,
                             fontFamily: T.mono,
                             fontSize: fs(10),
-                            fontWeight: 800,
+                            fontWeight: 400,
                             marginTop: 3,
                             overflow: "hidden",
                             textOverflow: "ellipsis",
@@ -2920,7 +2914,7 @@ export const AlgoScreen = ({
                                 userPreferences,
                               )}
                             </span>
-                            <span style={{ color: tone, fontWeight: 900 }}>
+                            <span style={{ color: tone, fontWeight: 400 }}>
                               {formatEnumLabel(item.type)}
                             </span>
                             <span
@@ -3019,7 +3013,7 @@ export const AlgoScreen = ({
                           color: T.text,
                           fontFamily: T.mono,
                           fontSize: fs(10),
-                          fontWeight: 900,
+                          fontWeight: 400,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
@@ -3039,13 +3033,13 @@ export const AlgoScreen = ({
                         {formatRelativeTimeShort(position.openedAt)}
                       </div>
                     </div>
-                    {[
-                      ["Qty", quantity],
-                      ["Entry", formatMoney(entry, 2)],
-                      ["Mark", formatMoney(mark, 2)],
-                      ["Stop", formatMoney(position.stopPrice, 2)],
-                      [
-                        "Stop dist",
+	                    {[
+	                      ["Qty", quantity],
+	                      ["Entry", formatPlainPrice(entry, 2)],
+	                      ["Mark", formatPlainPrice(mark, 2)],
+	                      ["Stop", formatPlainPrice(position.stopPrice, 2)],
+	                      [
+	                        "Stop dist",
                         distanceToStop == null
                           ? MISSING_VALUE
                           : formatPct(distanceToStop, 1),
@@ -3073,7 +3067,7 @@ export const AlgoScreen = ({
                                   : T.text,
                             fontFamily: T.mono,
                             fontSize: fs(10),
-                            fontWeight: 900,
+                            fontWeight: 400,
                             marginTop: 3,
                           }}
                         >
@@ -3212,7 +3206,7 @@ export const AlgoScreen = ({
                     color: T.textSec,
                     fontFamily: T.mono,
                     fontSize: fs(8),
-                    fontWeight: 800,
+                    fontWeight: 400,
                   }}
                 >
                   {label.toUpperCase()}
@@ -3304,7 +3298,7 @@ export const AlgoScreen = ({
                   color: "#fff",
                   fontFamily: T.mono,
                   fontSize: fs(8),
-                  fontWeight: 900,
+                  fontWeight: 400,
                   cursor: updateProfileMutation.isPending ? "wait" : "pointer",
                   opacity: updateProfileMutation.isPending ? 0.72 : 1,
                 }}
@@ -3353,7 +3347,7 @@ export const AlgoScreen = ({
                     padding: sp("5px 8px"),
                     fontSize: fs(8),
                     fontFamily: T.mono,
-                    fontWeight: 900,
+                    fontWeight: 400,
                     cursor: "pointer",
                   }}
                 >
@@ -3397,7 +3391,7 @@ export const AlgoScreen = ({
                     style={{
                       color: T.cyan,
                       fontFamily: T.mono,
-                      fontWeight: 900,
+                      fontWeight: 400,
                     }}
                   >
                     {formatEnumLabel(event.eventType)}
@@ -3468,7 +3462,7 @@ export const AlgoScreen = ({
             <div
               style={{
                 fontSize: fs(12),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.display,
                 color: T.text,
               }}
@@ -3524,7 +3518,7 @@ export const AlgoScreen = ({
                 {formatAppTimeForPreferences(event.occurredAt, userPreferences)}
               </span>
               <span
-                style={{ color: T.accent, fontFamily: T.mono, fontWeight: 700 }}
+                style={{ color: T.accent, fontFamily: T.mono, fontWeight: 400 }}
               >
                 {formatEnumLabel(event.eventType)}
               </span>

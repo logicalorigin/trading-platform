@@ -238,7 +238,7 @@ const HeaderIbkrStatusChip = ({
         <span
           style={{
             fontSize: fs(7),
-            fontWeight: 800,
+            fontWeight: 400,
             fontFamily: T.sans,
             letterSpacing: "0.04em",
             whiteSpace: "nowrap",
@@ -255,7 +255,7 @@ const HeaderIbkrStatusChip = ({
             background: badge.background,
             color: badge.color,
             fontSize: fs(7),
-            fontWeight: 900,
+            fontWeight: 400,
             fontFamily: T.mono,
             lineHeight: 1,
             padding: sp("2px 4px"),
@@ -270,7 +270,7 @@ const HeaderIbkrStatusChip = ({
         style={{
           color: T.textDim,
           fontSize: fs(7),
-          fontWeight: 800,
+          fontWeight: 400,
           fontFamily: T.mono,
           minWidth: dim(30),
           textAlign: "right",
@@ -306,7 +306,7 @@ const HeaderIbkrDetailRow = ({
     <span
       style={{
         color: tone,
-        fontWeight: 800,
+        fontWeight: 400,
         minWidth: 0,
         overflow: "hidden",
         textOverflow: wrap ? "clip" : "ellipsis",
@@ -354,7 +354,7 @@ const HeaderIbkrMetricTile = ({ tile }) => {
             color: T.textDim,
             fontFamily: T.mono,
             fontSize: fs(7),
-            fontWeight: 900,
+            fontWeight: 400,
             letterSpacing: "0.04em",
             lineHeight: 1.1,
             textTransform: "uppercase",
@@ -367,7 +367,7 @@ const HeaderIbkrMetricTile = ({ tile }) => {
             color: tile.tone,
             fontFamily: T.sans,
             fontSize: fs(10),
-            fontWeight: 900,
+            fontWeight: 400,
             lineHeight: 1.15,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -412,7 +412,7 @@ const HeaderProviderRows = ({ rows = [] }) => (
         color: T.textMuted,
         fontFamily: T.mono,
         fontSize: fs(8),
-        fontWeight: 900,
+        fontWeight: 400,
         letterSpacing: "0.05em",
         textTransform: "uppercase",
       }}
@@ -433,7 +433,7 @@ const HeaderProviderRows = ({ rows = [] }) => (
         }}
       >
         <span style={{ color: T.textDim }}>{row.label}</span>
-        <span style={{ color: row.tone, fontWeight: 900 }}>{row.value}</span>
+        <span style={{ color: row.tone, fontWeight: 400 }}>{row.value}</span>
         <span
           style={{
             color: T.textMuted,
@@ -481,14 +481,14 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
           style={{
             color: T.textMuted,
             fontSize: fs(8),
-            fontWeight: 900,
+            fontWeight: 400,
             letterSpacing: "0.05em",
             textTransform: "uppercase",
           }}
         >
           Market data lines
         </span>
-        <span style={{ color: T.textSec, fontSize: fs(8), fontWeight: 900 }}>
+        <span style={{ color: T.textSec, fontSize: fs(8), fontWeight: 400 }}>
           {lineUsage.summary}
         </span>
       </div>
@@ -499,7 +499,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
           gap: sp(5),
           color: T.textMuted,
           fontSize: fs(7),
-          fontWeight: 900,
+          fontWeight: 400,
           textTransform: "uppercase",
           borderBottom: `1px solid ${T.border}66`,
           paddingBottom: sp(2),
@@ -547,7 +547,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
               </span>
             ) : null}
           </span>
-          <span style={{ textAlign: "right", fontWeight: 900 }}>
+          <span style={{ textAlign: "right", fontWeight: 400 }}>
             {Number.isFinite(row.used) ? Math.round(row.used) : MISSING_VALUE}
           </span>
           <span style={{ textAlign: "right" }}>
@@ -583,7 +583,7 @@ const HeaderMarketDataLineBadge = ({ lineUsage }) => {
         color: tone,
         fontFamily: T.mono,
         fontSize: fs(7),
-        fontWeight: 900,
+        fontWeight: 400,
         lineHeight: 1,
         padding: sp("2px 4px"),
         whiteSpace: "nowrap",
@@ -624,7 +624,7 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
             color: model.health.color,
             fontFamily: T.mono,
             fontSize: fs(10),
-            fontWeight: 900,
+            fontWeight: 400,
           }}
         >
           <span
@@ -655,7 +655,7 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
                 color: badge.color,
                 fontFamily: T.mono,
                 fontSize: fs(7),
-                fontWeight: 900,
+                fontWeight: 400,
                 padding: sp("2px 4px"),
                 whiteSpace: "nowrap",
               }}
@@ -756,7 +756,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
           cursor: "pointer",
           fontFamily: T.mono,
           fontSize: fs(8),
-          fontWeight: 900,
+          fontWeight: 400,
           letterSpacing: "0.04em",
           textTransform: "uppercase",
         }}
@@ -789,7 +789,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
                   color: T.textMuted,
                   fontFamily: T.mono,
                   fontSize: fs(8),
-                  fontWeight: 900,
+                  fontWeight: 400,
                   letterSpacing: "0.05em",
                   textTransform: "uppercase",
                 }}
@@ -960,16 +960,15 @@ export const HeaderStatusCluster = ({
             : "Launch";
   const bridgeActionColor = gatewayConnectedForBridge
     ? T.green
-    : gatewayReconnectNeeded
-      ? T.amber
-      : T.accent;
+    : bridgeLauncherBusy || bridgeLaunchInFlight
+      ? T.accent
+      : gatewayReconnectNeeded
+        ? T.amber
+        : T.accent;
   const bridgeActionDisabled = Boolean(
     bridgeLauncherBusy ||
       bridgeLaunchInFlight ||
       gatewayConnectedForBridge,
-  );
-  const bridgeActionShowsBusyStyle = Boolean(
-    bridgeLauncherBusy || bridgeLaunchInFlight,
   );
   const headerDataModeLabel = resolveHeaderDataModeLabel(session);
   const surfaceStyle = {
@@ -985,7 +984,7 @@ export const HeaderStatusCluster = ({
   };
   const microLabelStyle = {
     fontSize: fs(7),
-    fontWeight: 800,
+    fontWeight: 400,
     fontFamily: T.sans,
     color: T.textMuted,
     letterSpacing: "0.06em",
@@ -1334,16 +1333,12 @@ export const HeaderStatusCluster = ({
                   alignItems: "center",
                   justifyContent: "center",
                   gap: sp(6),
-                  border: `1px solid ${
-                    bridgeActionShowsBusyStyle ? T.border : bridgeActionColor
-                  }`,
-                  background: bridgeActionShowsBusyStyle
-                    ? T.bg1
-                    : `${bridgeActionColor}18`,
-                  color: bridgeActionShowsBusyStyle ? T.textDim : bridgeActionColor,
+                  border: `1px solid ${bridgeActionColor}`,
+                  background: `${bridgeActionColor}18`,
+                  color: bridgeActionColor,
                   cursor: bridgeActionDisabled ? "default" : "pointer",
                   fontSize: fs(9),
-                  fontWeight: 800,
+                  fontWeight: 400,
                   fontFamily: T.sans,
                   letterSpacing: "0.04em",
                 }}
@@ -1383,7 +1378,7 @@ export const HeaderStatusCluster = ({
                     color: T.textSec,
                     cursor: bridgeLauncherBusy ? "default" : "pointer",
                     fontSize: fs(9),
-                    fontWeight: 800,
+                    fontWeight: 400,
                     fontFamily: T.sans,
                     letterSpacing: "0.04em",
                   }}
@@ -1429,7 +1424,7 @@ export const HeaderStatusCluster = ({
           <span
             style={{
               fontSize: fs(10),
-              fontWeight: 700,
+              fontWeight: 400,
               fontFamily: T.sans,
               color: T.text,
               lineHeight: 1.1,
@@ -1444,7 +1439,7 @@ export const HeaderStatusCluster = ({
             fontSize: fs(8),
             color: marketClock.color,
             fontFamily: T.sans,
-            fontWeight: 700,
+            fontWeight: 400,
             lineHeight: 1.1,
             whiteSpace: "nowrap",
           }}
@@ -1470,7 +1465,7 @@ export const HeaderStatusCluster = ({
           fontSize: fs(12),
           lineHeight: 1,
           fontFamily: T.sans,
-          fontWeight: 700,
+          fontWeight: 400,
           transition: "background 0.12s ease, border-color 0.12s ease",
         }}
         onMouseEnter={(event) => {

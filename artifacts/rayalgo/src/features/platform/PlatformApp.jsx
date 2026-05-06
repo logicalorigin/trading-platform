@@ -163,6 +163,7 @@ input[type=range]{accent-color:#3b82f6}
 `;
 
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
+const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
 
 // ═══════════════════════════════════════════════════════════════════
 // STATIC DATA / GENERATORS
@@ -314,7 +315,7 @@ export default function PlatformApp() {
   const sessionQuery = useGetSession({
     query: {
       staleTime: 5_000,
-      refetchInterval: 5_000,
+      refetchInterval: pageVisible ? 5_000 : false,
       retry: false,
     },
   });
@@ -330,7 +331,7 @@ export default function PlatformApp() {
   const watchlistsQuery = useListWatchlists({
     query: {
       staleTime: 60_000,
-      refetchInterval: 60_000,
+      refetchInterval: pageVisible ? 60_000 : false,
       retry: false,
     },
   });
@@ -1189,7 +1190,7 @@ export default function PlatformApp() {
     {
       query: {
         staleTime: 60_000,
-        refetchInterval: 60_000,
+        refetchInterval: pageVisible ? 60_000 : false,
         retry: false,
       },
     },
@@ -1240,12 +1241,16 @@ export default function PlatformApp() {
     15_000,
     3_600_000,
   );
+  const signalMonitorDisplayPollMs = Math.min(
+    signalMonitorPollMs,
+    SIGNAL_MONITOR_DISPLAY_POLL_MS,
+  );
   const signalMonitorStateQuery = useGetSignalMonitorState(
     signalMonitorParams,
     {
       query: {
         staleTime: 15_000,
-        refetchInterval: pageVisible ? signalMonitorPollMs : false,
+        refetchInterval: pageVisible ? signalMonitorDisplayPollMs : false,
         retry: false,
       },
     },
@@ -1255,7 +1260,7 @@ export default function PlatformApp() {
     {
       query: {
         staleTime: 15_000,
-        refetchInterval: pageVisible ? signalMonitorPollMs : false,
+        refetchInterval: pageVisible ? signalMonitorDisplayPollMs : false,
         retry: false,
       },
     },
@@ -1266,7 +1271,7 @@ export default function PlatformApp() {
     {
       kind: "poll",
       label: "Signal display",
-      detail: `${Math.round(signalMonitorPollMs / 1000)}s`,
+      detail: `${Math.round(signalMonitorDisplayPollMs / 1000)}s`,
       priority: 4,
     },
   );

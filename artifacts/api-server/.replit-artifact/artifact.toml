@@ -18,7 +18,7 @@ run = "LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev"
 [services.production]
 
 [services.production.build]
-args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+args = ["pnpm", "run", "build:api-deployment"]
 
 [services.production.build.env]
 NODE_ENV = "production"

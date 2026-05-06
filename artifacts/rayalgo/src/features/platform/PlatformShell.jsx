@@ -167,7 +167,7 @@ export const PlatformShell = ({
               borderRadius: dim(3),
               cursor: "pointer",
               fontSize: fs(14),
-              fontWeight: 900,
+              fontWeight: 400,
               position: "relative",
               zIndex: isPhone ? 150 : undefined,
             }}
@@ -206,7 +206,7 @@ export const PlatformShell = ({
                 padding: sp("3px 6px"),
                 minHeight: dim(isPhone ? 32 : 28),
                 fontSize: fs(10),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.sans,
                 background: activeScreen === screen.id ? T.bg3 : "transparent",
                 border: `1px solid ${activeScreen === screen.id ? T.accent : T.border}`,
@@ -242,7 +242,7 @@ export const PlatformShell = ({
                     background: alertColor,
                     color: "#fff",
                     fontSize: fs(8),
-                    fontWeight: 800,
+                    fontWeight: 400,
                     fontFamily: T.sans,
                     letterSpacing: "0.04em",
                     verticalAlign: "middle",
@@ -564,7 +564,7 @@ const ToastStack = ({ toasts, onDismiss }) => (
               style={{
                 fontSize: fs(14),
                 color,
-                fontWeight: 700,
+                fontWeight: 400,
                 lineHeight: 1,
                 marginTop: 1,
               }}
@@ -575,7 +575,7 @@ const ToastStack = ({ toasts, onDismiss }) => (
               <div
                 style={{
                   fontSize: fs(11),
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: T.text,
                   marginBottom: toast.body ? sp(2) : 0,
                 }}
@@ -599,7 +599,7 @@ const ToastStack = ({ toasts, onDismiss }) => (
               style={{
                 fontSize: fs(11),
                 color: T.textMuted,
-                fontWeight: 600,
+                fontWeight: 400,
                 opacity: 0.6,
                 marginLeft: sp(4),
                 marginTop: 1,

@@ -105,7 +105,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
       {/* ── HEADER ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 14 }}>
         <div>
-          <div style={{ fontSize: 11, color: accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: 600 }}>
+          <div style={{ fontSize: 11, color: accent, letterSpacing: 5, textTransform: "uppercase", fontWeight: 400 }}>
             Earnings & Catalysts
           </div>
           <h2 style={{ fontFamily: "var(--ra-font-sans)", fontSize: 30, fontWeight: 400, color: "#111", letterSpacing: -0.8, lineHeight: 1.05, marginTop: 3 }}>
@@ -113,7 +113,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
           </h2>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: accent }}>
+          <div style={{ fontSize: 18, fontWeight: 400, color: accent }}>
             {entries === null ? "…" : visible.length}
           </div>
           <div style={{ fontSize: 10, color: "#aaa", letterSpacing: 0.3 }}>
@@ -129,7 +129,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
             <button key={k} onClick={() => setRangeFilter(k)} style={{
               background: rangeFilter === k ? "#fff" : "transparent",
               border: "none", borderRadius: 5, padding: "5px 12px",
-              fontSize: 11, fontWeight: rangeFilter === k ? 700 : 500,
+              fontSize: 11, fontWeight: 400,
               color: rangeFilter === k ? "#111" : "#888", cursor: "pointer",
               boxShadow: rangeFilter === k ? "0 1px 3px rgba(0,0,0,.06)" : "none",
               transition: "all .12s",
@@ -144,7 +144,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
             background: !themeFilter ? "#fff" : "transparent",
             border: !themeFilter ? "1px solid rgba(0,0,0,.1)" : "1px solid transparent",
             borderRadius: 5, padding: "4px 10px", fontSize: 10,
-            color: !themeFilter ? "#111" : "#999", cursor: "pointer", fontWeight: 600,
+            color: !themeFilter ? "#111" : "#999", cursor: "pointer", fontWeight: 400,
           }}>All</button>
           {Object.keys(themes).filter(id => themes[id].available).map(tid => {
             const t = themes[tid];
@@ -154,7 +154,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                 background: active ? "#fff" : "transparent",
                 border: active ? `1px solid ${t.accent}66` : "1px solid transparent",
                 borderRadius: 5, padding: "4px 9px", fontSize: 10,
-                color: active ? t.accent : "#888", cursor: "pointer", fontWeight: active ? 700 : 500,
+                color: active ? t.accent : "#888", cursor: "pointer", fontWeight: 400,
                 display: "inline-flex", alignItems: "center", gap: 3,
                 boxShadow: active ? `0 1px 3px ${t.accent}22` : "none",
               }}>
@@ -170,7 +170,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
       {!apiKey && (
         <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, padding: "30px 20px", textAlign: "center", color: "#888", fontSize: 12 }}>
           <div style={{ fontSize: 32, opacity: 0.3, marginBottom: 8 }}>🔑</div>
-          <div style={{ fontWeight: 600, marginBottom: 4, color: "#555" }}>FMP API key required</div>
+          <div style={{ fontWeight: 400, marginBottom: 4, color: "#555" }}>FMP API key required</div>
           <div style={{ fontSize: 11, color: "#999" }}>Add a key in settings (gear icon) to load the earnings calendar.</div>
         </div>
       )}
@@ -185,7 +185,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
       {apiKey && entries && entries.length === 0 && (
         <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,.06)", borderRadius: 10, padding: "30px 20px", textAlign: "center", color: "#888", fontSize: 12 }}>
           <div style={{ fontSize: 32, opacity: 0.3, marginBottom: 8 }}>📅</div>
-          <div style={{ fontWeight: 600, marginBottom: 4, color: "#555" }}>No earnings data returned</div>
+          <div style={{ fontWeight: 400, marginBottom: 4, color: "#555" }}>No earnings data returned</div>
           <div style={{ fontSize: 11, color: "#999" }}>Either no companies in our universe report in the next 90 days, or the API response was empty.</div>
         </div>
       )}
@@ -208,8 +208,8 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
               padding: "5px 8px", background: "linear-gradient(to bottom, #fff 75%, rgba(255,255,255,.85))",
               borderBottom: "1px solid rgba(0,0,0,.08)",
             }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#222" }}>{dh.primary}</span>
-              {dh.rel && <span style={{ fontSize: 10, color: accent, fontWeight: 600, letterSpacing: .3 }}>{dh.rel}</span>}
+              <span style={{ fontSize: 13, fontWeight: 400, color: "#222" }}>{dh.primary}</span>
+              {dh.rel && <span style={{ fontSize: 10, color: accent, fontWeight: 400, letterSpacing: .3 }}>{dh.rel}</span>}
               <span style={{ fontSize: 10, color: "#bbb", marginLeft: "auto" }}>{group.rows.length} event{group.rows.length !== 1 ? "s" : ""}</span>
             </div>
             {/* Rows */}
@@ -245,7 +245,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                     {/* Time badge */}
                     <AppTooltip content={tb.title}><span style={{
                       display: "inline-block", padding: "2px 5px", borderRadius: 3,
-                      background: tb.bg, color: tb.fg, fontSize: 9, fontWeight: 700, letterSpacing: .5, textAlign: "center",
+                      background: tb.bg, color: tb.fg, fontSize: 9, fontWeight: 400, letterSpacing: .5, textAlign: "center",
                     }}>{tb.label}</span></AppTooltip>
 
                     {/* Ticker + name + theme */}
@@ -253,7 +253,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                       <Logo ticker={co.t} size={18} />
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: vc.c }}>{co.cc} {co.t}</span>
+                          <span style={{ fontSize: 12, fontWeight: 400, color: vc.c }}>{co.cc} {co.t}</span>
                           <span style={{ fontSize: 10, color: "#999", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>{co.nm}</span>
                         </div>
                         {themeChips.length > 0 && (
@@ -261,7 +261,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                             {themeChips.map(t => (
                               <span key={t.id} style={{
                                 fontSize: 8, padding: "0 4px", borderRadius: 2,
-                                background: t.accent + "15", color: t.accent, fontWeight: 600, letterSpacing: .3,
+                                background: t.accent + "15", color: t.accent, fontWeight: 400, letterSpacing: .3,
                               }}>{t.title.replace(/^The /, "")}</span>
                             ))}
                           </div>
@@ -274,7 +274,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                       <div style={{ fontSize: 9, color: "#bbb", letterSpacing: .3, textTransform: "uppercase" }}>
                         {reported ? "EPS Act" : "EPS Est"}
                       </div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: reported ? (beat ? "#1a8a5c" : "#c44040") : "#333" }}>
+                      <div style={{ fontSize: 12, fontWeight: 400, color: reported ? (beat ? "#1a8a5c" : "#c44040") : "#333" }}>
                         {reported ? fmtEPS(epsActual) : fmtEPS(epsEst)}
                       </div>
                       {reported && epsEst != null && (
@@ -285,7 +285,7 @@ export function CalendarView({ cos, liveData, apiKey, onSelect, themes, vx }) {
                     {/* Rev est */}
                     <div style={{ textAlign: "right", minWidth: 70 }}>
                       <div style={{ fontSize: 9, color: "#bbb", letterSpacing: .3, textTransform: "uppercase" }}>Rev Est</div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#333" }}>{fmtRev(revEst)}</div>
+                      <div style={{ fontSize: 12, fontWeight: 400, color: "#333" }}>{fmtRev(revEst)}</div>
                     </div>
 
                     {/* Arrow indicator */}

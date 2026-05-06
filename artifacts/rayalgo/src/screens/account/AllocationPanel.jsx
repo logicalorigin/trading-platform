@@ -167,7 +167,7 @@ const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = fa
         color: tone,
         fontSize: fs(10),
         fontFamily: T.mono,
-        fontWeight: 900,
+        fontWeight: 400,
         lineHeight: 1.1,
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -343,7 +343,7 @@ export const AllocationPanel = ({
                   color: "#ffffff",
                   fontSize: fs(compact ? 7 : 8),
                   fontFamily: T.mono,
-                  fontWeight: 800,
+                  fontWeight: 400,
                 }}
               >
                 L {formatAccountMoney(grossLong, currency, true, maskValues)}
@@ -358,7 +358,7 @@ export const AllocationPanel = ({
                   color: "#ffffff",
                   fontSize: fs(compact ? 7 : 8),
                   fontFamily: T.mono,
-                  fontWeight: 800,
+                  fontWeight: 400,
                 }}
               >
                 S {formatAccountMoney(grossShort, currency, true, maskValues)}
@@ -376,7 +376,7 @@ export const AllocationPanel = ({
               }}
             >
               <span>Gross {formatAccountMoney(grossTotal, currency, true, maskValues)}</span>
-              <span style={{ color: netExposure >= 0 ? T.green : T.red, fontWeight: 800 }}>
+              <span style={{ color: netExposure >= 0 ? T.green : T.red, fontWeight: 400 }}>
                 Net {formatAccountMoney(netExposure, currency, true, maskValues)}
               </span>
             </div>

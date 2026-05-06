@@ -33,6 +33,7 @@ import { normalizeSymbol } from "../lib/values";
 import {
   type BrokerBarSnapshot,
   type BrokerOrderSnapshot,
+  type BrokerPositionSnapshot,
   type HistoryBarTimeframe,
   type MarketDataFreshness,
   type PlaceOrderInput,
@@ -46,11 +47,18 @@ import {
   PolygonMarketDataClient,
   computeUnusualMetrics,
   getPolygonApiDiagnostics,
+  resolvePremiumDistributionClassificationConfidence,
   type BarSnapshot as PolygonBarSnapshot,
   type MarketDataProvider,
   type OptionChainContract as PolygonOptionChainContract,
+  type OptionPremiumDistribution,
+  type PremiumDistributionClassificationConfidence,
+  type PremiumDistributionDataAccess,
+  type PremiumDistributionSideBasis,
+  type PremiumDistributionTimeframe,
   type PolygonAggregateBarsPage,
   type QuoteSnapshot as PolygonQuoteSnapshot,
+  type StockGroupedDailyAggregate,
   type UniverseTicker,
   type UniverseMarket,
 } from "../providers/polygon/market-data";
@@ -135,6 +143,7 @@ import {
   loadDurableOptionExpirations,
   persistDurableOptionChain,
 } from "./option-metadata-store";
+import { validateSellCallOrderIntent } from "./option-order-intent";
 import {
   getAnnotatedBridgeHealthForTradingGuard,
   getBridgeHealthForSession,
@@ -879,6 +888,14 @@ function getMarketDataConnectionCapabilities(): string[] {
 
 const FLOW_EVENTS_CACHE_TTL_MS = 60_000;
 const FLOW_EVENTS_CACHE_STALE_TTL_MS = 5 * 60_000;
+const FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS = 45_000;
+const FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS = 3 * 60_000;
+const FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT = 6;
+const FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_LIMIT = 24;
+const FLOW_PREMIUM_DISTRIBUTION_MAX_CANDIDATES = 60;
+const FLOW_PREMIUM_DISTRIBUTION_CONCURRENCY = 4;
+const FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS = 8_000;
+const FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES = 4;
 const FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE = readPositiveIntegerEnv(
   "FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE",
   1,
@@ -889,6 +906,260 @@ const flowEventsCache = new Map<
 >();
 const flowEventsInFlight = new Map<string, Promise<FlowEventsResult>>();
 let flowEventsOnDemandActive = 0;
+
+export type FlowPremiumDistributionStatus =
+  | "ok"
+  | "empty"
+  | "degraded"
+  | "unconfigured";
+
+export type FlowPremiumDistributionResponse = {
+  status: FlowPremiumDistributionStatus;
+  asOf: Date;
+  timeframe: PremiumDistributionTimeframe;
+  source: {
+    provider: "polygon";
+    label: string;
+    timeframe: PremiumDistributionTimeframe;
+    providerHost: string | null;
+    sideBasis: PremiumDistributionSideBasis;
+    quoteAccess: PremiumDistributionDataAccess;
+    tradeAccess: PremiumDistributionDataAccess;
+    classifiedPremium: number;
+    classificationCoverage: number;
+    classificationConfidence: PremiumDistributionClassificationConfidence;
+    candidateDate: string | null;
+    candidateCount: number;
+    rankedCount: number;
+    errorCount: number;
+    errorMessage: string | null;
+    cache: "fresh" | "stale" | "miss";
+  };
+  widgets: Array<OptionPremiumDistribution & { rank: number }>;
+};
+
+const flowPremiumDistributionCache = new Map<
+  string,
+  {
+    value: FlowPremiumDistributionResponse;
+    expiresAt: number;
+    staleExpiresAt: number;
+  }
+>();
+const flowPremiumDistributionInFlight = new Map<
+  string,
+  Promise<FlowPremiumDistributionResponse>
+>();
+
+function getPolygonProviderHost(): string | null {
+  const config = getPolygonRuntimeConfig();
+  if (!config) return null;
+
+  try {
+    return new URL(config.baseUrl).host;
+  } catch {
+    return config.baseUrl;
+  }
+}
+
+function combinePremiumDistributionAccess(
+  widgets: Array<OptionPremiumDistribution & { rank: number }>,
+  key: "quoteAccess" | "tradeAccess",
+): PremiumDistributionDataAccess {
+  const values = new Set(widgets.map((widget) => widget[key]));
+  if (values.has("available")) return "available";
+  if (values.has("forbidden")) return "forbidden";
+  if (values.has("unavailable")) return "unavailable";
+  return "unknown";
+}
+
+function combinePremiumDistributionSideBasis(
+  widgets: Array<OptionPremiumDistribution & { rank: number }>,
+): PremiumDistributionSideBasis {
+  const values = new Set(widgets.map((widget) => widget.sideBasis));
+  if (values.has("mixed")) return "mixed";
+  if (values.has("quote_match") && values.has("tick_test")) return "mixed";
+  if (values.has("quote_match")) return "quote_match";
+  if (values.has("tick_test")) return "tick_test";
+  return "none";
+}
+
+function buildFlowPremiumDistributionSourceDiagnostics(
+  widgets: Array<OptionPremiumDistribution & { rank: number }>,
+): Pick<
+  FlowPremiumDistributionResponse["source"],
+  | "providerHost"
+  | "sideBasis"
+  | "quoteAccess"
+  | "tradeAccess"
+  | "classifiedPremium"
+  | "classificationCoverage"
+  | "classificationConfidence"
+> {
+  const classifiedPremium = widgets.reduce(
+    (sum, widget) => sum + widget.classifiedPremium,
+    0,
+  );
+  const premiumTotal = widgets.reduce(
+    (sum, widget) => sum + widget.premiumTotal,
+    0,
+  );
+  const classificationCoverage =
+    premiumTotal > 0 ? classifiedPremium / premiumTotal : 0;
+  const sideBasis = combinePremiumDistributionSideBasis(widgets);
+  const quoteAccess = combinePremiumDistributionAccess(widgets, "quoteAccess");
+  const tradeAccess = combinePremiumDistributionAccess(widgets, "tradeAccess");
+
+  return {
+    providerHost: getPolygonProviderHost(),
+    sideBasis,
+    quoteAccess,
+    tradeAccess,
+    classifiedPremium,
+    classificationCoverage,
+    classificationConfidence: resolvePremiumDistributionClassificationConfidence({
+      classificationCoverage,
+      sideBasis,
+      quoteAccess,
+      tradeAccess,
+    }),
+  };
+}
+
+function isPremiumDistributionCandidate(symbol: string): boolean {
+  return /^[A-Z][A-Z0-9.]{0,7}$/.test(symbol);
+}
+
+function normalizeFlowPremiumDistributionLimit(value: number | undefined): number {
+  if (!Number.isFinite(value)) return FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(Math.floor(value as number), 6));
+}
+
+function normalizeFlowPremiumDistributionCandidateLimit(
+  value: number | undefined,
+): number {
+  if (!Number.isFinite(value)) return FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_LIMIT;
+  return Math.max(
+    6,
+    Math.min(Math.floor(value as number), FLOW_PREMIUM_DISTRIBUTION_MAX_CANDIDATES),
+  );
+}
+
+function normalizeFlowPremiumDistributionTimeframe(
+  value: unknown,
+): PremiumDistributionTimeframe {
+  return String(value ?? "").trim().toLowerCase() === "week" ? "week" : "today";
+}
+
+function flowPremiumDistributionCacheKey(input: {
+  limit: number;
+  candidateLimit: number;
+  timeframe: PremiumDistributionTimeframe;
+}): string {
+  return `${input.timeframe}:${input.limit}:${input.candidateLimit}`;
+}
+
+async function fetchLatestGroupedStockAggregates(input: {
+  client: PolygonMarketDataClient;
+  now: Date;
+  timeframe: PremiumDistributionTimeframe;
+}): Promise<{
+  aggregates: StockGroupedDailyAggregate[];
+  candidateDate: string | null;
+  errorMessage: string | null;
+}> {
+  let errorMessage: string | null = null;
+  const collected: StockGroupedDailyAggregate[][] = [];
+  const candidateDates: string[] = [];
+  const maxTradingDays = input.timeframe === "week" ? 5 : 1;
+  const maxCalendarLookback = input.timeframe === "week" ? 10 : 6;
+
+  for (let offset = 0; offset < maxCalendarLookback; offset += 1) {
+    const date = new Date(
+      Date.UTC(
+        input.now.getUTCFullYear(),
+        input.now.getUTCMonth(),
+        input.now.getUTCDate() - offset,
+      ),
+    );
+
+    try {
+      const aggregates = await input.client.getGroupedDailyStockAggregates({ date });
+      if (aggregates.length) {
+        collected.push(aggregates);
+        candidateDates.push(date.toISOString().slice(0, 10));
+        if (collected.length >= maxTradingDays) {
+          break;
+        }
+      }
+    } catch (error) {
+      errorMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : "Polygon grouped daily stock aggregates failed.";
+    }
+  }
+
+  if (!collected.length) {
+    return { aggregates: [], candidateDate: null, errorMessage };
+  }
+
+  if (input.timeframe === "today") {
+    return {
+      aggregates: collected[0] ?? [],
+      candidateDate: candidateDates[0] ?? null,
+      errorMessage: null,
+    };
+  }
+
+  const bySymbol = new Map<string, StockGroupedDailyAggregate>();
+  collected.flat().forEach((aggregate) => {
+    const existing = bySymbol.get(aggregate.symbol);
+    if (!existing) {
+      bySymbol.set(aggregate.symbol, { ...aggregate });
+      return;
+    }
+    existing.volume += aggregate.volume;
+    existing.transactions =
+      existing.transactions === null && aggregate.transactions === null
+        ? null
+        : (existing.transactions ?? 0) + (aggregate.transactions ?? 0);
+  });
+
+  return {
+    aggregates: Array.from(bySymbol.values()),
+    candidateDate: candidateDates[0] ?? null,
+    errorMessage,
+  };
+}
+
+function withFlowPremiumDistributionCacheState(
+  value: FlowPremiumDistributionResponse,
+  cache: FlowPremiumDistributionResponse["source"]["cache"],
+): FlowPremiumDistributionResponse {
+  return {
+    ...value,
+    source: {
+      ...value.source,
+      cache,
+    },
+  };
+}
+
+async function runWithAbortTimeout<T>(
+  timeoutMs: number,
+  task: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  timeoutId.unref?.();
+
+  try {
+    return await task(controller.signal);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 function flowSource(input: FlowSourceInput): FlowEventsSource {
   return buildFlowSource({
     ...input,
@@ -2000,15 +2271,73 @@ export async function assertIbkrGatewayTradingAvailable() {
   }
 }
 
+async function validateOrderIntentForRouting(
+  input: PlaceOrderInput,
+  client: ReturnType<typeof getIbkrClient>,
+) {
+  if (
+    input.assetClass !== "option" ||
+    input.side !== "sell" ||
+    input.optionContract?.right !== "call"
+  ) {
+    return;
+  }
+
+  let positions: BrokerPositionSnapshot[];
+  try {
+    positions = await client.listPositions({
+      accountId: input.accountId,
+      mode: input.mode,
+    });
+  } catch (error) {
+    throw new HttpError(
+      409,
+      "Cannot validate the call sale until IBKR positions are available.",
+      {
+        code: "ibkr_option_order_position_check_unavailable",
+        expose: true,
+        cause: error,
+      },
+    );
+  }
+
+  const orders = await listOrdersWithResilience({
+    accountId: input.accountId,
+    mode: input.mode,
+  });
+  if (orders.degraded) {
+    throw new HttpError(
+      409,
+      "Cannot validate the call sale until open IBKR orders are available.",
+      {
+        code: "ibkr_option_order_open_orders_unavailable",
+        expose: true,
+        data: {
+          reason: orders.reason ?? "orders_unavailable",
+          debug: orders.debug ?? null,
+        },
+      },
+    );
+  }
+
+  validateSellCallOrderIntent({
+    order: input,
+    positions,
+    orders: orders.orders,
+  });
+}
+
 export async function placeOrder(input: PlaceOrderInput) {
   assertLiveOrderConfirmed(input.mode, input.confirm);
   await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClient();
+  await validateOrderIntentForRouting(input, client);
   return client.placeOrder(input);
 }
 
 export async function previewOrder(input: PlaceOrderInput) {
   const client = getIbkrClient();
+  await validateOrderIntentForRouting(input, client);
   return client.previewOrder(input);
 }
 
@@ -2016,11 +2345,22 @@ export async function submitRawOrders(input: {
   accountId?: string | null;
   mode?: "paper" | "live" | null;
   confirm?: boolean | null;
+  parentOrderRequest?: PlaceOrderInput | null;
   ibkrOrders: Record<string, unknown>[];
 }) {
   assertLiveOrderConfirmed(input.mode ?? getRuntimeMode(), input.confirm);
   await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClient();
+  if (input.parentOrderRequest) {
+    await validateOrderIntentForRouting(
+      {
+        ...input.parentOrderRequest,
+        accountId: input.accountId || input.parentOrderRequest.accountId,
+        mode: input.mode ?? input.parentOrderRequest.mode ?? getRuntimeMode(),
+      },
+      client,
+    );
+  }
   return client.submitRawOrders(input);
 }
 
@@ -7296,6 +7636,207 @@ export function getOptionsFlowUniverse() {
     symbols: orderedLaneResolution.admittedSymbols,
     sources,
   };
+}
+
+export async function getFlowPremiumDistribution(input: {
+  limit?: number;
+  candidateLimit?: number;
+  timeframe?: PremiumDistributionTimeframe;
+} = {}): Promise<FlowPremiumDistributionResponse> {
+  const requestedAt = Date.now();
+  const limit = normalizeFlowPremiumDistributionLimit(input.limit);
+  const candidateLimit = normalizeFlowPremiumDistributionCandidateLimit(
+    input.candidateLimit,
+  );
+  const timeframe = normalizeFlowPremiumDistributionTimeframe(input.timeframe);
+  const cacheKey = flowPremiumDistributionCacheKey({
+    limit,
+    candidateLimit,
+    timeframe,
+  });
+  const cached = flowPremiumDistributionCache.get(cacheKey);
+  if (cached && cached.expiresAt > requestedAt) {
+    return withFlowPremiumDistributionCacheState(cached.value, "fresh");
+  }
+
+  const inFlight = flowPremiumDistributionInFlight.get(cacheKey);
+  if (inFlight) {
+    if (cached && cached.staleExpiresAt > requestedAt) {
+      return withFlowPremiumDistributionCacheState(cached.value, "stale");
+    }
+    return inFlight;
+  }
+
+  const config = getPolygonRuntimeConfig();
+  if (!config) {
+    return {
+      status: "unconfigured",
+      asOf: new Date(),
+      timeframe,
+      source: {
+        provider: "polygon",
+        label: "Polygon premium snapshots",
+        timeframe,
+        providerHost: null,
+        sideBasis: "none",
+        quoteAccess: "unknown",
+        tradeAccess: "unknown",
+        classifiedPremium: 0,
+        classificationCoverage: 0,
+        classificationConfidence: "none",
+        candidateDate: null,
+        candidateCount: 0,
+        rankedCount: 0,
+        errorCount: 0,
+        errorMessage: "Polygon/Massive market data is not configured.",
+        cache: "miss",
+      },
+      widgets: [],
+    };
+  }
+
+  const request = (async (): Promise<FlowPremiumDistributionResponse> => {
+    const now = new Date();
+    const client = getPolygonClient();
+    const grouped = await fetchLatestGroupedStockAggregates({
+      client,
+      now,
+      timeframe,
+    });
+    if (!grouped.aggregates.length) {
+      const empty: FlowPremiumDistributionResponse = {
+        status: grouped.errorMessage ? "degraded" : "empty",
+        asOf: now,
+        timeframe,
+        source: {
+          provider: "polygon",
+          label: "Polygon premium snapshots",
+          timeframe,
+          providerHost: getPolygonProviderHost(),
+          sideBasis: "none",
+          quoteAccess: "unknown",
+          tradeAccess: "unknown",
+          classifiedPremium: 0,
+          classificationCoverage: 0,
+          classificationConfidence: "none",
+          candidateDate: grouped.candidateDate,
+          candidateCount: 0,
+          rankedCount: 0,
+          errorCount: grouped.errorMessage ? 1 : 0,
+          errorMessage: grouped.errorMessage,
+          cache: "miss",
+        },
+        widgets: [],
+      };
+      flowPremiumDistributionCache.set(cacheKey, {
+        value: empty,
+        expiresAt: Date.now() + FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS,
+        staleExpiresAt: Date.now() + FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS,
+      });
+      return empty;
+    }
+
+    const candidates = grouped.aggregates
+      .filter((aggregate) => isPremiumDistributionCandidate(aggregate.symbol))
+      .sort((left, right) => right.volume - left.volume)
+      .slice(0, candidateLimit)
+      .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+    let errorCount = 0;
+    let errorMessage: string | null = grouped.errorMessage;
+    const distributions = await mapWithConcurrency(
+      candidates,
+      FLOW_PREMIUM_DISTRIBUTION_CONCURRENCY,
+      async (candidate) => {
+        try {
+          return await runWithAbortTimeout(
+            FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS,
+            (signal) =>
+              client.getOptionPremiumDistribution({
+                underlying: candidate.symbol,
+                stockDayVolume: candidate.volume,
+                timeframe,
+                maxPages: FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES,
+                enrichTrades: candidate.rank <= Math.min(candidateLimit, limit * 2),
+                signal,
+              }),
+          );
+        } catch (error) {
+          errorCount += 1;
+          errorMessage =
+            errorMessage ??
+            (error instanceof Error && error.message
+              ? error.message
+              : "Polygon options premium snapshot failed.");
+          return null;
+        }
+      },
+    );
+    const widgets = distributions
+      .filter(
+        (distribution): distribution is OptionPremiumDistribution =>
+          distribution !== null &&
+          distribution.contractCount > 0 &&
+          distribution.premiumTotal > 0,
+      )
+      .sort((left, right) => {
+        const premiumDelta = right.premiumTotal - left.premiumTotal;
+        if (premiumDelta !== 0) return premiumDelta;
+
+        const classifiedDelta = right.classifiedPremium - left.classifiedPremium;
+        if (classifiedDelta !== 0) return classifiedDelta;
+
+        const volumeDelta =
+          (right.stockDayVolume ?? 0) - (left.stockDayVolume ?? 0);
+        if (volumeDelta !== 0) return volumeDelta;
+
+        return left.symbol.localeCompare(right.symbol);
+      })
+      .slice(0, limit)
+      .map((distribution, index) => ({
+        ...distribution,
+        rank: index + 1,
+      }));
+    const response: FlowPremiumDistributionResponse = {
+      status:
+        widgets.length > 0
+          ? errorCount > 0
+            ? "degraded"
+            : "ok"
+          : errorCount > 0
+            ? "degraded"
+            : "empty",
+      asOf: now,
+      timeframe,
+      source: {
+        provider: "polygon",
+        label: "Polygon premium snapshots",
+        timeframe,
+        ...buildFlowPremiumDistributionSourceDiagnostics(widgets),
+        candidateDate: grouped.candidateDate,
+        candidateCount: candidates.length,
+        rankedCount: widgets.length,
+        errorCount,
+        errorMessage,
+        cache: "miss",
+      },
+      widgets,
+    };
+    const settledAt = Date.now();
+    flowPremiumDistributionCache.set(cacheKey, {
+      value: response,
+      expiresAt: settledAt + FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS,
+      staleExpiresAt: settledAt + FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS,
+    });
+    return response;
+  })();
+
+  flowPremiumDistributionInFlight.set(cacheKey, request);
+  request.finally(() => {
+    if (flowPremiumDistributionInFlight.get(cacheKey) === request) {
+      flowPremiumDistributionInFlight.delete(cacheKey);
+    }
+  });
+  return request;
 }
 
 export function getOptionsFlowScannerDiagnostics() {

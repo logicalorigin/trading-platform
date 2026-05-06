@@ -1,4 +1,5 @@
 const normalizeProviderContractId = (value) => String(value || "").trim();
+export const TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT = 40;
 
 const pushProviderContractId = (target, seen, providerContractId) => {
   const normalized = normalizeProviderContractId(providerContractId);
@@ -53,6 +54,7 @@ export const buildTradeOptionQuoteSubscriptionPlan = ({
   contract = {},
   heldContracts = [],
   visibleRows = [],
+  maxVisibleProviderContractIds = TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT,
 }) => {
   const executionProviderContractIds = [];
   const executionSeen = new Set();
@@ -72,17 +74,23 @@ export const buildTradeOptionQuoteSubscriptionPlan = ({
 
   const visibleProviderContractIds = [];
   const visibleSeen = new Set(executionProviderContractIds);
+  const visibleLimit = Math.max(
+    0,
+    Math.floor(Number(maxVisibleProviderContractIds) || 0),
+  );
+  const pushVisibleProviderContractId = (providerContractId) => {
+    if (visibleProviderContractIds.length >= visibleLimit) {
+      return;
+    }
+    pushProviderContractId(
+      visibleProviderContractIds,
+      visibleSeen,
+      providerContractId,
+    );
+  };
   visibleRows.forEach((row) => {
-    pushProviderContractId(
-      visibleProviderContractIds,
-      visibleSeen,
-      row.cContract?.providerContractId,
-    );
-    pushProviderContractId(
-      visibleProviderContractIds,
-      visibleSeen,
-      row.pContract?.providerContractId,
-    );
+    pushVisibleProviderContractId(row.cContract?.providerContractId);
+    pushVisibleProviderContractId(row.pContract?.providerContractId);
   });
 
   return {

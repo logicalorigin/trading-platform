@@ -459,7 +459,7 @@ const AudioControlButton = ({
           style={{
             fontSize: fs(7),
             fontFamily: T.mono,
-            fontWeight: 700,
+            fontWeight: 400,
             color: muted ? T.amber : "#f8fafc",
             minWidth: dim(24),
             textAlign: "center",
@@ -700,7 +700,7 @@ const MenuSpeedButton = ({
         color: disabled ? T.textMuted : active ? T.green : T.textSec,
         fontSize: fs(8),
         fontFamily: T.mono,
-        fontWeight: 700,
+        fontWeight: 400,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transform: pressed
@@ -734,7 +734,7 @@ const MenuInfoRow = ({ label, value, tone = T.textSec }) => (
     <span
       style={{
         color: tone,
-        fontWeight: 700,
+        fontWeight: 400,
         maxWidth: dim(142),
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -2461,7 +2461,7 @@ export default function BloombergLiveDock() {
               color: topStatusColor,
               fontSize: fs(7),
               fontFamily: T.mono,
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
             {topStatusLabel}
@@ -2470,7 +2470,7 @@ export default function BloombergLiveDock() {
             style={{
               fontSize: fs(8),
               fontFamily: T.display,
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
             Bloomberg
@@ -2603,7 +2603,7 @@ export default function BloombergLiveDock() {
                       style={{
                         fontSize: fs(8),
                         fontFamily: T.display,
-                        fontWeight: 700,
+                        fontWeight: 400,
                         color: "#f8fafc",
                       }}
                     >
@@ -2618,7 +2618,7 @@ export default function BloombergLiveDock() {
                       color: topStatusColor,
                       fontSize: fs(7),
                       fontFamily: T.mono,
-                      fontWeight: 700,
+                      fontWeight: 400,
                       letterSpacing: "0.06em",
                     }}
                   >
@@ -2746,7 +2746,7 @@ export default function BloombergLiveDock() {
                           color: audioBlocked ? T.amber : T.red,
                           fontSize: fs(8),
                           fontFamily: T.mono,
-                          fontWeight: 700,
+                          fontWeight: 400,
                           letterSpacing: "0.04em",
                           backdropFilter: "blur(16px)",
                         }}
@@ -2864,7 +2864,7 @@ export default function BloombergLiveDock() {
                         color: atLiveEdge ? T.green : "#f8fafc",
                         fontSize: fs(7),
                         fontFamily: T.mono,
-                        fontWeight: 700,
+                        fontWeight: 400,
                         letterSpacing: "0.06em",
                         cursor: hasBufferedWindow ? "pointer" : "default",
                         opacity: hasBufferedWindow ? 1 : 0.45,
@@ -3123,7 +3123,7 @@ export default function BloombergLiveDock() {
                 alignItems: "center",
                 gap: sp(5),
                 color: "#f8fafc",
-                fontWeight: 700,
+                fontWeight: 400,
               }}
             >
               <Tv size={dim(12)} />

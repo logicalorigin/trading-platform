@@ -117,7 +117,7 @@ test("IBKR bridge launcher returns only the one-click protocol contract", () => 
   assert.match(launcher.launchUrl, /^rayalgo-ibkr:\/\/launch\?/);
   const launchParams = new URL(launcher.launchUrl).searchParams;
   assert.equal(launcher.activationId, launchParams.get("activationId"));
-  assert.equal(launcher.helperVersion, "2026-05-05.gateway-launch-v11");
+  assert.equal(launcher.helperVersion, "2026-05-06.gateway-reuse-v13");
   assert.match(launchParams.get("activationId") ?? "", /^[a-f0-9]{32}$/);
   assert.match(launchParams.get("callbackSecret") ?? "", /^[a-f0-9]{64}$/);
   assert.equal(launchParams.get("apiBaseUrl"), "https://rayalgo.example.com");
@@ -134,6 +134,18 @@ test("IBKR bridge launcher returns only the one-click protocol contract", () => 
     launchParams.get("bundleUrl"),
     "https://rayalgo.example.com/api/ibkr/bridge/bundle.tar.gz",
   );
+});
+
+test("IBKR bridge launcher can omit the bundle URL for repo-build fallback", () => {
+  const launcher = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://rayalgo.example.com",
+    bundleUrl: null,
+  });
+
+  const launchParams = new URL(launcher.launchUrl).searchParams;
+  assert.equal(launcher.bundleUrl, null);
+  assert.equal(launchParams.has("bundleUrl"), false);
+  assert.equal(launchParams.has("requiredCapability"), false);
 });
 
 test("legacy IBKR bridge activation callbacks attach the runtime", async () => {

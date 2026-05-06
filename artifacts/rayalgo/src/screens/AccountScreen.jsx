@@ -64,6 +64,11 @@ import {
 } from "./account/accountUtils";
 import { buildAccountTradingAnalysisModel } from "./account/accountTradingAnalysis";
 import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
+import {
+  buildPerformanceCalendarParams,
+  performanceCalendarQueriesEnabled as resolvePerformanceCalendarQueriesEnabled,
+  resolveReturnsCalendarData,
+} from "./account/accountCalendarData";
 
 const QUERY_OPTIONS = {
   query: {
@@ -124,7 +129,7 @@ const ShadowWatchlistBacktestPanel = ({
     color: running ? T.textMuted : T.pink,
     fontSize: fs(8),
     fontFamily: T.mono,
-    fontWeight: 900,
+    fontWeight: 400,
     cursor: running ? "wait" : "pointer",
     textTransform: "uppercase",
   };
@@ -229,7 +234,7 @@ const ShadowWatchlistBacktestPanel = ({
                   <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.mono }}>
                     {label.toUpperCase()}
                   </div>
-                  <div style={{ color, fontSize: fs(12), fontFamily: T.mono, fontWeight: 900 }}>
+                  <div style={{ color, fontSize: fs(12), fontFamily: T.mono, fontWeight: 400 }}>
                     {formatNumber(value || 0, 0)}
                   </div>
                 </div>
@@ -247,7 +252,7 @@ const ShadowWatchlistBacktestPanel = ({
             >
               <div>
                 P&L{" "}
-                <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: 900 }}>
+                <span style={{ color: pnl >= 0 ? T.green : T.red, fontWeight: 400 }}>
                   {formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
                 </span>
               </div>
@@ -262,20 +267,20 @@ const ShadowWatchlistBacktestPanel = ({
               </div>
               <div>
                 Exp{" "}
-                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: 900 }}>
+                <span style={{ color: Number(summary.expectancy || 0) >= 0 ? T.green : T.red, fontWeight: 400 }}>
                   {formatAccountMoney(summary.expectancy, currency, true, maskValues)}
                 </span>
               </div>
               <div>Closed {formatNumber(summary.closedTrades || 0, 0)}</div>
               <div>
                 NAV{" "}
-                <span style={{ color: T.green, fontWeight: 900 }}>
+                <span style={{ color: T.green, fontWeight: 400 }}>
                   {formatAccountMoney(summary.endingNetLiquidation, currency, true, maskValues)}
                 </span>
               </div>
               <div>
                 Max DD{" "}
-                <span style={{ color: T.red, fontWeight: 900 }}>
+                <span style={{ color: T.red, fontWeight: 400 }}>
                   {formatAccountPercent(summary.maxDrawdownPercent, 1, maskValues)}
                 </span>
               </div>
@@ -292,7 +297,7 @@ const ShadowWatchlistBacktestPanel = ({
                   gap: sp(4),
                 }}
               >
-                <div style={{ color: T.text, fontSize: fs(9), fontFamily: T.mono, fontWeight: 900 }}>
+                <div style={{ color: T.text, fontSize: fs(9), fontFamily: T.mono, fontWeight: 400 }}>
                   Winner {run.sweep.winnerId || "n/a"} · {formatNumber(run.sweep.variantCount || 0, 0)} variants · highest NAV
                 </div>
                 {(run.sweep.variants || []).slice(0, 3).map((variant) => (
@@ -470,8 +475,8 @@ export const AccountScreen = ({
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
   const benchmarkQueriesEnabled = Boolean(accountQueriesEnabled && !shadowMode);
-  const performanceCalendarQueriesEnabled = Boolean(
-    accountQueriesEnabled && !shadowMode,
+  const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
+    accountQueriesEnabled,
   );
   useShadowAccountSnapshotStream({
     enabled: Boolean(isVisible && shadowMode),
@@ -648,17 +653,14 @@ export const AccountScreen = ({
     [modeParams, tradeFilters],
   );
   const performanceCalendarParams = useMemo(
-    () => ({
-      ...modeParams,
-      from: new Date(Date.now() - 50 * 86_400_000).toISOString(),
-    }),
+    () => buildPerformanceCalendarParams(modeParams),
     [modeParams],
   );
   const performanceCalendarEquityQuery = useGetAccountEquityHistory(
     accountRequestId,
     {
       ...modeParams,
-      range: "1M",
+      range: "1Y",
     },
     {
       query: {
@@ -944,12 +946,15 @@ export const AccountScreen = ({
       manualOrders: orders.filter((order) => order.sourceType === "manual").length,
     };
   }, [openAccountPositions, ordersQuery.data]);
-  const returnsCalendarTradesData = shadowMode
-    ? tradesQuery.data
-    : performanceCalendarTradesQuery.data;
-  const returnsCalendarEquityPoints = shadowMode
-    ? equityQuery.data?.points
-    : performanceCalendarEquityQuery.data?.points;
+  const { tradesData: returnsCalendarTradesData, equityPoints: returnsCalendarEquityPoints } =
+    useMemo(
+      () =>
+        resolveReturnsCalendarData({
+          performanceCalendarTradesData: performanceCalendarTradesQuery.data,
+          performanceCalendarEquityData: performanceCalendarEquityQuery.data,
+        }),
+      [performanceCalendarEquityQuery.data, performanceCalendarTradesQuery.data],
+    );
   const returnsModel = useMemo(
     () =>
       buildAccountReturnsModel({
@@ -1064,7 +1069,7 @@ export const AccountScreen = ({
               color: active ? accent : T.textSec,
               fontSize: fs(7),
               fontFamily: T.mono,
-              fontWeight: 900,
+              fontWeight: 400,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
               cursor: "pointer",
@@ -1278,7 +1283,7 @@ export const AccountScreen = ({
           >
             <div style={{ display: "flex", gap: sp(4), alignItems: "center", flexWrap: "wrap" }}>
               <Pill tone="pink">Lens</Pill>
-              <span style={{ color: T.text, fontWeight: 900 }}>
+              <span style={{ color: T.text, fontWeight: 400 }}>
                 {selectedPatternLens.label}
               </span>
               {selectedPatternLens.closeHour ? (
@@ -1300,7 +1305,7 @@ export const AccountScreen = ({
                 padding: sp("0 7px"),
                 fontFamily: T.data,
                 fontSize: fs(8),
-                fontWeight: 900,
+                fontWeight: 400,
                 cursor: "pointer",
                 textTransform: "uppercase",
               }}
@@ -1416,7 +1421,7 @@ export const AccountScreen = ({
                       <div style={{ color: T.textMuted, fontSize: fs(7), fontFamily: T.mono }}>
                         {label.toUpperCase()}
                       </div>
-                      <div style={{ color, fontSize: fs(12), fontFamily: T.mono, fontWeight: 900 }}>
+                      <div style={{ color, fontSize: fs(12), fontFamily: T.mono, fontWeight: 400 }}>
                         {value}
                       </div>
                     </div>

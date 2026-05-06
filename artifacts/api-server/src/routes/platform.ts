@@ -28,6 +28,8 @@ import {
   ListAccountsQueryParams,
   ListAccountsResponse,
   ListBrokerConnectionsResponse,
+  GetFlowPremiumDistributionQueryParams,
+  GetFlowPremiumDistributionResponse,
   ListFlowEventsQueryParams,
   ListFlowEventsResponse,
   GetFlowUniverseResponse,
@@ -56,6 +58,7 @@ import {
   resolveOptionContractWithDebug,
   getQuoteSnapshots,
   getRuntimeDiagnostics,
+  getFlowPremiumDistribution,
   getOptionsFlowUniverse,
   getSession,
   getUniverseLogos,
@@ -956,9 +959,16 @@ router.get("/diagnostics/runtime", async (_req, res) => {
 });
 
 router.get("/ibkr/bridge/launcher", async (req, res) => {
+  const apiBaseUrl = getIbkrBridgeRequestOrigin(req);
+  const bundleUrl =
+    findIbkrBridgeBundlePath() || getIbkrBridgeBundleRedirectUrl()
+      ? `${apiBaseUrl}/api/ibkr/bridge/bundle.tar.gz`
+      : null;
+
   res.json(
     getIbkrBridgeLauncher({
-      apiBaseUrl: getIbkrBridgeRequestOrigin(req),
+      apiBaseUrl,
+      bundleUrl,
     }),
   );
 });
@@ -1343,6 +1353,10 @@ router.post("/orders/submit", async (req, res) => {
           ? req.body.mode
           : null,
       confirm: req.body.confirm === true,
+      parentOrderRequest:
+        req.body.parentOrderRequest && typeof req.body.parentOrderRequest === "object"
+          ? PlaceOrderBody.parse(req.body.parentOrderRequest)
+          : null,
       ibkrOrders: req.body.ibkrOrders,
     }));
     return;
@@ -1636,6 +1650,15 @@ router.get("/flow/events", async (req, res) => {
   const queueRefresh = readBooleanQueryFlag(req.query.queueRefresh) ?? true;
   const data = ListFlowEventsResponse.parse(
     await listFlowEvents({ ...query, blocking, queueRefresh }),
+  );
+
+  res.json(data);
+});
+
+router.get("/flow/premium-distribution", async (req, res) => {
+  const query = GetFlowPremiumDistributionQueryParams.parse(req.query);
+  const data = GetFlowPremiumDistributionResponse.parse(
+    await getFlowPremiumDistribution(query),
   );
 
   res.json(data);

@@ -21,6 +21,7 @@ import {
   SizeBucketRow,
 } from "../flow/OrderFlowVisuals.jsx";
 import {
+  formatOptionContractLabel,
   formatQuotePrice,
   formatRelativeTimeShort,
   isFiniteNumber,
@@ -43,6 +44,7 @@ export const TradeL2Panel = ({
   accountId,
   brokerConfigured,
   brokerAuthenticated,
+  isVisible = false,
   streamingPaused = false,
 }) => {
   const queryClient = useQueryClient();
@@ -56,6 +58,20 @@ export const TradeL2Panel = ({
   );
   const resolvedChainRows = chainRows.length ? chainRows : snapshotChainRows;
   const row = resolvedChainRows.find((r) => r.k === slot.strike);
+  const contractLabel = formatOptionContractLabel(
+    {
+      ticker: slot.ticker,
+      symbol: slot.ticker,
+      expirationDate: slot.exp,
+      exp: slot.exp,
+      strike: slot.strike,
+      cp: slot.cp,
+    },
+    {
+      includeSymbol: false,
+      fallback: `${slot.strike}${slot.cp}`,
+    },
+  );
   const mid = row ? (slot.cp === "C" ? row.cPrem : row.pPrem) : 3.0;
   const bid = row ? (slot.cp === "C" ? row.cBid : row.pBid) : mid - 0.04;
   const ask = row ? (slot.cp === "C" ? row.cAsk : row.pAsk) : mid + 0.04;
@@ -68,6 +84,13 @@ export const TradeL2Panel = ({
   const [tab, setTab] = useState("book");
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
+  const brokerRuntimeEnabled = Boolean(
+    isVisible &&
+      brokerAuthenticated &&
+      accountId &&
+      selectedContractMeta?.providerContractId &&
+      !streamingPaused,
+  );
   const depthQuery = useQuery({
     queryKey: [
       "trade-market-depth",
@@ -83,12 +106,7 @@ export const TradeL2Panel = ({
         providerContractId: selectedContractMeta?.providerContractId,
         exchange: "SMART",
       }),
-    enabled: Boolean(
-      brokerAuthenticated &&
-        accountId &&
-        selectedContractMeta?.providerContractId &&
-        !streamingPaused,
-    ),
+    enabled: brokerRuntimeEnabled,
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
@@ -109,12 +127,7 @@ export const TradeL2Panel = ({
         days: 2,
         limit: 24,
       }),
-    enabled: Boolean(
-      brokerAuthenticated &&
-        accountId &&
-        selectedContractMeta?.providerContractId &&
-        !streamingPaused,
-    ),
+    enabled: brokerRuntimeEnabled,
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
@@ -122,10 +135,7 @@ export const TradeL2Panel = ({
   });
   useEffect(() => {
     if (
-      !brokerAuthenticated ||
-      !accountId ||
-      !selectedContractMeta?.providerContractId ||
-      streamingPaused ||
+      !brokerRuntimeEnabled ||
       !pageVisible ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -163,19 +173,15 @@ export const TradeL2Panel = ({
     };
   }, [
     accountId,
-    brokerAuthenticated,
+    brokerRuntimeEnabled,
     pageVisible,
     queryClient,
     selectedContractMeta?.providerContractId,
-    streamingPaused,
     slot.ticker,
   ]);
   useEffect(() => {
     if (
-      !brokerAuthenticated ||
-      !accountId ||
-      !selectedContractMeta?.providerContractId ||
-      streamingPaused ||
+      !brokerRuntimeEnabled ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
     ) {
@@ -212,10 +218,9 @@ export const TradeL2Panel = ({
     };
   }, [
     accountId,
-    brokerAuthenticated,
+    brokerRuntimeEnabled,
     queryClient,
     selectedContractMeta?.providerContractId,
-    streamingPaused,
     slot.ticker,
   ]);
   const depthLevels = depthQuery.data?.depth?.levels || [];
@@ -239,7 +244,7 @@ export const TradeL2Panel = ({
         border: "none",
         padding: 0,
         fontSize: fs(9),
-        fontWeight: 700,
+        fontWeight: 400,
         color: tab === id ? T.text : T.textMuted,
         fontFamily: T.display,
         letterSpacing: "0.08em",
@@ -356,7 +361,7 @@ export const TradeL2Panel = ({
             >
               BEST BID
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: 700, color: T.green }}>
+            <div style={{ fontSize: fs(11), fontWeight: 400, color: T.green }}>
               {formatQuotePrice(bestBidLevel?.price ?? bid)}
             </div>
           </div>
@@ -370,7 +375,7 @@ export const TradeL2Panel = ({
             >
               LEVELS
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: 700, color: T.text }}>
+            <div style={{ fontSize: fs(11), fontWeight: 400, color: T.text }}>
               {depthLevels.length}
             </div>
           </div>
@@ -384,7 +389,7 @@ export const TradeL2Panel = ({
             >
               BEST ASK
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: 700, color: T.red }}>
+            <div style={{ fontSize: fs(11), fontWeight: 400, color: T.red }}>
               {formatQuotePrice(bestAskLevel?.price ?? ask)}
             </div>
           </div>
@@ -438,7 +443,7 @@ export const TradeL2Panel = ({
                       ? T.green
                       : T.textDim,
                   textAlign: "right",
-                  fontWeight: typeof level.bidSize === "number" ? 700 : 400,
+                  fontWeight: 400,
                 }}
               >
                 {level.bidSize != null ? level.bidSize.toFixed(0) : MISSING_VALUE}
@@ -447,7 +452,7 @@ export const TradeL2Panel = ({
                 style={{
                   color: level.isLastTrade ? T.accent : T.text,
                   textAlign: "right",
-                  fontWeight: 700,
+                  fontWeight: 400,
                 }}
               >
                 {formatQuotePrice(level.price)}
@@ -459,7 +464,7 @@ export const TradeL2Panel = ({
                       ? T.red
                       : T.textDim,
                   textAlign: "right",
-                  fontWeight: typeof level.askSize === "number" ? 700 : 400,
+                  fontWeight: 400,
                 }}
               >
                 {level.askSize != null ? level.askSize.toFixed(0) : MISSING_VALUE}
@@ -582,7 +587,7 @@ export const TradeL2Panel = ({
             <span
               style={{
                 color: execution.side === "buy" ? T.green : T.red,
-                fontWeight: 700,
+                fontWeight: 400,
               }}
             >
               {execution.side === "buy" ? "BUY" : "SELL"}
@@ -592,7 +597,7 @@ export const TradeL2Panel = ({
                 ? execution.quantity.toFixed(0)
                 : MISSING_VALUE}
             </span>
-            <span style={{ color: T.text, textAlign: "right", fontWeight: 700 }}>
+            <span style={{ color: T.text, textAlign: "right", fontWeight: 400 }}>
               {formatQuotePrice(execution.price)}
             </span>
             <span
@@ -676,16 +681,15 @@ export const TradeL2Panel = ({
               fontSize: fs(9),
               fontFamily: T.mono,
               color: contractColor,
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
-            {slot.strike}
-            {slot.cp}
+            {contractLabel}
           </span>
           <span
             style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}
           >
-            ${spread.toFixed(2)} sprd
+            {spread.toFixed(2)} sprd
           </span>
         </div>
       </div>
@@ -738,7 +742,7 @@ export const TradeL2Panel = ({
                     fontSize: fs(10),
                   }}
                 >
-                  <span style={{ color: T.green, fontWeight: 700 }}>
+                  <span style={{ color: T.green, fontWeight: 400 }}>
                     $
                     {(
                       tickerFlow.buyXL +
@@ -748,7 +752,7 @@ export const TradeL2Panel = ({
                     ).toFixed(0)}
                     M
                   </span>
-                  <span style={{ color: T.red, fontWeight: 700 }}>
+                  <span style={{ color: T.red, fontWeight: 400 }}>
                     $
                     {(
                       tickerFlow.sellXL +

@@ -493,7 +493,7 @@ table {
   color: var(--ra-tooltip-text);
   font-family: var(--ra-font-sans);
   font-size: var(--ra-type-body);
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.35;
   overflow-wrap: anywhere;
   pointer-events: none;

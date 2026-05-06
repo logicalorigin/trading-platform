@@ -44,7 +44,7 @@ const ResearchLoadingFallback = () => (
     <span
       style={{
         fontSize: fs(11),
-        fontWeight: 700,
+        fontWeight: 400,
         color: T.textSec,
       }}
     >

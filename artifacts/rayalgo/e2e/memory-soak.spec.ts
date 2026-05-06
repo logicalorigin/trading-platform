@@ -702,6 +702,8 @@ async function collectLiveSoakSample(page: Page, label: string) {
   const bridgeQuote = streams.bridgeQuote ?? {};
   const stockAggregates = streams.stockAggregates ?? {};
   const marketDataAdmission = streams.marketDataAdmission ?? {};
+  const optionsFlowScanner = marketDataAdmission?.optionsFlowScanner ?? {};
+  const deepScanner = optionsFlowScanner?.deepScanner ?? {};
 
   if (!runtimeResponse.ok) {
     streamingRuntimeIssues.push(
@@ -781,9 +783,13 @@ async function collectLiveSoakSample(page: Page, label: string) {
   }
   if (
     Number.isFinite(Number(marketDataAdmission?.flowScannerRemainingLineCount)) &&
-    Number(marketDataAdmission.flowScannerRemainingLineCount) <= 0
+    Number(marketDataAdmission.flowScannerRemainingLineCount) <= 0 &&
+    Number.isFinite(Number(deepScanner?.queuedCount)) &&
+    Number(deepScanner.queuedCount) > 0
   ) {
-    streamingRuntimeIssues.push("flow scanner exhausted its line budget");
+    streamingRuntimeIssues.push(
+      `flow scanner exhausted its line budget with ${Number(deepScanner.queuedCount)} queued`,
+    );
   }
   if (
     Number.isFinite(Number(marketDataAdmission?.accountMonitorRemainingLineCount)) &&

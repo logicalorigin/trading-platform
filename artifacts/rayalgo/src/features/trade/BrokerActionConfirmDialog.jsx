@@ -57,7 +57,7 @@ export const BrokerActionConfirmDialog = ({
           <span
             style={{
               fontSize: fs(10),
-              fontWeight: 800,
+              fontWeight: 400,
               color: confirmTone,
               fontFamily: T.display,
               letterSpacing: "0.08em",
@@ -68,7 +68,7 @@ export const BrokerActionConfirmDialog = ({
           <span
             style={{
               fontSize: fs(14),
-              fontWeight: 800,
+              fontWeight: 400,
               color: T.text,
               fontFamily: T.sans,
             }}
@@ -114,7 +114,7 @@ export const BrokerActionConfirmDialog = ({
                   style={{
                     fontSize: fs(8),
                     color: line.valueColor || T.text,
-                    fontWeight: 700,
+                    fontWeight: 400,
                     textAlign: "right",
                   }}
                 >
@@ -171,7 +171,7 @@ export const BrokerActionConfirmDialog = ({
               color: T.textSec,
               fontSize: fs(10),
               fontFamily: T.sans,
-              fontWeight: 700,
+              fontWeight: 400,
               cursor: pending ? "not-allowed" : "pointer",
               opacity: pending ? 0.65 : 1,
             }}
@@ -189,7 +189,7 @@ export const BrokerActionConfirmDialog = ({
               color: "#fff",
               fontSize: fs(10),
               fontFamily: T.sans,
-              fontWeight: 800,
+              fontWeight: 400,
               cursor: pending ? "wait" : "pointer",
               opacity: pending ? 0.75 : 1,
             }}

@@ -120,7 +120,7 @@ const TickerTabStripItem = ({
       <span
         style={{
           fontSize: fs(11),
-          fontWeight: 700,
+          fontWeight: 400,
           fontFamily: T.mono,
           color: isActive ? T.text : T.textSec,
         }}
@@ -132,7 +132,7 @@ const TickerTabStripItem = ({
           fontSize: fs(9),
           fontFamily: T.mono,
           color: pos == null ? T.textDim : pos ? T.green : T.red,
-          fontWeight: 600,
+          fontWeight: 400,
         }}
       >
         {formatSignedPercent(info?.pct)}
@@ -152,7 +152,7 @@ const TickerTabStripItem = ({
                     : T.textDim,
             fontFamily: T.mono,
             fontSize: fs(7),
-            fontWeight: 900,
+            fontWeight: 400,
             lineHeight: 1,
             padding: sp("2px 3px"),
           }}
@@ -316,7 +316,7 @@ export const TickerTabStrip = ({
           cursor: "pointer",
           fontSize: fs(13),
           padding: sp("3px 8px"),
-          fontWeight: 600,
+          fontWeight: 400,
           lineHeight: 1,
         }}
       >
@@ -395,7 +395,7 @@ export const TradeTickerHeader = ({
         <span
           style={{
             fontSize: fs(20),
-            fontWeight: 800,
+            fontWeight: 400,
             fontFamily: T.display,
             color: T.text,
             letterSpacing: 0,
@@ -427,7 +427,7 @@ export const TradeTickerHeader = ({
         <span
           style={{
             fontSize: fs(22),
-            fontWeight: 700,
+            fontWeight: 400,
             fontFamily: T.mono,
             color: T.text,
           }}
@@ -437,19 +437,19 @@ export const TradeTickerHeader = ({
         <span
           style={{
             fontSize: fs(12),
-            fontWeight: 600,
+            fontWeight: 400,
             fontFamily: T.mono,
             color: pos == null ? T.textDim : pos ? T.green : T.red,
           }}
         >
           {isFiniteNumber(info?.chg)
-            ? `${info.chg >= 0 ? "▲ +" : "▼ "}${Math.abs(info.chg).toFixed(2)}`
+            ? `${info.chg >= 0 ? "▲ +" : "▼ -"}${Math.abs(info.chg).toFixed(2)}`
             : MISSING_VALUE}
         </span>
         <span
           style={{
             fontSize: fs(12),
-            fontWeight: 600,
+            fontWeight: 400,
             fontFamily: T.mono,
             color: pos == null ? T.textDim : pos ? T.green : T.red,
           }}
@@ -470,13 +470,13 @@ export const TradeTickerHeader = ({
       >
         <div>
           <span style={{ color: T.textMuted }}>VOL </span>
-          <span style={{ color: T.text, fontWeight: 600 }}>
+          <span style={{ color: T.text, fontWeight: 400 }}>
             {fmtQuoteVolume(info?.volume)}
           </span>
         </div>
         <div>
           <span style={{ color: T.textMuted }}>IV </span>
-          <span style={{ color: T.text, fontWeight: 600 }}>
+          <span style={{ color: T.text, fontWeight: 400 }}>
             {isFiniteNumber(info?.iv)
               ? `${(info.iv * 100).toFixed(1)}%`
               : MISSING_VALUE}
@@ -487,10 +487,10 @@ export const TradeTickerHeader = ({
           <span
             style={{
               color: impMove != null ? T.cyan : T.textDim,
-              fontWeight: 700,
+              fontWeight: 400,
             }}
           >
-            {impMove != null ? `±$${impMove.toFixed(2)}` : MISSING_VALUE}
+            {impMove != null ? `±${impMove.toFixed(2)}` : MISSING_VALUE}
           </span>{" "}
           <span style={{ color: T.textDim }}>
             {impPct != null ? `(${impPct.toFixed(2)}%)` : ""}
@@ -498,7 +498,7 @@ export const TradeTickerHeader = ({
         </div>
         <div>
           <span style={{ color: T.textMuted }}>ATM </span>
-          <span style={{ color: T.accent, fontWeight: 600 }}>
+          <span style={{ color: T.accent, fontWeight: 400 }}>
             {atmRow?.k ?? getAtmStrikeFromPrice(info?.price) ?? MISSING_VALUE}
           </span>
         </div>
@@ -507,7 +507,7 @@ export const TradeTickerHeader = ({
           <span
             style={{
               color: resolvedChainStatus === "live" ? T.accent : T.textDim,
-              fontWeight: 600,
+              fontWeight: 400,
             }}
           >
             {resolvedChainStatus}

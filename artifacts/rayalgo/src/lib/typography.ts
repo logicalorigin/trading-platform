@@ -23,5 +23,11 @@ export const TYPE_PX = {
   screenTitle: 17,
 } as const;
 
+export const FONT_WEIGHT = {
+  regular: 400,
+  label: 600,
+  emphasis: 700,
+} as const;
+
 export const APP_FONT_FALLBACK =
   "var(--ra-font-sans, 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)";

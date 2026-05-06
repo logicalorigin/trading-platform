@@ -189,6 +189,7 @@ export function useOptionChartBars({
       underlying,
     ],
   );
+  const queryEnabled = Boolean(enabled && identityReady);
   const buildRequest = useCallback(
     ({
       timeframe: requestedTimeframe,
@@ -236,7 +237,7 @@ export function useOptionChartBars({
         buildHydrationRequestOptions(requestPriority),
       ),
     ...queryDefaults,
-    enabled: Boolean(enabled && identityReady),
+    enabled: queryEnabled,
   });
   const chartProviderContractId =
     normalizeBrokerProviderContractId(query.data?.providerContractId) ||
@@ -260,7 +261,7 @@ export function useOptionChartBars({
     family: "chart-bars",
     label: hydrationLabel || `${underlying || "option"} ${timeframe}`,
     priority: requestPriority,
-    active: Boolean(hydrationActive && enabled && identityReady),
+    active: Boolean(hydrationActive && queryEnabled),
     meta: {
       role: "option",
       timeframe,
@@ -304,7 +305,7 @@ export function useOptionChartBars({
     pageSizeTimeframe: timeframe,
     bars: baseBars,
     baseBarsReady,
-    enabled: Boolean(enabled && identityReady),
+    enabled: queryEnabled,
     fetchOlderBars: useCallback(
       async ({ from, to, limit, historyCursor, preferCursor }) => {
         const fromIso = from.toISOString();
@@ -355,9 +356,7 @@ export function useOptionChartBars({
         baseTimeframe,
         buildRequest,
         chartProviderContractId,
-        enabled,
         expirationDate,
-        identityReady,
         normalizedProviderContractId,
         optionTicker,
         queryClient,
@@ -423,8 +422,7 @@ export function useOptionChartBars({
   const prewarmTimeframe = useCallback(
     (nextTimeframe) => {
       if (
-        !enabled ||
-        !identityReady ||
+        !queryEnabled ||
         nextTimeframe === timeframe ||
         (Array.isArray(allowedTimeframes) &&
           !allowedTimeframes.some((option) =>
@@ -484,13 +482,12 @@ export function useOptionChartBars({
       allowedTimeframes,
       buildRequest,
       chartProviderContractId,
-      enabled,
       expirationDate,
       getPrewarmLimit,
-      identityReady,
       normalizedProviderContractId,
       optionTicker,
       prewarmPriority,
+      queryEnabled,
       queryClient,
       queryDefaults,
       right,

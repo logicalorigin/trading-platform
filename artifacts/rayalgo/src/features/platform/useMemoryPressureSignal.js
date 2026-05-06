@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { getLatestDiagnostics } from "@workspace/api-client-react";
 import { getActiveChartBarStoreEntryCount } from "../charting/activeChartBarStore";
 import { getChartHydrationStatsSnapshot } from "../charting/chartHydrationStats";
 import { readBrowserMemoryMeasurement } from "./memoryPressureClient";
@@ -12,7 +13,6 @@ import {
   useMemoryPressureSnapshot,
 } from "./memoryPressureStore";
 import { getMarketFlowStoreEntryCount } from "./marketFlowStore";
-import { platformJsonRequest } from "./platformJsonRequest";
 import { usePageVisible } from "./usePageVisible";
 import { getTradeFlowStoreEntryCount } from "./tradeFlowStore";
 import { getTradeOptionChainStoreEntryCount } from "./tradeOptionChainStore";
@@ -41,6 +41,27 @@ const jitterMs = (baseMs) => {
 const readResourceSnapshot = (payload) =>
   payload?.snapshots?.find?.((entry) => entry?.subsystem === "resource-pressure") ||
   null;
+
+const readLatestDiagnosticsSnapshot = async (timeoutMs = 4_000) => {
+  const controller =
+    timeoutMs > 0 && typeof AbortController !== "undefined"
+      ? new AbortController()
+      : null;
+  const timeoutId =
+    controller && timeoutMs > 0
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+
+  try {
+    return await getLatestDiagnostics(
+      controller ? { signal: controller.signal } : undefined,
+    );
+  } finally {
+    if (timeoutId != null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+};
 
 const readQueryDiagnostics = () => {
   try {
@@ -83,9 +104,7 @@ export const useMemoryPressureMonitor = () => {
         nextServerRefreshAtRef.current =
           now + jitterMs(SERVER_INTERVALS_MS[currentLevel] || SERVER_INTERVALS_MS.normal);
         try {
-          const diagnosticsPayload = await platformJsonRequest("/api/diagnostics/latest", {
-            timeoutMs: 4_000,
-          });
+          const diagnosticsPayload = await readLatestDiagnosticsSnapshot(4_000);
           if (!cancelled) {
             const resourceSnapshot = readResourceSnapshot(diagnosticsPayload);
             serverSummary =

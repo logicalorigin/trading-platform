@@ -43,6 +43,7 @@ import {
   fmtCompactNumber,
   fmtM,
   formatExpirationLabel,
+  formatOptionContractLabel,
   formatQuotePrice,
   isFiniteNumber,
   mapNewsSentimentToScore,
@@ -134,6 +135,37 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   );
   const optionRight = normalizeFlowOptionRight(evt?.right, evt?.cp);
   const optionStrike = normalizeFlowOptionStrike(evt?.strike);
+  const flowOptionContractLabel = formatOptionContractLabel(
+    {
+      ...evt,
+      ticker: evt?.ticker || evt?.underlying,
+      symbol: evt?.ticker || evt?.underlying,
+      expirationDate: optionExpirationIso || evt?.expirationDate || evt?.exp,
+      right: optionRight || evt?.right,
+      cp: evt?.cp,
+      strike: optionStrike ?? evt?.strike,
+    },
+    {
+      symbol: chartSymbol || evt?.ticker || evt?.underlying,
+      fallback: optionTicker || "Flow option",
+    },
+  );
+  const flowOptionContractShortLabel = formatOptionContractLabel(
+    {
+      ...evt,
+      ticker: evt?.ticker || evt?.underlying,
+      symbol: evt?.ticker || evt?.underlying,
+      expirationDate: optionExpirationIso || evt?.expirationDate || evt?.exp,
+      right: optionRight || evt?.right,
+      cp: evt?.cp,
+      strike: optionStrike ?? evt?.strike,
+    },
+    {
+      symbol: chartSymbol || evt?.ticker || evt?.underlying,
+      includeSymbol: false,
+      fallback: optionTicker || "Flow option",
+    },
+  );
   const [optionChartTimeframe, setOptionChartTimeframe] = useState("1m");
   const {
     favoriteTimeframes: optionFavoriteTimeframes,
@@ -417,7 +449,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
         style={{
           fontSize: fs(10),
           color,
-          fontWeight: 700,
+          fontWeight: 400,
           fontFamily: mono ? T.mono : T.sans,
           textAlign: "right",
         }}
@@ -454,7 +486,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             borderRadius: dim(4),
             color: T.textSec,
             fontSize: fs(10),
-            fontWeight: 600,
+            fontWeight: 400,
             fontFamily: T.sans,
             cursor: "pointer",
             flexShrink: 0,
@@ -485,14 +517,14 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           <span
             style={{
               fontSize: fs(16),
-              fontWeight: 800,
+              fontWeight: 400,
               fontFamily: T.display,
               color: T.text,
-              letterSpacing: "-0.01em",
+              letterSpacing: 0,
               whiteSpace: "nowrap",
             }}
           >
-            {evt.ticker} {evt.strike} {isCall ? "Call" : "Put"}
+            {flowOptionContractLabel}
           </span>
           <span
             style={{
@@ -509,7 +541,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               fontSize: fs(10),
               fontFamily: T.mono,
               color: evt.dte <= 1 ? T.red : evt.dte <= 7 ? T.amber : T.textDim,
-              fontWeight: 600,
+              fontWeight: 400,
             }}
           >
             {evt.dte}DTE
@@ -519,7 +551,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               fontSize: fs(10),
               fontFamily: T.mono,
               color: typeColor,
-              fontWeight: 700,
+              fontWeight: 400,
               padding: sp("1px 6px"),
               background: T.bg3,
               borderRadius: dim(2),
@@ -544,7 +576,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
           <span
             style={{
               fontSize: fs(18),
-              fontWeight: 800,
+              fontWeight: 400,
               fontFamily: T.mono,
               color: T.text,
             }}
@@ -581,7 +613,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             borderRadius: dim(4),
             cursor: "pointer",
             fontSize: fs(10),
-            fontWeight: 700,
+            fontWeight: 400,
             fontFamily: T.sans,
             flexShrink: 0,
           }}
@@ -596,8 +628,8 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               kind: next ? "success" : "info",
               title: next ? "Alert set" : "Alert removed",
               body: next
-                ? `${evt.ticker} ${evt.strike}${evt.cp} · Notify on next big activity (>$100K)`
-                : `${evt.ticker} ${evt.strike}${evt.cp} · No longer watching this contract`,
+                ? `${flowOptionContractShortLabel} · Notify on next big activity (>$100K)`
+                : `${flowOptionContractShortLabel} · No longer watching this contract`,
             });
           }}
           style={{
@@ -608,7 +640,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             borderRadius: dim(4),
             cursor: "pointer",
             fontSize: fs(10),
-            fontWeight: 600,
+            fontWeight: 400,
             fontFamily: T.sans,
             flexShrink: 0,
           }}
@@ -678,7 +710,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 fontSize: fs(8),
                 color: T.textMuted,
                 fontFamily: T.mono,
-                fontWeight: 700,
+                fontWeight: 400,
                 marginBottom: sp(2),
               }}
             >
@@ -689,7 +721,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 fontSize: fs(10),
                 color: item.color,
                 fontFamily: T.mono,
-                fontWeight: 800,
+                fontWeight: 400,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -720,7 +752,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             <div
               style={{
                 fontSize: fs(10),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.display,
                 color: T.textSec,
                 letterSpacing: "0.04em",
@@ -759,7 +791,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             <div
               style={{
                 fontSize: fs(10),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.display,
                 color: T.textSec,
                 letterSpacing: "0.04em",
@@ -780,7 +812,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
               }}
             >
               <div>
-                <span style={{ color: cpColor, fontWeight: 700 }}>
+                <span style={{ color: cpColor, fontWeight: 400 }}>
                   {isCall ? "Call flow" : "Put flow"}
                 </span>{" "}
                 with a provider-reported {evt.side.toLowerCase()} side. This panel
@@ -788,7 +820,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 provider.
               </div>
               <div>
-                <span style={{ color: T.text, fontWeight: 700 }}>{flowRead}</span>
+                <span style={{ color: T.text, fontWeight: 400 }}>{flowRead}</span>
                 {" · "}
                 <span
                   style={{
@@ -798,7 +830,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                         : sentimentScore < 0
                           ? T.red
                           : T.textDim,
-                    fontWeight: 700,
+                    fontWeight: 400,
                   }}
                 >
                   {evt.sentiment || "sentiment unavailable"}
@@ -834,7 +866,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
             <span
               style={{
                 fontSize: fs(10),
-                fontWeight: 700,
+                fontWeight: 400,
                 fontFamily: T.display,
                 color: T.textSec,
                 letterSpacing: "0.04em",
@@ -868,7 +900,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 showLegend
                 legend={{
                   symbol: chartSymbol || "OPTION",
-                  name: evt.optionTicker || evt.contract || "Flow option",
+                  name: flowOptionContractLabel,
                   timeframe: optionChartTimeframe,
                   statusLabel: optionChartStatusLabel,
                   statusTone: optionChartSourceState.tone,
@@ -892,7 +924,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                     theme={T}
                     controls={controls}
                     symbol={chartSymbol || "OPTION"}
-                    name={evt.optionTicker || evt.contract || "Flow option"}
+                    name={flowOptionContractLabel}
                     priceLabel="Option"
                     price={optionLastPrice}
                     changePercent={optionChangePercent}

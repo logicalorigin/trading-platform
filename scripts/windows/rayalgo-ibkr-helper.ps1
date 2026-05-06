@@ -33,7 +33,7 @@ $BuildRefFile = Join-Path $StateDir 'bridge-build-ref.txt'
 $BridgeBundleHashFile = Join-Path $StateDir 'bridge-bundle.sha256'
 $LockHashFile = Join-Path $StateDir 'pnpm-lock.sha256'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-05-05.gateway-launch-v11'
+$HelperVersion = '2026-05-06.gateway-reuse-v13'
 $script:BridgeBundleHash = ''
 
 New-Item -ItemType Directory -Force -Path $StateDir, $LogDir | Out-Null
@@ -394,6 +394,48 @@ function Get-IBGatewayProcessSummary {
             }
         }
 
+        $candidateFilter = "Name = 'ibgateway.exe' OR Name = 'java.exe' OR Name = 'javaw.exe'"
+        $cimProcesses = @()
+        try {
+            $cimProcesses = @(Get-CimInstance Win32_Process -Filter $candidateFilter -ErrorAction Stop)
+        } catch {
+            if (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
+                try {
+                    $cimProcesses = @(Get-WmiObject Win32_Process -Filter $candidateFilter -ErrorAction Stop)
+                } catch {
+                    Write-Log "IB Gateway process command-line detection skipped: $($_.Exception.Message)"
+                }
+            } else {
+                Write-Log "IB Gateway process command-line detection skipped: $($_.Exception.Message)"
+            }
+        }
+
+        foreach ($process in $cimProcesses) {
+            $processName = [string]$process.Name
+            $commandLine = [string]$process.CommandLine
+            $executablePath = [string]$process.ExecutablePath
+            $haystack = "$processName $commandLine $executablePath"
+            $looksLikeGateway = (
+                $processName -ieq 'ibgateway.exe' -or
+                $haystack -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)' -or
+                $haystack -match '(?i)(\\|/)ibgateway(\\|/)' -or
+                $haystack -match '(?i)\bibgateway(\.exe)?\b'
+            )
+
+            if (-not $looksLikeGateway) {
+                continue
+            }
+
+            $pidText = [string]$process.ProcessId
+            if (-not $seen.ContainsKey($pidText)) {
+                $seen[$pidText] = $true
+                if (-not $processName) {
+                    $processName = 'process'
+                }
+                $summaries.Add(("pid={0} name={1}" -f $process.ProcessId, $processName))
+            }
+        }
+
         if ($summaries.Count -eq 0) {
             return $null
         }
@@ -504,42 +546,54 @@ function Ensure-IBGatewaySocket {
 }
 
 function Ensure-RepoAndBridgeBuild {
+    $fallbackRepoDir = $RepoDir
+
     if ($script:BridgeBundleUrl) {
-        Ensure-Command -Command node -WingetId OpenJS.NodeJS.LTS -DisplayName 'Node.js LTS'
-        Ensure-Command -Command cloudflared -WingetId Cloudflare.cloudflared -DisplayName cloudflared
-        if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
-            throw 'Windows tar.exe was not found. Install Windows 10/11 built-in tar support or use Git Bash tar, then retry the bridge launch.'
-        }
-
-        $bundleDir = Join-Path $StateDir 'bridge-runtime'
-        $archive = Join-Path $StateDir 'bridge-bundle.tar.gz'
-        $distEntry = Join-Path $bundleDir 'artifacts\ibkr-bridge\dist\index.mjs'
-        Send-BridgeProgress -Status 'starting_bridge' -Step 'downloading_bridge_bundle' -Message 'Downloading the RayAlgo IB Gateway bridge bundle.'
-        Invoke-WebRequest -UseBasicParsing -Uri $script:BridgeBundleUrl -OutFile $archive
-        $currentBundleHash = Get-FileSha256 -Path $archive
-        $lastBundleHash = Read-FirstLine -Path $BridgeBundleHashFile
-        $bundleChanged = (-not $currentBundleHash) -or ($currentBundleHash -ne $lastBundleHash) -or (-not (Test-Path $distEntry))
-        $script:BridgeBundleChanged = $bundleChanged
-        $script:BridgeBundleHash = [string]$currentBundleHash
-        $script:RepoDir = $bundleDir
-
-        if ($bundleChanged) {
-            Remove-Item -Path $bundleDir -Recurse -Force -ErrorAction SilentlyContinue
-            New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
-            tar -xzf $archive -C $bundleDir
-            if ($currentBundleHash) {
-                Set-Content -Path $BridgeBundleHashFile -Value $currentBundleHash
+        try {
+            Ensure-Command -Command node -WingetId OpenJS.NodeJS.LTS -DisplayName 'Node.js LTS'
+            Ensure-Command -Command cloudflared -WingetId Cloudflare.cloudflared -DisplayName cloudflared
+            if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
+                throw 'Windows tar.exe was not found. Install Windows 10/11 built-in tar support or use Git Bash tar, then retry the bridge launch.'
             }
-        } else {
-            Write-Log 'Downloaded bridge bundle matches the installed bundle.'
-        }
 
-        if (-not (Test-Path $distEntry)) {
-            throw 'The downloaded IB Gateway bridge bundle is missing artifacts\ibkr-bridge\dist\index.mjs.'
-        }
+            $bundleDir = Join-Path $StateDir 'bridge-runtime'
+            $archive = Join-Path $StateDir 'bridge-bundle.tar.gz'
+            $distEntry = Join-Path $bundleDir 'artifacts\ibkr-bridge\dist\index.mjs'
+            Send-BridgeProgress -Status 'starting_bridge' -Step 'downloading_bridge_bundle' -Message 'Downloading the RayAlgo IB Gateway bridge bundle.'
+            Invoke-WebRequest -UseBasicParsing -Uri $script:BridgeBundleUrl -OutFile $archive
+            $currentBundleHash = Get-FileSha256 -Path $archive
+            $lastBundleHash = Read-FirstLine -Path $BridgeBundleHashFile
+            $bundleChanged = (-not $currentBundleHash) -or ($currentBundleHash -ne $lastBundleHash) -or (-not (Test-Path $distEntry))
+            $script:BridgeBundleChanged = $bundleChanged
+            $script:BridgeBundleHash = [string]$currentBundleHash
+            $script:RepoDir = $bundleDir
 
-        Send-BridgeProgress -Status 'starting_bridge' -Step 'bridge_bundle_ready' -Message 'IB Gateway bridge bundle is ready.'
-        return
+            if ($bundleChanged) {
+                Remove-Item -Path $bundleDir -Recurse -Force -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+                tar -xzf $archive -C $bundleDir
+                if ($currentBundleHash) {
+                    Set-Content -Path $BridgeBundleHashFile -Value $currentBundleHash
+                }
+            } else {
+                Write-Log 'Downloaded bridge bundle matches the installed bundle.'
+            }
+
+            if (-not (Test-Path $distEntry)) {
+                throw 'The downloaded IB Gateway bridge bundle is missing artifacts\ibkr-bridge\dist\index.mjs.'
+            }
+
+            Send-BridgeProgress -Status 'starting_bridge' -Step 'bridge_bundle_ready' -Message 'IB Gateway bridge bundle is ready.'
+            return
+        } catch {
+            $bundleError = $_.Exception.Message
+            Write-Log "Bridge bundle path failed; falling back to repo build. $bundleError"
+            Send-BridgeProgress -Status 'starting_bridge' -Step 'bridge_bundle_fallback' -Message (Truncate-Message "Bridge bundle was unavailable, so the helper is falling back to the RayAlgo repo build. $bundleError")
+            $script:BridgeBundleUrl = ''
+            $script:BridgeBundleChanged = $false
+            $script:BridgeBundleHash = ''
+            $script:RepoDir = $fallbackRepoDir
+        }
     }
 
     Ensure-Command -Command git -WingetId Git.Git -DisplayName Git

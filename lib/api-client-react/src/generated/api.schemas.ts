@@ -128,6 +128,24 @@ export const OrderSide = {
   sell: 'sell',
 } as const;
 
+export type OptionOrderPositionEffect = typeof OptionOrderPositionEffect[keyof typeof OptionOrderPositionEffect];
+
+
+export const OptionOrderPositionEffect = {
+  open: 'open',
+  close: 'close',
+} as const;
+
+export type OptionOrderStrategyIntent = typeof OptionOrderStrategyIntent[keyof typeof OptionOrderStrategyIntent];
+
+
+export const OptionOrderStrategyIntent = {
+  long_option: 'long_option',
+  sell_to_close: 'sell_to_close',
+  covered_call: 'covered_call',
+  uncovered_short_call: 'uncovered_short_call',
+} as const;
+
 export type OrderType = typeof OrderType[keyof typeof OrderType];
 
 
@@ -1360,6 +1378,8 @@ export interface PlaceOrderRequest {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContract | null;
+  positionEffect?: OptionOrderPositionEffect;
+  strategyIntent?: OptionOrderStrategyIntent;
   source?: PlaceOrderRequestSource;
   sourceEventId?: string | null;
   clientOrderId?: string | null;
@@ -1381,6 +1401,7 @@ export interface SubmitIbkrOrdersRequest {
   accountId?: string | null;
   mode?: EnvironmentMode | null;
   confirm?: boolean;
+  parentOrderRequest?: PlaceOrderRequest | null;
   ibkrOrders: JsonObject[];
 }
 
@@ -1408,6 +1429,157 @@ export interface CancelOrderResponse {
   accountId: string | null;
   message: string;
   submittedAt: string;
+}
+
+export interface FlowPremiumDistributionBucket {
+  inflowPremium: number;
+  outflowPremium: number;
+  buyPremium: number;
+  sellPremium: number;
+  neutralPremium: number;
+  totalPremium: number;
+  /** @minimum 0 */
+  count: number;
+}
+
+export interface FlowPremiumDistributionBuckets {
+  small: FlowPremiumDistributionBucket;
+  medium: FlowPremiumDistributionBucket;
+  large: FlowPremiumDistributionBucket;
+}
+
+export type FlowPremiumDistributionWidgetSource = typeof FlowPremiumDistributionWidgetSource[keyof typeof FlowPremiumDistributionWidgetSource];
+
+
+export const FlowPremiumDistributionWidgetSource = {
+  'polygon-options-snapshot': 'polygon-options-snapshot',
+} as const;
+
+export type FlowPremiumDistributionWidgetConfidence = typeof FlowPremiumDistributionWidgetConfidence[keyof typeof FlowPremiumDistributionWidgetConfidence];
+
+
+export const FlowPremiumDistributionWidgetConfidence = {
+  snapshot: 'snapshot',
+  partial: 'partial',
+} as const;
+
+export type FlowPremiumDistributionClassificationConfidence = typeof FlowPremiumDistributionClassificationConfidence[keyof typeof FlowPremiumDistributionClassificationConfidence];
+
+
+export const FlowPremiumDistributionClassificationConfidence = {
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+  very_low: 'very_low',
+  none: 'none',
+} as const;
+
+export interface FlowPremiumDistributionWidget {
+  /** @minimum 1 */
+  rank: number;
+  symbol: string;
+  asOf: string;
+  timeframe: 'today' | 'week';
+  /** @nullable */
+  stockDayVolume: number | null;
+  /** @nullable */
+  marketCap: number | null;
+  marketCapTier: 'mega' | 'large' | 'mid' | 'small_or_unknown';
+  bucketThresholds: {
+    smallMin: number;
+    mediumMin: number;
+    largeMin: number;
+  };
+  premiumTotal: number;
+  classifiedPremium: number;
+  classificationCoverage: number;
+  classificationConfidence: FlowPremiumDistributionClassificationConfidence;
+  netPremium: number;
+  inflowPremium: number;
+  outflowPremium: number;
+  buyPremium: number;
+  sellPremium: number;
+  neutralPremium: number;
+  callPremium: number;
+  putPremium: number;
+  buckets: FlowPremiumDistributionBuckets;
+  /** @minimum 0 */
+  contractCount: number;
+  /** @minimum 0 */
+  tradeCount: number;
+  /** @minimum 0 */
+  classifiedTradeCount: number;
+  /** @minimum 0 */
+  quoteMatchedCount: number;
+  /** @minimum 0 */
+  tickTestMatchedCount: number;
+  sideBasis: 'quote_match' | 'tick_test' | 'mixed' | 'none';
+  quoteAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  tradeAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  source: FlowPremiumDistributionWidgetSource;
+  confidence: FlowPremiumDistributionWidgetConfidence;
+  delayed: boolean;
+  /** @minimum 0 */
+  pageCount: number;
+}
+
+export type FlowPremiumDistributionSourceProvider = typeof FlowPremiumDistributionSourceProvider[keyof typeof FlowPremiumDistributionSourceProvider];
+
+
+export const FlowPremiumDistributionSourceProvider = {
+  polygon: 'polygon',
+} as const;
+
+export type FlowPremiumDistributionSourceCache = typeof FlowPremiumDistributionSourceCache[keyof typeof FlowPremiumDistributionSourceCache];
+
+
+export const FlowPremiumDistributionSourceCache = {
+  fresh: 'fresh',
+  stale: 'stale',
+  miss: 'miss',
+} as const;
+
+export interface FlowPremiumDistributionSource {
+  provider: FlowPremiumDistributionSourceProvider;
+  label: string;
+  timeframe: 'today' | 'week';
+  /** @nullable */
+  providerHost: string | null;
+  sideBasis: 'quote_match' | 'tick_test' | 'mixed' | 'none';
+  quoteAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  tradeAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  classifiedPremium: number;
+  classificationCoverage: number;
+  classificationConfidence: FlowPremiumDistributionClassificationConfidence;
+  /** @nullable */
+  candidateDate: string | null;
+  /** @minimum 0 */
+  candidateCount: number;
+  /** @minimum 0 */
+  rankedCount: number;
+  /** @minimum 0 */
+  errorCount: number;
+  /** @nullable */
+  errorMessage: string | null;
+  cache: FlowPremiumDistributionSourceCache;
+}
+
+export type FlowPremiumDistributionResponseStatus = typeof FlowPremiumDistributionResponseStatus[keyof typeof FlowPremiumDistributionResponseStatus];
+
+
+export const FlowPremiumDistributionResponseStatus = {
+  ok: 'ok',
+  empty: 'empty',
+  degraded: 'degraded',
+  unconfigured: 'unconfigured',
+} as const;
+
+export interface FlowPremiumDistributionResponse {
+  status: FlowPremiumDistributionResponseStatus;
+  asOf: string;
+  timeframe: 'today' | 'week';
+  source: FlowPremiumDistributionSource;
+  widgets: FlowPremiumDistributionWidget[];
 }
 
 /**
@@ -4087,6 +4259,25 @@ export type StreamStockAggregatesParams = {
  * Comma-separated ticker symbols.
  */
 symbols: string;
+};
+
+export type GetFlowPremiumDistributionParams = {
+/**
+ * Number of premium distribution widgets to return.
+ * @minimum 1
+ * @maximum 6
+ */
+limit?: number;
+/**
+ * Number of high-volume stock candidates to score through Polygon options snapshots.
+ * @minimum 6
+ * @maximum 60
+ */
+candidateLimit?: number;
+/**
+ * Candidate-volume timeframe for ranking the six widgets.
+ */
+timeframe?: 'today' | 'week';
 };
 
 export type ListFlowEventsParams = {

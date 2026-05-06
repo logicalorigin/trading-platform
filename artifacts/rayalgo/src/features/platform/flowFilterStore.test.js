@@ -3,12 +3,14 @@ import test from "node:test";
 import {
   buildFlowTapePresetPatch,
   filterFlowTapeEvents,
+  flowTapeFiltersAreActive,
   getFlowTapeFilterState,
   normalizeFlowTapeFilterState,
   parseFlowTapeTickerTokens,
   resetFlowTapeFilterStateForTests,
   setFlowTapeFilterState,
 } from "./flowFilterStore.js";
+import { flowEventsToChartEvents } from "../charting/chartEvents.ts";
 
 test("normalizeFlowTapeFilterState repairs invalid persisted filter values", () => {
   assert.deepEqual(
@@ -27,6 +29,15 @@ test("normalizeFlowTapeFilterState repairs invalid persisted filter values", () 
       excludeQuery: "",
     },
   );
+});
+
+test("flowTapeFiltersAreActive distinguishes default and narrowed filters", () => {
+  assert.equal(flowTapeFiltersAreActive({}), false);
+  assert.equal(flowTapeFiltersAreActive({ filter: "all", minPrem: 0 }), false);
+  assert.equal(flowTapeFiltersAreActive({ includeQuery: "SPY" }), true);
+  assert.equal(flowTapeFiltersAreActive({ excludeQuery: "QQQ" }), true);
+  assert.equal(flowTapeFiltersAreActive({ minPrem: 50_000 }), true);
+  assert.equal(flowTapeFiltersAreActive({ activeFlowPresetId: "sweeps" }), true);
 });
 
 test("flow tape filter state shares linked filter updates", () => {
@@ -177,4 +188,43 @@ test("filterFlowTapeEvents keeps repeat filters on the shared cluster model", ()
     ),
     ["first", "repeat"],
   );
+});
+
+test("shared Flow tape filters define chart marker eligibility", () => {
+  const events = [
+    {
+      id: "visible-call",
+      ticker: "SPY",
+      cp: "C",
+      premium: 42_000,
+      occurredAt: "2026-05-01T15:12:00.000Z",
+      isUnusual: false,
+    },
+    {
+      id: "hidden-put",
+      ticker: "SPY",
+      cp: "P",
+      premium: 250_000,
+      occurredAt: "2026-05-01T15:13:00.000Z",
+      isUnusual: true,
+    },
+    {
+      id: "hidden-symbol",
+      ticker: "QQQ",
+      cp: "C",
+      premium: 500_000,
+      occurredAt: "2026-05-01T15:14:00.000Z",
+      isUnusual: true,
+    },
+  ];
+
+  const filtered = filterFlowTapeEvents(events, {
+    filter: "calls",
+    minPrem: 0,
+    includeQuery: "SPY",
+    excludeQuery: "",
+  });
+  const chartEvents = flowEventsToChartEvents(filtered, "SPY");
+
+  assert.deepEqual(chartEvents.map((event) => event.id), ["visible-call"]);
 });

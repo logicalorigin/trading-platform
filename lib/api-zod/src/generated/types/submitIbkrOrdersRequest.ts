@@ -7,11 +7,13 @@
  */
 import type { EnvironmentMode } from './environmentMode';
 import type { JsonObject } from './jsonObject';
+import type { PlaceOrderRequest } from './placeOrderRequest';
 
 export interface SubmitIbkrOrdersRequest {
   /** @nullable */
   accountId?: string | null;
   mode?: EnvironmentMode | null;
   confirm?: boolean;
+  parentOrderRequest?: PlaceOrderRequest | null;
   ibkrOrders: JsonObject[];
 }

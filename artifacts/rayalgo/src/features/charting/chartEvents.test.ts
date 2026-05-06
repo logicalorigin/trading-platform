@@ -105,6 +105,30 @@ test("flowEventsToChartEvents renders mapped UI flow with uppercase side", () =>
   assert.equal(events[0].label, "C $125K");
 });
 
+test("flowEventsToChartEvents renders flow-filtered rows without a hidden material gate", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "filtered-visible-flow",
+        ticker: "SPY",
+        cp: "P",
+        contract: "SPY 485P",
+        premium: 42_000,
+        unusualScore: 0,
+        occurredAt: "2026-05-01T15:13:20.000Z",
+        side: "SELL",
+        isUnusual: false,
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].id, "filtered-visible-flow");
+  assert.equal(events[0].severity, "low");
+  assert.equal(events[0].summary, "SPY 485P options flow $42K");
+});
+
 test("flow event helpers merge feeds and match selected option contracts", () => {
   const broad = [
     {

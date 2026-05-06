@@ -6,6 +6,7 @@ import {
 import {
   daysToExpiration,
   formatExpirationLabel,
+  formatOptionContractLabel,
   isFiniteNumber,
 } from "../../lib/formatters";
 import {
@@ -116,7 +117,11 @@ export const mapFlowEventToUi = (event, preferences) => {
     basis: event.basis || "trade",
     sourceLabel: flowEventSourceLabel(event),
     side,
-    contract: `${event.underlying} ${event.strike}${cp} ${formatExpirationLabel(event.expirationDate)}`,
+    contract: formatOptionContractLabel(event, {
+      symbol: event.underlying || event.symbol,
+      includeSymbol: true,
+      fallback: `${event.underlying || event.symbol || ""} OPTION`.trim(),
+    }),
     strike: event.strike,
     cp,
     price: event.price,

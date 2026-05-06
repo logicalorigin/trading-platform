@@ -918,7 +918,7 @@ export const MarketScreen = ({
                 color: T.textDim,
                 fontFamily: T.mono,
                 fontSize: fs(8),
-                fontWeight: 800,
+                fontWeight: 400,
                 textTransform: "uppercase",
               }}
             >
@@ -939,7 +939,7 @@ export const MarketScreen = ({
                       color: T.textDim,
                       fontFamily: T.mono,
                       fontSize: fs(8),
-                      fontWeight: 800,
+                      fontWeight: 400,
                       textTransform: "uppercase",
                     }}
                   >
@@ -950,7 +950,7 @@ export const MarketScreen = ({
                       color: item.tone,
                       fontFamily: T.mono,
                       fontSize: fs(15),
-                      fontWeight: 900,
+                      fontWeight: 400,
                       marginTop: sp(4),
                     }}
                   >
@@ -1016,7 +1016,7 @@ export const MarketScreen = ({
                                 cursor: "pointer",
                               }}
                             >
-                              <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, textAlign: "left" }}>
+                              <span style={{ color: T.textSec, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, textAlign: "left" }}>
                                 {sector.sector}
                               </span>
                               <span style={{ position: "relative", height: dim(8), background: T.bg3 }}>
@@ -1033,7 +1033,7 @@ export const MarketScreen = ({
                                   }}
                                 />
                               </span>
-                              <span style={{ color: sector.net >= 0 ? T.green : T.red, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, textAlign: "right" }}>
+                              <span style={{ color: sector.net >= 0 ? T.green : T.red, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, textAlign: "right" }}>
                                 {sector.net >= 0 ? "+" : "-"}
                                 {fmtM(Math.abs(sector.net))}
                               </span>
@@ -1063,7 +1063,7 @@ export const MarketScreen = ({
                   ["Laggards", marketMovers.laggards, T.red],
                 ].map(([label, rows, color]) => (
                   <div key={label} style={{ minWidth: 0 }}>
-                    <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, marginBottom: sp(3) }}>
+                    <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, marginBottom: sp(3) }}>
                       {label.toUpperCase()}
                     </div>
                     {rows.map((row, index) => (
@@ -1084,11 +1084,11 @@ export const MarketScreen = ({
                           textAlign: "left",
                         }}
                       >
-                        <span style={{ color, fontFamily: T.mono, fontSize: fs(9), fontWeight: 900 }}>{row.sym}</span>
+                        <span style={{ color, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>{row.sym}</span>
                         <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {row.group}
                         </span>
-                        <span style={{ color, fontFamily: T.mono, fontSize: fs(8), fontWeight: 800, textAlign: "right" }}>
+                        <span style={{ color, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400, textAlign: "right" }}>
                           {formatSignedPercent(row.change)}
                         </span>
                       </button>
@@ -1148,7 +1148,7 @@ export const MarketScreen = ({
                         }}
                       />
                     </span>
-                    <span style={{ color: pos == null ? T.textDim : pos ? T.green : T.red, textAlign: "right", fontWeight: 800 }}>
+                    <span style={{ color: pos == null ? T.textDim : pos ? T.green : T.red, textAlign: "right", fontWeight: 400 }}>
                       {formatSignedPercent(item.pct)}
                     </span>
                   </div>
@@ -1159,14 +1159,14 @@ export const MarketScreen = ({
           <Card style={{ padding: "7px 10px" }}>
             <CardTitle>Breadth</CardTitle>
             <div style={{ display: "flex", alignItems: "center", gap: sp(6), marginBottom: sp(6) }}>
-              <span style={{ color: T.green, fontFamily: T.mono, fontSize: fs(12), fontWeight: 900 }}>
+              <span style={{ color: T.green, fontFamily: T.mono, fontSize: fs(12), fontWeight: 400 }}>
                 {breadth.total ? breadth.advancers : MISSING_VALUE}
               </span>
               <span style={{ flex: 1, display: "flex", height: dim(8), background: T.bg3, overflow: "hidden" }}>
                 <span style={{ width: `${upPct}%`, background: T.green }} />
                 <span style={{ width: `${downPct}%`, background: T.red }} />
               </span>
-              <span style={{ color: T.red, fontFamily: T.mono, fontSize: fs(12), fontWeight: 900 }}>
+              <span style={{ color: T.red, fontFamily: T.mono, fontSize: fs(12), fontWeight: 400 }}>
                 {breadth.total ? breadth.decliners : MISSING_VALUE}
               </span>
             </div>
@@ -1179,7 +1179,7 @@ export const MarketScreen = ({
               ].map(([label, value]) => (
                 <div key={label} style={{ display: "flex", justifyContent: "space-between", background: `${T.bg3}55`, padding: sp("3px 5px") }}>
                   <span style={{ color: T.textDim }}>{label}</span>
-                  <span style={{ color: T.textSec, fontWeight: 800 }}>{value}</span>
+                  <span style={{ color: T.textSec, fontWeight: 400 }}>{value}</span>
                 </div>
               ))}
             </div>
@@ -1392,7 +1392,7 @@ export const MarketScreen = ({
                       <div
                         style={{
                           fontSize: fs(10),
-                          fontWeight: 600,
+                          fontWeight: 400,
                           fontFamily: T.sans,
                           color: T.text,
                           overflow: "hidden",

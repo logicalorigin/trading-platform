@@ -126,7 +126,7 @@ function AppLoadingFallback() {
                 background: index === 0 ? "#182233" : "transparent",
                 color: index === 0 ? "#e2e8f0" : "#94a3b8",
                 fontSize: TYPE_CSS_VAR.body,
-                fontWeight: 800,
+                fontWeight: 400,
                 whiteSpace: "nowrap",
               }}
             >
@@ -161,7 +161,7 @@ function AppLoadingFallback() {
             alignItems: "center",
             color: "#94a3b8",
             fontSize: TYPE_CSS_VAR.body,
-            fontWeight: 800,
+            fontWeight: 400,
             whiteSpace: "nowrap",
           }}
         >
@@ -262,7 +262,7 @@ function AppLoadingFallback() {
           gap: 12,
           padding: "0 12px",
           fontSize: TYPE_CSS_VAR.label,
-          fontWeight: 800,
+          fontWeight: 400,
         }}
       >
         <span>RAYALGO</span>

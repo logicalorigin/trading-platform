@@ -69,11 +69,11 @@ export const OrderFlowDonut = ({ flow, size = 110, thickness = 18 }) => {
         y={cy + fs(11)}
         textAnchor="middle"
         fontSize={fs(11)}
-        fontWeight={700}
+        fontWeight={400}
         fill={net >= 0 ? T.green : T.red}
         fontFamily={T.mono}
       >
-        {net >= 0 ? "+" : ""}${Math.abs(net).toFixed(0)}M
+        {`${net >= 0 ? "+" : "-"}$${Math.abs(net).toFixed(0)}M`}
       </text>
     </svg>
   );
@@ -95,8 +95,8 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
         fontSize: fs(9),
       }}
     >
-      <span style={{ color: T.green, fontWeight: 600, textAlign: "right" }}>
-        {Number.isFinite(buy) ? buy.toFixed(1) : MISSING_VALUE}
+      <span style={{ color: T.green, fontWeight: 400, textAlign: "right" }}>
+        {Number.isFinite(buy) ? `$${buy.toFixed(1)}M` : MISSING_VALUE}
       </span>
       <div
         style={{ display: "flex", justifyContent: "flex-end", height: dim(8) }}
@@ -111,7 +111,7 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
           }}
         />
       </div>
-      <span style={{ textAlign: "center", color: T.textSec, fontWeight: 700 }}>
+      <span style={{ textAlign: "center", color: T.textSec, fontWeight: 400 }}>
         {label}
       </span>
       <div
@@ -131,8 +131,8 @@ export const SizeBucketRow = ({ label, buy, sell, maxValue }) => {
           }}
         />
       </div>
-      <span style={{ color: T.red, fontWeight: 600 }}>
-        {Number.isFinite(sell) ? sell.toFixed(1) : MISSING_VALUE}
+      <span style={{ color: T.red, fontWeight: 400 }}>
+        {Number.isFinite(sell) ? `$${sell.toFixed(1)}M` : MISSING_VALUE}
       </span>
     </div>
   );

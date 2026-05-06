@@ -25,9 +25,7 @@ export const formatPriceValue = (value, digits = 2) =>
 
 export const formatQuotePrice = (value) =>
   isFiniteNumber(value)
-    ? value < 10
-      ? value.toFixed(3)
-      : value.toFixed(2)
+    ? `${value < 10 ? value.toFixed(3) : value.toFixed(2)}`
     : MISSING_VALUE;
 
 export const formatSignedPercent = (value, digits = 2) =>
@@ -56,6 +54,78 @@ export const formatExpirationLabel = (value) => {
   if (!date) return value || MISSING_VALUE;
 
   return `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
+};
+
+export const normalizeOptionRightLabel = (value) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "C" || normalized === "CALL") return "C";
+  if (normalized === "P" || normalized === "PUT") return "P";
+  return "";
+};
+
+export const formatOptionStrikeLabel = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  return numeric.toLocaleString(undefined, {
+    maximumFractionDigits: numeric % 1 === 0 ? 0 : 2,
+  });
+};
+
+const stripLeadingContractSymbol = (description, symbol) => {
+  if (!description || !symbol) return description;
+  const escapedSymbol = String(symbol).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return description.replace(new RegExp(`^${escapedSymbol}\\s+`, "i"), "");
+};
+
+export const formatOptionContractLabel = (
+  contract,
+  {
+    symbol,
+    ticker,
+    includeSymbol = true,
+    fallback = MISSING_VALUE,
+  } = {},
+) => {
+  if (!contract || typeof contract !== "object") return fallback;
+
+  const resolvedSymbol = String(
+    symbol ??
+      ticker ??
+      contract.symbol ??
+      contract.ticker ??
+      contract.underlying ??
+      contract.underlyingSymbol ??
+      "",
+  )
+    .trim()
+    .toUpperCase();
+  const expiration = formatExpirationLabel(
+    contract.expirationDate ?? contract.exp ?? contract.expiry,
+  );
+  const strike = formatOptionStrikeLabel(contract.strike ?? contract.k);
+  const right = normalizeOptionRightLabel(
+    contract.cp ?? contract.right ?? contract.type,
+  );
+  const strikeRight = strike || right ? `${strike}${right}` : "";
+  const parts = [
+    includeSymbol ? resolvedSymbol : "",
+    expiration !== MISSING_VALUE ? expiration : "",
+    strikeRight,
+  ].filter(Boolean);
+
+  if (parts.length) return parts.join(" ");
+
+  const description = String(
+    contract.contractDescription ||
+      contract.contract ||
+      contract.optionTicker ||
+      contract.localSymbol ||
+      "",
+  ).trim();
+  const compactDescription = includeSymbol
+    ? description
+    : stripLeadingContractSymbol(description, resolvedSymbol);
+  return compactDescription || fallback;
 };
 
 export const parseExpirationValue = (value) => {

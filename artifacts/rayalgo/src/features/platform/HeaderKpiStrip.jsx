@@ -149,7 +149,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
               fontSize: fs(7),
               color: T.textMuted,
               fontFamily: T.sans,
-              fontWeight: 700,
+              fontWeight: 400,
               letterSpacing: "0.05em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
@@ -163,7 +163,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
             style={{
               display: "block",
               fontSize: fs(7),
-              fontWeight: 600,
+              fontWeight: 400,
               color: T.textMuted,
               fontFamily: T.sans,
               lineHeight: 1.1,
@@ -186,7 +186,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
             style={{
               display: "block",
               fontSize: fs(10),
-              fontWeight: 700,
+              fontWeight: 400,
               fontFamily: T.sans,
               color: T.text,
               lineHeight: 1.1,
@@ -199,7 +199,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect }) => {
             style={{
               display: "block",
               fontSize: fs(8),
-              fontWeight: 700,
+              fontWeight: 400,
               fontFamily: T.sans,
               color:
                 positive == null ? T.textDim : positive ? T.green : T.red,

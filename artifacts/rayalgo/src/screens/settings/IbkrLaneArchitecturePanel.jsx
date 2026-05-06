@@ -57,7 +57,7 @@ function Panel({ title, action, children }) {
           marginBottom: sp(10),
         }}
       >
-        <div style={{ fontSize: fs(12), fontWeight: 800 }}>{title}</div>
+        <div style={{ fontSize: fs(12), fontWeight: 400 }}>{title}</div>
         {action}
       </div>
       {children}
@@ -74,7 +74,7 @@ function smallButton() {
     padding: sp("5px 8px"),
     fontFamily: T.mono,
     fontSize: fs(9),
-    fontWeight: 900,
+    fontWeight: 400,
     cursor: "pointer",
   };
 }
@@ -87,7 +87,7 @@ function chipRemoveButton() {
     padding: 0,
     fontFamily: T.mono,
     fontSize: fs(8),
-    fontWeight: 900,
+    fontWeight: 400,
     cursor: "pointer",
     lineHeight: 1,
   };
@@ -115,7 +115,7 @@ function laneChip(color) {
     padding: sp("3px 5px"),
     fontFamily: T.mono,
     fontSize: fs(8),
-    fontWeight: 900,
+    fontWeight: 400,
     maxWidth: "100%",
     overflowWrap: "anywhere",
   };
@@ -157,7 +157,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
           color: T.textSec,
           fontFamily: T.mono,
           fontSize: fs(10),
-          fontWeight: 800,
+          fontWeight: 400,
         }}
       >
         <input
@@ -217,7 +217,7 @@ function LaneControlEditor({ control, draftValue, onChange, onReset }) {
       }}
     >
       <div style={{ minWidth: 0 }}>
-        <div style={{ color: T.text, fontSize: fs(10), fontWeight: 800 }}>
+        <div style={{ color: T.text, fontSize: fs(10), fontWeight: 400 }}>
           {control.label}
         </div>
         <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -261,7 +261,7 @@ function sourceBadge(sourceId) {
     padding: sp("1px 3px"),
     fontFamily: T.mono,
     fontSize: fs(7),
-    fontWeight: 900,
+    fontWeight: 400,
     lineHeight: 1.1,
   };
 }
@@ -277,10 +277,10 @@ function LaneMiniMetric({ label, value, tone = T.textSec }) {
         minWidth: 0,
       }}
     >
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(7), fontWeight: 900 }}>
+      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(7), fontWeight: 400 }}>
         {label}
       </div>
-      <div style={{ color: tone, fontFamily: T.mono, fontSize: fs(12), fontWeight: 900 }}>
+      <div style={{ color: tone, fontFamily: T.mono, fontSize: fs(12), fontWeight: 400 }}>
         {value}
       </div>
     </div>
@@ -309,7 +309,7 @@ function LaneSymbolChipEditor({ label, values, onChange, disabled = false }) {
 
   return (
     <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
-      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 900 }}>
+      <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
         {label}
       </div>
       <div
@@ -397,7 +397,7 @@ function LaneSymbolPreview({ title, preview, kind }) {
 
   return (
     <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
-      <div style={{ color: kind === "dropped" ? T.amber : T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 900 }}>
+      <div style={{ color: kind === "dropped" ? T.amber : T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
         {title}
       </div>
       <div style={{ display: "flex", gap: sp(5), flexWrap: "wrap" }}>
@@ -462,7 +462,7 @@ function LaneMembershipCard({
       <div style={{ display: "flex", justifyContent: "space-between", gap: sp(10), alignItems: "start" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: sp(6), flexWrap: "wrap" }}>
-            <span style={{ color: T.text, fontSize: fs(12), fontWeight: 900 }}>{lane.label}</span>
+            <span style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>{lane.label}</span>
             {changed && <span style={laneChip(T.green)}>staged</span>}
             {isSystemLane(lane.laneId) && <span style={laneChip(T.textDim)}>protected</span>}
           </div>
@@ -482,7 +482,7 @@ function LaneMembershipCard({
               Reset Lane
             </button>
           )}
-          <label style={{ display: "inline-flex", alignItems: "center", gap: sp(6), color: editable ? T.textSec : T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 900 }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: sp(6), color: editable ? T.textSec : T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
             <input
               type="checkbox"
               disabled={!editable}
@@ -508,7 +508,7 @@ function LaneMembershipCard({
       {editable ? (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "84px minmax(0, 1fr)", gap: sp(8), alignItems: "center" }}>
-            <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 900 }}>Max Symbols</span>
+            <span style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>Max Symbols</span>
             <input
               type="number"
               min={1}
@@ -534,7 +534,7 @@ function LaneMembershipCard({
                   padding: sp("4px 6px"),
                   fontFamily: T.mono,
                   fontSize: fs(8),
-                  fontWeight: 900,
+                  fontWeight: 400,
                 }}
               >
                 <input
@@ -647,7 +647,7 @@ function LanePresetBar({ onApplyPreset }) {
             cursor: "pointer",
           }}
         >
-          <div style={{ color: T.text, fontSize: fs(11), fontWeight: 900 }}>
+          <div style={{ color: T.text, fontSize: fs(11), fontWeight: 400 }}>
             {preset.label}
           </div>
           <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
@@ -676,7 +676,7 @@ function LaneSaveSummary({ changedCount, warnings, bridgeReady, onDiscard }) {
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8), flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ color: changedCount ? T.green : T.amber, fontFamily: T.mono, fontSize: fs(9), fontWeight: 900 }}>
+        <div style={{ color: changedCount ? T.green : T.amber, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400 }}>
           {changedCount ? `${changedCount} staged change${changedCount === 1 ? "" : "s"}` : "Bridge launcher required to save lane edits"}
         </div>
         {changedCount > 0 && (
@@ -711,7 +711,7 @@ function LaneGroupSection({ group, laneStateById, onPolicyChange, onResetPolicy 
 
   return (
     <section style={{ display: "grid", gap: sp(8) }}>
-      <div style={{ color: T.text, fontSize: fs(12), fontWeight: 900 }}>{group.label}</div>
+      <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>{group.label}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: sp(12) }}>
         {states.map((laneState) => (
           <LaneMembershipCard
@@ -729,11 +729,11 @@ function LaneGroupSection({ group, laneStateById, onPolicyChange, onResetPolicy 
 function LaneArchitectureSection({ snapshot }) {
   return (
     <section style={{ display: "grid", gap: sp(9) }}>
-      <div style={{ color: T.text, fontSize: fs(12), fontWeight: 900 }}>How Data Moves</div>
+      <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>How Data Moves</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: sp(10) }}>
         {(snapshot.layers || []).map((layer) => (
           <div key={layer.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(6), padding: sp(10), background: T.bg2 }}>
-            <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 900, marginBottom: sp(8) }}>
+            <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), fontWeight: 400, marginBottom: sp(8) }}>
               {layer.label}
             </div>
             <div style={{ display: "grid", gap: sp(8) }}>
@@ -749,8 +749,8 @@ function LaneArchitectureSection({ snapshot }) {
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: sp(8), alignItems: "center" }}>
-                    <span style={{ color: T.text, fontSize: fs(11), fontWeight: 900 }}>{node.label}</span>
-                    <span style={{ color: laneStatusTone(node.status), fontFamily: T.mono, fontSize: fs(8), fontWeight: 900 }}>
+                    <span style={{ color: T.text, fontSize: fs(11), fontWeight: 400 }}>{node.label}</span>
+                    <span style={{ color: laneStatusTone(node.status), fontFamily: T.mono, fontSize: fs(8), fontWeight: 400 }}>
                       {String(node.status || "unknown").toUpperCase()}
                     </span>
                   </div>
@@ -788,11 +788,11 @@ function LaneArchitectureSection({ snapshot }) {
 function AdvancedLaneControls({ controlGroups, drafts, onChange, onReset }) {
   return (
     <section style={{ display: "grid", gap: sp(9) }}>
-      <div style={{ color: T.text, fontSize: fs(12), fontWeight: 900 }}>Advanced Controls</div>
+      <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400 }}>Advanced Controls</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: sp(14) }}>
         {Array.from(controlGroups.entries()).map(([group, groupControls]) => (
           <div key={group} style={{ minWidth: 0 }}>
-            <div style={{ color: T.text, fontSize: fs(12), fontWeight: 900, marginBottom: sp(6) }}>
+            <div style={{ color: T.text, fontSize: fs(12), fontWeight: 400, marginBottom: sp(6) }}>
               {group}
             </div>
             {groupControls.map((control) => (

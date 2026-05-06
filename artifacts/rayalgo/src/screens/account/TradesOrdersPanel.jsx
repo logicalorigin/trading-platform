@@ -12,6 +12,7 @@ import {
   controlSelectStyle,
   formatAccountMoney,
   formatAccountPercent,
+  formatAccountPrice,
   formatNumber,
   moveTableFocus,
   mutedLabelStyle,
@@ -38,7 +39,7 @@ const SummaryCard = ({ label, value, tone = T.text }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.mono, fontWeight: 900 }}>
+    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.mono, fontWeight: 400 }}>
       {value}
     </div>
   </div>
@@ -200,7 +201,7 @@ export const OrdersPanel = ({
                 tabIndex={0}
                 onKeyDown={moveTableFocus}
               >
-                <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
+                <td style={{ ...tableCellStyle, color: T.text, fontWeight: 400 }}>
                   <MarketIdentityInline
                     item={{
                       ticker: order.symbol,
@@ -223,11 +224,11 @@ export const OrdersPanel = ({
                   <>
                     <td style={tableCellStyle}>
                       {order.limitPrice != null
-                        ? formatAccountMoney(order.limitPrice, currency, false, maskValues)
+                        ? formatAccountPrice(order.limitPrice, 2, maskValues)
                         : "----"}{" "}
                       /{" "}
                       {order.stopPrice != null
-                        ? formatAccountMoney(order.stopPrice, currency, false, maskValues)
+                        ? formatAccountPrice(order.stopPrice, 2, maskValues)
                         : "----"}
                     </td>
                     <td style={tableCellStyle}>{order.timeInForce}</td>
@@ -241,7 +242,7 @@ export const OrdersPanel = ({
                     </td>
                     <td style={tableCellStyle}>
                       {order.averageFillPrice != null
-                        ? formatAccountMoney(order.averageFillPrice, currency, false, maskValues)
+                        ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
                         : "----"}
                     </td>
                     <td style={tableCellStyle}>
@@ -276,7 +277,7 @@ export const OrdersPanel = ({
                     </td>
                     <td style={tableCellStyle}>
                       {order.averageFillPrice != null
-                        ? formatAccountMoney(order.averageFillPrice, currency, false, maskValues)
+                        ? formatAccountPrice(order.averageFillPrice, 2, maskValues)
                         : "----"}
                     </td>
                     <td style={tableCellStyle}>
@@ -508,7 +509,7 @@ export const ClosedTradesPanel = ({
                         cursor: onTradeSelect ? "pointer" : "default",
                       }}
                     >
-                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: 900 }}>
+                      <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: 400 }}>
                         <MarketIdentityInline
                           item={{
                             ticker: trade.symbol,
@@ -532,11 +533,11 @@ export const ClosedTradesPanel = ({
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
                         {trade.avgOpen != null
-                          ? formatAccountMoney(trade.avgOpen, currency, false, maskValues)
+                          ? formatAccountPrice(trade.avgOpen, 2, maskValues)
                           : "----"}
                         {" / "}
                         {trade.avgClose != null
-                          ? formatAccountMoney(trade.avgClose, currency, false, maskValues)
+                          ? formatAccountPrice(trade.avgClose, 2, maskValues)
                           : "----"}
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle, color: toneForValue(trade.realizedPnl) }}>
@@ -601,7 +602,7 @@ const DetailRow = ({ label, value, tone = T.textSec }) => (
         color: tone,
         fontFamily: T.data,
         fontSize: fs(9),
-        fontWeight: 800,
+        fontWeight: 400,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
@@ -804,7 +805,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
         <path d={linePath} stroke={lineTone} strokeWidth={1.2} fill="none" />
         {Number.isFinite(entryPx) ? (
           <g>
-            <title>{`Entry · ${formatAccountMoney(entryPx, currency, false, maskValues)} · ${formatAppDateTime(openMs)}`}</title>
+            <title>{`Entry · ${formatAccountPrice(entryPx, 2, maskValues)} · ${formatAppDateTime(openMs)}`}</title>
             <line
               x1={entryX}
               x2={entryX}
@@ -822,7 +823,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
               fill={T.green}
               fontFamily={T.data}
               fontSize={9}
-              fontWeight={900}
+              fontWeight={400}
             >
               ENTRY
             </text>
@@ -830,7 +831,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
         ) : null}
         {Number.isFinite(exitPx) ? (
           <g>
-            <title>{`Exit · ${formatAccountMoney(exitPx, currency, false, maskValues)} · ${formatAppDateTime(closeMs)}`}</title>
+            <title>{`Exit · ${formatAccountPrice(exitPx, 2, maskValues)} · ${formatAppDateTime(closeMs)}`}</title>
             <line
               x1={exitX}
               x2={exitX}
@@ -848,7 +849,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
               fill={T.red}
               fontFamily={T.data}
               fontSize={9}
-              fontWeight={900}
+              fontWeight={400}
               textAnchor="end"
             >
               EXIT
@@ -883,7 +884,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           fontSize={9}
           textAnchor="end"
         >
-          {formatAccountMoney(yHigh, currency, false, maskValues)}
+	          {formatAccountPrice(yHigh, 2, maskValues)}
         </text>
         <text
           x={padL - 4}
@@ -893,7 +894,7 @@ const TradePriceChart = ({ trade, currency, maskValues }) => {
           fontSize={9}
           textAnchor="end"
         >
-          {formatAccountMoney(yLow, currency, false, maskValues)}
+	          {formatAccountPrice(yLow, 2, maskValues)}
         </text>
       </svg>
     </div>
@@ -905,6 +906,14 @@ const lifecycleToneColor = (tone) =>
 
 const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
   if (!rows.length) return null;
+  const priceEventKeys = new Set(["entry", "order", "exit"]);
+  const formatLifecycleValue = (row, compact = false) => {
+    if (row?.value == null) return null;
+    if (typeof row.value !== "number") return row.value;
+    return priceEventKeys.has(row.key)
+      ? formatAccountPrice(row.value, 2, maskValues)
+      : formatAccountMoney(row.value, currency, compact, maskValues);
+  };
   const events = rows
     .map((row) => {
       const ts = row?.at ? new Date(row.at).getTime() : NaN;
@@ -936,18 +945,16 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
               fontSize: fs(8),
             }}
           >
-            <span style={{ color: T.text, fontWeight: 900 }}>{row.label}</span>
+            <span style={{ color: T.text, fontWeight: 400 }}>{row.label}</span>
             <span style={{ color: T.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {row.detail}
             </span>
-            <span style={{ color: lifecycleToneColor(row.tone), fontWeight: 900 }}>
+            <span style={{ color: lifecycleToneColor(row.tone), fontWeight: 400 }}>
               {row.value == null
                 ? row.at
                   ? formatAppDate(row.at)
                   : ""
-                : typeof row.value === "number"
-                  ? formatAccountMoney(row.value, currency, true, maskValues)
-                  : row.value}
+                : formatLifecycleValue(row, true)}
             </span>
           </div>
         ))}
@@ -1014,9 +1021,7 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
                 {`${event.label} · ${event.detail}${
                   event.value == null
                     ? ""
-                    : typeof event.value === "number"
-                      ? ` · ${formatAccountMoney(event.value, currency, true, maskValues)}`
-                      : ` · ${event.value}`
+                    : ` · ${formatLifecycleValue(event, true)}`
                 } · ${formatAppDateTime(event.ts)}`}
               </title>
               <line
@@ -1035,7 +1040,7 @@ const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
                 fill={color}
                 fontFamily={T.data}
                 fontSize={9}
-                fontWeight={900}
+                fontWeight={400}
                 textAnchor="middle"
               >
                 {event.label}
@@ -1125,7 +1130,7 @@ export const SelectedTradeAnalysisPanel = ({
               value={
                 trade.avgOpen == null
                   ? "----"
-                  : formatAccountMoney(trade.avgOpen, currency, false, maskValues)
+                  : formatAccountPrice(trade.avgOpen, 2, maskValues)
               }
             />
             <DetailRow
@@ -1133,7 +1138,7 @@ export const SelectedTradeAnalysisPanel = ({
               value={
                 trade.avgClose == null
                   ? "----"
-                  : formatAccountMoney(trade.avgClose, currency, false, maskValues)
+                  : formatAccountPrice(trade.avgClose, 2, maskValues)
               }
             />
             <DetailRow label="Opened" value={formatAppDateTime(trade.openDate)} />

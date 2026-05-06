@@ -106,7 +106,7 @@ const triggerStyle = (
   color: disabled ? theme.textMuted : theme.text,
   fontFamily: theme.mono,
   fontSize: dense ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.bodyStrong,
-  fontWeight: 700,
+  fontWeight: 400,
   letterSpacing: "0.04em",
   padding: dense ? "0 7px" : "0 9px",
   cursor: disabled ? "default" : "pointer",
@@ -144,7 +144,7 @@ const titleKickerStyle = (theme: WidgetTheme): CSSProperties => ({
   fontSize: TYPE_CSS_VAR.label,
   color: theme.textMuted,
   fontFamily: theme.mono,
-  fontWeight: 700,
+  fontWeight: 400,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
 });
@@ -163,7 +163,7 @@ const resetButtonStyle = (theme: WidgetTheme): CSSProperties => ({
   padding: "6px 10px",
   fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
-  fontWeight: 700,
+  fontWeight: 400,
   cursor: "pointer",
 });
 
@@ -182,7 +182,7 @@ const tabButtonStyle = (
   padding: "6px 10px",
   fontSize: TYPE_CSS_VAR.bodyStrong,
   fontFamily: theme.mono,
-  fontWeight: 700,
+  fontWeight: 400,
   cursor: "pointer",
 });
 
@@ -197,7 +197,7 @@ const sectionTitleStyle = (theme: WidgetTheme): CSSProperties => ({
   fontSize: TYPE_CSS_VAR.bodyStrong,
   color: theme.text,
   fontFamily: theme.mono,
-  fontWeight: 700,
+  fontWeight: 400,
 });
 
 const sectionDescriptionStyle = (theme: WidgetTheme): CSSProperties => ({
@@ -225,7 +225,7 @@ const rowLabelStyle = (theme: WidgetTheme): CSSProperties => ({
   fontSize: TYPE_CSS_VAR.bodyStrong,
   color: theme.text,
   fontFamily: theme.mono,
-  fontWeight: 600,
+  fontWeight: 400,
 });
 
 const rowHelperStyle = (theme: WidgetTheme): CSSProperties => ({
@@ -569,7 +569,7 @@ export function RayReplicaSettingsMenu({
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
             <div style={{ display: "grid", gap: 4 }}>
               <div style={titleKickerStyle(theme)}>RayReplica Settings</div>
-              <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontFamily: theme.mono, fontWeight: 700 }}>
+              <div style={{ fontSize: TYPE_CSS_VAR.bodyStrong, fontFamily: theme.mono, fontWeight: 400 }}>
                 {activeBandProfile?.label || "Custom"} profile
               </div>
               <div style={headerMetaStyle(theme)}>

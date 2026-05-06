@@ -32,7 +32,7 @@ const MetricCard = ({ label, value, title, tone = T.text, subvalue }) => (
     }}
   >
     <div style={mutedLabelStyle}>{label}</div>
-    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.mono, fontWeight: 900 }}>
+    <div style={{ color: tone, fontSize: fs(10), fontFamily: T.mono, fontWeight: 400 }}>
       {value}
     </div>
     {subvalue ? (
@@ -59,8 +59,8 @@ const MarginGauge = ({ value, maskValues = false }) => {
           color: tone,
           fontSize: fs(14),
           fontFamily: T.mono,
-          fontWeight: 900,
-          letterSpacing: "-0.02em",
+          fontWeight: 400,
+          letterSpacing: 0,
         }}
       >
         {ratioPercent(value, maskValues)}
@@ -410,7 +410,7 @@ export const RiskDashboardPanel = ({
                     <tbody>
                       {perUnderlying.slice(0, 5).map((row) => (
                         <tr key={row.underlying}>
-                          <td style={{ ...tableCellStyle, color: T.text, fontWeight: 800 }}>
+                          <td style={{ ...tableCellStyle, color: T.text, fontWeight: 400 }}>
                             <MarketIdentityInline
                               item={{ ticker: row.underlying, market: "stocks" }}
                               size={14}

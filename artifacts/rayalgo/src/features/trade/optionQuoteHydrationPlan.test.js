@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT,
   buildTradeOptionProviderContractIdPlan,
   buildTradeOptionQuoteSubscriptionPlan,
 } from "./optionQuoteHydrationPlan.js";
@@ -82,4 +83,26 @@ test("buildTradeOptionProviderContractIdPlan does not add non-visible hydrated t
     "C90",
     "P90",
   ]);
+});
+
+test("buildTradeOptionQuoteSubscriptionPlan caps visible contracts while pinning execution contracts", () => {
+  const plan = buildTradeOptionQuoteSubscriptionPlan({
+    chainRows: [row(100)],
+    visibleRows: [row(100), row(101), row(102), row(103), row(104)],
+    contract: { strike: 100, cp: "C" },
+    heldContracts: [{ providerContractId: "P104" }],
+    maxVisibleProviderContractIds: 4,
+  });
+
+  assert.deepEqual(plan.executionProviderContractIds, ["C100", "P104"]);
+  assert.deepEqual(plan.visibleProviderContractIds, [
+    "P100",
+    "C101",
+    "P101",
+    "C102",
+  ]);
+  assert.equal(
+    TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT,
+    40,
+  );
 });
