@@ -1,13 +1,16 @@
+import { useMemo, useState } from "react";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
-import { formatAppDate } from "../../lib/timeZone";
 import {
+  ToggleGroup,
   formatAccountMoney,
   formatAccountPercent,
   formatAccountSignedMoney,
   formatNumber,
+  mutedLabelStyle,
   panelStyle,
   toneForValue,
 } from "./accountUtils";
+import { buildTradeOutcomeHistogramModel } from "./tradeOutcomeHistogramModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -79,175 +82,435 @@ const MetricCell = ({ label, value, tone = T.text, title }) => (
   </div></AppTooltip>
 );
 
-const formatAxisMoney = (value, currency, maskValues) =>
-  value === 0
-    ? formatAccountMoney(0, currency, true, maskValues)
-    : formatAccountSignedMoney(value, currency, true, maskValues);
+const TRADING_DAY_COUNT = 30;
 
-const niceStep = (rawStep) => {
-  if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
-  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
-  const normalized = rawStep / magnitude;
-  if (normalized <= 1) return magnitude;
-  if (normalized <= 2) return 2 * magnitude;
-  if (normalized <= 5) return 5 * magnitude;
-  return 10 * magnitude;
+const startOfDay = (input) => {
+  const d = input instanceof Date ? new Date(input.getTime()) : new Date(input);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  return d;
 };
 
-const buildHistogramScale = (values) => {
-  const low = Math.min(0, ...values);
-  const high = Math.max(0, ...values);
-  const step = niceStep((high - low || Math.max(Math.abs(high), 1)) / 3);
-  return {
-    min: Math.floor(low / step) * step,
-    max: Math.ceil(high / step) * step,
-    step,
-  };
+const isoDay = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 };
 
-const PnlHistogram = ({ bars = [], currency, maskValues }) => {
-  const values = bars
-    .map((bar) => Number(bar.value))
-    .filter((value) => Number.isFinite(value));
-  const { min, max, step } = buildHistogramScale(values.length ? values : [0]);
-  const top = 6;
-  const right = 238;
-  const bottom = 48;
-  const left = 38;
-  const plotWidth = right - left;
-  const plotHeight = bottom - top;
-  const range = max - min || 1;
-  const yFor = (value) => top + ((max - value) / range) * plotHeight;
-  const zeroY = yFor(0);
-  const ticks = [max, 0, min]
-    .filter((value, index, list) => list.indexOf(value) === index)
-    .sort((a, b) => b - a);
-  const barGap = bars.length > 18 ? 1 : 2;
-  const barWidth = bars.length
-    ? Math.max(1, (plotWidth - barGap * Math.max(0, bars.length - 1)) / bars.length)
-    : plotWidth;
-  const firstLabel = bars[0]?.timestamp ? formatAppDate(bars[0].timestamp) : "";
-  const lastLabel = bars[bars.length - 1]?.timestamp
-    ? formatAppDate(bars[bars.length - 1].timestamp)
-    : "";
+const buildEquityDailyMap = (equityPoints) => {
+  // Returns Map<iso-day, { eodNav, transfers }>. Last point of each day wins
+  // for eodNav; transfers sum over all points in the day.
+  const byDay = new Map();
+  (equityPoints || []).forEach((point) => {
+    const day = startOfDay(point?.timestamp ?? point?.timestampMs);
+    if (!day) return;
+    const nav = Number(point?.netLiquidation);
+    if (!Number.isFinite(nav)) return;
+    const key = isoDay(day);
+    const deposits = Number(point?.deposits);
+    const withdrawals = Number(point?.withdrawals);
+    const transferDelta =
+      (Number.isFinite(deposits) ? deposits : 0) -
+      (Number.isFinite(withdrawals) ? withdrawals : 0);
+    const ts = day.getTime();
+    const current = byDay.get(key) || {
+      iso: key,
+      eodNav: null,
+      eodTs: -Infinity,
+      transfers: 0,
+    };
+    if (ts >= current.eodTs) {
+      current.eodNav = nav;
+      current.eodTs = ts;
+    }
+    current.transfers += transferDelta;
+    byDay.set(key, current);
+  });
+  return byDay;
+};
 
+const buildDailyPnlSeries = (trades, equityPoints) => {
+  const tradesByDay = new Map();
+  (trades || []).forEach((trade) => {
+    const day = startOfDay(trade?.closeDate);
+    if (!day) return;
+    const pnl = Number(trade?.pnl);
+    if (!Number.isFinite(pnl)) return;
+    const key = isoDay(day);
+    const current = tradesByDay.get(key) || {
+      iso: key,
+      realized: 0,
+      trades: 0,
+    };
+    current.realized += pnl;
+    current.trades += 1;
+    tradesByDay.set(key, current);
+  });
+
+  const equityByDay = buildEquityDailyMap(equityPoints);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const out = [];
+  const cursor = new Date(today);
+  // Track previous eod NAV walking *backwards* — we need the prior trading
+  // day's NAV to compute today's total P&L. Build the trading-day list
+  // forward first so we can walk it forward to compute daily totals.
+  const tradingDays = [];
+  while (tradingDays.length < TRADING_DAY_COUNT) {
+    const dayOfWeek = cursor.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      tradingDays.unshift({ iso: isoDay(cursor), date: new Date(cursor) });
+    }
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  // Find the most recent equity point strictly before our window so the
+  // first day's total P&L can be anchored.
+  const sortedEquityDays = Array.from(equityByDay.values())
+    .filter((entry) => entry.eodNav != null)
+    .sort((a, b) => a.eodTs - b.eodTs);
+  const windowStartIso = tradingDays[0]?.iso;
+  let priorNav = null;
+  for (const entry of sortedEquityDays) {
+    if (entry.iso < windowStartIso) {
+      priorNav = entry.eodNav;
+    } else {
+      break;
+    }
+  }
+
+  tradingDays.forEach((day) => {
+    const tradeRow = tradesByDay.get(day.iso);
+    const equityRow = equityByDay.get(day.iso);
+    const realized = tradeRow?.realized ?? 0;
+    const tradeCount = tradeRow?.trades ?? 0;
+    let total = null;
+    if (equityRow?.eodNav != null && priorNav != null) {
+      total = equityRow.eodNav - priorNav - (equityRow.transfers || 0);
+    }
+    const unrealized = total != null ? total - realized : null;
+    out.push({
+      iso: day.iso,
+      date: day.date,
+      realized,
+      unrealized,
+      total,
+      trades: tradeCount,
+    });
+    if (equityRow?.eodNav != null) {
+      priorNav = equityRow.eodNav;
+    }
+  });
+
+  return out;
+};
+
+const CALENDAR_MODE_OPTIONS = [
+  { value: "total", label: "Total" },
+  { value: "realized", label: "Real" },
+  { value: "unrealized", label: "Unreal" },
+];
+
+const valueForMode = (entry, mode) => {
+  if (mode === "realized") return entry.realized ?? 0;
+  if (mode === "unrealized") return entry.unrealized;
+  if (entry.total != null) return entry.total;
+  // Fall back to realized when total is unavailable so the chart still draws.
+  return entry.realized ?? 0;
+};
+
+const bucketColor = (side) => (side === "loss" ? T.red : side === "win" ? T.green : T.textMuted);
+
+const TradeOutcomeBuckets = ({ trades = [], currency, maskValues }) => {
+  const model = useMemo(
+    () => buildTradeOutcomeHistogramModel({ trades, metric: "pnl" }),
+    [trades],
+  );
+  const buckets = model.buckets || [];
+  if (!buckets.length || !model.summary?.totalTrades) {
+    return null;
+  }
+  const maxCount = buckets.reduce((m, b) => (b.count > m ? b.count : m), 0) || 1;
+  const summary = model.summary;
   return (
-    <AppTooltip content={
-        bars.length
-          ? "Transfer-adjusted point-to-point P&L histogram."
-          : "P&L path unavailable until the selected range has at least two equity points."
-      }><div
-      style={{
-        border: `1px solid ${T.border}`,
-        borderRadius: dim(4),
-        background: T.bg0,
-        overflow: "hidden",
-      }}
-    >
-      <svg
-        role="img"
-        aria-label="Transfer-adjusted account P&L histogram"
-        viewBox="0 0 240 62"
-        preserveAspectRatio="none"
-        style={{ display: "block", width: "100%", height: dim(62) }}
+    <AppTooltip content="$ P&L bucket distribution across all closed trades in the recent window.">
+      <div
+        style={{
+          display: "grid",
+          gap: sp(3),
+          paddingTop: sp(4),
+          borderTop: `1px solid ${T.border}`,
+        }}
       >
-        <rect x="0" y="0" width="240" height="62" fill={T.bg0} />
-        {ticks.map((tick) => {
-          const y = yFor(tick);
-          return (
-            <g key={tick}>
-              <line
-                x1={left}
-                x2={right}
-                y1={y}
-                y2={y}
-                stroke={tick === 0 ? T.textDim : T.border}
-                strokeDasharray={tick === 0 ? "0" : "3 3"}
-                strokeWidth={tick === 0 ? 0.9 : 0.55}
-                opacity={tick === 0 ? 0.8 : 0.9}
-              />
-              <text
-                x={left - 4}
-                y={y + 2.5}
-                fill={tick < 0 ? T.red : tick > 0 ? T.green : T.textDim}
-                fontFamily={T.mono}
-                fontSize="6.5"
-                fontWeight="800"
-                textAnchor="end"
-              >
-                {formatAxisMoney(tick, currency, maskValues)}
-              </text>
-            </g>
-          );
-        })}
-        <line x1={left} x2={left} y1={top} y2={bottom} stroke={T.border} strokeWidth="0.7" />
-        <line x1={left} x2={right} y1={bottom} y2={bottom} stroke={T.border} strokeWidth="0.7" />
-        {bars.map((bar, index) => {
-          const value = Number(bar.value);
-          const isFiniteValue = Number.isFinite(value);
-          const y = isFiniteValue ? yFor(Math.max(value, 0)) : zeroY;
-          const height = isFiniteValue ? Math.max(1, Math.abs(yFor(value) - zeroY)) : 1;
-          const color = value > 0 ? T.green : value < 0 ? T.red : T.textDim;
-          const x = left + index * (barWidth + barGap);
-          return (
-            <g key={`${bar.timestamp || "point"}-${index}`}>
-              <title>
-                {`${bar.timestamp || "Point"}\nP&L ${formatAccountSignedMoney(
-                  value,
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            gap: sp(6),
+          }}
+        >
+          <span style={mutedLabelStyle}>Outcome Distribution</span>
+          <span style={{ fontSize: fs(7), fontFamily: T.mono, color: T.textDim }}>
+            {formatNumber(summary.totalTrades, 0)} trades
+          </span>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${buckets.length}, minmax(0, 1fr))`,
+            gap: 1,
+            height: dim(28),
+            alignItems: "end",
+          }}
+        >
+          {buckets.map((bucket) => {
+            const heightPct = (bucket.count / maxCount) * 100;
+            return (
+              <div
+                key={bucket.id}
+                title={`${bucket.label} · ${formatNumber(bucket.count, 0)} trades · total ${formatAccountSignedMoney(
+                  bucket.total,
                   currency,
                   true,
                   maskValues,
-                )}\nReturn ${formatSignedPercent(bar.returnPercent, 2, maskValues)}`}
-              </title>
-              <rect
-                x={x}
-                y={value >= 0 ? y : zeroY}
-                width={barWidth}
-                height={height}
-                fill={color}
-                rx="0.8"
-                opacity={value === 0 ? 0.45 : 1}
+                )}`}
+                style={{
+                  height: `${Math.max(2, heightPct)}%`,
+                  background: bucketColor(bucket.side),
+                  opacity: bucket.count ? 0.85 : 0.2,
+                  borderRadius: 1,
+                }}
               />
-            </g>
+            );
+          })}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: fs(7),
+            fontFamily: T.mono,
+            color: T.textMuted,
+            gap: sp(3),
+            flexWrap: "wrap",
+          }}
+        >
+          <span>
+            <span style={{ color: T.green, fontWeight: 800 }}>{summary.winners}W</span>
+            <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
+            <span style={{ color: T.red, fontWeight: 800 }}>{summary.losers}L</span>
+          </span>
+          <span>
+            μW{" "}
+            <span style={{ color: T.green, fontWeight: 800 }}>
+              {formatAccountSignedMoney(summary.averageWin, currency, true, maskValues)}
+            </span>
+          </span>
+          <span>
+            μL{" "}
+            <span style={{ color: T.red, fontWeight: 800 }}>
+              {formatAccountSignedMoney(summary.averageLoss, currency, true, maskValues)}
+            </span>
+          </span>
+          <span>
+            PF{" "}
+            <span
+              style={{
+                color:
+                  summary.profitFactor == null
+                    ? T.textDim
+                    : summary.profitFactor >= 1
+                      ? T.green
+                      : T.red,
+                fontWeight: 800,
+              }}
+            >
+              {summary.profitFactor == null
+                ? "----"
+                : `${summary.profitFactor.toFixed(2)}x`}
+            </span>
+          </span>
+        </div>
+      </div>
+    </AppTooltip>
+  );
+};
+
+const DailyPnlCalendar = ({
+  trades = [],
+  equityPoints = [],
+  currency,
+  maskValues,
+}) => {
+  const [mode, setMode] = useState("total");
+  const days = useMemo(
+    () => buildDailyPnlSeries(trades, equityPoints),
+    [trades, equityPoints],
+  );
+
+  const totalAvailable = days.some((d) => d.total != null);
+  const effectiveMode = mode === "total" && !totalAvailable ? "realized" : mode;
+
+  const valueForDay = (d) => valueForMode(d, effectiveMode);
+
+  const wins = days.filter((d) => {
+    const v = valueForDay(d);
+    return v != null && v > 0;
+  }).length;
+  const losses = days.filter((d) => {
+    const v = valueForDay(d);
+    return v != null && v < 0;
+  }).length;
+  const max =
+    days.reduce((m, d) => {
+      const v = valueForDay(d);
+      return v != null && Math.abs(v) > m ? Math.abs(v) : m;
+    }, 0) || 1;
+  const best = days.reduce((acc, d) => {
+    const v = valueForDay(d);
+    if (v == null) return acc;
+    if (!acc) return d;
+    const av = valueForDay(acc) ?? -Infinity;
+    return v > av ? d : acc;
+  }, null);
+  const worst = days.reduce((acc, d) => {
+    const v = valueForDay(d);
+    if (v == null) return acc;
+    if (!acc) return d;
+    const av = valueForDay(acc) ?? Infinity;
+    return v < av ? d : acc;
+  }, null);
+
+  const hasAnyData = days.some(
+    (d) => (d.realized && d.realized !== 0) || d.total != null || d.trades > 0,
+  );
+
+  if (!hasAnyData) {
+    return (
+      <AppTooltip content="30-day P&L calendar will populate once closed trades or NAV snapshots are recorded.">
+        <div
+          style={{
+            border: `1px dashed ${T.border}`,
+            borderRadius: dim(4),
+            background: T.bg0,
+            color: T.textMuted,
+            fontSize: fs(8),
+            fontFamily: T.mono,
+            padding: sp(6),
+            textAlign: "center",
+          }}
+        >
+          No P&L in last 30 trading days
+        </div>
+      </AppTooltip>
+    );
+  }
+
+  const modeLabel =
+    effectiveMode === "realized"
+      ? "real"
+      : effectiveMode === "unrealized"
+        ? "unreal"
+        : "total";
+
+  return (
+    <div style={{ display: "grid", gap: sp(3) }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          fontSize: fs(8),
+          fontFamily: T.mono,
+          color: T.textMuted,
+          gap: sp(4),
+          flexWrap: "wrap",
+        }}
+      >
+        <span>
+          <span style={{ color: T.green, fontWeight: 800 }}>{wins}W</span>
+          <span style={{ margin: "0 3px", color: T.textDim }}>/</span>
+          <span style={{ color: T.red, fontWeight: 800 }}>{losses}L</span>
+          <span style={{ marginLeft: sp(4), color: T.textDim }}>{modeLabel}</span>
+        </span>
+        <ToggleGroup
+          options={CALENDAR_MODE_OPTIONS}
+          value={effectiveMode}
+          onChange={setMode}
+        />
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(10, 1fr)",
+          gap: 2,
+        }}
+      >
+        {days.map((d) => {
+          const value = valueForDay(d);
+          const intensity = value != null ? Math.abs(value) / max : 0;
+          const baseColor =
+            value == null || value === 0
+              ? T.bg3
+              : value > 0
+                ? T.green
+                : T.red;
+          const opacity = value == null || value === 0 ? 0.2 : 0.25 + intensity * 0.7;
+          const realFmt = formatAccountSignedMoney(d.realized || 0, currency, true, maskValues);
+          const unrealFmt =
+            d.unrealized == null
+              ? "----"
+              : formatAccountSignedMoney(d.unrealized, currency, true, maskValues);
+          const totalFmt =
+            d.total == null
+              ? "----"
+              : formatAccountSignedMoney(d.total, currency, true, maskValues);
+          return (
+            <div
+              key={d.iso}
+              title={`${d.iso}\nTotal ${totalFmt}\nReal ${realFmt}\nUnreal ${unrealFmt}\n${d.trades} trade${d.trades === 1 ? "" : "s"}`}
+              style={{
+                aspectRatio: "1",
+                borderRadius: 2,
+                background: baseColor,
+                opacity,
+              }}
+            />
           );
         })}
-        {step > 0 ? (
-          <text
-            x={right}
-            y={top + 7}
-            fill={T.textDim}
-            fontFamily={T.mono}
-            fontSize="6"
-            fontWeight="800"
-            textAnchor="end"
-          >
-            Δ P&L
-          </text>
-        ) : null}
-        <text
-          x={left}
-          y="58"
-          fill={T.textDim}
-          fontFamily={T.mono}
-          fontSize="6.5"
-          fontWeight="800"
-          textAnchor="start"
-        >
-          {firstLabel}
-        </text>
-        <text
-          x={right}
-          y="58"
-          fill={T.textDim}
-          fontFamily={T.mono}
-          fontSize="6.5"
-          fontWeight="800"
-          textAnchor="end"
-        >
-          {lastLabel}
-        </text>
-      </svg>
-    </div></AppTooltip>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: fs(7),
+          fontFamily: T.mono,
+          color: T.textMuted,
+          gap: sp(4),
+          flexWrap: "wrap",
+        }}
+      >
+        <span>
+          BEST{" "}
+          <span style={{ color: T.green, fontWeight: 800 }}>
+            {best && valueForDay(best) != null
+              ? formatAccountSignedMoney(valueForDay(best), currency, true, maskValues)
+              : "----"}
+          </span>
+        </span>
+        <span>
+          WORST{" "}
+          <span style={{ color: T.red, fontWeight: 800 }}>
+            {worst && valueForDay(worst) != null
+              ? formatAccountSignedMoney(valueForDay(worst), currency, true, maskValues)
+              : "----"}
+          </span>
+        </span>
+      </div>
+    </div>
   );
 };
 
@@ -257,6 +520,8 @@ export const AccountReturnsPanel = ({
   range,
   maskValues = false,
   compact = false,
+  tradesData = null,
+  equityPoints = null,
 }) => {
   const equity = model?.equity || {};
   const trades = model?.trades || {};
@@ -447,8 +712,15 @@ export const AccountReturnsPanel = ({
         </div>
       </header>
 
-      <PnlHistogram
-        bars={equity.pnlBars || []}
+      <DailyPnlCalendar
+        trades={tradesData?.trades || []}
+        equityPoints={equityPoints || []}
+        currency={currency}
+        maskValues={maskValues}
+      />
+
+      <TradeOutcomeBuckets
+        trades={tradesData?.trades || []}
         currency={currency}
         maskValues={maskValues}
       />

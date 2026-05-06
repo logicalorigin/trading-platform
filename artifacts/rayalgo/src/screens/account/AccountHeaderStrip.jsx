@@ -41,55 +41,46 @@ const badgeTone = (type) => {
   return "default";
 };
 
-const HeaderMetric = ({
-  label,
-  value,
-  tone = T.text,
-  title,
-  strong = false,
-  compact = false,
-}) => (
-  <AppTooltip content={title}>
-    <div
+const HeaderMetric = ({ label, value, tone = T.text, title, strong = false }) => (
+  <AppTooltip content={title}><div
+    style={{
+      display: "inline-flex",
+      alignItems: "baseline",
+      gap: sp(3),
+      minHeight: dim(20),
+      minWidth: 0,
+      padding: sp("0 5px"),
+      borderLeft: `1px solid ${T.border}`,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+    }}
+  >
+    <span
       style={{
-        display: "inline-flex",
-        alignItems: "baseline",
-        gap: sp(compact ? 2 : 3),
-        minHeight: dim(compact ? 24 : 20),
-        minWidth: 0,
-        padding: sp(compact ? "0 7px" : "0 5px"),
-        borderLeft: `1px solid ${T.border}`,
-        whiteSpace: "nowrap",
-        overflow: "hidden",
+        color: T.textMuted,
+        fontSize: fs(6),
+        fontFamily: T.sans,
+        fontWeight: 900,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        flexShrink: 0,
       }}
     >
-      <span
-        style={{
-          color: T.textMuted,
-          fontSize: fs(compact ? 7 : 6),
-          fontFamily: T.sans,
-          fontWeight: 900,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          flexShrink: 0,
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          color: tone,
-          fontSize: fs(strong ? 10 : 9),
-          fontFamily: T.mono,
-          fontWeight: 900,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {value}
-      </span>
-    </div>
-  </AppTooltip>
+      {label}
+    </span>
+    <span
+      style={{
+        color: tone,
+        fontSize: fs(strong ? 10 : 9),
+        fontFamily: T.mono,
+        fontWeight: 900,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {value}
+    </span>
+  </div></AppTooltip>
 );
 
 const AccountSwitcher = ({
@@ -98,7 +89,6 @@ const AccountSwitcher = ({
   accountOptions,
   currency,
   showCombined = true,
-  compact = false,
 }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
@@ -134,14 +124,7 @@ const AccountSwitcher = ({
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        position: "relative",
-        minWidth: compact ? 0 : dim(154),
-        flex: compact ? "1 1 150px" : undefined,
-      }}
-    >
+    <div ref={containerRef} style={{ position: "relative", minWidth: dim(154) }}>
       <button
         type="button"
         onClick={() => setOpen((currentState) => !currentState)}
@@ -179,7 +162,6 @@ const AccountSwitcher = ({
             display: "flex",
             alignItems: "baseline",
             gap: sp(5),
-            flexWrap: compact ? "wrap" : "nowrap",
           }}
         >
           <div
@@ -354,8 +336,6 @@ export const AccountHeaderStrip = ({
   showCombined = true,
   maskValues = false,
   sectionControl,
-  linkChip = null,
-  compact = false,
 }) => {
   const metrics = summary?.metrics || {};
   const currency = summary?.currency || accounts[0]?.currency || "USD";
@@ -387,73 +367,8 @@ export const AccountHeaderStrip = ({
   const accountTypes = summary?.badges?.accountTypes || [];
   const showPdtBadge = Boolean(pdt?.isPatternDayTrader || pdtRemaining != null);
 
-  const metricItems = [
-    {
-      label: "Net",
-      value: metricValue(metrics.netLiquidation, currency, "money", maskValues),
-      title: metricTitle(metrics.netLiquidation),
-      strong: true,
-    },
-    {
-      label: "Cash",
-      value: metricValue(metrics.totalCash, currency, "money", maskValues),
-      title: `${metricTitle(metrics.totalCash)}\nSettled: ${metricValue(metrics.settledCash, currency, "money", maskValues)}`,
-    },
-    {
-      label: "BP",
-      value: metricValue(metrics.buyingPower, currency, "money", maskValues),
-      title: metricTitle(metrics.buyingPower),
-    },
-    {
-      label: "Margin",
-      value: metricValue(metrics.marginUsed, currency, "money", maskValues),
-      title: `${metricTitle(metrics.marginUsed)}${
-        metrics.maintenanceMargin
-          ? `\nMaintenance: ${formatAccountMoney(metrics.maintenanceMargin.value, currency, true, maskValues)}`
-          : ""
-      }`,
-    },
-    {
-      label: "Cushion",
-      value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "ratioPercent", maskValues),
-      tone:
-        metrics.maintenanceMarginCushionPercent?.value > 0.5
-          ? T.green
-          : metrics.maintenanceMarginCushionPercent?.value > 0.25
-            ? T.amber
-            : T.red,
-      title: metricTitle(metrics.maintenanceMarginCushionPercent),
-    },
-    {
-      label: "Day",
-      value: metricValue(metrics.dayPnl, currency, "signedMoney", maskValues),
-      tone: metrics.dayPnl?.value >= 0 ? T.green : T.red,
-      title: `${metricTitle(metrics.dayPnl)}\n${metricTitle(metrics.dayPnlPercent)}${
-        metrics.dayPnlPercent
-          ? `\nPercent: ${formatAccountPercent(metrics.dayPnlPercent.value, 2, maskValues)}`
-          : ""
-      }`,
-      strong: true,
-    },
-    {
-      label: "Total",
-      value: metricValue(metrics.totalPnl, currency, "signedMoney", maskValues),
-      tone: metrics.totalPnl?.value >= 0 ? T.green : T.red,
-      title: `${metricTitle(metrics.totalPnl)}\n${metricTitle(metrics.totalPnlPercent)}${
-        metrics.totalPnlPercent
-          ? `\nPercent: ${formatAccountPercent(metrics.totalPnlPercent.value, 2, maskValues)}`
-          : ""
-      }`,
-      strong: true,
-    },
-  ];
-  const visibleMetrics = compact
-    ? metricItems.filter((metric) => ["Net", "BP", "Cushion", "Day"].includes(metric.label))
-    : metricItems;
-
   return (
     <section
-      data-compact={compact ? "true" : "false"}
       style={{
         borderBottom: `1px solid ${T.border}`,
         padding: sp("0 0 2px"),
@@ -469,19 +384,17 @@ export const AccountHeaderStrip = ({
           alignItems: "center",
           gap: sp(3),
           flexWrap: "wrap",
-          flex: compact ? "1 1 100%" : "0 1 auto",
-          minWidth: compact ? 0 : dim(285),
+          flex: "0 1 auto",
+          minWidth: dim(285),
         }}
       >
         {sectionControl}
-        {linkChip}
         <AccountSwitcher
           accountId={accountId}
           onAccountIdChange={onAccountIdChange}
           accountOptions={accountOptions}
           currency={currency}
           showCombined={showCombined}
-          compact={compact}
         />
         <div style={{ display: "flex", flexWrap: "wrap", gap: sp(2) }}>
           {(accountTypes.length ? accountTypes : ["combined"]).map((badge) => (
@@ -515,25 +428,80 @@ export const AccountHeaderStrip = ({
       </div>
 
       <div
-        data-testid="account-header-metrics"
         style={{
           display: "flex",
-          flexWrap: compact ? "nowrap" : "wrap",
-          justifyContent: compact ? "flex-start" : "flex-end",
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
           gap: 0,
           alignItems: "flex-start",
-          flex: compact ? "1 1 100%" : "1 1 560px",
-          minWidth: compact ? 0 : dim(280),
+          flex: "1 1 560px",
+          minWidth: dim(280),
           marginLeft: "auto",
-          overflowX: compact ? "auto" : "visible",
-          paddingBottom: compact ? sp(1) : 0,
         }}
       >
-        {visibleMetrics.map((metric) => (
+        {[
+          {
+            label: "Net",
+            value: metricValue(metrics.netLiquidation, currency, "money", maskValues),
+            title: metricTitle(metrics.netLiquidation),
+            strong: true,
+          },
+          {
+            label: "Cash",
+            value: metricValue(metrics.totalCash, currency, "money", maskValues),
+            title: `${metricTitle(metrics.totalCash)}\nSettled: ${metricValue(metrics.settledCash, currency, "money", maskValues)}`,
+          },
+          {
+            label: "BP",
+            value: metricValue(metrics.buyingPower, currency, "money", maskValues),
+            title: metricTitle(metrics.buyingPower),
+          },
+          {
+            label: "Margin",
+            value: metricValue(metrics.marginUsed, currency, "money", maskValues),
+            title: `${metricTitle(metrics.marginUsed)}${
+              metrics.maintenanceMargin
+                ? `\nMaintenance: ${formatAccountMoney(metrics.maintenanceMargin.value, currency, true, maskValues)}`
+                : ""
+            }`,
+          },
+          {
+            label: "Cushion",
+            value: metricValue(metrics.maintenanceMarginCushionPercent, currency, "ratioPercent", maskValues),
+            tone:
+              metrics.maintenanceMarginCushionPercent?.value > 0.5
+                ? T.green
+                : metrics.maintenanceMarginCushionPercent?.value > 0.25
+                  ? T.amber
+                  : T.red,
+            title: metricTitle(metrics.maintenanceMarginCushionPercent),
+          },
+          {
+            label: "Day",
+            value: metricValue(metrics.dayPnl, currency, "signedMoney", maskValues),
+            tone: metrics.dayPnl?.value >= 0 ? T.green : T.red,
+            title: `${metricTitle(metrics.dayPnl)}\n${metricTitle(metrics.dayPnlPercent)}${
+              metrics.dayPnlPercent
+                ? `\nPercent: ${formatAccountPercent(metrics.dayPnlPercent.value, 2, maskValues)}`
+                : ""
+            }`,
+            strong: true,
+          },
+          {
+            label: "Total",
+            value: metricValue(metrics.totalPnl, currency, "signedMoney", maskValues),
+            tone: metrics.totalPnl?.value >= 0 ? T.green : T.red,
+            title: `${metricTitle(metrics.totalPnl)}\n${metricTitle(metrics.totalPnlPercent)}${
+              metrics.totalPnlPercent
+                ? `\nPercent: ${formatAccountPercent(metrics.totalPnlPercent.value, 2, maskValues)}`
+                : ""
+            }`,
+            strong: true,
+          },
+        ].map((metric) => (
           <HeaderMetric
             key={metric.label}
             {...metric}
-            compact={compact}
           />
         ))}
       </div>

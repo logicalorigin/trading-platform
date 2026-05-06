@@ -109,6 +109,12 @@ router.post(
       typeof body.contractPresetId === "string" && body.contractPresetId.trim()
         ? body.contractPresetId.trim()
         : null;
+    const signalOptionsProfile =
+      body.signalOptionsProfile &&
+      typeof body.signalOptionsProfile === "object" &&
+      !Array.isArray(body.signalOptionsProfile)
+        ? (body.signalOptionsProfile as Record<string, unknown>)
+        : null;
 
     if (
       !underlying ||
@@ -129,6 +135,7 @@ router.post(
       right,
       spotPrice,
       contractPresetId,
+      signalOptionsProfile,
     });
     res.json({ contract });
   },

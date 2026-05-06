@@ -46,6 +46,12 @@ test("TradeScreen keeps more than eight recent ticker tabs", () => {
   assert.doesNotMatch(source, /slice\(-8\)/);
 });
 
+test("TradeScreen option price chart lets the chart surface own empty state", () => {
+  assert.match(source, /const optionChartEmptyState = useMemo/);
+  assert.match(source, /emptyState=\{optionChartEmptyState\}/);
+  assert.doesNotMatch(source, /aria-label="Contract chart empty state"/);
+});
+
 test("Platform does not passively reset Trade to the first active watchlist item", () => {
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\.some\(\(item\) => item\.symbol === sym\)/);
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\[0\]\?\.symbol/);

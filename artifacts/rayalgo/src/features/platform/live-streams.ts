@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getOptionQuoteSnapshots } from "@workspace/api-client-react";
 import { usePageVisible } from "./usePageVisible";
@@ -113,6 +113,7 @@ type OptionQuoteWebSocketPayload = OptionQuoteStreamPayload & {
 
 type OptionQuoteStreamIntent =
   | "execution-live"
+  | "account-monitor-live"
   | "visible-live"
   | "automation-live"
   | "flow-scanner-live"
@@ -139,6 +140,73 @@ const MAX_OPTION_QUOTE_SNAPSHOTS = 1_024;
 const OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE = 100;
 const OPTION_QUOTE_WEBSOCKET_ENABLED = true;
 const OPTION_QUOTE_WEBSOCKET_STALL_MS = 15_000;
+const ACCOUNT_STREAM_FRESH_MS = 7_000;
+const ORDER_INVALIDATION_THROTTLE_MS = 2_000;
+
+type BrokerStreamFreshnessSnapshot = {
+  accountLastEventAt: number | null;
+  orderLastEventAt: number | null;
+  accountFresh: boolean;
+  orderFresh: boolean;
+};
+
+let brokerStreamFreshnessVersion = 0;
+let accountLastEventAt: number | null = null;
+let orderLastEventAt: number | null = null;
+let lastOrderInvalidationAt = 0;
+const brokerStreamFreshnessListeners = new Set<() => void>();
+
+const emitBrokerStreamFreshness = () => {
+  brokerStreamFreshnessVersion += 1;
+  brokerStreamFreshnessListeners.forEach((listener) => listener());
+};
+
+const markBrokerStreamEvent = (kind: "account" | "order") => {
+  const now = Date.now();
+  if (kind === "account") {
+    accountLastEventAt = now;
+  } else {
+    orderLastEventAt = now;
+  }
+  emitBrokerStreamFreshness();
+};
+
+const subscribeBrokerStreamFreshness = (listener: () => void) => {
+  brokerStreamFreshnessListeners.add(listener);
+  return () => brokerStreamFreshnessListeners.delete(listener);
+};
+
+const getBrokerStreamFreshnessVersion = () => brokerStreamFreshnessVersion;
+
+export const getBrokerStreamFreshnessSnapshot =
+  (): BrokerStreamFreshnessSnapshot => {
+    const now = Date.now();
+    return {
+      accountLastEventAt,
+      orderLastEventAt,
+      accountFresh:
+        accountLastEventAt != null && now - accountLastEventAt <= ACCOUNT_STREAM_FRESH_MS,
+      orderFresh:
+        orderLastEventAt != null && now - orderLastEventAt <= ACCOUNT_STREAM_FRESH_MS,
+    };
+  };
+
+export const useBrokerStreamFreshnessSnapshot =
+  (enabled = true): BrokerStreamFreshnessSnapshot => {
+    useSyncExternalStore(
+      enabled ? subscribeBrokerStreamFreshness : () => () => {},
+      enabled ? getBrokerStreamFreshnessVersion : () => 0,
+      () => 0,
+    );
+    useEffect(() => {
+      if (!enabled) {
+        return undefined;
+      }
+      const interval = setInterval(emitBrokerStreamFreshness, 1_000);
+      return () => clearInterval(interval);
+    }, [enabled]);
+    return getBrokerStreamFreshnessSnapshot();
+  };
 
 export const getOptionQuoteSnapshotCacheSize = (): number =>
   optionQuoteSnapshotsByProviderContractId.size;
@@ -469,6 +537,46 @@ export const useStoredOptionQuoteSnapshot = (
   );
 
   return getStoredOptionQuoteSnapshot(normalizedProviderContractId);
+};
+
+export const useStoredOptionQuoteSnapshotVersion = (
+  providerContractIds: string[] = [],
+): number => {
+  const providerContractIdSignature = Array.from(
+    new Set(providerContractIds.map(normalizeProviderContractId).filter(Boolean)),
+  )
+    .sort()
+    .join("\u001f");
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!providerContractIdSignature) {
+        return () => {};
+      }
+
+      const unsubscribe = providerContractIdSignature
+        .split("\u001f")
+        .map((providerContractId) =>
+          subscribeToOptionQuoteSnapshot(providerContractId, listener),
+        );
+      return () => unsubscribe.forEach((stop) => stop());
+    },
+    [providerContractIdSignature],
+  );
+  const getSnapshot = useCallback(() => {
+    if (!providerContractIdSignature) {
+      return 0;
+    }
+
+    return providerContractIdSignature
+      .split("\u001f")
+      .reduce(
+        (version, providerContractId) =>
+          version + getOptionQuoteSnapshotVersion(providerContractId),
+        0,
+      );
+  }, [providerContractIdSignature]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 };
 
 const readQueryParams = (queryKey: unknown): Record<string, unknown> | null => {
@@ -1454,30 +1562,6 @@ export const groupOptionChainContractsByExpiration = (
   return contractsByExpiration;
 };
 
-const mergeOptionQuotesIntoCache = (
-  current: OptionChainResponse | undefined,
-  incomingQuotes: LiveOptionQuoteSnapshot[],
-  underlying: string,
-): OptionChainResponse | undefined => {
-  if (!current?.contracts?.length) {
-    return current;
-  }
-
-  const contracts = patchOptionQuotesIntoContracts(
-    current.contracts,
-    incomingQuotes,
-  );
-  if (contracts === current.contracts) {
-    return current;
-  }
-
-  return {
-    underlying,
-    expirationDate: current.expirationDate ?? null,
-    contracts,
-  };
-};
-
 export const useIbkrQuoteSnapshotStream = ({
   symbols,
   enabled = true,
@@ -1587,6 +1671,7 @@ export const useIbkrAccountSnapshotStream = ({
         return;
       }
 
+      markBrokerStreamEvent("account");
       applyIbkrAccountPayloadToCache(queryClient, payload, { accountId, mode });
     };
 
@@ -1673,6 +1758,7 @@ export const useIbkrOrderSnapshotStream = ({
         return;
       }
 
+      markBrokerStreamEvent("order");
       queryClient
         .getQueryCache()
         .findAll({ queryKey: ["/api/orders"] })
@@ -1687,16 +1773,20 @@ export const useIbkrOrderSnapshotStream = ({
           } satisfies OrdersResponse);
         });
 
-      invalidateAccountScopedQueries(
-        queryClient,
-        [
-          "combined",
-          ...(accountId ? [accountId] : []),
-          ...payload.orders.map((order) => order.accountId).filter(Boolean),
-        ],
-        mode,
-        new Set(["orders", "positions", "summary", "risk"]),
-      );
+      const now = Date.now();
+      if (now - lastOrderInvalidationAt >= ORDER_INVALIDATION_THROTTLE_MS) {
+        lastOrderInvalidationAt = now;
+        invalidateAccountScopedQueries(
+          queryClient,
+          [
+            "combined",
+            ...(accountId ? [accountId] : []),
+            ...payload.orders.map((order) => order.accountId).filter(Boolean),
+          ],
+          mode,
+          new Set(["orders", "positions", "summary", "risk"]),
+        );
+      }
     };
 
     source.addEventListener("orders", handleOrders as EventListener);
@@ -1704,7 +1794,7 @@ export const useIbkrOrderSnapshotStream = ({
       source.removeEventListener("orders", handleOrders as EventListener);
       source.close();
     };
-  }, [enabled, mode, queryClient, streamUrl]);
+  }, [accountId, enabled, mode, queryClient, streamUrl]);
 };
 
 export const useIbkrOptionChainStream = ({
@@ -1801,7 +1891,6 @@ export const useIbkrOptionQuoteStream = ({
   intent?: OptionQuoteStreamIntent;
   requiresGreeks?: boolean;
 }) => {
-  const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
   const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
   const providerContractIdSignature = providerContractIds
@@ -1868,21 +1957,6 @@ export const useIbkrOptionQuoteStream = ({
       }
 
       quotes.forEach(cacheOptionQuoteSnapshot);
-
-      queryClient
-        .getQueryCache()
-        .findAll({ queryKey: ["trade-option-chain", normalizedUnderlying] })
-        .forEach((query) => {
-          queryClient.setQueryData(
-            query.queryKey,
-            (current: OptionChainResponse | undefined) =>
-              mergeOptionQuotesIntoCache(
-                current,
-                quotes,
-                normalizedUnderlying,
-              ),
-          );
-        });
     };
 
     const flushQueuedQuotes = () => {
@@ -2194,7 +2268,6 @@ export const useIbkrOptionQuoteStream = ({
     normalizedUnderlying,
     normalizedOwner,
     pageVisible,
-    queryClient,
     requiresGreeks,
     webSocketUrl,
   ]);

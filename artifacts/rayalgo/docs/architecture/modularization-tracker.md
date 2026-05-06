@@ -184,7 +184,7 @@ This replan is based on current workspace files only. No separate untracked tran
   - Verify no automatic future-axis projection beyond the latest candle from stale `futureExpansionBars`; today is May 1, 2026 in the current environment, so future labels like May 26 must only appear when the user explicitly creates that much future space.
 - Trade UI:
   - Verify the contract option chart owns the top of the chart panel without the old MARK/BID/ASK/IV stat boxes above it.
-  - Verify option-chain selection hydrates provider contract IDs, chart bars, UOA overlays, order-ticket asset toggles, Shadow/IBKR preview and submit paths, disconnected-gateway blocking, ticker tab switching, drag-reorder persistence after reload, tab close, watchlist-driven ticker changes, and full-width layout.
+  - Verify option-chain selection hydrates provider contract IDs, chart bars, flow overlays, order-ticket asset toggles, Shadow/IBKR preview and submit paths, disconnected-gateway blocking, ticker tab switching, drag-reorder persistence after reload, tab close, watchlist-driven ticker changes, and full-width layout.
 - Market UI:
   - Verify independent and synced mini-chart timeframes, chart reset, layout buttons, grid resize handles, watchlist add/remove/reorder/filter/sort, signal interval controls, flow scanner controls, premium-flow strip, market heat/pulse/news/calendar empty states, and no stale inline interval buttons.
 - Platform shell and shared chrome:

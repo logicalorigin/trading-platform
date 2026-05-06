@@ -251,10 +251,10 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
   await expect(strips.nth(0)).toHaveAttribute("data-flow-fallback-used", "false");
   await expect(strips.nth(5)).toHaveAttribute("data-flow-source-provider", "IBKR");
   await expect(strips.nth(5)).toHaveAttribute("data-flow-source-live", "true");
-  const uoaLane = page.getByTestId("market-activity-uoa-lane");
-  await expect(uoaLane).toHaveAttribute("data-flow-snapshot-source", "chart-grid");
-  await expect(uoaLane).toHaveAttribute("data-flow-source-provider", "IBKR");
-  await expect(uoaLane).toHaveAttribute("data-flow-source-live", "true");
+  const flowLane = page.getByTestId("market-activity-flow-lane");
+  await expect(flowLane).toHaveAttribute("data-flow-snapshot-source", "chart-grid");
+  await expect(flowLane).toHaveAttribute("data-flow-source-provider", "IBKR");
+  await expect(flowLane).toHaveAttribute("data-flow-source-live", "true");
   await expect(page.locator("[data-premium-flow-glyph]")).toHaveCount(0);
   await expect(
     page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
@@ -295,8 +295,13 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     ),
   ).toBe(true);
   expect(
+    chartFlowUrls.every(
+      (href) => new URL(href).searchParams.get("blocking") === "true",
+    ),
+  ).toBe(true);
+  expect(
     flowUrls.filter((href) => new URL(href).searchParams.get("scope") !== "unusual"),
-    "Market should not run a separate all-flow watchlist scanner while chart UOA is active",
+    "Market should not run a separate all-flow watchlist scanner while chart flow is active",
   ).toEqual([]);
 
   const layout = await strips.evaluateAll((nodes) =>

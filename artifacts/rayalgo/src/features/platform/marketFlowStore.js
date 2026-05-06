@@ -4,6 +4,7 @@ import {
   DEFAULT_FLOW_SCANNER_CONFIG,
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig.js";
+import { providerSummaryHasTransientFlowState } from "./flowSourceState.js";
 
 const EMPTY_PROVIDER_SUMMARY = Object.freeze({
   label: "Loading flow",
@@ -203,12 +204,42 @@ const ensureEntry = (storeKey) => {
   return storeEntries.get(normalizedKey);
 };
 
+const hasSnapshotFlowEvents = (snapshot) =>
+  Array.isArray(snapshot?.flowEvents) && snapshot.flowEvents.length > 0;
+
+const shouldPreserveMarketFlowSnapshot = (current, next) =>
+  Boolean(
+    hasSnapshotFlowEvents(current) &&
+      !hasSnapshotFlowEvents(next) &&
+      (next?.flowStatus === "loading" ||
+        next?.flowStatus === "offline" ||
+        providerSummaryHasTransientFlowState(next?.providerSummary)),
+  );
+
+const preserveMarketFlowSnapshotEvents = (current, next) => ({
+  ...next,
+  hasLiveFlow: true,
+  flowStatus: "live",
+  flowEvents: current.flowEvents,
+  flowTide: current.flowTide,
+  tickerFlow: current.tickerFlow,
+  flowClock: current.flowClock,
+  sectorFlow: current.sectorFlow,
+  dteBuckets: current.dteBuckets,
+  marketOrderFlow: current.marketOrderFlow,
+  putCall: current.putCall,
+  staleFlowEvents: true,
+});
+
 export const publishMarketFlowSnapshot = (storeKey, snapshot) => {
   const entry = ensureEntry(storeKey);
   if (entry.snapshot === snapshot) {
     return;
   }
-  entry.snapshot = snapshot || EMPTY_MARKET_FLOW_SNAPSHOT;
+  const nextSnapshot = snapshot || EMPTY_MARKET_FLOW_SNAPSHOT;
+  entry.snapshot = shouldPreserveMarketFlowSnapshot(entry.snapshot, nextSnapshot)
+    ? preserveMarketFlowSnapshotEvents(entry.snapshot, nextSnapshot)
+    : nextSnapshot;
   entry.version += 1;
   entry.listeners.forEach((listener) => listener());
 };

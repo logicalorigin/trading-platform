@@ -6,11 +6,19 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { BacktestTradeDiagnostics } from './backtestTradeDiagnostics';
+import type { BacktestTradeInstrumentType } from './backtestTradeInstrumentType';
+import type { BacktestTradeOptionContract } from './backtestTradeOptionContract';
+import type { BacktestTradePricingMode } from './backtestTradePricingMode';
 
 export interface BacktestTrade {
   tradeSelectionId: string;
   symbol: string;
   side: string;
+  instrumentType: BacktestTradeInstrumentType;
+  pricingMode: BacktestTradePricingMode;
+  /** @nullable */
+  underlying: string | null;
+  optionContract: BacktestTradeOptionContract;
   entryAt: Date;
   exitAt: Date;
   entryPrice: number;

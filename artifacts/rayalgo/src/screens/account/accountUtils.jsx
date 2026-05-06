@@ -528,9 +528,6 @@ export const Panel = ({
   action,
   children,
   loading,
-  loadingDetail,
-  loadingRows = 4,
-  loadingTitle,
   error,
   onRetry,
   minHeight = 0,
@@ -593,89 +590,9 @@ export const Panel = ({
       {action}
     </div>
     <div style={{ flex: "0 1 auto", minHeight: 0, padding: noPad ? 0 : sp(6) }}>
-      {loading ? (
-        <PanelLoadingState
-          detail={
-            loadingDetail ||
-            subtitle ||
-            rightRail ||
-            "Fetching account data from the active provider."
-          }
-          rows={loadingRows}
-          title={loadingTitle || `Loading ${title}`}
-        />
-      ) : error ? (
-        <InlineError error={error} onRetry={onRetry} />
-      ) : (
-        children
-      )}
+      {loading ? <SkeletonRows /> : error ? <InlineError error={error} onRetry={onRetry} /> : children}
     </div>
   </section>
-);
-
-export const PanelLoadingState = ({ title, detail, rows = 4 }) => (
-  <div
-    data-testid="account-panel-loading-state"
-    style={{
-      display: "grid",
-      gap: sp(7),
-      padding: sp(6),
-      color: T.textDim,
-      fontFamily: T.sans,
-    }}
-  >
-    <div
-      style={{
-        display: "flex",
-        alignItems: "baseline",
-        justifyContent: "space-between",
-        gap: sp(8),
-        minWidth: 0,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            color: T.text,
-            fontSize: textSize("bodyStrong"),
-            fontWeight: 800,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {title}
-        </div>
-        <div
-          style={{
-            marginTop: sp(2),
-            color: T.textDim,
-            fontSize: textSize("caption"),
-            fontFamily: T.data,
-            lineHeight: 1.35,
-          }}
-        >
-          {detail}
-        </div>
-      </div>
-      <span
-        style={{
-          flexShrink: 0,
-          padding: sp("2px 6px"),
-          border: `1px solid ${T.accent}44`,
-          background: `${T.accent}14`,
-          color: T.accent,
-          fontSize: textSize("label"),
-          fontFamily: T.data,
-          fontWeight: 900,
-          textTransform: "uppercase",
-        }}
-      >
-        Fetching
-      </span>
-    </div>
-    <SkeletonRows rows={rows} />
-  </div>
 );
 
 export const SkeletonRows = ({ rows = 4 }) => (

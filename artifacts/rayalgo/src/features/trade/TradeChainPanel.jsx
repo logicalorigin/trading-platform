@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
@@ -13,6 +20,11 @@ import {
   resolveTradeOptionChainSnapshot,
   useTradeOptionChainSnapshot,
 } from "../platform/tradeOptionChainStore";
+import {
+  getStoredOptionQuoteSnapshot,
+  useStoredOptionQuoteSnapshotVersion,
+} from "../platform/live-streams";
+import { patchOptionChainRowWithQuoteGetter } from "./optionChainRows";
 import { MarketIdentityInline } from "../platform/marketIdentity";
 import {
   MISSING_VALUE,
@@ -127,6 +139,17 @@ const formatFreshnessLabel = (value) => {
 const getRowSideFreshness = (row, side) =>
   normalizeFreshness(row?.[side === "C" ? "cFreshness" : "pFreshness"]);
 
+const doesExpirationOptionMatchValue = (option, value) =>
+  Boolean(
+    value &&
+      option &&
+      (option.value === value ||
+        option.chainKey === value ||
+        option.isoDate === value ||
+        option.legacyValue === value ||
+        option.label === value),
+  );
+
 const hexToRgb = (value) => {
   const normalized = String(value || "").replace("#", "");
   if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
@@ -154,28 +177,14 @@ const normalizeLogValue = (value, maxValue) => {
   return Math.log1p(value) / Math.log1p(maxValue);
 };
 
-const buildHeatmapModel = (chain, atmStrike) => {
-  const maxDistance = Math.max(
-    1,
-    ...chain.map((row) =>
-      isFiniteNumber(atmStrike) ? Math.abs(row.k - atmStrike) : 1,
-    ),
-  );
+export const buildHeatmapModel = (chain) => {
   const maxima = chain.reduce(
     (next, row) => ({
-      cVol: Math.max(next.cVol, row.cVol || 0),
-      cOi: Math.max(next.cOi, row.cOi || 0),
       cPrem: Math.max(next.cPrem, row.cPrem || 0),
-      pVol: Math.max(next.pVol, row.pVol || 0),
-      pOi: Math.max(next.pOi, row.pOi || 0),
       pPrem: Math.max(next.pPrem, row.pPrem || 0),
     }),
     {
-      cVol: 0,
-      cOi: 0,
       cPrem: 0,
-      pVol: 0,
-      pOi: 0,
       pPrem: 0,
     },
   );
@@ -183,30 +192,9 @@ const buildHeatmapModel = (chain, atmStrike) => {
   return {
     intensity(row, side) {
       const prefix = side === "C" ? "c" : "p";
-      const volume = normalizeLogValue(row[`${prefix}Vol`], maxima[`${prefix}Vol`]);
-      const openInterest = normalizeLogValue(
-        row[`${prefix}Oi`],
-        maxima[`${prefix}Oi`],
-      );
-      const premium = normalizeLogValue(
+      return normalizeLogValue(
         row[`${prefix}Prem`],
         maxima[`${prefix}Prem`],
-      );
-      const atmProximity = isFiniteNumber(atmStrike)
-        ? 1 - Math.min(Math.abs(row.k - atmStrike) / maxDistance, 1)
-        : row.isAtm
-          ? 1
-          : 0;
-
-      return Math.max(
-        0,
-        Math.min(
-          1,
-          0.35 * volume +
-            0.25 * openInterest +
-            0.25 * premium +
-            0.15 * atmProximity,
-        ),
       );
     },
   };
@@ -237,29 +225,24 @@ const ChainStatePanel = ({
       borderRadius: dim(4),
     }}
   >
+    <style>
+      {"@keyframes tradeChainSpin { to { transform: rotate(360deg); } }"}
+    </style>
     {loading ? (
-      <div
-        data-testid="chain-loading-skeleton"
-        aria-hidden="true"
+      <span
+        data-testid="loading-spinner"
+        role="status"
+        aria-label="Loading"
         style={{
-          width: dim(172),
-          display: "grid",
-          gap: sp(5),
+          width: dim(18),
+          height: dim(18),
+          borderRadius: "50%",
+          border: `2px solid ${T.border}`,
+          borderTopColor: T.accent,
+          animation: "tradeChainSpin 900ms linear infinite",
+          flexShrink: 0,
         }}
-      >
-        {[0, 1, 2].map((index) => (
-          <span
-            key={index}
-            className="ra-skeleton"
-            style={{
-              height: dim(index === 0 ? 18 : 12),
-              width: index === 2 ? "72%" : "100%",
-              borderRadius: dim(3),
-              background: `${T.border}70`,
-            }}
-          />
-        ))}
-      </div>
+      />
     ) : null}
     <span style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
       <span
@@ -318,7 +301,7 @@ const ChainRefreshSpinner = () => (
   </>
 );
 
-const ChainSide = ({
+const ChainSide = forwardRef(function ChainSide({
   side,
   chain,
   columns,
@@ -328,15 +311,20 @@ const ChainSide = ({
   heatmapModel,
   atmStrike,
   onSelect,
+  onHorizontalScroll,
   topPadding = 0,
   bottomPadding = 0,
-}) => {
+}, scrollRef) {
   const sideColor = side === "C" ? T.green : T.red;
   const gridTemplateColumns = buildColumnGrid(columns);
   const sideMinWidth = getSideMinWidth(columns);
 
   return (
-    <div style={{ minWidth: 0, overflowX: "auto", overflowY: "visible" }}>
+    <div
+      ref={scrollRef}
+      onScroll={onHorizontalScroll}
+      style={{ minWidth: 0, overflowX: "auto", overflowY: "visible" }}
+    >
       <div style={{ minWidth: dim(sideMinWidth) }}>
         <div
           style={{
@@ -349,6 +337,7 @@ const ChainSide = ({
             zIndex: 2,
             background: T.bg2,
             borderBottom: `1px solid ${T.border}`,
+            boxShadow: `0 1px 0 ${T.border}`,
           }}
         >
           {columns.map((column) => (
@@ -382,12 +371,13 @@ const ChainSide = ({
           const isAtmRow = isFiniteNumber(atmStrike)
             ? row.k === atmStrike
             : row.isAtm;
-          const heatAlpha = heatmapEnabled
-            ? 0.05 + heatmapModel.intensity(row, side) * 0.28
+          const heatIntensity = heatmapEnabled
+            ? heatmapModel.intensity(row, side)
             : 0;
+          const heatAlpha = heatIntensity > 0 ? 0.04 + heatIntensity * 0.30 : 0;
           const rowBackground = selectedSide
             ? rgba(sideColor, 0.22)
-            : heatmapEnabled
+            : heatmapEnabled && heatAlpha > 0
               ? rgba(sideColor, heatAlpha)
               : isAtmRow
                 ? rgba(T.amber, 0.08)
@@ -450,7 +440,7 @@ const ChainSide = ({
       </div>
     </div>
   );
-};
+});
 
 const StrikeColumn = ({
   chain,
@@ -527,12 +517,13 @@ export const TradeChainPanel = ({
   onSelectContract,
   onChangeExp,
   onRetryExpiration,
-  onExpandExpiration,
-  expandedExpirationKeys = [],
   heldContracts = [],
   chainStatus = "empty",
   heatmapEnabled = false,
   onToggleHeatmap,
+  chainCoverageValue = 5,
+  chainCoverageOptions = [5, 10, 15, 20, "all"],
+  onChangeChainCoverage,
   onVisibleRowsChange,
 }) => {
   const fallback = useMemo(
@@ -565,6 +556,9 @@ export const TradeChainPanel = ({
     : snapshotExpirationOptions;
   const chain = chainRows.length ? chainRows : snapshotChainRows;
   const scrollRef = useRef(null);
+  const callSideScrollRef = useRef(null);
+  const putSideScrollRef = useRef(null);
+  const syncingSideScrollRef = useRef(false);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const resolvedChainStatus =
@@ -597,7 +591,9 @@ export const TradeChainPanel = ({
         },
       ];
   const expInfo =
-    fallbackExpirationOptions.find((option) => option.value === contract.exp) ||
+    fallbackExpirationOptions.find((option) =>
+      doesExpirationOptionMatchValue(option, contract.exp),
+    ) ||
     resolvedExpiration ||
     fallbackExpirationOptions[0] || {
       value: contract.exp,
@@ -605,11 +601,51 @@ export const TradeChainPanel = ({
       dte: daysToExpiration(contract.exp),
     };
   const heldForExpiration = heldContracts.filter(
-    (holding) => holding.exp === expInfo?.value,
+    (holding) => doesExpirationOptionMatchValue(expInfo, holding.exp),
   );
   const heatmapModel = useMemo(
-    () => buildHeatmapModel(chain, atmStrike),
-    [atmStrike, chain],
+    () => buildHeatmapModel(chain),
+    [chain],
+  );
+  const syncSideHorizontalScroll = useCallback((sourceSide) => {
+    if (syncingSideScrollRef.current) {
+      return;
+    }
+
+    const source =
+      sourceSide === "C" ? callSideScrollRef.current : putSideScrollRef.current;
+    const target =
+      sourceSide === "C" ? putSideScrollRef.current : callSideScrollRef.current;
+    if (!source || !target) {
+      return;
+    }
+
+    const sourceMax = Math.max(0, source.scrollWidth - source.clientWidth);
+    const targetMax = Math.max(0, target.scrollWidth - target.clientWidth);
+    const nextScrollLeft =
+      sourceMax > 0 ? (source.scrollLeft / sourceMax) * targetMax : 0;
+    if (Math.abs(target.scrollLeft - nextScrollLeft) < 1) {
+      return;
+    }
+
+    syncingSideScrollRef.current = true;
+    target.scrollLeft = nextScrollLeft;
+    const clearSyncFlag = () => {
+      syncingSideScrollRef.current = false;
+    };
+    if (typeof window !== "undefined" && window.requestAnimationFrame) {
+      window.requestAnimationFrame(clearSyncFlag);
+    } else {
+      clearSyncFlag();
+    }
+  }, []);
+  const handleCallHorizontalScroll = useCallback(
+    () => syncSideHorizontalScroll("C"),
+    [syncSideHorizontalScroll],
+  );
+  const handlePutHorizontalScroll = useCallback(
+    () => syncSideHorizontalScroll("P"),
+    [syncSideHorizontalScroll],
   );
   const selectedCenterStrike = contract.strike ?? atmStrike;
   useEffect(() => {
@@ -679,6 +715,42 @@ export const TradeChainPanel = ({
     visibleStartIndex + visibleRowCount,
   );
   const visibleChain = chain.slice(visibleStartIndex, visibleEndIndex);
+  const selectedChainRowBase =
+    chain.find((row) => row.k === contract?.strike) ||
+    chain.find((row) => row.isAtm) ||
+    null;
+  const visibleQuoteProviderContractIds = useMemo(
+    () =>
+      visibleChain
+        .flatMap((row) => [
+          row.cContract?.providerContractId,
+          row.pContract?.providerContractId,
+          selectedChainRowBase?.cContract?.providerContractId,
+          selectedChainRowBase?.pContract?.providerContractId,
+        ])
+        .filter(Boolean),
+    [selectedChainRowBase, visibleChain],
+  );
+  const visibleQuoteVersion = useStoredOptionQuoteSnapshotVersion(
+    visibleQuoteProviderContractIds,
+  );
+  const liveVisibleChain = useMemo(
+    () =>
+      visibleChain.map((row) =>
+        patchOptionChainRowWithQuoteGetter(row, getStoredOptionQuoteSnapshot),
+      ),
+    [visibleChain, visibleQuoteVersion],
+  );
+  const selectedChainRow = useMemo(
+    () =>
+      selectedChainRowBase
+        ? patchOptionChainRowWithQuoteGetter(
+            selectedChainRowBase,
+            getStoredOptionQuoteSnapshot,
+          )
+        : null,
+    [selectedChainRowBase, visibleQuoteVersion],
+  );
   useEffect(() => {
     onVisibleRowsChange?.(visibleChain);
   }, [onVisibleRowsChange, visibleChain]);
@@ -709,24 +781,9 @@ export const TradeChainPanel = ({
   const selectedExpirationStatus = chain.length
     ? "loaded"
     : resolvedExpirationStatus || "empty";
-  const selectedExpirationKey =
-    expInfo?.chainKey || expInfo?.isoDate || expInfo?.value || null;
-  const selectedExpirationExpanded = Boolean(
-    selectedExpirationKey && expandedExpirationKeys.includes(selectedExpirationKey),
-  );
-  const selectedChainRow =
-    chain.find((row) => row.k === contract?.strike) ||
-    chain.find((row) => row.isAtm) ||
-    null;
   const selectedDataFreshness = getRowSideFreshness(
     selectedChainRow,
     contract?.cp === "P" ? "P" : "C",
-  );
-  const canExpandSelectedExpiration = Boolean(
-    chain.length &&
-      selectedExpirationStatus === "loaded" &&
-      !selectedExpirationExpanded &&
-      onExpandExpiration,
   );
   const showLoading =
     !chain.length &&
@@ -902,28 +959,31 @@ export const TradeChainPanel = ({
           />
           Heatmap
         </label>
+        <select
+          aria-label="Option chain strike coverage"
+          value={String(chainCoverageValue)}
+          onChange={(event) => onChangeChainCoverage?.(event.target.value)}
+          style={{
+            background: T.bg3,
+            border: `1px solid ${T.border}`,
+            color: T.textSec,
+            fontSize: fs(9),
+            fontFamily: T.mono,
+            fontWeight: 700,
+            cursor: onChangeChainCoverage ? "pointer" : "default",
+            padding: sp("2px 6px"),
+            borderRadius: dim(3),
+            outline: "none",
+          }}
+        >
+          {chainCoverageOptions.map((option) => (
+            <option key={String(option)} value={String(option)}>
+              {option === "all" ? "All strikes" : `${option} each side`}
+            </option>
+          ))}
+        </select>
         <span style={{ flex: 1 }} />
         {isResolvedExpirationRefreshing ? <ChainRefreshSpinner /> : null}
-        {canExpandSelectedExpiration ? (
-          <button
-            type="button"
-            onClick={() => onExpandExpiration(expInfo)}
-            style={{
-              border: `1px solid ${T.border}`,
-              background: T.bg3,
-              color: T.textSec,
-              borderRadius: dim(3),
-              padding: sp("2px 6px"),
-              fontSize: fs(8),
-              fontFamily: T.mono,
-              fontWeight: 800,
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Expand
-          </button>
-        ) : null}
         <span style={{ fontSize: fs(9), fontFamily: T.mono, color: T.textDim }}>
           IMP{" "}
           <span style={{ color: impMove != null ? T.cyan : T.textDim, fontWeight: 700 }}>
@@ -958,6 +1018,7 @@ export const TradeChainPanel = ({
               height: "100%",
               overflowY: "auto",
               overflowX: "hidden",
+              position: "relative",
               display: "grid",
               gridTemplateColumns: `minmax(0, 1fr) ${dim(STRIKE_WIDTH)}px minmax(0, 1fr)`,
               fontFamily: T.mono,
@@ -965,8 +1026,9 @@ export const TradeChainPanel = ({
             }}
           >
             <ChainSide
+              ref={callSideScrollRef}
               side="C"
-              chain={visibleChain}
+              chain={liveVisibleChain}
               columns={CALL_COLUMNS}
               selected={{ strike: contract.strike, cp: contract.cp }}
               heldContracts={heldForExpiration}
@@ -974,18 +1036,20 @@ export const TradeChainPanel = ({
               heatmapModel={heatmapModel}
               atmStrike={atmStrike}
               onSelect={onSelectContract}
+              onHorizontalScroll={handleCallHorizontalScroll}
               topPadding={topPadding}
               bottomPadding={bottomPadding}
             />
             <StrikeColumn
-              chain={visibleChain}
+              chain={liveVisibleChain}
               atmStrike={atmStrike}
               topPadding={topPadding}
               bottomPadding={bottomPadding}
             />
             <ChainSide
+              ref={putSideScrollRef}
               side="P"
-              chain={visibleChain}
+              chain={liveVisibleChain}
               columns={PUT_COLUMNS}
               selected={{ strike: contract.strike, cp: contract.cp }}
               heldContracts={heldForExpiration}
@@ -993,6 +1057,7 @@ export const TradeChainPanel = ({
               heatmapModel={heatmapModel}
               atmStrike={atmStrike}
               onSelect={onSelectContract}
+              onHorizontalScroll={handlePutHorizontalScroll}
               topPadding={topPadding}
               bottomPadding={bottomPadding}
             />

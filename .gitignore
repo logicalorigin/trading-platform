@@ -48,6 +48,12 @@ Thumbs.db
 .cache/
 .local/
 
+# local agent/tool settings
+.claude/settings.local.json
+
+# local run artifacts and screenshots
+output/
+
 # local Playwright output
 artifacts/**/test-results/
 artifacts/**/playwright-report/

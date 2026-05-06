@@ -3027,6 +3027,158 @@ type NormalizedAccountTrade = {
   currency: string;
 };
 
+type TradeOutcomeSide = "loss" | "flat" | "win";
+
+type TradeOutcomeBucket = {
+  id: string;
+  index: number;
+  bucketCount: number;
+  min: number;
+  max: number;
+  label: string;
+  side: TradeOutcomeSide;
+  count: number;
+  total: number;
+  average: number;
+};
+
+const buildAccountTradeAnnotationKey = (input: {
+  source?: string | null;
+  accountId?: string | null;
+  id?: string | null;
+  symbol?: string | null;
+  closeDate?: Date | string | null;
+}) => {
+  const source = String(input.source || "UNKNOWN").trim().toUpperCase();
+  const accountId = String(input.accountId || "unknown").trim() || "unknown";
+  const id = String(input.id || "").trim();
+  if (id) {
+    return `${source}:${accountId}:${id}`;
+  }
+  const symbol = normalizeSymbol(input.symbol || "");
+  const closeDate =
+    input.closeDate instanceof Date
+      ? input.closeDate.toISOString()
+      : String(input.closeDate || "").trim();
+  return `${source}:${accountId}:${symbol || "unknown"}:${closeDate || "open"}`;
+};
+
+const normalizeAnnotationNote = (value: unknown) =>
+  typeof value === "string" ? value.trim().slice(0, 5_000) : "";
+
+const normalizeAnnotationTags = (value: unknown) =>
+  Array.from(
+    new Set(
+      (Array.isArray(value) ? value : [])
+        .map((tag) => String(tag || "").trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ).slice(0, 20);
+
+const normalizeAccountAnnotationMode = (input: {
+  accountId?: string | null;
+  mode?: RuntimeMode | "shadow" | null;
+}) => {
+  if (isShadowAccountId(input.accountId)) {
+    return "shadow";
+  }
+  return input.mode === "live" ? "live" : "paper";
+};
+
+const normalizeClosedTradesLimit = (value: unknown) => {
+  const parsed = Number(value);
+  if (value === undefined || value === null || value === "") {
+    return 500;
+  }
+  if (Number.isFinite(parsed) && parsed <= 0) {
+    return null;
+  }
+  return Number.isFinite(parsed)
+    ? Math.min(10_000, Math.max(1, Math.round(parsed)))
+    : 500;
+};
+
+const normalizeTradeOutcomeBucketCount = (value: unknown) => {
+  const parsed = Number(value);
+  const normalized = Number.isFinite(parsed) ? Math.round(parsed) : 9;
+  const odd = normalized % 2 === 0 ? normalized + 1 : normalized;
+  return Math.min(31, Math.max(3, odd));
+};
+
+const buildOutcomeBucket = (
+  side: TradeOutcomeSide,
+  values: number[],
+  index: number,
+  bucketCount: number,
+): TradeOutcomeBucket => {
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const label = side === "loss" ? "Loss" : side === "win" ? "Win" : "Flat";
+  return {
+    id: `pnl:${side}`,
+    index,
+    bucketCount,
+    min: Math.min(...values),
+    max: Math.max(...values),
+    label,
+    side,
+    count: values.length,
+    total,
+    average: values.length ? total / values.length : 0,
+  };
+};
+
+const buildTradeOutcomeBuckets = (
+  values: readonly number[],
+  bucketCountInput: unknown,
+): TradeOutcomeBucket[] => {
+  const numbers = values.filter((value) => Number.isFinite(value));
+  if (!numbers.length) {
+    return [];
+  }
+  if (numbers.every((value) => value === 0)) {
+    return [
+      {
+        id: "pnl:flat",
+        index: 0,
+        bucketCount: 1,
+        min: 0,
+        max: 0,
+        label: "Flat",
+        side: "flat",
+        count: numbers.length,
+        total: 0,
+        average: 0,
+      },
+    ];
+  }
+
+  const requestedBucketCount = normalizeTradeOutcomeBucketCount(bucketCountInput);
+  const groups: Array<[TradeOutcomeSide, number[]]> = [
+    ["loss", numbers.filter((value) => value < 0)],
+    ["flat", numbers.filter((value) => value === 0)],
+    ["win", numbers.filter((value) => value > 0)],
+  ].filter(
+    (group): group is [TradeOutcomeSide, number[]] => group[1].length > 0,
+  );
+  const bucketCount = Math.min(requestedBucketCount, groups.length);
+  return groups.map(([side, groupValues], index) =>
+    buildOutcomeBucket(side, groupValues, index, bucketCount),
+  );
+};
+
+const overviewMatchesRequest = (
+  overview: Record<string, unknown> | null | undefined,
+  request: Record<string, unknown>,
+) =>
+  Boolean(
+    overview &&
+      overview.accountId === request.accountId &&
+      overview.mode === request.mode &&
+      overview.range === request.range &&
+      (overview.assetClass ?? null) === (request.assetClass ?? null) &&
+      (overview.orderTab ?? null) === (request.orderTab ?? null),
+  );
+
 function matchesHoldDurationBucket(
   holdDurationMinutes: number | null,
   filter: string | null | undefined,
@@ -3694,6 +3846,20 @@ export const __accountOrderInternalsForTests = {
   positionGroupKey,
   terminalOrderStatus,
   workingOrderStatus,
+};
+
+export const __accountTradeAnnotationInternalsForTests = {
+  buildAccountTradeAnnotationKey,
+  normalizeAccountAnnotationMode,
+  normalizeAnnotationNote,
+  normalizeAnnotationTags,
+  normalizeClosedTradesLimit,
+};
+
+export const __accountOverviewInternalsForTests = {
+  buildTradeOutcomeBuckets,
+  normalizeTradeOutcomeBucketCount,
+  overviewMatchesRequest,
 };
 
 export const __accountRiskInternalsForTests = {

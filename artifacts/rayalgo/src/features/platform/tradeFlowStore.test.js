@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   TRADE_FLOW_STORE_ENTRY_CAP,
   clearTradeFlowSnapshot,
+  getTradeFlowSnapshotForTests,
   getTradeFlowStoreEntryCount,
   publishTradeFlowSnapshot,
   resetTradeFlowStoreForTests,
@@ -34,6 +35,46 @@ test("tradeFlowStore clears unused snapshots", () => {
   clearTradeFlowSnapshot("CLEARFLOW");
 
   assert.equal(getTradeFlowStoreEntryCount(), 0);
+});
+
+test("tradeFlowStore preserves live events when the next refresh is a transient empty", () => {
+  resetTradeFlowStoreForTests();
+
+  publishTradeFlowSnapshot("SPY", buildFlowSnapshot("SPY"));
+  publishTradeFlowSnapshot("SPY", {
+    events: [],
+    status: "empty",
+    source: {
+      provider: "none",
+      status: "empty",
+      ibkrStatus: "empty",
+      ibkrReason: "options_flow_scanner_line_budget_exhausted",
+    },
+  });
+
+  const preserved = getTradeFlowSnapshotForTests("SPY");
+  assert.equal(preserved.status, "stale");
+  assert.deepEqual(preserved.events, buildFlowSnapshot("SPY").events);
+});
+
+test("tradeFlowStore accepts confirmed empty loaded snapshots", () => {
+  resetTradeFlowStoreForTests();
+
+  publishTradeFlowSnapshot("SPY", buildFlowSnapshot("SPY"));
+  publishTradeFlowSnapshot("SPY", {
+    events: [],
+    status: "empty",
+    source: {
+      provider: "ibkr",
+      status: "empty",
+      ibkrStatus: "loaded",
+      ibkrReason: "options_flow_no_volume_candidates",
+    },
+  });
+
+  const empty = getTradeFlowSnapshotForTests("SPY");
+  assert.equal(empty.status, "empty");
+  assert.deepEqual(empty.events, []);
 });
 
 test("tradeFlowStore does not evict a newly subscribed entry before listener registration", () => {

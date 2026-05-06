@@ -2,9 +2,14 @@ import {
   IbkrBridgeClient,
   type BridgeLaneDiagnosticsSnapshot,
 } from "../providers/ibkr/bridge-client";
+import {
+  getBridgeGovernorConfigSnapshot,
+  getBridgeGovernorSnapshot,
+} from "./bridge-governor";
 import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
 import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
 import { getMarketDataAdmissionDiagnostics } from "./market-data-admission";
+import { getOptionsFlowScannerDiagnostics } from "./platform";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
 
 type CachedBridgeLaneDiagnostics = {
@@ -150,7 +155,10 @@ function readNumber(value: unknown): number | null {
 
 export async function getIbkrLineUsageSnapshot() {
   const bridge = await getCachedBridgeLaneDiagnostics();
-  const admission = getMarketDataAdmissionDiagnostics();
+  const admission = {
+    ...getMarketDataAdmissionDiagnostics(),
+    optionsFlowScanner: getOptionsFlowScannerDiagnostics(),
+  };
   const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
   const stockAggregates = getStockAggregateStreamDiagnostics();
@@ -174,6 +182,8 @@ export async function getIbkrLineUsageSnapshot() {
           ? null
           : Math.max(0, bridgeLineBudget - bridgeActiveLines),
     },
+    governor: getBridgeGovernorSnapshot(),
+    governorConfig: getBridgeGovernorConfigSnapshot(),
     streams: {
       quoteStreams,
       optionQuoteStreams,

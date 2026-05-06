@@ -82,6 +82,7 @@ const areExpirationOptionsEquivalent = (left = [], right = []) => {
       current?.value !== next?.value ||
       current?.chainKey !== next?.chainKey ||
       current?.isoDate !== next?.isoDate ||
+      current?.legacyValue !== next?.legacyValue ||
       current?.label !== next?.label ||
       current?.dte !== next?.dte ||
       normalizeTimestamp(current?.actualDate) !==
@@ -197,6 +198,17 @@ const areStatusMapsEquivalent = (left = {}, right = {}) => {
 
 const normalizeExpirationKey = (expiration) =>
   expiration?.chainKey || expiration?.isoDate || expiration?.value || null;
+
+const doesExpirationOptionMatchValue = (option, value) =>
+  Boolean(
+    value &&
+      option &&
+      (option.value === value ||
+        option.chainKey === value ||
+        option.isoDate === value ||
+        option.legacyValue === value ||
+        option.label === value),
+  );
 
 const normalizeUpdatedAt = (value) => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -369,11 +381,8 @@ export const useTradeOptionChainSnapshot = (
 export const resolveTradeOptionChainSnapshot = (snapshot, expirationValue) => {
   const expirationOptions = snapshot?.expirationOptions || [];
   const resolvedExpiration =
-    expirationOptions.find(
-      (option) =>
-        option.value === expirationValue ||
-        option.chainKey === expirationValue ||
-        option.isoDate === expirationValue,
+    expirationOptions.find((option) =>
+      doesExpirationOptionMatchValue(option, expirationValue),
     ) ||
     expirationOptions[0] ||
     null;

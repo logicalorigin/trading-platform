@@ -1071,9 +1071,11 @@ async function buildShadowFillPlan(input: ShadowOrderInput): Promise<ShadowFillP
 }
 
 export async function previewShadowOrder(input: ShadowOrderInput) {
-  await assertIbkrGatewayTradingAvailable();
   await ensureShadowAccount();
   const normalized = normalizeShadowOrderInput(input);
+  if (normalized.source !== "automation") {
+    await assertIbkrGatewayTradingAvailable();
+  }
   const plan = await buildShadowFillPlan(normalized);
   return {
     accountId: SHADOW_ACCOUNT_ID,
@@ -1108,9 +1110,11 @@ export async function previewShadowOrder(input: ShadowOrderInput) {
 }
 
 export async function placeShadowOrder(input: ShadowOrderInput) {
-  await assertIbkrGatewayTradingAvailable();
   await ensureShadowAccount();
   const normalized = normalizeShadowOrderInput(input);
+  if (normalized.source !== "automation") {
+    await assertIbkrGatewayTradingAvailable();
+  }
 
   if (normalized.sourceEventId) {
     const [existing] = await db

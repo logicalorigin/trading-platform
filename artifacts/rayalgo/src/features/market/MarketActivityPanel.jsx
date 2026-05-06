@@ -541,7 +541,7 @@ const getUnusualLaneTone = (item) => {
             ? T.green
             : T.amber;
   return {
-    label: isPut ? "PUT" : isCall ? "CALL" : "UOA",
+    label: isPut ? "PUT" : isCall ? "CALL" : "FLOW",
     color,
     background: `${color}12`,
   };
@@ -1019,9 +1019,9 @@ export const MarketActivityPanel = ({
           </MarketActivityLaneSection>
 
           <MarketActivityLaneSection
-            title="UOA"
-            meta={`${unusualRows.length} unusual prints · ${flowSourceLabel}`}
-            testId="market-activity-uoa-lane"
+            title="Flow"
+            meta={`${unusualRows.length} unusual rows · ${flowSourceLabel}`}
+            testId="market-activity-flow-lane"
             dataAttrs={{
               "data-flow-snapshot-source": flowSnapshotSource,
               "data-flow-source-provider": normalizedFlowSourceProvider,
@@ -1034,16 +1034,16 @@ export const MarketActivityPanel = ({
             <MarketLaneToolbar>
               <MarketToolbarLabel
                 Icon={Gauge}
-                label="UOA threshold"
+                label="Flow threshold"
                 tone={T.amber}
               />
               <AppTooltip content="Volume / open interest ratio at which a print is flagged as unusual."><select
-                data-testid="market-uoa-threshold-select"
+                data-testid="market-flow-threshold-select"
                 value={String(unusualThreshold)}
                 onChange={(event) =>
                   onChangeUnusualThreshold?.(Number(event.target.value))
                 }
-                aria-label="Unusual options activity threshold"
+                aria-label="Flow threshold"
                 style={{
                   width: dim(76),
                   flex: "0 0 auto",

@@ -87,16 +87,181 @@ const normalizeBias = (value: unknown): ChartEventBias => {
   return "neutral";
 };
 
-const normalizeDateOnly = (value: unknown): string => {
-  const raw = String(value || "").trim();
-  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (match) return match[1];
-  const parsed = Date.parse(raw);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
-};
-
 const isFlowEventRecord = (event: unknown): event is Record<string, unknown> =>
   Boolean(event && typeof event === "object" && !Array.isArray(event));
+
+const normalizeSymbol = (value: unknown): string =>
+  String(value || "").trim().toUpperCase();
+
+const normalizeProviderContractId = (value: unknown): string =>
+  String(value || "").trim();
+
+const normalizeExpirationIso = (value: unknown): string => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
+    if (/^\d{8}$/.test(trimmed)) {
+      return `${trimmed.slice(0, 4)}-${trimmed.slice(4, 6)}-${trimmed.slice(6, 8)}`;
+    }
+  }
+  const date = value instanceof Date ? value : value ? new Date(String(value)) : null;
+  return date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "";
+};
+
+const normalizeRight = (value: unknown): "call" | "put" | "" => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "C" || normalized === "CALL") return "call";
+  if (normalized === "P" || normalized === "PUT") return "put";
+  return "";
+};
+
+const readFlowEventSymbol = (event: Record<string, unknown>): string =>
+  normalizeSymbol(event.ticker || event.underlying || event.symbol);
+
+const readFlowEventChartTime = (event: Record<string, unknown>): string => {
+  const candidates = [
+    event.occurredAt,
+    event.timestamp,
+    event.dateTime,
+    event.createdAt,
+    event.updatedAt,
+    event.time,
+  ];
+  for (const candidate of candidates) {
+    if (candidate instanceof Date && Number.isFinite(candidate.getTime())) {
+      return candidate.toISOString();
+    }
+    if (typeof candidate === "number") {
+      if (Number.isFinite(candidate) && candidate > 0) {
+        const timestamp = candidate > 10_000_000_000 ? candidate : candidate * 1000;
+        return new Date(timestamp).toISOString();
+      }
+      continue;
+    }
+    if (typeof candidate !== "string") {
+      continue;
+    }
+    const raw = String(candidate).trim();
+    if (!raw) {
+      continue;
+    }
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) {
+      return new Date(parsed).toISOString();
+    }
+  }
+  return "";
+};
+
+const getMergedFlowEventKey = (event: Record<string, unknown>): string =>
+  String(
+    event.id ||
+      [
+        readFlowEventSymbol(event),
+        event.provider || "",
+        event.basis || "",
+        event.sourceBasis || "",
+        event.providerContractId || event.optionTicker || "",
+        event.strike ?? "",
+        event.cp || event.right || "",
+        event.expirationDate || event.exp || "",
+        readFlowEventChartTime(event),
+        event.side || "",
+        event.price ?? "",
+        event.size ?? event.vol ?? event.volume ?? "",
+        event.premium ?? "",
+      ].join("|"),
+  );
+
+export const mergeFlowEventFeeds = (
+  ...feeds: Array<Array<Record<string, unknown>> | null | undefined>
+): Array<Record<string, unknown>> => {
+  const mergedByKey = new Map<string, Record<string, unknown>>();
+  feeds.flat().forEach((event) => {
+    if (!isFlowEventRecord(event)) return;
+    const key = getMergedFlowEventKey(event);
+    if (!mergedByKey.has(key)) mergedByKey.set(key, event);
+  });
+  return Array.from(mergedByKey.values());
+};
+
+export const filterFlowEventsForSymbol = (
+  events: Array<Record<string, unknown>> = [],
+  symbol?: string,
+): Array<Record<string, unknown>> => {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  if (!normalizedSymbol) return [];
+  return (Array.isArray(events) ? events : []).filter(
+    (event) => isFlowEventRecord(event) && readFlowEventSymbol(event) === normalizedSymbol,
+  );
+};
+
+export const filterFlowEventsForOptionContract = (
+  events: Array<Record<string, unknown>> = [],
+  {
+    symbol,
+    providerContractId,
+    optionTicker,
+    expirationDate,
+    right,
+    strike,
+  }: {
+    symbol?: string | null;
+    providerContractId?: string | null;
+    optionTicker?: string | null;
+    expirationDate?: string | Date | null;
+    right?: string | null;
+    strike?: number | null;
+  } = {},
+): Array<Record<string, unknown>> => {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const normalizedProviderContractId = normalizeProviderContractId(providerContractId);
+  const normalizedOptionTicker = String(optionTicker || "").trim().toUpperCase();
+  const normalizedExpiration = normalizeExpirationIso(expirationDate);
+  const normalizedRight = normalizeRight(right);
+  const normalizedStrike = Number(strike);
+
+  return (Array.isArray(events) ? events : []).filter((event) => {
+    if (!isFlowEventRecord(event)) return false;
+    if (normalizedSymbol && readFlowEventSymbol(event) !== normalizedSymbol) {
+      return false;
+    }
+    const eventProviderContractId = normalizeProviderContractId(
+      event.providerContractId,
+    );
+    if (
+      normalizedProviderContractId &&
+      eventProviderContractId &&
+      eventProviderContractId === normalizedProviderContractId
+    ) {
+      return true;
+    }
+    const eventOptionTicker = String(event.optionTicker || "").trim().toUpperCase();
+    if (
+      normalizedOptionTicker &&
+      eventOptionTicker &&
+      eventOptionTicker === normalizedOptionTicker
+    ) {
+      return true;
+    }
+    if (
+      !normalizedExpiration ||
+      !normalizedRight ||
+      !Number.isFinite(normalizedStrike)
+    ) {
+      return false;
+    }
+    const eventExpiration = normalizeExpirationIso(event.expirationDate || event.exp);
+    const eventRight = normalizeRight(event.cp || event.right);
+    const eventStrike = finiteNumber(event.strike);
+    return (
+      eventExpiration === normalizedExpiration &&
+      eventRight === normalizedRight &&
+      eventStrike !== null &&
+      Math.abs(eventStrike - normalizedStrike) <= 0.01
+    );
+  });
+};
 
 const shouldRenderFlowOnSpotChart = (
   event: unknown,
@@ -120,7 +285,7 @@ export const flowEventsToChartEvents = (
   events: Array<Record<string, unknown>> = [],
   symbol?: string,
 ): ChartEvent[] => {
-  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const normalizedSymbol = normalizeSymbol(symbol);
   return (Array.isArray(events) ? events : [])
     .filter(shouldRenderFlowOnSpotChart)
     .map((event) => {
@@ -133,11 +298,18 @@ export const flowEventsToChartEvents = (
       const strike = finiteNumber(event.strike);
       const premium = finiteNumber(event.premium) ?? 0;
       const unusualScore = finiteNumber(event.unusualScore) ?? 0;
-      const occurredAt = String(event.occurredAt || event.time || "");
+      const occurredAt = readFlowEventChartTime(event);
       const contractLabel =
         String(event.contract || event.optionTicker || "").trim() ||
         [eventSymbol, strike ?? "", right].filter(Boolean).join(" ");
-      const flowKind = event.isUnusual ? "unusual flow" : "options flow";
+      const sourceBasis = String(event.sourceBasis || event.confidence || "");
+      const snapshotDerived =
+        event.basis === "snapshot" || sourceBasis === "snapshot_activity";
+      const flowKind = snapshotDerived
+        ? "snapshot activity"
+        : event.isUnusual
+          ? "unusual flow"
+          : "options flow";
 
       return {
         id: String(event.id || `${eventSymbol}:${occurredAt}:${contractLabel}`),
@@ -157,6 +329,8 @@ export const flowEventsToChartEvents = (
           premium,
           unusualScore,
           isUnusual: Boolean(event.isUnusual),
+          sourceBasis: sourceBasis || undefined,
+          timeBasis: snapshotDerived ? "snapshot_observed" : "trade_reported",
           contractLabel,
         },
       } satisfies ChartEvent;
@@ -174,8 +348,8 @@ export const earningsCalendarToChartEvents = (
       const eventSymbol = String(entry.symbol || normalizedSymbol)
         .trim()
         .toUpperCase();
-      const date = normalizeDateOnly(entry.date);
-      const timing = String(entry.reportingTime || entry.time || "").trim();
+      const date = String(entry.date || "");
+      const timing = String(entry.time || "").trim();
       return {
         id: `earnings:${eventSymbol}:${date}:${timing || "unknown"}`,
         symbol: eventSymbol,
@@ -185,10 +359,10 @@ export const earningsCalendarToChartEvents = (
         severity: "medium",
         label: "E",
         summary: `${eventSymbol} earnings${timing ? ` ${timing}` : ""}`,
-        source: String(entry.provider || "research-calendar"),
+        source: "research-calendar",
         confidence: 1,
         bias: "neutral",
-        actions: ["open_trade", "add_alert"],
+        actions: ["add_alert"],
         metadata: { ...entry },
       } satisfies ChartEvent;
     })
@@ -196,8 +370,6 @@ export const earningsCalendarToChartEvents = (
       (event) => event.time && (!normalizedSymbol || event.symbol === normalizedSymbol),
     );
 };
-
-export const earningsEventsToChartEvents = earningsCalendarToChartEvents;
 
 export const getChartEventLookbackWindow = (
   timeframe: string,

@@ -47,11 +47,6 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../../lib/typography";
 import type { ChartSurfaceControls } from "./ResearchChartSurface";
 import type { StudySpec } from "./types";
-import {
-  formatChartPrice,
-  formatCompactChartValue,
-  resolveChartPricePrecision,
-} from "./chartNumberFormat";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -223,11 +218,46 @@ const getPanelPalette = (theme: WidgetTheme): PanelPalette => {
   };
 };
 
+const formatPrice = (value: number | null | undefined): string => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+
+  const absValue = Math.abs(value);
+  if (absValue >= 100) {
+    return value.toFixed(2);
+  }
+  if (absValue >= 10) {
+    return value.toFixed(3);
+  }
+  if (absValue >= 1) {
+    return value.toFixed(4);
+  }
+  return value.toFixed(5);
+};
+
 const formatPercent = (value: number | null | undefined): string => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "-";
   }
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+};
+
+const formatVolume = (value: number | null | undefined): string => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+
+  if (value >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(2)}B`;
+  }
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(2)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(2)}K`;
+  }
+  return `${Math.round(value)}`;
 };
 
 const formatTimestamp = (
@@ -707,15 +737,6 @@ export const ResearchChartWidgetHeader = ({
             : (meta?.sourceLabel ?? (activeBar?.source ? "REST" : "")),
   };
   const displayPrice = price ?? resolvedMeta.close ?? null;
-  const pricePrecision = resolveChartPricePrecision({
-    price: displayPrice,
-    range:
-      typeof resolvedMeta.high === "number" &&
-      typeof resolvedMeta.low === "number"
-        ? resolvedMeta.high - resolvedMeta.low
-        : null,
-    compact: dense,
-  });
   const positive = (changePercent ?? 0) >= 0;
   const changeColor = positive ? theme.green : theme.red;
   const statusColor =
@@ -1203,7 +1224,7 @@ export const ResearchChartWidgetHeader = ({
             {priceLabel ? (
               <span style={{ color: theme.textMuted }}>{priceLabel}</span>
             ) : null}
-            <span>{formatChartPrice(displayPrice, { precision: pricePrecision, compact: dense })}</span>
+            <span>{formatPrice(displayPrice)}</span>
             <span style={{ color: changeColor, fontWeight: 700 }}>
               {formatPercent(changePercent)}
             </span>
@@ -1215,23 +1236,23 @@ export const ResearchChartWidgetHeader = ({
             </span>{" "}
             O{" "}
             <span style={{ color: theme.text }}>
-              {formatChartPrice(resolvedMeta.open, { precision: pricePrecision, compact: dense })}
+              {formatPrice(resolvedMeta.open)}
             </span>
             H{" "}
             <span style={{ color: theme.green }}>
-              {formatChartPrice(resolvedMeta.high, { precision: pricePrecision, compact: dense })}
+              {formatPrice(resolvedMeta.high)}
             </span>
             L{" "}
             <span style={{ color: theme.red }}>
-              {formatChartPrice(resolvedMeta.low, { precision: pricePrecision, compact: dense })}
+              {formatPrice(resolvedMeta.low)}
             </span>
             C{" "}
             <span style={{ color: theme.text }}>
-              {formatChartPrice(resolvedMeta.close, { precision: pricePrecision, compact: dense })}
+              {formatPrice(resolvedMeta.close)}
             </span>
             V{" "}
             <span style={{ color: theme.text }}>
-              {formatCompactChartValue(resolvedMeta.volume)}
+              {formatVolume(resolvedMeta.volume)}
             </span>
           </span>
 
@@ -1239,7 +1260,7 @@ export const ResearchChartWidgetHeader = ({
             <span style={legendChipStyle({ theme, palette, dense })}>
               VWAP{" "}
               <span style={{ color: theme.text }}>
-                {formatChartPrice(resolvedMeta.vwap, { precision: pricePrecision })}
+                {formatPrice(resolvedMeta.vwap)}
               </span>
             </span>
           ) : null}
@@ -1248,7 +1269,7 @@ export const ResearchChartWidgetHeader = ({
             <span style={legendChipStyle({ theme, palette, dense })}>
               SVWAP{" "}
               <span style={{ color: theme.text }}>
-                {formatChartPrice(resolvedMeta.sessionVwap, { precision: pricePrecision })}
+                {formatPrice(resolvedMeta.sessionVwap)}
               </span>
             </span>
           ) : null}

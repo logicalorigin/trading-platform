@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildResearchChartModel } from "./model";
+import {
+  buildResearchChartModel,
+  buildResearchChartModelIncremental,
+} from "./model";
 import {
   getChartBarLimit,
   getChartBrokerRecentWindowMinutes,
@@ -23,15 +26,15 @@ import {
   resolveDisplayChartPrice,
 } from "./displayChartSession";
 
-const buildSequentialBars = (count: number) => {
+const buildSequentialBars = (count: number, startIndex = 0) => {
   const start = Date.parse("2026-04-25T13:30:00.000Z");
   return Array.from({ length: count }, (_, index) => ({
-    timestamp: new Date(start + index * 1000).toISOString(),
-    open: 100 + index * 0.01,
-    high: 101 + index * 0.01,
-    low: 99 + index * 0.01,
-    close: 100.5 + index * 0.01,
-    volume: 1000 + index,
+    timestamp: new Date(start + (startIndex + index) * 1000).toISOString(),
+    open: 100 + (startIndex + index) * 0.01,
+    high: 101 + (startIndex + index) * 0.01,
+    low: 99 + (startIndex + index) * 0.01,
+    close: 100.5 + (startIndex + index) * 0.01,
+    volume: 1000 + startIndex + index,
   }));
 };
 
@@ -131,6 +134,65 @@ test("buildResearchChartModel resets default range target across interval switch
   });
 });
 
+test("buildResearchChartModelIncremental reuses chart bars for tail patches and multi-bar appends", () => {
+  let computeCalls = 0;
+  const indicatorRegistry = {
+    deferred: {
+      id: "deferred",
+      liveUpdateMode: "defer-on-tail-patch" as const,
+      compute: () => {
+        computeCalls += 1;
+        return {};
+      },
+    },
+  };
+  const indicatorSettings = {};
+  const indicatorMarkers = [];
+  const baseInput = {
+    timeframe: "1m",
+    selectedIndicators: ["deferred"],
+    indicatorSettings,
+    indicatorMarkers,
+    indicatorRegistry,
+  };
+  const firstBars = buildSequentialBars(3);
+  const first = buildResearchChartModelIncremental({
+    ...baseInput,
+    bars: firstBars,
+  });
+  const patchedBars = [
+    ...firstBars.slice(0, 2),
+    {
+      ...firstBars[2],
+      close: 110,
+    },
+  ];
+  const patched = buildResearchChartModelIncremental(
+    {
+      ...baseInput,
+      bars: patchedBars,
+    },
+    first.state,
+  );
+  const appended = buildResearchChartModelIncremental(
+    {
+      ...baseInput,
+      bars: [...patchedBars, ...buildSequentialBars(2, 3)],
+    },
+    patched.state,
+  );
+
+  assert.equal(computeCalls, 2);
+  assert.equal(patched.state.chartBars[0], first.state.chartBars[0]);
+  assert.equal(patched.state.chartBars[1], first.state.chartBars[1]);
+  assert.notEqual(patched.state.chartBars[2], first.state.chartBars[2]);
+  assert.equal(appended.state.chartBars[0], patched.state.chartBars[0]);
+  assert.equal(appended.state.chartBars[1], patched.state.chartBars[1]);
+  assert.equal(appended.state.chartBars[2], patched.state.chartBars[2]);
+  assert.equal(appended.model.chartBars.length, 5);
+  assert.equal(appended.model.chartBars[2].c, 110);
+});
+
 test("chart timeframe registry exposes 5s as the seconds floor", () => {
   assert.deepEqual(
     getChartTimeframeOptions("primary").map((option) => option.value),
@@ -221,7 +283,7 @@ test("platform display chart requests do not branch outsideRth by interval", () 
   );
 });
 
-test("display chart price prefers quote then canonical fallback before interval close", () => {
+test("display chart price prefers quote then rendered chart before canonical fallback", () => {
   const canonicalBars = [
     {
       timestamp: "2026-04-25T20:00:00.000Z",
@@ -248,7 +310,7 @@ test("display chart price prefers quote then canonical fallback before interval 
       canonicalBars,
       renderedBars: dailyBars,
     }),
-    111,
+    105,
   );
   assert.equal(
     resolveDisplayChartPrice({

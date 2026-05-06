@@ -1,8 +1,10 @@
 import { useMemo, useSyncExternalStore } from "react";
+import { shouldPreserveFlowEvents } from "./flowSourceState";
 
 const EMPTY_TRADE_FLOW_SNAPSHOT = Object.freeze({
   events: Object.freeze([]),
   status: "empty",
+  source: null,
 });
 
 const tradeFlowEntries = new Map();
@@ -80,17 +82,29 @@ export const publishTradeFlowSnapshot = (ticker, nextSnapshot) => {
     ? {
         events: nextSnapshot.events || EMPTY_TRADE_FLOW_SNAPSHOT.events,
         status: nextSnapshot.status || "empty",
+        source: nextSnapshot.source || null,
       }
     : EMPTY_TRADE_FLOW_SNAPSHOT;
+  const nextSnapshotForStore = shouldPreserveFlowEvents(
+    entry.snapshot,
+    normalizedSnapshot,
+  )
+    ? {
+        ...entry.snapshot,
+        status: "stale",
+        source: normalizedSnapshot.source,
+      }
+    : normalizedSnapshot;
 
   if (
-    entry.snapshot.status === normalizedSnapshot.status &&
-    areTradeFlowEventsEquivalent(entry.snapshot.events, normalizedSnapshot.events)
+    entry.snapshot.status === nextSnapshotForStore.status &&
+    entry.snapshot.source === nextSnapshotForStore.source &&
+    areTradeFlowEventsEquivalent(entry.snapshot.events, nextSnapshotForStore.events)
   ) {
     return;
   }
 
-  entry.snapshot = normalizedSnapshot;
+  entry.snapshot = nextSnapshotForStore;
   entry.version += 1;
   entry.listeners.forEach((listener) => listener());
 };
@@ -129,6 +143,7 @@ const getTradeFlowSnapshotVersion = (ticker) => ensureEntry(ticker).version;
 
 const getTradeFlowSnapshot = (ticker) =>
   ensureEntry(ticker).snapshot || EMPTY_TRADE_FLOW_SNAPSHOT;
+export const getTradeFlowSnapshotForTests = getTradeFlowSnapshot;
 
 export const getTradeFlowStoreEntryCount = () => tradeFlowEntries.size;
 

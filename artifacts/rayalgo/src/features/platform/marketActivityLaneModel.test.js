@@ -72,6 +72,38 @@ test("signal lane filters visible rows to selected timeframe", () => {
   );
 });
 
+test("signal lane filters active state signals older than two days", () => {
+  const rows = buildSignalLaneRows(
+    {
+      selectedTimeframe: "15m",
+      states: [
+        {
+          id: "old-current",
+          symbol: "MSFT",
+          timeframe: "15m",
+          currentSignalDirection: "sell",
+          currentSignalAt: "2026-04-28T15:59:00Z",
+          active: true,
+        },
+        {
+          id: "recent-current",
+          symbol: "NVDA",
+          timeframe: "15m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-28T16:01:00Z",
+          active: true,
+        },
+      ],
+    },
+    { nowMs: Date.parse("2026-04-30T16:00:00Z") },
+  );
+
+  assert.deepEqual(
+    rows.map((row) => row.symbol),
+    ["NVDA"],
+  );
+});
+
 test("signal lane ranks fresh current signals before stale events", () => {
   const rows = buildSignalLaneRows(
     {
@@ -146,7 +178,7 @@ test("unusual lane excludes routine flow and sorts by recency, score, then premi
   );
 });
 
-test("notifications keep alerts, news, and calendar separate from signal and UOA lanes", () => {
+test("notifications keep alerts, news, and calendar separate from signal and flow lanes", () => {
   const lanes = buildMarketActivityLanes(
     {
       selectedTimeframe: "15m",

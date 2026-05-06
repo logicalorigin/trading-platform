@@ -917,37 +917,6 @@ export interface ResearchCalendarEntry {
   fiscalDateEnding: string | null;
 }
 
-export type ResearchEarningsEventStatus = typeof ResearchEarningsEventStatus[keyof typeof ResearchEarningsEventStatus];
-
-
-export const ResearchEarningsEventStatus = {
-  confirmed: 'confirmed',
-  estimated: 'estimated',
-} as const;
-
-export interface ResearchEarningsEvent {
-  symbol: string;
-  /** @nullable */
-  date: string | null;
-  /** @nullable */
-  reportingTime: string | null;
-  provider: string;
-  /** @nullable */
-  epsEstimated: number | null;
-  /** @nullable */
-  epsActual: number | null;
-  /** @nullable */
-  revenueEstimated: number | null;
-  /** @nullable */
-  revenueActual: number | null;
-  /** @nullable */
-  fiscalPeriod: string | null;
-  /** @nullable */
-  fiscalDateEnding: string | null;
-  status: ResearchEarningsEventStatus;
-  fetchedAt: string;
-}
-
 export interface ResearchFiling {
   symbol: string;
   /** @nullable */
@@ -999,13 +968,6 @@ export interface ResearchSnapshotsResponse {
 
 export interface ResearchCalendarResponse {
   entries: ResearchCalendarEntry[];
-}
-
-export interface ResearchEarningsEventsResponse {
-  symbol: string;
-  from: string;
-  to: string;
-  events: ResearchEarningsEvent[];
 }
 
 export interface ResearchFilingsResponse {
@@ -2071,7 +2033,8 @@ export interface AccountOrdersResponse {
   tab: AccountOrdersResponseTab;
   currency: string;
   degraded?: boolean;
-  reason?: string;
+  /** @nullable */
+  reason?: string | null;
   stale?: boolean;
   debug?: AccountOrdersResponseDebug;
   orders: AccountOrder[];
@@ -2547,6 +2510,116 @@ export interface SignalOptionsAutomationState {
   activePositions: JsonObject[];
   risk: JsonObject;
   events: ExecutionEvent[];
+}
+
+export interface AlgoCockpitFleetSummary {
+  mode: EnvironmentMode;
+  totalDeployments: number;
+  enabledDeployments: number;
+  pausedDeployments: number;
+  erroredDeployments: number;
+  activeBlockers: number;
+  /** @nullable */
+  latestEventAt: string | null;
+}
+
+export interface AlgoCockpitReadiness {
+  ready: boolean;
+  reason: string;
+  message: string;
+  /** @nullable */
+  scanDisabledReason: string | null;
+  /** @nullable */
+  enableDisabledReason: string | null;
+  /** @nullable */
+  profileDisabledReason: string | null;
+}
+
+export type AlgoCockpitPipelineStageId = typeof AlgoCockpitPipelineStageId[keyof typeof AlgoCockpitPipelineStageId];
+
+
+export const AlgoCockpitPipelineStageId = {
+  scan_universe: 'scan_universe',
+  signal_detected: 'signal_detected',
+  contract_selected: 'contract_selected',
+  liquidity_risk_gate: 'liquidity_risk_gate',
+  order_shadow: 'order_shadow',
+  position_managed: 'position_managed',
+  exit_close: 'exit_close',
+} as const;
+
+export type AlgoCockpitPipelineStageStatus = typeof AlgoCockpitPipelineStageStatus[keyof typeof AlgoCockpitPipelineStageStatus];
+
+
+export const AlgoCockpitPipelineStageStatus = {
+  healthy: 'healthy',
+  running: 'running',
+  waiting: 'waiting',
+  attention: 'attention',
+  blocked: 'blocked',
+  stale: 'stale',
+} as const;
+
+export interface AlgoCockpitPipelineStage {
+  id: AlgoCockpitPipelineStageId;
+  label: string;
+  status: AlgoCockpitPipelineStageStatus;
+  count: number;
+  /** @nullable */
+  latestAt: string | null;
+  detail: string;
+}
+
+export type AlgoCockpitAttentionItemSeverity = typeof AlgoCockpitAttentionItemSeverity[keyof typeof AlgoCockpitAttentionItemSeverity];
+
+
+export const AlgoCockpitAttentionItemSeverity = {
+  info: 'info',
+  warning: 'warning',
+  critical: 'critical',
+} as const;
+
+export interface AlgoCockpitAttentionItem {
+  id: string;
+  severity: AlgoCockpitAttentionItemSeverity;
+  stage: string;
+  /** @nullable */
+  symbol: string | null;
+  summary: string;
+  detail: string;
+  /** @nullable */
+  occurredAt: string | null;
+  action: string;
+}
+
+export interface AlgoCockpitSourceBacktest {
+  strategyId: string;
+  strategyName: string;
+  /** @nullable */
+  sourceRunId: string | null;
+  /** @nullable */
+  sourceStudyId: string | null;
+  /** @nullable */
+  runName: string | null;
+  /** @nullable */
+  strategyVersion: string | null;
+  metrics: JsonObject | null;
+  promotedAt: string;
+}
+
+export interface AlgoCockpitSnapshotResponse {
+  fleet: AlgoCockpitFleetSummary;
+  deployment: AlgoDeployment;
+  readiness: AlgoCockpitReadiness;
+  pipelineStages: AlgoCockpitPipelineStage[];
+  attentionItems: AlgoCockpitAttentionItem[];
+  kpis: JsonObject;
+  risk: JsonObject;
+  candidates: JsonObject[];
+  activePositions: JsonObject[];
+  events: ExecutionEvent[];
+  sourceBacktest: AlgoCockpitSourceBacktest;
+  generatedAt: string;
 }
 
 export type SignalOptionsManualDeviationRequestSource = typeof SignalOptionsManualDeviationRequestSource[keyof typeof SignalOptionsManualDeviationRequestSource];
@@ -3102,6 +3175,35 @@ export interface BacktestRunSummary {
   updatedAt: string;
 }
 
+export type BacktestTradeInstrumentType = typeof BacktestTradeInstrumentType[keyof typeof BacktestTradeInstrumentType];
+
+
+export const BacktestTradeInstrumentType = {
+  equity: 'equity',
+  option: 'option',
+} as const;
+
+export type BacktestTradePricingMode = typeof BacktestTradePricingMode[keyof typeof BacktestTradePricingMode];
+
+
+export const BacktestTradePricingMode = {
+  shares: 'shares',
+  option_history: 'option_history',
+} as const;
+
+export type BacktestTradeOptionContract = {
+  ticker: string;
+  underlying: string;
+  expirationDate: string;
+  strike: number;
+  right: 'call' | 'put';
+  multiplier: number;
+  /** @nullable */
+  providerContractId: string | null;
+  /** @nullable */
+  dte: number | null;
+} | null;
+
 export type BacktestTradeReasonTraceStepKind = typeof BacktestTradeReasonTraceStepKind[keyof typeof BacktestTradeReasonTraceStepKind];
 
 
@@ -3183,6 +3285,11 @@ export interface BacktestTrade {
   tradeSelectionId: string;
   symbol: string;
   side: string;
+  instrumentType: BacktestTradeInstrumentType;
+  pricingMode: BacktestTradePricingMode;
+  /** @nullable */
+  underlying: string | null;
+  optionContract: BacktestTradeOptionContract;
   entryAt: string;
   exitAt: string;
   entryPrice: number;
@@ -4017,6 +4124,10 @@ maxDte?: number;
  * @maximum 150
  */
 lineBudget?: number;
+/**
+ * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
+ */
+blocking?: boolean;
 };
 
 export type ListFlowEventsScope = typeof ListFlowEventsScope[keyof typeof ListFlowEventsScope];
@@ -4058,12 +4169,6 @@ symbols: string;
 };
 
 export type GetResearchEarningsCalendarParams = {
-from: string;
-to: string;
-};
-
-export type GetResearchEarningsEventsParams = {
-symbol: string;
 from: string;
 to: string;
 };

@@ -17,6 +17,7 @@ import type {
   ChartBarsPagePayload,
 } from "./chartBarsPayloads";
 import {
+  clearActiveChartBarState,
   updateActiveChartBarState,
   useActiveChartBarState,
 } from "./activeChartBarStore";
@@ -59,11 +60,17 @@ type UseHistoricalBarStreamInput = {
   streamPriority?: number;
 };
 
+type UseHistoricalBarStreamResult = {
+  bars: MarketBar[];
+  status: LiveBarStreamStatus;
+};
+
 type UsePrependableHistoricalBarsInput = {
   scopeKey: string;
   timeframe: string;
   pageSizeTimeframe?: string;
   bars?: MarketBar[] | null;
+  baseBarsReady?: boolean;
   enabled?: boolean;
   fetchOlderBars?: (input: {
     from: Date;
@@ -148,7 +155,9 @@ const HISTORICAL_BAR_STREAM_TIMEFRAMES = new Set(["5s", "1m", "5m", "15m", "1h",
 const MINUTE_AGGREGATE_PATCH_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "1d"]);
 const LIVE_BAR_STREAM_STALE_MS = 45_000;
 const LIVE_BAR_STREAM_RECONNECT_MS = 5_000;
-const LIVE_BAR_FALLBACK_DELAYS_MS = [0, 15_000, 30_000, 60_000] as const;
+const LIVE_BAR_FALLBACK_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
+const LIVE_BAR_FALLBACK_JITTER_MS = 1_500;
+const LIVE_BAR_FALLBACK_STREAM_COOLDOWN_MS = 10_000;
 const LIVE_BAR_FALLBACK_SUCCESS_COOLDOWN_MS = 15_000;
 const LIVE_BAR_STREAM_MAX_CONNECTIONS = 64;
 const INTRADAY_PREPEND_MIN_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -156,6 +165,13 @@ const EMPTY_OLDER_HISTORY_WINDOW_EXHAUSTION_LIMIT = 120;
 
 const liveBarStreamEntries = new Map<string, LiveBarStreamEntry>();
 let nextLiveBarStreamListenerId = 1;
+const liveBarFallbackThrottleByStreamUrl = new Map<
+  string,
+  {
+    inFlight: Promise<MarketBar[] | null | undefined> | null;
+    nextAllowedAt: number;
+  }
+>();
 
 const requestLiveFrame = (callback: () => void): ReturnType<typeof setTimeout> | number => {
   if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
@@ -1174,11 +1190,32 @@ const patchBarsWithLiveQuote = (
   return nextBars;
 };
 
+const mergePrependableHistoricalBars = ({
+  baseBarsReady,
+  normalizedBaseBars,
+  historicalBars,
+  timeframe,
+}: {
+  baseBarsReady: boolean;
+  normalizedBaseBars: MarketBar[];
+  historicalBars: MarketBar[];
+  timeframe: string;
+}): MarketBar[] => {
+  if (!historicalBars.length) {
+    return normalizedBaseBars;
+  }
+  if (!normalizedBaseBars.length) {
+    return baseBarsReady ? normalizedBaseBars : historicalBars;
+  }
+  return mergePatchedBars(normalizedBaseBars, historicalBars, timeframe);
+};
+
 export const usePrependableHistoricalBars = ({
   scopeKey,
   timeframe,
   pageSizeTimeframe,
   bars,
+  baseBarsReady = true,
   enabled = true,
   fetchOlderBars,
 }: UsePrependableHistoricalBarsInput): {
@@ -1219,6 +1256,15 @@ export const usePrependableHistoricalBars = ({
       return;
     }
 
+    if (baseBarsReady && normalizedBaseBars.length === 0) {
+      clearActiveChartBarState(scopeKey);
+      return;
+    }
+
+    if (!normalizedBaseBars.length) {
+      return;
+    }
+
     updateActiveChartBarState(scopeKey, (current) => {
       const mergedHistoricalBars = current.historicalBars.length
         ? mergePatchedBars(current.historicalBars, normalizedBaseBars, timeframe)
@@ -1233,17 +1279,21 @@ export const usePrependableHistoricalBars = ({
         historicalBars: mergedHistoricalBars,
       };
     });
-  }, [enabled, normalizedBaseBars, scopeKey, timeframe]);
+  }, [baseBarsReady, enabled, normalizedBaseBars, scopeKey, timeframe]);
 
   const mergedBars = useMemo(() => {
-    if (!sharedState.historicalBars.length) {
-      return normalizedBaseBars;
-    }
-    if (!normalizedBaseBars.length) {
-      return sharedState.historicalBars;
-    }
-    return mergePatchedBars(normalizedBaseBars, sharedState.historicalBars, timeframe);
-  }, [normalizedBaseBars, sharedState.historicalBars, timeframe]);
+    return mergePrependableHistoricalBars({
+      baseBarsReady,
+      normalizedBaseBars,
+      historicalBars: sharedState.historicalBars,
+      timeframe,
+    });
+  }, [
+    baseBarsReady,
+    normalizedBaseBars,
+    sharedState.historicalBars,
+    timeframe,
+  ]);
   const oldestLoadedAtMs = useMemo(
     () =>
       mergedBars.length
@@ -1582,6 +1632,18 @@ export const useOptionQuotePatchedBars = ({
   }, [normalizedBaseBars, patchedBarLimit, timeframe]);
 
   useEffect(() => {
+    if (enabled) {
+      return;
+    }
+
+    setPatchedBars((current) => {
+      const next = capBarsToRecentLimit(normalizedBaseBars, patchedBarLimit);
+      return areBarsEquivalent(current, next) ? current : next;
+    });
+    lastAppliedQuoteSignatureRef.current = quoteSignature;
+  }, [enabled, normalizedBaseBars, patchedBarLimit, quoteSignature]);
+
+  useEffect(() => {
     if (!enabled || !providerContractId || !liveQuote) {
       return;
     }
@@ -1616,7 +1678,7 @@ export const useOptionQuotePatchedBars = ({
   return patchedBars;
 };
 
-export const useHistoricalBarStream = ({
+export const useHistoricalBarStreamState = ({
   symbol,
   timeframe,
   bars,
@@ -1628,7 +1690,7 @@ export const useHistoricalBarStream = ({
   instrumentationScope,
   fetchLatestBars,
   streamPriority = 0,
-}: UseHistoricalBarStreamInput): MarketBar[] => {
+}: UseHistoricalBarStreamInput): UseHistoricalBarStreamResult => {
   const normalizedBaseBars = useMemo(
     () => normalizeBaseBars(bars || [], timeframe),
     [bars, timeframe],
@@ -1642,6 +1704,8 @@ export const useHistoricalBarStream = ({
     source || "",
   ].join("::");
   const [streamedBars, setStreamedBars] = useState<MarketBar[]>(normalizedBaseBars);
+  const [streamStatus, setStreamStatus] =
+    useState<LiveBarStreamStatus>("deferred");
   const baseBarsRef = useRef(normalizedBaseBars);
   const fetchLatestBarsRef = useRef(fetchLatestBars);
   const lastStreamSignatureRef = useRef<string | null>(null);
@@ -1670,6 +1734,16 @@ export const useHistoricalBarStream = ({
   useEffect(() => {
     fetchLatestBarsRef.current = fetchLatestBars;
   }, [fetchLatestBars]);
+
+  useEffect(() => {
+    if (!enabled || !pageVisible) {
+      setStreamStatus("deferred");
+      return;
+    }
+    if (!streamUrl || typeof window === "undefined") {
+      setStreamStatus("unsupported");
+    }
+  }, [enabled, pageVisible, streamUrl]);
 
   useEffect(() => {
     setStreamedBars((current) => {
@@ -1702,6 +1776,7 @@ export const useHistoricalBarStream = ({
     let fallbackAttempt = 0;
     let lastFallbackCompletedAt = 0;
     let streamIsLive = false;
+    setStreamStatus("connecting");
 
     const clearFallbackTimer = () => {
       if (fallbackTimer == null) {
@@ -1783,10 +1858,46 @@ export const useHistoricalBarStream = ({
         0,
         lastFallbackCompletedAt + LIVE_BAR_FALLBACK_SUCCESS_COOLDOWN_MS - Date.now(),
       );
+      const jitter =
+        delay > 0 ? Math.floor(Math.random() * LIVE_BAR_FALLBACK_JITTER_MS) : 0;
       fallbackTimer = window.setTimeout(() => {
         fallbackTimer = null;
         void runFallback();
-      }, Math.max(delay, cooldownRemaining));
+      }, Math.max(delay + jitter, cooldownRemaining));
+    };
+
+    const fetchLatestBarsWithSharedThrottle = () => {
+      const fetchLatestBars = fetchLatestBarsRef.current;
+      if (!fetchLatestBars) {
+        return null;
+      }
+
+      const sharedState =
+        liveBarFallbackThrottleByStreamUrl.get(streamUrl) || {
+          inFlight: null,
+          nextAllowedAt: 0,
+        };
+      liveBarFallbackThrottleByStreamUrl.set(streamUrl, sharedState);
+      if (sharedState.inFlight) {
+        return sharedState.inFlight;
+      }
+
+      const waitMs = sharedState.nextAllowedAt - Date.now();
+      if (waitMs > 0) {
+        scheduleFallback(waitMs);
+        return null;
+      }
+
+      recordChartHydrationCounter("liveFallbackFetch", instrumentationScope);
+      const request = fetchLatestBars().finally(() => {
+        if (sharedState.inFlight === request) {
+          sharedState.inFlight = null;
+          sharedState.nextAllowedAt =
+            Date.now() + LIVE_BAR_FALLBACK_STREAM_COOLDOWN_MS;
+        }
+      });
+      sharedState.inFlight = request;
+      return request;
     };
 
     const runFallback = async () => {
@@ -1794,11 +1905,15 @@ export const useHistoricalBarStream = ({
         return;
       }
 
+      const latestBarsRequest = fetchLatestBarsWithSharedThrottle();
+      if (!latestBarsRequest) {
+        return;
+      }
+
       fallbackInFlight = true;
       try {
-        recordChartHydrationCounter("liveFallbackFetch", instrumentationScope);
         const bars = normalizeBaseBars(
-          await fetchLatestBarsRef.current(),
+          await latestBarsRequest,
           timeframe,
         );
         if (!active || !bars.length) {
@@ -1833,6 +1948,7 @@ export const useHistoricalBarStream = ({
         enqueueStreamBar(bar);
       },
       onStatus: (status) => {
+        setStreamStatus(status);
         streamIsLive = status === "live";
         if (status === "live" || status === "connecting") {
           if (status === "live") {
@@ -1842,7 +1958,7 @@ export const useHistoricalBarStream = ({
           return;
         }
 
-        scheduleFallback(0);
+        scheduleFallback(baseBarsRef.current.length ? undefined : 0);
       },
     });
 
@@ -1863,8 +1979,15 @@ export const useHistoricalBarStream = ({
     timeframe,
   ]);
 
-  return streamedBars;
+  return {
+    bars: streamedBars,
+    status: streamStatus,
+  };
 };
+
+export const useHistoricalBarStream = (
+  input: UseHistoricalBarStreamInput,
+): MarketBar[] => useHistoricalBarStreamState(input).bars;
 
 export const useMassiveStreamedStockBars = useBrokerStreamedBars;
 
@@ -1885,4 +2008,5 @@ export const __chartStreamingTestInternals = {
   resolvePrependLookbackMs,
   resolvePrependRequestPageSize,
   resolvePatchedBarLimit,
+  mergePrependableHistoricalBars,
 };

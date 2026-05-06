@@ -11,6 +11,7 @@ const ENV_KEYS = [
   "IBKR_MARKET_DATA_APP_MAX_LINES",
   "IBKR_MARKET_DATA_RESERVE_LINES",
   "IBKR_MARKET_DATA_EXECUTION_LINES",
+  "IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES",
   "IBKR_MARKET_DATA_VISIBLE_LINES",
   "IBKR_MARKET_DATA_AUTOMATION_LINES",
   "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
@@ -46,14 +47,38 @@ test("uses a 200-line IBKR budget with a 15-line reserve by default", () => {
   assert.equal(budget.reserveLines, 15);
   assert.equal(budget.usableLines, 185);
   assert.equal(budget.automationLineCap, 25);
+  assert.equal(budget.accountMonitorLineCap, 20);
   assert.equal(budget.flowScannerLineCap, 40);
   assert.deepEqual(budget.poolLineCaps, {
     execution: 12,
-    visible: 108,
+    "account-monitor": 20,
+    visible: 88,
     automation: 25,
     "flow-scanner": 40,
     convenience: 0,
   });
+});
+
+test("enforces the account monitor live-line cap", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "100",
+    IBKR_MARKET_DATA_RESERVE_LINES: "10",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "3",
+  });
+
+  const result = admitMarketDataLeases({
+    owner: "account-monitor:paper:all",
+    intent: "account-monitor-live",
+    requests: ["AAA", "BBB", "CCC", "DDD"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  assert.equal(result.admitted.length, 3);
+  assert.equal(result.rejected.length, 1);
+  assert.equal(result.rejected[0].reason, "pool-cap");
+  assert.equal(getMarketDataAdmissionDiagnostics().accountMonitorLineCount, 3);
 });
 
 test("counts option greeks as option plus shared underlying line", () => {
@@ -95,6 +120,7 @@ test("enforces the automation live-line cap", () => {
     IBKR_MARKET_DATA_APP_MAX_LINES: "100",
     IBKR_MARKET_DATA_RESERVE_LINES: "10",
     IBKR_MARKET_DATA_EXECUTION_LINES: "8",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
     IBKR_MARKET_DATA_VISIBLE_LINES: "50",
     IBKR_MARKET_DATA_AUTOMATION_LINES: "18",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "10",
@@ -169,6 +195,52 @@ test("higher-priority execution requests demote lower-priority convenience lease
   assert.equal(diagnostics.activeLineCount, 3);
   assert.equal(diagnostics.intentUsage["execution-live"], 2);
   assert.equal(diagnostics.intentUsage["delayed-ok"], 1);
+});
+
+test("account monitor requests demote visible requests but not execution requests", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "4",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "2",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "2",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "2",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+    IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "order-ticket",
+    intent: "execution-live",
+    requests: ["EX1", "EX2"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+  admitMarketDataLeases({
+    owner: "visible-watchlist",
+    intent: "visible-live",
+    requests: ["VIS1", "VIS2"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  const result = admitMarketDataLeases({
+    owner: "account-monitor:paper:all",
+    intent: "account-monitor-live",
+    requests: ["MON1", "MON2"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+  });
+
+  assert.equal(result.admitted.length, 2);
+  assert.equal(result.demoted.length, 2);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.intentUsage["execution-live"], 2);
+  assert.equal(diagnostics.intentUsage["account-monitor-live"], 2);
+  assert.equal(diagnostics.intentUsage["visible-live"], 0);
 });
 
 test("rejects same-priority requests when the live-line budget is full", () => {

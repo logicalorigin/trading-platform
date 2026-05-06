@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { RAYALGO_STORAGE_KEY } from "../../lib/uiTokens";
+import { normalizeTickerSymbol } from "./tickerIdentity";
 
 export const FLOW_TAPE_FILTER_OPTIONS = Object.freeze([
   { id: "all", label: "All" },
@@ -20,12 +21,6 @@ export const FLOW_MIN_PREMIUM_OPTIONS = Object.freeze([
 ]);
 
 export const FLOW_BUILT_IN_PRESETS = Object.freeze([
-  { id: "momentum", label: "Momentum", sortBy: "score" },
-  { id: "earnings-week", label: "Earnings Wk", sortBy: "premium" },
-  { id: "unusual-calls", label: "Unusual Calls", filter: "unusual", sortBy: "premium" },
-  { id: "unusual-puts", label: "Unusual Puts", filter: "unusual", sortBy: "premium" },
-  { id: "high-rvol", label: "High RelVol", sortBy: "ratio" },
-  { id: "held-positions", label: "Held Pos", sortBy: "premium" },
   { id: "ask-calls", label: "Ask Calls", sortBy: "premium" },
   { id: "bid-puts", label: "Bid Puts", sortBy: "premium" },
   { id: "zero-dte", label: "0DTE", sortBy: "premium" },
@@ -84,28 +79,179 @@ const persistFlowTapeFilterState = (state) => {
 const normalizeOptionalString = (value) =>
   typeof value === "string" ? value : value == null ? "" : String(value);
 
-const normalizeFlowPresetSymbol = (value) =>
-  value?.trim?.().toUpperCase?.() || "";
-
-const normalizeFlowPresetSymbolSet = (symbols = []) =>
-  new Set(
-    (Array.isArray(symbols) ? symbols : Array.from(symbols || []))
-      .map((symbol) => normalizeFlowPresetSymbol(symbol))
-      .filter(Boolean),
-  );
-
-const getFlowPresetEventTicker = (event) =>
-  normalizeFlowPresetSymbol(
-    event?.ticker ||
-      event?.underlying ||
-      event?.underlyingSymbol ||
-      event?.symbol ||
-      "",
-  );
-
 const normalizeMinPremium = (value) => {
   const parsed = typeof value === "string" ? Number(value) : value;
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 0;
+};
+
+export const parseFlowTapeTickerTokens = (value) =>
+  Array.from(
+    new Set(
+      String(value || "")
+        .split(/[\s,]+/)
+        .map((token) => normalizeTickerSymbol(token))
+        .filter(Boolean),
+    ),
+  );
+
+export const getFlowTapeEventSymbol = (event) =>
+  normalizeTickerSymbol(
+    event?.ticker ||
+      event?.underlying ||
+      event?.underlyingSymbol ||
+      event?.rootSymbol ||
+      event?.symbol,
+  );
+
+export const getFlowTapeEventRight = (event) => {
+  const right = String(event?.cp || event?.right || "")
+    .trim()
+    .toUpperCase();
+  if (right === "CALL") return "C";
+  if (right === "PUT") return "P";
+  return right;
+};
+
+const getFlowTapeEventType = (event) =>
+  String(event?.type || event?.tradeType || "")
+    .trim()
+    .toUpperCase();
+
+const getFlowTapeEventPremium = (event) => {
+  const premium = Number(event?.premium ?? 0);
+  return Number.isFinite(premium) ? premium : 0;
+};
+
+const getFlowTapeEventTime = (event) =>
+  event?.occurredAt || event?.time || event?.timestamp || "";
+
+export const getFlowTapeEventClusterKey = (event) => {
+  const symbol = getFlowTapeEventSymbol(event);
+  const right = getFlowTapeEventRight(event);
+  const expiration = event?.expirationDate || event?.exp || "";
+  const strike = event?.strike ?? "";
+  return (
+    event?.optionTicker ||
+    [symbol, strike, right, expiration].filter(Boolean).join("_")
+  );
+};
+
+export const buildFlowTapeEventClusters = (events = []) => {
+  const clusters = new Map();
+  (events || []).forEach((event) => {
+    const key = getFlowTapeEventClusterKey(event);
+    if (!key) return;
+    const time = getFlowTapeEventTime(event);
+    const current = clusters.get(key) || {
+      count: 0,
+      totalPrem: 0,
+      ids: [],
+      firstTime: time,
+      lastTime: time,
+    };
+    current.count += 1;
+    current.totalPrem += getFlowTapeEventPremium(event);
+    current.ids.push(event?.id);
+    if (!current.firstTime || (time && time < current.firstTime)) {
+      current.firstTime = time;
+    }
+    if (!current.lastTime || (time && time > current.lastTime)) {
+      current.lastTime = time;
+    }
+    clusters.set(key, current);
+  });
+  return clusters;
+};
+
+export const getFlowTapeEventCluster = (event, clusters) => {
+  const key = getFlowTapeEventClusterKey(event);
+  const cluster = clusters?.get?.(key) || null;
+  return cluster && cluster.count >= 2 ? cluster : null;
+};
+
+export const flowTapePresetMatches = (
+  presetId,
+  event,
+  clusterFor = () => null,
+) => {
+  if (!presetId) return true;
+  const right = getFlowTapeEventRight(event);
+  const side = String(event?.side || "").toUpperCase();
+  const type = getFlowTapeEventType(event);
+  const premium = getFlowTapeEventPremium(event);
+  if (presetId === "ask-calls") {
+    return right === "C" && side === "BUY";
+  }
+  if (presetId === "bid-puts") {
+    return right === "P" && side === "SELL";
+  }
+  if (presetId === "zero-dte") {
+    return Number.isFinite(event?.dte) && event.dte <= 1;
+  }
+  if (presetId === "premium-50k") {
+    return premium >= 50_000;
+  }
+  if (presetId === "premium-250k") {
+    return premium >= 250_000;
+  }
+  if (presetId === "vol-oi") {
+    return Boolean(event?.isUnusual) || (event?.unusualScore || 0) >= 1;
+  }
+  if (presetId === "sweeps") return type === "SWEEP";
+  if (presetId === "blocks") return type === "BLOCK";
+  if (presetId === "repeats") return clusterFor(event) !== null;
+  if (presetId === "golden") return Boolean(event?.golden);
+  return true;
+};
+
+export const flowTapeEventMatchesFilters = (
+  event,
+  filters = DEFAULT_FLOW_TAPE_FILTER_STATE,
+  {
+    includeTokens = parseFlowTapeTickerTokens(filters?.includeQuery),
+    excludeTokens = parseFlowTapeTickerTokens(filters?.excludeQuery),
+    clusterFor = () => null,
+  } = {},
+) => {
+  const resolved = normalizeFlowTapeFilterState(filters);
+  const ticker = getFlowTapeEventSymbol(event);
+  const right = getFlowTapeEventRight(event);
+  const type = getFlowTapeEventType(event);
+
+  if (includeTokens.length && !includeTokens.includes(ticker)) return false;
+  if (excludeTokens.includes(ticker)) return false;
+  if (resolved.filter === "calls" && right !== "C") return false;
+  if (resolved.filter === "puts" && right !== "P") return false;
+  if (resolved.filter === "unusual" && !event?.isUnusual) return false;
+  if (resolved.filter === "golden" && !event?.golden) return false;
+  if (resolved.filter === "sweep" && type !== "SWEEP") return false;
+  if (resolved.filter === "block" && type !== "BLOCK") return false;
+  if (resolved.filter === "cluster" && clusterFor(event) === null) return false;
+  if (!flowTapePresetMatches(resolved.activeFlowPresetId, event, clusterFor)) {
+    return false;
+  }
+  return getFlowTapeEventPremium(event) >= resolved.minPrem;
+};
+
+export const filterFlowTapeEvents = (
+  events = [],
+  filters = DEFAULT_FLOW_TAPE_FILTER_STATE,
+  { clusterFor } = {},
+) => {
+  const resolved = normalizeFlowTapeFilterState(filters);
+  const includeTokens = parseFlowTapeTickerTokens(resolved.includeQuery);
+  const excludeTokens = parseFlowTapeTickerTokens(resolved.excludeQuery);
+  const clusters = clusterFor ? null : buildFlowTapeEventClusters(events);
+  const resolveCluster =
+    clusterFor || ((event) => getFlowTapeEventCluster(event, clusters));
+
+  return (events || []).filter((event) =>
+    flowTapeEventMatchesFilters(event, resolved, {
+      includeTokens,
+      excludeTokens,
+      clusterFor: resolveCluster,
+    }),
+  );
 };
 
 export const normalizeFlowTapeFilterState = (value = {}) => {
@@ -183,106 +329,6 @@ export const resetFlowTapeFilterStateForTests = (
 
 export const getFlowBuiltInPreset = (presetId) =>
   FLOW_BUILT_IN_PRESETS.find((preset) => preset.id === presetId) || null;
-
-const flowOptionRight = (event) => {
-  const raw = String(event?.cp || event?.right || "").toUpperCase();
-  if (raw.startsWith("P")) return "P";
-  if (raw.startsWith("C")) return "C";
-  return "";
-};
-
-const hasEarningsWeekSignal = (event) =>
-  Boolean(
-    event?.earningsSoon ||
-      event?.earningsThisWeek ||
-      event?.hasEarningsThisWeek ||
-      event?.earningsWithinDays <= 7 ||
-      event?.calendarEventType === "earnings",
-  );
-
-const hasHeldPositionSignal = (event) =>
-  Boolean(
-    event?.heldPosition ||
-      event?.hasOpenPosition ||
-      event?.positionOpen ||
-      event?.positionQuantity,
-  );
-
-export const decorateFlowEventsWithPresetContext = (
-  events = [],
-  { earningsSymbols = [], positionSymbols = [] } = {},
-) => {
-  const earningsSet = normalizeFlowPresetSymbolSet(earningsSymbols);
-  const positionSet = normalizeFlowPresetSymbolSet(positionSymbols);
-  if (!earningsSet.size && !positionSet.size) {
-    return Array.isArray(events) ? events : [];
-  }
-
-  return (Array.isArray(events) ? events : []).map((event) => {
-    const ticker = getFlowPresetEventTicker(event);
-    if (!ticker) return event;
-    const patch = {};
-    if (earningsSet.has(ticker) && !hasEarningsWeekSignal(event)) {
-      patch.earningsSoon = true;
-      patch.earningsWithinDays = 7;
-    }
-    if (positionSet.has(ticker) && !hasHeldPositionSignal(event)) {
-      patch.heldPosition = true;
-    }
-    return Object.keys(patch).length ? { ...event, ...patch } : event;
-  });
-};
-
-export const flowEventMatchesBuiltInPreset = (
-  presetId,
-  event,
-  clusterFor = () => null,
-) => {
-  if (!presetId) return true;
-  const right = flowOptionRight(event);
-  const side = String(event?.side || "").toUpperCase();
-  if (presetId === "momentum") {
-    return Boolean(event?.golden) || Number(event?.score || 0) >= 75;
-  }
-  if (presetId === "earnings-week") {
-    return hasEarningsWeekSignal(event);
-  }
-  if (presetId === "unusual-calls") {
-    return right === "C" && Boolean(event?.isUnusual);
-  }
-  if (presetId === "unusual-puts") {
-    return right === "P" && Boolean(event?.isUnusual);
-  }
-  if (presetId === "high-rvol") {
-    return Boolean(event?.isUnusual) || Number(event?.unusualScore || 0) >= 1;
-  }
-  if (presetId === "held-positions") {
-    return hasHeldPositionSignal(event);
-  }
-  if (presetId === "ask-calls") {
-    return right === "C" && side === "BUY";
-  }
-  if (presetId === "bid-puts") {
-    return right === "P" && side === "SELL";
-  }
-  if (presetId === "zero-dte") {
-    return Number.isFinite(event?.dte) && event.dte <= 1;
-  }
-  if (presetId === "premium-50k") {
-    return Number(event?.premium || 0) >= 50_000;
-  }
-  if (presetId === "premium-250k") {
-    return Number(event?.premium || 0) >= 250_000;
-  }
-  if (presetId === "vol-oi") {
-    return Boolean(event?.isUnusual) || Number(event?.unusualScore || 0) >= 1;
-  }
-  if (presetId === "sweeps") return event?.type === "SWEEP";
-  if (presetId === "blocks") return event?.type === "BLOCK";
-  if (presetId === "repeats") return clusterFor(event) !== null;
-  if (presetId === "golden") return Boolean(event?.golden);
-  return true;
-};
 
 export const buildFlowTapePresetPatch = (presetId, currentState) => {
   const current = normalizeFlowTapeFilterState(currentState);

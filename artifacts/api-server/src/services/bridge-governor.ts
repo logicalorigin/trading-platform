@@ -25,6 +25,11 @@ export type BridgeGovernorConfig = {
   backoffMs: number;
 };
 
+export type BridgeWorkOptions = {
+  bypassBackoff?: boolean;
+  recordFailure?: boolean;
+};
+
 export type BridgeGovernorConfigSource = "default" | "env" | "override";
 
 export type BridgeGovernorConfigSnapshot = Record<
@@ -343,12 +348,16 @@ function releaseSlot(category: BridgeWorkCategory): void {
 export async function runBridgeWork<T>(
   category: BridgeWorkCategory,
   work: () => Promise<T>,
+  options: BridgeWorkOptions = {},
 ): Promise<T> {
-  if (isBridgeWorkBackedOff(category)) {
+  const bypassBackoff = Boolean(options.bypassBackoff);
+  const shouldRecordFailure = options.recordFailure !== false;
+
+  if (!bypassBackoff && isBridgeWorkBackedOff(category)) {
     throw backoffError(category);
   }
   await acquireSlot(category);
-  if (isBridgeWorkBackedOff(category)) {
+  if (!bypassBackoff && isBridgeWorkBackedOff(category)) {
     releaseSlot(category);
     throw backoffError(category);
   }
@@ -357,7 +366,9 @@ export async function runBridgeWork<T>(
     recordBridgeWorkSuccess(category);
     return result;
   } catch (error) {
-    recordBridgeWorkFailure(category, error);
+    if (shouldRecordFailure) {
+      recordBridgeWorkFailure(category, error);
+    }
     throw error;
   } finally {
     releaseSlot(category);

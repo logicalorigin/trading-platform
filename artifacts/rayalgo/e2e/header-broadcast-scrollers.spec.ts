@@ -84,7 +84,19 @@ function flowEvent(symbol: string, overrides: Record<string, unknown> = {}) {
 
 async function mockHeaderApi(
   page: Page,
-  { signalMonitorEnabled = true }: { signalMonitorEnabled?: boolean } = {},
+  {
+    flowPromotedSymbols,
+    flowUniverseSymbols,
+    onFlowEventsRequest,
+    signalMonitorEnabled = true,
+    watchlistSymbols = symbols,
+  }: {
+    flowPromotedSymbols?: string[];
+    flowUniverseSymbols?: string[];
+    onFlowEventsRequest?: (url: URL) => void;
+    signalMonitorEnabled?: boolean;
+    watchlistSymbols?: string[];
+  } = {},
 ) {
   const apiState = {
     signalMonitorEnabled,
@@ -129,9 +141,29 @@ async function mockHeaderApi(
             id: "default",
             name: "Default",
             isDefault: true,
-            symbols,
+            symbols: watchlistSymbols,
           },
         ],
+      };
+    } else if (url.pathname === "/api/flow/universe") {
+      const universeSymbols = flowUniverseSymbols || symbols;
+      body = {
+        symbols: universeSymbols,
+        coverage: {
+          mode: "market",
+          targetSize: 500,
+          activeTargetSize: universeSymbols.length,
+          selectedSymbols: universeSymbols.length,
+          selectedShortfall: Math.max(0, 500 - universeSymbols.length),
+          fallbackUsed: Boolean(flowUniverseSymbols),
+          stale: false,
+          cooldownCount: 0,
+          scannedSymbols: 0,
+          cycleScannedSymbols: 0,
+          currentBatch: [],
+          degradedReason: flowUniverseSymbols ? "mock partial universe" : null,
+          promotedSymbols: flowPromotedSymbols || [],
+        },
       };
     } else if (url.pathname === "/api/quotes/snapshot") {
       const requested = (url.searchParams.get("symbols") || "")
@@ -155,6 +187,7 @@ async function mockHeaderApi(
         bars: makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()),
       };
     } else if (url.pathname === "/api/flow/events") {
+      onFlowEventsRequest?.(url);
       const symbol = (url.searchParams.get("underlying") || "SPY").toUpperCase();
       body = {
         events:
@@ -274,6 +307,33 @@ test("header broadcast scrollers render and open Trade from tape items", async (
 
   await page.getByTitle(/QQQ unusual/).click();
   await expect(page.getByText(/QQQ 05\/15 438 P/)).toBeVisible({
+    timeout: 15_000,
+  });
+});
+
+test("header flow lane fills a partial backend universe beyond the active watchlist", async ({
+  page,
+}) => {
+  const requestedUnderlyings: string[] = [];
+  await mockHeaderApi(page, {
+    watchlistSymbols: ["AMD"],
+    flowUniverseSymbols: ["AMD", "SPY", "QQQ"],
+    flowPromotedSymbols: ["SPY", "QQQ"],
+    onFlowEventsRequest: (url) => {
+      requestedUnderlyings.push(
+        (url.searchParams.get("underlying") || "").toUpperCase(),
+      );
+    },
+  });
+  await openPlatform(page);
+
+  await expect(page.getByTestId("header-broadcast-scrollers")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(() => Array.from(new Set(requestedUnderlyings)), { timeout: 15_000 })
+    .toEqual(expect.arrayContaining(["AMD", "SPY", "QQQ"]));
+  await expect(page.getByTestId("header-unusual-tape")).toContainText("QQQ", {
     timeout: 15_000,
   });
 });

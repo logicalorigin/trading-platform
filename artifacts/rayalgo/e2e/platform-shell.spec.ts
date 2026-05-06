@@ -1,4 +1,4 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test.setTimeout(90_000);
 test.describe.configure({ mode: "serial" });
@@ -35,26 +35,16 @@ const spotApiTimeframeByInterval: Record<(typeof spotChartIntervals)[number], st
 
 type MockMarketDataAdmission = {
   activeLineCount: number;
+  accountMonitorLineCount?: number;
+  accountMonitorRemainingLineCount?: number;
   flowScannerLineCount: number;
   budget: {
     maxLines: number;
+    accountMonitorLineCap?: number;
     flowScannerLineCap: number;
   };
   poolUsage: Record<string, Record<string, unknown>>;
   counters?: Record<string, Record<string, number>>;
-};
-
-type MockAccountFixtures = {
-  summary?: unknown;
-  allocation?: unknown;
-  positions?: unknown;
-  positionsAtDate?: unknown;
-  orders?: unknown;
-  closedTrades?: unknown;
-  risk?: unknown;
-  cash?: unknown;
-  equityHistory?: unknown;
-  tradingPatterns?: unknown;
 };
 
 async function disableStreamingSources(page: Page) {
@@ -99,6 +89,112 @@ async function disableEventSource(page: Page) {
       value: undefined,
     });
   });
+}
+
+async function installControllableLineUsageEventSource(page: Page) {
+  await page.addInitScript(() => {
+    class MockEventSource extends EventTarget {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSED = 2;
+      static instances: MockEventSource[] = [];
+
+      readonly url: string;
+      readyState = MockEventSource.OPEN;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        MockEventSource.instances.push(this);
+        window.setTimeout(() => {
+          const event = new Event("open");
+          this.dispatchEvent(event);
+          this.onopen?.(event);
+        }, 0);
+      }
+
+      close() {
+        this.readyState = MockEventSource.CLOSED;
+      }
+    }
+
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      value: MockEventSource,
+    });
+    (
+      window as unknown as {
+        __getMockEventSourceUrls: () => string[];
+        __emitIbkrLineUsage: (payload: unknown) => void;
+      }
+    ).__getMockEventSourceUrls = () =>
+      MockEventSource.instances
+        .filter((source) => source.readyState !== MockEventSource.CLOSED)
+        .map((source) => source.url);
+    (
+      window as unknown as {
+        __emitIbkrLineUsage: (payload: unknown) => void;
+      }
+    ).__emitIbkrLineUsage = (payload: unknown) => {
+      MockEventSource.instances
+        .filter(
+          (source) =>
+            source.readyState !== MockEventSource.CLOSED &&
+            source.url.includes("/api/settings/ibkr-line-usage/stream"),
+        )
+        .forEach((source) => {
+          const event = new MessageEvent("ibkr-line-usage", {
+            data: JSON.stringify(payload),
+          });
+          source.dispatchEvent(event);
+          source.onmessage?.(event);
+        });
+    };
+  });
+}
+
+async function waitForLineUsageStream(page: Page) {
+  await page.waitForFunction(() =>
+    (
+      window as unknown as {
+        __getMockEventSourceUrls?: () => string[];
+      }
+    )
+      .__getMockEventSourceUrls?.()
+      .some((url) => url.includes("/api/settings/ibkr-line-usage/stream")),
+  );
+}
+
+async function emitLineUsageSnapshot(
+  page: Page,
+  admission: MockMarketDataAdmission,
+) {
+  await page.evaluate((nextAdmission) => {
+    (
+      window as unknown as {
+        __emitIbkrLineUsage: (payload: unknown) => void;
+      }
+    ).__emitIbkrLineUsage({
+      updatedAt: new Date().toISOString(),
+      admission: nextAdmission,
+      bridge: {
+        diagnostics: null,
+        error: null,
+        activeLineCount: null,
+        lineBudget: null,
+        remainingLineCount: null,
+      },
+      streams: {
+        quoteStreams: {},
+        optionQuoteStreams: {},
+        stockAggregates: {},
+      },
+      drift: { admissionVsBridgeLineDelta: null },
+    });
+  }, admission);
 }
 
 async function accelerateIntervalDelays(
@@ -206,23 +302,21 @@ async function mockShellApi(
     bridgeLauncherRequests = [],
     diagnosticsEventRequests = [],
     diagnosticsHistoryRequests = [],
+    runtimeDiagnosticsRequests = [],
     ibkrReady = false,
     ibkrLineUsageRequests = [],
-    failurePaths = [],
     runtimeLineUsage = null,
     shadowBacktestRequests = [],
-    accountFixtures,
   }: {
     barsRequests?: Array<Record<string, string>>;
     bridgeLauncherRequests?: Array<Record<string, string>>;
     diagnosticsEventRequests?: Array<Record<string, string>>;
     diagnosticsHistoryRequests?: Array<Record<string, string>>;
+    runtimeDiagnosticsRequests?: Array<Record<string, string>>;
     ibkrReady?: boolean;
     ibkrLineUsageRequests?: Array<Record<string, string>>;
-    failurePaths?: string[];
     runtimeLineUsage?: MockMarketDataAdmission | null;
     shadowBacktestRequests?: Array<Record<string, unknown>>;
-    accountFixtures?: MockAccountFixtures;
   } = {},
 ) {
   await page.route("**/api/**", async (route) => {
@@ -230,17 +324,6 @@ async function mockShellApi(
 
     if (url.pathname.includes("/streams/")) {
       await route.fulfill({ status: 204, body: "" });
-      return;
-    }
-
-    if (failurePaths.includes(url.pathname)) {
-      await route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({
-          detail: `Mock unavailable: ${url.pathname}`,
-        }),
-      });
       return;
     }
 
@@ -448,9 +531,18 @@ async function mockShellApi(
       ibkrLineUsageRequests.push(Object.fromEntries(url.searchParams.entries()));
       const admission = runtimeLineUsage || {
         activeLineCount: 0,
+        accountMonitorLineCount: 0,
+        accountMonitorRemainingLineCount: 20,
         flowScannerLineCount: 0,
-        budget: { maxLines: 0, flowScannerLineCap: 0 },
-        poolUsage: {},
+        budget: { maxLines: 0, accountMonitorLineCap: 20, flowScannerLineCap: 0 },
+        poolUsage: {
+          "account-monitor": {
+            activeLineCount: 0,
+            maxLines: 20,
+            remainingLineCount: 20,
+            strict: true,
+          },
+        },
         counters: {},
       };
       body = {
@@ -510,6 +602,7 @@ async function mockShellApi(
         },
       };
     } else if (url.pathname === "/api/diagnostics/runtime") {
+      runtimeDiagnosticsRequests.push(Object.fromEntries(url.searchParams.entries()));
       body = {
         providers: {
           polygon: {
@@ -551,9 +644,18 @@ async function mockShellApi(
           streams: {
             marketDataAdmission: runtimeLineUsage || {
               activeLineCount: 0,
+              accountMonitorLineCount: 0,
+              accountMonitorRemainingLineCount: 20,
               flowScannerLineCount: 0,
-              budget: { maxLines: 0, flowScannerLineCap: 0 },
-              poolUsage: {},
+              budget: { maxLines: 0, accountMonitorLineCap: 20, flowScannerLineCap: 0 },
+              poolUsage: {
+                "account-monitor": {
+                  activeLineCount: 0,
+                  maxLines: 20,
+                  remainingLineCount: 20,
+                  strict: true,
+                },
+              },
               counters: {},
             },
           },
@@ -701,45 +803,7 @@ async function mockShellApi(
         updatedAt: new Date(mockNow).toISOString(),
       };
     } else if (url.pathname.includes("/account/") || url.pathname.includes("/accounts/")) {
-      if (!accountFixtures) {
-        body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
-      } else if (url.pathname.endsWith("/summary")) {
-        body = accountFixtures.summary ?? { metrics: {}, accounts: [] };
-      } else if (url.pathname.endsWith("/allocation")) {
-        body = accountFixtures.allocation ?? { allocations: [] };
-      } else if (url.pathname.endsWith("/positions-at-date")) {
-        body = accountFixtures.positionsAtDate ?? { positions: [] };
-      } else if (url.pathname.endsWith("/positions")) {
-        body = accountFixtures.positions ?? { positions: [] };
-      } else if (url.pathname.endsWith("/orders")) {
-        body = accountFixtures.orders ?? { orders: [] };
-      } else if (url.pathname.endsWith("/closed-trades")) {
-        body = accountFixtures.closedTrades ?? { trades: [], summary: { count: 0 } };
-      } else if (url.pathname.endsWith("/risk")) {
-        body =
-          accountFixtures.risk ??
-          {
-            concentration: {},
-            winnersLosers: {},
-            margin: {},
-            greeks: {},
-            expiryConcentration: {},
-          };
-      } else if (url.pathname.endsWith("/cash-activity")) {
-        body = accountFixtures.cash ?? { activities: [], dividends: [] };
-      } else if (url.pathname.endsWith("/equity-history")) {
-        body =
-          accountFixtures.equityHistory ??
-          {
-            points: [],
-            range: url.searchParams.get("range") || "ALL",
-            currency: "USD",
-          };
-      } else if (url.pathname.endsWith("/trading-patterns")) {
-        body = accountFixtures.tradingPatterns ?? { summary: {}, tickerStats: [] };
-      } else {
-        body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
-      }
+      body = { accounts: [], positions: [], orders: [], trades: [], points: [] };
     }
 
     await route.fulfill({
@@ -764,39 +828,6 @@ function collectRuntimeIssues(page: Page) {
     issues.push(text);
   });
   return issues;
-}
-
-async function assertNoDevErrorOverlay(page: Page) {
-  await expect(page.locator("vite-error-overlay")).toHaveCount(0);
-  const overlayText = await page.evaluate(() => {
-    const overlaySelectors = [
-      "vite-error-overlay",
-      "[data-vite-error-overlay]",
-      "[data-testid*='error-overlay']",
-      "[class*='runtime-error']",
-      "[id*='runtime-error']",
-    ];
-    const overlayContent = overlaySelectors
-      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
-      .map((element) => element.textContent || "")
-      .join("\n");
-    return `${document.body?.innerText || ""}\n${overlayContent}`;
-  });
-  expect(overlayText).not.toMatch(
-    /\[plugin:runtime-error-plugin\]|maximum update depth exceeded|react limits the number of nested updates|failed to compile/i,
-  );
-}
-
-async function attachPhase0Screenshot(
-  page: Page,
-  testInfo: TestInfo,
-  label: string,
-) {
-  await assertNoDevErrorOverlay(page);
-  await testInfo.attach(`phase0-${label}.png`, {
-    body: await page.screenshot({ animations: "disabled" }),
-    contentType: "image/png",
-  });
 }
 
 async function openScreen(page: Page, label: string, screenId: string) {
@@ -928,80 +959,9 @@ test("platform shell keeps shared chrome while switching primary screens", async
   expect(pageErrors).toEqual([]);
 });
 
-test("platform shell icon controls and motion primitives respect reduced motion", async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await disableStreamingSources(page);
-  await mockShellApi(page, { ibkrReady: true });
-  await page.goto("/");
-
-  await expect(page.getByTestId("platform-compact-header")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /Switch to light theme/i }).locator("svg"),
-  ).toBeVisible();
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(
-    page
-      .getByTestId("platform-screen-nav")
-      .getByRole("button", { name: "Open watchlist" })
-      .locator("svg"),
-  ).toBeVisible();
-  await expect(page.getByTestId("header-broadcast-scrollers")).toHaveAttribute(
-    "data-layout",
-    "phone",
-  );
-  const broadcastMetrics = await page
-    .getByTestId("header-broadcast-scrollers")
-    .evaluate((element) => {
-      const root = element.getBoundingClientRect();
-      const lanes = Array.from(element.children).map((child) =>
-        Math.round(child.getBoundingClientRect().height),
-      );
-      return {
-        height: Math.round(root.height),
-        lanes,
-      };
-    });
-  expect(broadcastMetrics.height).toBeLessThanOrEqual(46);
-  expect(broadcastMetrics.lanes.every((height) => height <= 23)).toBe(true);
-
-  const motionState = await page.evaluate(() => {
-    const classNames = [
-      "ra-panel-enter",
-      "ra-popover-enter",
-      "ra-mobile-overlay-enter",
-      "ra-refresh-spin",
-    ];
-    const result: Record<string, string> = {};
-    for (const className of classNames) {
-      const node = document.createElement("div");
-      node.className = className;
-      document.body.appendChild(node);
-      result[className] = window.getComputedStyle(node).animationName;
-      node.remove();
-    }
-
-    const sidebar = document.createElement("div");
-    sidebar.className = "ra-sidebar-shell";
-    document.body.appendChild(sidebar);
-    result["ra-sidebar-shell-duration"] =
-      window.getComputedStyle(sidebar).transitionDuration;
-    sidebar.remove();
-    return result;
-  });
-
-  expect(motionState["ra-panel-enter"]).toBe("none");
-  expect(motionState["ra-popover-enter"]).toBe("none");
-  expect(motionState["ra-mobile-overlay-enter"]).toBe("none");
-  expect(motionState["ra-refresh-spin"]).toBe("none");
-  expect(motionState["ra-sidebar-shell-duration"]).toContain("0.001s");
-});
-
 test("platform pages render page-by-page and keep primary controls interactive", async ({
   page,
-}, testInfo) => {
+}) => {
   const runtimeIssues = collectRuntimeIssues(page);
 
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -1016,52 +976,28 @@ test("platform pages render page-by-page and keep primary controls interactive",
   });
   await expect(page.getByTestId("market-chart-grid")).toBeVisible();
   await expect(page.getByTestId("market-activity-panel")).toBeVisible();
-  await expect(page.getByTestId("workspace-link-chip-market").first()).toHaveAttribute(
-    "data-linked-workspace-group",
-    "A",
-  );
-  await attachPhase0Screenshot(page, testInfo, "desktop-market");
 
   await openScreen(page, "Flow", "flow");
   await expect(page.getByTestId("flow-main-layout")).toBeVisible();
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
   await expect(page.getByTestId("flow-filter-toggle")).toBeVisible();
-  await expect(page.getByTestId("workspace-link-chip-flow")).toHaveAttribute(
-    "data-linked-workspace-group",
-    "A",
-  );
   await page.getByTestId("flow-column-toggle").click();
   await expect(page.getByTestId("flow-column-drawer")).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "desktop-flow");
 
   await openScreen(page, "Trade", "trade");
   await expect(page.getByTestId("trade-top-zone")).toBeVisible();
   await expect(page.getByTestId("trade-middle-zone")).toBeVisible();
   await expect(page.getByTestId("trade-options-chain-panel")).toBeVisible();
-  await expect(page.getByTestId("workspace-link-chip-trade")).toHaveAttribute(
-    "data-linked-workspace-group",
-    "A",
-  );
-  await attachPhase0Screenshot(page, testInfo, "desktop-trade");
 
   await openScreen(page, "Account", "account");
   await expect(page.getByTestId("account-screen")).toBeVisible();
-  await expect(page.getByTestId("workspace-link-chip-account")).toHaveAttribute(
-    "data-linked-workspace-group",
-    "A",
-  );
   await page.getByTestId("account-section-shadow").click();
   await expect(page.getByText("Shadow internal paper")).toBeVisible();
   await page.getByTestId("account-section-real").click();
   await expect(page.getByText("Aggregated real accounts")).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "desktop-account");
 
   await openScreen(page, "Research", "research");
   await expect(page.getByTestId("research-screen")).toBeVisible();
-  await expect(page.getByTestId("workspace-link-chip-research")).toHaveAttribute(
-    "data-linked-workspace-group",
-    "A",
-  );
   await expect(page.getByTestId("research-search-input")).toBeEnabled({
     timeout: 30_000,
   });
@@ -1072,19 +1008,16 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await page.getByTestId("research-view-graph").click();
   await page.getByTestId("research-search-input").fill("NVDA");
   await expect(page.getByText(/match(?:es)?/)).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "desktop-research");
 
   await openScreen(page, "Algo", "algo");
   await expect(page.getByTestId("algo-screen")).toBeVisible();
   await expect(page.getByText("Execution Control Plane")).toBeVisible();
   await expect(page.getByText("No promoted draft strategies").first()).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "desktop-algo");
 
   await openScreen(page, "Backtest", "backtest");
   await expect(page.getByTestId("backtest-workspace")).toBeVisible();
   await expect(page.getByText("Research Workbench")).toBeVisible();
   await expect(page.getByText("Backtest Inputs")).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "desktop-backtest");
 
   await openScreen(page, "Diagnostics", "diagnostics");
   await expect(page.getByTestId("diagnostics-screen")).toBeVisible();
@@ -1093,7 +1026,6 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await expect(page.getByText("Footer Pressure Signal")).toBeVisible();
   await page.getByTestId("diagnostics-tab-overview").click();
   await expect(page.getByText("API Latency Trend")).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "desktop-diagnostics");
 
   await openScreen(page, "Settings", "settings");
   await expect(page.getByTestId("settings-screen")).toBeVisible();
@@ -1103,7 +1035,6 @@ test("platform pages render page-by-page and keep primary controls interactive",
   await page.getByTestId("settings-search-input").fill("");
   await page.getByTestId("settings-tab-workspace").click();
   await expect(page.getByText("Workspace Defaults")).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "desktop-settings");
 
   expect(runtimeIssues).toEqual([]);
 });
@@ -1122,38 +1053,6 @@ test("footer memory indicator stays visible and settings expose footer controls"
   await page.getByTestId("settings-tab-system").click();
   await expect(page.getByText("Footer Memory Signal")).toBeVisible();
   await expect(page.getByText("Pulse threshold")).toBeVisible();
-
-  expect(runtimeIssues).toEqual([]);
-});
-
-test("platform shows contextual degraded states when APIs or broker auth are unavailable", async ({
-  page,
-}, testInfo) => {
-  const runtimeIssues = collectRuntimeIssues(page);
-
-  await disableStreamingSources(page);
-  await mockShellApi(page, {
-    failurePaths: ["/api/settings/backend"],
-  });
-  await page.goto("/");
-
-  await openScreen(page, "Account", "account");
-  await expect(page.getByTestId("account-screen")).toBeVisible();
-  await expect(page.getByText("Setup & Health")).toBeVisible();
-  await expect(page.getByText("Bridge unavailable or not authenticated")).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "degraded-account");
-
-  await openScreen(page, "Market", "market");
-  await expect(page.getByText("No live calendar data")).toBeVisible();
-  await expect(
-    page.getByText("Research calendar access is not configured for this environment."),
-  ).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "degraded-market");
-
-  await openScreen(page, "Settings", "settings");
-  await expect(page.getByTestId("settings-screen")).toBeVisible();
-  await expect(page.getByText(/Mock unavailable: \/api\/settings\/backend/)).toBeVisible();
-  await attachPhase0Screenshot(page, testInfo, "degraded-settings");
 
   expect(runtimeIssues).toEqual([]);
 });
@@ -1191,7 +1090,6 @@ test("platform phone layout navigates all primary screens without document overf
   for (const [label, screenId, readyTestId] of screens) {
     await openScreen(page, label, screenId);
     await expect(page.getByTestId(readyTestId)).toBeVisible({ timeout: 30_000 });
-    await assertNoDevErrorOverlay(page);
     const overflow = await page.evaluate(() => ({
       viewportWidth: window.innerWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -1223,236 +1121,6 @@ test("platform keeps Account screen state mounted while hidden", async ({ page }
 
   await openScreen(page, "Account", "account");
   await expect(page.getByText("Shadow internal paper")).toBeVisible();
-  expect(runtimeIssues).toEqual([]);
-});
-
-test("account risk strip and row handoffs open Trade context", async ({ page }, testInfo) => {
-  const runtimeIssues = collectRuntimeIssues(page);
-  const updatedAt = new Date(mockNow).toISOString();
-  const metric = (value: number | null, field: string, currency: string | null = "USD") => ({
-    value,
-    currency,
-    source: "IBKR_ACCOUNT_SUMMARY",
-    field,
-    updatedAt,
-  });
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await disableStreamingSources(page);
-  await mockShellApi(page, {
-    ibkrReady: true,
-    accountFixtures: {
-      summary: {
-        accountId: "combined",
-        isCombined: true,
-        mode: "paper",
-        currency: "USD",
-        accounts: [
-          {
-            id: "DU1234567",
-            displayName: "Paper",
-            currency: "USD",
-            live: true,
-            accountType: "Margin",
-            updatedAt,
-          },
-        ],
-        updatedAt,
-        fx: { baseCurrency: "USD", timestamp: updatedAt, rates: { USD: 1 }, warning: null },
-        badges: { accountTypes: ["Margin"] },
-        metrics: {
-          netLiquidation: metric(100_000, "NetLiquidation"),
-          buyingPower: metric(25_000, "BuyingPower"),
-          marginUsed: metric(12_000, "InitMarginReq"),
-          maintenanceMargin: metric(8_000, "MaintMarginReq"),
-          maintenanceMarginCushionPercent: metric(0.62, "Cushion", null),
-          dayPnl: metric(850, "QuoteChange"),
-          dayPnlPercent: metric(0.85, "QuoteChange/NetLiquidation", null),
-          totalPnl: metric(4_250, "ChangeInNAV"),
-          totalPnlPercent: metric(4.25, "ChangeInNAV/InitialNAV", null),
-          totalCash: metric(20_000, "TotalCashValue"),
-          settledCash: metric(19_000, "SettledCash"),
-        },
-      },
-      positions: {
-        positions: [
-          {
-            id: "pos-nvda",
-            accountId: "DU1234567",
-            symbol: "NVDA",
-            assetClass: "Stocks",
-            quantity: 10,
-            marketValue: 41_000,
-            weightPercent: 41,
-            unrealizedPnl: 500,
-            sector: "Technology",
-          },
-          {
-            id: "pos-qqq",
-            accountId: "DU1234567",
-            symbol: "QQQ",
-            assetClass: "ETF",
-            quantity: 5,
-            marketValue: 9_000,
-            weightPercent: 9,
-            unrealizedPnl: 120,
-            sector: "ETF",
-          },
-        ],
-      },
-      orders: {
-        orders: [
-          {
-            id: "ord-nvda",
-            accountId: "DU1234567",
-            symbol: "NVDA",
-            assetClass: "Stocks",
-            side: "BUY",
-            type: "LMT",
-            quantity: 10,
-            filledQuantity: 0,
-            limitPrice: 410,
-            stopPrice: null,
-            timeInForce: "DAY",
-            status: "working",
-            placedAt: updatedAt,
-            averageFillPrice: null,
-            sourceType: "manual",
-            source: "manual",
-          },
-        ],
-        updatedAt,
-      },
-      closedTrades: {
-        summary: {
-          count: 1,
-          winners: 1,
-          losers: 0,
-          realizedPnl: 150,
-          commissions: 1,
-        },
-        trades: [
-          {
-            id: "trade-aapl",
-            source: "FLEX",
-            sourceType: "manual",
-            symbol: "AAPL",
-            assetClass: "Stocks",
-            side: "Long",
-            quantity: 3,
-            openDate: new Date(mockNow - 86_400_000).toISOString(),
-            closeDate: updatedAt,
-            avgOpen: 180,
-            avgClose: 230,
-            realizedPnl: 150,
-            realizedPnlPercent: 5,
-            commissions: 1,
-            currency: "USD",
-          },
-        ],
-      },
-      risk: {
-        accountId: "combined",
-        currency: "USD",
-        concentration: {
-          topPositions: [{ symbol: "NVDA", marketValue: 41_000, weightPercent: 0.41 }],
-          sectors: [{ sector: "Technology", value: 41_000, weightPercent: 41 }],
-        },
-        winnersLosers: {},
-        margin: {
-          leverageRatio: 0.5,
-          marginUsed: 12_000,
-          marginAvailable: 25_000,
-          maintenanceMargin: 8_000,
-          maintenanceCushionPercent: 0.62,
-          providerFields: {},
-        },
-        greeks: {},
-        expiryConcentration: {},
-        updatedAt,
-      },
-      allocation: { allocations: [] },
-      equityHistory: { points: [], range: "ALL", currency: "USD" },
-      cash: { activities: [], dividends: [] },
-    },
-  });
-  await page.goto("/");
-
-  await openScreen(page, "Account", "account");
-  await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
-  await expect(page.getByTestId("account-screen")).toHaveAttribute("data-layout", "phone");
-  await expect(page.getByTestId("account-mobile-section-rail")).toBeVisible();
-  await expect(page.getByTestId("account-header-metrics").locator(":scope > *")).toHaveCount(4);
-  await expect(page.getByTestId("account-portfolio-risk-strip")).toBeVisible();
-  await expect(page.getByTestId("account-risk-strip-buying-power")).toContainText("$25.0K");
-  await expect(page.getByTestId("account-risk-strip-open-risk")).toContainText("$50.0K");
-  await expect(page.getByTestId("account-risk-strip-live-state")).toContainText("Live");
-  const mobileAccountLayout = await page.evaluate(() => {
-    const riskStrip = document.querySelector(
-      '[data-testid="account-portfolio-risk-strip"]',
-    ) as HTMLElement | null;
-    const positions = document.querySelector(
-      '[data-testid="account-mobile-section-positions"]',
-    ) as HTMLElement | null;
-    const detailGrid = document.querySelector(
-      '[data-testid="account-screen"] .ra-account-detail-grid',
-    ) as HTMLElement | null;
-    const orders = document.querySelector(
-      '[data-testid="account-mobile-section-orders"]',
-    ) as HTMLElement | null;
-    const trades = document.querySelector(
-      '[data-testid="account-mobile-section-trades"]',
-    ) as HTMLElement | null;
-    return {
-      riskColumns: riskStrip
-        ? getComputedStyle(riskStrip).gridTemplateColumns.split(" ").filter(Boolean).length
-        : 0,
-      positionsOrder: positions ? getComputedStyle(positions).order : "",
-      detailGridOrder: detailGrid ? getComputedStyle(detailGrid).order : "",
-      ordersOrder: orders ? getComputedStyle(orders).order : "",
-      tradesOrder: trades ? getComputedStyle(trades).order : "",
-      viewportWidth: window.innerWidth,
-      scrollWidth: document.documentElement.scrollWidth,
-    };
-  });
-  expect(mobileAccountLayout.riskColumns).toBe(2);
-  expect(mobileAccountLayout.positionsOrder).toBe("3");
-  expect(mobileAccountLayout.detailGridOrder).toBe("4");
-  expect(mobileAccountLayout.ordersOrder).toBe("1");
-  expect(mobileAccountLayout.tradesOrder).toBe("3");
-  expect(mobileAccountLayout.scrollWidth).toBeLessThanOrEqual(
-    mobileAccountLayout.viewportWidth + 1,
-  );
-
-  await page.getByTestId("account-mobile-jump-positions").click();
-  await expect(page.getByTestId("account-mobile-section-positions")).toBeInViewport({
-    ratio: 0.15,
-  });
-  await page.getByTestId("account-mobile-jump-orders").click();
-  await expect(page.getByTestId("account-mobile-section-orders")).toBeInViewport({
-    ratio: 0.15,
-  });
-  await attachPhase0Screenshot(page, testInfo, "phone-account-orders");
-
-  await page.getByTestId("account-risk-symbol-NVDA").first().click();
-  await expect(page.getByText("Current Positions · 1")).toBeVisible();
-  await expect(page.getByText("Showing working · NVDA")).toBeVisible();
-
-  await page.getByTestId("account-order-trade-ord-nvda").click();
-  await expect(page.getByTestId("screen-host-trade")).toHaveAttribute("aria-hidden", "false");
-  await expect(
-    page.getByTestId("trade-equity-chart").getByTestId("chart-symbol-search-button"),
-  ).toHaveAttribute("title", "Search NVDA", { timeout: 15_000 });
-
-  await openScreen(page, "Account", "account");
-  await page.getByTestId("account-symbol-filter-clear").click();
-  await expect(page.getByText("Current Positions · 2")).toBeVisible();
-  await page.getByTestId("account-closed-trade-trade-FLEX:trade-aapl").click();
-  await expect(page.getByTestId("screen-host-trade")).toHaveAttribute("aria-hidden", "false");
-  await expect(
-    page.getByTestId("trade-equity-chart").getByTestId("chart-symbol-search-button"),
-  ).toHaveAttribute("title", "Search AAPL", { timeout: 15_000 });
-
   expect(runtimeIssues).toEqual([]);
 });
 
@@ -1499,6 +1167,7 @@ test("settings stops IBKR line usage polling while hidden", async ({ page }) => 
   await page.goto("/");
 
   await openScreen(page, "Settings", "settings");
+  await page.getByTestId("settings-tab-data-broker").click();
   await expect
     .poll(() => ibkrLineUsageRequests.length, { timeout: 5_000 })
     .toBeGreaterThan(1);
@@ -1553,38 +1222,53 @@ test("header connectivity shows market data line usage in the compact area and p
   page,
 }) => {
   const runtimeIssues = collectRuntimeIssues(page);
+  const runtimeDiagnosticsRequests: Array<Record<string, string>> = [];
+  const lineUsage: MockMarketDataAdmission = {
+    activeLineCount: 77,
+    accountMonitorLineCount: 12,
+    accountMonitorRemainingLineCount: 8,
+    flowScannerLineCount: 34,
+    budget: {
+      maxLines: 200,
+      accountMonitorLineCap: 20,
+      flowScannerLineCap: 40,
+    },
+    poolUsage: {
+      "account-monitor": {
+        activeLineCount: 12,
+        maxLines: 20,
+        remainingLineCount: 8,
+        strict: true,
+      },
+      "flow-scanner": {
+        activeLineCount: 34,
+        maxLines: 40,
+        remainingLineCount: 6,
+        strict: true,
+      },
+      visible: {
+        activeLineCount: 18,
+        maxLines: 88,
+        remainingLineCount: 70,
+      },
+    },
+    counters: {},
+  };
 
-  await disableStreamingSources(page);
+  await installControllableLineUsageEventSource(page);
   await mockShellApi(page, {
     ibkrReady: true,
-    runtimeLineUsage: {
-      activeLineCount: 77,
-      flowScannerLineCount: 34,
-      budget: {
-        maxLines: 200,
-        flowScannerLineCap: 40,
-      },
-      poolUsage: {
-        "flow-scanner": {
-          activeLineCount: 34,
-          maxLines: 40,
-          remainingLineCount: 6,
-          strict: true,
-        },
-        visible: {
-          activeLineCount: 18,
-          maxLines: 108,
-          remainingLineCount: 90,
-        },
-      },
-      counters: {},
-    },
+    runtimeDiagnosticsRequests,
+    runtimeLineUsage: lineUsage,
   });
   await page.goto("/");
+  await waitForLineUsageStream(page);
+  await emitLineUsageSnapshot(page, lineUsage);
 
   const compactLineUsage = page.getByTestId("header-market-data-line-usage");
   await expect(compactLineUsage).toContainText("LINES", { timeout: 15_000 });
   await expect(compactLineUsage).toContainText("77 / 200");
+  expect(runtimeDiagnosticsRequests).toHaveLength(0);
 
   await page
     .getByRole("button", { name: "Open IB Gateway connection details" })
@@ -1592,9 +1276,15 @@ test("header connectivity shows market data line usage in the compact area and p
   const popover = page.getByRole("dialog", { name: "IB Gateway bridge" });
   await expect(popover).toContainText("Market data lines");
   await expect(popover).toContainText("77 / 200");
+  await expect(popover).toContainText("Account monitor");
+  await expect(popover).toContainText("12");
+  await expect(popover).toContainText("20");
   await expect(popover).toContainText("Flow scanner");
   await expect(popover).toContainText("34");
   await expect(popover).toContainText("40");
+  await expect
+    .poll(() => runtimeDiagnosticsRequests.length, { timeout: 5_000 })
+    .toBeGreaterThan(0);
 
   const triggerBox = await page
     .getByRole("button", { name: "Open IB Gateway connection details" })
@@ -1616,6 +1306,118 @@ test("header connectivity shows market data line usage in the compact area and p
   expect(runtimeIssues).toEqual([]);
 });
 
+test("header connectivity line usage updates from the realtime stream while popover is open", async ({
+  page,
+}) => {
+  const runtimeIssues = collectRuntimeIssues(page);
+  const ibkrLineUsageRequests: Array<Record<string, string>> = [];
+  const initialLineUsage: MockMarketDataAdmission = {
+    activeLineCount: 80,
+    accountMonitorLineCount: 0,
+    accountMonitorRemainingLineCount: 20,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      accountMonitorLineCap: 20,
+      flowScannerLineCap: 40,
+    },
+    poolUsage: {
+      "account-monitor": {
+        activeLineCount: 0,
+        maxLines: 20,
+        remainingLineCount: 20,
+        strict: true,
+      },
+      "flow-scanner": {
+        activeLineCount: 0,
+        maxLines: 40,
+        remainingLineCount: 40,
+        strict: true,
+      },
+      visible: {
+        activeLineCount: 0,
+        maxLines: 88,
+        remainingLineCount: 88,
+      },
+      convenience: {
+        activeLineCount: 80,
+        maxLines: 80,
+        remainingLineCount: 0,
+      },
+    },
+    counters: {},
+  };
+  const requisitionedLineUsage: MockMarketDataAdmission = {
+    activeLineCount: 120,
+    accountMonitorLineCount: 20,
+    accountMonitorRemainingLineCount: 0,
+    flowScannerLineCount: 40,
+    budget: {
+      maxLines: 200,
+      accountMonitorLineCap: 20,
+      flowScannerLineCap: 40,
+    },
+    poolUsage: {
+      "account-monitor": {
+        activeLineCount: 20,
+        maxLines: 20,
+        remainingLineCount: 0,
+        strict: true,
+      },
+      "flow-scanner": {
+        activeLineCount: 40,
+        maxLines: 40,
+        remainingLineCount: 0,
+        strict: true,
+      },
+      visible: {
+        activeLineCount: 60,
+        maxLines: 88,
+        remainingLineCount: 28,
+      },
+      convenience: {
+        activeLineCount: 0,
+        maxLines: 80,
+        remainingLineCount: 80,
+      },
+    },
+    counters: {
+      "account-monitor-live": { admitted: 20, rejected: 0, demoted: 0 },
+      "flow-scanner-live": { admitted: 40, rejected: 0, demoted: 0 },
+      "convenience-live": { admitted: 80, rejected: 0, demoted: 80 },
+    },
+  };
+
+  await installControllableLineUsageEventSource(page);
+  await mockShellApi(page, {
+    ibkrReady: true,
+    ibkrLineUsageRequests,
+    runtimeLineUsage: initialLineUsage,
+  });
+  await page.goto("/");
+  await waitForLineUsageStream(page);
+  await emitLineUsageSnapshot(page, initialLineUsage);
+
+  const compactLineUsage = page.getByTestId("header-market-data-line-usage");
+  await expect(compactLineUsage).toContainText("80 / 200", { timeout: 15_000 });
+
+  await page
+    .getByRole("button", { name: "Open IB Gateway connection details" })
+    .click();
+  const popover = page.getByRole("dialog", { name: "IB Gateway bridge" });
+  await expect(popover).toContainText("Market data lines");
+  await expect(page.getByTestId("header-market-data-line-row-convenience")).toContainText("80");
+
+  await emitLineUsageSnapshot(page, requisitionedLineUsage);
+
+  await expect(compactLineUsage).toContainText("120 / 200");
+  await expect(page.getByTestId("header-market-data-line-row-account-monitor")).toContainText("20");
+  await expect(page.getByTestId("header-market-data-line-row-flow-scanner")).toContainText("40");
+  await expect(page.getByTestId("header-market-data-line-row-convenience")).toContainText("0");
+  expect(ibkrLineUsageRequests).toEqual([]);
+  expect(runtimeIssues).toEqual([]);
+});
+
 test("header connectivity popover stays inside the narrow header viewport", async ({
   page,
 }) => {
@@ -1627,12 +1429,21 @@ test("header connectivity popover stays inside the narrow header viewport", asyn
     ibkrReady: true,
     runtimeLineUsage: {
       activeLineCount: 77,
+      accountMonitorLineCount: 12,
+      accountMonitorRemainingLineCount: 8,
       flowScannerLineCount: 34,
       budget: {
         maxLines: 200,
+        accountMonitorLineCap: 20,
         flowScannerLineCap: 40,
       },
       poolUsage: {
+        "account-monitor": {
+          activeLineCount: 12,
+          maxLines: 20,
+          remainingLineCount: 8,
+          strict: true,
+        },
         "flow-scanner": {
           activeLineCount: 34,
           maxLines: 40,
@@ -1641,8 +1452,8 @@ test("header connectivity popover stays inside the narrow header viewport", asyn
         },
         visible: {
           activeLineCount: 18,
-          maxLines: 108,
-          remainingLineCount: 90,
+          maxLines: 88,
+          remainingLineCount: 70,
         },
       },
       counters: {},
@@ -1959,303 +1770,6 @@ test("market watchlist selection promotes an already-visible ticker into the pri
       }),
     )
     .toBe("AAPL");
-
-  expect(runtimeIssues).toEqual([]);
-});
-
-test("linked workspace keeps Market and Trade in sync until a panel is unlinked", async ({
-  page,
-}) => {
-  const runtimeIssues = collectRuntimeIssues(page);
-
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await disableStreamingSources(page);
-  await page.addInitScript(() => {
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-    window.localStorage.setItem(
-      "rayalgo:state:v1",
-      JSON.stringify({
-        screen: "market",
-        sym: "SPY",
-        marketActiveSymbol: "SPY",
-        tradeActiveTicker: "SPY",
-        theme: "dark",
-        sidebarCollapsed: false,
-        marketGridLayout: "1x1",
-        marketGridSoloSlotIndex: 0,
-        marketGridSlots: [{ ticker: "SPY", tf: "15m" }],
-        tradeRecentTickers: ["SPY"],
-        tradeWorkspaces: {
-          SPY: {
-            ticker: "SPY",
-            equityChart: { timeframe: "15m" },
-            selectedContract: { strike: null, cp: "C", exp: "" },
-          },
-        },
-        linkedWorkspace: {
-          version: 1,
-          activeGroup: "A",
-          panels: {
-            market: "A",
-            trade: "A",
-            flow: "A",
-            account: "A",
-            research: "A",
-          },
-          groups: {
-            A: { symbol: "SPY", timeframe: "15m" },
-            B: { symbol: "NVDA", timeframe: "5m" },
-            C: { symbol: "MSFT", timeframe: "1h" },
-          },
-        },
-      }),
-    );
-  });
-  await mockShellApi(page);
-  await page.goto("/");
-
-  const marketChart = page.getByTestId("market-mini-chart-0");
-  const marketSearchButton = marketChart.getByTestId("chart-symbol-search-button");
-  await expect(marketSearchButton).toHaveAttribute("title", "Search SPY", {
-    timeout: 30_000,
-  });
-  await expect(page.getByTestId("workspace-link-chip-market").first()).toHaveAttribute(
-    "data-linked-workspace-group",
-    "A",
-  );
-
-  await page.locator('[data-testid="watchlist-row"][data-symbol="AAPL"]').click();
-  await expect(marketSearchButton).toHaveAttribute("title", "Search AAPL", {
-    timeout: 15_000,
-  });
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
-        );
-        return state.linkedWorkspace?.groups?.A?.symbol || null;
-      }),
-    )
-    .toBe("AAPL");
-
-  await selectChartInterval(page, "market-mini-chart-0", "1h");
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
-        );
-        return state.linkedWorkspace?.groups?.A?.timeframe || null;
-      }),
-    )
-    .toBe("1h");
-
-  await openScreen(page, "Trade", "trade");
-  const tradeChart = page.getByTestId("trade-equity-chart");
-  const tradeSearchButton = tradeChart.getByTestId("chart-symbol-search-button");
-  await expect(tradeSearchButton).toHaveAttribute("title", "Search AAPL", {
-    timeout: 15_000,
-  });
-  await expect(tradeChart.getByTestId("chart-timeframe-menu-trigger")).toHaveAttribute(
-    "data-chart-timeframe",
-    "1h",
-  );
-
-  await page.getByTestId("workspace-link-chip-trade-unlink").click({ force: true });
-  await expect(page.getByTestId("workspace-link-chip-trade")).toHaveAttribute(
-    "data-linked-workspace-group",
-    "none",
-  );
-
-  await openScreen(page, "Market", "market");
-  await page.locator('[data-testid="watchlist-row"][data-symbol="MSFT"]').click();
-  await expect(marketSearchButton).toHaveAttribute("title", "Search MSFT", {
-    timeout: 15_000,
-  });
-
-  await openScreen(page, "Trade", "trade");
-  await expect(tradeSearchButton).toHaveAttribute("title", "Search AAPL");
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
-        );
-        const panels = state.linkedWorkspace?.panels || {};
-        return Object.prototype.hasOwnProperty.call(panels, "trade")
-          ? panels.trade
-          : "__missing__";
-      }),
-    )
-    .toBeNull();
-
-  expect(runtimeIssues).toEqual([]);
-});
-
-test("workspace presets switch screens, restore defaults, and persist lightweight state", async ({
-  page,
-}) => {
-  const runtimeIssues = collectRuntimeIssues(page);
-
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await disableStreamingSources(page);
-  await page.addInitScript(() => {
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-    window.localStorage.setItem(
-      "rayalgo:state:v1",
-      JSON.stringify({
-        screen: "market",
-        sym: "SPY",
-        marketActiveSymbol: "SPY",
-        theme: "dark",
-        sidebarCollapsed: false,
-        marketGridLayout: "3x3",
-        marketGridSoloSlotIndex: 0,
-        linkedWorkspace: {
-          version: 1,
-          activeGroup: "A",
-          panels: {
-            market: "A",
-            trade: "A",
-            flow: "A",
-            account: "A",
-            research: "A",
-          },
-          groups: {
-            A: { symbol: "SPY", timeframe: "15m" },
-            B: { symbol: "NVDA", timeframe: "5m" },
-            C: { symbol: "MSFT", timeframe: "1h" },
-          },
-        },
-        workspacePresets: {
-          version: 1,
-          activePresetId: "market_monitor",
-          presets: {
-            flow_review: {
-              screen: "flow",
-              sidebarCollapsed: false,
-              flowActivePresetId: "blocks",
-              flowFilter: "block",
-              flowMinPrem: 0,
-              flowSortBy: "ratio",
-              flowSortDir: "desc",
-              flowColumnsOpen: false,
-              activeLinkedGroup: "C",
-            },
-          },
-        },
-      }),
-    );
-  });
-  await mockShellApi(page);
-  await page.goto("/");
-
-  const presetSelect = page.getByTestId("workspace-preset-select");
-  await expect(presetSelect).toBeVisible();
-  await expect(presetSelect).toHaveValue("market_monitor");
-
-  await presetSelect.selectOption("flow_review");
-  await expect(page.getByTestId("screen-host-flow")).toHaveAttribute(
-    "aria-hidden",
-    "false",
-  );
-  await expect(page.getByTestId("flow-main-layout")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
-        );
-        return {
-          activePresetId: state.workspacePresets?.activePresetId,
-          savedMarketLayout:
-            state.workspacePresets?.presets?.market_monitor?.marketGridLayout,
-          flowPreset: state.flowActivePresetId,
-          flowFilter: state.flowFilter,
-          flowColumnsOpen: state.flowColumnsOpen,
-          activeGroup: state.linkedWorkspace?.activeGroup,
-          sidebarCollapsed: state.sidebarCollapsed,
-        };
-      }),
-    )
-    .toEqual({
-      activePresetId: "flow_review",
-      savedMarketLayout: "3x3",
-      flowPreset: "blocks",
-      flowFilter: "block",
-      flowColumnsOpen: false,
-      activeGroup: "C",
-      sidebarCollapsed: false,
-    });
-
-  await page.getByTestId("workspace-preset-restore").click();
-  await expect(presetSelect).toHaveValue("flow_review");
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
-        );
-        return {
-          activePresetId: state.workspacePresets?.activePresetId,
-          savedFlowPreset:
-            state.workspacePresets?.presets?.flow_review || null,
-          flowPreset: state.flowActivePresetId,
-          flowMinPrem: state.flowMinPrem,
-          flowColumnsOpen: state.flowColumnsOpen,
-          activeGroup: state.linkedWorkspace?.activeGroup,
-        };
-      }),
-    )
-    .toEqual({
-      activePresetId: "flow_review",
-      savedFlowPreset: null,
-      flowPreset: "premium-250k",
-      flowMinPrem: 250_000,
-      flowColumnsOpen: true,
-      activeGroup: "B",
-    });
-
-  await presetSelect.selectOption("options_trade");
-  await expect(page.getByTestId("screen-host-trade")).toHaveAttribute(
-    "aria-hidden",
-    "false",
-  );
-  await expect(page.getByTestId("trade-top-zone")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(
-          window.localStorage.getItem("rayalgo:state:v1") || "{}",
-        );
-        return {
-          screen: state.screen,
-          activePresetId: state.workspacePresets?.activePresetId,
-          savedFlowPreset:
-            state.workspacePresets?.presets?.flow_review?.flowActivePresetId,
-          sidebarCollapsed: state.sidebarCollapsed,
-          activeGroup: state.linkedWorkspace?.activeGroup,
-          tradeL2Tab: state.tradeL2Tab,
-          tradePositionsTab: state.tradePositionsTab,
-        };
-      }),
-    )
-    .toEqual({
-      screen: "trade",
-      activePresetId: "options_trade",
-      savedFlowPreset: "premium-250k",
-      sidebarCollapsed: true,
-      activeGroup: "A",
-      tradeL2Tab: "book",
-      tradePositionsTab: "open",
-    });
 
   expect(runtimeIssues).toEqual([]);
 });

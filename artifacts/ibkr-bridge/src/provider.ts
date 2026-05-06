@@ -45,6 +45,10 @@ export type BridgeHealth = {
   stale?: boolean;
   bridgeReachable?: boolean;
   socketConnected?: boolean;
+  brokerServerConnected?: boolean;
+  serverConnectivity?: "unknown" | "connected" | "disconnected";
+  lastServerConnectivityAt?: Date | null;
+  lastServerConnectivityError?: string | null;
   accountsLoaded?: boolean;
   configuredLiveMarketDataMode?: boolean;
   streamFresh?: boolean;
@@ -82,6 +86,10 @@ export type BridgeConnectionHealth = {
   stale?: boolean;
   bridgeReachable?: boolean;
   socketConnected?: boolean;
+  brokerServerConnected?: boolean;
+  serverConnectivity?: "unknown" | "connected" | "disconnected";
+  lastServerConnectivityAt?: Date | null;
+  lastServerConnectivityError?: string | null;
   accountsLoaded?: boolean;
   configuredLiveMarketDataMode?: boolean;
   streamFresh?: boolean;

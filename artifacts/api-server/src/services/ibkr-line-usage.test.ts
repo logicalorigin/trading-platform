@@ -40,7 +40,11 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
 
   assert.ok(Date.now() - startedAt < 1_000);
   assert.equal(snapshot.admission.activeLineCount, 1);
+  assert.equal(snapshot.admission.accountMonitorLineCount, 0);
+  assert.equal(snapshot.admission.budget.accountMonitorLineCap, 20);
+  assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 20);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
+  assert.equal(typeof snapshot.admission.optionsFlowScanner, "object");
   assert.equal(snapshot.bridge.diagnostics, null);
   assert.equal(snapshot.bridge.activeLineCount, null);
   assert.match(snapshot.bridge.error ?? "", /timed out after 10ms/i);

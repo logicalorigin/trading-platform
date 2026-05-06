@@ -2,6 +2,7 @@ import { normalizeSymbol } from "../lib/values";
 
 export type MarketDataIntent =
   | "execution-live"
+  | "account-monitor-live"
   | "visible-live"
   | "automation-live"
   | "flow-scanner-live"
@@ -15,6 +16,7 @@ export type MarketDataLineAssetClass = "equity" | "option";
 
 export type MarketDataPoolId =
   | "execution"
+  | "account-monitor"
   | "visible"
   | "automation"
   | "flow-scanner"
@@ -79,6 +81,7 @@ export type MarketDataAdmissionResult = {
     reserveLines: number;
     usableLines: number;
     automationLineCap: number;
+    accountMonitorLineCap: number;
     flowScannerLineCap: number;
     poolLineCaps: Record<MarketDataPoolId, number>;
     pools: Array<{
@@ -93,6 +96,7 @@ export type MarketDataAdmissionResult = {
 
 const INTENT_PRIORITY: Record<MarketDataIntent, number> = {
   "execution-live": 100,
+  "account-monitor-live": 90,
   "visible-live": 80,
   "automation-live": 60,
   "flow-scanner-live": 55,
@@ -103,6 +107,7 @@ const INTENT_PRIORITY: Record<MarketDataIntent, number> = {
 
 const INTENT_POOL: Record<MarketDataIntent, MarketDataPoolId> = {
   "execution-live": "execution",
+  "account-monitor-live": "account-monitor",
   "visible-live": "visible",
   "automation-live": "automation",
   "flow-scanner-live": "flow-scanner",
@@ -113,6 +118,7 @@ const INTENT_POOL: Record<MarketDataIntent, MarketDataPoolId> = {
 
 const POOL_LABELS: Record<MarketDataPoolId, string> = {
   execution: "Execution",
+  "account-monitor": "Account monitor",
   visible: "Visible",
   automation: "Automation",
   "flow-scanner": "Flow scanner",
@@ -121,6 +127,7 @@ const POOL_LABELS: Record<MarketDataPoolId, string> = {
 
 const POOL_INTENTS: Record<MarketDataPoolId, MarketDataIntent[]> = {
   execution: ["execution-live"],
+  "account-monitor": ["account-monitor-live"],
   visible: ["visible-live"],
   automation: ["automation-live"],
   "flow-scanner": ["flow-scanner-live"],
@@ -129,6 +136,7 @@ const POOL_INTENTS: Record<MarketDataPoolId, MarketDataIntent[]> = {
 
 const STRICT_POOL_IDS = new Set<MarketDataPoolId>([
   "execution",
+  "account-monitor",
   "automation",
   "flow-scanner",
 ]);
@@ -136,9 +144,11 @@ const STRICT_POOL_IDS = new Set<MarketDataPoolId>([
 const MAX_RECENT_EVENTS = 100;
 const DEFAULT_MAX_LINES = 200;
 const DEFAULT_RESERVE_LINES = 15;
+const MARKET_DATA_ADMISSION_SCHEMA_VERSION = 1;
 const DEFAULT_POOL_LINE_CAPS: Record<MarketDataPoolId, number> = {
   execution: 12,
-  visible: 108,
+  "account-monitor": 20,
+  visible: 88,
   automation: 25,
   // Keep the admission pool aligned with OPTIONS_FLOW_SCANNER_LINE_BUDGET.
   "flow-scanner": 40,
@@ -147,6 +157,7 @@ const DEFAULT_POOL_LINE_CAPS: Record<MarketDataPoolId, number> = {
 
 const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
   execution: "IBKR_MARKET_DATA_EXECUTION_LINES",
+  "account-monitor": "IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES",
   visible: "IBKR_MARKET_DATA_VISIBLE_LINES",
   automation: "IBKR_MARKET_DATA_AUTOMATION_LINES",
   "flow-scanner": "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
@@ -192,6 +203,7 @@ function normalizePoolLineCaps(
     "automation",
     "visible",
     "flow-scanner",
+    "account-monitor",
     "execution",
   ];
   reductionOrder.forEach((pool) => {
@@ -220,6 +232,7 @@ export function getMarketDataAdmissionBudget() {
   const usableLines = Math.max(1, maxLines - reserveLines);
   const poolLineCaps = normalizePoolLineCaps(usableLines);
   const automationLineCap = poolLineCaps.automation;
+  const accountMonitorLineCap = poolLineCaps["account-monitor"];
   const flowScannerLineCap = poolLineCaps["flow-scanner"];
 
   return {
@@ -227,6 +240,7 @@ export function getMarketDataAdmissionBudget() {
     reserveLines,
     usableLines,
     automationLineCap,
+    accountMonitorLineCap,
     flowScannerLineCap,
     poolLineCaps,
     pools: (Object.keys(poolLineCaps) as MarketDataPoolId[]).map((pool) => ({
@@ -364,6 +378,18 @@ export function releaseMarketDataLeases(owner: string, reason = "released"): voi
   Array.from(leases.values())
     .filter((lease) => lease.owner === owner)
     .forEach((lease) => releaseLease(lease, "released", reason));
+}
+
+export function releaseMarketDataLeaseIds(
+  leaseIds: string[],
+  reason = "released",
+): void {
+  leaseIds.forEach((leaseId) => {
+    const lease = leases.get(leaseId);
+    if (lease) {
+      releaseLease(lease, "released", reason);
+    }
+  });
 }
 
 export function expireMarketDataLeases(now = Date.now()): void {
@@ -588,6 +614,7 @@ export function getMarketDataAdmissionDiagnostics() {
     id.startsWith("option:"),
   );
   const automationLines = activeLineIds({ intent: "automation-live" });
+  const accountMonitorLines = activeLineIds({ intent: "account-monitor-live" });
   const flowScannerLines = activeLineIds({ intent: "flow-scanner-live" });
   const intentUsage = Object.fromEntries(
     (Object.keys(INTENT_PRIORITY) as MarketDataIntent[]).map((intent) => [
@@ -632,6 +659,8 @@ export function getMarketDataAdmissionDiagnostics() {
   >;
 
   return {
+    schemaVersion: MARKET_DATA_ADMISSION_SCHEMA_VERSION,
+    generatedAt: new Date().toISOString(),
     budget,
     activeLineCount: uniqueLines.size,
     reserveLineCount: Math.max(0, budget.maxLines - uniqueLines.size),
@@ -642,6 +671,11 @@ export function getMarketDataAdmissionDiagnostics() {
     automationRemainingLineCount: Math.max(
       0,
       budget.automationLineCap - automationLines.size,
+    ),
+    accountMonitorLineCount: accountMonitorLines.size,
+    accountMonitorRemainingLineCount: Math.max(
+      0,
+      budget.accountMonitorLineCap - accountMonitorLines.size,
     ),
     flowScannerLineCount: flowScannerLines.size,
     flowScannerRemainingLineCount: Math.max(

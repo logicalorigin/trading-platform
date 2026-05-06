@@ -8,19 +8,19 @@ import {
   useState,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarDays } from "lucide-react";
 import {
   useGetNews,
   useGetResearchEarningsCalendar,
 } from "@workspace/api-client-react";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import { useMarketAlertsSnapshot } from "../features/platform/marketAlertsStore";
-import { useMarketFlowSnapshot } from "../features/platform/marketFlowStore";
+import {
+  BROAD_MARKET_FLOW_STORE_KEY,
+  useMarketFlowSnapshotForStoreKey,
+} from "../features/platform/marketFlowStore";
 import { useSignalMonitorSnapshot } from "../features/platform/signalMonitorStore";
-import { MarketCalendarOverlay } from "../features/market/MarketCalendarOverlay.jsx";
 import { MultiChartGrid } from "../features/market/MultiChartGrid.jsx";
 import { MarketActivityPanel } from "../features/market/MarketActivityPanel";
-import { getMarketCalendarMonthWindow } from "../features/market/marketCalendarModel.js";
 import {
   MACRO_TICKERS,
   RATES_PROXIES,
@@ -379,7 +379,6 @@ export const MarketScreen = ({
   onSymClick,
   onChartFocus,
   symbols = [],
-  flowSymbols = symbols,
   signalSuggestionSymbols = [],
   isVisible = false,
   researchConfigured = false,
@@ -390,10 +389,6 @@ export const MarketScreen = ({
   onChangeMonitorTimeframe,
   onChangeMonitorWatchlist,
   watchlists = [],
-  onOpenTrade,
-  linkedContext = null,
-  onLinkedWorkspaceGroupChange,
-  onLinkedContextChange,
 }) => {
   const queryClient = useQueryClient();
   const marketWorkspaceRef = useRef(null);
@@ -409,9 +404,6 @@ export const MarketScreen = ({
       ? clampNumber(stored, 0.1, 100)
       : 1;
   });
-  const [marketCalendarOpen, setMarketCalendarOpen] = useState(false);
-  const [marketCalendarMonthDate, setMarketCalendarMonthDate] = useState(() => new Date());
-  const [chartFlowSnapshotState, setChartFlowSnapshotState] = useState(null);
   const [marketChartRetryRevision, setMarketChartRetryRevision] = useState(0);
   useEffect(() => {
     persistState({ marketActivityPanelWidth: activityPanelWidth });
@@ -464,19 +456,6 @@ export const MarketScreen = ({
     if (!Number.isFinite(next) || next <= 0) return;
     setUnusualThreshold(clampNumber(next, 0.1, 100));
   }, []);
-  const handleChartFlowSnapshotChange = useCallback((next) => {
-    setChartFlowSnapshotState((current) => {
-      if (!next) {
-        return current === null ? current : null;
-      }
-      return current?.signature === next.signature ? current : next;
-    });
-  }, []);
-  useEffect(() => {
-    if (!isVisible) {
-      setChartFlowSnapshotState(null);
-    }
-  }, [isVisible]);
   const marketChartResetKey = useMemo(
     () => `${sym || ""}:${symbols.join(",")}:${isVisible ? "visible" : "hidden"}`,
     [isVisible, sym, symbols],
@@ -521,18 +500,19 @@ export const MarketScreen = ({
     },
     [activityPanelWidth],
   );
-  const flowSnapshot = useMarketFlowSnapshot(flowSymbols, {
-    subscribe: isVisible,
-  });
-  const chartFlowSnapshot = chartFlowSnapshotState?.snapshot || null;
-  const activityFlowSnapshot = chartFlowSnapshot || flowSnapshot;
+  const flowSnapshot = useMarketFlowSnapshotForStoreKey(
+    BROAD_MARKET_FLOW_STORE_KEY,
+    {
+      subscribe: isVisible,
+    },
+  );
   const {
     putCall,
     sectorFlow,
     flowStatus,
     flowEvents,
     providerSummary: flowProviderSummary,
-  } = activityFlowSnapshot;
+  } = flowSnapshot;
   const popularTickers = useMemo(() => {
     const bySymbol = new Map();
     for (const event of flowEvents || []) {
@@ -562,10 +542,6 @@ export const MarketScreen = ({
       to: formatIsoDate(to),
     };
   }, []);
-  const marketCalendarWindow = useMemo(
-    () => getMarketCalendarMonthWindow(marketCalendarMonthDate),
-    [marketCalendarMonthDate],
-  );
   const newsQuery = useGetNews(
     { limit: 6 },
     {
@@ -590,20 +566,6 @@ export const MarketScreen = ({
       retry: false,
     },
   });
-  const marketCalendarQuery = useGetResearchEarningsCalendar(marketCalendarWindow, {
-    query: {
-      enabled: Boolean(
-        isVisible &&
-          marketCalendarOpen &&
-          researchConfigured &&
-          marketCalendarWindow.from &&
-          marketCalendarWindow.to,
-      ),
-      staleTime: 300_000,
-      refetchInterval: isVisible && marketCalendarOpen ? 300_000 : false,
-      retry: false,
-    },
-  });
   useRuntimeWorkloadFlag("market:news", isVisible, {
     kind: "poll",
     label: "Market news",
@@ -616,16 +578,6 @@ export const MarketScreen = ({
     detail: "300s",
     priority: 7,
   });
-  useRuntimeWorkloadFlag(
-    "market:calendar-overlay",
-    isVisible && marketCalendarOpen && researchConfigured,
-    {
-      kind: "poll",
-      label: "Market calendar overlay",
-      detail: marketCalendarWindow.monthKey,
-      priority: 7,
-    },
-  );
   const breadth = buildTrackedBreadthSummary();
   const ratesSummary = buildRatesProxySummary();
   const volatilityProxy =
@@ -854,13 +806,8 @@ export const MarketScreen = ({
                 popularTickers={stablePopularTickers}
                 signalSuggestionSymbols={signalSuggestionSymbols}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-                earningsEventsEnabled={researchConfigured}
                 isVisible={isVisible}
                 unusualThreshold={chartFlowUnusualThreshold}
-                onChartFlowSnapshotChange={handleChartFlowSnapshotChange}
-                linkedContext={linkedContext}
-                onLinkedWorkspaceGroupChange={onLinkedWorkspaceGroupChange}
-                onLinkedContextChange={onLinkedContextChange}
               />
             </MarketPanelErrorBoundary>
           ) : (
@@ -916,9 +863,7 @@ export const MarketScreen = ({
                 onChangeUnusualThreshold={handleChangeUnusualThreshold}
                 flowStatus={flowStatus}
                 flowProviderSummary={flowProviderSummary}
-                flowSnapshotSource={
-                  chartFlowSnapshot ? "chart-grid" : "shared-runtime"
-                }
+                flowSnapshotSource="broad-scanner"
               />
             </MarketPanelErrorBoundary>
           </div>
@@ -1392,40 +1337,18 @@ export const MarketScreen = ({
           <Card className="ra-panel-enter" style={{ padding: "6px 10px" }}>
             <CardTitle
               right={
-                <div style={{ display: "flex", alignItems: "center", gap: sp(5) }}>
-                  <span
-                    style={{
-                      fontSize: fs(7),
-                      color:
-                        calendarStatusLabel === "earnings · live"
-                          ? T.accent
-                          : T.textDim,
-                      fontFamily: T.mono,
-                    }}
-                  >
-                    {calendarStatusLabel}
-                  </span>
-                  <AppTooltip content="Open market calendar"><button
-                    type="button"
-                    data-testid="market-calendar-open"
-                    onClick={() => setMarketCalendarOpen(true)}
-                    className="ra-interactive"
-                    style={{
-                      width: dim(20),
-                      height: dim(20),
-                      border: `1px solid ${T.border}`,
-                      background: T.bg2,
-                      color: T.textSec,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: 0,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <CalendarDays size={dim(12)} strokeWidth={2.2} />
-                  </button></AppTooltip>
-                </div>
+                <span
+                  style={{
+                    fontSize: fs(7),
+                    color:
+                      calendarStatusLabel === "earnings · live"
+                        ? T.accent
+                        : T.textDim,
+                    fontFamily: T.mono,
+                  }}
+                >
+                  {calendarStatusLabel}
+                </span>
               }
             >
               Calendar
@@ -1507,23 +1430,6 @@ export const MarketScreen = ({
           </Card>
         </div>
       </div>
-      <MarketCalendarOverlay
-        open={marketCalendarOpen}
-        monthDate={marketCalendarMonthDate}
-        onChangeMonth={setMarketCalendarMonthDate}
-        onClose={() => setMarketCalendarOpen(false)}
-        earningsEntries={marketCalendarQuery.data?.entries || []}
-        earningsPending={marketCalendarQuery.isPending}
-        earningsError={marketCalendarQuery.isError}
-        researchConfigured={researchConfigured}
-        watchlists={watchlists}
-        fallbackSymbols={symbols}
-        heldSymbols={[]}
-        onSelectSymbol={onSymClick}
-        onOpenTrade={onOpenTrade}
-        onLinkedContextChange={onLinkedContextChange}
-        stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-      />
     </div>
   );
 };

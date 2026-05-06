@@ -1,5 +1,6 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
+import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import {
   EmptyState,
@@ -8,6 +9,7 @@ import {
   formatAccountPercent,
   mutedLabelStyle,
   sectionTitleStyle,
+  toneForValue,
 } from "./accountUtils";
 
 const getColors = () => [T.blue, T.cyan, T.purple, T.amber, T.green, "#f43f5e", T.textDim];
@@ -94,6 +96,60 @@ const Donut = ({ title, data, currency, maskValues = false, compact = false }) =
   </div>
 );
 
+const ConcentrationList = ({
+  title,
+  rows = [],
+  currency,
+  valueKey,
+  maskValues = false,
+  emptyLabel = "No rows",
+}) => (
+  <div style={{ display: "grid", gap: sp(3) }}>
+    <div style={{ ...sectionTitleStyle, fontSize: fs(8) }}>{title}</div>
+    {rows.length ? (
+      rows.slice(0, 5).map((row) => (
+        <div
+          key={`${title}:${row.symbol || row.sector}`}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto auto",
+            gap: sp(5),
+            alignItems: "center",
+            padding: sp("1px 0"),
+            borderBottom: `1px solid ${T.border}`,
+            fontSize: fs(9),
+            fontFamily: T.sans,
+          }}
+        >
+          <span style={{ color: T.text, minWidth: 0 }}>
+            {row.symbol ? (
+              <MarketIdentityInline
+                item={{ ticker: row.symbol, market: "stocks" }}
+                size={14}
+                showMark={false}
+                showChips
+                style={{ maxWidth: dim(120) }}
+              />
+            ) : (
+              row.sector
+            )}
+          </span>
+          <span style={{ color: toneForValue(row[valueKey]) }}>
+            {formatAccountMoney(row[valueKey], currency, true, maskValues)}
+          </span>
+          <span style={{ color: T.textDim }}>
+            {row.weightPercent == null
+              ? "----"
+              : formatAccountPercent(row.weightPercent, 1, maskValues)}
+          </span>
+        </div>
+      ))
+    ) : (
+      <div style={{ color: T.textMuted, fontSize: fs(10) }}>{emptyLabel}</div>
+    )}
+  </div>
+);
+
 const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = false }) => (
   <div
     style={{
@@ -123,7 +179,13 @@ const ExposureMetric = ({ label, value, currency, tone = T.text, maskValues = fa
   </div>
 );
 
-export const AllocationPanel = ({ query, currency, maskValues = false, compact = false }) => {
+export const AllocationPanel = ({
+  query,
+  currency,
+  maskValues = false,
+  compact = false,
+  concentration = null,
+}) => {
   const assetRows = nonZeroBuckets(query.data?.assetClass || []);
   const sectorRows = nonZeroBuckets(query.data?.sector || []);
   const exposure = query.data?.exposure;
@@ -319,6 +381,36 @@ export const AllocationPanel = ({ query, currency, maskValues = false, compact =
               </span>
             </div>
           </div>
+
+          {!compact &&
+          concentration &&
+          ((concentration.topPositions?.length || 0) > 0 ||
+            (concentration.sectors?.length || 0) > 0) ? (
+            <div
+              style={{
+                borderTop: `1px solid ${T.border}`,
+                paddingTop: sp(5),
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: sp(8),
+              }}
+            >
+              <ConcentrationList
+                title="Top Concentration"
+                rows={concentration.topPositions || []}
+                currency={currency}
+                valueKey="marketValue"
+                maskValues={maskValues}
+              />
+              <ConcentrationList
+                title="Sector Concentration"
+                rows={concentration.sectors || []}
+                currency={currency}
+                valueKey="value"
+                maskValues={maskValues}
+              />
+            </div>
+          ) : null}
         </div>
       )}
     </Panel>

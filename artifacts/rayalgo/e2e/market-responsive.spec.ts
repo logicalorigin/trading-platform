@@ -1,4 +1,4 @@
-import { expect, test, type ConsoleMessage, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type ConsoleMessage, type Locator, type Page } from "@playwright/test";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(90_000);
@@ -48,6 +48,40 @@ function expectLogicalRangesClose(
   expect(expected, `expected logical range ${expectedSignature}`).not.toBeNull();
   expect(Math.abs(actual!.from - expected!.from)).toBeLessThanOrEqual(tolerance);
   expect(Math.abs(actual!.to - expected!.to)).toBeLessThanOrEqual(tolerance);
+}
+
+function logicalRangesClose(
+  actualSignature: string | null,
+  expectedSignature: string | null,
+  tolerance = 0.001,
+) {
+  const actual = parseLogicalRangeSignature(actualSignature);
+  const expected = parseLogicalRangeSignature(expectedSignature);
+  return Boolean(
+    actual &&
+      expected &&
+      Math.abs(actual.from - expected.from) <= tolerance &&
+      Math.abs(actual.to - expected.to) <= tolerance,
+  );
+}
+
+async function expectPlotInsideChartFrame(
+  chart: Locator,
+  plot: Locator,
+) {
+  const chartBox = await chart.boundingBox();
+  const plotBox = await plot.boundingBox();
+
+  expect(chartBox, "chart frame should have a geometry box").not.toBeNull();
+  expect(plotBox, "chart plot should have a geometry box").not.toBeNull();
+  expect(plotBox!.x).toBeGreaterThanOrEqual(chartBox!.x - 1);
+  expect(plotBox!.y).toBeGreaterThanOrEqual(chartBox!.y - 1);
+  expect(plotBox!.x + plotBox!.width).toBeLessThanOrEqual(
+    chartBox!.x + chartBox!.width + 1,
+  );
+  expect(plotBox!.y + plotBox!.height).toBeLessThanOrEqual(
+    chartBox!.y + chartBox!.height + 1,
+  );
 }
 
 function makeBars(symbol: string, version = 0, count = 120) {
@@ -119,27 +153,12 @@ function makeFlowEvents(symbol: string) {
   ];
 }
 
-function currentMonthIsoDate(dayPreference: number) {
-  const now = new Date();
-  const lastDay = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
-  ).getUTCDate();
-  const day = Math.max(1, Math.min(lastDay, dayPreference));
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day),
-  )
-    .toISOString()
-    .slice(0, 10);
-}
-
 async function mockMarketApi(
   page: Page,
   options: {
     ibkrStreaming?: boolean;
     advanceBarsOnRequest?: boolean;
     initialBarCount?: number;
-    researchConfigured?: boolean;
-    earningsEntries?: Array<Record<string, unknown>>;
   } = {},
 ) {
   const observed = {
@@ -161,11 +180,7 @@ async function mockMarketApi(
           historical: "ibkr",
           research: "fmp",
         },
-        configured: {
-          polygon: false,
-          ibkr: Boolean(options.ibkrStreaming),
-          research: Boolean(options.researchConfigured),
-        },
+        configured: { polygon: false, ibkr: Boolean(options.ibkrStreaming), research: false },
         ibkrBridge: options.ibkrStreaming
           ? {
               authenticated: true,
@@ -238,57 +253,7 @@ async function mockMarketApi(
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
-      const from = url.searchParams.get("from") || "";
-      const to = url.searchParams.get("to") || "";
-      const entries = options.earningsEntries || [];
-      body = {
-        entries: entries.filter((entry) => {
-          const date = String(entry.date || "");
-          return (!from || date >= from) && (!to || date <= to);
-        }),
-      };
-    } else if (url.pathname === "/api/research/earnings-events") {
-      const symbol = (url.searchParams.get("symbol") || "").toUpperCase();
-      const from = url.searchParams.get("from") || "";
-      const to = url.searchParams.get("to") || "";
-      const events = (options.earningsEntries || [])
-        .filter((entry) => {
-          const date = String(entry.date || "");
-          const entrySymbol = String(entry.symbol || "").toUpperCase();
-          return (
-            (!symbol || entrySymbol === symbol) &&
-            (!from || date >= from) &&
-            (!to || date <= to)
-          );
-        })
-        .map((entry) => ({
-          symbol: String(entry.symbol || "").toUpperCase(),
-          date: entry.date,
-          reportingTime: entry.time || null,
-          provider: "fmp",
-          epsEstimated: entry.epsEstimated ?? null,
-          epsActual: entry.epsActual ?? null,
-          revenueEstimated: entry.revenueEstimated ?? null,
-          revenueActual: entry.revenueActual ?? null,
-          fiscalPeriod: entry.fiscalPeriod ?? null,
-          fiscalDateEnding: entry.fiscalDateEnding ?? null,
-          status:
-            entry.epsActual !== undefined || entry.revenueActual !== undefined
-              ? "confirmed"
-              : "estimated",
-          fetchedAt: new Date().toISOString(),
-        }));
-      body = {
-        symbol,
-        from,
-        to,
-        events,
-      };
-    } else if (url.pathname === "/api/research/status") {
-      body = {
-        configured: Boolean(options.researchConfigured),
-        provider: options.researchConfigured ? "fmp" : null,
-      };
+      body = { entries: [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
       body = {
         id: "mock-signal-monitor-profile",
@@ -455,197 +420,6 @@ async function expectNoElementOverflow(page: Page, selector: string) {
     expect(entry.overflowY, `${entry.text} should not overflow vertically`).toBe(false);
   });
 }
-
-test("Market calendar overlay renders month events, detail chart, and Trade handoff", async ({
-  page,
-}) => {
-  const runtimeIssues: string[] = [];
-  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
-  page.on("console", (message) => {
-    if (
-      (message.type() === "error" || message.type() === "warning") &&
-      !isIgnorableConsoleMessage(message)
-    ) {
-      runtimeIssues.push(message.text());
-    }
-  });
-
-  const todayDate = new Date().toISOString().slice(0, 10);
-  const nvdaDate = todayDate;
-  const aaplDate = currentMonthIsoDate(8);
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockMarketApi(page, {
-    researchConfigured: true,
-    earningsEntries: [
-      {
-        symbol: "SPY",
-        date: todayDate,
-        time: "bmo",
-        epsEstimated: 0,
-        revenueEstimated: 0,
-        fiscalDateEnding: todayDate,
-      },
-      {
-        symbol: "NVDA",
-        date: nvdaDate,
-        time: "amc",
-        epsEstimated: 5.22,
-        revenueEstimated: 38_000_000_000,
-        fiscalDateEnding: nvdaDate,
-      },
-      {
-        symbol: "AAPL",
-        date: aaplDate,
-        time: "bmo",
-        epsEstimated: 1.48,
-        revenueEstimated: 94_000_000_000,
-        fiscalDateEnding: aaplDate,
-      },
-    ],
-  });
-  await openMarket(page, "1x1");
-  await expect(
-    page.locator(
-      '[data-testid="market-mini-chart-0-surface-chart-event"][data-chart-event-type="earnings"]',
-    ),
-  ).toBeVisible({ timeout: 20_000 });
-
-  await page.getByTestId("market-calendar-open").click();
-  await expect(page.getByTestId("market-calendar-overlay")).toBeVisible();
-  await expect(page.getByTestId("market-calendar-provider-status")).toContainText(
-    /earnings live/i,
-    { timeout: 15_000 },
-  );
-  await expect(page.getByTestId("market-calendar-month-grid")).toBeVisible();
-  await page.getByText("NVDA AMC").click();
-  await expect(page.getByTestId("market-calendar-detail")).toContainText("NVDA");
-  await expect(page.getByTestId("market-calendar-detail")).toContainText("Revenue");
-  await expect(page.getByTestId("market-calendar-detail-mini-chart")).toBeVisible();
-  await expect(page.getByTestId("market-calendar-detail-chart")).toBeVisible({
-    timeout: 20_000,
-  });
-
-  await page.getByTestId("market-calendar-scope-all_watchlists").click();
-  await expect(page.getByTestId("market-calendar-detail")).toContainText("NVDA");
-
-  await page
-    .getByTestId("market-calendar-detail")
-    .getByRole("button", { name: /trade/i })
-    .click();
-  await expect(page.getByTestId("market-calendar-overlay")).toBeHidden();
-  await expect(page.getByTestId("trade-tab-NVDA")).toBeVisible({
-    timeout: 20_000,
-  });
-  expect(runtimeIssues, "Market calendar overlay should not emit runtime issues").toEqual([]);
-});
-
-test("Market calendar overlay uses phone agenda, detail chart, and Trade handoff", async ({
-  page,
-}, testInfo: TestInfo) => {
-  const runtimeIssues: string[] = [];
-  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
-  page.on("console", (message) => {
-    if (
-      (message.type() === "error" || message.type() === "warning") &&
-      !isIgnorableConsoleMessage(message)
-    ) {
-      runtimeIssues.push(message.text());
-    }
-  });
-
-  const todayDate = new Date().toISOString().slice(0, 10);
-  const aaplDate = currentMonthIsoDate(8);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockMarketApi(page, {
-    researchConfigured: true,
-    earningsEntries: [
-      {
-        symbol: "SPY",
-        date: todayDate,
-        time: "bmo",
-        epsEstimated: 0,
-        revenueEstimated: 0,
-        fiscalDateEnding: todayDate,
-      },
-      {
-        symbol: "NVDA",
-        date: todayDate,
-        time: "amc",
-        epsEstimated: 5.22,
-        revenueEstimated: 38_000_000_000,
-        fiscalDateEnding: todayDate,
-      },
-      {
-        symbol: "AAPL",
-        date: aaplDate,
-        time: "bmo",
-        epsEstimated: 1.48,
-        revenueEstimated: 94_000_000_000,
-        fiscalDateEnding: aaplDate,
-      },
-    ],
-  });
-  await openMarket(page, "1x1");
-
-  await page.getByTestId("market-calendar-open").click();
-  await expect(page.getByTestId("market-calendar-overlay")).toHaveAttribute(
-    "data-layout",
-    "phone",
-  );
-  await expect(page.getByTestId("market-calendar-provider-status")).toContainText(
-    /earnings live/i,
-    { timeout: 15_000 },
-  );
-  await expect(page.getByTestId("market-calendar-agenda")).toBeVisible();
-  await expect(page.getByTestId("market-calendar-month-grid")).toHaveCount(0);
-
-  await page
-    .locator('[data-testid^="market-calendar-event-"]')
-    .filter({ hasText: "NVDA" })
-    .first()
-    .click();
-  await expect(page.getByTestId("market-calendar-detail")).toContainText("NVDA");
-  await expect(page.getByTestId("market-calendar-detail")).toContainText("Revenue");
-  await expect(page.getByTestId("market-calendar-detail-mini-chart")).toBeVisible();
-  await expect(page.getByTestId("market-calendar-detail-chart")).toBeVisible({
-    timeout: 20_000,
-  });
-
-  const overlayMetrics = await page.getByTestId("market-calendar-overlay").evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return {
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      documentScrollWidth: document.documentElement.scrollWidth,
-      left: rect.left,
-      right: rect.right,
-      top: rect.top,
-      bottom: rect.bottom,
-    };
-  });
-  expect(overlayMetrics.documentScrollWidth).toBeLessThanOrEqual(
-    overlayMetrics.viewportWidth + 1,
-  );
-  expect(overlayMetrics.left).toBeGreaterThanOrEqual(0);
-  expect(overlayMetrics.right).toBeLessThanOrEqual(overlayMetrics.viewportWidth);
-  expect(overlayMetrics.top).toBeGreaterThanOrEqual(0);
-  expect(overlayMetrics.bottom).toBeLessThanOrEqual(overlayMetrics.viewportHeight);
-
-  await testInfo.attach("phase12-phone-market-calendar.png", {
-    body: await page.screenshot({ animations: "disabled" }),
-    contentType: "image/png",
-  });
-
-  await page
-    .getByTestId("market-calendar-detail")
-    .getByRole("button", { name: /trade/i })
-    .click();
-  await expect(page.getByTestId("market-calendar-overlay")).toBeHidden();
-  await expect(page.getByTestId("trade-tab-NVDA")).toBeVisible({
-    timeout: 20_000,
-  });
-  expect(runtimeIssues, "Market calendar phone overlay should not emit runtime issues").toEqual([]);
-});
 
 test("Market chart grid lets chart surfaces own touched viewports and clears them on reset", async ({
   page,
@@ -831,6 +605,98 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
     )
     .toBe("QQQ");
   expect(runtimeIssues, "Market chart drag-pan test should not emit runtime issues").toEqual([]);
+});
+
+test("Market chart grid resets stale viewports and keeps plots framed across layouts", async ({
+  page,
+}) => {
+  const runtimeIssues: string[] = [];
+  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning") &&
+      !isIgnorableConsoleMessage(message)
+    ) {
+      runtimeIssues.push(message.text());
+    }
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockMarketApi(page);
+  await openMarket(page, "2x3");
+
+  const chart = page.getByTestId("market-mini-chart-0");
+  const surface = page.getByTestId("market-mini-chart-0-surface");
+  const plot = page.getByTestId("market-mini-chart-0-surface-plot");
+  await expect(surface).toHaveAttribute(
+    "data-chart-viewport-layout",
+    /market-grid:2x3:slot-0:3x2:rev-0/,
+  );
+  await expect
+    .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
+    .not.toBe("none");
+  await expectPlotInsideChartFrame(chart, plot);
+
+  const initialPlotBox = await plot.boundingBox();
+  expect(initialPlotBox, "initial plot should have a geometry box").not.toBeNull();
+  await page.mouse.move(
+    initialPlotBox!.x + initialPlotBox!.width * 0.5,
+    initialPlotBox!.y + initialPlotBox!.height * 0.5,
+  );
+  await page.mouse.wheel(0, -500);
+  await expect(surface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "true",
+    { timeout: 10_000 },
+  );
+  const touchedRange = await surface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
+  const touched = parseLogicalRangeSignature(touchedRange);
+  expect(touched, `touched logical range ${touchedRange}`).not.toBeNull();
+
+  await page.getByRole("button", { name: "3x3" }).click();
+  await expect(surface).toHaveAttribute(
+    "data-chart-viewport-layout",
+    /market-grid:3x3:slot-0:3x3:rev-0/,
+    { timeout: 10_000 },
+  );
+  await expect(surface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "false",
+    { timeout: 10_000 },
+  );
+  await expect
+    .poll(() => surface.getAttribute("data-chart-visible-logical-range"))
+    .not.toBe("none");
+  await expectPlotInsideChartFrame(chart, plot);
+
+  const resetRange = await surface.getAttribute(
+    "data-chart-visible-logical-range",
+  );
+  const reset = parseLogicalRangeSignature(resetRange);
+  expect(reset, `reset logical range ${resetRange}`).not.toBeNull();
+  expect(logicalRangesClose(resetRange, touchedRange, 2)).toBe(false);
+  const compactPlotBox = await plot.boundingBox();
+  expect(compactPlotBox, "compact plot should have a geometry box").not.toBeNull();
+  expect(compactPlotBox!.height).toBeLessThan(initialPlotBox!.height);
+
+  await page.getByRole("button", { name: "1x1" }).click();
+  await expect(surface).toHaveAttribute(
+    "data-chart-viewport-layout",
+    /market-grid:1x1:slot-0:1x1:rev-0/,
+    { timeout: 10_000 },
+  );
+  await expect(surface).toHaveAttribute(
+    "data-chart-viewport-user-touched",
+    "false",
+  );
+  await expectPlotInsideChartFrame(chart, plot);
+  const soloPlotBox = await plot.boundingBox();
+  expect(soloPlotBox, "solo plot should have a geometry box").not.toBeNull();
+  expect(soloPlotBox!.height).toBeGreaterThan(compactPlotBox!.height);
+
+  expect(runtimeIssues, "Market layout viewport test should not emit runtime issues").toEqual([]);
 });
 
 test("Market chart grid keeps active plot pans through live bar refreshes", async ({

@@ -50,49 +50,74 @@ export const navigateIbkrProtocolLauncher = (launcher, url) => {
 };
 
 export const readIbkrBridgeSessionValue = (key) => {
-  if (typeof window === "undefined" || !window.sessionStorage) {
+  if (typeof window === "undefined") {
     return null;
   }
 
   try {
-    return window.sessionStorage.getItem(key) || null;
+    return (
+      window.sessionStorage?.getItem(key) ||
+      window.localStorage?.getItem(key) ||
+      null
+    );
   } catch {
-    return null;
+    try {
+      return window.localStorage?.getItem(key) || null;
+    } catch {
+      return null;
+    }
   }
 };
 
 export const writeIbkrBridgeSessionValue = (key, value) => {
-  if (!value || typeof window === "undefined" || !window.sessionStorage) {
+  if (!value || typeof window === "undefined") {
     return;
   }
 
   try {
-    window.sessionStorage.setItem(key, value);
+    window.sessionStorage?.setItem(key, value);
   } catch {
     // Session storage only keeps local bridge controls available in this tab.
+  }
+  try {
+    window.localStorage?.setItem(key, value);
+  } catch {
+    // Local storage lets bridge controls survive a reload; ignore write failures.
   }
 };
 
 export const removeIbkrBridgeSessionValue = (key) => {
-  if (typeof window === "undefined" || !window.sessionStorage) {
+  if (typeof window === "undefined") {
     return;
   }
 
   try {
-    window.sessionStorage.removeItem(key);
+    window.sessionStorage?.removeItem(key);
   } catch {
     // Session storage only keeps local bridge controls available in this tab.
+  }
+  try {
+    window.localStorage?.removeItem(key);
+  } catch {
+    // Ignore local storage cleanup failures.
   }
 };
 
 export const clearIbkrBridgeSessionValues = () => {
-  if (typeof window === "undefined" || !window.sessionStorage) {
+  if (typeof window === "undefined") {
     return;
   }
 
   try {
     Object.values(IBKR_BRIDGE_SESSION_KEYS).forEach((key) => {
-      window.sessionStorage.removeItem(key);
+      window.sessionStorage?.removeItem(key);
+    });
+  } catch {
+    // Ignore storage cleanup failures.
+  }
+  try {
+    Object.values(IBKR_BRIDGE_SESSION_KEYS).forEach((key) => {
+      window.localStorage?.removeItem(key);
     });
   } catch {
     // Ignore storage cleanup failures.

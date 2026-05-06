@@ -7,6 +7,7 @@ import {
   FLOW_SCANNER_SCOPE,
   UNUSUAL_SCANNER_BATCH_SIZE,
   UNUSUAL_SCANNER_INTERVAL_MS,
+  buildFlowScannerMarketUniverseSymbols,
   buildFlowScannerSymbols,
   filterFlowScannerEvents,
   normalizeFlowScannerConfig,
@@ -42,7 +43,7 @@ test("normalizeFlowScannerConfig applies defaults and clamps capacity settings",
       maxDte: "",
     }),
     {
-      mode: FLOW_SCANNER_MODE.allWatchlists,
+      mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
       scope: FLOW_SCANNER_SCOPE.unusual,
       maxSymbols: 2000,
       batchSize: 250,
@@ -94,8 +95,11 @@ test("buildFlowScannerSymbols can scan only the active watchlist", () => {
   );
 });
 
-test("default flow scanner scans all watchlists without market universe fallback", () => {
-  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.mode, FLOW_SCANNER_MODE.allWatchlists);
+test("default flow scanner scans all watchlists plus the market universe", () => {
+  assert.equal(
+    DEFAULT_FLOW_SCANNER_CONFIG.mode,
+    FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+  );
   assert.deepEqual(
     buildFlowScannerSymbols({
       activeWatchlistSymbols: ["SPY"],
@@ -103,7 +107,20 @@ test("default flow scanner scans all watchlists without market universe fallback
       marketSymbols: ["QQQ", "IWM"],
       config: DEFAULT_FLOW_SCANNER_CONFIG,
     }),
-    ["SPY", "NVDA", "AAPL"],
+    ["SPY", "NVDA", "AAPL", "QQQ", "IWM"],
+  );
+});
+
+test("buildFlowScannerMarketUniverseSymbols keeps runtime signals from replacing the universe", () => {
+  assert.deepEqual(
+    buildFlowScannerMarketUniverseSymbols({
+      backendSymbols: ["AMD", "NVDA", "SPY"],
+      promotedSymbols: ["AMD"],
+      currentBatchSymbols: ["QQQ", "NVDA"],
+      fallbackSymbols: ["SPY", "AAPL"],
+      prioritizeRuntimeSignals: true,
+    }),
+    ["AMD", "QQQ", "NVDA", "SPY", "AAPL"],
   );
 });
 
@@ -123,6 +140,21 @@ test("filterFlowScannerEvents applies unusual, premium, and max-DTE filters", ()
       maxDte: 30,
     }).map((event) => event.id),
     ["match"],
+  );
+});
+
+test("filterFlowScannerEvents applies custom unusual thresholds locally", () => {
+  const events = [
+    { id: "default-unusual", isUnusual: true, unusualScore: 1.2, premium: 10_000, dte: 7 },
+    { id: "custom-unusual", isUnusual: true, unusualScore: 2.2, premium: 10_000, dte: 7 },
+  ];
+
+  assert.deepEqual(
+    filterFlowScannerEvents(events, {
+      scope: FLOW_SCANNER_SCOPE.unusual,
+      unusualThreshold: 2,
+    }).map((event) => event.id),
+    ["custom-unusual"],
   );
 });
 

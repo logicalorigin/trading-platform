@@ -100,6 +100,11 @@ const resolveConnectionProof = (connection, runtime) => {
     runtime?.connected,
     connection?.reachable,
   );
+  const brokerServerConnected = firstBoolean(
+    connection?.brokerServerConnected,
+    runtime?.brokerServerConnected,
+    socketConnected === true ? true : undefined,
+  );
   const authenticated = firstBoolean(
     connection?.authenticated,
     runtime?.authenticated,
@@ -115,6 +120,7 @@ const resolveConnectionProof = (connection, runtime) => {
     healthFresh === true &&
       bridgeReachable === true &&
       socketConnected === true &&
+      brokerServerConnected !== false &&
       authenticated === true &&
       accountsLoaded === true &&
       configuredLiveMarketDataMode === true &&
@@ -129,6 +135,7 @@ const resolveConnectionProof = (connection, runtime) => {
     healthAgeMs: firstValue(connection?.healthAgeMs, runtime?.healthAgeMs),
     bridgeReachable,
     socketConnected,
+    brokerServerConnected,
     authenticated,
     accountsLoaded,
     configuredLiveMarketDataMode,
@@ -186,6 +193,16 @@ const fallbackConnection = (session, key) => {
     stale: active ? bridge?.stale ?? bridge?.healthFresh === false : true,
     bridgeReachable: active ? bridge?.bridgeReachable ?? bridge?.healthFresh === true : false,
     socketConnected: active ? bridge?.socketConnected ?? Boolean(bridge?.connected) : false,
+    brokerServerConnected: active
+      ? bridge?.brokerServerConnected ?? Boolean(bridge?.connected)
+      : false,
+    serverConnectivity: active ? bridge?.serverConnectivity || null : "unknown",
+    lastServerConnectivityAt: active
+      ? bridge?.lastServerConnectivityAt || null
+      : null,
+    lastServerConnectivityError: active
+      ? bridge?.lastServerConnectivityError || null
+      : null,
     accountsLoaded: active ? bridge?.accountsLoaded ?? Boolean(bridge?.accounts?.length) : false,
     configuredLiveMarketDataMode: active
       ? bridge?.configuredLiveMarketDataMode ?? isLiveMarketDataMode(bridge?.marketDataMode)
@@ -307,13 +324,21 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
       };
     case "reconnect_needed":
       return {
-        label: "reconnect",
+        label:
+          streamStateReason === "gateway_server_disconnected"
+            ? "server disconnected"
+            : "reconnect",
         status: "reconnect_needed",
-        healthLabel: "Reconnect Needed",
+        healthLabel:
+          streamStateReason === "gateway_server_disconnected"
+            ? "Server Disconnected"
+            : "Reconnect Needed",
         detail:
-          streamStateReason === "gateway_socket_disconnected"
-            ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
-            : "Reconnect IBKR to attach the current Gateway tunnel",
+          streamStateReason === "gateway_server_disconnected"
+            ? "Gateway API socket is open, but Gateway is disconnected from IBKR servers"
+            : streamStateReason === "gateway_socket_disconnected"
+              ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
+              : "Reconnect IBKR to attach the current Gateway tunnel",
         color: T.amber,
         background: T.amberBg,
         Icon: PlugZap,
@@ -530,6 +555,7 @@ export const isIbkrWaveActive = (connection) => {
   const connected = Boolean(
     proof.healthFresh === true &&
       proof.authenticated === true &&
+      proof.brokerServerConnected !== false &&
       (proof.bridgeReachable === true ||
         proof.socketConnected === true ||
         connection.reachable === true) &&
@@ -569,6 +595,11 @@ export const resolveIbkrGatewayHealth = ({
   const authenticated = firstBoolean(
     connection?.authenticated,
     runtime?.authenticated,
+  );
+  const brokerServerConnected = firstBoolean(
+    connection?.brokerServerConnected,
+    runtime?.brokerServerConnected,
+    socketConnected === true ? true : undefined,
   );
   const competing = firstBoolean(connection?.competing, runtime?.competing);
   const liveMarketDataAvailable = firstBoolean(
@@ -639,6 +670,21 @@ export const resolveIbkrGatewayHealth = ({
         proof.streamStateReason === "gateway_socket_disconnected"
           ? "Bridge tunnel is reachable, but IB Gateway/TWS is disconnected"
           : streamMeta?.detail || "Reconnect IBKR to attach the current Gateway tunnel",
+    };
+  }
+
+  if (bridgeReachable === true && brokerServerConnected === false) {
+    const streamMeta = getIbkrStreamStateMeta(
+      proof.streamState,
+      proof.streamStateReason,
+    );
+    return {
+      status: "reconnect_needed",
+      label: streamMeta?.healthLabel || "Server Disconnected",
+      color: streamMeta?.color || T.amber,
+      detail:
+        streamMeta?.detail ||
+        "Gateway API socket is open, but Gateway is disconnected from IBKR servers",
     };
   }
 

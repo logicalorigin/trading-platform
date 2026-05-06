@@ -22,6 +22,7 @@ const HEAVY_GET_PATHS = new Set([
 ]);
 const HEAVY_GET_CONCURRENCY = 3;
 const HEAVY_GET_PRIORITY: Record<string, number> = {
+  "/api/bars": 8,
   "/api/options/chart-bars": 12,
   "/api/options/chains": 10,
 };

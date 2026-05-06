@@ -81,19 +81,6 @@ const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
 
-const normalizeSymbolFilter = (value) => String(value || "").trim().toUpperCase();
-
-const positionMatchesSymbol = (row, symbolFilter) => {
-  const normalized = normalizeSymbolFilter(symbolFilter);
-  if (!normalized) {
-    return true;
-  }
-  return [row?.symbol, row?.optionContract?.underlying]
-    .map(normalizeSymbolFilter)
-    .filter(Boolean)
-    .includes(normalized);
-};
-
 const dateLabel = (date) => {
   if (!date) return "Live";
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -329,18 +316,19 @@ export const PositionsPanel = ({
   sourceFilter = "all",
   onSourceFilterChange,
   onJumpToChart,
-  symbolFilter = "",
-  onClearSymbolFilter,
   rightRail = "IBKR positions + lots",
   emptyBody = "Positions from the IBKR account stream will appear here. Tax lots fill in from the local ledger as fills are observed.",
   maskValues = false,
+  positionsAtDateQuery,
+  activeEquityDate,
+  pinnedEquityDate,
+  currentPositionsCount,
+  onClearEquityPin,
 }) => {
   const [sort, setSort] = useState({ id: "marketValue", dir: "desc" });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const normalizedSymbolFilter = normalizeSymbolFilter(symbolFilter);
   const rows = (query.data?.positions || [])
     .filter(isOpenPositionRow)
-    .filter((row) => positionMatchesSymbol(row, normalizedSymbolFilter))
     .filter((row) =>
       sourceFilter === "all" ? true : row.sourceType === sourceFilter,
     );
@@ -376,12 +364,13 @@ export const PositionsPanel = ({
     });
   };
 
-  return (
+  const inspectingDate = Boolean(activeEquityDate || pinnedEquityDate);
+  const showInspector = inspectingDate && positionsAtDateQuery;
+
+  const positionsTablePanel = (
     <Panel
       title={`Current Positions · ${rows.length}`}
-      rightRail={
-        normalizedSymbolFilter ? `${rightRail} · ${normalizedSymbolFilter}` : rightRail
-      }
+      rightRail={rightRail}
       loading={query.isLoading}
       error={query.error}
       onRetry={query.refetch}
@@ -397,37 +386,18 @@ export const PositionsPanel = ({
               onChange={onSourceFilterChange}
             />
           ) : null}
-          {normalizedSymbolFilter ? (
-            <button
-              type="button"
-              data-testid="account-symbol-filter-clear"
-              className="ra-interactive"
-              onClick={onClearSymbolFilter}
-              style={secondaryButtonStyle}
-            >
-              Clear {normalizedSymbolFilter}
-            </button>
-          ) : null}
         </div>
       }
     >
       {!rows.length ? (
         <div style={{ padding: sp(7) }}>
           <EmptyState
-            title={
-              normalizedSymbolFilter
-                ? `No open ${normalizedSymbolFilter} positions`
-                : "No open positions"
-            }
-            body={
-              normalizedSymbolFilter
-                ? "Risk drilldown is active; clear the symbol filter to return to all positions."
-                : emptyBody
-            }
+            title="No open positions"
+            body={emptyBody}
           />
         </div>
       ) : (
-        <div className="ra-hide-scrollbar ra-account-table-scroll" style={{ overflow: "auto", maxHeight: "34vh" }}>
+        <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: "34vh" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1160 }}>
             <thead>
               <tr style={tableHeaderStyle}>
@@ -819,6 +789,26 @@ export const PositionsPanel = ({
         </div>
       )}
     </Panel>
+  );
+
+  if (!showInspector) {
+    return positionsTablePanel;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: sp(6) }}>
+      <PositionsAtDateInspector
+        query={positionsAtDateQuery}
+        activeDate={activeEquityDate}
+        pinnedDate={pinnedEquityDate}
+        currentPositionsCount={currentPositionsCount}
+        currency={currency}
+        maskValues={maskValues}
+        onClearPin={onClearEquityPin}
+        onJumpToChart={onJumpToChart}
+      />
+      {positionsTablePanel}
+    </div>
   );
 };
 

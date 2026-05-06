@@ -51,6 +51,7 @@ type ResearchChartFrameProps = {
   model: ChartModel;
   surfaceUiStateKey?: string;
   rangeIdentityKey?: string | null;
+  viewportLayoutKey?: string | null;
   compact?: boolean;
   showSurfaceToolbar?: boolean;
   showLegend?: boolean;
@@ -83,7 +84,6 @@ type ResearchChartFrameProps = {
   viewportSnapshot?: ChartViewportSnapshot | null;
   viewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
-  viewportResetRevision?: number;
   persistScalePrefs?: boolean;
 };
 
@@ -93,6 +93,7 @@ export const ResearchChartFrame = ({
   model,
   surfaceUiStateKey,
   rangeIdentityKey,
+  viewportLayoutKey,
   compact = false,
   showSurfaceToolbar = true,
   showLegend = true,
@@ -121,7 +122,6 @@ export const ResearchChartFrame = ({
   viewportSnapshot,
   viewportUserTouched = false,
   onViewportSnapshotChange,
-  viewportResetRevision = 0,
   persistScalePrefs,
 }: ResearchChartFrameProps) => (
   <div
@@ -147,6 +147,7 @@ export const ResearchChartFrame = ({
         themeKey={themeKey}
         uiStateKey={surfaceUiStateKey}
         rangeIdentityKey={rangeIdentityKey}
+        viewportLayoutKey={viewportLayoutKey}
         model={model}
         compact={compact}
         showToolbar={showSurfaceToolbar}
@@ -171,7 +172,6 @@ export const ResearchChartFrame = ({
         viewportSnapshot={viewportSnapshot}
         externalViewportUserTouched={viewportUserTouched}
         onViewportSnapshotChange={onViewportSnapshotChange}
-        viewportResetRevision={viewportResetRevision}
         persistScalePrefs={persistScalePrefs}
       />
     </div>

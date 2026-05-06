@@ -152,23 +152,6 @@ export type ResearchCalendarEntry = {
   fiscalDateEnding: string | null;
 };
 
-export type ResearchEarningsEventStatus = "confirmed" | "estimated";
-
-export type ResearchEarningsEvent = {
-  symbol: string;
-  date: string | null;
-  reportingTime: string | null;
-  provider: "fmp";
-  epsEstimated: number | null;
-  epsActual: number | null;
-  revenueEstimated: number | null;
-  revenueActual: number | null;
-  fiscalPeriod: string | null;
-  fiscalDateEnding: string | null;
-  status: ResearchEarningsEventStatus;
-  fetchedAt: string;
-};
-
 export type ResearchFiling = {
   symbol: string;
   type: string | null;
@@ -699,22 +682,6 @@ function normalizeIsoDate(value: unknown): string | null {
   return date ? toIsoDateString(date) : null;
 }
 
-function normalizeReportingTime(value: unknown): string | null {
-  const raw = asString(value)?.trim();
-  if (!raw) return null;
-  const normalized = raw.toLowerCase();
-  if (normalized === "before market open" || normalized === "before open") {
-    return "bmo";
-  }
-  if (normalized === "after market close" || normalized === "after close") {
-    return "amc";
-  }
-  if (normalized === "during market hours" || normalized === "market hours") {
-    return "dmh";
-  }
-  return normalized;
-}
-
 function getRecordArray(payload: unknown): Record<string, unknown>[] {
   return asArray(payload).flatMap((entry) => {
     const record = asRecord(entry);
@@ -1129,58 +1096,21 @@ export class FmpResearchClient {
     });
   }
 
-  async getEarningsCalendarEvents(
-    from: Date,
-    to: Date,
-  ): Promise<ResearchEarningsEvent[]> {
+  async getEarningsCalendar(from: Date, to: Date): Promise<ResearchCalendarEntry[]> {
     const payload = await this.fetchStable<unknown>("/earnings-calendar", {
       from: toIsoDateString(from),
       to: toIsoDateString(to),
     });
-    const fetchedAt = new Date().toISOString();
 
     return getRecordArray(payload).map((entry) => ({
       symbol: fromProviderSymbol(asString(entry["symbol"]) ?? ""),
       date: normalizeIsoDate(entry["date"]),
-      reportingTime: normalizeReportingTime(entry["time"]),
-      provider: "fmp",
-      epsEstimated: asNumber(
-        firstDefined(entry["epsEstimated"], entry["epsEstimate"]),
-      ),
-      epsActual: asNumber(
-        firstDefined(entry["epsActual"], entry["eps"]),
-      ),
-      revenueEstimated: asNumber(
-        firstDefined(entry["revenueEstimated"], entry["revenueEstimate"]),
-      ),
-      revenueActual: asNumber(
-        firstDefined(entry["revenueActual"], entry["revenue"]),
-      ),
-      fiscalPeriod: asString(
-        firstDefined(entry["period"], entry["fiscalPeriod"], entry["quarter"]),
-      ),
+      time: asString(entry["time"])?.toLowerCase() ?? null,
+      epsEstimated: asNumber(entry["epsEstimated"] ?? entry["eps"]),
+      revenueEstimated: asNumber(entry["revenueEstimated"] ?? entry["revenue"]),
       fiscalDateEnding: normalizeIsoDate(
         firstDefined(entry["fiscalDateEnding"], entry["fiscalDate"]),
       ),
-      status:
-        asNumber(firstDefined(entry["epsActual"], entry["eps"])) !== null ||
-        asNumber(firstDefined(entry["revenueActual"], entry["revenue"])) !== null
-          ? "confirmed"
-          : "estimated",
-      fetchedAt,
-    }));
-  }
-
-  async getEarningsCalendar(from: Date, to: Date): Promise<ResearchCalendarEntry[]> {
-    const events = await this.getEarningsCalendarEvents(from, to);
-
-    return events.map((event) => ({
-      symbol: event.symbol,
-      date: event.date,
-      time: event.reportingTime,
-      epsEstimated: event.epsEstimated ?? event.epsActual,
-      revenueEstimated: event.revenueEstimated ?? event.revenueActual,
-      fiscalDateEnding: event.fiscalDateEnding,
     }));
   }
 

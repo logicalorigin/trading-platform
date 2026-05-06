@@ -22,7 +22,6 @@ import type {
   StudySpec,
 } from "./types";
 import { resolveUsEquityMarketSession } from "./marketSession";
-import { formatChartPrice } from "./chartNumberFormat";
 
 export const RAY_REPLICA_PINE_SCRIPT_KEY = "rayalgo-replica-smc-pro-v3";
 
@@ -665,8 +664,12 @@ const resolveSolidHexColor = (color: string, fallback: string): string =>
   /^#[0-9a-fA-F]{6}/.test(color) ? color.slice(0, 7) : fallback;
 
 const formatOverlayPrice = (value: number): string => {
-  const formatted = formatChartPrice(value, { compact: true, missing: "—" });
-  return formatted.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  const fixed = value.toFixed(Math.abs(value) >= 100 ? 2 : 4);
+  return fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
 };
 
 const formatCompactVolume = (value: number): string => {

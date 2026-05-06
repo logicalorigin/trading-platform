@@ -32,6 +32,7 @@ import type {
   AccountSummaryResponse,
   AccountTradingPatternsResponse,
   AccountsResponse,
+  AlgoCockpitSnapshotResponse,
   AlgoDeployment,
   AlgoDeploymentsResponse,
   BacktestDraftStrategiesResponse,
@@ -92,7 +93,6 @@ import type {
   GetOptionExpirationsParams,
   GetQuoteSnapshotsParams,
   GetResearchEarningsCalendarParams,
-  GetResearchEarningsEventsParams,
   GetResearchFinancialsParams,
   GetResearchFundamentalsParams,
   GetResearchSecFilingsParams,
@@ -132,7 +132,6 @@ import type {
   QuoteSnapshotsResponse,
   ReplaceOrderRequest,
   ResearchCalendarResponse,
-  ResearchEarningsEventsResponse,
   ResearchFilingsResponse,
   ResearchFinancialsResponse,
   ResearchFundamentalsResponse,
@@ -5381,88 +5380,6 @@ export function useGetResearchEarningsCalendar<TData = Awaited<ReturnType<typeof
 
 
 /**
- * @summary Get provider-backed earnings events for a symbol
- */
-export const getGetResearchEarningsEventsUrl = (params: GetResearchEarningsEventsParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/research/earnings-events?${stringifiedParams}` : `/api/research/earnings-events`
-}
-
-export const getResearchEarningsEvents = async (params: GetResearchEarningsEventsParams, options?: RequestInit): Promise<ResearchEarningsEventsResponse> => {
-
-  return customFetch<ResearchEarningsEventsResponse>(getGetResearchEarningsEventsUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetResearchEarningsEventsQueryKey = (params?: GetResearchEarningsEventsParams,) => {
-    return [
-    `/api/research/earnings-events`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getGetResearchEarningsEventsQueryOptions = <TData = Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError = ErrorType<unknown>>(params: GetResearchEarningsEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetResearchEarningsEventsQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getResearchEarningsEvents>>> = ({ signal }) => getResearchEarningsEvents(params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetResearchEarningsEventsQueryResult = NonNullable<Awaited<ReturnType<typeof getResearchEarningsEvents>>>
-export type GetResearchEarningsEventsQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Get provider-backed earnings events for a symbol
- */
-
-export function useGetResearchEarningsEvents<TData = Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError = ErrorType<unknown>>(
- params: GetResearchEarningsEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchEarningsEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetResearchEarningsEventsQueryOptions(params,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-
-
-
-
-/**
  * @summary Get recent SEC filings for a symbol
  */
 export const getGetResearchSecFilingsUrl = (params: GetResearchSecFilingsParams,) => {
@@ -6066,6 +5983,81 @@ export function useGetSignalOptionsAutomationState<TData = Awaited<ReturnType<ty
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetSignalOptionsAutomationStateQueryOptions(deploymentId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Get the operator cockpit snapshot for an algo deployment
+ */
+export const getGetAlgoDeploymentCockpitUrl = (deploymentId: string,) => {
+
+
+
+
+  return `/api/algo/deployments/${deploymentId}/cockpit`
+}
+
+export const getAlgoDeploymentCockpit = async (deploymentId: string, options?: RequestInit): Promise<AlgoCockpitSnapshotResponse> => {
+
+  return customFetch<AlgoCockpitSnapshotResponse>(getGetAlgoDeploymentCockpitUrl(deploymentId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAlgoDeploymentCockpitQueryKey = (deploymentId: string,) => {
+    return [
+    `/api/algo/deployments/${deploymentId}/cockpit`
+    ] as const;
+    }
+
+
+export const getGetAlgoDeploymentCockpitQueryOptions = <TData = Awaited<ReturnType<typeof getAlgoDeploymentCockpit>>, TError = ErrorType<unknown>>(deploymentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentCockpit>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAlgoDeploymentCockpitQueryKey(deploymentId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlgoDeploymentCockpit>>> = ({ signal }) => getAlgoDeploymentCockpit(deploymentId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(deploymentId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentCockpit>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAlgoDeploymentCockpitQueryResult = NonNullable<Awaited<ReturnType<typeof getAlgoDeploymentCockpit>>>
+export type GetAlgoDeploymentCockpitQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the operator cockpit snapshot for an algo deployment
+ */
+
+export function useGetAlgoDeploymentCockpit<TData = Awaited<ReturnType<typeof getAlgoDeploymentCockpit>>, TError = ErrorType<unknown>>(
+ deploymentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlgoDeploymentCockpit>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAlgoDeploymentCockpitQueryOptions(deploymentId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

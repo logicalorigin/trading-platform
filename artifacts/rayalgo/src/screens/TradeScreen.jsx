@@ -30,15 +30,18 @@ import {
 } from "../features/charting/timeframes";
 import { RayReplicaSettingsMenu } from "../features/charting/RayReplicaSettingsMenu";
 import { ResearchChartFrame } from "../features/charting/ResearchChartFrame";
-import { ChartHydrationStatusStrip } from "../features/charting/ChartHydrationStatusStrip";
 import {
   ResearchChartWidgetFooter,
   ResearchChartWidgetHeader,
   ResearchChartWidgetSidebar,
 } from "../features/charting/ResearchChartWidgetChrome";
-import { flowEventsToChartEvents } from "../features/charting/chartEvents";
+import {
+  filterFlowEventsForOptionContract,
+  filterFlowEventsForSymbol,
+  flowEventsToChartEvents,
+  mergeFlowEventFeeds,
+} from "../features/charting/chartEvents";
 import { recordChartBarScopeState } from "../features/charting/chartHydrationStats";
-import { resolveChartLoadingStatus } from "../features/charting/chartLoadingStatusModel";
 import { resolveSpotChartFrameLayout } from "../features/charting/spotChartFrameLayout";
 import { useDrawingHistory } from "../features/charting/useDrawingHistory";
 import { useIndicatorLibrary } from "../features/charting/pineScripts";
@@ -66,6 +69,7 @@ import {
   OPTION_CHART_BARS_QUERY_DEFAULTS,
   useOptionChartBars,
 } from "../features/charting/useOptionChartBars.js";
+import { resolveOptionChartSourceState } from "../features/charting/chartApiBars.js";
 import {
   TradeEquityPanel,
   TradeL2Panel,
@@ -84,7 +88,6 @@ import {
   ensureTradeTickerInfo,
   publishRuntimeTickerSnapshot,
 } from "../features/platform/runtimeTickerStore";
-import { WorkspaceLinkChip } from "../features/platform/WorkspaceLinkChip.jsx";
 import {
   HEAVY_PAYLOAD_GC_MS,
   QUERY_DEFAULTS,
@@ -103,30 +106,34 @@ import {
   parseExpirationValue,
 } from "../lib/formatters";
 import { TradeChainPanel } from "../features/trade/TradeChainPanel";
-import { buildOptionChainRowsFromApi } from "../features/trade/optionChainRows";
+import {
+  buildOptionChainRowsFromApi,
+  patchOptionChainRowWithQuoteGetter,
+} from "../features/trade/optionChainRows";
 import {
   OPTION_CHAIN_AUTO_BATCH_ENABLED,
   OPTION_CHAIN_BATCH_ACTIVE_CHUNKS,
-  OPTION_CHAIN_EXPANDED_STRIKES_AROUND_MONEY,
+  DEFAULT_OPTION_CHAIN_COVERAGE,
+  OPTION_CHAIN_COVERAGE_VALUES,
   OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY,
   OPTION_CHAIN_FULL_STRIKE_COVERAGE,
   OPTION_CHAIN_METADATA_HYDRATION,
   getExpirationChainKey,
+  normalizeTradeOptionChainCoverage,
   resolveTradeOptionChainHydrationPlan,
-  shouldHydrateActiveFullCoverage,
 } from "../features/trade/optionChainLoadingPlan";
 import {
-  ACTIVE_OPTION_QUOTE_LINE_BUDGET,
-  DEFAULT_OPTION_QUOTE_ROTATION_MS,
-  buildTradeOptionProviderContractIdPlan,
-  resolveOptionQuoteLineBudget,
-  selectRotatingProviderContractIds,
+  buildTradeOptionQuoteSubscriptionPlan,
 } from "../features/trade/optionQuoteHydrationPlan";
 import {
   clearTradeFlowSnapshot,
   publishTradeFlowSnapshot,
   useTradeFlowSnapshot,
 } from "../features/platform/tradeFlowStore";
+import {
+  BROAD_MARKET_FLOW_STORE_KEY,
+  useMarketFlowSnapshotForStoreKey,
+} from "../features/platform/marketFlowStore";
 import { normalizeFlowOptionExpirationIso } from "../features/platform/flowOptionChartIdentity";
 import {
   MISSING_VALUE,
@@ -144,59 +151,6 @@ import {
 import { isOpenPositionRow } from "../features/account/accountPositionRows.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
-const TRADE_MOBILE_SECTION_JUMPS = Object.freeze([
-  { id: "chart", label: "Chart", targetTestId: "trade-equity-chart" },
-  { id: "ticket", label: "Ticket", targetTestId: "trade-order-ticket" },
-  { id: "chain", label: "Chain", targetTestId: "trade-options-chain-panel" },
-  { id: "account", label: "Account", targetTestId: "trade-bottom-zone" },
-]);
-
-const TradeMobileSectionRail = ({ onJump }) => (
-  <nav
-    data-testid="trade-mobile-section-rail"
-    aria-label="Trade mobile sections"
-    className="ra-hide-scrollbar"
-    style={{
-      position: "sticky",
-      top: 0,
-      zIndex: 5,
-      display: "flex",
-      alignItems: "center",
-      gap: sp(4),
-      overflowX: "auto",
-      padding: sp("4px"),
-      border: `1px solid ${T.border}`,
-      borderRadius: dim(5),
-      background: `${T.bg1}f2`,
-      backdropFilter: "blur(10px)",
-    }}
-  >
-    {TRADE_MOBILE_SECTION_JUMPS.map((item) => (
-      <button
-        key={item.id}
-        type="button"
-        data-testid={`trade-mobile-jump-${item.id}`}
-        className="ra-interactive"
-        onClick={() => onJump(item.targetTestId)}
-        style={{
-          flex: "0 0 auto",
-          minHeight: dim(28),
-          minWidth: 0,
-          padding: sp("0 9px"),
-          border: `1px solid ${T.border}`,
-          borderRadius: dim(4),
-          background: "transparent",
-          color: T.textSec,
-          font: `900 ${fs(8)}px ${T.mono}`,
-          textTransform: "uppercase",
-          cursor: "pointer",
-        }}
-      >
-        {item.label}
-      </button>
-    ))}
-  </nav>
-);
 
 const OPTION_CHAIN_QUERY_DEFAULTS = {
   staleTime: 5 * 60_000,
@@ -205,7 +159,7 @@ const OPTION_CHAIN_QUERY_DEFAULTS = {
   refetchOnReconnect: false,
   refetchOnWindowFocus: false,
   retry: 1,
-  gcTime: HEAVY_PAYLOAD_GC_MS,
+  gcTime: 5 * 60_000,
 };
 
 const OPTION_EXPIRATION_QUERY_DEFAULTS = {
@@ -387,6 +341,13 @@ const getTradeOptionChainBatchQueryKey = (
   ...chainKeys,
 ];
 
+const buildOptionChainCoverageRequestParams = (request) => {
+  if (request?.strikeCoverage) {
+    return { strikeCoverage: request.strikeCoverage };
+  }
+  return { strikesAroundMoney: request?.strikesAroundMoney };
+};
+
 const isTradeHeavyQueryKey = (queryKey, ticker) => {
   if (!Array.isArray(queryKey)) {
     return false;
@@ -434,19 +395,27 @@ const formatOptionExpirationIsoDate = (value, actualDate) => {
   return null;
 };
 
-const buildExpirationOptions = (expirations = []) =>
-  expirations
+const buildExpirationOptions = (expirations = []) => {
+  const currentYear = new Date().getUTCFullYear();
+  return expirations
     .map((entry) => {
       const actualDate = parseExpirationValue(entry?.expirationDate);
-      const value = formatExpirationLabel(entry?.expirationDate);
+      const legacyValue = formatExpirationLabel(entry?.expirationDate);
       const isoDate = formatOptionExpirationIsoDate(
         entry?.expirationDate,
         actualDate,
       );
+      const expirationYear = actualDate?.getUTCFullYear?.() ?? null;
+      const label =
+        expirationYear && expirationYear !== currentYear
+          ? `${legacyValue}/${expirationYear}`
+          : legacyValue;
+      const value = isoDate || legacyValue;
       return {
         value,
+        legacyValue,
         chainKey: isoDate ? String(isoDate) : value,
-        label: value,
+        label,
         dte: daysToExpiration(actualDate),
         actualDate,
         isoDate,
@@ -458,6 +427,18 @@ const buildExpirationOptions = (expirations = []) =>
         (left.actualDate?.getTime?.() ?? 0) -
         (right.actualDate?.getTime?.() ?? 0),
     );
+};
+
+const doesExpirationOptionMatchValue = (option, value) =>
+  Boolean(
+    value &&
+      option &&
+      (option.value === value ||
+        option.chainKey === value ||
+        option.isoDate === value ||
+        option.legacyValue === value ||
+        option.label === value),
+  );
 
 const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -549,47 +530,9 @@ const getOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) => {
   };
 };
 
-const patchRowSideWithStoredQuote = (row, side) => {
-  const prefix = side === "C" ? "c" : "p";
-  const providerContractId = row?.[`${prefix}Contract`]?.providerContractId;
-  const quote = getStoredOptionQuoteSnapshot(providerContractId);
-  if (!quote) {
-    return row;
-  }
-
-  const bid = isFiniteNumber(quote.bid)
-    ? +quote.bid.toFixed(2)
-    : row[`${prefix}Bid`];
-  const ask = isFiniteNumber(quote.ask)
-    ? +quote.ask.toFixed(2)
-    : row[`${prefix}Ask`];
-  const last = isFiniteNumber(quote.price)
-    ? +quote.price.toFixed(2)
-    : row[`${prefix}Prem`];
-
-  return {
-    ...row,
-    [`${prefix}Prem`]: getOptionMark(bid, ask, last) ?? row[`${prefix}Prem`],
-    [`${prefix}Bid`]: bid,
-    [`${prefix}Ask`]: ask,
-    [`${prefix}Vol`]: quote.volume ?? row[`${prefix}Vol`],
-    [`${prefix}Oi`]: quote.openInterest ?? row[`${prefix}Oi`],
-    [`${prefix}Iv`]: quote.impliedVolatility ?? row[`${prefix}Iv`],
-    [`${prefix}Delta`]: quote.delta ?? row[`${prefix}Delta`],
-    [`${prefix}Gamma`]: quote.gamma ?? row[`${prefix}Gamma`],
-    [`${prefix}Theta`]: quote.theta ?? row[`${prefix}Theta`],
-    [`${prefix}Vega`]: quote.vega ?? row[`${prefix}Vega`],
-    [`${prefix}Freshness`]: quote.freshness ?? row[`${prefix}Freshness`],
-    [`${prefix}MarketDataMode`]:
-      quote.marketDataMode ?? row[`${prefix}MarketDataMode`],
-    [`${prefix}QuoteUpdatedAt`]:
-      quote.dataUpdatedAt ?? quote.updatedAt ?? row[`${prefix}QuoteUpdatedAt`],
-  };
-};
-
 const buildLiveAwareOptionChainRows = (contracts, spotPrice) =>
   buildOptionChainRowsFromApi(contracts, spotPrice).map((row) =>
-    patchRowSideWithStoredQuote(patchRowSideWithStoredQuote(row, "C"), "P"),
+    patchOptionChainRowWithQuoteGetter(row, getStoredOptionQuoteSnapshot),
   );
 
 const TradePanelShell = ({
@@ -668,6 +611,7 @@ const TradeContractDetailPanel = ({
   ticker,
   contract,
   heldContracts = [],
+  flowEvents = [],
   liveDataEnabled = true,
   historicalDataEnabled = liveDataEnabled,
 }) => {
@@ -778,6 +722,8 @@ const TradeContractDetailPanel = ({
     prependOlderBars,
     prewarmTimeframe: prewarmFavoriteTimeframe,
     query: optionBarsQuery,
+    baseBarsCacheStale: optionBaseBarsCacheStale,
+    streamStatus: optionStreamStatus,
     streamedBars,
   } = useOptionChartBars({
     scope: "trade-contract",
@@ -886,9 +832,33 @@ const TradeContractDetailPanel = ({
       selectedIndicators,
     ],
   });
+  const mergedFlowEvents = useMemo(
+    () => mergeFlowEventFeeds(tradeFlowSnapshot.events || [], flowEvents || []),
+    [flowEvents, tradeFlowSnapshot.events],
+  );
+  const selectedContractFlowEvents = useMemo(
+    () =>
+      filterFlowEventsForOptionContract(mergedFlowEvents, {
+        symbol: ticker,
+        providerContractId,
+        optionTicker,
+        expirationDate: optionExpirationIso,
+        right: optionRight,
+        strike: contract.strike,
+      }),
+    [
+      contract.strike,
+      mergedFlowEvents,
+      optionExpirationIso,
+      optionRight,
+      optionTicker,
+      providerContractId,
+      ticker,
+    ],
+  );
   const chartEvents = useMemo(
-    () => flowEventsToChartEvents(tradeFlowSnapshot.events || [], ticker),
-    [ticker, tradeFlowSnapshot.events],
+    () => flowEventsToChartEvents(selectedContractFlowEvents, ticker),
+    [selectedContractFlowEvents, ticker],
   );
   const heldCount = heldContracts.length;
   const contractLabel = selectedContract
@@ -916,7 +886,7 @@ const TradeContractDetailPanel = ({
     liveQuote?.freshness ?? rowFreshness,
     rowFreshness || "metadata",
   );
-  const barFreshness = normalizeMarketFreshness(
+  const rawBarFreshness = normalizeMarketFreshness(
     optionBarsQuery.data?.freshness ?? latestBar?.freshness,
     displayBars.length ? "live" : "unavailable",
   );
@@ -938,50 +908,52 @@ const TradeContractDetailPanel = ({
     previousBar.c !== 0
       ? ((lastPrice - previousBar.c) / previousBar.c) * 100
       : null;
-  const statusLabel = !optionIdentityReady
-    ? "missing option details"
-    : displayBars.length
-      ? chartFeedIssue && chartDataSource === "polygon-option-aggregates"
-        ? "IBKR feed issue · Polygon history"
-        : chartDataSource === "polygon-option-aggregates"
-          ? "Polygon history"
-          : barFreshness === "live"
-            ? liveDataEnabled
-              ? "live"
-              : "loaded"
-            : `${formatMarketFreshnessLabel(barFreshness)} history`
-      : chartRequestLoading
-        ? "loading option history"
-        : chartRequestFailed
-          ? "option history unavailable"
-          : chartEmptyReason
-            ? chartEmptyReason.replaceAll("-", " ")
-            : "no option bars";
-  const optionChartHydrationStatus = resolveChartLoadingStatus({
-    symbol: ticker || "OPTION",
+  const optionChartSourceState = resolveOptionChartSourceState({
+    identityReady: optionIdentityReady,
+    latestBar,
+    status: optionStreamStatus,
     timeframe: optionChartTimeframe,
-    providerLabel: statusLabel,
-    statusLabel,
-    renderedBarCount: displayBars.length,
-    hydratedBaseCount: baseBars.length,
-    livePatchedBarCount: Math.max(0, streamedBars.length - baseBars.length),
-    requestedLimit: optionBarsLimit,
-    targetLimit: getChartBarLimit(optionChartTimeframe, "option"),
-    maxLimit: getMaxChartBarLimit(optionChartTimeframe, "option"),
-    isInitialLoading: chartRequestLoading && !displayBars.length,
-    isFetching: chartRequestLoading,
-    isHydratingFullWindow:
-      displayBars.length > 0 &&
-      optionBarsLimit < getChartBarLimit(optionChartTimeframe, "option"),
-    isPrependingOlder,
-    hasExhaustedOlderHistory,
+    liveDataEnabled,
+    requestLoading: chartRequestLoading,
+    requestFailed: chartRequestFailed,
     emptyReason: chartEmptyReason,
+    feedIssue: chartFeedIssue,
+    dataSource: chartDataSource,
+    resolutionSource: optionBarsQuery.data?.resolutionSource,
+    responseFreshness: optionBarsQuery.data?.freshness,
+    cacheStale: optionBaseBarsCacheStale,
   });
+  const barFreshness = normalizeMarketFreshness(
+    optionChartSourceState.freshness,
+    rawBarFreshness,
+  );
+  const statusLabel = optionChartSourceState.label;
   const optionChartEmptyCopy = getOptionChartEmptyCopy({
     emptyReason: chartEmptyReason,
     requestFailed: chartRequestFailed,
     feedIssue: chartFeedIssue,
   });
+  const optionChartEmptyState = useMemo(
+    () => ({
+      eyebrow: "Option chart",
+      title: chartRequestLoading
+        ? "Loading option history"
+        : optionIdentityReady
+          ? optionChartEmptyCopy.title
+          : "Select a contract",
+      detail: chartRequestLoading
+        ? "Resolving the option contract and requesting chart bars."
+        : optionIdentityReady
+          ? optionChartEmptyCopy.detail
+          : "Choose an option row to load chart history.",
+    }),
+    [
+      chartRequestLoading,
+      optionChartEmptyCopy.detail,
+      optionChartEmptyCopy.title,
+      optionIdentityReady,
+    ],
+  );
 
   useEffect(() => {
     recordChartBarScopeState(optionContractScopeKey, {
@@ -1135,14 +1107,7 @@ const TradeContractDetailPanel = ({
             rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
             model={chartModel}
             chartEvents={chartEvents}
-            subHeader={
-              <ChartHydrationStatusStrip
-                compact={false}
-                dataTestId="trade-contract-option-chart-hydration-status"
-                status={optionChartHydrationStatus}
-                theme={T}
-              />
-            }
+            emptyState={optionChartEmptyState}
             drawings={drawings}
             drawMode={drawMode}
             onAddDrawing={addDrawing}
@@ -1153,6 +1118,7 @@ const TradeContractDetailPanel = ({
               name: contractLabel,
               timeframe: optionChartTimeframe,
               statusLabel,
+              statusTone: optionChartSourceState.tone,
               priceLabel: "Option",
               price: lastPrice,
               changePercent,
@@ -1179,6 +1145,7 @@ const TradeContractDetailPanel = ({
                 price={lastPrice}
                 changePercent={changePercent}
                 statusLabel={statusLabel}
+                statusTone={optionChartSourceState.tone}
                 timeframe={optionChartTimeframe}
                 showInlineLegend={false}
                 timeframeOptions={TRADE_OPTION_CHART_TIMEFRAME_OPTIONS}
@@ -1245,60 +1212,9 @@ const TradeContractDetailPanel = ({
             }
             onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
           />
-          {!displayBars.length ? (
-            <div
-              aria-label="Contract chart empty state"
-              style={{
-                position: "absolute",
-                top: TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceTopOverlayHeight,
-                right: 0,
-                bottom:
-                  TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceBottomOverlayHeight,
-                left: TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceLeftOverlayWidth,
-                display: "grid",
-                placeItems: "center",
-                pointerEvents: "none",
-                padding: sp(12),
-                textAlign: "center",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    color: T.textSec,
-                    fontFamily: T.mono,
-                    fontSize: fs(10),
-                    fontWeight: 800,
-                    marginBottom: sp(4),
-                  }}
-                >
-                  {chartRequestLoading
-                    ? "Loading option history"
-                    : optionIdentityReady
-                      ? optionChartEmptyCopy.title
-                      : "Select a contract"}
-                </div>
-                <div
-                  style={{
-                    color: T.textDim,
-                    fontFamily: T.sans,
-                    fontSize: fs(10),
-                    lineHeight: 1.35,
-                    maxWidth: dim(340),
-                  }}
-                >
-                  {chartRequestLoading
-                    ? "Resolving the option contract and requesting chart bars."
-                    : optionIdentityReady
-                      ? optionChartEmptyCopy.detail
-                      : "Choose an option row to load chart history."}
-                </div>
-              </div>
-            </div>
-          ) : null}
           {displayBars.length && chartEvents.length ? (
-            <AppTooltip content={chartEvents[0]?.summary || "Unusual options activity"}><div
-              data-testid="trade-contract-option-chart-uoa-badge"
+            <AppTooltip content={chartEvents[0]?.summary || "Flow"}><div
+              data-testid="trade-contract-option-chart-flow-badge"
               style={{
                 position: "absolute",
                 right: dim(10),
@@ -1322,7 +1238,7 @@ const TradeContractDetailPanel = ({
                 boxShadow: `0 0 0 1px ${T.bg4}cc`,
               }}
             >
-              UOA {chartEvents[0]?.label || chartEvents.length}
+              Flow {chartEvents[0]?.label || chartEvents.length}
             </div></AppTooltip>
           ) : null}
         </div>
@@ -1591,7 +1507,8 @@ const TradeFlowRuntime = ({ ticker, enabled }) => {
 
   const tickerFlowQuery = useQuery({
     queryKey: ["trade-flow", ticker],
-    queryFn: () => listFlowEventsRequest({ underlying: ticker, limit: 80 }),
+    queryFn: () =>
+      listFlowEventsRequest({ underlying: ticker, limit: 80, blocking: true }),
     enabled: flowEnabled,
     staleTime: 60_000,
     refetchInterval: flowEnabled ? 60_000 : false,
@@ -1621,6 +1538,7 @@ const TradeFlowRuntime = ({ ticker, enabled }) => {
     publishTradeFlowSnapshot(ticker, {
       events,
       status,
+      source: tickerFlowQuery.data?.source || null,
     });
   }, [
     ticker,
@@ -1635,10 +1553,12 @@ const TradeFlowRuntime = ({ ticker, enabled }) => {
 const TradeOptionChainRuntime = ({
   ticker,
   expirationValue,
-  expandedChainKeys = [],
+  chainCoverage = DEFAULT_OPTION_CHAIN_COVERAGE,
   enabled = true,
   background = false,
 }) => {
+  const normalizedChainCoverage =
+    normalizeTradeOptionChainCoverage(chainCoverage);
   const expirationsQuery = useGetOptionExpirations(
     { underlying: ticker },
     {
@@ -1659,7 +1579,9 @@ const TradeOptionChainRuntime = ({
     }
 
     return (
-      expirationOptions.find((option) => option.value === expirationValue) ||
+      expirationOptions.find((option) =>
+        doesExpirationOptionMatchValue(option, expirationValue),
+      ) ||
       expirationOptions[0]
     );
   }, [expirationOptions, expirationValue]);
@@ -1678,19 +1600,20 @@ const TradeOptionChainRuntime = ({
   }, [activeExpiration, expirationOptions]);
   const {
     activeChainKey,
+    activeRequest,
+    backgroundRequest,
     batchExpirationOptions,
     batchExpirationChunks,
-    expandedActiveExpiration,
   } = useMemo(
     () =>
       resolveTradeOptionChainHydrationPlan({
         orderedExpirationOptions,
         activeExpiration,
-        expandedChainKeys,
         background,
         autoBatchEnabled: OPTION_CHAIN_AUTO_BATCH_ENABLED,
+        coverage: normalizedChainCoverage,
       }),
-    [activeExpiration, background, expandedChainKeys, orderedExpirationOptions],
+    [activeExpiration, background, normalizedChainCoverage, orderedExpirationOptions],
   );
   const batchExpirationChunkSignature = useMemo(
     () =>
@@ -1708,6 +1631,7 @@ const TradeOptionChainRuntime = ({
     activeChainKey,
     batchExpirationChunkSignature,
     batchExpirationChunks.length,
+    normalizedChainCoverage,
     ticker,
   ]);
   const batchQueryIndexByChainKey = useMemo(() => {
@@ -1738,7 +1662,9 @@ const TradeOptionChainRuntime = ({
     queryKey: getTradeOptionChainQueryKey(
       ticker,
       activeChainKey,
-      OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY,
+      activeRequest.strikesAroundMoney,
+      activeRequest.strikeCoverage,
+      OPTION_CHAIN_METADATA_HYDRATION,
     ),
     queryFn: async ({ signal }) => {
       const startedAt = nowMs();
@@ -1747,7 +1673,7 @@ const TradeOptionChainRuntime = ({
           {
             underlying: ticker,
             expirationDate: activeExpiration?.isoDate || undefined,
-            strikesAroundMoney: OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY,
+            ...buildOptionChainCoverageRequestParams(activeRequest),
             quoteHydration: OPTION_CHAIN_METADATA_HYDRATION,
           },
           { signal },
@@ -1804,8 +1730,8 @@ const TradeOptionChainRuntime = ({
         queryKey: getTradeOptionChainBatchQueryKey(
           ticker,
           chainKeys,
-          OPTION_CHAIN_EXPANDED_STRIKES_AROUND_MONEY,
-          OPTION_CHAIN_FULL_STRIKE_COVERAGE,
+          backgroundRequest.strikesAroundMoney,
+          backgroundRequest.strikeCoverage,
         ),
         queryFn: async ({ signal }) => {
           const startedAt = nowMs();
@@ -1814,7 +1740,7 @@ const TradeOptionChainRuntime = ({
               {
                 underlying: ticker,
                 expirationDates,
-                strikeCoverage: OPTION_CHAIN_FULL_STRIKE_COVERAGE,
+                ...buildOptionChainCoverageRequestParams(backgroundRequest),
                 quoteHydration: OPTION_CHAIN_METADATA_HYDRATION,
               },
               { signal },
@@ -1875,65 +1801,6 @@ const TradeOptionChainRuntime = ({
     enabled,
     enabledBatchChunkCount,
   ]);
-  const activeFastChainEmpty = Boolean(
-    activeOptionChainQuery.isSuccess &&
-      !(activeOptionChainQuery.data?.contracts || []).length,
-  );
-  const activeFastHydrationStatus = activeOptionChainQuery.isError
-    ? "failed"
-    : activeFastChainEmpty
-      ? "empty"
-      : activeOptionChainQuery.isSuccess
-        ? "loaded"
-        : null;
-  const shouldFallbackActiveFullCoverage = shouldHydrateActiveFullCoverage({
-    activeExpiration,
-    expandedChainKeys: [],
-    background,
-    activeFastHydrationStatus,
-  });
-  const activeFullCoverageExpiration =
-    expandedActiveExpiration ||
-    (activeExpiration?.isoDate &&
-    !expandedActiveExpiration &&
-    shouldFallbackActiveFullCoverage
-      ? activeExpiration
-      : null);
-  const activeFullCoverageChainKey = getExpirationChainKey(
-    activeFullCoverageExpiration,
-  );
-  const expandedOptionChainQuery = useQuery({
-    queryKey: getTradeOptionChainQueryKey(
-      ticker,
-      activeChainKey,
-      OPTION_CHAIN_EXPANDED_STRIKES_AROUND_MONEY,
-      OPTION_CHAIN_FULL_STRIKE_COVERAGE,
-    ),
-    queryFn: async ({ signal }) => {
-      const startedAt = nowMs();
-      try {
-        return await getOptionChainRequest(
-          {
-            underlying: ticker,
-            expirationDate: activeFullCoverageExpiration?.isoDate || undefined,
-            strikeCoverage: OPTION_CHAIN_FULL_STRIKE_COVERAGE,
-            quoteHydration: OPTION_CHAIN_METADATA_HYDRATION,
-          },
-          { signal },
-        );
-      } finally {
-        recordOptionHydrationMetric("fullChainMs", nowMs() - startedAt);
-      }
-    },
-    enabled: Boolean(
-      enabled &&
-        !background &&
-        ticker &&
-        activeFullCoverageExpiration?.isoDate &&
-        activeFullCoverageChainKey === activeChainKey,
-    ),
-    ...OPTION_CHAIN_QUERY_DEFAULTS,
-  });
   const batchResultsByChainKey = useMemo(
     () =>
       new Map(
@@ -1968,8 +1835,8 @@ const TradeOptionChainRuntime = ({
         batchExpirationChunks.length - enabledBatchChunkCount,
       ),
       fullQueueDepth:
-        activeFullCoverageChainKey &&
-        expandedOptionChainQuery.fetchStatus === "fetching"
+        activeRequest.coverage === "full" &&
+        activeOptionChainQuery.fetchStatus === "fetching"
           ? 1
           : 0,
       pauseReason: !enabled
@@ -1982,7 +1849,8 @@ const TradeOptionChainRuntime = ({
     });
   }, [
     activeChainKey,
-    activeFullCoverageChainKey,
+    activeOptionChainQuery.fetchStatus,
+    activeRequest.coverage,
     background,
     batchExpirationChunks.length,
     enabled,
@@ -1996,7 +1864,6 @@ const TradeOptionChainRuntime = ({
     expirationsQuery.data?.debug?.returnedCount,
     expirationsQuery.data?.debug?.stale,
     expirationsQuery.data?.expirations?.length,
-    expandedOptionChainQuery.fetchStatus,
     ticker,
   ]);
 
@@ -2061,17 +1928,6 @@ const TradeOptionChainRuntime = ({
           data.contracts,
           tickerInfo.price,
         );
-        const previousRows = rowsByExpiration[chainKey] || [];
-        const previousCoverage = coverageByExpiration[chainKey] || null;
-        if (
-          previousCoverage === "full" &&
-          coverage !== "full" &&
-          previousRows.length > nextRows.length
-        ) {
-          staleExpirationKeySet.delete(chainKey);
-          return;
-        }
-
         rowsByExpiration[chainKey] = nextRows;
         coverageByExpiration[chainKey] = coverage;
         staleExpirationKeySet.delete(chainKey);
@@ -2102,7 +1958,7 @@ const TradeOptionChainRuntime = ({
       activeExpiration,
       activeOptionChainQuery.data,
       activeOptionChainQuery,
-      "window",
+      activeRequest.coverage,
     );
     batchExpirationOptions.forEach((expiration) => {
       const chainKey = getExpirationChainKey(expiration);
@@ -2119,15 +1975,9 @@ const TradeOptionChainRuntime = ({
           isSuccess: result.status !== "failed",
           isError: result.status === "failed",
         },
-        "full",
+        backgroundRequest.coverage,
       );
     });
-    applyChainResult(
-      activeExpiration,
-      expandedOptionChainQuery.data,
-      expandedOptionChainQuery,
-      "full",
-    );
     markRefreshingExpiration(activeExpiration, activeOptionChainQuery);
     batchExpirationOptions.forEach((expiration) => {
       const chainKey = getExpirationChainKey(expiration);
@@ -2140,7 +1990,6 @@ const TradeOptionChainRuntime = ({
         });
       }
     });
-    markRefreshingExpiration(activeExpiration, expandedOptionChainQuery);
 
     const statusByExpiration = Object.fromEntries(
       expirationOptions
@@ -2155,20 +2004,6 @@ const TradeOptionChainRuntime = ({
           }
 
           if (chainKey === activeChainKey) {
-            if (activeFullCoverageChainKey === chainKey) {
-              if (
-                expandedOptionChainQuery.fetchStatus === "fetching" ||
-                expandedOptionChainQuery.isPending
-              ) {
-                return [chainKey, "loading"];
-              }
-              if (expandedOptionChainQuery.isError) {
-                return [chainKey, "failed"];
-              }
-              if (expandedOptionChainQuery.isSuccess) {
-                return [chainKey, "empty"];
-              }
-            }
             if (activeOptionChainQuery.isError) {
               return [chainKey, "failed"];
             }
@@ -2264,7 +2099,6 @@ const TradeOptionChainRuntime = ({
     });
   }, [
     activeChainKey,
-    activeFullCoverageChainKey,
     activeExpiration,
     activeOptionChainQuery.data,
     activeOptionChainQuery.dataUpdatedAt,
@@ -2273,6 +2107,8 @@ const TradeOptionChainRuntime = ({
     activeOptionChainQuery.isError,
     activeOptionChainQuery.isPending,
     activeOptionChainQuery.isSuccess,
+    activeRequest.coverage,
+    backgroundRequest.coverage,
     batchExpirationOptions,
     batchFetchStatusByChunkIndex,
     batchQueryIndexByChainKey,
@@ -2280,13 +2116,6 @@ const TradeOptionChainRuntime = ({
     enabledBatchChunkCount,
     background,
     expirationOptions,
-    expandedOptionChainQuery.data,
-    expandedOptionChainQuery.dataUpdatedAt,
-    expandedOptionChainQuery.errorUpdatedAt,
-    expandedOptionChainQuery.fetchStatus,
-    expandedOptionChainQuery.isError,
-    expandedOptionChainQuery.isPending,
-    expandedOptionChainQuery.isSuccess,
     expirationsQuery.isError,
     expirationsQuery.isPending,
     ticker,
@@ -2309,7 +2138,11 @@ const TradeContractSelectionRuntime = ({
     if (!expirationOptions.length) {
       return;
     }
-    if (expirationOptions.some((option) => option.value === contract.exp)) {
+    if (
+      expirationOptions.some((option) =>
+        doesExpirationOptionMatchValue(option, contract.exp),
+      )
+    ) {
       return;
     }
 
@@ -2358,9 +2191,9 @@ const TradeOptionQuoteRuntime = ({
     contract.exp,
   );
 
-  const providerContractIds = useMemo(
+  const quoteSubscriptionPlan = useMemo(
     () =>
-      buildTradeOptionProviderContractIdPlan({
+      buildTradeOptionQuoteSubscriptionPlan({
         chainRows,
         contract,
         heldContracts,
@@ -2368,103 +2201,29 @@ const TradeOptionQuoteRuntime = ({
       }),
     [chainRows, contract, heldContracts, visibleRows],
   );
-  const providerContractIdSignature = providerContractIds.join("\u001f");
-  const [rotationIndex, setRotationIndex] = useState(0);
-  useEffect(() => {
-    setRotationIndex(0);
-  }, [providerContractIdSignature]);
-  const quoteSubscriptionPlan = useMemo(
-    () =>
-      selectRotatingProviderContractIds({
-        providerContractIds,
-        lineBudget: resolveOptionQuoteLineBudget({
-          active: enabled,
-          configuredLimit: ACTIVE_OPTION_QUOTE_LINE_BUDGET,
-        }),
-        rotationIndex,
-      }),
-    [enabled, providerContractIds, rotationIndex],
-  );
-  const executionProviderContractIds = useMemo(() => {
-    const selectedProviderContractId =
-      providerContractIds.length > 0 ? providerContractIds[0] : null;
-    const executionIds = new Set();
-    if (selectedProviderContractId) {
-      executionIds.add(selectedProviderContractId);
-    }
-    heldContracts.forEach((holding) => {
-      const providerContractId = String(holding?.providerContractId || "").trim();
-      if (providerContractId) {
-        executionIds.add(providerContractId);
-      }
-    });
-    return quoteSubscriptionPlan.activeProviderContractIds.filter(
-      (providerContractId) => executionIds.has(providerContractId),
-    );
-  }, [
-    heldContracts,
-    providerContractIds,
-    quoteSubscriptionPlan.activeProviderContractIds,
-  ]);
-  const visibleProviderContractIds = useMemo(() => {
-    const executionSet = new Set(executionProviderContractIds);
-    return quoteSubscriptionPlan.activeProviderContractIds.filter(
-      (providerContractId) => !executionSet.has(providerContractId),
-    );
-  }, [
-    executionProviderContractIds,
-    quoteSubscriptionPlan.activeProviderContractIds,
-  ]);
-
-  useEffect(() => {
-    const lineBudget = resolveOptionQuoteLineBudget({
-      active: enabled,
-      configuredLimit: ACTIVE_OPTION_QUOTE_LINE_BUDGET,
-    });
-    if (
-      !enabled ||
-      providerContractIds.length <= lineBudget
-    ) {
-      return;
-    }
-
-    const timer = setInterval(() => {
-      setRotationIndex((current) => current + 1);
-    }, DEFAULT_OPTION_QUOTE_ROTATION_MS);
-    return () => clearInterval(timer);
-  }, [enabled, providerContractIds.length]);
+  const executionProviderContractIds =
+    quoteSubscriptionPlan.executionProviderContractIds;
+  const visibleProviderContractIds =
+    quoteSubscriptionPlan.visibleProviderContractIds;
+  const requestedProviderContractIds =
+    quoteSubscriptionPlan.requestedProviderContractIds;
 
   useEffect(() => {
     setOptionHydrationDiagnostics({
       ticker,
       expiration: contract.exp,
-      requestedQuotes: providerContractIds.length,
-      acceptedQuotes: quoteSubscriptionPlan.activeProviderContractIds.length,
-      rejectedQuotes: 0,
-      pendingQuotes: quoteSubscriptionPlan.pendingProviderContractIds.length,
+      requestedQuotes: requestedProviderContractIds.length,
+      pendingQuotes: 0,
       activeQuoteSubscriptions:
-        quoteSubscriptionPlan.activeProviderContractIds.length,
-      pinnedQuoteSubscriptions:
-        quoteSubscriptionPlan.pinnedProviderContractIds.length,
-      rotatingQuoteSubscriptions:
-        quoteSubscriptionPlan.rotatingProviderContractIds.length,
-      quoteMode:
-        providerContractIds.length >
-        resolveOptionQuoteLineBudget({
-          active: enabled,
-          configuredLimit: ACTIVE_OPTION_QUOTE_LINE_BUDGET,
-        })
-          ? "websocket-rotating-full-expiration"
-          : "websocket-full-expiration",
+        requestedProviderContractIds.length,
+      pinnedQuoteSubscriptions: executionProviderContractIds.length,
+      rotatingQuoteSubscriptions: 0,
+      quoteMode: "websocket-backend-admission-visible-window",
     });
   }, [
     contract.exp,
-    enabled,
-    providerContractIds.length,
-    quoteSubscriptionPlan.activeProviderContractIds.length,
-    quoteSubscriptionPlan.pendingProviderContractIds.length,
-    quoteSubscriptionPlan.pinnedProviderContractIds.length,
-    quoteSubscriptionPlan.rotatingProviderContractIds.length,
+    executionProviderContractIds.length,
+    requestedProviderContractIds.length,
     ticker,
   ]);
 
@@ -2508,10 +2267,6 @@ export const TradeScreen = ({
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   isVisible = false,
-  researchConfigured = false,
-  linkedContext = null,
-  onLinkedWorkspaceGroupChange,
-  onLinkedContextChange,
 }) => {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -2537,15 +2292,6 @@ export const TradeScreen = ({
   const tradeTopHeight = tradeIsNarrow ? "auto" : dim(560);
   const tradeMiddleHeight = tradeIsNarrow ? "auto" : dim(320);
   const tradeBottomHeight = tradeIsNarrow ? "auto" : dim(300);
-  const handleTradeMobileSectionJump = useCallback((targetTestId) => {
-    document
-      .querySelector(`[data-testid="${targetTestId}"]`)
-      ?.scrollIntoView({
-        block: "start",
-        inline: "nearest",
-        behavior: "auto",
-      });
-  }, []);
   // Initialize from persisted state, falling back to sym prop or sensible defaults
   const initialTicker = (() => {
     const resolved = resolveInitialTradeTicker({
@@ -2601,9 +2347,12 @@ export const TradeScreen = ({
   const [tradeChainHeatmapEnabled, setTradeChainHeatmapEnabled] = useState(
     Boolean(_initialState.tradeChainHeatmapEnabled),
   );
+  const [tradeOptionChainCoverage, setTradeOptionChainCoverage] = useState(() =>
+    normalizeTradeOptionChainCoverage(
+      _initialState.tradeOptionChainCoverage ?? DEFAULT_OPTION_CHAIN_COVERAGE,
+    ),
+  );
   const [visibleOptionChainRows, setVisibleOptionChainRows] = useState([]);
-  const [expandedOptionChainKeysByTicker, setExpandedOptionChainKeysByTicker] =
-    useState({});
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
@@ -2624,8 +2373,14 @@ export const TradeScreen = ({
   const tradeBrokerStreamingEnabled = Boolean(
     tradeLiveStreamsEnabled && stockAggregateStreamingEnabled,
   );
-  const expandedOptionChainKeys =
-    expandedOptionChainKeysByTicker[activeTicker] || [];
+  const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
+    BROAD_MARKET_FLOW_STORE_KEY,
+    { subscribe: isVisible },
+  );
+  const activeTickerBroadFlowEvents = useMemo(
+    () => filterFlowEventsForSymbol(broadFlowSnapshot.flowEvents || [], activeTicker),
+    [activeTicker, broadFlowSnapshot.flowEvents],
+  );
   useRuntimeWorkloadFlag("trade:streams", tradeBrokerStreamingEnabled, {
     kind: "stream",
     label: "Trade live streams",
@@ -2654,37 +2409,6 @@ export const TradeScreen = ({
       return next;
     });
   }, []);
-  const activeEquityChart = useMemo(
-    () => ({
-      ...activeWorkspace.equityChart,
-      ...(linkedContext?.linked && linkedContext.timeframe
-        ? { timeframe: linkedContext.timeframe }
-        : {}),
-    }),
-    [activeWorkspace.equityChart, linkedContext?.linked, linkedContext?.timeframe],
-  );
-  const handleEquityWorkspaceChartChange = useCallback(
-    (patch) => {
-      upsertTradeWorkspace(activeTicker, {
-        equityChart: {
-          ...activeWorkspace.equityChart,
-          ...patch,
-        },
-      });
-      if (patch?.timeframe) {
-        onLinkedContextChange?.({
-          symbol: activeTicker,
-          timeframe: patch.timeframe,
-        });
-      }
-    },
-    [
-      activeTicker,
-      activeWorkspace.equityChart,
-      onLinkedContextChange,
-      upsertTradeWorkspace,
-    ],
-  );
   const updateContract = useCallback(
     (patch) => {
       const nextContract = { ...contract, ...patch };
@@ -2786,22 +2510,11 @@ export const TradeScreen = ({
     persistState({ tradeChainHeatmapEnabled });
   }, [tradeChainHeatmapEnabled]);
   useEffect(() => {
-    const handleWorkspaceSettings = (event) => {
-      const state = event?.detail || {};
-      if (typeof state.tradeChainHeatmapEnabled === "boolean") {
-        setTradeChainHeatmapEnabled(state.tradeChainHeatmapEnabled);
-      }
-    };
-    window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
-    return () =>
-      window.removeEventListener(
-        "rayalgo:workspace-settings-updated",
-        handleWorkspaceSettings,
-      );
-  }, []);
+    persistState({ tradeOptionChainCoverage });
+  }, [tradeOptionChainCoverage]);
   useEffect(() => {
     setVisibleOptionChainRows([]);
-  }, [activeTicker, contract.exp]);
+  }, [activeTicker, contract.exp, tradeOptionChainCoverage]);
   useEffect(() => {
     if (typeof activeWorkspace.chainHeatmapEnabled === "boolean") {
       setTradeChainHeatmapEnabled(activeWorkspace.chainHeatmapEnabled);
@@ -3008,6 +2721,24 @@ export const TradeScreen = ({
     (exp) => updateContract({ exp }),
     [updateContract],
   );
+  const handleChangeOptionChainCoverage = useCallback(
+    (value) => {
+      const nextCoverage = normalizeTradeOptionChainCoverage(value);
+      setTradeOptionChainCoverage((current) =>
+        current === nextCoverage ? current : nextCoverage,
+      );
+      clearTradeOptionChainSnapshot(activeTicker);
+      queryClient.invalidateQueries({
+        queryKey: ["trade-option-chain", activeTicker],
+        exact: false,
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["trade-option-chain-batch", activeTicker],
+        exact: false,
+      });
+    },
+    [activeTicker, queryClient],
+  );
   const handleRetryExpiration = useCallback(
     (expiration) => {
       const chainKey = getExpirationChainKey(expiration);
@@ -3015,24 +2746,12 @@ export const TradeScreen = ({
         return;
       }
 
-      [
-        {
-          strikesAroundMoney: OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY,
-          strikeCoverage: null,
-        },
-        {
-          strikesAroundMoney: OPTION_CHAIN_EXPANDED_STRIKES_AROUND_MONEY,
-          strikeCoverage: OPTION_CHAIN_FULL_STRIKE_COVERAGE,
-        },
-      ].forEach(({ strikesAroundMoney, strikeCoverage }) => {
-        const queryKey = getTradeOptionChainQueryKey(
-          activeTicker,
-          chainKey,
-          strikesAroundMoney,
-          strikeCoverage,
-        );
-        queryClient.invalidateQueries({ queryKey, exact: true });
-        queryClient.refetchQueries({ queryKey, exact: true, type: "active" });
+      const queryKey = ["trade-option-chain", activeTicker, chainKey];
+      queryClient.invalidateQueries({ queryKey, exact: false });
+      queryClient.refetchQueries({
+        queryKey,
+        exact: false,
+        type: "active",
       });
       queryClient.invalidateQueries({
         queryKey: ["trade-option-chain-batch", activeTicker],
@@ -3042,36 +2761,6 @@ export const TradeScreen = ({
         queryKey: ["/api/options/expirations"],
         exact: false,
       });
-    },
-    [activeTicker, queryClient],
-  );
-  const handleExpandExpiration = useCallback(
-    (expiration) => {
-      const chainKey = getExpirationChainKey(expiration);
-      if (!chainKey) {
-        return;
-      }
-
-      setExpandedOptionChainKeysByTicker((current) => {
-        const currentKeys = current[activeTicker] || [];
-        if (currentKeys.includes(chainKey)) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [activeTicker]: [...currentKeys, chainKey],
-        };
-      });
-
-      const queryKey = getTradeOptionChainQueryKey(
-        activeTicker,
-        chainKey,
-        OPTION_CHAIN_EXPANDED_STRIKES_AROUND_MONEY,
-        OPTION_CHAIN_FULL_STRIKE_COVERAGE,
-      );
-      queryClient.invalidateQueries({ queryKey, exact: true });
-      queryClient.refetchQueries({ queryKey, exact: true, type: "active" });
     },
     [activeTicker, queryClient],
   );
@@ -3185,7 +2874,7 @@ export const TradeScreen = ({
       <TradeOptionChainRuntime
         ticker={activeTicker}
         expirationValue={contract.exp}
-        expandedChainKeys={expandedOptionChainKeys}
+        chainCoverage={tradeOptionChainCoverage}
         enabled={isVisible && !tradeTickerSearchAnchor}
       />
       <TradeFlowRuntime
@@ -3221,18 +2910,7 @@ export const TradeScreen = ({
         <MemoTradeTickerHeader
           ticker={activeTicker}
           expirationValue={contract.exp}
-          linkChip={
-            <WorkspaceLinkChip
-              panelId="trade"
-              context={linkedContext}
-              compact
-              onChangeGroup={onLinkedWorkspaceGroupChange}
-            />
-          }
         />
-        {tradeIsPhone ? (
-          <TradeMobileSectionRail onJump={handleTradeMobileSectionJump} />
-        ) : null}
         {automationContextVisible && (
           <div
             className="ra-panel-enter ra-focus-rail"
@@ -3343,8 +3021,8 @@ export const TradeScreen = ({
         >
           <MemoTradeEquityPanel
             ticker={activeTicker}
+            flowEvents={activeTickerBroadFlowEvents}
             historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
-            earningsEventsEnabled={researchConfigured}
             stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
             onOpenSearch={openEquitySearch}
             searchOpen={tradeTickerSearchAnchor === "equity"}
@@ -3352,14 +3030,22 @@ export const TradeScreen = ({
             searchContent={renderTradeTickerSearch(
               tradeTickerSearchAnchor === "equity",
             )}
-            workspaceChart={activeEquityChart}
-            onWorkspaceChartChange={handleEquityWorkspaceChartChange}
+            workspaceChart={activeWorkspace.equityChart}
+            onWorkspaceChartChange={(patch) =>
+              upsertTradeWorkspace(activeTicker, {
+                equityChart: {
+                  ...activeWorkspace.equityChart,
+                  ...patch,
+                },
+              })
+            }
             referenceLines={workspaceReferenceLines}
           />
           <MemoTradeContractDetailPanel
             ticker={activeTicker}
             contract={contract}
             heldContracts={heldContracts}
+            flowEvents={activeTickerBroadFlowEvents}
             historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
             liveDataEnabled={tradeLiveStreamsEnabled}
           />
@@ -3395,8 +3081,6 @@ export const TradeScreen = ({
             onSelectContract={handleSelectContract}
             onChangeExp={handleChangeExpiration}
             onRetryExpiration={handleRetryExpiration}
-            onExpandExpiration={handleExpandExpiration}
-            expandedExpirationKeys={expandedOptionChainKeys}
             heatmapEnabled={tradeChainHeatmapEnabled}
             onToggleHeatmap={() =>
               setTradeChainHeatmapEnabled((current) => {
@@ -3405,6 +3089,9 @@ export const TradeScreen = ({
                 return next;
               })
             }
+            chainCoverageValue={tradeOptionChainCoverage}
+            chainCoverageOptions={OPTION_CHAIN_COVERAGE_VALUES}
+            onChangeChainCoverage={handleChangeOptionChainCoverage}
             onVisibleRowsChange={handleVisibleOptionChainRowsChange}
           />
           <MemoTradeSpotFlowPanel ticker={activeTicker} />

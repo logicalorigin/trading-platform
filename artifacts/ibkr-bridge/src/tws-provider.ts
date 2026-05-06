@@ -1368,6 +1368,17 @@ function isLikelyUsEquitySession(now = new Date()): boolean {
   return minutes >= 9 * 60 + 25 && minutes <= 16 * 60 + 5;
 }
 
+export function resolveOptionQuoteMarketDataType(
+  configuredMarketDataType: 1 | 2 | 3 | 4,
+  now = new Date(),
+): 1 | 2 | 3 | 4 {
+  if (configuredMarketDataType === 1 && !isLikelyUsEquitySession(now)) {
+    return 2;
+  }
+
+  return configuredMarketDataType;
+}
+
 // Pick the first option-computation tick that has a usable value, preferring
 // the model computation (server-side Black-Scholes) and falling back to the
 // last/bid/ask computations. Each variant has a delayed counterpart for
@@ -1552,6 +1563,43 @@ function isRequestScopedTwsError(error: unknown): boolean {
     message.includes("ticker limit") ||
     message.includes("subscription limit")
   );
+}
+
+const TWS_SERVER_CONNECTIVITY_LOST_CODES = new Set([1100, 1300, 2110]);
+const TWS_SERVER_CONNECTIVITY_RESTORED_CODES = new Set([1101, 1102]);
+
+function resolveTwsServerConnectivityEvent(
+  error: unknown,
+): "connected" | "disconnected" | null {
+  const codes = collectTwsErrorCodes(error);
+  if (codes.some((code) => TWS_SERVER_CONNECTIVITY_RESTORED_CODES.has(code))) {
+    return "connected";
+  }
+  if (codes.some((code) => TWS_SERVER_CONNECTIVITY_LOST_CODES.has(code))) {
+    return "disconnected";
+  }
+
+  const message = getErrorMessage(error).toLowerCase();
+  if (
+    message.includes("connectivity between ib") &&
+    message.includes("restored")
+  ) {
+    return "connected";
+  }
+  if (
+    message.includes("connectivity between ib") &&
+    message.includes("lost")
+  ) {
+    return "disconnected";
+  }
+  if (
+    message.includes("connectivity between trader workstation and server is broken") ||
+    message.includes("socket port has been reset")
+  ) {
+    return "disconnected";
+  }
+
+  return null;
 }
 
 function toOptionContractMeta(
@@ -1806,6 +1854,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   private lastRecoveryAttemptAt: Date | null = null;
   private lastRecoveryError: string | null = null;
   private managedAccounts: string[] = [];
+  private serverConnectivity: "unknown" | "connected" | "disconnected" =
+    "unknown";
+  private lastServerConnectivityAt: Date | null = null;
+  private lastServerConnectivityError: string | null = null;
   private baseSubscriptionsStarted = false;
   private accountSummaryInitialized = false;
   private positionsInitialized = false;
@@ -1820,6 +1872,18 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   private quoteEventCount = 0;
   private optionQuoteEventCount = 0;
   private readonly optionMetaInFlight = new Map<string, Promise<unknown>>();
+
+  private setMarketDataType(marketDataType: 1 | 2 | 3 | 4): void {
+    if (this.connectionState !== ConnectionState.Connected) {
+      return;
+    }
+
+    this.api.setMarketDataType(marketDataType as TwsMarketDataType);
+  }
+
+  private getOptionQuoteMarketDataType(): 1 | 2 | 3 | 4 {
+    return resolveOptionQuoteMarketDataType(this.config.marketDataType);
+  }
 
   private get tickleIntervalMs(): number {
     return getBridgeRuntimeLimit("tickleIntervalMs");
@@ -1875,15 +1939,15 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
       if (state === ConnectionState.Connected) {
         this.lastError = null;
-        this.api.setMarketDataType(
-          this.config.marketDataType as TwsMarketDataType,
-        );
+        this.markServerConnectivityConnected();
+        this.setMarketDataType(this.config.marketDataType);
         void this.refreshManagedAccounts().catch(() => {});
         void this.ensureBaseSubscriptions().catch(() => {});
         return;
       }
 
       if (state === ConnectionState.Disconnected) {
+        this.markServerConnectivityDisconnected("TWS API socket disconnected.");
         this.latestSession = this.buildSessionSnapshot();
       }
     });
@@ -1895,8 +1959,29 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     this.ensureTickleLoop();
   }
 
+  private markServerConnectivityConnected() {
+    this.serverConnectivity = "connected";
+    this.lastServerConnectivityAt = new Date();
+    this.lastServerConnectivityError = null;
+  }
+
+  private markServerConnectivityDisconnected(message: string | null) {
+    this.serverConnectivity = "disconnected";
+    this.lastServerConnectivityAt = new Date();
+    this.lastServerConnectivityError = message;
+  }
+
   private recordError(error: unknown) {
     const message = getErrorMessage(error);
+    const connectivity = resolveTwsServerConnectivityEvent(error);
+    if (connectivity) {
+      if (connectivity === "connected") {
+        this.markServerConnectivityConnected();
+      } else {
+        this.markServerConnectivityDisconnected(message || null);
+      }
+      this.latestSession = this.buildSessionSnapshot();
+    }
     if (
       this.connectionState === ConnectionState.Connected &&
       (message.includes("ibkr_bridge_lane_queue_full") ||
@@ -2689,6 +2774,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     this.managedAccounts = (await this.api.getManagedAccounts()).filter(
       Boolean,
     );
+    this.markServerConnectivityConnected();
     this.latestSession = this.buildSessionSnapshot();
     return this.latestSession;
   }
@@ -3536,6 +3622,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     const numericProviderContractId = /^\d+$/.test(normalizedProviderContractId)
       ? Number(normalizedProviderContractId)
       : null;
+    const marketDataType = this.getOptionQuoteMarketDataType();
+    this.setMarketDataType(marketDataType);
     const subscription = this.api
       .getMarketData(
         numericProviderContractId === null
@@ -3559,7 +3647,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
               resolved.optionContract.ticker,
               normalizedProviderContractId,
               update.all,
-              this.config.marketDataType,
+              marketDataType,
             ),
           );
           this.quotesByProviderContractId.set(
@@ -3678,11 +3766,15 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     symbol: string;
     providerContractId: string | null;
     genericTickList?: string;
+    marketDataType?: 1 | 2 | 3 | 4;
   }): Promise<QuoteSnapshot | null> {
     await this.ensureConnected();
+    const marketDataType = input.marketDataType ?? this.config.marketDataType;
+    this.setMarketDataType(marketDataType);
     if (input.genericTickList?.trim()) {
       const genericTickSnapshot = await this.getContractQuoteStreamSample({
         ...input,
+        marketDataType,
         genericTickList: input.genericTickList.trim(),
       });
       if (genericTickSnapshot) {
@@ -3701,7 +3793,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
           input.symbol,
           input.providerContractId,
           marketData,
-          this.config.marketDataType,
+          marketDataType,
         ),
       );
     } catch (error) {
@@ -3715,6 +3807,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     symbol: string;
     providerContractId: string | null;
     genericTickList: string;
+    marketDataType?: 1 | 2 | 3 | 4;
   }): Promise<QuoteSnapshot | null> {
     return new Promise((resolve) => {
       let latest: QuoteSnapshot | null = null;
@@ -3744,7 +3837,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
                   input.symbol,
                   input.providerContractId,
                   update.all,
-                  this.config.marketDataType,
+                  input.marketDataType ?? this.config.marketDataType,
                 ),
               );
             },
@@ -3935,6 +4028,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         await this.ensureConnected();
         await this.api.getCurrentTime();
         await this.refreshManagedAccounts();
+        this.markServerConnectivityConnected();
         this.lastTickleAt = new Date();
         this.lastError = null;
       } catch (error) {
@@ -3961,18 +4055,24 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     ]
       .filter((value): value is number => Number.isFinite(value))
       .sort((left, right) => left - right)[0] ?? null;
-    const streamFresh =
+    const rawStreamFresh =
       lastStreamEventAgeMs !== null &&
       lastStreamEventAgeMs <=
         Math.max(1_000, Number(process.env["IBKR_QUOTE_STREAM_STALL_MS"] ?? 10_000));
-    const accountsLoaded = session.accounts.length > 0;
+    const brokerServerConnected =
+      session.connected && this.serverConnectivity !== "disconnected";
+    const streamFresh = brokerServerConnected && rawStreamFresh;
+    const authenticated = brokerServerConnected && session.authenticated;
+    const accountsLoaded = brokerServerConnected && session.accounts.length > 0;
     const configuredLiveMarketDataMode = Boolean(
       isLiveIbkrMarketDataMode(marketDataMode),
     );
     const marketSessionActive = isLikelyUsEquitySession();
     const strictReason = !session.connected
       ? "gateway_socket_disconnected"
-      : !session.authenticated
+      : !brokerServerConnected
+        ? "gateway_server_disconnected"
+      : !authenticated
         ? "gateway_login_required"
         : !accountsLoaded
           ? "accounts_unavailable"
@@ -3989,7 +4089,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       bridgeRuntimeBuild:
         process.env["IBKR_BRIDGE_RUNTIME_BUILD"]?.trim() || null,
       configured: true,
-      authenticated: session.authenticated,
+      authenticated,
       connected: session.connected,
       competing: session.competing,
       selectedAccountId: session.selectedAccountId,
@@ -4010,6 +4110,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       stale: false,
       bridgeReachable: true,
       socketConnected: session.connected,
+      brokerServerConnected,
+      serverConnectivity: this.serverConnectivity,
+      lastServerConnectivityAt: this.lastServerConnectivityAt,
+      lastServerConnectivityError: this.lastServerConnectivityError,
       accountsLoaded,
       configuredLiveMarketDataMode,
       streamFresh,
@@ -4457,6 +4561,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         symbol: resolved.optionContract.ticker,
         providerContractId: ensuredProviderContractId,
         genericTickList: "100,101,106",
+        marketDataType: this.getOptionQuoteMarketDataType(),
       });
 
       if (fallbackQuote) {
@@ -4994,6 +5099,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
                           // omits the values from the snapshot and the option chain
                           // can't surface IV/Greeks.
                           genericTickList: "100,101,106",
+                          marketDataType: this.getOptionQuoteMarketDataType(),
                         })) ?? null)
                   : null;
 

@@ -7,6 +7,10 @@ import {
   setFlowScannerControlState,
   useFlowScannerControlState,
 } from "./marketFlowStore";
+import {
+  FLOW_SCANNER_MODE,
+  normalizeFlowScannerConfig,
+} from "./marketFlowScannerConfig";
 import { useLiveMarketFlow } from "./useLiveMarketFlow";
 
 export const SharedMarketFlowRuntime = memo(({
@@ -18,6 +22,7 @@ export const SharedMarketFlowRuntime = memo(({
   const snapshot = useLiveMarketFlow(symbols, {
     enabled,
     intervalMs,
+    blocking: true,
   });
 
   useEffect(() => {
@@ -33,17 +38,40 @@ export const SharedMarketFlowRuntime = memo(({
 
 export const BroadFlowScannerRuntime = memo(({
   symbols = [],
-  activeSymbols = symbols,
   enabled = true,
 }) => {
   const flowScannerControl = useFlowScannerControlState();
   const scannerEnabled = Boolean(flowScannerControl.enabled);
   const runtimeActive = Boolean(enabled && scannerEnabled);
+  const broadScannerConfig = useMemo(
+    () =>
+      normalizeFlowScannerConfig({
+        ...flowScannerControl.config,
+        mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+      }),
+    [flowScannerControl.config],
+  );
   const snapshot = useLiveMarketFlow(symbols, {
-    activeSymbols,
     enabled: runtimeActive,
-    scannerConfig: flowScannerControl.config,
+    scannerConfig: broadScannerConfig,
+    blocking: false,
   });
+
+  useEffect(() => {
+    if (
+      flowScannerControl.config.mode ===
+      FLOW_SCANNER_MODE.allWatchlistsPlusUniverse
+    ) {
+      return undefined;
+    }
+    setFlowScannerControlState({
+      config: {
+        ...flowScannerControl.config,
+        mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
+      },
+    });
+    return undefined;
+  }, [flowScannerControl.config]);
 
   useEffect(() => {
     setFlowScannerControlState(
@@ -66,13 +94,13 @@ export const BroadFlowScannerRuntime = memo(({
   );
 
   useEffect(() => {
-    if (!scannerEnabled) {
+    if (!runtimeActive) {
       clearMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY);
       return undefined;
     }
     publishMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY, snapshot);
     return undefined;
-  }, [scannerEnabled, snapshot]);
+  }, [runtimeActive, snapshot]);
 
   return null;
 });

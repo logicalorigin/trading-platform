@@ -3,20 +3,12 @@ import test from "node:test";
 import {
   WATCHLIST_SIGNAL_TIMEFRAMES,
   WATCHLIST_SORT_MODE,
-  activeWatchlistSymbols,
-  allWatchlistSymbols,
   buildSignalMatrixBySymbol,
-  buildWatchlistBadges,
-  buildWatchlistEarningsSymbols,
-  buildWatchlistFlowBySymbol,
   buildWatchlistIdentityPayload,
-  buildWatchlistPositionSymbols,
   buildWatchlistRows,
   countWatchlistSymbols,
-  formatWatchlistSignalBars,
   getBestWatchlistSignalState,
   sortWatchlistRows,
-  widerUniverseSymbols,
 } from "./watchlistModel.js";
 
 test("buildWatchlistIdentityPayload normalizes ticker-search identity fields", () => {
@@ -138,37 +130,6 @@ test("buildWatchlistRows supports legacy symbol arrays", () => {
   assert.equal(countWatchlistSymbols({ symbols: ["SPY", "QQQ"] }), 2);
 });
 
-test("watchlist symbol helpers preserve priority and de-dupe symbols", () => {
-  const watchlists = [
-    {
-      id: "growth",
-      symbols: ["spy", "QQQ", "spy"],
-    },
-    {
-      id: "semis",
-      items: [
-        { symbol: "nvda" },
-        { sym: "AMD" },
-        { symbol: "qqq" },
-      ],
-    },
-  ];
-
-  assert.deepEqual(activeWatchlistSymbols(watchlists[0]), ["SPY", "QQQ"]);
-  assert.deepEqual(allWatchlistSymbols(watchlists), ["SPY", "QQQ", "NVDA", "AMD"]);
-  assert.deepEqual(
-    widerUniverseSymbols({
-      watchlists,
-      universeSymbols: ["AAPL", "NVDA", "MSFT"],
-    }),
-    ["SPY", "QQQ", "NVDA", "AMD", "AAPL", "MSFT"],
-  );
-  assert.deepEqual(
-    allWatchlistSymbols([], ["iwm", "SPY", ""]),
-    ["IWM", "SPY"],
-  );
-});
-
 test("buildWatchlistRows appends monitored-only symbols without duplicating active rows", () => {
   const rows = buildWatchlistRows({
     activeWatchlist: {
@@ -262,126 +223,5 @@ test("signal sort prefers fresh matrix dots over legacy monitor state", () => {
   assert.deepEqual(
     sorted.map((row) => row.sym),
     ["QQQ", "NVDA", "SPY"],
-  );
-});
-
-test("formatWatchlistSignalBars keeps compact badge labels", () => {
-  assert.equal(formatWatchlistSignalBars(0), "0");
-  assert.equal(formatWatchlistSignalBars(18.9), "18");
-  assert.equal(formatWatchlistSignalBars(99), "99");
-  assert.equal(formatWatchlistSignalBars(100), "99+");
-  assert.equal(formatWatchlistSignalBars(null), "-");
-});
-
-test("watchlist badge helpers aggregate flow, positions, and earnings symbols", () => {
-  const nowMs = Date.parse("2026-05-05T16:00:00.000Z");
-
-  assert.deepEqual(
-    buildWatchlistPositionSymbols([
-      { symbol: "SPY" },
-      { symbol: "NVDA 260515C900", optionContract: { underlying: "nvda" } },
-      { underlyingSymbol: "msft" },
-    ]),
-    ["SPY", "NVDA", "MSFT"],
-  );
-
-  assert.deepEqual(
-    buildWatchlistEarningsSymbols(
-      [
-        { symbol: "nvda", date: "2026-05-06" },
-        { symbol: "AAPL", date: "2026-05-25" },
-        { symbol: "MSFT", date: "2026-05-01" },
-      ],
-      { nowMs, horizonDays: 14 },
-    ),
-    ["NVDA"],
-  );
-
-  const flowBySymbol = buildWatchlistFlowBySymbol(
-    [
-      {
-        underlying: "nvda",
-        premium: 350_000,
-        unusualScore: 2.2,
-        occurredAt: "2026-05-05T15:55:00.000Z",
-      },
-      {
-        ticker: "NVDA",
-        premium: 90_000,
-        isUnusual: true,
-        occurredAt: "2026-05-05T15:58:00.000Z",
-      },
-      {
-        underlying: "AAPL",
-        premium: 500_000,
-        occurredAt: "2026-05-05T12:00:00.000Z",
-      },
-    ],
-    { nowMs },
-  );
-
-  assert.deepEqual(
-    {
-      count: flowBySymbol.NVDA.count,
-      premium: flowBySymbol.NVDA.premium,
-      latestAt: flowBySymbol.NVDA.latestAt,
-    },
-    {
-      count: 2,
-      premium: 440_000,
-      latestAt: "2026-05-05T15:58:00.000Z",
-    },
-  );
-  assert.equal(flowBySymbol.AAPL, undefined);
-});
-
-test("buildWatchlistBadges returns compact badges for active row state", () => {
-  const badges = buildWatchlistBadges({
-    symbol: "nvda",
-    selectedSymbol: "NVDA",
-    snapshot: {
-      price: 905,
-      updatedAt: "2026-05-05T15:50:00.000Z",
-    },
-    signalState: {
-      currentSignalDirection: "buy",
-      fresh: true,
-    },
-    earningsSymbols: new Set(["NVDA"]),
-    flowBySymbol: new Map([
-      ["NVDA", { count: 2, premium: 440_000 }],
-    ]),
-    positionSymbols: ["nvda"],
-    nowMs: Date.parse("2026-05-05T16:00:00.000Z"),
-  });
-
-  assert.deepEqual(
-    badges.map((badge) => [badge.id, badge.label, badge.tone]),
-    [
-      ["linked", "LINK", "linked"],
-      ["earnings", "EARN", "earnings"],
-      ["signal", "BUY", "buy"],
-      ["flow", "FLOW+", "flow"],
-      ["position", "POS", "position"],
-    ],
-  );
-});
-
-test("buildWatchlistBadges reports no-data and stale quote states", () => {
-  assert.deepEqual(
-    buildWatchlistBadges({ symbol: "SPY", snapshot: null }).map((badge) => badge.id),
-    ["no-data"],
-  );
-
-  assert.deepEqual(
-    buildWatchlistBadges({
-      symbol: "SPY",
-      snapshot: {
-        price: 510,
-        updatedAt: "2026-05-05T15:00:00.000Z",
-      },
-      nowMs: Date.parse("2026-05-05T16:00:00.000Z"),
-    }).map((badge) => badge.id),
-    ["stale"],
   );
 });

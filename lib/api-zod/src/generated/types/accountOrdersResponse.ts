@@ -14,7 +14,8 @@ export interface AccountOrdersResponse {
   tab: AccountOrdersResponseTab;
   currency: string;
   degraded?: boolean;
-  reason?: string;
+  /** @nullable */
+  reason?: string | null;
   stale?: boolean;
   debug?: AccountOrdersResponseDebug;
   orders: AccountOrder[];

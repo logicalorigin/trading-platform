@@ -15,8 +15,6 @@ import {
   YAxis,
 } from "recharts";
 import {
-  Ban,
-  ChartCandlestick,
   Columns3,
   Copy,
   ExternalLink,
@@ -25,43 +23,41 @@ import {
   Pin,
   PinOff,
   Play,
-  Send,
   SlidersHorizontal,
 } from "lucide-react";
-import {
-  useGetNews,
-  useGetResearchEarningsCalendar,
-  useListPositions,
-} from "@workspace/api-client-react";
+import { useGetNews } from "@workspace/api-client-react";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   setFlowScannerControlState,
   useFlowScannerControlState,
-  useMarketFlowSnapshot,
   useMarketFlowSnapshotForStoreKey,
 } from "../features/platform/marketFlowStore";
+import {
+  flowReasonLooksTransient,
+  providerSummaryHasTransientFlowState,
+  providerSummaryHasVisibleFlowDegradation,
+} from "../features/platform/flowSourceState.js";
 import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
 import { FlowScannerStatusPanel } from "../features/flow/FlowScannerStatusPanel.jsx";
-import { buildRelatedFlowEvents } from "../features/flow/flowRelatedEventsModel";
+import {
+  OrderFlowDonut,
+  SizeBucketRow,
+} from "../features/flow/OrderFlowVisuals.jsx";
 import {
   buildDteBucketsFromEvents,
   buildFlowClockFromEvents,
   buildFlowTideFromEvents,
   buildMarketOrderFlowFromEvents,
-  buildPutCallSummaryFromEvents,
   buildSectorFlowFromEvents,
   buildTickerFlowFromEvents,
 } from "../features/flow/flowAnalytics";
-import {
-  OrderFlowDonut,
-  SizeBucketRow,
-} from "../features/flow/OrderFlowVisuals.jsx";
 import { flowProviderColor } from "../features/flow/flowPresentation";
 import {
   bridgeRuntimeMessage,
 } from "../features/platform/bridgeRuntimeModel";
+import { flowScannerModeUsesMarketUniverse } from "../features/platform/marketFlowScannerConfig";
+import { ensureTradeTickerInfo } from "../features/platform/runtimeTickerStore";
 import { normalizeTickerSymbol } from "../features/platform/tickerIdentity";
-import { WorkspaceLinkChip } from "../features/platform/WorkspaceLinkChip.jsx";
 import {
   Badge,
   Card,
@@ -74,7 +70,6 @@ import {
   fmtCompactNumber,
   fmtM,
   formatExpirationLabel,
-  formatIsoDate,
   formatRelativeTimeShort,
   isFiniteNumber,
   mapNewsSentimentToScore,
@@ -92,34 +87,24 @@ import {
   joinMotionClasses,
   motionRowStyle,
   motionVars,
-  useListMotionKeys,
 } from "../lib/motion";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
-  formatFlowScannerModeLabel,
 } from "../features/platform/marketFlowScannerConfig";
-import {
-  appendFlowExcludeTicker,
-  buildFlowRowActions,
-  getFlowEventTicker,
-} from "../features/platform/flowActionModel";
-import { useToast } from "../features/platform/platformContexts.jsx";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import {
   FLOW_BUILT_IN_PRESETS,
   FLOW_MIN_PREMIUM_OPTIONS,
   FLOW_TAPE_FILTER_OPTIONS,
+  buildFlowTapeEventClusters,
   buildFlowTapePresetPatch,
-  decorateFlowEventsWithPresetContext,
-  flowEventMatchesBuiltInPreset,
+  filterFlowTapeEvents,
+  getFlowTapeEventCluster,
   getFlowBuiltInPreset,
+  parseFlowTapeTickerTokens,
   setFlowTapeFilterState,
   useFlowTapeFilterState,
 } from "../features/platform/flowFilterStore";
-import {
-  buildWatchlistEarningsSymbols,
-  buildWatchlistPositionSymbols,
-} from "../features/platform/watchlistModel";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import {
   classifyFlowSentiment,
@@ -139,6 +124,17 @@ const UNUSUAL_SORT_OPTIONS = [
   { id: "dte", label: "DTE", numeric: true },
   { id: "underlying", label: "Underlying", numeric: false },
 ];
+
+const getDisplayableFlowError = (providerSummary) => {
+  const message =
+    providerSummary?.erroredSource?.errorMessage ||
+    providerSummary?.failures?.[0]?.error ||
+    null;
+  if (!message || flowReasonLooksTransient(message)) {
+    return null;
+  }
+  return message;
+};
 const FLOW_ROWS_OPTIONS = [24, 40, 60, 100];
 const FLOW_TAPE_OPTIONAL_COLUMNS = Object.freeze([
   { id: "side", label: "SIDE", toggleLabel: "Side", width: "56px" },
@@ -187,56 +183,9 @@ const FLOW_FIXED_COLUMNS = Object.freeze([
   { id: "strike", label: "STRIKE", width: "64px" },
   { id: "otmPercent", label: "% OTM", width: "58px" },
   { id: "mark", label: "MARK", width: "62px" },
-  { id: "actions", label: "ACTIONS", width: "146px" },
+  { id: "actions", label: "ACTIONS", width: "76px" },
 ]);
-const FLOW_ROW_ACTION_TONES = Object.freeze({
-  accent: T.accent,
-  bad: T.red,
-  good: T.green,
-  info: T.cyan,
-  muted: T.textDim,
-  warn: T.amber,
-});
-const FLOW_ROW_ACTION_TEST_IDS = Object.freeze({
-  copy_contract: "flow-action-copy-contract",
-  inspect_option: "flow-action-chart-option",
-  mute_ticker: "flow-action-mute-ticker",
-  open_underlying: "flow-action-open-underlying",
-  pin: "flow-action-pin",
-  send_to_ticket: "flow-action-send-ticket",
-});
-const getFlowRowActionIcon = (action) => {
-  if (action.id === "inspect_option") return ChartCandlestick;
-  if (action.id === "open_underlying") return ExternalLink;
-  if (action.id === "send_to_ticket") return Send;
-  if (action.id === "copy_contract") return Copy;
-  if (action.id === "mute_ticker") return Ban;
-  return action.active ? PinOff : Pin;
-};
 
-const getMergedFlowEventKey = (event) =>
-  event?.id ||
-  [
-    event?.ticker || event?.underlying || event?.symbol || "",
-    event?.optionTicker || "",
-    event?.strike ?? "",
-    event?.cp || event?.right || "",
-    event?.expirationDate || event?.exp || "",
-    event?.occurredAt || event?.time || "",
-    event?.premium ?? "",
-  ].join("|");
-
-const mergeFlowEventFeeds = (...feeds) => {
-  const mergedByKey = new Map();
-  feeds.flat().forEach((event) => {
-    if (!event) return;
-    const key = getMergedFlowEventKey(event);
-    if (!mergedByKey.has(key)) {
-      mergedByKey.set(key, event);
-    }
-  });
-  return Array.from(mergedByKey.values());
-};
 const RIGHT_ALIGNED_FLOW_COLUMNS = new Set([
   "actions",
   "ask",
@@ -357,12 +306,6 @@ const normalizeFlowVisibleColumns = (value) => {
   ];
 };
 
-const sameStringArray = (left = [], right = []) =>
-  Array.isArray(left) &&
-  Array.isArray(right) &&
-  left.length === right.length &&
-  left.every((value, index) => value === right[index]);
-
 const getFlowContractLabel = (event) => {
   if (!event) return "";
   const expiration = formatExpirationLabel(event.expirationDate);
@@ -374,45 +317,7 @@ const getFlowContractLabel = (event) => {
     .join(" | ");
 };
 
-const writeFlowContractToClipboard = async (value) => {
-  if (!value) return;
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  if (typeof document === "undefined") return;
-  const textArea = document.createElement("textarea");
-  textArea.value = value;
-  textArea.setAttribute("readonly", "");
-  textArea.style.position = "fixed";
-  textArea.style.left = "-9999px";
-  textArea.style.top = "0";
-  document.body.appendChild(textArea);
-  textArea.select();
-  try {
-    document.execCommand("copy");
-  } finally {
-    document.body.removeChild(textArea);
-  }
-};
-
-const parseTickerTokens = (value) =>
-  Array.from(
-    new Set(
-      String(value || "")
-        .split(/[\s,]+/)
-        .map((token) => normalizeTickerSymbol(token))
-        .filter(Boolean),
-    ),
-  );
-
 const FLOW_PRESET_COLORS = Object.freeze({
-  momentum: T.green,
-  "earnings-week": T.purple,
-  "unusual-calls": T.green,
-  "unusual-puts": T.red,
-  "high-rvol": T.cyan,
-  "held-positions": T.accent,
   "ask-calls": T.green,
   "bid-puts": T.red,
   "zero-dte": T.amber,
@@ -603,9 +508,11 @@ const resolveFlowQuality = ({
     flowStatus === "offline" ||
     Boolean(providerSummary?.erroredSource) ||
     failures.length > 0;
+  const hasVisibleDegradation =
+    providerSummaryHasVisibleFlowDegradation(providerSummary);
   const sourceLabel = providerSummary?.label || "Flow source";
 
-  if (hasSourceError) {
+  if (hasSourceError || hasVisibleDegradation) {
     return {
       label: "Degraded",
       color: T.red,
@@ -613,6 +520,7 @@ const resolveFlowQuality = ({
       detail:
         providerSummary?.erroredSource?.errorMessage ||
         failures[0]?.error ||
+        coverage?.degradedReason ||
         "Flow provider returned an error.",
       newestAgeMs,
       oldestAgeMs,
@@ -750,11 +658,7 @@ const FlowOverviewPanel = ({
   session,
   symbols = [],
   isVisible = false,
-  linkedContext = null,
-  onLinkedWorkspaceGroupChange,
-  onLinkedContextChange,
 }) => {
-  const toast = useToast();
   const { preferences: userPreferences } = useUserPreferences();
   const appTimeZoneLabel = getAppTimeZoneLabel(userPreferences);
   const formatFlowAppTime = useCallback(
@@ -785,7 +689,6 @@ const FlowOverviewPanel = ({
     ),
   );
   const [selectedEvt, setSelectedEvt] = useState(null);
-  const lastLinkedSelectionRef = useRef("");
   const [density, setDensity] = useState(
     _initialState.flowDensity || "compact",
   );
@@ -827,44 +730,11 @@ const FlowOverviewPanel = ({
   useEffect(() => {
     const handleWorkspaceSettings = (event) => {
       const state = event?.detail || {};
-      if (state.flowSortBy) {
-        const nextSortBy = normalizeFlowSortBy(state.flowSortBy);
-        setSortBy(nextSortBy);
-        setSortDir(normalizeFlowSortDir(state.flowSortDir, nextSortBy));
-      } else if (state.flowSortDir) {
-        setSortDir(() => normalizeFlowSortDir(state.flowSortDir, sortBy));
-      }
       if (state.flowDensity === "compact" || state.flowDensity === "comfortable") {
         setDensity(state.flowDensity);
       }
       if (FLOW_ROWS_OPTIONS.includes(Number(state.flowRowsPerPage))) {
         setRowsPerPage(Number(state.flowRowsPerPage));
-      }
-      if (typeof state.flowLivePaused === "boolean") {
-        setLivePaused(state.flowLivePaused);
-      }
-      if (typeof state.flowShowUnusualScanner === "boolean") {
-        setShowUnusualScanner(state.flowShowUnusualScanner);
-      }
-      if (typeof state.flowFiltersOpen === "boolean") {
-        setFiltersOpen(state.flowFiltersOpen);
-      }
-      if (typeof state.flowColumnsOpen === "boolean") {
-        setColumnsOpen(state.flowColumnsOpen);
-      }
-      if (Array.isArray(state.flowColumnOrder)) {
-        const nextColumnOrder = normalizeFlowColumnOrder(state.flowColumnOrder);
-        setColumnOrder((current) =>
-          sameStringArray(current, nextColumnOrder) ? current : nextColumnOrder,
-        );
-      }
-      if (Array.isArray(state.flowVisibleColumns)) {
-        const nextVisibleColumns = normalizeFlowVisibleColumns(state.flowVisibleColumns);
-        setVisibleColumns((current) =>
-          sameStringArray(current, nextVisibleColumns)
-            ? current
-            : nextVisibleColumns,
-        );
       }
     };
     window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
@@ -873,7 +743,7 @@ const FlowOverviewPanel = ({
         "rayalgo:workspace-settings-updated",
         handleWorkspaceSettings,
       );
-  }, [sortBy]);
+  }, []);
 
   useEffect(() => {
     persistState({ flowSavedScans: savedScans });
@@ -1012,116 +882,17 @@ const FlowOverviewPanel = ({
     return () => clearTimeout(timeoutId);
   }, [activateNews, isVisible]);
 
-  const environment = session?.environment || "paper";
-  const researchConfigured = Boolean(session?.configured?.research);
-  const brokerAuthenticated = Boolean(
-    session?.ibkrBridge?.authenticated &&
-      session?.ibkrBridge?.healthFresh !== false,
-  );
-  const primaryAccountId =
-    session?.ibkrBridge?.selectedAccountId ||
-    session?.ibkrBridge?.accounts?.[0]?.accountId ||
-    null;
-  const flowPresetCalendarWindow = useMemo(() => {
-    const from = new Date();
-    const to = new Date(from);
-    to.setUTCDate(to.getUTCDate() + 14);
-    return {
-      from: formatIsoDate(from),
-      to: formatIsoDate(to),
-    };
-  }, []);
-  const flowPresetEarningsQuery = useGetResearchEarningsCalendar(
-    flowPresetCalendarWindow,
-    {
-      query: {
-        enabled: Boolean(
-          isVisible &&
-            researchConfigured &&
-            flowPresetCalendarWindow.from &&
-            flowPresetCalendarWindow.to,
-        ),
-        staleTime: 300_000,
-        refetchInterval: isVisible ? 300_000 : false,
-        retry: false,
-      },
-    },
-  );
-  const flowPresetEarningsSymbols = useMemo(
-    () =>
-      buildWatchlistEarningsSymbols(flowPresetEarningsQuery.data?.entries || [], {
-        horizonDays: 14,
-      }),
-    [flowPresetEarningsQuery.data],
-  );
-  const flowPresetPositionsQuery = useListPositions(
-    primaryAccountId
-      ? { accountId: primaryAccountId, mode: environment }
-      : { mode: environment },
-    {
-      query: {
-        enabled: Boolean(isVisible && brokerAuthenticated && primaryAccountId),
-        staleTime: 30_000,
-        refetchInterval: false,
-        retry: false,
-      },
-    },
-  );
-  const flowPresetPositionSymbols = useMemo(
-    () =>
-      buildWatchlistPositionSymbols(flowPresetPositionsQuery.data?.positions || []),
-    [flowPresetPositionsQuery.data],
-  );
-
-  const sharedFlowSnapshot = useMarketFlowSnapshot(symbols, {
-    subscribe: isVisible && !livePaused,
-  });
   const flowScannerControl = useFlowScannerControlState({
     subscribe: isVisible,
   });
   const flowScannerEnabled = Boolean(flowScannerControl.enabled);
   const flowScannerPanelVisible = showUnusualScanner || flowScannerEnabled;
   const flowScannerOwnerActive = Boolean(flowScannerControl.ownerActive);
-  const broadScanSnapshotActive = flowScannerEnabled && flowScannerOwnerActive;
   const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
     BROAD_MARKET_FLOW_STORE_KEY,
-    { subscribe: isVisible && !livePaused && broadScanSnapshotActive },
+    { subscribe: isVisible && !livePaused },
   );
-  const liveFlowSnapshot = useMemo(() => {
-    if (!broadScanSnapshotActive) {
-      return sharedFlowSnapshot;
-    }
-    const flowEvents = mergeFlowEventFeeds(
-      broadFlowSnapshot.flowEvents || [],
-      sharedFlowSnapshot.flowEvents || [],
-    );
-    const providerSummary =
-      broadFlowSnapshot.providerSummary || sharedFlowSnapshot.providerSummary;
-    const flowStatus = flowEvents.length
-      ? "live"
-      : broadFlowSnapshot.flowStatus || sharedFlowSnapshot.flowStatus;
-
-    return {
-      ...sharedFlowSnapshot,
-      hasLiveFlow: flowEvents.length > 0,
-      flowStatus,
-      providerSummary,
-      flowEvents,
-      flowTide: buildFlowTideFromEvents(flowEvents),
-      tickerFlow: buildTickerFlowFromEvents(flowEvents),
-      flowClock: buildFlowClockFromEvents(flowEvents),
-      sectorFlow: buildSectorFlowFromEvents(flowEvents),
-      dteBuckets: buildDteBucketsFromEvents(flowEvents),
-      marketOrderFlow: buildMarketOrderFlowFromEvents(flowEvents),
-      putCall: buildPutCallSummaryFromEvents(flowEvents),
-    };
-  }, [
-    broadFlowSnapshot.flowEvents,
-    broadFlowSnapshot.flowStatus,
-    broadFlowSnapshot.providerSummary,
-    broadScanSnapshotActive,
-    sharedFlowSnapshot,
-  ]);
+  const liveFlowSnapshot = broadFlowSnapshot;
   const flowScannerTone = flowScannerEnabled
     ? flowScannerOwnerActive
       ? T.green
@@ -1139,27 +910,16 @@ const FlowOverviewPanel = ({
     flowStatus,
     providerSummary,
     flowEvents: rawFlowEvents = [],
-    flowTide,
-    tickerFlow,
-    flowClock,
-    sectorFlow,
-    dteBuckets,
-    marketOrderFlow,
   } = flowSnapshot;
 
   const flowEvents = useMemo(
-    () => {
-      const normalizedEvents = rawFlowEvents.map((event) => ({
+    () =>
+      rawFlowEvents.map((event) => ({
         ...event,
         mark: resolveFlowMark(event),
         otmPercent: resolveFlowOtmPercent(event),
-      }));
-      return decorateFlowEventsWithPresetContext(normalizedEvents, {
-        earningsSymbols: flowPresetEarningsSymbols,
-        positionSymbols: flowPresetPositionSymbols,
-      });
-    },
-    [flowPresetEarningsSymbols, flowPresetPositionSymbols, rawFlowEvents],
+      })),
+    [rawFlowEvents],
   );
 
   useEffect(() => {
@@ -1198,7 +958,10 @@ const FlowOverviewPanel = ({
     coverage.selectedSymbols || totalCoverageSymbols;
   const scannedCoverageSymbols =
     coverage.cycleScannedSymbols ?? coverage.scannedSymbols ?? 0;
-  const coverageModeLabel = formatFlowScannerModeLabel(coverage.mode);
+  const coverageModeLabel =
+    flowScannerModeUsesMarketUniverse(coverage.mode)
+      ? "market-wide"
+      : "watchlist";
   const oldestScanAt = useMemo(() => {
     const timestamps = Object.values(coverage.lastScannedAt || {});
     return timestamps.length ? Math.min(...timestamps) : null;
@@ -1262,54 +1025,64 @@ const FlowOverviewPanel = ({
     }));
   }, [newsQuery.data]);
 
-  const includeTokens = useMemo(() => parseTickerTokens(includeQuery), [
+  const includeTokens = useMemo(() => parseFlowTapeTickerTokens(includeQuery), [
     includeQuery,
   ]);
-  const excludeTokens = useMemo(() => parseTickerTokens(excludeQuery), [
+  const excludeTokens = useMemo(() => parseFlowTapeTickerTokens(excludeQuery), [
     excludeQuery,
   ]);
   const activeBuiltInPreset = getFlowBuiltInPreset(activeFlowPresetId);
 
-  const clusters = useMemo(() => {
-    const map = {};
-    for (const event of flowEvents) {
-      const key =
-        event.optionTicker ||
-        `${event.ticker}_${event.strike}_${event.cp}_${formatExpirationLabel(
-          event.expirationDate,
-        )}`;
-      if (!map[key]) {
-        map[key] = {
-          count: 0,
-          totalPrem: 0,
-          ids: [],
-          firstTime: event.time,
-          lastTime: event.time,
-        };
-      }
-      map[key].count += 1;
-      map[key].totalPrem += event.premium;
-      map[key].ids.push(event.id);
-      if (event.time < map[key].firstTime) map[key].firstTime = event.time;
-      if (event.time > map[key].lastTime) map[key].lastTime = event.time;
-    }
-    return map;
-  }, [flowEvents]);
+  const clusters = useMemo(
+    () => buildFlowTapeEventClusters(flowEvents),
+    [flowEvents],
+  );
 
-  const clusterFor = (event) => {
-    const key =
-      event.optionTicker ||
-      `${event.ticker}_${event.strike}_${event.cp}_${formatExpirationLabel(
-        event.expirationDate,
-      )}`;
-    const cluster = clusters[key];
-    return cluster && cluster.count >= 2 ? cluster : null;
-  };
+  const clusterFor = useCallback(
+    (event) => getFlowTapeEventCluster(event, clusters),
+    [clusters],
+  );
 
+  const filtered = useMemo(() => {
+    let events = filterFlowTapeEvents(flowEvents, flowTapeFilters, {
+      clusterFor,
+    });
+
+    events = [...events].sort((left, right) =>
+      compareFlowEvents(left, right, sortBy, sortDir),
+    );
+
+    return events;
+  }, [
+    clusterFor,
+    flowEvents,
+    flowTapeFilters,
+    sortBy,
+    sortDir,
+  ]);
+  const filteredFlowAnalytics = useMemo(
+    () => ({
+      flowTide: buildFlowTideFromEvents(filtered),
+      tickerFlow: buildTickerFlowFromEvents(filtered, ensureTradeTickerInfo),
+      flowClock: buildFlowClockFromEvents(filtered),
+      sectorFlow: buildSectorFlowFromEvents(filtered),
+      dteBuckets: buildDteBucketsFromEvents(filtered),
+      marketOrderFlow: buildMarketOrderFlowFromEvents(filtered),
+    }),
+    [filtered],
+  );
+  const {
+    flowTide,
+    tickerFlow,
+    flowClock,
+    sectorFlow,
+    dteBuckets,
+    marketOrderFlow,
+  } = filteredFlowAnalytics;
   const topContractsByTicker = useMemo(() => {
     if (!showDeferredPanels) return {};
     const groupedByTicker = {};
-    for (const event of flowEvents) {
+    for (const event of filtered) {
       if (!groupedByTicker[event.ticker]) groupedByTicker[event.ticker] = {};
       const key =
         event.optionTicker ||
@@ -1343,62 +1116,17 @@ const FlowOverviewPanel = ({
           .slice(0, 3),
       ]),
     );
-  }, [flowEvents, showDeferredPanels]);
-
-  const filtered = useMemo(() => {
-    let events = flowEvents
-      .filter((event) => {
-        const ticker = normalizeTickerSymbol(event.ticker);
-        if (includeTokens.length && !includeTokens.includes(ticker)) return false;
-        if (excludeTokens.includes(ticker)) return false;
-        if (filter === "calls") return event.cp === "C";
-        if (filter === "puts") return event.cp === "P";
-        if (filter === "unusual") return event.isUnusual;
-        if (filter === "golden") return event.golden;
-        if (filter === "sweep") return event.type === "SWEEP";
-        if (filter === "block") return event.type === "BLOCK";
-        if (filter === "cluster") return clusterFor(event) !== null;
-        return true;
-      })
-      .filter((event) =>
-        flowEventMatchesBuiltInPreset(activeFlowPresetId, event, clusterFor),
-      )
-      .filter((event) => event.premium >= minPrem);
-
-    events = [...events].sort((left, right) =>
-      compareFlowEvents(left, right, sortBy, sortDir),
-    );
-
-    return events;
-  }, [
-    activeFlowPresetId,
-    clusterFor,
-    excludeTokens,
-    filter,
-    flowEvents,
-    includeTokens,
-    minPrem,
-    sortBy,
-    sortDir,
-  ]);
+  }, [filtered, showDeferredPanels]);
 
   const visibleFlowRows = filtered.slice(0, rowsPerPage);
-  const visibleFlowRowMotion = useListMotionKeys(
-    visibleFlowRows,
-    (event) => event.id,
-  );
   const denseRows = density === "compact";
   const orderedOptionalColumns = columnOrder
     .map((columnId) => FLOW_COLUMN_BY_ID.get(columnId))
     .filter((column) => column && visibleColumns.includes(column.id));
   const tapeColumns = [...FLOW_FIXED_COLUMNS, ...orderedOptionalColumns];
   const tapeGridTemplate = tapeColumns.map((column) => column.width).join(" ");
-  const fixedColumnsWidth = FLOW_FIXED_COLUMNS.reduce((sum, column) => {
-    const width = Number.parseInt(column.width, 10);
-    return sum + (Number.isFinite(width) ? width : 0);
-  }, 0);
   const tapeTableMinWidth = dim(
-    fixedColumnsWidth +
+    472 +
       orderedOptionalColumns.reduce((sum, column) => {
         const width = Number.parseInt(column.width, 10);
         return sum + (Number.isFinite(width) ? width : 72);
@@ -1434,15 +1162,6 @@ const FlowOverviewPanel = ({
       null,
     [filtered, flowEvents, pinnedEventId],
   );
-  const selectedRelatedFlowEvents = useMemo(
-    () =>
-      buildRelatedFlowEvents({
-        event: selectedEvt,
-        events: flowEvents,
-        limit: 6,
-      }),
-    [flowEvents, selectedEvt],
-  );
   const flowSentimentSummary = useMemo(
     () => summarizeFlowSentiment(filtered),
     [filtered],
@@ -1454,18 +1173,18 @@ const FlowOverviewPanel = ({
     }
   }, [isNarrowFlowLayout]);
 
-  const totalCallPrem = flowEvents
+  const totalCallPrem = filtered
     .filter((event) => event.cp === "C")
     .reduce((sum, event) => sum + event.premium, 0);
-  const totalPutPrem = flowEvents
+  const totalPutPrem = filtered
     .filter((event) => event.cp === "P")
     .reduce((sum, event) => sum + event.premium, 0);
   const netPrem = totalCallPrem - totalPutPrem;
-  const goldenCount = flowEvents.filter((event) => event.golden).length;
-  const blockCount = flowEvents.filter((event) => event.type === "BLOCK").length;
-  const sweepCount = flowEvents.filter((event) => event.type === "SWEEP").length;
-  const zeroDteCount = flowEvents.filter((event) => event.dte <= 1).length;
-  const zeroDtePrem = flowEvents
+  const goldenCount = filtered.filter((event) => event.golden).length;
+  const blockCount = filtered.filter((event) => event.type === "BLOCK").length;
+  const sweepCount = filtered.filter((event) => event.type === "SWEEP").length;
+  const zeroDteCount = filtered.filter((event) => event.dte <= 1).length;
+  const zeroDtePrem = filtered
     .filter((event) => event.dte <= 1)
     .reduce((sum, event) => sum + event.premium, 0);
   const cpRatio = totalCallPrem ? totalPutPrem / totalCallPrem : 0;
@@ -1474,7 +1193,7 @@ const FlowOverviewPanel = ({
       (left, right) => right.calls + right.puts - (left.calls + left.puts),
     )[0] || { sym: MISSING_VALUE, calls: 0, puts: 0 };
 
-  const xlTrades = flowEvents.filter((event) => event.premium >= 250000);
+  const xlTrades = filtered.filter((event) => event.premium >= 250000);
   const xlCallPrem =
     xlTrades
       .filter((event) => event.cp === "C" && event.side === "BUY")
@@ -1519,7 +1238,7 @@ const FlowOverviewPanel = ({
       null,
     )?.time || MISSING_VALUE;
   const flowClockAverage = Math.round(
-    flowEvents.length / Math.max(1, flowClock.length),
+    filtered.length / Math.max(1, flowClock.length),
   );
 
   const ibkrLoginRequired =
@@ -1539,6 +1258,7 @@ const FlowOverviewPanel = ({
       : flowDisplayLabel === "IBKR delayed"
         ? T.amber
         : providerSummary.color;
+  const displayableFlowError = getDisplayableFlowError(providerSummary);
   const feedStateLabel = livePaused
     ? "Paused"
     : hasLiveFlow
@@ -1558,13 +1278,13 @@ const FlowOverviewPanel = ({
       ? "Waiting on current options activity snapshots for the tracked symbols."
       : ibkrLoginRequired
         ? bridgeRuntimeMessage(session)
-        : providerSummary.erroredSource?.errorMessage
-          ? providerSummary.erroredSource.errorMessage
-          : providerSummary.failures[0]?.error
-            ? providerSummary.failures[0].error
+        : displayableFlowError
+          ? displayableFlowError
             : providerSummary.fallbackUsed
               ? "IBKR returned no active snapshot flow and the Polygon trade fallback was empty."
-              : "IBKR returned no active snapshot flow for the tracked symbols.";
+              : providerSummaryHasTransientFlowState(providerSummary)
+                ? "The scanner is rotating through the broad universe; the latest transient bridge response did not produce a completed flow snapshot."
+                : "IBKR returned no active snapshot flow for the tracked symbols.";
 
   const activeTicker = normalizeTickerSymbol(
     selectedEvt?.ticker ||
@@ -1574,23 +1294,12 @@ const FlowOverviewPanel = ({
       watchlistSymbols[0] ||
       "",
   );
-  useEffect(() => {
-    if (!linkedContext?.linked || !selectedEvt?.ticker) {
-      return;
-    }
-    const symbol = normalizeTickerSymbol(selectedEvt.ticker);
-    if (!symbol || lastLinkedSelectionRef.current === symbol) {
-      return;
-    }
-    lastLinkedSelectionRef.current = symbol;
-    onLinkedContextChange?.({ symbol });
-  }, [linkedContext?.linked, onLinkedContextChange, selectedEvt?.ticker]);
   const selectedTickerEvents = useMemo(
     () =>
-      flowEvents.filter(
+      filtered.filter(
         (event) => normalizeTickerSymbol(event.ticker) === activeTicker,
       ),
-    [activeTicker, flowEvents],
+    [activeTicker, filtered],
   );
   const selectedCallPremium = selectedTickerEvents.reduce(
     (sum, event) => sum + (event.cp === "C" ? event.premium : 0),
@@ -1780,7 +1489,7 @@ const FlowOverviewPanel = ({
     () =>
       !showDeferredPanels
         ? []
-        : flowEvents
+        : filtered
         .map((event) => {
           const cluster = clusterFor(event);
           const actionScore =
@@ -1799,7 +1508,7 @@ const FlowOverviewPanel = ({
             right.event.premium - left.event.premium,
         )
         .slice(0, 6),
-    [flowEvents, clusters, showDeferredPanels],
+    [clusterFor, filtered, showDeferredPanels],
   );
 
   const selectedNewsItems = useMemo(() => {
@@ -1815,7 +1524,7 @@ const FlowOverviewPanel = ({
     {
       label: "Total Premium",
       value: fmtM(totalCallPrem + totalPutPrem),
-      sub: `${flowEvents.length} prints`,
+      sub: `${filtered.length} shown`,
       color: T.text,
     },
     {
@@ -1860,15 +1569,31 @@ const FlowOverviewPanel = ({
     setLivePaused(true);
   };
 
-  const showCopiedStatus = useCallback((eventId) => {
-    setCopiedEventId(eventId);
-    if (copyStatusTimerRef.current) {
-      clearTimeout(copyStatusTimerRef.current);
+  const handleCopyContract = async (event, contractEvent) => {
+    event.stopPropagation();
+    const contractLabel = getFlowContractLabel(contractEvent);
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(contractLabel);
+      }
+      setCopiedEventId(contractEvent.id);
+      if (copyStatusTimerRef.current) {
+        clearTimeout(copyStatusTimerRef.current);
+      }
+      copyStatusTimerRef.current = setTimeout(() => {
+        setCopiedEventId(null);
+      }, 1400);
+    } catch (_error) {
+      setCopiedEventId(contractEvent.id);
     }
-    copyStatusTimerRef.current = setTimeout(() => {
-      setCopiedEventId(null);
-    }, 1400);
-  }, []);
+  };
+
+  const handleTogglePinned = (event, contractEvent) => {
+    event.stopPropagation();
+    setPinnedEventId((current) =>
+      current === contractEvent.id ? null : contractEvent.id,
+    );
+  };
 
   const updateFlowTapeFilters = useCallback((patch, { clearPreset = true } = {}) => {
     setActiveScanId(null);
@@ -1877,57 +1602,6 @@ const FlowOverviewPanel = ({
       ...(clearPreset ? { activeFlowPresetId: null } : {}),
     });
   }, []);
-
-  const handleFlowRowAction = useCallback(
-    (event, actionId, contractEvent) => {
-      event.stopPropagation();
-      if (!contractEvent) return;
-
-      if (actionId === "inspect_option") {
-        setSelectedEvt(contractEvent);
-        return;
-      }
-      if (actionId === "open_underlying") {
-        onJumpToTrade?.(contractEvent, { mode: "underlying" });
-        return;
-      }
-      if (actionId === "send_to_ticket") {
-        onJumpToTrade?.(contractEvent, { mode: "ticket" });
-        return;
-      }
-      if (actionId === "copy_contract") {
-        const contractLabel = getFlowContractLabel(contractEvent);
-        showCopiedStatus(contractEvent.id);
-        void writeFlowContractToClipboard(contractLabel).catch(() => {});
-        return;
-      }
-      if (actionId === "pin") {
-        setPinnedEventId((current) =>
-          current === contractEvent.id ? null : contractEvent.id,
-        );
-        return;
-      }
-      if (actionId === "mute_ticker") {
-        const ticker = getFlowEventTicker(contractEvent);
-        if (!ticker) return;
-        const nextExcludeQuery = appendFlowExcludeTicker(excludeQuery, ticker);
-        updateFlowTapeFilters({ excludeQuery: nextExcludeQuery });
-        toast.push({
-          kind: "info",
-          title: `${ticker} muted`,
-          body: "Flow filters now exclude this ticker. Clear the exclude filter to restore it.",
-          duration: 2600,
-        });
-      }
-    },
-    [
-      excludeQuery,
-      onJumpToTrade,
-      showCopiedStatus,
-      toast,
-      updateFlowTapeFilters,
-    ],
-  );
 
   const markScannerEdited = () => {
     setActiveScanId(null);
@@ -2077,6 +1751,7 @@ const FlowOverviewPanel = ({
       const ageColor = ageMs < 60_000 ? T.green : ageMs < 300_000 ? T.textSec : T.textDim;
       return (
         <AppTooltip content={occurredAt ? `${occurredAt} ${appTimeZoneLabel}` : undefined}><span
+          data-testid="flow-tape-cell-time"
           style={{ color: ageColor, fontWeight: ageMs < 60_000 ? 700 : 500 }}
         >
           {ageLabel}
@@ -2471,13 +2146,6 @@ const FlowOverviewPanel = ({
     if (columnId === "actions") {
       const isPinned = pinnedEventId === event.id;
       const copied = copiedEventId === event.id;
-      const ticker = getFlowEventTicker(event);
-      const actions = buildFlowRowActions({
-        event,
-        isCopied: copied,
-        isMuted: ticker ? excludeTokens.includes(ticker) : false,
-        isPinned,
-      });
       return (
         <div
           style={{
@@ -2487,38 +2155,66 @@ const FlowOverviewPanel = ({
             gap: sp(2),
           }}
         >
-          {actions.map((action) => {
-            const Icon = getFlowRowActionIcon(action);
-            const color = FLOW_ROW_ACTION_TONES[action.tone] || T.textDim;
-            return (
-              <AppTooltip key={action.id} content={action.label}><button
-                type="button"
-                data-testid={FLOW_ROW_ACTION_TEST_IDS[action.id]}
-                aria-label={action.ariaLabel}
-                disabled={action.disabled}
-                onClick={(clickEvent) =>
-                  handleFlowRowAction(clickEvent, action.id, event)
-                }
-                style={{
-                  width: dim(22),
-                  height: dim(22),
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: `1px solid ${
-                    action.active ? `${color}66` : T.border
-                  }`,
-                  background: action.active ? `${color}18` : T.bg2,
-                  color: action.disabled ? T.textMuted : color,
-                  cursor: action.disabled ? "not-allowed" : "pointer",
-                  opacity: action.disabled ? 0.45 : 1,
-                  padding: 0,
-                }}
-              >
-                <Icon size={12} />
-              </button></AppTooltip>
-            );
-          })}
+          <AppTooltip content={isPinned ? "Unpin row" : "Pin row"}><button
+            type="button"
+            aria-label={isPinned ? "Unpin flow row" : "Pin flow row"}
+            onClick={(clickEvent) => handleTogglePinned(clickEvent, event)}
+            style={{
+              width: dim(22),
+              height: dim(22),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `1px solid ${isPinned ? T.amber : T.border}`,
+              background: isPinned ? `${T.amber}18` : T.bg2,
+              color: isPinned ? T.amber : T.textDim,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
+          </button></AppTooltip>
+          <AppTooltip content={copied ? "Copied" : "Copy contract"}><button
+            type="button"
+            aria-label="Copy flow contract"
+            onClick={(clickEvent) => handleCopyContract(clickEvent, event)}
+            style={{
+              width: dim(22),
+              height: dim(22),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `1px solid ${copied ? T.green : T.border}`,
+              background: copied ? `${T.green}18` : T.bg2,
+              color: copied ? T.green : T.textDim,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            <Copy size={12} />
+          </button></AppTooltip>
+          <AppTooltip content="Open in Trade"><button
+            type="button"
+            aria-label="Open flow row in Trade"
+            onClick={(clickEvent) => {
+              clickEvent.stopPropagation();
+              onJumpToTrade?.(event);
+            }}
+            style={{
+              width: dim(22),
+              height: dim(22),
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `1px solid ${T.border}`,
+              background: T.bg2,
+              color: T.textDim,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            <ExternalLink size={12} />
+          </button></AppTooltip>
         </div>
       );
     }
@@ -2981,10 +2677,9 @@ const FlowOverviewPanel = ({
     </Card>
   ) : null;
 
-  const renderFlowMobileCard = (event, index = 0, rowMotion = null) => {
+  const renderFlowMobileCard = (event, index = 0) => {
     const selected = selectedEvt?.id === event.id;
     const pinned = pinnedEventId === event.id;
-    const isNewRow = rowMotion?.isNew ?? true;
     const executionMeta = getFlowExecutionMeta(event);
     const premiumLabel =
       event.premium >= 1e6
@@ -3000,8 +2695,6 @@ const FlowOverviewPanel = ({
       <div
         key={event.id}
         data-testid="flow-row-card"
-        data-flow-row-new={isNewRow ? "true" : "false"}
-        data-flow-row-ticker={getFlowEventTicker(event)}
         role="button"
         tabIndex={0}
         onClick={() =>
@@ -3018,12 +2711,12 @@ const FlowOverviewPanel = ({
           }
         }}
         className={joinMotionClasses(
-          isNewRow && "ra-row-enter",
+          "ra-row-enter",
           "ra-interactive",
           (selected || pinned) && "ra-focus-rail",
         )}
         style={{
-          ...(isNewRow ? motionRowStyle(index, 10, 140) : null),
+          ...motionRowStyle(index, 10, 140),
           ...motionVars({
             accent: selected
               ? T.accent
@@ -3311,7 +3004,7 @@ const FlowOverviewPanel = ({
                   color: T.text,
                 }}
               >
-                Flow Scanner
+                Options Flow Tape
               </span>
               <span
                 style={{
@@ -3434,298 +3127,6 @@ const FlowOverviewPanel = ({
         ) : null}
         {columnDrawer}
 
-        <Card style={{ display: "none" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              gap: sp(10),
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
-              <span
-                style={{
-                  fontSize: fs(12),
-                  fontWeight: 800,
-                  fontFamily: T.display,
-                  color: T.text,
-                }}
-              >
-                Flow Scanner
-              </span>
-              <span
-                style={{
-                  fontSize: fs(8),
-                  color: T.textDim,
-                  fontFamily: T.mono,
-                }}
-              >
-                Tape-first live options flow with inline context and saved presets.
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: sp(6),
-                flexWrap: "wrap",
-                justifyContent: "flex-end",
-              }}
-            >
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: sp(4),
-                  padding: sp("2px 6px"),
-                  borderRadius: dim(3),
-                  border: `1px solid ${feedStateColor}30`,
-                  background: `${feedStateColor}12`,
-                  color: feedStateColor,
-                  fontSize: fs(8),
-                  fontFamily: T.mono,
-                  fontWeight: 700,
-                }}
-              >
-                {feedStateLabel}
-              </span>
-              <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-                {filtered.length} / {flowEvents.length} shown
-              </span>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(220px, 1fr) minmax(220px, 1fr) auto",
-              gap: sp(6),
-              alignItems: "center",
-            }}
-          >
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: sp(3),
-                fontSize: fs(8),
-                color: T.textDim,
-                fontFamily: T.mono,
-              }}
-            >
-              Include tickers
-              <input
-                value={includeQuery}
-                onChange={(event) => {
-                  updateFlowTapeFilters({ includeQuery: event.target.value });
-                }}
-                placeholder="SPY, QQQ, NVDA"
-                style={{
-                  width: "100%",
-                  padding: sp("6px 8px"),
-                  background: T.bg1,
-                  border: `1px solid ${T.border}`,
-                  color: T.text,
-                  fontFamily: T.mono,
-                  fontSize: fs(10),
-                }}
-              />
-            </label>
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: sp(3),
-                fontSize: fs(8),
-                color: T.textDim,
-                fontFamily: T.mono,
-              }}
-            >
-              Exclude tickers
-              <input
-                value={excludeQuery}
-                onChange={(event) => {
-                  updateFlowTapeFilters({ excludeQuery: event.target.value });
-                }}
-                placeholder="AAPL, TSLA"
-                style={{
-                  width: "100%",
-                  padding: sp("6px 8px"),
-                  background: T.bg1,
-                  border: `1px solid ${T.border}`,
-                  color: T.text,
-                  fontFamily: T.mono,
-                  fontSize: fs(10),
-                }}
-              />
-            </label>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: sp(3),
-                alignItems: "flex-end",
-              }}
-            >
-              <button
-                onClick={handleToggleLivePaused}
-                style={{
-                  ...toolbarChipStyle(livePaused, livePaused ? T.amber : T.green),
-                  minWidth: dim(104),
-                }}
-              >
-                {livePaused ? "Resume live" : "Pause tape"}
-              </button>
-              <button
-                onClick={saveCurrentScan}
-                style={{
-                  ...toolbarChipStyle(false),
-                  color: T.accent,
-                  borderColor: T.accent,
-                  minWidth: dim(104),
-                }}
-              >
-                Save preset
-              </button>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
-            <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-              FLOW
-            </span>
-            {FLOW_TAPE_FILTER_OPTIONS.map(({ id: key, label }) => (
-              <Pill
-                key={key}
-                active={filter === key}
-                onClick={() => {
-                  updateFlowTapeFilters({ filter: key });
-                }}
-                color={key === "golden" ? T.amber : key === "cluster" ? T.cyan : undefined}
-              >
-                {label}
-              </Pill>
-            ))}
-            <span style={{ marginLeft: sp(8), fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-              MIN
-            </span>
-            {FLOW_MIN_PREMIUM_OPTIONS.map(({ value, label }) => (
-              <Pill
-                key={value}
-                active={minPrem === value}
-                onClick={() => {
-                  updateFlowTapeFilters({ minPrem: value });
-                }}
-              >
-                {label}
-              </Pill>
-            ))}
-          </div>
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
-            <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-              DENSITY
-            </span>
-            {[
-              ["compact", "Compact"],
-              ["comfortable", "Comfort"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                onClick={() => {
-                  setDensity(value);
-                  setActiveScanId(null);
-                }}
-                style={toolbarChipStyle(density === value)}
-              >
-                {label}
-              </button>
-            ))}
-            <span style={{ marginLeft: sp(8), fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-              ROWS
-            </span>
-            {FLOW_ROWS_OPTIONS.map((value) => (
-              <button
-                key={value}
-                onClick={() => {
-                  setRowsPerPage(value);
-                  setActiveScanId(null);
-                }}
-                style={toolbarChipStyle(rowsPerPage === value)}
-              >
-                {value}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
-            <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-              COLUMNS
-            </span>
-            {FLOW_TAPE_OPTIONAL_COLUMNS.map((column) => (
-              <button
-                key={column.id}
-                onClick={() => toggleColumn(column.id)}
-                style={toolbarChipStyle(
-                  visibleColumns.includes(column.id),
-                  visibleColumns.includes(column.id) ? T.text : T.border,
-                )}
-              >
-                {column.toggleLabel}
-              </button>
-            ))}
-          </div>
-
-          {savedScans.length ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: sp(4), alignItems: "center" }}>
-              <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-                PRESETS
-              </span>
-              {savedScans.map((scan) => (
-                <AppTooltip key={scan.id} content={`${scan.name} · ${scan.filter} · ${normalizeFlowSortBy(scan.sortBy)} ${normalizeFlowSortDir(scan.sortDir, scan.sortBy)}`}><div
-                  key={scan.id}
-                  onClick={() => loadScan(scan)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: sp(3),
-                    padding: sp("3px 7px"),
-                    borderRadius: dim(3),
-                    border: `1px solid ${activeScanId === scan.id ? T.accent : T.border}`,
-                    background: activeScanId === scan.id ? `${T.accent}18` : T.bg1,
-                    cursor: "pointer",
-                    fontSize: fs(8),
-                    fontFamily: T.mono,
-                    color: activeScanId === scan.id ? T.accent : T.textSec,
-                  }}
-                >
-                  <span>{scan.name}</span>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      deleteScan(scan.id);
-                    }}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: T.textMuted,
-                      cursor: "pointer",
-                      fontSize: fs(10),
-                      padding: 0,
-                      lineHeight: 1,
-                    }}
-                  >
-                    ×
-                  </button>
-                </div></AppTooltip>
-              ))}
-            </div>
-          ) : null}
-        </Card>
-
         {flowPresetBar}
 
         <div
@@ -3751,7 +3152,6 @@ const FlowOverviewPanel = ({
             {selectedEvt ? (
               <ContractDetailInline
                 evt={selectedEvt}
-                relatedEvents={selectedRelatedFlowEvents}
                 onBack={() => setSelectedEvt(null)}
                 onJumpToTrade={(event) => {
                   setSelectedEvt(null);
@@ -3805,7 +3205,6 @@ const FlowOverviewPanel = ({
                 <div
                   style={{
                     display: "flex",
-                    alignItems: "center",
                     gap: sp(8),
                     flexWrap: "wrap",
                     fontSize: fs(8),
@@ -3813,31 +3212,6 @@ const FlowOverviewPanel = ({
                     color: T.textDim,
                   }}
                 >
-                  <AppTooltip content={`${flowDisplayLabel} · ${feedStateLabel}`}>
-                    <span
-                      data-testid="flow-tape-feed-state"
-                      className={joinMotionClasses(
-                        (hasLiveFlow || flowStatus === "loading") &&
-                          "ra-status-pulse",
-                      )}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: sp(4),
-                        padding: sp("2px 6px"),
-                        borderRadius: dim(3),
-                        border: `1px solid ${feedStateColor}30`,
-                        background: `${feedStateColor}12`,
-                        color: feedStateColor,
-                        fontSize: fs(8),
-                        fontFamily: T.mono,
-                        fontWeight: 700,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {feedStateLabel}
-                    </span>
-                  </AppTooltip>
                   <span>
                     Bull{" "}
                     <span style={{ color: T.green, fontWeight: 700 }}>
@@ -3998,11 +3372,7 @@ const FlowOverviewPanel = ({
                           style={{ flex: 1, overflowY: "auto" }}
                         >
                           {visibleFlowRows.map((event, index) =>
-                            renderFlowMobileCard(
-                              event,
-                              index,
-                              visibleFlowRowMotion[index],
-                            ),
+                            renderFlowMobileCard(event, index),
                           )}
                         </div>
                         {filtered.length > rowsPerPage ? (
@@ -4127,17 +3497,13 @@ const FlowOverviewPanel = ({
                             {visibleFlowRows.map((event, index) => {
                               const selected = selectedEvt?.id === event.id;
                               const pinned = pinnedEventId === event.id;
-                              const rowMotion = visibleFlowRowMotion[index];
-                              const isNewRow = rowMotion?.isNew ?? true;
                               const executionMeta = getFlowExecutionMeta(event);
                               return (
                                 <div
                                   key={event.id}
                                   data-testid="flow-tape-row"
-                                  data-flow-row-new={isNewRow ? "true" : "false"}
-                                  data-flow-row-ticker={getFlowEventTicker(event)}
                                   className={joinMotionClasses(
-                                    isNewRow && "ra-row-enter",
+                                    "ra-row-enter",
                                     "ra-interactive",
                                     (selected || pinned) && "ra-focus-rail",
                                   )}
@@ -4148,7 +3514,7 @@ const FlowOverviewPanel = ({
                                   }
                                   onDoubleClick={() => onJumpToTrade?.(event)}
                                   style={{
-                                    ...(isNewRow ? motionRowStyle(index, 7, 120) : null),
+                                    ...motionRowStyle(index, 7, 120),
                                     ...motionVars({
                                       accent: selected
                                         ? T.accent
@@ -4426,23 +3792,9 @@ const FlowOverviewPanel = ({
                 >
                   <CardTitle
                     right={
-                      <div
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: sp(4),
-                        }}
-                      >
-                        <WorkspaceLinkChip
-                          panelId="flow"
-                          context={linkedContext}
-                          compact
-                          onChangeGroup={onLinkedWorkspaceGroupChange}
-                        />
-                        <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
-                          {selectedTickerEvents.length} rows
-                        </span>
-                      </div>
+                      <span style={{ fontSize: fs(8), color: T.textDim, fontFamily: T.mono }}>
+                        {selectedTickerEvents.length} rows
+                      </span>
                     }
                   >
                     Ticker Flow Lens
@@ -5631,26 +4983,19 @@ const UnusualScannerSection = ({
     () =>
       _initialState.flowUnusualSortDir || _initialState.unusualSortDir || "desc",
   );
-  const [sideFilter, setSideFilter] = useState(
-    () =>
-      _initialState.flowUnusualSideFilter ||
-      _initialState.unusualSideFilter ||
-      "all",
-  );
+  const flowTapeFilters = useFlowTapeFilterState();
 
   useEffect(() => {
     persistState({
       flowUnusualSortBy: sortBy,
       flowUnusualSortDir: sortDir,
-      flowUnusualSideFilter: sideFilter,
     });
-  }, [sideFilter, sortBy, sortDir]);
+  }, [sortBy, sortDir]);
 
   const liveFlowSnapshot = useMarketFlowSnapshotForStoreKey(
     BROAD_MARKET_FLOW_STORE_KEY,
   );
   const {
-    hasLiveFlow,
     flowStatus,
     providerSummary,
     flowEvents,
@@ -5684,13 +5029,8 @@ const UnusualScannerSection = ({
     coverage.totalSymbols ||
     totalWatchlistSymbols ||
     0;
-  const intendedCoverageSymbols =
-    coverage.targetSize || totalCoverageSymbols;
-  const selectedCoverageSymbols =
-    coverage.selectedSymbols || totalCoverageSymbols;
   const scannedCoverageSymbols =
     coverage.cycleScannedSymbols ?? coverage.scannedSymbols ?? 0;
-  const coverageModeLabel = formatFlowScannerModeLabel(coverage.mode);
   const oldestScanAt = useMemo(() => {
     const stamps = Object.values(coverage.lastScannedAt || {});
     if (!stamps.length) return null;
@@ -5703,23 +5043,13 @@ const UnusualScannerSection = ({
   }, [coverage.lastScannedAt]);
 
   const unusualEvents = useMemo(
-    () => flowEvents.filter((event) => event.isUnusual),
-    [flowEvents],
+    () => filterFlowTapeEvents(flowEvents, flowTapeFilters),
+    [flowEvents, flowTapeFilters],
   );
-
-  const filteredEvents = useMemo(() => {
-    if (sideFilter === "calls") {
-      return unusualEvents.filter((event) => event.cp === "C");
-    }
-    if (sideFilter === "puts") {
-      return unusualEvents.filter((event) => event.cp === "P");
-    }
-    return unusualEvents;
-  }, [sideFilter, unusualEvents]);
 
   const sortedEvents = useMemo(() => {
     const direction = sortDir === "asc" ? 1 : -1;
-    const events = [...filteredEvents];
+    const events = [...unusualEvents];
     events.sort((left, right) => {
       let cmp = 0;
       if (sortBy === "ratio") {
@@ -5739,7 +5069,7 @@ const UnusualScannerSection = ({
       return cmp * direction;
     });
     return events;
-  }, [filteredEvents, sortBy, sortDir]);
+  }, [unusualEvents, sortBy, sortDir]);
 
   const totalPremium = unusualEvents.reduce(
     (sum, event) => sum + (event.premium || 0),
@@ -5766,19 +5096,6 @@ const UnusualScannerSection = ({
     Boolean(session?.configured?.ibkr) &&
     !session?.ibkrBridge?.authenticated &&
     !providerSummary.providers.includes("polygon");
-  const flowDisplayLabel =
-    !hasLiveFlow && ibkrLoginRequired
-      ? "IBKR login required"
-      : providerSummary.label === "IBKR snapshot live" &&
-          session?.ibkrBridge?.liveMarketDataAvailable === false
-        ? "IBKR delayed"
-        : providerSummary.label;
-  const flowDisplayColor =
-    !hasLiveFlow && ibkrLoginRequired
-      ? T.amber
-      : flowDisplayLabel === "IBKR delayed"
-        ? T.amber
-        : providerSummary.color;
 
   const handleSort = (id) => {
     if (sortBy === id) {
@@ -5798,49 +5115,17 @@ const UnusualScannerSection = ({
       ? "Scanning the configured Flow universe for contracts where today's volume already exceeds open interest."
       : ibkrLoginRequired
         ? bridgeRuntimeMessage(session)
-        : providerSummary.failures[0]?.error
-          ? providerSummary.failures[0].error
+        : getDisplayableFlowError(providerSummary)
+          ? getDisplayableFlowError(providerSummary)
           : !flowEvents.length
-            ? "No live options flow returned for the configured Flow universe yet."
-            : "No contracts in the configured Flow universe have volume above open interest right now.";
-
-  const scannerFlowQuality = resolveFlowQuality({
-    flowStatus,
-    hasLiveFlow,
-    providerSummary,
-    coverage,
-    watchlistSymbols,
-    newestScanAt,
-    oldestScanAt,
-    livePaused: false,
-  });
-
-  const scannerStatusPanel = (
-    <FlowScannerStatusPanel
-      enabled
-      ownerActive={coverage.isFetching || flowStatus === "loading"}
-      flowDisplayLabel={flowDisplayLabel}
-      flowDisplayColor={flowDisplayColor}
-      flowQuality={scannerFlowQuality}
-      coverage={coverage}
-      coverageModeLabel={coverageModeLabel}
-      scannedCoverageSymbols={scannedCoverageSymbols}
-      totalCoverageSymbols={totalCoverageSymbols}
-      intendedCoverageSymbols={intendedCoverageSymbols}
-      selectedCoverageSymbols={selectedCoverageSymbols}
-      newestScanAt={newestScanAt}
-      oldestScanAt={oldestScanAt}
-      scannerConfig={scannerConfig}
-      toggleTone={flowDisplayColor || T.accent}
-      formatAppTime={formatScannerAppTime}
-      showToggle={false}
-      testId="flow-unusual-scanner-status-panel"
-    />
-  );
+            ? providerSummaryHasTransientFlowState(providerSummary)
+              ? "The scanner is rotating through the configured universe; the latest transient bridge response did not produce completed scanner results."
+              : "No live options flow returned for the configured Flow universe yet."
+            : "No flow matches the current Flow filters.";
 
   const kpiCards = [
     {
-      label: "UNUSUAL CONTRACTS",
+      label: "FLOW CONTRACTS",
       value: unusualEvents.length,
       sub: `${uniqueUnderlyings} underlying${uniqueUnderlyings === 1 ? "" : "s"}`,
       color: T.amber,
@@ -5867,8 +5152,6 @@ const UnusualScannerSection = ({
 
   return (
     <>
-      {scannerStatusPanel}
-
       {watchlistSymbols.length > 0 ? (
         <Card style={{ padding: "6px 9px" }}>
           <div
@@ -6018,7 +5301,7 @@ const UnusualScannerSection = ({
             </span>
           }
         >
-          Flow Scanner
+          Scanner Results
         </CardTitle>
 
         <div
@@ -6037,17 +5320,43 @@ const UnusualScannerSection = ({
               marginRight: sp(4),
             }}
           >
-            SIDE
+            FLOW
           </span>
-          {[
-            { id: "all", label: "All" },
-            { id: "calls", label: "Calls" },
-            { id: "puts", label: "Puts" },
-          ].map((option) => (
+          {FLOW_TAPE_FILTER_OPTIONS.map((option) => (
             <Pill
               key={option.id}
-              active={sideFilter === option.id}
-              onClick={() => setSideFilter(option.id)}
+              active={flowTapeFilters.filter === option.id}
+              onClick={() =>
+                setFlowTapeFilterState({
+                  filter: option.id,
+                  activeFlowPresetId: null,
+                })
+              }
+            >
+              {option.label}
+            </Pill>
+          ))}
+          <span
+            style={{
+              fontSize: fs(8),
+              color: T.textDim,
+              fontFamily: T.mono,
+              marginLeft: sp(8),
+              marginRight: sp(4),
+            }}
+          >
+            MIN PREM
+          </span>
+          {FLOW_MIN_PREMIUM_OPTIONS.map((option) => (
+            <Pill
+              key={option.value}
+              active={flowTapeFilters.minPrem === option.value}
+              onClick={() =>
+                setFlowTapeFilterState({
+                  minPrem: option.value,
+                  activeFlowPresetId: null,
+                })
+              }
             >
               {option.label}
             </Pill>
@@ -6236,7 +5545,7 @@ const UnusualScannerSection = ({
           </div>
         ) : (
           <DataUnavailableState
-            title="No unusual options activity"
+            title="No flow"
             detail={emptyDetail}
           />
         )}
@@ -6250,18 +5559,12 @@ export const FlowScreen = ({
   session,
   symbols = [],
   isVisible = false,
-  linkedContext = null,
-  onLinkedWorkspaceGroupChange,
-  onLinkedContextChange,
 }) => (
   <FlowOverviewPanel
     onJumpToTrade={onJumpToTrade}
     session={session}
     symbols={symbols}
     isVisible={isVisible}
-    linkedContext={linkedContext}
-    onLinkedWorkspaceGroupChange={onLinkedWorkspaceGroupChange}
-    onLinkedContextChange={onLinkedContextChange}
   />
 );
 

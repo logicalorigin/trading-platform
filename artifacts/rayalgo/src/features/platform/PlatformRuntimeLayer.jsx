@@ -4,7 +4,6 @@ export const PlatformRuntimeLayer = ({
   BroadFlowScannerRuntimeComponent,
   watchlistSymbols,
   broadFlowWatchlistSymbols = watchlistSymbols,
-  broadFlowActiveSymbols = watchlistSymbols,
   activeWatchlistItems,
   quoteSymbols,
   sparklineSymbols,
@@ -36,7 +35,6 @@ export const PlatformRuntimeLayer = ({
     />
     <BroadFlowScannerRuntimeComponent
       symbols={broadFlowWatchlistSymbols}
-      activeSymbols={broadFlowActiveSymbols}
       enabled={broadFlowRuntimeEnabled}
     />
     {children}

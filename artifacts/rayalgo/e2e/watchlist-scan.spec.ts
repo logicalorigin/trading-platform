@@ -57,20 +57,10 @@ async function mockPlatformApi(
   page: Page,
   {
     watchlist,
-    earningsEntries = [],
-    flowEvents = [],
     onReorder,
-    positions = [],
-    researchConfigured = false,
-    onSignalMatrixRequest,
   }: {
-    watchlist: unknown | unknown[];
-    earningsEntries?: unknown[];
-    flowEvents?: unknown[];
+    watchlist: unknown;
     onReorder?: (payload: unknown) => void;
-    positions?: unknown[];
-    researchConfigured?: boolean;
-    onSignalMatrixRequest?: (payload: unknown) => void;
   },
 ) {
   await page.route("**/api/**", async (route) => {
@@ -79,44 +69,18 @@ async function mockPlatformApi(
 
     if (url.pathname === "/api/session") {
       body = {
-        configured: {
-          ibkr: positions.length > 0,
-          research: researchConfigured,
+        configured: { ibkr: false, research: false },
+        ibkrBridge: {
+          authenticated: false,
+          connected: false,
+          liveMarketDataAvailable: false,
+          transport: "ib-gateway",
         },
-        ibkrBridge: positions.length
-          ? {
-              authenticated: true,
-              connected: true,
-              healthFresh: true,
-              selectedAccountId: "DU123",
-              accounts: [{ accountId: "DU123" }],
-              liveMarketDataAvailable: true,
-              transport: "ib-gateway",
-            }
-          : {
-              authenticated: false,
-              connected: false,
-              liveMarketDataAvailable: false,
-              transport: "ib-gateway",
-            },
         environment: "paper",
         marketDataProviders: {},
       };
-    } else if (url.pathname === "/api/accounts") {
-      body = {
-        accounts: positions.length
-          ? [{ id: "DU123", accountId: "DU123", label: "Mock account" }]
-          : [],
-      };
-    } else if (
-      url.pathname.startsWith("/api/accounts/") &&
-      url.pathname.endsWith("/positions")
-    ) {
-      body = { positions };
-    } else if (url.pathname === "/api/positions") {
-      body = { positions };
     } else if (url.pathname === "/api/watchlists" && route.request().method() === "GET") {
-      body = { watchlists: Array.isArray(watchlist) ? watchlist : [watchlist] };
+      body = { watchlists: [watchlist] };
     } else if (
       url.pathname === "/api/watchlists/default/items/reorder" &&
       route.request().method() === "PUT"
@@ -152,62 +116,13 @@ async function mockPlatformApi(
     } else if (url.pathname === "/api/bars") {
       body = { bars: makeBars((url.searchParams.get("symbol") || "SPY").toUpperCase()) };
     } else if (url.pathname === "/api/flow/events") {
-      body = {
-        events: flowEvents,
-        source: {
-          provider: "ibkr",
-          status: flowEvents.length ? "live" : "empty",
-          fallbackUsed: false,
-          unusualThreshold: 1,
-        },
-      };
+      body = { events: [] };
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
-      body = { entries: earningsEntries };
+      body = { entries: [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
       body = { enabled: true, timeframe: "15m", watchlistId: "default" };
-    } else if (
-      url.pathname === "/api/signal-monitor/matrix" &&
-      route.request().method() === "POST"
-    ) {
-      const payload = route.request().postDataJSON();
-      onSignalMatrixRequest?.(payload);
-      const requestedSymbols = Array.isArray(payload?.symbols)
-        ? payload.symbols.map((symbol: string) => symbol.toUpperCase())
-        : ["SPY", "QQQ", "NVDA"];
-      body = {
-        states: requestedSymbols.flatMap((symbol: string) => [
-          {
-            symbol,
-            timeframe: "2m",
-            currentSignalDirection: symbol === "QQQ" ? null : "buy",
-            currentSignalAt: new Date().toISOString(),
-            currentSignalPrice: quoteData[symbol]?.price ?? 100,
-            latestBarAt: new Date().toISOString(),
-            barsSinceSignal: symbol === "SPY" ? 0 : 12,
-            fresh: symbol === "SPY",
-            status: "ok",
-            lastEvaluatedAt: new Date().toISOString(),
-          },
-          {
-            symbol,
-            timeframe: "5m",
-            currentSignalDirection: symbol === "SPY" ? "sell" : null,
-            currentSignalAt: new Date().toISOString(),
-            currentSignalPrice: quoteData[symbol]?.price ?? 100,
-            latestBarAt: new Date().toISOString(),
-            barsSinceSignal: symbol === "SPY" ? 105 : null,
-            fresh: false,
-            status: "ok",
-            lastEvaluatedAt: new Date().toISOString(),
-          },
-        ]),
-        timeframes: ["2m", "5m", "15m"],
-        evaluatedAt: new Date().toISOString(),
-        skippedSymbols: [],
-        truncated: false,
-      };
     } else if (url.pathname === "/api/signal-monitor/state") {
       body = { states: signalStates };
     } else if (url.pathname === "/api/signal-monitor/events") {
@@ -277,35 +192,8 @@ test("watchlist displays legacy symbols plus signal-monitor rows and signal sort
 
   await expect(page.locator('[data-testid="watchlist-signal-pill"][data-fresh="true"]')).toHaveCount(1);
   await expect(page.locator('[data-testid="watchlist-signal-pill"][data-fresh="false"]')).toHaveCount(1);
-  const spyRow = page.locator('[data-testid="watchlist-row"][data-symbol="SPY"]');
-  await expect(spyRow.locator('[data-testid="watchlist-signal-dot-2m"]')).toHaveText("0");
-  await expect(spyRow.locator('[data-testid="watchlist-signal-dot-5m"]')).toHaveText("99+");
-  await expect(spyRow.locator('[data-testid="watchlist-signal-dot-2m"]')).toHaveAttribute(
-    "aria-label",
-    /2m BUY fresh - 0 bars/,
-  );
-  const signalBadgeBoxes = await spyRow.evaluate((row) => {
-    const rowBox = row.getBoundingClientRect();
-    return Array.from(
-      row.querySelectorAll('[data-testid^="watchlist-signal-dot-"]'),
-    ).map((badge) => {
-      const box = badge.getBoundingClientRect();
-      return {
-        left: box.left - rowBox.left,
-        right: rowBox.right - box.right,
-        top: box.top - rowBox.top,
-        bottom: rowBox.bottom - box.bottom,
-      };
-    });
-  });
-  expect(
-    signalBadgeBoxes.every(
-      (box) => box.left >= 0 && box.right >= 0 && box.top >= 0 && box.bottom >= 0,
-    ),
-  ).toBe(true);
 
   await page.getByTestId("watchlist-sort-signal").click();
-  await expect(page.getByTestId("watchlist-active-state")).toContainText("SORT Signal");
   await expect
     .poll(async () =>
       page
@@ -318,73 +206,6 @@ test("watchlist displays legacy symbols plus signal-monitor rows and signal sort
     "draggable",
     "false",
   );
-
-  await page.getByPlaceholder("Filter...").fill("QQQ");
-  await expect(page.getByTestId("watchlist-active-state")).toContainText("FILTER QQQ");
-  await expect(page.locator('[data-testid="watchlist-row"]')).toHaveCount(1);
-  await page.getByTestId("watchlist-filter-clear").click();
-  await expect(page.getByPlaceholder("Filter...")).toHaveValue("");
-  await expect(page.getByTestId("watchlist-active-state")).toContainText("FILTER ALL");
-});
-
-test("watchlist badges surface linked, signal, flow, earnings, and position state", async ({
-  page,
-}) => {
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  await mockPlatformApi(page, {
-    watchlist: {
-      id: "default",
-      name: "Default",
-      isDefault: true,
-      symbols: ["SPY", "QQQ"],
-    },
-    researchConfigured: true,
-    earningsEntries: [{ symbol: "SPY", date: tomorrow, time: "bmo" }],
-    flowEvents: [
-      {
-        id: "spy-flow",
-        underlying: "SPY",
-        right: "call",
-        strike: 510,
-        expirationDate: tomorrow,
-        occurredAt: new Date().toISOString(),
-        premium: 350_000,
-        isUnusual: true,
-        unusualScore: 2.4,
-        provider: "ibkr",
-      },
-    ],
-    positions: [{ id: "pos-spy", symbol: "SPY", quantity: 10 }],
-  });
-  await openMarketWithWatchlist(page);
-
-  const spyRow = page.locator('[data-testid="watchlist-row"][data-symbol="SPY"]');
-  await expect(spyRow.getByTestId("watchlist-badge-linked")).toBeVisible();
-  await expect(spyRow.getByTestId("watchlist-badge-signal")).toBeVisible();
-  await expect(spyRow.getByTestId("watchlist-badge-flow")).toBeVisible();
-  await expect(spyRow.getByTestId("watchlist-badge-earnings")).toBeVisible();
-  await expect(spyRow.getByTestId("watchlist-badge-position")).toBeVisible();
-  await expect(spyRow).toHaveAttribute("data-watchlist-badge-count", "5");
-
-  const badgeBoxes = await spyRow.evaluate((row) => {
-    const rowBox = row.getBoundingClientRect();
-    return Array.from(row.querySelectorAll("[data-watchlist-badge]")).map((badge) => {
-      const box = badge.getBoundingClientRect();
-      return {
-        left: box.left - rowBox.left,
-        right: rowBox.right - box.right,
-        top: box.top - rowBox.top,
-        bottom: rowBox.bottom - box.bottom,
-      };
-    });
-  });
-  expect(
-    badgeBoxes.every(
-      (box) => box.left >= 0 && box.right >= 0 && box.top >= 0 && box.bottom >= 0,
-    ),
-  ).toBe(true);
 });
 
 test("watchlist drag and drop reorders canonical rows in manual mode", async ({ page }) => {
@@ -415,34 +236,6 @@ test("watchlist drag and drop reorders canonical rows in manual mode", async ({ 
   await expect
     .poll(() => reorderPayload)
     .toEqual({ itemIds: ["qqq-item", "spy-item", "nvda-item"] });
-});
-
-test("signal matrix scans all watchlists, not only the active watchlist", async ({ page }) => {
-  let matrixPayload: unknown = null;
-  await mockPlatformApi(page, {
-    watchlist: [
-      {
-        id: "default",
-        name: "Default",
-        isDefault: true,
-        symbols: ["SPY"],
-      },
-      {
-        id: "semis",
-        name: "Semis",
-        isDefault: false,
-        symbols: ["NVDA", "AMD"],
-      },
-    ],
-    onSignalMatrixRequest: (payload) => {
-      matrixPayload = payload;
-    },
-  });
-  await openMarketWithWatchlist(page);
-
-  await expect
-    .poll(() => (matrixPayload as { symbols?: string[] } | null)?.symbols)
-    .toEqual(["SPY", "NVDA", "AMD"]);
 });
 
 test("watchlist row renders persisted identity metadata without clipping", async ({ page }) => {

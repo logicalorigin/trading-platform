@@ -32,6 +32,14 @@ test("buildHeaderSignalTapeItems merges active state and recent events", () => {
           fresh: true,
           active: true,
         },
+        {
+          id: "old-state",
+          symbol: "msft",
+          timeframe: "15m",
+          currentSignalDirection: "sell",
+          currentSignalAt: "2026-04-25T15:55:00Z",
+          active: true,
+        },
       ],
       events: [
         {
@@ -89,7 +97,7 @@ test("buildHeaderSignalTapeItems sorts newest signal first", () => {
   );
 });
 
-test("buildHeaderUnusualTapeItems filters routine flow and ranks unusual events", () => {
+test("buildHeaderUnusualTapeItems ranks scanner-selected flow events", () => {
   const items = buildHeaderUnusualTapeItems([
     {
       id: "routine",
@@ -97,7 +105,7 @@ test("buildHeaderUnusualTapeItems filters routine flow and ranks unusual events"
       isUnusual: false,
       unusualScore: 0.8,
       premium: 800_000,
-      occurredAt: "2026-04-27T15:50:00Z",
+      occurredAt: "2026-04-27T15:58:00Z",
     },
     {
       id: "older-higher-score",
@@ -121,7 +129,7 @@ test("buildHeaderUnusualTapeItems filters routine flow and ranks unusual events"
 
   assert.deepEqual(
     items.map((item) => item.symbol),
-    ["QQQ", "NVDA"],
+    ["SPY", "QQQ", "NVDA"],
   );
-  assert.equal(items[0].right, "P");
+  assert.equal(items[1].right, "P");
 });

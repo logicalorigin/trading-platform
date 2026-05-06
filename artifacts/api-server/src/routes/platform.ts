@@ -199,16 +199,16 @@ const SSE_DRAIN_TIMEOUT_MS = Math.max(
 const OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS = Math.max(
   1_000,
   Number.parseInt(
-    process.env["OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS"] ?? "15000",
+    process.env["OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS"] ?? "60000",
     10,
-  ) || 15_000,
+  ) || 60_000,
 );
 const OPTION_CHART_BARS_ROUTE_STALE_TTL_MS = Math.max(
   OPTION_CHART_BARS_ROUTE_CACHE_TTL_MS,
   Number.parseInt(
-    process.env["OPTION_CHART_BARS_ROUTE_STALE_TTL_MS"] ?? "120000",
+    process.env["OPTION_CHART_BARS_ROUTE_STALE_TTL_MS"] ?? "300000",
     10,
-  ) || 120_000,
+  ) || 300_000,
 );
 type OptionChartBarsRouteResult = Awaited<
   ReturnType<typeof getOptionChartBarsWithDebug>
@@ -320,6 +320,15 @@ function withCachedOptionChartBarsDebug(
 ): OptionChartBarsRouteResult {
   return {
     ...value,
+    historyPage: value.historyPage
+      ? {
+          ...value.historyPage,
+          cacheStatus: "hit",
+          hydrationStatus: input.stale
+            ? "warming"
+            : value.historyPage.hydrationStatus,
+        }
+      : value.historyPage,
     debug: {
       ...value.debug,
       cacheStatus: "hit",
@@ -508,6 +517,48 @@ function createRequestAbortSignal(req: Request, res: Response): AbortSignal {
   }
 
   return controller.signal;
+}
+
+const BARS_REQUEST_MAX_WINDOW_DAYS: Record<string, number> = {
+  "1s": 7,
+  "5s": 7,
+  "15s": 7,
+  "1m": 45,
+  "5m": 180,
+  "15m": 365,
+  "1h": 365 * 3,
+  "1d": 365 * 15,
+};
+
+function validateBarsRequestWindow(
+  query: ReturnType<typeof GetBarsQueryParams.parse>,
+  res: Response,
+): boolean {
+  if (!query.from || !query.to) {
+    return true;
+  }
+
+  const maxDays = BARS_REQUEST_MAX_WINDOW_DAYS[query.timeframe];
+  if (!maxDays) {
+    return true;
+  }
+
+  const requestedDays =
+    Math.max(0, query.to.getTime() - query.from.getTime()) / 86_400_000;
+  if (requestedDays <= maxDays) {
+    return true;
+  }
+
+  res.status(400).type("application/problem+json").json({
+    type: "https://rayalgo.local/problems/bars-request-too-large",
+    title: "Bars request is too large",
+    status: 400,
+    detail: `${query.timeframe} bars are limited to ${maxDays} calendar days per request.`,
+    code: "BARS_REQUEST_TOO_LARGE",
+    maxWindowDays: maxDays,
+    requestedWindowDays: Math.ceil(requestedDays),
+  });
+  return false;
 }
 
 function readOptionalString(value: unknown, maxLength = 160): string | undefined {
@@ -1408,6 +1459,7 @@ router.get("/universe/logo-proxy", async (req, res) => {
 });
 
 router.get("/bars", async (req, res) => {
+  const signal = createRequestAbortSignal(req, res);
   const query = GetBarsQueryParams.parse(
     coerceBooleanQueryFields(
       coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
@@ -1419,6 +1471,9 @@ router.get("/bars", async (req, res) => {
       ],
     ),
   );
+  if (!validateBarsRequestWindow(query, res)) {
+    return;
+  }
   const rawBrokerRecentWindowMinutes =
     typeof req.query.brokerRecentWindowMinutes === "string"
       ? Number(req.query.brokerRecentWindowMinutes)
@@ -1430,7 +1485,7 @@ router.get("/bars", async (req, res) => {
       Number.isFinite(rawBrokerRecentWindowMinutes)
         ? rawBrokerRecentWindowMinutes
         : null,
-  });
+  }, { signal });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetBarsResponse.parse(raw);
 
@@ -1528,10 +1583,26 @@ router.get("/market-depth", async (req, res) => {
   }));
 });
 
+function readBooleanQueryFlag(value: unknown): boolean | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
 router.get("/flow/events", async (req, res) => {
   const query = ListFlowEventsQueryParams.parse(req.query);
+  const blocking = readBooleanQueryFlag(req.query.blocking) ?? false;
   const data = ListFlowEventsResponse.parse(
-    await listFlowEvents({ ...query, blocking: false }),
+    await listFlowEvents({ ...query, blocking }),
   );
 
   res.json(data);

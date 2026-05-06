@@ -9,7 +9,9 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
   FLOW_SCANNER_MODE,
+  FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS,
   FLOW_SCANNER_SCOPE,
+  buildFlowScannerMarketUniverseSymbols,
   buildFlowScannerSymbols,
   filterFlowScannerEvents,
   flowScannerModeUsesMarketUniverse,
@@ -27,6 +29,11 @@ import {
   buildTickerFlowFromEvents,
 } from "../flow/flowAnalytics";
 import { ensureTradeTickerInfo } from "./runtimeTickerStore";
+import {
+  flowFailureLooksVisible,
+  isVisibleFlowDegradationSource,
+  shouldPreserveFlowEvents,
+} from "./flowSourceState";
 
 const FLOW_SCANNER_UNIVERSE_QUERY_KEY = ["/api/flow/universe"];
 
@@ -60,6 +67,7 @@ export const useLiveMarketFlow = (
     lineBudget,
     minPremium,
     maxDte,
+    blocking = true,
     mode = FLOW_SCANNER_MODE.activeWatchlist,
     scope = FLOW_SCANNER_SCOPE.all,
     concurrency,
@@ -104,6 +112,8 @@ export const useLiveMarketFlow = (
       unusualThreshold,
     ],
   );
+  const shouldPrioritizeRuntimeSignals =
+    blocking === false && flowScannerModeUsesMarketUniverse(effectiveScannerConfig.mode);
   const shouldLoadMarketUniverse =
     enabled && flowScannerModeUsesMarketUniverse(effectiveScannerConfig.mode);
   const marketUniverseQuery = useQuery({
@@ -116,17 +126,41 @@ export const useLiveMarketFlow = (
   });
   const backendMarketSymbols = marketUniverseQuery.data?.symbols || [];
   const marketUniverseCoverage = marketUniverseQuery.data?.coverage || null;
+  const promotedBackendSymbols = useMemo(
+    () => normalizeFlowUniverseSymbols(marketUniverseCoverage?.promotedSymbols),
+    [marketUniverseCoverage],
+  );
+  const backendRadarBatchSymbols = useMemo(
+    () => normalizeFlowUniverseSymbols(marketUniverseCoverage?.currentBatch),
+    [marketUniverseCoverage],
+  );
+  const marketSymbolsForScanner = useMemo(() => {
+    if (!flowScannerModeUsesMarketUniverse(effectiveScannerConfig.mode)) {
+      return undefined;
+    }
+    return buildFlowScannerMarketUniverseSymbols({
+      backendSymbols: backendMarketSymbols,
+      promotedSymbols: promotedBackendSymbols,
+      currentBatchSymbols: backendRadarBatchSymbols,
+      fallbackSymbols: FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS,
+      prioritizeRuntimeSignals: shouldPrioritizeRuntimeSignals,
+    });
+  }, [
+    backendRadarBatchSymbols,
+    backendMarketSymbols,
+    effectiveScannerConfig.mode,
+    promotedBackendSymbols,
+    shouldPrioritizeRuntimeSignals,
+  ]);
   const liveSymbols = useMemo(
     () =>
       buildFlowScannerSymbols({
         activeWatchlistSymbols: activeSymbols,
         watchlistSymbols: symbols,
-        marketSymbols: backendMarketSymbols.length
-          ? backendMarketSymbols
-          : undefined,
+        marketSymbols: marketSymbolsForScanner,
         config: effectiveScannerConfig,
       }),
-    [activeSymbols, symbols, backendMarketSymbols, effectiveScannerConfig],
+    [activeSymbols, symbols, marketSymbolsForScanner, effectiveScannerConfig],
   );
   const liveSymbolsKey = liveSymbols.join(",");
   const effectiveBatchSize = Math.max(
@@ -140,14 +174,7 @@ export const useLiveMarketFlow = (
       : undefined;
   const effectiveIntervalMs = effectiveScannerConfig.intervalMs;
   const effectiveConcurrency = effectiveScannerConfig.concurrency;
-  const normalizedThreshold =
-    Number.isFinite(effectiveScannerConfig.unusualThreshold) &&
-    effectiveScannerConfig.unusualThreshold > 0
-      ? effectiveScannerConfig.unusualThreshold
-      : undefined;
-  const shouldSendUnusualThreshold =
-    normalizedThreshold !== undefined &&
-    effectiveScannerConfig.scope === FLOW_SCANNER_SCOPE.unusual;
+  const normalizedThreshold = effectiveScannerConfig.unusualThreshold;
   const effectiveMinPremium =
     Number.isFinite(effectiveScannerConfig.minPremium) &&
     effectiveScannerConfig.minPremium > 0
@@ -210,7 +237,6 @@ export const useLiveMarketFlow = (
     if (!enabled || !liveSymbols.length) return undefined;
     let cancelled = false;
     let timer = null;
-    let consecutiveErrorBatches = 0;
 
     const schedule = (delay) => {
       if (cancelled) return;
@@ -233,86 +259,108 @@ export const useLiveMarketFlow = (
       offsetRef.current = (start + size) % Math.max(1, total);
       setScanState((prev) => ({ ...prev, isFetching: true, lastBatch: batch }));
 
+      const commitSymbolResult = (symbol, result, scannedAt) => {
+        setScanState((prev) => {
+          const allowed = new Set(liveSymbols);
+          if (!allowed.has(symbol)) return prev;
+
+          const bySymbol = {};
+          for (const [entrySymbol, value] of Object.entries(prev.bySymbol)) {
+            if (allowed.has(entrySymbol)) bySymbol[entrySymbol] = value;
+          }
+
+          if (result.status === "fulfilled") {
+            const next = {
+              events: result.value.events || [],
+              source: result.value.source || null,
+              scannedAt,
+              error: null,
+            };
+            bySymbol[symbol] = shouldPreserveFlowEvents(bySymbol[symbol], next)
+              ? {
+                  ...bySymbol[symbol],
+                  source: next.source,
+                  scannedAt,
+                  error: null,
+                }
+              : next;
+            return {
+              ...prev,
+              bySymbol,
+              isPending: false,
+              lastError: null,
+            };
+          }
+
+          const message =
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason ?? "Flow request failed");
+          const existing = bySymbol[symbol] || { events: [], source: null };
+          bySymbol[symbol] = {
+            ...existing,
+            scannedAt,
+            error: message,
+          };
+          return {
+            ...prev,
+            bySymbol,
+            isPending: false,
+            lastError: message,
+          };
+        });
+      };
+
       const startedAt = Date.now();
       const results = await runFlowScannerBatch(
         batch,
         effectiveConcurrency,
-        (symbol) =>
-          listFlowEventsRequest({
-            underlying: symbol,
-            limit: effectiveLimit,
-            scope: effectiveScannerConfig.scope,
-            ...(shouldSendUnusualThreshold
-              ? { unusualThreshold: normalizedThreshold }
-              : {}),
-            ...(effectiveLineBudget !== undefined
-              ? { lineBudget: effectiveLineBudget }
-              : {}),
-            ...(effectiveMinPremium !== undefined
-              ? { minPremium: effectiveMinPremium }
-              : {}),
-            ...(effectiveMaxDte !== undefined ? { maxDte: effectiveMaxDte } : {}),
-          }),
+        async (symbol) => {
+          try {
+            const value = await listFlowEventsRequest({
+              underlying: symbol,
+              limit: effectiveLimit,
+              scope: FLOW_SCANNER_SCOPE.all,
+              ...(effectiveLineBudget !== undefined
+                ? { lineBudget: effectiveLineBudget }
+                : {}),
+              ...(effectiveMinPremium !== undefined
+                ? { minPremium: effectiveMinPremium }
+                : {}),
+              ...(effectiveMaxDte !== undefined
+                ? { maxDte: effectiveMaxDte }
+                : {}),
+              blocking,
+            });
+            if (!cancelled) {
+              commitSymbolResult(symbol, { status: "fulfilled", value }, Date.now());
+            }
+            return value;
+          } catch (reason) {
+            if (!cancelled) {
+              commitSymbolResult(symbol, { status: "rejected", reason }, Date.now());
+            }
+            throw reason;
+          }
+        },
       );
       if (cancelled) return;
 
-      const now = Date.now();
-      let batchHadError = false;
-      setScanState((prev) => {
-        const allowed = new Set(liveSymbols);
-        const bySymbol = {};
-        for (const [symbol, value] of Object.entries(prev.bySymbol)) {
-          if (allowed.has(symbol)) bySymbol[symbol] = value;
-        }
-        let lastError = null;
-        results.forEach((result, index) => {
-          const symbol = batch[index];
-          if (!allowed.has(symbol)) return;
-          if (result.status === "fulfilled") {
-            bySymbol[symbol] = {
-              events: result.value.events || [],
-              source: result.value.source || null,
-              scannedAt: now,
-              error: null,
-            };
-          } else {
-            batchHadError = true;
-            const message =
-              result.reason instanceof Error
-                ? result.reason.message
-                : String(result.reason ?? "Flow request failed");
-            const existing = bySymbol[symbol] || { events: [], source: null };
-            bySymbol[symbol] = {
-              ...existing,
-              scannedAt: now,
-              error: message,
-            };
-            lastError = message;
-          }
-        });
-        return {
-          bySymbol,
-          isFetching: false,
-          isPending: false,
-          cycle: prev.cycle + 1,
-          lastBatch: batch,
-          lastError,
-        };
-      });
+      const batchHadError = results.some((result) => result.status === "rejected");
+      setScanState((prev) => ({
+        ...prev,
+        isFetching: false,
+        isPending: false,
+        cycle: prev.cycle + 1,
+        lastBatch: batch,
+        lastError: batchHadError ? prev.lastError : null,
+      }));
 
-      // Schedule the next batch *after* this one completes — never overlap
-      // requests, and apply exponential backoff (capped) when batches error so
-      // we don't hammer IBKR if the bridge is struggling.
-      consecutiveErrorBatches = batchHadError ? consecutiveErrorBatches + 1 : 0;
+      // Schedule the next batch after this one completes; do not slow the
+      // scanner because one symbol or quote batch failed.
       const elapsed = Date.now() - startedAt;
       const baseDelay = Math.max(0, effectiveIntervalMs - elapsed);
-      const backoff = consecutiveErrorBatches
-        ? Math.min(
-            60_000,
-            effectiveIntervalMs * 2 ** Math.min(consecutiveErrorBatches - 1, 4),
-          )
-        : 0;
-      schedule(baseDelay + backoff);
+      schedule(baseDelay);
     };
 
     runOnce();
@@ -329,10 +377,10 @@ export const useLiveMarketFlow = (
     effectiveMaxDte,
     effectiveMinPremium,
     effectiveScannerConfig.scope,
+    blocking,
     enabled,
     liveSymbolsKey,
     normalizedThreshold,
-    shouldSendUnusualThreshold,
   ]);
 
   const responses = useMemo(
@@ -350,7 +398,12 @@ export const useLiveMarketFlow = (
     () =>
       responses
         .filter((response) => response.error)
-        .map((response) => ({ symbol: response.symbol, error: response.error })),
+        .map((response) => ({
+          symbol: response.symbol,
+          error: response.error,
+          scannedAt: response.scannedAt,
+        }))
+        .filter((failure) => flowFailureLooksVisible(failure)),
     [responses],
   );
   const aggregatedEvents = useMemo(
@@ -402,7 +455,11 @@ export const useLiveMarketFlow = (
       Boolean(response.source?.fallbackUsed),
     );
     const erroredSource =
-      responses.find((response) => response.source?.status === "error")?.source ||
+      responses.find(
+        (response) =>
+          response.source?.status === "error" &&
+          isVisibleFlowDegradationSource(response.source),
+      )?.source ||
       null;
     const sourcesBySymbol = Object.fromEntries(
       responses.map((response) => [response.symbol, response.source]),

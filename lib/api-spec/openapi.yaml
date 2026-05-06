@@ -1490,6 +1490,12 @@ paths:
             type: integer
             minimum: 1
             maximum: 150
+        - name: blocking
+          in: query
+          required: false
+          description: Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
+          schema:
+            type: boolean
       responses:
         "200":
           description: Options flow
@@ -1734,37 +1740,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResearchCalendarResponse"
 
-  /research/earnings-events:
-    get:
-      operationId: getResearchEarningsEvents
-      tags: [research]
-      summary: Get provider-backed earnings events for a symbol
-      parameters:
-        - name: symbol
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: from
-          in: query
-          required: true
-          schema:
-            type: string
-            format: date
-        - name: to
-          in: query
-          required: true
-          schema:
-            type: string
-            format: date
-      responses:
-        "200":
-          description: Provider-backed symbol earnings events
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ResearchEarningsEventsResponse"
-
   /research/sec-filings:
     get:
       operationId: getResearchSecFilings
@@ -1933,6 +1908,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SignalOptionsAutomationState"
+
+  /algo/deployments/{deploymentId}/cockpit:
+    get:
+      operationId: getAlgoDeploymentCockpit
+      tags: [automation]
+      summary: Get the operator cockpit snapshot for an algo deployment
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Algo cockpit snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlgoCockpitSnapshotResponse"
 
   /algo/deployments/{deploymentId}/signal-options/shadow-scan:
     post:
@@ -3606,51 +3600,6 @@ components:
         - revenueEstimated
         - fiscalDateEnding
 
-    ResearchEarningsEvent:
-      type: object
-      properties:
-        symbol:
-          type: string
-        date:
-          type: [string, "null"]
-          format: date
-        reportingTime:
-          type: [string, "null"]
-        provider:
-          type: string
-        epsEstimated:
-          type: [number, "null"]
-        epsActual:
-          type: [number, "null"]
-        revenueEstimated:
-          type: [number, "null"]
-        revenueActual:
-          type: [number, "null"]
-        fiscalPeriod:
-          type: [string, "null"]
-        fiscalDateEnding:
-          type: [string, "null"]
-          format: date
-        status:
-          type: string
-          enum: [confirmed, estimated]
-        fetchedAt:
-          type: string
-          format: date-time
-      required:
-        - symbol
-        - date
-        - reportingTime
-        - provider
-        - epsEstimated
-        - epsActual
-        - revenueEstimated
-        - revenueActual
-        - fiscalPeriod
-        - fiscalDateEnding
-        - status
-        - fetchedAt
-
     ResearchFiling:
       type: object
       properties:
@@ -3756,27 +3705,6 @@ components:
             $ref: "#/components/schemas/ResearchCalendarEntry"
       required:
         - entries
-
-    ResearchEarningsEventsResponse:
-      type: object
-      properties:
-        symbol:
-          type: string
-        from:
-          type: string
-          format: date
-        to:
-          type: string
-          format: date
-        events:
-          type: array
-          items:
-            $ref: "#/components/schemas/ResearchEarningsEvent"
-      required:
-        - symbol
-        - from
-        - to
-        - events
 
     ResearchFilingsResponse:
       type: object
@@ -5786,7 +5714,7 @@ components:
         degraded:
           type: boolean
         reason:
-          type: string
+          type: [string, "null"]
         stale:
           type: boolean
         debug:
@@ -6702,6 +6630,206 @@ components:
         - activePositions
         - risk
         - events
+
+    AlgoCockpitFleetSummary:
+      type: object
+      properties:
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
+        totalDeployments:
+          type: integer
+        enabledDeployments:
+          type: integer
+        pausedDeployments:
+          type: integer
+        erroredDeployments:
+          type: integer
+        activeBlockers:
+          type: integer
+        latestEventAt:
+          type: [string, "null"]
+          format: date-time
+      required:
+        - mode
+        - totalDeployments
+        - enabledDeployments
+        - pausedDeployments
+        - erroredDeployments
+        - activeBlockers
+        - latestEventAt
+
+    AlgoCockpitReadiness:
+      type: object
+      properties:
+        ready:
+          type: boolean
+        reason:
+          type: string
+        message:
+          type: string
+        scanDisabledReason:
+          type: [string, "null"]
+        enableDisabledReason:
+          type: [string, "null"]
+        profileDisabledReason:
+          type: [string, "null"]
+      required:
+        - ready
+        - reason
+        - message
+        - scanDisabledReason
+        - enableDisabledReason
+        - profileDisabledReason
+
+    AlgoCockpitPipelineStage:
+      type: object
+      properties:
+        id:
+          type: string
+          enum:
+            [
+              scan_universe,
+              signal_detected,
+              contract_selected,
+              liquidity_risk_gate,
+              order_shadow,
+              position_managed,
+              exit_close,
+            ]
+        label:
+          type: string
+        status:
+          type: string
+          enum: [healthy, running, waiting, attention, blocked, stale]
+        count:
+          type: integer
+        latestAt:
+          type: [string, "null"]
+          format: date-time
+        detail:
+          type: string
+      required:
+        - id
+        - label
+        - status
+        - count
+        - latestAt
+        - detail
+
+    AlgoCockpitAttentionItem:
+      type: object
+      properties:
+        id:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        stage:
+          type: string
+        symbol:
+          type: [string, "null"]
+        summary:
+          type: string
+        detail:
+          type: string
+        occurredAt:
+          type: [string, "null"]
+          format: date-time
+        action:
+          type: string
+      required:
+        - id
+        - severity
+        - stage
+        - symbol
+        - summary
+        - detail
+        - occurredAt
+        - action
+
+    AlgoCockpitSourceBacktest:
+      type: object
+      properties:
+        strategyId:
+          type: string
+        strategyName:
+          type: string
+        sourceRunId:
+          type: [string, "null"]
+        sourceStudyId:
+          type: [string, "null"]
+        runName:
+          type: [string, "null"]
+        strategyVersion:
+          type: [string, "null"]
+        metrics:
+          oneOf:
+            - $ref: "#/components/schemas/JsonObject"
+            - type: "null"
+        promotedAt:
+          type: string
+          format: date-time
+      required:
+        - strategyId
+        - strategyName
+        - sourceRunId
+        - sourceStudyId
+        - runName
+        - strategyVersion
+        - metrics
+        - promotedAt
+
+    AlgoCockpitSnapshotResponse:
+      type: object
+      properties:
+        fleet:
+          $ref: "#/components/schemas/AlgoCockpitFleetSummary"
+        deployment:
+          $ref: "#/components/schemas/AlgoDeployment"
+        readiness:
+          $ref: "#/components/schemas/AlgoCockpitReadiness"
+        pipelineStages:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoCockpitPipelineStage"
+        attentionItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgoCockpitAttentionItem"
+        kpis:
+          $ref: "#/components/schemas/JsonObject"
+        risk:
+          $ref: "#/components/schemas/JsonObject"
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        activePositions:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutionEvent"
+        sourceBacktest:
+          $ref: "#/components/schemas/AlgoCockpitSourceBacktest"
+        generatedAt:
+          type: string
+          format: date-time
+      required:
+        - fleet
+        - deployment
+        - readiness
+        - pipelineStages
+        - attentionItems
+        - kpis
+        - risk
+        - candidates
+        - activePositions
+        - events
+        - sourceBacktest
+        - generatedAt
 
     SignalOptionsManualDeviationRequest:
       type: object
@@ -7775,6 +7903,45 @@ components:
           type: string
         side:
           type: string
+        instrumentType:
+          type: string
+          enum: ["equity", "option"]
+        pricingMode:
+          type: string
+          enum: ["shares", "option_history"]
+        underlying:
+          type: [string, "null"]
+        optionContract:
+          oneOf:
+            - type: object
+              properties:
+                ticker:
+                  type: string
+                underlying:
+                  type: string
+                expirationDate:
+                  type: string
+                strike:
+                  type: number
+                right:
+                  type: string
+                  enum: ["call", "put"]
+                multiplier:
+                  type: number
+                providerContractId:
+                  type: [string, "null"]
+                dte:
+                  type: [number, "null"]
+              required:
+                - ticker
+                - underlying
+                - expirationDate
+                - strike
+                - right
+                - multiplier
+                - providerContractId
+                - dte
+            - type: "null"
         entryAt:
           type: string
           format: date-time
@@ -7811,6 +7978,10 @@ components:
         - tradeSelectionId
         - symbol
         - side
+        - instrumentType
+        - pricingMode
+        - underlying
+        - optionContract
         - entryAt
         - exitAt
         - entryPrice

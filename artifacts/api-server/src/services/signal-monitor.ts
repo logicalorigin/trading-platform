@@ -83,6 +83,16 @@ export function resolveSignalMonitorTimeframe(
   return SIGNAL_MONITOR_TIMEFRAMES.includes(resolved) ? resolved : fallback;
 }
 
+export function withSignalMonitorUniverseScope(
+  settings: Record<string, unknown>,
+  universeScope: string,
+): Record<string, unknown> {
+  return {
+    ...asRecord(settings),
+    universeScope,
+  };
+}
+
 function parseSignalTimeframe(value: unknown): SignalMonitorTimeframe {
   const resolved = String(value || "").trim() as SignalMonitorTimeframe;
   if (!SIGNAL_MONITOR_TIMEFRAMES.includes(resolved)) {
@@ -252,6 +262,16 @@ async function getOrCreateProfile(environment: RuntimeMode) {
     });
   }
   return fallback;
+}
+
+export async function getSignalMonitorProfileRow(input: {
+  environment?: RuntimeMode;
+  ensureWatchlist?: boolean;
+}) {
+  const profile = await getOrCreateProfile(resolveEnvironment(input.environment));
+  return input.ensureWatchlist === false
+    ? profile
+    : ensureProfileWatchlist(profile);
 }
 
 async function assertWatchlistExists(watchlistId: string) {

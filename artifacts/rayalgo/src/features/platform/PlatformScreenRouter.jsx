@@ -14,7 +14,6 @@ export const PlatformScreenRouter = ({
   screenId,
   screen,
   sym,
-  tradeSym,
   tradeSymPing,
   marketSymPing,
   session,
@@ -43,24 +42,11 @@ export const PlatformScreenRouter = ({
   onToggleMonitor,
   onChangeMonitorTimeframe,
   onChangeMonitorWatchlist,
-  onJumpToTradeFromMarket,
   onJumpToTradeFromFlow,
   onSelectTradingAccount,
   onJumpToTradeFromAccount,
   onJumpToTradeFromResearch,
-  onJumpToTradeFromBacktest,
   onJumpToTradeFromSignalOptionsCandidate,
-  marketLinkedContext,
-  tradeLinkedContext,
-  flowLinkedContext,
-  accountLinkedContext,
-  researchLinkedContext,
-  onSetLinkedWorkspacePanelGroup,
-  onMarketLinkedContextChange,
-  onTradeLinkedContextChange,
-  onFlowLinkedContextChange,
-  onAccountLinkedContextChange,
-  onResearchLinkedContextChange,
   onToggleTheme,
   onToggleSidebar,
 }) => {
@@ -71,7 +57,6 @@ export const PlatformScreenRouter = ({
       onSymClick={onSelectSymbol}
       onChartFocus={onFocusMarketChart}
       symbols={watchlistSymbols}
-      flowSymbols={runtimeWatchlistSymbols}
       signalSuggestionSymbols={signalMonitorSymbols}
       isVisible={marketScreenActive}
       researchConfigured={researchConfigured}
@@ -83,11 +68,7 @@ export const PlatformScreenRouter = ({
       onToggleMonitor={onToggleMonitor}
       onChangeMonitorTimeframe={onChangeMonitorTimeframe}
       onChangeMonitorWatchlist={onChangeMonitorWatchlist}
-      onOpenTrade={onJumpToTradeFromMarket}
       watchlists={watchlists}
-      linkedContext={marketLinkedContext}
-      onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
-      onLinkedContextChange={onMarketLinkedContextChange}
     />
   );
 
@@ -102,15 +83,12 @@ export const PlatformScreenRouter = ({
           symbols={runtimeWatchlistSymbols}
           isVisible={flowScreenActive}
           onJumpToTrade={onJumpToTradeFromFlow}
-          linkedContext={flowLinkedContext}
-          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
-          onLinkedContextChange={onFlowLinkedContextChange}
         />
       );
     case "trade":
       return (
         <MemoTradeScreen
-          sym={tradeSym || sym}
+          sym={sym}
           symPing={tradeSymPing}
           session={session}
           environment={environment}
@@ -120,10 +98,6 @@ export const PlatformScreenRouter = ({
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "trade"}
-          researchConfigured={researchConfigured}
-          linkedContext={tradeLinkedContext}
-          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
-          onLinkedContextChange={onTradeLinkedContextChange}
         />
       );
     case "account":
@@ -140,9 +114,6 @@ export const PlatformScreenRouter = ({
           gatewayTradingMessage={gatewayTradingMessage}
           isVisible={screen === "account"}
           onJumpToTrade={onJumpToTradeFromAccount}
-          linkedContext={accountLinkedContext}
-          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
-          onLinkedContextChange={onAccountLinkedContextChange}
         />
       );
     case "research":
@@ -150,9 +121,6 @@ export const PlatformScreenRouter = ({
         <MemoResearchScreen
           isVisible={screen === "research"}
           onJumpToTrade={onJumpToTradeFromResearch}
-          linkedContext={researchLinkedContext}
-          onLinkedWorkspaceGroupChange={onSetLinkedWorkspacePanelGroup}
-          onLinkedContextChange={onResearchLinkedContextChange}
         />
       );
     case "algo":
@@ -172,7 +140,6 @@ export const PlatformScreenRouter = ({
           watchlists={watchlists}
           defaultWatchlistId={defaultWatchlist?.id || null}
           isVisible={screen === "backtest"}
-          onJumpToTrade={onJumpToTradeFromBacktest}
         />
       );
     case "diagnostics":

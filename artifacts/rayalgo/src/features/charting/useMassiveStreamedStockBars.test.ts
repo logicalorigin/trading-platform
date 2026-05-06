@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getChartHydrationStatsSnapshot } from "./chartHydrationStats";
 import {
+  isChartBarsPayloadCacheStale,
   normalizeChartBarsPagePayload,
   normalizeLatestChartBarsPayload,
 } from "./chartBarsPayloads";
@@ -360,6 +361,29 @@ test("base bar normalization rejects accidental response envelopes without crash
   assert.equal(normalized.length, 0);
 });
 
+test("prependable chart bars do not reuse stored history after a confirmed empty base response", () => {
+  const historicalBars = [buildBar(1)];
+
+  assert.equal(
+    __chartStreamingTestInternals.mergePrependableHistoricalBars({
+      baseBarsReady: false,
+      normalizedBaseBars: [],
+      historicalBars,
+      timeframe: "1m",
+    }).length,
+    1,
+  );
+  assert.equal(
+    __chartStreamingTestInternals.mergePrependableHistoricalBars({
+      baseBarsReady: true,
+      normalizedBaseBars: [],
+      historicalBars,
+      timeframe: "1m",
+    }).length,
+    0,
+  );
+});
+
 test("chart bars payload helpers normalize API envelopes for latest and older fetches", () => {
   const bar = buildBar(1);
   const latest = normalizeLatestChartBarsPayload(
@@ -389,6 +413,32 @@ test("chart bars payload helpers normalize API envelopes for latest and older fe
   assert.equal(older.historyPage?.providerCursor?.includes("SPY"), true);
   assert.equal(older.historyPage?.providerPageCount, 2);
   assert.equal(older.historyPage?.historyCursor, "opaque-history-cursor");
+});
+
+test("chart bars payload helper treats stale debug and warming history as one cache state", () => {
+  assert.equal(
+    isChartBarsPayloadCacheStale({
+      bars: [buildBar(1)],
+      historyPage: { hydrationStatus: "warm" },
+      debug: { stale: true },
+    }),
+    true,
+  );
+  assert.equal(
+    isChartBarsPayloadCacheStale(
+      { bars: [buildBar(1)], debug: { stale: false } },
+      { hydrationStatus: "warming" },
+    ),
+    true,
+  );
+  assert.equal(
+    isChartBarsPayloadCacheStale({
+      bars: [buildBar(1)],
+      historyPage: { hydrationStatus: "warm" },
+      debug: { stale: false },
+    }),
+    false,
+  );
 });
 
 test("chart bars payload helper records shape errors", () => {

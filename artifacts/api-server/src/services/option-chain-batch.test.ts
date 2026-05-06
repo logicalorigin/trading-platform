@@ -28,6 +28,7 @@ const {
   getOptionExpirations,
   getOptionExpirationsWithDebug,
   resolveOptionContractWithDebug,
+  shouldUseDurableOptionExpirationsForRequest,
 } = platformModule;
 const {
   __resetBridgeOptionQuoteStreamForTests,
@@ -717,6 +718,61 @@ test("getBarsWithDebug starts fresh after a stale in-flight bar request", async 
   }
 });
 
+test("getBarsWithDebug marks stale cached bar history as warming", async () => {
+  const originalNow = Date.now;
+  const originalBackgroundEnabled =
+    process.env["CHART_HYDRATION_BACKGROUND_ENABLED"];
+  let now = Date.parse("2026-05-01T20:00:00.000Z");
+  let historyCalls = 0;
+
+  Date.now = () => now;
+  process.env["CHART_HYDRATION_BACKGROUND_ENABLED"] = "0";
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async () => {
+          historyCalls += 1;
+          return [brokerBar(null, 501)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  try {
+    const input = {
+      symbol: "STALECACHE",
+      timeframe: "1m" as const,
+      limit: 1,
+      assetClass: "equity" as const,
+      allowHistoricalSynthesis: false,
+    };
+
+    const first = await getBarsWithDebug(input);
+    now += 31_000;
+    const second = await getBarsWithDebug(input);
+
+    assert.equal(first.debug.cacheStatus, "miss");
+    assert.equal(first.historyPage.hydrationStatus, "warm");
+    assert.equal(second.debug.cacheStatus, "hit");
+    assert.equal(second.debug.stale, true);
+    assert.equal(second.historyPage.cacheStatus, "hit");
+    assert.equal(second.historyPage.hydrationStatus, "warming");
+    assert.equal(second.bars[0]?.close, 501);
+    assert.equal(historyCalls, 1);
+  } finally {
+    Date.now = originalNow;
+    if (originalBackgroundEnabled === undefined) {
+      delete process.env["CHART_HYDRATION_BACKGROUND_ENABLED"];
+    } else {
+      process.env["CHART_HYDRATION_BACKGROUND_ENABLED"] =
+        originalBackgroundEnabled;
+    }
+  }
+});
+
 test("batchOptionChains dedupes dates and caps upstream concurrency", async () => {
   const calls: string[] = [];
   let active = 0;
@@ -750,7 +806,13 @@ test("batchOptionChains dedupes dates and caps upstream concurrency", async () =
     strikesAroundMoney: 2,
   });
 
-  assert.deepEqual(calls, ["2026-05-01", "2026-05-08", "2026-05-15"]);
+  assert.deepEqual(calls, [
+    "2026-05-01",
+    "2026-05-08",
+    "2026-05-15",
+    "2026-05-01",
+    "2026-05-01",
+  ]);
   assert.equal(maxActive, 1);
   assert.deepEqual(
     result.results.map((entry) => entry.status),
@@ -890,6 +952,42 @@ test("option expiration lookup forwards explicit caps without capping all-expira
   assert.equal(capped.debug.returnedCount, 1);
 });
 
+test("uncapped option expiration discovery does not trust partial durable metadata", () => {
+  const durable = {
+    expirations: [
+      new Date("2026-05-05T00:00:00.000Z"),
+      new Date("2026-05-06T00:00:00.000Z"),
+      new Date("2026-05-07T00:00:00.000Z"),
+      new Date("2026-05-08T00:00:00.000Z"),
+    ],
+    debug: {
+      cacheStatus: "hit" as const,
+      totalMs: 0,
+      upstreamMs: null,
+      reason: "durable_option_expirations",
+    },
+  };
+
+  assert.equal(
+    shouldUseDurableOptionExpirationsForRequest({ underlying: "SPY" }, durable),
+    false,
+  );
+  assert.equal(
+    shouldUseDurableOptionExpirationsForRequest(
+      { underlying: "SPY", maxExpirations: 20 },
+      durable,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldUseDurableOptionExpirationsForRequest(
+      { underlying: "SPY", maxExpirations: 4 },
+      durable,
+    ),
+    true,
+  );
+});
+
 test("option chain lookup defaults to all expirations when no expiration is requested", async () => {
   const seenMaxExpirations: Array<number | undefined> = [];
   __setIbkrBridgeClientFactoryForTests(
@@ -940,7 +1038,7 @@ test("option chain lookup defaults to all expirations when no expiration is requ
   assert.equal(dateOnly(explicit.contracts[0]!.contract.expirationDate), "2026-05-01");
 });
 
-test("option chain lookup does not cache empty Gateway responses", async () => {
+test("option chain lookup retries empty Gateway responses", async () => {
   let calls = 0;
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -958,12 +1056,12 @@ test("option chain lookup does not cache empty Gateway responses", async () => {
     expirationDate: new Date("2026-05-01T00:00:00.000Z"),
     strikesAroundMoney: 2,
   };
-  const empty = await getOptionChainWithDebug(input);
   const loaded = await getOptionChainWithDebug(input);
+  const cached = await getOptionChainWithDebug(input);
 
   assert.equal(calls, 2);
-  assert.equal(empty.contracts.length, 0);
   assert.equal(loaded.contracts.length, 1);
+  assert.equal(cached.contracts.length, 1);
 });
 
 test("resolveOptionContractWithDebug hydrates full expiration metadata and caches conids", async () => {
@@ -1128,9 +1226,10 @@ test("resolveOptionContractWithDebug reports error when IB Gateway lookup fails"
   assert.equal(result.debug.reason, "option_contract_resolution_error");
 });
 
-test("getOptionChartBarsWithDebug uses the current chain contract before a provided event conid", async () => {
+test("getOptionChartBarsWithDebug uses a provided provider contract id before loading the full chain", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
   let historicalProviderContractId: string | null | undefined;
+  let optionChainFetches = 0;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -1140,6 +1239,7 @@ test("getOptionChartBarsWithDebug uses the current chain contract before a provi
           marketDataMode: "live",
         }),
         getOptionChain: async () => {
+          optionChainFetches += 1;
           const base = optionContract(expirationDate, 970);
           return [
             {
@@ -1170,14 +1270,52 @@ test("getOptionChartBarsWithDebug uses the current chain contract before a provi
     outsideRth: false,
   });
 
-  assert.equal(historicalProviderContractId, "chain-conid");
-  assert.equal(result.providerContractId, "chain-conid");
-  assert.equal(result.resolutionSource, "chain");
+  assert.equal(optionChainFetches, 0);
+  assert.equal(historicalProviderContractId, "event-conid");
+  assert.equal(result.providerContractId, "event-conid");
+  assert.equal(result.resolutionSource, "provided");
   assert.equal(result.dataSource, "ibkr-history");
   assert.equal(result.feedIssue, false);
   assert.equal(result.emptyReason, null);
   assert.equal(result.bars.length, 1);
   assert.equal(result.bars[0].close, 2.15);
+});
+
+test("getOptionChartBarsWithDebug preserves IBKR bars cache metadata", async () => {
+  let historicalCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async (input: { providerContractId?: string | null }) => {
+          historicalCalls += 1;
+          return [brokerBar(input.providerContractId ?? null)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const expirationDate = new Date("2026-05-01T00:00:00.000Z");
+  const request = {
+    underlying: "SPY",
+    expirationDate,
+    strike: 500,
+    right: "call" as const,
+    providerContractId: "event-conid",
+    timeframe: "1m" as const,
+    limit: 5,
+    outsideRth: false,
+  };
+
+  const first = await getOptionChartBarsWithDebug(request);
+  const second = await getOptionChartBarsWithDebug(request);
+
+  assert.equal(first.dataSource, "ibkr-history");
+  assert.equal(second.dataSource, "ibkr-history");
+  assert.equal(second.debug.cacheStatus, "hit");
+  assert.equal(historicalCalls, 1);
 });
 
 test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when IBKR history is empty", async () => {
@@ -1249,14 +1387,14 @@ test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when I
   });
 
   assert.equal(polygonTicker, "O:SPY261218C00970000");
-  assert.equal(result.providerContractId, "chain-conid");
-  assert.equal(result.resolutionSource, "chain");
+  assert.equal(result.providerContractId, "event-conid");
+  assert.equal(result.resolutionSource, "provided");
   assert.equal(result.dataSource, "polygon-option-aggregates");
   assert.equal(result.historySource, "polygon-option-aggregates");
   assert.equal(result.feedIssue, false);
   assert.equal(result.emptyReason, null);
   assert.equal(result.bars.length, 1);
-  assert.equal(result.bars[0].providerContractId, "chain-conid");
+  assert.equal(result.bars[0].providerContractId, "event-conid");
   assert.equal(result.bars[0].source, "polygon-option-aggregates");
   assert.equal(result.bars[0].close, 1.25);
   assert.equal(result.historyPage.provider, "polygon-option-aggregates");
@@ -1692,8 +1830,8 @@ test("getOptionChartBarsWithDebug returns no chart when both IBKR and Polygon ha
     outsideRth: false,
   });
 
-  assert.equal(result.providerContractId, "chain-conid");
-  assert.equal(result.resolutionSource, "chain");
+  assert.equal(result.providerContractId, "event-conid");
+  assert.equal(result.resolutionSource, "provided");
   assert.equal(result.dataSource, "none");
   assert.equal(result.feedIssue, false);
   assert.equal(result.emptyReason, "no-option-aggregate-bars");

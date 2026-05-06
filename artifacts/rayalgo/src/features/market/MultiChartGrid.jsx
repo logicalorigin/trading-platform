@@ -5,7 +5,15 @@ import {
 } from "../charting/timeframes";
 import { clearStoredChartViewportSnapshot } from "../charting/ResearchChartSurface";
 import { buildChartBarScopeKey } from "../charting/chartHydrationRuntime";
+import {
+  filterFlowEventsForSymbol,
+  mergeFlowEventFeeds,
+} from "../charting/chartEvents";
 import { buildPremiumFlowBySymbol } from "../platform/premiumFlowIndicator";
+import {
+  BROAD_MARKET_FLOW_STORE_KEY,
+  useMarketFlowSnapshotForStoreKey,
+} from "../platform/marketFlowStore";
 import { FLOW_SCANNER_SCOPE } from "../platform/marketFlowScannerConfig";
 import { WATCHLIST } from "./marketReferenceData";
 import {
@@ -29,7 +37,6 @@ import {
 } from "../platform/tickerSearch/TickerSearch.jsx";
 import { MiniChartCell } from "./MiniChartCell.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
-import { WorkspaceLinkChip } from "../platform/WorkspaceLinkChip.jsx";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import { Card } from "../../components/platform/primitives.jsx";
@@ -64,6 +71,21 @@ const MAX_MULTI_CHART_SLOTS = Math.max(
 const MARKET_CHART_FLOW_LIMIT = 80;
 const MARKET_CHART_FLOW_LINE_BUDGET = 40;
 const MARKET_CHART_FLOW_CONCURRENCY = 1;
+
+const buildMarketChartViewportLayoutKey = ({
+  layout,
+  slotIndex,
+  renderedCols,
+  renderedRows,
+  revision,
+}) =>
+  [
+    "market-grid",
+    layout,
+    `slot-${slotIndex}`,
+    `${renderedCols}x${renderedRows}`,
+    `rev-${revision}`,
+  ].join(":");
 
 const buildDefaultMiniChartSymbols = (
   activeSym,
@@ -160,13 +182,9 @@ export const MultiChartGrid = ({
   popularTickers = [],
   signalSuggestionSymbols = [],
   stockAggregateStreamingEnabled = false,
-  earningsEventsEnabled = false,
   isVisible = false,
   unusualThreshold,
   onChartFlowSnapshotChange,
-  linkedContext = null,
-  onLinkedWorkspaceGroupChange,
-  onLinkedContextChange,
 }) => {
   const gridBodyRef = useRef(null);
   const defaultSymbolsRef = useRef(
@@ -199,27 +217,17 @@ export const MultiChartGrid = ({
   const [marketGridTrackState, setMarketGridTrackState] = useState(() =>
     readMarketGridTrackSession(),
   );
+  const [chartViewportLayoutRevision, setChartViewportLayoutRevision] =
+    useState(0);
   const [chartViewportResetRevision, setChartViewportResetRevision] = useState(0);
   const [gridResizeHoverHandle, setGridResizeHoverHandle] = useState(null);
   const [gridResizeActiveHandle, setGridResizeActiveHandle] = useState(null);
   const [openTickerSearchSlotIndex, setOpenTickerSearchSlotIndex] = useState(null);
   useEffect(() => {
     const handleWorkspaceSettings = (event) => {
-      const state = event?.detail || {};
-      const nextLayout = state.marketGridLayout;
+      const nextLayout = event?.detail?.marketGridLayout;
       if (nextLayout && MULTI_CHART_LAYOUTS[nextLayout]) {
         setLayout((current) => (current === nextLayout ? current : nextLayout));
-      }
-      if (Number.isFinite(state.marketGridSoloSlotIndex)) {
-        setSoloSlotIndex(
-          Math.max(
-            0,
-            Math.min(MAX_MULTI_CHART_SLOTS - 1, state.marketGridSoloSlotIndex),
-          ),
-        );
-      }
-      if (typeof state.marketGridSyncTimeframes === "boolean") {
-        setSyncTimeframes(state.marketGridSyncTimeframes);
       }
     };
     window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
@@ -323,14 +331,38 @@ export const MultiChartGrid = ({
   const {
     flowStatus: chartFlowStatus,
     providerSummary: chartFlowProviderSummary,
-    flowEvents: chartFlowEvents,
+    flowEvents: localChartFlowEvents,
   } = chartFlowSnapshot;
+  const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
+    BROAD_MARKET_FLOW_STORE_KEY,
+    { subscribe: isVisible },
+  );
+  const chartFlowEvents = useMemo(
+    () =>
+      mergeFlowEventFeeds(
+        localChartFlowEvents || [],
+        streamedSymbols.flatMap((symbol) =>
+          filterFlowEventsForSymbol(broadFlowSnapshot.flowEvents || [], symbol),
+        ),
+      ),
+    [broadFlowSnapshot.flowEvents, localChartFlowEvents, streamedSymbols],
+  );
+  const effectiveChartFlowStatus = chartFlowEvents.length ? "live" : chartFlowStatus;
+  const effectiveChartFlowSnapshot = useMemo(
+    () => ({
+      ...chartFlowSnapshot,
+      flowStatus: effectiveChartFlowStatus,
+      hasLiveFlow: chartFlowEvents.length > 0 || chartFlowSnapshot.hasLiveFlow,
+      flowEvents: chartFlowEvents,
+    }),
+    [chartFlowEvents, chartFlowSnapshot, effectiveChartFlowStatus],
+  );
   const streamedSymbolsKey = streamedSymbols.join(",");
   const chartFlowSnapshotSignature = useMemo(() => {
     const coverage = chartFlowProviderSummary?.coverage || {};
     return [
       streamedSymbolsKey,
-      chartFlowStatus,
+      effectiveChartFlowStatus,
       chartFlowProviderSummary?.label || "",
       (chartFlowProviderSummary?.providers || []).join(","),
       chartFlowProviderSummary?.fallbackUsed ? "fallback" : "primary",
@@ -345,7 +377,7 @@ export const MultiChartGrid = ({
   }, [
     chartFlowEvents,
     chartFlowProviderSummary,
-    chartFlowStatus,
+    effectiveChartFlowStatus,
     streamedSymbolsKey,
   ]);
   useEffect(() => {
@@ -359,12 +391,13 @@ export const MultiChartGrid = ({
     onChartFlowSnapshotChange({
       signature: chartFlowSnapshotSignature,
       symbols: streamedSymbols,
-      snapshot: chartFlowSnapshot,
+      snapshot: effectiveChartFlowSnapshot,
     });
   }, [
     chartFlowSnapshotSignature,
     isVisible,
     onChartFlowSnapshotChange,
+    effectiveChartFlowSnapshot,
     streamedSymbolsKey,
   ]);
   useEffect(
@@ -569,6 +602,7 @@ export const MultiChartGrid = ({
       rows: buildEqualTrackWeights(renderedRows),
       rowHeights: Array.from({ length: renderedRows }, () => baseCellHeight),
     });
+    setChartViewportLayoutRevision((revision) => revision + 1);
   }, [baseCellHeight, renderedCols, renderedRows, setLayoutTrackState]);
   const resetGridChartViews = useCallback(() => {
     visibleSlotEntries.forEach(({ slot }) => {
@@ -593,11 +627,15 @@ export const MultiChartGrid = ({
       const minColumnWidth = Math.max(dim(denseGrid ? 140 : 170), baseCardMinWidth * 0.36);
       let lastClientX = startX;
       let lastClientY = startY;
+      let resizeMoved = false;
       const handlePointerMove = (moveEvent) => {
         lastClientX = moveEvent.clientX;
         lastClientY = moveEvent.clientY;
         const deltaX = moveEvent.clientX - startX;
         const deltaY = moveEvent.clientY - startY;
+        if (Math.abs(deltaX) > 0 || Math.abs(deltaY) > 0) {
+          resizeMoved = true;
+        }
         const nextLayoutState = {
           cols: startColumnWeights,
           rows: buildEqualTrackWeights(renderedRows),
@@ -643,6 +681,9 @@ export const MultiChartGrid = ({
             : null;
         setGridResizeActiveHandle(null);
         setGridResizeHoverHandle(hoveredHandle || null);
+        if (resizeMoved) {
+          setChartViewportLayoutRevision((revision) => revision + 1);
+        }
         handleElement?.releasePointerCapture?.(pointerId);
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", finishResize);
@@ -717,50 +758,6 @@ export const MultiChartGrid = ({
     );
   };
   useEffect(() => {
-    if (!linkedContext?.linked) {
-      return;
-    }
-    const linkedSymbol = normalizeTickerSymbol(linkedContext.symbol);
-    const linkedTimeframe = normalizeChartTimeframe(linkedContext.timeframe);
-    if (!linkedSymbol && !linkedTimeframe) {
-      return;
-    }
-    setSlots((current) => {
-      const targetIndex =
-        layout === "1x1"
-          ? visibleSlotEntries[0]?.index ?? soloSlotIndex ?? 0
-          : visibleSlotEntries[0]?.index ?? 0;
-      let changed = false;
-      const next = current.map((slot, index) => {
-        if (index !== targetIndex) {
-          return slot;
-        }
-        const patch = {
-          ...slot,
-          ticker: linkedSymbol || slot.ticker,
-          tf: linkedTimeframe || slot.tf,
-        };
-        const hydrated = hydrateMiniChartSlot(patch, defaults[index]);
-        changed =
-          changed ||
-          hydrated.ticker !== slot.ticker ||
-          hydrated.tf !== slot.tf;
-        return hydrated;
-      });
-      return changed ? next : current;
-    });
-  }, [
-    defaults,
-    layout,
-    linkedContext?.broadcastSequence,
-    linkedContext?.groupId,
-    linkedContext?.linked,
-    linkedContext?.symbol,
-    linkedContext?.timeframe,
-    soloSlotIndex,
-    visibleSlotEntries,
-  ]);
-  useEffect(() => {
     const normalizedExternalSym =
       externalSelection?.n > 0
         ? normalizeTickerSymbol(externalSelection?.sym)
@@ -794,15 +791,11 @@ export const MultiChartGrid = ({
     if (normalizeTickerSymbol(currentSlot?.ticker) === normalizedActiveSym) {
       return;
     }
-    const sourceSlotBeforeSelection = sourceIndex >= 0 ? slots[sourceIndex] : null;
-    const targetSlotBeforeSelection = slots[targetIndex] || null;
 
     rememberSearchRow(normalizedActiveSym);
     setSlots((current) => {
-      const sourceSlot =
-        sourceSlotBeforeSelection ||
-        (sourceIndex >= 0 ? current[sourceIndex] : null);
-      const targetSlot = targetSlotBeforeSelection || current[targetIndex] || null;
+      const sourceSlot = sourceIndex >= 0 ? current[sourceIndex] : null;
+      const targetSlot = current[targetIndex] || null;
       return current.map((slot, index) => {
         if (index === targetIndex) {
           return hydrateMiniChartSlot(
@@ -1042,26 +1035,32 @@ export const MultiChartGrid = ({
           }}
         >
           {visibleSlotEntries.map(({ slot, index }) => {
+            const chartViewportLayoutKey = buildMarketChartViewportLayoutKey({
+              layout,
+              slotIndex: index,
+              renderedCols,
+              renderedRows,
+              revision: chartViewportLayoutRevision,
+            });
             return (
               <MiniChartCell
-                key={`market-chart-slot-${index}`}
+                key={`market-chart-slot-${index}-${layout}-${chartViewportLayoutRevision}-${chartViewportResetRevision}`}
                 dataTestId={`market-mini-chart-${index}`}
                 slot={slot}
+                chartViewportLayoutKey={chartViewportLayoutKey}
                 premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}
                 flowEvents={flowEventsBySymbol[normalizeTickerSymbol(slot.ticker)] || []}
-                premiumFlowStatus={chartFlowStatus}
+                premiumFlowStatus={effectiveChartFlowStatus}
                 premiumFlowProviderSummary={chartFlowProviderSummary}
                 isActive={slot.ticker === activeSym}
                 dense={denseGrid}
                 compactFlow={compactPremiumFlow}
                 stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
-                earningsEventsEnabled={earningsEventsEnabled}
                 onFocus={onSymClick}
-                viewportResetRevision={chartViewportResetRevision}
                 onEnterSoloMode={() => {
                   setSoloSlotIndex(index);
                   setLayout("1x1");
-                  onSymClick?.(slot.ticker, { timeframe: slot.tf });
+                  onSymClick?.(slot.ticker);
                 }}
                 onChangeTicker={(ticker, result) => {
                   updateSlot(index, {
@@ -1079,30 +1078,9 @@ export const MultiChartGrid = ({
                       null,
                     searchResult: result || null,
                   });
-                  onSymClick?.(ticker, { timeframe: slot.tf });
+                  onSymClick?.(ticker);
                 }}
-                onChangeTimeframe={(tf) => {
-                  updateSlotTimeframe(index, tf);
-                  const isLinkedActiveFrame =
-                    linkedContext?.linked &&
-                    (index === visibleSlotEntries[0]?.index ||
-                      normalizeTickerSymbol(slot.ticker) ===
-                        normalizeTickerSymbol(activeSym));
-                  if (isLinkedActiveFrame) {
-                    onLinkedContextChange?.({
-                      symbol: slot.ticker,
-                      timeframe: tf,
-                    });
-                  }
-                }}
-                linkChip={
-                  <WorkspaceLinkChip
-                    panelId="market"
-                    context={linkedContext}
-                    compact
-                    onChangeGroup={onLinkedWorkspaceGroupChange}
-                  />
-                }
+                onChangeTimeframe={(tf) => updateSlotTimeframe(index, tf)}
                 recentTickers={recentTickers}
                 recentTickerRows={recentTickerRows}
                 watchlistSymbols={watchlistSymbols}

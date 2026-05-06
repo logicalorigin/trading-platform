@@ -1,4 +1,5 @@
 export type SignalOptionsStrikeSlot = 0 | 1 | 2 | 3 | 4 | 5;
+export type SignalOptionsRight = "call" | "put";
 
 export type SignalOptionsExecutionProfile = {
   version: "v1";
@@ -282,4 +283,58 @@ export function resolveSignalOptionsExecutionProfile(
       ),
     },
   };
+}
+
+export function signalOptionsRightForDirection(
+  direction: "buy" | "sell" | "long" | "short",
+): SignalOptionsRight {
+  return direction === "sell" || direction === "short" ? "put" : "call";
+}
+
+export function signalOptionsStrikeSlotForRight(
+  profile: SignalOptionsExecutionProfile,
+  right: SignalOptionsRight,
+): SignalOptionsStrikeSlot {
+  return right === "put"
+    ? profile.optionSelection.putStrikeSlot
+    : profile.optionSelection.callStrikeSlot;
+}
+
+export function resolveSignalOptionsStrike(input: {
+  strikes: number[];
+  spotPrice: number;
+  slot: SignalOptionsStrikeSlot | number;
+}): number | null {
+  const strikes = [...new Set(input.strikes)]
+    .filter((strike) => Number.isFinite(strike))
+    .sort((left, right) => left - right);
+  if (!strikes.length) {
+    return null;
+  }
+
+  const belowIndex = strikes.reduce(
+    (bestIndex, strike, index) =>
+      strike <= input.spotPrice && index > bestIndex ? index : bestIndex,
+    -1,
+  );
+  const aboveIndex = strikes.findIndex((strike) => strike >= input.spotPrice);
+  const resolvedBelowIndex =
+    belowIndex >= 0 ? belowIndex : Math.max(0, aboveIndex);
+  const resolvedAboveIndex =
+    aboveIndex >= 0 ? aboveIndex : Math.max(0, resolvedBelowIndex);
+  const slot = Math.round(Math.min(5, Math.max(0, Number(input.slot))));
+  const targetIndex =
+    slot === 0
+      ? resolvedBelowIndex - 2
+      : slot === 1
+        ? resolvedBelowIndex - 1
+        : slot === 2
+          ? resolvedBelowIndex
+          : slot === 3
+            ? resolvedAboveIndex
+            : slot === 4
+              ? resolvedAboveIndex + 1
+              : resolvedAboveIndex + 2;
+
+  return strikes[Math.min(strikes.length - 1, Math.max(0, targetIndex))] ?? null;
 }

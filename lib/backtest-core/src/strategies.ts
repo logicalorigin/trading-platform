@@ -377,6 +377,16 @@ const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
     step: 1,
   },
   {
+    key: "signalOptionsTargetDte",
+    label: "Signal Options Target DTE",
+    type: "integer",
+    defaultValue: defaultSignalOptionsExecutionProfile.optionSelection.targetDte,
+    options: [],
+    min: 0,
+    max: 90,
+    step: 1,
+  },
+  {
     key: "signalOptionsMaxDte",
     label: "Signal Options Max DTE",
     type: "integer",
@@ -384,6 +394,26 @@ const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
     options: [],
     min: 0,
     max: 90,
+    step: 1,
+  },
+  {
+    key: "signalOptionsCallStrikeSlot",
+    label: "Signal Options Call Strike Slot",
+    type: "integer",
+    defaultValue: defaultSignalOptionsExecutionProfile.optionSelection.callStrikeSlot,
+    options: [],
+    min: 0,
+    max: 5,
+    step: 1,
+  },
+  {
+    key: "signalOptionsPutStrikeSlot",
+    label: "Signal Options Put Strike Slot",
+    type: "integer",
+    defaultValue: defaultSignalOptionsExecutionProfile.optionSelection.putStrikeSlot,
+    options: [],
+    min: 0,
+    max: 5,
     step: 1,
   },
   {
@@ -405,6 +435,26 @@ const rayReplicaParameterDefinitions: StrategyParameterDefinition[] = [
     min: 1,
     max: 500,
     step: 1,
+  },
+  {
+    key: "signalOptionsMaxOpenSymbols",
+    label: "Signal Options Max Open Symbols",
+    type: "integer",
+    defaultValue: defaultSignalOptionsExecutionProfile.riskCaps.maxOpenSymbols,
+    options: [],
+    min: 1,
+    max: 500,
+    step: 1,
+  },
+  {
+    key: "signalOptionsMaxDailyLoss",
+    label: "Signal Options Max Daily Loss",
+    type: "number",
+    defaultValue: defaultSignalOptionsExecutionProfile.riskCaps.maxDailyLoss,
+    options: [],
+    min: 1,
+    max: 1000000,
+    step: 50,
   },
   {
     key: "signalOptionsMaxSpreadPct",
@@ -496,10 +546,20 @@ const strategies: ExecutableStrategy[] = [
         defaultSignalOptionsExecutionProfile.optionSelection.minDte,
       signalOptionsMaxDte:
         defaultSignalOptionsExecutionProfile.optionSelection.maxDte,
+      signalOptionsTargetDte:
+        defaultSignalOptionsExecutionProfile.optionSelection.targetDte,
+      signalOptionsCallStrikeSlot:
+        defaultSignalOptionsExecutionProfile.optionSelection.callStrikeSlot,
+      signalOptionsPutStrikeSlot:
+        defaultSignalOptionsExecutionProfile.optionSelection.putStrikeSlot,
       signalOptionsMaxPremium:
         defaultSignalOptionsExecutionProfile.riskCaps.maxPremiumPerEntry,
       signalOptionsMaxContracts:
         defaultSignalOptionsExecutionProfile.riskCaps.maxContracts,
+      signalOptionsMaxOpenSymbols:
+        defaultSignalOptionsExecutionProfile.riskCaps.maxOpenSymbols,
+      signalOptionsMaxDailyLoss:
+        defaultSignalOptionsExecutionProfile.riskCaps.maxDailyLoss,
       signalOptionsMaxSpreadPct:
         defaultSignalOptionsExecutionProfile.liquidityGate.maxSpreadPctOfMid,
     },

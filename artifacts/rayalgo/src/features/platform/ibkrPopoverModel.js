@@ -5,6 +5,10 @@ import {
   maskIbkrAccountId,
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus.jsx";
+import {
+  normalizeAdmissionDiagnostics,
+  selectRuntimeAdmissionDiagnostics,
+} from "./runtimeControlModel.js";
 
 const headerDetailValue = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== "");
@@ -86,98 +90,13 @@ const formatHeaderTimeAgo = (value) => {
   return `${Math.round(ageMs / 3_600_000)}h ago`;
 };
 
-const usageTone = (used, cap, degraded = false) => {
-  if (degraded) return T.red;
-  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) return T.textDim;
-  const ratio = used / cap;
-  if (ratio >= 0.95) return T.red;
-  if (ratio >= 0.75) return T.amber;
-  return T.textSec;
-};
-
-const sumRecentActions = (admission, actions) => {
-  const counters = admission?.counters || {};
-  return Object.values(counters).reduce((total, counter) => {
-    if (!counter || typeof counter !== "object") return total;
-    return (
-      total +
-      actions.reduce((sum, action) => {
-        const value = counter[action];
-        return sum + (Number.isFinite(value) ? value : 0);
-      }, 0)
-    );
-  }, 0);
-};
-
 const buildLineUsageRows = (admission) => {
-  if (!admission || typeof admission !== "object") {
-    return {
-      available: false,
-      summary: MISSING_VALUE,
-      rows: [],
-    };
-  }
-
-  const budget = admission.budget || {};
-  const poolUsage = admission.poolUsage || {};
-  const warnings = sumRecentActions(admission, ["rejected", "demoted"]);
-  const pools = [
-    ["flow-scanner", "Flow scanner"],
-    ["visible", "Visible"],
-    ["execution", "Execution"],
-    ["automation", "Automation"],
-    ["convenience", "Convenience"],
-  ];
-  const rows = pools.map(([id, label]) => {
-    const pool = poolUsage[id] || {};
-    const used =
-      Number.isFinite(pool.activeLineCount)
-        ? pool.activeLineCount
-        : id === "flow-scanner"
-          ? admission.flowScannerLineCount
-          : null;
-    const cap =
-      Number.isFinite(pool.maxLines)
-        ? pool.maxLines
-        : id === "flow-scanner"
-          ? budget.flowScannerLineCap
-          : null;
-    const free =
-      Number.isFinite(pool.remainingLineCount)
-        ? pool.remainingLineCount
-        : Number.isFinite(cap) && Number.isFinite(used)
-          ? Math.max(0, cap - used)
-          : null;
-    return {
-      id,
-      label,
-      used,
-      cap,
-      free,
-      tone: usageTone(used, cap, warnings > 0 && id === "flow-scanner"),
-      strict: Boolean(pool.strict),
-    };
-  });
-
-  rows.push({
-    id: "total",
-    label: "Total app",
-    used: admission.activeLineCount,
-    cap: budget.maxLines,
-    free: Number.isFinite(admission.activeLineCount) && Number.isFinite(budget.maxLines)
-      ? Math.max(0, budget.maxLines - admission.activeLineCount)
-      : null,
-    tone: usageTone(admission.activeLineCount, budget.maxLines, warnings > 0),
-    strict: false,
-  });
-
+  const normalized = normalizeAdmissionDiagnostics(admission);
   return {
-    available: true,
-    summary: `${formatHeaderCount(admission.activeLineCount)} / ${formatHeaderCount(
-      budget.maxLines,
-    )}`,
-    warnings,
-    rows,
+    available: normalized.available,
+    summary: normalized.summary,
+    warnings: normalized.warnings,
+    rows: normalized.rows,
   };
 };
 
@@ -217,6 +136,7 @@ export const buildHeaderIbkrPopoverModel = ({
   latencyStats,
   runtimeDiagnostics,
   runtimeError,
+  lineUsage: normalizedLineUsage,
   lineUsageSnapshot,
 }) => {
   const runtime = runtimeDiagnostics?.ibkr;
@@ -239,6 +159,10 @@ export const buildHeaderIbkrPopoverModel = ({
         healthAgeMs: runtime.healthAgeMs,
         bridgeReachable: runtime.bridgeReachable,
         socketConnected: runtime.socketConnected,
+        brokerServerConnected: runtime.brokerServerConnected,
+        serverConnectivity: runtime.serverConnectivity,
+        lastServerConnectivityAt: runtime.lastServerConnectivityAt,
+        lastServerConnectivityError: runtime.lastServerConnectivityError,
         accountsLoaded: runtime.accountsLoaded,
         configuredLiveMarketDataMode: runtime.configuredLiveMarketDataMode,
         streamFresh: runtime.streamFresh,
@@ -284,9 +208,14 @@ export const buildHeaderIbkrPopoverModel = ({
   const strictReason = headerDetailValue(runtime?.strictReason, connection?.strictReason);
   const gatewaySocket = headerDetailValue(
     runtime?.socketConnected,
-    runtime?.connected,
     connection?.socketConnected,
     connection?.reachable,
+    runtime?.connected,
+  );
+  const brokerServerConnected = headerDetailValue(
+    runtime?.brokerServerConnected,
+    connection?.brokerServerConnected,
+    gatewaySocket === true ? true : undefined,
   );
   const authenticated = headerDetailValue(
     runtime?.authenticated,
@@ -328,7 +257,8 @@ export const buildHeaderIbkrPopoverModel = ({
     : runtimeDiagnostics
       ? "fresh"
       : "loading";
-  const gatewayConnected = gatewaySocket === true;
+  const gatewayConnected =
+    gatewaySocket === true && brokerServerConnected !== false;
   const authenticatedReady = authenticated === true;
   const streamConsumerCount = stream.activeConsumerCount;
   const streamSymbolCount = stream.unionSymbolCount;
@@ -392,9 +322,11 @@ export const buildHeaderIbkrPopoverModel = ({
     liveDataLabel,
     runtimeDiagnostics,
   });
-  const lineUsage = buildLineUsageRows(
-    runtime?.streams?.marketDataAdmission ?? lineUsageSnapshot?.admission,
-  );
+  const lineUsage =
+    normalizedLineUsage ||
+    buildLineUsageRows(
+      selectRuntimeAdmissionDiagnostics({ runtimeDiagnostics, lineUsageSnapshot }),
+    );
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
   let issue = {
@@ -439,10 +371,19 @@ export const buildHeaderIbkrPopoverModel = ({
       value:
         gatewaySocket == null
           ? runtimeState
+          : brokerServerConnected === false
+            ? "Server offline"
           : gatewayConnected
             ? "Connected"
             : "Offline",
-      tone: gatewayConnected ? T.green : gatewaySocket === false ? T.red : T.textDim,
+      tone:
+        gatewayConnected
+          ? T.green
+          : gatewaySocket === false
+            ? T.red
+            : brokerServerConnected === false
+              ? T.amber
+              : T.textDim,
       iconKey: "radioTower",
     },
     {
@@ -600,6 +541,20 @@ export const buildHeaderIbkrPopoverModel = ({
           label: "Gateway",
           value: formatHeaderBool(gatewaySocket, "connected", "disconnected"),
           tone: gatewayConnected ? T.green : gatewaySocket === false ? T.red : T.textDim,
+        },
+        {
+          label: "IBKR server",
+          value: formatHeaderBool(
+            brokerServerConnected,
+            "connected",
+            "disconnected",
+          ),
+          tone:
+            brokerServerConnected
+              ? T.green
+              : brokerServerConnected === false
+                ? T.amber
+                : T.textDim,
         },
         {
           label: "Auth",

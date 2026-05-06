@@ -5,7 +5,6 @@ import {
   getOpenPositionRows,
   isOpenPositionRow,
 } from "../../features/account/accountPositionRows.js";
-import { buildPortfolioRiskStripModel } from "../../features/account/accountPortfolioRiskStripModel.js";
 
 test("open position rows exclude explicit zero quantities", () => {
   assert.equal(isOpenPositionRow({ quantity: 10 }), true);
@@ -112,65 +111,4 @@ test("risk display model clears current risk rows when every streamed position i
     thisMonth: 0,
     next90Days: 0,
   });
-});
-
-test("portfolio risk strip model summarizes live account pressure", () => {
-  const model = buildPortfolioRiskStripModel({
-    summary: {
-      currency: "USD",
-      metrics: {
-        netLiquidation: { value: 100_000 },
-        buyingPower: { value: 25_000, field: "BuyingPower" },
-        dayPnl: { value: -450, field: "QuoteChange" },
-        maintenanceMarginCushionPercent: { value: 0.24 },
-      },
-    },
-    riskData: {
-      currency: "USD",
-      margin: {
-        maintenanceCushionPercent: 0.24,
-        marginUsed: 18_000,
-      },
-      concentration: {
-        topPositions: [{ symbol: "NVDA", weightPercent: 0.41 }],
-      },
-    },
-    positionsResponse: {
-      positions: [
-        { symbol: "NVDA", quantity: 10, marketValue: 41_000 },
-        { symbol: "SPY", quantity: 0, marketValue: 0 },
-        { symbol: "QQQ", quantity: 5, marketValue: 9_000 },
-      ],
-    },
-    brokerAuthenticated: true,
-    gatewayTradingReady: false,
-  });
-
-  const byId = Object.fromEntries(model.cards.map((card) => [card.id, card]));
-
-  assert.equal(model.state.label, "Degraded");
-  assert.equal(byId["open-risk"].value, 50_000);
-  assert.equal(byId["open-risk"].detail, "2 open positions");
-  assert.equal(byId["open-risk"].tone, "amber");
-  assert.equal(byId["day-pnl"].tone, "red");
-  assert.equal(byId["margin-pressure"].value, 24);
-  assert.equal(byId["margin-pressure"].tone, "red");
-  assert.equal(byId.concentration.value, 41);
-  assert.equal(byId.concentration.tone, "red");
-  assert.equal(byId["live-state"].text, "Degraded");
-});
-
-test("portfolio risk strip model marks shadow ledger state", () => {
-  const model = buildPortfolioRiskStripModel({
-    accountMode: "shadow",
-    positionsResponse: {
-      positions: [{ symbol: "AAPL", quantity: 2, averageCost: 180 }],
-    },
-  });
-
-  const stateCard = model.cards.find((card) => card.id === "live-state");
-  assert.equal(model.state.label, "Shadow");
-  assert.equal(stateCard.text, "Shadow");
-  assert.equal(stateCard.tone, "pink");
-  assert.equal(model.cards.find((card) => card.id === "open-risk").value, 360);
 });

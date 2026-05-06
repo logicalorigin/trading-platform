@@ -6,6 +6,9 @@
     pkgs.poppler_utils
     pkgs.libreoffice
     pkgs.bubblewrap
+    pkgs.gdk-pixbuf
+    pkgs.freetype
+    pkgs.fontconfig
     pkgs.glib
     pkgs.expat
     pkgs.nspr

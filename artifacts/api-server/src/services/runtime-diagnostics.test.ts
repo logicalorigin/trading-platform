@@ -224,6 +224,14 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
     typeof diagnostics.ibkr.streams.marketDataAdmission.activeLineCount,
     "number",
   );
+  assert.equal(
+    typeof diagnostics.ibkr.streams.marketDataAdmission.accountMonitorLineCount,
+    "number",
+  );
+  assert.equal(
+    typeof diagnostics.ibkr.streams.marketDataAdmission.budget.accountMonitorLineCap,
+    "number",
+  );
   assert.equal(typeof diagnostics.providers.polygon.configured, "boolean");
   assert.ok(
     ["ok", "degraded", "unconfigured", "unknown"].includes(

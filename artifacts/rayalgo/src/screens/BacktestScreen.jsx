@@ -12,7 +12,6 @@ export const BacktestScreen = ({
   watchlists,
   defaultWatchlistId,
   isVisible = false,
-  onJumpToTrade,
 }) => (
   <BacktestWorkspace
     theme={T}
@@ -20,7 +19,6 @@ export const BacktestScreen = ({
     watchlists={watchlists}
     defaultWatchlistId={defaultWatchlistId}
     isVisible={isVisible}
-    onJumpToTrade={onJumpToTrade}
   />
 );
 

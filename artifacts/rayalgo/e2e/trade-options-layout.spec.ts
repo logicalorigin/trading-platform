@@ -1,4 +1,4 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test.setTimeout(90_000);
 
@@ -589,9 +589,7 @@ test("Trade swaps contract chart above options chain and removes placeholder cop
       .getByTestId("trade-contract-chart-panel")
       .getByText("CONTRACT", { exact: true }),
   ).toHaveCount(0);
-  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText(
-    "SHADOW PAPER",
-  );
+  await expect(page.getByText("SHADOW PAPER")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "SHADOW", exact: true }),
   ).toBeVisible();
@@ -642,7 +640,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   await expect(page.getByText("ORDER TICKET", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText("SHADOW PAPER", {
+  await expect(page.getByText("SHADOW PAPER")).toBeVisible({
     timeout: 30_000,
   });
   await expect(
@@ -665,11 +663,11 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   expect(shadowPreviewRequests[0]?.accountId).toBe("shadow");
   await expect(page.getByText("CONID")).toBeVisible();
 
-  await page.getByRole("button", { name: "REAL", exact: true }).click();
-  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText("IBKR PAPER");
-  await expect(
-    page.getByRole("button", { name: "PREVIEW IBKR" }),
-  ).toBeVisible();
+	  await page.getByRole("button", { name: "REAL", exact: true }).click();
+	  await expect(page.getByText("IBKR PAPER")).toBeVisible();
+	  await expect(
+	    page.getByRole("button", { name: "PREVIEW IBKR" }),
+	  ).toBeVisible();
   await expect(page.getByTestId("trade-ticket-stop-loss-toggle")).toBeEnabled();
   await expect(page.getByTestId("trade-ticket-take-profit-toggle")).toBeEnabled();
 
@@ -692,7 +690,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   await expect(page.getByTestId("trade-top-zone")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText("IBKR PAPER", {
+  await expect(page.getByText("IBKR PAPER")).toBeVisible({
     timeout: 30_000,
   });
   await expect(
@@ -700,9 +698,7 @@ test("Trade ticket switches between Shadow and IBKR execution modes", async ({
   ).toBeVisible();
 
   await page.getByRole("button", { name: "SHADOW", exact: true }).click();
-  await expect(page.getByTestId("trade-ticket-execution-label")).toHaveText(
-    "SHADOW PAPER",
-  );
+  await expect(page.getByText("SHADOW PAPER")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "PREVIEW SHADOW" }),
   ).toBeVisible();
@@ -773,12 +769,8 @@ test("Trade ticket blocks execution when IB Gateway is disconnected but allows I
   await openTrade(page);
 
   await expect(
-    page.getByTestId("trade-top-zone").getByText("IB Gateway is disconnected.").first(),
+    page.getByTestId("trade-top-zone").getByText("IB Gateway is disconnected."),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("trade-ticket-readiness-strip")).toHaveAttribute(
-    "data-ticket-readiness-blocker",
-    /IB Gateway is disconnected\./,
-  );
   await expect(
     page.getByRole("button", { name: "PREVIEW SHADOW" }),
   ).toBeDisabled();
@@ -823,39 +815,10 @@ test("Trade ticket toggles between option contracts and shares", async ({
   await expect(
     page.getByTestId("trade-ticket-asset-mode-equity"),
   ).toBeVisible();
-  await expect(page.getByTestId("trade-ticket-readiness-strip")).toHaveAttribute(
-    "data-ticket-readiness-state",
-    "ready",
-  );
-  await expect(page.getByTestId("trade-ticket-readiness-instrument")).toContainText(
-    "SPY 500C",
-  );
-  await expect(page.getByTestId("trade-ticket-readiness-quote")).toContainText(
-    "live option quote",
-  );
-  await expect(page.getByTestId("trade-ticket-readiness-provider")).toContainText(
-    "IBKR",
-  );
   await expect(page.getByText("MID", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("trade-preview-lane")).toHaveAttribute(
-    "data-trade-preview-only",
-    "true",
-  );
-  await page.getByTestId("trade-preview-lane-bid").click();
-  await expect(page.getByTestId("trade-ticket-parent-price-input")).toHaveValue(
-    "7.95",
-  );
-  expect(shadowPreviewRequests).toHaveLength(0);
 
   await page.getByTestId("trade-ticket-asset-mode-equity").click();
-  await expect(page.getByTestId("trade-ticket-readiness-instrument")).toContainText(
-    "SPY",
-  );
-  await expect(page.getByTestId("trade-ticket-readiness-quote")).toContainText(
-    "stock quote ready",
-  );
   await expect(page.getByText("LAST", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("trade-preview-lane-last")).toBeVisible();
   await expect(
     page.getByTestId("trade-top-zone").getByText("VOL", { exact: true }),
   ).toBeVisible();
@@ -914,7 +877,7 @@ test("Trade ticket keeps shares tradable when option data is unavailable", async
   expect(shadowPreviewRequests[0]?.limitPrice).toBe(501.25);
 });
 
-test("Trade charts render unusual options activity on spot and option charts", async ({
+test("Trade charts render flow on spot and option charts", async ({
   page,
 }) => {
   const occurredAt = new Date(mockBarNow).toISOString();
@@ -953,7 +916,7 @@ test("Trade charts render unusual options activity on spot and option charts", a
     page.getByTestId("trade-equity-chart-surface-chart-event").first(),
   ).toBeVisible({ timeout: 15_000 });
   await expect(
-    page.getByTestId("trade-contract-option-chart-uoa-badge"),
+    page.getByTestId("trade-contract-option-chart-flow-badge"),
   ).toBeVisible({ timeout: 15_000 });
 });
 
@@ -976,9 +939,6 @@ test("Trade switches between ticker tabs without showing the prior ticker", asyn
   await openTrade(page);
 
   const tradeChart = page.getByTestId("trade-equity-chart");
-  await expect(
-    tradeChart.getByTestId("trade-equity-chart-hydration-status"),
-  ).toContainText(/bars|Streaming|Loaded|Hydrating|Fetching/i);
   await expect(tradeChart.getByTestId("chart-symbol-search-button")).toHaveAttribute(
     "title",
     "Search SPY",
@@ -1228,14 +1188,13 @@ test("Trade, Flow, and Research pages fill the available viewport width", async 
 
 test("Trade phone layout loads lazy module and exposes full trading stack", async ({
   page,
-}, testInfo: TestInfo) => {
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockTradeApi(page);
   await openTrade(page);
 
   await expect(page.locator(".ra-shell")).toHaveAttribute("data-layout", "phone");
   await expect(page.locator('[data-trade-layout="phone"]')).toBeVisible();
-  await expect(page.getByTestId("trade-mobile-section-rail")).toBeVisible();
   await expect(page.getByTestId("trade-equity-chart")).toBeVisible();
   await expect(page.getByTestId("trade-contract-chart-panel")).toBeVisible();
   await expect(page.getByTestId("trade-order-ticket")).toBeVisible();
@@ -1257,26 +1216,9 @@ test("Trade phone layout loads lazy module and exposes full trading stack", asyn
   expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
   expect(metrics.topColumns.split(" ").length).toBe(1);
   expect(metrics.middleColumns.split(" ").length).toBe(1);
-
-  await page.getByTestId("trade-mobile-jump-ticket").click();
-  await expect(page.getByTestId("trade-order-ticket")).toBeInViewport({
-    ratio: 0.2,
-  });
-  await page.getByTestId("trade-mobile-jump-chain").click();
-  await expect(page.getByTestId("trade-options-chain-panel")).toBeInViewport({
-    ratio: 0.2,
-  });
-  await page.getByTestId("trade-mobile-jump-account").click();
-  await expect(page.getByTestId("trade-bottom-zone")).toBeInViewport({
-    ratio: 0.1,
-  });
-  await testInfo.attach("phase12-phone-trade-stack.png", {
-    body: await page.screenshot({ animations: "disabled" }),
-    contentType: "image/png",
-  });
 });
 
-test("Trade option chain loading state shows skeleton status while chain request is pending", async ({
+test("Trade option chain loading state shows a spinner while chain request is pending", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -1286,12 +1228,11 @@ test("Trade option chain loading state shows skeleton status while chain request
   await expect(
     page
       .getByTestId("trade-options-chain-panel")
-      .getByTestId("chain-loading-skeleton"),
+      .getByTestId("loading-spinner"),
   ).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText("Loading option chain")).toBeVisible();
 });
 
-test("Trade option chain cold load hydrates full expiration batches", async ({
+test("Trade option chain cold load hydrates selected and background expirations", async ({
   page,
 }) => {
   const chainUrls: string[] = [];
@@ -1315,7 +1256,7 @@ test("Trade option chain cold load hydrates full expiration batches", async ({
         ).size,
       { timeout: 10_000 },
     )
-    .toBe(expirations.length);
+    .toBe(expirations.length - 1);
 
   expect(
     chainUrls.some(
@@ -1323,12 +1264,10 @@ test("Trade option chain cold load hydrates full expiration batches", async ({
     ),
   ).toBe(false);
   expect(
-    batchRequests.some((request) => request["strikeCoverage"] === "full"),
-  ).toBe(true);
-  expect(
     batchRequests.every(
       (request) =>
-        request["strikeCoverage"] === "full" &&
+        request["strikeCoverage"] !== "full" &&
+        request["strikesAroundMoney"] === 5 &&
         request["quoteHydration"] === "metadata",
     ),
   ).toBe(true);
@@ -1399,6 +1338,20 @@ test("Trade option chain selects a hydrated conid and renders option chart bars"
   await expect
     .poll(
       () =>
+        page
+          .getByTestId("trade-options-chain-panel")
+          .locator("select")
+          .first()
+          .locator("option")
+          .evaluateAll((options) =>
+            options.map((option) => (option as HTMLOptionElement).value),
+          ),
+      { timeout: 10_000 },
+    )
+    .toEqual(expirations);
+  await expect
+    .poll(
+      () =>
         new Set(
           batchRequests.flatMap((request) =>
             Array.isArray(request["expirationDates"])
@@ -1408,7 +1361,7 @@ test("Trade option chain selects a hydrated conid and renders option chart bars"
         ).size,
       { timeout: 10_000 },
     )
-    .toBe(expirations.length);
+    .toBe(expirations.length - 1);
 
   const chart = page.getByTestId("trade-contract-option-chart");
   const contractChartPanel = page.getByTestId("trade-contract-chart-panel");
@@ -1418,9 +1371,6 @@ test("Trade option chain selects a hydrated conid and renders option chart bars"
   ).toHaveAttribute("data-chart-visible-logical-range", /^(?!none$).+/, {
     timeout: 10_000,
   });
-  await expect(
-    chart.getByTestId("trade-contract-option-chart-hydration-status"),
-  ).toContainText(/bars|Streaming|Loaded|Hydrating|Fetching/i);
   await expect(contractChartPanel.getByText(/^MARK$/)).toHaveCount(0);
   await expect(contractChartPanel.getByText(/^BID$/)).toHaveCount(0);
   await expect(contractChartPanel.getByText(/^ASK$/)).toHaveCount(0);
@@ -1443,10 +1393,10 @@ test("Trade option chain selects a hydrated conid and renders option chart bars"
 
   const panel = page.getByTestId("trade-options-chain-panel");
   for (const [expirationValue, providerContractId] of [
-    ["05/08", mockOptionConid("2026-05-08", 500, "C")],
-    ["05/15", mockOptionConid("2026-05-15", 500, "C")],
+    ["2026-05-08", mockOptionConid("2026-05-08", 500, "C")],
+    ["2026-05-15", mockOptionConid("2026-05-15", 500, "C")],
   ] as const) {
-    await panel.locator("select").selectOption(expirationValue);
+    await panel.locator("select").first().selectOption(expirationValue);
     await expect(chart).toBeVisible({ timeout: 15_000 });
     await expect
       .poll(

@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  FLOW_BUILT_IN_PRESETS,
   buildFlowTapePresetPatch,
-  decorateFlowEventsWithPresetContext,
-  flowEventMatchesBuiltInPreset,
+  filterFlowTapeEvents,
   getFlowTapeFilterState,
   normalizeFlowTapeFilterState,
+  parseFlowTapeTickerTokens,
   resetFlowTapeFilterStateForTests,
   setFlowTapeFilterState,
 } from "./flowFilterStore.js";
@@ -86,102 +85,96 @@ test("buildFlowTapePresetPatch mirrors Flow page preset behavior", () => {
   );
 });
 
-test("Flow built-in presets include Phase 10 scanner modes", () => {
-  const presetIds = FLOW_BUILT_IN_PRESETS.map((preset) => preset.id);
-  assert.deepEqual(
-    [
-      "momentum",
-      "earnings-week",
-      "unusual-calls",
-      "unusual-puts",
-      "high-rvol",
-      "held-positions",
-    ].filter((id) => presetIds.includes(id)),
-    [
-      "momentum",
-      "earnings-week",
-      "unusual-calls",
-      "unusual-puts",
-      "high-rvol",
-      "held-positions",
-    ],
-  );
-
-  assert.deepEqual(
-    buildFlowTapePresetPatch("unusual-calls", {
-      activeFlowPresetId: null,
-      filter: "all",
-      minPrem: 0,
-    }),
+test("filterFlowTapeEvents applies the shared Flow visual filters", () => {
+  const events = [
     {
-      activeFlowPresetId: "unusual-calls",
-      filter: "unusual",
-      minPrem: 0,
-    },
-  );
-});
-
-test("flowEventMatchesBuiltInPreset evaluates scanner preset semantics", () => {
-  assert.equal(
-    flowEventMatchesBuiltInPreset("unusual-calls", {
+      id: "spy-call",
+      ticker: "SPY",
       cp: "C",
+      premium: 125_000,
+      type: "SWEEP",
       isUnusual: true,
-    }),
-    true,
-  );
-  assert.equal(
-    flowEventMatchesBuiltInPreset("unusual-puts", {
-      right: "put",
-      isUnusual: true,
-    }),
-    true,
-  );
-  assert.equal(
-    flowEventMatchesBuiltInPreset("momentum", {
-      score: 80,
-    }),
-    true,
-  );
-  assert.equal(
-    flowEventMatchesBuiltInPreset("earnings-week", {
-      earningsWithinDays: 5,
-    }),
-    true,
-  );
-  assert.equal(
-    flowEventMatchesBuiltInPreset("held-positions", {
-      positionQuantity: -2,
-    }),
-    true,
-  );
-  assert.equal(
-    flowEventMatchesBuiltInPreset("repeats", { id: "one" }, () => ({ count: 2 })),
-    true,
-  );
-  assert.equal(
-    flowEventMatchesBuiltInPreset("unusual-calls", {
+    },
+    {
+      id: "qqq-put",
+      ticker: "QQQ",
       cp: "P",
+      premium: 80_000,
+      type: "BLOCK",
       isUnusual: true,
-    }),
-    false,
+    },
+    {
+      id: "nvda-call",
+      ticker: "NVDA",
+      cp: "C",
+      premium: 30_000,
+      type: "TRADE",
+      isUnusual: false,
+    },
+  ];
+
+  assert.deepEqual(parseFlowTapeTickerTokens(" spy,qqq  SPY "), [
+    "SPY",
+    "QQQ",
+  ]);
+  assert.deepEqual(
+    filterFlowTapeEvents(events, {
+      filter: "calls",
+      minPrem: 50_000,
+      includeQuery: "spy,nvda",
+      excludeQuery: "",
+    }).map((event) => event.id),
+    ["spy-call"],
+  );
+  assert.deepEqual(
+    filterFlowTapeEvents(events, {
+      filter: "block",
+      minPrem: 0,
+      includeQuery: "",
+      excludeQuery: "spy",
+    }).map((event) => event.id),
+    ["qqq-put"],
   );
 });
 
-test("decorateFlowEventsWithPresetContext wires app state into preset semantics", () => {
-  const [earningsEvent, heldEvent, untouchedEvent] = decorateFlowEventsWithPresetContext(
-    [
-      { id: "earnings", ticker: "SPY" },
-      { id: "held", underlying: "NVDA" },
-      { id: "other", ticker: "AAPL" },
-    ],
+test("filterFlowTapeEvents keeps repeat filters on the shared cluster model", () => {
+  const events = [
     {
-      earningsSymbols: ["spy"],
-      positionSymbols: new Set(["nvda"]),
+      id: "first",
+      ticker: "AAPL",
+      cp: "C",
+      strike: 210,
+      expirationDate: "2026-05-15",
+      premium: 25_000,
     },
-  );
+    {
+      id: "repeat",
+      ticker: "AAPL",
+      cp: "C",
+      strike: 210,
+      expirationDate: "2026-05-15",
+      premium: 35_000,
+    },
+    {
+      id: "single",
+      ticker: "MSFT",
+      cp: "P",
+      strike: 410,
+      expirationDate: "2026-05-15",
+      premium: 100_000,
+    },
+  ];
 
-  assert.equal(flowEventMatchesBuiltInPreset("earnings-week", earningsEvent), true);
-  assert.equal(flowEventMatchesBuiltInPreset("held-positions", heldEvent), true);
-  assert.equal(flowEventMatchesBuiltInPreset("earnings-week", untouchedEvent), false);
-  assert.equal(flowEventMatchesBuiltInPreset("held-positions", untouchedEvent), false);
+  assert.deepEqual(
+    filterFlowTapeEvents(events, { filter: "cluster" }).map(
+      (event) => event.id,
+    ),
+    ["first", "repeat"],
+  );
+  assert.deepEqual(
+    filterFlowTapeEvents(events, { activeFlowPresetId: "repeats" }).map(
+      (event) => event.id,
+    ),
+    ["first", "repeat"],
+  );
 });

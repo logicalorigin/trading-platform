@@ -67,10 +67,8 @@ export const MiniChartCell = ({
   dense = false,
   compactFlow = false,
   stockAggregateStreamingEnabled = false,
-  earningsEventsEnabled = false,
   dataTestId,
-  viewportResetRevision = 0,
-  linkChip = null,
+  chartViewportLayoutKey = null,
 }) => {
   const ticker = normalizeTickerSymbol(slot?.ticker) || WATCHLIST[0]?.sym || "SPY";
   const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
@@ -171,10 +169,10 @@ export const MiniChartCell = ({
       !isMarketChartShellControlTarget(event.target)
     ) {
       suppressNextClickRef.current = true;
-      onFocus(ticker, { timeframe });
+      onFocus(ticker);
     }
     pendingPointerRef.current = null;
-  }, [isActive, onFocus, ticker, timeframe]);
+  }, [isActive, onFocus, ticker]);
   const handleFramePointerCancel = useCallback(() => {
     pendingPointerRef.current = null;
     suppressNextClickRef.current = true;
@@ -191,9 +189,9 @@ export const MiniChartCell = ({
       if (isMarketChartShellControlTarget(event.target)) {
         return;
       }
-      onFocus(ticker, { timeframe });
+      onFocus(ticker);
     },
-    [isActive, onFocus, ticker, timeframe],
+    [isActive, onFocus, ticker],
   );
   const handleDoubleClick = useCallback(
     (event) => {
@@ -270,11 +268,11 @@ export const MiniChartCell = ({
           ticker={ticker}
           flowEvents={flowEvents}
           historicalDataEnabled
-          earningsEventsEnabled={earningsEventsEnabled}
           stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           dataTestId={dataTestId}
           compact={dense}
-          surfaceUiStateKey="market-spot-chart"
+          surfaceUiStateKey={`market-spot-chart:${ticker}:${timeframe}`}
+          viewportLayoutKey={chartViewportLayoutKey}
           searchOpen={searchOpen}
           onSearchOpenChange={setSearchOpen}
           searchContent={
@@ -301,8 +299,6 @@ export const MiniChartCell = ({
           }
           workspaceChart={{ timeframe }}
           onWorkspaceChartChange={handleWorkspaceChartChange}
-          viewportResetRevision={viewportResetRevision}
-          linkChip={linkChip}
         />
       </div>
       <MiniChartPremiumFlowIndicator

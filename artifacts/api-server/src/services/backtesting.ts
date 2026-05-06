@@ -6,6 +6,10 @@ import {
   getBacktestOptionPreset,
   getStrategyCatalogItem,
   listStrategies,
+  resolveSignalOptionsExecutionProfile,
+  resolveSignalOptionsStrike,
+  signalOptionsStrikeSlotForRight,
+  type SignalOptionsExecutionProfile,
   type BacktestBar,
   type BacktestTimeframe,
   type StrategyCatalogItem,
@@ -94,6 +98,7 @@ export type ResolveBacktestOptionContractInput = {
   right: "call" | "put";
   spotPrice: number;
   contractPresetId?: string | null;
+  signalOptionsProfile?: unknown;
 };
 
 export type ResolvedBacktestOptionContract = {
@@ -267,6 +272,23 @@ function selectExpiryWindow(
   );
 }
 
+function selectSignalOptionsExpiryWindow(
+  contracts: HistoricalOptionContract[],
+  occurredAt: Date,
+  profile: SignalOptionsExecutionProfile,
+): HistoricalOptionContract[] {
+  const minDte = profile.optionSelection.allowZeroDte
+    ? profile.optionSelection.minDte
+    : Math.max(1, profile.optionSelection.minDte);
+  const maxDte = Math.max(minDte, profile.optionSelection.maxDte);
+  const targetDte = Math.min(
+    maxDte,
+    Math.max(minDte, profile.optionSelection.targetDte),
+  );
+
+  return selectExpiryWindow(contracts, occurredAt, targetDte, minDte, maxDte);
+}
+
 function scoreContractStrike(
   contract: HistoricalOptionContract,
   spotPrice: number,
@@ -301,6 +323,9 @@ export async function resolveBacktestOptionContract(
 ): Promise<ResolvedBacktestOptionContract | null> {
   const underlying = normalizeSymbol(input.underlying);
   const preset = getBacktestOptionPreset(input.contractPresetId);
+  const signalOptionsProfile = input.signalOptionsProfile
+    ? resolveSignalOptionsExecutionProfile(input.signalOptionsProfile)
+    : null;
   const occurredAt = new Date(input.occurredAt);
 
   if (!underlying) {
@@ -323,7 +348,10 @@ export async function resolveBacktestOptionContract(
     expirationDateGte: startOfUtcDay(occurredAt),
     expirationDateLte: addUtcDays(
       startOfUtcDay(occurredAt),
-      Math.max(preset.maxDte, preset.targetDte) + OPTION_CONTRACT_LOOKAHEAD_DAYS,
+      Math.max(
+        signalOptionsProfile?.optionSelection.maxDte ?? preset.maxDte,
+        signalOptionsProfile?.optionSelection.targetDte ?? preset.targetDte,
+      ) + OPTION_CONTRACT_LOOKAHEAD_DAYS,
     ),
     limit: 1_000,
   });
@@ -332,26 +360,54 @@ export async function resolveBacktestOptionContract(
     return null;
   }
 
-  const filteredByExpiry = selectExpiryWindow(
-    contracts,
-    occurredAt,
-    preset.targetDte,
-    preset.minDte,
-    preset.maxDte,
-  );
+  const filteredByExpiry = signalOptionsProfile
+    ? selectSignalOptionsExpiryWindow(contracts, occurredAt, signalOptionsProfile)
+    : selectExpiryWindow(
+        contracts,
+        occurredAt,
+        preset.targetDte,
+        preset.minDte,
+        preset.maxDte,
+      );
 
   const selected =
-    [...filteredByExpiry].sort((left, right) => {
-      const strikeDelta =
-        scoreContractStrike(left, input.spotPrice, input.right, preset.strikeTarget) -
-        scoreContractStrike(right, input.spotPrice, input.right, preset.strikeTarget);
+    signalOptionsProfile
+      ? (() => {
+          const selectedStrike = resolveSignalOptionsStrike({
+            strikes: filteredByExpiry.map((contract) => contract.strike),
+            spotPrice: input.spotPrice,
+            slot: signalOptionsStrikeSlotForRight(
+              signalOptionsProfile,
+              input.right,
+            ),
+          });
+          return (
+            filteredByExpiry.find(
+              (contract) => contract.strike === selectedStrike,
+            ) ?? null
+          );
+        })()
+      : [...filteredByExpiry].sort((left, right) => {
+          const strikeDelta =
+            scoreContractStrike(
+              left,
+              input.spotPrice,
+              input.right,
+              preset.strikeTarget,
+            ) -
+            scoreContractStrike(
+              right,
+              input.spotPrice,
+              input.right,
+              preset.strikeTarget,
+            );
 
-      if (strikeDelta !== 0) {
-        return strikeDelta;
-      }
+          if (strikeDelta !== 0) {
+            return strikeDelta;
+          }
 
-      return left.strike - right.strike;
-    })[0] ?? null;
+          return left.strike - right.strike;
+        })[0] ?? null;
 
   if (!selected) {
     return null;
@@ -421,6 +477,50 @@ function buildTradeSelectionId(
 
 function buildOptionDatasetRole(symbol: string, entryAt: Date): string {
   return `option:${normalizeSymbol(symbol).slice(0, 8)}:${entryAt.getTime()}`;
+}
+
+function parseOptionContractFromTicker(
+  ticker: string,
+  fallbackUnderlying: string,
+) {
+  const compact = ticker.replace(/^O:/i, "").toUpperCase();
+  const standard = /^([A-Z]+)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/.exec(
+    compact,
+  );
+  if (standard) {
+    const [, underlying, yy, mm, dd, cp, rawStrike] = standard;
+    const year = 2000 + Number(yy);
+    return {
+      ticker,
+      underlying,
+      expirationDate: `${year}-${mm}-${dd}`,
+      strike: Number(rawStrike) / 1000,
+      right: cp === "P" ? ("put" as const) : ("call" as const),
+      multiplier: 100,
+      providerContractId: null,
+      dte: null,
+    };
+  }
+
+  const compactFallback = /^([A-Z]+)(\d{2})(\d{2})(\d{2})([CP])(\d+(?:\.\d+)?)$/.exec(
+    compact,
+  );
+  if (!compactFallback) {
+    return null;
+  }
+
+  const [, underlying, yy, mm, dd, cp, rawStrike] = compactFallback;
+  const year = 2000 + Number(yy);
+  return {
+    ticker,
+    underlying: underlying || fallbackUnderlying,
+    expirationDate: `${year}-${mm}-${dd}`,
+    strike: Number(rawStrike),
+    right: cp === "P" ? ("put" as const) : ("call" as const),
+    multiplier: 100,
+    providerContractId: null,
+    dte: null,
+  };
 }
 
 function buildSelectionFocusToken(
@@ -1280,11 +1380,19 @@ function tradeToResponse(
   runId: string,
   trade: BacktestRunTrade,
   diagnostics: BacktestTradeDiagnosticsResponse | null,
+  optionDataset: HistoricalBarDataset | null = null,
 ) {
+  const optionContract = optionDataset
+    ? parseOptionContractFromTicker(optionDataset.symbol, trade.symbol)
+    : null;
   return {
     tradeSelectionId: buildTradeSelectionId(runId, trade),
     symbol: trade.symbol,
     side: trade.side,
+    instrumentType: optionDataset ? "option" : "equity",
+    pricingMode: optionDataset ? "option_history" : "shares",
+    underlying: optionDataset ? trade.symbol : null,
+    optionContract,
     entryAt: trade.entryAt,
     exitAt: trade.exitAt,
     entryPrice: numericValue(trade.entryPrice),
@@ -1786,6 +1894,33 @@ export function listBacktestStrategies() {
   };
 }
 
+function resolveSignalOptionsProfileFromParameters(
+  parameters: Record<string, unknown> | null | undefined,
+) {
+  if (parameters?.executionMode !== "signal_options") {
+    return null;
+  }
+
+  return resolveSignalOptionsExecutionProfile({
+    optionSelection: {
+      minDte: parameters.signalOptionsMinDte,
+      targetDte: parameters.signalOptionsTargetDte,
+      maxDte: parameters.signalOptionsMaxDte,
+      callStrikeSlot: parameters.signalOptionsCallStrikeSlot,
+      putStrikeSlot: parameters.signalOptionsPutStrikeSlot,
+    },
+    riskCaps: {
+      maxPremiumPerEntry: parameters.signalOptionsMaxPremium,
+      maxContracts: parameters.signalOptionsMaxContracts,
+      maxOpenSymbols: parameters.signalOptionsMaxOpenSymbols,
+      maxDailyLoss: parameters.signalOptionsMaxDailyLoss,
+    },
+    liquidityGate: {
+      maxSpreadPctOfMid: parameters.signalOptionsMaxSpreadPct,
+    },
+  });
+}
+
 export async function listBacktestStudies() {
   const studies = await db
     .select()
@@ -1881,6 +2016,7 @@ async function buildRunDetail(run: BacktestRun) {
   const datasetRows = await db
     .select({
       dataset: historicalBarDatasetsTable,
+      role: backtestRunDatasetsTable.role,
     })
     .from(backtestRunDatasetsTable)
     .innerJoin(
@@ -1889,6 +2025,14 @@ async function buildRunDetail(run: BacktestRun) {
     )
     .where(eq(backtestRunDatasetsTable.runId, run.id));
   const datasets = datasetRows.map(({ dataset }) => dataset);
+  const optionDatasetByTradeId = new Map(
+    datasetRows
+      .filter(({ role }) => role.startsWith("option:"))
+      .map(({ dataset, role }) => {
+        const [, symbol, entryMs] = role.split(":");
+        return [`${run.id}:${symbol}:${entryMs}`, dataset] as const;
+      }),
+  );
   const tradeDiagnosticsByTradeId = await buildTradeDiagnosticsMap(
     run.id,
     study,
@@ -1905,6 +2049,9 @@ async function buildRunDetail(run: BacktestRun) {
         trade,
         tradeDiagnosticsByTradeId.get(buildTradeSelectionId(run.id, trade)) ??
           null,
+        optionDatasetByTradeId.get(
+          `${run.id}:${normalizeSymbol(trade.symbol).slice(0, 8)}:${trade.entryAt.getTime()}`,
+        ) ?? null,
       ),
     ),
     points: points.map(pointToResponse),
@@ -2411,6 +2558,9 @@ export async function promoteBacktestRun(input: PromoteRunInput) {
   }
 
   const study = await getStudyOrThrow(run.studyId);
+  const signalOptions = resolveSignalOptionsProfileFromParameters(
+    run.parameters,
+  );
 
   const draft = await db.transaction(async (tx) => {
     const [strategy] = await tx
@@ -2427,6 +2577,7 @@ export async function promoteBacktestRun(input: PromoteRunInput) {
           strategyId: run.strategyId,
           strategyVersion: run.strategyVersion,
           parameters: run.parameters,
+          ...(signalOptions ? { signalOptions } : {}),
           portfolioRules: run.portfolioRules,
           executionProfile: run.executionProfile,
           metrics: run.metrics,

@@ -38,7 +38,7 @@ test("radar scoring only treats explicit option ticks as option activity", () =>
   assert.ok(optionActivity.score > 0);
 });
 
-test("radar scanner covers 500 symbols inside a five-minute cycle with 30-line batches", async () => {
+test("radar scanner covers 500 symbols inside a five-minute cycle with 40-line batches", async () => {
   let currentMs = Date.parse("2026-05-01T14:30:00.000Z");
   const symbols = Array.from({ length: 500 }, (_unused, index) => `T${index + 1}`);
   const promotedBatches: string[][] = [];
@@ -59,9 +59,9 @@ test("radar scanner covers 500 symbols inside a five-minute cycle with 30-line b
     },
   });
 
-  for (let index = 0; index < 17; index += 1) {
+  for (let index = 0; index < 13; index += 1) {
     await scanner.runOnce(symbols, {
-      batchSize: 30,
+      batchSize: 40,
       promoteCount: 3,
       fallbackPromoteCount: 1,
     });
@@ -70,8 +70,41 @@ test("radar scanner covers 500 symbols inside a five-minute cycle with 30-line b
 
   const coverage = scanner.getCoverage();
   assert.equal(coverage.scannedSymbols, 500);
-  assert.equal(coverage.estimatedCycleMs, 255_000);
+  assert.equal(coverage.estimatedCycleMs, 195_000);
   assert.ok((coverage.estimatedCycleMs ?? Number.POSITIVE_INFINITY) <= 300_000);
-  assert.equal(promotedBatches.length, 17);
+  assert.equal(promotedBatches.length, 13);
   assert.ok(promotedBatches.every((batch) => batch.length >= 1));
+});
+
+test("radar scanner pauses fetches when the bridge is not usable", async () => {
+  let fetchCalls = 0;
+  let batches = 0;
+  const scanner = createOptionsFlowRadarScanner({
+    shouldSkip: async () => "gateway-not-authenticated",
+    fetchBatch: async (batch) => {
+      fetchCalls += 1;
+      return {
+        quotes: batch.map((symbol) => ({ symbol })),
+      };
+    },
+    onBatch: () => {
+      batches += 1;
+    },
+  });
+
+  const result = await scanner.runOnce(["SPY", "QQQ"], {
+    batchSize: 2,
+    promoteCount: 1,
+  });
+  const coverage = scanner.getCoverage();
+
+  assert.equal(fetchCalls, 0);
+  assert.equal(batches, 0);
+  assert.deepEqual(result.scannedSymbols, []);
+  assert.equal(result.failed, false);
+  assert.equal(result.error, "gateway-not-authenticated");
+  assert.deepEqual(coverage.currentBatch, []);
+  assert.equal(coverage.selectedSymbols, 2);
+  assert.equal(coverage.scannedSymbols, 0);
+  assert.equal(coverage.degradedReason, "gateway-not-authenticated");
 });

@@ -117,6 +117,19 @@ export type StrategySignalContext = {
 export type BacktestTrade = {
   symbol: string;
   side: "long";
+  instrumentType?: "equity" | "option";
+  pricingMode?: "shares" | "option_history";
+  underlying?: string | null;
+  optionContract?: {
+    ticker: string;
+    underlying: string;
+    expirationDate: string;
+    strike: number;
+    right: "call" | "put";
+    multiplier: number;
+    providerContractId?: string | null;
+    dte?: number | null;
+  } | null;
   entryAt: Date;
   exitAt: Date;
   entryPrice: number;

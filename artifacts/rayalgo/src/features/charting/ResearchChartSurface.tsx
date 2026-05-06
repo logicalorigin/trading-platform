@@ -59,14 +59,6 @@ import {
   recordChartHydrationCounter,
   recordChartHydrationMetric,
 } from "./chartHydrationStats";
-import {
-  countChartValueDecimals,
-  formatChartPrice,
-  formatChartSignedPrice,
-  formatCompactChartValue,
-  resolveChartOverlayLabelBudget,
-  resolveChartPricePrecisionForBars,
-} from "./chartNumberFormat";
 
 
 type ResearchChartTheme = {
@@ -233,6 +225,7 @@ type ChartScalePreferences = {
 
 export type ChartViewportSnapshot = {
   identityKey: string;
+  viewportLayoutKey?: string | null;
   visibleLogicalRange: VisibleLogicalRange | null;
   userTouched: boolean;
   realtimeFollow: boolean;
@@ -243,16 +236,55 @@ export type ChartViewportSnapshot = {
 };
 
 const STORED_CHART_VIEWPORT_SNAPSHOT_LIMIT = 96;
+const STORED_CHART_VIEWPORT_LAYOUT_SEPARATOR = "::viewport-layout::";
 const storedChartViewportSnapshots = new Map<string, ChartViewportSnapshot>();
+
+const normalizeChartViewportLayoutKey = (
+  value?: string | null,
+): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+
+const buildStoredChartViewportSnapshotKey = (
+  identityKey: string,
+  viewportLayoutKey?: string | null,
+): string => {
+  const normalizedLayoutKey = normalizeChartViewportLayoutKey(viewportLayoutKey);
+  return normalizedLayoutKey
+    ? `${identityKey}${STORED_CHART_VIEWPORT_LAYOUT_SEPARATOR}${normalizedLayoutKey}`
+    : identityKey;
+};
+
+const chartViewportSnapshotMatchesContext = (
+  snapshot: ChartViewportSnapshot | null | undefined,
+  identityKey: string | null,
+  viewportLayoutKey?: string | null,
+): snapshot is ChartViewportSnapshot => {
+  if (!identityKey || snapshot?.identityKey !== identityKey) {
+    return false;
+  }
+
+  const expectedLayoutKey = normalizeChartViewportLayoutKey(viewportLayoutKey);
+  const snapshotLayoutKey = normalizeChartViewportLayoutKey(
+    snapshot.viewportLayoutKey,
+  );
+  return expectedLayoutKey
+    ? snapshotLayoutKey === expectedLayoutKey
+    : snapshotLayoutKey === null;
+};
 
 export const readStoredChartViewportSnapshot = (
   identityKey?: string | null,
+  viewportLayoutKey?: string | null,
 ): ChartViewportSnapshot | null => {
   if (!identityKey) {
     return null;
   }
 
-  return storedChartViewportSnapshots.get(identityKey) ?? null;
+  return (
+    storedChartViewportSnapshots.get(
+      buildStoredChartViewportSnapshotKey(identityKey, viewportLayoutKey),
+    ) ?? null
+  );
 };
 
 export const writeStoredChartViewportSnapshot = (
@@ -262,8 +294,12 @@ export const writeStoredChartViewportSnapshot = (
     return;
   }
 
-  storedChartViewportSnapshots.delete(snapshot.identityKey);
-  storedChartViewportSnapshots.set(snapshot.identityKey, snapshot);
+  const storageKey = buildStoredChartViewportSnapshotKey(
+    snapshot.identityKey,
+    snapshot.viewportLayoutKey,
+  );
+  storedChartViewportSnapshots.delete(storageKey);
+  storedChartViewportSnapshots.set(storageKey, snapshot);
 
   while (storedChartViewportSnapshots.size > STORED_CHART_VIEWPORT_SNAPSHOT_LIMIT) {
     const oldestKey = storedChartViewportSnapshots.keys().next().value;
@@ -276,27 +312,53 @@ export const writeStoredChartViewportSnapshot = (
 
 export const clearStoredChartViewportSnapshot = (
   identityKey?: string | null,
+  viewportLayoutKey?: string | null,
 ): void => {
   if (!identityKey) {
     return;
   }
+
+  const normalizedLayoutKey = normalizeChartViewportLayoutKey(viewportLayoutKey);
+  if (normalizedLayoutKey) {
+    storedChartViewportSnapshots.delete(
+      buildStoredChartViewportSnapshotKey(identityKey, normalizedLayoutKey),
+    );
+    return;
+  }
+
   storedChartViewportSnapshots.delete(identityKey);
+  const prefix = `${identityKey}${STORED_CHART_VIEWPORT_LAYOUT_SEPARATOR}`;
+  Array.from(storedChartViewportSnapshots.keys()).forEach((key) => {
+    if (key.startsWith(prefix)) {
+      storedChartViewportSnapshots.delete(key);
+    }
+  });
 };
 
 export const resolveEffectiveChartViewportSnapshot = ({
   identityKey,
+  viewportLayoutKey,
   viewportSnapshot,
   useStoredFallback,
 }: {
   identityKey: string | null;
+  viewportLayoutKey?: string | null;
   viewportSnapshot?: ChartViewportSnapshot | null;
   useStoredFallback: boolean;
 }): ChartViewportSnapshot | null => {
-  if (identityKey && viewportSnapshot?.identityKey === identityKey) {
+  if (
+    chartViewportSnapshotMatchesContext(
+      viewportSnapshot,
+      identityKey,
+      viewportLayoutKey,
+    )
+  ) {
     return viewportSnapshot;
   }
 
-  return useStoredFallback ? readStoredChartViewportSnapshot(identityKey) : null;
+  return useStoredFallback
+    ? readStoredChartViewportSnapshot(identityKey, viewportLayoutKey)
+    : null;
 };
 
 export type ChartLegendOhlcvMeta = {
@@ -943,6 +1005,7 @@ type ResearchChartSurfaceProps = {
   themeKey: string;
   uiStateKey?: string;
   rangeIdentityKey?: string | null;
+  viewportLayoutKey?: string | null;
   dataTestId?: string;
   compact?: boolean;
   showToolbar?: boolean;
@@ -985,7 +1048,6 @@ type ResearchChartSurfaceProps = {
   viewportSnapshot?: ChartViewportSnapshot | null;
   externalViewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
-  viewportResetRevision?: number;
   persistScalePrefs?: boolean;
 };
 
@@ -1110,58 +1172,112 @@ const seriesDataPointsEqual = (
   return true;
 };
 
-export const resolveSeriesTailUpdateMode = (
+type SeriesTailUpdateMode = "noop" | "patch" | "append" | "reset";
+
+type SeriesTailUpdatePlan = {
+  mode: SeriesTailUpdateMode;
+  startIndex: number;
+};
+
+const buildSeriesTailUpdatePlan = (
   previous: Array<Record<string, unknown>>,
   next: Array<Record<string, unknown>>,
-): "noop" | "patch" | "append" | "reset" => {
+): SeriesTailUpdatePlan => {
+  const reset = { mode: "reset" as const, startIndex: 0 };
+
   if (previous === next) {
-    return "noop";
+    return { mode: "noop", startIndex: next.length };
   }
 
   if (!next.length) {
-    return previous.length ? "reset" : "noop";
+    return previous.length ? reset : { mode: "noop", startIndex: 0 };
   }
 
   if (!previous.length) {
-    return "reset";
+    return reset;
   }
 
   if (next.length === previous.length) {
     let tailChanged = false;
     for (let index = 0; index < previous.length; index += 1) {
       if (!seriesTimesEqual(previous[index]?.time, next[index]?.time)) {
-        return "reset";
+        return reset;
       }
       if (!seriesDataPointsEqual(previous[index], next[index])) {
         if (index !== previous.length - 1) {
-          return "reset";
+          return reset;
         }
         tailChanged = true;
       }
     }
 
-    return tailChanged ? "patch" : "noop";
+    return tailChanged
+      ? { mode: "patch", startIndex: previous.length - 1 }
+      : { mode: "noop", startIndex: next.length };
   }
 
-  if (next.length === previous.length + 1) {
+  if (next.length > previous.length) {
+    let startIndex = previous.length;
     for (let index = 0; index < previous.length; index += 1) {
-      if (!seriesDataPointsEqual(previous[index], next[index])) {
-        return "reset";
+      if (seriesDataPointsEqual(previous[index], next[index])) {
+        continue;
+      }
+
+      if (
+        index === previous.length - 1 &&
+        seriesTimesEqual(previous[index]?.time, next[index]?.time)
+      ) {
+        startIndex = index;
+        continue;
+      }
+
+      return reset;
+    }
+
+    if (startIndex === previous.length - 1) {
+      const tailWhitespaceChanged =
+        Object.prototype.hasOwnProperty.call(previous[startIndex], "value") !==
+        Object.prototype.hasOwnProperty.call(next[startIndex], "value");
+      if (tailWhitespaceChanged) {
+        return reset;
       }
     }
 
-    const tailTimeComparison = compareSeriesTimes(
-      next[next.length - 1]?.time,
-      previous[previous.length - 1]?.time,
-    );
-    if (tailTimeComparison === null || tailTimeComparison <= 0) {
-      return "reset";
+    for (
+      let index = Math.max(previous.length, startIndex + 1);
+      index < next.length;
+      index += 1
+    ) {
+      const timeComparison = compareSeriesTimes(
+        next[index]?.time,
+        next[index - 1]?.time,
+      );
+      if (timeComparison === null || timeComparison <= 0) {
+        return reset;
+      }
     }
 
-    return "append";
+    if (startIndex === previous.length) {
+      const tailTimeComparison = compareSeriesTimes(
+        next[startIndex]?.time,
+        previous[previous.length - 1]?.time,
+      );
+      if (tailTimeComparison === null || tailTimeComparison <= 0) {
+        return reset;
+      }
+    }
+
+    return { mode: "append", startIndex };
   }
 
-  return "reset";
+  return reset;
+};
+
+export const resolveSeriesTailUpdateMode = (
+  previous: Array<Record<string, unknown>>,
+  next: Array<Record<string, unknown>>,
+): SeriesTailUpdateMode => {
+  return buildSeriesTailUpdatePlan(previous, next).mode;
 };
 
 const canUpdateSeriesTail = (
@@ -1370,22 +1486,6 @@ export const resolveZoomedVisibleRange = ({
   };
 };
 
-export const resolveWheelZoomFactor = (
-  deltaY: number,
-  {
-    zoomInFactor = 0.8,
-    zoomOutFactor = 1.25,
-  }: {
-    zoomInFactor?: number;
-    zoomOutFactor?: number;
-  } = {},
-): number | null => {
-  if (!Number.isFinite(deltaY) || Math.abs(deltaY) < 1) {
-    return null;
-  }
-  return deltaY < 0 ? zoomInFactor : zoomOutFactor;
-};
-
 export const isVisibleRangeNearRealtime = ({
   visibleRange,
   barCount,
@@ -1474,12 +1574,14 @@ export const resolveViewportVisibleLogicalRange = (
 
 export const resolveViewportRestoreState = ({
   identityKey,
+  viewportLayoutKey,
   viewportSnapshot,
   storedScalePrefs = {},
   defaultScaleMode,
   barCount: _barCount,
 }: {
   identityKey: string | null;
+  viewportLayoutKey?: string | null;
   viewportSnapshot?: ChartViewportSnapshot | null;
   storedScalePrefs?: ChartScalePreferences;
   defaultScaleMode: ScaleMode;
@@ -1493,10 +1595,13 @@ export const resolveViewportRestoreState = ({
   autoScale: boolean;
   invertScale: boolean;
 } => {
-  const matchingSnapshot =
-    identityKey && viewportSnapshot?.identityKey === identityKey
-      ? viewportSnapshot
-      : null;
+  const matchingSnapshot = chartViewportSnapshotMatchesContext(
+    viewportSnapshot,
+    identityKey,
+    viewportLayoutKey,
+  )
+    ? viewportSnapshot
+    : null;
   const visibleLogicalRange =
     matchingSnapshot?.userTouched
       ? resolveViewportVisibleLogicalRange(matchingSnapshot.visibleLogicalRange)
@@ -1658,35 +1763,41 @@ const syncSeriesData = (
   previous: Array<Record<string, unknown>>,
   next: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> => {
-  const updateMode = resolveSeriesTailUpdateMode(previous, next);
+  const updatePlan = buildSeriesTailUpdatePlan(previous, next);
 
-  if (updateMode === "noop") {
+  if (updatePlan.mode === "noop") {
     return previous;
   }
 
-  if (updateMode === "patch" || updateMode === "append") {
-    const previousPoint = previous[previous.length - 1];
-    const nextPoint = next[next.length - 1];
-    const tailWhitespaceChanged =
-      Boolean(previousPoint) &&
-      Boolean(nextPoint) &&
-      Object.prototype.hasOwnProperty.call(previousPoint, "value") !==
-        Object.prototype.hasOwnProperty.call(nextPoint, "value");
+  if (updatePlan.mode === "patch" || updatePlan.mode === "append") {
+    try {
+      for (let index = updatePlan.startIndex; index < next.length; index += 1) {
+        const nextPoint = next[index];
+        const previousPoint =
+          index < previous.length ? previous[index] : next[index - 1];
+        const pointUpdateMode = index < previous.length ? "patch" : "append";
+        const tailWhitespaceChanged =
+          Boolean(previousPoint) &&
+          Boolean(nextPoint) &&
+          Object.prototype.hasOwnProperty.call(previousPoint, "value") !==
+            Object.prototype.hasOwnProperty.call(nextPoint, "value");
 
-    if (
-      nextPoint &&
-      !tailWhitespaceChanged &&
-      canUpdateSeriesTail(previousPoint, nextPoint, updateMode)
-    ) {
-      try {
+        if (
+          !nextPoint ||
+          tailWhitespaceChanged ||
+          !canUpdateSeriesTail(previousPoint, nextPoint, pointUpdateMode)
+        ) {
+          throw new Error("Series tail update is not applicable.");
+        }
+
         series.update(nextPoint);
-        return next;
-      } catch (_error) {
-        // Timeframe changes and provider backfills can replace the visible
-        // time sequence while preserving array length. Lightweight Charts
-        // rejects tail updates for older/non-comparable times, so recover with
-        // a full reset instead of surfacing a runtime overlay.
       }
+      return next;
+    } catch (_error) {
+      // Timeframe changes and provider backfills can replace the visible time
+      // sequence while preserving array length. Lightweight Charts rejects
+      // non-tail updates, so recover with a full reset instead of surfacing a
+      // runtime overlay.
     }
   }
 
@@ -2135,6 +2246,17 @@ export const buildChartLegendStudyItems = ({
   }, []);
 };
 
+const formatCompactNumber = (value: number): string => {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: value >= 1_000_000 ? 2 : 1,
+  }).format(value);
+};
+
 const formatLegendTimestamp = (
   value: string,
   preferences: UserPreferences,
@@ -2162,7 +2284,16 @@ const formatLegendSignedNumber = (
   value: number | null | undefined,
   digits = 2,
 ): string => {
-  return formatChartSignedPrice(value, { precision: digits, missing: "—" });
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  const formatted = formatChartPriceAxisValue(Math.abs(value), digits);
+  if (formatted === "0") {
+    return "+0";
+  }
+
+  return `${value >= 0 ? "+" : "-"}${formatted}`;
 };
 
 const formatLegendPercent = (value: number | null | undefined): string => {
@@ -2174,7 +2305,7 @@ const formatLegendPercent = (value: number | null | undefined): string => {
 };
 
 const formatLegendStudyValue = (value: number): string => {
-  const digits = Math.min(4, Math.max(2, countChartValueDecimals(value)));
+  const digits = Math.min(4, Math.max(2, countValueDecimals(value)));
   return formatLegendNumber(value, digits);
 };
 
@@ -2200,6 +2331,77 @@ const formatLegendSourceLabel = (
 
   return fallback || null;
 };
+
+const countValueDecimals = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  const text = value.toString().toLowerCase();
+  if (text.includes("e-")) {
+    const [, exponentText = "0"] = text.split("e-");
+    return Number.parseInt(exponentText, 10) || 0;
+  }
+
+  const [, decimals = ""] = text.split(".");
+  return decimals.replace(/0+$/, "").length;
+};
+
+export const formatChartPriceAxisValue = (
+  value: number | null | undefined,
+  precision = 2,
+): string => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  const safePrecision = Math.max(0, Math.min(8, Math.floor(precision)));
+  const rounded = Number(value.toFixed(safePrecision));
+  if (Object.is(rounded, -0)) {
+    return safePrecision >= 2 ? "0.00" : "0";
+  }
+
+  const fixed = rounded.toFixed(safePrecision);
+  const [integer, fraction = ""] = fixed.split(".");
+  if (!fraction) {
+    return fixed;
+  }
+
+  const minDigits = Math.min(2, safePrecision);
+  const trimmedFraction = fraction.replace(/0+$/, "");
+  const displayFraction =
+    trimmedFraction.length < minDigits
+      ? fraction.slice(0, minDigits)
+      : trimmedFraction;
+
+  return displayFraction ? `${integer}.${displayFraction}` : integer;
+};
+
+export const resolvePricePrecision = (bars: ChartModel["chartBars"]): number => {
+  const maxDecimals = bars.reduce(
+    (result, bar) =>
+      Math.max(
+        result,
+        countValueDecimals(bar.o),
+        countValueDecimals(bar.h),
+        countValueDecimals(bar.l),
+        countValueDecimals(bar.c),
+      ),
+    0,
+  );
+
+  return Math.min(4, Math.max(2, maxDecimals));
+};
+
+const buildChartPriceFormat = (pricePrecision: number) =>
+  ({
+    type: "custom",
+    minMove: 1 / 10 ** pricePrecision,
+    formatter: (value: number) =>
+      formatChartPriceAxisValue(value, pricePrecision),
+    tickmarksFormatter: (values: number[]) =>
+      values.map((value) => formatChartPriceAxisValue(value, pricePrecision)),
+  }) as const;
 
 const numbersClose = (left: number, right: number, epsilon = 0.5): boolean =>
   Number.isFinite(left) &&
@@ -3879,6 +4081,7 @@ export const ResearchChartSurface = ({
   themeKey,
   uiStateKey,
   rangeIdentityKey = null,
+  viewportLayoutKey = null,
   dataTestId,
   compact = false,
   showToolbar = true,
@@ -3911,7 +4114,6 @@ export const ResearchChartSurface = ({
   viewportSnapshot = null,
   externalViewportUserTouched = false,
   onViewportSnapshotChange,
-  viewportResetRevision = 0,
   persistScalePrefs = true,
 }: ResearchChartSurfaceProps) => {
   const { preferences: userPreferences } = useUserPreferences();
@@ -3921,8 +4123,11 @@ export const ResearchChartSurface = ({
     persistLocalChartState && userPreferences.chart.keepTimeZoom;
   const viewportSnapshotControlled =
     typeof onViewportSnapshotChange === "function";
+  const normalizedViewportLayoutKey =
+    normalizeChartViewportLayoutKey(viewportLayoutKey);
   const effectiveViewportSnapshot = resolveEffectiveChartViewportSnapshot({
     identityKey: rangeIdentityKey ?? null,
+    viewportLayoutKey: normalizedViewportLayoutKey,
     viewportSnapshot,
     useStoredFallback: !viewportSnapshotControlled && keepStoredChartViewport,
   });
@@ -3956,11 +4161,10 @@ export const ResearchChartSurface = ({
   const realtimeFollowRef = useRef(true);
   const chartBarCountRef = useRef(model.chartBars.length);
   const rangeIdentityKeyRef = useRef<string | null>(null);
+  const viewportLayoutKeyRef = useRef<string | null>(null);
   const lastPublishedVisibleRangeSignatureRef = useRef<string | null>(null);
   const programmaticVisibleRangeSignatureRef = useRef<string | null>(null);
   const lastProgrammaticViewportIntentAtRef = useRef(0);
-  const viewportResetRevisionRef = useRef(viewportResetRevision);
-  const pendingViewportResetPublishRef = useRef<number | null>(null);
   const autoHydrationViewportRef = useRef(true);
   const previousFirstChartBarTimeRef = useRef<number | null>(null);
   const initializedRangeRef = useRef(false);
@@ -3990,15 +4194,6 @@ export const ResearchChartSurface = ({
   const viewportSnapshotChangeRef = useRef(onViewportSnapshotChange);
   const lastUserViewportIntentAtRef = useRef(0);
   const lastWheelViewportIntentAtRef = useRef(0);
-  const wheelZoomFallbackIntentRef = useRef<{
-    at: number;
-    beforeSignature: string;
-  } | null>(null);
-  const lastWheelNativeRangeRef = useRef<{
-    at: number;
-    beforeSignature: string;
-    visibleRange: VisibleLogicalRange;
-  } | null>(null);
   const viewportPointerActiveRef = useRef(false);
   const lastPlotViewportIntentAtRef = useRef(0);
   const lastPlotResizeAtRef = useRef(0);
@@ -4305,6 +4500,7 @@ export const ResearchChartSurface = ({
       if (!identityKey) return null;
       return {
         identityKey,
+        viewportLayoutKey: viewportLayoutKeyRef.current,
         visibleLogicalRange: visibleRange,
         userTouched,
         realtimeFollow,
@@ -4335,29 +4531,6 @@ export const ResearchChartSurface = ({
     lastWheelViewportIntentAtRef.current = 0;
     viewportPointerActiveRef.current = false;
   }, []);
-
-  useEffect(() => {
-    if (viewportResetRevision === viewportResetRevisionRef.current) {
-      return;
-    }
-    viewportResetRevisionRef.current = viewportResetRevision;
-    pendingViewportResetPublishRef.current = viewportResetRevision;
-    clearUserViewportIntent();
-    lastLocalUserViewportAtRef.current = 0;
-    lastUserVisibleRangeRef.current = null;
-    visibleLogicalRangeRef.current = null;
-    realtimeFollowRef.current = true;
-    autoHydrationViewportRef.current = true;
-    programmaticVisibleRangeSignatureRef.current = null;
-    lastProgrammaticViewportIntentAtRef.current = 0;
-    syncViewportUserTouched(false, { force: true });
-    lastPublishedVisibleRangeSignatureRef.current = null;
-    clearStoredChartViewportSnapshot(rangeIdentityKeyRef.current);
-  }, [
-    clearUserViewportIntent,
-    syncViewportUserTouched,
-    viewportResetRevision,
-  ]);
 
   const markUserViewportIntent = useCallback(
     (
@@ -4394,23 +4567,10 @@ export const ResearchChartSurface = ({
         viewportPointerActiveRef.current = true;
       } else if (mode === "wheel") {
         lastWheelViewportIntentAtRef.current = now;
-        const wheelRange =
-          normalizeVisibleLogicalRange(
-            chartRef.current?.timeScale?.().getVisibleLogicalRange?.(),
-          ) ||
-          normalizeVisibleLogicalRange(visibleLogicalRangeRef.current) ||
-          normalizeVisibleLogicalRange(model.defaultVisibleLogicalRange);
-        if (wheelRange) {
-          wheelZoomFallbackIntentRef.current = {
-            at: now,
-            beforeSignature: buildVisibleRangeSignature(wheelRange),
-          };
-          lastWheelNativeRangeRef.current = null;
-        }
       }
       return true;
     },
-    [model.defaultVisibleLogicalRange],
+    [],
   );
 
   useEffect(() => {
@@ -4424,7 +4584,6 @@ export const ResearchChartSurface = ({
         clientX: event.clientX,
         clientY: event.clientY,
       });
-      scheduleWheelZoomFallback(event);
     };
     const handleNativePointerDown = (event: globalThis.PointerEvent) => {
       markUserViewportIntent(event.target, "pointer", {
@@ -4799,23 +4958,13 @@ export const ResearchChartSurface = ({
     syncViewportUserTouched(Boolean(effectiveViewportSnapshot?.userTouched));
   }, [
     rangeIdentityKey,
+    normalizedViewportLayoutKey,
     effectiveViewportSnapshot?.identityKey,
     syncViewportUserTouched,
   ]);
 
   useEffect(() => {
     if (!rangeIdentityKeyRef.current) {
-      return;
-    }
-    if (pendingViewportResetPublishRef.current === viewportResetRevision) {
-      pendingViewportResetPublishRef.current = null;
-      publishViewportSnapshot(
-        buildViewportSnapshot({
-          visibleRange: null,
-          userTouched: false,
-          realtimeFollow: true,
-        }),
-      );
       return;
     }
     publishViewportSnapshot(
@@ -4847,7 +4996,6 @@ export const ResearchChartSurface = ({
     scaleMode,
     effectiveViewportSnapshot?.identityKey,
     effectiveViewportSnapshot?.userTouched,
-    viewportResetRevision,
     viewportUserTouched,
   ]);
 
@@ -4876,12 +5024,17 @@ export const ResearchChartSurface = ({
 
   useLayoutEffect(() => {
     const nextRangeIdentityKey = rangeIdentityKey ?? null;
-    if (rangeIdentityKeyRef.current === nextRangeIdentityKey) {
+    const nextViewportLayoutKey = normalizedViewportLayoutKey;
+    if (
+      rangeIdentityKeyRef.current === nextRangeIdentityKey &&
+      viewportLayoutKeyRef.current === nextViewportLayoutKey
+    ) {
       return;
     }
 
     const restoreState = resolveViewportRestoreState({
       identityKey: nextRangeIdentityKey,
+      viewportLayoutKey: nextViewportLayoutKey,
       viewportSnapshot: effectiveViewportSnapshot,
       storedScalePrefs: persistLocalChartState
         ? readStoredChartScalePrefs(uiStateKey)
@@ -4892,6 +5045,7 @@ export const ResearchChartSurface = ({
     const matchingStoredRange = restoreState.visibleLogicalRange;
 
     rangeIdentityKeyRef.current = nextRangeIdentityKey;
+    viewportLayoutKeyRef.current = nextViewportLayoutKey;
     visibleLogicalRangeRef.current = matchingStoredRange;
     realtimeFollowRef.current = restoreState.realtimeFollow;
     lastPublishedVisibleRangeSignatureRef.current = null;
@@ -4943,6 +5097,7 @@ export const ResearchChartSurface = ({
     model.defaultVisibleLogicalRange,
     persistLocalChartState,
     rangeIdentityKey,
+    normalizedViewportLayoutKey,
     setProgrammaticVisibleLogicalRange,
     syncViewportUserTouched,
     uiStateKey,
@@ -5212,22 +5367,6 @@ export const ResearchChartSurface = ({
         const wheelIntent =
           Date.now() - lastWheelViewportIntentAtRef.current <=
           USER_VIEWPORT_INTENT_WINDOW_MS;
-        if (wheelIntent && normalizedRange) {
-          const wheelFallbackIntent = wheelZoomFallbackIntentRef.current;
-          const rangeSignature = buildVisibleRangeSignature(normalizedRange);
-          if (
-            !wheelFallbackIntent ||
-            rangeSignature !== wheelFallbackIntent.beforeSignature
-          ) {
-            if (wheelFallbackIntent) {
-              lastWheelNativeRangeRef.current = {
-                at: wheelFallbackIntent.at,
-                beforeSignature: wheelFallbackIntent.beforeSignature,
-                visibleRange: normalizedRange,
-              };
-            }
-          }
-        }
         const userIntent =
           (viewportPointerActiveRef.current ||
             Boolean(plotPanRef.current) ||
@@ -5432,14 +5571,8 @@ export const ResearchChartSurface = ({
     const baselineSeries = baselineSeriesRef.current;
     const volumeSeries = volumeSeriesRef.current;
     const seriesSyncStartedAt = nowMs();
-    const pricePrecision = resolveChartPricePrecisionForBars(model.chartBars, {
-      compact,
-    });
-    const priceFormat = {
-      type: "price",
-      precision: pricePrecision,
-      minMove: 1 / 10 ** pricePrecision,
-    } as const;
+    const pricePrecision = resolvePricePrecision(model.chartBars);
+    const priceFormat = buildChartPriceFormat(pricePrecision);
     const candleSeriesData = model.chartBars.map((bar) => ({
       time: bar.time,
       open: bar.o,
@@ -6357,7 +6490,44 @@ export const ResearchChartSurface = ({
     if (autoScale && showRightPriceScale) {
       chartRef.current.priceScale?.("right", 0)?.setAutoScale?.(true);
     }
-  }, [autoScale, plotSize.height, plotSize.width, showRightPriceScale]);
+
+    const userViewportTouched = Boolean(
+      externalViewportUserTouched ||
+        viewportUserTouchedRef.current ||
+        viewportUserTouched ||
+        (effectiveViewportSnapshot?.identityKey ===
+          rangeIdentityKeyRef.current &&
+          effectiveViewportSnapshot.userTouched),
+    );
+    if (
+      !userViewportTouched &&
+      autoHydrationViewportRef.current &&
+      model.defaultVisibleLogicalRange &&
+      model.chartBars.length > 0 &&
+      !isViewportInteractionActive()
+    ) {
+      setProgrammaticVisibleLogicalRange(
+        resolveAutoHydrationVisibleRange({
+          barCount: model.chartBars.length,
+          defaultVisibleRange: model.defaultVisibleLogicalRange,
+        }) || model.defaultVisibleLogicalRange,
+        { markInitialized: true },
+      );
+    }
+  }, [
+    autoScale,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.userTouched,
+    externalViewportUserTouched,
+    isViewportInteractionActive,
+    model.chartBars.length,
+    model.defaultVisibleLogicalRange,
+    plotSize.height,
+    plotSize.width,
+    setProgrammaticVisibleLogicalRange,
+    showRightPriceScale,
+    viewportUserTouched,
+  ]);
   const displayDeltaBase =
     displayBar?.previousClose ?? displayBar?.open ?? null;
   const displayDelta =
@@ -6403,15 +6573,9 @@ export const ResearchChartSurface = ({
     ? (displayBar.open + displayBar.high + displayBar.low + displayBar.close) /
       4
     : null;
-  const pricePrecision = resolveChartPricePrecisionForBars(model.chartBars, {
-    compact,
-  });
-  const formatSurfacePrice = (value: number | null | undefined): string =>
-    formatChartPrice(value, {
-      precision: pricePrecision,
-      compact,
-      missing: "—",
-    });
+  const pricePrecision = resolvePricePrecision(model.chartBars);
+  const formatPrice = (value: number | null | undefined): string =>
+    formatChartPriceAxisValue(value, pricePrecision);
   const deltaColor = (displayDeltaValue ?? 0) >= 0 ? theme.green : theme.red;
   const legendStudies = legend?.studies || EMPTY_LEGEND_STUDIES;
   const selectedLegendStudies =
@@ -6594,109 +6758,11 @@ export const ResearchChartSurface = ({
     chartRef.current?.timeScale?.().scrollToRealTime?.();
     clearRememberedViewport(null);
   };
-  // Lightweight Charts can occasionally emit an unchanged wheel range or snap it back;
-  // keep the wheel viewport user-owned by replaying the native range or a single fallback zoom.
-  function scheduleWheelZoomFallback(event: {
-    target: EventTarget | null;
-    clientX: number;
-    clientY: number;
-    deltaY: number;
-  }) {
-    if (
-      !enableInteractions ||
-      drawMode ||
-      isChartControlEventTarget(event.target)
-    ) {
-      return;
-    }
-
-    const chart = chartRef.current;
-    const container = containerRef.current;
-    const factor = resolveWheelZoomFactor(event.deltaY);
-    if (!chart || !container || !factor || typeof window === "undefined") {
-      return;
-    }
-    const wheelIntentAt = lastWheelViewportIntentAtRef.current;
-
-    const rect = container.getBoundingClientRect();
-    const priceScaleWidth = chart.priceScale?.("right", 0)?.width?.() || 0;
-    const insidePlot = isPointInsideRect({
-      x: event.clientX,
-      y: event.clientY,
-      rect,
-    });
-    const insideRightPriceScale = isPointInsideRightPriceScale({
-      x: event.clientX,
-      y: event.clientY,
-      rect,
-      priceScaleWidth,
-    });
-    if (!insidePlot || insideRightPriceScale) {
-      return;
-    }
-
-    const beforeRange =
-      normalizeVisibleLogicalRange(
-        chart.timeScale?.().getVisibleLogicalRange?.(),
-      ) ||
-      normalizeVisibleLogicalRange(visibleLogicalRangeRef.current) ||
-      normalizeVisibleLogicalRange(model.defaultVisibleLogicalRange);
-    if (!beforeRange) {
-      return;
-    }
-    const beforeSignature = buildVisibleRangeSignature(beforeRange);
-    wheelZoomFallbackIntentRef.current = {
-      at: wheelIntentAt,
-      beforeSignature,
-    };
-    const applyFallback = () => {
-      const currentIntent = wheelZoomFallbackIntentRef.current;
-      if (
-        !currentIntent ||
-        currentIntent.at !== wheelIntentAt ||
-        currentIntent.beforeSignature !== beforeSignature
-      ) {
-        return;
-      }
-      const activeRange =
-        normalizeVisibleLogicalRange(
-          chartRef.current?.timeScale?.().getVisibleLogicalRange?.(),
-        ) ||
-        normalizeVisibleLogicalRange(visibleLogicalRangeRef.current) ||
-        beforeRange;
-      if (
-        !activeRange ||
-        buildVisibleRangeSignature(activeRange) !== beforeSignature
-      ) {
-        return;
-      }
-
-      const nativeRange = lastWheelNativeRangeRef.current;
-      if (
-        nativeRange?.at === wheelIntentAt &&
-        nativeRange.beforeSignature === beforeSignature
-      ) {
-        setAdjustedVisibleRange(nativeRange.visibleRange);
-        return;
-      }
-
-      setAdjustedVisibleRange(
-        resolveZoomedVisibleRange({
-          currentRange: activeRange,
-          factor,
-        }),
-      );
-    };
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(applyFallback);
-    });
-  }
   const handleRootWheelCapture = (event: WheelEvent<HTMLDivElement>) => {
     markUserViewportIntent(event.target, "wheel", {
       clientX: event.clientX,
       clientY: event.clientY,
     });
-    scheduleWheelZoomFallback(event);
   };
   const handleRootClickCapture = (event: MouseEvent<HTMLDivElement>) => {
     if (isChartControlEventTarget(event.target)) {
@@ -7392,10 +7458,13 @@ export const ResearchChartSurface = ({
       ],
     },
   ];
-  const activeViewportSnapshot =
-    effectiveViewportSnapshot?.identityKey === (rangeIdentityKey ?? null)
-      ? effectiveViewportSnapshot
-      : null;
+  const activeViewportSnapshot = chartViewportSnapshotMatchesContext(
+    effectiveViewportSnapshot,
+    rangeIdentityKey ?? null,
+    normalizedViewportLayoutKey,
+  )
+    ? effectiveViewportSnapshot
+    : null;
   const activeViewportRangeSignature = buildVisibleRangeSignature(
     visibleLogicalRangeRef.current ?? activeViewportSnapshot?.visibleLogicalRange,
   );
@@ -7403,27 +7472,13 @@ export const ResearchChartSurface = ({
     model.chartBars.length > 0
       ? model.chartBars[model.chartBars.length - 1]
       : null;
-  const overlayLabelBudgetSource = [
-    ...zoneOverlays,
-    ...boxDrawingOverlays,
-  ].filter((overlay) => Boolean(overlay.label));
-  const overlayLabelBudget = resolveChartOverlayLabelBudget({
-    compact,
-    plotWidth: plotSize.width,
-    plotHeight: plotSize.height,
-    overlayCount: overlayLabelBudgetSource.length,
-  });
-  const visibleOverlayLabelIds = new Set(
-    overlayLabelBudgetSource
-      .slice(0, overlayLabelBudget)
-      .map((overlay) => overlay.id),
-  );
 
   return (
     <div
       ref={rootRef}
       data-testid={dataTestId}
       data-chart-range-identity={rangeIdentityKey || undefined}
+      data-chart-viewport-layout={normalizedViewportLayoutKey || undefined}
       data-chart-viewport-user-touched={
         activeViewportSnapshot?.userTouched ||
         externalViewportUserTouched ||
@@ -7709,7 +7764,7 @@ export const ResearchChartSurface = ({
                       overflow: "visible",
                     }}
                   >
-                    {overlay.label && visibleOverlayLabelIds.has(overlay.id) ? (
+                    {overlay.label ? (
                       <div
                         style={{
                           position: "absolute",
@@ -7775,7 +7830,7 @@ export const ResearchChartSurface = ({
                       opacity: overlay.opacity ?? 1,
                     }}
                   >
-                    {overlay.label && visibleOverlayLabelIds.has(overlay.id) ? (
+                    {overlay.label ? (
                       <div
                         style={{
                           position: "absolute",
@@ -7829,7 +7884,7 @@ export const ResearchChartSurface = ({
                     overflow: "hidden",
                   }}
                 >
-                  {overlay.label && visibleOverlayLabelIds.has(overlay.id) ? (
+                  {overlay.label ? (
                     <div
                       style={{
                         position: "absolute",
@@ -8605,18 +8660,18 @@ export const ResearchChartSurface = ({
               }}
             >
               <span>
-                O <span style={{ color: theme.text }}>{formatSurfacePrice(displayBar.open)}</span>
+                O <span style={{ color: theme.text }}>{formatPrice(displayBar.open)}</span>
               </span>
               <span>
-                H <span style={{ color: theme.green }}>{formatSurfacePrice(displayBar.high)}</span>
+                H <span style={{ color: theme.green }}>{formatPrice(displayBar.high)}</span>
               </span>
               <span>
-                L <span style={{ color: theme.red }}>{formatSurfacePrice(displayBar.low)}</span>
+                L <span style={{ color: theme.red }}>{formatPrice(displayBar.low)}</span>
               </span>
               <span>
                 C{" "}
                 <span style={{ color: theme.text }}>
-                  {formatSurfacePrice(displayBar.close)}
+                  {formatPrice(displayBar.close)}
                 </span>
               </span>
               <span style={{ color: deltaColor }}>
@@ -8629,20 +8684,20 @@ export const ResearchChartSurface = ({
                 <span>
                   Vol{" "}
                   <span style={{ color: theme.text }}>
-                    {formatCompactChartValue(displayBar.volume, { missing: "—" })}
+                    {formatCompactNumber(displayBar.volume)}
                   </span>
                 </span>
               ) : null}
               {!legendCompactMode && displayBar.vwap != null ? (
                 <span>
-                  VWAP <span style={{ color: theme.text }}>{formatSurfacePrice(displayBar.vwap)}</span>
+                  VWAP <span style={{ color: theme.text }}>{formatPrice(displayBar.vwap)}</span>
                 </span>
               ) : null}
               {!legendCompactMode && displayBar.sessionVwap != null ? (
                 <span>
                   SVWAP{" "}
                   <span style={{ color: theme.text }}>
-                    {formatSurfacePrice(displayBar.sessionVwap)}
+                    {formatPrice(displayBar.sessionVwap)}
                   </span>
                 </span>
               ) : null}
@@ -8650,7 +8705,7 @@ export const ResearchChartSurface = ({
                 <span>
                   AV{" "}
                   <span style={{ color: theme.text }}>
-                    {formatCompactChartValue(displayBar.accumulatedVolume, { missing: "—" })}
+                    {formatCompactNumber(displayBar.accumulatedVolume)}
                   </span>
                 </span>
               ) : null}

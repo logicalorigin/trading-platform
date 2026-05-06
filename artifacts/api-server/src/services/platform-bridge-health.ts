@@ -219,7 +219,10 @@ function annotateBridgeHealth(
   );
   const streamFresh =
     lastStreamEventAgeMs !== null && lastStreamEventAgeMs <= bridgeStreamFreshMs();
-  const accountsLoaded = Array.isArray(health.accounts) && health.accounts.length > 0;
+  const brokerServerConnected =
+    health.brokerServerConnected ?? Boolean(health.connected);
+  const accountsLoaded =
+    brokerServerConnected && Array.isArray(health.accounts) && health.accounts.length > 0;
   const currentBridgeDiagnostics = hasCurrentBridgeDiagnostics(health);
   if (health.connected && health.authenticated && !currentBridgeDiagnostics) {
     markBridgeOrderReadsSuppressed({
@@ -241,6 +244,7 @@ function annotateBridgeHealth(
   const strictReason = resolveIbkrRuntimeStrictReason({
     healthFresh,
     connected: Boolean(health.connected),
+    brokerServerConnected,
     authenticated: Boolean(health.authenticated),
     accountsLoaded,
     configuredLiveMarketDataMode,
@@ -255,6 +259,7 @@ function annotateBridgeHealth(
     healthFresh,
     bridgeReachable,
     connected: Boolean(health.connected),
+    brokerServerConnected,
     authenticated: Boolean(health.authenticated),
     accountsLoaded,
     configuredLiveMarketDataMode,
@@ -273,6 +278,10 @@ function annotateBridgeHealth(
     stale: !healthFresh,
     bridgeReachable,
     socketConnected: Boolean(health.connected),
+    brokerServerConnected,
+    serverConnectivity: health.serverConnectivity,
+    lastServerConnectivityAt: health.lastServerConnectivityAt,
+    lastServerConnectivityError: health.lastServerConnectivityError,
     accountsLoaded,
     configuredLiveMarketDataMode,
     streamFresh,

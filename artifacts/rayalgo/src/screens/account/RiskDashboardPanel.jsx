@@ -14,6 +14,7 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { buildAccountRiskDisplayModel } from "../../features/account/accountPositionRows.js";
+import { ExpiryCalendarHeatmap } from "./ExpiryCalendarHeatmap.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -95,7 +96,6 @@ const RankedList = ({
   valueKey,
   emptyLabel = "No rows",
   maskValues = false,
-  onSymbolSelect,
 }) => (
   <div
     style={{
@@ -121,38 +121,13 @@ const RankedList = ({
         >
           <span style={{ color: T.text, minWidth: 0 }}>
             {row.symbol ? (
-              onSymbolSelect ? (
-                <button
-                  type="button"
-                  data-testid={`account-risk-symbol-${row.symbol}`}
-                  className="ra-interactive"
-                  onClick={() => onSymbolSelect(row.symbol)}
-                  style={{
-                    border: "none",
-                    padding: 0,
-                    background: "transparent",
-                    color: T.text,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <MarketIdentityInline
-                    item={{ ticker: row.symbol, market: "stocks" }}
-                    size={14}
-                    showMark={false}
-                    showChips
-                    style={{ maxWidth: dim(120) }}
-                  />
-                </button>
-              ) : (
-                <MarketIdentityInline
-                  item={{ ticker: row.symbol, market: "stocks" }}
-                  size={14}
-                  showMark={false}
-                  showChips
-                  style={{ maxWidth: dim(120) }}
-                />
-              )
+              <MarketIdentityInline
+                item={{ ticker: row.symbol, market: "stocks" }}
+                size={14}
+                showMark={false}
+                showChips
+                style={{ maxWidth: dim(120) }}
+              />
             ) : (
               row.sector
             )}
@@ -181,7 +156,6 @@ export const RiskDashboardPanel = ({
   rightRail,
   maskValues = false,
   compact = false,
-  onSymbolSelect,
 }) => {
   const data = buildAccountRiskDisplayModel(query.data, positionsResponse);
   const margin = data?.margin || {};
@@ -296,7 +270,6 @@ export const RiskDashboardPanel = ({
               currency={currency}
               valueKey="marketValue"
               maskValues={maskValues}
-              onSymbolSelect={onSymbolSelect}
             />
           </div>
         </div>
@@ -403,73 +376,7 @@ export const RiskDashboardPanel = ({
                 </div>
               ) : null}
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: sp(8),
-                  paddingTop: sp(4),
-                  borderTop: `1px solid ${T.border}`,
-                }}
-              >
-                <RankedList
-                  title="Top Concentration"
-                  rows={data.concentration?.topPositions || []}
-                  currency={currency}
-                  valueKey="marketValue"
-                  onSymbolSelect={onSymbolSelect}
-                />
-                <RankedList
-                  title="Sector Concentration"
-                  rows={data.concentration?.sectors || []}
-                  currency={currency}
-                  valueKey="value"
-                />
-              </div>
             </div>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-              gap: sp(8),
-              paddingTop: sp(4),
-              borderTop: `1px solid ${T.border}`,
-            }}
-          >
-            <RankedList
-              title="Today Winners"
-              rows={data.winnersLosers?.todayWinners || []}
-              currency={currency}
-              valueKey="unrealizedPnl"
-              maskValues={maskValues}
-              onSymbolSelect={onSymbolSelect}
-            />
-            <RankedList
-              title="Today Losers"
-              rows={data.winnersLosers?.todayLosers || []}
-              currency={currency}
-              valueKey="unrealizedPnl"
-              maskValues={maskValues}
-              onSymbolSelect={onSymbolSelect}
-            />
-            <RankedList
-              title="All-Time Winners"
-              rows={data.winnersLosers?.allTimeWinners || []}
-              currency={currency}
-              valueKey="unrealizedPnl"
-              maskValues={maskValues}
-              onSymbolSelect={onSymbolSelect}
-            />
-            <RankedList
-              title="All-Time Losers"
-              rows={data.winnersLosers?.allTimeLosers || []}
-              currency={currency}
-              valueKey="unrealizedPnl"
-              maskValues={maskValues}
-              onSymbolSelect={onSymbolSelect}
-            />
           </div>
 
           <div
@@ -532,25 +439,11 @@ export const RiskDashboardPanel = ({
               )}
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gap: sp(5),
-              }}
-            >
-              <div style={{ ...sectionTitleStyle, fontSize: fs(9) }}>Expiry Notional</div>
-              {[
-                ["This Week", data.expiryConcentration?.thisWeek],
-                ["This Month", data.expiryConcentration?.thisMonth],
-                ["Next 90d", data.expiryConcentration?.next90Days],
-              ].map(([label, value]) => (
-                <MetricCard
-                  key={label}
-                  label={label}
-                  value={formatAccountMoney(value, currency, true, maskValues)}
-                />
-              ))}
-            </div>
+            <ExpiryCalendarHeatmap
+              positions={positionsResponse?.positions || []}
+              currency={currency}
+              maskValues={maskValues}
+            />
           </div>
         </div>
       )}

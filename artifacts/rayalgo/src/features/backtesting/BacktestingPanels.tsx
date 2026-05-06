@@ -31,6 +31,7 @@ import {
   getListBacktestRunsQueryKey,
   getListBacktestStrategiesQueryKey,
   getListBacktestStudiesQueryKey,
+  getBars,
   useCancelBacktestJob,
   useCreatePineScript,
   useCreateBacktestRun,
@@ -133,7 +134,6 @@ type BacktestWorkspaceProps = {
   watchlists: Watchlist[];
   defaultWatchlistId: string | null;
   isVisible?: boolean;
-  onJumpToTrade?: (symbol: string) => void;
 };
 
 type AlgoDraftStrategiesPanelProps = {
@@ -198,10 +198,26 @@ const DEFAULT_BACKTEST_INDICATORS = [
 const SPOT_HISTORY_LOOKBACK_YEARS = 10;
 const MAX_SPOT_HISTORY_REQUEST_BARS = 50_000;
 const SPOT_HISTORY_REQUEST_HEADROOM_RATIO = 0.95;
-const SPOT_HISTORY_FETCH_CONCURRENCY = 4;
+const SPOT_HISTORY_INITIAL_FETCH_CONCURRENCY = 1;
+const SPOT_HISTORY_EXPANDED_FETCH_CONCURRENCY = 1;
 const SPOT_HISTORY_REFRESH_MS = 5 * 60_000;
+const SPOT_HISTORY_INITIAL_STALE_MS = 10 * 60_000;
+const SPOT_HISTORY_REQUEST_TIMEOUT_MS = 20_000;
+const SPOT_HISTORY_REQUEST_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
+const SPOT_HISTORY_REQUEST_PRIORITY = 8;
 const TRADING_DAYS_PER_YEAR = 252;
 const CALENDAR_DAYS_PER_YEAR = 365;
+const SPOT_HISTORY_MAX_REQUEST_WINDOW_DAYS: Partial<Record<BarTimeframe, number>> = {
+  "1s": 7,
+  "5s": 7,
+  "15s": 7,
+  "1m": 45,
+  "5m": 180,
+  "15m": CALENDAR_DAYS_PER_YEAR,
+  "1h": CALENDAR_DAYS_PER_YEAR * 3,
+  "1d": CALENDAR_DAYS_PER_YEAR * 15,
+};
+type SpotHistoryMode = "initial" | "expanded";
 
 type SpotHistoryBarsResponse = {
   symbol: string;
@@ -326,6 +342,42 @@ function formatNumber(value: number | null | undefined, digits = 2): string {
   return value.toFixed(digits);
 }
 
+function formatBacktestOptionRight(value: unknown): string {
+  return value === "call" ? "C" : value === "put" ? "P" : "—";
+}
+
+function formatBacktestOptionContract(
+  contract: BacktestTrade["optionContract"] | null | undefined,
+): string {
+  if (!contract) {
+    return "—";
+  }
+
+  return [
+    contract.expirationDate,
+    formatNumber(contract.strike),
+    formatBacktestOptionRight(contract.right),
+  ]
+    .filter((part) => part !== "—")
+    .join(" ");
+}
+
+function formatBacktestInstrumentLabel(trade: BacktestTrade): string {
+  if (trade.instrumentType !== "option") {
+    return trade.symbol;
+  }
+
+  return formatBacktestOptionContract(trade.optionContract);
+}
+
+function formatBacktestPricingLabel(trade: BacktestTrade): string {
+  if (trade.instrumentType === "option") {
+    return "Option history";
+  }
+
+  return "Shares";
+}
+
 function formatDateTime(
   value: string | null | undefined,
   preferences: UserPreferences,
@@ -379,6 +431,55 @@ function buildLookbackWindowIsoRange(years: number): {
     fromIso: from.toISOString(),
     toIso: to.toISOString(),
   };
+}
+
+function buildLookbackWindowIsoRangeForCalendarDays(days: number): {
+  fromIso: string;
+  toIso: string;
+} {
+  const safeDays = Math.max(1, Math.floor(days));
+  const to = new Date();
+  const from = new Date(to);
+  from.setUTCDate(from.getUTCDate() - safeDays);
+  from.setUTCHours(0, 0, 0, 0);
+  to.setUTCHours(23, 59, 59, 999);
+
+  return {
+    fromIso: from.toISOString(),
+    toIso: to.toISOString(),
+  };
+}
+
+function resolveInitialSpotHistoryLookbackDays(timeframe: BarTimeframe): number {
+  switch (timeframe) {
+    case "1s":
+    case "5s":
+    case "15s":
+      return 5;
+    case "1m":
+      return 30;
+    case "5m":
+    case "15m":
+    case "1h":
+      return 90;
+    case "1d":
+      return CALENDAR_DAYS_PER_YEAR * 2;
+    default:
+      return 90;
+  }
+}
+
+function buildSpotHistoryRange(
+  timeframe: BarTimeframe,
+  mode: SpotHistoryMode,
+): { fromIso: string; toIso: string } {
+  if (mode === "expanded") {
+    return buildLookbackWindowIsoRange(SPOT_HISTORY_LOOKBACK_YEARS);
+  }
+
+  return buildLookbackWindowIsoRangeForCalendarDays(
+    resolveInitialSpotHistoryLookbackDays(timeframe),
+  );
 }
 
 function timeframeToMinutes(timeframe: BarTimeframe): number | null {
@@ -462,10 +563,14 @@ function resolveSpotHistoryChunkDays(
     Math.floor(maxOutputBars / barsPerTradingDay),
   );
 
-  return Math.max(
+  const estimatedChunkDays = Math.max(
     7,
     Math.floor((maxTradingDays * CALENDAR_DAYS_PER_YEAR) / TRADING_DAYS_PER_YEAR),
   );
+  const maxWindowDays = SPOT_HISTORY_MAX_REQUEST_WINDOW_DAYS[timeframe];
+  return maxWindowDays
+    ? Math.min(estimatedChunkDays, maxWindowDays)
+    : estimatedChunkDays;
 }
 
 function buildSpotHistoryWindows(input: {
@@ -501,28 +606,40 @@ async function fetchSpotHistoryBarsWindow(input: {
   limit: number;
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
+  signal?: AbortSignal;
 }): Promise<SpotHistoryBarsResponse> {
-  const params = new URLSearchParams({
-    symbol: input.symbol,
-    timeframe: input.timeframe,
-    from: input.fromIso,
-    to: input.toIso,
-    limit: String(input.limit),
-    allowHistoricalSynthesis: "true",
-  });
-  if (typeof input.outsideRth === "boolean") {
-    params.set("outsideRth", String(input.outsideRth));
-  }
-  if (input.source) {
-    params.set("source", input.source);
-  }
-  const response = await fetch(`/api/bars?${params.toString()}`);
+  const response = await getBars(
+    {
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      from: input.fromIso,
+      to: input.toIso,
+      limit: input.limit,
+      outsideRth: input.outsideRth,
+      source: input.source,
+      allowHistoricalSynthesis: true,
+    },
+    {
+      headers: {
+        [SPOT_HISTORY_REQUEST_PRIORITY_HEADER]: String(
+          SPOT_HISTORY_REQUEST_PRIORITY,
+        ),
+      },
+      signal: input.signal,
+      timeoutMs: SPOT_HISTORY_REQUEST_TIMEOUT_MS,
+    } as RequestInit,
+  );
 
-  if (!response.ok) {
-    throw new Error(`Unable to load ${input.symbol} spot history.`);
-  }
-
-  return (await response.json()) as SpotHistoryBarsResponse;
+  return {
+    symbol: response.symbol,
+    timeframe: response.timeframe,
+    bars: (response.bars ?? []).map((bar) => ({
+      ...bar,
+      timestamp: bar.timestamp,
+      source: bar.source ?? null,
+      providerContractId: bar.providerContractId ?? null,
+    })),
+  };
 }
 
 function isRegularSessionTimestamp(timestamp: string): boolean {
@@ -546,6 +663,8 @@ async function fetchSpotHistoryBars(input: {
   toIso: string;
   outsideRth?: boolean;
   source?: "trades" | "midpoint" | "bid_ask";
+  concurrency?: number;
+  signal?: AbortSignal;
 }): Promise<SpotHistoryBarsResponse> {
   const outsideRth =
     typeof input.outsideRth === "boolean"
@@ -557,14 +676,20 @@ async function fetchSpotHistoryBars(input: {
     chunkDays: resolveSpotHistoryChunkDays(input.timeframe, outsideRth),
   });
   const responses: SpotHistoryBarsResponse[] = [];
+  const concurrency = Math.max(1, Math.floor(input.concurrency ?? 1));
   for (
     let startIndex = 0;
     startIndex < windows.length;
-    startIndex += SPOT_HISTORY_FETCH_CONCURRENCY
+    startIndex += concurrency
   ) {
+    if (input.signal?.aborted) {
+      throw input.signal.reason instanceof Error
+        ? input.signal.reason
+        : new DOMException("The operation was aborted.", "AbortError");
+    }
     const nextResponses = await Promise.all(
       windows
-        .slice(startIndex, startIndex + SPOT_HISTORY_FETCH_CONCURRENCY)
+        .slice(startIndex, startIndex + concurrency)
         .map((window) =>
           fetchSpotHistoryBarsWindow({
             symbol: input.symbol,
@@ -574,6 +699,7 @@ async function fetchSpotHistoryBars(input: {
             limit: MAX_SPOT_HISTORY_REQUEST_BARS,
             outsideRth,
             source: input.source,
+            signal: input.signal,
           }),
         ),
     );
@@ -601,6 +727,13 @@ async function fetchSpotHistoryBars(input: {
     timeframe: input.timeframe,
     bars: mergedAndSortedBars,
   };
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
 }
 
 function toStartOfDayIso(dateValue: string): string {
@@ -1337,7 +1470,6 @@ export function BacktestWorkspace({
   watchlists,
   defaultWatchlistId,
   isVisible = false,
-  onJumpToTrade,
 }: BacktestWorkspaceProps) {
   const [backtestRootRef, backtestRootSize] = useElementSize();
   const { isPhone: backtestIsPhone, isNarrow: backtestIsNarrow } =
@@ -1433,6 +1565,8 @@ export function BacktestWorkspace({
   const [summaryTradeLens, setSummaryTradeLens] =
     useState<SummaryTradeLens>("all");
   const [selectedRunChartSymbol, setSelectedRunChartSymbol] = useState("");
+  const [spotHistoryMode, setSpotHistoryMode] =
+    useState<SpotHistoryMode>("initial");
   const [selectedTradeSelectionId, setSelectedTradeSelectionId] = useState<
     string | null
   >(null);
@@ -1654,8 +1788,6 @@ export function BacktestWorkspace({
       ) ?? null
     );
   }, [activeTradeSelectionId, tradeRows]);
-  const selectedTradeSymbol =
-    selectedTradeRecord?.symbol ?? activeTradeOverlay?.symbol ?? null;
   const selectedTradeDiagnostics = selectedTradeRecord?.diagnostics ?? null;
   const selectedTradeExitConsequences =
     selectedTradeDiagnostics?.exitConsequences ?? null;
@@ -1709,6 +1841,14 @@ export function BacktestWorkspace({
 
       const haystack = [
         trade.symbol,
+        trade.underlying,
+        trade.instrumentType,
+        trade.pricingMode,
+        trade.optionContract?.ticker,
+        trade.optionContract?.underlying,
+        trade.optionContract?.expirationDate,
+        trade.optionContract?.strike,
+        trade.optionContract?.right,
         trade.side,
         trade.exitReason,
         trade.tradeSelectionId,
@@ -1759,23 +1899,36 @@ export function BacktestWorkspace({
     runDetail?.study.timeframe ??
     selectedStudy?.timeframe ??
     timeframe) as BarTimeframe;
+  useEffect(() => {
+    setSpotHistoryMode("initial");
+  }, [selectedChartSymbol, selectedChartTimeframe]);
   const spotHistoryRange = useMemo(
-    () => buildLookbackWindowIsoRange(SPOT_HISTORY_LOOKBACK_YEARS),
-    [],
+    () => buildSpotHistoryRange(selectedChartTimeframe, spotHistoryMode),
+    [selectedChartTimeframe, spotHistoryMode],
   );
+  useEffect(() => {
+    if (!isVisible) {
+      void queryClient.cancelQueries({ queryKey: ["backtest-spot-history"] });
+    }
+  }, [isVisible, queryClient]);
   const spotHistoryQuery = useQuery({
     queryKey: [
       "backtest-spot-history",
+      spotHistoryMode,
       selectedChartSymbol,
       selectedChartTimeframe,
       spotHistoryRange.fromIso,
       spotHistoryRange.toIso,
     ],
-    enabled: Boolean(selectedChartSymbol && selectedChartTimeframe),
-    staleTime: SPOT_HISTORY_REFRESH_MS,
-    refetchInterval: isVisible ? SPOT_HISTORY_REFRESH_MS : false,
+    enabled: Boolean(isVisible && selectedChartSymbol && selectedChartTimeframe),
+    staleTime:
+      spotHistoryMode === "expanded"
+        ? SPOT_HISTORY_REFRESH_MS
+        : SPOT_HISTORY_INITIAL_STALE_MS,
+    refetchInterval: false,
     refetchOnWindowFocus: false,
-    queryFn: () =>
+    retry: (failureCount, error) => !isAbortError(error) && failureCount < 1,
+    queryFn: ({ signal }) =>
       fetchSpotHistoryBars({
         symbol: selectedChartSymbol,
         timeframe: selectedChartTimeframe,
@@ -1783,6 +1936,11 @@ export function BacktestWorkspace({
         toIso: spotHistoryRange.toIso,
         outsideRth: false,
         source: "trades",
+        concurrency:
+          spotHistoryMode === "expanded"
+            ? SPOT_HISTORY_EXPANDED_FETCH_CONCURRENCY
+            : SPOT_HISTORY_INITIAL_FETCH_CONCURRENCY,
+        signal,
       }),
   });
   const spotChartModel = useMemo(
@@ -1854,6 +2012,20 @@ export function BacktestWorkspace({
     spotHistoryQuery.data?.bars?.[spotHistoryQuery.data.bars.length - 1]
       ?.source ?? null;
   const spotHistoryBarCount = spotHistoryQuery.data?.bars?.length ?? 0;
+  const spotHistoryAborted = isAbortError(spotHistoryQuery.error);
+  const spotHistoryModeLabel =
+    spotHistoryMode === "expanded"
+      ? `${SPOT_HISTORY_LOOKBACK_YEARS}y full history`
+      : `${resolveInitialSpotHistoryLookbackDays(selectedChartTimeframe)}d recent`;
+  const spotHistoryStatusText = spotChartModel
+    ? `Loaded ${spotHistoryBarCount} ${selectedChartTimeframe} bars for ${selectedChartSymbol || "selected symbol"}`
+    : spotHistoryQuery.isError
+      ? spotHistoryAborted
+        ? "History loading canceled"
+        : "Unable to load spot history"
+      : spotHistoryMode === "expanded"
+        ? "Loading full history"
+        : "Loading recent chart history";
   const dominantExitReason = useMemo(() => {
     const counts = new Map<string, number>();
     tradeRows.forEach((trade) => {
@@ -3191,11 +3363,7 @@ export function BacktestWorkspace({
                 }}
               >
                 <span>
-                  {spotChartModel
-                    ? `Loaded ${spotHistoryBarCount} ${selectedChartTimeframe} bars for ${selectedChartSymbol || "selected symbol"}`
-                    : spotHistoryQuery.isError
-                      ? "Unable to load spot history"
-                      : "Loading delayed history and current bars"}
+                  {spotHistoryStatusText}
                 </span>
                 <span
                   style={{
@@ -3249,6 +3417,20 @@ export function BacktestWorkspace({
               style={buttonStyle(theme, scale, "ghost")}
             >
               Clear Trade Focus
+            </button>
+            <button
+              type="button"
+              onClick={() => setSpotHistoryMode("expanded")}
+              disabled={spotHistoryMode === "expanded" || spotHistoryQuery.isFetching}
+              style={buttonStyle(
+                theme,
+                scale,
+                spotHistoryMode === "expanded" ? "secondary" : "ghost",
+              )}
+            >
+              {spotHistoryMode === "expanded"
+                ? "Full History Selected"
+                : "Load Full History"}
             </button>
           </div>
 
@@ -3403,7 +3585,7 @@ export function BacktestWorkspace({
                     }}
                   >
                     {selectedChartSymbol || "No symbol"} ·{" "}
-                    {selectedChartTimeframe || "—"} · {SPOT_HISTORY_LOOKBACK_YEARS}y lookback
+                    {selectedChartTimeframe || "—"} · {spotHistoryModeLabel}
                   </div>
                 </div>
                 <div
@@ -3479,7 +3661,7 @@ export function BacktestWorkspace({
                       pendingTradeOptions.length > 0 ? scale.dim(64) : 0
                     }
                   />
-                ) : spotHistoryQuery.isError ? (
+                ) : spotHistoryQuery.isError && !spotHistoryAborted ? (
                   <div
                     style={{
                       height: "100%",
@@ -3506,8 +3688,8 @@ export function BacktestWorkspace({
                       textAlign: "center",
                     }}
                   >
-                    Hydrating the spot chart from delayed history and current
-                    bars for {selectedChartSymbol || "the selected symbol"}.
+                    {spotHistoryStatusText} for{" "}
+                    {selectedChartSymbol || "the selected symbol"}.
                   </div>
                 )}
               </div>
@@ -3618,6 +3800,19 @@ export function BacktestWorkspace({
                         <MetricCard
                           label="Selected Trade"
                           value={
+                            selectedTradeRecord
+                              ? formatBacktestInstrumentLabel(selectedTradeRecord)
+                              : activeTradeOverlay?.symbol ??
+                                "—"
+                          }
+                          accent={theme.text}
+                          theme={theme}
+                          scale={scale}
+                        />
+                        <MetricCard
+                          label="Underlying"
+                          value={
+                            selectedTradeRecord?.underlying ??
                             selectedTradeRecord?.symbol ??
                             activeTradeOverlay?.symbol ??
                             "—"
@@ -4436,31 +4631,13 @@ export function BacktestWorkspace({
                 >
                   <div
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: scale.sp(8),
                       fontSize: scale.fs(10),
                       fontWeight: 700,
                       color: theme.textSec,
                       marginBottom: scale.sp(8),
                     }}
                   >
-                    <span>Selected Trade</span>
-                    {selectedTradeSymbol && onJumpToTrade ? (
-                      <button
-                        type="button"
-                        data-testid="backtest-selected-trade-open-trade"
-                        onClick={() => onJumpToTrade(selectedTradeSymbol)}
-                        style={{
-                          ...buttonStyle(theme, scale, "ghost"),
-                          minHeight: scale.dim(22),
-                          padding: scale.sp("0 8px"),
-                        }}
-                      >
-                        Open in Trade
-                      </button>
-                    ) : null}
+                    Selected Trade
                   </div>
                   {!selectedTradeRecord && !activeTradeOverlay ? (
                     <div
@@ -4490,6 +4667,17 @@ export function BacktestWorkspace({
                           theme={theme}
                           scale={scale}
                         />
+                        {selectedTradeRecord?.instrumentType === "option" ? (
+                          <MetricCard
+                            label="Contract"
+                            value={formatBacktestInstrumentLabel(
+                              selectedTradeRecord,
+                            )}
+                            accent={theme.text}
+                            theme={theme}
+                            scale={scale}
+                          />
+                        ) : null}
                         <MetricCard
                           label="Net / Gross"
                           value={`${formatCurrency(selectedTradeRecord?.netPnl ?? activeTradeOverlay?.pnl ?? null)} / ${formatCurrency(selectedTradeRecord?.grossPnl ?? null)}`}
@@ -4561,6 +4749,21 @@ export function BacktestWorkspace({
                           gap: scale.sp(6),
                         }}
                       >
+                        <div>
+                          Instrument:{" "}
+                          {selectedTradeRecord
+                            ? `${formatBacktestPricingLabel(selectedTradeRecord)} · ${selectedTradeRecord.underlying ?? selectedTradeRecord.symbol}`
+                            : activeTradeOverlay?.symbol ?? "—"}
+                        </div>
+                        {selectedTradeRecord?.instrumentType === "option" ? (
+                          <div>
+                            Contract:{" "}
+                            {formatBacktestInstrumentLabel(selectedTradeRecord)}
+                            {selectedTradeRecord.optionContract?.ticker
+                              ? ` · ${selectedTradeRecord.optionContract.ticker}`
+                              : ""}
+                          </div>
+                        ) : null}
                         <div>
                           Signal / Entry / Exit:{" "}
                           {formatBacktestDateTime(
@@ -5420,6 +5623,7 @@ export function BacktestWorkspace({
                       {[
                         "Index",
                         "Trade ID",
+                        "Instrument",
                         "Entry",
                         "Direction",
                         "Entry Price",
@@ -5447,7 +5651,7 @@ export function BacktestWorkspace({
                     {paginatedTradeRows.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={11}
+                          colSpan={12}
                           style={{
                             padding: scale.sp("14px 12px"),
                             color: theme.textDim,
@@ -5499,6 +5703,36 @@ export function BacktestWorkspace({
                                 }}
                               >
                                 {trade.tradeSelectionId}
+                              </td>
+                              <td
+                                style={{
+                                  padding: scale.sp("10px 12px"),
+                                  borderBottom: `1px solid ${theme.border}`,
+                                  fontSize: scale.fs(9),
+                                  color: theme.textSec,
+                                  minWidth: scale.dim(150),
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    color: theme.text,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {trade.underlying ?? trade.symbol}
+                                </div>
+                                {trade.instrumentType === "option" ? (
+                                  <div
+                                    style={{
+                                      marginTop: scale.sp(3),
+                                      fontFamily: theme.mono,
+                                      color: theme.textDim,
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    {formatBacktestInstrumentLabel(trade)}
+                                  </div>
+                                ) : null}
                               </td>
                               <td
                                 style={{
@@ -5599,7 +5833,7 @@ export function BacktestWorkspace({
                             {isSelected ? (
                               <tr>
                                 <td
-                                  colSpan={11}
+                                  colSpan={12}
                                   style={{
                                     padding: scale.sp("10px 12px"),
                                     borderBottom: `1px solid ${theme.border}`,
@@ -5617,6 +5851,15 @@ export function BacktestWorkspace({
                                     }}
                                   >
                                     <div>Symbol {trade.symbol}</div>
+                                    {trade.instrumentType === "option" ? (
+                                      <div>
+                                        Contract{" "}
+                                        {formatBacktestInstrumentLabel(trade)}
+                                      </div>
+                                    ) : null}
+                                    <div>
+                                      Pricing {formatBacktestPricingLabel(trade)}
+                                    </div>
                                     <div>
                                       Gross P&L {formatCurrency(trade.grossPnl)}
                                     </div>

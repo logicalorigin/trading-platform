@@ -62,6 +62,7 @@ export type OptionsFlowRadarCoverage = {
 
 export type OptionsFlowRadarScannerOptions = {
   fetchBatch: (symbols: readonly string[]) => Promise<OptionsFlowRadarFetchResult>;
+  shouldSkip?: () => string | null | Promise<string | null>;
   normalizeSymbol?: (symbol: string) => string;
   now?: () => number;
   onBatch?: (symbols: readonly string[]) => void;
@@ -84,7 +85,7 @@ type RotationInput = {
 };
 
 const DEFAULT_INTERVAL_MS = 15_000;
-const DEFAULT_BATCH_SIZE = 30;
+const DEFAULT_BATCH_SIZE = 40;
 const DEFAULT_PROMOTE_COUNT = 3;
 
 function getErrorMessage(error: unknown): string {
@@ -297,6 +298,19 @@ export function createOptionsFlowRadarScanner(
         promotedSymbols: [],
         failed: false,
         error: null,
+      };
+    }
+
+    const skipReason = await options.shouldSkip?.();
+    if (skipReason) {
+      currentBatch = [];
+      promotedSymbols = [];
+      degradedReason = skipReason;
+      return {
+        scannedSymbols: [],
+        promotedSymbols: [],
+        failed: false,
+        error: skipReason,
       };
     }
 

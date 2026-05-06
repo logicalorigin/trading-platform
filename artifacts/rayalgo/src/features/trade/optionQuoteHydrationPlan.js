@@ -1,7 +1,25 @@
-export const ACTIVE_OPTION_QUOTE_LINE_BUDGET = 96;
-export const BACKGROUND_OPTION_QUOTE_LINE_BUDGET = 24;
-export const DEFAULT_OPTION_QUOTE_LINE_BUDGET = ACTIVE_OPTION_QUOTE_LINE_BUDGET;
-export const DEFAULT_OPTION_QUOTE_ROTATION_MS = 3_000;
+const normalizeProviderContractId = (value) => String(value || "").trim();
+
+const pushProviderContractId = (target, seen, providerContractId) => {
+  const normalized = normalizeProviderContractId(providerContractId);
+  if (!normalized || seen.has(normalized)) {
+    return;
+  }
+
+  seen.add(normalized);
+  target.push(normalized);
+};
+
+const resolveSelectedProviderContractId = ({ chainRows = [], contract = {} }) => {
+  const selectedRow = chainRows.find((row) => row.k === contract.strike) || null;
+  return (
+    (contract.cp === "P"
+      ? selectedRow?.pContract?.providerContractId
+      : selectedRow?.cContract?.providerContractId) ||
+    contract.providerContractId ||
+    null
+  );
+};
 
 export const buildTradeOptionProviderContractIdPlan = ({
   chainRows = [],
@@ -11,129 +29,68 @@ export const buildTradeOptionProviderContractIdPlan = ({
 }) => {
   const collected = [];
   const seen = new Set();
-  const pushProviderContractId = (providerContractId) => {
-    const normalized = String(providerContractId || "").trim();
-    if (!normalized || seen.has(normalized)) {
-      return;
-    }
-    seen.add(normalized);
-    collected.push(normalized);
-  };
 
-  const selectedRow = chainRows.find((row) => row.k === contract.strike) || null;
-  const selectedProviderContractId =
-    contract.cp === "P"
-      ? selectedRow?.pContract?.providerContractId
-      : selectedRow?.cContract?.providerContractId;
-  pushProviderContractId(selectedProviderContractId);
+  pushProviderContractId(
+    collected,
+    seen,
+    resolveSelectedProviderContractId({ chainRows, contract }),
+  );
 
   heldContracts.forEach((holding) => {
-    pushProviderContractId(holding.providerContractId);
+    pushProviderContractId(collected, seen, holding?.providerContractId);
   });
 
   visibleRows.forEach((row) => {
-    pushProviderContractId(row.cContract?.providerContractId);
-    pushProviderContractId(row.pContract?.providerContractId);
+    pushProviderContractId(collected, seen, row.cContract?.providerContractId);
+    pushProviderContractId(collected, seen, row.pContract?.providerContractId);
   });
-
-  const centerStrike =
-    selectedRow?.k ??
-    chainRows.find((row) => row.isAtm)?.k ??
-    contract.strike ??
-    null;
-
-  [...chainRows]
-    .sort((left, right) => {
-      if (centerStrike == null) {
-        return left.k - right.k;
-      }
-      return (
-        Math.abs(left.k - centerStrike) - Math.abs(right.k - centerStrike) ||
-        left.k - right.k
-      );
-    })
-    .forEach((row) => {
-      pushProviderContractId(row.cContract?.providerContractId);
-      pushProviderContractId(row.pContract?.providerContractId);
-    });
 
   return collected;
 };
 
-export const resolveOptionQuoteLineBudget = ({
-  active = true,
-  configuredLimit = null,
-} = {}) => {
-  const baseBudget = active
-    ? ACTIVE_OPTION_QUOTE_LINE_BUDGET
-    : BACKGROUND_OPTION_QUOTE_LINE_BUDGET;
-  const normalizedConfiguredLimit =
-    Number.isFinite(configuredLimit) && configuredLimit > 0
-      ? Math.floor(configuredLimit)
-      : null;
-
-  return Math.max(
-    0,
-    normalizedConfiguredLimit == null
-      ? baseBudget
-      : Math.min(baseBudget, normalizedConfiguredLimit),
-  );
-};
-
-export const selectRotatingProviderContractIds = ({
-  providerContractIds = [],
-  lineBudget = DEFAULT_OPTION_QUOTE_LINE_BUDGET,
-  rotationIndex = 0,
+export const buildTradeOptionQuoteSubscriptionPlan = ({
+  chainRows = [],
+  contract = {},
+  heldContracts = [],
+  visibleRows = [],
 }) => {
-  const normalizedBudget = Math.max(0, Math.floor(lineBudget));
-  if (normalizedBudget <= 0) {
-    return {
-      activeProviderContractIds: [],
-      pinnedProviderContractIds: [],
-      rotatingProviderContractIds: providerContractIds,
-      pendingProviderContractIds: providerContractIds,
-    };
-  }
+  const executionProviderContractIds = [];
+  const executionSeen = new Set();
 
-  if (providerContractIds.length <= normalizedBudget) {
-    return {
-      activeProviderContractIds: providerContractIds,
-      pinnedProviderContractIds: providerContractIds,
-      rotatingProviderContractIds: [],
-      pendingProviderContractIds: [],
-    };
-  }
+  pushProviderContractId(
+    executionProviderContractIds,
+    executionSeen,
+    resolveSelectedProviderContractId({ chainRows, contract }),
+  );
+  heldContracts.forEach((holding) => {
+    pushProviderContractId(
+      executionProviderContractIds,
+      executionSeen,
+      holding?.providerContractId,
+    );
+  });
 
-  const pinnedBudget = Math.max(1, Math.floor(normalizedBudget / 2));
-  const pinnedProviderContractIds = providerContractIds.slice(0, pinnedBudget);
-  const rotatingProviderContractIds = providerContractIds.slice(pinnedBudget);
-  const rotatingBudget = normalizedBudget - pinnedProviderContractIds.length;
-  const start =
-    rotatingProviderContractIds.length > 0
-      ? (rotationIndex * rotatingBudget) % rotatingProviderContractIds.length
-      : 0;
-  const activeRotatingProviderContractIds =
-    rotatingBudget > 0
-      ? Array.from(
-          { length: Math.min(rotatingBudget, rotatingProviderContractIds.length) },
-          (_, offset) => {
-            const index = (start + offset) % rotatingProviderContractIds.length;
-            return rotatingProviderContractIds[index];
-          },
-        )
-      : [];
-  const activeProviderContractIds = [
-    ...pinnedProviderContractIds,
-    ...activeRotatingProviderContractIds,
-  ];
-  const activeSet = new Set(activeProviderContractIds);
+  const visibleProviderContractIds = [];
+  const visibleSeen = new Set(executionProviderContractIds);
+  visibleRows.forEach((row) => {
+    pushProviderContractId(
+      visibleProviderContractIds,
+      visibleSeen,
+      row.cContract?.providerContractId,
+    );
+    pushProviderContractId(
+      visibleProviderContractIds,
+      visibleSeen,
+      row.pContract?.providerContractId,
+    );
+  });
 
   return {
-    activeProviderContractIds,
-    pinnedProviderContractIds,
-    rotatingProviderContractIds,
-    pendingProviderContractIds: providerContractIds.filter(
-      (providerContractId) => !activeSet.has(providerContractId),
-    ),
+    executionProviderContractIds,
+    visibleProviderContractIds,
+    requestedProviderContractIds: [
+      ...executionProviderContractIds,
+      ...visibleProviderContractIds,
+    ],
   };
 };

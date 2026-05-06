@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildMiniChartBarsFromApi,
   resolveBrokerChartSourceState,
+  resolveOptionChartSourceState,
 } from "./chartApiBars.js";
+
+const readLocalSource = (path) =>
+  readFileSync(new URL(path, import.meta.url), "utf8");
 
 test("buildMiniChartBarsFromApi preserves source freshness metadata", () => {
   const [bar] = buildMiniChartBarsFromApi([
@@ -114,4 +119,57 @@ test("resolveBrokerChartSourceState identifies delayed fallback feeds", () => {
   assert.equal(state.label, "DELAYED");
   assert.equal(state.isDelayed, true);
   assert.equal(state.isDegraded, true);
+});
+
+test("resolveBrokerChartSourceState marks stream fallback as degraded", () => {
+  const state = resolveBrokerChartSourceState({
+    latestBar: {
+      source: "ibkr-history",
+      freshness: "live",
+      marketDataMode: "live",
+    },
+    status: "fallback",
+    timeframe: "1m",
+    streamingEnabled: true,
+    market: "stocks",
+  });
+
+  assert.equal(state.state, "fallback");
+  assert.equal(state.label, "FALLBACK");
+  assert.equal(state.tone, "warn");
+  assert.equal(state.isFallback, true);
+  assert.equal(state.isDegraded, true);
+});
+
+test("resolveOptionChartSourceState exposes stale cached option history", () => {
+  const state = resolveOptionChartSourceState({
+    identityReady: true,
+    latestBar: {
+      source: "ibkr-history",
+      freshness: "live",
+      marketDataMode: "live",
+    },
+    status: "live",
+    timeframe: "1m",
+    liveDataEnabled: true,
+    dataSource: "ibkr-history",
+    responseFreshness: "live",
+    cacheStale: true,
+  });
+
+  assert.equal(state.state, "stale");
+  assert.equal(state.label, "STALE");
+  assert.equal(state.tone, "warn");
+  assert.equal(state.freshness, "stale");
+});
+
+test("display chart price fallback stays on IBKR-only bars", () => {
+  const source = readLocalSource("./chartApiBars.js");
+  const fallbackBody = source.match(
+    /export const useDisplayChartPriceFallbackBars = \([\s\S]*?\n\};/,
+  )?.[0];
+
+  assert.ok(fallbackBody, "display chart price fallback hook should exist");
+  assert.match(fallbackBody, /allowHistoricalSynthesis:\s*false/);
+  assert.doesNotMatch(fallbackBody, /allowHistoricalSynthesis:\s*true/);
 });

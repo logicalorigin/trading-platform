@@ -114,6 +114,11 @@ const readContractLabel = (event: ChartEvent): string =>
       "",
   ).trim();
 
+const isSnapshotActivityEvent = (event: ChartEvent): boolean =>
+  event.metadata?.basis === "snapshot" ||
+  event.metadata?.sourceBasis === "snapshot_activity" ||
+  event.metadata?.confidence === "snapshot_activity";
+
 const readTags = (event: ChartEvent): string[] => {
   const tags = new Set<string>();
   const rawType = normalizeTag(event.metadata?.type ?? event.metadata?.tradeType);
@@ -270,9 +275,18 @@ export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel
       : bucket.bias === "bearish"
         ? "Bearish"
         : "Mixed";
+  const snapshotOnly = bucket.events.every(isSnapshotActivityEvent);
+  const title =
+    bucket.count > 1
+      ? snapshotOnly
+        ? `${bucket.count} active contracts`
+        : `${bucket.count} flow events`
+      : snapshotOnly
+        ? "Active contract flow"
+        : "Flow event";
 
   return {
-    title: bucket.count > 1 ? `${bucket.count} unusual flow prints` : "Unusual flow",
+    title,
     summary: `${compactCurrency(bucket.totalPremium)} premium · ${sentiment}`,
     premium: compactCurrency(bucket.totalPremium),
     contracts: bucket.totalContracts > 0 ? compactNumber(bucket.totalContracts) : "n/a",

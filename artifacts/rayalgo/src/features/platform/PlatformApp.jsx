@@ -18,7 +18,6 @@ import {
   getListSignalMonitorEventsQueryKey,
   useEvaluateSignalMonitor,
   useEvaluateSignalMonitorMatrix,
-  useGetResearchEarningsCalendar,
   useGetSignalMonitorProfile,
   useGetSignalMonitorState,
   useListSignalMonitorEvents,
@@ -46,6 +45,7 @@ import {
 } from "../market/marketReferenceData";
 import {
   getOptionQuoteSnapshotCacheSize,
+  useBrokerStreamFreshnessSnapshot,
   useIbkrAccountSnapshotStream,
   useIbkrOrderSnapshotStream,
   useShadowAccountSnapshotStream,
@@ -60,6 +60,7 @@ import {
   getRuntimeWorkloadStats,
   useRuntimeWorkloadFlag,
 } from "./workloadStats";
+import { useMemoryPressureMonitor } from "./useMemoryPressureSignal";
 import { PlatformShell } from "./PlatformShell.jsx";
 import { PlatformProviders } from "./PlatformProviders.jsx";
 import { PlatformRuntimeLayer } from "./PlatformRuntimeLayer.jsx";
@@ -94,38 +95,14 @@ import {
 import {
   normalizeSignalMonitorTimeframe,
 } from "./marketActivityLaneModel";
-import {
-  getFlowEventOptionCp,
-} from "./flowActionModel";
 import { publishMarketAlertsSnapshot } from "./marketAlertsStore";
 import {
   publishSignalMonitorSnapshot,
 } from "./signalMonitorStore";
 import {
-  activeWatchlistSymbols as buildActiveWatchlistSymbols,
-  allWatchlistSymbols as buildAllWatchlistSymbols,
-  buildWatchlistEarningsSymbols,
   buildWatchlistIdentityPayload,
-  buildWatchlistPositionSymbols,
   buildWatchlistRows,
 } from "./watchlistModel";
-import {
-  applyLinkedWorkspaceBroadcast,
-  getLinkedWorkspacePanelsForGroup,
-  normalizeLinkedWorkspaceState,
-  resolveLinkedWorkspacePanelContext,
-  setLinkedWorkspaceActiveGroup,
-  setLinkedWorkspacePanelGroup,
-} from "./linkedWorkspaceModel";
-import {
-  WORKSPACE_PRESET_DEFINITIONS,
-  buildWorkspacePresetStoragePatch,
-  captureWorkspacePresetSnapshot,
-  normalizeWorkspacePresetsState,
-  restoreWorkspacePresetDefaults,
-  switchWorkspacePreset,
-} from "./workspacePresetModel";
-import { setFlowTapeFilterState } from "./flowFilterStore";
 import {
   getTradeFlowStoreEntryCount,
 } from "./tradeFlowStore";
@@ -139,10 +116,12 @@ import {
   setCurrentScale,
   setCurrentTheme,
 } from "../../lib/uiTokens";
+import { setHydrationPressureState } from "./hydrationCoordinator";
+import { buildPlatformWorkSchedule } from "./appWorkScheduler.js";
+import { resolveIbkrWorkPressure } from "./workPressureModel.js";
 import {
   _initialState,
   persistState,
-  readPersistedState,
 } from "../../lib/workspaceState";
 import { preloadDynamicImport } from "../../lib/dynamicImport";
 import { getMemoryPressureSnapshot } from "./memoryPressureStore";
@@ -230,11 +209,8 @@ const scheduleIdleWork = (callback, timeout = 1_500) => {
 export default function PlatformApp() {
   const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
+  const memoryPressureSignal = useMemoryPressureMonitor();
   const userPreferences = useUserPreferences();
-  const initialScreen =
-    _initialState.screen === "unusual"
-      ? "flow"
-      : _initialState.screen || "market";
   const previousPageVisibleRef = useRef(pageVisible);
   const latencyDebugEnabled = useMemo(
     () =>
@@ -242,38 +218,23 @@ export default function PlatformApp() {
       new URLSearchParams(window.location.search).get("latency") === "1",
     [],
   );
-  const [screen, setScreen] = useState(() => initialScreen);
+  const [screen, setScreen] = useState(() =>
+    _initialState.screen === "unusual"
+      ? "flow"
+      : _initialState.screen || "market",
+  );
   const [mountedScreens, setMountedScreens] = useState(() =>
-    buildMountedScreenState(initialScreen),
+    buildMountedScreenState(
+      _initialState.screen === "unusual"
+        ? "flow"
+        : _initialState.screen || "market",
+    ),
   );
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
   const [sym, setSym] = useState(_initialState.sym || "SPY");
-  const [marketSym, setMarketSym] = useState(
-    _initialState.marketActiveSymbol || _initialState.sym || "SPY",
-  );
-  const [linkedWorkspace, setLinkedWorkspace] = useState(() =>
-    normalizeLinkedWorkspaceState(_initialState.linkedWorkspace, {
-      symbol: _initialState.sym || "SPY",
-      timeframe:
-        _initialState.marketGridSlots?.[0]?.tf ||
-        _initialState.tradeWorkspaces?.[_initialState.tradeActiveTicker]?.equityChart?.timeframe ||
-        "15m",
-    }),
-  );
-  const linkedWorkspaceRef = useRef(linkedWorkspace);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
   );
-  const [workspacePresetState, setWorkspacePresetState] = useState(() =>
-    normalizeWorkspacePresetsState(_initialState.workspacePresets, {
-      screen: initialScreen,
-      sidebarCollapsed: Boolean(_initialState.sidebarCollapsed),
-      linkedWorkspace: _initialState.linkedWorkspace,
-      workspaceState: _initialState,
-    }),
-  );
-  const workspacePresetStateRef = useRef(workspacePresetState);
-  const [workspacePresetRevision, setWorkspacePresetRevision] = useState(0);
   const [theme, setTheme] = useState(_initialState.theme || "dark");
   const [, setUiPreferenceRevision] = useState(0);
   const appearancePreferences = userPreferences.preferences?.appearance || {};
@@ -410,14 +371,38 @@ export default function PlatformApp() {
     const fallback = watchlistsQuery.data?.watchlists?.length
       ? []
       : WATCHLIST.map((item) => item.sym);
-    const unique = buildActiveWatchlistSymbols(activeWatchlist, fallback);
+    const unique = [
+      ...new Set(
+        buildWatchlistRows({
+          activeWatchlist,
+          fallbackSymbols: fallback,
+          signalStates: [],
+        })
+          .map((item) => item.sym)
+          .filter(Boolean),
+      ),
+    ];
     return unique.length ? unique : ["SPY"];
   }, [activeWatchlist, watchlistsQuery.data]);
   const allWatchlistSymbolList = useMemo(() => {
     const fallback = watchlistsQuery.data?.watchlists?.length
       ? []
       : WATCHLIST.map((item) => item.sym);
-    const unique = buildAllWatchlistSymbols(watchlists, fallback);
+    const sourceWatchlists = Array.isArray(watchlists) ? watchlists : [];
+    const symbols = sourceWatchlists.length
+      ? sourceWatchlists.flatMap((watchlist) =>
+          buildWatchlistRows({
+            activeWatchlist: watchlist,
+            fallbackSymbols: [],
+            signalStates: [],
+          }).map((item) => item.sym),
+        )
+      : buildWatchlistRows({
+          activeWatchlist: null,
+          fallbackSymbols: fallback,
+          signalStates: [],
+        }).map((item) => item.sym);
+    const unique = [...new Set(symbols.filter(Boolean))];
     return unique.length ? unique : watchlistSymbols;
   }, [watchlistSymbols, watchlists, watchlistsQuery.data]);
   const marketScreenWarm = Boolean(mountedScreens.market);
@@ -430,7 +415,16 @@ export default function PlatformApp() {
       ) || "SPY",
     [sym, watchlistSymbols],
   );
-  const tradeBackgroundWarmupReady = sessionMetadataSettled;
+  const memoryPressureObserved = Boolean(
+    memoryPressureSignal?.observedAt || memoryPressureSignal?.measurement,
+  );
+  const memoryAllowsBackgroundWarmup = Boolean(
+    memoryPressureObserved && memoryPressureSignal?.level === "normal",
+  );
+  const memoryAllowsIdlePrefetch = memoryAllowsBackgroundWarmup;
+  const tradeBackgroundWarmupReady = Boolean(
+    sessionMetadataSettled && memoryAllowsBackgroundWarmup,
+  );
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -507,8 +501,8 @@ export default function PlatformApp() {
   );
   const accountRealtimeEnabled = Boolean(
     pageVisible &&
-      sessionQuery.data?.ibkrBridge?.authenticated &&
-      sessionQuery.data?.ibkrBridge?.healthFresh !== false,
+      sessionQuery.data?.configured?.ibkr &&
+      sessionQuery.data?.ibkrBridge?.authenticated,
   );
   useIbkrAccountSnapshotStream({
     accountId: null,
@@ -713,15 +707,14 @@ export default function PlatformApp() {
       upsertWatchlistInCache(watchlist);
       invalidateWatchlists();
       if (variables?.symbol) {
-        const nextSym = normalizeTickerSymbol(variables.symbol);
-        if (nextSym) {
-          ensureTradeTickerInfo(nextSym, nextSym);
-          broadcastLinkedWorkspace({
-            sourcePanel: "watchlist",
-            symbol: nextSym,
-            updatedAt: new Date().toISOString(),
-          });
-        }
+        const nextSym = variables.symbol.toUpperCase();
+        setSym(nextSym);
+        setMarketSymPing((prev) => ({ sym: nextSym, n: prev.n + 1 }));
+        setTradeSymPing((prev) => ({
+          sym: nextSym,
+          n: prev.n + 1,
+          contract: null,
+        }));
       }
       pushToast({
         title: `Added ${variables?.symbol?.toUpperCase?.() || "symbol"}`,
@@ -865,7 +858,6 @@ export default function PlatformApp() {
 
     const nextSym = watchlistSymbols[0];
     setSym(nextSym);
-    setMarketSym(nextSym);
     setTradeSymPing((prev) => ({ sym: nextSym, n: prev.n + 1 }));
   }, [screen, watchlistSymbols, sym]);
 
@@ -879,6 +871,17 @@ export default function PlatformApp() {
   const gatewayTradingReadiness = resolveGatewayTradingReadiness(session);
   const gatewayTradingReady = gatewayTradingReadiness.ready;
   const gatewayTradingMessage = gatewayTradingReadiness.message;
+  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot();
+  const accountOrderStreamsFresh = Boolean(
+    brokerStreamFreshness.accountFresh && brokerStreamFreshness.orderFresh,
+  );
+  const effectiveGatewayTradingReady = Boolean(
+    gatewayTradingReady && accountOrderStreamsFresh,
+  );
+  const effectiveGatewayTradingMessage =
+    gatewayTradingReady && !accountOrderStreamsFresh
+      ? "Broker account and order streams are stale; live trading is paused until realtime account state refreshes."
+      : gatewayTradingMessage;
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
@@ -893,29 +896,6 @@ export default function PlatformApp() {
     selectedAccountId ||
     null;
   const researchConfigured = Boolean(session?.configured?.research);
-  const watchlistEarningsQuery = useGetResearchEarningsCalendar(
-    preloadCalendarWindow,
-    {
-      query: {
-        enabled: Boolean(
-          pageVisible &&
-            researchConfigured &&
-            preloadCalendarWindow.from &&
-            preloadCalendarWindow.to,
-        ),
-        staleTime: 300_000,
-        refetchInterval: pageVisible ? 300_000 : false,
-        retry: false,
-      },
-    },
-  );
-  const watchlistEarningsSymbols = useMemo(
-    () =>
-      buildWatchlistEarningsSymbols(watchlistEarningsQuery.data?.entries || [], {
-        horizonDays: 14,
-      }),
-    [watchlistEarningsQuery.data],
-  );
 
   useEffect(() => {
     setBrokerStockAggregateStreamPaused(!pageVisible);
@@ -976,6 +956,7 @@ export default function PlatformApp() {
 
   useEffect(() => {
     if (!tradeBackgroundWarmupReady) {
+      screenWarmupStartedRef.current = false;
       return;
     }
 
@@ -1025,7 +1006,7 @@ export default function PlatformApp() {
   }, [screen, tradeBackgroundWarmupReady]);
 
   useEffect(() => {
-    if (!sessionMetadataSettled) {
+    if (!sessionMetadataSettled || !memoryAllowsIdlePrefetch) {
       return undefined;
     }
 
@@ -1105,6 +1086,7 @@ export default function PlatformApp() {
     };
   }, [
     environment,
+    memoryAllowsIdlePrefetch,
     preloadCalendarWindow,
     queryClient,
     researchConfigured,
@@ -1120,10 +1102,6 @@ export default function PlatformApp() {
         refetchInterval: false,
       },
     },
-  );
-  const watchlistPositionSymbols = useMemo(
-    () => buildWatchlistPositionSymbols(positionAlertsQuery.data?.positions || []),
-    [positionAlertsQuery.data],
   );
   const alertingPositions = useMemo(() => {
     if (!brokerConfigured || !brokerAuthenticated || !primaryAccountId) {
@@ -1221,6 +1199,40 @@ export default function PlatformApp() {
     },
   );
   const signalMonitorProfile = signalMonitorProfileQuery.data || null;
+  const ibkrWorkPressure = useMemo(
+    () => resolveIbkrWorkPressure(session?.ibkrBridge),
+    [session?.ibkrBridge],
+  );
+  const workSchedule = useMemo(
+    () =>
+      buildPlatformWorkSchedule({
+        pageVisible,
+        sessionMetadataSettled,
+        activeScreen: screen,
+        screenWarmupPhase,
+        ibkrWorkPressure,
+        memoryPressure: memoryPressureSignal,
+        brokerConfigured,
+        brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
+        automationEnabled: Boolean(signalMonitorProfile?.enabled),
+        tradingEnabled: Boolean(gatewayTradingReady),
+      }),
+    [
+      brokerConfigured,
+      gatewayTradingReady,
+      ibkrWorkPressure,
+      memoryPressureSignal,
+      pageVisible,
+      screen,
+      screenWarmupPhase,
+      sessionMetadataSettled,
+      session?.ibkrBridge?.authenticated,
+      signalMonitorProfile?.enabled,
+    ],
+  );
+  useEffect(() => {
+    setHydrationPressureState(workSchedule.hydrationPressure);
+  }, [workSchedule.hydrationPressure]);
   useRuntimeWorkloadFlag("signal-monitor:profile", Boolean(pageVisible), {
     kind: "poll",
     label: "Signal profile",
@@ -1338,17 +1350,9 @@ export default function PlatformApp() {
     timeframes: ["2m", "5m", "15m"],
   }));
   const signalMatrixEvaluationInFlightRef = useRef(false);
-  const signalMatrixSymbols = useMemo(() => {
-    const maxSymbols = clampNumber(
-      Number(signalMonitorProfile?.maxSymbols) || 50,
-      1,
-      250,
-    );
-    return allWatchlistSymbolList.slice(0, maxSymbols);
-  }, [allWatchlistSymbolList, signalMonitorProfile?.maxSymbols]);
   const signalMatrixSymbolsKey = useMemo(
-    () => signalMatrixSymbols.join(","),
-    [signalMatrixSymbols],
+    () => watchlistSymbols.join(","),
+    [watchlistSymbols],
   );
   const evaluateSignalMonitorMatrixMutation = useEvaluateSignalMonitorMatrix({
     mutation: {
@@ -1374,19 +1378,20 @@ export default function PlatformApp() {
     evaluateSignalMonitorMatrixMutation.mutate({
       data: {
         environment,
-        watchlistId: null,
-        symbols: signalMatrixSymbols,
+        watchlistId: activeWatchlist?.id || null,
+        symbols: activeWatchlist?.id ? undefined : watchlistSymbols,
         timeframes: ["2m", "5m", "15m"],
       },
     });
   }, [
+    activeWatchlist?.id,
     environment,
     evaluateSignalMonitorMatrixMutation.mutate,
     signalMatrixSymbolsKey,
-    signalMatrixSymbols,
+    watchlistSymbols,
   ]);
   useEffect(() => {
-    if (!pageVisible || !signalMatrixSymbols.length) {
+    if (!pageVisible || !watchlistSymbols.length) {
       return undefined;
     }
 
@@ -1398,7 +1403,7 @@ export default function PlatformApp() {
     runSignalMatrixEvaluation,
     signalMonitorPollMs,
     signalMatrixSymbolsKey,
-    signalMatrixSymbols.length,
+    watchlistSymbols.length,
   ]);
   const runSignalMonitorEvaluation = useCallback(
     (mode = "incremental") => {
@@ -1478,16 +1483,6 @@ export default function PlatformApp() {
     persistState({ sym });
   }, [sym]);
   useEffect(() => {
-    persistState({ marketActiveSymbol: marketSym });
-  }, [marketSym]);
-  useEffect(() => {
-    linkedWorkspaceRef.current = linkedWorkspace;
-    persistState({ linkedWorkspace });
-  }, [linkedWorkspace]);
-  useEffect(() => {
-    workspacePresetStateRef.current = workspacePresetState;
-  }, [workspacePresetState]);
-  useEffect(() => {
     persistState({ sidebarCollapsed });
   }, [sidebarCollapsed]);
   useEffect(() => {
@@ -1537,178 +1532,6 @@ export default function PlatformApp() {
     setTheme(next);
     userPreferences.patch({ appearance: { theme: next } });
   }, [theme, userPreferences]);
-  const marketLinkedContext = useMemo(
-    () =>
-      resolveLinkedWorkspacePanelContext(linkedWorkspace, "market", {
-        symbol: marketSym,
-        timeframe: _initialState.marketGridSlots?.[0]?.tf || "15m",
-      }),
-    [linkedWorkspace, marketSym],
-  );
-  const tradeLinkedContext = useMemo(
-    () =>
-      resolveLinkedWorkspacePanelContext(linkedWorkspace, "trade", {
-        symbol: tradeSymPing.sym || sym,
-        timeframe:
-          _initialState.tradeWorkspaces?.[tradeSymPing.sym]?.equityChart?.timeframe ||
-          "5m",
-      }),
-    [linkedWorkspace, sym, tradeSymPing.sym],
-  );
-  const flowLinkedContext = useMemo(
-    () =>
-      resolveLinkedWorkspacePanelContext(linkedWorkspace, "flow", {
-        symbol: sym,
-        timeframe: marketLinkedContext.timeframe || "15m",
-      }),
-    [linkedWorkspace, marketLinkedContext.timeframe, sym],
-  );
-  const accountLinkedContext = useMemo(
-    () =>
-      resolveLinkedWorkspacePanelContext(linkedWorkspace, "account", {
-        symbol: sym,
-        timeframe: tradeLinkedContext.timeframe || "5m",
-      }),
-    [linkedWorkspace, sym, tradeLinkedContext.timeframe],
-  );
-  const researchLinkedContext = useMemo(
-    () =>
-      resolveLinkedWorkspacePanelContext(linkedWorkspace, "research", {
-        symbol: sym,
-        timeframe: marketLinkedContext.timeframe || "15m",
-      }),
-    [linkedWorkspace, marketLinkedContext.timeframe, sym],
-  );
-  const handleSetLinkedWorkspacePanelGroup = useCallback((panelId, groupId) => {
-    let next = setLinkedWorkspacePanelGroup(
-      linkedWorkspaceRef.current,
-      panelId,
-      groupId,
-    );
-    if (groupId) {
-      next = setLinkedWorkspaceActiveGroup(next, groupId);
-    }
-    linkedWorkspaceRef.current = next;
-    setLinkedWorkspace(next);
-    const group = groupId ? next.groups[groupId] : null;
-    if (!group?.symbol) {
-      return;
-    }
-    setSym(group.symbol);
-    if (panelId === "market") {
-      setMarketSym(group.symbol);
-      setMarketSymPing((prev) => ({ sym: group.symbol, n: prev.n + 1 }));
-    }
-    if (panelId === "trade") {
-      ensureTradeTickerInfo(group.symbol, group.symbol);
-      setTradeSymPing((prev) => ({
-        sym: group.symbol,
-        n: prev.n + 1,
-        contract: null,
-      }));
-    }
-  }, []);
-  const applyLinkedSymbolContext = useCallback((nextState, options = {}) => {
-    const groupId = nextState.lastBroadcast?.groupId || nextState.activeGroup;
-    const group = nextState.groups[groupId];
-    if (!group?.symbol) {
-      return;
-    }
-    const linkedPanels = new Set(getLinkedWorkspacePanelsForGroup(nextState, groupId));
-    setSym(group.symbol);
-    if (linkedPanels.has("market")) {
-      setMarketSym(group.symbol);
-      setMarketSymPing((prev) => ({ sym: group.symbol, n: prev.n + 1 }));
-    }
-    if (linkedPanels.has("trade")) {
-      ensureTradeTickerInfo(group.symbol, group.symbol);
-      setTradeSymPing((prev) => ({
-        sym: group.symbol,
-        n: prev.n + 1,
-        contract: options.contract ?? null,
-        ...(Object.prototype.hasOwnProperty.call(options, "automationCandidate")
-          ? { automationCandidate: options.automationCandidate }
-          : {}),
-      }));
-    }
-  }, []);
-  const broadcastLinkedWorkspace = useCallback((payload, options = {}) => {
-    const next = applyLinkedWorkspaceBroadcast(
-      linkedWorkspaceRef.current,
-      payload,
-    );
-    linkedWorkspaceRef.current = next;
-    setLinkedWorkspace(next);
-    applyLinkedSymbolContext(next, options);
-    return next;
-  }, [applyLinkedSymbolContext]);
-
-  const buildCurrentWorkspacePresetSnapshot = useCallback(
-    (presetId = workspacePresetStateRef.current.activePresetId) =>
-      captureWorkspacePresetSnapshot(
-        {
-          screen,
-          sidebarCollapsed,
-          linkedWorkspace: linkedWorkspaceRef.current,
-          workspaceState: readPersistedState(),
-        },
-        presetId,
-      ),
-    [screen, sidebarCollapsed],
-  );
-
-  const applyWorkspacePresetSnapshot = useCallback((snapshot, nextPresetState) => {
-    const storagePatch = buildWorkspacePresetStoragePatch(snapshot);
-    const nextLinkedWorkspace = setLinkedWorkspaceActiveGroup(
-      linkedWorkspaceRef.current,
-      snapshot.activeLinkedGroup,
-    );
-
-    linkedWorkspaceRef.current = nextLinkedWorkspace;
-    setLinkedWorkspace(nextLinkedWorkspace);
-    setFlowTapeFilterState({
-      activeFlowPresetId: storagePatch.flowActivePresetId,
-      filter: storagePatch.flowFilter,
-      minPrem: storagePatch.flowMinPrem,
-      includeQuery: storagePatch.flowIncludeQuery,
-      excludeQuery: storagePatch.flowExcludeQuery,
-    });
-
-    startTransition(() => {
-      setScreen(storagePatch.screen);
-      setSidebarCollapsed(storagePatch.sidebarCollapsed);
-    });
-    persistState({
-      ...storagePatch,
-      linkedWorkspace: nextLinkedWorkspace,
-      workspacePresets: nextPresetState,
-    });
-    setWorkspacePresetRevision((revision) => revision + 1);
-  }, []);
-
-  const handleWorkspacePresetChange = useCallback(
-    (presetId) => {
-      const currentState = workspacePresetStateRef.current;
-      const currentSnapshot = buildCurrentWorkspacePresetSnapshot(
-        currentState.activePresetId,
-      );
-      const result = switchWorkspacePreset(currentState, presetId, currentSnapshot);
-      workspacePresetStateRef.current = result.state;
-      setWorkspacePresetState(result.state);
-      applyWorkspacePresetSnapshot(result.snapshot, result.state);
-    },
-    [applyWorkspacePresetSnapshot, buildCurrentWorkspacePresetSnapshot],
-  );
-
-  const handleRestoreWorkspacePreset = useCallback(() => {
-    const result = restoreWorkspacePresetDefaults(
-      workspacePresetStateRef.current,
-      workspacePresetStateRef.current.activePresetId,
-    );
-    workspacePresetStateRef.current = result.state;
-    setWorkspacePresetState(result.state);
-    applyWorkspacePresetSnapshot(result.snapshot, result.state);
-  }, [applyWorkspacePresetSnapshot]);
 
   const handleSelectWatchlist = useCallback((watchlistId) => {
     setActiveWatchlistId(watchlistId);
@@ -1722,30 +1545,21 @@ export default function PlatformApp() {
       return;
     }
     ensureTradeTickerInfo(normalized, normalized);
-    broadcastLinkedWorkspace({
-      sourcePanel: "watchlist",
-      symbol: normalized,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [broadcastLinkedWorkspace]);
-  const handleFocusMarketChart = useCallback((newSym, context = {}) => {
+    setSym(normalized);
+    setMarketSymPing((prev) => ({ sym: normalized, n: prev.n + 1 }));
+    setTradeSymPing((prev) => ({
+      sym: normalized,
+      n: prev.n + 1,
+      contract: null,
+    }));
+  }, []);
+  const handleFocusMarketChart = useCallback((newSym) => {
     const normalized = normalizeTickerSymbol(newSym);
     if (!normalized) {
       return;
     }
-    const marketGroup = linkedWorkspaceRef.current?.panels?.market || null;
-    if (!marketGroup) {
-      setMarketSym(normalized);
-      setSym(normalized);
-      return;
-    }
-    broadcastLinkedWorkspace({
-      sourcePanel: "market",
-      symbol: normalized,
-      timeframe: context?.timeframe,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [broadcastLinkedWorkspace]);
+    setSym(normalized);
+  }, []);
 
   const handleSignalAction = useCallback((ticker, signal) => {
     const normalized = normalizeTickerSymbol(ticker);
@@ -1754,12 +1568,12 @@ export default function PlatformApp() {
     }
 
     ensureTradeTickerInfo(normalized, normalized);
-    broadcastLinkedWorkspace({
-      sourcePanel: "market",
-      symbol: normalized,
-      timeframe: signal?.timeframe,
-      updatedAt: new Date().toISOString(),
-    });
+    setSym(normalized);
+    setTradeSymPing((prev) => ({
+      sym: normalized,
+      n: prev.n + 1,
+      contract: null,
+    }));
     setScreen("trade");
     pushToast({
       title: `${normalized} ${String(signal?.currentSignalDirection || signal?.direction || "signal").toUpperCase()} signal`,
@@ -1772,7 +1586,7 @@ export default function PlatformApp() {
           : "success",
       duration: 2600,
     });
-  }, [broadcastLinkedWorkspace, pushToast]);
+  }, [pushToast]);
 
   const handleToggleSignalMonitor = useCallback(() => {
     const nextEnabled = !signalMonitorProfile?.enabled;
@@ -1904,45 +1718,24 @@ export default function PlatformApp() {
     });
   }, [activeWatchlist, reorderWatchlistMutation]);
 
-  // Jump to Trade tab from Flow with either the underlying chart or the contract ticket preloaded.
-  const handleJumpToTradeFromFlow = useCallback((evt, options = {}) => {
-    const ticker = normalizeTickerSymbol(
-      evt?.ticker || evt?.underlying || evt?.symbol,
-    );
+  // Jump to Trade tab from Flow drawer with a contract preloaded
+  const handleJumpToTradeFromFlow = useCallback((evt) => {
+    const ticker = evt.ticker?.toUpperCase?.() || evt.ticker;
     if (!ticker) return;
-    const mode = options?.mode === "underlying" ? "underlying" : "ticket";
-    const cp = getFlowEventOptionCp(evt);
-    const contract =
-      mode === "ticket"
-        ? {
-            strike: evt?.strike,
-            cp: cp || "C",
-            exp: formatExpirationLabel(evt?.expirationDate || evt?.exp),
-            providerContractId: evt?.providerContractId || null,
-            optionTicker: evt?.optionTicker || evt?.contract || null,
-          }
-        : null;
 
     ensureTradeTickerInfo(ticker, ticker);
-    broadcastLinkedWorkspace({
-      sourcePanel: "flow",
-      symbol: ticker,
-      updatedAt: new Date().toISOString(),
-    }, contract ? { contract } : {});
+    setSym(ticker);
+    setTradeSymPing((prev) => ({
+      sym: ticker,
+      n: prev.n + 1,
+      contract: {
+        strike: evt.strike,
+        cp: evt.cp,
+        exp: formatExpirationLabel(evt.expirationDate || evt.exp),
+      },
+    }));
     setScreen("trade");
-    pushToast({
-      title:
-        mode === "underlying"
-          ? `${ticker} chart opened from Flow`
-          : `${ticker} flow contract sent to Trade`,
-      body:
-        mode === "underlying"
-          ? "Trade is focused on the underlying equity chart."
-          : "Trade preloaded the flow contract in the selected option context.",
-      kind: "info",
-      duration: 2400,
-    });
-  }, [broadcastLinkedWorkspace, pushToast]);
+  }, []);
 
   const handleJumpToTradeFromSignalOptionsCandidate = useCallback((candidate) => {
     const ticker = candidate?.symbol?.toUpperCase?.() || candidate?.symbol;
@@ -1955,12 +1748,10 @@ export default function PlatformApp() {
     const right = selectedContract.right === "put" ? "P" : "C";
 
     ensureTradeTickerInfo(ticker, ticker);
-    broadcastLinkedWorkspace({
-      sourcePanel: "algo",
-      symbol: ticker,
-      timeframe: candidate?.timeframe,
-      updatedAt: new Date().toISOString(),
-    }, {
+    setSym(ticker);
+    setTradeSymPing((prev) => ({
+      sym: ticker,
+      n: prev.n + 1,
       contract: {
         strike: Number.isFinite(strike) ? strike : null,
         cp: right,
@@ -1968,7 +1759,7 @@ export default function PlatformApp() {
         providerContractId: selectedContract.providerContractId || null,
       },
       automationCandidate: candidate,
-    });
+    }));
     setScreen("trade");
     pushToast({
       title: `${ticker} signal-option context loaded`,
@@ -1976,7 +1767,7 @@ export default function PlatformApp() {
       kind: "info",
       duration: 2600,
     });
-  }, [broadcastLinkedWorkspace, pushToast]);
+  }, [pushToast]);
 
   // Jump to Trade tab from Research with a ticker preloaded.
   // Research passes a plain ticker string rather than a flow event.
@@ -1985,88 +1776,25 @@ export default function PlatformApp() {
     if (!normalized) return;
 
     ensureTradeTickerInfo(normalized, normalized);
-    broadcastLinkedWorkspace({
-      sourcePanel: "research",
-      symbol: normalized,
-      updatedAt: new Date().toISOString(),
-    });
+    setSym(normalized);
+    setTradeSymPing((prev) => ({
+      sym: normalized,
+      n: prev.n + 1,
+      contract: null,
+    }));
     setScreen("trade");
-  }, [broadcastLinkedWorkspace]);
-
-  const handleJumpToTradeFromMarket = useCallback((ticker) => {
-    const normalized = normalizeTickerSymbol(ticker);
-    if (!normalized) {
-      return;
-    }
-    ensureTradeTickerInfo(normalized, normalized);
-    broadcastLinkedWorkspace({
-      sourcePanel: "market",
-      symbol: normalized,
-      updatedAt: new Date().toISOString(),
-    });
-    setScreen("trade");
-  }, [broadcastLinkedWorkspace]);
+  }, []);
 
   const handleAccountJumpToTrade = useCallback((symbol) => {
-    const normalized = normalizeTickerSymbol(symbol);
-    if (!normalized) {
-      return;
-    }
-    ensureTradeTickerInfo(normalized, normalized);
-    broadcastLinkedWorkspace({
-      sourcePanel: "account",
-      symbol: normalized,
-      updatedAt: new Date().toISOString(),
-    });
+    handleSelectSymbol(symbol);
     setScreen("trade");
-  }, [broadcastLinkedWorkspace]);
-  const handleJumpToTradeFromBacktest = useCallback((symbol) => {
-    const normalized = normalizeTickerSymbol(symbol);
-    if (!normalized) {
-      return;
-    }
-    ensureTradeTickerInfo(normalized, normalized);
-    broadcastLinkedWorkspace({
-      sourcePanel: "external",
-      symbol: normalized,
-      updatedAt: new Date().toISOString(),
-    });
-    setScreen("trade");
-  }, [broadcastLinkedWorkspace]);
-  const broadcastPanelLinkedContext = useCallback((sourcePanel, { symbol, timeframe }) => {
-    const normalized = normalizeTickerSymbol(symbol);
-    if (!normalized && !timeframe) {
-      return;
-    }
-    broadcastLinkedWorkspace({
-      sourcePanel,
-      symbol: normalized || undefined,
-      timeframe,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [broadcastLinkedWorkspace]);
-  const handleTradeLinkedContextChange = useCallback(({ symbol, timeframe }) => {
-    broadcastPanelLinkedContext("trade", { symbol, timeframe });
-  }, [broadcastPanelLinkedContext]);
-  const handleMarketLinkedContextChange = useCallback(({ symbol, timeframe }) => {
-    broadcastPanelLinkedContext("market", { symbol, timeframe });
-  }, [broadcastPanelLinkedContext]);
-  const handleFlowLinkedContextChange = useCallback(({ symbol, timeframe }) => {
-    broadcastPanelLinkedContext("flow", { symbol, timeframe });
-  }, [broadcastPanelLinkedContext]);
-  const handleAccountLinkedContextChange = useCallback(({ symbol, timeframe }) => {
-    broadcastPanelLinkedContext("account", { symbol, timeframe });
-  }, [broadcastPanelLinkedContext]);
-  const handleResearchLinkedContextChange = useCallback(({ symbol, timeframe }) => {
-    broadcastPanelLinkedContext("research", { symbol, timeframe });
-  }, [broadcastPanelLinkedContext]);
+  }, [handleSelectSymbol]);
 
   const renderScreenById = (screenId) => (
     <PlatformScreenRouter
       screenId={screenId}
       screen={screen}
-      sym={marketSym}
-      tradeSym={tradeSymPing.sym || sym}
+      sym={sym}
       tradeSymPing={tradeSymPing}
       marketSymPing={marketSymPing}
       session={session}
@@ -2075,8 +1803,8 @@ export default function PlatformApp() {
       primaryAccountId={primaryAccountId}
       brokerConfigured={brokerConfigured}
       brokerAuthenticated={brokerAuthenticated}
-      gatewayTradingReady={gatewayTradingReady}
-      gatewayTradingMessage={gatewayTradingMessage}
+      gatewayTradingReady={effectiveGatewayTradingReady}
+      gatewayTradingMessage={effectiveGatewayTradingMessage}
       watchlistSymbols={watchlistSymbols}
       runtimeWatchlistSymbols={runtimeWatchlistSymbols}
       signalMonitorSymbols={signalMonitorSymbols}
@@ -2095,26 +1823,13 @@ export default function PlatformApp() {
       onToggleMonitor={handleToggleSignalMonitor}
       onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
       onChangeMonitorWatchlist={handleChangeSignalMonitorWatchlist}
-      onJumpToTradeFromMarket={handleJumpToTradeFromMarket}
       onJumpToTradeFromFlow={handleJumpToTradeFromFlow}
       onSelectTradingAccount={setSelectedAccountId}
       onJumpToTradeFromAccount={handleAccountJumpToTrade}
       onJumpToTradeFromResearch={handleJumpToTradeFromResearch}
-      onJumpToTradeFromBacktest={handleJumpToTradeFromBacktest}
       onJumpToTradeFromSignalOptionsCandidate={
         handleJumpToTradeFromSignalOptionsCandidate
       }
-      marketLinkedContext={marketLinkedContext}
-      tradeLinkedContext={tradeLinkedContext}
-      flowLinkedContext={flowLinkedContext}
-      accountLinkedContext={accountLinkedContext}
-      researchLinkedContext={researchLinkedContext}
-      onSetLinkedWorkspacePanelGroup={handleSetLinkedWorkspacePanelGroup}
-      onMarketLinkedContextChange={handleMarketLinkedContextChange}
-      onTradeLinkedContextChange={handleTradeLinkedContextChange}
-      onFlowLinkedContextChange={handleFlowLinkedContextChange}
-      onAccountLinkedContextChange={handleAccountLinkedContextChange}
-      onResearchLinkedContextChange={handleResearchLinkedContextChange}
       onToggleTheme={toggleTheme}
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
     />
@@ -2136,37 +1851,27 @@ export default function PlatformApp() {
         BroadFlowScannerRuntimeComponent={BroadFlowScannerRuntime}
         watchlistSymbols={runtimeWatchlistSymbols}
         broadFlowWatchlistSymbols={broadFlowWatchlistSymbols}
-        broadFlowActiveSymbols={watchlistSymbols}
         activeWatchlistItems={activeWatchlist?.items}
         quoteSymbols={runtimeQuoteSymbols}
         sparklineSymbols={runtimeSparklineSymbols}
         streamedQuoteSymbols={runtimeStreamedQuoteSymbols}
         streamedAggregateSymbols={runtimeStreamedAggregateSymbols}
-        marketStockAggregateStreamingEnabled={marketStockAggregateStreamingEnabled}
+        marketStockAggregateStreamingEnabled={
+          workSchedule.streams.marketStockAggregates
+        }
         marketScreenActive={marketScreenActive}
-        lowPriorityHistoryEnabled={
-          sessionMetadataSettled && screenWarmupPhase !== "initial"
-        }
-        flowRuntimeEnabled={
-          sessionMetadataSettled && flowScreenActive
-        }
+        lowPriorityHistoryEnabled={workSchedule.streams.lowPriorityHistory}
+        flowRuntimeEnabled={workSchedule.streams.sharedFlowRuntime}
         flowRuntimeIntervalMs={
           marketScreenActive || flowScreenActive ? 10_000 : 30_000
         }
-        broadFlowRuntimeEnabled={
-          sessionMetadataSettled && pageVisible
-        }
+        broadFlowRuntimeEnabled={workSchedule.streams.broadFlowRuntime}
       >
         <PlatformShell
             activeScreen={screen}
             mountedScreens={mountedScreens}
             setScreen={setScreen}
             renderScreenById={renderScreenById}
-            workspacePresets={WORKSPACE_PRESET_DEFINITIONS}
-            activeWorkspacePresetId={workspacePresetState.activePresetId}
-            workspacePresetRevision={workspacePresetRevision}
-            onWorkspacePresetChange={handleWorkspacePresetChange}
-            onRestoreWorkspacePreset={handleRestoreWorkspacePreset}
             fontCss={FONT_CSS}
             toasts={toasts}
             onDismissToast={dismissToast}
@@ -2177,12 +1882,11 @@ export default function PlatformApp() {
             HeaderStatusClusterComponent={MemoHeaderStatusCluster}
             HeaderBroadcastScrollerStackComponent={HeaderBroadcastScrollerStack}
             WatchlistComponent={MemoWatchlistContainer}
+            memoryPressureSignal={memoryPressureSignal}
             activeWatchlist={activeWatchlist}
             watchlistSymbols={watchlistSymbols}
             signalMonitorStates={signalMonitorStates}
             signalMatrixStates={signalMatrixSnapshot.states}
-            watchlistEarningsSymbols={watchlistEarningsSymbols}
-            watchlistPositionSymbols={watchlistPositionSymbols}
             selectedSymbol={sym}
             sidebarCollapsed={sidebarCollapsed}
             setSidebarCollapsed={setSidebarCollapsed}

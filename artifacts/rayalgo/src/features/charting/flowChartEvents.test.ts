@@ -144,3 +144,25 @@ test("buildFlowTooltipModel returns compact TradingView-style event details", ()
   assert.equal(tooltip.topContract, "AAPL 200C");
   assert.deepEqual(tooltip.tags, ["sweep"]);
 });
+
+test("buildFlowTooltipModel labels snapshot buckets as contract activity", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        metadata: {
+          basis: "snapshot",
+          sourceBasis: "snapshot_activity",
+          cp: "C",
+          premium: 450_000,
+          contracts: 300,
+          contractLabel: "SPY 500C",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  const tooltip = buildFlowTooltipModel(bucket);
+
+  assert.equal(tooltip.title, "Active contract flow");
+});

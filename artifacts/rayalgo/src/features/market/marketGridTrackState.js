@@ -134,10 +134,25 @@ export const resizeMarketGridRowPixels = (
   ) {
     return rowHeights;
   }
+
   const rowIndex = dividerIndex - 1;
-  return rowHeights.map((height, index) =>
-    index === rowIndex ? Math.max(minRowHeight, height + deltaPx) : height,
-  );
+  const nextRowIndex = dividerIndex;
+  const pairTotal = rowHeights[rowIndex] + rowHeights[nextRowIndex];
+  const safeMin = Math.max(24, Math.min(minRowHeight, pairTotal / 2 - 4));
+
+  if (!(pairTotal > safeMin * 2)) {
+    return rowHeights;
+  }
+
+  const nextRowHeights = [...rowHeights];
+  const unclampedTop = rowHeights[rowIndex] + deltaPx;
+  const nextTop = clampNumber(unclampedTop, safeMin, pairTotal - safeMin);
+  const nextBottom = pairTotal - nextTop;
+
+  nextRowHeights[rowIndex] = nextTop;
+  nextRowHeights[nextRowIndex] = nextBottom;
+
+  return nextRowHeights;
 };
 
 export const buildMarketGridResizeHandleKey = (

@@ -1,30 +1,27 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
-import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import { Card } from "../../components/platform/primitives.jsx";
-import { platformJsonRequest } from "../platform/platformJsonRequest";
-import { AppTooltip } from "@/components/ui/tooltip";
 import {
-  formatScannerCount,
-  resolveFlowScannerProgress,
-} from "./flowScannerStatusModel.js";
+  lineUsageTone,
+} from "../platform/runtimeControlModel.js";
+import { useRuntimeControlSnapshot } from "../platform/useRuntimeControlSnapshot.js";
+import { buildRecentScannerSymbols } from "./flowScannerStatusModel.js";
+import { AppTooltip } from "@/components/ui/tooltip";
+
+
+const safeCount = (value) =>
+  Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;
+
+const formatCount = (value) => {
+  const count = safeCount(value);
+  return count == null ? MISSING_VALUE : count.toLocaleString();
+};
 
 const formatRelative = (value) => {
   const timestamp = Number(value);
   if (!Number.isFinite(timestamp)) return null;
   return formatRelativeTimeShort(new Date(timestamp).toISOString());
-};
-
-const lineTone = (used, cap) => {
-  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
-    return T.textDim;
-  }
-  const ratio = used / cap;
-  if (ratio >= 0.95) return T.red;
-  if (ratio >= 0.75) return T.amber;
-  return T.textSec;
 };
 
 const ScannerMetric = ({ label, value, detail, tone = T.textSec }) => (
@@ -81,41 +78,6 @@ const ScannerMetric = ({ label, value, detail, tone = T.textSec }) => (
   </div>
 );
 
-const ScannerStatusChip = ({ label, value, tone = T.textSec, testId, title }) => (
-  <AppTooltip content={title || `${label}: ${value}`}>
-    <span
-      data-testid={testId}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(4),
-        minHeight: dim(20),
-        maxWidth: "100%",
-        padding: sp("2px 6px"),
-        border: `1px solid ${tone}32`,
-        background: `${tone}12`,
-        color: tone,
-        fontFamily: T.mono,
-        fontSize: fs(8),
-        fontWeight: 900,
-        lineHeight: 1,
-        textTransform: "uppercase",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span style={{ color: T.textMuted }}>{label}</span>
-      <span
-        style={{
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {value}
-      </span>
-    </span>
-  </AppTooltip>
-);
-
 const TickerChip = ({ symbol, label, tone, title }) => (
   <AppTooltip content={title}><span
     style={{
@@ -160,96 +122,65 @@ export const FlowScannerStatusPanel = ({
   dense = false,
   testId = "flow-scanner-status-panel",
 }) => {
-  const runtimeDiagnosticsQuery = useQuery({
-    queryKey: ["flow-scanner-status-runtime-diagnostics"],
-    queryFn: () =>
-      platformJsonRequest("/api/diagnostics/runtime", { timeoutMs: 0 }),
-    refetchInterval: enabled ? 5_000 : false,
-    retry: false,
-    staleTime: 2_000,
+  const runtimeControl = useRuntimeControlSnapshot({
+    enabled,
+    runtimeDiagnosticsEnabled: false,
+    lineUsageEnabled: enabled,
+    lineUsageStreamEnabled: false,
+    lineUsagePollInterval: 5_000,
   });
-  const admission =
-    runtimeDiagnosticsQuery.data?.ibkr?.streams?.marketDataAdmission || null;
-  const scannerUsed = admission?.flowScannerLineCount;
-  const scannerCap = admission?.budget?.flowScannerLineCap;
-  const scannerFree = admission?.flowScannerRemainingLineCount;
-  const totalUsed = admission?.activeLineCount;
-  const totalCap = admission?.budget?.maxLines;
-  const progress = useMemo(
-    () =>
-      resolveFlowScannerProgress({
-        coverage,
-        coverageModeLabel,
-        scannerConfig,
-        scannedCoverageSymbols,
-        totalCoverageSymbols,
-        intendedCoverageSymbols,
-        selectedCoverageSymbols,
-      }),
-    [
-      coverage,
-      coverageModeLabel,
-      intendedCoverageSymbols,
-      scannedCoverageSymbols,
-      scannerConfig,
-      selectedCoverageSymbols,
-      totalCoverageSymbols,
-    ],
+  const lineUsage = runtimeControl.lineUsage;
+  const scannerUsed = lineUsage.flowScanner?.used;
+  const scannerCap = lineUsage.flowScanner?.cap;
+  const accountMonitorUsed = lineUsage.accountMonitor?.used;
+  const accountMonitorCap = lineUsage.accountMonitor?.cap;
+  const totalUsed = lineUsage.total?.used;
+  const totalCap = lineUsage.total?.cap;
+  const currentBatch = Array.isArray(coverage.currentBatch)
+    ? coverage.currentBatch.filter(Boolean)
+    : [];
+  const recentSymbols = useMemo(
+    () => buildRecentScannerSymbols(coverage.lastScannedAt, currentBatch),
+    [coverage.lastScannedAt, currentBatch],
   );
-  const {
-    batchLabel,
-    capLabel,
-    currentBatch,
-    cycleLabel,
-    pendingCount,
-    progressText,
-    queueLabel,
-    recentSymbols,
-    scopeLabel,
-    selectedDetail,
-    sourceModeLabel,
-  } = progress;
+  const pendingCount = Math.max(
+    0,
+    (safeCount(totalCoverageSymbols) ?? 0) -
+      Math.max(currentBatch.length + recentSymbols.length, safeCount(scannedCoverageSymbols) ?? 0),
+  );
   const latestLabel = newestScanAt ? `latest ${formatRelative(newestScanAt)}` : "latest --";
   const oldestLabel =
     oldestScanAt && oldestScanAt !== newestScanAt
       ? `oldest ${formatRelative(oldestScanAt)}`
       : null;
+  const selectedDetail =
+    intendedCoverageSymbols > selectedCoverageSymbols
+      ? `selected ${formatCount(selectedCoverageSymbols)}/${formatCount(intendedCoverageSymbols)}`
+      : coverage.isRotating
+        ? `rotating ${formatCount(coverage.batchSize || scannerConfig.batchSize)}/cycle`
+        : coverageModeLabel;
   const sourceTone = flowDisplayColor || T.textSec;
-  const diagnosticsLoading =
-    !runtimeDiagnosticsQuery.data &&
-    (runtimeDiagnosticsQuery.isPending || runtimeDiagnosticsQuery.isLoading);
-  const diagnosticsDetail = diagnosticsLoading
-    ? "checking runtime diagnostics"
-    : runtimeDiagnosticsQuery.isError
-      ? "runtime diagnostics unavailable"
-      : Number.isFinite(totalUsed) || Number.isFinite(totalCap)
-        ? `app ${formatScannerCount(totalUsed)}/${formatScannerCount(totalCap)} · free ${formatScannerCount(scannerFree)}`
-        : "runtime diagnostics";
-  const lineValue =
-    Number.isFinite(scannerUsed) || Number.isFinite(scannerCap)
-      ? `${formatScannerCount(scannerUsed)}/${formatScannerCount(scannerCap)}`
-      : MISSING_VALUE;
-  const scanSweepActive = Boolean(enabled && coverage.isFetching);
+  const scanDegraded = enabled && flowQuality?.label === "Degraded";
+  const scannerRuntimeActive = Boolean(
+    ownerActive || runtimeControl.flowScanner?.active,
+  );
+  const statusTone = scanDegraded ? flowQuality?.color || T.red : toggleTone;
   const statusLabel = enabled
-    ? coverage.isFetching
-      ? "Fetching"
-      : ownerActive
-        ? "Scanning"
+    ? scanDegraded
+      ? "Degraded"
+      : scannerRuntimeActive
+      ? "Scanning"
       : "Idle"
     : "Off";
 
   return (
     <Card
-      className="ra-panel-enter"
       data-testid={testId}
-      data-scanner-state={statusLabel.toLowerCase()}
-      data-source-mode={sourceModeLabel.toLowerCase()}
       style={{
-        ...motionVars({ accent: toggleTone }),
         padding: dense ? sp("7px 8px") : sp("8px 10px"),
         display: "grid",
         gap: sp(7),
-        borderColor: ownerActive ? `${toggleTone}66` : T.border,
+        borderColor: scannerRuntimeActive || scanDegraded ? `${statusTone}66` : T.border,
       }}
     >
       <div
@@ -275,7 +206,7 @@ export const FlowScannerStatusPanel = ({
           </span>
           <span
             style={{
-              color: toggleTone,
+              color: statusTone,
               fontFamily: T.mono,
               fontSize: fs(8),
               fontWeight: 900,
@@ -299,20 +230,6 @@ export const FlowScannerStatusPanel = ({
           >
             {flowDisplayLabel || "Flow source"}
           </span>
-          <ScannerStatusChip
-            label="Source"
-            value={scopeLabel ? `${sourceModeLabel} · ${scopeLabel}` : sourceModeLabel}
-            tone={sourceTone}
-            testId={`${testId}-source-chip`}
-            title={`Scanner source ${sourceModeLabel}${scopeLabel ? `, ${scopeLabel}` : ""}`}
-          />
-          <ScannerStatusChip
-            label="Cap"
-            value={capLabel}
-            tone={T.textSec}
-            testId={`${testId}-cap-chip`}
-            title={`Scanner symbol cap ${capLabel}`}
-          />
         </div>
         <div
           style={{
@@ -328,7 +245,7 @@ export const FlowScannerStatusPanel = ({
           <span>
             Cycle{" "}
             <span style={{ color: T.text, fontWeight: 900 }}>
-              {cycleLabel}
+              {formatCount(scannedCoverageSymbols)}/{formatCount(totalCoverageSymbols || scannedCoverageSymbols)}
             </span>
           </span>
           <span>{latestLabel}</span>
@@ -357,47 +274,6 @@ export const FlowScannerStatusPanel = ({
       </div>
 
       <div
-        className={joinMotionClasses(scanSweepActive && "ra-scan-sweep")}
-        data-testid={`${testId}-progress-strip`}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: sp(8),
-          minWidth: 0,
-          padding: sp("4px 6px"),
-          border: `1px solid ${scanSweepActive ? `${toggleTone}55` : T.border}`,
-          background: scanSweepActive ? `${toggleTone}10` : T.bg0,
-          color: T.textDim,
-          fontFamily: T.mono,
-          fontSize: fs(8),
-          lineHeight: 1.25,
-        }}
-      >
-        <span
-          style={{
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {progressText}
-        </span>
-        <span
-          style={{
-            flexShrink: 0,
-            color: scanSweepActive ? toggleTone : T.textMuted,
-            fontWeight: 900,
-            textTransform: "uppercase",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {queueLabel}
-        </span>
-      </div>
-
-      <div
         style={{
           display: "grid",
           gridTemplateColumns: dense
@@ -408,7 +284,7 @@ export const FlowScannerStatusPanel = ({
       >
         <ScannerMetric
           label="Coverage"
-          value={cycleLabel}
+          value={`${formatCount(scannedCoverageSymbols)}/${formatCount(totalCoverageSymbols || scannedCoverageSymbols)}`}
           detail={selectedDetail}
           tone={T.textSec}
         />
@@ -418,15 +294,23 @@ export const FlowScannerStatusPanel = ({
           detail={
             currentBatch.length > 3
               ? `+${currentBatch.length - 3} active`
-              : batchLabel
+              : `${formatCount(scannerConfig.batchSize || coverage.batchSize)} batch / ${formatCount(scannerConfig.concurrency || coverage.concurrency)} conc`
           }
           tone={currentBatch.length ? T.accent : T.textDim}
         />
         <ScannerMetric
           label="Lines"
-          value={lineValue}
-          detail={diagnosticsDetail}
-          tone={lineTone(scannerUsed, scannerCap)}
+          value={
+            Number.isFinite(scannerUsed) || Number.isFinite(scannerCap)
+              ? `${formatCount(scannerUsed)}/${formatCount(scannerCap)}`
+              : MISSING_VALUE
+          }
+          detail={
+            Number.isFinite(totalUsed) || Number.isFinite(totalCap)
+              ? `acct ${formatCount(accountMonitorUsed)}/${formatCount(accountMonitorCap)} · app ${formatCount(totalUsed)}/${formatCount(totalCap)}`
+              : "runtime diagnostics"
+          }
+          tone={lineUsageTone(scannerUsed, scannerCap)}
         />
         <ScannerMetric
           label="Quality"
@@ -472,10 +356,10 @@ export const FlowScannerStatusPanel = ({
           ))}
           {pendingCount > 0 ? (
             <TickerChip
-              symbol={`+${formatScannerCount(pendingCount)}`}
+              symbol={`+${formatCount(pendingCount)}`}
               label="pending"
               tone={T.textMuted}
-              title={`${formatScannerCount(pendingCount)} symbols pending in this cycle`}
+              title={`${formatCount(pendingCount)} symbols pending in this cycle`}
             />
           ) : null}
         </div>

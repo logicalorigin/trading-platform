@@ -20,18 +20,11 @@ import {
   WATCHLIST_SORT_MODE,
   WATCHLIST_SIGNAL_TIMEFRAMES,
   buildSignalMatrixBySymbol,
-  buildWatchlistBadges,
-  buildWatchlistFlowBySymbol,
   buildWatchlistRows,
   countWatchlistSymbols,
-  formatWatchlistSignalBars,
   getBestWatchlistSignalState,
   sortWatchlistRows,
 } from "./watchlistModel";
-import {
-  BROAD_MARKET_FLOW_STORE_KEY,
-  useMarketFlowSnapshotForStoreKey,
-} from "./marketFlowStore";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -125,13 +118,6 @@ const WATCHLIST_DIRECTION_SORTS = new Set([
 const isWatchlistSignalDirection = (value) =>
   value === "buy" || value === "sell";
 
-const formatSignalFreshnessLabel = (state) => {
-  if (!state) return "unknown freshness";
-  if (state.status === "error") return "error";
-  if (state.status === "unavailable") return "unavailable";
-  return state.fresh ? "fresh" : "stale";
-};
-
 const getFallbackSignalForTimeframe = (fallbackState, timeframe) => {
   if (!fallbackState || fallbackState.timeframe !== timeframe) return null;
   return fallbackState;
@@ -143,8 +129,8 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
     style={{
       display: "inline-flex",
       alignItems: "center",
-      gap: sp(2),
-      minWidth: dim(58),
+      gap: sp(3),
+      minWidth: dim(34),
     }}
   >
     {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe) => {
@@ -156,14 +142,8 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
       const color = direction === "buy" ? T.blue : direction === "sell" ? T.red : T.textMuted;
       const fresh = Boolean(state?.fresh);
       const status = state?.status || "unknown";
-      const barsLabel = hasDirection
-        ? formatWatchlistSignalBars(state?.barsSinceSignal)
-        : "-";
-      const fullBarsLabel = Number.isFinite(state?.barsSinceSignal)
-        ? `${state.barsSinceSignal} bars`
-        : "no bar count";
       const label = hasDirection
-        ? `${timeframe} ${direction.toUpperCase()} ${formatSignalFreshnessLabel(state)} - ${fullBarsLabel}`
+        ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
         : `${timeframe} no signal - ${status}`;
 
       return (
@@ -173,7 +153,6 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
           data-testid={`watchlist-signal-dot-${timeframe}`}
           data-timeframe={timeframe}
           data-direction={hasDirection ? direction : "none"}
-          data-bars-since-signal={hasDirection ? barsLabel : ""}
           aria-label={label}
           onClick={(event) => {
             event.stopPropagation();
@@ -182,117 +161,21 @@ const WatchlistSignalDots = ({ statesByTimeframe = {}, fallbackState = null, onS
             }
           }}
           style={{
-            minWidth: dim(18),
-            height: dim(14),
-            borderRadius: dim(2),
+            width: dim(7),
+            height: dim(7),
+            borderRadius: "50%",
             border: `1px solid ${hasDirection ? color : T.borderLight}`,
-            background: hasDirection ? `${color}${fresh ? "24" : "12"}` : "transparent",
-            color: hasDirection ? color : T.textMuted,
+            background: hasDirection ? color : "transparent",
             opacity: hasDirection ? (fresh ? 1 : 0.42) : 0.55,
             boxShadow: hasDirection && fresh ? `0 0 0 2px ${color}20` : "none",
             cursor: hasDirection ? "pointer" : "default",
-            padding: sp("0 3px"),
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontFamily: T.mono,
-            fontSize: fs(7),
-            fontWeight: 900,
-            lineHeight: 1,
+            padding: 0,
           }}
-        >
-          {barsLabel}
-        </button></AppTooltip>
+        /></AppTooltip>
       );
     })}
   </span>
 );
-
-const MAX_VISIBLE_WATCHLIST_BADGES = 5;
-
-const getWatchlistBadgeColor = (tone) => {
-  if (tone === "buy" || tone === "linked") return T.blue;
-  if (tone === "sell") return T.red;
-  if (tone === "earnings") return T.amber;
-  if (tone === "flow") return T.cyan;
-  if (tone === "position") return T.green;
-  if (tone === "stale") return T.amber;
-  return T.textDim;
-};
-
-const WatchlistBadgeStrip = ({ badges = [] }) => {
-  if (!badges.length) return null;
-
-  const visibleBadges = badges.slice(0, MAX_VISIBLE_WATCHLIST_BADGES);
-  const hiddenBadges = badges.slice(MAX_VISIBLE_WATCHLIST_BADGES);
-  const hiddenDetail = hiddenBadges.map((badge) => badge.detail || badge.label).join(" · ");
-
-  return (
-    <div
-      data-testid="watchlist-badge-strip"
-      data-watchlist-badge-count={badges.length}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: sp(3),
-        marginTop: sp(3),
-        minWidth: 0,
-        overflow: "hidden",
-      }}
-    >
-      {visibleBadges.map((badge) => {
-        const color = getWatchlistBadgeColor(badge.tone);
-        return (
-          <AppTooltip key={badge.id} content={badge.detail || badge.label}>
-            <span
-              data-testid={`watchlist-badge-${badge.id}`}
-              data-watchlist-badge={badge.id}
-              style={{
-                minWidth: 0,
-                maxWidth: dim(48),
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                border: `1px solid ${color}66`,
-                background: `${color}14`,
-                color,
-                fontFamily: T.mono,
-                fontSize: fs(7),
-                fontWeight: 900,
-                lineHeight: 1,
-                padding: sp("2px 3px"),
-                borderRadius: 0,
-              }}
-            >
-              {badge.label}
-            </span>
-          </AppTooltip>
-        );
-      })}
-      {hiddenBadges.length ? (
-        <AppTooltip content={hiddenDetail}>
-          <span
-            data-testid="watchlist-badge-overflow"
-            style={{
-              border: `1px solid ${T.border}`,
-              background: T.bg2,
-              color: T.textMuted,
-              fontFamily: T.mono,
-              fontSize: fs(7),
-              fontWeight: 900,
-              lineHeight: 1,
-              padding: sp("2px 3px"),
-              borderRadius: 0,
-              whiteSpace: "nowrap",
-            }}
-          >
-            +{hiddenBadges.length}
-          </span>
-        </AppTooltip>
-      ) : null}
-    </div>
-  );
-};
 
 const WatchlistRow = memo(
   ({
@@ -311,9 +194,6 @@ const WatchlistRow = memo(
     onRemoveSymbol,
     onSignalAction,
     signalStatesByTimeframe = {},
-    earningsSymbols = [],
-    flowSummary = null,
-    positionSymbols = [],
     busy = false,
   }) => {
     const fallback = useMemo(
@@ -326,27 +206,6 @@ const WatchlistRow = memo(
     const bestSignalState = getBestWatchlistSignalState(
       signalStatesByTimeframe,
       signalState,
-    );
-    const badges = useMemo(
-      () =>
-        buildWatchlistBadges({
-          symbol: item.sym,
-          selectedSymbol: selected,
-          snapshot,
-          signalState: bestSignalState,
-          earningsSymbols,
-          flowBySymbol: flowSummary ? { [item.sym]: flowSummary } : {},
-          positionSymbols,
-        }),
-      [
-        bestSignalState,
-        earningsSymbols,
-        flowSummary,
-        item.sym,
-        positionSymbols,
-        selected,
-        snapshot,
-      ],
     );
     const selectedRow = selected === item.sym;
     const signalDirection = bestSignalState?.currentSignalDirection;
@@ -390,7 +249,6 @@ const WatchlistRow = memo(
         data-testid="watchlist-row"
         data-symbol={item.sym}
         data-source={item.source}
-        data-watchlist-badge-count={badges.length}
         className={joinMotionClasses(
           "ra-row-enter",
           "ra-interactive",
@@ -618,7 +476,6 @@ const WatchlistRow = memo(
               {quoteAge}
             </span></AppTooltip>
           </div>
-          <WatchlistBadgeStrip badges={badges} />
           <div
             style={{
               display: "flex",
@@ -707,8 +564,6 @@ export const Watchlist = ({
   selected,
   signalStates = [],
   signalMatrixStates = [],
-  earningsSymbols = [],
-  positionSymbols = [],
   onSelect,
   onSelectWatchlist,
   onCreateWatchlist,
@@ -758,13 +613,6 @@ export const Watchlist = ({
     [items],
   );
   const snapshotsBySymbol = useRuntimeTickerSnapshots(itemSymbols);
-  const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
-    BROAD_MARKET_FLOW_STORE_KEY,
-  );
-  const flowBySymbol = useMemo(
-    () => buildWatchlistFlowBySymbol(broadFlowSnapshot.flowEvents),
-    [broadFlowSnapshot.flowEvents],
-  );
   const signalStatesBySymbol = useMemo(
     () =>
       Object.fromEntries(
@@ -831,10 +679,6 @@ export const Watchlist = ({
     [items],
   );
   const directionEnabled = WATCHLIST_DIRECTION_SORTS.has(sortMode);
-  const activeSortOption =
-    WATCHLIST_SORT_OPTIONS.find((option) => option.id === sortMode) ||
-    WATCHLIST_SORT_OPTIONS[0];
-  const searchTerm = search.trim();
   const closeWatchlistMenu = () => setWatchlistMenuOpen(false);
   const closeAddMode = ({ clearQuery = false } = {}) => {
     setAddMode(false);
@@ -1250,92 +1094,6 @@ export const Watchlist = ({
           </button></AppTooltip>
         </div>
 
-        <div
-          data-testid="watchlist-active-state"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-            gap: sp(4),
-            minWidth: 0,
-          }}
-        >
-          <span
-            style={{
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              border: `1px solid ${T.border}`,
-              background: T.bg2,
-              color: T.textDim,
-              fontFamily: T.mono,
-              fontSize: fs(7),
-              fontWeight: 900,
-              lineHeight: 1,
-              padding: sp("4px 5px"),
-            }}
-          >
-            SORT {activeSortOption.label}
-            {directionEnabled ? ` ${sortDirection.toUpperCase()}` : ""}
-          </span>
-          {searchTerm ? (
-            <AppTooltip content="Clear watchlist filter">
-              <button
-                type="button"
-                data-testid="watchlist-filter-clear"
-                onClick={() => setSearch("")}
-                style={{
-                  minWidth: 0,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: sp(4),
-                  border: `1px solid ${T.accent}`,
-                  background: `${T.accent}12`,
-                  color: T.accent,
-                  fontFamily: T.mono,
-                  fontSize: fs(7),
-                  fontWeight: 900,
-                  lineHeight: 1,
-                  padding: sp("3px 5px"),
-                  cursor: "pointer",
-                }}
-              >
-                <span
-                  style={{
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  FILTER {searchTerm.toUpperCase()}
-                </span>
-                <X size={10} style={{ flexShrink: 0 }} />
-              </button>
-            </AppTooltip>
-          ) : (
-            <span
-              style={{
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                border: `1px solid ${T.border}`,
-                background: T.bg2,
-                color: T.textMuted,
-                fontFamily: T.mono,
-                fontSize: fs(7),
-                fontWeight: 900,
-                lineHeight: 1,
-                padding: sp("4px 5px"),
-              }}
-            >
-              FILTER ALL
-            </span>
-          )}
-        </div>
-
         {addMode ? (
           <div
             data-testid="watchlist-add-panel"
@@ -1509,9 +1267,6 @@ export const Watchlist = ({
               onRemoveSymbol={onRemoveSymbol}
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
-              earningsSymbols={earningsSymbols}
-              flowSummary={flowBySymbol[item.sym] || null}
-              positionSymbols={positionSymbols}
               busy={busy}
             />
           );

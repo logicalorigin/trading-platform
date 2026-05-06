@@ -677,7 +677,10 @@ async function buildLaneMemberships(
       }),
       activeCount: readNumber(bridgeSchedulerLane(bridge, "account").active),
       queuedCount: readNumber(bridgeSchedulerLane(bridge, "account").queued),
-      notes: ["Account lane is system controlled and should stay narrow."],
+      notes: [
+        "Account lane is system controlled and should stay narrow.",
+        `Account monitor live-line pool: ${admissionDiagnostics.accountMonitorLineCount}/${admissionDiagnostics.budget.accountMonitorLineCap}.`,
+      ],
     },
     {
       label: laneLabels["orders-control"],

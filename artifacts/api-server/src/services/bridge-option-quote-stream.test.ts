@@ -13,6 +13,12 @@ import {
   __resetMarketDataAdmissionForTests,
   getMarketDataAdmissionDiagnostics,
 } from "./market-data-admission";
+import { HttpError } from "../lib/errors";
+import {
+  __resetBridgeGovernorForTests,
+  isBridgeWorkBackedOff,
+  runBridgeWork,
+} from "./bridge-governor";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 
 function optionQuote(
@@ -51,7 +57,10 @@ test.afterEach(() => {
   __resetBridgeOptionQuoteStreamForTests();
   __setBridgeOptionQuoteClientForTests(null);
   __setBridgeOptionQuoteStreamNowForTests(null);
+  __resetBridgeGovernorForTests();
   __resetMarketDataAdmissionForTests();
+  delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"];
+  delete process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"];
 });
 
 test("option quote stream shares one bridge stream for duplicate contract demand", async () => {
@@ -219,4 +228,185 @@ test("option quote snapshots expose custom admission results for background call
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.flowScannerLineCount, 0);
   assert.equal(diagnostics.activeLineCount, 0);
+});
+
+test("flow scanner option quote snapshots are not blocked by option-chain governor backoff", async () => {
+  await assert.rejects(
+    runBridgeWork("options", async () => {
+      throw new HttpError(504, "IBKR bridge request to /options/quotes timed out.", {
+        code: "upstream_http_error",
+      });
+    }),
+  );
+  assert.equal(isBridgeWorkBackedOff("options"), true);
+
+  const bridgeRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["3002", "3001"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+  });
+
+  assert.deepEqual(bridgeRequests, [["3001", "3002"]]);
+  assert.equal(payload.quotes.length, 2);
+  assert.equal(payload.debug?.returnedCount, 2);
+  assert.equal(payload.debug?.acceptedCount, 2);
+  assert.equal(payload.debug?.rejectedCount, 0);
+});
+
+test("flow scanner option quote snapshots bypass quote governor backoff", async () => {
+  process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"] = "1";
+  process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"] = "1000";
+
+  await assert.rejects(
+    runBridgeWork("quotes", async () => {
+      throw new HttpError(504, "IBKR bridge request to /quotes timed out.", {
+        code: "ibkr_bridge_request_timeout",
+      });
+    }),
+  );
+  assert.equal(isBridgeWorkBackedOff("quotes"), true);
+
+  const bridgeRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["4002", "4001"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+  });
+
+  assert.deepEqual(bridgeRequests, [["4001", "4002"]]);
+  assert.equal(payload.quotes.length, 2);
+  assert.equal(payload.debug?.errorMessage, null);
+  assert.equal(payload.debug?.returnedCount, 2);
+  assert.equal(payload.debug?.acceptedCount, 2);
+  assert.equal(payload.debug?.rejectedCount, 0);
+});
+
+test("option quote snapshots expose bridge hydration errors in debug metadata", async () => {
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      throw new HttpError(504, "IBKR bridge request to /options/quotes timed out.", {
+        code: "upstream_http_error",
+      });
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["5001"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+  });
+
+  assert.equal(payload.quotes.length, 0);
+  assert.match(payload.debug?.errorMessage || "", /timed out/i);
+  assert.equal(payload.debug?.acceptedCount, 1);
+  assert.equal(payload.debug?.returnedCount, 0);
+  assert.deepEqual(payload.debug?.missingProviderContractIds, ["5001"]);
+});
+
+test("option quote snapshots do not release same-owner live stream leases", async () => {
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const owner = "trade-option-visible:SPY";
+  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+    {
+      underlying: "SPY",
+      providerContractIds: ["3001"],
+      owner,
+      intent: "visible-live",
+    },
+    () => {},
+  );
+
+  await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["3001"],
+    owner,
+    intent: "visible-live",
+  });
+
+  const streamDiagnostics = getBridgeOptionQuoteStreamDiagnostics();
+  const admissionDiagnostics = getMarketDataAdmissionDiagnostics();
+  unsubscribe();
+
+  assert.equal(streamDiagnostics.activeConsumerCount, 1);
+  assert.equal(streamDiagnostics.unionProviderContractIdCount, 1);
+  assert.equal(admissionDiagnostics.activeOptionLineCount, 1);
+  assert.equal(admissionDiagnostics.activeEquityLineCount, 1);
 });

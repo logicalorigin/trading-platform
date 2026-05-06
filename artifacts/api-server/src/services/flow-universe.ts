@@ -220,10 +220,14 @@ export function rankFlowUniverseCandidates(input: {
   pinnedSymbols?: readonly string[];
   fallbackSymbols?: readonly string[];
   targetSize: number;
+  minPrice?: number;
+  minDollarVolume?: number;
   now?: Date;
 }): string[] {
   const now = input.now ?? new Date();
   const targetSize = Math.max(1, Math.floor(input.targetSize));
+  const minPrice = Math.max(0, input.minPrice ?? 0);
+  const minDollarVolume = Math.max(0, input.minDollarVolume ?? 0);
   const pinned = uniqueSymbols(input.pinnedSymbols ?? []);
   const candidateBySymbol = new Map(
     input.candidates.map((candidate) => [normalizeSymbol(candidate.symbol), candidate]),
@@ -274,7 +278,15 @@ export function rankFlowUniverseCandidates(input: {
       return rightScore - leftScore || left.symbol.localeCompare(right.symbol);
     });
 
-  for (const candidate of sorted) {
+  const hasFlowEvidence = (candidate: RankingCandidate): boolean =>
+    candidate.flowScore > 0 ||
+    candidate.previousSessionFlowScore > 0;
+  const hasLiquidityEvidence = (candidate: RankingCandidate): boolean =>
+    ((candidate.price ?? 0) >= minPrice &&
+      (candidate.dollarVolume ?? 0) >= minDollarVolume &&
+      ((candidate.dollarVolume ?? 0) > 0 || (candidate.liquidityRank ?? 0) > 0));
+
+  for (const candidate of sorted.filter(hasFlowEvidence)) {
     if (selected.length >= targetSize) break;
     appendSymbol(candidate.symbol);
   }
@@ -282,6 +294,20 @@ export function rankFlowUniverseCandidates(input: {
   for (const symbol of uniqueSymbols(input.fallbackSymbols ?? [])) {
     if (selected.length >= targetSize) break;
     appendSymbol(symbol);
+  }
+
+  for (const candidate of sorted.filter(
+    (candidate) => !hasFlowEvidence(candidate) && hasLiquidityEvidence(candidate),
+  )) {
+    if (selected.length >= targetSize) break;
+    appendSymbol(candidate.symbol);
+  }
+
+  for (const candidate of sorted.filter(
+    (candidate) => !hasFlowEvidence(candidate) && !hasLiquidityEvidence(candidate),
+  )) {
+    if (selected.length >= targetSize) break;
+    appendSymbol(candidate.symbol);
   }
 
   return selected.slice(0, targetSize);
@@ -352,69 +378,6 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     }));
   }
 
-  async function loadBroadCatalogCandidates(): Promise<RankingCandidate[]> {
-    const rows = await runtimeOptions.db
-      .select({
-        symbol: universeCatalogListingsTable.normalizedTicker,
-        market: universeCatalogListingsTable.market,
-        price: flowUniverseRankingsTable.price,
-        volume: flowUniverseRankingsTable.volume,
-        dollarVolume: flowUniverseRankingsTable.dollarVolume,
-        liquidityRank: flowUniverseRankingsTable.liquidityRank,
-        flowScore: flowUniverseRankingsTable.flowScore,
-        previousSessionFlowScore:
-          flowUniverseRankingsTable.previousSessionFlowScore,
-        rankedAt: flowUniverseRankingsTable.rankedAt,
-        selected: flowUniverseRankingsTable.selected,
-        selectedAt: flowUniverseRankingsTable.selectedAt,
-        lastScannedAt: flowUniverseRankingsTable.lastScannedAt,
-        cooldownUntil: flowUniverseRankingsTable.cooldownUntil,
-      })
-      .from(universeCatalogListingsTable)
-      .leftJoin(
-        flowUniverseRankingsTable,
-        eq(
-          flowUniverseRankingsTable.symbol,
-          universeCatalogListingsTable.normalizedTicker,
-        ),
-      )
-      .where(
-        and(
-          eq(universeCatalogListingsTable.active, true),
-          inArray(
-            universeCatalogListingsTable.market,
-            [...runtimeOptions.markets] as Array<"stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc">,
-          ),
-          sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
-          sql`(${flowUniverseRankingsTable.price} is null or ${flowUniverseRankingsTable.price} >= ${runtimeOptions.minPrice.toString()})`,
-          sql`(${flowUniverseRankingsTable.dollarVolume} is null or ${flowUniverseRankingsTable.dollarVolume} >= ${runtimeOptions.minDollarVolume.toString()})`,
-        ),
-      )
-      .orderBy(
-        desc(flowUniverseRankingsTable.previousSessionFlowScore),
-        desc(flowUniverseRankingsTable.flowScore),
-        desc(flowUniverseRankingsTable.dollarVolume),
-        asc(universeCatalogListingsTable.normalizedTicker),
-      )
-      .limit(Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100));
-
-    return rows.map((row) => ({
-      symbol: row.symbol,
-      market: row.market,
-      price: toNumber(row.price),
-      volume: toNumber(row.volume),
-      dollarVolume: toNumber(row.dollarVolume),
-      liquidityRank: row.liquidityRank ?? null,
-      flowScore: toNumber(row.flowScore) ?? 0,
-      previousSessionFlowScore: toNumber(row.previousSessionFlowScore) ?? 0,
-      rankedAt: row.rankedAt ?? null,
-      selected: Boolean(row.selected),
-      selectedAt: row.selectedAt ?? null,
-      lastScannedAt: row.lastScannedAt ?? null,
-      cooldownUntil: row.cooldownUntil ?? null,
-    }));
-  }
-
   async function loadCandidates(): Promise<RankingCandidate[]> {
     try {
       const rows = await runtimeOptions.db
@@ -479,15 +442,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         lastScannedAt: row.lastScannedAt ?? null,
         cooldownUntil: row.cooldownUntil ?? null,
       }));
-      if (strictCandidates.length >= runtimeOptions.targetSize) {
-        return strictCandidates;
-      }
-      const seen = new Set(strictCandidates.map((candidate) => candidate.symbol));
-      const broadCandidates = await loadBroadCatalogCandidates();
-      return [
-        ...strictCandidates,
-        ...broadCandidates.filter((candidate) => !seen.has(candidate.symbol)),
-      ];
+      return strictCandidates;
     } catch (error) {
       if (isMissingFlowUniverseRankingsTableError(error)) {
         return loadCatalogCandidates();
@@ -711,6 +666,8 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         pinnedSymbols,
         fallbackSymbols: fallbackFillSymbols,
         targetSize: runtimeOptions.targetSize,
+        minPrice: runtimeOptions.minPrice,
+        minDollarVolume: runtimeOptions.minDollarVolume,
         now: selectionNow,
       });
 

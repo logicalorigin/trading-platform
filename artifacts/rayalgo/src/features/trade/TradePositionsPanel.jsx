@@ -42,16 +42,9 @@ import {
   fs,
   sp,
 } from "../../lib/uiTokens";
-import {
-  _initialState,
-  persistState,
-} from "../../lib/workspaceState";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
-const TRADE_POSITIONS_TABS = new Set(["open", "history", "orders"]);
-const normalizeTradePositionsTab = (value) =>
-  TRADE_POSITIONS_TABS.has(value) ? value : "open";
 
 export const TradePositionsPanel = ({
   accountId,
@@ -67,32 +60,7 @@ export const TradePositionsPanel = ({
   const { preferences: userPreferences } = useUserPreferences();
   const pos = usePositions();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState(() =>
-    normalizeTradePositionsTab(_initialState.tradePositionsTab),
-  );
-  useEffect(() => {
-    persistState({ tradePositionsTab: tab });
-  }, [tab]);
-  useEffect(() => {
-    const handleWorkspaceSettings = (event) => {
-      if (
-        !Object.prototype.hasOwnProperty.call(
-          event?.detail || {},
-          "tradePositionsTab",
-        )
-      ) {
-        return;
-      }
-      const nextTab = normalizeTradePositionsTab(event.detail.tradePositionsTab);
-      setTab((current) => (current === nextTab ? current : nextTab));
-    };
-    window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
-    return () =>
-      window.removeEventListener(
-        "rayalgo:workspace-settings-updated",
-        handleWorkspaceSettings,
-      );
-  }, []);
+  const [tab, setTab] = useState("open");
   const positionsQuery = useListPositions(
     { accountId, mode: environment },
     {

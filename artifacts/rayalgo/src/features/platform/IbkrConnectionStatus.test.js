@@ -151,6 +151,24 @@ test("getIbkrConnectionTone maps configured connection states", () => {
     getIbkrConnectionTone({
       configured: true,
       reachable: true,
+      socketConnected: true,
+      brokerServerConnected: false,
+      authenticated: false,
+      healthFresh: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: false,
+      streamState: "reconnect_needed",
+      streamStateReason: "gateway_server_disconnected",
+      accountsLoaded: false,
+      strictReady: false,
+      strictReason: "gateway_server_disconnected",
+    }).label,
+    "server disconnected",
+  );
+  assert.equal(
+    getIbkrConnectionTone({
+      configured: true,
+      reachable: true,
       authenticated: true,
       healthFresh: false,
       configuredLiveMarketDataMode: true,
@@ -683,6 +701,55 @@ test("buildHeaderIbkrPopoverModel separates reachable bridge tunnels from discon
   assert.equal(findPopoverDetailRow(model, "Last error"), undefined);
 });
 
+test("buildHeaderIbkrPopoverModel separates local Gateway sockets from IBKR server disconnects", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      socketConnected: true,
+      brokerServerConnected: false,
+      authenticated: false,
+      bridgeReachable: true,
+      healthFresh: true,
+      accountsLoaded: false,
+      streamFresh: false,
+      streamState: "reconnect_needed",
+      streamStateReason: "gateway_server_disconnected",
+      strictReady: false,
+      strictReason: "gateway_server_disconnected",
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        reachable: true,
+        bridgeReachable: true,
+        connected: true,
+        socketConnected: true,
+        brokerServerConnected: false,
+        authenticated: false,
+        healthFresh: true,
+        accountsLoaded: false,
+        streamFresh: false,
+        streamState: "reconnect_needed",
+        streamStateReason: "gateway_server_disconnected",
+        strictReady: false,
+        strictReason: "gateway_server_disconnected",
+      },
+    },
+  });
+
+  assert.equal(model.issue.key, "reconnect_needed");
+  assert.match(model.issue.label, /disconnected from IBKR servers/);
+  assert.equal(findPopoverDetailRow(model, "Gateway").value, "connected");
+  assert.equal(findPopoverDetailRow(model, "IBKR server").value, "disconnected");
+  assert.equal(
+    findPopoverDetailRow(model, "Ready reason").value,
+    "gateway_server_disconnected",
+  );
+  assert.equal(model.tiles.find((tile) => tile.label === "Gateway").value, "Server offline");
+});
+
 test("buildHeaderIbkrPopoverModel keeps token state in details unless it causes a failure", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {
@@ -1051,14 +1118,23 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
         streams: {
           marketDataAdmission: {
             activeLineCount: 77,
+            accountMonitorLineCount: 12,
+            accountMonitorRemainingLineCount: 8,
             flowScannerLineCount: 34,
             flowScannerRemainingLineCount: 6,
             leaseCount: 38,
             budget: {
               maxLines: 200,
+              accountMonitorLineCap: 20,
               flowScannerLineCap: 40,
             },
             poolUsage: {
+              "account-monitor": {
+                activeLineCount: 12,
+                maxLines: 20,
+                remainingLineCount: 8,
+                strict: true,
+              },
               "flow-scanner": {
                 activeLineCount: 34,
                 maxLines: 40,
@@ -1067,8 +1143,8 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
               },
               visible: {
                 activeLineCount: 18,
-                maxLines: 108,
-                remainingLineCount: 90,
+                maxLines: 88,
+                remainingLineCount: 70,
               },
             },
             counters: {},
@@ -1088,9 +1164,14 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
   assert.equal(model.lineUsage.summary, "77 / 200");
   assert.deepEqual(
     model.lineUsage.rows
-      .filter((row) => row.id === "flow-scanner" || row.id === "total")
+      .filter((row) =>
+        row.id === "account-monitor" ||
+        row.id === "flow-scanner" ||
+        row.id === "total"
+      )
       .map((row) => [row.id, row.used, row.cap, row.free]),
     [
+      ["account-monitor", 12, 20, 8],
       ["flow-scanner", 34, 40, 6],
       ["total", 77, 200, 123],
     ],
@@ -1114,12 +1195,20 @@ test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are 
     lineUsageSnapshot: {
       admission: {
         activeLineCount: 77,
+        accountMonitorLineCount: 12,
         flowScannerLineCount: 34,
         budget: {
           maxLines: 200,
+          accountMonitorLineCap: 20,
           flowScannerLineCap: 40,
         },
         poolUsage: {
+          "account-monitor": {
+            activeLineCount: 12,
+            maxLines: 20,
+            remainingLineCount: 8,
+            strict: true,
+          },
           "flow-scanner": {
             activeLineCount: 34,
             maxLines: 40,
@@ -1136,11 +1225,81 @@ test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are 
   assert.equal(model.lineUsage.summary, "77 / 200");
   assert.deepEqual(
     model.lineUsage.rows
-      .filter((row) => row.id === "flow-scanner" || row.id === "total")
+      .filter((row) =>
+        row.id === "account-monitor" ||
+        row.id === "flow-scanner" ||
+        row.id === "total"
+      )
       .map((row) => [row.id, row.used, row.cap, row.free]),
     [
+      ["account-monitor", 12, 20, 8],
       ["flow-scanner", 34, 40, 6],
       ["total", 77, 200, 123],
+    ],
+  );
+});
+
+test("buildHeaderIbkrPopoverModel fills account monitor line usage for legacy diagnostics", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        healthFresh: true,
+        accountsLoaded: true,
+        configuredLiveMarketDataMode: true,
+        streams: {
+          marketDataAdmission: {
+            activeLineCount: 100,
+            flowScannerLineCount: 0,
+            budget: {
+              maxLines: 200,
+              flowScannerLineCap: 40,
+            },
+            poolUsage: {
+              visible: {
+                activeLineCount: 40,
+                maxLines: 100 + 8,
+                remainingLineCount: 48 + 20,
+              },
+              convenience: {
+                activeLineCount: 80,
+                maxLines: 0,
+                remainingLineCount: 0,
+              },
+            },
+            counters: {},
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    model.lineUsage.rows
+      .filter((row) =>
+        row.id === "account-monitor" ||
+        row.id === "visible" ||
+        row.id === "total"
+      )
+      .map((row) => [row.id, row.used, row.cap, row.free]),
+    [
+      ["account-monitor", 0, 20, 20],
+      ["visible", 40, 88, 48],
+      ["total", 100, 200, 100],
     ],
   );
 });

@@ -32,16 +32,9 @@ import {
   fs,
   sp,
 } from "../../lib/uiTokens";
-import {
-  _initialState,
-  persistState,
-} from "../../lib/workspaceState";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
-const TRADE_L2_TABS = new Set(["book", "flow", "tape"]);
-const normalizeTradeL2Tab = (value) =>
-  TRADE_L2_TABS.has(value) ? value : "book";
 
 export const TradeL2Panel = ({
   slot,
@@ -72,32 +65,7 @@ export const TradeL2Panel = ({
     [effectiveFlowEvents],
   );
   const contractColor = slot.cp === "C" ? T.green : T.red;
-  const [tab, setTab] = useState(() =>
-    normalizeTradeL2Tab(_initialState.tradeL2Tab),
-  );
-  useEffect(() => {
-    persistState({ tradeL2Tab: tab });
-  }, [tab]);
-  useEffect(() => {
-    const handleWorkspaceSettings = (event) => {
-      if (
-        !Object.prototype.hasOwnProperty.call(
-          event?.detail || {},
-          "tradeL2Tab",
-        )
-      ) {
-        return;
-      }
-      const nextTab = normalizeTradeL2Tab(event.detail.tradeL2Tab);
-      setTab((current) => (current === nextTab ? current : nextTab));
-    };
-    window.addEventListener("rayalgo:workspace-settings-updated", handleWorkspaceSettings);
-    return () =>
-      window.removeEventListener(
-        "rayalgo:workspace-settings-updated",
-        handleWorkspaceSettings,
-      );
-  }, []);
+  const [tab, setTab] = useState("book");
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
   const depthQuery = useQuery({

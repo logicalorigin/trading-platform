@@ -148,6 +148,50 @@ test("flow universe backfills short ranked candidates from fallback symbols", ()
   assert.deepEqual(selected, ["SPY", "NVDA", "AAPL", "MSFT", "META"]);
 });
 
+test("flow universe prefers fallback liquidity pool over unrated catalog filler", () => {
+  const selected = rankFlowUniverseCandidates({
+    targetSize: 4,
+    minPrice: 5,
+    minDollarVolume: 25_000_000,
+    now: new Date("2026-05-01T14:30:00.000Z"),
+    fallbackSymbols: ["AMD", "SPY"],
+    candidates: [
+      {
+        symbol: "AAPD",
+        market: "etf",
+        price: null,
+        volume: null,
+        dollarVolume: 0,
+        liquidityRank: 1,
+        flowScore: 0,
+        previousSessionFlowScore: 0,
+        rankedAt: null,
+        selected: true,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+      {
+        symbol: "NVDA",
+        market: "stocks",
+        price: 900,
+        volume: 20_000_000,
+        dollarVolume: 18_000_000_000,
+        liquidityRank: 2,
+        flowScore: 1,
+        previousSessionFlowScore: 0,
+        rankedAt: null,
+        selected: false,
+        selectedAt: null,
+        lastScannedAt: null,
+        cooldownUntil: null,
+      },
+    ],
+  });
+
+  assert.deepEqual(selected, ["NVDA", "AMD", "SPY", "AAPD"]);
+});
+
 test("flow universe cooldowns are skipped during fallback fill", () => {
   const selected = rankFlowUniverseCandidates({
     targetSize: 3,

@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  ACTIVE_OPTION_QUOTE_LINE_BUDGET,
-  BACKGROUND_OPTION_QUOTE_LINE_BUDGET,
   buildTradeOptionProviderContractIdPlan,
-  resolveOptionQuoteLineBudget,
-  selectRotatingProviderContractIds,
+  buildTradeOptionQuoteSubscriptionPlan,
 } from "./optionQuoteHydrationPlan.js";
 
 const row = (strike) => ({
@@ -15,35 +12,54 @@ const row = (strike) => ({
   pContract: { providerContractId: `P${strike}` },
 });
 
-test("buildTradeOptionProviderContractIdPlan includes the full selected expiration in priority order", () => {
+test("buildTradeOptionProviderContractIdPlan includes selected, held, and visible row contracts only", () => {
   const providerContractIds = buildTradeOptionProviderContractIdPlan({
     chainRows: [row(95), row(100), row(105), row(110)],
     contract: { strike: 105, cp: "P" },
     heldContracts: [{ providerContractId: "C95" }],
+    visibleRows: [row(100), row(110)],
   });
 
   assert.deepEqual(providerContractIds, [
     "P105",
     "C95",
-    "C105",
     "C100",
     "P100",
     "C110",
     "P110",
-    "P95",
   ]);
 });
 
-test("buildTradeOptionProviderContractIdPlan prioritizes visible rows before tail rotation", () => {
+test("buildTradeOptionProviderContractIdPlan protects held contracts outside visible rows", () => {
   const providerContractIds = buildTradeOptionProviderContractIdPlan({
-    chainRows: [row(90), row(95), row(100), row(105), row(110)],
-    visibleRows: [row(110), row(90)],
+    chainRows: [row(100)],
     contract: { strike: 100, cp: "C" },
-    heldContracts: [],
+    heldContracts: [{ providerContractId: "C200" }],
   });
 
-  assert.deepEqual(providerContractIds.slice(0, 5), [
+  assert.deepEqual(providerContractIds, ["C100", "C200"]);
+});
+
+test("buildTradeOptionQuoteSubscriptionPlan separates execution from visible contracts", () => {
+  const plan = buildTradeOptionQuoteSubscriptionPlan({
+    chainRows: [row(90), row(95), row(100), row(105), row(110)],
+    visibleRows: [row(100), row(110), row(90)],
+    contract: { strike: 100, cp: "C" },
+    heldContracts: [{ providerContractId: "P95" }],
+  });
+
+  assert.deepEqual(plan.executionProviderContractIds, ["C100", "P95"]);
+  assert.deepEqual(plan.visibleProviderContractIds, [
+    "P100",
+    "C110",
+    "P110",
+    "C90",
+    "P90",
+  ]);
+  assert.deepEqual(plan.requestedProviderContractIds, [
     "C100",
+    "P95",
+    "P100",
     "C110",
     "P110",
     "C90",
@@ -51,59 +67,19 @@ test("buildTradeOptionProviderContractIdPlan prioritizes visible rows before tai
   ]);
 });
 
-test("resolveOptionQuoteLineBudget reserves more lines for active trade pages", () => {
-  assert.equal(
-    resolveOptionQuoteLineBudget({ active: true }),
-    ACTIVE_OPTION_QUOTE_LINE_BUDGET,
-  );
-  assert.equal(
-    resolveOptionQuoteLineBudget({ active: false }),
-    BACKGROUND_OPTION_QUOTE_LINE_BUDGET,
-  );
-  assert.equal(
-    resolveOptionQuoteLineBudget({ active: true, configuredLimit: 80 }),
-    80,
-  );
-});
-
-test("selectRotatingProviderContractIds pins priority ids and rotates the rest within budget", () => {
-  const providerContractIds = Array.from({ length: 10 }, (_, index) => `id-${index}`);
-
-  const first = selectRotatingProviderContractIds({
-    providerContractIds,
-    lineBudget: 4,
-    rotationIndex: 0,
-  });
-  const second = selectRotatingProviderContractIds({
-    providerContractIds,
-    lineBudget: 4,
-    rotationIndex: 1,
+test("buildTradeOptionProviderContractIdPlan does not add non-visible hydrated tail rows", () => {
+  const providerContractIds = buildTradeOptionProviderContractIdPlan({
+    chainRows: [row(90), row(95), row(100), row(105), row(110)],
+    visibleRows: [row(110), row(90)],
+    contract: { strike: 100, cp: "C" },
+    heldContracts: [],
   });
 
-  assert.deepEqual(first.pinnedProviderContractIds, ["id-0", "id-1"]);
-  assert.deepEqual(first.activeProviderContractIds, [
-    "id-0",
-    "id-1",
-    "id-2",
-    "id-3",
+  assert.deepEqual(providerContractIds, [
+    "C100",
+    "C110",
+    "P110",
+    "C90",
+    "P90",
   ]);
-  assert.deepEqual(second.activeProviderContractIds, [
-    "id-0",
-    "id-1",
-    "id-4",
-    "id-5",
-  ]);
-  assert.equal(first.pendingProviderContractIds.length, 6);
-  assert.equal(second.pendingProviderContractIds.length, 6);
-});
-
-test("selectRotatingProviderContractIds can disable background quote lines", () => {
-  const providerContractIds = ["id-0", "id-1"];
-  const plan = selectRotatingProviderContractIds({
-    providerContractIds,
-    lineBudget: 0,
-  });
-
-  assert.deepEqual(plan.activeProviderContractIds, []);
-  assert.deepEqual(plan.pendingProviderContractIds, providerContractIds);
 });

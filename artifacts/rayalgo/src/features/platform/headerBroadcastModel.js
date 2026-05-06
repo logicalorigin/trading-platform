@@ -1,6 +1,6 @@
 export const HEADER_SIGNAL_MAX_ITEMS = 24;
 export const HEADER_UNUSUAL_MAX_ITEMS = 28;
-export const HEADER_RECENT_SIGNAL_MS = 24 * 60 * 60 * 1000;
+export const HEADER_RECENT_SIGNAL_MS = 2 * 24 * 60 * 60 * 1000;
 export const DEFAULT_HEADER_BROADCAST_SPEED_PRESET = "slow";
 export const HEADER_BROADCAST_SPEED_PRESETS = {
   slow: {
@@ -84,6 +84,8 @@ export const buildHeaderSignalTapeItems = (
     const timeframe = state?.timeframe || "";
     const time = state?.currentSignalAt || state?.lastEvaluatedAt || "";
     const timeMs = parseTimeMs(time);
+    if (timeMs && timeMs < cutoffMs) return;
+
     const key = [
       symbol,
       timeframe,
@@ -174,7 +176,6 @@ export const buildHeaderUnusualTapeItems = (
     const symbol = getFlowEventSymbol(event);
     if (!symbol) return;
 
-    if (!event?.isUnusual) return;
     const score = Number(event?.unusualScore ?? event?.score ?? 0);
 
     const time = getFlowEventTime(event);

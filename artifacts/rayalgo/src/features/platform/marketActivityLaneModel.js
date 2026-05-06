@@ -1,5 +1,5 @@
 export const SIGNAL_MONITOR_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
-export const MARKET_ACTIVITY_RECENT_SIGNAL_MS = 24 * 60 * 60 * 1000;
+export const MARKET_ACTIVITY_RECENT_SIGNAL_MS = 2 * 24 * 60 * 60 * 1000;
 
 export const normalizeSignalMonitorTimeframe = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
@@ -76,6 +76,8 @@ export const buildSignalLaneRows = (
 
     const time = state?.currentSignalAt || state?.lastEvaluatedAt || "";
     const timeMs = parseActivityTimeMs(time);
+    if (timeMs && timeMs < cutoffMs) return;
+
     const key = [symbol, timeframe, direction, timeMs || state?.id || "current"].join(
       "|",
     );

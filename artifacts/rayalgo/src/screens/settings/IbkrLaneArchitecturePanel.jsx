@@ -13,7 +13,6 @@ import {
   normalizeLaneSymbolList,
   resolveLanePreview,
 } from "./ibkrLaneUiModel";
-import { PanelLoadingState } from "../../components/platform/primitives.jsx";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 
 const formatCount = (value) =>
@@ -900,13 +899,9 @@ export function IbkrLaneArchitecturePanel({
         </div>
       )}
       {!snapshot ? (
-        <PanelLoadingState
-          testId="ibkr-lane-loading-state"
-          title="Loading lane architecture"
-          detail="Fetching IBKR line budgets, policy overrides, and active lane health."
-          rows={4}
-          tone={T.accent}
-        />
+        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
+          Loading lane architecture.
+        </div>
       ) : (
         <div style={{ display: "grid", gap: sp(16) }}>
           <LaneDashboardSummary

@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   clusterChartEvents,
   earningsCalendarToChartEvents,
-  earningsEventsToChartEvents,
+  filterFlowEventsForOptionContract,
+  filterFlowEventsForSymbol,
   flowEventsToChartEvents,
   getChartEventLookbackWindow,
+  mergeFlowEventFeeds,
 } from "./chartEvents";
 
 test("flowEventsToChartEvents normalizes unusual flow into bar events", () => {
@@ -81,6 +83,144 @@ test("flowEventsToChartEvents promotes high-premium non-unusual options flow", (
   assert.equal(events[0].metadata.isUnusual, false);
 });
 
+test("flowEventsToChartEvents renders mapped UI flow with uppercase side", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "ui-flow",
+        ticker: "SPY",
+        cp: "C",
+        contract: "SPY 500C May 15",
+        premium: 125_000,
+        unusualScore: 0.2,
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "BUY",
+        isUnusual: false,
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].label, "C $125K");
+});
+
+test("flow event helpers merge feeds and match selected option contracts", () => {
+  const broad = [
+    {
+      id: "spy-call",
+      ticker: "SPY",
+      providerContractId: "conid-call",
+      optionTicker: "SPY250515C00500000",
+      cp: "C",
+      strike: 500,
+      expirationDate: "2026-05-15",
+      premium: 300_000,
+    },
+  ];
+  const local = [
+    broad[0],
+    {
+      id: "spy-put",
+      ticker: "SPY",
+      providerContractId: "conid-put",
+      cp: "P",
+      strike: 500,
+      expirationDate: "2026-05-15",
+      premium: 250_000,
+    },
+    {
+      id: "qqq-call",
+      ticker: "QQQ",
+      providerContractId: "conid-qqq",
+      cp: "C",
+      strike: 430,
+      expirationDate: "2026-05-15",
+      premium: 200_000,
+    },
+  ];
+
+  const merged = mergeFlowEventFeeds(broad, local);
+  assert.equal(merged.length, 3);
+  assert.deepEqual(
+    filterFlowEventsForSymbol(merged, "SPY").map((event) => event.id),
+    ["spy-call", "spy-put"],
+  );
+  assert.deepEqual(
+    filterFlowEventsForOptionContract(merged, {
+      symbol: "SPY",
+      providerContractId: "conid-call",
+      expirationDate: "2026-05-15",
+      right: "call",
+      strike: 500,
+    }).map((event) => event.id),
+    ["spy-call"],
+  );
+});
+
+test("mergeFlowEventFeeds keeps distinct trade rows without ids", () => {
+  const rows = mergeFlowEventFeeds(
+    [
+      {
+        ticker: "SPY",
+        provider: "polygon",
+        basis: "trade",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 20,
+        premium: 42_000,
+      },
+      {
+        ticker: "SPY",
+        provider: "polygon",
+        basis: "trade",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 35,
+        premium: 73_500,
+      },
+    ],
+  );
+
+  assert.equal(rows.length, 2);
+});
+
+test("flowEventsToChartEvents preserves snapshot time basis without treating it as a print", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "snapshot-flow",
+        ticker: "SPY",
+        basis: "snapshot",
+        sourceBasis: "snapshot_activity",
+        cp: "C",
+        contract: "SPY 500C",
+        premium: 420_000,
+        unusualScore: 1.5,
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        time: "11:12 AM",
+        isUnusual: true,
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].time, "2026-05-01T15:12:00.000Z");
+  assert.equal(events[0].summary, "SPY 500C snapshot activity $420K");
+  assert.equal(events[0].metadata.timeBasis, "snapshot_observed");
+});
+
 test("earningsCalendarToChartEvents normalizes earnings into timescale events", () => {
   const events = earningsCalendarToChartEvents(
     [{ symbol: "MSFT", date: "2026-05-01", time: "amc" }],
@@ -91,33 +231,6 @@ test("earningsCalendarToChartEvents normalizes earnings into timescale events", 
   assert.equal(events[0].eventType, "earnings");
   assert.equal(events[0].placement, "timescale");
   assert.equal(events[0].label, "E");
-});
-
-test("earningsEventsToChartEvents keeps provider metadata for chart markers", () => {
-  const events = earningsEventsToChartEvents(
-    [
-      {
-        symbol: "NVDA",
-        date: "2026-05-20T00:00:00.000Z",
-        reportingTime: "amc",
-        provider: "fmp",
-        epsEstimated: 5.22,
-        epsActual: 5.48,
-        revenueEstimated: 38_000_000_000,
-        revenueActual: 39_300_000_000,
-        fiscalPeriod: "Q1",
-        status: "confirmed",
-      },
-    ],
-    "NVDA",
-  );
-
-  assert.equal(events.length, 1);
-  assert.equal(events[0].id, "earnings:NVDA:2026-05-20:amc");
-  assert.equal(events[0].time, "2026-05-20");
-  assert.equal(events[0].source, "fmp");
-  assert.equal(events[0].actions.includes("open_trade"), true);
-  assert.equal(events[0].metadata.epsActual, 5.48);
 });
 
 test("getChartEventLookbackWindow uses timeframe-aware extended history", () => {

@@ -26,6 +26,8 @@ export type ResearchChartModelBuildState = {
     indicatorRegistry: BuildChartModelInput["indicatorRegistry"];
   };
   plugins: ReturnType<typeof resolveIndicatorPlugins>;
+  chartBars: ChartBar[];
+  chartBarRanges: ChartBarRange[];
   pluginOutputs: IndicatorPluginOutput[];
   model: ChartModel;
 };
@@ -327,10 +329,17 @@ const areMarketBarsEquivalent = (
   );
 };
 
+type BarMutationMode =
+  | "full"
+  | "tail-patch"
+  | "append"
+  | "tail-patch-append"
+  | "prepend";
+
 const detectBarMutationMode = (
   previousBars: MarketBar[],
   nextBars: MarketBar[],
-): "full" | "tail-patch" | "append" | "prepend" => {
+): BarMutationMode => {
   if (!previousBars.length || !nextBars.length) {
     return "full";
   }
@@ -366,6 +375,38 @@ const detectBarMutationMode = (
   }
 
   if (nextBars.length > previousBars.length) {
+    let matchesPreviousPrefix = true;
+    for (let index = 0; index < previousBars.length; index += 1) {
+      if (!areMarketBarsEquivalent(previousBars[index], nextBars[index])) {
+        matchesPreviousPrefix = false;
+        break;
+      }
+    }
+    if (matchesPreviousPrefix) {
+      return "append";
+    }
+
+    let matchesPatchableTailPrefix = true;
+    for (let index = 0; index < previousBars.length - 1; index += 1) {
+      if (!areMarketBarsEquivalent(previousBars[index], nextBars[index])) {
+        matchesPatchableTailPrefix = false;
+        break;
+      }
+    }
+    const previousTailTime = resolveEpochMs(previousBars[previousBars.length - 1]);
+    const nextTailTime = resolveEpochMs(nextBars[previousBars.length - 1]);
+    if (
+      matchesPatchableTailPrefix &&
+      previousTailTime != null &&
+      previousTailTime === nextTailTime &&
+      !areMarketBarsEquivalent(
+        previousBars[previousBars.length - 1],
+        nextBars[previousBars.length - 1],
+      )
+    ) {
+      return "tail-patch-append";
+    }
+
     const offset = nextBars.length - previousBars.length;
     for (let index = 0; index < previousBars.length; index += 1) {
       if (!areMarketBarsEquivalent(previousBars[index], nextBars[index + offset])) {
@@ -376,6 +417,84 @@ const detectBarMutationMode = (
   }
 
   return "full";
+};
+
+const canReusePreviousChartBars = (
+  previousState: ResearchChartModelBuildState,
+): boolean =>
+  Array.isArray(previousState.chartBars) &&
+  Array.isArray(previousState.chartBarRanges) &&
+  previousState.chartBars.length === previousState.input.bars.length &&
+  previousState.chartBarRanges.length === previousState.chartBars.length;
+
+const rebuildChartBarsIncrementally = ({
+  previousState,
+  nextBars,
+  timeframe,
+  mutationMode,
+}: {
+  previousState: ResearchChartModelBuildState;
+  nextBars: MarketBar[];
+  timeframe: string;
+  mutationMode: BarMutationMode;
+}): { chartBars: ChartBar[]; chartBarRanges: ChartBarRange[] } | null => {
+  if (!canReusePreviousChartBars(previousState)) {
+    return null;
+  }
+
+  if (mutationMode === "tail-patch") {
+    const builtTail = buildChartBars(nextBars.slice(-1), timeframe);
+    const tailBar = builtTail.chartBars[0];
+    const previousTail = previousState.chartBars[previousState.chartBars.length - 1];
+    if (!tailBar || tailBar.time !== previousTail?.time) {
+      return null;
+    }
+
+    return {
+      chartBars: [...previousState.chartBars.slice(0, -1), tailBar],
+      chartBarRanges: previousState.chartBarRanges.slice(),
+    };
+  }
+
+  if (mutationMode !== "append" && mutationMode !== "tail-patch-append") {
+    return null;
+  }
+
+  const replaceFromRawIndex =
+    mutationMode === "tail-patch-append"
+      ? previousState.input.bars.length - 1
+      : previousState.input.bars.length;
+  const appended = buildChartBars(nextBars.slice(replaceFromRawIndex), timeframe);
+  if (!appended.chartBars.length) {
+    return null;
+  }
+
+  const prefixBars = previousState.chartBars.slice(0, replaceFromRawIndex);
+  const prefixRanges = previousState.chartBarRanges.slice(0, replaceFromRawIndex);
+  const previousPrefixTail = prefixBars[prefixBars.length - 1];
+  const firstAppended = appended.chartBars[0];
+  if (previousPrefixTail && firstAppended.time <= previousPrefixTail.time) {
+    return null;
+  }
+
+  for (let index = 1; index < appended.chartBars.length; index += 1) {
+    if (appended.chartBars[index].time <= appended.chartBars[index - 1].time) {
+      return null;
+    }
+  }
+
+  if (prefixRanges.length) {
+    const firstAppendedRange = appended.chartBarRanges[0];
+    prefixRanges[prefixRanges.length - 1] = {
+      ...prefixRanges[prefixRanges.length - 1],
+      endMs: firstAppendedRange.startMs,
+    };
+  }
+
+  return {
+    chartBars: [...prefixBars, ...appended.chartBars],
+    chartBarRanges: [...prefixRanges, ...appended.chartBarRanges],
+  };
 };
 
 const buildChartModelFromPluginOutputs = ({
@@ -462,7 +581,21 @@ export const buildResearchChartModelIncremental = (
     indicatorMarkers = [],
     indicatorRegistry = defaultIndicatorRegistry,
   } = input;
-  const { chartBars, chartBarRanges } = buildChartBars(bars, timeframe);
+  const barMutationMode =
+    previousState && previousState.input.timeframe === timeframe
+      ? detectBarMutationMode(previousState.input.bars, bars)
+      : "full";
+  const incrementalChartBars =
+    previousState && previousState.input.timeframe === timeframe
+      ? rebuildChartBarsIncrementally({
+          previousState,
+          nextBars: bars,
+          timeframe,
+          mutationMode: barMutationMode,
+        })
+      : null;
+  const { chartBars, chartBarRanges } =
+    incrementalChartBars ?? buildChartBars(bars, timeframe);
   const plugins = resolveIndicatorPlugins(
     selectedIndicators,
     indicatorRegistry,
@@ -479,7 +612,7 @@ export const buildResearchChartModelIncremental = (
         previousState.input.selectedIndicators,
         selectedIndicators,
       ) &&
-      detectBarMutationMode(previousState.input.bars, bars) === "tail-patch" &&
+      barMutationMode === "tail-patch" &&
       previousState.plugins.length === plugins.length &&
       previousState.plugins.every((plugin, index) => plugin.id === plugins[index]?.id),
   );
@@ -525,6 +658,8 @@ export const buildResearchChartModelIncremental = (
         indicatorRegistry,
       },
       plugins,
+      chartBars,
+      chartBarRanges,
       pluginOutputs,
       model,
     },

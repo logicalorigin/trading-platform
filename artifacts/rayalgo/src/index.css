@@ -195,21 +195,6 @@ table {
   }
 }
 
-@keyframes raMobileOverlayEnter {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes raRefreshSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes raValueFlashUp {
   0% {
     background-color: rgba(16, 185, 129, 0);
@@ -337,34 +322,10 @@ table {
   grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
 }
 
-.ra-account-mobile-section-rail {
-  display: none;
-}
-
-.ra-account-section {
-  min-width: 0;
-  scroll-margin-top: 56px;
-}
-
 .ra-popover-enter {
   animation: raPopoverEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
   transform-origin: top right;
   will-change: opacity, transform;
-}
-
-.ra-mobile-overlay-enter {
-  animation: raMobileOverlayEnter var(--ra-motion-fast) var(--ra-motion-enter) both;
-}
-
-.ra-sidebar-shell {
-  transition:
-    width var(--ra-motion-standard) var(--ra-motion-ease),
-    box-shadow var(--ra-motion-standard) var(--ra-motion-ease);
-}
-
-.ra-refresh-spin {
-  animation: raRefreshSpin 820ms linear infinite;
-  transform-origin: center;
 }
 
 .ra-row-enter {
@@ -576,7 +537,6 @@ table {
   }
 
   .ra-shell[data-layout="phone"] button,
-  [data-testid="account-screen"][data-layout="phone"] button,
   [data-trade-layout="phone"] button,
   [data-testid="algo-screen"][data-layout="phone"] button,
   [data-testid="settings-screen"][data-layout="phone"] button,
@@ -615,7 +575,7 @@ table {
   }
 
   [data-trade-layout="phone"] [data-testid="trade-order-ticket"] [style*="grid-template-columns"],
-  [data-testid="account-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="account-screen"] [style*="grid-template-columns"],
   [data-testid="algo-screen"][data-layout="phone"] [style*="grid-template-columns"],
   [data-testid="settings-screen"][data-layout="phone"] [style*="grid-template-columns"],
   [data-testid="diagnostics-screen"][data-layout="phone"] [style*="grid-template-columns"],
@@ -623,94 +583,12 @@ table {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
-  [data-testid="account-screen"][data-layout="phone"] {
+  [data-testid="account-screen"] {
     min-width: 0;
   }
 
-  [data-testid="account-screen"][data-layout="phone"] > div {
+  [data-testid="account-screen"] > div {
     padding: 5px !important;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] [data-testid="account-portfolio-risk-strip"] {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-risk-strip-section {
-    order: 1;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-mobile-section-rail {
-    order: 2;
-    position: sticky;
-    top: 0;
-    z-index: 4;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    overflow-x: auto;
-    padding: 4px;
-    border: 1px solid var(--ra-color-border, rgba(148, 163, 184, 0.25));
-    border-radius: 5px;
-    background: color-mix(in srgb, var(--ra-color-bg-1, #0b0f14) 92%, transparent);
-    backdrop-filter: blur(10px);
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-mobile-section-rail button {
-    flex: 0 0 auto;
-    min-width: 0;
-    min-height: 28px;
-    padding: 0 9px;
-    border: 1px solid var(--ra-color-border, rgba(148, 163, 184, 0.25));
-    border-radius: 4px;
-    background: transparent;
-    color: var(--ra-color-text, #e5e7eb);
-    font: 800 9px var(--ra-font-data, system-ui, sans-serif);
-    text-transform: uppercase;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-positions-section {
-    order: 3;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-detail-grid {
-    order: 4;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-overview-grid {
-    order: 5;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-date-inspector-section {
-    order: 6;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-trading-patterns-section {
-    order: 7;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-pattern-lens-section {
-    order: 8;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-support-grid {
-    order: 9;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-orders-section {
-    order: 1;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-selected-trade-section {
-    order: 2;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-trades-section {
-    order: 3;
-  }
-
-  [data-testid="account-screen"][data-layout="phone"] .ra-account-table-scroll {
-    max-height: min(52vh, 440px) !important;
-    -webkit-overflow-scrolling: touch;
   }
 
   [data-testid="algo-screen"][data-layout="phone"] [style*="min-width"],
@@ -775,9 +653,7 @@ table {
 @media (prefers-reduced-motion: reduce) {
   .ra-panel-enter,
   .ra-popover-enter,
-  .ra-mobile-overlay-enter,
   .ra-row-enter,
-  .ra-refresh-spin,
   .ra-value-flash-up,
   .ra-value-flash-down,
   .ra-status-pulse,
@@ -791,10 +667,6 @@ table {
   }
 
   .ra-interactive {
-    transition-duration: 1ms !important;
-  }
-
-  .ra-sidebar-shell {
     transition-duration: 1ms !important;
   }
 
@@ -814,9 +686,7 @@ table {
 
 html[data-rayalgo-reduced-motion="on"] .ra-panel-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-popover-enter,
-html[data-rayalgo-reduced-motion="on"] .ra-mobile-overlay-enter,
 html[data-rayalgo-reduced-motion="on"] .ra-row-enter,
-html[data-rayalgo-reduced-motion="on"] .ra-refresh-spin,
 html[data-rayalgo-reduced-motion="on"] .ra-value-flash-up,
 html[data-rayalgo-reduced-motion="on"] .ra-value-flash-down,
 html[data-rayalgo-reduced-motion="on"] .ra-status-pulse,
@@ -830,10 +700,6 @@ html[data-rayalgo-reduced-motion="on"] .ra-bar-fill {
 }
 
 html[data-rayalgo-reduced-motion="on"] .ra-interactive {
-  transition-duration: 1ms !important;
-}
-
-html[data-rayalgo-reduced-motion="on"] .ra-sidebar-shell {
   transition-duration: 1ms !important;
 }
 

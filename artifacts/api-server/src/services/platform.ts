@@ -560,6 +560,7 @@ let lastIbkrWatchlistPrewarmSignature: string | null = null;
 let pendingIbkrWatchlistPrewarmSignature: string | null = null;
 let ibkrWatchlistPrewarmSequence = 0;
 const IBKR_WATCHLIST_PREWARM_OWNER = "watchlist-prewarm";
+const IBKR_WATCHLIST_PREWARM_MAX_SYMBOLS = 30;
 
 function collectWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
   return Array.from(
@@ -600,7 +601,8 @@ function scheduleIbkrWatchlistPrewarm(
   });
   const admittedSymbols = admission.admitted
     .map((lease) => lease.symbol)
-    .filter((symbol): symbol is string => Boolean(symbol));
+    .filter((symbol): symbol is string => Boolean(symbol))
+    .slice(0, IBKR_WATCHLIST_PREWARM_MAX_SYMBOLS);
   if (!admittedSymbols.length) {
     releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
     return;
@@ -618,8 +620,10 @@ function scheduleIbkrWatchlistPrewarm(
   ibkrWatchlistPrewarmSequence = sequence;
   pendingIbkrWatchlistPrewarmSignature = signature;
 
-  void runBridgeWork("quotes", () =>
-    getIbkrClient().prewarmQuoteSubscriptions(admittedSymbols),
+  void runBridgeWork(
+    "quotes",
+    () => getIbkrClient().prewarmQuoteSubscriptions(admittedSymbols),
+    { recordFailure: false },
   )
     .then(() => {
       if (sequence !== ibkrWatchlistPrewarmSequence) {
@@ -1027,6 +1031,63 @@ function flowEventsSourceUsesPolygonFallback(source: unknown): boolean {
   return candidate?.provider === "polygon" || candidate?.fallbackUsed === true;
 }
 
+const TRANSIENT_EMPTY_FLOW_SOURCE_PATTERNS = [
+  "backoff",
+  "degraded",
+  "error",
+  "line_budget",
+  "queued",
+  "refreshing",
+  "saturated",
+  "unavailable",
+];
+
+function isTransientEmptyFlowSource(source: unknown): boolean {
+  const candidate = source as Partial<FlowEventsSource> | null | undefined;
+  if (!candidate) {
+    return false;
+  }
+
+  const status = String(candidate.status || "").toLowerCase();
+  const provider = String(candidate.provider || "").toLowerCase();
+  const ibkrStatus = String(candidate.ibkrStatus || "").toLowerCase();
+  const ibkrReason = String(candidate.ibkrReason || "").toLowerCase();
+
+  if (status === "error" || Boolean(candidate.errorMessage)) {
+    return true;
+  }
+  if (ibkrStatus === "degraded" || ibkrStatus === "error") {
+    return true;
+  }
+  if (
+    TRANSIENT_EMPTY_FLOW_SOURCE_PATTERNS.some((pattern) =>
+      ibkrReason.includes(pattern),
+    )
+  ) {
+    return true;
+  }
+
+  return status === "empty" && provider !== "ibkr" && ibkrStatus !== "loaded";
+}
+
+function shouldPreserveCachedFlowEvents(
+  cached: { value: FlowEventsResult; staleExpiresAt: number } | undefined,
+  next: FlowEventsResult,
+  currentMs: number,
+): boolean {
+  return Boolean(
+    cached &&
+      cached.value.events.length > 0 &&
+      cached.staleExpiresAt > currentMs &&
+      next.events.length === 0 &&
+      isTransientEmptyFlowSource(next.source),
+  );
+}
+
+function isCacheableFlowEventsResult(value: FlowEventsResult): boolean {
+  return value.events.length > 0 || !isTransientEmptyFlowSource(value.source);
+}
+
 function isFlowScannerSnapshotAllowedForFallbackPolicy(
   snapshot: { source?: unknown } | null,
   allowPolygonFallback: boolean,
@@ -1118,7 +1179,7 @@ function deferredFlowEventsResult(input: {
       status: "empty",
       attemptedProviders: ["ibkr"],
       unusualThreshold: input.unusualThreshold ?? 1,
-      ibkrStatus: "degraded",
+      ibkrStatus: "empty",
       ibkrReason: input.reason,
       ibkrExpirationCount: 0,
       ibkrHydratedExpirationCount: 0,
@@ -1126,6 +1187,25 @@ function deferredFlowEventsResult(input: {
       ibkrQualifiedContractCount: 0,
     }),
   };
+}
+
+function queueOptionsFlowScannerRefresh(input: {
+  underlying: string;
+  scannerRequest: OptionsFlowScannerRequest;
+  phase: string;
+}): boolean {
+  if (!getOptionsFlowRuntimeConfig().scannerEnabled) {
+    return false;
+  }
+  optionsFlowScanner
+    .requestScan([input.underlying], input.scannerRequest)
+    .catch((error) => {
+      logger.warn(
+        { err: error, underlying: input.underlying, phase: input.phase },
+        "Failed to queue options flow scanner refresh",
+      );
+    });
+  return true;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -1457,6 +1537,14 @@ export async function getRuntimeDiagnostics() {
   } = await getRuntimeBridgeHealthState();
   const memory = process.memoryUsage();
   const resourceCaches = getPlatformResourceDiagnostics();
+  const marketDataStreams = getRuntimeMarketDataDiagnostics({
+    bridgeQuoteDiagnostics,
+  });
+  const optionsFlowScannerDiagnostics = getOptionsFlowScannerDiagnostics();
+  const marketDataAdmissionWithScanner = {
+    ...marketDataStreams.marketDataAdmission,
+    optionsFlowScanner: optionsFlowScannerDiagnostics,
+  };
 
   return {
     timestamp: new Date(),
@@ -1498,6 +1586,12 @@ export async function getRuntimeDiagnostics() {
       stale: annotatedHealth?.stale ?? true,
       bridgeReachable: annotatedHealth?.bridgeReachable ?? false,
       socketConnected: annotatedHealth?.socketConnected ?? false,
+      brokerServerConnected: annotatedHealth?.brokerServerConnected ?? false,
+      serverConnectivity: annotatedHealth?.serverConnectivity ?? null,
+      lastServerConnectivityAt:
+        annotatedHealth?.lastServerConnectivityAt ?? null,
+      lastServerConnectivityError:
+        annotatedHealth?.lastServerConnectivityError ?? null,
       accountsLoaded: annotatedHealth?.accountsLoaded ?? false,
       configuredLiveMarketDataMode:
         annotatedHealth?.configuredLiveMarketDataMode ?? false,
@@ -1540,7 +1634,10 @@ export async function getRuntimeDiagnostics() {
         diagnosticsMutateOrders: false,
       },
       governor: getBridgeGovernorSnapshot(),
-      streams: getRuntimeMarketDataDiagnostics({ bridgeQuoteDiagnostics }),
+      streams: {
+        ...marketDataStreams,
+        marketDataAdmission: marketDataAdmissionWithScanner,
+      },
     },
   };
 }
@@ -1724,7 +1821,6 @@ export async function listAccounts(input: { mode?: "paper" | "live" }) {
 
 export async function listWatchlists() {
   const snapshot = await listWatchlistsFromDb();
-  scheduleIbkrWatchlistPrewarm(snapshot.watchlists, "list");
   return snapshot;
 }
 
@@ -4997,6 +5093,9 @@ type GetBarsInput = {
   allowStudyFallback?: boolean;
   brokerRecentWindowMinutes?: number | null;
 };
+type GetBarsOptions = {
+  signal?: AbortSignal;
+};
 
 type BarsHistoryPage = {
   requestedFrom: Date | null;
@@ -5282,7 +5381,7 @@ function restrictHistoricalSynthesisToBrokerBackfill(
 // (or refetches racing each other) share a single upstream IBKR/Polygon
 // fetch. The bridge can hold an upstream history slot for 7-15s, so even
 // a small TTL of a few seconds dramatically reduces request volume.
-const BARS_CACHE_TTL_MS = 15_000;
+const BARS_CACHE_TTL_MS = 30_000;
 const BARS_CACHE_STALE_TTL_MS = 10 * 60_000;
 const BARS_CACHE_MAX_ENTRIES = 256;
 const BARS_PROVIDER_BUDGET_MS = readPositiveIntegerEnv(
@@ -5319,6 +5418,37 @@ const barsHydrationCounters = {
   cursorFallback: 0,
   backgroundRefresh: 0,
 };
+function createBarsRequestAbortedError() {
+  return new HttpError(499, "Bars request was aborted.", {
+    code: "bars_request_aborted",
+  });
+}
+
+function throwIfBarsSignalAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createBarsRequestAbortedError();
+  }
+}
+
+async function awaitWithBarsAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return promise;
+  throwIfBarsSignalAborted(signal);
+
+  let abortListener: (() => void) | null = null;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    abortListener = () => reject(createBarsRequestAbortedError());
+    signal.addEventListener("abort", abortListener, { once: true });
+  });
+
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    if (abortListener) signal.removeEventListener("abort", abortListener);
+  }
+}
 const barsCache = new Map<
   string,
   {
@@ -5636,12 +5766,10 @@ function withBarsDebug(
   debug: GetBarsRequestDebug,
 ): GetBarsResultWithDebug {
   const hydrationStatus: BarsHistoryPage["hydrationStatus"] =
-    value.historyPage?.hydrationStatus ??
-    (debug.stale
+    debug.stale
       ? "warming"
-      : value.bars.length
-        ? "warm"
-        : "cold");
+      : value.historyPage?.hydrationStatus ??
+        (value.bars.length ? "warm" : "cold");
   return {
     ...value,
     historyPage: value.historyPage
@@ -5659,32 +5787,49 @@ function resolveWithin<T>(
   promise: Promise<T>,
   timeoutMs: number,
   fallback: T,
+  options: { signal?: AbortSignal; createAbortError?: () => Error } = {},
 ): Promise<T> {
+  if (options.signal?.aborted) {
+    throw (options.createAbortError ?? createBarsRequestAbortedError)();
+  }
   let timeoutId: NodeJS.Timeout | null = null;
+  let abortListener: (() => void) | null = null;
   const timeout = new Promise<T>((resolve) => {
     timeoutId = setTimeout(() => resolve(fallback), timeoutMs);
     timeoutId.unref?.();
   });
+  const abort = options.signal
+    ? new Promise<never>((_resolve, reject) => {
+        abortListener = () =>
+          reject((options.createAbortError ?? createBarsRequestAbortedError)());
+        options.signal?.addEventListener("abort", abortListener, { once: true });
+      })
+    : null;
 
-  return Promise.race([promise, timeout]).finally(() => {
+  return Promise.race(abort ? [promise, timeout, abort] : [promise, timeout]).finally(() => {
     if (timeoutId) {
       clearTimeout(timeoutId);
+    }
+    if (abortListener) {
+      options.signal?.removeEventListener("abort", abortListener);
     }
   });
 }
 
 export async function getBarsWithDebug(
   input: GetBarsInput,
+  options: GetBarsOptions = {},
 ): Promise<GetBarsResultWithDebug> {
   const sanitizedInput = sanitizeBarsInput(input);
   const key = buildBarsCacheKey(sanitizedInput);
   const requestedAt = Date.now();
   const dedupeEnabled = isChartHydrationDedupeEnabled();
+  throwIfBarsSignalAborted(options.signal);
 
   if (!dedupeEnabled) {
     const upstreamStartedAt = Date.now();
     barsHydrationCounters.cacheMiss += 1;
-    const value = await getBarsImpl(sanitizedInput);
+    const value = await getBarsImpl(sanitizedInput, options);
     return withBarsDebug(value, {
       cacheStatus: "miss",
       totalMs: Math.max(0, Date.now() - requestedAt),
@@ -5733,7 +5878,9 @@ export async function getBarsWithDebug(
     barsHydrationCounters.staleServed += 1;
     if (isChartHydrationBackgroundEnabled()) {
       barsHydrationCounters.backgroundRefresh += 1;
-      refreshBarsCache(key, sanitizedInput).catch(() => {});
+      if (!options.signal?.aborted) {
+        refreshBarsCache(key, sanitizedInput).catch(() => {});
+      }
     }
     return withBarsDebug(reusableStale.value, {
       cacheStatus: "hit",
@@ -5751,7 +5898,7 @@ export async function getBarsWithDebug(
   const reusableInFlight = findReusableBarsInFlight(sanitizedInput);
   if (reusableInFlight) {
     barsHydrationCounters.inFlightJoin += 1;
-    const value = await reusableInFlight;
+    const value = await awaitWithBarsAbort(reusableInFlight, options.signal);
     return withBarsDebug(value, {
       cacheStatus: "inflight",
       totalMs: Math.max(0, Date.now() - requestedAt),
@@ -5765,7 +5912,7 @@ export async function getBarsWithDebug(
       barsInFlight.delete(key);
     } else {
       barsHydrationCounters.inFlightJoin += 1;
-      const value = await inFlight.promise;
+      const value = await awaitWithBarsAbort(inFlight.promise, options.signal);
       return withBarsDebug(value, {
         cacheStatus: "inflight",
         totalMs: Math.max(0, Date.now() - requestedAt),
@@ -5777,7 +5924,7 @@ export async function getBarsWithDebug(
 
   const upstreamStartedAt = Date.now();
   barsHydrationCounters.cacheMiss += 1;
-  const value = await refreshBarsCache(key, sanitizedInput);
+  const value = await refreshBarsCache(key, sanitizedInput, options);
 
   return withBarsDebug(value, {
     cacheStatus: "miss",
@@ -5790,10 +5937,12 @@ export async function getBarsWithDebug(
 function refreshBarsCache(
   key: string,
   input: GetBarsInput,
+  options: GetBarsOptions = {},
 ): Promise<GetBarsResult> {
+  throwIfBarsSignalAborted(options.signal);
   const existing = barsInFlight.get(key);
   if (existing && !isBarsInFlightStale(existing)) {
-    return existing.promise;
+    return awaitWithBarsAbort(existing.promise, options.signal);
   }
   if (existing) {
     barsInFlight.delete(key);
@@ -5802,7 +5951,7 @@ function refreshBarsCache(
   let promise: Promise<GetBarsResult> | null = null;
   promise = (async () => {
     try {
-      const value = await getBarsImpl(input);
+      const value = await getBarsImpl(input, options);
       const settledAt = Date.now();
       barsCache.set(key, {
         input,
@@ -6267,9 +6416,13 @@ function decorateBarsResult(input: {
   };
 }
 
-async function getBarsImpl(input: GetBarsInput) {
+async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
+  throwIfBarsSignalAborted(options.signal);
   const bridgeClient = getIbkrClient();
-  const bridgeHealth = await bridgeClient.getHealth().catch(() => null);
+  const bridgeHealth = await awaitWithBarsAbort(
+    bridgeClient.getHealth().catch(() => null),
+    options.signal,
+  );
   const polygonConfig = getPolygonRuntimeConfig();
   const polygonClient = polygonConfig ? getPolygonClient() : null;
   const polygonBarsDelayed =
@@ -6309,12 +6462,15 @@ async function getBarsImpl(input: GetBarsInput) {
         providerContractId: brokerHistoryInput.providerContractId,
         outsideRth,
         source: brokerHistoryInput.source,
+        signal: options.signal,
       }),
       BARS_PROVIDER_BUDGET_MS,
       [],
+      { signal: options.signal, createAbortError: createBarsRequestAbortedError },
     );
 
   if (isBrokerHistoryTimeframe) {
+    throwIfBarsSignalAborted(options.signal);
     try {
       const brokerHistoryInput = buildRecentBrokerHistoryInput(
         input,
@@ -6334,32 +6490,42 @@ async function getBarsImpl(input: GetBarsInput) {
         });
       }
     } catch (error) {
+      if (error instanceof HttpError && error.code === "bars_request_aborted") {
+        throw error;
+      }
       brokerHistoryError = error;
       ibkrBars = [];
     }
   }
-  const storedHistoricalBars = restrictHistoricalSynthesisToBrokerBackfill(
-    input,
-    await resolveWithin(
-      loadStoredMarketBars({
-        symbol: input.symbol,
-        timeframe: input.timeframe,
-        limit: input.limit,
-        from: input.from,
-        to: input.to,
-        assetClass: input.assetClass,
-        market: input.market,
-        providerContractId: input.providerContractId,
-        outsideRth,
-        source: input.source,
-        recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
-        sourceName: historicalStoreSource,
-      }),
-      BARS_PROVIDER_BUDGET_MS,
-      [],
-    ),
-    ibkrBars,
-  );
+  const storedHistoricalBars = allowHistoricalSynthesis
+    ? restrictHistoricalSynthesisToBrokerBackfill(
+        input,
+        await resolveWithin(
+          loadStoredMarketBars({
+            symbol: input.symbol,
+            timeframe: input.timeframe,
+            limit: input.limit,
+            from: input.from,
+            to: input.to,
+            assetClass: input.assetClass,
+            market: input.market,
+            providerContractId: input.providerContractId,
+            outsideRth,
+            source: input.source,
+            recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+            sourceName: historicalStoreSource,
+          }),
+          BARS_PROVIDER_BUDGET_MS,
+          [],
+          {
+            signal: options.signal,
+            createAbortError: createBarsRequestAbortedError,
+          },
+        ),
+        ibkrBars,
+      )
+    : [];
+  throwIfBarsSignalAborted(options.signal);
   const desiredBars = Math.max(
     input.limit ?? (ibkrBars.length + storedHistoricalBars.length),
     1,
@@ -6398,6 +6564,7 @@ async function getBarsImpl(input: GetBarsInput) {
           }).catch(() => null),
           BARS_PROVIDER_BUDGET_MS,
           null,
+          { signal: options.signal, createAbortError: createBarsRequestAbortedError },
         );
         usedCursorContinuation = Boolean(polygonBarsPage);
       }
@@ -6417,6 +6584,7 @@ async function getBarsImpl(input: GetBarsInput) {
           }),
           BARS_PROVIDER_BUDGET_MS,
           null,
+          { signal: options.signal, createAbortError: createBarsRequestAbortedError },
         );
       }
       if (polygonBarsPage) {
@@ -6435,27 +6603,32 @@ async function getBarsImpl(input: GetBarsInput) {
         }),
         input.timeframe,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof HttpError && error.code === "bars_request_aborted") {
+        throw error;
+      }
       polygonBarsPage = null;
       polygonBars = [];
     }
-    void persistMarketDataBars({
-      request: {
-        symbol: input.symbol,
-        timeframe: input.timeframe,
-        limit: input.limit,
-        from: input.from,
-        to: input.to,
-        assetClass: input.assetClass,
-        market: input.market,
-        providerContractId: input.providerContractId,
-        outsideRth,
-        source: input.source,
-        recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
-      },
-      sourceName: historicalStoreSource,
-      bars: polygonBars,
-    });
+    if (!options.signal?.aborted) {
+      void persistMarketDataBars({
+        request: {
+          symbol: input.symbol,
+          timeframe: input.timeframe,
+          limit: input.limit,
+          from: input.from,
+          to: input.to,
+          assetClass: input.assetClass,
+          market: input.market,
+          providerContractId: input.providerContractId,
+          outsideRth,
+          source: input.source,
+          recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+        },
+        sourceName: historicalStoreSource,
+        bars: polygonBars,
+      });
+    }
     const mergeablePolygonBars = restrictHistoricalSynthesisToBrokerBackfill(
       input,
       polygonBars,
@@ -6749,6 +6922,7 @@ const OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS = readNonNegativeIntegerEnv(
   "OPTION_CHAIN_BATCH_EMERGENCY_MAX_EXPIRATIONS",
   0,
 );
+const OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS = [250, 750] as const;
 const OPTIONS_FLOW_SCANNER_ENABLED = readBooleanEnv(
   "OPTIONS_FLOW_SCANNER_ENABLED",
   true,
@@ -6796,7 +6970,7 @@ const OPTIONS_FLOW_RADAR_ENABLED = readBooleanEnv(
 );
 const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_BATCH_SIZE",
-  30,
+  40,
 );
 const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_CANDIDATES",
@@ -6808,7 +6982,7 @@ const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
 );
 const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
-  10,
+  40,
 );
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
@@ -7076,6 +7250,30 @@ const flowUniverseManager = createFlowUniverseManager({
     }));
   },
 });
+
+async function getOptionsFlowScannerBridgeSkipReason(): Promise<string | null> {
+  const health = await getIbkrClient().getHealth().catch(() => null);
+  if (!health) {
+    return "bridge-health-unavailable";
+  }
+  if (health.configured === false) {
+    return "bridge-not-configured";
+  }
+  if (health.transport !== "tws") {
+    return "transport-not-tws";
+  }
+  if (health.connected === false) {
+    return "gateway-not-connected";
+  }
+  if (health.authenticated === false) {
+    return "gateway-not-authenticated";
+  }
+  if (health.liveMarketDataAvailable === false) {
+    return "market-data-not-live";
+  }
+  return null;
+}
+
 const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   normalizeSymbol,
   maxConcurrency: resolveOptionsFlowScannerEffectiveConcurrency(
@@ -7086,11 +7284,7 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   preferredTransport: "tws",
   allowFallbackTransport: false,
   getTransport: async () => {
-    if (isBridgeWorkBackedOff("health") || isBridgeWorkBackedOff("options")) {
-      return null;
-    }
-    const health = await runBridgeWork("health", () => getIbkrClient().getHealth())
-      .catch(() => null);
+    const health = await getIbkrClient().getHealth().catch(() => null);
     return health
       ? {
           transport: health.transport,
@@ -7131,12 +7325,12 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
 });
 const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
   normalizeSymbol,
+  shouldSkip: getOptionsFlowScannerBridgeSkipReason,
   fetchBatch: async (symbols) => {
-    if (isBridgeWorkBackedOff("quotes")) {
-      throw new Error("quotes-bridge-work-backed-off");
-    }
-    const quotes = await runBridgeWork("quotes", () =>
-      getIbkrClient().getOptionActivitySnapshots([...symbols]),
+    const quotes = await runBridgeWork(
+      "quotes",
+      () => getIbkrClient().getOptionActivitySnapshots([...symbols]),
+      { bypassBackoff: true, recordFailure: false },
     );
     return {
       quotes,
@@ -7176,11 +7370,38 @@ function getFlowScannerPinnedSymbols(): string[] {
 }
 
 export function getOptionsFlowScannerLaneResolution() {
-  const { builtInSymbols, flowUniverseSymbols } = getOptionsFlowLaneSourceSymbols();
-  return resolveIbkrLaneSymbols("flow-scanner", {
-    "built-in": builtInSymbols,
-    "flow-universe": flowUniverseSymbols,
+  const sources = getOptionsFlowLaneSourceSymbols();
+  const resolution = resolveIbkrLaneSymbols("flow-scanner", {
+    "built-in": sources.builtInSymbols,
+    "flow-universe": sources.flowUniverseSymbols,
   });
+  return orderOptionsFlowScannerLaneResolution(sources, resolution);
+}
+
+function orderOptionsFlowScannerLaneResolution(
+  sources: {
+    builtInSymbols: string[];
+    flowUniverseSymbols: string[];
+  },
+  resolution: ReturnType<typeof resolveIbkrLaneSymbols>,
+) {
+  const admitted = new Set(resolution.admittedSymbols);
+  const orderedSymbols = Array.from(
+    new Set([
+      ...resolution.desiredSymbols
+        .filter(
+          (entry) => admitted.has(entry.symbol) && entry.sources.includes("manual"),
+        )
+        .map((entry) => entry.symbol),
+      ...sources.flowUniverseSymbols,
+      ...sources.builtInSymbols,
+      ...resolution.admittedSymbols,
+    ]),
+  ).filter((symbol) => admitted.has(symbol));
+  return {
+    ...resolution,
+    admittedSymbols: orderedSymbols.slice(0, resolution.maxSymbols),
+  };
 }
 
 export function getOptionsFlowLaneSourceSymbols(): {
@@ -7335,10 +7556,39 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
 
 export function getOptionsFlowUniverse() {
   const sources = getOptionsFlowLaneSourceSymbols();
+  const laneResolution = resolveIbkrLaneSymbols("flow-scanner", {
+    "built-in": sources.builtInSymbols,
+    "flow-universe": sources.flowUniverseSymbols,
+  });
+  const orderedLaneResolution = orderOptionsFlowScannerLaneResolution(
+    sources,
+    laneResolution,
+  );
   return {
     coverage: getOptionsFlowUniverseCoverage(),
-    symbols: sources.flowUniverseSymbols,
+    symbols: orderedLaneResolution.admittedSymbols,
     sources,
+  };
+}
+
+export function getOptionsFlowScannerDiagnostics() {
+  const config = getOptionsFlowRuntimeConfig();
+  const deepScanner = optionsFlowScanner.getDiagnostics();
+  const radar = optionsFlowRadarScanner.getCoverage();
+  return {
+    enabled: config.scannerEnabled,
+    started: optionsFlowScannerStarted,
+    radarEnabled: config.radarEnabled,
+    scannerAlwaysOn: config.scannerAlwaysOn,
+    lineBudget: config.scannerLineBudget,
+    deepScanner,
+    radar,
+    lastSkippedReason: deepScanner.lastSkippedReason || null,
+    radarDegradedReason: radar.degradedReason || null,
+    lastBatch: deepScanner.lastBatch.length
+      ? deepScanner.lastBatch
+      : radar.currentBatch,
+    promotedSymbols: radar.promotedSymbols,
   };
 }
 
@@ -8115,6 +8365,17 @@ function formatOptionChainBatchError(error: unknown): string {
   return "Option chain request failed.";
 }
 
+function waitForOptionChainRetry(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
+}
+
+function shouldRetryEmptyOptionChain(input: IbkrOptionChainInput): boolean {
+  return Boolean(input.expirationDate);
+}
+
 async function mapWithConcurrency<T, R>(
   values: T[],
   concurrency: number,
@@ -8475,9 +8736,20 @@ function refreshOptionChainCache(
 
   const promise = (async () => {
     try {
-      const ibkrValue = await runBridgeWork("options", () =>
+      let ibkrValue = await runBridgeWork("options", () =>
         getIbkrClient().getOptionChain(input),
       );
+      if (!ibkrValue.length && shouldRetryEmptyOptionChain(input)) {
+        for (const delayMs of OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
+          await waitForOptionChainRetry(delayMs);
+          ibkrValue = await runBridgeWork("options", () =>
+            getIbkrClient().getOptionChain(input),
+          );
+          if (ibkrValue.length) {
+            break;
+          }
+        }
+      }
       const value =
         input.quoteHydration === "metadata" &&
         input.allowDelayedSnapshotHydration !== false
@@ -8581,6 +8853,26 @@ async function loadDurableOptionExpirationsForRequest(input: {
   };
 }
 
+export function shouldUseDurableOptionExpirationsForRequest(
+  input: IbkrOptionExpirationsInput,
+  durable: {
+    expirations: IbkrOptionExpirationDates;
+    debug: RequestDebugMetadata;
+  } | null,
+): boolean {
+  if (!durable || durable.debug.stale === true) {
+    return false;
+  }
+  if (
+    typeof input.maxExpirations !== "number" ||
+    !Number.isFinite(input.maxExpirations)
+  ) {
+    return false;
+  }
+
+  return durable.expirations.length >= Math.max(1, Math.floor(input.maxExpirations));
+}
+
 async function getCachedIbkrOptionExpirationsWithDebug(
   input: IbkrOptionExpirationsInput,
 ): Promise<{
@@ -8633,7 +8925,7 @@ async function getCachedIbkrOptionExpirationsWithDebug(
     request: input,
     requestedAt,
   });
-  if (durable && durable.debug.stale !== true) {
+  if (durable && shouldUseDurableOptionExpirationsForRequest(input, durable)) {
     return durable;
   }
 
@@ -9343,12 +9635,14 @@ export async function getOptionChartBarsWithDebug(input: {
   }
 
   let contract: IbkrOptionChainContracts[number]["contract"] | null = null;
-  let providerContractId: string | null = null;
-  let resolutionSource: OptionChartBarsResolutionSource = "none";
+  let providerContractId: string | null = providedProviderContractId;
+  let resolutionSource: OptionChartBarsResolutionSource = providerContractId
+    ? "provided"
+    : "none";
   let chainDebug: RequestDebugMetadata | null = null;
   let chainError: unknown = null;
 
-  try {
+  const resolveFromOptionChain = async () => {
     const chain = await getCachedIbkrOptionChainWithDebug({
       underlying,
       expirationDate,
@@ -9363,15 +9657,19 @@ export async function getOptionChartBarsWithDebug(input: {
       strike,
     });
     contract = match?.contract ?? null;
-    providerContractId = contract?.providerContractId?.trim() || null;
-    resolutionSource = providerContractId ? "chain" : "none";
-  } catch (error) {
-    chainError = error;
-  }
+    const chainProviderContractId = contract?.providerContractId?.trim() || null;
+    if (chainProviderContractId) {
+      providerContractId = chainProviderContractId;
+      resolutionSource = "chain";
+    }
+  };
 
-  if (!providerContractId && providedProviderContractId) {
-    providerContractId = providedProviderContractId;
-    resolutionSource = "provided";
+  if (!providerContractId) {
+    try {
+      await resolveFromOptionChain();
+    } catch (error) {
+      chainError = error;
+    }
   }
 
   if (!providerContractId && !chainError) {
@@ -9389,10 +9687,11 @@ export async function getOptionChartBarsWithDebug(input: {
   }
 
   let ibkrBarsResult: GetBarsResult | null = null;
+  let ibkrBarsDebug: RequestDebugMetadata | null = null;
   let ibkrBarsError: unknown = null;
   if (providerContractId) {
     try {
-      const { debug: _debug, ...barsResult } = await getBarsWithDebug({
+      const { debug, ...barsResult } = await getBarsWithDebug({
         symbol: underlying,
         timeframe: input.timeframe,
         limit: input.limit,
@@ -9406,6 +9705,7 @@ export async function getOptionChartBarsWithDebug(input: {
         allowStudyFallback: false,
       });
       ibkrBarsResult = barsResult;
+      ibkrBarsDebug = debug;
     } catch (error) {
       ibkrBarsError = error;
     }
@@ -9435,10 +9735,29 @@ export async function getOptionChartBarsWithDebug(input: {
         feedIssue: false,
       },
       {
-        cacheStatus: chainDebug?.cacheStatus ?? "miss",
-        upstreamMs: chainDebug?.upstreamMs ?? null,
-        degraded: false,
-        reason: null,
+        cacheStatus:
+          (ibkrBarsDebug as RequestDebugMetadata | null)?.cacheStatus ??
+          (chainDebug as RequestDebugMetadata | null)?.cacheStatus ??
+          "miss",
+        upstreamMs:
+          (ibkrBarsDebug as RequestDebugMetadata | null)?.upstreamMs ??
+          (chainDebug as RequestDebugMetadata | null)?.upstreamMs ??
+          null,
+        stale:
+          (ibkrBarsDebug as RequestDebugMetadata | null)?.stale ??
+          (chainDebug as RequestDebugMetadata | null)?.stale,
+        ageMs:
+          (ibkrBarsDebug as RequestDebugMetadata | null)?.ageMs ??
+          (chainDebug as RequestDebugMetadata | null)?.ageMs,
+        degraded:
+          Boolean((ibkrBarsDebug as RequestDebugMetadata | null)?.stale) ||
+          Boolean((chainDebug as RequestDebugMetadata | null)?.stale),
+        reason:
+          (ibkrBarsDebug as RequestDebugMetadata | null)?.stale
+            ? "stale_ibkr_option_history_cache"
+            : (chainDebug as RequestDebugMetadata | null)?.stale
+              ? "stale_option_chain_cache"
+              : null,
       },
     );
   }
@@ -9446,7 +9765,10 @@ export async function getOptionChartBarsWithDebug(input: {
   const feedIssue = isIbkrOptionHistoryFeedIssue({
     barsResult: ibkrBarsResult,
     error: ibkrBarsError,
-  }) || Boolean(!providerContractId && (chainError || chainDebug?.degraded));
+  }) || Boolean(
+    !providerContractId &&
+      (chainError || (chainDebug as RequestDebugMetadata | null)?.degraded),
+  );
 
   if (!polygonOptionTicker) {
     return finish(
@@ -9688,6 +10010,8 @@ function selectFlowScannerLiveCandidateContracts(
   contracts: IbkrOptionChainContracts,
   lineBudget: number,
 ): IbkrOptionChainContracts {
+  const underlyingPrice = readOptionChainUnderlyingPrice(contracts);
+
   return contracts
     .filter((contract) => contract.contract.providerContractId)
     .sort((left, right) => {
@@ -9703,7 +10027,42 @@ function selectFlowScannerLiveCandidateContracts(
       if ((leftVolume ?? 0) !== (rightVolume ?? 0)) {
         return (rightVolume ?? 0) - (leftVolume ?? 0);
       }
-      return (right.openInterest ?? 0) - (left.openInterest ?? 0);
+      if ((left.openInterest ?? 0) !== (right.openInterest ?? 0)) {
+        return (right.openInterest ?? 0) - (left.openInterest ?? 0);
+      }
+
+      const leftUnderlyingPrice =
+        typeof left.underlyingPrice === "number" &&
+        Number.isFinite(left.underlyingPrice) &&
+        left.underlyingPrice > 0
+          ? left.underlyingPrice
+          : underlyingPrice;
+      const rightUnderlyingPrice =
+        typeof right.underlyingPrice === "number" &&
+        Number.isFinite(right.underlyingPrice) &&
+        right.underlyingPrice > 0
+          ? right.underlyingPrice
+          : underlyingPrice;
+      const leftDistance =
+        leftUnderlyingPrice !== null && leftUnderlyingPrice > 0
+          ? Math.abs(left.contract.strike - leftUnderlyingPrice) /
+            leftUnderlyingPrice
+          : Number.POSITIVE_INFINITY;
+      const rightDistance =
+        rightUnderlyingPrice !== null && rightUnderlyingPrice > 0
+          ? Math.abs(right.contract.strike - rightUnderlyingPrice) /
+            rightUnderlyingPrice
+          : Number.POSITIVE_INFINITY;
+      if (leftDistance !== rightDistance) {
+        return leftDistance - rightDistance;
+      }
+
+      return (
+        left.contract.expirationDate.getTime() -
+          right.contract.expirationDate.getTime() ||
+        left.contract.right.localeCompare(right.contract.right) ||
+        left.contract.strike - right.contract.strike
+      );
     })
     .slice(0, Math.max(1, lineBudget));
 }
@@ -9727,6 +10086,30 @@ export async function listFlowEvents(input: {
       ? Math.min(100, Math.max(0.1, input.unusualThreshold as number))
       : undefined;
   const filters = normalizeFlowEventsFilters(input);
+  const runtimeConfig = getOptionsFlowRuntimeConfig();
+  const nonblockingScannerRefresh =
+    !blocking &&
+    input.allowPolygonFallback !== true;
+  const defaultScannerLineBudget = nonblockingScannerRefresh
+    ? Math.max(
+        1,
+        Math.min(runtimeConfig.radarDeepLineBudget, runtimeConfig.scannerLineBudget),
+      )
+    : runtimeConfig.scannerLineBudget;
+  const explicitLineBudget =
+    Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0
+      ? Math.max(
+          1,
+          Math.min(
+            Math.floor(input.lineBudget as number),
+            runtimeConfig.scannerLineBudget,
+          ),
+        )
+      : null;
+  const scannerLineBudget = explicitLineBudget ?? defaultScannerLineBudget;
+  const scannerLimitFloor = nonblockingScannerRefresh
+    ? scannerLineBudget
+    : runtimeConfig.scannerLimit;
 
   if (!underlying) {
     return {
@@ -9740,25 +10123,26 @@ export async function listFlowEvents(input: {
   }
 
   const scannerRequest = {
-    limit: Math.max(limit, getOptionsFlowRuntimeConfig().scannerLimit),
+    limit: Math.max(limit, scannerLimitFloor),
     unusualThreshold,
-    lineBudget:
-      Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0
-        ? Math.max(
-            1,
-            Math.min(
-              Math.floor(input.lineBudget as number),
-              getOptionsFlowRuntimeConfig().scannerLineBudget,
-            ),
-          )
-        : getOptionsFlowRuntimeConfig().scannerLineBudget,
+    lineBudget: scannerLineBudget,
     allowPolygonFallback: input.allowPolygonFallback ?? false,
   };
+  const scannerSnapshotLimit = nonblockingScannerRefresh
+    ? Math.max(
+        1,
+        Math.min(
+          scannerRequest.limit,
+          scannerRequest.lineBudget ?? scannerRequest.limit,
+        ),
+      )
+    : scannerRequest.limit;
   const rawScannerSnapshot = getOptionsFlowRuntimeConfig().scannerEnabled
     ? optionsFlowScanner.getSnapshot(underlying, {
-        limit: scannerRequest.limit,
+        limit: scannerSnapshotLimit,
         unusualThreshold,
         lineBudget: scannerRequest.lineBudget,
+        allowPartial: nonblockingScannerRefresh,
       })
     : null;
   const scannerSnapshot = isFlowScannerSnapshotAllowedForFallbackPolicy(
@@ -9789,22 +10173,23 @@ export async function listFlowEvents(input: {
     unusualThreshold ?? "default"
   }:${flowEventsFilterCacheKey(filters)}:${
     scannerRequest.allowPolygonFallback ? "polygon-fallback" : "ibkr-only"
-  }`;
+  }:${scannerRequest.lineBudget}`;
   const requestedAt = Date.now();
-  const cached = flowEventsCache.get(cacheKey);
+  let cached = flowEventsCache.get(cacheKey);
+  if (cached && !isCacheableFlowEventsResult(cached.value)) {
+    flowEventsCache.delete(cacheKey);
+    cached = undefined;
+  }
   if (cached && cached.expiresAt > requestedAt) {
     return cached.value;
   }
   const inFlight = flowEventsInFlight.get(cacheKey);
 
   if (scannerSnapshot?.freshness === "stale") {
-    optionsFlowScanner
-      .requestScan([underlying], scannerRequest)
-      .catch((error) => {
-        logger.warn(
-          { err: error, underlying },
-          "Failed to queue options flow scanner refresh",
-        );
+    queueOptionsFlowScannerRefresh({
+      underlying,
+      scannerRequest,
+      phase: "stale-snapshot",
     });
     return {
       events: filterFlowEventsForRequest(
@@ -9851,6 +10236,23 @@ export async function listFlowEvents(input: {
       });
     }
     return inFlight;
+  }
+
+  if (
+    nonblockingScannerRefresh &&
+    queueOptionsFlowScannerRefresh({
+      underlying,
+      scannerRequest,
+      phase: "nonblocking-miss",
+    })
+  ) {
+    return deferredFlowEventsResult({
+      underlying,
+      limit,
+      filters,
+      unusualThreshold,
+      reason: "options_flow_scanner_queued",
+    });
   }
 
   const deferReason = shouldDeferOnDemandFlowRefresh();
@@ -9901,15 +10303,25 @@ function refreshFlowEventsCache(
     return existing;
   }
 
+  const cached = flowEventsCache.get(cacheKey);
   flowEventsOnDemandActive += 1;
   const request = listFlowEventsUncached(input).then((value) => {
     const settledAt = Date.now();
-    flowEventsCache.set(cacheKey, {
-      value,
-      expiresAt: settledAt + FLOW_EVENTS_CACHE_TTL_MS,
-      staleExpiresAt: settledAt + FLOW_EVENTS_CACHE_STALE_TTL_MS,
-    });
+    const nextValue = shouldPreserveCachedFlowEvents(cached, value, settledAt)
+      ? cached!.value
+      : value;
+    const cacheable = isCacheableFlowEventsResult(nextValue);
+    if (cacheable) {
+      flowEventsCache.set(cacheKey, {
+        value: nextValue,
+        expiresAt: settledAt + FLOW_EVENTS_CACHE_TTL_MS,
+        staleExpiresAt: settledAt + FLOW_EVENTS_CACHE_STALE_TTL_MS,
+      });
+    } else {
+      flowEventsCache.delete(cacheKey);
+    }
     if (
+      cacheable &&
       getOptionsFlowRuntimeConfig().scannerEnabled &&
       input.allowPolygonFallback !== true &&
       !hasNarrowFlowFilters(input.filters)
@@ -9921,10 +10333,10 @@ function refreshFlowEventsCache(
           unusualThreshold: input.unusualThreshold,
           lineBudget: input.lineBudget,
         },
-        value,
+        nextValue,
       );
     }
-    return value;
+    return nextValue;
   });
   flowEventsInFlight.set(cacheKey, request);
 
@@ -10096,6 +10508,17 @@ async function listFlowEventsUncached(input: {
       ibkrReturnedQuoteCount =
         quotePayload?.debug?.returnedCount ?? quotePayload?.quotes.length ?? 0;
       ibkrMissingQuoteCount = quotePayload?.debug?.missingProviderContractIds.length ?? 0;
+      const quoteHydrationError = quotePayload?.debug?.errorMessage ?? null;
+      if (quoteHydrationError) {
+        ibkrError ??= quoteHydrationError;
+        ibkrReason ??= "options_flow_quote_hydration_failed";
+      } else if (
+        ibkrAcceptedQuoteCount > 0 &&
+        ibkrReturnedQuoteCount === 0 &&
+        ibkrMissingQuoteCount > 0
+      ) {
+        ibkrReason ??= "options_flow_quote_hydration_empty";
+      }
       const admittedProviderContractIds = new Set(
         quotePayload?.debug?.acceptedProviderContractIds ?? [],
       );
@@ -10186,7 +10609,8 @@ async function listFlowEventsUncached(input: {
     ibkrStatus =
       ibkrQualifiedContractCount > 0
         ? "loaded"
-        : ibkrReason?.includes("degraded")
+        : ibkrReason?.includes("degraded") ||
+            ibkrReason?.includes("quote_hydration")
           ? "degraded"
           : "empty";
   }
@@ -10259,8 +10683,10 @@ async function listFlowEventsUncached(input: {
       // Rank by mark-based premium (mark × volume × multiplier) so the
       // ordering is stable even when `last` is stale or zero. The display
       // `price` still prefers the last field when available.
+      const occurredAt =
+        c.dataUpdatedAt ?? c.quoteUpdatedAt ?? c.updatedAt ?? new Date();
       return {
-        id: `${c.contract.ticker}-${c.updatedAt.getTime()}`,
+        id: `${c.contract.ticker}-${occurredAt.getTime()}`,
         underlying: normalizeSymbol(c.contract.underlying),
         provider: "ibkr" as const,
         basis: "snapshot" as const,
@@ -10278,7 +10704,7 @@ async function listFlowEventsUncached(input: {
         premium: mark * size * c.contract.sharesPerContract,
         multiplier: c.contract.multiplier,
         sharesPerContract: c.contract.sharesPerContract,
-        openInterest: c.openInterest,
+        openInterest: c.openInterest ?? 0,
         impliedVolatility: c.impliedVolatility,
         delta: c.delta,
         gamma: c.gamma,
@@ -10293,7 +10719,7 @@ async function listFlowEventsUncached(input: {
         side,
         sentiment,
         tradeConditions: [] as string[],
-        occurredAt: c.updatedAt,
+        occurredAt,
         unusualScore,
         isUnusual,
       };
@@ -10400,6 +10826,8 @@ async function listFlowEventsUncached(input: {
 type FlowScannerBenchmarkLineUsage = {
   activeLineCount: number;
   activeOptionLineCount: number;
+  accountMonitorLineCount: number;
+  accountMonitorRemainingLineCount: number;
   flowScannerLineCount: number;
   flowScannerRemainingLineCount: number;
   usableRemainingLineCount: number;
@@ -10460,6 +10888,8 @@ function summarizeMarketDataLineUsage(
   return {
     activeLineCount: diagnostics.activeLineCount,
     activeOptionLineCount: diagnostics.activeOptionLineCount,
+    accountMonitorLineCount: diagnostics.accountMonitorLineCount,
+    accountMonitorRemainingLineCount: diagnostics.accountMonitorRemainingLineCount,
     flowScannerLineCount: diagnostics.flowScannerLineCount,
     flowScannerRemainingLineCount: diagnostics.flowScannerRemainingLineCount,
     usableRemainingLineCount: diagnostics.usableRemainingLineCount,

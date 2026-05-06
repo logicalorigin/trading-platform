@@ -60,6 +60,10 @@ type BridgeHealthSnapshot = {
   stale?: boolean;
   bridgeReachable?: boolean;
   socketConnected?: boolean;
+  brokerServerConnected?: boolean;
+  serverConnectivity?: "unknown" | "connected" | "disconnected";
+  lastServerConnectivityAt?: Date | null;
+  lastServerConnectivityError?: string | null;
   accountsLoaded?: boolean;
   configuredLiveMarketDataMode?: boolean;
   streamFresh?: boolean;
@@ -120,6 +124,10 @@ type BridgeConnectionHealthSnapshot = {
   stale?: boolean;
   bridgeReachable?: boolean;
   socketConnected?: boolean;
+  brokerServerConnected?: boolean;
+  serverConnectivity?: "unknown" | "connected" | "disconnected";
+  lastServerConnectivityAt?: Date | null;
+  lastServerConnectivityError?: string | null;
   accountsLoaded?: boolean;
   configuredLiveMarketDataMode?: boolean;
   streamFresh?: boolean;
@@ -282,6 +290,10 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
     stale: raw.stale,
     bridgeReachable: raw.bridgeReachable,
     socketConnected: raw.socketConnected,
+    brokerServerConnected: raw.brokerServerConnected,
+    serverConnectivity: raw.serverConnectivity,
+    lastServerConnectivityAt: raw.lastServerConnectivityAt,
+    lastServerConnectivityError: raw.lastServerConnectivityError,
     accountsLoaded: raw.accountsLoaded,
     configuredLiveMarketDataMode: raw.configuredLiveMarketDataMode,
     streamFresh: raw.streamFresh,
@@ -297,6 +309,9 @@ function hydrateHealth(raw: BridgeHealthSnapshot): BridgeHealthSnapshot {
     lastRecoveryAttemptAt: raw.lastRecoveryAttemptAt
       ? toDate(raw.lastRecoveryAttemptAt)
       : null,
+    lastServerConnectivityAt: raw.lastServerConnectivityAt
+      ? toDate(raw.lastServerConnectivityAt)
+      : null,
     connections: {
       tws: hydrateConnectionHealth(twsConnection),
     },
@@ -310,6 +325,9 @@ function hydrateConnectionHealth(
     ...raw,
     lastPingAt: raw.lastPingAt ? toDate(raw.lastPingAt) : null,
     lastTickleAt: raw.lastTickleAt ? toDate(raw.lastTickleAt) : null,
+    lastServerConnectivityAt: raw.lastServerConnectivityAt
+      ? toDate(raw.lastServerConnectivityAt)
+      : null,
   };
 }
 
@@ -1612,6 +1630,7 @@ export class IbkrBridgeClient {
     providerContractId?: string | null;
     outsideRth?: boolean;
     source?: HistoryDataSource;
+    signal?: AbortSignal;
   }): Promise<BrokerBarSnapshot[]> {
     const bridgeSymbol = toBridgeStockSymbolForRequest(input);
     const payload = await this.request<{
@@ -1623,7 +1642,7 @@ export class IbkrBridgeClient {
       >;
     }>(
       "/bars",
-      {},
+      { signal: input.signal },
       {
         symbol: bridgeSymbol,
         timeframe: input.timeframe,

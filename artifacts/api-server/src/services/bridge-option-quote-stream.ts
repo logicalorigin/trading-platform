@@ -8,10 +8,12 @@ import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
   isBridgeWorkBackedOff,
   runBridgeWork,
+  type BridgeWorkCategory,
 } from "./bridge-governor";
 import {
   admitMarketDataLeases,
   isMarketDataLeaseActive,
+  releaseMarketDataLeaseIds,
   releaseMarketDataLeases,
   type MarketDataFallbackProvider,
   type MarketDataIntent,
@@ -37,6 +39,7 @@ export type OptionQuoteSnapshotPayload = {
     bridgeChunks: number;
     providerMode: string | null;
     liveMarketDataAvailable: boolean | null;
+    errorMessage?: string | null;
     acceptedProviderContractIds: string[];
     missingProviderContractIds: string[];
   };
@@ -582,6 +585,12 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const owner =
     input.owner?.trim() || `bridge-option-quote-snapshot:${nextSnapshotOwnerId++}`;
   const intent = input.intent ?? "visible-live";
+  const bridgeWorkCategory: BridgeWorkCategory =
+    intent === "flow-scanner-live" ? "quotes" : "options";
+  const bypassBridgeBackoff = intent === "flow-scanner-live";
+  const bridgeWorkOptions = bypassBridgeBackoff
+    ? { bypassBackoff: true, recordFailure: false }
+    : undefined;
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
   const fallbackProvider = input.fallbackProvider ?? "polygon";
   const requiresGreeks = input.requiresGreeks ?? true;
@@ -597,7 +606,9 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     })),
     ttlMs,
     fallbackProvider,
+    replaceOwnerExisting: false,
   });
+  const admittedLeaseIds = admission.admitted.map((lease) => lease.id);
   const admittedProviderContractIds = admission.admitted
     .map((lease) => lease.providerContractId)
     .filter((providerContractId): providerContractId is string =>
@@ -627,8 +638,8 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       ),
   );
 
-  if (isBridgeWorkBackedOff("options")) {
-    releaseMarketDataLeases(owner, "snapshot_complete");
+  if (!bypassBridgeBackoff && isBridgeWorkBackedOff(bridgeWorkCategory)) {
+    releaseMarketDataLeaseIds(admittedLeaseIds, "snapshot_complete");
     return {
       ...cachedQuotes,
       debug: {
@@ -641,6 +652,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
         returnedCount: cachedQuotes.quotes.length,
         bridgeChunks: bridgeChunks.length,
         ...providerDebug,
+        errorMessage: `IBKR bridge ${bridgeWorkCategory} work is backed off.`,
         acceptedProviderContractIds: admittedProviderContractIds,
         missingProviderContractIds: normalizedProviderContractIds.filter(
           (providerContractId) =>
@@ -651,6 +663,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   }
 
   const upstreamStartedAt = Date.now();
+  let upstreamErrorMessage: string | null = null;
   try {
     if (hydrateProviderContractIds.length > 0) {
       const freshQuotes = (
@@ -659,11 +672,12 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
             hydrateProviderContractIds,
             OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
           ).map((providerContractIds) =>
-            runBridgeWork("options", () =>
+            runBridgeWork(bridgeWorkCategory, () =>
               bridgeClient.getOptionQuoteSnapshots({
                 underlying,
                 providerContractIds,
               }),
+              bridgeWorkOptions,
             ),
           ),
         )
@@ -681,11 +695,12 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
               missingAfterHydration,
               OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
             ).map((providerContractIds) =>
-              runBridgeWork("options", () =>
+              runBridgeWork(bridgeWorkCategory, () =>
                 bridgeClient.getOptionQuoteSnapshots({
                   underlying,
                   providerContractIds,
                 }),
+                bridgeWorkOptions,
               ),
             ),
           )
@@ -694,10 +709,11 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       }
     }
   } catch (error) {
-    lastError = readErrorMessage(error);
+    upstreamErrorMessage = readErrorMessage(error);
+    lastError = upstreamErrorMessage;
     lastErrorAt = nowProvider();
   } finally {
-    releaseMarketDataLeases(owner, "snapshot_complete");
+    releaseMarketDataLeaseIds(admittedLeaseIds, "snapshot_complete");
   }
 
   const payload = getPayloadForProviderContractIds(
@@ -727,6 +743,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       returnedCount: payload.quotes.length,
       bridgeChunks: bridgeChunks.length,
       ...providerDebug,
+      errorMessage: upstreamErrorMessage,
       acceptedProviderContractIds: admittedProviderContractIds,
       missingProviderContractIds: normalizedProviderContractIds.filter(
         (providerContractId) => !returnedProviderContractIds.has(providerContractId),

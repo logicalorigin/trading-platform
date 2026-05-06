@@ -94,6 +94,7 @@ export function resolveIbkrRuntimeStreamState(input: {
   healthFresh?: boolean;
   bridgeReachable?: boolean;
   connected?: boolean;
+  brokerServerConnected?: boolean;
   authenticated?: boolean;
   accountsLoaded?: boolean;
   configuredLiveMarketDataMode?: boolean;
@@ -131,6 +132,9 @@ export function resolveIbkrRuntimeStreamState(input: {
   }
   if (!input.connected) {
     return streamStateDetail("reconnect_needed", "gateway_socket_disconnected");
+  }
+  if (input.brokerServerConnected === false) {
+    return streamStateDetail("reconnect_needed", "gateway_server_disconnected");
   }
   if (!input.authenticated) {
     return streamStateDetail("login_required", "gateway_login_required");
@@ -177,6 +181,7 @@ export function resolveIbkrRuntimeStreamState(input: {
 export function resolveIbkrRuntimeStrictReason(input: {
   healthFresh: boolean;
   connected: boolean;
+  brokerServerConnected?: boolean;
   authenticated: boolean;
   accountsLoaded: boolean;
   configuredLiveMarketDataMode: boolean;
@@ -196,6 +201,9 @@ export function resolveIbkrRuntimeStrictReason(input: {
   }
   if (!input.healthFresh) return "health_stale";
   if (!input.connected) return "gateway_socket_disconnected";
+  if (input.brokerServerConnected === false) {
+    return "gateway_server_disconnected";
+  }
   if (!input.authenticated) return "gateway_login_required";
   if (!input.accountsLoaded) return "accounts_unavailable";
   if (!input.configuredLiveMarketDataMode) {

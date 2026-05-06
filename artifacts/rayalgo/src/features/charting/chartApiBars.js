@@ -75,7 +75,7 @@ export const buildChartBarsFromApi = (bars) =>
       ageMs: Number.isFinite(bar?.ageMs) ? bar.ageMs : null,
       delayed: Boolean(bar?.delayed),
       i: index,
-      uoa: 0,
+      flow: 0,
     });
     return result;
   }, []);
@@ -100,6 +100,14 @@ export const describeBrokerChartSource = (source) => {
 
 export const describeBrokerChartStatus = (status, timeframe) =>
   status === "live" ? `IBKR ${timeframe}` : status;
+
+const formatOptionFreshnessLabel = (value) => {
+  const freshness = normalizeText(value) || "unavailable";
+  if (freshness === "delayed_frozen") return "delayed frozen";
+  if (freshness === "metadata") return "metadata";
+  if (freshness === "unavailable") return "unavailable";
+  return freshness;
+};
 
 const intradayTimeframes = new Set([
   "5s",
@@ -169,13 +177,16 @@ export const resolveBrokerChartSourceState = ({
     source.includes("delayed") ||
     source.includes("polygon");
   const isFallback =
+    statusText === "fallback" ||
     source.includes("massive") ||
     source.includes("gap-fill") ||
     source.includes("polygon");
   const isStale =
     freshness === "stale" ||
     marketDataMode === "stale" ||
-    statusText === "stale";
+    statusText === "stale" ||
+    statusText === "reconnecting" ||
+    statusText === "error";
   const isIbkr =
     baseSource.startsWith("ibkr") ||
     marketDataMode === "live" ||
@@ -207,6 +218,11 @@ export const resolveBrokerChartSourceState = ({
     label = baseSource === "ibkr-websocket-derived" ? "IBKR WS" : "IBKR LIVE";
     shortLabel = baseSource === "ibkr-websocket-derived" ? "WS" : "LIVE";
     tone = "good";
+  } else if (statusText === "fallback") {
+    state = "fallback";
+    label = "FALLBACK";
+    shortLabel = "FALLBACK";
+    tone = "warn";
   } else if (isStale) {
     state = "stale";
     label = "STALE";
@@ -260,6 +276,158 @@ export const resolveBrokerChartSourceState = ({
   };
 };
 
+export const resolveOptionChartSourceState = ({
+  identityReady = true,
+  latestBar,
+  status,
+  timeframe,
+  liveDataEnabled = true,
+  requestLoading = false,
+  requestFailed = false,
+  emptyReason = null,
+  feedIssue = false,
+  dataSource = "none",
+  resolutionSource = "none",
+  responseFreshness = null,
+  cacheStale = false,
+} = {}) => {
+  if (!identityReady) {
+    return {
+      label: "missing option details",
+      tone: "muted",
+      sourceLabel: "",
+      freshness: "unavailable",
+      state: "empty",
+    };
+  }
+
+  const hasBars = Boolean(latestBar);
+  const effectiveStatus = cacheStale ? "stale" : status || (hasBars ? "live" : "empty");
+  const effectiveLatestBar =
+    cacheStale && latestBar
+      ? {
+          ...latestBar,
+          freshness: "stale",
+          marketDataMode: latestBar.marketDataMode ?? "stale",
+        }
+      : latestBar;
+  const sourceState = resolveBrokerChartSourceState({
+    latestBar: effectiveLatestBar,
+    status: effectiveStatus,
+    timeframe,
+    streamingEnabled: liveDataEnabled,
+    market: "options",
+  });
+  const freshness = cacheStale
+    ? "stale"
+    : normalizeText(responseFreshness) ||
+      sourceState.freshness ||
+      normalizeText(latestBar?.freshness) ||
+      (hasBars ? "live" : "unavailable");
+
+  if (hasBars) {
+    if (sourceState.isStale || sourceState.state === "fallback") {
+      return {
+        ...sourceState,
+        label: sourceState.label,
+        freshness,
+      };
+    }
+    if (sourceState.isDelayed) {
+      return {
+        ...sourceState,
+        label: sourceState.label,
+        freshness,
+      };
+    }
+    if (feedIssue && dataSource === "polygon-option-aggregates") {
+      return {
+        ...sourceState,
+        label: "IBKR feed issue · Polygon history",
+        sourceLabel: "Polygon history",
+        tone: "warn",
+        freshness,
+      };
+    }
+    if (dataSource === "polygon-option-aggregates") {
+      return {
+        ...sourceState,
+        label: "Polygon history",
+        sourceLabel: "Polygon history",
+        tone: "neutral",
+        freshness,
+      };
+    }
+    if (dataSource === "ibkr-history") {
+      return {
+        ...sourceState,
+        label: "IBKR option history",
+        sourceLabel: "IBKR option history",
+        tone: sourceState.tone || "neutral",
+        freshness,
+      };
+    }
+    if (sourceState.isRealtime) {
+      return {
+        ...sourceState,
+        label: liveDataEnabled ? "live" : "loaded",
+        sourceLabel: sourceState.sourceLabel || sourceState.label,
+        freshness,
+      };
+    }
+    return {
+      ...sourceState,
+      label:
+        freshness === "live"
+          ? liveDataEnabled
+            ? "live"
+            : "loaded"
+          : `${formatOptionFreshnessLabel(freshness)} history`,
+      sourceLabel: sourceState.sourceLabel || sourceState.label,
+      freshness,
+    };
+  }
+
+  if (requestLoading) {
+    return {
+      ...sourceState,
+      label: "loading option history",
+      tone: "info",
+      freshness,
+    };
+  }
+  if (requestFailed) {
+    return {
+      ...sourceState,
+      label: "option history unavailable",
+      tone: "warn",
+      freshness,
+    };
+  }
+  if (emptyReason) {
+    return {
+      ...sourceState,
+      label: String(emptyReason).replaceAll("-", " "),
+      tone: "muted",
+      freshness,
+    };
+  }
+  if (resolutionSource === "none") {
+    return {
+      ...sourceState,
+      label: "contract lookup unavailable",
+      tone: "muted",
+      freshness,
+    };
+  }
+  return {
+    ...sourceState,
+    label: "no option bars",
+    tone: "muted",
+    freshness,
+  };
+};
+
 const formatChartSourceAge = (ageMs) => {
   if (!Number.isFinite(ageMs) || ageMs < 0) return "";
   if (ageMs < 60_000) return `${Math.max(0, Math.round(ageMs / 1000))}s`;
@@ -302,7 +470,7 @@ export const useDisplayChartPriceFallbackBars = ({
               market: normalizedMarket || undefined,
               outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
               source: "trades",
-              allowHistoricalSynthesis: true,
+              allowHistoricalSynthesis: false,
               providerContractId: normalizedProviderContractId || undefined,
             },
             buildBarsRequestOptions(priority),

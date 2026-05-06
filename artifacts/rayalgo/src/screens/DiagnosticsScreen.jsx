@@ -17,6 +17,7 @@ import {
 } from "../features/platform/IbkrConnectionStatus";
 import { useRuntimeWorkloadStats } from "../features/platform/workloadStats";
 import { useHydrationCoordinatorStats } from "../features/platform/hydrationCoordinator";
+import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import {
   dismissAllLocalAlertPreferences,
   dismissLocalAlertPreference,
@@ -142,6 +143,13 @@ const formatDuration = (value) => {
 
 const formatAgo = (value) => {
   const timestamp = Date.parse(value || "");
+  return Number.isFinite(timestamp)
+    ? `${formatDuration(Date.now() - timestamp)} ago`
+    : MISSING_VALUE;
+};
+
+const formatFreshnessAge = (value) => {
+  const timestamp = Number(value);
   return Number.isFinite(timestamp)
     ? `${formatDuration(Date.now() - timestamp)} ago`
     : MISSING_VALUE;
@@ -860,6 +868,20 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
     );
   }, [allLocalAlerts, alertPreferences.dismissedAlerts, latest?.timestamp]);
   const stream = latencyStats?.stream || {};
+  const runtimeIbkr = safeRecord(ibkrSnapshot?.raw);
+  const runtimeControl = useRuntimeControlSnapshot({
+    enabled: isVisible,
+    runtimeDiagnostics: runtimeIbkr ? { ibkr: runtimeIbkr } : null,
+    runtimeDiagnosticsEnabled: false,
+    lineUsageEnabled: false,
+    workloadStats,
+    hydrationStats: hydrationCoordinatorStats,
+    memoryPressure: memoryPressureState,
+  });
+  const runtimeLineUsage = runtimeControl.lineUsage;
+  const governorRows = Object.entries(runtimeControl.bridgeGovernor || {}).filter(
+    ([, lane]) => lane && typeof lane === "object",
+  );
   const quoteCoverage =
     Number.isFinite(state.requestedQuotes) && state.requestedQuotes > 0
       ? `${state.returnedQuotes ?? state.acceptedQuotes ?? 0}/${state.requestedQuotes}`
@@ -1198,6 +1220,53 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
         <div style={{ display: "grid", gap: sp(14) }}>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: sp(14) }}>
             <GatewayPanel latest={latest} latencyStats={latencyStats} onMetric={selectMetric} />
+            <Panel title="Bridge Governor">
+              {governorRows.length ? (
+                governorRows.map(([id, lane]) => (
+                  <StateRow
+                    key={id}
+                    label={id}
+                    value={`${formatCount(lane.active)} active / ${formatCount(lane.queued)} queued`}
+                    tone={lane.circuitOpen ? T.amber : T.textSec}
+                  />
+                ))
+              ) : (
+                <StateRow label="Governor" value={MISSING_VALUE} />
+              )}
+            </Panel>
+            <Panel title="Account Realtime">
+              <StateRow
+                label="Account stream"
+                value={runtimeControl.streams.account.fresh ? "fresh" : "pending"}
+                tone={runtimeControl.streams.account.fresh ? T.green : T.amber}
+              />
+              <StateRow
+                label="Account age"
+                value={formatFreshnessAge(runtimeControl.streams.account.lastEventAt)}
+              />
+              <StateRow
+                label="Order stream"
+                value={runtimeControl.streams.order.fresh ? "fresh" : "pending"}
+                tone={runtimeControl.streams.order.fresh ? T.green : T.amber}
+              />
+              <StateRow
+                label="Order age"
+                value={formatFreshnessAge(runtimeControl.streams.order.lastEventAt)}
+              />
+              <StateRow
+                label="Trading freshness"
+                value={
+                  runtimeControl.streams.tradingFresh
+                    ? "ready"
+                    : "paused"
+                }
+                tone={
+                  runtimeControl.streams.tradingFresh
+                    ? T.green
+                    : T.amber
+                }
+              />
+            </Panel>
             <Panel title="IBKR Raw Snapshot">
               <JsonBlock value={ibkrSnapshot} />
             </Panel>
@@ -1240,6 +1309,20 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
             <StateRow label="API->React p95" value={formatMs(latencyStats.apiToReactMs?.p95)} />
             <StateRow label="Total p50" value={formatMs(latencyStats.totalMs?.p50)} />
             <StateRow label="Total p95" value={formatMs(latencyStats.totalMs?.p95)} />
+          </Panel>
+          <Panel title="Market Data Lines">
+            {runtimeLineUsage.rows.length ? (
+              runtimeLineUsage.rows.map((row) => (
+                <StateRow
+                  key={row.id}
+                  label={row.label}
+                  value={`${formatCount(row.used)} / ${formatCount(row.cap)}`}
+                  tone={row.tone}
+                />
+              ))
+            ) : (
+              <StateRow label="Line usage" value={MISSING_VALUE} />
+            )}
           </Panel>
           <Panel title="Option Hydration">
             <StateRow label="Active chain p95" value={formatMs(metrics.activeChainMs?.p95)} />

@@ -47,145 +47,22 @@ export const LoadingSpinner = ({ size = 18, color = T.accent }) => (
     data-testid="loading-spinner"
     role="status"
     aria-label="Loading"
-    className="ra-refresh-spin"
     style={{
       width: dim(size),
       height: dim(size),
       borderRadius: "50%",
       border: `2px solid ${T.border}`,
       borderTopColor: color,
+      animation: "premiumFlowSpin 820ms linear infinite",
       flexShrink: 0,
     }}
   />
-);
-
-export const LoadingSkeletonRows = ({
-  rows = 3,
-  width = 210,
-  tone = T.accent,
-}) => (
-  <div
-    data-testid="data-unavailable-loading-skeleton"
-    aria-hidden="true"
-    style={{
-      width: "100%",
-      maxWidth: dim(width),
-      display: "grid",
-      gap: sp(5),
-      margin: sp("0 auto 8px"),
-    }}
-  >
-    {Array.from({ length: rows }).map((_, index) => (
-      <span
-        key={index}
-        className="ra-skeleton"
-        style={{
-          height: dim(index === 0 ? 18 : 11),
-          width: index === rows - 1 ? "68%" : "100%",
-          borderRadius: dim(3),
-          background:
-            index === 0
-              ? `${tone}1f`
-              : `linear-gradient(90deg, ${T.bg2}, ${T.bg3}, ${T.bg2})`,
-          border: `1px solid ${index === 0 ? `${tone}33` : T.border}`,
-        }}
-      />
-    ))}
-  </div>
-);
-
-export const PanelLoadingState = ({
-  title = "Loading panel",
-  detail = "Fetching the latest provider state.",
-  rows = 3,
-  tone = T.accent,
-  status = "Loading",
-  testId = "panel-loading-state",
-}) => (
-  <div
-    data-testid={testId}
-    role="status"
-    aria-live="polite"
-    style={{
-      border: `1px dashed ${T.border}`,
-      background: T.bg0,
-      borderRadius: dim(5),
-      padding: sp(10),
-      display: "grid",
-      gap: sp(8),
-      width: "100%",
-      minWidth: 0,
-    }}
-  >
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        gap: sp(10),
-        flexWrap: "wrap",
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            color: T.textSec,
-            fontFamily: T.mono,
-            fontSize: textSize("bodyStrong"),
-            fontWeight: 900,
-          }}
-        >
-          {title}
-        </div>
-        <div
-          style={{
-            marginTop: sp(3),
-            color: T.textDim,
-            fontFamily: T.mono,
-            fontSize: textSize("caption"),
-            lineHeight: 1.45,
-          }}
-        >
-          {detail}
-        </div>
-      </div>
-      <span
-        style={{
-          padding: sp("2px 7px"),
-          border: `1px solid ${tone}35`,
-          background: `${tone}12`,
-          color: tone,
-          borderRadius: dim(3),
-          fontFamily: T.mono,
-          fontSize: textSize("caption"),
-          fontWeight: 900,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {status}
-      </span>
-    </div>
-    <div style={{ display: "grid", gap: sp(6) }} aria-hidden="true">
-      {Array.from({ length: rows }).map((_, index) => (
-        <div
-          key={index}
-          className="ra-skeleton"
-          style={{
-            height: dim(index === 0 ? 32 : 24),
-            borderRadius: dim(4),
-            border: `1px solid ${T.border}`,
-          }}
-        />
-      ))}
-    </div>
-  </div>
 );
 
 export const DataUnavailableState = ({
   title = "No live data",
   detail = "This panel is waiting on a live provider response.",
   loading = false,
-  loadingMode = "skeleton",
   tone,
   fill = false,
   minHeight = 72,
@@ -209,7 +86,7 @@ export const DataUnavailableState = ({
     }}
   >
     <div style={{ maxWidth: dim(260) }}>
-      {loading && loadingMode === "spinner" ? (
+      {loading ? (
         <div
           style={{
             display: "flex",
@@ -219,8 +96,6 @@ export const DataUnavailableState = ({
         >
           <LoadingSpinner color={tone || T.accent} />
         </div>
-      ) : loading ? (
-        <LoadingSkeletonRows tone={tone || T.accent} />
       ) : null}
       <div
         style={{

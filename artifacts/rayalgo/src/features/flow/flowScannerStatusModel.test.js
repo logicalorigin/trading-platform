@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -81,4 +82,22 @@ test("buildRecentScannerSymbols excludes active batch and sorts newest first", (
       { symbol: "SPY", scannedAt: 1_000 },
     ],
   );
+});
+
+const readPanelSource = () =>
+  readFileSync(new URL("./FlowScannerStatusPanel.jsx", import.meta.url), "utf8");
+
+test("flow scanner status panel renders one latest scan label", () => {
+  const source = readPanelSource();
+  const latestLabelReferences = source.match(/\{latestLabel\}/g) || [];
+
+  assert.equal(latestLabelReferences.length, 1);
+});
+
+test("flow scanner status panel keeps active and recent scanner tickers visible", () => {
+  const source = readPanelSource();
+
+  assert.match(source, /data-testid="flow-scanner-live-tickers"/);
+  assert.match(source, /currentBatch\.slice\(0,\s*12\)\.map/);
+  assert.match(source, /recentSymbols\.slice\(0,\s*10\)\.map/);
 });

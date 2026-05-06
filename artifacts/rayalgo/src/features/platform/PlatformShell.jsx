@@ -1,22 +1,10 @@
 import { Suspense, useEffect, useRef } from "react";
-import {
-  CircleCheck,
-  CircleX,
-  Info,
-  Menu,
-  PanelLeftClose,
-  PanelLeftOpen,
-  RotateCcw,
-  TriangleAlert,
-  X,
-} from "lucide-react";
 import BloombergLiveDock from "./BloombergLiveDock";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { SCREENS, ScreenLoadingFallback } from "./screenRegistry.jsx";
 import { responsiveFlags, useViewportSize } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
-import { useMemoryPressureMonitor } from "./useMemoryPressureSignal";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -27,11 +15,6 @@ export const PlatformShell = ({
   mountedScreens,
   setScreen,
   renderScreenById,
-  workspacePresets = [],
-  activeWorkspacePresetId = "",
-  workspacePresetRevision = 0,
-  onWorkspacePresetChange,
-  onRestoreWorkspacePreset,
   fontCss,
   toasts,
   onDismissToast,
@@ -42,12 +25,11 @@ export const PlatformShell = ({
   HeaderStatusClusterComponent,
   HeaderBroadcastScrollerStackComponent,
   WatchlistComponent,
+  memoryPressureSignal,
   activeWatchlist,
   watchlistSymbols,
   signalMonitorStates,
   signalMatrixStates,
-  watchlistEarningsSymbols,
-  watchlistPositionSymbols,
   selectedSymbol,
   sidebarCollapsed,
   setSidebarCollapsed,
@@ -85,7 +67,6 @@ export const PlatformShell = ({
 }) => {
   const viewport = useViewportSize();
   const { isPhone, isNarrow } = responsiveFlags(viewport.width);
-  const memoryPressureSignal = useMemoryPressureMonitor();
   const mobileAutoCollapseRef = useRef(false);
   useEffect(() => {
     if (!isPhone) {
@@ -191,11 +172,7 @@ export const PlatformShell = ({
               zIndex: isPhone ? 150 : undefined,
             }}
           >
-            {sidebarCollapsed ? (
-              <Menu size={dim(16)} strokeWidth={2.3} />
-            ) : (
-              <X size={dim(16)} strokeWidth={2.3} />
-            )}
+            {sidebarCollapsed ? "☰" : "×"}
           </button></AppTooltip>
         ) : null}
         {SCREENS.map((screen) => {
@@ -340,7 +317,6 @@ export const PlatformShell = ({
     <div style={{ flex: 1, display: "flex", overflow: "hidden", minWidth: 0 }}>
       {isPhone && !sidebarCollapsed ? (
         <button
-          className="ra-mobile-overlay-enter"
           type="button"
           aria-label="Dismiss watchlist overlay"
           onClick={() => setSidebarCollapsed(true)}
@@ -355,9 +331,9 @@ export const PlatformShell = ({
         />
       ) : null}
       <div
-        className="ra-sidebar-shell"
         style={{
           width: sidebarWidth,
+          transition: "width 0.2s",
           flexShrink: 0,
           overflow: "hidden",
           position: isPhone ? "fixed" : undefined,
@@ -381,32 +357,25 @@ export const PlatformShell = ({
               paddingTop: sp(8),
             }}
           >
-            <AppTooltip content="Open watchlist"><button
-              className="ra-interactive"
-              type="button"
-              aria-label="Open watchlist"
+            <button
               onClick={() => setSidebarCollapsed(false)}
               style={{
                 width: dim(28),
                 height: dim(28),
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
                 border: "none",
                 borderRadius: 0,
                 background: T.bg2,
                 color: T.textDim,
                 cursor: "pointer",
+                fontSize: fs(12),
               }}
             >
-              <PanelLeftOpen size={dim(14)} strokeWidth={2.3} />
-            </button></AppTooltip>
+              ☰
+            </button>
           </div>
         ) : (
           <div style={{ position: "relative", height: "100%" }}>
-            <AppTooltip content={isPhone ? "Close watchlist" : "Collapse watchlist"}><button
-              className="ra-interactive"
-              type="button"
+            <button
               onClick={() => setSidebarCollapsed(true)}
               aria-label={isPhone ? "Close watchlist panel" : "Collapse watchlist"}
               style={{
@@ -424,20 +393,14 @@ export const PlatformShell = ({
                 fontSize: fs(isPhone ? 13 : 9),
               }}
             >
-              {isPhone ? (
-                <X size={dim(14)} strokeWidth={2.3} />
-              ) : (
-                <PanelLeftClose size={dim(12)} strokeWidth={2.3} />
-              )}
-            </button></AppTooltip>
+              {isPhone ? "×" : "◂"}
+            </button>
             <WatchlistComponent
               watchlists={watchlists}
               activeWatchlist={activeWatchlist}
               watchlistSymbols={watchlistSymbols}
               signalStates={signalMonitorStates}
               signalMatrixStates={signalMatrixStates}
-              earningsSymbols={watchlistEarningsSymbols}
-              positionSymbols={watchlistPositionSymbols}
               selected={selectedSymbol}
               onSelect={onSelectSymbol}
               onChartFocus={onFocusMarketChart}
@@ -516,13 +479,6 @@ export const PlatformShell = ({
         WL {(activeWatchlist?.name || "Core").toUpperCase()}
       </span>
       <span style={{ color: T.textMuted }}>SYM {selectedSymbol}</span>
-      <WorkspacePresetSwitcher
-        presets={workspacePresets}
-        activePresetId={activeWorkspacePresetId}
-        revision={workspacePresetRevision}
-        onChange={onWorkspacePresetChange}
-        onRestore={onRestoreWorkspacePreset}
-      />
       <span style={{ color: session?.configured?.ibkr ? T.green : T.red }}>
         HIST {(session?.marketDataProviders?.historical || MISSING_VALUE).toUpperCase()}
       </span>
@@ -534,93 +490,6 @@ export const PlatformShell = ({
     </div>
     <BloombergLiveDock />
   </div>
-  );
-};
-
-const WorkspacePresetSwitcher = ({
-  presets,
-  activePresetId,
-  revision,
-  onChange,
-  onRestore,
-}) => {
-  const activePreset = presets.find((preset) => preset.id === activePresetId);
-  if (!presets.length) return null;
-  return (
-    <span
-      key={revision}
-      data-testid="workspace-preset-switcher"
-      className="ra-focus-rail"
-      style={{
-        ...motionVars({ accent: T.accent }),
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(4),
-        paddingLeft: sp(7),
-        color: T.textMuted,
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          fontSize: fs(8),
-          fontWeight: 800,
-          color: T.textMuted,
-          fontFamily: T.mono,
-        }}
-      >
-        WS
-      </span>
-      <select
-        data-testid="workspace-preset-select"
-        aria-label="Workspace preset"
-        value={activePreset?.id || presets[0]?.id || ""}
-        onChange={(event) => onChange?.(event.target.value)}
-        style={{
-          height: dim(20),
-          maxWidth: dim(160),
-          border: `1px solid ${T.border}`,
-          background: T.bg2,
-          color: T.textSec,
-          fontSize: fs(9),
-          fontWeight: 700,
-          fontFamily: T.sans,
-          borderRadius: 0,
-          padding: sp("0 18px 0 5px"),
-          outline: "none",
-        }}
-      >
-        {presets.map((preset) => (
-          <option key={preset.id} value={preset.id}>
-            {preset.label}
-          </option>
-        ))}
-      </select>
-      <AppTooltip content="Restore preset defaults">
-        <button
-          data-testid="workspace-preset-restore"
-          className="ra-interactive"
-          type="button"
-          aria-label="Restore workspace preset defaults"
-          onClick={() => onRestore?.()}
-          style={{
-            width: dim(20),
-            height: dim(20),
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            border: `1px solid ${T.border}`,
-            background: T.bg2,
-            color: T.textDim,
-            borderRadius: 0,
-            cursor: "pointer",
-            flex: "0 0 auto",
-          }}
-        >
-          <RotateCcw size={dim(12)} strokeWidth={2.3} />
-        </button>
-      </AppTooltip>
-    </span>
   );
 };
 
@@ -647,14 +516,14 @@ const ToastStack = ({ toasts, onDismiss }) => (
               : toast.kind === "warn"
                 ? T.amber
                 : T.accent;
-        const ToastIcon =
+        const icon =
           toast.kind === "success"
-            ? CircleCheck
+            ? "✓"
             : toast.kind === "error"
-              ? CircleX
+              ? "✕"
               : toast.kind === "warn"
-                ? TriangleAlert
-                : Info;
+                ? "⚠"
+                : "ⓘ";
       return (
         <AppTooltip key={toast.id} content="Click to dismiss"><div
           key={toast.id}
@@ -693,18 +562,14 @@ const ToastStack = ({ toasts, onDismiss }) => (
           >
             <span
               style={{
+                fontSize: fs(14),
                 color,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: dim(16),
-                height: dim(16),
+                fontWeight: 700,
                 lineHeight: 1,
                 marginTop: 1,
-                flexShrink: 0,
               }}
             >
-              <ToastIcon size={dim(15)} strokeWidth={2.3} />
+              {icon}
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
@@ -732,16 +597,15 @@ const ToastStack = ({ toasts, onDismiss }) => (
             </div>
             <span
               style={{
+                fontSize: fs(11),
                 color: T.textMuted,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
+                fontWeight: 600,
                 opacity: 0.6,
                 marginLeft: sp(4),
                 marginTop: 1,
               }}
             >
-              <X size={dim(13)} strokeWidth={2.2} />
+              ✕
             </span>
           </div>
         </div></AppTooltip>

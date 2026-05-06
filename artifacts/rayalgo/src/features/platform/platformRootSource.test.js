@@ -67,17 +67,132 @@ test("flow scanner threshold changes are part of the live scanner effect contrac
   );
 });
 
-test("Market avoids the shared all-flow runtime while chart UOA scanner owns Market flow", () => {
+test("live flow scanner waits for on-demand IBKR hydration", () => {
+  const source = readFileSync(
+    new URL("./useLiveMarketFlow.js", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /blocking\s*=\s*true/);
+  assert.match(source, /blocking,\s*\n\s*\}\);/);
+});
+
+test("flow scanner requests broad backend flow and filters scanner scope locally", () => {
+  const source = readFileSync(
+    new URL("./useLiveMarketFlow.js", import.meta.url),
+    "utf8",
+  );
+  const requestBlock = source.match(
+    /listFlowEventsRequest\(\{[\s\S]*?\n\s*\}\);/,
+  )?.[0];
+
+  assert.ok(requestBlock, "flow scanner request block must be present");
+  assert.match(requestBlock, /scope:\s*FLOW_SCANNER_SCOPE\.all/);
+  assert.doesNotMatch(requestBlock, /scope:\s*effectiveScannerConfig\.scope/);
+  assert.doesNotMatch(requestBlock, /unusualThreshold/);
+  assert.match(source, /filterFlowScannerEvents\([\s\S]*effectiveScannerConfig/);
+  assert.match(source, /promotedBackendSymbols/);
+  assert.match(source, /backendRadarBatchSymbols/);
+  assert.match(source, /FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS/);
+  assert.match(source, /blocking\s*===\s*false[\s\S]*flowScannerModeUsesMarketUniverse/);
+  assert.match(source, /marketSymbols:\s*marketSymbolsForScanner/);
+});
+
+test("header flow scanner lane applies the shared Flow tape filters", () => {
+  const source = readFileSync(
+    new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /mergeFlowEventFeeds/);
+  assert.doesNotMatch(source, /useMarketFlowSnapshot\(symbols/);
+  assert.doesNotMatch(source, /header-flow-scan-mode/);
+  assert.match(source, /useMarketFlowSnapshotForStoreKey\(\s*BROAD_MARKET_FLOW_STORE_KEY/);
+  assert.match(source, /useFlowTapeFilterState\(\{[\s\S]*subscribe:\s*enabled/);
+  assert.match(source, /filterFlowTapeEvents\(broadFlowSnapshot\.flowEvents/);
+  assert.match(source, /mode:\s*FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
+  assert.match(source, /buildHeaderUnusualTapeItems\(unusualEvents\)/);
+});
+
+test("Flow page scanner uses one broad scanner panel and no active-symbol merge", () => {
+  const source = readFileSync(
+    new URL("../../screens/FlowScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const scannerPanelRenders = source.match(/<FlowScannerStatusPanel\b/g) || [];
+
+  assert.equal(scannerPanelRenders.length, 1);
+  assert.doesNotMatch(source, />\s*Flow Scanner\s*</);
+  assert.doesNotMatch(source, /mergeFlowEventFeeds/);
+  assert.doesNotMatch(source, /useMarketFlowSnapshot\(symbols/);
+  assert.match(source, /useMarketFlowSnapshotForStoreKey\(\s*BROAD_MARKET_FLOW_STORE_KEY/);
+  assert.match(source, /filterFlowTapeEvents\(flowEvents,\s*flowTapeFilters/);
+  assert.match(source, /buildFlowTideFromEvents\(filtered\)/);
+  assert.match(source, /buildTickerFlowFromEvents\(filtered/);
+  assert.match(source, /buildMarketOrderFlowFromEvents\(filtered\)/);
+  assert.doesNotMatch(source, /flowUnusualSideFilter/);
+  assert.doesNotMatch(source, /unusualSideFilter/);
+  assert.doesNotMatch(source, /flow-unusual-scanner-status-panel/);
+});
+
+test("client flow scanner keeps rotating after failed symbol batches", () => {
+  const source = readFileSync(
+    new URL("./useLiveMarketFlow.js", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /consecutiveErrorBatches/);
+  assert.doesNotMatch(source, /2 \*\*/);
+  assert.match(source, /schedule\(baseDelay\)/);
+});
+
+test("shared flow hydrates visible flow while broad scanner stays broad and nonblocking", () => {
+  const source = readFileSync(
+    new URL("./MarketFlowRuntimeLayer.jsx", import.meta.url),
+    "utf8",
+  );
+  const runtimeLayerSource = readFileSync(
+    new URL("./PlatformRuntimeLayer.jsx", import.meta.url),
+    "utf8",
+  );
+  const platformAppSource = readFileSync(
+    new URL("./PlatformApp.jsx", import.meta.url),
+    "utf8",
+  );
+  const sharedRuntime = source.match(
+    /export const SharedMarketFlowRuntime[\s\S]*?return null;\n\}\);/,
+  )?.[0];
+  const broadRuntime = source.match(
+    /export const BroadFlowScannerRuntime[\s\S]*?return null;\n\}\);/,
+  )?.[0];
+
+  assert.ok(sharedRuntime, "SharedMarketFlowRuntime must stay in the runtime layer");
+  assert.ok(broadRuntime, "BroadFlowScannerRuntime must stay in the runtime layer");
+  assert.doesNotMatch(broadRuntime, /activeSymbols/);
+  assert.match(broadRuntime, /FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
+  assert.match(broadRuntime, /if \(!runtimeActive\)[\s\S]*clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/);
+  assert.match(sharedRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*true/);
+  assert.match(broadRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*false/);
+  assert.doesNotMatch(runtimeLayerSource, /activeSymbols=\{/);
+  assert.doesNotMatch(platformAppSource, /broadFlowActiveSymbols/);
+});
+
+test("Broad scanner owns Flow and Market flow without the shared all-flow runtime", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const schedulerSource = readFileSync(
+    new URL("./appWorkScheduler.js", import.meta.url),
+    "utf8",
+  );
   const flowRuntimeProp = source.match(
     /flowRuntimeEnabled=\{[\s\S]*?\}\s*flowRuntimeIntervalMs=/,
   )?.[0];
 
   assert.ok(flowRuntimeProp, "PlatformApp must pass flowRuntimeEnabled");
-  assert.match(flowRuntimeProp, /flowScreenActive/);
+  assert.match(flowRuntimeProp, /workSchedule\.streams\.sharedFlowRuntime/);
+  assert.match(schedulerSource, /sharedFlowRuntime:\s*false/);
   assert.doesNotMatch(
-    flowRuntimeProp,
+    schedulerSource,
     /marketScreenActive/,
-    "Market chart UOA scanner should own Market flow to avoid a second all-flow path",
+    "Chart and broad scanner runtimes should own flow to avoid a second all-flow path",
   );
 });

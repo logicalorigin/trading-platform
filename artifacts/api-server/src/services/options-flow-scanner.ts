@@ -13,6 +13,8 @@ export type OptionsFlowScannerSource = {
   status?: string;
   provider?: string;
   errorMessage?: string | null;
+  ibkrStatus?: string;
+  ibkrReason?: string | null;
 };
 
 export type OptionsFlowScannerFetchResult<TEvent> = {
@@ -24,6 +26,7 @@ export type OptionsFlowScannerRequest = {
   limit: number;
   unusualThreshold?: number;
   lineBudget?: number;
+  allowPartial?: boolean;
 };
 
 export type OptionsFlowScannerSnapshot<TEvent> = {
@@ -43,6 +46,20 @@ export type OptionsFlowScannerRunResult = {
   failedSymbols: string[];
   transport: OptionsFlowScannerTransport | null;
   skippedReason: string | null;
+};
+
+export type OptionsFlowScannerDiagnostics = {
+  queuedCount: number;
+  draining: boolean;
+  snapshotCount: number;
+  maxConcurrency: number;
+  lastRunAt: Date | null;
+  lastBatch: string[];
+  lastScannedSymbols: string[];
+  lastSkippedSymbols: string[];
+  lastFailedSymbols: string[];
+  lastSkippedReason: string | null;
+  lastTransport: OptionsFlowScannerTransport | null;
 };
 
 export type OptionsFlowScannerOptions<TEvent> = {
@@ -117,6 +134,42 @@ function normalizeLineBudget(value: number | undefined): number | null {
     : null;
 }
 
+const TRANSIENT_EMPTY_REASON_PATTERNS = [
+  "backoff",
+  "degraded",
+  "error",
+  "line_budget",
+  "queued",
+  "refreshing",
+  "saturated",
+  "unavailable",
+];
+
+function isTransientEmptySource(
+  source: OptionsFlowScannerSource | null | undefined,
+): boolean {
+  if (!source) {
+    return false;
+  }
+
+  const status = String(source.status || "").toLowerCase();
+  const provider = String(source.provider || "").toLowerCase();
+  const ibkrStatus = String(source.ibkrStatus || "").toLowerCase();
+  const ibkrReason = String(source.ibkrReason || "").toLowerCase();
+
+  if (status === "error" || Boolean(source.errorMessage)) {
+    return true;
+  }
+  if (ibkrStatus === "degraded" || ibkrStatus === "error") {
+    return true;
+  }
+  if (TRANSIENT_EMPTY_REASON_PATTERNS.some((pattern) => ibkrReason.includes(pattern))) {
+    return true;
+  }
+
+  return status === "empty" && provider !== "ibkr" && ibkrStatus !== "loaded";
+}
+
 function uniqueSymbols(
   symbols: readonly string[],
   normalizeSymbol: (symbol: string) => string,
@@ -133,6 +186,10 @@ function getTransportSkipReason(
   preferredTransport: OptionsFlowScannerTransport | null,
   allowFallbackTransport: boolean,
 ): string | null {
+  if (!status) {
+    return "transport-unavailable";
+  }
+
   const transport = status?.transport ?? null;
 
   if (
@@ -189,6 +246,31 @@ export function createOptionsFlowScanner<TEvent>(
   let timer: NodeJS.Timeout | null = null;
   let stopRotation: (() => void) | null = null;
   let rotationOffset = 0;
+  let lastRunAt: Date | null = null;
+  let lastBatch: string[] = [];
+  let lastRunResult: OptionsFlowScannerRunResult = {
+    scannedSymbols: [],
+    skippedSymbols: [],
+    failedSymbols: [],
+    transport: null,
+    skippedReason: null,
+  };
+
+  function recordRunResult(
+    symbols: readonly string[],
+    result: OptionsFlowScannerRunResult,
+  ): OptionsFlowScannerRunResult {
+    lastRunAt = new Date(now());
+    lastBatch = [...symbols];
+    lastRunResult = {
+      scannedSymbols: [...result.scannedSymbols],
+      skippedSymbols: [...result.skippedSymbols],
+      failedSymbols: [...result.failedSymbols],
+      transport: result.transport,
+      skippedReason: result.skippedReason,
+    };
+    return result;
+  }
 
   async function getTransport(): Promise<OptionsFlowScannerTransportStatus | null> {
     try {
@@ -219,23 +301,25 @@ export function createOptionsFlowScanner<TEvent>(
     } catch (error) {
       const settledAt = now();
       const message = getErrorMessage(error);
-      snapshots.set(keyFor(symbol, request.unusualThreshold), {
-        symbol,
-        events: [],
-        source: {
-          status: "error",
-          provider: "none",
-          errorMessage: message,
-        },
-        scannedAtMs: scanStartedAt,
-        expiresAtMs: settledAt + snapshotTtlMs,
-        staleExpiresAtMs: settledAt + snapshotStaleTtlMs,
-        transport,
+      const source = {
         status: "error",
-        error: message,
-        requestedLimit: request.limit,
-        requestedLineBudget: normalizeLineBudget(request.lineBudget),
-      });
+        provider: "none",
+        errorMessage: message,
+      };
+      if (
+        shouldPreserveExistingSnapshot(
+          symbol,
+          request,
+          [],
+          source,
+          settledAt,
+        )
+      ) {
+        options.onError?.(error, { symbol, phase: "fetch" });
+        await options.onResult?.({ symbol, failed: true, error: message });
+        return { symbol, failed: true };
+      }
+      snapshots.delete(keyFor(symbol, request.unusualThreshold));
       options.onError?.(error, { symbol, phase: "fetch" });
       await options.onResult?.({ symbol, failed: true, error: message });
       return { symbol, failed: true };
@@ -252,6 +336,21 @@ export function createOptionsFlowScanner<TEvent>(
   ): void {
     const symbol = normalizeSymbol(symbolInput);
     const source = result.source ?? null;
+    if (
+      shouldPreserveExistingSnapshot(
+        symbol,
+        request,
+        result.events,
+        source,
+        settledAtMs,
+      )
+    ) {
+      return;
+    }
+    if (result.events.length === 0 && isTransientEmptySource(source)) {
+      snapshots.delete(keyFor(symbol, request.unusualThreshold));
+      return;
+    }
     snapshots.set(keyFor(symbol, request.unusualThreshold), {
       symbol,
       events: result.events,
@@ -265,6 +364,22 @@ export function createOptionsFlowScanner<TEvent>(
       requestedLimit: request.limit,
       requestedLineBudget: normalizeLineBudget(request.lineBudget),
     });
+  }
+
+  function shouldPreserveExistingSnapshot(
+    symbolInput: string,
+    request: OptionsFlowScannerRequest,
+    events: readonly TEvent[],
+    source: OptionsFlowScannerSource | null,
+    currentMs = now(),
+  ): boolean {
+    if (events.length > 0 || !isTransientEmptySource(source)) {
+      return false;
+    }
+
+    const symbol = normalizeSymbol(symbolInput);
+    const existing = snapshots.get(keyFor(symbol, request.unusualThreshold));
+    return Boolean(existing?.events.length && existing.staleExpiresAtMs > currentMs);
   }
 
   async function runOnce(
@@ -281,23 +396,23 @@ export function createOptionsFlowScanner<TEvent>(
     );
 
     if (skipReason) {
-      return {
+      return recordRunResult(normalizedSymbols, {
         scannedSymbols: [],
         skippedSymbols: normalizedSymbols,
         failedSymbols: [],
         transport,
         skippedReason: skipReason,
-      };
+      });
     }
 
     if (!normalizedSymbols.length) {
-      return {
+      return recordRunResult(normalizedSymbols, {
         scannedSymbols: [],
         skippedSymbols: [],
         failedSymbols: [],
         transport,
         skippedReason: null,
-      };
+      });
     }
 
     const scannedSymbols: string[] = [];
@@ -319,13 +434,13 @@ export function createOptionsFlowScanner<TEvent>(
 
     await Promise.all(workers);
 
-    return {
+    return recordRunResult(normalizedSymbols, {
       scannedSymbols,
       skippedSymbols: [],
       failedSymbols,
       transport,
       skippedReason: null,
-    };
+    });
   }
 
   async function drainQueue(): Promise<OptionsFlowScannerRunResult> {
@@ -399,6 +514,7 @@ export function createOptionsFlowScanner<TEvent>(
     }
 
     if (
+      !request.allowPartial &&
       snapshot.requestedLimit < request.limit &&
       snapshot.events.length >= snapshot.requestedLimit
     ) {
@@ -406,6 +522,7 @@ export function createOptionsFlowScanner<TEvent>(
     }
     const requestedLineBudget = normalizeLineBudget(request.lineBudget);
     if (
+      !request.allowPartial &&
       requestedLineBudget !== null &&
       snapshot.requestedLineBudget !== null &&
       snapshot.requestedLineBudget < requestedLineBudget
@@ -508,6 +625,15 @@ export function createOptionsFlowScanner<TEvent>(
     queued.clear();
     drainPromise = null;
     rotationOffset = 0;
+    lastRunAt = null;
+    lastBatch = [];
+    lastRunResult = {
+      scannedSymbols: [],
+      skippedSymbols: [],
+      failedSymbols: [],
+      transport: null,
+      skippedReason: null,
+    };
   }
 
   function setMaxConcurrency(value: number): void {
@@ -520,7 +646,24 @@ export function createOptionsFlowScanner<TEvent>(
     return maxConcurrency;
   }
 
+  function getDiagnostics(): OptionsFlowScannerDiagnostics {
+    return {
+      queuedCount: queued.size,
+      draining: Boolean(drainPromise),
+      snapshotCount: snapshots.size,
+      maxConcurrency,
+      lastRunAt,
+      lastBatch: [...lastBatch],
+      lastScannedSymbols: [...lastRunResult.scannedSymbols],
+      lastSkippedSymbols: [...lastRunResult.skippedSymbols],
+      lastFailedSymbols: [...lastRunResult.failedSymbols],
+      lastSkippedReason: lastRunResult.skippedReason,
+      lastTransport: lastRunResult.transport,
+    };
+  }
+
   return {
+    getDiagnostics,
     getMaxConcurrency,
     getSnapshot,
     requestScan,

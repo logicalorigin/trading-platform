@@ -5,6 +5,7 @@ import type { ChartEvent } from "./chartEvents";
 import {
   buildChartLegendStudyItems,
   expandStudySpecsForRender,
+  formatChartPriceAxisValue,
   buildIndicatorDashboardStripSegments,
   buildVisibleRangeSignature,
   clampOverlayRectPosition,
@@ -26,6 +27,7 @@ import {
   resolveVisibleChartEvents,
   resolveViewportRestoreState,
   resolveViewportVisibleLogicalRange,
+  resolvePricePrecision,
   resolveSeriesTailUpdateMode,
   resolveZoomedVisibleRange,
   sanitizeStoredChartScalePrefs,
@@ -34,7 +36,6 @@ import {
   shouldPreserveUserViewportRange,
   writeStoredChartViewportSnapshot,
   resolveVisibleRangeSyncAction,
-  resolveWheelZoomFactor,
 } from "./ResearchChartSurface";
 
 const readResearchChartSurfaceSource = () =>
@@ -61,7 +62,7 @@ const dashboardFixture = {
 };
 
 const unusualFlowChartEvent: ChartEvent = {
-  id: "uoa:SPY:1",
+  id: "flow:SPY:1",
   symbol: "SPY",
   eventType: "unusual_flow",
   time: "2026-05-01T14:30:00.000Z",
@@ -76,7 +77,7 @@ const unusualFlowChartEvent: ChartEvent = {
   metadata: {},
 };
 
-test("ResearchChartSurface keeps UOA chart events visible when execution markers are disabled", () => {
+test("ResearchChartSurface keeps flow chart events visible when execution markers are disabled", () => {
   assert.deepEqual(
     resolveVisibleChartEvents({
       chartEvents: [unusualFlowChartEvent],
@@ -289,6 +290,49 @@ test("ResearchChartSurface appends only newer object-shaped times", () => {
   assert.equal(resolveSeriesTailUpdateMode(previous, older), "reset");
 });
 
+test("ResearchChartSurface treats batched newer points as a tail append", () => {
+  const previous = [
+    { time: 1, value: 100 },
+    { time: 2, value: 101 },
+  ];
+  const next = [
+    { time: 1, value: 100 },
+    { time: 2, value: 101 },
+    { time: 3, value: 102 },
+    { time: 4, value: 103 },
+  ];
+
+  assert.equal(resolveSeriesTailUpdateMode(previous, next), "append");
+});
+
+test("ResearchChartSurface appends when the current tail is patched first", () => {
+  const previous = [
+    { time: 1, value: 100 },
+    { time: 2, value: 101 },
+  ];
+  const next = [
+    { time: 1, value: 100 },
+    { time: 2, value: 101.25 },
+    { time: 3, value: 102 },
+  ];
+
+  assert.equal(resolveSeriesTailUpdateMode(previous, next), "append");
+});
+
+test("ResearchChartSurface resets batched data when an interior point changes", () => {
+  const previous = [
+    { time: 1, value: 100 },
+    { time: 2, value: 101 },
+  ];
+  const next = [
+    { time: 1, value: 99.75 },
+    { time: 2, value: 101 },
+    { time: 3, value: 102 },
+  ];
+
+  assert.equal(resolveSeriesTailUpdateMode(previous, next), "reset");
+});
+
 test("ResearchChartSurface resets when interval changes replace object-shaped times", () => {
   const previous = [
     { time: { year: 2026, month: 4, day: 23 }, value: 100 },
@@ -417,6 +461,44 @@ test("ResearchChartSurface keeps study legend labels when the active bar has no 
       },
     ],
   );
+});
+
+test("ResearchChartSurface trims unused trailing zeroes from chart price labels", () => {
+  assert.equal(formatChartPriceAxisValue(100, 4), "100.00");
+  assert.equal(formatChartPriceAxisValue(100.5, 4), "100.50");
+  assert.equal(formatChartPriceAxisValue(100.25, 4), "100.25");
+  assert.equal(formatChartPriceAxisValue(100.1234, 4), "100.1234");
+  assert.equal(formatChartPriceAxisValue(-0.00001, 4), "0.00");
+  assert.equal(formatChartPriceAxisValue(Number.NaN, 4), "—");
+});
+
+test("ResearchChartSurface bases axis precision on rendered OHLC prices", () => {
+  const bars = [
+    {
+      time: 1,
+      ts: "2026-05-06T13:30:00.000Z",
+      date: "2026-05-06",
+      o: 100,
+      h: 101.5,
+      l: 99.25,
+      c: 100,
+      v: 120_000,
+      vwap: 100.1234,
+      sessionVwap: 100.9876,
+    },
+  ];
+  const fractionalBars = [
+    {
+      ...bars[0],
+      o: 0.1234,
+      h: 0.125,
+      l: 0.12,
+      c: 0.123,
+    },
+  ];
+
+  assert.equal(resolvePricePrecision(bars), 2);
+  assert.equal(resolvePricePrecision(fractionalBars), 4);
 });
 
 test("ResearchChartSurface skips visible-range reapply when already initialized and no stored-range sync is pending", () => {
@@ -778,13 +860,6 @@ test("ResearchChartSurface zooms around the current viewport center", () => {
   );
 });
 
-test("ResearchChartSurface resolves mouse-wheel zoom direction", () => {
-  assert.equal(resolveWheelZoomFactor(-500), 0.8);
-  assert.equal(resolveWheelZoomFactor(500), 1.25);
-  assert.equal(resolveWheelZoomFactor(0.25), null);
-  assert.equal(resolveWheelZoomFactor(Number.NaN), null);
-});
-
 test("ResearchChartSurface restores matching user-touched viewport snapshots", () => {
   const snapshot = {
     identityKey: "market-grid-slot::0::SPY::15m",
@@ -978,6 +1053,90 @@ test("ResearchChartSurface uses stored viewport snapshots as an uncontrolled fal
 
   clearStoredChartViewportSnapshot(identityKey);
   assert.equal(readStoredChartViewportSnapshot(identityKey), null);
+});
+
+test("ResearchChartSurface scopes stored viewport ranges by layout context", () => {
+  const identityKey = "chart-parity:market:SPY:15m";
+  const layoutSnapshot = {
+    identityKey,
+    viewportLayoutKey: "market-grid:2x3:slot-0:3x2:rev-0",
+    visibleLogicalRange: { from: 20, to: 80 },
+    userTouched: true,
+    realtimeFollow: false,
+    scaleMode: "linear",
+    autoScale: true,
+    invertScale: false,
+    updatedAt: 1,
+  } as const;
+
+  clearStoredChartViewportSnapshot(identityKey);
+  writeStoredChartViewportSnapshot(layoutSnapshot);
+
+  assert.deepEqual(
+    readStoredChartViewportSnapshot(identityKey, layoutSnapshot.viewportLayoutKey),
+    layoutSnapshot,
+  );
+  assert.equal(readStoredChartViewportSnapshot(identityKey), null);
+  assert.equal(
+    readStoredChartViewportSnapshot(
+      identityKey,
+      "market-grid:3x3:slot-0:3x3:rev-0",
+    ),
+    null,
+  );
+  assert.equal(
+    resolveEffectiveChartViewportSnapshot({
+      identityKey,
+      viewportLayoutKey: "market-grid:3x3:slot-0:3x3:rev-0",
+      viewportSnapshot: null,
+      useStoredFallback: true,
+    }),
+    null,
+  );
+
+  clearStoredChartViewportSnapshot(identityKey);
+  assert.equal(
+    readStoredChartViewportSnapshot(identityKey, layoutSnapshot.viewportLayoutKey),
+    null,
+  );
+});
+
+test("ResearchChartSurface resets user-touched ranges when the layout context changes", () => {
+  const snapshot = {
+    identityKey: "chart-parity:market:NVDA:15m",
+    viewportLayoutKey: "market-grid:2x3:slot-0:3x2:rev-0",
+    visibleLogicalRange: { from: 24, to: 84 },
+    userTouched: true,
+    realtimeFollow: false,
+    scaleMode: "percentage",
+    autoScale: false,
+    invertScale: true,
+    updatedAt: 1,
+  } as const;
+
+  assert.deepEqual(
+    resolveViewportRestoreState({
+      identityKey: snapshot.identityKey,
+      viewportLayoutKey: "market-grid:3x3:slot-0:3x3:rev-0",
+      viewportSnapshot: snapshot,
+      storedScalePrefs: {
+        scaleMode: "log",
+        autoScale: true,
+        invertScale: false,
+      },
+      defaultScaleMode: "linear",
+      barCount: 100,
+    }),
+    {
+      matchingSnapshot: null,
+      visibleLogicalRange: null,
+      realtimeFollow: true,
+      autoHydration: true,
+      scaleMode: "log",
+      autoScale: true,
+      invertScale: false,
+    },
+  );
 });
 
 test("ResearchChartSurface lets controlled viewport snapshots win over stored fallback", () => {

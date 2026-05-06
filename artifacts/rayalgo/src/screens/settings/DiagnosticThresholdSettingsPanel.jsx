@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PanelLoadingState } from "../../components/platform/primitives.jsx";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens";
 
 const THRESHOLD_EVENT = "rayalgo:diagnostic-thresholds-updated";
@@ -213,13 +212,9 @@ export function DiagnosticThresholdSettingsPanel({
         </div>
       )}
       {loading && drafts.length === 0 ? (
-        <PanelLoadingState
-          testId="diagnostic-threshold-loading-state"
-          title="Loading diagnostic thresholds"
-          detail="Fetching alert limits, cooldowns, and current diagnostic policy state."
-          rows={3}
-          tone={T.accent}
-        />
+        <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
+          Loading diagnostic thresholds.
+        </div>
       ) : (
         <div
           style={{

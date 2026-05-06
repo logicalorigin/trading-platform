@@ -208,6 +208,55 @@ test("tradeOptionChainStore falls back to legacy expiration value row keys", () 
   assert.equal(resolved.chainRows[0].k, 110);
 });
 
+test("tradeOptionChainStore resolves legacy labels when option values are ISO dates", () => {
+  const ticker = "CHAINKEY_ISO";
+  publishTradeOptionChainSnapshot(ticker, {
+    expirationOptions: [
+      {
+        value: "2026-05-01",
+        legacyValue: "05/01",
+        chainKey: "2026-05-01",
+        isoDate: "2026-05-01",
+        label: "05/01",
+        dte: 7,
+        actualDate: new Date("2026-05-01T00:00:00Z"),
+      },
+      {
+        value: "2027-05-01",
+        legacyValue: "05/01",
+        chainKey: "2027-05-01",
+        isoDate: "2027-05-01",
+        label: "05/01/2027",
+        dte: 372,
+        actualDate: new Date("2027-05-01T00:00:00Z"),
+      },
+    ],
+    rowsByExpiration: {
+      "2026-05-01": [buildRow(115)],
+      "2027-05-01": [buildRow(120)],
+    },
+    loadingExpirations: [],
+    loadedExpirationCount: 2,
+    totalExpirationCount: 2,
+    updatedAt: 1000,
+    status: "live",
+  });
+
+  const isoResolved = resolveTradeOptionChainSnapshot(
+    getTradeOptionChainSnapshot(ticker),
+    "2027-05-01",
+  );
+  const legacyResolved = resolveTradeOptionChainSnapshot(
+    getTradeOptionChainSnapshot(ticker),
+    "05/01",
+  );
+
+  assert.equal(isoResolved.resolvedExpirationKey, "2027-05-01");
+  assert.equal(isoResolved.chainRows[0].k, 120);
+  assert.equal(legacyResolved.resolvedExpirationKey, "2026-05-01");
+  assert.equal(legacyResolved.chainRows[0].k, 115);
+});
+
 test("tradeOptionChainStore exposes empty and failed expiration status without rows", () => {
   const ticker = "CHAINKEY4";
   publishTradeOptionChainSnapshot(ticker, {

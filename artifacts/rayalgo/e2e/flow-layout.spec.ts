@@ -1,4 +1,4 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test.setTimeout(90_000);
 test.describe.configure({ mode: "serial" });
@@ -103,14 +103,14 @@ async function mockFlowApi(
   page: Page,
   options: {
     emptyOptionBars?: boolean;
-    earningsEntries?: unknown[];
+    flowPromotedSymbols?: string[];
+    flowUniverseSymbols?: string[];
     invalidFirstProviderContractId?: boolean;
     missingFirstProviderContractId?: boolean;
     onFlowEventsRequest?: (url: URL) => void;
-    positions?: unknown[];
-    researchConfigured?: boolean;
     resolveContractFailure?: boolean;
     skipChainMatch?: boolean;
+    watchlistSymbols?: string[];
   } = {},
 ) {
   await page.route("**/api/**", async (route) => {
@@ -119,63 +119,48 @@ async function mockFlowApi(
 
     if (url.pathname === "/api/session") {
       body = {
-        configured: {
-          ibkr: Boolean(options.positions?.length),
-          research: Boolean(options.researchConfigured),
+        configured: { ibkr: false, research: false },
+        ibkrBridge: {
+          authenticated: false,
+          connected: false,
+          liveMarketDataAvailable: false,
+          transport: "client-portal",
         },
-        ibkrBridge: options.positions?.length
-          ? {
-              authenticated: true,
-              connected: true,
-              healthFresh: true,
-              selectedAccountId: "DU123",
-              accounts: [{ accountId: "DU123" }],
-              liveMarketDataAvailable: true,
-              transport: "client-portal",
-            }
-          : {
-              authenticated: false,
-              connected: false,
-              liveMarketDataAvailable: false,
-              transport: "client-portal",
-            },
         environment: "paper",
         marketDataProviders: {},
-      };
-    } else if (url.pathname === "/api/accounts") {
-      body = {
-        accounts: options.positions?.length
-          ? [{ id: "DU123", accountId: "DU123", label: "Mock account" }]
-          : [],
-      };
-    } else if (url.pathname === "/api/positions") {
-      body = { positions: options.positions || [] };
-    } else if (
-      url.pathname.startsWith("/api/accounts/") &&
-      url.pathname.endsWith("/positions")
-    ) {
-      body = { positions: options.positions || [] };
-    } else if (url.pathname === "/api/diagnostics/runtime") {
-      body = {
-        ibkr: {
-          streams: {
-            marketDataAdmission: {
-              activeLineCount: 18,
-              flowScannerLineCount: 6,
-              flowScannerRemainingLineCount: 34,
-              budget: {
-                maxLines: 100,
-                flowScannerLineCap: 40,
-              },
-            },
-          },
-        },
       };
     } else if (url.pathname === "/api/watchlists") {
       body = {
         watchlists: [
-          { id: "default", name: "Default", isDefault: true, symbols: flowSymbols },
+          {
+            id: "default",
+            name: "Default",
+            isDefault: true,
+            symbols: options.watchlistSymbols || flowSymbols,
+          },
         ],
+      };
+    } else if (url.pathname === "/api/flow/universe") {
+      const symbols = options.flowUniverseSymbols || flowSymbols;
+      body = {
+        symbols,
+        coverage: {
+          mode: "market",
+          targetSize: 500,
+          activeTargetSize: symbols.length,
+          selectedSymbols: symbols.length,
+          selectedShortfall: Math.max(0, 500 - symbols.length),
+          fallbackUsed: Boolean(options.flowUniverseSymbols),
+          stale: false,
+          cooldownCount: 0,
+          scannedSymbols: 0,
+          cycleScannedSymbols: 0,
+          currentBatch: [],
+          degradedReason: options.flowUniverseSymbols
+            ? "mock partial universe"
+            : null,
+          promotedSymbols: options.flowPromotedSymbols || [],
+        },
       };
     } else if (url.pathname === "/api/quotes/snapshot") {
       const requested = (url.searchParams.get("symbols") || "SPY")
@@ -364,7 +349,7 @@ async function mockFlowApi(
     } else if (url.pathname === "/api/news") {
       body = { articles: [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
-      body = { entries: options.earningsEntries || [] };
+      body = { entries: [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
       body = {
         id: "mock-signal-monitor-profile",
@@ -490,12 +475,6 @@ async function expectChartCanvasDrawn(page: Page, chartTestId: string) {
     .toBe(true);
 }
 
-async function clickFlowTapeRow(page: Page, rowIndex = 0) {
-  await page.getByTestId("flow-tape-row").nth(rowIndex).click({
-    position: { x: 18, y: 10 },
-  });
-}
-
 test("Flow scanner keeps scanning after leaving the Flow page", async ({
   page,
 }) => {
@@ -554,7 +533,7 @@ test("Flow scanner keeps scanning after leaving the Flow page", async ({
 
 test("Flow tape includes broad scanner feed events", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockFlowApi(page);
+  await mockFlowApi(page, { flowPromotedSymbols: ["DIA"] });
   await openFlowWithState(page, {
     flowScannerConfig: {
       mode: "market",
@@ -574,6 +553,49 @@ test("Flow tape includes broad scanner feed events", async ({ page }) => {
   await expect(flowHost.getByRole("button", { name: "Stop Flow scan" })).toBeVisible();
   await expect(
     page.getByTestId("flow-tape-row").filter({ hasText: "DIA" }).first(),
+  ).toBeVisible({ timeout: 15_000 });
+});
+
+test("Flow scanner fills a partial backend universe beyond the active watchlist", async ({
+  page,
+}) => {
+  const requestedUnderlyings: string[] = [];
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockFlowApi(page, {
+    watchlistSymbols: ["AMD"],
+    flowUniverseSymbols: ["AMD", "SPY", "QQQ"],
+    flowPromotedSymbols: ["SPY", "QQQ"],
+    onFlowEventsRequest: (url) => {
+      requestedUnderlyings.push(
+        (url.searchParams.get("underlying") || "").toUpperCase(),
+      );
+    },
+  });
+  await openFlowWithState(page, {
+    flowScannerConfig: {
+      mode: "market",
+      scope: "unusual",
+      maxSymbols: 6,
+      batchSize: 6,
+      intervalMs: 2_500,
+      concurrency: 2,
+      limit: 25,
+      unusualThreshold: 1,
+      minPremium: 0,
+      maxDte: null,
+    },
+  });
+
+  const flowHost = page.getByTestId("screen-host-flow");
+  await expect(flowHost.getByRole("button", { name: "Stop Flow scan" })).toBeVisible();
+  await expect
+    .poll(() => Array.from(new Set(requestedUnderlyings)), { timeout: 15_000 })
+    .toEqual(expect.arrayContaining(["AMD", "SPY", "QQQ"]));
+  await expect(
+    page.getByTestId("flow-tape-row").filter({ hasText: "SPY" }).first(),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.getByTestId("flow-tape-row").filter({ hasText: "QQQ" }).first(),
   ).toBeVisible({ timeout: 15_000 });
 });
 
@@ -633,31 +655,20 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
   await mockFlowApi(page);
   await openFlow(page);
 
+  const flowHost = page.getByTestId("screen-host-flow");
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
-  const scannerStatusPanel = page.getByTestId("flow-scanner-status-panel");
-  await expect(scannerStatusPanel).toBeVisible();
-  await expect(
-    scannerStatusPanel.getByTestId("flow-scanner-status-panel-source-chip"),
-  ).toContainText(/watchlist|universe/i);
-  await expect(
-    scannerStatusPanel.getByTestId("flow-scanner-status-panel-cap-chip"),
-  ).toContainText(/cap/i);
-  await expect(
-    scannerStatusPanel.getByTestId("flow-scanner-status-panel-progress-strip"),
-  ).toContainText(/scanned/);
-  await expect(scannerStatusPanel.getByTestId("loading-spinner")).toHaveCount(0);
+  await expect(page.getByTestId("flow-scanner-status-panel")).toBeVisible();
+  await expect(flowHost.getByText("Flow Scanner", { exact: true })).toHaveCount(1);
+  await expect(flowHost.getByText("Options Flow Tape", { exact: true })).toBeVisible();
+  await expect(flowHost.getByText("Scanner Results", { exact: true })).toBeVisible();
   await expect(page.getByTestId("flow-preset-bar")).toBeVisible();
   await expect(page.getByTestId("flow-ticker-lens")).toBeVisible();
   await expect(page.getByTestId("flow-tape-row").first()).toBeVisible();
-  await expect(page.getByTestId("flow-tape-feed-state")).toContainText(
-    /Live|Loading|Degraded|Paused/,
-  );
-  await expect(page.getByTestId("flow-tape-row").first()).toHaveAttribute(
-    "data-flow-row-new",
-    /true|false/,
-  );
   await expect(page.getByTestId("flow-sentiment-bar")).toBeVisible();
   await expect(page.getByTestId("flow-tape-header-time")).toContainText("AGE");
+  await expect(page.getByTestId("flow-tape-cell-time").first()).toHaveText(
+    /^(now|\d+[smhd])$/,
+  );
   await expect(page.getByTestId("flow-tape-header-expiration")).toBeVisible();
   await expect(page.getByTestId("flow-tape-header-right")).toBeVisible();
   await expect(page.getByTestId("flow-tape-header-strike")).toBeVisible();
@@ -684,22 +695,6 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
     "ascending",
   );
   await expect(page.getByTestId("flow-filter-panel")).not.toContainText("SORT");
-
-  await expect(page.getByTestId("flow-built-in-preset-momentum")).toBeVisible();
-  await expect(page.getByTestId("flow-built-in-preset-earnings-week")).toBeVisible();
-  await expect(page.getByTestId("flow-built-in-preset-unusual-calls")).toBeVisible();
-  await expect(page.getByTestId("flow-built-in-preset-unusual-puts")).toBeVisible();
-  await expect(page.getByTestId("flow-built-in-preset-high-rvol")).toBeVisible();
-  await expect(page.getByTestId("flow-built-in-preset-held-positions")).toBeVisible();
-  await page.getByTestId("flow-built-in-preset-unusual-calls").click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
-        return state.flowActivePresetId;
-      }),
-    )
-    .toBe("unusual-calls");
 
   await page.getByTestId("flow-built-in-preset-premium-250k").click();
   await expect
@@ -730,113 +725,6 @@ test("Flow desktop uses toolbar, inline filters, and persistent column drawer se
     )
     .toBe(false);
   await expectNoDocumentOverflow(page);
-});
-
-test("Flow earnings and held-position presets use app state when flow rows lack flags", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  await mockFlowApi(page, {
-    researchConfigured: true,
-    earningsEntries: [{ symbol: "QQQ", date: tomorrow, time: "amc" }],
-    positions: [{ id: "pos-spy", symbol: "SPY", quantity: 10 }],
-  });
-  await openFlow(page);
-
-  const visibleTickers = () =>
-    page.getByTestId("flow-tape-row").evaluateAll((rows) => [
-      ...new Set(
-        rows
-          .map((row) => row.getAttribute("data-flow-row-ticker"))
-          .filter(Boolean),
-      ),
-    ]);
-
-  await page.getByTestId("flow-built-in-preset-held-positions").click();
-  await expect.poll(visibleTickers).toEqual(["SPY"]);
-
-  await page.getByTestId("flow-built-in-preset-earnings-week").click();
-  await expect.poll(visibleTickers).toEqual(["QQQ"]);
-});
-
-test("Flow row action rail charts options and mutes tickers", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockFlowApi(page);
-  await openFlow(page);
-
-  const firstRow = page.getByTestId("flow-tape-row").first();
-  await expect(firstRow).toBeVisible();
-  const ticker = await firstRow.getAttribute("data-flow-row-ticker");
-  expect(ticker).toBeTruthy();
-
-  await expect(firstRow.getByTestId("flow-action-chart-option")).toBeVisible();
-  await expect(firstRow.getByTestId("flow-action-open-underlying")).toBeVisible();
-  await expect(firstRow.getByTestId("flow-action-send-ticket")).toBeVisible();
-  await expect(firstRow.getByTestId("flow-action-copy-contract")).toBeVisible();
-  await expect(firstRow.getByTestId("flow-action-pin")).toBeVisible();
-  await expect(firstRow.getByTestId("flow-action-mute-ticker")).toBeVisible();
-
-  await firstRow.getByTestId("flow-action-chart-option").click();
-  await expect(page.getByTestId("flow-inline-execution-quality")).toBeVisible();
-  await expect(page.getByTestId("flow-related-prints")).toBeVisible();
-  await expect(page.getByTestId("flow-related-print-row")).toHaveCount(2);
-  await expectChartCanvasDrawn(page, "flow-inspection-option-chart");
-
-  await firstRow.getByTestId("flow-action-mute-ticker").click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
-        return state.flowExcludeQuery || "";
-      }),
-    )
-    .toContain(ticker!);
-});
-
-test("Flow underlying and ticket actions focus Trade predictably", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockFlowApi(page);
-  await openFlow(page);
-
-  const firstRow = page.getByTestId("flow-tape-row").first();
-  await expect(firstRow).toBeVisible();
-  const ticker = await firstRow.getAttribute("data-flow-row-ticker");
-  expect(ticker).toBeTruthy();
-
-  await firstRow.getByTestId("flow-action-open-underlying").click();
-  await expect(page.getByTestId("screen-host-trade")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(page.getByTestId("trade-equity-chart")).toBeVisible();
-
-  await openFlowWithState(page, {});
-  const ticketRow = page.getByTestId("flow-tape-row").first();
-  const ticketTicker = await ticketRow.getAttribute("data-flow-row-ticker");
-  await ticketRow.getByTestId("flow-action-send-ticket").click();
-  await expect(page.getByTestId("screen-host-trade")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect
-    .poll(() =>
-      page.evaluate((symbol) => {
-        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
-        return state.tradeContracts?.[symbol || ""]?.providerContractId || "";
-      }, ticketTicker),
-    )
-    .toMatch(/^\d+$/);
-  await expect
-    .poll(() =>
-      page.evaluate((symbol) => {
-        const state = JSON.parse(localStorage.getItem("rayalgo:state:v1") || "{}");
-        return state.tradeContracts?.[symbol || ""]?.cp || "";
-      }, ticketTicker),
-    )
-    .toMatch(/^[CP]$/);
 });
 
 test("Flow tape repairs persisted column state to show the visual bid ask column", async ({
@@ -901,7 +789,7 @@ test("Flow inspection requests and renders option charts for several clicked flo
       return url.pathname === "/api/options/chart-bars";
     });
 
-    await clickFlowTapeRow(page, rowIndex);
+    await page.getByTestId("flow-tape-row").nth(rowIndex).click();
     await expect(page.getByTestId("flow-contract-drawer")).toHaveCount(0);
     await expect(page.getByTestId("flow-inline-execution-quality")).toBeVisible();
     const request = await chartRequest;
@@ -926,7 +814,7 @@ test("Flow inspection hydrates fallback flow contracts through the shared option
     );
   });
 
-  await clickFlowTapeRow(page);
+  await page.getByTestId("flow-tape-row").first().click();
   await chartRequest;
   await expectChartCanvasDrawn(page, "flow-inspection-option-chart");
   await expect(page.getByText("Option contract lookup unavailable")).toHaveCount(0);
@@ -947,7 +835,7 @@ test("Flow inspection sends non-IBKR fallback ids to the shared option chart end
     return url.pathname === "/api/options/chart-bars";
   });
 
-  await clickFlowTapeRow(page);
+  await page.getByTestId("flow-tape-row").first().click();
   const request = await chartRequest;
   const url = new URL(request.url());
   expect(url.searchParams.has("providerContractId")).toBe(false);
@@ -980,7 +868,7 @@ test("Flow inspection does not call the legacy option bars route when shared cha
     return url.pathname === "/api/options/chart-bars";
   });
 
-  await clickFlowTapeRow(page);
+  await page.getByTestId("flow-tape-row").first().click();
   await chartRequest;
   await expect(page.getByText("Option contract lookup unavailable")).toBeVisible();
   expect(legacyOptionBarsRequests).toHaveLength(0);
@@ -993,7 +881,7 @@ test("Flow inspection keeps the chart frame visible for empty option history", a
   await mockFlowApi(page, { emptyOptionBars: true });
   await openFlow(page);
 
-  await clickFlowTapeRow(page);
+  await page.getByTestId("flow-tape-row").first().click();
   await expect(page.getByText("No option trades in this window")).toBeVisible();
   await expect(page.getByTestId("flow-inspection-option-chart")).toBeVisible();
   await expect(page.getByTestId("flow-inspection-option-chart-surface")).toBeVisible();
@@ -1001,7 +889,7 @@ test("Flow inspection keeps the chart frame visible for empty option history", a
 
 test("Flow mobile renders row cards with filter overlay, column drawer, copy, and pin actions", async ({
   page,
-}, testInfo: TestInfo) => {
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFlowApi(page);
   await openFlow(page);
@@ -1010,7 +898,6 @@ test("Flow mobile renders row cards with filter overlay, column drawer, copy, an
   await expect(page.getByTestId("flow-mobile-card-list")).toBeVisible();
   const firstCard = page.getByTestId("flow-row-card").first();
   await expect(firstCard).toBeVisible();
-  await expect(firstCard).toHaveAttribute("data-flow-row-new", /true|false/);
 
   await page.getByTestId("flow-filter-toggle").click();
   await expect(page.getByTestId("flow-filter-panel")).toBeVisible();
@@ -1044,8 +931,4 @@ test("Flow mobile renders row cards with filter overlay, column drawer, copy, an
   });
   expect(detailAboveCards).toBe(true);
   await expectNoDocumentOverflow(page);
-  await testInfo.attach("phase12-phone-flow-card-tape.png", {
-    body: await page.screenshot({ animations: "disabled" }),
-    contentType: "image/png",
-  });
 });

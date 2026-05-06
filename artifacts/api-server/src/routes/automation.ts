@@ -7,6 +7,7 @@ import {
   setAlgoDeploymentEnabled,
 } from "../services/automation";
 import {
+  getAlgoDeploymentCockpit,
   listSignalOptionsAutomationState,
   recordSignalOptionsManualDeviation,
   runSignalOptionsShadowScan,
@@ -85,6 +86,14 @@ router.post("/algo/deployments/:deploymentId/pause", async (req, res): Promise<v
 router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, res): Promise<void> => {
   res.json(
     await listSignalOptionsAutomationState({
+      deploymentId: req.params.deploymentId,
+    }),
+  );
+});
+
+router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<void> => {
+  res.json(
+    await getAlgoDeploymentCockpit({
       deploymentId: req.params.deploymentId,
     }),
   );

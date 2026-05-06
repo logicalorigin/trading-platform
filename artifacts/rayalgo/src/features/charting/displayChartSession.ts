@@ -34,5 +34,5 @@ export const resolveDisplayChartPrice = ({
   renderedBars?: MarketBar[] | null;
 }): number | null =>
   resolveFiniteNumber(quotePrice) ??
-  resolveLatestBarClose(canonicalBars) ??
-  resolveLatestBarClose(renderedBars);
+  resolveLatestBarClose(renderedBars) ??
+  resolveLatestBarClose(canonicalBars);

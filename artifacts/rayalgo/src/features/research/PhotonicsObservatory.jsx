@@ -4164,6 +4164,9 @@ function Heatmap({ cos, sel, onSel, onFilterVertical, theme }) {
 function ResearchLoadingState({ theme }) {
   return (
     <div className="ra-panel-enter" style={{ animation: "fadeIn 0.2s ease", maxWidth: 760, margin: "24px auto 0" }}>
+      <style>
+        {"@keyframes researchWorkspaceSpin { to { transform: rotate(360deg); } }"}
+      </style>
       <div style={{
         background: "#fff",
         border: "1px solid rgba(0,0,0,.06)",
@@ -4179,35 +4182,28 @@ function ResearchLoadingState({ theme }) {
           <div style={{ fontSize: 11, color: theme.accent, letterSpacing: 3, textTransform: "uppercase", fontWeight: 700 }}>
             Research
           </div>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontFamily: "var(--ra-font-sans)", fontSize: 28, color: "#111" }}>
-                Loading research workspace
-              </div>
-              <div style={{ fontSize: 12, color: "#666", marginTop: 6, lineHeight: 1.6, maxWidth: 520 }}>
-                Hydrating the curated universe, graph relationships, and thesis metadata for the selected theme. Live market data wiring stays available while the authored research dataset loads.
-              </div>
-            </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
             <span
-              data-testid="research-loading-status-chip"
+              data-testid="loading-spinner"
               role="status"
-              aria-label="Loading research workspace"
+              aria-label="Loading"
+              className="ra-status-pulse"
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                padding: "2px 7px",
-                borderRadius: 4,
-                border: `1px solid ${theme.accent}44`,
-                background: `${theme.accent}10`,
-                color: theme.accent,
-                fontFamily: "var(--ra-font-mono)",
-                fontSize: 10,
-                fontWeight: 800,
+                width: 20,
+                height: 20,
+                borderRadius: "50%",
+                border: "2px solid rgba(0,0,0,.08)",
+                borderTopColor: theme.accent,
+                animation: "researchWorkspaceSpin 820ms linear infinite",
                 flexShrink: 0,
               }}
-            >
-              Hydrating
-            </span>
+            />
+            <div style={{ fontFamily: "var(--ra-font-sans)", fontSize: 28, color: "#111" }}>
+              Loading research workspace
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: "#666", marginTop: 6, lineHeight: 1.6, maxWidth: 520 }}>
+            The curated universe, graph relationships, and thesis metadata are being loaded into the platform shell. Live market data wiring stays available while the authored research dataset hydrates.
           </div>
         </div>
 
@@ -4218,11 +4214,13 @@ function ResearchLoadingState({ theme }) {
                 {[0, 1, 2].map((row) => (
                   <div
                     key={row}
-                    className="ra-skeleton"
                     style={{
                       height: column === 0 && row === 0 ? 180 : 84,
                       borderRadius: 10,
                       border: "1px solid rgba(0,0,0,.05)",
+                      background: "linear-gradient(90deg, rgba(0,0,0,.025) 0%, rgba(0,0,0,.055) 50%, rgba(0,0,0,.025) 100%)",
+                      backgroundSize: "220px 100%",
+                      animation: "shimmer 1.6s linear infinite",
                     }}
                   />
                 ))}
@@ -4238,7 +4236,6 @@ function ResearchLoadingState({ theme }) {
 export default function PhotonicsObservatory({
   onJumpToTrade,
   isVisible = false,
-  onLinkedContextChange,
 }) {
   const [themeId, setThemeId] = useState("ai");
   const {
@@ -4262,13 +4259,6 @@ export default function PhotonicsObservatory({
   const [showSettings, setShowSettings] = useState(false);
   const graphRef = useRef();
   const detailRef = useRef();
-  useEffect(() => {
-    const symbol = String(sel || "").trim().toUpperCase();
-    if (!symbol) {
-      return;
-    }
-    onLinkedContextChange?.({ symbol });
-  }, [onLinkedContextChange, sel]);
   useRuntimeWorkloadFlag("research:stream", isVisible, {
     kind: "stream",
     label: "Research live quotes",
@@ -4539,6 +4529,7 @@ export default function PhotonicsObservatory({
         @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes edgeFlow { to { stroke-dashoffset: -12; } }
+        @keyframes shimmer { from { background-position: -200px 0; } to { background-position: 200px 0; } }
         @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
       `}</style>
 

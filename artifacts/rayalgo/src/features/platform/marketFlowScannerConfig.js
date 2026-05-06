@@ -1,4 +1,4 @@
-export const UNUSUAL_SCANNER_BATCH_SIZE = 30;
+export const UNUSUAL_SCANNER_BATCH_SIZE = 40;
 export const UNUSUAL_SCANNER_PER_SYMBOL_LIMIT = 25;
 export const UNUSUAL_SCANNER_MAX_WATCHLIST = Number.POSITIVE_INFINITY;
 export const UNUSUAL_SCANNER_INTERVAL_MS = 15_000;
@@ -54,7 +54,7 @@ export const FLOW_SCANNER_CONFIG_LIMITS = Object.freeze({
 });
 
 export const DEFAULT_FLOW_SCANNER_CONFIG = Object.freeze({
-  mode: FLOW_SCANNER_MODE.allWatchlists,
+  mode: FLOW_SCANNER_MODE.allWatchlistsPlusUniverse,
   scope: FLOW_SCANNER_SCOPE.unusual,
   maxSymbols: 500,
   batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
@@ -207,6 +207,23 @@ export const buildFlowScannerSymbols = ({
   return uniqueSymbols(symbols).slice(0, resolved.maxSymbols);
 };
 
+export const buildFlowScannerMarketUniverseSymbols = ({
+  backendSymbols = [],
+  promotedSymbols = [],
+  currentBatchSymbols = [],
+  fallbackSymbols = FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS,
+  prioritizeRuntimeSignals = false,
+} = {}) => {
+  const backend = uniqueSymbols(backendSymbols);
+  const fallback = uniqueSymbols(fallbackSymbols);
+  const selectedUniverse = backend.length ? [...backend, ...fallback] : fallback;
+  const runtimePriority = prioritizeRuntimeSignals
+    ? [...uniqueSymbols(promotedSymbols), ...uniqueSymbols(currentBatchSymbols)]
+    : [];
+
+  return uniqueSymbols([...runtimePriority, ...selectedUniverse]);
+};
+
 export const filterFlowScannerEvents = (
   events = [],
   config = DEFAULT_FLOW_SCANNER_CONFIG,
@@ -218,9 +235,11 @@ export const filterFlowScannerEvents = (
     const side = String(event?.side || "").toUpperCase();
     const type = String(event?.type || "").toUpperCase();
     const score = Number(event?.unusualScore);
+    const matchesUnusualScore = Number.isFinite(score)
+      ? score >= resolved.unusualThreshold
+      : Boolean(event?.isUnusual);
     const matchesUnusualScope =
-      Boolean(event?.isUnusual) ||
-      (Number.isFinite(score) && score >= resolved.unusualThreshold) ||
+      matchesUnusualScore ||
       Boolean(event?.golden) ||
       type === "SWEEP" ||
       type === "BLOCK" ||

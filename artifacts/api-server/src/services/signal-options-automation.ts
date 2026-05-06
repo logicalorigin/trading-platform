@@ -4,6 +4,8 @@ import {
 } from "@workspace/backtest-core";
 import {
   algoDeploymentsTable,
+  algoStrategiesTable,
+  backtestRunsTable,
   db,
   executionEventsTable,
   shadowFillsTable,
@@ -41,6 +43,8 @@ export const SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT =
   "signal_options_gateway_blocked";
 export const SIGNAL_OPTIONS_MANUAL_DEVIATION_EVENT =
   "signal_options_manual_deviation";
+
+const activeScanDeploymentIds = new Set<string>();
 
 type SignalDirection = "buy" | "sell";
 type OptionRight = "call" | "put";
@@ -886,7 +890,10 @@ function isSameUtcDate(left: Date, right: Date) {
   );
 }
 
-function computeSignalOptionsDailyPnl(events: ExecutionEvent[], now = new Date()) {
+function computeSignalOptionsDailyRealizedPnl(
+  events: ExecutionEvent[],
+  now = new Date(),
+) {
   return events
     .filter(
       (event) =>
@@ -894,6 +901,34 @@ function computeSignalOptionsDailyPnl(events: ExecutionEvent[], now = new Date()
         isSameUtcDate(event.occurredAt, now),
     )
     .reduce((sum, event) => sum + (finiteNumber(asRecord(event.payload).pnl) ?? 0), 0);
+}
+
+function computeSignalOptionsOpenUnrealizedPnl(
+  positions: SignalOptionsPosition[],
+) {
+  return positions.reduce((sum, position) => {
+    const markPrice = finiteNumber(position.lastMarkPrice);
+    if (markPrice == null) {
+      return sum;
+    }
+    const multiplier =
+      finiteNumber(asRecord(position.selectedContract).multiplier) ?? 100;
+    return (
+      sum +
+      (markPrice - position.entryPrice) * position.quantity * multiplier
+    );
+  }, 0);
+}
+
+function computeSignalOptionsDailyPnl(
+  events: ExecutionEvent[],
+  positions: SignalOptionsPosition[] = [],
+  now = new Date(),
+) {
+  return (
+    computeSignalOptionsDailyRealizedPnl(events, now) +
+    computeSignalOptionsOpenUnrealizedPnl(positions)
+  );
 }
 
 type SignalOptionsShadowIndex = {
@@ -1142,6 +1177,421 @@ function deriveCandidateActionStatus(input: {
   };
 }
 
+type AlgoCockpitStageStatus =
+  | "healthy"
+  | "running"
+  | "waiting"
+  | "attention"
+  | "blocked"
+  | "stale";
+
+type AlgoCockpitSeverity = "info" | "warning" | "critical";
+
+function latestIso(
+  values: Array<string | Date | null | undefined>,
+): string | null {
+  const dates = values
+    .map((value) => dateOrNull(value))
+    .filter((value): value is Date => Boolean(value));
+  if (!dates.length) {
+    return null;
+  }
+  return new Date(
+    Math.max(...dates.map((value) => value.getTime())),
+  ).toISOString();
+}
+
+function candidateLatestTimelineAt(candidate: SignalOptionsCandidate) {
+  const latest = candidate.timeline?.at(-1);
+  return toIsoString(asRecord(latest).occurredAt);
+}
+
+function stageStatus(input: {
+  blocked?: boolean;
+  attention?: boolean;
+  running?: boolean;
+  stale?: boolean;
+  count?: number;
+  fallback?: AlgoCockpitStageStatus;
+}): AlgoCockpitStageStatus {
+  if (input.blocked) {
+    return "blocked";
+  }
+  if (input.running) {
+    return "running";
+  }
+  if (input.attention) {
+    return "attention";
+  }
+  if (input.stale) {
+    return "stale";
+  }
+  if ((input.count ?? 0) > 0) {
+    return "healthy";
+  }
+  return input.fallback ?? "waiting";
+}
+
+function positionStopDistancePercent(position: SignalOptionsPosition) {
+  const mark = finiteNumber(position.lastMarkPrice) ?? position.entryPrice;
+  const stop = finiteNumber(position.stopPrice);
+  if (mark == null || stop == null || mark <= 0) {
+    return null;
+  }
+  return ((mark - stop) / mark) * 100;
+}
+
+function isPositionNearStop(position: SignalOptionsPosition) {
+  const distance = positionStopDistancePercent(position);
+  return distance != null && distance <= 20;
+}
+
+function isPositionMarkStale(position: SignalOptionsPosition, now = new Date()) {
+  const markedAt = dateOrNull(position.lastMarkedAt);
+  return Boolean(markedAt && now.getTime() - markedAt.getTime() > 15 * 60_000);
+}
+
+function buildCockpitPipeline(input: {
+  deployment: AlgoDeployment;
+  readiness: AlgoGatewayReadiness;
+  candidates: Array<SignalOptionsCandidate & {
+    actionStatus?: SignalOptionsActionStatus;
+    syncStatus?: SignalOptionsSyncStatus;
+  }>;
+  activePositions: SignalOptionsPosition[];
+  risk: Record<string, unknown>;
+  events: ExecutionEvent[];
+}) {
+  const selectedContracts = input.candidates.filter(
+    (candidate) => Object.keys(asRecord(candidate.selectedContract)).length > 0,
+  );
+  const blockedCandidates = input.candidates.filter(
+    (candidate) =>
+      candidate.actionStatus === "blocked" || candidate.status === "skipped",
+  );
+  const shadowFilled = input.candidates.filter((candidate) =>
+    ["shadow_filled", "partial_shadow", "closed"].includes(
+      String(candidate.actionStatus ?? ""),
+    ),
+  );
+  const mismatches = input.candidates.filter(
+    (candidate) =>
+      candidate.actionStatus === "mismatch" || candidate.syncStatus === "mismatch",
+  );
+  const exitEvents = input.events.filter(
+    (event) => event.eventType === SIGNAL_OPTIONS_EXIT_EVENT,
+  );
+  const latestGatewayBlocked = input.events.find(
+    (event) => event.eventType === SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
+  );
+  const nearStopCount = input.activePositions.filter(isPositionNearStop).length;
+  const dailyHaltActive = input.risk.dailyHaltActive === true;
+  const scanRunning = activeScanDeploymentIds.has(input.deployment.id);
+
+  return [
+    {
+      id: "scan_universe",
+      label: "Scan Universe",
+      status: stageStatus({
+        blocked: !input.readiness.ready,
+        running: scanRunning,
+        count: input.deployment.lastEvaluatedAt ? 1 : 0,
+      }),
+      count: input.deployment.symbolUniverse.length,
+      latestAt:
+        input.deployment.lastEvaluatedAt?.toISOString() ??
+        latestGatewayBlocked?.occurredAt.toISOString() ??
+        null,
+      detail: scanRunning
+        ? "scan running"
+        : input.readiness.ready
+          ? `${input.deployment.symbolUniverse.length} symbols ready`
+          : input.readiness.message,
+    },
+    {
+      id: "signal_detected",
+      label: "Signal Detected",
+      status: stageStatus({ count: input.candidates.length }),
+      count: input.candidates.length,
+      latestAt: latestIso(input.candidates.map((candidate) => candidate.signalAt)),
+      detail: input.candidates.length
+        ? `${input.candidates.length} recent signal candidates`
+        : "awaiting fresh RayReplica signal",
+    },
+    {
+      id: "contract_selected",
+      label: "Contract Selected",
+      status: stageStatus({
+        attention: blockedCandidates.some((candidate) =>
+          String(candidate.reason ?? "").includes("contract"),
+        ),
+        count: selectedContracts.length,
+      }),
+      count: selectedContracts.length,
+      latestAt: latestIso(selectedContracts.map(candidateLatestTimelineAt)),
+      detail: selectedContracts.length
+        ? `${selectedContracts.length} contracts resolved`
+        : "no resolved contracts yet",
+    },
+    {
+      id: "liquidity_risk_gate",
+      label: "Liquidity/Risk Gate",
+      status: stageStatus({
+        blocked: dailyHaltActive,
+        attention: blockedCandidates.length > 0,
+        count: input.candidates.length - blockedCandidates.length,
+      }),
+      count: blockedCandidates.length,
+      latestAt: latestIso(blockedCandidates.map(candidateLatestTimelineAt)),
+      detail: dailyHaltActive
+        ? "daily loss halt active"
+        : blockedCandidates.length
+          ? `${blockedCandidates.length} candidates blocked`
+          : "gates clear for current candidates",
+    },
+    {
+      id: "order_shadow",
+      label: "Shadow Order",
+      status: stageStatus({
+        attention: mismatches.length > 0,
+        count: shadowFilled.length,
+      }),
+      count: shadowFilled.length,
+      latestAt: latestIso(shadowFilled.map(candidateLatestTimelineAt)),
+      detail: mismatches.length
+        ? `${mismatches.length} shadow attribution mismatches`
+        : shadowFilled.length
+          ? `${shadowFilled.length} shadow-linked orders`
+          : "no shadow fills yet",
+    },
+    {
+      id: "position_managed",
+      label: "Position Managed",
+      status: stageStatus({
+        attention: nearStopCount > 0,
+        count: input.activePositions.length,
+      }),
+      count: input.activePositions.length,
+      latestAt: latestIso(
+        input.activePositions.map((position) => position.lastMarkedAt),
+      ),
+      detail: nearStopCount
+        ? `${nearStopCount} positions near stop`
+        : input.activePositions.length
+          ? `${input.activePositions.length} positions marked`
+          : "no open shadow positions",
+    },
+    {
+      id: "exit_close",
+      label: "Exit/Close",
+      status: stageStatus({ count: exitEvents.length }),
+      count: exitEvents.length,
+      latestAt: latestIso(exitEvents.map((event) => event.occurredAt)),
+      detail: exitEvents.length
+        ? `${exitEvents.length} recent exits`
+        : "waiting for exit rules",
+    },
+  ];
+}
+
+function buildCockpitAttention(input: {
+  deployment: AlgoDeployment;
+  readiness: AlgoGatewayReadiness;
+  candidates: Array<SignalOptionsCandidate & {
+    actionStatus?: SignalOptionsActionStatus;
+    syncStatus?: SignalOptionsSyncStatus;
+    shadowLink?: SignalOptionsShadowLink | null;
+  }>;
+  activePositions: SignalOptionsPosition[];
+  risk: Record<string, unknown>;
+  events: ExecutionEvent[];
+}) {
+  const items: Array<{
+    id: string;
+    severity: AlgoCockpitSeverity;
+    stage: string;
+    symbol: string | null;
+    summary: string;
+    detail: string;
+    occurredAt: string | null;
+    action: string;
+  }> = [];
+
+  if (!input.readiness.ready) {
+    items.push({
+      id: "gateway-readiness",
+      severity: "critical",
+      stage: "scan_universe",
+      symbol: null,
+      summary: "Gateway or market data is blocking scans.",
+      detail: input.readiness.message,
+      occurredAt: new Date().toISOString(),
+      action: "Start or repair the IBKR bridge before running scans.",
+    });
+  }
+
+  if (input.deployment.lastError) {
+    items.push({
+      id: "deployment-last-error",
+      severity: "critical",
+      stage: "scan_universe",
+      symbol: null,
+      summary: "Deployment has a recorded error.",
+      detail: input.deployment.lastError,
+      occurredAt: input.deployment.updatedAt.toISOString(),
+      action: "Review the latest execution event and rerun after resolving it.",
+    });
+  }
+
+  if (input.risk.dailyHaltActive === true) {
+    items.push({
+      id: "daily-loss-halt",
+      severity: "critical",
+      stage: "liquidity_risk_gate",
+      symbol: null,
+      summary: "Daily loss halt is active.",
+      detail: `Daily P&L ${input.risk.dailyPnl ?? 0} breached max loss ${input.risk.maxDailyLoss ?? 0}.`,
+      occurredAt: new Date().toISOString(),
+      action: "Pause deployment or reduce risk before the next scan.",
+    });
+  }
+
+  input.candidates
+    .filter(
+      (candidate) =>
+        candidate.actionStatus === "blocked" || candidate.status === "skipped",
+    )
+    .slice(0, 8)
+    .forEach((candidate) => {
+      items.push({
+        id: `blocked-${candidate.id}`,
+        severity: "warning",
+        stage: "liquidity_risk_gate",
+        symbol: candidate.symbol,
+        summary: `${candidate.symbol} candidate blocked.`,
+        detail: formatEnumReason(candidate.reason ?? "gate_failed"),
+        occurredAt: candidateLatestTimelineAt(candidate) ?? candidate.signalAt ?? null,
+        action: "Inspect contract, quote freshness, liquidity, and risk caps.",
+      });
+    });
+
+  input.candidates
+    .filter(
+      (candidate) =>
+        candidate.actionStatus === "mismatch" ||
+        candidate.syncStatus === "mismatch" ||
+        candidate.syncStatus === "event_only" ||
+        candidate.shadowLink?.attributionStatus === "unknown",
+    )
+    .slice(0, 8)
+    .forEach((candidate) => {
+      items.push({
+        id: `shadow-${candidate.id}`,
+        severity: candidate.actionStatus === "mismatch" ? "critical" : "warning",
+        stage: "order_shadow",
+        symbol: candidate.symbol,
+        summary: `${candidate.symbol} shadow ledger attribution needs review.`,
+        detail: shadowLinkStatus(candidate.shadowLink),
+        occurredAt: candidateLatestTimelineAt(candidate) ?? candidate.signalAt ?? null,
+        action: "Compare execution event, shadow order, fill, and position link.",
+      });
+    });
+
+  input.activePositions.forEach((position) => {
+    if (isPositionNearStop(position)) {
+      items.push({
+        id: `near-stop-${position.id}`,
+        severity: "warning",
+        stage: "position_managed",
+        symbol: position.symbol,
+        summary: `${position.symbol} position is near stop.`,
+        detail: `${formatNumberForPayload(positionStopDistancePercent(position))}% from stop.`,
+        occurredAt: position.lastMarkedAt ?? position.openedAt,
+        action: "Review mark, stop, and exit policy before the next scan.",
+      });
+    }
+    if (isPositionMarkStale(position)) {
+      items.push({
+        id: `stale-mark-${position.id}`,
+        severity: "warning",
+        stage: "position_managed",
+        symbol: position.symbol,
+        summary: `${position.symbol} mark is stale.`,
+        detail: `Last marked ${position.lastMarkedAt ?? "unknown"}.`,
+        occurredAt: position.lastMarkedAt ?? position.openedAt,
+        action: "Run scan or check option quote hydration.",
+      });
+    }
+  });
+
+  return items.sort((left, right) => {
+    const severityRank = { critical: 0, warning: 1, info: 2 };
+    return severityRank[left.severity] - severityRank[right.severity];
+  });
+}
+
+function formatEnumReason(value: string) {
+  return value.replace(/_/g, " ");
+}
+
+function formatNumberForPayload(value: number | null) {
+  return value == null || !Number.isFinite(value) ? null : Number(value.toFixed(1));
+}
+
+function shadowLinkStatus(value: SignalOptionsShadowLink | null | undefined) {
+  if (!value) {
+    return "No shadow order/fill/position link found.";
+  }
+  return [
+    value.orderId ? "order linked" : "order missing",
+    value.fillId ? "fill linked" : "fill missing",
+    value.positionId ? "position linked" : "position missing",
+    value.attributionStatus,
+  ].join(" / ");
+}
+
+function isUuidLike(value: string | null | undefined) {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        value,
+      ),
+  );
+}
+
+async function resolveSourceBacktest(deployment: AlgoDeployment) {
+  const config = asRecord(deployment.config);
+  const sourceRunId =
+    compactString(config.sourceRunId) ?? compactString(config.runId);
+  const validSourceRunId = isUuidLike(sourceRunId) ? sourceRunId : null;
+  const sourceStudyId = compactString(config.sourceStudyId);
+  const [strategy] = await db
+    .select()
+    .from(algoStrategiesTable)
+    .where(eq(algoStrategiesTable.id, deployment.strategyId))
+    .limit(1);
+  const [run] = validSourceRunId
+    ? await db
+        .select()
+        .from(backtestRunsTable)
+        .where(eq(backtestRunsTable.id, validSourceRunId))
+        .limit(1)
+    : [];
+
+  return {
+    strategyId: deployment.strategyId,
+    strategyName: strategy?.name ?? deployment.name,
+    sourceRunId: sourceRunId ?? null,
+    sourceStudyId: sourceStudyId ?? run?.studyId ?? null,
+    runName: run?.name ?? null,
+    strategyVersion:
+      compactString(config.strategyVersion) ?? run?.strategyVersion ?? null,
+    metrics: (run?.metrics as Record<string, unknown> | null) ?? null,
+    promotedAt:
+      strategy?.createdAt?.toISOString?.() ?? deployment.createdAt.toISOString(),
+  };
+}
+
 async function buildStatePayload(input: {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
@@ -1225,7 +1675,10 @@ async function buildStatePayload(input: {
     (sum, position) => sum + position.premiumAtRisk,
     0,
   );
-  const dailyPnl = computeSignalOptionsDailyPnl(signalEvents);
+  const dailyRealizedPnl = computeSignalOptionsDailyRealizedPnl(signalEvents);
+  const openUnrealizedPnl =
+    computeSignalOptionsOpenUnrealizedPnl(activePositions);
+  const dailyPnl = dailyRealizedPnl + openUnrealizedPnl;
 
   return {
     deployment: deploymentToResponse(input.deployment),
@@ -1240,6 +1693,8 @@ async function buildStatePayload(input: {
       maxPremiumPerEntry: input.profile.riskCaps.maxPremiumPerEntry,
       maxContracts: input.profile.riskCaps.maxContracts,
       maxDailyLoss: input.profile.riskCaps.maxDailyLoss,
+      dailyRealizedPnl: Number(dailyRealizedPnl.toFixed(2)),
+      openUnrealizedPnl: Number(openUnrealizedPnl.toFixed(2)),
       dailyPnl: Number(dailyPnl.toFixed(2)),
       dailyHaltActive: dailyPnl <= -Math.abs(input.profile.riskCaps.maxDailyLoss),
     },
@@ -1255,6 +1710,102 @@ export async function listSignalOptionsAutomationState(input: {
   const events = await listDeploymentEvents(deployment.id, 500);
 
   return buildStatePayload({ deployment, profile, events });
+}
+
+export async function getAlgoDeploymentCockpit(input: {
+  deploymentId: string;
+}) {
+  const deployment = await getDeploymentOrThrow(input.deploymentId);
+  const [profile, events, readiness, fleetRows] = await Promise.all([
+    Promise.resolve(resolveDeploymentProfile(deployment)),
+    listDeploymentEvents(deployment.id, 750),
+    getAlgoGatewayReadiness(),
+    db
+      .select()
+      .from(algoDeploymentsTable)
+      .where(eq(algoDeploymentsTable.mode, deployment.mode))
+      .orderBy(desc(algoDeploymentsTable.updatedAt)),
+  ]);
+  const state = await buildStatePayload({ deployment, profile, events });
+  const pipelineStages = buildCockpitPipeline({
+    deployment,
+    readiness,
+    candidates: state.candidates,
+    activePositions: state.activePositions,
+    risk: state.risk,
+    events,
+  });
+  const attentionItems = buildCockpitAttention({
+    deployment,
+    readiness,
+    candidates: state.candidates,
+    activePositions: state.activePositions,
+    risk: state.risk,
+    events,
+  });
+  const sourceBacktest = await resolveSourceBacktest(deployment);
+  const signalOptionFleet = fleetRows.filter(deploymentHasSignalOptionsProfile);
+  const enabledDeployments = signalOptionFleet.filter((item) => item.enabled);
+  const erroredDeployments = signalOptionFleet.filter((item) => item.lastError);
+  const latestFleetEvent = events[0] ?? null;
+
+  return {
+    fleet: {
+      mode: deployment.mode,
+      totalDeployments: signalOptionFleet.length,
+      enabledDeployments: enabledDeployments.length,
+      pausedDeployments: Math.max(
+        0,
+        signalOptionFleet.length - enabledDeployments.length,
+      ),
+      erroredDeployments: erroredDeployments.length,
+      activeBlockers: attentionItems.filter(
+        (item) => item.severity === "critical",
+      ).length,
+      latestEventAt: latestFleetEvent?.occurredAt.toISOString() ?? null,
+    },
+    deployment: deploymentToResponse(deployment),
+    readiness: {
+      ready: readiness.ready,
+      reason: readiness.reason,
+      message: readiness.message,
+      scanDisabledReason: readiness.ready ? null : readiness.message,
+      enableDisabledReason: readiness.ready ? null : readiness.message,
+      profileDisabledReason: null,
+    },
+    pipelineStages,
+    attentionItems,
+    kpis: {
+      todayPnl: state.risk.dailyPnl,
+      dailyRealizedPnl: state.risk.dailyRealizedPnl,
+      openUnrealizedPnl: state.risk.openUnrealizedPnl,
+      maxDailyLoss: state.risk.maxDailyLoss,
+      dailyLossRemaining:
+        Math.abs(Number(state.risk.maxDailyLoss ?? 0)) +
+        Number(state.risk.dailyPnl ?? 0),
+      openPremium: state.risk.openPremium,
+      openSymbols: state.risk.openSymbols,
+      maxOpenSymbols: state.risk.maxOpenSymbols,
+      candidates: state.candidates.length,
+      blockedCandidates: state.candidates.filter(
+        (candidate) =>
+          candidate.actionStatus === "blocked" ||
+          candidate.status === "skipped",
+      ).length,
+      shadowFilledCandidates: state.candidates.filter((candidate) =>
+        ["shadow_filled", "partial_shadow", "closed"].includes(
+          String(candidate.actionStatus ?? ""),
+        ),
+      ).length,
+      openPositions: state.activePositions.length,
+    },
+    risk: state.risk,
+    candidates: state.candidates,
+    activePositions: state.activePositions,
+    events: state.events,
+    sourceBacktest,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export async function listEnabledSignalOptionsDeployments() {
@@ -1678,6 +2229,27 @@ export async function runSignalOptionsShadowScan(input: {
   forceEvaluate?: boolean;
   source?: "manual" | "worker";
 }) {
+  if (activeScanDeploymentIds.has(input.deploymentId)) {
+    throw new HttpError(409, "Signal-options scan is already running.", {
+      code: "signal_options_scan_running",
+      detail:
+        "A worker or manual scan is already active for this deployment.",
+      expose: true,
+    });
+  }
+  activeScanDeploymentIds.add(input.deploymentId);
+  try {
+    return await runSignalOptionsShadowScanUnlocked(input);
+  } finally {
+    activeScanDeploymentIds.delete(input.deploymentId);
+  }
+}
+
+async function runSignalOptionsShadowScanUnlocked(input: {
+  deploymentId: string;
+  forceEvaluate?: boolean;
+  source?: "manual" | "worker";
+}) {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
   const source = input.source ?? "manual";
   const readiness = await getAlgoGatewayReadiness();
@@ -1712,10 +2284,16 @@ export async function runSignalOptionsShadowScan(input: {
 
   const eventsAfterMarks = await listDeploymentEvents(deployment.id, 750);
   const seenSignals = seenSignalKeys(eventsAfterMarks);
-  const dailyPnl = computeSignalOptionsDailyPnl(eventsAfterMarks);
+  const activePositionsAfterMarks = deriveActivePositions(
+    signalOptionsEvents(eventsAfterMarks),
+  );
+  const dailyPnl = computeSignalOptionsDailyPnl(
+    eventsAfterMarks,
+    activePositionsAfterMarks,
+  );
   const dailyHaltActive = dailyPnl <= -Math.abs(profile.riskCaps.maxDailyLoss);
   const activePositionsBySymbol = new Map(
-    deriveActivePositions(signalOptionsEvents(eventsAfterMarks)).map((position) => [
+    activePositionsAfterMarks.map((position) => [
       normalizeSymbol(position.symbol).toUpperCase(),
       position,
     ]),
@@ -1904,3 +2482,11 @@ export async function updateSignalOptionsExecutionProfile(input: {
     deploymentId: nextDeployment.id,
   });
 }
+
+export const __signalOptionsAutomationInternalsForTests = {
+  buildCockpitAttention,
+  buildCockpitPipeline,
+  computeSignalOptionsDailyPnl,
+  computeSignalOptionsDailyRealizedPnl,
+  computeSignalOptionsOpenUnrealizedPnl,
+};

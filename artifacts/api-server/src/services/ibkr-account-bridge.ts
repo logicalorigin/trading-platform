@@ -31,7 +31,7 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
 }
 
 function accountFreshTtlMs(): number {
-  return readPositiveIntegerEnv("IBKR_ACCOUNT_CACHE_TTL_MS", 3_000);
+  return readPositiveIntegerEnv("IBKR_ACCOUNT_CACHE_TTL_MS", 2_000);
 }
 
 function accountStaleTtlMs(): number {

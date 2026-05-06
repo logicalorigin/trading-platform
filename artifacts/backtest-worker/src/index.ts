@@ -6,12 +6,15 @@ import {
   calculateBacktestMetrics,
   calculateBenchmarkMetrics,
   rankCandidateResults,
+  resolveSignalOptionsExecutionProfile,
+  signalOptionsRightForDirection,
   runBacktest,
   type BacktestBar,
   type BacktestMetrics,
   type BacktestPoint,
   type BacktestRiskRules,
   type BacktestTrade,
+  type SignalOptionsExecutionProfile,
   type StudyDefinition,
 } from "@workspace/backtest-core";
 import {
@@ -117,12 +120,16 @@ type OptionPositionState = {
   right: "call" | "put";
   dataset: DatasetRow;
   bars: BacktestBar[];
+  entryBarIndex: number;
+  lastRiskBarIndex: number;
   contract: ResolvedOptionContract;
   entryAt: Date;
   entryPrice: number;
   quantity: number;
   entryValue: number;
   entryCommissionPaid: number;
+  peakPrice: number;
+  trailingStopPrice: number | null;
 };
 
 type SimulatedOptionTrade = BacktestTrade & {
@@ -749,8 +756,40 @@ function applySlippage(price: number, side: "buy" | "sell", slippageBps: number)
   return side === "buy" ? price * (1 + multiplier) : price * (1 - multiplier);
 }
 
-function resolveExecutionMode(study: StudyDefinition): "spot" | "options" {
-  return study.parameters["executionMode"] === "options" ? "options" : "spot";
+function resolveExecutionMode(
+  study: StudyDefinition,
+): "spot" | "options" | "signal_options" {
+  return study.parameters["executionMode"] === "options" ||
+    study.parameters["executionMode"] === "signal_options"
+    ? study.parameters["executionMode"]
+    : "spot";
+}
+
+function resolveSignalOptionsProfileFromStudy(
+  study: StudyDefinition,
+): SignalOptionsExecutionProfile | null {
+  if (study.parameters["executionMode"] !== "signal_options") {
+    return null;
+  }
+
+  return resolveSignalOptionsExecutionProfile({
+    optionSelection: {
+      minDte: study.parameters["signalOptionsMinDte"],
+      targetDte: study.parameters["signalOptionsTargetDte"],
+      maxDte: study.parameters["signalOptionsMaxDte"],
+      callStrikeSlot: study.parameters["signalOptionsCallStrikeSlot"],
+      putStrikeSlot: study.parameters["signalOptionsPutStrikeSlot"],
+    },
+    riskCaps: {
+      maxPremiumPerEntry: study.parameters["signalOptionsMaxPremium"],
+      maxContracts: study.parameters["signalOptionsMaxContracts"],
+      maxOpenSymbols: study.parameters["signalOptionsMaxOpenSymbols"],
+      maxDailyLoss: study.parameters["signalOptionsMaxDailyLoss"],
+    },
+    liquidityGate: {
+      maxSpreadPctOfMid: study.parameters["signalOptionsMaxSpreadPct"],
+    },
+  });
 }
 
 function buildOptionDatasetRole(symbol: string, entryAt: Date): string {
@@ -796,6 +835,19 @@ function closeOptionTrade(
   return {
     symbol: position.symbol,
     side: "long",
+    instrumentType: "option",
+    pricingMode: "option_history",
+    underlying: position.symbol,
+    optionContract: {
+      ticker: position.contract.ticker,
+      underlying: position.contract.underlying,
+      expirationDate: position.contract.expirationDate.toISOString().slice(0, 10),
+      strike: position.contract.strike,
+      right: position.contract.right,
+      multiplier: position.contract.multiplier,
+      providerContractId: position.contract.providerContractId,
+      dte: position.contract.dte,
+    },
     entryAt: position.entryAt,
     exitAt: exitBar.startsAt,
     entryPrice: position.entryPrice,
@@ -823,6 +875,7 @@ async function resolveOptionContractForSignal(input: {
   right: "call" | "put";
   spotPrice: number;
   contractPresetId?: string | null;
+  signalOptionsProfile?: SignalOptionsExecutionProfile | null;
 }): Promise<ResolvedOptionContract | null> {
   const url = new URL(`${API_BASE_URL}/backtests/internal/resolve-option-contract`);
   const payload = await fetchJson<ApiResolvedOptionContractResponse>(url.toString(), {
@@ -833,6 +886,7 @@ async function resolveOptionContractForSignal(input: {
     body: JSON.stringify({
       ...input,
       occurredAt: input.occurredAt.toISOString(),
+      signalOptionsProfile: input.signalOptionsProfile ?? null,
     }),
   });
 
@@ -921,6 +975,90 @@ function buildOptionPoints(
   return points;
 }
 
+function utcDateKey(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function optionPositionUnrealizedAt(
+  position: OptionPositionState,
+  timestampMs: number,
+): number {
+  const priceIndex =
+    findBarIndexAtOrBefore(position.bars, timestampMs) ??
+    findBarIndexAtOrBefore(position.bars, position.entryAt.getTime());
+  const markPrice = priceIndex != null ? position.bars[priceIndex]?.close : null;
+  return typeof markPrice === "number" && Number.isFinite(markPrice)
+    ? (markPrice - position.entryPrice) *
+        position.quantity *
+        position.contract.multiplier
+    : 0;
+}
+
+function resolveSignalOptionsRiskExit(
+  position: OptionPositionState,
+  profile: SignalOptionsExecutionProfile,
+  untilMs: number,
+): { bar: BacktestBar; price: number; reason: string } | null {
+  for (
+    let index = position.lastRiskBarIndex + 1;
+    index < position.bars.length;
+    index += 1
+  ) {
+    const bar = position.bars[index]!;
+    if (bar.startsAt.getTime() > untilMs) {
+      break;
+    }
+
+    position.lastRiskBarIndex = index;
+    position.peakPrice = Math.max(position.peakPrice, bar.high);
+    const fixedStop =
+      position.entryPrice * (1 + profile.exitPolicy.hardStopPct / 100);
+    const trailActivated =
+      position.peakPrice >=
+      position.entryPrice *
+        (1 + profile.exitPolicy.trailActivationPct / 100);
+
+    if (trailActivated) {
+      const giveback =
+        position.peakPrice * (1 - profile.exitPolicy.trailGivebackPct / 100);
+      const locked =
+        position.entryPrice * (1 + profile.exitPolicy.minLockedGainPct / 100);
+      const nextTrail = Math.max(giveback, locked);
+      position.trailingStopPrice =
+        position.trailingStopPrice == null
+          ? nextTrail
+          : Math.max(position.trailingStopPrice, nextTrail);
+    }
+
+    const triggered = [
+      bar.low <= fixedStop
+        ? { price: fixedStop, reason: "signal_options_hard_stop" }
+        : null,
+      position.trailingStopPrice != null && bar.low <= position.trailingStopPrice
+        ? {
+            price: position.trailingStopPrice,
+            reason: "signal_options_trailing_stop",
+          }
+        : null,
+    ].filter((item): item is { price: number; reason: string } =>
+      Boolean(item),
+    );
+
+    if (triggered.length > 0) {
+      const conservative = triggered.sort(
+        (left, right) => left.price - right.price,
+      )[0]!;
+      return {
+        bar,
+        price: bar.open <= conservative.price ? bar.open : conservative.price,
+        reason: conservative.reason,
+      };
+    }
+  }
+
+  return null;
+}
+
 async function runOptionsBacktest(
   study: StudyDefinition,
   barsBySymbol: Record<string, BacktestBar[]>,
@@ -934,7 +1072,78 @@ async function runOptionsBacktest(
   const trades: SimulatedOptionTrade[] = [];
   const datasetBindings: RunDatasetBinding[] = [];
   const positions = new Map<string, OptionPositionState>();
+  const signalOptionsProfile = resolveSignalOptionsProfileFromStudy(study);
+  const dailyRealizedPnl = new Map<string, number>();
   let cash = study.portfolioRules.initialCapital;
+  if (signalOptionsProfile) {
+    warnings.push(
+      "Signal-options backtests replay real option aggregate bars; historical bid/ask freshness gates are reported as configuration only.",
+    );
+  }
+
+  const recordClosedPosition = (
+    position: OptionPositionState,
+    exitBar: BacktestBar,
+    exitPrice: number,
+    exitReason: string,
+  ): void => {
+    const exitValue = exitPrice * position.quantity * position.contract.multiplier;
+    const exitCommissionPaid = computeCommission(
+      exitValue,
+      study.executionProfile.commissionBps,
+    );
+    cash += exitValue - exitCommissionPaid;
+    const trade = closeOptionTrade(
+      position,
+      exitBar,
+      exitPrice,
+      exitReason,
+      exitCommissionPaid,
+    );
+    trades.push(trade);
+    positions.delete(position.symbol);
+
+    if (signalOptionsProfile) {
+      const key = utcDateKey(exitBar.startsAt);
+      dailyRealizedPnl.set(key, (dailyRealizedPnl.get(key) ?? 0) + trade.netPnl);
+    }
+  };
+
+  const closeSignalOptionsRiskExits = (untilMs: number): void => {
+    if (!signalOptionsProfile) {
+      return;
+    }
+
+    [...positions.values()].forEach((position) => {
+      const riskExit = resolveSignalOptionsRiskExit(
+        position,
+        signalOptionsProfile,
+        untilMs,
+      );
+      if (!riskExit) {
+        return;
+      }
+
+      const exitPrice = applySlippage(
+        riskExit.price,
+        "sell",
+        study.executionProfile.slippageBps,
+      );
+      recordClosedPosition(position, riskExit.bar, exitPrice, riskExit.reason);
+    });
+  };
+
+  const signalOptionsDailyPnlAt = (occurredAt: Date): number => {
+    if (!signalOptionsProfile) {
+      return 0;
+    }
+    const timestampMs = occurredAt.getTime();
+    const openUnrealized = [...positions.values()].reduce(
+      (sum, position) => sum + optionPositionUnrealizedAt(position, timestampMs),
+      0,
+    );
+    return (dailyRealizedPnl.get(utcDateKey(occurredAt)) ?? 0) + openUnrealized;
+  };
 
   const signalEvents = Object.entries(barsBySymbol)
     .flatMap(([symbol, bars]) =>
@@ -959,10 +1168,17 @@ async function runOptionsBacktest(
       continue;
     }
 
-    const desiredRight = event.direction === "long" ? "call" : "put";
+    closeSignalOptionsRiskExits(event.occurredAt.getTime());
+
+    const desiredRight = signalOptionsRightForDirection(event.direction);
     const existingPosition = positions.get(event.symbol) ?? null;
 
-    if (existingPosition && existingPosition.right !== desiredRight) {
+    if (
+      existingPosition &&
+      existingPosition.right !== desiredRight &&
+      (!signalOptionsProfile ||
+        signalOptionsProfile.exitPolicy.flipOnOppositeSignal)
+    ) {
       const exitBarIndex =
         findBarIndexAtOrAfter(existingPosition.bars, event.occurredAt.getTime()) ??
         existingPosition.bars.length - 1;
@@ -985,24 +1201,12 @@ async function runOptionsBacktest(
           "sell",
           study.executionProfile.slippageBps,
         );
-        const exitValue =
-          exitPrice * existingPosition.quantity * existingPosition.contract.multiplier;
-        const exitCommissionPaid = computeCommission(
-          exitValue,
-          study.executionProfile.commissionBps,
+        recordClosedPosition(
+          existingPosition,
+          exitBar,
+          exitPrice,
+          `${event.direction === "long" ? "bullish" : "bearish"}_choch`,
         );
-
-        cash += exitValue - exitCommissionPaid;
-        trades.push(
-          closeOptionTrade(
-            existingPosition,
-            exitBar,
-            exitPrice,
-            `${event.direction === "long" ? "bullish" : "bearish"}_choch`,
-            exitCommissionPaid,
-          ),
-        );
-        positions.delete(event.symbol);
       }
     }
 
@@ -1010,9 +1214,27 @@ async function runOptionsBacktest(
       continue;
     }
 
-    if (positions.size >= study.portfolioRules.maxConcurrentPositions) {
+    const maxOpenPositions = signalOptionsProfile
+      ? Math.min(
+          study.portfolioRules.maxConcurrentPositions,
+          signalOptionsProfile.riskCaps.maxOpenSymbols,
+        )
+      : study.portfolioRules.maxConcurrentPositions;
+
+    if (positions.size >= maxOpenPositions) {
       warnings.push(
         `${event.symbol}: skipped ${desiredRight} entry at ${event.occurredAt.toISOString()} because the portfolio was already at max concurrent positions.`,
+      );
+      continue;
+    }
+
+    if (
+      signalOptionsProfile &&
+      signalOptionsDailyPnlAt(event.occurredAt) <=
+        -Math.abs(signalOptionsProfile.riskCaps.maxDailyLoss)
+    ) {
+      warnings.push(
+        `${event.symbol}: skipped ${desiredRight} entry at ${event.occurredAt.toISOString()} because the signal-options daily loss halt was active.`,
       );
       continue;
     }
@@ -1022,10 +1244,12 @@ async function runOptionsBacktest(
       occurredAt: event.occurredAt,
       right: desiredRight,
       spotPrice: spotBar.close,
-      contractPresetId:
-        typeof study.parameters["contractPresetId"] === "string"
+      contractPresetId: signalOptionsProfile
+        ? null
+        : typeof study.parameters["contractPresetId"] === "string"
           ? study.parameters["contractPresetId"]
           : null,
+      signalOptionsProfile,
     });
 
     if (!contract) {
@@ -1079,7 +1303,16 @@ async function runOptionsBacktest(
     const targetPositionValue =
       study.portfolioRules.initialCapital *
       (study.portfolioRules.positionSizePercent / 100);
-    const quantity = Math.floor(targetPositionValue / contractCost);
+    const maxByPositionSize = Math.floor(targetPositionValue / contractCost);
+    const quantity = signalOptionsProfile
+      ? Math.min(
+          maxByPositionSize,
+          signalOptionsProfile.riskCaps.maxContracts,
+          Math.floor(
+            signalOptionsProfile.riskCaps.maxPremiumPerEntry / contractCost,
+          ),
+        )
+      : maxByPositionSize;
 
     if (quantity <= 0) {
       warnings.push(
@@ -1108,16 +1341,22 @@ async function runOptionsBacktest(
       right: desiredRight,
       dataset: optionData.dataset,
       bars: optionData.bars,
+      entryBarIndex,
+      lastRiskBarIndex: entryBarIndex,
       contract,
       entryAt: entryBar.startsAt,
       entryPrice,
       quantity,
       entryValue,
       entryCommissionPaid,
+      peakPrice: entryPrice,
+      trailingStopPrice: null,
     });
   }
 
-  positions.forEach((position, symbol) => {
+  closeSignalOptionsRiskExits(study.to.getTime());
+
+  [...positions.entries()].forEach(([symbol, position]) => {
     const exitBar = position.bars[position.bars.length - 1];
 
     if (!exitBar) {
@@ -1130,21 +1369,7 @@ async function runOptionsBacktest(
       "sell",
       study.executionProfile.slippageBps,
     );
-    const exitValue = exitPrice * position.quantity * position.contract.multiplier;
-    const exitCommissionPaid = computeCommission(
-      exitValue,
-      study.executionProfile.commissionBps,
-    );
-    cash += exitValue - exitCommissionPaid;
-    trades.push(
-      closeOptionTrade(
-        position,
-        exitBar,
-        exitPrice,
-        "end_of_run",
-        exitCommissionPaid,
-      ),
-    );
+    recordClosedPosition(position, exitBar, exitPrice, "end_of_run");
   });
 
   const sortedTrades = trades.sort(
@@ -1196,7 +1421,7 @@ async function executeStudyRun(
   datasetBindings: RunDatasetBinding[];
 }> {
   if (
-    resolveExecutionMode(study) === "options" &&
+    resolveExecutionMode(study) !== "spot" &&
     study.strategyId === "ray_replica_signals"
   ) {
     const optionResult = await runOptionsBacktest(study, barsBySymbol);
@@ -1569,7 +1794,7 @@ async function processSweep(job: JobRow): Promise<void> {
   if (
     sweep.mode === "walk_forward" &&
     windows.length > 0 &&
-    resolveExecutionMode(buildStudyDefinition(study, baseParameters)) !== "options"
+    resolveExecutionMode(buildStudyDefinition(study, baseParameters)) === "spot"
   ) {
     const firstTrainingWindow = windows[0]!;
     const trainingBars = sliceBarsByWindow(

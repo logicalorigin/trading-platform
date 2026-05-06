@@ -1,14 +1,4 @@
 import { useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { T, dim, sp, textSize } from "../../lib/uiTokens";
 import { formatAppDateTime } from "../../lib/timeZone";
 import {
@@ -18,11 +8,13 @@ import {
   ToggleGroup,
   formatAccountMoney,
   formatAccountPercent,
+  formatAccountSignedMoney,
   formatNumber,
   mutedLabelStyle,
   secondaryButtonStyle,
   toneForValue,
 } from "./accountUtils";
+import { buildTradeOutcomeHistogramModel } from "./tradeOutcomeHistogramModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -314,63 +306,286 @@ const BucketDrilldownStrip = ({
   );
 };
 
-const EMPTY_ANALYSIS_CARDS = [
-  {
-    key: "empty-best-winner",
-    label: "Best Winner",
-    description: "Waiting for closed trades",
-    value: null,
-    tone: "green",
-    disabled: true,
-  },
-  {
-    key: "empty-worst-loss",
-    label: "Worst Loss",
-    description: "Waiting for closed trades",
-    value: null,
-    tone: "red",
-    disabled: true,
-  },
-  {
-    key: "empty-fee-drag",
-    label: "Fee Drag",
-    description: "Waiting for commissions",
-    value: null,
-    tone: "amber",
-    disabled: true,
-  },
-  {
-    key: "empty-weak-bucket",
-    label: "Weak Bucket",
-    description: "Waiting for repeat patterns",
-    value: null,
-    tone: "cyan",
-    disabled: true,
-  },
-];
+const startOfIsoWeek = (input) => {
+  const d = input instanceof Date ? new Date(input.getTime()) : new Date(input);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  const dayOffset = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - dayOffset);
+  return d;
+};
 
-const PatternTooltip = ({ active, payload, currency, maskValues }) => {
-  if (!active || !payload?.length) return null;
-  const row = payload[0]?.payload || {};
+const isoWeekKey = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const WEEKS_TO_RENDER = 12;
+
+const WeeklyPnlBars = ({ trades = [], currency, maskValues }) => {
+  const weeks = useMemo(() => {
+    const byWeek = new Map();
+    (trades || []).forEach((trade) => {
+      const closeAt = startOfIsoWeek(trade?.closeDate);
+      if (!closeAt) return;
+      const pnl = finiteNumber(trade?.realizedPnl);
+      if (pnl == null) return;
+      const key = isoWeekKey(closeAt);
+      const current = byWeek.get(key) || { iso: key, weekStart: closeAt, pnl: 0, trades: 0 };
+      current.pnl += pnl;
+      current.trades += 1;
+      byWeek.set(key, current);
+    });
+    const today = startOfIsoWeek(new Date());
+    if (!today) return [];
+    const out = [];
+    const cursor = new Date(today);
+    for (let i = 0; i < WEEKS_TO_RENDER; i += 1) {
+      const key = isoWeekKey(cursor);
+      const entry = byWeek.get(key);
+      out.unshift(entry || { iso: key, weekStart: new Date(cursor), pnl: 0, trades: 0 });
+      cursor.setDate(cursor.getDate() - 7);
+    }
+    return out;
+  }, [trades]);
+
+  const totalTradedWeeks = weeks.filter((w) => w.trades > 0).length;
+  if (!totalTradedWeeks) return null;
+
+  const totalPnl = weeks.reduce((s, w) => s + w.pnl, 0);
+  const maxAbsPnl = weeks.reduce(
+    (m, w) => (Math.abs(w.pnl) > m ? Math.abs(w.pnl) : m),
+    0,
+  );
+  const flatPnl = maxAbsPnl === 0;
+  // When every week is exactly flat, show trade-count bars instead so the
+  // chart still communicates which weeks were traded rather than rendering
+  // a stripe of 1-pixel dashes.
+  const maxAbs = flatPnl
+    ? weeks.reduce((m, w) => (w.trades > m ? w.trades : m), 0) || 1
+    : maxAbsPnl;
+  // 4-week rolling expectancy (per-trade) ending at each week
+  const rollingExpectancy = weeks.map((_, idx) => {
+    const window = weeks.slice(Math.max(0, idx - 3), idx + 1);
+    const tradeCount = window.reduce((sum, w) => sum + w.trades, 0);
+    if (!tradeCount) return null;
+    const pnlSum = window.reduce((sum, w) => sum + w.pnl, 0);
+    return pnlSum / tradeCount;
+  });
+  const expectancyExtent = rollingExpectancy.reduce(
+    (m, v) => (v != null && Math.abs(v) > m ? Math.abs(v) : m),
+    0,
+  ) || 1;
+
+  const W = 600;
+  const H = 100;
+  const padT = 6;
+  const padB = 16;
+  const padX = 6;
+  const chartW = W - padX * 2;
+  const chartH = H - padT - padB;
+  const zeroY = padT + chartH / 2;
+  const colWidth = chartW / weeks.length;
+  const expectancyPath = rollingExpectancy
+    .map((value, idx) => {
+      if (value == null) return null;
+      const cx = padX + colWidth * (idx + 0.5);
+      const cy = zeroY - (value / expectancyExtent) * (chartH / 2 - 2);
+      return `${idx === 0 ? "M" : "L"}${cx.toFixed(1)},${cy.toFixed(1)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div
       style={{
-        background: T.bg0,
+        display: "grid",
+        gap: sp(3),
         border: `1px solid ${T.border}`,
-        borderRadius: dim(4),
-        padding: sp(6),
-        color: T.text,
-        fontSize: textSize("caption"),
-        fontFamily: T.data,
+        borderRadius: dim(5),
+        background: T.bg0,
+        padding: sp("6px 8px"),
       }}
     >
-      <div style={{ fontWeight: 900 }}>{row.symbol || row.hour || row.weekday || row.label}</div>
-      <div style={{ color: toneForValue(row.realizedPnl) }}>
-        {formatAccountMoney(row.realizedPnl, currency, true, maskValues)}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: sp(4),
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={mutedLabelStyle}>WEEKLY P&L · LAST {WEEKS_TO_RENDER}W</div>
+        <div style={{ fontSize: textSize("label"), fontFamily: T.data, color: T.textDim }}>
+          {totalTradedWeeks}/{WEEKS_TO_RENDER} traded ·{" "}
+          <span style={{ color: toneForValue(totalPnl), fontWeight: 900 }}>
+            {formatAccountSignedMoney(totalPnl, currency, true, maskValues)}
+          </span>
+        </div>
       </div>
-      <div style={{ color: T.textSec }}>
-        {formatNumber(row.closedTrades || 0, 0)} trades ·{" "}
-        {formatAccountPercent(row.winRatePercent, 0, maskValues)}
+      <svg
+        width="100%"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ display: "block" }}
+      >
+        <line
+          x1={padX}
+          x2={W - padX}
+          y1={zeroY}
+          y2={zeroY}
+          stroke={T.border}
+          strokeWidth={0.5}
+          strokeDasharray="2 2"
+        />
+        {weeks.map((week, idx) => {
+          if (!week.trades) return null;
+          const halfChart = chartH / 2 - 2;
+          const magnitude = flatPnl ? week.trades : Math.abs(week.pnl);
+          const barHeight = Math.max(2, (magnitude / maxAbs) * halfChart);
+          const x = padX + colWidth * idx + colWidth * 0.15;
+          const w = Math.max(2, colWidth * 0.7);
+          // When every week is flat, draw bars upward in cyan to signal
+          // "trade activity, no realized P&L".
+          const positive = flatPnl ? true : week.pnl >= 0;
+          const fill = flatPnl ? T.cyan : positive ? T.green : T.red;
+          const y = positive ? zeroY - barHeight : zeroY;
+          return (
+            <g key={week.iso}>
+              <title>
+                {`${week.iso} · ${formatAccountSignedMoney(week.pnl, currency, true, maskValues)} · ${week.trades} trades`}
+              </title>
+              <rect
+                x={x}
+                y={y}
+                width={w}
+                height={barHeight}
+                fill={fill}
+                opacity={0.85}
+                rx={1}
+              />
+            </g>
+          );
+        })}
+        {expectancyPath && !flatPnl ? (
+          <path d={expectancyPath} fill="none" stroke={T.cyan} strokeWidth={1.2} opacity={0.85} />
+        ) : null}
+      </svg>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: sp(4),
+          fontSize: textSize("tableHeader"),
+          fontFamily: T.data,
+          color: T.textMuted,
+        }}
+      >
+        <span>{formatAppDateTime(weeks[0].weekStart).slice(0, 10)}</span>
+        <span style={{ color: T.cyan }}>
+          {flatPnl ? "trade count (no realized P&L)" : "4w rolling expectancy"}
+        </span>
+        <span>{formatAppDateTime(weeks[weeks.length - 1].weekStart).slice(0, 10)}</span>
+      </div>
+    </div>
+  );
+};
+
+const histogramBucketColor = (side) =>
+  side === "loss" ? T.red : side === "win" ? T.green : T.textMuted;
+
+const HorizontalPnlHistogram = ({ trades = [], currency, maskValues, lensActive = false }) => {
+  const model = useMemo(
+    () => buildTradeOutcomeHistogramModel({ trades, metric: "pnl" }),
+    [trades],
+  );
+  const buckets = arrayValue(model?.buckets);
+  if (!model.summary?.totalTrades || !buckets.length) {
+    return null;
+  }
+  // Render lows at top → highs at bottom (descending min, so largest losses first).
+  const orderedBuckets = [...buckets].sort((left, right) => left.min - right.min).reverse();
+  const maxCount = orderedBuckets.reduce((m, b) => (b.count > m ? b.count : m), 0) || 1;
+  return (
+    <div style={{ display: "grid", gap: sp(3) }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: sp(4),
+        }}
+      >
+        <div style={mutedLabelStyle}>P&L DISTRIBUTION</div>
+        <div style={{ fontSize: textSize("label"), fontFamily: T.data, color: T.textDim }}>
+          {lensActive ? "lens · " : ""}
+          {formatNumber(model.summary.totalTrades, 0)} trades
+        </div>
+      </div>
+      <div style={{ display: "grid", gap: 2 }}>
+        {orderedBuckets.map((bucket) => {
+          const widthPct = (bucket.count / maxCount) * 100;
+          const color = histogramBucketColor(bucket.side);
+          return (
+            <AppTooltip
+              key={bucket.id}
+              content={`${bucket.label} · ${formatNumber(bucket.count, 0)} trades · total ${formatAccountSignedMoney(
+                bucket.total,
+                currency,
+                true,
+                maskValues,
+              )}`}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(46px, auto) minmax(0, 1fr) minmax(20px, auto)",
+                  alignItems: "center",
+                  gap: sp(4),
+                  fontFamily: T.data,
+                  fontSize: textSize("label"),
+                }}
+              >
+                <span
+                  style={{
+                    color: color,
+                    fontWeight: 900,
+                    textAlign: "right",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {bucket.label}
+                </span>
+                <div
+                  style={{
+                    height: dim(10),
+                    background: T.bg0,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: dim(2),
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.max(2, widthPct)}%`,
+                      height: "100%",
+                      background: color,
+                      opacity: bucket.count ? 0.85 : 0.2,
+                    }}
+                  />
+                </div>
+                <span style={{ color: T.textSec, textAlign: "right" }}>
+                  {formatNumber(bucket.count, 0)}
+                </span>
+              </div>
+            </AppTooltip>
+          );
+        })}
       </div>
     </div>
   );
@@ -474,40 +689,32 @@ export const TradingPatternsPanel = ({
   onLensChange,
   analysis,
   onTradeSelect,
+  lensFilteredTrades = null,
 }) => {
   const [sortKey, setSortKey] = useState("realizedPnl");
+  const [tickerOrder, setTickerOrder] = useState("top");
   const packet = query.data || {};
   const summary = packet.summary || {};
   const snapshot = packet.snapshot || {};
   const tickerRows = useMemo(() => {
     const rows = arrayValue(packet.tickerStats);
-    return [...rows].sort((left, right) => {
+    const sortedDesc = [...rows].sort((left, right) => {
       const delta = (finiteNumber(right?.[sortKey]) ?? 0) - (finiteNumber(left?.[sortKey]) ?? 0);
       return delta || String(left?.symbol || "").localeCompare(String(right?.symbol || ""));
     });
-  }, [packet.tickerStats, sortKey]);
-  const topRows = tickerRows.slice(0, 8);
-  const worstRows = [...tickerRows]
-    .sort((left, right) => (finiteNumber(left?.realizedPnl) ?? 0) - (finiteNumber(right?.realizedPnl) ?? 0))
-    .slice(0, 6);
+    return tickerOrder === "bottom" ? [...sortedDesc].reverse() : sortedDesc;
+  }, [packet.tickerStats, sortKey, tickerOrder]);
+  const tickerTableRows = tickerRows.slice(0, 8);
   const sourceRows = arrayValue(packet.sourceStats).slice(0, 5);
   const hourRows = arrayValue(packet.timeStats?.byHour).map((row) => ({
     ...row,
     label: row.hour,
-  }));
-  const chartRows = topRows.map((row) => ({
-    symbol: row.symbol,
-    realizedPnl: finiteNumber(row.realizedPnl) ?? 0,
-    closedTrades: finiteNumber(row.closedTrades) ?? 0,
-    winRatePercent: finiteNumber(row.winRatePercent),
   }));
   const loading = query.isLoading || query.isPending;
   const refreshing = snapshotMutation?.isPending;
   const selectedSymbol = selectedLens?.symbol || "";
   const selectedSourceType = selectedLens?.sourceType || "all";
   const selectedCloseHour = selectedLens?.closeHour ?? null;
-  const bestTrade = summary.bestTrade || null;
-  const worstTrade = summary.worstTrade || null;
   const selectSymbol = (symbol) => {
     onSymbolSelect?.(symbol);
     onLensChange?.("symbol", { symbol });
@@ -523,9 +730,7 @@ export const TradingPatternsPanel = ({
   };
   const representativeCards = arrayValue(analysis?.representativeTrades).slice(0, 4);
   const issueCards = arrayValue(analysis?.issueCards).slice(0, 5);
-  const analysisCards = representativeCards.length || issueCards.length
-    ? [...representativeCards, ...issueCards]
-    : EMPTY_ANALYSIS_CARDS;
+  const analysisCards = [...representativeCards, ...issueCards];
   const readinessRows = arrayValue(analysis?.readiness);
   const drilldownGroups = [
     ...arrayValue(analysis?.bucketGroups?.side),
@@ -556,6 +761,14 @@ export const TradingPatternsPanel = ({
       action={
         <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", alignItems: "center" }}>
           <ToggleGroup options={SORT_OPTIONS} value={sortKey} onChange={setSortKey} />
+          <ToggleGroup
+            options={[
+              { value: "top", label: "Top" },
+              { value: "bottom", label: "Bottom" },
+            ]}
+            value={tickerOrder}
+            onChange={setTickerOrder}
+          />
           <button
             type="button"
             className="ra-interactive"
@@ -608,20 +821,65 @@ export const TradingPatternsPanel = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-            gap: sp(5),
+            gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))",
+            gap: sp(4),
           }}
         >
-          {analysisCards.map((card) => (
-            <AnalysisCard
-              key={card.key}
-              card={card}
-              currency={currency}
-              maskValues={maskValues}
-              onActivate={activateAnalysisCard}
-            />
-          ))}
+          <PatternMetric label="Trades" value={formatNumber(summary.closedTrades || 0, 0)} />
+          <PatternMetric
+            label="P&L"
+            value={formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
+            tone={toneForValue(summary.realizedPnl)}
+          />
+          <PatternMetric
+            label="Win"
+            value={formatAccountPercent(summary.winRatePercent, 0, maskValues)}
+            tone={T.green}
+          />
+          <PatternMetric
+            label="Exp"
+            value={formatAccountMoney(summary.expectancy, currency, true, maskValues)}
+            tone={toneForValue(summary.expectancy)}
+          />
+          <PatternMetric
+            label="PF"
+            value={summary.profitFactor == null ? "----" : formatNumber(summary.profitFactor, 2)}
+            tone={T.cyan}
+          />
+          <PatternMetric label="Events" value={formatNumber(summary.tradeEvents || 0, 0)} tone={T.purple} />
+          <PatternMetric label="Open Lots" value={formatNumber(summary.openLots || 0, 0)} tone={T.cyan} />
+          <PatternMetric
+            label="Anomalies"
+            value={formatNumber(summary.anomalies || 0, 0)}
+            tone={(summary.anomalies || 0) ? T.amber : T.textSec}
+          />
         </div>
+
+        <WeeklyPnlBars
+          trades={arrayValue(lensFilteredTrades)}
+          currency={currency}
+          maskValues={maskValues}
+        />
+
+        {analysisCards.length ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gap: sp(5),
+            }}
+          >
+            {analysisCards.map((card) => (
+              <AnalysisCard
+                key={card.key}
+                card={card}
+                currency={currency}
+                maskValues={maskValues}
+                onActivate={activateAnalysisCard}
+              />
+            ))}
+          </div>
+        ) : null}
 
         <AnalysisReadinessStrip readiness={readinessRows} />
 
@@ -632,43 +890,6 @@ export const TradingPatternsPanel = ({
           selectedLens={selectedLens}
           onLensChange={onLensChange}
         />
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))",
-              gap: sp(4),
-            }}
-          >
-            <PatternMetric label="Trades" value={formatNumber(summary.closedTrades || 0, 0)} />
-            <PatternMetric
-              label="P&L"
-              value={formatAccountMoney(summary.realizedPnl, currency, true, maskValues)}
-              tone={toneForValue(summary.realizedPnl)}
-            />
-            <PatternMetric
-              label="Win"
-              value={formatAccountPercent(summary.winRatePercent, 0, maskValues)}
-              tone={T.green}
-            />
-            <PatternMetric
-              label="Exp"
-              value={formatAccountMoney(summary.expectancy, currency, true, maskValues)}
-              tone={toneForValue(summary.expectancy)}
-            />
-            <PatternMetric
-              label="PF"
-              value={summary.profitFactor == null ? "----" : formatNumber(summary.profitFactor, 2)}
-              tone={T.cyan}
-            />
-            <PatternMetric label="Events" value={formatNumber(summary.tradeEvents || 0, 0)} tone={T.purple} />
-            <PatternMetric label="Open Lots" value={formatNumber(summary.openLots || 0, 0)} tone={T.cyan} />
-            <PatternMetric
-              label="Anomalies"
-              value={formatNumber(summary.anomalies || 0, 0)}
-              tone={(summary.anomalies || 0) ? T.amber : T.textSec}
-            />
-          </div>
 
         {!tickerRows.length ? (
           <div
@@ -694,32 +915,13 @@ export const TradingPatternsPanel = ({
           >
             <div style={{ display: "grid", gap: sp(4), minWidth: 0 }}>
               <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", alignItems: "center" }}>
-                <Pill tone="green">Best Tickers</Pill>
-                <Pill tone="red">Worst {worstRows[0]?.symbol || "----"}</Pill>
+                <Pill tone={tickerOrder === "bottom" ? "red" : "green"}>
+                  {tickerOrder === "bottom" ? "Bottom Tickers" : "Top Tickers"}
+                </Pill>
                 <Pill tone="purple">{formatNumber(summary.symbolsTraded || 0, 0)} symbols</Pill>
               </div>
-              <div style={{ width: "100%", height: dim(130) }}>
-                <ResponsiveContainer>
-                  <BarChart data={chartRows} margin={{ top: 4, right: 4, bottom: 0, left: -8 }}>
-                    <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="symbol" tick={{ fill: T.textMuted, fontSize: textSize("tableCell") }} stroke={T.border} />
-                    <YAxis
-                      tick={{ fill: T.textMuted, fontSize: textSize("tableCell") }}
-                      stroke={T.border}
-                      tickFormatter={(value) => formatAccountMoney(value, currency, true, maskValues)}
-                      width={48}
-                    />
-                    <Tooltip content={<PatternTooltip currency={currency} maskValues={maskValues} />} />
-                    <Bar dataKey="realizedPnl" radius={[3, 3, 0, 0]} isAnimationActive={false}>
-                      {chartRows.map((row) => (
-                        <Cell key={row.symbol} fill={(row.realizedPnl ?? 0) >= 0 ? T.green : T.red} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
               <TickerRows
-                rows={topRows}
+                rows={tickerTableRows}
                 currency={currency}
                 maskValues={maskValues}
                 onSymbolSelect={selectSymbol}
@@ -728,24 +930,12 @@ export const TradingPatternsPanel = ({
             </div>
 
             <div style={{ display: "grid", gap: sp(5), alignContent: "start" }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: sp(4),
-                }}
-              >
-                <PatternMetric
-                  label={`Best ${bestTrade?.symbol || "----"}`}
-                  value={formatAccountMoney(bestTrade?.realizedPnl, currency, true, maskValues)}
-                  tone={toneForValue(bestTrade?.realizedPnl)}
-                />
-                <PatternMetric
-                  label={`Worst ${worstTrade?.symbol || "----"}`}
-                  value={formatAccountMoney(worstTrade?.realizedPnl, currency, true, maskValues)}
-                  tone={toneForValue(worstTrade?.realizedPnl)}
-                />
-              </div>
+              <HorizontalPnlHistogram
+                trades={arrayValue(lensFilteredTrades)}
+                currency={currency}
+                maskValues={maskValues}
+                lensActive={Boolean(selectedLens && selectedLens.kind && selectedLens.kind !== "none")}
+              />
               <div style={{ display: "grid", gap: sp(3) }}>
                 <div style={mutedLabelStyle}>SOURCE BREAKDOWN</div>
                 {sourceRows.map((row) => (
@@ -823,35 +1013,6 @@ export const TradingPatternsPanel = ({
                     </button></AppTooltip>
                   ))}
                 </div>
-              </div>
-              <div style={{ display: "grid", gap: sp(3) }}>
-                <div style={mutedLabelStyle}>WORST TICKERS</div>
-                {worstRows.slice(0, 4).map((row) => (
-                  <button
-                    type="button"
-                    key={row.symbol}
-                    onClick={() => selectSymbol(row.symbol)}
-                    className="ra-interactive"
-                    style={{
-                      border: `1px solid ${T.border}`,
-                      borderRadius: dim(4),
-                      background: T.bg0,
-                      padding: sp("4px 5px"),
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: sp(5),
-                      color: T.textSec,
-                      fontFamily: T.data,
-                      fontSize: textSize("tableCell"),
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span style={{ color: T.cyan, fontWeight: 900 }}>{row.symbol}</span>
-                    <span style={{ color: toneForValue(row.realizedPnl), fontWeight: 900 }}>
-                      {formatAccountMoney(row.realizedPnl, currency, true, maskValues)}
-                    </span>
-                  </button>
-                ))}
               </div>
             </div>
           </div>

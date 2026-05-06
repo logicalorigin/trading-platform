@@ -71,6 +71,7 @@ function normalizeOwner(value: unknown): string | undefined {
 
 function normalizeIntent(value: unknown): MarketDataIntent {
   return value === "execution-live" ||
+    value === "account-monitor-live" ||
     value === "visible-live" ||
     value === "automation-live" ||
     value === "flow-scanner-live" ||

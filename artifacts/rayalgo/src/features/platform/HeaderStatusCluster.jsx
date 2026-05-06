@@ -1,16 +1,14 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
   ChevronDown,
   CircleCheck,
   Gauge,
-  Moon,
   Power,
   RadioTower,
   RefreshCw,
   ShieldCheck,
-  Sun,
   X,
 } from "lucide-react";
 import {
@@ -51,7 +49,7 @@ import {
 } from "./ibkrBridgeSession";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
 import { platformJsonRequest } from "./platformJsonRequest";
-import { buildShellStateLabel } from "./shellStatusModel";
+import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import { AppTooltip } from "@/components/ui/tooltip";
 
@@ -203,10 +201,10 @@ const resolveHeaderIbkrPingMs = (connection, latencyStats) => {
 
 const resolveHeaderDataModeLabel = (session) => {
   const liveAvailable = session?.ibkrBridge?.liveMarketDataAvailable;
-  if (liveAvailable === false) return `${buildShellStateLabel("delayed").label} DATA`;
-  if (liveAvailable === true) return `${buildShellStateLabel("live").label} DATA`;
+  if (liveAvailable === false) return "DELAYED DATA";
+  if (liveAvailable === true) return "LIVE DATA";
   const provider = session?.marketDataProviders?.live;
-  return provider ? `${buildShellStateLabel("live").label} DATA` : MISSING_VALUE;
+  return provider ? "LIVE DATA" : MISSING_VALUE;
 };
 
 const HeaderIbkrStatusChip = ({
@@ -497,7 +495,7 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(82px, 1fr) repeat(3, minmax(34px, auto))",
+          gridTemplateColumns: "minmax(96px, 1fr) repeat(3, minmax(34px, auto))",
           gap: sp(5),
           color: T.textMuted,
           fontSize: fs(7),
@@ -515,9 +513,10 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
       {lineUsage.rows.map((row) => (
         <div
           key={row.id}
+          data-testid={`header-market-data-line-row-${row.id}`}
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(82px, 1fr) repeat(3, minmax(34px, auto))",
+            gridTemplateColumns: "minmax(96px, 1fr) repeat(3, minmax(34px, auto))",
             gap: sp(5),
             alignItems: "baseline",
             color: row.tone,
@@ -526,8 +525,27 @@ const HeaderMarketDataLineUsage = ({ lineUsage }) => {
             padding: sp("1px 0"),
           }}
         >
-          <span style={{ color: row.id === "total" ? T.textSec : T.textDim }}>
-            {row.label}
+          <span
+            style={{
+              color: row.id === "total" ? T.textSec : T.textDim,
+              minWidth: 0,
+            }}
+          >
+            <span>{row.label}</span>
+            {row.detail ? (
+              <span
+                style={{
+                  display: "block",
+                  marginTop: sp(1),
+                  color: row.tone,
+                  fontSize: fs(7),
+                  lineHeight: 1.1,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {row.detail}
+              </span>
+            ) : null}
           </span>
           <span style={{ textAlign: "right", fontWeight: 900 }}>
             {Number.isFinite(row.used) ? Math.round(row.used) : MISSING_VALUE}
@@ -844,37 +862,21 @@ export const HeaderStatusCluster = ({
       gatewayConnection?.reachable ||
       gatewayConnection?.authenticated,
   );
-  const gatewayRuntimeDiagnosticsQuery = useQuery({
-    queryKey: ["platform-runtime-diagnostics", "ibkr-popover"],
-    queryFn: () =>
-      platformJsonRequest("/api/diagnostics/runtime", { timeoutMs: 6_500 }),
+  const gatewayRuntimeDiagnosticsEnabled = Boolean(
+    bridgePopoverOpen && gatewayDiagnosticsEnabled,
+  );
+  const runtimeControl = useRuntimeControlSnapshot({
     enabled: gatewayDiagnosticsEnabled,
-    refetchInterval: gatewayDiagnosticsEnabled
-      ? bridgePopoverOpen
-        ? 5_000
-        : 15_000
-      : false,
-    placeholderData: (previousData) => previousData,
-    retry: false,
-    staleTime: bridgePopoverOpen ? 2_000 : 10_000,
-  });
-  const gatewayLineUsageQuery = useQuery({
-    queryKey: ["settings", "ibkr-line-usage", "header"],
-    queryFn: () =>
-      platformJsonRequest("/api/settings/ibkr-line-usage", { timeoutMs: 3_000 }),
-    enabled: gatewayDiagnosticsEnabled,
-    refetchInterval: gatewayDiagnosticsEnabled
-      ? bridgePopoverOpen
-        ? 2_000
-        : 10_000
-      : false,
-    placeholderData: (previousData) => previousData,
-    retry: false,
-    staleTime: bridgePopoverOpen ? 1_000 : 5_000,
+    runtimeDiagnosticsEnabled: gatewayRuntimeDiagnosticsEnabled,
+    runtimeDiagnosticsQueryKey: "ibkr-popover",
+    runtimeDiagnosticsRefetchInterval: bridgePopoverOpen ? 5_000 : 15_000,
+    lineUsageEnabled: gatewayDiagnosticsEnabled,
+    lineUsageStreamEnabled: true,
+    lineUsagePollInterval: bridgePopoverOpen ? 2_000 : 10_000,
   });
   useRuntimeWorkloadFlag(
     "header:runtime-diagnostics",
-    gatewayDiagnosticsEnabled,
+    gatewayRuntimeDiagnosticsEnabled,
     {
       kind: "poll",
       label: "Header runtime",
@@ -883,32 +885,39 @@ export const HeaderStatusCluster = ({
     },
   );
   const gatewayRuntimeError =
-    gatewayRuntimeDiagnosticsQuery.error instanceof Error
-      ? gatewayRuntimeDiagnosticsQuery.error.message
-      : gatewayRuntimeDiagnosticsQuery.error
-        ? String(gatewayRuntimeDiagnosticsQuery.error)
+    runtimeControl.runtimeError instanceof Error
+      ? runtimeControl.runtimeError.message
+      : runtimeControl.runtimeError
+        ? String(runtimeControl.runtimeError)
         : null;
   const gatewayPopoverModel = useMemo(
     () =>
       buildHeaderIbkrPopoverModel({
         connection: gatewayConnection,
         latencyStats: gatewayLatencyStats,
-        runtimeDiagnostics: gatewayRuntimeDiagnosticsQuery.data,
+        runtimeDiagnostics: runtimeControl.runtimeDiagnostics,
         runtimeError: gatewayRuntimeError,
-        lineUsageSnapshot: gatewayLineUsageQuery.data,
+        lineUsage: runtimeControl.lineUsage,
+        lineUsageSnapshot: runtimeControl.lineUsageSnapshot,
       }),
     [
       gatewayConnection,
       gatewayLatencyStats,
-      gatewayRuntimeDiagnosticsQuery.data,
+      runtimeControl.runtimeDiagnostics,
       gatewayRuntimeError,
-      gatewayLineUsageQuery.data,
+      runtimeControl.lineUsage,
+      runtimeControl.lineUsageSnapshot,
     ],
   );
+  const bridgeRuntimeOverrideActive = Boolean(
+    runtimeControl.runtimeDiagnostics?.ibkr?.runtimeOverrideActive ||
+      session?.runtime?.ibkr?.runtimeOverrideActive,
+  );
   const canDeactivate = Boolean(
-    bridgeManagementToken &&
-      gatewayConnection?.authenticated &&
-      gatewayConnection?.reachable !== false,
+    bridgeManagementToken ||
+      bridgeRuntimeOverrideActive ||
+      session?.configured?.ibkr ||
+      gatewayConnection?.configured,
   );
   const gatewayConnectedForBridge = Boolean(
     gatewayConnection?.authenticated &&
@@ -1109,21 +1118,39 @@ export const HeaderStatusCluster = ({
   }, []);
 
   const handleDeactivate = useCallback(async () => {
-    if (!bridgeManagementToken) {
-      setBridgeLauncherError("Attach a Gateway bridge session before detaching.");
-      return;
-    }
-
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
 
     try {
-      await platformJsonRequest("/api/ibkr/bridge/detach", {
-        method: "POST",
-        body: {
-          managementToken: bridgeManagementToken,
-        },
-      });
+      if (bridgeManagementToken) {
+        try {
+          await platformJsonRequest("/api/ibkr/bridge/detach", {
+            method: "POST",
+            body: {
+              managementToken: bridgeManagementToken,
+            },
+          });
+        } catch (error) {
+          if (error?.code !== "invalid_ibkr_bridge_detach_token") {
+            throw error;
+          }
+          await platformJsonRequest(
+            "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
+            {
+              method: "POST",
+              body: { force: true },
+            },
+          );
+        }
+      } else {
+        await platformJsonRequest(
+          "/api/settings/backend/actions/ibkr.bridgeOverride.clear",
+          {
+            method: "POST",
+            body: { force: true },
+          },
+        );
+      }
       setBridgeManagementToken(null);
       clearIbkrBridgeSessionValues();
       setBridgeLaunchUrl(null);
@@ -1194,7 +1221,6 @@ export const HeaderStatusCluster = ({
 
         {bridgePopoverOpen ? (
           <div
-            className="ra-popover-enter"
             ref={bridgePopoverRef}
             role="dialog"
             aria-label="IB Gateway bridge"
@@ -1246,7 +1272,6 @@ export const HeaderStatusCluster = ({
                 </span>
               </div>
               <AppTooltip content="Close"><button
-                className="ra-interactive"
                 type="button"
                 onClick={() => setBridgePopoverOpen(false)}
                 style={{
@@ -1299,7 +1324,6 @@ export const HeaderStatusCluster = ({
               }}
             >
               <button
-                className="ra-interactive"
                 type="button"
                 onClick={handleStartBridgeLauncher}
                 disabled={bridgeActionDisabled}
@@ -1327,9 +1351,11 @@ export const HeaderStatusCluster = ({
                 {bridgeLauncherBusy ? (
                   <RefreshCw
                     data-ibkr-bridge-spinner
-                    className="ra-refresh-spin"
                     size={dim(13)}
                     strokeWidth={2.2}
+                    style={{
+                      animation: "premiumFlowSpin 820ms linear infinite",
+                    }}
                   />
                 ) : gatewayConnectedForBridge ? (
                   <CircleCheck size={dim(13)} strokeWidth={2.2} />
@@ -1343,7 +1369,6 @@ export const HeaderStatusCluster = ({
 
               {canDeactivate ? (
                 <button
-                  className="ra-interactive"
                   type="button"
                   onClick={handleDeactivate}
                   disabled={bridgeLauncherBusy}
@@ -1431,16 +1456,12 @@ export const HeaderStatusCluster = ({
       <AppTooltip content={
           theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
         }><button
-        className="ra-interactive"
         type="button"
         onClick={onToggleTheme}
         style={{
           width: dim(30),
           minHeight: dim(32),
           padding: 0,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
           background: T.bg1,
           border: `1px solid ${T.border}`,
           borderRadius: 0,
@@ -1461,11 +1482,7 @@ export const HeaderStatusCluster = ({
           event.currentTarget.style.borderColor = T.border;
         }}
       >
-        {theme === "dark" ? (
-          <Sun size={dim(14)} strokeWidth={2.2} />
-        ) : (
-          <Moon size={dim(14)} strokeWidth={2.2} />
-        )}
+        {theme === "dark" ? "☼" : "☾"}
       </button></AppTooltip>
     </div>
   );

@@ -42,4 +42,8 @@ maxDte?: number;
  * @maximum 150
  */
 lineBudget?: number;
+/**
+ * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
+ */
+blocking?: boolean;
 };

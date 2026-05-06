@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ListFlowEventsResponse } from "@workspace/api-zod";
 import type { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
-import type { OptionChainContract } from "../providers/ibkr/client";
+import type {
+  OptionChainContract,
+  QuoteSnapshot,
+} from "../providers/ibkr/client";
 import { __resetMarketDataAdmissionForTests } from "./market-data-admission";
 import { createOptionsFlowScanner } from "./options-flow-scanner";
 
@@ -73,6 +76,44 @@ function optionContract(symbol = "SPY"): OptionChainContract {
     openInterest: 100,
     volume: 250,
     updatedAt: new Date("2026-04-24T14:30:00.000Z"),
+  };
+}
+
+function optionQuote(
+  providerContractId: string,
+  overrides: Partial<QuoteSnapshot> = {},
+): QuoteSnapshot {
+  return {
+    symbol: "SPY OPT",
+    price: 2.3,
+    bid: 2.2,
+    ask: 2.4,
+    bidSize: 1,
+    askSize: 1,
+    change: 0,
+    changePercent: 0,
+    open: null,
+    high: null,
+    low: null,
+    prevClose: null,
+    volume: 250,
+    openInterest: 100,
+    impliedVolatility: 0.25,
+    delta: 0.5,
+    gamma: 0.02,
+    theta: -0.01,
+    vega: 0.08,
+    updatedAt: new Date("2026-04-24T20:00:00.000Z"),
+    providerContractId,
+    transport: "tws",
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    dataUpdatedAt: new Date("2026-04-24T14:35:00.000Z"),
+    ageMs: null,
+    cacheAgeMs: null,
+    latency: null,
+    ...overrides,
   };
 }
 
@@ -164,6 +205,8 @@ test("options flow runtime defaults scan one symbol at a time through the reserv
   const config = getOptionsFlowRuntimeConfig();
 
   assert.equal(config.scannerLineBudget, 40);
+  assert.equal(config.radarBatchSize, 40);
+  assert.equal(config.radarDeepLineBudget, 40);
   assert.equal(config.scannerConcurrency, 1);
   assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 1);
   assert.equal(
@@ -207,6 +250,8 @@ test("options flow scanner skips fan-out when transport is unavailable", async (
   assert.deepEqual(result.skippedSymbols, ["SPY", "QQQ"]);
   assert.equal(result.skippedReason, "transport-not-tws");
   assert.equal(scanner.getSnapshot("SPY", { limit: 10 }), null);
+  assert.equal(scanner.getDiagnostics().lastSkippedReason, "transport-not-tws");
+  assert.deepEqual(scanner.getDiagnostics().lastBatch, ["SPY", "QQQ"]);
 });
 
 test("options flow scanner waits for an authenticated live Gateway", async () => {
@@ -329,6 +374,61 @@ test("options flow scanner serves stale snapshots inside stale ttl", async () =>
   assert.equal(scanner.getSnapshot("SPY", { limit: 10 }), null);
 });
 
+test("options flow scanner keeps the last event snapshot when a refresh is line-budget blocked", async () => {
+  let currentTime = 1_000;
+  let blocked = false;
+  const scanner = createOptionsFlowScanner({
+    now: () => currentTime,
+    snapshotTtlMs: 1_000,
+    snapshotStaleTtlMs: 5_000,
+    preferredTransport: "tws",
+    getTransport: async () => ({ transport: "tws" }),
+    fetchSymbol: async ({ symbol }) =>
+      blocked
+        ? {
+            events: [],
+            source: {
+              provider: "none",
+              status: "empty",
+              ibkrStatus: "empty",
+              ibkrReason: "options_flow_scanner_line_budget_exhausted",
+            },
+          }
+        : {
+            events: [{ symbol, id: "live-flow" }],
+            source: { provider: "ibkr", status: "live" },
+          },
+  });
+
+  await scanner.runOnce(["spy"], { limit: 10 });
+  blocked = true;
+  currentTime = 1_500;
+  await scanner.runOnce(["spy"], { limit: 10 });
+
+  const snapshot = scanner.getSnapshot("SPY", { limit: 10 });
+  assert.deepEqual(snapshot?.events, [{ symbol: "SPY", id: "live-flow" }]);
+  assert.equal(snapshot?.source?.provider, "ibkr");
+});
+
+test("options flow scanner does not retain transient empty error snapshots", async () => {
+  const scanner = createOptionsFlowScanner({
+    preferredTransport: "tws",
+    getTransport: async () => ({ transport: "tws" }),
+    fetchSymbol: async () => ({
+      events: [],
+      source: {
+        provider: "none",
+        status: "error",
+        errorMessage: "IBKR bridge request to /options/quotes timed out after 12000ms.",
+      },
+    }),
+  });
+
+  await scanner.runOnce(["spy"], { limit: 10 });
+
+  assert.equal(scanner.getSnapshot("SPY", { limit: 10 }), null);
+});
+
 test("listFlowEvents serves backend scanner snapshots before on-demand derivation", async () => {
   let chainCalls = 0;
   __setIbkrBridgeClientFactoryForTests(
@@ -371,14 +471,75 @@ test("listFlowEvents serves backend scanner snapshots before on-demand derivatio
 	  assert.equal(
 	    ListFlowEventsResponse.parse(result).events[0]?.providerContractId,
 	    "SPY-2026-05-15-500-C",
-	  );
-	});
+		  );
+		});
+
+test("listFlowEvents serves partial scanner snapshots to nonblocking callers", async () => {
+  const contracts = Array.from({ length: 10 }, (_unused, index) => {
+    const base = optionContract("SPY");
+    return {
+      ...base,
+      contract: {
+        ...base.contract,
+        ticker: `SPY-2026-05-15-${500 + index}-C`,
+        providerContractId: `SPY-2026-05-15-${500 + index}-C`,
+        strike: 500 + index,
+      },
+      underlyingPrice: 505,
+    };
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          connected: true,
+          configured: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => contracts,
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  await __runOptionsFlowScannerOnceForTests(["spy"], {
+    limit: 10,
+    lineBudget: 10,
+  });
+
+  __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionChain: async () => {
+          throw new Error("partial scanner snapshot should satisfy the request");
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const result = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 25, blocking: false }),
+  );
+
+  assert.equal(result.events.length, 10);
+  assert.equal(result.source.status, "live");
+  assert.equal(result.events[0]?.underlying, "SPY");
+});
 
 test("listFlowEvents primes scanner snapshots from the on-demand path", async () => {
   let chainCalls = 0;
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
         getOptionExpirations: async () => [
           new Date("2026-05-15T00:00:00.000Z"),
         ],
@@ -414,7 +575,155 @@ test("listFlowEvents primes scanner snapshots from the on-demand path", async ()
 	  );
 	});
 
-test("listFlowEvents can warm on-demand flow without blocking callers", async () => {
+test("listFlowEvents keeps line-budget cache entries isolated", async () => {
+  const first = optionContract("SPY");
+  const second = optionContract("SPY");
+  const firstId = first.contract.providerContractId ?? "";
+  const secondId = "SPY-2026-05-15-505-C";
+  second.contract = {
+    ...second.contract,
+    ticker: secondId,
+    providerContractId: secondId,
+    strike: 505,
+  };
+  second.volume = 225;
+  second.mark = 1.9;
+
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
+      return (input.providerContractIds || []).map((providerContractId) =>
+        optionQuote(providerContractId, {
+          volume: providerContractId === firstId ? 250 : 225,
+          price: providerContractId === firstId ? 2.3 : 1.95,
+          bid: providerContractId === firstId ? 2.2 : 1.9,
+          ask: providerContractId === firstId ? 2.4 : 2,
+        }),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [first, second],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const narrow = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5, lineBudget: 1 }),
+  );
+  const wider = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5, lineBudget: 2 }),
+  );
+
+  assert.equal(narrow.events.length, 1);
+  assert.equal(wider.events.length, 2);
+});
+
+test("listFlowEvents spends scanner quote lines on near-the-money metadata contracts", async () => {
+  const base = optionContract("SPY");
+  const buildMetadataContract = (
+    providerContractId: string,
+    strike: number,
+    right: "call" | "put",
+  ): OptionChainContract => ({
+    ...base,
+    contract: {
+      ...base.contract,
+      ticker: providerContractId,
+      providerContractId,
+      strike,
+      right,
+    },
+    bid: null,
+    ask: null,
+    last: null,
+    mark: null,
+    openInterest: null,
+    volume: null,
+    underlyingPrice: 500,
+  });
+  const nearCallId = "SPY-2026-05-15-500-C";
+  const nearPutId = "SPY-2026-05-15-500-P";
+  const requestedProviderContractIds: string[] = [];
+
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
+      requestedProviderContractIds.push(...(input.providerContractIds || []));
+      return (input.providerContractIds || []).map((providerContractId) =>
+        optionQuote(providerContractId, {
+          volume: 250,
+          openInterest: null,
+          price: 2.3,
+          bid: 2.2,
+          ask: 2.4,
+        }),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [
+          buildMetadataContract("SPY-2026-05-15-100-C", 100, "call"),
+          buildMetadataContract("SPY-2026-05-15-900-C", 900, "call"),
+          buildMetadataContract(nearCallId, 500, "call"),
+          buildMetadataContract(nearPutId, 500, "put"),
+        ],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const parsed = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5, lineBudget: 2 }),
+  );
+
+  assert.deepEqual(
+    parsed.events.map((event) => event.openInterest),
+    [0, 0],
+  );
+  assert.deepEqual(requestedProviderContractIds.sort(), [
+    nearCallId,
+    nearPutId,
+  ]);
+  assert.deepEqual(
+    parsed.events.map((event) => event.providerContractId).sort(),
+    [nearCallId, nearPutId],
+  );
+});
+
+test("listFlowEvents queues scanner refreshes without blocking callers", async () => {
   let chainCalls = 0;
   let releaseRefresh: () => void = () => {};
   const refreshGate = new Promise<void>((resolve) => {
@@ -424,6 +733,13 @@ test("listFlowEvents can warm on-demand flow without blocking callers", async ()
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
         getOptionExpirations: async () => [
           new Date("2026-05-15T00:00:00.000Z"),
         ],
@@ -443,10 +759,10 @@ test("listFlowEvents can warm on-demand flow without blocking callers", async ()
   const parsedFirst = ListFlowEventsResponse.parse(first);
 
   assert.equal(parsedFirst.events.length, 0);
-  assert.equal(parsedFirst.source.ibkrStatus, "degraded");
+  assert.equal(parsedFirst.source.ibkrStatus, "empty");
   assert.equal(
     parsedFirst.source.ibkrReason,
-    "options_flow_on_demand_refreshing",
+    "options_flow_scanner_queued",
   );
 
   for (let attempt = 0; attempt < 10 && chainCalls === 0; attempt += 1) {
@@ -465,6 +781,184 @@ test("listFlowEvents can warm on-demand flow without blocking callers", async ()
     blocking: false,
   });
   assert.equal(cached.events.length, 1);
+});
+
+test("listFlowEvents queues filtered nonblocking scans through the scanner", async () => {
+  let chainCalls = 0;
+  let releaseRefresh: () => void = () => {};
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => {
+          chainCalls += 1;
+          await refreshGate;
+          return [optionContract("SPY")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const first = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 5,
+      blocking: false,
+      minPremium: 10_000,
+      maxDte: 30,
+    }),
+  );
+
+  assert.equal(first.events.length, 0);
+  assert.equal(first.source.ibkrStatus, "empty");
+  assert.equal(first.source.ibkrReason, "options_flow_scanner_queued");
+
+  for (let attempt = 0; attempt < 10 && chainCalls === 0; attempt += 1) {
+    await wait(0);
+  }
+  assert.equal(chainCalls, 1);
+
+  releaseRefresh();
+
+  const warmed = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 5,
+      minPremium: 10_000,
+      maxDte: 30,
+    }),
+  );
+  assert.equal(warmed.events.length, 1);
+});
+
+test("listFlowEvents does not cache transient quote timeout empties", async () => {
+  let quoteCalls = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
+      quoteCalls += 1;
+      if (quoteCalls === 1) {
+        throw new Error(
+          "IBKR bridge request to /options/quotes timed out after 12000ms.",
+        );
+      }
+      return (input.providerContractIds || []).map((providerContractId) =>
+        optionQuote(providerContractId, { volume: 250 }),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [{ ...optionContract("SPY"), volume: 0 }],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const timedOut = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5 }),
+  );
+  assert.equal(timedOut.events.length, 0);
+  assert.equal(timedOut.source.status, "error");
+
+  const recovered = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5 }),
+  );
+  assert.equal(recovered.events.length, 1);
+  assert.equal(recovered.source.status, "live");
+  assert.equal(quoteCalls, 2);
+});
+
+test("listFlowEvents caps nonblocking scanner refreshes to the radar deep quote budget", async () => {
+  const base = optionContract("SPY");
+  const requestedProviderContractIds: string[] = [];
+  const contracts = Array.from({ length: 40 }, (_unused, index) => ({
+    ...base,
+    contract: {
+      ...base.contract,
+      ticker: `SPY-2026-05-15-${400 + index}-C`,
+      providerContractId: `SPY-2026-05-15-${400 + index}-C`,
+      strike: 400 + index,
+    },
+    underlyingPrice: 420,
+  }));
+
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
+      requestedProviderContractIds.push(...(input.providerContractIds || []));
+      return (input.providerContractIds || []).map((providerContractId) =>
+        optionQuote(providerContractId, { volume: 250 }),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => contracts,
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const queued = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5, blocking: false }),
+  );
+
+  assert.equal(queued.source.ibkrReason, "options_flow_scanner_queued");
+
+  for (
+    let attempt = 0;
+    attempt < 20 && requestedProviderContractIds.length === 0;
+    attempt += 1
+  ) {
+    await wait(10);
+  }
+
+  assert.equal(
+    requestedProviderContractIds.length,
+    getOptionsFlowRuntimeConfig().radarDeepLineBudget,
+  );
 });
 
 test("listFlowEvents applies request filters to IBKR-derived rows", async () => {
@@ -645,6 +1139,51 @@ test("listFlowEvents reports IBKR as source when a live snapshot is filtered emp
   assert.equal(parsed.source.fallbackUsed, false);
   assert.equal(parsed.source.ibkrStatus, "loaded");
   assert.ok((parsed.source.ibkrFilteredEventCount ?? 0) > 0);
+});
+
+test("listFlowEvents timestamps IBKR snapshot rows from quote data time", async () => {
+  const contract = optionContract("SPY");
+  const providerContractId = contract.contract.providerContractId ?? "";
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      return [
+        optionQuote(providerContractId, {
+          updatedAt: new Date("2026-04-24T20:00:00.000Z"),
+          dataUpdatedAt: new Date("2026-04-24T14:35:00.000Z"),
+        }),
+      ];
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [contract],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const parsed = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5 }),
+  );
+
+  assert.equal(parsed.events.length, 1);
+  assert.equal(
+    parsed.events[0]?.occurredAt.toISOString(),
+    "2026-04-24T14:35:00.000Z",
+  );
+  assert.match(parsed.events[0]?.id ?? "", /1777041300000$/);
 });
 
 test("listFlowEvents does not reuse explicit Polygon fallback cache for IBKR-only requests", async () => {

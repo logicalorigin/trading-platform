@@ -1,5 +1,62 @@
 import { isFiniteNumber } from "../../lib/formatters";
 
+const getOptionMark = (bid, ask, last) => {
+  if (isFiniteNumber(bid) && bid > 0 && isFiniteNumber(ask) && ask > 0) {
+    return +((bid + ask) / 2).toFixed(2);
+  }
+  return isFiniteNumber(last) ? +last.toFixed(2) : null;
+};
+
+export const patchOptionChainRowSideWithQuote = (row, side, quote) => {
+  if (!row || !quote) {
+    return row;
+  }
+
+  const prefix = side === "C" ? "c" : "p";
+  const bid = isFiniteNumber(quote.bid)
+    ? +quote.bid.toFixed(2)
+    : row[`${prefix}Bid`];
+  const ask = isFiniteNumber(quote.ask)
+    ? +quote.ask.toFixed(2)
+    : row[`${prefix}Ask`];
+  const last = isFiniteNumber(quote.price)
+    ? +quote.price.toFixed(2)
+    : row[`${prefix}Prem`];
+
+  return {
+    ...row,
+    [`${prefix}Prem`]: getOptionMark(bid, ask, last) ?? row[`${prefix}Prem`],
+    [`${prefix}Bid`]: bid,
+    [`${prefix}Ask`]: ask,
+    [`${prefix}Vol`]: quote.volume ?? row[`${prefix}Vol`],
+    [`${prefix}Oi`]: quote.openInterest ?? row[`${prefix}Oi`],
+    [`${prefix}Iv`]: quote.impliedVolatility ?? row[`${prefix}Iv`],
+    [`${prefix}Delta`]: quote.delta ?? row[`${prefix}Delta`],
+    [`${prefix}Gamma`]: quote.gamma ?? row[`${prefix}Gamma`],
+    [`${prefix}Theta`]: quote.theta ?? row[`${prefix}Theta`],
+    [`${prefix}Vega`]: quote.vega ?? row[`${prefix}Vega`],
+    [`${prefix}Freshness`]: quote.freshness ?? row[`${prefix}Freshness`],
+    [`${prefix}MarketDataMode`]:
+      quote.marketDataMode ?? row[`${prefix}MarketDataMode`],
+    [`${prefix}QuoteUpdatedAt`]:
+      quote.dataUpdatedAt ?? quote.updatedAt ?? row[`${prefix}QuoteUpdatedAt`],
+  };
+};
+
+export const patchOptionChainRowWithQuoteGetter = (row, getQuoteSnapshot) => {
+  if (!row || typeof getQuoteSnapshot !== "function") {
+    return row;
+  }
+
+  const callQuote = getQuoteSnapshot(row.cContract?.providerContractId);
+  const putQuote = getQuoteSnapshot(row.pContract?.providerContractId);
+  return patchOptionChainRowSideWithQuote(
+    patchOptionChainRowSideWithQuote(row, "C", callQuote),
+    "P",
+    putQuote,
+  );
+};
+
 export const buildOptionChainRowsFromApi = (contracts, spotPrice) => {
   const rowsByStrike = new Map();
 
@@ -13,11 +70,12 @@ export const buildOptionChainRowsFromApi = (contracts, spotPrice) => {
       quote.dataUpdatedAt ||
       (quoteFreshness !== "metadata" ? quote.updatedAt : null) ||
       null;
-    const hasAnyQuoteData =
-      isFiniteNumber(quote.bid) ||
-      isFiniteNumber(quote.ask) ||
-      isFiniteNumber(quote.last) ||
-      isFiniteNumber(quote.mark) ||
+    const hasPositivePrice =
+      (isFiniteNumber(quote.bid) && quote.bid > 0) ||
+      (isFiniteNumber(quote.ask) && quote.ask > 0) ||
+      (isFiniteNumber(quote.last) && quote.last > 0) ||
+      (isFiniteNumber(quote.mark) && quote.mark > 0);
+    const hasNonPriceMarketData =
       isFiniteNumber(quote.volume) ||
       isFiniteNumber(quote.openInterest) ||
       isFiniteNumber(quote.impliedVolatility) ||
@@ -26,13 +84,13 @@ export const buildOptionChainRowsFromApi = (contracts, spotPrice) => {
       isFiniteNumber(quote.theta) ||
       isFiniteNumber(quote.vega);
     const quoteCanCarryMarketData =
-      quoteFreshness !== "metadata" &&
-      quoteFreshness !== "pending" &&
       quoteFreshness !== "unavailable";
     const hasHydratedQuoteData =
-      quoteCanCarryMarketData && (Boolean(quoteUpdatedAt) || hasAnyQuoteData);
+      quoteCanCarryMarketData && (hasPositivePrice || hasNonPriceMarketData);
     const quoteNumber = (value) =>
       hasHydratedQuoteData && isFiniteNumber(value) ? value : null;
+    const quotePrice = (value) =>
+      hasHydratedQuoteData && isFiniteNumber(value) && value > 0 ? value : null;
 
     const row = rowsByStrike.get(strike) || {
       k: strike,
@@ -66,10 +124,10 @@ export const buildOptionChainRowsFromApi = (contracts, spotPrice) => {
       pQuoteUpdatedAt: null,
       isAtm: false,
     };
-    const bid = quoteNumber(quote.bid);
-    const ask = quoteNumber(quote.ask);
-    const last = quoteNumber(quote.last);
-    const markValue = quoteNumber(quote.mark);
+    const bid = quotePrice(quote.bid);
+    const ask = quotePrice(quote.ask);
+    const last = quotePrice(quote.last);
+    const markValue = quotePrice(quote.mark);
     const mark =
       markValue != null && markValue > 0
         ? markValue

@@ -28,6 +28,7 @@ import {
   setFlowScannerControlState,
   useFlowScannerControlState,
 } from "../features/platform/marketFlowStore";
+import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import {
   getChartTimeframeOptions,
   resolveChartTimeframeFavorites,
@@ -39,7 +40,6 @@ import {
 } from "../features/preferences/userPreferenceModel";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
-import { PanelLoadingState } from "../components/platform/primitives.jsx";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import { MISSING_VALUE, RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
 import { formatAppTimeForPreferences } from "../lib/timeZone";
@@ -170,6 +170,15 @@ const formatBytes = (bytes) => {
 
 const formatCount = (value) =>
   Number.isFinite(Number(value)) ? Math.round(Number(value)).toLocaleString() : MISSING_VALUE;
+
+const formatFreshnessAge = (value) => {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp)) return MISSING_VALUE;
+  const ageMs = Math.max(0, Date.now() - timestamp);
+  if (ageMs < 1_000) return "now";
+  if (ageMs < 60_000) return `${Math.round(ageMs / 1_000)}s ago`;
+  return `${Math.round(ageMs / 60_000)}m ago`;
+};
 
 const estimateStorageBytes = (key, value) =>
   (String(key || "").length + String(value || "").length) * 2;
@@ -975,71 +984,35 @@ function useIbkrLaneSettings() {
   };
 }
 
-function useIbkrLineUsage(isVisible = false) {
-  const [snapshot, setSnapshot] = useState(null);
-  const [error, setError] = useState(null);
-
-  const load = useCallback(() => {
-    fetch("/api/settings/ibkr-line-usage", { headers: { Accept: "application/json" } })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : response.json().then((payload) => Promise.reject(payload)),
-      )
-      .then((payload) => {
-        setSnapshot(payload);
-        setError(null);
-      })
-      .catch((err) => {
-        setError(err?.detail || err?.message || "IBKR line usage is unavailable.");
-      });
-  }, []);
-
-  useEffect(() => {
-    if (!isVisible) {
-      return undefined;
-    }
-
-    if (typeof window === "undefined" || typeof window.EventSource !== "function") {
-      load();
-      const interval = window.setInterval(load, 2_000);
-      return () => window.clearInterval(interval);
-    }
-
-    const source = new window.EventSource("/api/settings/ibkr-line-usage/stream");
-    source.addEventListener("ibkr-line-usage", (event) => {
-      try {
-        setSnapshot(JSON.parse(event.data));
-        setError(null);
-      } catch {
-        setError("IBKR line usage stream returned an invalid payload.");
-      }
-    });
-    source.addEventListener("error", () => {
-      setError("IBKR line usage stream is reconnecting.");
-    });
-    return () => source.close();
-  }, [isVisible, load]);
-
-  return { snapshot, error, reload: load };
-}
-
-function IbkrLineUsagePanel({ snapshot, error, onReload }) {
+function IbkrLineUsagePanel({ runtimeControl }) {
+  const snapshot = runtimeControl.lineUsageSnapshot;
+  const brokerStreamFreshness = runtimeControl.streams;
+  const error = runtimeControl.lineUsageError
+    ? runtimeControl.lineUsageError instanceof Error
+      ? runtimeControl.lineUsageError.message
+      : String(runtimeControl.lineUsageError)
+    : null;
   const admission = safeRecord(snapshot?.admission);
   const budget = safeRecord(admission.budget);
   const bridge = safeRecord(snapshot?.bridge);
+  const governor = safeRecord(snapshot?.governor || bridge.governor);
   const drift = safeRecord(snapshot?.drift);
   const streams = safeRecord(snapshot?.streams);
   const quoteStreams = safeRecord(streams.quoteStreams);
   const optionQuoteStreams = safeRecord(streams.optionQuoteStreams);
-  const poolUsage = safeRecord(admission.poolUsage);
-  const pools = Object.values(poolUsage);
+  const lineUsage = runtimeControl.lineUsage;
+  const accountMonitor = lineUsage.accountMonitor || {};
+  const flowScanner = lineUsage.flowScanner || {};
+  const automation = lineUsage.pools.automation || {};
+  const governorRows = Object.entries(governor).filter(
+    ([, lane]) => lane && typeof lane === "object",
+  );
 
   return (
     <Panel
       title="IBKR Line Usage"
       action={
-        <button type="button" onClick={onReload} style={smallButton()}>
+        <button type="button" onClick={runtimeControl.reload} style={smallButton()}>
           Refresh
         </button>
       }
@@ -1054,29 +1027,64 @@ function IbkrLineUsagePanel({ snapshot, error, onReload }) {
           <StateRow label="Account allowance" value={formatCount(budget.maxLines)} />
           <StateRow label="API usable lines" value={formatCount(budget.usableLines)} />
           <StateRow label="API active lines" value={formatCount(admission.activeLineCount)} />
-          <StateRow label="Account reserve" value={formatCount(budget.reserveLines)} />
+          <StateRow label="Line reserve" value={formatCount(budget.reserveLines)} />
           <StateRow label="Usable remaining" value={formatCount(admission.usableRemainingLineCount)} tone={Number(admission.usableRemainingLineCount) <= 5 ? T.amber : T.green} />
           <StateRow label="Bridge live cap" value={formatCount(bridge.lineBudget)} />
           <StateRow label="Bridge active lines" value={formatCount(bridge.activeLineCount)} />
         </div>
         <div>
-          <StateRow label="Flow scanner" value={`${formatCount(admission.flowScannerLineCount)} / ${formatCount(budget.flowScannerLineCap)}`} />
-          <StateRow label="Automation" value={`${formatCount(admission.automationLineCount)} / ${formatCount(budget.automationLineCap)}`} />
+          <StateRow label="Flow scanner" value={`${formatCount(flowScanner.used)} / ${formatCount(flowScanner.cap)}`} />
+          <StateRow label="Account monitor" value={`${formatCount(accountMonitor.used)} / ${formatCount(accountMonitor.cap)}`} />
+          <StateRow label="Automation" value={`${formatCount(automation.used)} / ${formatCount(automation.cap)}`} />
           <StateRow label="Quote stream symbols" value={formatCount(quoteStreams.unionSymbolCount)} />
           <StateRow label="Option quote contracts" value={formatCount(optionQuoteStreams.unionProviderContractIdCount)} />
           <StateRow label="API vs bridge delta" value={formatCount(drift.admissionVsBridgeLineDelta)} />
+          <StateRow
+            label="Account stream"
+            value={brokerStreamFreshness.account.fresh ? "fresh" : "pending"}
+            tone={brokerStreamFreshness.account.fresh ? T.green : T.amber}
+          />
+          <StateRow
+            label="Account age"
+            value={formatFreshnessAge(brokerStreamFreshness.account.lastEventAt)}
+          />
+          <StateRow
+            label="Order stream"
+            value={brokerStreamFreshness.order.fresh ? "fresh" : "pending"}
+            tone={brokerStreamFreshness.order.fresh ? T.green : T.amber}
+          />
+          <StateRow
+            label="Order age"
+            value={formatFreshnessAge(brokerStreamFreshness.order.lastEventAt)}
+          />
         </div>
       </div>
-      {pools.length > 0 && (
+      {lineUsage.rows.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: sp(8), marginTop: sp(12) }}>
-          {pools.map((pool) => (
+          {lineUsage.rows.map((pool) => (
             <div key={pool.id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(5), padding: sp(9), background: T.bg2 }}>
               <div style={{ color: T.text, fontSize: fs(10), fontWeight: 900 }}>{pool.label}</div>
-              <div style={{ color: Number(pool.activeLineCount) > Number(pool.maxLines) ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(11), fontWeight: 900, marginTop: sp(4) }}>
-                {formatCount(pool.activeLineCount)} / {formatCount(pool.maxLines)}
+              <div style={{ color: Number(pool.used) > Number(pool.cap) ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(11), fontWeight: 900, marginTop: sp(4) }}>
+                {formatCount(pool.used)} / {formatCount(pool.cap)}
               </div>
               <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
                 {pool.strict ? "hard cap" : "borrowable"}
+                {pool.legacyNormalized ? " · normalized" : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {governorRows.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: sp(8), marginTop: sp(12) }}>
+          {governorRows.map(([id, lane]) => (
+            <div key={id} style={{ border: `1px solid ${T.border}`, borderRadius: dim(5), padding: sp(9), background: T.bg2 }}>
+              <div style={{ color: T.text, fontSize: fs(10), fontWeight: 900 }}>{id}</div>
+              <div style={{ color: lane.circuitOpen ? T.amber : T.textSec, fontFamily: T.mono, fontSize: fs(10), fontWeight: 900, marginTop: sp(4) }}>
+                {formatCount(lane.active)} active / {formatCount(lane.queued)} queued
+              </div>
+              <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(8), marginTop: sp(3) }}>
+                {lane.circuitOpen ? `backoff ${formatCount(lane.backoffRemainingMs)}ms` : lane.lastFailure || "ready"}
               </div>
             </div>
           ))}
@@ -1811,7 +1819,7 @@ function WorkspaceDefaultsPanel() {
             onChange={(value) => workspace.patch({ marketActivityPanelWidth: value })}
           />
           <NumberField
-            label="Market UOA Threshold"
+            label="Market Flow Threshold"
             value={Number.isFinite(state.marketUnusualThreshold) ? state.marketUnusualThreshold : 1}
             min={0.1}
             max={100}
@@ -2021,7 +2029,7 @@ function FlowScannerSettingsPanel() {
       }
     >
       <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(9), marginBottom: sp(10) }}>
-        Shared with the header UOA scan controls and persisted in the app workspace state.
+        Shared with the header flow scan controls and persisted in the app workspace state.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: sp(10) }}>
         <SelectField
@@ -2088,13 +2096,9 @@ function SignalMonitorSettingsPanel({ watchlists }) {
           </div>
         )}
         {!draft ? (
-          <PanelLoadingState
-            testId="signal-monitor-loading-state"
-            title="Loading signal monitor profile"
-            detail="Fetching watchlist scope, scan cadence, and signal freshness settings."
-            rows={3}
-            tone={T.amber}
-          />
+          <div style={{ color: T.textDim, fontFamily: T.mono, fontSize: fs(10) }}>
+            Loading signal monitor profile.
+          </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: sp(10) }}>
             <label style={{ ...labelStyle(), flexDirection: "row", alignItems: "center" }}>
@@ -2199,22 +2203,10 @@ function ResearchProviderPanel({ backendSnapshot }) {
           {research.error}
         </div>
       )}
-      {!research.status && !research.error ? (
-        <PanelLoadingState
-          testId="research-provider-loading-state"
-          title="Fetching research provider status"
-          detail="Checking API provider configuration, market-data wiring, and broker availability."
-          rows={3}
-          tone={T.accent}
-        />
-      ) : (
-        <>
-          <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? T.green : T.amber} />
-          <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? T.green : T.amber} />
-          <StateRow label="Market data provider" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? T.green : T.amber} />
-          <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? T.green : T.amber} />
-        </>
-      )}
+      <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? T.green : T.amber} />
+      <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? T.green : T.amber} />
+      <StateRow label="Market data provider" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? T.green : T.amber} />
+      <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? T.green : T.amber} />
     </Panel>
   );
 }
@@ -2292,7 +2284,7 @@ function IbkrBridgeOverridePanel({ active, onReload }) {
 function SettingsInventoryPanel() {
   const rows = [
     ["Market", "Grid layout, ticker search filters, sector timeframe", "local workspace", "Visible here through app/flow preferences or in Market"],
-    ["Flow", "Saved scans, inspector preferences, broad UOA scanner", "mixed", "Broad scanner wired here; scan lists remain in Flow"],
+    ["Flow", "Saved scans, inspector preferences, broad flow scanner", "mixed", "Broad scanner wired here; scan lists remain in Flow"],
     ["Charting", "Timeframe favorites, scale preferences, grid sizing cleanup", "local workspace/browser", "Favorites wired here; per-chart viewport edits stay in chart surfaces"],
     ["Trade", "Tabs, recent tickers, contracts, chart/chain preferences", "local workspace", "Keep in Trade because values are workspace-specific"],
     ["Account", "Selected account, risk panels", "local + backend", "Account selection stays global header/account workflow"],
@@ -2446,7 +2438,12 @@ export default function SettingsScreen({
   const backend = useBackendSettings();
   const userPreferences = useUserPreferences();
   const ibkr = useIbkrLaneSettings();
-  const ibkrLineUsage = useIbkrLineUsage(isVisible);
+  const runtimeControl = useRuntimeControlSnapshot({
+    enabled: Boolean(isVisible && activeTab === "Data & Broker"),
+    runtimeDiagnosticsEnabled: false,
+    lineUsageEnabled: Boolean(isVisible && activeTab === "Data & Broker"),
+    lineUsageStreamEnabled: true,
+  });
   const { watchlists } = useWatchlists();
   const settings = backend.snapshot?.settings || [];
   const settingsByGroup = useMemo(() => {
@@ -2657,9 +2654,7 @@ export default function SettingsScreen({
                 onReload={backend.reload}
               />
               <IbkrLineUsagePanel
-                snapshot={ibkrLineUsage.snapshot}
-                error={ibkrLineUsage.error}
-                onReload={ibkrLineUsage.reload}
+                runtimeControl={runtimeControl}
               />
               <IbkrLaneArchitecturePanel
                 snapshot={ibkr.snapshot}

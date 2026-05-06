@@ -785,6 +785,12 @@ async function collectLiveSoakSample(page: Page, label: string) {
   ) {
     streamingRuntimeIssues.push("flow scanner exhausted its line budget");
   }
+  if (
+    Number.isFinite(Number(marketDataAdmission?.accountMonitorRemainingLineCount)) &&
+    Number(marketDataAdmission.accountMonitorRemainingLineCount) <= 0
+  ) {
+    streamingRuntimeIssues.push("account monitor exhausted its line budget");
+  }
   if (marketDataSnapshot?.status && marketDataSnapshot.status !== "ok") {
     streamingRuntimeIssues.push(`market-data diagnostics status is ${marketDataSnapshot.status}`);
   }
@@ -825,6 +831,9 @@ async function collectLiveSoakSample(page: Page, label: string) {
       quoteRecentGapCount: bridgeQuote?.recentGapCount ?? null,
       stockAggregateAgeMs: stockAggregates?.lastAggregateAgeMs ?? null,
       stockAggregateGapCount: stockAggregates?.gapCount ?? null,
+      accountMonitorLineCount: marketDataAdmission?.accountMonitorLineCount ?? null,
+      accountMonitorRemainingLineCount:
+        marketDataAdmission?.accountMonitorRemainingLineCount ?? null,
       flowScannerLineCount: marketDataAdmission?.flowScannerLineCount ?? null,
       flowScannerRemainingLineCount:
         marketDataAdmission?.flowScannerRemainingLineCount ?? null,

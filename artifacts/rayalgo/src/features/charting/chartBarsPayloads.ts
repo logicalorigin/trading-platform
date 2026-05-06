@@ -71,3 +71,21 @@ export const normalizeLatestChartBarsPayload = <TInputBar = MarketBar, TOutputBa
   const page = normalizeChartBarsPagePayload(payload, options);
   return page.bars;
 };
+
+export const isChartBarsPayloadCacheStale = (
+  payload: unknown,
+  historyPage?: ChartBarsHistoryPage | null,
+): boolean => {
+  const payloadRecord = isRecord(payload) ? payload : null;
+  const debug = isRecord(payloadRecord?.debug) ? payloadRecord.debug : null;
+  const resolvedHistoryPage =
+    historyPage ??
+    (isRecord(payloadRecord?.historyPage)
+      ? (payloadRecord.historyPage as ChartBarsHistoryPage)
+      : null);
+
+  return Boolean(
+    debug?.stale === true ||
+      resolvedHistoryPage?.hydrationStatus === "warming",
+  );
+};

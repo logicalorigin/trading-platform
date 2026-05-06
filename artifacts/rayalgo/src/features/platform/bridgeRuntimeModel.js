@@ -24,6 +24,9 @@ export const bridgeRuntimeTone = (session) => {
       color: T.red,
     };
   }
+  if (bridge?.brokerServerConnected === false) {
+    return { label: "server disconnected", color: T.amber, pulse: true };
+  }
   if (
     bridge?.healthFresh === false &&
     (bridge?.connected || bridge?.authenticated || bridge?.bridgeReachable)
@@ -73,6 +76,14 @@ export const bridgeRuntimeMessage = (session) => {
   const streamState = bridge?.streamState;
   if (streamState === "reconnect_needed") {
     if (
+      bridge?.strictReason === "gateway_server_disconnected" ||
+      bridge?.streamStateReason === "gateway_server_disconnected" ||
+      bridge?.brokerServerConnected === false
+    ) {
+      const target = bridge?.connectionTarget ? ` at ${bridge.connectionTarget}` : "";
+      return `Gateway API socket is open${target}, but Gateway is disconnected from IBKR servers. Reconnect Gateway to IBKR.`;
+    }
+    if (
       bridge?.strictReason === "gateway_socket_disconnected" ||
       bridge?.streamStateReason === "gateway_socket_disconnected" ||
       bridge?.socketConnected === false ||
@@ -91,6 +102,10 @@ export const bridgeRuntimeMessage = (session) => {
       return bridge.lastError;
     }
     return `${bridgeTransportLabel(session)} is not connected to the broker session.`;
+  }
+  if (bridge?.brokerServerConnected === false) {
+    const target = bridge?.connectionTarget ? ` at ${bridge.connectionTarget}` : "";
+    return `Gateway API socket is open${target}, but Gateway is disconnected from IBKR servers. Reconnect Gateway to IBKR.`;
   }
   if (bridge?.healthFresh === false && streamState !== "reconnect_needed") {
     return "IB Gateway health is pending; waiting for the next successful check.";
@@ -133,6 +148,16 @@ export const bridgeRuntimeMessage = (session) => {
       return `IBKR Gateway is connected via ${transportMeta}${accountMeta}; quote stream is reconnecting.`;
     }
     if (streamState === "reconnect_needed") {
+      if (
+        bridge?.strictReason === "gateway_server_disconnected" ||
+        bridge?.streamStateReason === "gateway_server_disconnected" ||
+        bridge?.brokerServerConnected === false
+      ) {
+        const target = bridge?.connectionTarget
+          ? ` at ${bridge.connectionTarget}`
+          : "";
+        return `Gateway API socket is open${target}, but Gateway is disconnected from IBKR servers. Reconnect Gateway to IBKR.`;
+      }
       if (
         bridge?.strictReason === "gateway_socket_disconnected" ||
         bridge?.streamStateReason === "gateway_socket_disconnected" ||

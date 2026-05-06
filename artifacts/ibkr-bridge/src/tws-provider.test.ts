@@ -12,6 +12,7 @@ import {
   isSnapshotGenericTickError,
   mapTwsContractDescriptionToUniverseTicker,
   resolveOptionActivitySnapshotTimeoutMs,
+  resolveOptionQuoteMarketDataType,
   selectRelevantOptionStrikes,
   toQuoteSnapshot,
   TwsIbkrBridgeProvider,
@@ -39,6 +40,75 @@ test("bridge runtime defaults reflect the line booster live quote allowance", ()
     BRIDGE_RUNTIME_LIMITS.optionQuoteVisibleContractLimit.defaultValue,
     100,
   );
+});
+
+test("option quote market data type switches live config to frozen outside regular session", () => {
+  assert.equal(
+    resolveOptionQuoteMarketDataType(
+      MarketDataType.REALTIME as 1,
+      new Date("2026-05-05T14:00:00.000Z"),
+    ),
+    MarketDataType.REALTIME,
+  );
+  assert.equal(
+    resolveOptionQuoteMarketDataType(
+      MarketDataType.REALTIME as 1,
+      new Date("2026-05-05T20:10:00.000Z"),
+    ),
+    MarketDataType.FROZEN,
+  );
+  assert.equal(
+    resolveOptionQuoteMarketDataType(
+      MarketDataType.DELAYED as 3,
+      new Date("2026-05-05T20:10:00.000Z"),
+    ),
+    MarketDataType.DELAYED,
+  );
+});
+
+test("TWS health marks IBKR server connectivity loss separately from the local socket", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    connectionState: ConnectionState;
+    managedAccounts: string[];
+    recordError(error: unknown): void;
+  };
+
+  internals.connectionState = ConnectionState.Connected;
+  internals.managedAccounts = ["U1"];
+  internals.recordError({
+    code: 1100,
+    message: "Connectivity between IB and Trader Workstation has been lost.",
+  });
+
+  const disconnected = await provider.getHealth();
+  assert.equal(disconnected.socketConnected, true);
+  assert.equal(disconnected.brokerServerConnected, false);
+  assert.equal(disconnected.connected, true);
+  assert.equal(disconnected.authenticated, false);
+  assert.equal(disconnected.accountsLoaded, false);
+  assert.equal(disconnected.strictReady, false);
+  assert.equal(disconnected.strictReason, "gateway_server_disconnected");
+
+  internals.recordError({
+    code: 1102,
+    message:
+      "Connectivity between IB and Trader Workstation has been restored - data maintained.",
+  });
+
+  const restored = await provider.getHealth();
+  assert.equal(restored.socketConnected, true);
+  assert.equal(restored.brokerServerConnected, true);
+  assert.equal(restored.connected, true);
+  assert.equal(restored.authenticated, true);
+  assert.equal(restored.accountsLoaded, true);
 });
 
 test("maps TWS stock contract descriptions into IBKR universe tickers", () => {
@@ -1098,6 +1168,7 @@ test("generic tick quote hydration uses streaming market data instead of snapsho
         }): { unsubscribe(): void };
       };
       getMarketDataSnapshot(): Promise<Map<number, { value: number }>>;
+      setMarketDataType(type: MarketDataType): void;
     };
     connectionState: ConnectionState;
     getContractQuoteSnapshot(input: {
@@ -1140,6 +1211,7 @@ test("generic tick quote hydration uses streaming market data instead of snapsho
       snapshotCalls += 1;
       return new Map();
     },
+    setMarketDataType: () => {},
   };
 
   const quote = await internals.getContractQuoteSnapshot({

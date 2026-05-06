@@ -34,12 +34,6 @@ import {
   BrokerActionConfirmDialog,
   formatLiveBrokerActionError,
 } from "./BrokerActionConfirmDialog.jsx";
-import {
-  buildTradePreviewLaneLevels,
-} from "./tradePreviewLaneModel";
-import {
-  buildTradeTicketReadiness,
-} from "./tradeTicketReadinessModel";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   daysToExpiration,
@@ -104,6 +98,7 @@ export const TradeOrderTicket = ({
       ? (spread / prem) * 100
       : null;
   const delta = isFiniteNumber(rawDelta) ? Math.abs(rawDelta) : null;
+  const contractColor = slot.cp === "C" ? T.green : T.red;
   const expInfo = expiration || {
     value: slot.exp,
     label: slot.exp,
@@ -112,10 +107,6 @@ export const TradeOrderTicket = ({
   };
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
-  const selectedOptionQuoteFreshness =
-    slot.cp === "C" ? row?.cFreshness : row?.pFreshness;
-  const selectedOptionMarketDataMode =
-    slot.cp === "C" ? row?.cMarketDataMode : row?.pMarketDataMode;
   const [ticketAssetMode, setTicketAssetMode] = useState("option");
   const normalizedTicketAssetMode = normalizeTicketAssetMode(ticketAssetMode);
   const ticketIsShares = normalizedTicketAssetMode === "equity";
@@ -393,151 +384,6 @@ export const TradeOrderTicket = ({
         ? T.green
         : T.amber
       : T.textDim;
-  const ticketReadiness = useMemo(
-    () =>
-      buildTradeTicketReadiness({
-        accountId,
-        brokerConfigured,
-        cp: slot.cp,
-        dte: expInfo.dte,
-        environment,
-        equityPrice,
-        equityQuoteReady,
-        expirationLabel: expInfo.label || slot.exp,
-        gatewayTradingMessage,
-        gatewayTradingReady,
-        optionQuoteReady,
-        optionTicketReady,
-        providerContractId: selectedContractMeta?.providerContractId,
-        quoteFreshness: selectedOptionQuoteFreshness,
-        quoteMarketDataMode: selectedOptionMarketDataMode,
-        strike: slot.strike,
-        ticketIsShares,
-        ticker: slot.ticker,
-        tradingExecutionMode: executionMode,
-      }),
-    [
-      accountId,
-      brokerConfigured,
-      environment,
-      equityPrice,
-      equityQuoteReady,
-      executionMode,
-      expInfo.dte,
-      expInfo.label,
-      gatewayTradingMessage,
-      gatewayTradingReady,
-      optionQuoteReady,
-      optionTicketReady,
-      selectedContractMeta?.providerContractId,
-      selectedOptionMarketDataMode,
-      selectedOptionQuoteFreshness,
-      slot.cp,
-      slot.exp,
-      slot.strike,
-      slot.ticker,
-      ticketIsShares,
-    ],
-  );
-  const ticketReadinessTone = (tone) => {
-    if (tone === "good") return T.green;
-    if (tone === "warn") return T.amber;
-    if (tone === "bad") return T.red;
-    if (tone === "info") return T.cyan;
-    if (tone === "shadow") return T.pink;
-    if (tone === "accent") return T.accent;
-    return T.textSec;
-  };
-  const renderTicketReadinessStrip = () => (
-    <div
-      data-testid="trade-ticket-readiness-strip"
-      data-ticket-readiness-state={ticketReadiness.state}
-      data-ticket-readiness-blocker={ticketReadiness.blockedReason || ""}
-      title={ticketReadiness.blockedReason || "Ready for guarded preview and confirmation."}
-      style={{
-        border: `1px solid ${
-          ticketReadiness.state === "ready" ? `${T.green}35` : `${T.amber}45`
-        }`,
-        background:
-          ticketReadiness.state === "ready" ? `${T.green}08` : `${T.amber}10`,
-        borderRadius: dim(3),
-        padding: sp("2px 4px"),
-        display: "grid",
-        gridTemplateColumns: "minmax(74px, 1.15fr) repeat(4, minmax(42px, 0.85fr))",
-        alignItems: "center",
-        gap: sp(3),
-        minWidth: 0,
-      }}
-    >
-      <div
-        style={{
-          minWidth: 0,
-        }}
-      >
-        <div
-          data-testid="trade-ticket-readiness-instrument"
-          style={{
-            color: T.text,
-            fontFamily: T.display,
-            fontSize: fs(10),
-            fontWeight: 800,
-            lineHeight: 1.05,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {ticketReadiness.instrumentLabel}
-        </div>
-        <div
-          title={ticketReadiness.instrumentDetail}
-          style={{
-            display: "none",
-            color: T.textDim,
-            fontFamily: T.mono,
-            fontSize: 8,
-            marginTop: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {ticketReadiness.instrumentDetail}
-        </div>
-      </div>
-      {ticketReadiness.chips.map((chip) => {
-        const color = ticketReadinessTone(chip.tone);
-        return (
-          <div
-            key={chip.id}
-            data-testid={`trade-ticket-readiness-${chip.id}`}
-            title={`${chip.label}: ${chip.value}`}
-            style={{
-              border: `1px solid ${color}30`,
-              background: `${color}10`,
-              borderRadius: dim(3),
-              padding: sp("1px 3px"),
-              minWidth: 0,
-              color: chip.id === "quote" ? color : T.text,
-              fontFamily: T.mono,
-              fontSize: 8,
-              fontWeight: 900,
-              lineHeight: 1.1,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              textTransform: "uppercase",
-            }}
-          >
-            {chip.value}
-          </div>
-        );
-      })}
-      <div data-testid="trade-ticket-readiness-blocker" style={{ display: "none" }}>
-        {ticketReadiness.state}
-      </div>
-    </div>
-  );
   const renderTicketAssetModeControls = () => (
     <div
       data-testid="trade-ticket-asset-mode"
@@ -587,7 +433,6 @@ export const TradeOrderTicket = ({
         }}
       >
         <span
-          data-testid="trade-ticket-execution-label"
           style={{
             fontSize: fs(8),
             color: selectedExecutionColor,
@@ -985,26 +830,6 @@ export const TradeOrderTicket = ({
   const bidFlashClass = useValueFlash(ticketIsShares ? equityPrice : bid);
   const midFlashClass = useValueFlash(ticketReferencePrice);
   const askFlashClass = useValueFlash(ticketIsShares ? equityPrice : ask);
-  const previewLaneLevels = useMemo(
-    () =>
-      buildTradePreviewLaneLevels({
-        ticketIsShares,
-        equityPrice,
-        bid,
-        mid: ticketReferencePrice,
-        ask,
-      }),
-    [ask, bid, equityPrice, ticketIsShares, ticketReferencePrice],
-  );
-  const applyPreviewLaneLevel = (level) => {
-    if (!level || level.disabled || !isFiniteNumber(level.price)) {
-      return;
-    }
-    setOrderType("LMT");
-    setLimitPrice(level.price.toFixed(2));
-  };
-  const getPreviewLaneLevel = (levelId) =>
-    previewLaneLevels.find((level) => level.id === levelId) || null;
   const closeLiveConfirm = () => {
     if (liveConfirmPending) {
       return;
@@ -1059,7 +884,6 @@ export const TradeOrderTicket = ({
         </div>
         {renderTicketAssetModeControls()}
         {renderExecutionModeControls()}
-        {renderTicketReadinessStrip()}
         {renderLockedTicketControls()}
         <DataUnavailableState
           title="No live contract quote"
@@ -1918,11 +1742,36 @@ export const TradeOrderTicket = ({
         </div>
       ) : null}
       {renderExecutionModeControls()}
-      {renderTicketReadinessStrip()}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+        <span
+          style={{
+            fontSize: fs(13),
+            fontWeight: 800,
+            fontFamily: T.mono,
+            color: T.text,
+          }}
+        >
+          {slot.ticker}
+        </span>
+        {ticketIsOptions ? (
+          <span
+            style={{
+              fontSize: fs(12),
+              fontWeight: 700,
+              fontFamily: T.mono,
+              color: contractColor,
+            }}
+          >
+            {slot.strike}
+            {slot.cp}
+          </span>
+        ) : null}
+        <span style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}>
+          {ticketInstrumentDetail}
+        </span>
+      </div>
       {ticketIsShares ? (
         <div
-          data-testid="trade-preview-lane"
-          data-trade-preview-only="true"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr",
@@ -1933,22 +1782,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.mono,
           }}
         >
-          <button
-            type="button"
-            className={midFlashClass}
-            data-testid="trade-preview-lane-last"
-            disabled={getPreviewLaneLevel("last")?.disabled}
-            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("last"))}
-            style={{
-              textAlign: "left",
-              border: 0,
-              background: "transparent",
-              color: "inherit",
-              font: "inherit",
-              padding: 0,
-              cursor: getPreviewLaneLevel("last")?.disabled ? "not-allowed" : "pointer",
-            }}
-          >
+          <div className={midFlashClass}>
             <div
               style={{
                 fontSize: fs(6),
@@ -1968,7 +1802,7 @@ export const TradeOrderTicket = ({
             >
               {equityQuoteReady ? `$${equityPrice.toFixed(2)}` : MISSING_VALUE}
             </div>
-          </button>
+          </div>
           <div style={{ textAlign: "center" }}>
             <div
               style={{
@@ -2026,8 +1860,6 @@ export const TradeOrderTicket = ({
         </div>
       ) : (
         <div
-          data-testid="trade-preview-lane"
-          data-trade-preview-only="true"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr",
@@ -2038,22 +1870,7 @@ export const TradeOrderTicket = ({
             fontFamily: T.mono,
           }}
         >
-          <button
-            type="button"
-            className={bidFlashClass}
-            data-testid="trade-preview-lane-bid"
-            disabled={getPreviewLaneLevel("bid")?.disabled}
-            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("bid"))}
-            style={{
-              textAlign: "left",
-              border: 0,
-              background: "transparent",
-              color: "inherit",
-              font: "inherit",
-              padding: 0,
-              cursor: getPreviewLaneLevel("bid")?.disabled ? "not-allowed" : "pointer",
-            }}
-          >
+          <div className={bidFlashClass}>
             <div
               style={{
                 fontSize: fs(6),
@@ -2073,23 +1890,8 @@ export const TradeOrderTicket = ({
             >
               ${bid.toFixed(2)}
             </div>
-          </button>
-          <button
-            type="button"
-            className={midFlashClass}
-            data-testid="trade-preview-lane-mid"
-            disabled={getPreviewLaneLevel("mid")?.disabled}
-            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("mid"))}
-            style={{
-              textAlign: "center",
-              border: 0,
-              background: "transparent",
-              color: "inherit",
-              font: "inherit",
-              padding: 0,
-              cursor: getPreviewLaneLevel("mid")?.disabled ? "not-allowed" : "pointer",
-            }}
-          >
+          </div>
+          <div className={midFlashClass} style={{ textAlign: "center" }}>
             <div
               style={{
                 fontSize: fs(6),
@@ -2119,23 +1921,8 @@ export const TradeOrderTicket = ({
                 ? `${spread.toFixed(2)} (${spreadPct.toFixed(1)}%)`
                 : MISSING_VALUE}
             </div>
-          </button>
-          <button
-            type="button"
-            className={askFlashClass}
-            data-testid="trade-preview-lane-ask"
-            disabled={getPreviewLaneLevel("ask")?.disabled}
-            onClick={() => applyPreviewLaneLevel(getPreviewLaneLevel("ask"))}
-            style={{
-              textAlign: "right",
-              border: 0,
-              background: "transparent",
-              color: "inherit",
-              font: "inherit",
-              padding: 0,
-              cursor: getPreviewLaneLevel("ask")?.disabled ? "not-allowed" : "pointer",
-            }}
-          >
+          </div>
+          <div className={askFlashClass} style={{ textAlign: "right" }}>
             <div
               style={{
                 fontSize: fs(6),
@@ -2155,7 +1942,7 @@ export const TradeOrderTicket = ({
             >
               ${ask.toFixed(2)}
             </div>
-          </button>
+          </div>
         </div>
       )}
       {/* Side + Order type */}
@@ -2327,7 +2114,6 @@ export const TradeOrderTicket = ({
           <input
             type="number"
             step="0.01"
-            data-testid="trade-ticket-parent-price-input"
             aria-label={`${parentPriceLabel.toLowerCase()} price`}
             value={parentPriceValue}
             disabled={parentPriceDisabled}

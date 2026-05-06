@@ -16,28 +16,31 @@ import {
   getInitialChartBarLimit,
 } from "./timeframes";
 import {
-  useHistoricalBarStream,
+  useHistoricalBarStreamState,
   useOptionQuotePatchedBars,
   usePrependableHistoricalBars,
 } from "./useMassiveStreamedStockBars";
 import {
+  isChartBarsPayloadCacheStale,
   normalizeChartBarsPagePayload,
   normalizeLatestChartBarsPayload,
 } from "./chartBarsPayloads";
 
 export const OPTION_CHART_BARS_QUERY_DEFAULTS = {
-  staleTime: 5 * 60_000,
+  staleTime: 30_000,
   refetchInterval: false,
-  refetchOnMount: false,
-  refetchOnReconnect: false,
-  refetchOnWindowFocus: false,
+  refetchOnMount: "always",
+  refetchOnReconnect: true,
+  refetchOnWindowFocus: true,
   retry: false,
-  gcTime: 15_000,
+  gcTime: 5 * 60_000,
 };
 
 export const normalizeBrokerProviderContractId = (value) => {
   const normalized = value?.trim?.() || "";
-  return /^\d+$/.test(normalized) ? normalized : null;
+  return /^\d+$/.test(normalized) || normalized.startsWith("twsopt:")
+    ? normalized
+    : null;
 };
 
 export const normalizeApiBarForChart = (bar) => ({
@@ -72,6 +75,43 @@ export const buildOptionChartIdentityKey = ({
     optionTicker || "",
     providerContractId || "",
   ].join("::");
+
+export const buildOptionChartBarsRequest = ({
+  underlying,
+  expirationDate,
+  right,
+  strike,
+  optionTicker = null,
+  providerContractId = null,
+  timeframe,
+  limit,
+  from,
+  to,
+  outsideRth = false,
+  historyCursor = null,
+  preferCursor = false,
+}) => ({
+  underlying,
+  expirationDate,
+  strike,
+  right,
+  optionTicker: optionTicker || undefined,
+  providerContractId:
+    normalizeBrokerProviderContractId(providerContractId) || undefined,
+  timeframe,
+  limit,
+  from,
+  to,
+  outsideRth,
+  historyCursor: historyCursor || undefined,
+  preferCursor: historyCursor && preferCursor ? true : undefined,
+});
+
+export const shouldPatchOptionChartWithLiveQuote = ({
+  liveEnabled,
+  providerContractId,
+}) =>
+  Boolean(liveEnabled && normalizeBrokerProviderContractId(providerContractId));
 
 export function useOptionChartBars({
   scope,
@@ -156,22 +196,26 @@ export function useOptionChartBars({
       providerContractId: requestProviderContractId,
       from,
       to,
-    } = {}) => ({
-      underlying,
-      expirationDate,
-      strike,
-      right,
-      optionTicker: optionTicker || undefined,
-      providerContractId:
-        normalizeBrokerProviderContractId(requestProviderContractId) ||
-        normalizedProviderContractId ||
-        undefined,
-      timeframe: requestedTimeframe || baseTimeframe,
-      limit: limit ?? baseLimit,
-      from,
-      to,
-      outsideRth,
-    }),
+      historyCursor,
+      preferCursor,
+    } = {}) =>
+      buildOptionChartBarsRequest({
+        underlying,
+        expirationDate,
+        strike,
+        right,
+        optionTicker,
+        providerContractId:
+          normalizeBrokerProviderContractId(requestProviderContractId) ||
+          normalizedProviderContractId,
+        timeframe: requestedTimeframe || baseTimeframe,
+        limit: limit ?? baseLimit,
+        from,
+        to,
+        outsideRth,
+        historyCursor,
+        preferCursor,
+      }),
     [
       baseLimit,
       baseTimeframe,
@@ -236,6 +280,15 @@ export function useOptionChartBars({
     [query.data, scope],
   );
   const baseBars = basePage.bars;
+  const baseBarsCacheStale = isChartBarsPayloadCacheStale(
+    query.data,
+    basePage.historyPage,
+  );
+  const baseBarsReady = Boolean(
+    query.isSuccess &&
+      query.fetchStatus !== "fetching" &&
+      !baseBarsCacheStale,
+  );
   const baseBarsScopeKey = useMemo(
     () => [
       "option-chart-bars-base",
@@ -250,6 +303,7 @@ export function useOptionChartBars({
     timeframe: baseTimeframe,
     pageSizeTimeframe: timeframe,
     bars: baseBars,
+    baseBarsReady,
     enabled: Boolean(enabled && identityReady),
     fetchOlderBars: useCallback(
       async ({ from, to, limit, historyCursor, preferCursor }) => {
@@ -339,7 +393,7 @@ export function useOptionChartBars({
     requestPriority,
     scope,
   ]);
-  const streamedBars = useHistoricalBarStream({
+  const streamedBarsState = useHistoricalBarStreamState({
     symbol: underlying,
     timeframe: baseTimeframe,
     bars: prependableBars.bars,
@@ -352,11 +406,15 @@ export function useOptionChartBars({
     instrumentationScope: baseBarsScopeKey,
     streamPriority,
   });
+  const streamedBars = streamedBarsState.bars;
   const patchedBars = useOptionQuotePatchedBars({
     providerContractId: chartProviderContractId,
     timeframe: baseTimeframe,
     bars: streamedBars,
-    enabled: Boolean(liveEnabled && chartProviderContractId),
+    enabled: shouldPatchOptionChartWithLiveQuote({
+      liveEnabled,
+      providerContractId: chartProviderContractId,
+    }),
   });
   const displayBars = useMemo(
     () => rollupMarketBars(patchedBars, baseTimeframe, timeframe),
@@ -447,6 +505,9 @@ export function useOptionChartBars({
     baseBars: prependableBars.bars,
     baseLimit,
     baseTimeframe,
+    baseBarsCacheStale,
+    baseBarsReady,
+    baseHistoryPage: basePage.historyPage,
     bars: patchedBars,
     chartProviderContractId,
     displayBars,
@@ -474,5 +535,6 @@ export function useOptionChartBars({
     prewarmTimeframe,
     query,
     streamedBars,
+    streamStatus: streamedBarsState.status,
   };
 }

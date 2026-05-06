@@ -32,6 +32,11 @@ import {
 import type {
   MarketDataFallbackProvider,
   MarketDataIntent,
+  MarketDataLineRequest,
+} from "./market-data-admission";
+import {
+  admitMarketDataLeases,
+  releaseMarketDataLeases,
 } from "./market-data-admission";
 import { recordAccountSnapshots } from "./account";
 import { getOptionChain } from "./platform";
@@ -40,6 +45,7 @@ const bridgeClient = new IbkrBridgeClient();
 const ORDER_SNAPSHOT_STALE_MS = 120_000;
 const STREAM_RECONNECT_MIN_MS = 1_000;
 const STREAM_RECONNECT_MAX_MS = 30_000;
+const ACCOUNT_MONITOR_LEASE_TTL_MS = 15_000;
 
 type Unsubscribe = () => void;
 type OrderSnapshotPayload = {
@@ -49,6 +55,15 @@ const orderSnapshotCache = new Map<
   string,
   { payload: OrderSnapshotPayload; cachedAt: number }
 >();
+const accountMonitorSnapshots = new Map<
+  string,
+  {
+    mode: "paper" | "live";
+    accountId?: string;
+    positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+    orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
+  }
+>();
 
 function stableStringify(value: unknown): string {
   return JSON.stringify(value);
@@ -57,6 +72,20 @@ function stableStringify(value: unknown): string {
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const value = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+export function accountStreamIntervalMs(): number {
+  return Math.max(
+    1_000,
+    readPositiveIntegerEnv("IBKR_ACCOUNT_STREAM_INTERVAL_MS", 2_000),
+  );
+}
+
+export function orderStreamIntervalMs(): number {
+  return Math.max(
+    1_000,
+    readPositiveIntegerEnv("IBKR_ORDER_STREAM_INTERVAL_MS", 2_000),
+  );
 }
 
 function orderSnapshotTimeoutMs(): number {
@@ -82,6 +111,135 @@ function nextReconnectDelay(attempt: number): number {
     STREAM_RECONNECT_MAX_MS,
     STREAM_RECONNECT_MIN_MS * 2 ** Math.max(0, attempt),
   );
+}
+
+function accountMonitorOwner(input: {
+  mode: "paper" | "live";
+  accountId?: string;
+}): string {
+  return `account-monitor:${input.mode}:${input.accountId?.trim() || "all"}`;
+}
+
+function isWorkingOrderStatus(status: unknown): boolean {
+  return !["filled", "canceled", "rejected", "expired"].includes(
+    String(status || "").toLowerCase(),
+  );
+}
+
+function marketDataRequestFromInstrument(input: {
+  symbol?: string | null;
+  assetClass?: string | null;
+  optionContract?: { providerContractId?: unknown; underlying?: unknown } | null;
+}): MarketDataLineRequest | null {
+  const assetClass = input.assetClass === "option" ? "option" : "equity";
+  const symbol = normalizeSymbol(
+    String(input.optionContract?.underlying ?? input.symbol ?? ""),
+  );
+
+  if (assetClass === "option") {
+    const providerContractId =
+      typeof input.optionContract?.providerContractId === "string"
+        ? input.optionContract.providerContractId.trim()
+        : String(input.optionContract?.providerContractId ?? "").trim();
+    if (!providerContractId) {
+      return symbol ? { assetClass: "equity", symbol } : null;
+    }
+    return {
+      assetClass: "option",
+      symbol,
+      underlying: symbol,
+      providerContractId,
+      requiresGreeks: true,
+    };
+  }
+
+  return symbol ? { assetClass: "equity", symbol } : null;
+}
+
+function refreshAccountMonitorLeases(input: {
+  mode: "paper" | "live";
+  accountId?: string;
+}): void {
+  const key = accountMonitorOwner(input);
+  const snapshot = accountMonitorSnapshots.get(key);
+  const requestsByKey = new Map<string, MarketDataLineRequest>();
+
+  snapshot?.positions.forEach((position) => {
+    if (Math.abs(Number(position.quantity ?? 0)) <= 1e-9) {
+      return;
+    }
+    const request = marketDataRequestFromInstrument(position);
+    if (request) {
+      requestsByKey.set(
+        `${request.assetClass}:${request.providerContractId ?? request.symbol}`,
+        request,
+      );
+    }
+  });
+
+  snapshot?.orders.forEach((order) => {
+    if (!isWorkingOrderStatus(order.status)) {
+      return;
+    }
+    const remainingQuantity =
+      Number(order.quantity ?? 0) - Number(order.filledQuantity ?? 0);
+    if (remainingQuantity <= 1e-9) {
+      return;
+    }
+    const request = marketDataRequestFromInstrument(order);
+    if (request) {
+      requestsByKey.set(
+        `${request.assetClass}:${request.providerContractId ?? request.symbol}`,
+        request,
+      );
+    }
+  });
+
+  const requests = Array.from(requestsByKey.values());
+  if (!requests.length) {
+    releaseMarketDataLeases(key, "account_monitor_empty");
+    return;
+  }
+
+  admitMarketDataLeases({
+    owner: key,
+    intent: "account-monitor-live",
+    requests,
+    ttlMs: ACCOUNT_MONITOR_LEASE_TTL_MS,
+    fallbackProvider: "polygon",
+  });
+}
+
+function updateAccountMonitorPositions(input: {
+  mode: "paper" | "live";
+  accountId?: string;
+  positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+}): void {
+  const key = accountMonitorOwner(input);
+  const current = accountMonitorSnapshots.get(key);
+  accountMonitorSnapshots.set(key, {
+    mode: input.mode,
+    accountId: input.accountId,
+    positions: input.positions,
+    orders: current?.orders ?? [],
+  });
+  refreshAccountMonitorLeases(input);
+}
+
+function updateAccountMonitorOrders(input: {
+  mode: "paper" | "live";
+  accountId?: string;
+  orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>>;
+}): void {
+  const key = accountMonitorOwner(input);
+  const current = accountMonitorSnapshots.get(key);
+  accountMonitorSnapshots.set(key, {
+    mode: input.mode,
+    accountId: input.accountId,
+    positions: current?.positions ?? [],
+    orders: input.orders,
+  });
+  refreshAccountMonitorLeases(input);
 }
 
 function createPollingStream<T>({
@@ -282,6 +440,11 @@ export async function fetchOrderSnapshotPayload(input: {
       ).orders,
     }));
     orderSnapshotCache.set(cacheKey, { payload, cachedAt: Date.now() });
+    updateAccountMonitorOrders({
+      mode: input.mode,
+      accountId: input.accountId,
+      orders: payload.orders,
+    });
     return payload;
   } catch (error) {
     if (isOrderSnapshotTimeoutError(error)) {
@@ -327,10 +490,16 @@ export async function fetchAccountSnapshotPayload(input: {
   void recordAccountSnapshots(accounts).catch((error) => {
     logger.warn({ err: error }, "Failed to record account balance snapshots");
   });
+  const positions = await listIbkrPositions(input);
+  updateAccountMonitorPositions({
+    mode: input.mode,
+    accountId: input.accountId,
+    positions,
+  });
 
   return {
     accounts,
-    positions: await listIbkrPositions(input),
+    positions,
   };
 }
 
@@ -491,7 +660,7 @@ export function subscribeOrderSnapshots(
   onSnapshot: (payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> }) => void,
 ): Unsubscribe {
   return createPollingStream({
-    intervalMs: 5_000,
+    intervalMs: orderStreamIntervalMs(),
     fetchSnapshot: async () => fetchOrderSnapshotPayload(input),
     onSnapshot,
   });
@@ -508,7 +677,7 @@ export function subscribeAccountSnapshots(
   }) => void,
 ): Unsubscribe {
   return createPollingStream({
-    intervalMs: 3_000,
+    intervalMs: accountStreamIntervalMs(),
     fetchSnapshot: async () => fetchAccountSnapshotPayload(input),
     onSnapshot,
   });

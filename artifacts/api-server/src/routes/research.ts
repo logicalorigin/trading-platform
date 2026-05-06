@@ -2,8 +2,6 @@ import { Router, type IRouter } from "express";
 import {
   GetResearchEarningsCalendarQueryParams,
   GetResearchEarningsCalendarResponse,
-  GetResearchEarningsEventsQueryParams,
-  GetResearchEarningsEventsResponse,
   GetResearchFinancialsQueryParams,
   GetResearchFinancialsResponse,
   GetResearchFundamentalsQueryParams,
@@ -20,7 +18,6 @@ import {
 } from "@workspace/api-zod";
 import {
   getResearchCalendar,
-  getResearchEarningsEvents,
   getResearchFilings,
   getResearchFinancials,
   getResearchFundamentals,
@@ -88,17 +85,6 @@ router.get("/research/earnings-calendar", async (req, res) => {
   );
   const data = GetResearchEarningsCalendarResponse.parse(
     await getResearchCalendar(query),
-  );
-
-  res.json(data);
-});
-
-router.get("/research/earnings-events", async (req, res) => {
-  const query = GetResearchEarningsEventsQueryParams.parse(
-    coerceDateQueryFields(req.query as Record<string, unknown>, ["from", "to"]),
-  );
-  const data = GetResearchEarningsEventsResponse.parse(
-    await getResearchEarningsEvents(query),
   );
 
   res.json(data);

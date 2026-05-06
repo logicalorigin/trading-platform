@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+import { useGetBars } from "@workspace/api-client-react";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { T, dim, fs, sp } from "../../lib/uiTokens";
 import { formatAppDate, formatAppDateTime } from "../../lib/timeZone";
@@ -45,30 +47,6 @@ const SummaryCard = ({ label, value, tone = T.text }) => (
 const marketForAssetClass = (assetClass) =>
   String(assetClass || "").toLowerCase() === "etf" ? "etf" : "stocks";
 
-const TradeContextButton = ({ symbol, onJumpToChart, testId }) =>
-  symbol && onJumpToChart ? (
-    <AppTooltip content={`Open ${symbol} in Trade`}>
-      <button
-        type="button"
-        data-testid={testId}
-        className="ra-interactive"
-        onClick={(event) => {
-          event.stopPropagation();
-          onJumpToChart(symbol);
-        }}
-        style={{
-          ...secondaryButtonStyle,
-          height: dim(19),
-          padding: sp("0 6px"),
-          color: T.accent,
-          flexShrink: 0,
-        }}
-      >
-        Trade
-      </button>
-    </AppTooltip>
-  ) : null;
-
 const SOURCE_FILTERS = [
   { value: "all", label: "All Sources" },
   { value: "manual", label: "Manual" },
@@ -91,17 +69,6 @@ const normalizeText = (value, fallback = "") => {
 };
 
 const normalizeSymbol = (value) => normalizeText(value).toUpperCase();
-
-const orderMatchesSymbol = (order, symbolFilter) => {
-  const normalized = normalizeSymbol(symbolFilter);
-  if (!normalized) {
-    return true;
-  }
-  return [order?.symbol, order?.optionContract?.underlying]
-    .map(normalizeSymbol)
-    .filter(Boolean)
-    .includes(normalized);
-};
 
 const tradeStrategyValue = (trade) =>
   normalizeText(
@@ -169,25 +136,16 @@ export const OrdersPanel = ({
   cancelDisabledReason = "IB Gateway must be connected before trading.",
   sourceFilter = "all",
   onSourceFilterChange,
-  onJumpToChart,
-  symbolFilter = "",
-  onClearSymbolFilter,
   emptyBody = "Working orders update from the IBKR order stream. Historical rows appear as orders reach a terminal status.",
   maskValues = false,
 }) => {
-  const normalizedSymbolFilter = normalizeSymbol(symbolFilter);
   const orders = (query.data?.orders || []).filter((order) =>
-    (sourceFilter === "all" ? true : order.sourceType === sourceFilter) &&
-    orderMatchesSymbol(order, normalizedSymbolFilter),
+    sourceFilter === "all" ? true : order.sourceType === sourceFilter,
   );
   return (
   <Panel
     title="Orders"
-    rightRail={
-      normalizedSymbolFilter
-        ? `Showing ${tab} · ${normalizedSymbolFilter}`
-        : `Showing ${tab}`
-    }
+    rightRail={`Showing ${tab}`}
     loading={query.isLoading}
     error={query.error}
     onRetry={query.refetch}
@@ -210,37 +168,18 @@ export const OrdersPanel = ({
             onChange={onSourceFilterChange}
           />
         ) : null}
-        {normalizedSymbolFilter ? (
-          <button
-            type="button"
-            data-testid="account-orders-symbol-filter-clear"
-            className="ra-interactive"
-            onClick={onClearSymbolFilter}
-            style={secondaryButtonStyle}
-          >
-            Clear {normalizedSymbolFilter}
-          </button>
-        ) : null}
       </div>
     }
   >
     {!orders.length ? (
       <div style={{ padding: sp(7) }}>
         <EmptyState
-          title={
-            normalizedSymbolFilter
-              ? `No ${normalizedSymbolFilter} ${tab} orders`
-              : `No ${tab} orders`
-          }
-          body={
-            normalizedSymbolFilter
-              ? "Risk drilldown is active; clear the symbol filter to return to all orders."
-              : emptyBody
-          }
+          title={`No ${tab} orders`}
+          body={emptyBody}
         />
       </div>
     ) : (
-      <div className="ra-hide-scrollbar ra-account-table-scroll" style={{ overflow: "auto", maxHeight: 248 }}>
+      <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 248 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 940 }}>
           <thead>
             <tr style={tableHeaderStyle}>
@@ -259,27 +198,19 @@ export const OrdersPanel = ({
                 key={order.id}
                 className="ra-table-row"
                 tabIndex={0}
-                onDoubleClick={() => onJumpToChart?.(order.symbol)}
                 onKeyDown={moveTableFocus}
               >
                 <td style={{ ...tableCellStyle, color: T.text, fontWeight: 900 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
-                    <MarketIdentityInline
-                      item={{
-                        ticker: order.symbol,
-                        market: marketForAssetClass(order.assetClass),
-                      }}
-                      size={14}
-                      showMark={false}
-                      showChips
-                      style={{ maxWidth: dim(126), minWidth: 0 }}
-                    />
-                    <TradeContextButton
-                      symbol={order.symbol}
-                      onJumpToChart={onJumpToChart}
-                      testId={`account-order-trade-${order.id}`}
-                    />
-                  </div>
+                  <MarketIdentityInline
+                    item={{
+                      ticker: order.symbol,
+                      market: marketForAssetClass(order.assetClass),
+                    }}
+                    size={14}
+                    showMark={false}
+                    showChips
+                    style={{ maxWidth: dim(126) }}
+                  />
                 </td>
                 <td style={tableCellStyle}>
                   <Pill tone={/buy|long/i.test(order.side) ? "green" : "red"}>{order.side}</Pill>
@@ -394,7 +325,6 @@ export const ClosedTradesPanel = ({
   maskValues = false,
   selectedTradeId = "",
   onTradeSelect,
-  onJumpToChart,
 }) => {
   const rows = (query.data?.trades || []).filter((trade) =>
     (!sourceFiltersEnabled || !filters.sourceType || filters.sourceType === "all"
@@ -527,7 +457,7 @@ export const ClosedTradesPanel = ({
             body={emptyBody}
           />
         ) : (
-          <div className="ra-hide-scrollbar ra-account-table-scroll" style={{ overflow: "auto", maxHeight: 278 }}>
+          <div className="ra-hide-scrollbar" style={{ overflow: "auto", maxHeight: 278 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1040 }}>
               <thead>
                 <tr style={tableHeaderStyle}>
@@ -564,7 +494,6 @@ export const ClosedTradesPanel = ({
                       className="ra-table-row"
                       tabIndex={0}
                       onClick={() => onTradeSelect?.(tradeId)}
-                      onDoubleClick={() => onJumpToChart?.(trade.symbol)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
@@ -580,23 +509,16 @@ export const ClosedTradesPanel = ({
                       }}
                     >
                       <td style={{ ...tableCellStyle, ...selectedCellStyle, color: T.text, fontWeight: 900 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
-                          <MarketIdentityInline
-                            item={{
-                              ticker: trade.symbol,
-                              market: marketForAssetClass(trade.assetClass),
-                            }}
-                            size={14}
-                            showMark={false}
-                            showChips
-                            style={{ maxWidth: dim(126), minWidth: 0 }}
-                          />
-                          <TradeContextButton
-                            symbol={trade.symbol}
-                            onJumpToChart={onJumpToChart}
-                            testId={`account-closed-trade-trade-${tradeId}`}
-                          />
-                        </div>
+                        <MarketIdentityInline
+                          item={{
+                            ticker: trade.symbol,
+                            market: marketForAssetClass(trade.assetClass),
+                          }}
+                          size={14}
+                          showMark={false}
+                          showChips
+                          style={{ maxWidth: dim(126) }}
+                        />
                       </td>
                       <td style={{ ...tableCellStyle, ...selectedCellStyle }}>
                         <Pill tone={/buy|long/i.test(trade.side) ? "green" : "red"}>{trade.side}</Pill>
@@ -690,6 +612,442 @@ const DetailRow = ({ label, value, tone = T.textSec }) => (
   </div>
 );
 
+const TRADE_CHART_HEIGHT = 110;
+
+const pickBarsTimeframe = (holdMinutes) => {
+  const minutes = Number(holdMinutes);
+  if (!Number.isFinite(minutes) || minutes <= 0) return "1h";
+  if (minutes < 240) return "5m";
+  if (minutes < 5 * 24 * 60) return "15m";
+  if (minutes < 30 * 24 * 60) return "1h";
+  return "1d";
+};
+
+const TradePriceChart = ({ trade, currency, maskValues }) => {
+  const symbol = String(trade?.symbol || "").trim();
+  const rawOpenMs = trade?.openDate ? new Date(trade.openDate).getTime() : NaN;
+  const rawCloseMs = trade?.closeDate ? new Date(trade.closeDate).getTime() : NaN;
+  const holdMinutes = Number(trade?.holdDurationMinutes);
+  // Derive a missing endpoint from the hold duration when possible so the
+  // chart can render for Flex-sourced trades that only carry one timestamp.
+  let openMs = rawOpenMs;
+  let closeMs = rawCloseMs;
+  if (!Number.isFinite(openMs) && Number.isFinite(closeMs) && Number.isFinite(holdMinutes) && holdMinutes > 0) {
+    openMs = closeMs - holdMinutes * 60_000;
+  } else if (!Number.isFinite(closeMs) && Number.isFinite(openMs) && Number.isFinite(holdMinutes) && holdMinutes > 0) {
+    closeMs = openMs + holdMinutes * 60_000;
+  }
+  const hasWindow = Number.isFinite(openMs) && Number.isFinite(closeMs) && closeMs > openMs;
+  const timeframe = pickBarsTimeframe(holdMinutes);
+  const padding = hasWindow ? Math.max(60_000, (closeMs - openMs) * 0.1) : 0;
+  const fromIso = hasWindow ? new Date(openMs - padding).toISOString() : undefined;
+  const toIso = hasWindow ? new Date(closeMs + padding).toISOString() : undefined;
+  const enabled = Boolean(symbol && hasWindow);
+  const barsQuery = useGetBars(
+    enabled
+      ? {
+          symbol,
+          timeframe,
+          from: fromIso,
+          to: toIso,
+          limit: 500,
+        }
+      : { symbol: "", timeframe: "1m" },
+    {
+      query: {
+        enabled,
+        staleTime: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const bars = useMemo(() => {
+    if (!enabled) return [];
+    const raw = barsQuery.data?.bars || [];
+    return raw
+      .map((bar) => {
+        const ts = bar?.timestamp ? new Date(bar.timestamp).getTime() : NaN;
+        const close = Number(bar?.close);
+        if (!Number.isFinite(ts) || !Number.isFinite(close)) return null;
+        return { ts, close };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.ts - b.ts);
+  }, [enabled, barsQuery.data]);
+
+  if (!enabled) {
+    return (
+      <div
+        style={{
+          border: `1px dashed ${T.border}`,
+          borderRadius: dim(4),
+          background: T.bg0,
+          color: T.textMuted,
+          fontFamily: T.data,
+          fontSize: fs(9),
+          padding: sp("6px 8px"),
+          textAlign: "center",
+        }}
+      >
+        Trade window unavailable — open or close timestamp missing.
+      </div>
+    );
+  }
+  if (!barsQuery.isLoading && bars.length < 2) {
+    return (
+      <div
+        style={{
+          border: `1px dashed ${T.border}`,
+          borderRadius: dim(4),
+          background: T.bg0,
+          color: T.textMuted,
+          fontFamily: T.data,
+          fontSize: fs(9),
+          padding: sp("6px 8px"),
+          textAlign: "center",
+        }}
+      >
+        Bars unavailable for {symbol} during this trade window.
+      </div>
+    );
+  }
+
+  const W = 600;
+  const H = TRADE_CHART_HEIGHT;
+  const padL = 40;
+  const padR = 8;
+  const padT = 6;
+  const padB = 14;
+  if (barsQuery.isLoading || !bars.length) {
+    return (
+      <div
+        style={{
+          height: dim(H),
+          border: `1px solid ${T.border}`,
+          borderRadius: dim(4),
+          background: T.bg0,
+          color: T.textMuted,
+          display: "grid",
+          placeItems: "center",
+          fontFamily: T.data,
+          fontSize: fs(9),
+        }}
+      >
+        Loading bars…
+      </div>
+    );
+  }
+  const tMin = Math.min(bars[0].ts, openMs);
+  const tMax = Math.max(bars[bars.length - 1].ts, closeMs);
+  const span = tMax - tMin || 1;
+  const closes = bars.map((b) => b.close);
+  const yMin = Math.min(...closes, Number(trade?.avgOpen) || closes[0], Number(trade?.avgClose) || closes[0]);
+  const yMax = Math.max(...closes, Number(trade?.avgOpen) || closes[0], Number(trade?.avgClose) || closes[0]);
+  const yPad = (yMax - yMin) * 0.06 || 1;
+  const yLow = yMin - yPad;
+  const yHigh = yMax + yPad;
+  const yRange = yHigh - yLow || 1;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+  const xFor = (ts) => padL + ((ts - tMin) / span) * chartW;
+  const yFor = (val) => padT + chartH - ((val - yLow) / yRange) * chartH;
+  const linePath = bars
+    .map((bar, idx) => `${idx === 0 ? "M" : "L"}${xFor(bar.ts).toFixed(1)},${yFor(bar.close).toFixed(1)}`)
+    .join(" ");
+  const lastClose = bars[bars.length - 1].close;
+  const firstClose = bars[0].close;
+  const tradeShortSide = /short|sell/i.test(trade?.side || "");
+  const lineTone = tradeShortSide
+    ? lastClose <= firstClose
+      ? T.green
+      : T.red
+    : lastClose >= firstClose
+      ? T.green
+      : T.red;
+  const areaPath = `${linePath} L${xFor(bars[bars.length - 1].ts).toFixed(1)},${(padT + chartH).toFixed(1)} L${padL},${(padT + chartH).toFixed(1)} Z`;
+
+  const entryPx = Number(trade?.avgOpen);
+  const exitPx = Number(trade?.avgClose);
+  const entryX = xFor(openMs);
+  const exitX = xFor(closeMs);
+
+  return (
+    <div style={{ display: "grid", gap: sp(2) }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: sp(4),
+        }}
+      >
+        <div style={mutedLabelStyle}>
+          {symbol} · {timeframe} BARS
+        </div>
+        <div style={{ fontSize: fs(8), fontFamily: T.data, color: T.textDim }}>
+          {bars.length} bars
+        </div>
+      </div>
+      <svg
+        width="100%"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ display: "block" }}
+      >
+        <defs>
+          <linearGradient id={`tradeChartGrad-${symbol}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={lineTone} stopOpacity={0.18} />
+            <stop offset="100%" stopColor={lineTone} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill={`url(#tradeChartGrad-${symbol})`} />
+        <path d={linePath} stroke={lineTone} strokeWidth={1.2} fill="none" />
+        {Number.isFinite(entryPx) ? (
+          <g>
+            <title>{`Entry · ${formatAccountMoney(entryPx, currency, false, maskValues)} · ${formatAppDateTime(openMs)}`}</title>
+            <line
+              x1={entryX}
+              x2={entryX}
+              y1={padT}
+              y2={padT + chartH}
+              stroke={T.green}
+              strokeWidth={0.6}
+              strokeDasharray="2 2"
+              opacity={0.6}
+            />
+            <circle cx={entryX} cy={yFor(entryPx)} r={4} fill={T.green} stroke={T.bg1} strokeWidth={1} />
+            <text
+              x={entryX + 4}
+              y={yFor(entryPx) - 6}
+              fill={T.green}
+              fontFamily={T.data}
+              fontSize={9}
+              fontWeight={900}
+            >
+              ENTRY
+            </text>
+          </g>
+        ) : null}
+        {Number.isFinite(exitPx) ? (
+          <g>
+            <title>{`Exit · ${formatAccountMoney(exitPx, currency, false, maskValues)} · ${formatAppDateTime(closeMs)}`}</title>
+            <line
+              x1={exitX}
+              x2={exitX}
+              y1={padT}
+              y2={padT + chartH}
+              stroke={T.red}
+              strokeWidth={0.6}
+              strokeDasharray="2 2"
+              opacity={0.6}
+            />
+            <circle cx={exitX} cy={yFor(exitPx)} r={4} fill={T.red} stroke={T.bg1} strokeWidth={1} />
+            <text
+              x={exitX - 4}
+              y={yFor(exitPx) - 6}
+              fill={T.red}
+              fontFamily={T.data}
+              fontSize={9}
+              fontWeight={900}
+              textAnchor="end"
+            >
+              EXIT
+            </text>
+          </g>
+        ) : null}
+        <text
+          x={padL}
+          y={padT + chartH + 11}
+          fill={T.textMuted}
+          fontFamily={T.data}
+          fontSize={9}
+          textAnchor="start"
+        >
+          {formatAppDate(tMin)}
+        </text>
+        <text
+          x={W - padR}
+          y={padT + chartH + 11}
+          fill={T.textMuted}
+          fontFamily={T.data}
+          fontSize={9}
+          textAnchor="end"
+        >
+          {formatAppDate(tMax)}
+        </text>
+        <text
+          x={padL - 4}
+          y={padT + 4}
+          fill={T.textMuted}
+          fontFamily={T.data}
+          fontSize={9}
+          textAnchor="end"
+        >
+          {formatAccountMoney(yHigh, currency, false, maskValues)}
+        </text>
+        <text
+          x={padL - 4}
+          y={padT + chartH}
+          fill={T.textMuted}
+          fontFamily={T.data}
+          fontSize={9}
+          textAnchor="end"
+        >
+          {formatAccountMoney(yLow, currency, false, maskValues)}
+        </text>
+      </svg>
+    </div>
+  );
+};
+
+const lifecycleToneColor = (tone) =>
+  tone === "green" ? T.green : tone === "red" ? T.red : T.cyan;
+
+const LifecycleTimeline = ({ rows = [], currency, maskValues }) => {
+  if (!rows.length) return null;
+  const events = rows
+    .map((row) => {
+      const ts = row?.at ? new Date(row.at).getTime() : NaN;
+      return Number.isFinite(ts) ? { ...row, ts } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ts - b.ts);
+  const tSpan =
+    events.length >= 2 ? events[events.length - 1].ts - events[0].ts : 0;
+  // Less than ~1 minute of total span means everything would stack on a single
+  // x-position — fall back to the legible text-row layout instead.
+  if (events.length < 2 || tSpan < 60_000) {
+    return (
+      <div style={{ display: "grid", gap: sp(3) }}>
+        <div style={mutedLabelStyle}>TRADE LIFECYCLE</div>
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto minmax(0, 1fr) auto",
+              gap: sp(5),
+              border: `1px solid ${T.border}`,
+              borderRadius: dim(4),
+              background: T.bg0,
+              padding: sp("4px 5px"),
+              alignItems: "center",
+              fontFamily: T.data,
+              fontSize: fs(8),
+            }}
+          >
+            <span style={{ color: T.text, fontWeight: 900 }}>{row.label}</span>
+            <span style={{ color: T.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {row.detail}
+            </span>
+            <span style={{ color: lifecycleToneColor(row.tone), fontWeight: 900 }}>
+              {row.value == null
+                ? row.at
+                  ? formatAppDate(row.at)
+                  : ""
+                : typeof row.value === "number"
+                  ? formatAccountMoney(row.value, currency, true, maskValues)
+                  : row.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  const tMin = events[0].ts;
+  const tMax = events[events.length - 1].ts;
+  const span = tMax - tMin;
+  const W = 600;
+  const H = 64;
+  const padX = 40;
+  const padTop = 16;
+  const padBottom = 18;
+  const trackY = padTop + (H - padTop - padBottom) / 2;
+  const xFor = (ts) => padX + ((ts - tMin) / span) * (W - padX * 2);
+  // De-overlap markers: when events share an x within 16px, vertical stack
+  const placements = events.map((event, idx) => {
+    const baseX = xFor(event.ts);
+    let stackIdx = 0;
+    for (let i = 0; i < idx; i += 1) {
+      if (Math.abs(xFor(events[i].ts) - baseX) < 16) stackIdx += 1;
+    }
+    return { ...event, x: baseX, stack: stackIdx };
+  });
+  return (
+    <div style={{ display: "grid", gap: sp(3) }}>
+      <div style={mutedLabelStyle}>TRADE LIFECYCLE</div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}>
+        <line
+          x1={padX}
+          x2={W - padX}
+          y1={trackY}
+          y2={trackY}
+          stroke={T.border}
+          strokeWidth={1}
+        />
+        <text
+          x={padX}
+          y={H - 4}
+          fill={T.textMuted}
+          fontFamily={T.data}
+          fontSize={9}
+          textAnchor="start"
+        >
+          {formatAppDate(events[0].ts)}
+        </text>
+        <text
+          x={W - padX}
+          y={H - 4}
+          fill={T.textMuted}
+          fontFamily={T.data}
+          fontSize={9}
+          textAnchor="end"
+        >
+          {formatAppDate(events[events.length - 1].ts)}
+        </text>
+        {placements.map((event) => {
+          const color = lifecycleToneColor(event.tone);
+          const cy = trackY - event.stack * 10;
+          return (
+            <g key={event.key}>
+              <title>
+                {`${event.label} · ${event.detail}${
+                  event.value == null
+                    ? ""
+                    : typeof event.value === "number"
+                      ? ` · ${formatAccountMoney(event.value, currency, true, maskValues)}`
+                      : ` · ${event.value}`
+                } · ${formatAppDateTime(event.ts)}`}
+              </title>
+              <line
+                x1={event.x}
+                x2={event.x}
+                y1={cy}
+                y2={trackY}
+                stroke={color}
+                strokeWidth={0.6}
+                opacity={0.6}
+              />
+              <circle cx={event.x} cy={cy} r={4} fill={color} stroke={T.bg1} strokeWidth={1} />
+              <text
+                x={event.x}
+                y={cy - 7}
+                fill={color}
+                fontFamily={T.data}
+                fontSize={9}
+                fontWeight={900}
+                textAnchor="middle"
+              >
+                {event.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+};
+
 export const SelectedTradeAnalysisPanel = ({
   analysis,
   currency,
@@ -734,6 +1092,8 @@ export const SelectedTradeAnalysisPanel = ({
             </Pill>
             {trade.assetClass ? <Pill tone="purple">{trade.assetClass}</Pill> : null}
           </div>
+
+          <TradePriceChart trade={trade} currency={currency} maskValues={maskValues} />
 
           <div
             style={{
@@ -780,47 +1140,11 @@ export const SelectedTradeAnalysisPanel = ({
             <DetailRow label="Closed" value={formatAppDateTime(trade.closeDate)} />
           </div>
 
-          <div style={{ display: "grid", gap: sp(4) }}>
-            <div style={mutedLabelStyle}>TRADE LIFECYCLE</div>
-            {lifecycleRows.map((row) => (
-              <div
-                key={row.key}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(82px, 0.35fr) minmax(0, 1fr) auto",
-                  gap: sp(5),
-                  border: `1px solid ${T.border}`,
-                  borderRadius: dim(4),
-                  background: T.bg0,
-                  padding: sp("4px 5px"),
-                  alignItems: "center",
-                  minWidth: 0,
-                }}
-              >
-                <span style={{ color: T.text, fontFamily: T.data, fontWeight: 900, fontSize: fs(8) }}>
-                  {row.label}
-                </span>
-                <span
-                  style={{
-                    color: T.textSec,
-                    fontSize: fs(8),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {row.detail}
-                </span>
-                <span style={{ color: row.tone === "red" ? T.red : row.tone === "green" ? T.green : T.textDim, fontFamily: T.data, fontSize: fs(8), fontWeight: 900 }}>
-                  {row.value == null
-                    ? formatAppDate(row.at)
-                    : typeof row.value === "number"
-                      ? formatAccountMoney(row.value, currency, true, maskValues)
-                      : row.value}
-                </span>
-              </div>
-            ))}
-          </div>
+          <LifecycleTimeline
+            rows={lifecycleRows}
+            currency={currency}
+            maskValues={maskValues}
+          />
 
           <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap", color: T.textDim, fontSize: fs(8), fontFamily: T.data }}>
             <span>{detail.relatedOrders?.length || 0} related orders</span>
