@@ -5,6 +5,10 @@ export const ACCOUNT_REFRESH_INTERVALS = Object.freeze({
   tradesFallback: 60_000,
   chart: 60_000,
   health: 15_000,
+  shadowPrimaryFallback: 30_000,
+  shadowSecondaryFallback: 60_000,
+  shadowTradesFallback: 120_000,
+  shadowChart: 120_000,
 });
 
 export const buildAccountRefreshPolicy = ({
@@ -24,6 +28,17 @@ export const buildAccountRefreshPolicy = ({
       chart: false,
       health: false,
       streamBacked: brokerStreamFresh,
+    };
+  }
+
+  if (shadowMode) {
+    return {
+      primary: ACCOUNT_REFRESH_INTERVALS.shadowPrimaryFallback,
+      secondary: ACCOUNT_REFRESH_INTERVALS.shadowSecondaryFallback,
+      trades: ACCOUNT_REFRESH_INTERVALS.shadowTradesFallback,
+      chart: ACCOUNT_REFRESH_INTERVALS.shadowChart,
+      health: false,
+      streamBacked: false,
     };
   }
 

@@ -64,6 +64,33 @@ test("buildShadowPositionDayChange uses daily baseline instead of total unrealiz
   assert.equal(Number(changed.dayChangePercent?.toFixed(6)), 2.074689);
 });
 
+test("selectLatestShadowPositionMarksByPositionId keeps one newest mark per position", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests
+      .selectLatestShadowPositionMarksByPositionId;
+  const selected = helper([
+    {
+      positionId: "pos-a",
+      asOf: new Date("2026-05-01T13:00:00.000Z"),
+      marketValue: "100",
+    },
+    {
+      positionId: "pos-b",
+      asOf: new Date("2026-05-01T12:00:00.000Z"),
+      marketValue: "200",
+    },
+    {
+      positionId: "pos-a",
+      asOf: new Date("2026-05-01T14:00:00.000Z"),
+      marketValue: "125",
+    },
+  ]);
+
+  assert.equal(selected.size, 2);
+  assert.equal(selected.get("pos-a")?.marketValue, "125");
+  assert.equal(selected.get("pos-b")?.marketValue, "200");
+});
+
 const shadowTotals = {
   cash: 30_000,
   startingBalance: 30_000,

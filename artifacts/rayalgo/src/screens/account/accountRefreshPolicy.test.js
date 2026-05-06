@@ -27,6 +27,22 @@ test("uses fallback broker account polling when either realtime stream is stale"
   assert.equal(policy.streamBacked, false);
 });
 
+test("uses slower fallback polling for shadow account ledger views", () => {
+  const policy = buildAccountRefreshPolicy({
+    isVisible: true,
+    accountStreamFresh: true,
+    orderStreamFresh: true,
+    shadowMode: true,
+  });
+
+  assert.equal(policy.primary, 30_000);
+  assert.equal(policy.secondary, 60_000);
+  assert.equal(policy.trades, 120_000);
+  assert.equal(policy.chart, 120_000);
+  assert.equal(policy.health, false);
+  assert.equal(policy.streamBacked, false);
+});
+
 test("disables all account polling while hidden", () => {
   const policy = buildAccountRefreshPolicy({
     isVisible: false,

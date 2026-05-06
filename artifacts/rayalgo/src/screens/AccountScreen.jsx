@@ -445,7 +445,7 @@ export const AccountScreen = ({
     }),
     [],
   );
-  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot();
+  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(!shadowMode);
   const refreshPolicy = useMemo(
     () =>
       buildAccountRefreshPolicy({
@@ -466,6 +466,10 @@ export const AccountScreen = ({
   const tradesRefreshInterval = refreshPolicy.trades;
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
+  const benchmarkQueriesEnabled = Boolean(accountQueriesEnabled && !shadowMode);
+  const performanceCalendarQueriesEnabled = Boolean(
+    accountQueriesEnabled && !shadowMode,
+  );
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
     label: "Account live",
@@ -504,7 +508,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: benchmarkQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -535,7 +539,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: benchmarkQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -552,7 +556,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: benchmarkQueriesEnabled,
         placeholderData: (previousData) =>
           previousData?.range === range ? previousData : undefined,
       },
@@ -654,7 +658,7 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: performanceCalendarQueriesEnabled,
       },
     },
   );
@@ -665,7 +669,7 @@ export const AccountScreen = ({
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: chartRefreshInterval,
-        enabled: accountQueriesEnabled,
+        enabled: performanceCalendarQueriesEnabled,
       },
     },
   );
@@ -673,7 +677,7 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: tradesRefreshInterval,
-      enabled: Boolean(isVisible && accountRequestId),
+      enabled: accountQueriesEnabled,
     },
   });
   const ordersQuery = useGetAccountOrders(
@@ -701,7 +705,7 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: Boolean(isVisible && accountRequestId),
+      enabled: accountQueriesEnabled,
     },
   });
   const tradingPatternsQuery = useGetAccountTradingPatterns(
@@ -917,26 +921,29 @@ export const AccountScreen = ({
     tradesQuery.refetch,
     tradingPatternsQuery,
   ]);
-  const shadowAutomationAudit = {
-    automationPositions: openAccountPositions.filter(
-      (position) => position.sourceType === "automation",
-    ).length,
-    backtestPositions: openAccountPositions.filter(
-      (position) => position.sourceType === "watchlist_backtest",
-    ).length,
-    mixedPositions: openAccountPositions.filter(
-      (position) => position.sourceType === "mixed",
-    ).length,
-    automationOrders: (ordersQuery.data?.orders || []).filter(
-      (order) => order.sourceType === "automation",
-    ).length,
-    backtestOrders: (ordersQuery.data?.orders || []).filter(
-      (order) => order.sourceType === "watchlist_backtest",
-    ).length,
-    manualOrders: (ordersQuery.data?.orders || []).filter(
-      (order) => order.sourceType === "manual",
-    ).length,
-  };
+  const shadowAutomationAudit = useMemo(() => {
+    const orders = ordersQuery.data?.orders || [];
+    return {
+      automationPositions: openAccountPositions.filter(
+        (position) => position.sourceType === "automation",
+      ).length,
+      backtestPositions: openAccountPositions.filter(
+        (position) => position.sourceType === "watchlist_backtest",
+      ).length,
+      mixedPositions: openAccountPositions.filter(
+        (position) => position.sourceType === "mixed",
+      ).length,
+      automationOrders: orders.filter((order) => order.sourceType === "automation").length,
+      backtestOrders: orders.filter((order) => order.sourceType === "watchlist_backtest").length,
+      manualOrders: orders.filter((order) => order.sourceType === "manual").length,
+    };
+  }, [openAccountPositions, ordersQuery.data]);
+  const returnsCalendarTradesData = shadowMode
+    ? tradesQuery.data
+    : performanceCalendarTradesQuery.data;
+  const returnsCalendarEquityPoints = shadowMode
+    ? equityQuery.data?.points
+    : performanceCalendarEquityQuery.data?.points;
   const returnsModel = useMemo(
     () =>
       buildAccountReturnsModel({
@@ -1126,8 +1133,8 @@ export const AccountScreen = ({
               currency={currency}
               range={range}
               maskValues={maskAccountValues}
-              tradesData={performanceCalendarTradesQuery.data}
-              equityPoints={performanceCalendarEquityQuery.data?.series}
+              tradesData={returnsCalendarTradesData}
+              equityPoints={returnsCalendarEquityPoints}
               compact
             />
           </div>

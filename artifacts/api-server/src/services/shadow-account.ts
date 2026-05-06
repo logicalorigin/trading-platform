@@ -104,6 +104,7 @@ type ShadowOrderInput = Omit<PlaceOrderInput, "accountId" | "mode"> & {
 };
 
 type ShadowPositionRow = typeof shadowPositionsTable.$inferSelect;
+type ShadowPositionMarkRow = typeof shadowPositionMarksTable.$inferSelect;
 type ShadowAccountRow = typeof shadowAccountsTable.$inferSelect;
 type ShadowFillRow = typeof shadowFillsTable.$inferSelect;
 type ShadowOrderRow = typeof shadowOrdersTable.$inferSelect;
@@ -1517,6 +1518,19 @@ function buildShadowPositionDayChange(input: {
   };
 }
 
+function selectLatestShadowPositionMarksByPositionId<
+  T extends Pick<ShadowPositionMarkRow, "positionId" | "asOf">,
+>(marks: T[]): Map<string, T> {
+  const byPositionId = new Map<string, T>();
+  marks.forEach((mark) => {
+    const current = byPositionId.get(mark.positionId);
+    if (!current || mark.asOf.getTime() > current.asOf.getTime()) {
+      byPositionId.set(mark.positionId, mark);
+    }
+  });
+  return byPositionId;
+}
+
 async function readShadowPositionDayChanges(
   positions: ShadowPositionRow[],
   now = new Date(),
@@ -1524,6 +1538,20 @@ async function readShadowPositionDayChanges(
   const changes = new Map<string, ShadowPositionDayChange>();
   const marketDate = previousWeekdayOrSame(marketDateKey(now));
   const dayStart = zonedDateTimeToUtc({ marketDate, hour: 0, minute: 0 });
+  const positionIds = positions.map((position) => position.id);
+  const baselineMarks = positionIds.length
+    ? await db
+        .select()
+        .from(shadowPositionMarksTable)
+        .where(
+          and(
+            inArray(shadowPositionMarksTable.positionId, positionIds),
+            lte(shadowPositionMarksTable.asOf, dayStart),
+          ),
+        )
+    : [];
+  const baselineMarksByPositionId =
+    selectLatestShadowPositionMarksByPositionId(baselineMarks);
 
   for (const position of positions) {
     const currentAsOf = position.asOf ?? position.updatedAt ?? now;
@@ -1541,17 +1569,7 @@ async function readShadowPositionDayChanges(
       continue;
     }
 
-    const [baselineMark] = await db
-      .select()
-      .from(shadowPositionMarksTable)
-      .where(
-        and(
-          eq(shadowPositionMarksTable.positionId, position.id),
-          lte(shadowPositionMarksTable.asOf, dayStart),
-        ),
-      )
-      .orderBy(desc(shadowPositionMarksTable.asOf))
-      .limit(1);
+    const baselineMark = baselineMarksByPositionId.get(position.id);
     const openedAt = position.openedAt ?? currentAsOf;
     const baselineMarketValue =
       toNumber(baselineMark?.marketValue) ??
@@ -3117,7 +3135,12 @@ export async function getShadowAccountRisk(input: {
 }
 
 function buildShadowExpiryConcentration(
-  positions: Array<{ assetClass: string; id: string }>,
+  positions: Array<{
+    assetClass: string;
+    id: string;
+    description?: unknown;
+    marketValue?: unknown;
+  }>,
 ) {
   const now = Date.now();
   const week = now + 7 * 86_400_000;
@@ -3128,17 +3151,9 @@ function buildShadowExpiryConcentration(
     if (position.assetClass !== "Options") {
       return;
     }
-    // Position rows expose option expiry in the description; detailed expiry notional
-    // is kept conservative until the UI consumes option metadata directly.
-    const source = positions.find((candidate) => candidate.id === position.id);
-    if (!source) {
-      return;
-    }
-    const expiryMatch = "description" in source
-      ? String(source.description).match(/\d{4}-\d{2}-\d{2}/)
-      : null;
+    const expiryMatch = String(position.description ?? "").match(/\d{4}-\d{2}-\d{2}/);
     const expiry = expiryMatch ? new Date(`${expiryMatch[0]}T00:00:00.000Z`).getTime() : null;
-    const value = "marketValue" in source ? Math.abs(Number(source.marketValue) || 0) : 0;
+    const value = Math.abs(Number(position.marketValue) || 0);
     if (!expiry) {
       return;
     }
@@ -5313,6 +5328,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   withWatchlistBacktestProxyUniverse,
   computeWatchlistBacktestStartingBook,
   selectShadowEquityHistoryRows,
+  selectLatestShadowPositionMarksByPositionId,
   buildShadowPositionDayChange,
   buildShadowTradingPatternsFromRows,
   summarizeWatchlistBacktestClosedTrades,
