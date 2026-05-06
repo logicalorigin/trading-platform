@@ -74,7 +74,7 @@ test("live flow scanner waits for on-demand IBKR hydration", () => {
   );
 
   assert.match(source, /blocking\s*=\s*true/);
-  assert.match(source, /blocking,\s*\n\s*\}\);/);
+  assert.match(source, /queueRefresh:\s*blocking/);
 });
 
 test("flow scanner requests broad backend flow and filters scanner scope locally", () => {

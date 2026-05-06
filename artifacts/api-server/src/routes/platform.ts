@@ -858,11 +858,10 @@ async function startSse(
       return Promise.resolve();
     }
 
-    pendingChunks += 1;
-    if (pendingChunks > SSE_MAX_BUFFERED_CHUNKS) {
-      cleanup();
+    if (pendingChunks >= SSE_MAX_BUFFERED_CHUNKS) {
       return Promise.resolve();
     }
+    pendingChunks += 1;
 
     writeQueue = writeQueue
       .then(async () => {
@@ -1634,8 +1633,9 @@ function readBooleanQueryFlag(value: unknown): boolean | undefined {
 router.get("/flow/events", async (req, res) => {
   const query = ListFlowEventsQueryParams.parse(req.query);
   const blocking = readBooleanQueryFlag(req.query.blocking) ?? false;
+  const queueRefresh = readBooleanQueryFlag(req.query.queueRefresh) ?? true;
   const data = ListFlowEventsResponse.parse(
-    await listFlowEvents({ ...query, blocking }),
+    await listFlowEvents({ ...query, blocking, queueRefresh }),
   );
 
   res.json(data);

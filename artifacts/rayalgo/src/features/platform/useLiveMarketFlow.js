@@ -331,6 +331,7 @@ export const useLiveMarketFlow = (
                 ? { maxDte: effectiveMaxDte }
                 : {}),
               blocking,
+              queueRefresh: blocking,
             });
             if (!cancelled) {
               commitSymbolResult(symbol, { status: "fulfilled", value }, Date.now());

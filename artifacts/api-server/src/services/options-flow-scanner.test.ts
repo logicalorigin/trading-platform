@@ -783,6 +783,51 @@ test("listFlowEvents queues scanner refreshes without blocking callers", async (
   assert.equal(cached.events.length, 1);
 });
 
+test("listFlowEvents can read nonblocking scanner snapshots without enqueueing deep scans", async () => {
+  let chainCalls = 0;
+
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => {
+          chainCalls += 1;
+          return [optionContract("SPY")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const result = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 5,
+      blocking: false,
+      queueRefresh: false,
+    }),
+  );
+
+  assert.equal(result.events.length, 0);
+  assert.equal(result.source.ibkrStatus, "empty");
+  assert.equal(
+    result.source.ibkrReason,
+    "options_flow_scanner_snapshot_pending",
+  );
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await wait(0);
+  }
+  assert.equal(chainCalls, 0);
+});
+
 test("listFlowEvents queues filtered nonblocking scans through the scanner", async () => {
   let chainCalls = 0;
   let releaseRefresh: () => void = () => {};

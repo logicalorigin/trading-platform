@@ -10076,6 +10076,7 @@ export async function listFlowEvents(input: {
   unusualThreshold?: number;
   lineBudget?: number;
   blocking?: boolean;
+  queueRefresh?: boolean;
   allowPolygonFallback?: boolean;
 }): Promise<FlowEventsResult> {
   const underlying = normalizeSymbol(input.underlying ?? "");
@@ -10087,8 +10088,10 @@ export async function listFlowEvents(input: {
       : undefined;
   const filters = normalizeFlowEventsFilters(input);
   const runtimeConfig = getOptionsFlowRuntimeConfig();
+  const shouldQueueRefresh = input.queueRefresh !== false;
   const nonblockingScannerRefresh =
     !blocking &&
+    shouldQueueRefresh &&
     input.allowPolygonFallback !== true;
   const defaultScannerLineBudget = nonblockingScannerRefresh
     ? Math.max(
@@ -10186,11 +10189,13 @@ export async function listFlowEvents(input: {
   const inFlight = flowEventsInFlight.get(cacheKey);
 
   if (scannerSnapshot?.freshness === "stale") {
-    queueOptionsFlowScannerRefresh({
-      underlying,
-      scannerRequest,
-      phase: "stale-snapshot",
-    });
+    if (shouldQueueRefresh) {
+      queueOptionsFlowScannerRefresh({
+        underlying,
+        scannerRequest,
+        phase: "stale-snapshot",
+      });
+    }
     return {
       events: filterFlowEventsForRequest(
         scannerSnapshot.events,
@@ -10209,7 +10214,7 @@ export async function listFlowEvents(input: {
   }
 
   if (cached && cached.staleExpiresAt > requestedAt) {
-    if (!inFlight) {
+    if (!inFlight && shouldQueueRefresh) {
       refreshFlowEventsCache(cacheKey, {
         underlying,
         limit,
@@ -10236,6 +10241,16 @@ export async function listFlowEvents(input: {
       });
     }
     return inFlight;
+  }
+
+  if (!blocking && !shouldQueueRefresh) {
+    return deferredFlowEventsResult({
+      underlying,
+      limit,
+      filters,
+      unusualThreshold,
+      reason: "options_flow_scanner_snapshot_pending",
+    });
   }
 
   if (

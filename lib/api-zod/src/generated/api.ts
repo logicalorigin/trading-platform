@@ -2255,7 +2255,8 @@ export const ListFlowEventsQueryParams = zod.object({
   "minPremium": zod.coerce.number().min(listFlowEventsQueryMinPremiumMin).max(listFlowEventsQueryMinPremiumMax).optional().describe('Minimum option premium, in dollars, required for each returned flow row.'),
   "maxDte": zod.coerce.number().min(listFlowEventsQueryMaxDteMin).max(listFlowEventsQueryMaxDteMax).optional().describe('Maximum days to expiration to include in the flow scan.'),
   "lineBudget": zod.coerce.number().min(1).max(listFlowEventsQueryLineBudgetMax).optional().describe('Maximum IBKR option quote lines this request may use.'),
-  "blocking": zod.coerce.boolean().optional().describe('Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.')
+  "blocking": zod.coerce.boolean().optional().describe('Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.'),
+  "queueRefresh": zod.coerce.boolean().optional().describe('Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.')
 })
 
 export const listFlowEventsResponseSourceIbkrExpirationCountMin = 0;

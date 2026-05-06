@@ -46,4 +46,8 @@ lineBudget?: number;
  * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
  */
 blocking?: boolean;
+/**
+ * Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.
+ */
+queueRefresh?: boolean;
 };

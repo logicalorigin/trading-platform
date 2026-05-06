@@ -1496,6 +1496,12 @@ paths:
           description: Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
           schema:
             type: boolean
+        - name: queueRefresh
+          in: query
+          required: false
+          description: Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.
+          schema:
+            type: boolean
       responses:
         "200":
           description: Options flow
