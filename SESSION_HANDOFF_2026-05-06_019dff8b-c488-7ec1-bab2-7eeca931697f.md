@@ -3,19 +3,19 @@
 ## Session Metadata
 
 - Session ID: `019dff8b-c488-7ec1-bab2-7eeca931697f`
-- Saved At (MT): `2026-05-06 17:21:59 MDT`
-- Saved At (UTC): `2026-05-06T23:21:59.087Z`
+- Saved At (MT): `2026-05-06 17:34:29 MDT`
+- Saved At (UTC): `2026-05-06T23:34:29.980Z`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Rollout Path: `/home/runner/.codex/sessions/2026/05/06/rollout-2026-05-06T17-07-23-019dff8b-c488-7ec1-bab2-7eeca931697f.jsonl`
 - Branch: `main`
-- HEAD: `a09456b7b24717a5c3733c1495c533434fac0116`
-- Latest Commit: `Move shadow account stream to visible page`
-- Latest Commit Session ID: `unknown`
+- HEAD: `45715c13e35f42abe6e822a7b2840e64f205fa05`
+- Latest Commit: `Improve account snapshot handling and data accuracy`
+- Latest Commit Session ID: `d56ae97d-ce5b-4897-beba-c1c01ae8f27e`
 - Title: we dropped a couple of in-flight sessions. please find them. it will be found via staged work and code. this was just a few minutes ago, and it is not the session dealing with the replit workflow
 - Model: `gpt-5.5`
 - Reasoning Effort: `xhigh`
-- Tokens Used: `4830168`
+- Tokens Used: `11866234`
 
 ## Current User Request
 
@@ -62,343 +62,69 @@ we dropped a couple of in-flight sessions. please find them. it will be found vi
 - `2026-05-06T23:07:59.684Z` Tool failed: /bin/bash -lc sed -n '1,220p' /home/runner/workspace/.agents/skills/session-handoff/SKILL.md (exit 1)
 - `2026-05-06T23:08:03.774Z` Tool: exec_command sed -n '1,220p' /home/runner/workspace/.agents/skills/session-handoff/SKILL.md
 - `2026-05-06T23:08:21.939Z` Agent: I hit a sandbox wrapper error on the first file read, so I’ll rerun the repo-inspection commands with approval where needed instead of trying to work around it. The first pass is…
-- … 104 lower-signal transcript events omitted …
-- `2026-05-06T23:20:21.737Z` Tool: exec_command sed -n '1,80p' artifacts/api-server/src/providers/polygon/market-data.test.ts && sed -n '160,280p' artifacts/api-server/src/providers/polygon/market-data.test.ts
-- `2026-05-06T23:20:21.759Z` Tool: exec_command sed -n '1,330p' artifacts/api-server/src/services/flow-premium-distribution.test.ts
-- `2026-05-06T23:20:25.426Z` Tool: exec_command nl -ba artifacts/api-server/src/providers/polygon/market-data.test.ts | sed -n '1,310p'
-- `2026-05-06T23:21:45.705Z` Agent: I’m picking up the Polygon mapping implementation now. I’ll keep this scoped to the distribution data path, source diagnostics, UI confidence display, schema/client types, and the…
-- `2026-05-06T23:21:53.577Z` Agent: I’m using the local coding guidelines skill for the implementation pass, and I’ll refresh the handoff after the validation step so the recovered session remains resumable.
-- `2026-05-06T23:21:53.590Z` Tool: exec_command sed -n '1,220p' /home/runner/workspace/.agents/skills/karpathy-guidelines/SKILL.md
-- `2026-05-06T23:21:53.616Z` Tool: exec_command sed -n '1,220p' /home/runner/workspace/.agents/skills/session-handoff/SKILL.md
-- `2026-05-06T23:21:53.664Z` Tool: exec_command git status --short --branch
-- `2026-05-06T23:21:57.146Z` Agent: The worktree has broad unrelated changes already present, so I’m treating the files in the distribution slice as the only write scope. Before editing, I’m refreshing the session h…
-- `2026-05-06T23:21:58.804Z` Tool: exec_command node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --session 019dff8b-c488-7ec1-bab2-7eeca931697f --watch --interval-ms 60000 --max-cycles 1
+- … 204 lower-signal transcript events omitted …
+- `2026-05-06T23:33:57.841Z` Tool: exec_command git log --oneline -5 --decorate
+- `2026-05-06T23:33:57.859Z` Tool: exec_command git ls-files artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs lib/api-zod/src/generated/types/flowPremiumDistributionClassificationConfidence.ts artifacts/api-server…
+- `2026-05-06T23:33:57.912Z` Tool: exec_command node -e 'const p=require("./tmp/polygon-premium-distribution-sample.json"); const s=p.symbols[0]; console.log(`${s.symbol} ${s.aggregate.classificationConfidence} coverage=${s.agg…
+- `2026-05-06T23:34:03.355Z` Tool: exec_command git show --stat --oneline --name-only HEAD | sed -n '1,160p'
+- `2026-05-06T23:34:14.898Z` Tool: exec_command git show HEAD^:artifacts/api-server/src/providers/polygon/market-data.ts | rg -n "classificationConfidence|PremiumDistributionClassificationConfidence|conditionCodes|Polygon/Massi…
+- `2026-05-06T23:34:14.916Z` Tool: exec_command git show HEAD^:artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs >/dev/null && echo existed || echo missing
+- `2026-05-06T23:34:14.957Z` Tool: exec_command git show HEAD^:artifacts/api-server/src/services/flow-premium-distribution.test.ts | rg -n "classificationConfidence|very low" || true
+- `2026-05-06T23:34:15.007Z` Tool: exec_command git show HEAD^:lib/api-spec/openapi.yaml | rg -n "classificationConfidence|FlowPremiumDistributionClassificationConfidence" || true
+- `2026-05-06T23:34:21.392Z` Agent: The repo is clean but the branch is ahead of `origin/main` by two commits, so these implementation files are already in HEAD rather than an unstaged patch. I’m refreshing the hand…
+- `2026-05-06T23:34:29.748Z` Tool: exec_command node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --session 019dff8b-c488-7ec1-bab2-7eeca931697f --watch --interval-ms 60000 --max-cycles 1
 
 ## High-Signal Changed Files
 
-- `.replit`
-- `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/.replit-artifact/artifact.toml`
-- `artifacts/api-server/scripts/runUnitTests.mjs`
-- `artifacts/api-server/src/providers/polygon/market-data.ts`
-- `artifacts/api-server/src/routes/platform.ts`
-- `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
-- `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
-- `artifacts/api-server/src/services/option-chain-batch.test.ts`
-- `artifacts/api-server/src/services/platform.ts`
-- `artifacts/api-server/src/services/shadow-account.ts`
+- `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs`
+- `artifacts/api-server/src/services/account-equity-history-model.ts`
+- `artifacts/api-server/src/services/account-equity-history.test.ts`
+- `artifacts/api-server/src/services/account.ts`
+- `artifacts/api-server/src/services/flow-premium-distribution.test.ts`
 - `artifacts/rayalgo/e2e/flow-layout.spec.ts`
-- `artifacts/rayalgo/e2e/memory-soak.spec.ts`
-- `artifacts/rayalgo/scripts/runUnitTests.mjs`
-- `artifacts/rayalgo/src/app/App.tsx`
-- `artifacts/rayalgo/src/components/platform/primitives.jsx`
-- `artifacts/rayalgo/src/components/ui/dropdown-menu.tsx`
-- `artifacts/rayalgo/src/features/backtesting/BacktestingPanels.tsx`
-- `artifacts/rayalgo/src/features/charting/ChartParityLab.tsx`
-- `artifacts/rayalgo/src/features/charting/RayReplicaSettingsMenu.tsx`
-- `artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx`
-- `artifacts/rayalgo/src/features/charting/ResearchChartWidgetChrome.tsx`
-- `artifacts/rayalgo/src/features/charting/chartEvents.test.ts`
-- `artifacts/rayalgo/src/features/charting/chartEvents.ts`
-- `artifacts/rayalgo/src/features/charting/useOptionChartBars.js`
-- `artifacts/rayalgo/src/features/flow/ContractDetailInline.jsx`
-- `artifacts/rayalgo/src/features/flow/FlowScannerStatusPanel.jsx`
-- `artifacts/rayalgo/src/features/flow/OrderFlowVisuals.jsx`
-- `artifacts/rayalgo/src/features/flow/flowEventMapper.js`
-- `artifacts/rayalgo/src/features/market/MarketActivityPanel.jsx`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main
- M .replit
- M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/.replit-artifact/artifact.toml
- M artifacts/api-server/scripts/runUnitTests.mjs
- M artifacts/api-server/src/providers/polygon/market-data.ts
- M artifacts/api-server/src/routes/platform.ts
- M artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts
- M artifacts/api-server/src/services/ibkr-bridge-runtime.ts
- M artifacts/api-server/src/services/option-chain-batch.test.ts
- M artifacts/api-server/src/services/platform.ts
- M artifacts/api-server/src/services/shadow-account.ts
- M artifacts/rayalgo/e2e/flow-layout.spec.ts
- M artifacts/rayalgo/e2e/memory-soak.spec.ts
- M artifacts/rayalgo/scripts/runUnitTests.mjs
- M artifacts/rayalgo/src/app/App.tsx
- M artifacts/rayalgo/src/components/platform/primitives.jsx
- M artifacts/rayalgo/src/components/ui/dropdown-menu.tsx
- M artifacts/rayalgo/src/features/backtesting/BacktestingPanels.tsx
- M artifacts/rayalgo/src/features/charting/ChartParityLab.tsx
- M artifacts/rayalgo/src/features/charting/RayReplicaSettingsMenu.tsx
- M artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx
- M artifacts/rayalgo/src/features/charting/ResearchChartWidgetChrome.tsx
- M artifacts/rayalgo/src/features/charting/chartEvents.test.ts
- M artifacts/rayalgo/src/features/charting/chartEvents.ts
- M artifacts/rayalgo/src/features/charting/useOptionChartBars.js
- M artifacts/rayalgo/src/features/flow/ContractDetailInline.jsx
- M artifacts/rayalgo/src/features/flow/FlowScannerStatusPanel.jsx
- M artifacts/rayalgo/src/features/flow/OrderFlowVisuals.jsx
- M artifacts/rayalgo/src/features/flow/flowEventMapper.js
- M artifacts/rayalgo/src/features/market/MarketActivityPanel.jsx
- M artifacts/rayalgo/src/features/market/MiniChartPremiumFlowIndicator.jsx
- M artifacts/rayalgo/src/features/market/MultiChartGrid.jsx
- M artifacts/rayalgo/src/features/market/marketChartWiring.test.js
- M artifacts/rayalgo/src/features/platform/BloombergLiveDock.jsx
- M artifacts/rayalgo/src/features/platform/FooterMemoryPressureIndicator.jsx
- M artifacts/rayalgo/src/features/platform/HeaderAccountStrip.jsx
- M artifacts/rayalgo/src/features/platform/HeaderBroadcastScrollerStack.jsx
- M artifacts/rayalgo/src/features/platform/HeaderKpiStrip.jsx
- M artifacts/rayalgo/src/features/platform/HeaderStatusCluster.jsx
- M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.jsx
- M artifacts/rayalgo/src/features/platform/IbkrConnectionStatus.test.js
- M artifacts/rayalgo/src/features/platform/LatencyDebugStrip.jsx
- M artifacts/rayalgo/src/features/platform/MarketDataSubscriptionProvider.jsx
- M artifacts/rayalgo/src/features/platform/PlatformApp.jsx
- M artifacts/rayalgo/src/features/platform/PlatformShell.jsx
- M artifacts/rayalgo/src/features/platform/PlatformWatchlist.jsx
- M artifacts/rayalgo/src/features/platform/appWorkScheduler.js
- M artifacts/rayalgo/src/features/platform/appWorkScheduler.test.js
- M artifacts/rayalgo/src/features/platform/bridgeRuntimeModel.js
- M artifacts/rayalgo/src/features/platform/flowFilterStore.js
- M artifacts/rayalgo/src/features/platform/flowFilterStore.test.js
- M artifacts/rayalgo/src/features/platform/marketActivityLaneModel.js
- M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.js
- M artifacts/rayalgo/src/features/platform/marketFlowScannerConfig.test.js
- M artifacts/rayalgo/src/features/platform/marketIdentity.jsx
- M artifacts/rayalgo/src/features/platform/platformRootSource.test.js
- M artifacts/rayalgo/src/features/platform/tickerSearch/TickerSearch.jsx
- M artifacts/rayalgo/src/features/platform/useMemoryPressureSignal.js
- M artifacts/rayalgo/src/features/platform/useRuntimeControlSnapshot.js
- M artifacts/rayalgo/src/features/research/PhotonicsObservatory.jsx
- M artifacts/rayalgo/src/features/research/components/ResearchCalendarView.jsx
- M artifacts/rayalgo/src/features/research/components/ResearchSettingsPanel.jsx
- M artifacts/rayalgo/src/features/research/components/ResearchThemeSwitcher.jsx
- M artifacts/rayalgo/src/features/trade/BrokerActionConfirmDialog.jsx
- M artifacts/rayalgo/src/features/trade/PayoffDiagram.jsx
- M artifacts/rayalgo/src/features/trade/TradeChainPanel.jsx
- M artifacts/rayalgo/src/features/trade/TradeEquityPanel.jsx
- M artifacts/rayalgo/src/features/trade/TradeL2Panel.jsx
- M artifacts/rayalgo/src/features/trade/TradeOrderTicket.jsx
- M artifacts/rayalgo/src/features/trade/TradePositionsPanel.jsx
- M artifacts/rayalgo/src/features/trade/TradeStrategyGreeksPanel.jsx
- M artifacts/rayalgo/src/features/trade/TradeWorkspaceChrome.jsx
- M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.js
- M artifacts/rayalgo/src/features/trade/optionQuoteHydrationPlan.test.js
- M artifacts/rayalgo/src/features/trade/tradeBrokerRequests.js
- M artifacts/rayalgo/src/index.css
- M artifacts/rayalgo/src/lib/formatters.js
- M artifacts/rayalgo/src/lib/motion.jsx
- M artifacts/rayalgo/src/lib/typography.ts
- M artifacts/rayalgo/src/lib/uiTokens.jsx
- M artifacts/rayalgo/src/screens/AccountScreen.jsx
- M artifacts/rayalgo/src/screens/AlgoScreen.jsx
- M artifacts/rayalgo/src/screens/DiagnosticsScreen.jsx
- M artifacts/rayalgo/src/screens/FlowScreen.jsx
- M artifacts/rayalgo/src/screens/MarketScreen.jsx
- M artifacts/rayalgo/src/screens/ResearchScreen.jsx
- M artifacts/rayalgo/src/screens/SettingsScreen.jsx
- M artifacts/rayalgo/src/screens/TradeScreen.jsx
- M artifacts/rayalgo/src/screens/TradeScreen.search-handlers.test.mjs
- M artifacts/rayalgo/src/screens/account/AccountHeaderStrip.jsx
- M artifacts/rayalgo/src/screens/account/AccountReturnsPanel.jsx
- M artifacts/rayalgo/src/screens/account/AllocationPanel.jsx
- M artifacts/rayalgo/src/screens/account/CashFundingPanel.jsx
- M artifacts/rayalgo/src/screens/account/EquityCurvePanel.jsx
- M artifacts/rayalgo/src/screens/account/ExpiryCalendarHeatmap.jsx
- M artifacts/rayalgo/src/screens/account/IntradayPnlPanel.jsx
- M artifacts/rayalgo/src/screens/account/PositionTreemapPanel.jsx
- M artifacts/rayalgo/src/screens/account/PositionsPanel.jsx
- M artifacts/rayalgo/src/screens/account/RiskDashboardPanel.jsx
- M artifacts/rayalgo/src/screens/account/SetupHealthPanel.jsx
- M artifacts/rayalgo/src/screens/account/TradesOrdersPanel.jsx
- M artifacts/rayalgo/src/screens/account/TradingPatternsPanel.jsx
- M artifacts/rayalgo/src/screens/account/accountUtils.jsx
- M artifacts/rayalgo/src/screens/diagnostics/localAlerts.test.js
- M artifacts/rayalgo/src/screens/settings/DiagnosticThresholdSettingsPanel.jsx
- M artifacts/rayalgo/src/screens/settings/IbkrLaneArchitecturePanel.jsx
- M lib/api-client-react/src/generated/api.schemas.ts
- M lib/api-client-react/src/generated/api.ts
- M lib/api-spec/openapi.yaml
- M lib/api-zod/src/generated/api.ts
- M lib/api-zod/src/generated/types/index.ts
- M lib/api-zod/src/generated/types/placeOrderRequest.ts
- M lib/api-zod/src/generated/types/submitIbkrOrdersRequest.ts
- M lib/ibkr-contracts/src/client.ts
- M package.json
- M replit.md
- M scripts/windows/rayalgo-ibkr-helper.ps1
-?? APP_SURFACE_OWNERSHIP_REVIEW.md
-?? SESSION_HANDOFF_2026-05-06_019dff66-df3f-7bc1-abe4-39b68ed2dcff.md
-?? SESSION_HANDOFF_2026-05-06_019dff67-f5a1-7332-8624-585ac4cd1435.md
-?? SESSION_HANDOFF_2026-05-06_019dff68-fd69-7fd1-84aa-f97b89d2efe8.md
-?? SESSION_HANDOFF_2026-05-06_019dff6f-d657-70a2-bed9-7c3a2469bed7.md
-?? SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md
-?? artifacts/api-server/src/providers/polygon/market-data.test.ts
-?? artifacts/api-server/src/services/flow-premium-distribution.test.ts
-?? artifacts/api-server/src/services/option-order-intent.test.ts
-?? artifacts/api-server/src/services/option-order-intent.ts
-?? artifacts/rayalgo/src/features/charting/ResearchChartDashboardStrip.ts
-?? artifacts/rayalgo/src/features/flow/flowTapeColumns.js
-?? artifacts/rayalgo/src/features/flow/flowTapeColumns.test.js
-?? artifacts/rayalgo/src/features/trade/optionSellCallIntent.js
-?? artifacts/rayalgo/src/features/trade/optionSellCallIntent.test.js
-?? artifacts/rayalgo/src/lib/formatters.test.js
-?? artifacts/rayalgo/src/screens/account/accountCalendarData.js
-?? artifacts/rayalgo/src/screens/account/accountCalendarData.test.js
-?? artifacts/rayalgo/src/screens/account/accountPnlCalendarModel.js
-?? artifacts/rayalgo/src/screens/account/accountPnlCalendarModel.test.js
-?? lib/api-zod/src/generated/types/flowPremiumDistributionBucket.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionBuckets.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionResponse.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionResponseStatus.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionSource.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionSourceCache.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionSourceProvider.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionWidget.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionWidgetConfidence.ts
-?? lib/api-zod/src/generated/types/flowPremiumDistributionWidgetSource.ts
-?? lib/api-zod/src/generated/types/getFlowPremiumDistributionParams.ts
-?? scripts/package-ibkr-bridge-bundle.mjs
-?? scripts/run-replit-dev.sh
+## main...origin/main [ahead 2]
 ```
 
 ## Diff Summary
 
 ```text
- .replit                                            |   24 +-
- SESSION_HANDOFF_MASTER.md                          |    5 +
- .../api-server/.replit-artifact/artifact.toml      |    2 +-
- artifacts/api-server/scripts/runUnitTests.mjs      |    3 +
- .../src/providers/polygon/market-data.ts           | 1060 +++++++++-
- artifacts/api-server/src/routes/platform.ts        |   25 +-
- .../src/services/ibkr-bridge-runtime.test.ts       |   14 +-
- .../api-server/src/services/ibkr-bridge-runtime.ts |   40 +-
- .../src/services/option-chain-batch.test.ts        |   52 +
- artifacts/api-server/src/services/platform.ts      |  524 +++++
- .../api-server/src/services/shadow-account.ts      |   13 +
- artifacts/rayalgo/e2e/flow-layout.spec.ts          |  146 +-
- artifacts/rayalgo/e2e/memory-soak.spec.ts          |   10 +-
- artifacts/rayalgo/scripts/runUnitTests.mjs         |    3 +
- artifacts/rayalgo/src/app/App.tsx                  |    6 +-
- .../rayalgo/src/components/platform/primitives.jsx |    8 +-
- .../rayalgo/src/components/ui/dropdown-menu.tsx    |    2 +-
- .../src/features/backtesting/BacktestingPanels.tsx |  125 +-
- .../src/features/charting/ChartParityLab.tsx       |   14 +-
- .../features/charting/RayReplicaSettingsMenu.tsx   |   14 +-
- .../src/features/charting/ResearchChartSurface.tsx |   18 +-
- .../charting/ResearchChartWidgetChrome.tsx         |   18 +-
- .../src/features/charting/chartEvents.test.ts      |   24 +
- .../rayalgo/src/features/charting/chartEvents.ts   |   25 +-
- .../src/features/charting/useOptionChartBars.js    |   15 +-
- .../src/features/flow/ContractDetailInline.jsx     |   76 +-
- .../src/features/flow/FlowScannerStatusPanel.jsx   |   16 +-
- .../rayalgo/src/features/flow/OrderFlowVisuals.jsx |   14 +-
- .../rayalgo/src/features/flow/flowEventMapper.js   |    7 +-
- .../src/features/market/MarketActivityPanel.jsx    |   36 +-
- .../market/MiniChartPremiumFlowIndicator.jsx       |    4 +-
- .../rayalgo/src/features/market/MultiChartGrid.jsx |   10 +-
- .../src/features/market/marketChartWiring.test.js  |   26 +
- .../src/features/platform/BloombergLiveDock.jsx    |   20 +-
- .../platform/FooterMemoryPressureIndicator.jsx     |    2 +-
- .../src/features/platform/HeaderAccountStrip.jsx   |    6 +-
- .../platform/HeaderBroadcastScrollerStack.jsx      |   80 +-
- .../src/features/platform/HeaderKpiStrip.jsx       |    8 +-
- .../src/features/platform/HeaderStatusCluster.jsx  |   67 +-
- .../src/features/platform/IbkrConnectionStatus.jsx |   29 +-
- .../features/platform/IbkrConnectionStatus.test.js |  175 ++
- .../src/features/platform/LatencyDebugStrip.jsx    |    2 +-
- .../platform/MarketDataSubscriptionProvider.jsx    |    1 +
- .../rayalgo/src/features/platform/PlatformApp.jsx  |   17 +-
- .../src/features/platform/PlatformShell.jsx        |   12 +-
- .../src/features/platform/PlatformWatchlist.jsx    |  106 +-
- .../src/features/platform/appWorkScheduler.js      |    4 +-
- .../src/features/platform/appWorkScheduler.test.js |   26 +-
- .../src/features/platform/bridgeRuntimeModel.js    |    5 +-
- .../src/features/platform/flowFilterStore.js       |   11 +
- .../src/features/platform/flowFilterStore.test.js  |   50 +
- .../features/platform/marketActivityLaneModel.js   |   13 +-
- .../features/platform/marketFlowScannerConfig.js   |    2 +-
- .../platform/marketFlowScannerConfig.test.js       |   17 +-
- .../src/features/platform/marketIdentity.jsx       |    6 +-
- .../features/platform/platformRootSource.test.js   |  236 ++-
- .../platform/tickerSearch/TickerSearch.jsx         |   16 +-
- .../features/platform/useMemoryPressureSignal.js   |   27 +-
- .../features/platform/useRuntimeControlSnapshot.js |   30 +-
- .../src/features/research/PhotonicsObservatory.jsx |  287 ++-
- .../research/components/ResearchCalendarView.jsx   |   28 +-
- .../research/components/ResearchSettingsPanel.jsx  |    4 +-
- .../research/components/ResearchThemeSwitcher.jsx  |    6 +-
- .../features/trade/BrokerActionConfirmDialog.jsx   |   10 +-
- .../rayalgo/src/features/trade/PayoffDiagram.jsx   |   16 +-
- .../rayalgo/src/features/trade/TradeChainPanel.jsx |   25 +-
- .../src/features/trade/TradeEquityPanel.jsx        |   13 +-
- .../rayalgo/src/features/trade/TradeL2Panel.jsx    |   82 +-
- .../src/features/trade/TradeOrderTicket.jsx        |  558 ++++--
- .../src/features/trade/TradePositionsPanel.jsx     |  119 +-
- .../features/trade/TradeStrategyGreeksPanel.jsx    |   24 +-
- .../src/features/trade/TradeWorkspaceChrome.jsx    |   30 +-
- .../src/features/trade/optionQuoteHydrationPlan.js |   22 +-
- .../trade/optionQuoteHydrationPlan.test.js         |   23 +
- .../src/features/trade/tradeBrokerRequests.js      |   10 +-
- artifacts/rayalgo/src/index.css                    |    2 +-
- artifacts/rayalgo/src/lib/formatters.js            |   76 +-
- artifacts/rayalgo/src/lib/motion.jsx               |   40 +-
- artifacts/rayalgo/src/lib/typography.ts            |    6 +
- artifacts/rayalgo/src/lib/uiTokens.jsx             |    6 +
- artifacts/rayalgo/src/screens/AccountScreen.jsx    |   53 +-
- artifacts/rayalgo/src/screens/AlgoScreen.jsx       |  234 ++-
- .../rayalgo/src/screens/DiagnosticsScreen.jsx      |   66 +-
- artifacts/rayalgo/src/screens/FlowScreen.jsx       |  971 +++++++++-
- artifacts/rayalgo/src/screens/MarketScreen.jsx     |   26 +-
- artifacts/rayalgo/src/screens/ResearchScreen.jsx   |    2 +-
- artifacts/rayalgo/src/screens/SettingsScreen.jsx   |  269 ++-
- artifacts/rayalgo/src/screens/TradeScreen.jsx      |   75 +-
- .../screens/TradeScreen.search-handlers.test.mjs   |   12 +
- .../src/screens/account/AccountHeaderStrip.jsx     |   10 +-
- .../src/screens/account/AccountReturnsPanel.jsx    |  864 ++++++---
- .../src/screens/account/AllocationPanel.jsx        |    8 +-
- .../src/screens/account/CashFundingPanel.jsx       |    6 +-
- .../src/screens/account/EquityCurvePanel.jsx       |   19 +-
- .../src/screens/account/ExpiryCalendarHeatmap.jsx  |    8 +-
- .../src/screens/account/IntradayPnlPanel.jsx       |   10 +-
- .../src/screens/account/PositionTreemapPanel.jsx   |    4 +-
- .../rayalgo/src/screens/account/PositionsPanel.jsx |   35 +-
- .../src/screens/account/RiskDashboardPanel.jsx     |    8 +-
- .../src/screens/account/SetupHealthPanel.jsx       |    2 +-
- .../src/screens/account/TradesOrdersPanel.jsx      |   59 +-
- .../src/screens/account/TradingPatternsPanel.jsx   |   24 +-
- .../rayalgo/src/screens/account/accountUtils.jsx   |   31 +-
- .../src/screens/diagnostics/localAlerts.test.js    |   39 +
- .../settings/DiagnosticThresholdSettingsPanel.jsx  |  102 +-
- .../screens/settings/IbkrLaneArchitecturePanel.jsx |   48 +-
- lib/api-client-react/src/generated/api.schemas.ts  |  178 ++
- lib/api-client-react/src/generated/api.ts          | 2015 ++++++++++----------
- lib/api-spec/openapi.yaml                          |  308 +++
- lib/api-zod/src/generated/api.ts                   |  134 ++
- lib/api-zod/src/generated/types/index.ts           |   11 +
- .../src/generated/types/placeOrderRequest.ts       |    9 +
- .../src/generated/types/submitIbkrOrdersRequest.ts |    2 +
- lib/ibkr-contracts/src/client.ts                   |    8 +
- package.json                                       |    2 +
- replit.md                                          |   56 +-
- scripts/windows/rayalgo-ibkr-helper.ps1            |  120 +-
- 117 files changed, 7790 insertions(+), 2772 deletions(-)
+No tracked changes relative to HEAD.
 ```
 
 ## Validations Detected In Transcript
 
-- None detected in this session transcript.
+- `2026-05-06T23:30:27.683Z` /bin/bash -lc node --check artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs (exit 0)
 
 ## What Changed This Session
 
-- Replace this section with the concrete product and code changes completed in the session.
+- Implemented the Polygon premium distribution mapping plan:
+  - `artifacts/api-server/src/providers/polygon/market-data.ts` now exposes `classificationConfidence` (`high`, `medium`, `low`, `very_low`, `none`), keeps the legacy `confidence` field intact, records option trade condition/exchange codes for audits, and documents the Polygon/Massive snapshot/trade mapping assumptions.
+  - `artifacts/api-server/src/services/platform.ts` aggregates the new source-level confidence and returns `none` for unconfigured/empty states.
+  - `artifacts/rayalgo/src/screens/FlowScreen.jsx` shows a compact source confidence label and mutes classified inflow/outflow bars when coverage is effectively absent (`none`/`very_low`).
+  - `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/api.schemas.ts`, and `lib/api-zod/src/generated/*` include the new confidence field so the route parser preserves it.
+  - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` samples live Polygon/Massive snapshots and trades, then writes a sanitized JSON audit without API keys.
+- Added/updated focused coverage in:
+  - `artifacts/api-server/src/providers/polygon/market-data.test.ts`
+  - `artifacts/api-server/src/services/flow-premium-distribution.test.ts`
+  - `artifacts/rayalgo/e2e/flow-layout.spec.ts`
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- Branch `main` is clean and ahead of `origin/main` by two commits. The latest commit includes the sampler plus focused test updates; the core mapping/schema/UI changes were already present in the preceding in-flight work.
+- Validation completed:
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/polygon/market-data.test.ts src/services/flow-premium-distribution.test.ts` passed: 14/14.
+  - `pnpm --filter @workspace/api-server run typecheck` passed.
+  - `node --check artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` passed.
+  - `pnpm --filter @workspace/api-server exec node --import tsx ./scripts/sampleFlowPremiumDistribution.mjs --write --symbols SPY --max-pages 1 --contracts 2 --trade-limit 25` passed and wrote `tmp/polygon-premium-distribution-sample.json`.
+  - `pnpm --filter @workspace/rayalgo exec node ./scripts/runPlaywrightInReplit.mjs e2e/flow-layout.spec.ts -g "Flow premium distribution"` passed: 1/1.
+- Live sample result: `SPY` via `api.massive.com`, 250 snapshots, 0 last quotes, 50 sampled trade prints, tick-test side basis, coverage `0.000026089939846189105`, `classificationConfidence: "very_low"`. This confirms the `<1% classified` UI/source behavior is needed.
+- Handoff refresh still reports a separate live Codex terminal with no handoffable persisted session (`pid=902`, `/dev/pts/3`); it is unrelated to this completed implementation pass.
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. Review `tmp/polygon-premium-distribution-sample.json` for the full sanitized live audit before deciding whether condition-code filtering should affect tick-test classification.
+2. If more confidence is needed, run the sampler over `SPY,QQQ,NVDA,AAPL,TSLA,IWM` with `--max-pages 1` or `--max-pages 2` and compare quote presence/coverage by symbol.
