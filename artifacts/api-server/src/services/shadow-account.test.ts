@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { SHADOW_ACCOUNT_STREAM_INTERVAL_MS } from "./shadow-account-streams";
 import {
   __shadowWatchlistBacktestInternalsForTests,
   buildWatchlistBacktestFills,
   computeShadowOrderFees,
 } from "./shadow-account";
+
+test("shadow account snapshot stream uses the visible-page cadence", () => {
+  assert.equal(SHADOW_ACCOUNT_STREAM_INTERVAL_MS, 5_000);
+});
 
 test("computeShadowOrderFees applies IBKR Pro Fixed option fees", () => {
   assert.equal(

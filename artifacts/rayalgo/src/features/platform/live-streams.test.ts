@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   applyIbkrAccountPayloadToCache,
   applyShadowAccountPayloadToCache,
+  getShadowAccountStreamUrl,
   getOptionChainContractExpirationKey,
   groupOptionChainContractsByExpiration,
   invalidateVisibleAccountDerivedQueries,
@@ -47,6 +49,25 @@ test("getOptionChainContractExpirationKey normalizes API datetime strings", () =
       optionQuote("SPY-20260427-C700", "2026-04-27T00:00:00.000Z"),
     ),
     "2026-04-27",
+  );
+});
+
+test("shadow account stream URL does not require query params", () => {
+  assert.equal(getShadowAccountStreamUrl(), "/api/streams/accounts/shadow");
+});
+
+test("shadow account stream is owned by the visible shadow account screen", () => {
+  const platformAppSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const accountScreenSource = readFileSync(
+    new URL("../../screens/AccountScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(platformAppSource, /useShadowAccountSnapshotStream/);
+  assert.match(accountScreenSource, /useShadowAccountSnapshotStream/);
+  assert.match(
+    accountScreenSource,
+    /enabled:\s*Boolean\(isVisible\s*&&\s*shadowMode\)/,
   );
 });
 
@@ -246,7 +267,7 @@ const createMockQueryClient = (
   };
 };
 
-test("applyShadowAccountPayloadToCache patches shadow account caches and invalidates derived views", () => {
+test("applyShadowAccountPayloadToCache patches shadow account caches without invalidating derived views", () => {
   const summary = { accountId: "shadow", metrics: { netLiquidation: { value: 100_500 } } };
   const positions = {
     accountId: "shadow",
@@ -274,6 +295,8 @@ test("applyShadowAccountPayloadToCache patches shadow account caches and invalid
     ["/api/accounts/shadow/allocation", { mode: "paper" }],
     ["/api/accounts/shadow/risk", { mode: "paper" }],
     ["/api/accounts/shadow/equity-history", { mode: "paper", range: "ALL" }],
+    ["/api/accounts/shadow/closed-trades", { mode: "paper" }],
+    ["/api/accounts/shadow/cash-activity", { mode: "paper" }],
     ["/api/accounts/U1/summary", { mode: "paper" }],
   ]);
 
@@ -319,17 +342,7 @@ test("applyShadowAccountPayloadToCache patches shadow account caches and invalid
       ?.assetClass[0].label,
     "Cash",
   );
-  assert.ok(
-    invalidated.some(
-      (queryKey) =>
-        queryKey[0] === "/api/accounts/shadow/equity-history" &&
-        (queryKey[1] as any).range === "ALL",
-    ),
-  );
-  assert.equal(
-    invalidated.some((queryKey) => queryKey[0] === "/api/accounts/U1/summary"),
-    false,
-  );
+  assert.equal(invalidated.length, 0);
 });
 
 test("invalidateVisibleAccountDerivedQueries targets scoped real account views", () => {

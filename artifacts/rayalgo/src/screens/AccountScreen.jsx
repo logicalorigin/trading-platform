@@ -18,7 +18,10 @@ import {
   useCreateAccountTradingPatternsSnapshot,
 } from "@workspace/api-client-react";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
-import { useBrokerStreamFreshnessSnapshot } from "../features/platform/live-streams";
+import {
+  useBrokerStreamFreshnessSnapshot,
+  useShadowAccountSnapshotStream,
+} from "../features/platform/live-streams";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { RAYALGO_STORAGE_KEY, T, dim, fs, sp } from "../lib/uiTokens";
@@ -470,6 +473,9 @@ export const AccountScreen = ({
   const performanceCalendarQueriesEnabled = Boolean(
     accountQueriesEnabled && !shadowMode,
   );
+  useShadowAccountSnapshotStream({
+    enabled: Boolean(isVisible && shadowMode),
+  });
   useRuntimeWorkloadFlag("account:live", Boolean(liveRefreshInterval), {
     kind: "poll",
     label: "Account live",

@@ -48,7 +48,6 @@ import {
   useBrokerStreamFreshnessSnapshot,
   useIbkrAccountSnapshotStream,
   useIbkrOrderSnapshotStream,
-  useShadowAccountSnapshotStream,
 } from "./live-streams";
 import { MarketDataSubscriptionProvider } from "./MarketDataSubscriptionProvider.jsx";
 import { usePageVisible } from "./usePageVisible";
@@ -513,9 +512,6 @@ export default function PlatformApp() {
     accountId: null,
     mode: sessionQuery.data?.environment || "paper",
     enabled: accountRealtimeEnabled,
-  });
-  useShadowAccountSnapshotStream({
-    enabled: Boolean(pageVisible),
   });
 
   useEffect(() => {

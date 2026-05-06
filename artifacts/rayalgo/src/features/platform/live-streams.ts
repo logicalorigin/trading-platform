@@ -55,7 +55,6 @@ type ShadowAccountStreamPayload = {
   historyOrders: AccountOrdersResponse;
   allocation: AccountAllocationResponse;
   risk: AccountRiskResponse;
-  equityHistory?: unknown;
   updatedAt: string;
 };
 
@@ -245,6 +244,9 @@ const buildStreamUrl = (
 
   return `${path}?${query}`;
 };
+
+export const getShadowAccountStreamUrl = (): string =>
+  "/api/streams/accounts/shadow";
 
 const buildWebSocketUrl = (path: string): string | null => {
   if (typeof window === "undefined") {
@@ -1207,7 +1209,6 @@ export const applyShadowAccountPayloadToCache = (
       }
     });
 
-  invalidateVisibleAccountDerivedQueries(queryClient, ["shadow"], "paper");
 };
 
 export const applyIbkrAccountPayloadToCache = (
@@ -1689,10 +1690,7 @@ export const useShadowAccountSnapshotStream = ({
   enabled?: boolean;
 } = {}) => {
   const queryClient = useQueryClient();
-  const streamUrl = useMemo(
-    () => buildStreamUrl("/api/streams/accounts/shadow", {}),
-    [],
-  );
+  const streamUrl = getShadowAccountStreamUrl();
 
   useEffect(() => {
     if (
