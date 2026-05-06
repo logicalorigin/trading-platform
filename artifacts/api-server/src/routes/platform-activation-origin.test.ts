@@ -4,9 +4,12 @@ import type { Request } from "express";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 
-const { getIbkrBridgeRequestOrigin } = await import("./platform");
+const { getIbkrBridgeBundleRedirectUrl, getIbkrBridgeRequestOrigin } =
+  await import("./platform");
 
 const ENV_NAMES = [
+  "IBKR_BRIDGE_BUNDLE_URL",
+  "RAYALGO_IBKR_BRIDGE_BUNDLE_URL",
   "IBKR_BRIDGE_API_BASE_URL",
   "RAYALGO_PUBLIC_API_BASE_URL",
   "PUBLIC_API_BASE_URL",
@@ -128,4 +131,25 @@ test("IBKR bridge launcher origin can use a non-loopback browser origin", () => 
   );
 
   assert.equal(origin, "https://rayalgo-preview.example.com");
+});
+
+test("IBKR bridge bundle redirect uses configured external artifact URL", () => {
+  process.env["IBKR_BRIDGE_BUNDLE_URL"] =
+    " https://downloads.example.com/releases/ibgateway-bridge.tar.gz?token=test ";
+
+  assert.equal(
+    getIbkrBridgeBundleRedirectUrl(),
+    "https://downloads.example.com/releases/ibgateway-bridge.tar.gz?token=test",
+  );
+});
+
+test("IBKR bridge bundle redirect ignores invalid primary URLs", () => {
+  process.env["IBKR_BRIDGE_BUNDLE_URL"] = "file:///tmp/bundle.tar.gz";
+  process.env["RAYALGO_IBKR_BRIDGE_BUNDLE_URL"] =
+    "https://cdn.example.com/ibgateway-bridge.tar.gz";
+
+  assert.equal(
+    getIbkrBridgeBundleRedirectUrl(),
+    "https://cdn.example.com/ibgateway-bridge.tar.gz",
+  );
 });

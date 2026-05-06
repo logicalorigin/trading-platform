@@ -177,6 +177,10 @@ const IBKR_BRIDGE_BUNDLE_PATHS = [
   resolve(process.cwd(), "../../artifacts/ibgateway-bridge-windows-current.tar.gz"),
   resolve(process.cwd(), "artifacts/ibgateway-bridge-windows-current.tar.gz"),
 ];
+const IBKR_BRIDGE_BUNDLE_URL_ENV_NAMES = [
+  "IBKR_BRIDGE_BUNDLE_URL",
+  "RAYALGO_IBKR_BRIDGE_BUNDLE_URL",
+];
 const IBKR_BRIDGE_PUBLIC_BASE_URL_ENV_NAMES = [
   "IBKR_BRIDGE_API_BASE_URL",
   "RAYALGO_PUBLIC_API_BASE_URL",
@@ -420,6 +424,26 @@ function getConfiguredBridgeBaseUrl(): string | null {
     const normalized = normalizeOrigin(value);
     if (normalized) {
       return normalized;
+    }
+  }
+
+  return null;
+}
+
+export function getIbkrBridgeBundleRedirectUrl(): string | null {
+  for (const name of IBKR_BRIDGE_BUNDLE_URL_ENV_NAMES) {
+    const value = process.env[name]?.trim();
+    if (!value) {
+      continue;
+    }
+
+    try {
+      const url = new URL(value);
+      if (url.protocol === "https:" || url.protocol === "http:") {
+        return url.toString();
+      }
+    } catch {
+      // Ignore invalid configuration and continue to the next supported name.
     }
   }
 
@@ -965,8 +989,17 @@ router.get("/ibkr/bridge/helper.ps1", async (_req, res) => {
 router.get("/ibkr/bridge/bundle.tar.gz", async (_req, res) => {
   const bundlePath = findIbkrBridgeBundlePath();
   if (!bundlePath) {
+    const redirectUrl = getIbkrBridgeBundleRedirectUrl();
+    if (redirectUrl) {
+      res.setHeader("Cache-Control", "no-store");
+      res.redirect(302, redirectUrl);
+      return;
+    }
+
     res.status(404).json({
       error: "IB Gateway bridge bundle was not found.",
+      detail:
+        "Set IBKR_BRIDGE_BUNDLE_URL to an external artifact URL or provide a local bridge bundle.",
     });
     return;
   }

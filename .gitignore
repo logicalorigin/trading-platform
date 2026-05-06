@@ -60,6 +60,9 @@ attached_assets/
 # local run artifacts and screenshots
 output/
 
+# local release/download artifacts
+artifacts/ibgateway-bridge-windows-current.tar.gz
+
 # local Playwright output
 artifacts/**/test-results/
 artifacts/**/playwright-report/

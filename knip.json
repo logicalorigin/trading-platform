@@ -9,8 +9,13 @@
       "project": ["scripts/**/*.{ts,js,mjs}"]
     },
     "artifacts/api-server": {
-      "entry": ["src/index.ts", "build.mjs"],
-      "project": "src/**/*.ts"
+      "entry": [
+        "src/index.ts",
+        "build.mjs",
+        "scripts/runUnitTests.mjs",
+        "src/**/*.test.ts"
+      ],
+      "project": ["src/**/*.ts", "scripts/**/*.mjs"]
     },
     "artifacts/ibkr-bridge": {
       "entry": ["src/index.ts", "build.mjs", "src/**/*.test.ts"],
@@ -22,8 +27,15 @@
       "project": "src/**/*.ts"
     },
     "artifacts/rayalgo": {
-      "entry": ["src/main.tsx", "src/main.jsx", "index.html", "vite.config.ts"],
-      "project": "src/**/*.{ts,tsx,js,jsx}",
+      "entry": [
+        "src/main.tsx",
+        "src/main.jsx",
+        "index.html",
+        "vite.config.ts",
+        "scripts/runUnitTests.mjs",
+        "src/**/*.test.{ts,tsx,js,jsx,mjs}"
+      ],
+      "project": ["src/**/*.{ts,tsx,js,jsx}", "scripts/**/*.mjs"],
       "ignoreDependencies": ["tailwindcss"]
     },
     "lib/api-spec": {
@@ -43,7 +55,7 @@
       "project": "src/**/*.ts"
     },
     "lib/backtest-core": {
-      "entry": ["src/index.ts"],
+      "entry": ["src/index.ts", "src/**/*.test.ts"],
       "project": "src/**/*.ts"
     },
     "lib/rayreplica-core": {
