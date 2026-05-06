@@ -4,12 +4,14 @@ import {
   BROAD_MARKET_FLOW_STORE_KEY,
   EMPTY_MARKET_FLOW_SNAPSHOT,
   MARKET_FLOW_STORE_ENTRY_CAP,
+  acquireFlowScannerOwner,
   buildMarketFlowStoreKey,
   clearMarketFlowSnapshot,
   getFlowScannerControlState,
   getMarketFlowSnapshotForStoreKey,
   getMarketFlowStoreEntryCount,
   publishMarketFlowSnapshot,
+  releaseFlowScannerOwner,
   resetFlowScannerControlForTests,
   resetMarketFlowStoreForTests,
   setFlowScannerControlState,
@@ -170,4 +172,21 @@ test("flow scanner control state normalizes and shares scanner settings", () => 
   assert.equal(state.config.mode, FLOW_SCANNER_MODE.market);
   assert.equal(state.config.maxSymbols, 2000);
   assert.equal(state.config.batchSize, 250);
+});
+
+test("flow scanner owner leases prevent stale cleanup from disabling an active owner", () => {
+  resetFlowScannerControlForTests();
+
+  const releaseBroadRuntime = acquireFlowScannerOwner("broad-runtime");
+  acquireFlowScannerOwner("remounted-runtime");
+
+  assert.equal(getFlowScannerControlState().ownerActive, true);
+
+  releaseBroadRuntime();
+
+  assert.equal(getFlowScannerControlState().ownerActive, true);
+
+  releaseFlowScannerOwner("remounted-runtime");
+
+  assert.equal(getFlowScannerControlState().ownerActive, false);
 });

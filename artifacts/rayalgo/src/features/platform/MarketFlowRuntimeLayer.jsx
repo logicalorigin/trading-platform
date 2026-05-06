@@ -1,6 +1,7 @@
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
+  acquireFlowScannerOwner,
   buildMarketFlowStoreKey,
   clearMarketFlowSnapshot,
   publishMarketFlowSnapshot,
@@ -40,6 +41,7 @@ export const BroadFlowScannerRuntime = memo(({
   symbols = [],
   enabled = true,
 }) => {
+  const ownerTokenRef = useRef(Symbol("broad-flow-scanner-runtime"));
   const flowScannerControl = useFlowScannerControlState();
   const scannerEnabled = Boolean(flowScannerControl.enabled);
   const runtimeActive = Boolean(enabled && scannerEnabled);
@@ -74,16 +76,10 @@ export const BroadFlowScannerRuntime = memo(({
   }, [flowScannerControl.config]);
 
   useEffect(() => {
-    setFlowScannerControlState(
-      { ownerActive: runtimeActive },
-      { persistConfig: false },
-    );
-    return () => {
-      setFlowScannerControlState(
-        { ownerActive: false },
-        { persistConfig: false },
-      );
-    };
+    if (!runtimeActive) {
+      return undefined;
+    }
+    return acquireFlowScannerOwner(ownerTokenRef.current);
   }, [runtimeActive]);
 
   useEffect(

@@ -62,8 +62,10 @@ export const BROAD_MARKET_FLOW_STORE_KEY = "__broad_market_flow__";
 
 const storeEntries = new Map();
 const flowScannerControlListeners = new Set();
+const flowScannerOwnerLeases = new Set();
 let flowScannerControlVersion = 0;
 const DEFAULT_FLOW_SCANNER_ENABLED = true;
+const MANUAL_FLOW_SCANNER_OWNER = "manual";
 
 const readPersistedFlowScannerConfig = () => {
   try {
@@ -118,12 +120,51 @@ const notifyFlowScannerControlListeners = () => {
 
 export const getFlowScannerControlState = () => flowScannerControlState;
 
+const syncFlowScannerOwnerActive = () => {
+  const ownerActive = flowScannerOwnerLeases.size > 0;
+  if (flowScannerControlState.ownerActive === ownerActive) {
+    return flowScannerControlState;
+  }
+  flowScannerControlState = {
+    ...flowScannerControlState,
+    ownerActive,
+  };
+  notifyFlowScannerControlListeners();
+  return flowScannerControlState;
+};
+
+export const acquireFlowScannerOwner = (
+  ownerId = Symbol("flow-scanner-owner"),
+) => {
+  flowScannerOwnerLeases.add(ownerId);
+  syncFlowScannerOwnerActive();
+  return () => {
+    releaseFlowScannerOwner(ownerId);
+  };
+};
+
+export const releaseFlowScannerOwner = (ownerId) => {
+  flowScannerOwnerLeases.delete(ownerId);
+  return syncFlowScannerOwnerActive();
+};
+
 export const setFlowScannerControlState = (
   patch = {},
   { persistConfig = true } = {},
 ) => {
   const current = flowScannerControlState;
   const hasConfigPatch = Object.prototype.hasOwnProperty.call(patch, "config");
+  const hasOwnerPatch = Object.prototype.hasOwnProperty.call(
+    patch,
+    "ownerActive",
+  );
+  if (hasOwnerPatch) {
+    if (patch.ownerActive) {
+      flowScannerOwnerLeases.add(MANUAL_FLOW_SCANNER_OWNER);
+    } else {
+      flowScannerOwnerLeases.delete(MANUAL_FLOW_SCANNER_OWNER);
+    }
+  }
   const config = hasConfigPatch
     ? normalizeFlowScannerConfig({
         ...current.config,
@@ -134,9 +175,7 @@ export const setFlowScannerControlState = (
     enabled: Object.prototype.hasOwnProperty.call(patch, "enabled")
       ? Boolean(patch.enabled)
       : current.enabled,
-    ownerActive: Object.prototype.hasOwnProperty.call(patch, "ownerActive")
-      ? Boolean(patch.ownerActive)
-      : current.ownerActive,
+    ownerActive: flowScannerOwnerLeases.size > 0,
     config,
   };
 
@@ -286,6 +325,7 @@ export const resetMarketFlowStoreForTests = () => {
 };
 
 export const resetFlowScannerControlForTests = () => {
+  flowScannerOwnerLeases.clear();
   flowScannerControlState = {
     enabled: DEFAULT_FLOW_SCANNER_ENABLED,
     ownerActive: false,
