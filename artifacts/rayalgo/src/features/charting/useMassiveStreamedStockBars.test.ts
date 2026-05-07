@@ -44,6 +44,196 @@ test("live chart patch caps preserve hydrated base bars before trimming", () => 
   assert.equal(patchedBars[0]?.time, baseBars[0]?.time);
 });
 
+test("stock quote patch updates the current 5s candle from the watchlist quote clock", () => {
+  const start = Date.parse("2026-05-04T14:30:00.000Z");
+  const baseBars = [
+    {
+      timestamp: new Date(start),
+      time: start,
+      ts: new Date(start).toISOString(),
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100.25,
+      volume: 1_000,
+      source: "ibkr-history",
+      dataUpdatedAt: "2026-05-04T14:30:01.000Z",
+    },
+  ];
+
+  const patched = __chartStreamingTestInternals.patchBarsWithLiveQuote(
+    baseBars,
+    "5s",
+    {
+      price: 102.5,
+      updatedAt: "2026-05-04T14:30:03.000Z",
+      dataUpdatedAt: "2026-05-04T14:30:03.000Z",
+      marketDataMode: "live",
+      freshness: "live",
+    },
+    "ibkr-stock-quote-derived",
+  );
+
+  assert.equal(patched.length, 1);
+  assert.equal(patched[0]?.time, start);
+  assert.equal(patched[0]?.close, 102.5);
+  assert.equal(patched[0]?.source, "ibkr-stock-quote-derived");
+  assert.equal(patched[0]?.dataUpdatedAt, "2026-05-04T14:30:03.000Z");
+});
+
+test("stock quote patch appends the next 5s candle without waiting for aggregate bars", () => {
+  const start = Date.parse("2026-05-04T14:30:00.000Z");
+  const baseBars = [
+    {
+      timestamp: new Date(start),
+      time: start,
+      ts: new Date(start).toISOString(),
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100.25,
+      volume: 1_000,
+      source: "ibkr-history",
+    },
+  ];
+
+  const patched = __chartStreamingTestInternals.patchBarsWithLiveQuote(
+    baseBars,
+    "5s",
+    {
+      price: 102,
+      updatedAt: "2026-05-04T14:30:07.000Z",
+      dataUpdatedAt: "2026-05-04T14:30:07.000Z",
+    },
+    "ibkr-stock-quote-derived",
+  );
+
+  assert.equal(patched.length, 2);
+  assert.equal(patched[1]?.time, start + 5_000);
+  assert.equal(patched[1]?.open, 100.25);
+  assert.equal(patched[1]?.close, 102);
+});
+
+test("option quote patch carries live volume into the current candle", () => {
+  const start = Date.parse("2026-05-04T14:30:00.000Z");
+  const baseBars = [
+    {
+      timestamp: new Date(start),
+      time: start,
+      ts: new Date(start).toISOString(),
+      open: 1,
+      high: 1.1,
+      low: 0.95,
+      close: 1.05,
+      volume: 12,
+      source: "ibkr-history",
+      dataUpdatedAt: "2026-05-04T14:30:01.000Z",
+    },
+  ];
+
+  const patched = __chartStreamingTestInternals.patchBarsWithLiveQuote(
+    baseBars,
+    "1m",
+    {
+      price: 1.2,
+      volume: 80,
+      updatedAt: "2026-05-04T14:30:30.000Z",
+      dataUpdatedAt: "2026-05-04T14:30:30.000Z",
+      marketDataMode: "live",
+      freshness: "live",
+    },
+  );
+
+  assert.equal(patched.length, 1);
+  assert.equal(patched[0]?.close, 1.2);
+  assert.equal(patched[0]?.volume, 80);
+  assert.equal(patched[0]?.v, 80);
+});
+
+test("option quote patch carries live volume into appended candles", () => {
+  const start = Date.parse("2026-05-04T14:30:00.000Z");
+  const baseBars = [
+    {
+      timestamp: new Date(start),
+      time: start,
+      ts: new Date(start).toISOString(),
+      open: 1,
+      high: 1.1,
+      low: 0.95,
+      close: 1.05,
+      volume: 12,
+      source: "ibkr-history",
+    },
+  ];
+
+  const patched = __chartStreamingTestInternals.patchBarsWithLiveQuote(
+    baseBars,
+    "1m",
+    {
+      price: 1.2,
+      volume: 95,
+      updatedAt: "2026-05-04T14:31:05.000Z",
+      dataUpdatedAt: "2026-05-04T14:31:05.000Z",
+    },
+  );
+
+  assert.equal(patched.length, 2);
+  assert.equal(patched[1]?.time, start + 60_000);
+  assert.equal(patched[1]?.volume, 95);
+  assert.equal(patched[1]?.v, 95);
+});
+
+test("option quote patch signature changes when only volume changes", () => {
+  const baseQuote = {
+    price: 1.2,
+    bid: 1.15,
+    ask: 1.25,
+    updatedAt: "2026-05-04T14:31:05.000Z",
+  };
+
+  assert.notEqual(
+    __chartStreamingTestInternals.buildLiveQuotePatchSignature({
+      ...baseQuote,
+      volume: 80,
+    }),
+    __chartStreamingTestInternals.buildLiveQuotePatchSignature({
+      ...baseQuote,
+      volume: 95,
+    }),
+  );
+});
+
+test("live quote patch does not overwrite a newer aggregate or history bar", () => {
+  const start = Date.parse("2026-05-04T14:30:00.000Z");
+  const baseBars = [
+    {
+      timestamp: new Date(start),
+      time: start,
+      ts: new Date(start).toISOString(),
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100.25,
+      volume: 1_000,
+      source: "ibkr-websocket-derived",
+      dataUpdatedAt: "2026-05-04T14:30:04.000Z",
+    },
+  ];
+
+  const patched = __chartStreamingTestInternals.patchBarsWithLiveQuote(
+    baseBars,
+    "5s",
+    {
+      price: 98,
+      updatedAt: "2026-05-04T14:30:03.000Z",
+      dataUpdatedAt: "2026-05-04T14:30:03.000Z",
+    },
+    "ibkr-stock-quote-derived",
+  );
+
+  assert.deepEqual(patched, baseBars);
+});
+
 test("5m historical stream patches merge into the hydrated candle bucket", () => {
   const baseStart = Date.parse("2026-04-27T13:30:00.000Z");
   const baseBars = [

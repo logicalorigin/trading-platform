@@ -24,8 +24,28 @@ type HistoricalFlowProviderClient = {
     to: Date;
     unusualThreshold?: number;
     maxDte?: number | null;
+    tradeConcurrency?: number;
+    contractPageLimit?: number;
+    contractLimit?: number;
+    tradePageLimit?: number;
+    tradeLimit?: number;
+    signal?: AbortSignal;
     onEvents?: (events: ProviderFlowEvent[]) => void | Promise<void>;
   }): Promise<HistoricalOptionFlowEventsResult | ProviderFlowEvent[]>;
+  getDerivedFlowEvents?(input: {
+    underlying: string;
+    limit?: number;
+    unusualThreshold?: number;
+    from?: Date;
+    to?: Date;
+    snapshotPageLimit?: number;
+    tradeConcurrency?: number;
+    contractPageLimit?: number;
+    contractLimit?: number;
+    tradePageLimit?: number;
+    tradeLimit?: number;
+    signal?: AbortSignal;
+  }): Promise<ProviderFlowEvent[]>;
 };
 
 export type HistoricalFlowProviderName = "polygon" | "massive";
@@ -39,6 +59,16 @@ type HistoricalFlowSession = {
 const HISTORICAL_FLOW_STORE_BATCH_SIZE = 500;
 const HISTORICAL_FLOW_WINDOW_ROW_LIMIT = 50_000;
 const HISTORICAL_FLOW_DEFAULT_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1_000;
+const HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS = 3_000;
+const HISTORICAL_FLOW_STORE_DISABLE_COOLDOWN_MS = 5 * 60_000;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT = 40;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT = 1;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_PAGE_LIMIT = 1;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT = 1;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT = 500;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_CONCURRENCY = 4;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE = 60;
+const HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS = 20_000;
 const HISTORICAL_FLOW_SAMPLE_BASE_BUCKET_SECONDS = 5 * 60;
 const HISTORICAL_FLOW_SAMPLE_MIN_BUCKET_SECONDS = 60;
 const HISTORICAL_FLOW_SAMPLE_MAX_BUCKET_SECONDS = 60 * 60;
@@ -56,6 +86,11 @@ const NEW_YORK_FLOW_SESSION_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 
 let historicalFlowStoreDisabled = false;
+let historicalFlowStoreDisabledUntilMs = 0;
+let historicalFlowStoreReadTimeoutMs =
+  HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
+let historicalFlowDirectFallbackTimeoutMs =
+  HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS;
 const hydrationInFlight = new Map<string, Promise<HydrationTotals>>();
 
 type HydrationTotals = {
@@ -70,6 +105,68 @@ type NewYorkSessionParts = {
   day: number;
   weekday: string;
   minutes: number;
+};
+
+type StoreReadResult<T> = {
+  value: T;
+  timedOut: boolean;
+};
+
+const settleHistoricalFlowStoreRead = async <T>(
+  operation: string,
+  read: () => Promise<T>,
+  fallback: T,
+  options: { onTimeout?: () => void; timeoutMs?: number } = {},
+): Promise<StoreReadResult<T>> => {
+  const timeoutMs = Math.max(
+    1,
+    Math.floor(options.timeoutMs ?? historicalFlowStoreReadTimeoutMs),
+  );
+  let settled = false;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const readPromise = read();
+  const guardedRead = readPromise.then(
+    (value) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      settled = true;
+      return { value, timedOut: false };
+    },
+    (error) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      settled = true;
+      logger.debug(
+        { err: error, operation },
+        "historical flow store read failed for nonblocking caller",
+      );
+      return { value: fallback, timedOut: false };
+    },
+  );
+
+  const timeoutPromise = new Promise<StoreReadResult<T>>((resolve) => {
+    timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      logger.debug(
+        { operation, timeoutMs },
+        "historical flow store read timed out for nonblocking caller",
+      );
+      options.onTimeout?.();
+      resolve({ value: fallback, timedOut: true });
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+
+  const result = await Promise.race([guardedRead, timeoutPromise]);
+  if (result.timedOut) {
+    readPromise.catch(() => {});
+  }
+  return result;
 };
 
 const numberFromDb = (value: unknown): number => {
@@ -199,10 +296,28 @@ const disableHistoricalFlowStoreAfterError = (
   operation: string,
 ): void => {
   historicalFlowStoreDisabled = true;
+  historicalFlowStoreDisabledUntilMs =
+    Date.now() + HISTORICAL_FLOW_STORE_DISABLE_COOLDOWN_MS;
   logger.debug(
     { err: error, operation },
     "durable historical flow store disabled after database error",
   );
+};
+
+const isHistoricalFlowStoreDisabled = (): boolean => {
+  if (!historicalFlowStoreDisabled) {
+    return false;
+  }
+  if (
+    Number.isFinite(historicalFlowStoreDisabledUntilMs) &&
+    historicalFlowStoreDisabledUntilMs > 0 &&
+    Date.now() >= historicalFlowStoreDisabledUntilMs
+  ) {
+    historicalFlowStoreDisabled = false;
+    historicalFlowStoreDisabledUntilMs = 0;
+    return false;
+  }
+  return true;
 };
 
 const providerEventKeyFor = (event: ProviderFlowEvent): string =>
@@ -328,6 +443,75 @@ const resolveHistoricalFlowSampleWindows = (input: {
   return windows;
 };
 
+const historicalFlowEventTimeMs = (event: ProviderFlowEvent): number | null => {
+  const occurredAt = event.occurredAt;
+  if (occurredAt instanceof Date) {
+    return Number.isNaN(occurredAt.getTime()) ? null : occurredAt.getTime();
+  }
+  const parsed = new Date(String(occurredAt ?? ""));
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+};
+
+const sampleHistoricalFlowEventsForWindow = (input: {
+  events: ProviderFlowEvent[];
+  from: Date;
+  to: Date;
+  limit: number;
+  bucketSeconds?: number;
+}): ProviderFlowEvent[] => {
+  if (input.events.length <= 1) {
+    return input.events;
+  }
+  const sample = resolveHistoricalFlowSamplePlan({
+    from: input.from,
+    to: input.to,
+    limit: input.limit,
+    bucketSeconds: input.bucketSeconds,
+  });
+  const windows = resolveHistoricalFlowSampleWindows({
+    sessions: resolveHistoricalFlowSessions({ from: input.from, to: input.to }),
+    bucketSeconds: sample.bucketSeconds,
+    from: input.from,
+    to: input.to,
+  });
+  const selected: ProviderFlowEvent[] = [];
+
+  for (const window of windows) {
+    if (selected.length >= sample.rowLimit) {
+      break;
+    }
+    const startMs = window.from.getTime();
+    const endMs = window.to.getTime();
+    const bucketEvents = input.events
+      .filter((event) => {
+        const timeMs = historicalFlowEventTimeMs(event);
+        return timeMs !== null && timeMs >= startMs && timeMs < endMs;
+      })
+      .sort((left, right) => {
+        const premiumDelta = Number(right.premium ?? 0) - Number(left.premium ?? 0);
+        if (premiumDelta !== 0) {
+          return premiumDelta;
+        }
+        return (
+          (historicalFlowEventTimeMs(left) ?? 0) -
+          (historicalFlowEventTimeMs(right) ?? 0)
+        );
+      })
+      .slice(0, Math.min(sample.perBucketLimit, sample.rowLimit - selected.length));
+    selected.push(...bucketEvents);
+  }
+
+  return selected.sort((left, right) => {
+    const timeDelta =
+      (historicalFlowEventTimeMs(left) ?? 0) -
+      (historicalFlowEventTimeMs(right) ?? 0);
+    if (timeDelta !== 0) {
+      return timeDelta;
+    }
+    return Number(right.premium ?? 0) - Number(left.premium ?? 0);
+  });
+};
+
 export function resolveHistoricalFlowSamplePlan(input: {
   from: Date;
   to: Date;
@@ -388,7 +572,7 @@ async function loadStoredHistoricalFlowEvents(input: {
   limit: number;
   bucketSeconds?: number;
 }): Promise<ProviderFlowEvent[]> {
-  if (historicalFlowStoreDisabled) {
+  if (isHistoricalFlowStoreDisabled()) {
     return [];
   }
 
@@ -438,7 +622,7 @@ async function persistHistoricalFlowEvents(input: {
   provider: HistoricalFlowProviderName;
   events: ProviderFlowEvent[];
 }): Promise<void> {
-  if (historicalFlowStoreDisabled || input.events.length === 0) {
+  if (isHistoricalFlowStoreDisabled() || input.events.length === 0) {
     return;
   }
 
@@ -501,7 +685,7 @@ async function loadIncompleteSessions(input: {
   provider: HistoricalFlowProviderName;
   sessions: HistoricalFlowSession[];
 }): Promise<HistoricalFlowSession[]> {
-  if (historicalFlowStoreDisabled || input.sessions.length === 0) {
+  if (isHistoricalFlowStoreDisabled() || input.sessions.length === 0) {
     return input.sessions;
   }
 
@@ -559,7 +743,7 @@ async function markHydrationSession(input: {
   eventCount?: number;
   errorMessage?: string | null;
 }): Promise<void> {
-  if (historicalFlowStoreDisabled) {
+  if (isHistoricalFlowStoreDisabled()) {
     return;
   }
 
@@ -701,15 +885,59 @@ async function loadDirectHistoricalFlowEvents(input: {
   client: HistoricalFlowProviderClient;
   from: Date;
   to: Date;
+  limit?: number;
   unusualThreshold?: number;
   maxDte?: number | null;
+  fallbackMaxDte?: number;
+  preferDerived?: boolean;
+  tradeConcurrency?: number;
+  snapshotPageLimit?: number;
+  contractPageLimit?: number;
+  contractLimit?: number;
+  tradePageLimit?: number;
+  tradeLimit?: number;
+  signal?: AbortSignal;
 }): Promise<ProviderFlowEvent[]> {
+  if (input.preferDerived && input.client.getDerivedFlowEvents) {
+    try {
+      return await input.client.getDerivedFlowEvents({
+        underlying: input.underlying,
+        from: input.from,
+        to: input.to,
+        limit: Math.max(1, Math.min(input.limit ?? 250, 250)),
+        unusualThreshold: input.unusualThreshold,
+        snapshotPageLimit: input.snapshotPageLimit,
+        tradeConcurrency: input.tradeConcurrency,
+        contractPageLimit: input.contractPageLimit,
+        contractLimit: input.contractLimit,
+        tradePageLimit: input.tradePageLimit,
+        tradeLimit: input.tradeLimit,
+        signal: input.signal,
+      });
+    } catch (error) {
+      logger.debug(
+        { err: error, underlying: input.underlying },
+        "historical flow derived direct fallback failed; trying trade scan",
+      );
+    }
+  }
+
+  const maxDte =
+    typeof input.maxDte === "number" && Number.isFinite(input.maxDte)
+      ? input.maxDte
+      : input.fallbackMaxDte;
   const result = await input.client.getHistoricalOptionFlowEvents({
     underlying: input.underlying,
     from: input.from,
     to: input.to,
     unusualThreshold: input.unusualThreshold,
-    maxDte: input.maxDte,
+    maxDte,
+    tradeConcurrency: input.tradeConcurrency,
+    contractPageLimit: input.contractPageLimit,
+    contractLimit: input.contractLimit,
+    tradePageLimit: input.tradePageLimit,
+    tradeLimit: input.tradeLimit,
+    signal: input.signal,
   });
   return Array.isArray(result) ? result : result.events;
 }
@@ -753,21 +981,128 @@ export async function listHistoricalFlowEvents(input: {
   }
 
   const sessions = resolveHistoricalFlowSessions({ from, to });
-  let storedEvents = await loadStoredHistoricalFlowEvents({
-    underlying,
-    provider,
-    from,
-    to,
-    limit: input.limit,
-    bucketSeconds: input.historicalBucketSeconds,
-  });
-  const incompleteSessions = await loadIncompleteSessions({
-    underlying,
-    provider,
-    sessions,
-  });
+  let storedEvents: ProviderFlowEvent[] = [];
+  let incompleteSessions: HistoricalFlowSession[] = sessions;
 
-  if (historicalFlowStoreDisabled) {
+  if (input.blocking === false) {
+    const storedRead = await settleHistoricalFlowStoreRead(
+      "loadStoredHistoricalFlowEvents",
+      () =>
+        loadStoredHistoricalFlowEvents({
+          underlying,
+          provider,
+          from,
+          to,
+          limit: input.limit,
+          bucketSeconds: input.historicalBucketSeconds,
+        }),
+      [],
+    );
+    storedEvents = storedRead.value;
+
+    if (storedRead.timedOut) {
+      disableHistoricalFlowStoreAfterError(
+        new Error("historical flow store read timed out"),
+        "loadStoredHistoricalFlowEvents",
+      );
+    } else {
+      const incompleteRead = await settleHistoricalFlowStoreRead(
+        "loadIncompleteSessions",
+        () =>
+          loadIncompleteSessions({
+            underlying,
+            provider,
+            sessions,
+          }),
+        sessions,
+      );
+      incompleteSessions = incompleteRead.value;
+
+      if (incompleteRead.timedOut) {
+        disableHistoricalFlowStoreAfterError(
+          new Error("historical flow incomplete-session read timed out"),
+          "loadIncompleteSessions",
+        );
+      }
+    }
+  } else {
+    storedEvents = await loadStoredHistoricalFlowEvents({
+      underlying,
+      provider,
+      from,
+      to,
+      limit: input.limit,
+      bucketSeconds: input.historicalBucketSeconds,
+    });
+    incompleteSessions = await loadIncompleteSessions({
+      underlying,
+      provider,
+      sessions,
+    });
+  }
+
+  if (isHistoricalFlowStoreDisabled()) {
+    if (input.blocking === false) {
+      const controller = new AbortController();
+      const directRead = await settleHistoricalFlowStoreRead(
+        "loadDirectHistoricalFlowEvents",
+        () =>
+          loadDirectHistoricalFlowEvents({
+            underlying,
+            client: input.client,
+            from,
+            to,
+            limit: input.limit,
+            unusualThreshold: input.unusualThreshold,
+            maxDte: input.filters.maxDte,
+            fallbackMaxDte: HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE,
+            preferDerived: true,
+            snapshotPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT,
+            contractPageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_PAGE_LIMIT,
+            contractLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT,
+            tradePageLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT,
+            tradeLimit: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT,
+            tradeConcurrency: HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_CONCURRENCY,
+            signal: controller.signal,
+          }),
+        [],
+        {
+          timeoutMs: historicalFlowDirectFallbackTimeoutMs,
+          onTimeout: () => {
+            controller.abort();
+          },
+        },
+      );
+      const filteredCandidates = filterFlowEventsForRequest(
+        directRead.value,
+        input.filters,
+        input.unusualThreshold,
+        HISTORICAL_FLOW_WINDOW_ROW_LIMIT,
+      ) as ProviderFlowEvent[];
+      const filteredEvents = sampleHistoricalFlowEventsForWindow({
+        events: filteredCandidates,
+        from,
+        to,
+        limit: input.limit,
+        bucketSeconds: input.historicalBucketSeconds,
+      });
+      return {
+        events: filteredEvents,
+        source: flowSource({
+          provider: "polygon",
+          status: filteredEvents.length ? "fallback" : "empty",
+          attemptedProviders,
+          unusualThreshold: input.unusualThreshold ?? 1,
+          ibkrStatus: "empty",
+          ibkrReason: filteredEvents.length
+            ? "options_flow_historical_direct"
+            : directRead.timedOut
+              ? "options_flow_historical_provider_timeout"
+              : "options_flow_historical_store_unavailable",
+        }),
+      };
+    }
+
     try {
       storedEvents = await loadDirectHistoricalFlowEvents({
         underlying,
@@ -806,7 +1141,7 @@ export async function listHistoricalFlowEvents(input: {
     } else {
       try {
         await hydrate;
-        storedEvents = historicalFlowStoreDisabled
+        storedEvents = isHistoricalFlowStoreDisabled()
           ? await loadDirectHistoricalFlowEvents({
               underlying,
               client: input.client,
@@ -824,7 +1159,7 @@ export async function listHistoricalFlowEvents(input: {
               bucketSeconds: input.historicalBucketSeconds,
             });
       } catch (error) {
-        if (storedEvents.length === 0 || historicalFlowStoreDisabled) {
+        if (storedEvents.length === 0 || isHistoricalFlowStoreDisabled()) {
           try {
             storedEvents = await loadDirectHistoricalFlowEvents({
               underlying,
@@ -890,9 +1225,31 @@ export async function listHistoricalFlowEvents(input: {
 
 export function __resetHistoricalFlowEventsForTests(): void {
   historicalFlowStoreDisabled = false;
+  historicalFlowStoreDisabledUntilMs = 0;
+  historicalFlowStoreReadTimeoutMs =
+    HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
+  historicalFlowDirectFallbackTimeoutMs =
+    HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS;
   hydrationInFlight.clear();
 }
 
 export function __setHistoricalFlowStoreDisabledForTests(disabled: boolean): void {
   historicalFlowStoreDisabled = disabled;
+  historicalFlowStoreDisabledUntilMs = disabled ? Number.POSITIVE_INFINITY : 0;
+}
+
+export function __setHistoricalFlowStoreReadTimeoutMsForTests(
+  timeoutMs: number,
+): void {
+  historicalFlowStoreReadTimeoutMs = Number.isFinite(timeoutMs)
+    ? Math.max(1, Math.floor(timeoutMs))
+    : HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS;
+}
+
+export function __setHistoricalFlowDirectFallbackTimeoutMsForTests(
+  timeoutMs: number,
+): void {
+  historicalFlowDirectFallbackTimeoutMs = Number.isFinite(timeoutMs)
+    ? Math.max(1, Math.floor(timeoutMs))
+    : HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS;
 }

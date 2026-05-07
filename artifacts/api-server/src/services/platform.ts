@@ -131,7 +131,9 @@ import {
   listHistoricalFlowEvents,
   normalizeHistoricalFlowSampleBucketSeconds,
   __resetHistoricalFlowEventsForTests,
+  __setHistoricalFlowDirectFallbackTimeoutMsForTests,
   __setHistoricalFlowStoreDisabledForTests,
+  __setHistoricalFlowStoreReadTimeoutMsForTests,
 } from "./historical-flow-events";
 import {
   admitMarketDataLeases,
@@ -166,7 +168,11 @@ export {
   resolveIbkrRuntimeStreamState as __resolveIbkrRuntimeStreamStateForTests,
   resolveIbkrRuntimeStrictReason as __resolveIbkrRuntimeStrictReasonForTests,
 } from "./platform-runtime-status";
-export { __setHistoricalFlowStoreDisabledForTests };
+export {
+  __setHistoricalFlowDirectFallbackTimeoutMsForTests,
+  __setHistoricalFlowStoreDisabledForTests,
+  __setHistoricalFlowStoreReadTimeoutMsForTests,
+};
 
 const BUILT_IN_WATCHLISTS = [
   {
@@ -576,6 +582,32 @@ function mapWatchlistRows(
 
   return {
     watchlists: Array.from(grouped.values()),
+  };
+}
+
+function buildBuiltInWatchlistSnapshot(): { watchlists: WatchlistRecord[] } {
+  const now = new Date();
+  return {
+    watchlists: BUILT_IN_WATCHLISTS.map((watchlist, watchlistIndex) => ({
+      id: `built-in-${watchlist.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      name: watchlist.name,
+      isDefault: watchlist.isDefault,
+      updatedAt: now,
+      items: watchlist.items.map((item, itemIndex) => ({
+        id: `built-in-${watchlistIndex}-${item.symbol}`,
+        symbol: item.symbol,
+        name: item.name,
+        market: "stocks" as UniverseMarket,
+        normalizedExchangeMic: null,
+        exchangeDisplay: null,
+        countryCode: "US",
+        exchangeCountryCode: "US",
+        sector: null,
+        industry: null,
+        sortOrder: itemIndex,
+        addedAt: now,
+      })),
+    })),
   };
 }
 
@@ -2073,8 +2105,15 @@ export async function listAccounts(input: { mode?: "paper" | "live" }) {
 }
 
 export async function listWatchlists() {
-  const snapshot = await listWatchlistsFromDb();
-  return snapshot;
+  try {
+    return await listWatchlistsFromDb();
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "watchlist database unavailable; serving built-in watchlists",
+    );
+    return buildBuiltInWatchlistSnapshot();
+  }
 }
 
 export async function createWatchlist(input: {

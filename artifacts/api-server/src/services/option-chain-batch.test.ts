@@ -1492,6 +1492,7 @@ test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when I
   assert.equal(result.bars[0].providerContractId, "event-conid");
   assert.equal(result.bars[0].source, "polygon-option-aggregates");
   assert.equal(result.bars[0].close, 1.25);
+  assert.equal(result.bars[0].volume, 42);
   assert.equal(result.historyPage.provider, "polygon-option-aggregates");
   assert.equal(result.historyPage.providerNextUrl?.includes("apiKey"), false);
   assert.equal(result.historyPage.providerNextUrl?.includes("cursor=abc"), true);

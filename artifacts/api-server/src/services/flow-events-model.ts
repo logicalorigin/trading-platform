@@ -200,6 +200,8 @@ const TRANSIENT_EMPTY_FLOW_SOURCE_PATTERNS = [
   "queued",
   "refreshing",
   "saturated",
+  "timed out",
+  "timeout",
   "unavailable",
 ];
 

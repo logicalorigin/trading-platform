@@ -17,7 +17,10 @@ import {
   resolveLocalRollupBaseTimeframe,
   rollupMarketBars,
 } from "../charting/timeframeRollups";
-import { flowEventsToChartEventConversion } from "../charting/chartEvents";
+import {
+  flowEventsToChartEventConversion,
+  mergeFlowEventFeeds,
+} from "../charting/chartEvents";
 import {
   getChartBarLimit,
   getChartBrokerRecentWindowMinutes,
@@ -36,6 +39,7 @@ import {
   buildTradeBarsFromApi,
   describeBrokerChartSource,
   describeBrokerChartStatus,
+  mergeChartBarsByTime,
   resolveBrokerChartSourceState,
   useDisplayChartPriceFallbackBars,
 } from "../charting/chartApiBars";
@@ -79,6 +83,8 @@ import {
 import { _initialState, persistState } from "../../lib/workspaceState";
 import { T, getCurrentTheme } from "../../lib/uiTokens";
 
+const COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000;
+
 export const TradeEquityPanel = ({
   ticker,
   flowEvents,
@@ -96,20 +102,17 @@ export const TradeEquityPanel = ({
   onWorkspaceChartChange,
   referenceLines = [],
   showSignalFrameBorder = true,
+  prewarmFavoriteTimeframesEnabled = true,
 }) => {
   const queryClient = useQueryClient();
-  const parentFlowEventsProvided = flowEvents !== undefined;
-  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker, {
-    subscribe: !parentFlowEventsProvided,
-  });
+  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
   const effectiveFlowEvents = useMemo(
     () =>
-      parentFlowEventsProvided
-        ? Array.isArray(flowEvents)
-          ? flowEvents
-          : []
-        : tradeFlowSnapshot.events || [],
-    [flowEvents, parentFlowEventsProvided, tradeFlowSnapshot.events],
+      mergeFlowEventFeeds(
+        tradeFlowSnapshot.events || [],
+        Array.isArray(flowEvents) ? flowEvents : [],
+      ),
+    [flowEvents, tradeFlowSnapshot.events],
   );
   const tickerFallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
@@ -213,10 +216,10 @@ export const TradeEquityPanel = ({
                   limit: expandedLimit,
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
-                  allowHistoricalSynthesis: false,
+                  allowHistoricalSynthesis: true,
                   brokerRecentWindowMinutes,
                 },
-                buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
+                buildBarsRequestOptions(BARS_REQUEST_PRIORITY.visible),
               ),
             }),
           ...BARS_QUERY_DEFAULTS,
@@ -261,7 +264,7 @@ export const TradeEquityPanel = ({
             limit: baseRequestedLimit,
             outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
             source: "trades",
-            allowHistoricalSynthesis: false,
+            allowHistoricalSynthesis: true,
             brokerRecentWindowMinutes: baseBrokerRecentWindowMinutes,
           },
           buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
@@ -292,11 +295,19 @@ export const TradeEquityPanel = ({
   );
   useEffect(() => {
     if (!baseBarsPage.bars.length) {
-      return;
+      return undefined;
     }
 
-    progressiveBars.hydrateFullWindow();
-  }, [baseBarsPage.bars.length, progressiveBars.hydrateFullWindow]);
+    if (!compact) {
+      progressiveBars.hydrateFullWindow();
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      progressiveBars.hydrateFullWindow();
+    }, COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [baseBarsPage.bars.length, compact, progressiveBars.hydrateFullWindow]);
   const prewarmFavoriteTimeframe = useCallback(
     (nextTimeframe) => {
       const favoriteTimeframe = normalizeChartTimeframe(nextTimeframe);
@@ -344,7 +355,7 @@ export const TradeEquityPanel = ({
                   limit: favoriteLimit,
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
-                  allowHistoricalSynthesis: false,
+                  allowHistoricalSynthesis: true,
                   brokerRecentWindowMinutes:
                     favoriteBrokerRecentWindowMinutes,
                 },
@@ -358,6 +369,7 @@ export const TradeEquityPanel = ({
   );
   useEffect(() => {
     if (
+      !prewarmFavoriteTimeframesEnabled ||
       !historicalDataEnabled ||
       !barsQuery.data?.bars?.length ||
       !primaryFavoriteTimeframes.length
@@ -379,6 +391,7 @@ export const TradeEquityPanel = ({
     barsQuery.data?.bars?.length,
     chartHydrationScopeKey,
     historicalDataEnabled,
+    prewarmFavoriteTimeframesEnabled,
     prewarmFavoriteTimeframe,
     primaryFavoriteTimeframes,
   ]);
@@ -418,7 +431,7 @@ export const TradeEquityPanel = ({
                   to: toIso,
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
-                  allowHistoricalSynthesis: false,
+                  allowHistoricalSynthesis: true,
                   historyCursor: historyCursor || undefined,
                   preferCursor: historyCursor && preferCursor ? true : undefined,
                   brokerRecentWindowMinutes,
@@ -469,9 +482,13 @@ export const TradeEquityPanel = ({
       ),
     [prependableBars.bars, rollupBaseTimeframe, tf],
   );
-  const bars = useMemo(
+  const streamedChartBars = useMemo(
     () => rollupMarketBars(liveBars, rollupBaseTimeframe, tf),
     [liveBars, rollupBaseTimeframe, tf],
+  );
+  const bars = useMemo(
+    () => mergeChartBarsByTime(hydratedBaseBars, streamedChartBars),
+    [hydratedBaseBars, streamedChartBars],
   );
   const displayPriceFallbackQuery = useDisplayChartPriceFallbackBars({
     symbol: ticker,
@@ -545,7 +562,9 @@ export const TradeEquityPanel = ({
   const latestBarSource = String(latestBar?.source || "");
   const hasBrokerLiveBar =
     latestBarSource === "ibkr-websocket-derived" ||
-    latestBarSource.startsWith("ibkr-websocket-derived:");
+    latestBarSource === "ibkr-stock-quote-derived" ||
+    latestBarSource.startsWith("ibkr-websocket-derived:") ||
+    latestBarSource.startsWith("ibkr-stock-quote-derived:");
   const barsStatus = !bars.length
     ? barsQuery.isPending || barsQuery.fetchStatus === "fetching"
       ? "loading"
@@ -684,6 +703,8 @@ export const TradeEquityPanel = ({
       frameSignalState={showSignalFrameBorder ? signalFrameState : null}
       chartEvents={chartEvents}
       chartFlowDiagnostics={chartEventConversion}
+      latestQuotePrice={tickerInfo?.price}
+      latestQuoteUpdatedAt={tickerInfo?.updatedAt}
       showSurfaceToolbar={false}
       showLegend
       legend={{

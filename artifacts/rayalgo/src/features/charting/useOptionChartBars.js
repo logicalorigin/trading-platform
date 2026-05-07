@@ -43,21 +43,35 @@ export const normalizeBrokerProviderContractId = (value) => {
     : null;
 };
 
-export const normalizeApiBarForChart = (bar) => ({
-  ts: bar.timestamp,
-  timestamp: bar.timestamp,
-  time: bar.timestamp,
-  o: bar.open,
-  h: bar.high,
-  l: bar.low,
-  c: bar.close,
-  v: bar.volume,
-  source: bar.source || bar.transport || "ibkr-history",
-  freshness: bar.freshness,
-  marketDataMode: bar.marketDataMode,
-  dataUpdatedAt: bar.dataUpdatedAt,
-  studyFallback: Boolean(bar.source === "option-study-quote-fallback"),
-});
+const resolveApiBarVolume = (bar) => {
+  if (typeof bar.volume === "number" && Number.isFinite(bar.volume)) {
+    return bar.volume;
+  }
+  if (typeof bar.v === "number" && Number.isFinite(bar.v)) {
+    return bar.v;
+  }
+  return 0;
+};
+
+export const normalizeApiBarForChart = (bar) => {
+  const volume = resolveApiBarVolume(bar);
+  return {
+    ts: bar.timestamp,
+    timestamp: bar.timestamp,
+    time: bar.timestamp,
+    o: bar.open,
+    h: bar.high,
+    l: bar.low,
+    c: bar.close,
+    v: volume,
+    volume,
+    source: bar.source || bar.transport || "ibkr-history",
+    freshness: bar.freshness,
+    marketDataMode: bar.marketDataMode,
+    dataUpdatedAt: bar.dataUpdatedAt,
+    studyFallback: Boolean(bar.source === "option-study-quote-fallback"),
+  };
+};
 
 export const buildOptionChartIdentityKey = ({
   underlying,

@@ -111,6 +111,20 @@ test("flow cache helpers preserve live data across transient empty sources", () 
   );
 });
 
+test("flow cache helpers treat historical store timeouts as transient", () => {
+  const timeoutEmpty: FlowEventsResult = {
+    events: [],
+    source: flowSource({
+      provider: "polygon",
+      status: "empty",
+      ibkrStatus: "empty",
+      ibkrReason: "options_flow_historical_store_read_timeout",
+    }),
+  };
+
+  assert.equal(isCacheableFlowEventsResult(timeoutEmpty), false);
+});
+
 test("flow scanner snapshot policy rejects polygon fallback unless allowed", () => {
   const snapshot = {
     source: flowSource({

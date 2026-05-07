@@ -11,8 +11,10 @@ import {
   clampOverlayRectPosition,
   clampVisibleLogicalRangeToBarCount,
   clearStoredChartViewportSnapshot,
+  isOverlayAnchorVisibleOnAxis,
   isVisibleRangeNearRealtime,
   normalizeVisibleLogicalRange,
+  RESEARCH_CHART_SURFACE_MODULE_VERSION,
   readStoredChartViewportSnapshot,
   resolveAutoHydrationVisibleRange,
   resolveChartPlotPanRange,
@@ -21,6 +23,7 @@ import {
   resolveDashboardStripAnchorStyle,
   resolveDashboardStripTier,
   resolveEffectiveChartViewportSnapshot,
+  resolveSeriesTailUpdateResetReason,
   resolveVisibleRangeChangeSource,
   resolveVisibleRangePublishDecision,
   resolveVisibleRangePublishState,
@@ -87,6 +90,17 @@ test("ResearchChartSurface keeps flow chart events visible when execution marker
   );
 });
 
+test("ResearchChartSurface mounts the overlay layer for flow event overlays", () => {
+  const source = readResearchChartSurfaceSource();
+  const overlayLayerGate = source.match(
+    /\{windowOverlays\.length \|\|[\s\S]*?\? \(\s*<div\s+data-testid=\{dataTestId \? `\$\{dataTestId\}-overlay-layer`/,
+  )?.[0];
+
+  assert.ok(overlayLayerGate, "overlay layer gate must be present");
+  assert.match(overlayLayerGate, /flowVolumeOverlays\.length/);
+  assert.match(overlayLayerGate, /chartEventOverlays\.length/);
+});
+
 test("ResearchChartSurface gates gray session visuals to closed market hours", () => {
   const source = readResearchChartSurfaceSource();
 
@@ -149,6 +163,13 @@ test("ResearchChartSurface clamps overlay rectangles inside the plot viewport", 
     }),
     { left: 80, top: 0 },
   );
+});
+
+test("ResearchChartSurface drops event anchors that are fully outside the plot axis", () => {
+  assert.equal(isOverlayAnchorVisibleOnAxis(-13, 12, 320), false);
+  assert.equal(isOverlayAnchorVisibleOnAxis(-12, 12, 320), true);
+  assert.equal(isOverlayAnchorVisibleOnAxis(332, 12, 320), true);
+  assert.equal(isOverlayAnchorVisibleOnAxis(333, 12, 320), false);
 });
 
 test("ResearchChartSurface flattens dashboard fields for one-line micro strips", () => {
@@ -357,6 +378,10 @@ test("ResearchChartSurface resets batched data when an interior point changes", 
   ];
 
   assert.equal(resolveSeriesTailUpdateMode(previous, next), "reset");
+  assert.equal(
+    resolveSeriesTailUpdateResetReason(previous, next),
+    "interior-point-changed",
+  );
 });
 
 test("ResearchChartSurface resets when interval changes replace object-shaped times", () => {
@@ -370,6 +395,10 @@ test("ResearchChartSurface resets when interval changes replace object-shaped ti
   ];
 
   assert.equal(resolveSeriesTailUpdateMode(previous, next), "reset");
+  assert.equal(
+    resolveSeriesTailUpdateResetReason(previous, next),
+    "time-sequence-changed",
+  );
 });
 
 test("ResearchChartSurface expands line-break studies into isolated contiguous segments", () => {
@@ -1323,10 +1352,17 @@ test("ResearchChartSurface restores viewport ranges after full resets and user-t
 test("ResearchChartSurface exposes live render diagnostics for viewport and flow", () => {
   const source = readResearchChartSurfaceSource();
 
+  assert.equal(
+    RESEARCH_CHART_SURFACE_MODULE_VERSION,
+    "ResearchChartSurface@20260507-runtime-fingerprint-v1",
+  );
+  assert.match(source, /data-chart-surface-module-version=\{RESEARCH_CHART_SURFACE_MODULE_VERSION\}/);
+  assert.match(source, /data-chart-surface-module-source="ResearchChartSurface\.tsx"/);
   assert.match(source, /data-chart-flow-events-count=\{flowChartEventCount\}/);
   assert.match(source, /data-chart-flow-raw-input-count=\{rawFlowInputCount\}/);
   assert.match(source, /data-chart-flow-converted-count=\{convertedFlowEventCount\}/);
   assert.match(source, /data-chart-flow-bucket-count=\{flowChartBuckets\.length\}/);
+  assert.match(source, /data-chart-flow-hydration-state=\{chartFlowHydrationState\}/);
   assert.match(source, /data-chart-flow-bucketed-event-count=/);
   assert.match(source, /data-chart-flow-marker-count=\{renderedFlowMarkerCount\}/);
   assert.match(source, /data-chart-flow-invalid-time-drop-count=/);
@@ -1336,9 +1372,22 @@ test("ResearchChartSurface exposes live render diagnostics for viewport and flow
   assert.match(source, /data-chart-extended-session-enabled=/);
   assert.match(source, /data-chart-instance-create-count=\{surfaceDiagnostics\.chartInstanceCreates\}/);
   assert.match(source, /data-chart-series-full-reset-count=\{surfaceDiagnostics\.seriesFullResets\}/);
+  assert.match(source, /data-chart-series-last-reset-reason=/);
+  assert.match(source, /data-chart-latest-quote-age-ms=/);
+  assert.match(source, /data-chart-watchlist-price-delta=/);
+  assert.match(source, /data-chart-marker-set-count=\{surfaceDiagnostics\.markerSetCalls\}/);
   assert.match(source, /data-chart-viewport-user-range-preserve-count=/);
   assert.match(source, /visibleRangeUserPreserved/);
   assert.match(source, /visibleRangeRealtimeFollow/);
+});
+
+test("ResearchChartSurface skips marker redraws when the marker payload is unchanged", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /const markerSignatureRef = useRef<string \| null>\(null\);/);
+  assert.match(source, /const markerSignature = JSON\.stringify\(markers\);/);
+  assert.match(source, /markerSignatureRef\.current === markerSignature/);
+  assert.match(source, /markerApi\.setMarkers\(markers\)/);
 });
 
 test("ResearchChartSurface sanitizes stored scale preferences", () => {

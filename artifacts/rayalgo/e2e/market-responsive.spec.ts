@@ -65,6 +65,41 @@ function logicalRangesClose(
   );
 }
 
+async function waitForLogicalRangeToSettle(
+  surface: Locator,
+  tolerance = 0.001,
+) {
+  let previousSignature: string | null = null;
+  let settledSignature: string | null = null;
+  let stableSamples = 0;
+
+  await expect
+    .poll(
+      async () => {
+        const currentSignature = await surface.getAttribute(
+          "data-chart-visible-logical-range",
+        );
+        if (
+          currentSignature &&
+          currentSignature !== "none" &&
+          logicalRangesClose(currentSignature, previousSignature, tolerance)
+        ) {
+          stableSamples += 1;
+          settledSignature = currentSignature;
+        } else {
+          stableSamples = 0;
+        }
+        previousSignature = currentSignature;
+        return stableSamples;
+      },
+      { timeout: 5_000, intervals: [100, 120, 160, 200, 250] },
+    )
+    .toBeGreaterThanOrEqual(2);
+
+  expect(settledSignature, "settled logical range").not.toBeNull();
+  return settledSignature;
+}
+
 async function expectPlotInsideChartFrame(
   chart: Locator,
   plot: Locator,
@@ -512,6 +547,24 @@ test("Market startup resolves nested light theme before React mounts", async ({
   });
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.dataset.rayalgoRuntimeBuildMode,
+      ),
+    )
+    .toBe("vite-dev");
+  const runtimeFingerprint = await page.evaluate(() => {
+    const runtimeWindow = window as unknown as {
+      __RAYALGO_GET_RUNTIME_FINGERPRINT__?: () => Record<string, unknown>;
+    };
+    return runtimeWindow.__RAYALGO_GET_RUNTIME_FINGERPRINT__?.() || null;
+  });
+  expect(runtimeFingerprint).toMatchObject({
+    packageName: "@workspace/rayalgo",
+    entryModuleVersion: "app-entry-20260507-runtime-fingerprint-v1",
+    buildMode: "vite-dev",
+  });
   expect(
     await page.evaluate(() => document.documentElement.dataset.rayalgoTheme),
   ).toBe("light");
@@ -575,6 +628,18 @@ test("Market chart frames render signal colors and extended-session shading", as
   expect(sellBorderColor).toBe("rgb(239, 68, 68)");
 
   const firstSurface = page.getByTestId("market-mini-chart-0-surface");
+  const chartSurfaces = page.locator(
+    '[data-testid="market-chart-grid"] [data-chart-surface-module-version]',
+  );
+  await expect(chartSurfaces).toHaveCount(4);
+  const chartSurfaceVersions = await chartSurfaces.evaluateAll((nodes) =>
+    nodes.map((node) =>
+      node.getAttribute("data-chart-surface-module-version") || "",
+    ),
+  );
+  expect([...new Set(chartSurfaceVersions)]).toEqual([
+    "ResearchChartSurface@20260507-runtime-fingerprint-v1",
+  ]);
   await expect(firstSurface).toHaveAttribute("data-chart-extended-session-enabled", "true");
   await expect
     .poll(async () =>
@@ -631,9 +696,7 @@ test("Market chart grid lets chart surfaces own touched viewports and clears the
     "true",
     { timeout: 10_000 },
   );
-  const touchedRange = await firstSurface.getAttribute(
-    "data-chart-visible-logical-range",
-  );
+  const touchedRange = await waitForLogicalRangeToSettle(firstSurface);
   expect(touchedRange).not.toBe("none");
 
   await page.waitForTimeout(350);

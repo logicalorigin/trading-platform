@@ -2,7 +2,22 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
+import { execFileSync } from "node:child_process";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
+
+const repoRoot = path.resolve(import.meta.dirname, "../..");
+
+const readGitValue = (args: string[]): string => {
+  try {
+    return execFileSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+};
 
 const rawPort = process.env.PORT;
 
@@ -48,6 +63,20 @@ const getNodeModulePackageName = (id: string): string | null => {
 const isolationMode = process.env.RAYALGO_CROSS_ORIGIN_ISOLATION || "report-only";
 const coopPolicy = process.env.RAYALGO_COOP_POLICY || "same-origin";
 const coepPolicy = process.env.RAYALGO_COEP_POLICY || "require-corp";
+const sourceTreeDirty = readGitValue(["status", "--short"]).length > 0;
+const runtimeBuildFingerprint = {
+  packageName: "@workspace/rayalgo",
+  viteConfigPath: "artifacts/rayalgo/vite.config.ts",
+  gitSha: readGitValue(["rev-parse", "--short=12", "HEAD"]) || "unknown",
+  gitBranch: readGitValue(["branch", "--show-current"]) || "unknown",
+  sourceTreeStatus: sourceTreeDirty ? "dirty" : "clean",
+  devServerStartedAt: new Date().toISOString(),
+  port: rawPort,
+  basePath,
+  proxyApiTarget: process.env.VITE_PROXY_API_TARGET || "http://127.0.0.1:8080",
+  nodeEnv: process.env.NODE_ENV || null,
+  replitIdPresent: process.env.REPL_ID !== undefined,
+};
 const isolationHeaders =
   isolationMode === "off"
     ? {}
@@ -69,6 +98,9 @@ const isolationHeaders =
 
 export default defineConfig({
   base: basePath,
+  define: {
+    __RAYALGO_BUILD_FINGERPRINT__: JSON.stringify(runtimeBuildFingerprint),
+  },
   plugins: [
     react(),
     tailwindcss(),

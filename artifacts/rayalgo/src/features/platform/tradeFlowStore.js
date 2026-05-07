@@ -25,6 +25,9 @@ const evictOldestUnusedTradeFlowEntry = (protectedKey = null) => {
 
 const normalizeTicker = (ticker) => ticker?.trim?.().toUpperCase?.() || "";
 
+const readFlowEventTicker = (event) =>
+  normalizeTicker(event?.ticker || event?.underlying || event?.symbol);
+
 const deleteEntryIfUnused = (ticker) => {
   const normalizedTicker = normalizeTicker(ticker) || "__empty__";
   const entry = tradeFlowEntries.get(normalizedTicker);
@@ -74,6 +77,58 @@ const areTradeFlowEventsEquivalent = (left = [], right = []) => {
   }
 
   return true;
+};
+
+export const groupTradeFlowEventsByTicker = (events = [], symbols = []) => {
+  const allowedSymbols = new Set(
+    (symbols || []).map(normalizeTicker).filter(Boolean),
+  );
+  const grouped = {};
+  allowedSymbols.forEach((symbol) => {
+    grouped[symbol] = [];
+  });
+
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const symbol = readFlowEventTicker(event);
+    if (!symbol || (allowedSymbols.size && !allowedSymbols.has(symbol))) {
+      return;
+    }
+    if (!grouped[symbol]) {
+      grouped[symbol] = [];
+    }
+    grouped[symbol].push(event);
+  });
+
+  return grouped;
+};
+
+export const publishTradeFlowSnapshotsByTicker = ({
+  symbols = [],
+  events = [],
+  status = "live",
+  source = null,
+  sourceBySymbol = null,
+  includeEmpty = false,
+} = {}) => {
+  const grouped = groupTradeFlowEventsByTicker(events, symbols);
+  const tickers = Array.from(
+    new Set([
+      ...(symbols || []).map(normalizeTicker).filter(Boolean),
+      ...Object.keys(grouped),
+    ]),
+  );
+
+  tickers.forEach((ticker) => {
+    const tickerEvents = grouped[ticker] || [];
+    if (!includeEmpty && tickerEvents.length === 0) {
+      return;
+    }
+    publishTradeFlowSnapshot(ticker, {
+      events: tickerEvents,
+      status: tickerEvents.length ? "live" : status,
+      source: sourceBySymbol?.[ticker] || source,
+    });
+  });
 };
 
 export const publishTradeFlowSnapshot = (ticker, nextSnapshot) => {

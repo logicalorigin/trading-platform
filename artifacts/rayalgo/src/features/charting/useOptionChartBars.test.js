@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildOptionChartBarsRequest,
+  normalizeApiBarForChart,
   shouldPatchOptionChartWithLiveQuote,
 } from "./useOptionChartBars.js";
 
@@ -57,6 +58,34 @@ test("option chart request builder omits invalid optional provider and cursor fi
   assert.equal(request.optionTicker, undefined);
   assert.equal(request.historyCursor, undefined);
   assert.equal(request.preferCursor, undefined);
+});
+
+test("option chart API normalization preserves volume fields", () => {
+  const normalized = normalizeApiBarForChart({
+    timestamp: "2026-05-04T14:30:00.000Z",
+    open: 1,
+    high: 1.25,
+    low: 0.95,
+    close: 1.1,
+    volume: 125,
+  });
+
+  assert.equal(normalized.v, 125);
+  assert.equal(normalized.volume, 125);
+});
+
+test("option chart API normalization accepts v volume aliases", () => {
+  const normalized = normalizeApiBarForChart({
+    timestamp: "2026-05-04T14:31:00.000Z",
+    open: 1.1,
+    high: 1.3,
+    low: 1,
+    close: 1.2,
+    v: 80,
+  });
+
+  assert.equal(normalized.v, 80);
+  assert.equal(normalized.volume, 80);
 });
 
 test("option charts patch from live IBKR quotes whenever live mode has a broker contract", () => {

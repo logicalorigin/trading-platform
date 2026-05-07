@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildMiniChartBarsFromApi,
+  mergeChartBarsByTime,
   resolveBrokerChartSourceState,
   resolveOptionChartSourceState,
 } from "./chartApiBars.js";
@@ -34,6 +35,47 @@ test("buildMiniChartBarsFromApi preserves source freshness metadata", () => {
   assert.equal(bar.dataUpdatedAt, "2026-05-04T14:30:05.000Z");
   assert.equal(bar.ageMs, 5000);
   assert.equal(bar.delayed, false);
+});
+
+test("mergeChartBarsByTime preserves historical context under live patches", () => {
+  const historicalBars = buildMiniChartBarsFromApi([
+    {
+      timestamp: "2026-05-07T14:00:00.000Z",
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100.5,
+      volume: 1_000,
+      source: "ibkr-history",
+    },
+    {
+      timestamp: "2026-05-07T14:15:00.000Z",
+      open: 100.5,
+      high: 102,
+      low: 100,
+      close: 101.5,
+      volume: 1_200,
+      source: "ibkr-history",
+    },
+  ]);
+  const livePatch = buildMiniChartBarsFromApi([
+    {
+      timestamp: "2026-05-07T14:15:00.000Z",
+      open: 100.5,
+      high: 102.5,
+      low: 100,
+      close: 102,
+      volume: 1_350,
+      source: "ibkr-stock-quote-derived",
+    },
+  ]);
+
+  const merged = mergeChartBarsByTime(historicalBars, livePatch);
+
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].source, "ibkr-history");
+  assert.equal(merged[1].source, "ibkr-stock-quote-derived");
+  assert.equal(merged[1].c, 102);
 });
 
 test("resolveBrokerChartSourceState marks IBKR websocket bars as live", () => {
@@ -76,6 +118,29 @@ test("resolveBrokerChartSourceState keeps rolled IBKR websocket bars live", () =
   assert.equal(state.state, "live");
   assert.equal(state.label, "IBKR WS");
   assert.equal(state.sourceLabel, "WS ROLL");
+  assert.equal(state.tone, "good");
+  assert.equal(state.isRealtime, true);
+  assert.equal(state.isDegraded, false);
+});
+
+test("resolveBrokerChartSourceState marks stock quote-derived bars as live", () => {
+  const state = resolveBrokerChartSourceState({
+    latestBar: {
+      source: "ibkr-stock-quote-derived",
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: "2026-05-04T14:30:03.000Z",
+    },
+    status: "live",
+    timeframe: "5s",
+    streamingEnabled: true,
+    market: "stocks",
+    nowMs: Date.parse("2026-05-04T14:30:04.000Z"),
+  });
+
+  assert.equal(state.state, "live");
+  assert.equal(state.label, "IBKR LIVE");
+  assert.equal(state.sourceLabel, "LIVE");
   assert.equal(state.tone, "good");
   assert.equal(state.isRealtime, true);
   assert.equal(state.isDegraded, false);

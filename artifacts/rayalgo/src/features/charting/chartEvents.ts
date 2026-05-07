@@ -91,8 +91,62 @@ const compactPremium = (value: unknown): string => {
   return `$${Math.round(premium)}`;
 };
 
-const normalizeBias = (value: unknown): ChartEventBias => {
-  if (value === "bullish" || value === "bearish") return value;
+const normalizeBiasValue = (value: unknown): ChartEventBias | null => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "bullish" || normalized === "bull") return "bullish";
+  if (normalized === "bearish" || normalized === "bear") return "bearish";
+  if (normalized === "neutral" || normalized === "mixed") return "neutral";
+  return null;
+};
+
+const normalizeSide = (value: unknown): "buy" | "sell" | "mid" | "" => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (
+    normalized === "buy" ||
+    normalized === "bought" ||
+    normalized === "ask" ||
+    normalized === "at_ask" ||
+    normalized === "above_ask" ||
+    normalized === "lift" ||
+    normalized === "lifted"
+  ) {
+    return "buy";
+  }
+  if (
+    normalized === "sell" ||
+    normalized === "sold" ||
+    normalized === "bid" ||
+    normalized === "at_bid" ||
+    normalized === "below_bid" ||
+    normalized === "hit" ||
+    normalized === "hit_bid"
+  ) {
+    return "sell";
+  }
+  if (normalized === "mid" || normalized === "middle" || normalized === "between") {
+    return "mid";
+  }
+  return "";
+};
+
+const normalizeBias = ({
+  value,
+  right,
+  side,
+}: {
+  value: unknown;
+  right: unknown;
+  side: unknown;
+}): ChartEventBias => {
+  const explicit = normalizeBiasValue(value);
+  if (explicit) return explicit;
+
+  const normalizedRight = normalizeRight(right);
+  const normalizedSide = normalizeSide(side);
+  if (normalizedSide === "buy" && normalizedRight === "call") return "bullish";
+  if (normalizedSide === "sell" && normalizedRight === "put") return "bullish";
+  if (normalizedSide === "buy" && normalizedRight === "put") return "bearish";
+  if (normalizedSide === "sell" && normalizedRight === "call") return "bearish";
   return "neutral";
 };
 
@@ -270,11 +324,16 @@ export const isSnapshotFlowEvent = (event: Record<string, unknown>): boolean => 
 const readFlowEventChartTime = (event: Record<string, unknown>): string => {
   const candidates = [
     event.occurredAt,
+    event.sip_timestamp,
+    event.participant_timestamp,
+    event.trf_timestamp,
+    event.exchange_timestamp,
     event.timestamp,
     event.dateTime,
     event.createdAt,
     event.updatedAt,
     event.time,
+    event.t,
   ];
   for (const candidate of candidates) {
     if (candidate instanceof Date && Number.isFinite(candidate.getTime())) {
@@ -282,8 +341,19 @@ const readFlowEventChartTime = (event: Record<string, unknown>): string => {
     }
     if (typeof candidate === "number") {
       if (Number.isFinite(candidate) && candidate > 0) {
-        const timestamp = candidate > 10_000_000_000 ? candidate : candidate * 1000;
-        return new Date(timestamp).toISOString();
+        const abs = Math.abs(candidate);
+        const timestamp =
+          abs >= 1e17
+            ? candidate / 1e6
+            : abs >= 1e14
+              ? candidate / 1e3
+              : abs >= 1e11
+                ? candidate
+                : candidate * 1000;
+        const date = new Date(timestamp);
+        if (Number.isFinite(date.getTime())) {
+          return date.toISOString();
+        }
       }
       continue;
     }
@@ -506,7 +576,11 @@ export const flowEventsToChartEventConversion = (
       summary: `${contractLabel} ${flowKind} ${compactPremium(premium)}`,
       source: String(event.provider || "flow"),
       confidence: Math.max(0, Math.min(1, unusualScore / 5)),
-      bias: normalizeBias(event.flowBias || event.sentiment),
+      bias: normalizeBias({
+        value: event.flowBias || event.sentiment,
+        right: event.cp || event.right,
+        side: event.side,
+      }),
       actions: ["open_flow", "open_trade", "copy_contract", "add_alert"],
       metadata: {
         ...event,

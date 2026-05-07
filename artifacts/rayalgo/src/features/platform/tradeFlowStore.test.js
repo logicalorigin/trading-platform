@@ -5,7 +5,9 @@ import {
   clearTradeFlowSnapshot,
   getTradeFlowSnapshotForTests,
   getTradeFlowStoreEntryCount,
+  groupTradeFlowEventsByTicker,
   publishTradeFlowSnapshot,
+  publishTradeFlowSnapshotsByTicker,
   resetTradeFlowStoreForTests,
   subscribeToTradeFlowSnapshotForTests,
 } from "./tradeFlowStore.js";
@@ -55,6 +57,66 @@ test("tradeFlowStore preserves live events when the next refresh is a transient 
   const preserved = getTradeFlowSnapshotForTests("SPY");
   assert.equal(preserved.status, "stale");
   assert.deepEqual(preserved.events, buildFlowSnapshot("SPY").events);
+});
+
+test("tradeFlowStore groups flow events by ticker-like fields", () => {
+  const grouped = groupTradeFlowEventsByTicker(
+    [
+      { id: "spy", underlying: "spy" },
+      { id: "nvda", symbol: "NVDA" },
+      { id: "ignored", ticker: "MSFT" },
+    ],
+    ["SPY", "NVDA"],
+  );
+
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(grouped).map(([ticker, events]) => [
+        ticker,
+        events.map((event) => event.id),
+      ]),
+    ),
+    {
+      SPY: ["spy"],
+      NVDA: ["nvda"],
+    },
+  );
+});
+
+test("tradeFlowStore publishes per-ticker snapshots without letting hydrating empties erase events", () => {
+  resetTradeFlowStoreForTests();
+
+  publishTradeFlowSnapshotsByTicker({
+    symbols: ["SPY", "NVDA"],
+    events: [
+      { id: "spy-live", ticker: "SPY", premium: 100_000 },
+      { id: "nvda-live", underlying: "NVDA", premium: 200_000 },
+    ],
+    source: { provider: "polygon", status: "fallback" },
+    includeEmpty: true,
+  });
+  publishTradeFlowSnapshotsByTicker({
+    symbols: ["SPY", "NVDA"],
+    events: [],
+    status: "loading",
+    source: {
+      provider: "polygon",
+      status: "empty",
+      ibkrStatus: "empty",
+      ibkrReason: "options_flow_historical_refreshing",
+    },
+    includeEmpty: true,
+  });
+
+  assert.deepEqual(
+    getTradeFlowSnapshotForTests("SPY").events.map((event) => event.id),
+    ["spy-live"],
+  );
+  assert.equal(getTradeFlowSnapshotForTests("SPY").status, "stale");
+  assert.deepEqual(
+    getTradeFlowSnapshotForTests("NVDA").events.map((event) => event.id),
+    ["nvda-live"],
+  );
 });
 
 test("tradeFlowStore accepts confirmed empty loaded snapshots", () => {

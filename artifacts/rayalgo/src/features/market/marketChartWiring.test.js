@@ -21,13 +21,32 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
   assert.match(source, /const MARKET_CHART_FLOW_HISTORY_LIMIT = 1_000;/);
   assert.match(source, /const MARKET_CHART_FLOW_LINE_BUDGET = 40;/);
   assert.match(source, /const MARKET_CHART_FLOW_CONCURRENCY = 1;/);
+  assert.match(
+    source,
+    /const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY\.active - 1;/,
+  );
+  assert.match(source, /const MARKET_CHART_FLOW_STARTUP_DELAY_MS = 1_000;/);
+  assert.match(source, /chartFlowStartupReady/);
+  assert.doesNotMatch(
+    source,
+    /const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY\.active \+ 2;/,
+    "historical flow must not outrank active candle hydration",
+  );
   assert.match(source, /listFlowEventsRequest/);
+  assert.match(source, /buildBarsRequestOptions\(MARKET_CHART_FLOW_REQUEST_PRIORITY\)/);
   assert.match(source, /historicalChartFlowRequests/);
   assert.match(source, /historicalBucketSeconds/);
   assert.match(source, /getChartEventLookbackWindow/);
+  assert.match(source, /alignMarketChartFlowHistoryWindow/);
+  assert.match(source, /Math\.floor\(from\.getTime\(\) \/ bucketMs\) \* bucketMs/);
+  assert.match(source, /Math\.ceil\(to\.getTime\(\) \/ bucketMs\) \* bucketMs/);
   assert.match(source, /mapFlowEventToUi/);
+  assert.match(
+    source,
+    /isTransientEmptyFlowSource\(query\.state\.data\?\.source\) \? 5_000 : 15_000/,
+  );
   assert.match(scannerCall, /limit:\s*MARKET_CHART_FLOW_LIMIT/);
-  assert.match(scannerCall, /enabled:\s*Boolean\(isVisible && streamedSymbols\.length\)/);
+  assert.match(scannerCall, /enabled:\s*Boolean\(isVisible && chartFlowStartupReady && streamedSymbols\.length\)/);
   assert.match(scannerCall, /scope:\s*FLOW_SCANNER_SCOPE\.all/);
   assert.match(scannerCall, /concurrency:\s*MARKET_CHART_FLOW_CONCURRENCY/);
   assert.match(scannerCall, /lineBudget:\s*MARKET_CHART_FLOW_LINE_BUDGET/);
@@ -61,6 +80,7 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.match(source, /surfaceUiStateKey=\{`market-spot-chart:\$\{slotId\}:\$\{timeframe\}`\}/);
   assert.match(source, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(source, /workspaceChart=\{\{ timeframe \}\}/);
+  assert.match(source, /prewarmFavoriteTimeframesEnabled=\{false\}/);
   assert.match(source, /onWorkspaceChartChange=\{handleWorkspaceChartChange\}/);
   assert.doesNotMatch(source, /resolveSignalFrameState/);
   assert.doesNotMatch(source, /useSignalMonitorStateForSymbol/);
@@ -95,8 +115,8 @@ test("Trade spot chart uses the IBKR aggregate stream as its live stock layer", 
   assert.match(panelSource, /resolveSignalFrameState/);
   assert.match(panelSource, /frameSignalState=\{showSignalFrameBorder \? signalFrameState : null\}/);
   assert.match(panelSource, /ibkr-websocket-derived/);
-  assert.match(panelSource, /allowHistoricalSynthesis:\s*false/);
-  assert.doesNotMatch(panelSource, /allowHistoricalSynthesis:\s*true/);
+  assert.match(panelSource, /allowHistoricalSynthesis:\s*true/);
+  assert.doesNotMatch(panelSource, /allowHistoricalSynthesis:\s*false/);
   assert.doesNotMatch(panelSource, /useHistoricalBarStreamState/);
   assert.doesNotMatch(panelSource, /liveFallbackRequestMs/);
 });
@@ -125,22 +145,30 @@ test("Research chart frames expose signal frame state as first-class attributes"
   assert.match(frameSource, /border:\s*signalActive/);
 });
 
-test("Market chart flow events are passed raw into the Trade spot chart path", () => {
+test("Market chart flow events publish to the shared Trade spot chart path", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const cellSource = readLocalSource("./MiniChartCell.jsx");
   const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
 
+  assert.match(gridSource, /isTransientEmptyFlowSource/);
+  assert.match(gridSource, /historicalChartFlowRetainedRef/);
+  assert.match(gridSource, /buildBarsRequestOptions\(MARKET_CHART_FLOW_REQUEST_PRIORITY\)/);
   assert.match(gridSource, /BROAD_MARKET_FLOW_STORE_KEY/);
   assert.match(gridSource, /useMarketFlowSnapshotForStoreKey/);
   assert.match(gridSource, /mergeFlowEventFeeds/);
   assert.match(gridSource, /filterFlowEventsForSymbol/);
   assert.match(gridSource, /effectiveChartFlowSnapshot/);
   assert.match(gridSource, /const flowEventsBySymbol = useMemo/);
+  assert.match(gridSource, /publishTradeFlowSnapshotsByTicker/);
   assert.match(gridSource, /flowEvents=\{flowEventsBySymbol/);
   assert.match(cellSource, /flowEvents=\{flowEvents\}/);
-  assert.match(tradeSpotSource, /const parentFlowEventsProvided = flowEvents !== undefined/);
-  assert.match(tradeSpotSource, /subscribe:\s*!parentFlowEventsProvided/);
-  assert.doesNotMatch(tradeSpotSource, /mergeFlowEventFeeds\(tradeFlowSnapshot/);
+  assert.match(tradeSpotSource, /const tradeFlowSnapshot = useTradeFlowSnapshot\(ticker\)/);
+  assert.match(tradeSpotSource, /mergeFlowEventFeeds\(/);
+  assert.match(tradeSpotSource, /prewarmFavoriteTimeframesEnabled = true/);
+  assert.match(tradeSpotSource, /!prewarmFavoriteTimeframesEnabled/);
+  assert.match(tradeSpotSource, /COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000/);
+  assert.match(tradeSpotSource, /if \(!compact\) \{/);
+  assert.match(tradeSpotSource, /tradeFlowSnapshot\.events \|\| \[\]/);
   assert.doesNotMatch(tradeSpotSource, /retainedFlowState/);
   assert.doesNotMatch(gridSource, /quote=\{/);
   assert.doesNotMatch(gridSource, /onChangeStudies=\{/);

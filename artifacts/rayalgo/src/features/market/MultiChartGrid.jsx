@@ -19,6 +19,12 @@ import {
   BROAD_MARKET_FLOW_STORE_KEY,
   useMarketFlowSnapshotForStoreKey,
 } from "../platform/marketFlowStore";
+import {
+  BARS_REQUEST_PRIORITY,
+  buildBarsRequestOptions,
+} from "../platform/queryDefaults";
+import { isTransientEmptyFlowSource } from "../platform/flowSourceState";
+import { publishTradeFlowSnapshotsByTicker } from "../platform/tradeFlowStore";
 import { FLOW_SCANNER_SCOPE } from "../platform/marketFlowScannerConfig";
 import { WATCHLIST } from "./marketReferenceData";
 import {
@@ -77,8 +83,17 @@ const MARKET_CHART_FLOW_LIMIT = 80;
 const MARKET_CHART_FLOW_HISTORY_LIMIT = 1_000;
 const MARKET_CHART_FLOW_LINE_BUDGET = 40;
 const MARKET_CHART_FLOW_CONCURRENCY = 1;
+const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY.active - 1;
+const MARKET_CHART_FLOW_STARTUP_DELAY_MS = 1_000;
 const MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3_600;
+
+const MARKET_CHART_FLOW_PENDING_SOURCE = {
+  provider: "polygon",
+  status: "empty",
+  ibkrStatus: "empty",
+  ibkrReason: "options_flow_historical_refreshing",
+};
 
 const getMarketChartFlowHistoryBucketSeconds = (timeframe) => {
   const definition = getChartTimeframeDefinition(timeframe);
@@ -89,6 +104,14 @@ const getMarketChartFlowHistoryBucketSeconds = (timeframe) => {
     MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS,
     Math.min(MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS, stepSeconds),
   );
+};
+
+const alignMarketChartFlowHistoryWindow = ({ from, to, bucketSeconds }) => {
+  const bucketMs = Math.max(1, bucketSeconds) * 1000;
+  return {
+    from: new Date(Math.floor(from.getTime() / bucketMs) * bucketMs),
+    to: new Date(Math.ceil(to.getTime() / bucketMs) * bucketMs),
+  };
 };
 
 const buildMarketChartViewportLayoutKey = ({
@@ -335,6 +358,20 @@ export const MultiChartGrid = ({
       ),
     [visibleSlotEntries],
   );
+  const streamedSymbolsKey = streamedSymbols.join(",");
+  const [chartFlowStartupReady, setChartFlowStartupReady] = useState(false);
+  useEffect(() => {
+    if (!isVisible || !streamedSymbols.length) {
+      setChartFlowStartupReady(false);
+      return undefined;
+    }
+
+    setChartFlowStartupReady(false);
+    const timer = setTimeout(() => {
+      setChartFlowStartupReady(true);
+    }, MARKET_CHART_FLOW_STARTUP_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isVisible, streamedSymbolsKey, streamedSymbols.length]);
   const historicalChartFlowRequests = useMemo(() => {
     const requestsByKey = new Map();
     visibleSlotEntries.forEach((entry) => {
@@ -347,11 +384,16 @@ export const MultiChartGrid = ({
       const window = getChartEventLookbackWindow(timeframe);
       const historicalBucketSeconds =
         getMarketChartFlowHistoryBucketSeconds(timeframe);
+      const alignedWindow = alignMarketChartFlowHistoryWindow({
+        from: window.from,
+        to: window.to,
+        bucketSeconds: historicalBucketSeconds,
+      });
       const request = {
         symbol,
         timeframe,
-        from: window.from.toISOString(),
-        to: window.to.toISOString(),
+        from: alignedWindow.from.toISOString(),
+        to: alignedWindow.to.toISOString(),
         historicalBucketSeconds,
       };
       requestsByKey.set(
@@ -361,6 +403,7 @@ export const MultiChartGrid = ({
     });
     return Array.from(requestsByKey.values());
   }, [visibleSlotEntries]);
+  const historicalChartFlowRetainedRef = useRef(new Map());
   const historicalChartFlowQueries = useQueries({
     queries: historicalChartFlowRequests.map((request) => ({
       queryKey: [
@@ -372,34 +415,91 @@ export const MultiChartGrid = ({
         request.historicalBucketSeconds,
       ],
       queryFn: () =>
-        listFlowEventsRequest({
-          underlying: request.symbol,
-          limit: MARKET_CHART_FLOW_HISTORY_LIMIT,
-          scope: FLOW_SCANNER_SCOPE.all,
-          from: request.from,
-          to: request.to,
-          historicalBucketSeconds: request.historicalBucketSeconds,
-          blocking: false,
-        }),
-      enabled: Boolean(isVisible && request.symbol),
+        listFlowEventsRequest(
+          {
+            underlying: request.symbol,
+            limit: MARKET_CHART_FLOW_HISTORY_LIMIT,
+            scope: FLOW_SCANNER_SCOPE.all,
+            from: request.from,
+            to: request.to,
+            historicalBucketSeconds: request.historicalBucketSeconds,
+            blocking: false,
+          },
+          buildBarsRequestOptions(MARKET_CHART_FLOW_REQUEST_PRIORITY),
+        ),
+      enabled: Boolean(isVisible && chartFlowStartupReady && request.symbol),
       staleTime: 15_000,
-      refetchInterval: isVisible ? 15_000 : false,
+      refetchInterval: isVisible && chartFlowStartupReady
+        ? (query) =>
+            isTransientEmptyFlowSource(query.state.data?.source) ? 5_000 : 15_000
+        : false,
       placeholderData: (previousData) => previousData,
       retry: false,
     })),
   });
-  const historicalChartFlowEvents = useMemo(
-    () =>
-      historicalChartFlowQueries.flatMap((query) =>
-        (query.data?.events || []).map((event) => mapFlowEventToUi(event)),
-      ),
-    [historicalChartFlowQueries],
-  );
+  const historicalChartFlowEvents = useMemo(() => {
+    const activeKeys = new Set();
+    const retained = historicalChartFlowRetainedRef.current;
+
+    const events = historicalChartFlowQueries.flatMap((query, index) => {
+      const request = historicalChartFlowRequests[index];
+      if (!request?.symbol) {
+        return [];
+      }
+
+      const key = `${request.symbol}:${request.timeframe}:${request.from}:${request.to}:${request.historicalBucketSeconds}`;
+      activeKeys.add(key);
+      const incomingEvents = (query.data?.events || []).map((event) =>
+        mapFlowEventToUi(event),
+      );
+      const transientEmpty =
+        query.isPending ||
+        query.isError ||
+        isTransientEmptyFlowSource(query.data?.source);
+
+      if (incomingEvents.length > 0 || (!transientEmpty && query.data)) {
+        retained.set(key, {
+          events: incomingEvents,
+          source: query.data?.source || null,
+        });
+        return incomingEvents;
+      }
+
+      return retained.get(key)?.events || [];
+    });
+
+    Array.from(retained.keys()).forEach((key) => {
+      if (!activeKeys.has(key)) {
+        retained.delete(key);
+      }
+    });
+
+    return events;
+  }, [historicalChartFlowQueries, historicalChartFlowRequests]);
   const historicalChartFlowPending = historicalChartFlowQueries.some(
     (query) => query.isPending,
   );
+  const historicalChartFlowSourceBySymbol = useMemo(() => {
+    const sources = {};
+    historicalChartFlowQueries.forEach((query, index) => {
+      const request = historicalChartFlowRequests[index];
+      const symbol = request?.symbol;
+      if (!symbol) {
+        return;
+      }
+      if (query.data?.source) {
+        sources[symbol] = query.data.source;
+      } else if (query.isPending || query.fetchStatus === "fetching") {
+        const key = `${request.symbol}:${request.timeframe}:${request.from}:${request.to}:${request.historicalBucketSeconds}`;
+        sources[symbol] =
+          historicalChartFlowRetainedRef.current.get(key)?.source ||
+          MARKET_CHART_FLOW_PENDING_SOURCE;
+      }
+    });
+    return sources;
+  }, [historicalChartFlowQueries, historicalChartFlowRequests]);
   const chartFlowSnapshot = useLiveMarketFlow(streamedSymbols, {
-    enabled: Boolean(isVisible && streamedSymbols.length),
+    enabled: Boolean(isVisible && chartFlowStartupReady && streamedSymbols.length),
     limit: MARKET_CHART_FLOW_LIMIT,
     maxSymbols: MAX_MULTI_CHART_SLOTS,
     batchSize: MAX_MULTI_CHART_SLOTS,
@@ -419,6 +519,21 @@ export const MultiChartGrid = ({
     BROAD_MARKET_FLOW_STORE_KEY,
     { subscribe: isVisible },
   );
+  const chartFlowSourceBySymbol = useMemo(() => {
+    const sources = {};
+    streamedSymbols.forEach((symbol) => {
+      sources[symbol] =
+        historicalChartFlowSourceBySymbol[symbol] ||
+        chartFlowProviderSummary?.sourcesBySymbol?.[symbol] ||
+        (historicalChartFlowPending ? MARKET_CHART_FLOW_PENDING_SOURCE : null);
+    });
+    return sources;
+  }, [
+    chartFlowProviderSummary,
+    historicalChartFlowPending,
+    historicalChartFlowSourceBySymbol,
+    streamedSymbols,
+  ]);
   const chartFlowEvents = useMemo(
     () =>
       mergeFlowEventFeeds(
@@ -449,7 +564,6 @@ export const MultiChartGrid = ({
     }),
     [chartFlowEvents, chartFlowSnapshot, effectiveChartFlowStatus],
   );
-  const streamedSymbolsKey = streamedSymbols.join(",");
   const chartFlowSnapshotSignature = useMemo(() => {
     const coverage = chartFlowProviderSummary?.coverage || {};
     return [
@@ -520,6 +634,26 @@ export const MultiChartGrid = ({
     });
     return grouped;
   }, [chartFlowEvents, streamedSymbols]);
+  useEffect(() => {
+    if (!isVisible || !streamedSymbols.length) {
+      return;
+    }
+    publishTradeFlowSnapshotsByTicker({
+      symbols: streamedSymbols,
+      events: chartFlowEvents,
+      status: effectiveChartFlowStatus,
+      source: chartFlowProviderSummary?.erroredSource || null,
+      sourceBySymbol: chartFlowSourceBySymbol,
+      includeEmpty: true,
+    });
+  }, [
+    chartFlowEvents,
+    chartFlowProviderSummary?.erroredSource,
+    chartFlowSourceBySymbol,
+    effectiveChartFlowStatus,
+    isVisible,
+    streamedSymbols,
+  ]);
   const chartFlowSuggestionSymbols = useMemo(
     () =>
       Array.from(

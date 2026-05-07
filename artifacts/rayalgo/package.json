@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ../../scripts/reap-dev-port.mjs && exec vite --config vite.config.ts --host 0.0.0.0",
-    "build": "vite build --config vite.config.ts",
-    "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
+    "dev": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/} VITE_PROXY_API_TARGET=${VITE_PROXY_API_TARGET:-http://127.0.0.1:8080}; export VITE_API_BASE_URL=${VITE_API_BASE_URL:-$VITE_PROXY_API_TARGET}; node ../../scripts/reap-dev-port.mjs && exec vite --config vite.config.ts --host 0.0.0.0",
+    "build": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/}; vite build --config vite.config.ts",
+    "serve": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH NIX_LD NIX_LD_LIBRARY_PATH; export PORT=${PORT:-18747} BASE_PATH=${BASE_PATH:-/}; vite preview --config vite.config.ts --host 0.0.0.0",
+    "doctor:runtime": "node ./scripts/checkDevRuntime.mjs",
     "generate:research-theme-datasets": "node --experimental-specifier-resolution=node ./scripts/generateResearchThemeDatasets.mjs",
     "bundle:audit": "node ./scripts/bundleAudit.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",

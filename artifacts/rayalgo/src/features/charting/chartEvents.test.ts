@@ -169,6 +169,65 @@ test("flowEventsToChartEvents renders flow-filtered rows without a hidden materi
   assert.equal(events[0].summary, "SPY 485P options flow $42K");
 });
 
+test("flowEventsToChartEvents maps side and right into flow bias", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "call-buy",
+        ticker: "SPY",
+        cp: "C",
+        premium: 125_000,
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "BUY",
+      },
+      {
+        id: "put-buy",
+        ticker: "SPY",
+        cp: "P",
+        premium: 130_000,
+        occurredAt: "2026-05-01T15:13:00.000Z",
+        side: "BUY",
+      },
+      {
+        id: "put-sell",
+        ticker: "SPY",
+        cp: "P",
+        premium: 140_000,
+        occurredAt: "2026-05-01T15:14:00.000Z",
+        side: "SELL",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.deepEqual(
+    events.map((event) => event.bias),
+    ["bullish", "bearish", "bullish"],
+  );
+});
+
+test("flowEventsToChartEvents reads raw Polygon/Massive trade timestamps", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "massive-trade",
+        ticker: "SPY",
+        cp: "C",
+        premium: 125_000,
+        sip_timestamp: 1_777_647_120_000_000_000,
+        side: "BUY",
+        provider: "polygon",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].time, "2026-05-01T14:52:00.000Z");
+  assert.equal(events[0].source, "polygon");
+  assert.equal(events[0].bias, "bullish");
+});
+
 test("flow event helpers merge feeds and match selected option contracts", () => {
   const broad = [
     {

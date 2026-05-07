@@ -3192,6 +3192,7 @@ export class PolygonMarketDataClient {
     contractType?: OptionRight;
     limit?: number;
     maxPages?: number;
+    signal?: AbortSignal;
   }): Promise<HistoricalOptionContract[]> {
     const underlying = normalizeSymbol(input.underlying);
     const fetchContracts = async (
@@ -3220,7 +3221,7 @@ export class PolygonMarketDataClient {
       let pageCount = 0;
 
       while (nextUrl && pageCount < maxPages) {
-        const page = await this.fetchChainPage(nextUrl);
+        const page = await this.fetchChainPage(nextUrl, input.signal);
         contracts.push(
           ...compact(
             page.results.map((result) =>
@@ -3251,7 +3252,9 @@ export class PolygonMarketDataClient {
     maxDte?: number | null;
     tradeConcurrency?: number;
     contractPageLimit?: number;
+    contractLimit?: number;
     tradePageLimit?: number;
+    tradeLimit?: number;
     signal?: AbortSignal;
     onEvents?: (events: FlowEvent[]) => void | Promise<void>;
   }): Promise<HistoricalOptionFlowEventsResult> {
@@ -3273,26 +3276,34 @@ export class PolygonMarketDataClient {
       input.maxDte >= 0
         ? addUtcDays(startOfUtcDay(from), Math.floor(input.maxDte))
         : undefined;
+    const contractLimit = Math.max(
+      1,
+      Math.min(Math.floor(input.contractLimit ?? 1_000), 1_000),
+    );
     const contracts = await this.getHistoricalOptionContracts({
       underlying,
       asOf: from,
       expirationDateGte: startOfUtcDay(from),
       expirationDateLte,
-      limit: 1_000,
+      limit: contractLimit,
       maxPages: input.contractPageLimit,
+      signal: input.signal,
     });
     if (!contracts.length) {
       return { events: [], contractCount: 0, contractsScanned: 0 };
     }
 
-    const conditionMetadata = await this.fetchOptionTradeConditionMetadata();
+    const contractsToScan = contracts.slice(0, contractLimit);
+    const conditionMetadata = await this.fetchOptionTradeConditionMetadata(
+      input.signal,
+    );
     const eventsById = new Map<string, FlowEvent>();
     const concurrency = Math.max(
       1,
       Math.min(input.tradeConcurrency ?? OPTION_FLOW_TRADE_CONCURRENCY, 16),
     );
     const summaries = await mapWithLocalConcurrency(
-      contracts,
+      contractsToScan,
       concurrency,
       async (contract) => {
         try {
@@ -3300,7 +3311,7 @@ export class PolygonMarketDataClient {
             optionTicker: contract.ticker,
             since: from,
             until: to,
-            limit: 50_000,
+            limit: input.tradeLimit ?? 50_000,
             maxPages: input.tradePageLimit,
             exactWindow: true,
             signal: input.signal,
@@ -3391,6 +3402,13 @@ export class PolygonMarketDataClient {
     unusualThreshold?: number;
     from?: Date;
     to?: Date;
+    snapshotPageLimit?: number;
+    tradeConcurrency?: number;
+    contractPageLimit?: number;
+    contractLimit?: number;
+    tradePageLimit?: number;
+    tradeLimit?: number;
+    signal?: AbortSignal;
   }): Promise<FlowEvent[]> {
     const underlying = normalizeSymbol(input.underlying);
     const limit = Math.max(1, Math.min(input.limit ?? 50, 250));
@@ -3410,8 +3428,13 @@ export class PolygonMarketDataClient {
     const results: unknown[] = [];
     let pageCount = 0;
 
-    while (nextUrl && pageCount < OPTION_FLOW_SNAPSHOT_MAX_PAGES) {
-      const page = await this.fetchChainPage(nextUrl);
+    const snapshotMaxPages = Math.max(
+      1,
+      Math.min(input.snapshotPageLimit ?? OPTION_FLOW_SNAPSHOT_MAX_PAGES, 100),
+    );
+
+    while (nextUrl && pageCount < snapshotMaxPages) {
+      const page = await this.fetchChainPage(nextUrl, input.signal);
       results.push(...page.results);
       nextUrl = page.nextUrl;
       pageCount += 1;
@@ -3426,7 +3449,9 @@ export class PolygonMarketDataClient {
           limit: OPTION_FLOW_SNAPSHOT_PAGE_LIMIT,
         },
       );
-      const payload = await this.fetchJson<unknown>(fallbackUrl);
+      const payload = await this.fetchJson<unknown>(fallbackUrl, {
+        signal: input.signal,
+      });
       const record = asRecord(payload);
       results.push(...asArray(record?.["results"]));
     }
@@ -3439,6 +3464,12 @@ export class PolygonMarketDataClient {
         to: input.to ?? now,
         limit,
         unusualThreshold: input.unusualThreshold,
+        tradeConcurrency: input.tradeConcurrency,
+        contractPageLimit: input.contractPageLimit,
+        contractLimit: input.contractLimit,
+        tradePageLimit: input.tradePageLimit,
+        tradeLimit: input.tradeLimit,
+        signal: input.signal,
       });
     }
 
@@ -3496,6 +3527,12 @@ export class PolygonMarketDataClient {
     to: Date;
     limit: number;
     unusualThreshold?: number;
+    tradeConcurrency?: number;
+    contractPageLimit?: number;
+    contractLimit?: number;
+    tradePageLimit?: number;
+    tradeLimit?: number;
+    signal?: AbortSignal;
   }): Promise<FlowEvent[]> {
     const to = input.to;
     const from = input.from ?? addUtcDays(to, -2);
@@ -3528,9 +3565,13 @@ export class PolygonMarketDataClient {
       input.snapshots
         .map((snapshot) => readOptionSnapshotUnderlyingPrice(snapshot))
         .find((price): price is number => price !== null) ?? null;
+    const tradeContractLimit = Math.max(
+      1,
+      Math.min(input.contractLimit ?? OPTION_FLOW_TRADE_CONTRACT_LIMIT, 250),
+    );
     const snapshotSeedLimit = Math.max(
       1,
-      Math.floor(OPTION_FLOW_TRADE_CONTRACT_LIMIT / 2),
+      Math.floor(tradeContractLimit / 2),
     );
     const candidatesByTicker = new Map<
       string,
@@ -3556,7 +3597,9 @@ export class PolygonMarketDataClient {
           startOfUtcDay(to),
           OPTION_FLOW_EXPIRATION_LOOKAHEAD_DAYS,
         ),
-        limit: 1_000,
+        limit: tradeContractLimit,
+        maxPages: input.contractPageLimit,
+        signal: input.signal,
       });
       historicalContracts
         .map((contract) => ({
@@ -3578,14 +3621,14 @@ export class PolygonMarketDataClient {
             left.strike - right.strike ||
             left.right.localeCompare(right.right),
         )
-        .slice(0, OPTION_FLOW_TRADE_CONTRACT_LIMIT - candidatesByTicker.size)
+        .slice(0, Math.max(0, tradeContractLimit - candidatesByTicker.size))
         .forEach(addCandidate);
     } catch {
       // Current snapshots still provide historical trade hydration for active contracts.
     }
 
     candidates.forEach((candidate) => {
-      if (candidatesByTicker.size < OPTION_FLOW_TRADE_CONTRACT_LIMIT) {
+      if (candidatesByTicker.size < tradeContractLimit) {
         addCandidate(candidate);
       }
     });
@@ -3596,19 +3639,27 @@ export class PolygonMarketDataClient {
       return [];
     }
 
-    const conditionMetadata = await this.fetchOptionTradeConditionMetadata();
+    const conditionMetadata = await this.fetchOptionTradeConditionMetadata(
+      input.signal,
+    );
     const eventsById = new Map<string, FlowEvent>();
+    const tradeConcurrency = Math.max(
+      1,
+      Math.min(input.tradeConcurrency ?? OPTION_FLOW_TRADE_CONCURRENCY, 16),
+    );
     const summaries = await mapWithLocalConcurrency(
       candidatesForTrades,
-      OPTION_FLOW_TRADE_CONCURRENCY,
+      tradeConcurrency,
       async (candidate) => {
         try {
           const rawTrades = await this.fetchOptionTradePrints({
             optionTicker: candidate.ticker,
             since: from,
             until: to,
-            limit: OPTION_FLOW_TRADE_LIMIT,
+            limit: input.tradeLimit ?? OPTION_FLOW_TRADE_LIMIT,
+            maxPages: input.tradePageLimit,
             exactWindow: true,
+            signal: input.signal,
           });
           return {
             candidate,
@@ -3668,13 +3719,20 @@ export class PolygonMarketDataClient {
 
     return [...eventsById.values()]
       .sort((left, right) => {
+        const premiumDelta = right.premium - left.premium;
+        if (premiumDelta !== 0) {
+          return premiumDelta;
+        }
+        return left.occurredAt.getTime() - right.occurredAt.getTime();
+      })
+      .slice(0, input.limit)
+      .sort((left, right) => {
         const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
         if (timeDelta !== 0) {
           return timeDelta;
         }
         return right.premium - left.premium;
-      })
-      .slice(0, input.limit);
+      });
   }
 
   async getOptionPremiumDistribution(input: {

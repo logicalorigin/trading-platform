@@ -84,6 +84,29 @@ export const buildMiniChartBarsFromApi = (bars) => buildChartBarsFromApi(bars);
 
 export const buildTradeBarsFromApi = (bars) => buildChartBarsFromApi(bars);
 
+export const mergeChartBarsByTime = (baseBars = [], patchedBars = []) => {
+  const mergedByTime = new Map();
+
+  const appendBars = (bars) => {
+    (Array.isArray(bars) ? bars : []).forEach((bar) => {
+      const timeMs = resolveApiBarTimestampMs(
+        bar?.timestamp ?? bar?.time ?? bar?.ts,
+      );
+      if (timeMs == null) {
+        return;
+      }
+      mergedByTime.set(timeMs, bar);
+    });
+  };
+
+  appendBars(baseBars);
+  appendBars(patchedBars);
+
+  return Array.from(mergedByTime.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([, bar]) => bar);
+};
+
 export const describeBrokerChartSource = (source) => {
   if (typeof source === "string" && source.endsWith(":rollup")) {
     const baseSource = source.replace(/:rollup$/, "");
@@ -92,6 +115,7 @@ export const describeBrokerChartSource = (source) => {
   }
   if (source === "ibkr-websocket-derived") return "WS";
   if (source === "polygon-delayed-websocket") return "DELAYED WS";
+  if (source === "ibkr-stock-quote-derived") return "LIVE";
   if (source === "ibkr-option-quote-derived") return "LIVE";
   if (source === "ibkr+massive-gap-fill") return "IBKR + GAP";
   if (source === "ibkr-history") return "IBKR";
@@ -199,6 +223,7 @@ export const resolveBrokerChartSourceState = ({
     !isDelayed &&
     !isStale &&
     (baseSource === "ibkr-websocket-derived" ||
+      baseSource === "ibkr-stock-quote-derived" ||
       baseSource === "ibkr-option-quote-derived" ||
       (baseSource !== "ibkr-history" &&
         isIbkr &&

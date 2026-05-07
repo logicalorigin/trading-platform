@@ -82,6 +82,8 @@ type ResearchChartFrameProps = {
   referenceLines?: ReferenceLine[];
   chartEvents?: ChartEvent[];
   chartFlowDiagnostics?: FlowChartEventConversion | null;
+  latestQuotePrice?: number | null;
+  latestQuoteUpdatedAt?: string | Date | number | null;
   emptyState?: {
     title?: string | null;
     detail?: string | null;
@@ -126,6 +128,8 @@ export const ResearchChartFrame = ({
   referenceLines = EMPTY_REFERENCE_LINES,
   chartEvents = EMPTY_CHART_EVENTS,
   chartFlowDiagnostics = null,
+  latestQuotePrice = null,
+  latestQuoteUpdatedAt = null,
   emptyState = null,
   drawMode = null,
   onAddDrawing,
@@ -199,6 +203,8 @@ export const ResearchChartFrame = ({
           referenceLines={referenceLines}
           chartEvents={chartEvents}
           chartFlowDiagnostics={chartFlowDiagnostics}
+          latestQuotePrice={latestQuotePrice}
+          latestQuoteUpdatedAt={latestQuoteUpdatedAt}
           emptyState={emptyState}
           drawMode={drawMode}
           onAddDrawing={onAddDrawing}

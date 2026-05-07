@@ -260,6 +260,7 @@ export const MiniChartCell = ({
           compact={dense}
           surfaceUiStateKey={`market-spot-chart:${slotId}:${timeframe}`}
           viewportLayoutKey={chartViewportLayoutKey}
+          prewarmFavoriteTimeframesEnabled={false}
           searchOpen={searchOpen}
           onSearchOpenChange={setSearchOpen}
           searchContent={

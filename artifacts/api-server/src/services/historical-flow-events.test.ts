@@ -17,6 +17,27 @@ test("historical flow service stays isolated from live IBKR streaming modules", 
   assert.doesNotMatch(source, /fetchBridgeOptionQuoteSnapshots/);
 });
 
+test("historical flow nonblocking store reads have a bounded response budget", () => {
+  assert.match(
+    source,
+    /HISTORICAL_FLOW_NONBLOCKING_STORE_READ_TIMEOUT_MS = 3_000/,
+  );
+  assert.match(source, /HISTORICAL_FLOW_STORE_DISABLE_COOLDOWN_MS = 5 \* 60_000/);
+  assert.match(source, /settleHistoricalFlowStoreRead/);
+  assert.match(source, /historical flow store read timed out/);
+});
+
+test("historical flow nonblocking direct fallback is explicitly bounded", () => {
+  assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT = 40/);
+  assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT = 1/);
+  assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_PAGE_LIMIT = 1/);
+  assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_TRADE_LIMIT = 500/);
+  assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_MAX_DTE = 60/);
+  assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_TIMEOUT_MS = 20_000/);
+  assert.match(source, /preferDerived: true/);
+  assert.match(source, /controller\.abort\(\)/);
+});
+
 test("historical flow sampling budgets markers across regular sessions", () => {
   const plan = resolveHistoricalFlowSamplePlan({
     from: new Date("2026-05-05T13:30:00.000Z"),

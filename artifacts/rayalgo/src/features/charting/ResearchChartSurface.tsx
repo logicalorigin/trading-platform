@@ -66,6 +66,8 @@ import {
   type ChartHydrationCounterKey,
 } from "./chartHydrationStats";
 
+export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
+  "ResearchChartSurface@20260507-runtime-fingerprint-v1";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -1049,6 +1051,8 @@ type ResearchChartSurfaceProps = {
   }>;
   chartEvents?: ChartEvent[];
   chartFlowDiagnostics?: FlowChartEventConversion | null;
+  latestQuotePrice?: number | null;
+  latestQuoteUpdatedAt?: string | Date | number | null;
   emptyState?: {
     title?: string | null;
     detail?: string | null;
@@ -1187,44 +1191,66 @@ const seriesDataPointsEqual = (
 };
 
 type SeriesTailUpdateMode = "noop" | "patch" | "append" | "reset";
+type SeriesTailResetReason =
+  | "empty-next"
+  | "initial-load"
+  | "time-sequence-changed"
+  | "interior-point-changed"
+  | "tail-whitespace-shape-changed"
+  | "non-increasing-append-time"
+  | "shorter-series"
+  | "tail-update-rejected";
 
 type SeriesTailUpdatePlan = {
   mode: SeriesTailUpdateMode;
   startIndex: number;
+  resetReason?: SeriesTailResetReason;
 };
 
 type SeriesSyncModeReporter = (
   mode: "patch" | "append" | "reset",
   delta: number,
+  detail?: {
+    seriesName?: string;
+    resetReason?: SeriesTailResetReason;
+  },
 ) => void;
+
+const buildSeriesResetPlan = (
+  resetReason: SeriesTailResetReason,
+): SeriesTailUpdatePlan => ({
+  mode: "reset",
+  startIndex: 0,
+  resetReason,
+});
 
 const buildSeriesTailUpdatePlan = (
   previous: Array<Record<string, unknown>>,
   next: Array<Record<string, unknown>>,
 ): SeriesTailUpdatePlan => {
-  const reset = { mode: "reset" as const, startIndex: 0 };
-
   if (previous === next) {
     return { mode: "noop", startIndex: next.length };
   }
 
   if (!next.length) {
-    return previous.length ? reset : { mode: "noop", startIndex: 0 };
+    return previous.length
+      ? buildSeriesResetPlan("empty-next")
+      : { mode: "noop", startIndex: 0 };
   }
 
   if (!previous.length) {
-    return reset;
+    return buildSeriesResetPlan("initial-load");
   }
 
   if (next.length === previous.length) {
     let tailChanged = false;
     for (let index = 0; index < previous.length; index += 1) {
       if (!seriesTimesEqual(previous[index]?.time, next[index]?.time)) {
-        return reset;
+        return buildSeriesResetPlan("time-sequence-changed");
       }
       if (!seriesDataPointsEqual(previous[index], next[index])) {
         if (index !== previous.length - 1) {
-          return reset;
+          return buildSeriesResetPlan("interior-point-changed");
         }
         tailChanged = true;
       }
@@ -1250,7 +1276,11 @@ const buildSeriesTailUpdatePlan = (
         continue;
       }
 
-      return reset;
+      return buildSeriesResetPlan(
+        seriesTimesEqual(previous[index]?.time, next[index]?.time)
+          ? "interior-point-changed"
+          : "time-sequence-changed",
+      );
     }
 
     if (startIndex === previous.length - 1) {
@@ -1258,7 +1288,7 @@ const buildSeriesTailUpdatePlan = (
         Object.prototype.hasOwnProperty.call(previous[startIndex], "value") !==
         Object.prototype.hasOwnProperty.call(next[startIndex], "value");
       if (tailWhitespaceChanged) {
-        return reset;
+        return buildSeriesResetPlan("tail-whitespace-shape-changed");
       }
     }
 
@@ -1272,7 +1302,7 @@ const buildSeriesTailUpdatePlan = (
         next[index - 1]?.time,
       );
       if (timeComparison === null || timeComparison <= 0) {
-        return reset;
+        return buildSeriesResetPlan("non-increasing-append-time");
       }
     }
 
@@ -1282,14 +1312,14 @@ const buildSeriesTailUpdatePlan = (
         previous[previous.length - 1]?.time,
       );
       if (tailTimeComparison === null || tailTimeComparison <= 0) {
-        return reset;
+        return buildSeriesResetPlan("non-increasing-append-time");
       }
     }
 
     return { mode: "append", startIndex };
   }
 
-  return reset;
+  return buildSeriesResetPlan("shorter-series");
 };
 
 export const resolveSeriesTailUpdateMode = (
@@ -1297,6 +1327,13 @@ export const resolveSeriesTailUpdateMode = (
   next: Array<Record<string, unknown>>,
 ): SeriesTailUpdateMode => {
   return buildSeriesTailUpdatePlan(previous, next).mode;
+};
+
+export const resolveSeriesTailUpdateResetReason = (
+  previous: Array<Record<string, unknown>>,
+  next: Array<Record<string, unknown>>,
+): SeriesTailResetReason | null => {
+  return buildSeriesTailUpdatePlan(previous, next).resetReason ?? null;
 };
 
 const canUpdateSeriesTail = (
@@ -1783,8 +1820,10 @@ const syncSeriesData = (
   next: Array<Record<string, unknown>>,
   instrumentationScope?: string | null,
   reportMode?: SeriesSyncModeReporter,
+  seriesName = "series",
 ): Array<Record<string, unknown>> => {
   const updatePlan = buildSeriesTailUpdatePlan(previous, next);
+  let resetReason = updatePlan.resetReason;
 
   if (updatePlan.mode === "noop") {
     return previous;
@@ -1808,6 +1847,9 @@ const syncSeriesData = (
           tailWhitespaceChanged ||
           !canUpdateSeriesTail(previousPoint, nextPoint, pointUpdateMode)
         ) {
+          resetReason = tailWhitespaceChanged
+            ? "tail-whitespace-shape-changed"
+            : "tail-update-rejected";
           throw new Error("Series tail update is not applicable.");
         }
 
@@ -1832,7 +1874,10 @@ const syncSeriesData = (
   }
 
   recordChartHydrationCounter("seriesFullReset", instrumentationScope);
-  reportMode?.("reset", next.length);
+  reportMode?.("reset", next.length, {
+    seriesName,
+    resetReason: resetReason ?? "tail-update-rejected",
+  });
   series.setData(next);
   return next;
 };
@@ -1961,6 +2006,20 @@ const chartTimeToDate = (value: unknown): Date | null => {
     Number.isInteger(day)
   ) {
     return new Date(Date.UTC(year, month - 1, day, 12));
+  }
+  return null;
+};
+
+const resolveDateLikeMs = (value: unknown): number | null => {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
   }
   return null;
 };
@@ -2850,6 +2909,16 @@ const clampVisualAnchor = (
   return clampCoordinate(value, halfSize, viewportSize - halfSize);
 };
 
+export const isOverlayAnchorVisibleOnAxis = (
+  value: number,
+  halfSize: number,
+  viewportSize: number,
+): boolean =>
+  Number.isFinite(value) &&
+  viewportSize > 0 &&
+  value + halfSize >= 0 &&
+  value - halfSize <= viewportSize;
+
 export const clampOverlayRectPosition = ({
   left,
   top,
@@ -3556,13 +3625,13 @@ const buildChartEventOverlays = (
 
     const time = Math.floor(parsed / 1000);
     const x = chart.timeScale().timeToCoordinate(time);
-    if (!Number.isFinite(x)) {
+    const size = event.placement === "timescale" ? 18 : 22;
+    if (!isOverlayAnchorVisibleOnAxis(Number(x), size / 2, viewportWidth)) {
       return result;
     }
 
     const bar = barByTime.get(time);
     const label = event.label || (event.eventType === "earnings" ? "E" : "F");
-    const size = event.placement === "timescale" ? 18 : 22;
     const anchorTop =
       event.placement === "timescale"
         ? viewportHeight - size / 2
@@ -3607,12 +3676,12 @@ const buildFlowChartEventOverlays = (
 
   return buckets.reduce<ChartEventOverlay[]>((result, bucket) => {
     const x = chart.timeScale().timeToCoordinate(bucket.time);
-    if (!Number.isFinite(x)) {
+    const size = 24;
+    if (!isOverlayAnchorVisibleOnAxis(Number(x), size / 2, viewportWidth)) {
       return result;
     }
 
     const bar = model.chartBars[bucket.barIndex];
-    const size = 24;
     const anchorTop = Number.isFinite(bar?.h)
       ? (series.priceToCoordinate?.(bar?.h) ?? 24) - size
       : size / 2;
@@ -4286,6 +4355,8 @@ export const ResearchChartSurface = ({
   referenceLines = EMPTY_REFERENCE_LINES,
   chartEvents = EMPTY_CHART_EVENTS,
   chartFlowDiagnostics = null,
+  latestQuotePrice = null,
+  latestQuoteUpdatedAt = null,
   emptyState = null,
   drawMode = null,
   onAddDrawing,
@@ -4321,6 +4392,8 @@ export const ResearchChartSurface = ({
     seriesTailPatches: 0,
     seriesTailAppends: 0,
     seriesFullResets: 0,
+    markerSetCalls: 0,
+    lastSeriesResetReason: "",
     viewportDefaultRangeApplies: 0,
     viewportUserRangePreserves: 0,
     viewportRealtimeFollowApplies: 0,
@@ -4349,6 +4422,7 @@ export const ResearchChartSurface = ({
     volume: [],
   });
   const markerApisRef = useRef<any[]>([]);
+  const markerSignatureRef = useRef<string | null>(null);
   const studyRegistryRef = useRef<Record<string, StudyRegistryEntry>>({});
   const visibleLogicalRangeRef = useRef<any>(null);
   const realtimeFollowRef = useRef(true);
@@ -4441,6 +4515,9 @@ export const ResearchChartSurface = ({
     root.dataset.chartSeriesFullResetCount = String(
       diagnostics.seriesFullResets,
     );
+    root.dataset.chartSeriesLastResetReason =
+      diagnostics.lastSeriesResetReason || "";
+    root.dataset.chartMarkerSetCount = String(diagnostics.markerSetCalls);
     root.dataset.chartViewportDefaultRangeApplyCount = String(
       diagnostics.viewportDefaultRangeApplies,
     );
@@ -4547,13 +4624,14 @@ export const ResearchChartSurface = ({
     chartEvents,
     showExecutionMarkers: userPreferences.trading.showExecutionMarkers,
   });
+  const flowChartModel = model.chartBars.length ? model : deferredModel;
   const flowChartBuckets = useMemo(
-    () => buildFlowChartBuckets(visibleChartEvents, deferredModel),
-    [visibleChartEvents, deferredModel],
+    () => buildFlowChartBuckets(visibleChartEvents, flowChartModel),
+    [visibleChartEvents, flowChartModel],
   );
   const flowChartBucketDiagnostics = useMemo(
-    () => summarizeFlowChartBucketPlacement(visibleChartEvents, deferredModel),
-    [visibleChartEvents, deferredModel],
+    () => summarizeFlowChartBucketPlacement(visibleChartEvents, flowChartModel),
+    [visibleChartEvents, flowChartModel],
   );
   const showTradePositionOverlays = userPreferences.trading.showPositionLines;
   const [boxDrawingOverlays, setBoxDrawingOverlays] = useState<OverlayShape[]>(
@@ -5612,6 +5690,7 @@ export const ResearchChartSurface = ({
         createSeriesMarkers(areaSeries, []),
         createSeriesMarkers(baselineSeries, []),
       ];
+      markerSignatureRef.current = null;
       chartRef.current = chart;
       surfaceDiagnosticsRef.current.chartInstanceCreates += 1;
       recordChartHydrationCounter("chartInstanceCreate", hydrationScopeKey);
@@ -5799,6 +5878,7 @@ export const ResearchChartSurface = ({
         volume: [],
       };
       markerApisRef.current = [];
+      markerSignatureRef.current = null;
       studyRegistryRef.current = {};
       drawingLinesRef.current = {
         candles: [],
@@ -5935,7 +6015,7 @@ export const ResearchChartSurface = ({
       followLatestBars: shouldFollowLatestBars,
     });
     let seriesFullResetDuringSync = false;
-    const reportSeriesSyncMode: SeriesSyncModeReporter = (mode, delta) => {
+    const reportSeriesSyncMode: SeriesSyncModeReporter = (mode, delta, detail) => {
       if (mode === "patch") {
         surfaceDiagnosticsRef.current.seriesTailPatches += delta;
       } else if (mode === "append") {
@@ -5943,6 +6023,10 @@ export const ResearchChartSurface = ({
       } else {
         seriesFullResetDuringSync = true;
         surfaceDiagnosticsRef.current.seriesFullResets += 1;
+        surfaceDiagnosticsRef.current.lastSeriesResetReason = [
+          detail?.seriesName || "series",
+          detail?.resetReason || "unknown",
+        ].join(":");
       }
       writeSurfaceDiagnosticsAttributes();
     };
@@ -5953,6 +6037,7 @@ export const ResearchChartSurface = ({
       candleSeriesData,
       hydrationScopeKey,
       reportSeriesSyncMode,
+      "candles",
     );
     baseSeriesDataRef.current.bars = syncSeriesData(
       barSeries,
@@ -5960,6 +6045,7 @@ export const ResearchChartSurface = ({
       barSeriesData,
       hydrationScopeKey,
       reportSeriesSyncMode,
+      "bars",
     );
     baseSeriesDataRef.current.line = syncSeriesData(
       lineSeries,
@@ -5967,6 +6053,7 @@ export const ResearchChartSurface = ({
       closeSeriesData,
       hydrationScopeKey,
       reportSeriesSyncMode,
+      "line",
     );
     baseSeriesDataRef.current.area = syncSeriesData(
       areaSeries,
@@ -5974,6 +6061,7 @@ export const ResearchChartSurface = ({
       closeSeriesData,
       hydrationScopeKey,
       reportSeriesSyncMode,
+      "area",
     );
     baseSeriesDataRef.current.baseline = syncSeriesData(
       baselineSeries,
@@ -5981,6 +6069,7 @@ export const ResearchChartSurface = ({
       closeSeriesData,
       hydrationScopeKey,
       reportSeriesSyncMode,
+      "baseline",
     );
     baseSeriesDataRef.current.volume = syncSeriesData(
       volumeSeries,
@@ -5988,6 +6077,7 @@ export const ResearchChartSurface = ({
       volumeSeriesData,
       hydrationScopeKey,
       reportSeriesSyncMode,
+      "volume",
     );
     if (
       userViewportTouched &&
@@ -6424,7 +6514,14 @@ export const ResearchChartSurface = ({
         text: marker.text,
         size: marker.size,
       }));
+    const markerSignature = JSON.stringify(markers);
+    if (markerSignatureRef.current === markerSignature) {
+      return;
+    }
+    markerSignatureRef.current = markerSignature;
     markerApisRef.current.forEach((markerApi) => markerApi.setMarkers(markers));
+    surfaceDiagnosticsRef.current.markerSetCalls += 1;
+    writeSurfaceDiagnosticsAttributes();
   }, [
     deferredModel.chartBars.length,
     deferredModel.indicatorMarkerPayload,
@@ -6644,22 +6741,20 @@ export const ResearchChartSurface = ({
       ...buildFlowChartEventOverlays(
         chartRef.current,
         activePriceSeriesRef.current,
-        deferredModel,
+        flowChartModel,
         flowChartBuckets,
         viewportWidth,
         viewportHeight,
       ),
     ]);
     syncFlowVolumeOverlaysState(
-      showVolume
-        ? buildFlowVolumeOverlays(
-            chartRef.current,
-            deferredModel,
-            flowChartBuckets,
-            viewportWidth,
-            viewportHeight,
-          )
-        : [],
+      buildFlowVolumeOverlays(
+        chartRef.current,
+        flowChartModel,
+        flowChartBuckets,
+        viewportWidth,
+        viewportHeight,
+      ),
     );
     syncIndicatorDashboardOverlayState(indicatorEventOverlays.dashboard);
     const selectedTradeOverlays = showTradePositionOverlays
@@ -6690,6 +6785,7 @@ export const ResearchChartSurface = ({
     baseSeriesType,
     drawings,
     flowChartBuckets,
+    flowChartModel,
     deferredModel.chartBars,
     deferredModel.activeTradeSelectionId,
     deferredModel.indicatorEvents,
@@ -6704,7 +6800,6 @@ export const ResearchChartSurface = ({
     plotSize.width,
     rootWidth,
     scaleMode,
-    showVolume,
     showTradePositionOverlays,
     visibleChartEvents,
     theme.accent,
@@ -7861,6 +7956,15 @@ export const ResearchChartSurface = ({
     model.chartBars.length > 0
       ? model.chartBars[model.chartBars.length - 1]
       : null;
+  const latestQuoteUpdatedAtMs = resolveDateLikeMs(latestQuoteUpdatedAt);
+  const latestQuoteAgeMs =
+    latestQuoteUpdatedAtMs != null
+      ? Math.max(0, Date.now() - latestQuoteUpdatedAtMs)
+      : null;
+  const watchlistChartPriceDelta =
+    Number.isFinite(latestQuotePrice) && Number.isFinite(latestRenderedBar?.c)
+      ? Number((Number(latestRenderedBar?.c) - Number(latestQuotePrice)).toFixed(6))
+      : null;
   const flowChartEventCount = visibleChartEvents.filter(
     (event) => event.eventType === "unusual_flow",
   ).length;
@@ -7874,6 +7978,16 @@ export const ResearchChartSurface = ({
   const renderedFlowMarkerCount = chartEventOverlays.filter(
     (overlay) => overlay.eventType === "unusual_flow",
   ).length;
+  const chartFlowHydrationState =
+    flowChartEventCount <= 0
+      ? rawFlowInputCount > 0
+        ? "conversion-empty"
+        : "empty"
+      : flowChartBucketDiagnostics.bucketedEventCount <= 0
+        ? "outside-loaded-bars"
+        : flowChartBucketDiagnostics.bucketedEventCount < flowChartEventCount
+          ? "partial"
+          : "hydrated";
   const extendedSessionBarCount =
     marketSessionBarCounts.pre + marketSessionBarCounts.after;
   const surfaceDiagnostics = surfaceDiagnosticsRef.current;
@@ -7882,6 +7996,8 @@ export const ResearchChartSurface = ({
     <div
       ref={rootRef}
       data-testid={dataTestId}
+      data-chart-surface-module-version={RESEARCH_CHART_SURFACE_MODULE_VERSION}
+      data-chart-surface-module-source="ResearchChartSurface.tsx"
       data-chart-range-identity={rangeIdentityKey || undefined}
       data-chart-viewport-layout={normalizedViewportLayoutKey || undefined}
       data-chart-viewport-user-touched={
@@ -7898,16 +8014,20 @@ export const ResearchChartSurface = ({
       data-chart-latest-freshness={latestRenderedBar?.freshness || ""}
       data-chart-latest-market-data-mode={latestRenderedBar?.marketDataMode || ""}
       data-chart-latest-delayed={latestRenderedBar?.delayed ? "true" : "false"}
+      data-chart-latest-quote-age-ms={latestQuoteAgeMs ?? ""}
+      data-chart-watchlist-price-delta={watchlistChartPriceDelta ?? ""}
       data-chart-events-count={visibleChartEvents.length}
       data-chart-flow-raw-input-count={rawFlowInputCount}
       data-chart-flow-converted-count={convertedFlowEventCount}
       data-chart-flow-events-count={flowChartEventCount}
+      data-chart-flow-hydration-state={chartFlowHydrationState}
       data-chart-flow-bucket-count={flowChartBuckets.length}
       data-chart-flow-bucketed-event-count={
         flowChartBucketDiagnostics.bucketedEventCount
       }
       data-chart-flow-marker-count={renderedFlowMarkerCount}
       data-chart-flow-volume-count={flowVolumeOverlays.length}
+      data-chart-regular-volume-enabled={showVolume ? "true" : "false"}
       data-chart-flow-invalid-time-drop-count={
         conversionInvalidTimeDropCount +
         flowChartBucketDiagnostics.droppedInvalidTimeCount
@@ -7931,6 +8051,10 @@ export const ResearchChartSurface = ({
       data-chart-series-tail-patch-count={surfaceDiagnostics.seriesTailPatches}
       data-chart-series-tail-append-count={surfaceDiagnostics.seriesTailAppends}
       data-chart-series-full-reset-count={surfaceDiagnostics.seriesFullResets}
+      data-chart-series-last-reset-reason={
+        surfaceDiagnostics.lastSeriesResetReason
+      }
+      data-chart-marker-set-count={surfaceDiagnostics.markerSetCalls}
       data-chart-viewport-default-range-apply-count={
         surfaceDiagnostics.viewportDefaultRangeApplies
       }
@@ -8145,6 +8269,8 @@ export const ResearchChartSurface = ({
           indicatorBadgeOverlays.length ||
           indicatorDotOverlays.length ||
           tradeThresholdOverlays.length ||
+          flowVolumeOverlays.length ||
+          chartEventOverlays.length ||
           tradeMarkerTargets.length ||
           selectedTradeConnector ||
           selectedTradeEntryBadge ||

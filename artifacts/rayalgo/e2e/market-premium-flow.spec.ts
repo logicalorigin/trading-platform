@@ -16,6 +16,15 @@ const quoteData: Record<
   IWM: { price: 202.42, change: 0.12, changePercent: 0.06, volume: 28_000_000 },
 };
 
+type MarketGridTestOptions = {
+  showVolume?: boolean;
+};
+
+const buildTestUserPreferences = (options: MarketGridTestOptions = {}) => ({
+  appearance: { theme: "dark" },
+  chart: { showVolume: options.showVolume ?? true },
+});
+
 function makeBars(symbol: string) {
   const now = Date.now();
   const base = quoteData[symbol]?.price ?? 100;
@@ -58,7 +67,13 @@ function flowEvent(symbol: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function mockMarketApi(page: Page, flowUrls: string[]) {
+async function mockMarketApi(
+  page: Page,
+  flowUrls: string[],
+  options: MarketGridTestOptions = {},
+) {
+  const userPreferences = buildTestUserPreferences(options);
+
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     let body: unknown = {};
@@ -74,6 +89,14 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
         },
         environment: "paper",
         marketDataProviders: {},
+      };
+    } else if (url.pathname === "/api/settings/preferences") {
+      body = {
+        profileKey: "default",
+        version: 1,
+        preferences: userPreferences,
+        source: "local",
+        updatedAt: new Date(0).toISOString(),
       };
     } else if (url.pathname === "/api/watchlists") {
       body = {
@@ -211,8 +234,11 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
   });
 }
 
-async function openMarketGrid(page: Page) {
-  await page.addInitScript((gridSymbols) => {
+async function openMarketGrid(
+  page: Page,
+  options: MarketGridTestOptions = {},
+) {
+  await page.addInitScript(({ gridSymbols, userPreferences }) => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
@@ -221,6 +247,7 @@ async function openMarketGrid(page: Page) {
         screen: "market",
         sym: "SPY",
         theme: "dark",
+        userPreferences,
         sidebarCollapsed: true,
         marketUnusualThreshold: 2,
         marketGridLayout: "2x3",
@@ -231,7 +258,7 @@ async function openMarketGrid(page: Page) {
         })),
       }),
     );
-  }, symbols);
+  }, { gridSymbols: symbols, userPreferences: buildTestUserPreferences(options) });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("market-chart-grid")).toBeVisible({
@@ -239,12 +266,12 @@ async function openMarketGrid(page: Page) {
   });
 }
 
-test("Market chart grid premium-flow strips render below charts and overlays stay on top", async ({
+test("Market chart grid premium-flow strips and flow-volume overlays render with regular volume hidden", async ({
   page,
 }) => {
   const flowUrls: string[] = [];
-  await mockMarketApi(page, flowUrls);
-  await openMarketGrid(page);
+  await mockMarketApi(page, flowUrls, { showVolume: false });
+  await openMarketGrid(page, { showVolume: false });
 
   const strips = page.getByTestId("market-premium-flow-strip");
   await expect(strips).toHaveCount(6);
@@ -289,6 +316,10 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-event-symbol", "QQQ");
   const firstSurface = page.getByTestId("market-mini-chart-0-surface");
+  await expect(firstSurface).toHaveAttribute(
+    "data-chart-regular-volume-enabled",
+    "false",
+  );
   await expect(firstSurface).toHaveAttribute(
     "data-chart-flow-raw-input-count",
     /(?:[2-9]|\d{2,})/,

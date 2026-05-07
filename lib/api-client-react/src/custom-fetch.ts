@@ -20,13 +20,14 @@ const HEAVY_GET_PATHS = new Set([
   "/api/options/chains",
   "/api/flow/events",
 ]);
-const HEAVY_GET_CONCURRENCY = 3;
+const HEAVY_GET_CONCURRENCY = 6;
 const HEAVY_GET_PRIORITY: Record<string, number> = {
   "/api/bars": 8,
   "/api/options/chart-bars": 12,
   "/api/options/chains": 10,
 };
 const STARTUP_GET_TIMEOUT_MS: Record<string, number> = {
+  "/api/bars": 12_000,
   "/api/watchlists": 2_500,
   "/api/diagnostics/runtime": 2_000,
 };

@@ -38,7 +38,9 @@ const {
   __fetchOptionsFlowRadarQuotesForTests,
   __runOptionsFlowScannerOnceForTests,
   __setIbkrBridgeClientFactoryForTests,
+  __setHistoricalFlowDirectFallbackTimeoutMsForTests,
   __setHistoricalFlowStoreDisabledForTests,
+  __setHistoricalFlowStoreReadTimeoutMsForTests,
   __setPolygonMarketDataClientFactoryForTests,
   getOptionsFlowRuntimeConfig,
   resolveOptionsFlowScannerEffectiveConcurrency,
@@ -185,6 +187,9 @@ test.afterEach(() => {
   __resetBridgeOptionQuoteStreamForTests();
   __resetOptionChainCachesForTests();
   __resetMarketDataAdmissionForTests();
+  __setHistoricalFlowStoreDisabledForTests(false);
+  __setHistoricalFlowStoreReadTimeoutMsForTests(3_000);
+  __setHistoricalFlowDirectFallbackTimeoutMsForTests(20_000);
   clearPolygonEnv();
 });
 
@@ -1250,6 +1255,137 @@ test("listFlowEvents routes explicit time windows to Polygon historical flow", a
     parsed.events.map((event) => event.id),
     ["SPY-HISTORY"],
   );
+});
+
+test("listFlowEvents bounds direct historical fallback when the store is unavailable", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  __setHistoricalFlowStoreDisabledForTests(true);
+  __setHistoricalFlowDirectFallbackTimeoutMsForTests(1);
+  let polygonCalls = 0;
+  let requestedInput:
+    | {
+        contractLimit?: number;
+        contractPageLimit?: number;
+        tradeConcurrency?: number;
+        tradePageLimit?: number;
+        tradeLimit?: number;
+        maxDte?: number | null;
+        signal?: AbortSignal;
+      }
+    | undefined;
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getHistoricalOptionFlowEvents: (input: {
+          contractLimit?: number;
+          contractPageLimit?: number;
+          tradeConcurrency?: number;
+          tradePageLimit?: number;
+          tradeLimit?: number;
+          maxDte?: number | null;
+          signal?: AbortSignal;
+        }) => {
+          polygonCalls += 1;
+          requestedInput = input;
+          return new Promise(() => {});
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const result = await listFlowEvents({
+    underlying: "SPY",
+    limit: 1_000,
+    from: new Date("2026-04-23T13:30:00.000Z"),
+    to: new Date("2026-04-24T20:00:00.000Z"),
+    blocking: false,
+  });
+  const parsed = ListFlowEventsResponse.parse(result);
+
+  assert.equal(polygonCalls, 1);
+  assert.equal(requestedInput?.contractLimit, 40);
+  assert.equal(requestedInput?.contractPageLimit, 1);
+  assert.equal(requestedInput?.tradeConcurrency, 4);
+  assert.equal(requestedInput?.tradePageLimit, 1);
+  assert.equal(requestedInput?.tradeLimit, 500);
+  assert.equal(requestedInput?.maxDte, 60);
+  assert.equal(requestedInput?.signal?.aborted, true);
+  assert.deepEqual(parsed.events, []);
+  assert.equal(parsed.source.provider, "polygon");
+  assert.equal(
+    parsed.source.ibkrReason,
+    "options_flow_historical_provider_timeout",
+  );
+});
+
+test("listFlowEvents uses derived historical fallback for nonblocking charts when the store is unavailable", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  __setHistoricalFlowStoreDisabledForTests(true);
+  let requestedInput:
+    | {
+      from?: Date;
+      to?: Date;
+      limit?: number;
+      snapshotPageLimit?: number;
+      contractLimit?: number;
+      contractPageLimit?: number;
+      tradeLimit?: number;
+      tradePageLimit?: number;
+      tradeConcurrency?: number;
+    }
+    | undefined;
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getHistoricalOptionFlowEvents: () => {
+          throw new Error("historical scan should not run before derived fallback");
+        },
+        getDerivedFlowEvents: async (input: {
+          from?: Date;
+          to?: Date;
+          limit?: number;
+          snapshotPageLimit?: number;
+          contractLimit?: number;
+          contractPageLimit?: number;
+          tradeLimit?: number;
+          tradePageLimit?: number;
+          tradeConcurrency?: number;
+        }) => {
+          requestedInput = input;
+          return [polygonFlowEvent("SPY-DERIVED-HISTORY", 75_000)];
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const from = new Date("2026-04-23T13:30:00.000Z");
+  const to = new Date("2026-04-24T20:00:00.000Z");
+  const result = await listFlowEvents({
+    underlying: "SPY",
+    limit: 1_000,
+    from,
+    to,
+    blocking: false,
+  });
+  const parsed = ListFlowEventsResponse.parse(result);
+
+  assert.equal(requestedInput?.from?.toISOString(), from.toISOString());
+  assert.equal(requestedInput?.to?.toISOString(), to.toISOString());
+  assert.equal(requestedInput?.limit, 250);
+  assert.equal(requestedInput?.snapshotPageLimit, 1);
+  assert.equal(requestedInput?.contractLimit, 40);
+  assert.equal(requestedInput?.contractPageLimit, 1);
+  assert.equal(requestedInput?.tradeLimit, 500);
+  assert.equal(requestedInput?.tradePageLimit, 1);
+  assert.equal(requestedInput?.tradeConcurrency, 4);
+  assert.deepEqual(
+    parsed.events.map((event) => event.id),
+    ["SPY-DERIVED-HISTORY"],
+  );
+  assert.equal(parsed.source.provider, "polygon");
+  assert.equal(parsed.source.ibkrReason, "options_flow_historical_direct");
 });
 
 test("listFlowEvents widens explicit Polygon fallback candidates before applying narrow filters", async () => {

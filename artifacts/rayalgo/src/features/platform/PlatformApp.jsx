@@ -284,7 +284,6 @@ export default function PlatformApp() {
         acc[family] = (acc[family] || 0) + 1;
         return acc;
       }, {});
-
       return {
         queryCount: queries.length,
         activeQueryCount: queries.filter(

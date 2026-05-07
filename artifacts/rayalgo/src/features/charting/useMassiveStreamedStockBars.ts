@@ -7,6 +7,7 @@ import {
 } from "./useMassiveStockAggregateStream";
 import type { BrokerStockAggregateMessage } from "./useMassiveStockAggregateStream";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
+import { useRuntimeTickerSnapshot } from "../platform/runtimeTickerStore";
 import { usePageVisible } from "../platform/usePageVisible";
 import {
   markChartLivePatchPending,
@@ -86,10 +87,11 @@ type LiveOptionQuoteLike = {
   price?: number | null;
   bid?: number | null;
   ask?: number | null;
-  updatedAt?: string | Date | null;
+  volume?: number | null;
+  updatedAt?: string | Date | number | null;
   freshness?: string | null;
   marketDataMode?: string | null;
-  dataUpdatedAt?: string | Date | null;
+  dataUpdatedAt?: string | Date | number | null;
 };
 
 type HistoricalBarStreamSnapshot = {
@@ -393,6 +395,10 @@ const resolveQuoteUpdatedAtMs = (
     return value.getTime();
   }
 
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value) : Math.floor(value * 1000);
+  }
+
   if (typeof value === "string") {
     const parsed = Date.parse(value);
     return Number.isNaN(parsed) ? null : parsed;
@@ -429,6 +435,24 @@ const resolveLiveQuotePrice = (quote: LiveOptionQuoteLike | null): number | null
 
   return null;
 };
+
+const resolveLiveQuoteVolume = (quote: LiveOptionQuoteLike | null): number | null => {
+  if (typeof quote?.volume === "number" && Number.isFinite(quote.volume) && quote.volume >= 0) {
+    return quote.volume;
+  }
+
+  return null;
+};
+
+const buildLiveQuotePatchSignature = (
+  quote: LiveOptionQuoteLike | null,
+): string => [
+  resolveQuoteUpdatedAtMs(quote?.updatedAt) ?? "",
+  quote?.price ?? "",
+  quote?.bid ?? "",
+  quote?.ask ?? "",
+  resolveLiveQuoteVolume(quote) ?? "",
+].join("|");
 
 const normalizeBaseBars = (
   bars: MarketBar[] | null | undefined,
@@ -1131,10 +1155,13 @@ const patchBarsWithLiveQuote = (
   bars: MarketBar[],
   timeframe: string,
   quote: LiveOptionQuoteLike | null,
+  source = "ibkr-option-quote-derived",
 ): MarketBar[] => {
   const normalizedBars = normalizeBaseBars(bars, timeframe);
   const quotePrice = resolveLiveQuotePrice(quote);
   const quoteUpdatedAtMs = resolveQuoteUpdatedAtMs(quote?.updatedAt);
+  const quoteVolume =
+    source === "ibkr-option-quote-derived" ? resolveLiveQuoteVolume(quote) : null;
   const stepMs = timeframeToStepMs(timeframe);
 
   if (!normalizedBars.length || quotePrice == null || quoteUpdatedAtMs == null || !stepMs) {
@@ -1149,6 +1176,11 @@ const patchBarsWithLiveQuote = (
     return normalizedBars;
   }
 
+  const lastDataUpdatedAtMs = resolveQuoteUpdatedAtMs(lastBar.dataUpdatedAt);
+  if (lastDataUpdatedAtMs != null && quoteUpdatedAtMs < lastDataUpdatedAtMs) {
+    return normalizedBars;
+  }
+
   const nextBarStartMs =
     isDailyTimeframe(timeframe)
       ? quoteUpdatedAtMs < lastBarStartMs + stepMs
@@ -1157,13 +1189,22 @@ const patchBarsWithLiveQuote = (
       : Math.floor(quoteUpdatedAtMs / stepMs) * stepMs;
 
   if (nextBarStartMs <= lastBarStartMs) {
+    const lastBarVolume = lastBar.volume ?? lastBar.v ?? 0;
+    const patchedVolume =
+      quoteVolume == null ? lastBarVolume : Math.max(lastBarVolume, quoteVolume);
     nextBars[nextBars.length - 1] = {
       ...lastBar,
       high: Math.max(lastBar.high ?? lastBar.h ?? quotePrice, quotePrice),
       low: Math.min(lastBar.low ?? lastBar.l ?? quotePrice, quotePrice),
       close: quotePrice,
       c: quotePrice,
-      source: "ibkr-option-quote-derived",
+      ...(quoteVolume == null
+        ? {}
+        : {
+            volume: patchedVolume,
+            v: patchedVolume,
+          }),
+      source,
       freshness: quote?.freshness ?? lastBar.freshness,
       marketDataMode: quote?.marketDataMode ?? lastBar.marketDataMode,
       dataUpdatedAt: quote?.dataUpdatedAt ?? quote?.updatedAt ?? lastBar.dataUpdatedAt,
@@ -1182,8 +1223,9 @@ const patchBarsWithLiveQuote = (
     high: Math.max(previousClose, quotePrice),
     low: Math.min(previousClose, quotePrice),
     close: quotePrice,
-    volume: lastBar.volume ?? lastBar.v ?? 0,
-    source: "ibkr-option-quote-derived",
+    volume: quoteVolume ?? lastBar.volume ?? lastBar.v ?? 0,
+    v: quoteVolume ?? lastBar.volume ?? lastBar.v ?? 0,
+    source,
     freshness: quote?.freshness ?? lastBar.freshness,
     marketDataMode: quote?.marketDataMode ?? lastBar.marketDataMode,
     dataUpdatedAt: quote?.dataUpdatedAt ?? quote?.updatedAt ?? lastBar.dataUpdatedAt,
@@ -1572,17 +1614,48 @@ export const useBrokerStreamedBars = ({
   const streamEnabled = Boolean(
     enabled && symbol && MINUTE_AGGREGATE_PATCH_TIMEFRAMES.has(timeframe),
   );
+  const quotePatchEnabled = Boolean(enabled && symbol);
   useBrokerStockAggregateStream({
     symbols: symbol ? [symbol] : [],
     enabled: streamEnabled,
   });
 
+  const runtimeQuote = useRuntimeTickerSnapshot(symbol, null, {
+    subscribe: quotePatchEnabled,
+  });
   const symbolAggregateVersion = useStockMinuteAggregateSymbolVersion(symbol);
   const previousAggregateVersionRef = useRef(symbolAggregateVersion);
+  const runtimeQuotePrice = resolveLiveQuotePrice(runtimeQuote);
+  const runtimeQuoteUpdatedAtMs = resolveQuoteUpdatedAtMs(runtimeQuote?.updatedAt);
+  const runtimeQuoteSignature = [
+    runtimeQuotePrice ?? "",
+    runtimeQuoteUpdatedAtMs ?? "",
+    runtimeQuote?.freshness ?? "",
+    runtimeQuote?.marketDataMode ?? "",
+  ].join("|");
+  const previousRuntimeQuoteSignatureRef = useRef(runtimeQuoteSignature);
 
-  const mergedBars = useMemo(
+  const aggregatePatchedBars = useMemo(
     () => mergeBarsWithMinuteAggregates(symbol, timeframe, bars || []),
     [bars, symbolAggregateVersion, symbol, timeframe],
+  );
+  const mergedBars = useMemo(
+    () =>
+      quotePatchEnabled
+        ? patchBarsWithLiveQuote(
+            aggregatePatchedBars,
+            timeframe,
+            runtimeQuote,
+            "ibkr-stock-quote-derived",
+          )
+        : aggregatePatchedBars,
+    [
+      aggregatePatchedBars,
+      quotePatchEnabled,
+      runtimeQuote,
+      runtimeQuoteSignature,
+      timeframe,
+    ],
   );
 
   useEffect(() => {
@@ -1596,15 +1669,37 @@ export const useBrokerStreamedBars = ({
     previousAggregateVersionRef.current = symbolAggregateVersion;
     recordChartHydrationCounter("livePatchReceived", instrumentationScope);
     markChartLivePatchPending(instrumentationScope);
-    if (!areBarsEquivalent(bars || [], mergedBars)) {
+    if (!areBarsEquivalent(bars || [], aggregatePatchedBars)) {
       recordChartHydrationCounter("livePatchApplied", instrumentationScope);
     }
   }, [
+    aggregatePatchedBars,
     bars,
     instrumentationScope,
-    mergedBars,
     streamEnabled,
     symbolAggregateVersion,
+  ]);
+
+  useEffect(() => {
+    if (!quotePatchEnabled) {
+      previousRuntimeQuoteSignatureRef.current = runtimeQuoteSignature;
+      return;
+    }
+    if (previousRuntimeQuoteSignatureRef.current === runtimeQuoteSignature) {
+      return;
+    }
+    previousRuntimeQuoteSignatureRef.current = runtimeQuoteSignature;
+    recordChartHydrationCounter("livePatchReceived", instrumentationScope);
+    markChartLivePatchPending(instrumentationScope);
+    if (!areBarsEquivalent(aggregatePatchedBars, mergedBars)) {
+      recordChartHydrationCounter("livePatchApplied", instrumentationScope);
+    }
+  }, [
+    aggregatePatchedBars,
+    instrumentationScope,
+    mergedBars,
+    quotePatchEnabled,
+    runtimeQuoteSignature,
   ]);
 
   return mergedBars;
@@ -1630,12 +1725,7 @@ export const useOptionQuotePatchedBars = ({
     () => resolvePatchedBarLimit(timeframe, normalizedBaseBars),
     [normalizedBaseBars, timeframe],
   );
-  const quoteSignature = [
-    resolveQuoteUpdatedAtMs(liveQuote?.updatedAt) ?? "",
-    liveQuote?.price ?? "",
-    liveQuote?.bid ?? "",
-    liveQuote?.ask ?? "",
-  ].join("|");
+  const quoteSignature = buildLiveQuotePatchSignature(liveQuote);
 
   useEffect(() => {
     baseBarsRef.current = normalizedBaseBars;
@@ -2038,9 +2128,11 @@ export const __chartStreamingTestInternals = {
   mergeAndCapPatchedBars,
   normalizeHistoricalBarsPayload,
   normalizeBaseBars,
+  patchBarsWithLiveQuote,
   patchBarsWithHistoricalBarStream,
   buildPatchedBarFromHistoricalBarStream,
   buildHistoricalBarStreamSignature,
+  buildLiveQuotePatchSignature,
   resolveHistoricalBarStreamBucketKey,
   createLiveBarFrameScheduler,
   isHistoricalBarStreamPayloadForUrl,
