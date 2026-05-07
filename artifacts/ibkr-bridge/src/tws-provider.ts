@@ -4389,21 +4389,26 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
         const snapshots = await Promise.all(
           normalizedSymbols.map(async (symbol) => {
-            const resolved = await this.resolveStockContract(symbol);
-            return this.getContractQuoteStreamSample({
-              contract: {
-                ...resolved.contract,
-                conId: resolved.resolved.conid,
-                exchange: "SMART",
-              },
-              symbol,
-              providerContractId: resolved.resolved.providerContractId,
-              // 100 = option volume, 101 = option open interest, 106 =
-              // implied volatility. Sampling the underlying with these generic
-              // ticks gives the broad radar enough activity data without
-              // hydrating every option contract in the chain.
-              genericTickList: "100,101,106",
-            });
+            try {
+              const resolved = await this.resolveStockContract(symbol);
+              return await this.getContractQuoteStreamSample({
+                contract: {
+                  ...resolved.contract,
+                  conId: resolved.resolved.conid,
+                  exchange: "SMART",
+                },
+                symbol,
+                providerContractId: resolved.resolved.providerContractId,
+                // 100 = option volume, 101 = option open interest, 106 =
+                // implied volatility. Sampling the underlying with these generic
+                // ticks gives the broad radar enough activity data without
+                // hydrating every option contract in the chain.
+                genericTickList: "100,101,106",
+              });
+            } catch (error) {
+              this.recordError(error);
+              return null;
+            }
           }),
         );
 

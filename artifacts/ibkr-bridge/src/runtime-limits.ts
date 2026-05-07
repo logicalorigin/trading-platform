@@ -53,7 +53,7 @@ export const BRIDGE_RUNTIME_LIMITS: Record<
   },
   maxLiveEquityLines: {
     envName: "IBKR_MAX_LIVE_EQUITY_LINES",
-    defaultValue: 80,
+    defaultValue: 90,
     min: 0,
     max: 500,
     description: "Dedicated live equity quote line budget. Zero uses total budget.",

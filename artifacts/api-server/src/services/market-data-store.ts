@@ -4,8 +4,8 @@ import {
   desc,
   eq,
   gte,
-  inArray,
   lte,
+  sql,
 } from "drizzle-orm";
 import {
   barCacheTable,
@@ -314,9 +314,9 @@ export async function persistMarketDataBars(input: {
   request: MarketDataStoreRequest;
   sourceName: string;
   bars: MarketDataStoreBarInput[];
-}): Promise<void> {
+}): Promise<boolean> {
   if (!input.bars.length || !shouldUseDurableMarketDataStore(input.request)) {
-    return;
+    return false;
   }
 
   try {
@@ -325,7 +325,7 @@ export async function persistMarketDataBars(input: {
       assetClass: input.request.assetClass,
     });
     if (!instrumentId) {
-      return;
+      return false;
     }
 
     const symbol = normalizeSymbol(input.request.symbol);
@@ -335,43 +335,47 @@ export async function persistMarketDataBars(input: {
     );
     for (let offset = 0; offset < normalizedBars.length; offset += STORE_BATCH_SIZE) {
       const batch = normalizedBars.slice(offset, offset + STORE_BATCH_SIZE);
-      const timestamps = batch.map((bar) => bar.timestamp);
-      const existingRows = timestamps.length
-        ? await db
-            .select({ startsAt: barCacheTable.startsAt })
-            .from(barCacheTable)
-            .where(
-              and(
-                eq(barCacheTable.instrumentId, instrumentId),
-                eq(barCacheTable.timeframe, input.request.timeframe),
-                eq(barCacheTable.source, input.sourceName),
-                inArray(barCacheTable.startsAt, timestamps),
-              ),
-            )
-        : [];
-      const existing = new Set(
-        existingRows.map((row) => row.startsAt.getTime()),
-      );
-      const values = batch
-        .filter((bar) => !existing.has(bar.timestamp.getTime()))
-        .map((bar) => ({
-          instrumentId,
-          symbol,
-          timeframe: input.request.timeframe,
-          startsAt: bar.timestamp,
-          open: String(bar.open),
-          high: String(bar.high),
-          low: String(bar.low),
-          close: String(bar.close),
-          volume: String(bar.volume),
-          source: input.sourceName,
-        }));
+      const now = new Date();
+      const values = batch.map((bar) => ({
+        instrumentId,
+        symbol,
+        timeframe: input.request.timeframe,
+        startsAt: bar.timestamp,
+        open: String(bar.open),
+        high: String(bar.high),
+        low: String(bar.low),
+        close: String(bar.close),
+        volume: String(bar.volume),
+        source: input.sourceName,
+        updatedAt: now,
+      }));
 
       if (values.length) {
-        await db.insert(barCacheTable).values(values);
+        await db
+          .insert(barCacheTable)
+          .values(values)
+          .onConflictDoUpdate({
+            target: [
+              barCacheTable.instrumentId,
+              barCacheTable.timeframe,
+              barCacheTable.source,
+              barCacheTable.startsAt,
+            ],
+            set: {
+              symbol,
+              open: sql`excluded.open`,
+              high: sql`excluded.high`,
+              low: sql`excluded.low`,
+              close: sql`excluded.close`,
+              volume: sql`excluded.volume`,
+              updatedAt: now,
+            },
+          });
       }
     }
+    return true;
   } catch (error) {
     disableStoreAfterError(error, "persistMarketDataBars");
+    return false;
   }
 }

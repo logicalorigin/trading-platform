@@ -8,8 +8,11 @@ import {
   setIbkrBridgeRuntimeOverride,
 } from "../lib/runtime";
 import {
+  __stockAggregateStreamTestInternals,
   getPreferredStockAggregateStreamSource,
+  getStockAggregateStreamDiagnostics,
   resolvePreferredStockAggregateStreamSource,
+  subscribeStockMinuteAggregates,
 } from "./stock-aggregate-stream";
 
 const ENV_KEYS = [
@@ -115,4 +118,96 @@ test("configured IBKR bridge wins even when Polygon credentials are present", ()
       );
     },
   );
+});
+
+test("stock aggregate diagnostics track per-symbol freshness", () => {
+  withAggregateRuntimeEnv({}, () => {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: "https://runtime-bridge.example.com",
+      apiToken: "runtime-token",
+    });
+    __stockAggregateStreamTestInternals.reset();
+    const unsubscribe = subscribeStockMinuteAggregates(["SPY"], () => {});
+
+    try {
+      __stockAggregateStreamTestInternals.handleQuoteSnapshot(
+        {
+          quotes: [
+            {
+              symbol: "SPY",
+              price: 100,
+              bid: 0,
+              ask: 0,
+              volume: 1_000,
+            } as any,
+          ],
+        },
+        0,
+      );
+
+      const diagnostics = getStockAggregateStreamDiagnostics();
+      assert.equal(diagnostics.perSymbol[0]?.symbol, "SPY");
+      assert.equal(diagnostics.perSymbol[0]?.hasAccumulator, true);
+      assert.equal(diagnostics.perSymbol[0]?.eventCount, 1);
+      assert.equal(diagnostics.perSymbol[0]?.gapCount, 0);
+    } finally {
+      unsubscribe();
+      __stockAggregateStreamTestInternals.reset();
+    }
+  });
+});
+
+test("stock aggregate stream emits heartbeat aggregate when quotes are fresh", () => {
+  withAggregateRuntimeEnv({}, () => {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: "https://runtime-bridge.example.com",
+      apiToken: "runtime-token",
+    });
+    __stockAggregateStreamTestInternals.reset();
+    const messages: unknown[] = [];
+    const unsubscribe = subscribeStockMinuteAggregates(["SPY"], (message) => {
+      messages.push(message);
+    });
+
+    try {
+      __stockAggregateStreamTestInternals.handleQuoteSnapshot(
+        {
+          quotes: [
+            {
+              symbol: "SPY",
+              price: 100,
+              bid: 0,
+              ask: 0,
+              volume: 1_000,
+            } as any,
+          ],
+        },
+        0,
+      );
+      __stockAggregateStreamTestInternals.flushAggregateFanout();
+      assert.equal(messages.length, 1);
+
+      __stockAggregateStreamTestInternals.handleQuoteSnapshot(
+        {
+          quotes: [
+            {
+              symbol: "SPY",
+              price: 0,
+              bid: 0,
+              ask: 0,
+              volume: 1_000,
+            } as any,
+          ],
+        },
+        6_000,
+      );
+      __stockAggregateStreamTestInternals.emitAggregateHeartbeats(6_000);
+      __stockAggregateStreamTestInternals.flushAggregateFanout();
+
+      assert.equal(messages.length, 2);
+    } finally {
+      unsubscribe();
+      __stockAggregateStreamTestInternals.reset();
+    }
+  });
 });

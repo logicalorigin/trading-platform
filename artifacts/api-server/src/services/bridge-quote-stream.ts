@@ -2,6 +2,7 @@ import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import {
   IbkrBridgeClient,
+  type MutableQuoteStream,
   type QuoteStreamSignal,
 } from "../providers/ibkr/bridge-client";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
@@ -38,6 +39,13 @@ export type BridgeQuoteStreamDiagnostics = {
   lastSignalAgeMs: number | null;
   freshnessAgeMs: number | null;
   streamActive: boolean;
+  streamSignature: string;
+  pendingStreamSignature: string;
+  mutableStreamActive: boolean;
+  mutableStreamSupported: boolean;
+  mutableUpdateCount: number;
+  lastMutableUpdateAt: string | null;
+  lastMutableUpdateAgeMs: number | null;
   reconnectScheduled: boolean;
   desiredSymbols: string[];
   lastError: string | null;
@@ -58,6 +66,12 @@ type Subscriber = {
 
 type BridgeQuoteClient = {
   getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]>;
+  streamMutableQuoteSnapshots?(
+    symbols: string[],
+    onQuotes: (quotes: QuoteSnapshot[]) => void,
+    onError?: (error: unknown) => void,
+    onSignal?: (signal: QuoteStreamSignal) => void,
+  ): MutableQuoteStream;
   streamQuoteSnapshots(
     symbols: string[],
     onQuotes: (quotes: QuoteSnapshot[]) => void,
@@ -89,8 +103,10 @@ const STREAM_STALL_RECONNECT_MS = Math.max(
 let nextSubscriberId = 1;
 let streamSignature = "";
 let streamUnsubscribe: (() => void) | null = null;
+let streamMutableControl: MutableQuoteStream | null = null;
 let pendingStreamSignature = "";
 let pendingStreamUnsubscribe: (() => void) | null = null;
+let pendingStreamMutableControl: MutableQuoteStream | null = null;
 let pendingStreamStartedAt: Date | null = null;
 let pendingReadyAt: Date | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
@@ -100,6 +116,9 @@ let eventCount = 0;
 let reconnectCount = 0;
 let staleReconnectCount = 0;
 let reconnectAttempt = 0;
+let mutableQuoteStreamSupported = true;
+let mutableUpdateCount = 0;
+let lastMutableUpdateAt: Date | null = null;
 let streamGapCount = 0;
 let maxGapMs = 0;
 let lastGapMs: number | null = null;
@@ -218,6 +237,18 @@ function isCapacityPressureError(error: unknown): boolean {
     message.includes("max number of tickers") ||
     message.includes("ticker limit") ||
     message.includes("subscription limit")
+  );
+}
+
+function isMutableStreamUnsupportedError(error: unknown): boolean {
+  return (
+    Boolean(
+      error &&
+        typeof error === "object" &&
+        "statusCode" in error &&
+        (error as { statusCode?: unknown }).statusCode === 404,
+    ) ||
+    readErrorMessage(error).includes("quote stream session not found")
   );
 }
 
@@ -413,6 +444,7 @@ function clearRefreshTimer() {
 function stopPendingStream() {
   pendingStreamUnsubscribe?.();
   pendingStreamUnsubscribe = null;
+  pendingStreamMutableControl = null;
   pendingStreamSignature = "";
   pendingStreamStartedAt = null;
   pendingReadyAt = null;
@@ -422,6 +454,7 @@ function stopActiveStream() {
   clearStallTimer();
   streamUnsubscribe?.();
   streamUnsubscribe = null;
+  streamMutableControl = null;
   streamSignature = "";
   streamStartedAt = null;
 }
@@ -588,6 +621,39 @@ function refreshBridgeQuoteStream() {
     return;
   }
 
+  if (streamMutableControl && streamUnsubscribe) {
+    stopPendingStream();
+    mutableUpdateCount += 1;
+    lastMutableUpdateAt = nowProvider();
+    streamSignature = nextSignature;
+    lastSignalAt = lastMutableUpdateAt;
+    lastStreamStatus = {
+      state: "open",
+      reason: "symbols_update_pending",
+      requestedCount: symbols.length,
+      admittedCount: symbols.length,
+      rejectedCount: 0,
+    };
+    startStallTimer(nextSignature);
+    Promise.resolve(streamMutableControl.setSymbols(symbols)).then(
+      () => {
+        lastError = null;
+        lastErrorAt = null;
+        reconnectAttempt = 0;
+      },
+      (error) => {
+        if (isMutableStreamUnsupportedError(error)) {
+          mutableQuoteStreamSupported = false;
+          stopActiveStream();
+          scheduleRefreshBridgeQuoteStream(0);
+          return;
+        }
+        handleStreamError(nextSignature, error);
+      },
+    );
+    return;
+  }
+
   stopPendingStream();
   pendingStreamSignature = nextSignature;
   pendingStreamStartedAt = new Date();
@@ -602,12 +668,15 @@ function refreshBridgeQuoteStream() {
       return;
     }
     const nextUnsubscribe = pendingStreamUnsubscribe;
+    const nextMutableControl = pendingStreamMutableControl;
     stopActiveStream();
     streamSignature = nextSignature;
     streamUnsubscribe = nextUnsubscribe;
+    streamMutableControl = nextMutableControl;
     streamStartedAt = readyAt;
     pendingStreamSignature = "";
     pendingStreamUnsubscribe = null;
+    pendingStreamMutableControl = null;
     pendingStreamStartedAt = null;
     pendingReadyAt = null;
     lastError = null;
@@ -617,37 +686,46 @@ function refreshBridgeQuoteStream() {
   };
 
   try {
-    const nextUnsubscribe = bridgeClient.streamQuoteSnapshots(
-      symbols,
-      (quotes) => {
-        if (streamSignature !== nextSignature) {
-          activatePendingStream(nowProvider());
-        }
-        const cachedQuotes = quotes.flatMap((quote) => {
-          const cached = cacheQuote(quote);
-          return cached ? [cached] : [];
-        });
-        notifySubscribers(cachedQuotes);
-      },
-      (error) => handleStreamError(nextSignature, error),
-      (signal) => {
-        recordStreamSignal(signal);
-        const statusState = signal.status?.state;
-        if (
-          signal.type === "ready" ||
-          (streamUnsubscribe === null &&
-            (signal.type === "open" ||
-              (signal.type === "status" && statusState === "open")))
-        ) {
-          activatePendingStream(signal.at);
-        }
-      },
-    );
+    const onQuotes = (quotes: QuoteSnapshot[]) => {
+      if (streamSignature !== nextSignature) {
+        activatePendingStream(nowProvider());
+      }
+      const cachedQuotes = quotes.flatMap((quote) => {
+        const cached = cacheQuote(quote);
+        return cached ? [cached] : [];
+      });
+      notifySubscribers(cachedQuotes);
+    };
+    const onError = (error: unknown) => handleStreamError(nextSignature, error);
+    const onSignal = (signal: QuoteStreamSignal) => {
+      recordStreamSignal(signal);
+      const statusState = signal.status?.state;
+      if (
+        signal.type === "ready" ||
+        (streamUnsubscribe === null &&
+          (signal.type === "open" ||
+            (signal.type === "status" && statusState === "open")))
+      ) {
+        activatePendingStream(signal.at);
+      }
+    };
+    const nextMutableControl = mutableQuoteStreamSupported
+      ? bridgeClient.streamMutableQuoteSnapshots?.(
+          symbols,
+          onQuotes,
+          onError,
+          onSignal,
+        ) ?? null
+      : null;
+    const nextUnsubscribe = nextMutableControl
+      ? () => nextMutableControl.close()
+      : bridgeClient.streamQuoteSnapshots(symbols, onQuotes, onError, onSignal);
     if (!pendingStreamSignature) {
       nextUnsubscribe();
       return;
     }
     pendingStreamUnsubscribe = nextUnsubscribe;
+    pendingStreamMutableControl = nextMutableControl;
     if (pendingReadyAt) {
       activatePendingStream(pendingReadyAt);
     } else if (!streamUnsubscribe) {
@@ -799,6 +877,9 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
   const lastEventAgeMs =
     lastEventMs === null ? null : Math.max(0, now - lastEventMs);
   const lastGapAgeMs = lastGapAt ? Math.max(0, now - lastGapAt.getTime()) : null;
+  const lastMutableUpdateAgeMs = lastMutableUpdateAt
+    ? Math.max(0, now - lastMutableUpdateAt.getTime())
+    : null;
   const recentMaxGapMs =
     streamGapEvents.length > 0
       ? Math.max(...streamGapEvents.map((event) => event.gapMs))
@@ -834,6 +915,13 @@ export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics 
     lastSignalAgeMs: currentStreamSignalAgeMs,
     freshnessAgeMs: lastEventAgeMs,
     streamActive: Boolean(hasQuoteDemand && streamUnsubscribe && streamSignature),
+    streamSignature,
+    pendingStreamSignature,
+    mutableStreamActive: Boolean(streamMutableControl),
+    mutableStreamSupported: mutableQuoteStreamSupported,
+    mutableUpdateCount,
+    lastMutableUpdateAt: lastMutableUpdateAt?.toISOString() ?? null,
+    lastMutableUpdateAgeMs,
     reconnectScheduled: Boolean(reconnectTimer),
     desiredSymbols: desiredSymbols.slice(0, 50),
     lastError: hasQuoteDemand ? lastError : null,
@@ -893,6 +981,9 @@ export function __resetBridgeQuoteStreamForTests(): void {
   eventCount = 0;
   reconnectCount = 0;
   staleReconnectCount = 0;
+  mutableQuoteStreamSupported = true;
+  mutableUpdateCount = 0;
+  lastMutableUpdateAt = null;
   streamGapCount = 0;
   maxGapMs = 0;
   lastGapMs = null;

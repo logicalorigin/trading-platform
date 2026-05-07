@@ -5,6 +5,7 @@ import {
   admitMarketDataLeases,
   getMarketDataAdmissionBudget,
   getMarketDataAdmissionDiagnostics,
+  setMarketDataAdmissionRuntimeDefaults,
 } from "./market-data-admission";
 
 const ENV_KEYS = [
@@ -16,6 +17,7 @@ const ENV_KEYS = [
   "IBKR_MARKET_DATA_AUTOMATION_LINES",
   "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
   "IBKR_MARKET_DATA_CONVENIENCE_LINES",
+  "OPTIONS_FLOW_SCANNER_LINE_BUDGET",
 ] as const;
 
 const originalEnv = Object.fromEntries(
@@ -46,17 +48,43 @@ test("uses a 200-line IBKR budget with a 15-line reserve by default", () => {
   assert.equal(budget.maxLines, 200);
   assert.equal(budget.reserveLines, 15);
   assert.equal(budget.usableLines, 185);
-  assert.equal(budget.automationLineCap, 25);
-  assert.equal(budget.accountMonitorLineCap, 20);
-  assert.equal(budget.flowScannerLineCap, 40);
+  assert.equal(budget.automationLineCap, 5);
+  assert.equal(budget.accountMonitorLineCap, 10);
+  assert.equal(budget.flowScannerLineCap, 100);
   assert.deepEqual(budget.poolLineCaps, {
     execution: 12,
-    "account-monitor": 20,
-    visible: 88,
-    automation: 25,
-    "flow-scanner": 40,
+    "account-monitor": 10,
+    visible: 58,
+    automation: 5,
+    "flow-scanner": 100,
     convenience: 0,
   });
+});
+
+test("derives visible headroom from overlapping runtime scanner line budget", () => {
+  setEnv({});
+  setMarketDataAdmissionRuntimeDefaults({ flowScannerLineBudget: 40 });
+
+  const budget = getMarketDataAdmissionBudget();
+  assert.deepEqual(budget.poolLineCaps, {
+    execution: 12,
+    "account-monitor": 10,
+    visible: 78,
+    automation: 5,
+    "flow-scanner": 80,
+    convenience: 0,
+  });
+});
+
+test("keeps explicit admission env caps ahead of runtime scanner defaults", () => {
+  setEnv({
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "20",
+  });
+  setMarketDataAdmissionRuntimeDefaults({ flowScannerLineBudget: 55 });
+
+  const budget = getMarketDataAdmissionBudget();
+  assert.equal(budget.flowScannerLineCap, 20);
+  assert.equal(budget.poolLineCaps.visible, 138);
 });
 
 test("enforces the account monitor live-line cap", () => {

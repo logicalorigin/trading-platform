@@ -183,6 +183,11 @@ export type QuoteStreamSignal = {
   status?: StreamStatusPayload | null;
 };
 
+export type MutableQuoteStream = {
+  setSymbols(symbols: string[]): Promise<void>;
+  close(): void;
+};
+
 type OptionExpirationsPayload = {
   expirations: Array<Date | string | { expirationDate: Date | string }>;
 };
@@ -956,12 +961,17 @@ export class IbkrBridgeClient {
     onQuotes: (quotes: QuoteSnapshot[]) => void,
     onError?: (error: unknown) => void,
     onSignal?: (signal: QuoteStreamSignal) => void,
+    sessionId?: string,
   ): () => void {
     const config = this.getConfig();
     const bridgeSymbols = normalizeBridgeStockSymbols(symbols);
-    const url = this.buildUrl(config, "/streams/quotes", {
+    const params: Record<string, QueryValue> = {
       symbols: bridgeSymbols.join(","),
-    });
+    };
+    if (sessionId) {
+      params.sessionId = sessionId;
+    }
+    const url = this.buildUrl(config, "/streams/quotes", params);
     const requestId = randomUUID();
     const client = url.protocol === "https:" ? https : http;
     const agent =
@@ -1155,6 +1165,50 @@ export class IbkrBridgeClient {
       stopped = true;
       stopStallWatchdog();
       request.destroy();
+    };
+  }
+
+  streamMutableQuoteSnapshots(
+    symbols: string[],
+    onQuotes: (quotes: QuoteSnapshot[]) => void,
+    onError?: (error: unknown) => void,
+    onSignal?: (signal: QuoteStreamSignal) => void,
+  ): MutableQuoteStream {
+    const sessionId = randomUUID();
+    const bridgeClient = this;
+    let closed = false;
+    const closeStream = this.streamQuoteSnapshots(
+      symbols,
+      onQuotes,
+      onError,
+      onSignal,
+      sessionId,
+    );
+
+    return {
+      async setSymbols(nextSymbols: string[]): Promise<void> {
+        if (closed) {
+          return;
+        }
+        const bridgeSymbols = normalizeBridgeStockSymbols(nextSymbols);
+        if (!bridgeSymbols.length) {
+          return;
+        }
+        await bridgeClient.request(
+          `/streams/quotes/sessions/${encodeURIComponent(sessionId)}/symbols`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ symbols: bridgeSymbols }),
+          },
+        );
+      },
+      close(): void {
+        closed = true;
+        closeStream();
+      },
     };
   }
 

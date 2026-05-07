@@ -34,7 +34,7 @@ test.afterEach(() => {
 
 test("bridge runtime defaults reflect the line booster live quote allowance", () => {
   assert.equal(BRIDGE_RUNTIME_LIMITS.maxMarketDataLines.defaultValue, 190);
-  assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveEquityLines.defaultValue, 80);
+  assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveEquityLines.defaultValue, 90);
   assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveOptionLines.defaultValue, 100);
   assert.equal(
     BRIDGE_RUNTIME_LIMITS.optionQuoteVisibleContractLimit.defaultValue,
@@ -1125,6 +1125,68 @@ test("option activity snapshot timeout scales with radar batch size", () => {
     }),
     20_000,
   );
+});
+
+test("option activity snapshots tolerate per-symbol contract failures", async () => {
+  __resetBridgeSchedulerForTests();
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    refreshSession(): Promise<void>;
+    resolveStockContract(symbol: string): Promise<{
+      contract: Record<string, unknown>;
+      resolved: { conid: number; providerContractId: string };
+    }>;
+    getContractQuoteStreamSample(input: {
+      symbol: string;
+      providerContractId: string | null;
+    }): Promise<Record<string, unknown> | null>;
+    recordError(error: unknown): void;
+  };
+  const recordedErrors: string[] = [];
+
+  internals.refreshSession = async () => {};
+  internals.resolveStockContract = async (symbol) => {
+    if (symbol === "BAD") {
+      throw new Error("No security definition has been found for the request");
+    }
+    return {
+      contract: { symbol, secType: SecType.STK },
+      resolved: {
+        conid: symbol === "SPY" ? 756733 : 320227571,
+        providerContractId: symbol,
+      },
+    };
+  };
+  internals.getContractQuoteStreamSample = async ({ symbol, providerContractId }) => ({
+    symbol,
+    providerContractId,
+    price: 100,
+    optionCallVolume: symbol === "SPY" ? 1000 : 500,
+  });
+  internals.recordError = (error) => {
+    recordedErrors.push(error instanceof Error ? error.message : String(error));
+  };
+
+  const quotes = await provider.getOptionActivitySnapshots(["SPY", "BAD", "QQQ"]);
+  const marketLane = getBridgeSchedulerDiagnostics()["market-subscriptions"];
+
+  assert.deepEqual(
+    quotes.map((quote) => quote.symbol),
+    ["SPY", "QQQ"],
+  );
+  assert.deepEqual(recordedErrors, [
+    "No security definition has been found for the request",
+  ]);
+  assert.equal(marketLane.completed, 1);
+  assert.equal(marketLane.timedOut, 0);
+  assert.equal(marketLane.failureCount, 0);
 });
 
 test("detects nested IBKR snapshot generic-tick validation errors", () => {

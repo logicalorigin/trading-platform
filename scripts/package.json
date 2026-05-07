@@ -6,6 +6,7 @@
   "scripts": {
     "ibkr:latency": "tsx ./src/ibkr-latency-bench.ts",
     "ibkr:flow-scanner-bench": "tsx ./src/ibkr-flow-scanner-line-bench.ts",
+    "ibkr:line-usage-monitor": "tsx ./src/ibkr-line-usage-monitor.ts",
     "ibkr:soak": "tsx ./src/ibkr-connection-soak.ts",
     "universe:sync": "tsx ./src/sync-universe-catalog.ts",
     "universe:sync:nasdaq": "tsx ./src/sync-nasdaq-listed-universe.ts",

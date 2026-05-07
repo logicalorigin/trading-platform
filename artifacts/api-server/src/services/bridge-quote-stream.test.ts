@@ -235,6 +235,49 @@ test("bridge quote stream treats open stream signals as liveness proof", async (
   assert.equal(diagnostics.lastError, null);
 });
 
+test("bridge quote stream updates mutable bridge stream symbols without reconnecting", async () => {
+  const now = new Date("2026-04-28T14:30:00.000Z");
+  let opened = 0;
+  const updates: string[][] = [];
+  __setBridgeQuoteStreamNowForTests(now);
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots() {
+      return [];
+    },
+    streamMutableQuoteSnapshots(_symbols, _onSnapshot, _onError, onSignal) {
+      opened += 1;
+      onSignal?.({
+        type: "ready",
+        at: now,
+        status: { state: "open" },
+      });
+      return {
+        async setSymbols(symbols) {
+          updates.push(symbols);
+        },
+        close() {},
+      };
+    },
+    streamQuoteSnapshots() {
+      throw new Error("legacy stream should not be used");
+    },
+  });
+
+  const unsubscribeSpy = subscribeBridgeQuoteSnapshots(["SPY"], () => {});
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const unsubscribeQqq = subscribeBridgeQuoteSnapshots(["QQQ"], () => {});
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const diagnostics = getBridgeQuoteStreamDiagnostics();
+  unsubscribeQqq();
+  unsubscribeSpy();
+
+  assert.equal(opened, 1);
+  assert.deepEqual(updates.at(-1), ["QQQ", "SPY"]);
+  assert.equal(diagnostics.mutableStreamActive, true);
+  assert.equal(diagnostics.mutableUpdateCount, 1);
+  assert.equal(diagnostics.reconnectScheduled, false);
+});
+
 test("bridge quote stream reports capacity pressure without reconnecting", async () => {
   const now = new Date("2026-04-28T14:30:00.000Z");
   __setBridgeQuoteStreamNowForTests(now);

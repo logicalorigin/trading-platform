@@ -331,6 +331,84 @@ test("quote streams translate dotted share classes for the bridge", async (t) =>
   assert.equal((quotes as Array<{ symbol: string }>)[0]?.symbol, "BRK.B");
 });
 
+test("mutable quote streams update symbols through the bridge session", async (t) => {
+  let sessionId = "";
+  let postSymbols: string[] | null = null;
+  let resolveSessionReady: (() => void) | null = null;
+  const sessionReady = new Promise<void>((resolve) => {
+    resolveSessionReady = resolve;
+  });
+  const updateReceived = new Promise<void>((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      assert.ok(req.url);
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (req.method === "GET") {
+        assert.equal(url.pathname, "/streams/quotes");
+        assert.equal(url.searchParams.get("symbols"), "BRK B");
+        sessionId = url.searchParams.get("sessionId") || "";
+        assert.ok(sessionId);
+        resolveSessionReady?.();
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+        });
+        res.write('event: ready\ndata: {"source":"test"}\n\n');
+        return;
+      }
+
+      if (req.method === "POST") {
+        assert.equal(
+          url.pathname,
+          `/streams/quotes/sessions/${sessionId}/symbols`,
+        );
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer | string) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        req.on("end", () => {
+          try {
+            const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+              symbols?: string[];
+            };
+            postSymbols = body.symbols || null;
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+        return;
+      }
+
+      res.writeHead(404);
+      res.end();
+    });
+
+    listen(server)
+      .then((port) => {
+        useTempBridgeRuntimeOverride(t);
+        setIbkrBridgeRuntimeOverride({
+          baseUrl: `http://127.0.0.1:${port}`,
+          apiToken: null,
+        });
+        t.after(() => {
+          server.close();
+        });
+
+        const client = new IbkrBridgeClient();
+        const stream = client.streamMutableQuoteSnapshots(["BRK.B"], () => {});
+        void sessionReady
+          .then(() => stream.setSymbols(["MSFT"]))
+          .finally(() => stream.close());
+      })
+      .catch(reject);
+  });
+
+  await updateReceived;
+  assert.deepEqual(postSymbols, ["MSFT"]);
+});
+
 test("quote streams treat bridge heartbeats as stream activity", async (t) => {
   const previousStallMs = process.env["IBKR_QUOTE_STREAM_STALL_MS"];
   process.env["IBKR_QUOTE_STREAM_STALL_MS"] = "1000";

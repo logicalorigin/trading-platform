@@ -410,23 +410,27 @@ function buildHistoryPeriod(
   }
 
   const totalDays = Math.ceil(totalMs / dayMs);
-  if (totalDays <= 1_000) {
+  if (totalDays <= 365) {
     return `${Math.max(1, totalDays)}d`;
   }
 
   const totalWeeks = Math.ceil(totalMs / weekMs);
-  if (totalWeeks <= 792) {
+  if (totalWeeks <= 52) {
     return `${Math.max(1, totalWeeks)}w`;
   }
 
   const totalMonths = Math.ceil(totalMs / monthMs);
-  if (totalMonths <= 182) {
+  if (totalMonths <= 12) {
     return `${Math.max(1, totalMonths)}m`;
   }
 
   const totalYears = Math.ceil(totalMs / yearMs);
   return `${Math.max(1, totalYears)}y`;
 }
+
+export const __ibkrClientTestInternals = {
+  buildHistoryPeriod,
+};
 
 function resolveRequestedHistoryBars(input: {
   timeframe: HistoryBarTimeframe;

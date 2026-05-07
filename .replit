@@ -91,3 +91,5 @@ externalPort = 3003
 IBKR_TRANSPORT = "tws"
 PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
+
+[nix]

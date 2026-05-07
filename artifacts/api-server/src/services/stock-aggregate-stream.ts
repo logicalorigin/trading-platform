@@ -39,6 +39,10 @@ type Subscriber = {
   symbols: Set<string>;
   onAggregate: (message: StockMinuteAggregateMessage) => void;
 };
+export type StockMinuteAggregateSubscription = {
+  setSymbols(symbols: string[]): void;
+  unsubscribe(): void;
+};
 type BridgeQuoteSnapshotPayload = Parameters<
   Parameters<typeof subscribeBridgeQuoteSnapshots>[1]
 >[0];
@@ -56,10 +60,21 @@ type MinuteAccumulator = {
   latency?: QuoteSnapshot["latency"];
 };
 
+type SymbolAggregateStats = {
+  eventCount: number;
+  gapCount: number;
+  maxGapMs: number;
+  lastQuoteAt: Date | null;
+  lastAggregateAt: Date | null;
+  lastGapAt: Date | null;
+};
+
 const subscribers = new Map<number, Subscriber>();
 const accumulators = new Map<string, MinuteAccumulator>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 const AGGREGATE_FANOUT_FLUSH_MS = 100;
+const AGGREGATE_STALE_HEARTBEAT_MS = 5_000;
+const AGGREGATE_QUOTE_FRESH_MS = 10_000;
 
 let nextSubscriberId = 1;
 let quoteUnsubscribe: (() => void) | null = null;
@@ -68,15 +83,43 @@ let quoteSubscriptionSignature = "";
 let activeStreamSource: StockMinuteAggregateSource | "none" = "none";
 let refreshTimer: NodeJS.Timeout | null = null;
 let fanoutTimer: NodeJS.Timeout | null = null;
+let heartbeatTimer: NodeJS.Timeout | null = null;
 const pendingFanoutBySymbol = new Map<string, StockMinuteAggregateMessage>();
+const aggregateStatsBySymbol = new Map<string, SymbolAggregateStats>();
 let aggregateEventCount = 0;
 let aggregateGapCount = 0;
 let maxAggregateGapMs = 0;
 let lastAggregateAt: Date | null = null;
 let lastAggregateGapAt: Date | null = null;
 
-function recordAggregateEvent(): void {
-  const now = new Date();
+function getSymbolAggregateStats(symbol: string): SymbolAggregateStats {
+  const existing = aggregateStatsBySymbol.get(symbol);
+  if (existing) {
+    return existing;
+  }
+  const created: SymbolAggregateStats = {
+    eventCount: 0,
+    gapCount: 0,
+    maxGapMs: 0,
+    lastQuoteAt: null,
+    lastAggregateAt: null,
+    lastGapAt: null,
+  };
+  aggregateStatsBySymbol.set(symbol, created);
+  return created;
+}
+
+function recordQuoteEvent(symbol: string, observedAt: number): void {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) {
+    return;
+  }
+  getSymbolAggregateStats(normalized).lastQuoteAt = new Date(observedAt);
+}
+
+function recordAggregateEvent(symbol: string, observedAt = Date.now()): void {
+  const normalized = normalizeSymbol(symbol);
+  const now = new Date(observedAt);
   if (lastAggregateAt) {
     const gapMs = Math.max(0, now.getTime() - lastAggregateAt.getTime());
     maxAggregateGapMs = Math.max(maxAggregateGapMs, gapMs);
@@ -88,6 +131,24 @@ function recordAggregateEvent(): void {
 
   aggregateEventCount += 1;
   lastAggregateAt = now;
+
+  if (!normalized) {
+    return;
+  }
+  const stats = getSymbolAggregateStats(normalized);
+  if (stats.lastAggregateAt) {
+    const symbolGapMs = Math.max(
+      0,
+      now.getTime() - stats.lastAggregateAt.getTime(),
+    );
+    stats.maxGapMs = Math.max(stats.maxGapMs, symbolGapMs);
+    if (symbolGapMs >= 10_000) {
+      stats.gapCount += 1;
+      stats.lastGapAt = now;
+    }
+  }
+  stats.eventCount += 1;
+  stats.lastAggregateAt = now;
 }
 
 function getDesiredSymbols(): string[] {
@@ -123,8 +184,11 @@ function flushAggregateFanout() {
   messages.forEach(broadcastAggregate);
 }
 
-function scheduleAggregateFanout(message: StockMinuteAggregateMessage) {
-  recordAggregateEvent();
+function scheduleAggregateFanout(
+  message: StockMinuteAggregateMessage,
+  observedAt = Date.now(),
+) {
+  recordAggregateEvent(message.symbol, observedAt);
   pendingFanoutBySymbol.set(message.symbol, message);
   if (fanoutTimer) {
     return;
@@ -205,7 +269,10 @@ function updateAccumulator(input: {
       latency: input.latency,
     };
     accumulators.set(input.symbol, nextAccumulator);
-    scheduleAggregateFanout(toAggregateMessage(input.symbol, nextAccumulator));
+    scheduleAggregateFanout(
+      toAggregateMessage(input.symbol, nextAccumulator),
+      input.observedAt,
+    );
     return;
   }
 
@@ -220,20 +287,27 @@ function updateAccumulator(input: {
     latency: input.latency,
   };
   accumulators.set(input.symbol, nextAccumulator);
-  scheduleAggregateFanout(toAggregateMessage(input.symbol, nextAccumulator));
+  scheduleAggregateFanout(
+    toAggregateMessage(input.symbol, nextAccumulator),
+    input.observedAt,
+  );
 }
 
-function handleQuoteSnapshot(payload: BridgeQuoteSnapshotPayload) {
-  const observedAt = Date.now();
+function handleQuoteSnapshot(
+  payload: BridgeQuoteSnapshotPayload,
+  observedAt = Date.now(),
+) {
 
   payload.quotes.forEach((quote) => {
+    const symbol = normalizeSymbol(quote.symbol);
+    recordQuoteEvent(symbol, observedAt);
     const price = quote.price > 0 ? quote.price : quote.bid > 0 ? quote.bid : quote.ask;
     if (!price || !Number.isFinite(price)) {
       return;
     }
 
     updateAccumulator({
-      symbol: normalizeSymbol(quote.symbol),
+      symbol,
       price,
       dayVolume: quote.volume ?? null,
       observedAt,
@@ -243,7 +317,7 @@ function handleQuoteSnapshot(payload: BridgeQuoteSnapshotPayload) {
 }
 
 function handlePolygonAggregate(message: PolygonDelayedStockAggregate): void {
-  scheduleAggregateFanout(message);
+  scheduleAggregateFanout(message, Date.now());
 }
 
 function clearRefreshTimer() {
@@ -253,6 +327,46 @@ function clearRefreshTimer() {
 
   clearTimeout(refreshTimer);
   refreshTimer = null;
+}
+
+function clearHeartbeatTimer() {
+  if (!heartbeatTimer) {
+    return;
+  }
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function emitAggregateHeartbeats(now = Date.now()): void {
+  if (getPreferredStockAggregateStreamSource() !== "ibkr-websocket-derived") {
+    return;
+  }
+  getDesiredSymbols().forEach((symbol) => {
+    const accumulator = accumulators.get(symbol);
+    const stats = aggregateStatsBySymbol.get(symbol);
+    if (!accumulator || !stats?.lastQuoteAt || !stats.lastAggregateAt) {
+      return;
+    }
+    const lastQuoteAgeMs = now - stats.lastQuoteAt.getTime();
+    const lastAggregateAgeMs = now - stats.lastAggregateAt.getTime();
+    if (
+      lastQuoteAgeMs <= AGGREGATE_QUOTE_FRESH_MS &&
+      lastAggregateAgeMs >= AGGREGATE_STALE_HEARTBEAT_MS
+    ) {
+      scheduleAggregateFanout(toAggregateMessage(symbol, accumulator), now);
+    }
+  });
+}
+
+function ensureHeartbeatTimer() {
+  if (heartbeatTimer || subscribers.size === 0) {
+    return;
+  }
+  heartbeatTimer = setInterval(
+    () => emitAggregateHeartbeats(),
+    AGGREGATE_STALE_HEARTBEAT_MS,
+  );
+  heartbeatTimer.unref?.();
 }
 
 function refreshQuoteSubscription() {
@@ -274,10 +388,12 @@ function refreshQuoteSubscription() {
   activeStreamSource = !symbols.length ? "none" : provider;
 
   if (!symbols.length || provider === "none") {
+    clearHeartbeatTimer();
     return;
   }
 
   if (provider === "polygon-delayed-websocket") {
+    clearHeartbeatTimer();
     polygonUnsubscribe = subscribePolygonStockMinuteAggregates(
       symbols,
       handlePolygonAggregate,
@@ -285,6 +401,7 @@ function refreshQuoteSubscription() {
     return;
   }
 
+  ensureHeartbeatTimer();
   quoteUnsubscribe = subscribeBridgeQuoteSnapshots(symbols, handleQuoteSnapshot);
 }
 
@@ -350,6 +467,27 @@ export function getStockAggregateStreamDiagnostics() {
     lastGapAt: lastAggregateGapAt?.toISOString() ?? null,
     quoteSubscriptionActive: Boolean(quoteUnsubscribe ?? polygonUnsubscribe),
     quoteSubscriptionSignature,
+    perSymbol: desiredSymbols.map((symbol) => {
+      const stats = aggregateStatsBySymbol.get(symbol);
+      const accumulator = accumulators.get(symbol);
+      return {
+        symbol,
+        hasAccumulator: Boolean(accumulator),
+        eventCount: stats?.eventCount ?? 0,
+        gapCount: stats?.gapCount ?? 0,
+        maxGapMs:
+          stats && stats.eventCount > 1 ? stats.maxGapMs : null,
+        lastQuoteAt: stats?.lastQuoteAt?.toISOString() ?? null,
+        lastQuoteAgeMs: stats?.lastQuoteAt
+          ? Math.max(0, now - stats.lastQuoteAt.getTime())
+          : null,
+        lastAggregateAt: stats?.lastAggregateAt?.toISOString() ?? null,
+        lastAggregateAgeMs: stats?.lastAggregateAt
+          ? Math.max(0, now - stats.lastAggregateAt.getTime())
+          : null,
+        lastGapAt: stats?.lastGapAt?.toISOString() ?? null,
+      };
+    }),
     polygonDelayedWebSocket: getPolygonDelayedWebSocketDiagnostics(),
   };
 }
@@ -358,6 +496,13 @@ export function subscribeStockMinuteAggregates(
   symbols: string[],
   onAggregate: (message: StockMinuteAggregateMessage) => void,
 ): () => void {
+  return subscribeMutableStockMinuteAggregates(symbols, onAggregate).unsubscribe;
+}
+
+export function subscribeMutableStockMinuteAggregates(
+  symbols: string[],
+  onAggregate: (message: StockMinuteAggregateMessage) => void,
+): StockMinuteAggregateSubscription {
   const normalizedSymbols = new Set(
     symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
   );
@@ -371,15 +516,61 @@ export function subscribeStockMinuteAggregates(
   });
   scheduleRefreshQuoteSubscription();
 
-  return () => {
+  const unsubscribe = () => {
     subscribers.delete(subscriberId);
     if (subscribers.size === 0) {
       if (fanoutTimer) {
         clearTimeout(fanoutTimer);
         fanoutTimer = null;
       }
+      clearHeartbeatTimer();
       pendingFanoutBySymbol.clear();
     }
     scheduleRefreshQuoteSubscription();
   };
+
+  return {
+    setSymbols(nextSymbols: string[]) {
+      const subscriber = subscribers.get(subscriberId);
+      if (!subscriber) {
+        return;
+      }
+      subscriber.symbols = new Set(
+        nextSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+      );
+      scheduleRefreshQuoteSubscription();
+    },
+    unsubscribe,
+  };
 }
+
+export const __stockAggregateStreamTestInternals = {
+  handleQuoteSnapshot,
+  emitAggregateHeartbeats,
+  flushAggregateFanout,
+  reset() {
+    subscribers.clear();
+    accumulators.clear();
+    pendingFanoutBySymbol.clear();
+    aggregateStatsBySymbol.clear();
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
+    if (fanoutTimer) {
+      clearTimeout(fanoutTimer);
+      fanoutTimer = null;
+    }
+    clearHeartbeatTimer();
+    nextSubscriberId = 1;
+    quoteUnsubscribe = null;
+    polygonUnsubscribe = null;
+    quoteSubscriptionSignature = "";
+    activeStreamSource = "none";
+    aggregateEventCount = 0;
+    aggregateGapCount = 0;
+    maxAggregateGapMs = 0;
+    lastAggregateAt = null;
+    lastAggregateGapAt = null;
+  },
+};

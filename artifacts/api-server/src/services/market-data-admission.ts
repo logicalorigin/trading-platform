@@ -145,15 +145,12 @@ const MAX_RECENT_EVENTS = 100;
 const DEFAULT_MAX_LINES = 200;
 const DEFAULT_RESERVE_LINES = 15;
 const MARKET_DATA_ADMISSION_SCHEMA_VERSION = 1;
-const DEFAULT_POOL_LINE_CAPS: Record<MarketDataPoolId, number> = {
-  execution: 12,
-  "account-monitor": 20,
-  visible: 88,
-  automation: 25,
-  // Keep the admission pool aligned with OPTIONS_FLOW_SCANNER_LINE_BUDGET.
-  "flow-scanner": 40,
-  convenience: 0,
-};
+const DEFAULT_EXECUTION_LINES = 12;
+const DEFAULT_ACCOUNT_MONITOR_LINES = 10;
+const DEFAULT_AUTOMATION_LINES = 5;
+const DEFAULT_FLOW_SCANNER_LINES = 50;
+const DEFAULT_FLOW_SCANNER_POOL_MAX_LINES = 100;
+const OPTIONS_FLOW_SCANNER_LINE_BUDGET_ENV = "OPTIONS_FLOW_SCANNER_LINE_BUDGET";
 
 const POOL_ENV_KEYS: Record<MarketDataPoolId, string> = {
   execution: "IBKR_MARKET_DATA_EXECUTION_LINES",
@@ -168,6 +165,7 @@ const leases = new Map<string, MarketDataLease>();
 const countersByIntent = new Map<MarketDataIntent, AdmissionCounters>();
 const recentEvents: AdmissionEvent[] = [];
 let nextLeaseId = 1;
+let runtimeFlowScannerLineBudget: number | null = null;
 
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -179,25 +177,73 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readOptionalNonNegativeIntegerEnv(name: string): number | null {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function resolveDefaultFlowScannerLineCap(): number {
+  const perScanLineBudget = Math.max(
+    0,
+    runtimeFlowScannerLineBudget ??
+      readPositiveIntegerEnv(
+        OPTIONS_FLOW_SCANNER_LINE_BUDGET_ENV,
+        DEFAULT_FLOW_SCANNER_LINES,
+      ),
+  );
+  // The scanner line budget is per scan; the admission pool needs overlap room
+  // while previous scan leases age out.
+  return Math.min(DEFAULT_FLOW_SCANNER_POOL_MAX_LINES, perScanLineBudget * 2);
+}
+
+function buildDefaultPoolLineCaps(
+  usableLines: number,
+): Record<MarketDataPoolId, number> {
+  const flowScannerLines = resolveDefaultFlowScannerLineCap();
+  const fixedLines =
+    DEFAULT_EXECUTION_LINES +
+    DEFAULT_ACCOUNT_MONITOR_LINES +
+    DEFAULT_AUTOMATION_LINES +
+    flowScannerLines;
+  return {
+    execution: DEFAULT_EXECUTION_LINES,
+    "account-monitor": DEFAULT_ACCOUNT_MONITOR_LINES,
+    visible: Math.max(0, usableLines - fixedLines),
+    automation: DEFAULT_AUTOMATION_LINES,
+    "flow-scanner": flowScannerLines,
+    convenience: 0,
+  };
+}
+
 function normalizePoolLineCaps(
   usableLines: number,
 ): Record<MarketDataPoolId, number> {
-  const caps = Object.fromEntries(
-    (Object.keys(DEFAULT_POOL_LINE_CAPS) as MarketDataPoolId[]).map((pool) => [
-      pool,
-      readNonNegativeIntegerEnv(
-        POOL_ENV_KEYS[pool],
-        DEFAULT_POOL_LINE_CAPS[pool],
-      ),
-    ]),
-  ) as Record<MarketDataPoolId, number>;
-  const total = Object.values(caps).reduce((sum, value) => sum + value, 0);
-  if (total <= usableLines) {
-    caps.convenience += usableLines - total;
+  const caps = buildDefaultPoolLineCaps(usableLines);
+  const envOverrides = new Set<MarketDataPoolId>();
+  (Object.keys(caps) as MarketDataPoolId[]).forEach((pool) => {
+    const value = readOptionalNonNegativeIntegerEnv(POOL_ENV_KEYS[pool]);
+    if (value !== null) {
+      caps[pool] = value;
+      envOverrides.add(pool);
+    }
+  });
+
+  const total = () => Object.values(caps).reduce((sum, value) => sum + value, 0);
+  if (total() < usableLines) {
+    const leftover = usableLines - total();
+    if (!envOverrides.has("visible")) {
+      caps.visible += leftover;
+    } else if (!envOverrides.has("convenience")) {
+      caps.convenience += leftover;
+    }
+  }
+
+  const totalLines = total();
+  if (totalLines <= usableLines) {
     return caps;
   }
 
-  let overflow = total - usableLines;
+  let overflow = totalLines - usableLines;
   const reductionOrder: MarketDataPoolId[] = [
     "convenience",
     "automation",
@@ -215,6 +261,18 @@ function normalizePoolLineCaps(
     overflow -= reduction;
   });
   return caps;
+}
+
+export function setMarketDataAdmissionRuntimeDefaults(input: {
+  flowScannerLineBudget?: number | null;
+}): void {
+  const flowScannerLineBudget = input.flowScannerLineBudget;
+  runtimeFlowScannerLineBudget =
+    typeof flowScannerLineBudget === "number" &&
+    Number.isFinite(flowScannerLineBudget) &&
+    flowScannerLineBudget > 0
+      ? Math.floor(flowScannerLineBudget)
+      : null;
 }
 
 export function getMarketDataAdmissionBudget() {
@@ -430,6 +488,17 @@ function demoteLowerPriorityLeases(input: {
   return demoted;
 }
 
+function sameInstrumentSet(
+  left: Array<Pick<MarketDataLease, "instrumentKey">>,
+  right: Array<Pick<MarketDataLease, "instrumentKey">>,
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightKeys = new Set(right.map((item) => item.instrumentKey));
+  return left.every((item) => rightKeys.has(item.instrumentKey));
+}
+
 export function admitMarketDataLeases(input: {
   owner: string;
   intent: MarketDataIntent;
@@ -441,10 +510,6 @@ export function admitMarketDataLeases(input: {
 }): MarketDataAdmissionResult {
   expireMarketDataLeases();
   const fallbackProvider = input.fallbackProvider ?? "polygon";
-  if (input.replaceOwnerExisting !== false) {
-    releaseMarketDataLeases(input.owner, "owner_replaced");
-  }
-
   const budget = getMarketDataAdmissionBudget();
   const priority = INTENT_PRIORITY[input.intent];
   const pool = input.pool ?? INTENT_POOL[input.intent];
@@ -455,6 +520,40 @@ export function admitMarketDataLeases(input: {
     typeof input.ttlMs === "number" && Number.isFinite(input.ttlMs) && input.ttlMs > 0
       ? new Date(Date.now() + input.ttlMs).toISOString()
       : null;
+  const normalizedRequests = input.requests
+    .map((request) => normalizeRequest(request))
+    .filter((request): request is NonNullable<ReturnType<typeof normalizeRequest>> =>
+      Boolean(request),
+    );
+
+  if (
+    input.replaceOwnerExisting !== false &&
+    normalizedRequests.length > 0 &&
+    normalizedRequests.length === input.requests.length
+  ) {
+    const existingOwnerLeases = Array.from(leases.values()).filter(
+      (lease) =>
+        lease.owner === input.owner &&
+        lease.intent === input.intent &&
+        lease.pool === pool &&
+        lease.fallbackProvider === fallbackProvider,
+    );
+    if (sameInstrumentSet(existingOwnerLeases, normalizedRequests)) {
+      const refreshedLeases = existingOwnerLeases.map((lease) => ({
+        ...lease,
+        expiresAt,
+      }));
+      refreshedLeases.forEach((lease) => leases.set(lease.id, lease));
+      return {
+        admitted: refreshedLeases,
+        rejected,
+        demoted,
+        budget,
+      };
+    }
+
+    releaseMarketDataLeases(input.owner, "owner_replaced");
+  }
 
   input.requests.forEach((request) => {
     const normalized = normalizeRequest(request);
@@ -696,4 +795,5 @@ export function __resetMarketDataAdmissionForTests(): void {
   countersByIntent.clear();
   recentEvents.length = 0;
   nextLeaseId = 1;
+  runtimeFlowScannerLineBudget = null;
 }

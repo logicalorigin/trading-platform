@@ -76,6 +76,29 @@ function createQuoteSseBatchWriter(
   };
 }
 
+function normalizeQuoteStreamSymbols(rawSymbols: unknown): string[] {
+  const values = Array.isArray(rawSymbols)
+    ? rawSymbols
+    : typeof rawSymbols === "string"
+      ? rawSymbols.split(",")
+      : [];
+  return Array.from(
+    new Set(
+      values
+        .map((symbol) => String(symbol).trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
+const quoteStreamSessions = new Map<
+  string,
+  {
+    token: symbol;
+    setSymbols(symbols: string[]): Promise<Record<string, unknown>>;
+  }
+>();
+
 function getErrorCode(error: unknown): string | null {
   if (isHttpError(error) && error.code) {
     return error.code;
@@ -432,14 +455,9 @@ app.get("/streams/quotes", async (req, res, next) => {
     : typeof req.query.symbols === "string"
       ? req.query.symbols
       : "";
-  const symbols = Array.from(
-    new Set(
-      rawSymbols
-        .split(",")
-        .map((symbol) => symbol.trim().toUpperCase())
-        .filter(Boolean),
-    ),
-  );
+  let symbols = normalizeQuoteStreamSymbols(rawSymbols);
+  const sessionId =
+    typeof req.query.sessionId === "string" ? req.query.sessionId.trim() : "";
 
   if (!symbols.length) {
     res.status(400).json({
@@ -464,6 +482,8 @@ app.get("/streams/quotes", async (req, res, next) => {
   let unsubscribe: () => void = () => {};
   let retryTimer: NodeJS.Timeout | null = null;
   let retryAttempt = 0;
+  let connectVersion = 0;
+  const sessionToken = Symbol(sessionId || "quote-stream");
   let streamStatus: Record<string, unknown> = {
     state: "open",
     lastEventAgeMs: null,
@@ -495,6 +515,9 @@ app.get("/streams/quotes", async (req, res, next) => {
     clearRetryTimer();
     quoteBatch.close();
     unsubscribe();
+    if (sessionId && quoteStreamSessions.get(sessionId)?.token === sessionToken) {
+      quoteStreamSessions.delete(sessionId);
+    }
     writer.close();
   };
 
@@ -502,18 +525,20 @@ app.get("/streams/quotes", async (req, res, next) => {
   req.on("aborted", cleanup);
 
   const connect = async () => {
+    const requestedSymbols = symbols;
+    const requestVersion = ++connectVersion;
     if (cleanedUp || writer.isClosed()) {
       return;
     }
 
     try {
       const nextUnsubscribe = await ibkrBridgeService.subscribeQuoteStream(
-        symbols,
+        requestedSymbols,
         (quote) => {
           quoteBatch.enqueue(quote);
         },
       );
-      if (cleanedUp) {
+      if (cleanedUp || requestVersion !== connectVersion) {
         nextUnsubscribe();
         return;
       }
@@ -522,15 +547,15 @@ app.get("/streams/quotes", async (req, res, next) => {
       streamStatus = {
         state: "open",
         lastEventAgeMs: null,
-        requestedCount: symbols.length,
-        admittedCount: symbols.length,
+        requestedCount: requestedSymbols.length,
+        admittedCount: requestedSymbols.length,
         rejectedCount: 0,
       };
       unsubscribe();
       unsubscribe = nextUnsubscribe;
       await writer.writeEvent("stream-status", streamStatus);
       await writer.writeEvent("ready", {
-        symbols,
+        symbols: requestedSymbols,
         source: "ibkr-bridge",
       });
     } catch (error) {
@@ -541,9 +566,9 @@ app.get("/streams/quotes", async (req, res, next) => {
           state: streamCapacityState(error),
           reason: getErrorCode(error) ?? "ibkr_stream_capacity_limited",
           message: getErrorMessage(error),
-          requestedCount: symbols.length,
+          requestedCount: requestedSymbols.length,
           admittedCount: 0,
-          rejectedCount: symbols.length,
+          rejectedCount: requestedSymbols.length,
           retryDelayMs,
         };
         await writer.writeEvent("stream-status", streamStatus);
@@ -561,7 +586,56 @@ app.get("/streams/quotes", async (req, res, next) => {
     }
   };
 
+  const setSymbols = async (nextSymbols: string[]) => {
+    const normalizedSymbols = normalizeQuoteStreamSymbols(nextSymbols);
+    if (!normalizedSymbols.length) {
+      throw new Error("At least one quote stream symbol is required.");
+    }
+    const nextSignature = normalizedSymbols.join(",");
+    if (nextSignature === symbols.join(",")) {
+      return streamStatus;
+    }
+
+    symbols = normalizedSymbols;
+    clearRetryTimer();
+    await connect();
+    return streamStatus;
+  };
+
+  if (sessionId) {
+    quoteStreamSessions.set(sessionId, { token: sessionToken, setSymbols });
+  }
+
   void connect();
+});
+
+app.post("/streams/quotes/sessions/:sessionId/symbols", async (req, res) => {
+  const sessionId = req.params.sessionId?.trim() || "";
+  const session = sessionId ? quoteStreamSessions.get(sessionId) : null;
+  if (!session) {
+    res.status(404).json({
+      error: "quote stream session not found",
+    });
+    return;
+  }
+
+  const symbols = normalizeQuoteStreamSymbols(
+    (req.body as { symbols?: unknown } | undefined)?.symbols,
+  );
+  if (!symbols.length) {
+    res.status(400).json({
+      error: "symbols body field is required",
+    });
+    return;
+  }
+
+  const status = await session.setSymbols(symbols);
+  res.json({
+    sessionId,
+    symbols,
+    status,
+    updatedAt: new Date().toISOString(),
+  });
 });
 
 app.get("/bars", async (req, res) => {

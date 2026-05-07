@@ -124,7 +124,7 @@ const DEFAULT_LANE_POLICY: IbkrLanePolicy = {
       },
       manualSymbols: [],
       excludedSymbols: [],
-      maxSymbols: 80,
+      maxSymbols: 90,
       priority: DEFAULT_PRIORITY,
     },
     "option-live-quotes": {

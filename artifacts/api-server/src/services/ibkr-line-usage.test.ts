@@ -41,11 +41,59 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   assert.ok(Date.now() - startedAt < 1_000);
   assert.equal(snapshot.admission.activeLineCount, 1);
   assert.equal(snapshot.admission.accountMonitorLineCount, 0);
-  assert.equal(snapshot.admission.budget.accountMonitorLineCap, 20);
-  assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 20);
+  assert.equal(snapshot.admission.budget.accountMonitorLineCap, 10);
+  assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 10);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
   assert.equal(typeof snapshot.admission.optionsFlowScanner, "object");
   assert.equal(snapshot.bridge.diagnostics, null);
   assert.equal(snapshot.bridge.activeLineCount, null);
   assert.match(snapshot.bridge.error ?? "", /timed out after 10ms/i);
+  assert.equal(snapshot.drift.reconciliation.status, "unknown");
+});
+
+test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () => {
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 3,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: ["AAPL", "MSFT"],
+        activeOptionProviderContractIds: ["twsopt:test-bridge-only"],
+      },
+    }),
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-equity",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+  admitMarketDataLeases({
+    owner: "line-usage-option",
+    intent: "visible-live",
+    requests: [
+      {
+        assetClass: "option",
+        symbol: "SPY",
+        providerContractId: "twsopt:test-api-only",
+      },
+    ],
+    fallbackProvider: "cache",
+    replaceOwnerExisting: false,
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.drift.admissionVsBridgeLineDelta, -1);
+  assert.equal(snapshot.drift.reconciliation.status, "mixed");
+  assert.equal(snapshot.drift.reconciliation.matchedLineCount, 1);
+  assert.equal(snapshot.drift.reconciliation.apiOnlyLineCount, 1);
+  assert.equal(snapshot.drift.reconciliation.bridgeOnlyLineCount, 2);
+  assert.deepEqual(snapshot.drift.reconciliation.apiOnlyLineSample, [
+    "option:twsopt:test-api-only",
+  ]);
+  assert.deepEqual(snapshot.drift.reconciliation.bridgeOnlyLineSample, [
+    "equity:MSFT",
+    "option:twsopt:test-bridge-only",
+  ]);
 });

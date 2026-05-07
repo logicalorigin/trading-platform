@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   normalizeBarsToStoreTimeframe,
   type MarketDataStoreTimeframe,
 } from "./market-data-store";
+
+const readMarketDataStoreSource = () =>
+  readFileSync(new URL("./market-data-store.ts", import.meta.url), "utf8");
 
 test("normalizeBarsToStoreTimeframe rebuilds malformed cached 5m bars", () => {
   const bars = [
@@ -113,4 +117,19 @@ test("normalizeBarsToStoreTimeframe aligns every backend timeframe bucket", () =
       timeframe,
     );
   });
+});
+
+test("persistMarketDataBars upserts revised provider bars", () => {
+  const source = readMarketDataStoreSource();
+
+  assert.match(source, /onConflictDoUpdate\(\{/);
+  assert.match(source, /barCacheTable\.instrumentId/);
+  assert.match(source, /barCacheTable\.timeframe/);
+  assert.match(source, /barCacheTable\.source/);
+  assert.match(source, /barCacheTable\.startsAt/);
+  assert.match(source, /open:\s*sql`excluded\.open`/);
+  assert.match(source, /high:\s*sql`excluded\.high`/);
+  assert.match(source, /low:\s*sql`excluded\.low`/);
+  assert.match(source, /close:\s*sql`excluded\.close`/);
+  assert.match(source, /volume:\s*sql`excluded\.volume`/);
 });

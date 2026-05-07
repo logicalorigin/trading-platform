@@ -210,7 +210,7 @@ const optionsFlowBounds: Partial<
   radarBatchSize: { min: 1, max: 100 },
   radarDeepCandidateCount: { min: 1, max: 20 },
   radarFallbackDeepCandidateCount: { min: 0, max: 20 },
-  radarDeepLineBudget: { min: 1, max: 40 },
+  radarDeepLineBudget: { min: 1, max: 100 },
   scannerBatchSize: { min: 1, max: 100 },
   scannerConcurrency: { min: 1, max: 8 },
   scannerLimit: { min: 1, max: 500 },
@@ -314,6 +314,10 @@ function loadPersistedOverrides(): PersistedLaneOverrides {
   }
   applyPersistedOverrides();
   return persistedOverrides;
+}
+
+export function ensureIbkrLaneRuntimeOverridesLoaded(): void {
+  loadPersistedOverrides();
 }
 
 function persistOverrides(): void {

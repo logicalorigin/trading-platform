@@ -14,6 +14,7 @@ import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
 import { getBridgeQuoteStreamDiagnostics } from "./services/bridge-quote-stream";
+import { ensureIbkrLaneRuntimeOverridesLoaded } from "./services/ibkr-lanes";
 
 const rawPort = process.env["PORT"];
 
@@ -147,6 +148,7 @@ server.once("error", (err) => {
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
+  ensureIbkrLaneRuntimeOverridesLoaded();
   startAccountFlexRefreshScheduler();
   startOptionsFlowScanner();
   startTradeMonitorWorker();
