@@ -120,7 +120,9 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
       const symbol = (url.searchParams.get("underlying") || "SPY").toUpperCase();
       const scope = url.searchParams.get("scope") || "all";
       const limit = Number(url.searchParams.get("limit") || "0");
-      const unusualThreshold = Number(url.searchParams.get("unusualThreshold") || "0");
+      const lineBudget = Number(url.searchParams.get("lineBudget") || "0");
+      const historicalWindow =
+        url.searchParams.has("from") || url.searchParams.has("to");
       await new Promise((resolve) => setTimeout(resolve, 450));
       const eventsBySymbol: Record<string, unknown[]> = {
         SPY: [
@@ -128,6 +130,7 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
             premium: 350_000,
             strike: 510,
             right: "call",
+            optionTicker: "SPYC510",
             isUnusual: true,
             unusualScore: 2.4,
           }),
@@ -135,8 +138,17 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
             premium: 90_000,
             strike: 505,
             right: "put",
-            side: "sell",
+            optionTicker: "SPYP505",
+            side: "buy",
             sentiment: "bearish",
+          }),
+          flowEvent("SPY", {
+            premium: 70_000,
+            strike: 512,
+            right: "call",
+            optionTicker: "SPYC512",
+            side: "mid",
+            sentiment: "neutral",
           }),
         ],
         QQQ: [
@@ -162,14 +174,16 @@ async function mockMarketApi(page: Page, flowUrls: string[]) {
       };
       body = {
         events:
-          scope === "unusual" && limit >= 80 && unusualThreshold === 2
+          scope === "all" &&
+          ((limit >= 80 && lineBudget === 40) ||
+            (historicalWindow && limit >= 1_000))
             ? eventsBySymbol[symbol] || []
             : [],
         source: {
           provider: "ibkr",
           status: "live",
           fallbackUsed: false,
-          unusualThreshold: unusualThreshold || 1,
+          unusualThreshold: 1,
         },
       };
     } else if (url.pathname === "/api/news") {
@@ -243,16 +257,13 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
   await expect(
     page.getByRole("status", { name: /SPY options premium flow IBKR SNAPSHOT/i }),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.getByRole("status", { name: /IWM options premium flow No options flow/i }),
-  ).toBeVisible();
   await expect(strips.nth(0)).toHaveAttribute("data-flow-source-provider", "IBKR");
   await expect(strips.nth(0)).toHaveAttribute("data-flow-source-live", "true");
   await expect(strips.nth(0)).toHaveAttribute("data-flow-fallback-used", "false");
   await expect(strips.nth(5)).toHaveAttribute("data-flow-source-provider", "IBKR");
   await expect(strips.nth(5)).toHaveAttribute("data-flow-source-live", "true");
   const flowLane = page.getByTestId("market-activity-flow-lane");
-  await expect(flowLane).toHaveAttribute("data-flow-snapshot-source", "chart-grid");
+  await expect(flowLane).toHaveAttribute("data-flow-snapshot-source", "broad-scanner");
   await expect(flowLane).toHaveAttribute("data-flow-source-provider", "IBKR");
   await expect(flowLane).toHaveAttribute("data-flow-source-live", "true");
   await expect(page.locator("[data-premium-flow-glyph]")).toHaveCount(0);
@@ -277,22 +288,59 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
   await expect(
     page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-event-symbol", "QQQ");
+  const firstSurface = page.getByTestId("market-mini-chart-0-surface");
+  await expect(firstSurface).toHaveAttribute(
+    "data-chart-flow-raw-input-count",
+    /(?:[2-9]|\d{2,})/,
+  );
+  await expect(firstSurface).toHaveAttribute(
+    "data-chart-flow-bucketed-event-count",
+    /[1-9]\d*/,
+  );
+  await expect(
+    page.getByTestId("market-mini-chart-0-surface-flow-volume").first(),
+  ).toBeVisible();
+  await expect(
+    firstSurface.locator('[data-chart-flow-volume-segment="bullish"]').first(),
+  ).toBeVisible();
+  await expect(
+    firstSurface.locator('[data-chart-flow-volume-segment="bearish"]').first(),
+  ).toBeVisible();
+  await expect(
+    firstSurface.locator('[data-chart-flow-volume-segment="neutral"]').first(),
+  ).toBeVisible();
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(6);
   const chartFlowUrls = flowUrls.filter((href) => {
     const params = new URL(href).searchParams;
     return (
-      params.get("scope") === "unusual" &&
-      params.get("unusualThreshold") === "2" &&
+      params.get("scope") === "all" &&
       params.get("lineBudget") === "40" &&
       Number(params.get("limit") || "0") >= 80
     );
   });
   expect(chartFlowUrls.length).toBeGreaterThanOrEqual(6);
+  const historicalFlowUrls = flowUrls.filter((href) => {
+    const params = new URL(href).searchParams;
+    return (
+      params.get("scope") === "all" &&
+      params.has("from") &&
+      params.has("to") &&
+      params.has("historicalBucketSeconds") &&
+      Number(params.get("limit") || "0") >= 1_000
+    );
+  });
+  expect(historicalFlowUrls.length).toBeGreaterThanOrEqual(6);
   expect(
     chartFlowUrls.every(
-      (href) => new URL(href).searchParams.get("scope") === "unusual",
+      (href) => new URL(href).searchParams.get("scope") === "all",
     ),
+  ).toBe(true);
+  expect(
+    chartFlowUrls.every(
+      (href) => !new URL(href).searchParams.has("unusualThreshold"),
+    ),
+    "Market chart flow should request broad backend flow and filter unusual events locally",
   ).toBe(true);
   expect(
     chartFlowUrls.every(
@@ -300,7 +348,7 @@ test("Market chart grid premium-flow strips render below charts and overlays sta
     ),
   ).toBe(true);
   expect(
-    flowUrls.filter((href) => new URL(href).searchParams.get("scope") !== "unusual"),
+    flowUrls.filter((href) => new URL(href).searchParams.get("scope") !== "all"),
     "Market should not run a separate all-flow watchlist scanner while chart flow is active",
   ).toEqual([]);
 

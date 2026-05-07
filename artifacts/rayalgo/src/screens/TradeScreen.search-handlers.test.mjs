@@ -64,6 +64,17 @@ test("TradeScreen keeps option chain snapshots warm while hidden", () => {
   );
 });
 
+test("TradeScreen queues active ticker flow refreshes through the scanner", () => {
+  assert.match(
+    source,
+    /listFlowEventsRequest\(\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_LIVE_LIMIT,\s*blocking:\s*false,\s*queueRefresh:\s*true,/,
+  );
+  assert.doesNotMatch(
+    source,
+    /listFlowEventsRequest\(\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_LIVE_LIMIT,\s*blocking:\s*true,/,
+  );
+});
+
 test("Platform does not passively reset Trade to the first active watchlist item", () => {
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\.some\(\(item\) => item\.symbol === sym\)/);
   assert.doesNotMatch(platformSource, /activeWatchlist\.items\[0\]\?\.symbol/);

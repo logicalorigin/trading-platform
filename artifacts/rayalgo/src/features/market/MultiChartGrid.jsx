@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
+import { listFlowEvents as listFlowEventsRequest } from "@workspace/api-client-react";
 import {
+  getChartTimeframeDefinition,
   getChartTimeframeValues,
   normalizeChartTimeframe,
 } from "../charting/timeframes";
@@ -7,8 +10,10 @@ import { clearStoredChartViewportSnapshot } from "../charting/ResearchChartSurfa
 import { buildChartBarScopeKey } from "../charting/chartHydrationRuntime";
 import {
   filterFlowEventsForSymbol,
+  getChartEventLookbackWindow,
   mergeFlowEventFeeds,
 } from "../charting/chartEvents";
+import { mapFlowEventToUi } from "../flow/flowEventMapper";
 import { buildPremiumFlowBySymbol } from "../platform/premiumFlowIndicator";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
@@ -69,8 +74,22 @@ const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
 const MARKET_CHART_FLOW_LIMIT = 80;
+const MARKET_CHART_FLOW_HISTORY_LIMIT = 1_000;
 const MARKET_CHART_FLOW_LINE_BUDGET = 40;
 const MARKET_CHART_FLOW_CONCURRENCY = 1;
+const MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
+const MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3_600;
+
+const getMarketChartFlowHistoryBucketSeconds = (timeframe) => {
+  const definition = getChartTimeframeDefinition(timeframe);
+  const stepSeconds = definition?.stepMs
+    ? Math.round(definition.stepMs / 1000)
+    : 5 * 60;
+  return Math.max(
+    MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS,
+    Math.min(MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS, stepSeconds),
+  );
+};
 
 const buildMarketChartViewportLayoutKey = ({
   layout,
@@ -316,6 +335,69 @@ export const MultiChartGrid = ({
       ),
     [visibleSlotEntries],
   );
+  const historicalChartFlowRequests = useMemo(() => {
+    const requestsByKey = new Map();
+    visibleSlotEntries.forEach((entry) => {
+      const symbol = normalizeTickerSymbol(entry.slot?.ticker);
+      if (!symbol) return;
+      const hydratedTimeframe = normalizeChartTimeframe(entry.slot?.tf);
+      const timeframe = MINI_CHART_TIMEFRAMES.includes(hydratedTimeframe)
+        ? hydratedTimeframe
+        : "15m";
+      const window = getChartEventLookbackWindow(timeframe);
+      const historicalBucketSeconds =
+        getMarketChartFlowHistoryBucketSeconds(timeframe);
+      const request = {
+        symbol,
+        timeframe,
+        from: window.from.toISOString(),
+        to: window.to.toISOString(),
+        historicalBucketSeconds,
+      };
+      requestsByKey.set(
+        `${request.symbol}:${request.timeframe}:${request.historicalBucketSeconds}`,
+        request,
+      );
+    });
+    return Array.from(requestsByKey.values());
+  }, [visibleSlotEntries]);
+  const historicalChartFlowQueries = useQueries({
+    queries: historicalChartFlowRequests.map((request) => ({
+      queryKey: [
+        "market-chart-flow-history",
+        request.symbol,
+        request.timeframe,
+        request.from,
+        request.to,
+        request.historicalBucketSeconds,
+      ],
+      queryFn: () =>
+        listFlowEventsRequest({
+          underlying: request.symbol,
+          limit: MARKET_CHART_FLOW_HISTORY_LIMIT,
+          scope: FLOW_SCANNER_SCOPE.all,
+          from: request.from,
+          to: request.to,
+          historicalBucketSeconds: request.historicalBucketSeconds,
+          blocking: false,
+        }),
+      enabled: Boolean(isVisible && request.symbol),
+      staleTime: 15_000,
+      refetchInterval: isVisible ? 15_000 : false,
+      placeholderData: (previousData) => previousData,
+      retry: false,
+    })),
+  });
+  const historicalChartFlowEvents = useMemo(
+    () =>
+      historicalChartFlowQueries.flatMap((query) =>
+        (query.data?.events || []).map((event) => mapFlowEventToUi(event)),
+      ),
+    [historicalChartFlowQueries],
+  );
+  const historicalChartFlowPending = historicalChartFlowQueries.some(
+    (query) => query.isPending,
+  );
   const chartFlowSnapshot = useLiveMarketFlow(streamedSymbols, {
     enabled: Boolean(isVisible && streamedSymbols.length),
     limit: MARKET_CHART_FLOW_LIMIT,
@@ -324,9 +406,9 @@ export const MultiChartGrid = ({
     concurrency: MARKET_CHART_FLOW_CONCURRENCY,
     lineBudget: MARKET_CHART_FLOW_LINE_BUDGET,
     intervalMs: 10_000,
-    scope: FLOW_SCANNER_SCOPE.unusual,
+    scope: FLOW_SCANNER_SCOPE.all,
     unusualThreshold,
-    workloadLabel: "Chart unusual flow",
+    workloadLabel: "Chart flow",
   });
   const {
     flowStatus: chartFlowStatus,
@@ -340,14 +422,24 @@ export const MultiChartGrid = ({
   const chartFlowEvents = useMemo(
     () =>
       mergeFlowEventFeeds(
+        historicalChartFlowEvents || [],
         localChartFlowEvents || [],
         streamedSymbols.flatMap((symbol) =>
           filterFlowEventsForSymbol(broadFlowSnapshot.flowEvents || [], symbol),
         ),
       ),
-    [broadFlowSnapshot.flowEvents, localChartFlowEvents, streamedSymbols],
+    [
+      broadFlowSnapshot.flowEvents,
+      historicalChartFlowEvents,
+      localChartFlowEvents,
+      streamedSymbols,
+    ],
   );
-  const effectiveChartFlowStatus = chartFlowEvents.length ? "live" : chartFlowStatus;
+  const effectiveChartFlowStatus = chartFlowEvents.length
+    ? "live"
+    : historicalChartFlowPending
+      ? "loading"
+      : chartFlowStatus;
   const effectiveChartFlowSnapshot = useMemo(
     () => ({
       ...chartFlowSnapshot,
@@ -1046,6 +1138,7 @@ export const MultiChartGrid = ({
               <MiniChartCell
                 key={`market-chart-slot-${index}-${layout}-${chartViewportLayoutRevision}-${chartViewportResetRevision}`}
                 dataTestId={`market-mini-chart-${index}`}
+                slotId={`slot-${index}`}
                 slot={slot}
                 chartViewportLayoutKey={chartViewportLayoutKey}
                 premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}

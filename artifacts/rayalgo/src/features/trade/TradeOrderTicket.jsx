@@ -1056,7 +1056,7 @@ export const TradeOrderTicket = ({
     brokerPositionContextReady,
     brokerOrderContextReady,
     shadowPositionContextReady: Boolean(shadowExposureQuery.data),
-    shadowMatchingQuantity,
+    shadowMatchingQuantity: matchingShadowQuantity,
   });
   const ticketActionLabel =
     side === "BUY"

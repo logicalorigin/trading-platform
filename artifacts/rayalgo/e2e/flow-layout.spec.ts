@@ -4,12 +4,48 @@ test.setTimeout(90_000);
 test.describe.configure({ mode: "serial" });
 
 const flowSymbols = ["SPY", "QQQ", "NVDA", "TSLA", "IWM", "AAPL"];
+const premiumSymbols = [
+  ...flowSymbols,
+  "AMD",
+  "MU",
+  "META",
+  "MSFT",
+];
 const basePrices = Object.fromEntries(
   flowSymbols.map((symbol, index) => [symbol, 420 + index * 18]),
 );
 const symbolOffsets = Object.fromEntries(
   flowSymbols.map((symbol, index) => [symbol, (index + 1) * 10_000]),
 );
+
+function makePremiumHydrationDiagnostics() {
+  return {
+    snapshotCount: 120,
+    usablePremiumSnapshotCount: 92,
+    usablePremiumTotal: 12_000_000,
+    selectedPremiumTotal: 11_400_000,
+    classificationTargetPremiumCoverage: 0.9,
+    selectedPremiumCoverage: 0.95,
+    pageCount: 1,
+    snapshotTradingDate: "2026-05-06",
+    tradeLookbackStartDate: "2026-05-06",
+    quoteProbeDate: "2026-05-06",
+    quoteProbeStatus: "available",
+    quoteProbeMessage: null,
+    tradeContractCandidateCount: 60,
+    tradeContractHydratedCount: 60,
+    tradeCallAttemptCount: 60,
+    tradeCallSuccessCount: 60,
+    tradeCallErrorCount: 0,
+    tradeCallForbiddenCount: 0,
+    eligibleTradeCount: 180,
+    ineligibleTradeCount: 0,
+    unknownConditionTradeCount: 0,
+    conditionCodes: ["209", "219"],
+    exchangeCodes: ["300", "313"],
+    classifiedContractCoverage: 0.96,
+  };
+}
 
 function mockConid(symbol: string, suffix: number) {
   return String(900_000 + (symbolOffsets[symbol] ?? 0) + suffix);
@@ -132,6 +168,8 @@ function makePremiumWidget(symbol: string, index: number) {
     classifiedPremium: inflow + outflow,
     classificationCoverage: (inflow + outflow) / (inflow + outflow + neutral),
     classificationConfidence: "high",
+    hydrationWarning: null,
+    hydrationDiagnostics: makePremiumHydrationDiagnostics(),
     netPremium: inflow - outflow,
     inflowPremium: inflow,
     outflowPremium: outflow,
@@ -238,7 +276,7 @@ async function mockFlowApi(
           sideBasis: "quote_match",
           quoteAccess: "available",
           tradeAccess: "available",
-          classifiedPremium: flowSymbols.reduce(
+          classifiedPremium: premiumSymbols.reduce(
             (sum, symbol, index) =>
               sum +
               makePremiumWidget(symbol, index).classifiedPremium,
@@ -246,14 +284,19 @@ async function mockFlowApi(
           ),
           classificationCoverage: 0.96,
           classificationConfidence: "high",
+          coverageMode: "universe",
+          hydrationStatus: "complete",
+          hydrationWarning: null,
+          hydratedSymbolCount: premiumSymbols.length,
+          hydrationDiagnostics: makePremiumHydrationDiagnostics(),
           candidateDate: "2026-05-06",
-          candidateCount: flowSymbols.length,
-          rankedCount: flowSymbols.length,
+          candidateCount: premiumSymbols.length,
+          rankedCount: premiumSymbols.length,
           errorCount: 0,
           errorMessage: null,
           cache: "miss",
         },
-        widgets: flowSymbols.map((symbol, index) => ({
+        widgets: premiumSymbols.map((symbol, index) => ({
           ...makePremiumWidget(symbol, index),
           timeframe,
         })),
@@ -571,7 +614,7 @@ async function expectChartCanvasDrawn(page: Page, chartTestId: string) {
     .toBe(true);
 }
 
-test("Flow premium distribution renders six compact Webull-style widgets", async ({
+test("Flow premium distribution renders ten compact Webull-style widgets", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -580,13 +623,16 @@ test("Flow premium distribution renders six compact Webull-style widgets", async
 
   const strip = page.getByTestId("flow-premium-distribution-strip");
   await expect(strip).toBeVisible();
-  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(6);
-  await expect(strip.locator('section[aria-label="Inflow order bars"]')).toHaveCount(6);
-  await expect(strip.locator('section[aria-label="Outflow order bars"]')).toHaveCount(6);
-  await expect(strip.getByTestId("flow-premium-bucket-row")).toHaveCount(36);
-  await expect(strip.getByText(/High confidence/)).toBeVisible();
-  await expect(strip.getByText("Kilo USD", { exact: true })).toHaveCount(6);
-  await expect(strip.getByRole("img", { name: "Order flow distribution donut chart" })).toHaveCount(6);
+  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(10);
+  await expect(strip.locator('section[aria-label="Inflow order bars"]')).toHaveCount(0);
+  await expect(strip.locator('section[aria-label="Outflow order bars"]')).toHaveCount(0);
+  await expect(strip.getByTestId("flow-premium-bucket-row")).toHaveCount(0);
+  await expect(strip.getByText(/Quote matched · 96% classified/)).toBeVisible();
+  await expect(strip.getByText("Kilo USD", { exact: true })).toHaveCount(0);
+  await expect(strip.getByRole("img", { name: /Order flow distribution donut chart/ })).toHaveCount(10);
+  await expect(page.getByTestId("flow-premium-distribution-widget").first()).toContainText("SPY");
+  await expect(strip.getByText(/#1/)).toHaveCount(0);
+  await expect(page.getByTestId("flow-premium-distribution-widget").first()).toContainText(/M/);
   await expect(strip.locator("svg text").filter({ hasText: /%/ })).toHaveCount(0);
   await expect(strip.getByText(/cls · N/)).toHaveCount(0);
   await expect(strip.getByText(/trades · Vol/)).toHaveCount(0);
@@ -601,8 +647,8 @@ test("Flow premium distribution renders six compact Webull-style widgets", async
         return { width: rect.width, height: rect.height };
       }),
     );
-  expect(Math.max(...desktopBoxes.map((box) => box.width))).toBeLessThanOrEqual(230);
-  expect(Math.max(...desktopBoxes.map((box) => box.height))).toBeLessThanOrEqual(220);
+  expect(Math.max(...desktopBoxes.map((box) => box.width))).toBeLessThanOrEqual(155);
+  expect(Math.max(...desktopBoxes.map((box) => box.height))).toBeLessThanOrEqual(120);
   await strip.screenshot({
     path: testInfo.outputPath("flow-premium-distribution-desktop.png"),
   });
@@ -612,7 +658,7 @@ test("Flow premium distribution renders six compact Webull-style widgets", async
 
   await page.setViewportSize({ width: 390, height: 900 });
   await expect(strip).toBeVisible();
-  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(6);
+  await expect(page.getByTestId("flow-premium-distribution-widget")).toHaveCount(10);
   await strip.screenshot({
     path: testInfo.outputPath("flow-premium-distribution-mobile.png"),
   });

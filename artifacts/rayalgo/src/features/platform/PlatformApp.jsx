@@ -111,6 +111,8 @@ import {
 import { platformJsonRequest } from "./platformJsonRequest";
 import {
   getCurrentTheme,
+  resolveEffectiveThemeFromState,
+  resolveEffectiveThemePreference,
   setCurrentDensity,
   setCurrentScale,
   setCurrentTheme,
@@ -235,7 +237,11 @@ export default function PlatformApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
   );
-  const [theme, setTheme] = useState(_initialState.theme || "dark");
+  const [theme, setTheme] = useState(() => {
+    const initialTheme = resolveEffectiveThemeFromState(_initialState);
+    setCurrentTheme(initialTheme);
+    return initialTheme;
+  });
   const [, setUiPreferenceRevision] = useState(0);
   const appearancePreferences = userPreferences.preferences?.appearance || {};
   const preferredTheme = appearancePreferences.theme;
@@ -1497,9 +1503,10 @@ export default function PlatformApp() {
       theme === "light" ? "light" : "dark";
   }, [theme]);
   useEffect(() => {
-    if ((preferredTheme === "dark" || preferredTheme === "light") && preferredTheme !== theme) {
-      setCurrentTheme(preferredTheme);
-      setTheme(preferredTheme);
+    const resolvedTheme = resolveEffectiveThemePreference(preferredTheme, theme);
+    if (resolvedTheme !== theme) {
+      setCurrentTheme(resolvedTheme);
+      setTheme(resolvedTheme);
     }
   }, [preferredTheme, theme]);
   useEffect(() => {

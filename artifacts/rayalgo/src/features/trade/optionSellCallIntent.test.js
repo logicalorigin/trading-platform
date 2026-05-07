@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildSellCallTicketCoverage,
   resolveSellCallTicketIntent,
 } from "./optionSellCallIntent.js";
+
+const tradeOrderTicketSource = readFileSync(
+  new URL("./TradeOrderTicket.jsx", import.meta.url),
+  "utf8",
+);
 
 const selectedContract = {
   ticker: "SPY   260619C00500000",
@@ -49,6 +55,14 @@ const order = (patch = {}) => ({
   updatedAt: "2026-05-06T15:00:00.000Z",
   optionContract: selectedContract,
   ...patch,
+});
+
+test("TradeOrderTicket passes computed shadow quantity into sell-call intent", () => {
+  assert.match(
+    tradeOrderTicketSource,
+    /shadowMatchingQuantity:\s*matchingShadowQuantity/,
+  );
+  assert.doesNotMatch(tradeOrderTicketSource, /\n\s*shadowMatchingQuantity,\n/);
 });
 
 test("resolves real sell calls against matching long option positions first", () => {

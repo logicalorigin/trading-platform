@@ -17,10 +17,7 @@ import {
   resolveLocalRollupBaseTimeframe,
   rollupMarketBars,
 } from "../charting/timeframeRollups";
-import {
-  flowEventsToChartEvents,
-  mergeFlowEventFeeds,
-} from "../charting/chartEvents";
+import { flowEventsToChartEventConversion } from "../charting/chartEvents";
 import {
   getChartBarLimit,
   getChartBrokerRecentWindowMinutes,
@@ -70,10 +67,8 @@ import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
 } from "../platform/runtimeTickerStore";
-import {
-  filterFlowTapeEvents,
-  useFlowTapeFilterState,
-} from "../platform/flowFilterStore";
+import { useSignalMonitorStateForSymbol } from "../platform/signalMonitorStore";
+import { resolveSignalFrameState } from "../platform/signalFrameState";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
 import {
   DEFAULT_TRADE_EQUITY_STUDIES,
@@ -100,23 +95,34 @@ export const TradeEquityPanel = ({
   workspaceChart = null,
   onWorkspaceChartChange,
   referenceLines = [],
+  showSignalFrameBorder = true,
 }) => {
   const queryClient = useQueryClient();
-  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
-  const flowTapeFilters = useFlowTapeFilterState();
+  const parentFlowEventsProvided = flowEvents !== undefined;
+  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker, {
+    subscribe: !parentFlowEventsProvided,
+  });
   const effectiveFlowEvents = useMemo(
-    () => mergeFlowEventFeeds(tradeFlowSnapshot.events || [], flowEvents || []),
-    [flowEvents, tradeFlowSnapshot.events],
-  );
-  const filteredFlowEvents = useMemo(
-    () => filterFlowTapeEvents(effectiveFlowEvents, flowTapeFilters),
-    [effectiveFlowEvents, flowTapeFilters],
+    () =>
+      parentFlowEventsProvided
+        ? Array.isArray(flowEvents)
+          ? flowEvents
+          : []
+        : tradeFlowSnapshot.events || [],
+    [flowEvents, parentFlowEventsProvided, tradeFlowSnapshot.events],
   );
   const tickerFallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
     [ticker],
   );
   const tickerInfo = useRuntimeTickerSnapshot(ticker, tickerFallback);
+  const signalState = useSignalMonitorStateForSymbol(ticker, {
+    subscribeToUpdates: showSignalFrameBorder,
+  });
+  const signalFrameState = useMemo(
+    () => (showSignalFrameBorder ? resolveSignalFrameState(signalState, T) : null),
+    [showSignalFrameBorder, signalState],
+  );
   const hasAnchoredTickerSearch =
     typeof onSearchOpenChange === "function" && searchContent != null;
   const { studies: availableStudies, indicatorRegistry } =
@@ -448,6 +454,7 @@ export const TradeEquityPanel = ({
     timeframe: rollupBaseTimeframe,
     bars: prependableBars.bars,
     enabled: Boolean(stockAggregateStreamingEnabled && ticker),
+    instrumentationScope: baseBarsScopeKey,
   });
   const liveBars = useMemo(
     () => buildTradeBarsFromApi(streamedSourceBars),
@@ -548,10 +555,11 @@ export const TradeEquityPanel = ({
       : baseBarsCacheStale
       ? "stale"
       : "live";
-  const chartEvents = useMemo(
-    () => flowEventsToChartEvents(filteredFlowEvents || [], ticker),
-    [filteredFlowEvents, ticker],
+  const chartEventConversion = useMemo(
+    () => flowEventsToChartEventConversion(effectiveFlowEvents || [], ticker),
+    [effectiveFlowEvents, ticker],
   );
+  const chartEvents = chartEventConversion.events;
   const chartModel = useMeasuredChartModel({
     scopeKey: chartHydrationScopeKey,
     bars,
@@ -665,7 +673,6 @@ export const TradeEquityPanel = ({
 
   return (
     <ResearchChartFrame
-      key={chartHydrationScopeKey}
       dataTestId={dataTestId}
       theme={T}
       themeKey={getCurrentTheme()}
@@ -674,7 +681,9 @@ export const TradeEquityPanel = ({
       viewportLayoutKey={viewportLayoutKey}
       model={chartModel}
       compact={compact}
+      frameSignalState={showSignalFrameBorder ? signalFrameState : null}
       chartEvents={chartEvents}
+      chartFlowDiagnostics={chartEventConversion}
       showSurfaceToolbar={false}
       showLegend
       legend={{

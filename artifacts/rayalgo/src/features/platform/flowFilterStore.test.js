@@ -10,7 +10,6 @@ import {
   resetFlowTapeFilterStateForTests,
   setFlowTapeFilterState,
 } from "./flowFilterStore.js";
-import { flowEventsToChartEvents } from "../charting/chartEvents.ts";
 
 test("normalizeFlowTapeFilterState repairs invalid persisted filter values", () => {
   assert.deepEqual(
@@ -190,7 +189,7 @@ test("filterFlowTapeEvents keeps repeat filters on the shared cluster model", ()
   );
 });
 
-test("shared Flow tape filters define chart marker eligibility", () => {
+test("shared Flow tape filters narrow only the tape event set", () => {
   const events = [
     {
       id: "visible-call",
@@ -224,7 +223,6 @@ test("shared Flow tape filters define chart marker eligibility", () => {
     includeQuery: "SPY",
     excludeQuery: "",
   });
-  const chartEvents = flowEventsToChartEvents(filtered, "SPY");
 
-  assert.deepEqual(chartEvents.map((event) => event.id), ["visible-call"]);
+  assert.deepEqual(filtered.map((event) => event.id), ["visible-call"]);
 });

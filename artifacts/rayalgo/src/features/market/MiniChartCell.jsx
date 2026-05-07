@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getChartTimeframeValues, normalizeChartTimeframe } from "../charting/timeframes";
 import { TradeEquityPanel } from "../trade/TradeEquityPanel.jsx";
 import { ensureTradeTickerInfo } from "../platform/runtimeTickerStore";
-import { useSignalMonitorStateForSymbol } from "../platform/signalMonitorStore";
 import { MarketIdentityMark } from "../platform/marketIdentity";
 import { MiniChartTickerSearch } from "../platform/tickerSearch/TickerSearch.jsx";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
@@ -68,6 +67,7 @@ export const MiniChartCell = ({
   compactFlow = false,
   stockAggregateStreamingEnabled = false,
   dataTestId,
+  slotId = dataTestId || "market-mini-chart",
   chartViewportLayoutKey = null,
 }) => {
   const ticker = normalizeTickerSymbol(slot?.ticker) || WATCHLIST[0]?.sym || "SPY";
@@ -75,7 +75,6 @@ export const MiniChartCell = ({
   const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
     ? hydratedTimeframe
     : "5m";
-  const signalState = useSignalMonitorStateForSymbol(ticker);
   const fallbackInfo =
     DEFAULT_WATCHLIST_BY_SYMBOL[ticker] ||
     WATCHLIST.find((item) => item.sym === ticker) ||
@@ -213,14 +212,6 @@ export const MiniChartCell = ({
     },
     [onChangeTimeframe, timeframe],
   );
-  const signalDirection = signalState?.currentSignalDirection;
-  const hasSignalBorder =
-    signalState?.fresh &&
-    signalState?.status === "ok" &&
-    (signalDirection === "buy" || signalDirection === "sell");
-  const signalBorderColor =
-    signalDirection === "buy" ? T.green : signalDirection === "sell" ? T.red : T.border;
-
   return (
     <div
       onPointerDownCapture={handleFramePointerDown}
@@ -233,17 +224,13 @@ export const MiniChartCell = ({
         position: "relative",
         height: "100%",
         boxSizing: "border-box",
-        border: `1px solid ${hasSignalBorder ? signalBorderColor : isActive ? T.accent : "transparent"}`,
+        border: `1px solid ${isActive ? T.accent : "transparent"}`,
         cursor: "default",
         transition: "border-color 0.15s, box-shadow 0.15s",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        boxShadow: hasSignalBorder
-          ? `0 0 0 1px ${signalBorderColor}55, 0 0 18px ${signalBorderColor}30`
-          : isActive
-            ? `0 0 0 1px ${T.accent}33`
-            : "none",
+        boxShadow: isActive ? `0 0 0 1px ${T.accent}33` : "none",
       }}
     >
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
@@ -271,7 +258,7 @@ export const MiniChartCell = ({
           stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           dataTestId={dataTestId}
           compact={dense}
-          surfaceUiStateKey={`market-spot-chart:${ticker}:${timeframe}`}
+          surfaceUiStateKey={`market-spot-chart:${slotId}:${timeframe}`}
           viewportLayoutKey={chartViewportLayoutKey}
           searchOpen={searchOpen}
           onSearchOpenChange={setSearchOpen}

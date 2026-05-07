@@ -25,6 +25,7 @@ import {
 } from "../features/platform/live-streams";
 import {
   getChartBarLimit,
+  getChartTimeframeDefinition,
   getChartTimeframeOptions,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
@@ -39,7 +40,8 @@ import {
 import {
   filterFlowEventsForOptionContract,
   filterFlowEventsForSymbol,
-  flowEventsToChartEvents,
+  flowEventsToChartEventConversion,
+  getChartEventLookbackWindow,
   mergeFlowEventFeeds,
 } from "../features/charting/chartEvents";
 import { recordChartBarScopeState } from "../features/charting/chartHydrationStats";
@@ -132,10 +134,6 @@ import {
   publishTradeFlowSnapshot,
   useTradeFlowSnapshot,
 } from "../features/platform/tradeFlowStore";
-import {
-  filterFlowTapeEvents,
-  useFlowTapeFilterState,
-} from "../features/platform/flowFilterStore";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   useMarketFlowSnapshotForStoreKey,
@@ -618,13 +616,15 @@ const TradeContractDetailPanel = ({
   ticker,
   contract,
   heldContracts = [],
-  flowEvents = [],
+  flowEvents,
   liveDataEnabled = true,
   historicalDataEnabled = liveDataEnabled,
 }) => {
   const chainSnapshot = useTradeOptionChainSnapshot(ticker);
-  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
-  const flowTapeFilters = useFlowTapeFilterState();
+  const parentFlowEventsProvided = flowEvents !== undefined;
+  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker, {
+    subscribe: !parentFlowEventsProvided,
+  });
   const {
     favoriteTimeframes: optionFavoriteTimeframes,
     toggleFavoriteTimeframe: toggleOptionFavoriteTimeframe,
@@ -807,17 +807,18 @@ const TradeContractDetailPanel = ({
   useEffect(() => {
     persistState({ tradeOptionRayReplicaSettings: rayReplicaSettings });
   }, [rayReplicaSettings]);
+  const optionChartScopeKey =
+    optionContractScopeKey ||
+    [
+      "trade-contract-option",
+      ticker || "__missing__",
+      optionExpirationIso || "__missing__",
+      optionRight || "__missing__",
+      Number.isFinite(contract.strike) ? contract.strike : "__missing__",
+      optionChartTimeframe,
+    ].join("::");
   const chartModel = useMeasuredChartModel({
-    scopeKey:
-      optionContractScopeKey ||
-      [
-        "trade-contract-option",
-        ticker || "__missing__",
-        optionExpirationIso || "__missing__",
-        optionRight || "__missing__",
-        Number.isFinite(contract.strike) ? contract.strike : "__missing__",
-        optionChartTimeframe,
-      ].join("::"),
+    scopeKey: optionChartScopeKey,
     bars: displayBars,
     buildInput: {
       bars: displayBars,
@@ -841,16 +842,17 @@ const TradeContractDetailPanel = ({
     ],
   });
   const mergedFlowEvents = useMemo(
-    () => mergeFlowEventFeeds(tradeFlowSnapshot.events || [], flowEvents || []),
-    [flowEvents, tradeFlowSnapshot.events],
-  );
-  const filteredFlowEvents = useMemo(
-    () => filterFlowTapeEvents(mergedFlowEvents, flowTapeFilters),
-    [flowTapeFilters, mergedFlowEvents],
+    () =>
+      parentFlowEventsProvided
+        ? Array.isArray(flowEvents)
+          ? flowEvents
+          : []
+        : tradeFlowSnapshot.events || [],
+    [flowEvents, parentFlowEventsProvided, tradeFlowSnapshot.events],
   );
   const selectedContractFlowEvents = useMemo(
     () =>
-      filterFlowEventsForOptionContract(filteredFlowEvents, {
+      filterFlowEventsForOptionContract(mergedFlowEvents, {
         symbol: ticker,
         providerContractId,
         optionTicker,
@@ -860,7 +862,7 @@ const TradeContractDetailPanel = ({
       }),
     [
       contract.strike,
-      filteredFlowEvents,
+      mergedFlowEvents,
       optionExpirationIso,
       optionRight,
       optionTicker,
@@ -868,10 +870,50 @@ const TradeContractDetailPanel = ({
       ticker,
     ],
   );
-  const chartEvents = useMemo(
-    () => flowEventsToChartEvents(selectedContractFlowEvents, ticker),
+  const chartEventConversion = useMemo(
+    () => flowEventsToChartEventConversion(selectedContractFlowEvents, ticker),
     [selectedContractFlowEvents, ticker],
   );
+  const chartEvents = chartEventConversion.events;
+  const chartFlowBadge = useMemo(() => {
+    if (!chartEvents.length) {
+      return null;
+    }
+    const topEvent =
+      chartEvents
+        .slice()
+        .sort(
+          (left, right) =>
+            Number(right.metadata?.premium || 0) -
+            Number(left.metadata?.premium || 0),
+        )[0] || chartEvents[0];
+    const bullishCount = chartEvents.filter(
+      (event) => event.bias === "bullish",
+    ).length;
+    const bearishCount = chartEvents.filter(
+      (event) => event.bias === "bearish",
+    ).length;
+    const bias =
+      bullishCount > bearishCount
+        ? "bullish"
+        : bearishCount > bullishCount
+          ? "bearish"
+          : topEvent?.bias || "neutral";
+    const color = bias === "bearish" ? T.red : bias === "bullish" ? T.green : T.amber;
+    return {
+      color,
+      label:
+        chartEvents.length > 1
+          ? `${chartEvents.length} Flow`
+          : `Flow ${topEvent?.label || 1}`,
+      tooltip:
+        chartEvents.length > 1
+          ? `${chartEvents.length} flow events · ${
+              topEvent?.summary || topEvent?.label || "top flow"
+            }`
+          : topEvent?.summary || "Flow",
+    };
+  }, [chartEvents]);
   const heldCount = heldContracts.length;
   const contractLabel = selectedContract
     ? getContractLabel(
@@ -1119,6 +1161,7 @@ const TradeContractDetailPanel = ({
             rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
             model={chartModel}
             chartEvents={chartEvents}
+            chartFlowDiagnostics={chartEventConversion}
             emptyState={optionChartEmptyState}
             drawings={drawings}
             drawMode={drawMode}
@@ -1224,8 +1267,8 @@ const TradeContractDetailPanel = ({
             }
             onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
           />
-          {displayBars.length && chartEvents.length ? (
-            <AppTooltip content={chartEvents[0]?.summary || "Flow"}><div
+          {displayBars.length && chartFlowBadge ? (
+            <AppTooltip content={chartFlowBadge.tooltip}><div
               data-testid="trade-contract-option-chart-flow-badge"
               style={{
                 position: "absolute",
@@ -1234,13 +1277,9 @@ const TradeContractDetailPanel = ({
                   TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceTopOverlayHeight + 8,
                 ),
                 zIndex: 8,
-                border: `1px solid ${
-                  chartEvents[0]?.bias === "bearish" ? T.red : T.green
-                }66`,
-                background: `${
-                  chartEvents[0]?.bias === "bearish" ? T.red : T.green
-                }18`,
-                color: chartEvents[0]?.bias === "bearish" ? T.red : T.green,
+                border: `1px solid ${chartFlowBadge.color}66`,
+                background: `${chartFlowBadge.color}18`,
+                color: chartFlowBadge.color,
                 borderRadius: dim(3),
                 padding: sp("4px 6px"),
                 fontFamily: T.mono,
@@ -1250,7 +1289,7 @@ const TradeContractDetailPanel = ({
                 boxShadow: `0 0 0 1px ${T.bg4}cc`,
               }}
             >
-              Flow {chartEvents[0]?.label || chartEvents.length}
+              {chartFlowBadge.label}
             </div></AppTooltip>
           ) : null}
         </div>
@@ -1507,23 +1546,79 @@ const TradeQuoteRuntime = ({
   return null;
 };
 
-const TradeFlowRuntime = ({ ticker, enabled }) => {
+const TRADE_FLOW_LIVE_LIMIT = 80;
+const TRADE_FLOW_HISTORY_LIMIT = 1000;
+const TRADE_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
+const TRADE_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3600;
+
+const getTradeFlowHistoryBucketSeconds = (timeframe) => {
+  const definition = getChartTimeframeDefinition(timeframe);
+  const stepSeconds = definition?.stepMs
+    ? Math.round(definition.stepMs / 1000)
+    : 5 * 60;
+  return Math.max(
+    TRADE_FLOW_MIN_HISTORY_BUCKET_SECONDS,
+    Math.min(TRADE_FLOW_MAX_HISTORY_BUCKET_SECONDS, stepSeconds),
+  );
+};
+
+const TradeFlowRuntime = ({ ticker, enabled, timeframe = "5m" }) => {
   const flowEnabled = Boolean(enabled && ticker);
+  const historicalFlowEventsRef = useRef({ key: "", events: [] });
+  const historicalBucketSeconds = useMemo(
+    () => getTradeFlowHistoryBucketSeconds(timeframe),
+    [timeframe],
+  );
+  const historicalFlowWindow = useMemo(() => {
+    const window = getChartEventLookbackWindow(timeframe);
+    return {
+      from: window.from.toISOString(),
+      to: window.to.toISOString(),
+    };
+  }, [ticker, timeframe]);
 
   useRuntimeWorkloadFlag("trade:flow", flowEnabled, {
     kind: "poll",
     label: "Trade flow",
-    detail: "10s",
+    detail: "15s",
     priority: 5,
   });
 
   const tickerFlowQuery = useQuery({
     queryKey: ["trade-flow", ticker],
     queryFn: () =>
-      listFlowEventsRequest({ underlying: ticker, limit: 80, blocking: true }),
+      listFlowEventsRequest({
+        underlying: ticker,
+        limit: TRADE_FLOW_LIVE_LIMIT,
+        blocking: false,
+        queueRefresh: true,
+      }),
     enabled: flowEnabled,
-    staleTime: 60_000,
-    refetchInterval: flowEnabled ? 60_000 : false,
+    staleTime: 15_000,
+    refetchInterval: flowEnabled ? 15_000 : false,
+    retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
+  });
+  const historicalFlowQuery = useQuery({
+    queryKey: [
+      "trade-flow-history",
+      ticker,
+      historicalFlowWindow.from,
+      historicalFlowWindow.to,
+      historicalBucketSeconds,
+    ],
+    queryFn: () =>
+      listFlowEventsRequest({
+        underlying: ticker,
+        limit: TRADE_FLOW_HISTORY_LIMIT,
+        from: historicalFlowWindow.from,
+        to: historicalFlowWindow.to,
+        historicalBucketSeconds,
+        blocking: false,
+      }),
+    enabled: flowEnabled,
+    staleTime: 15_000,
+    refetchInterval: flowEnabled ? 15_000 : false,
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
@@ -1533,27 +1628,58 @@ const TradeFlowRuntime = ({ ticker, enabled }) => {
       return;
     }
 
+    const historicalKey = `${ticker}:${historicalFlowWindow.from}:${historicalFlowWindow.to}:${historicalBucketSeconds}`;
+    if (historicalFlowEventsRef.current.key !== historicalKey) {
+      historicalFlowEventsRef.current = { key: historicalKey, events: [] };
+    }
     const liveEvents =
       tickerFlowQuery.data?.events?.map((event) => mapFlowEventToUi(event)) ||
       [];
-    const events = liveEvents.length
-      ? liveEvents.sort((left, right) => right.premium - left.premium)
-      : [];
+    const incomingHistoricalEvents =
+      historicalFlowQuery.data?.events?.map((event) => mapFlowEventToUi(event)) ||
+      [];
+    const historicalReason = String(
+      historicalFlowQuery.data?.source?.ibkrReason || "",
+    ).toLowerCase();
+    const historicalRefreshTransient =
+      historicalFlowQuery.isPending ||
+      historicalFlowQuery.isError ||
+      historicalReason.includes("refreshing") ||
+      historicalReason.includes("error") ||
+      historicalReason.includes("failed");
+    if (incomingHistoricalEvents.length > 0 || !historicalRefreshTransient) {
+      historicalFlowEventsRef.current = {
+        key: historicalKey,
+        events: incomingHistoricalEvents,
+      };
+    }
+    const historicalEvents = incomingHistoricalEvents.length
+      ? incomingHistoricalEvents
+      : historicalFlowEventsRef.current.events;
+    const events = mergeFlowEventFeeds(liveEvents, historicalEvents).sort(
+      (left, right) => (right.premium || 0) - (left.premium || 0),
+    );
     const status = events.length
       ? "live"
-      : tickerFlowQuery.isPending
+      : tickerFlowQuery.isPending || historicalFlowQuery.isPending
         ? "loading"
-        : tickerFlowQuery.isError
+        : tickerFlowQuery.isError && historicalFlowQuery.isError
           ? "offline"
           : "empty";
 
     publishTradeFlowSnapshot(ticker, {
       events,
       status,
-      source: tickerFlowQuery.data?.source || null,
+      source: tickerFlowQuery.data?.source || historicalFlowQuery.data?.source || null,
     });
   }, [
     ticker,
+    historicalFlowQuery.data,
+    historicalFlowQuery.isError,
+    historicalFlowQuery.isPending,
+    historicalBucketSeconds,
+    historicalFlowWindow.from,
+    historicalFlowWindow.to,
     tickerFlowQuery.data,
     tickerFlowQuery.isError,
     tickerFlowQuery.isPending,
@@ -2389,9 +2515,20 @@ export const TradeScreen = ({
     BROAD_MARKET_FLOW_STORE_KEY,
     { subscribe: isVisible },
   );
+  const activeTickerTradeFlowSnapshot = useTradeFlowSnapshot(activeTicker, {
+    subscribe: isVisible,
+  });
   const activeTickerBroadFlowEvents = useMemo(
     () => filterFlowEventsForSymbol(broadFlowSnapshot.flowEvents || [], activeTicker),
     [activeTicker, broadFlowSnapshot.flowEvents],
+  );
+  const activeTickerChartFlowEvents = useMemo(
+    () =>
+      mergeFlowEventFeeds(
+        activeTickerTradeFlowSnapshot.events || [],
+        activeTickerBroadFlowEvents,
+      ),
+    [activeTickerBroadFlowEvents, activeTickerTradeFlowSnapshot.events],
   );
   useRuntimeWorkloadFlag("trade:streams", tradeBrokerStreamingEnabled, {
     kind: "stream",
@@ -2901,6 +3038,7 @@ export const TradeScreen = ({
       <TradeFlowRuntime
         ticker={activeTicker}
         enabled={tradeLiveStreamsEnabled}
+        timeframe={activeWorkspace.equityChart?.timeframe || "5m"}
       />
       <TradeContractSelectionRuntime
         ticker={activeTicker}
@@ -3047,7 +3185,7 @@ export const TradeScreen = ({
         >
           <MemoTradeEquityPanel
             ticker={activeTicker}
-            flowEvents={activeTickerBroadFlowEvents}
+            flowEvents={activeTickerChartFlowEvents}
             historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
             stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
             onOpenSearch={openEquitySearch}
@@ -3071,7 +3209,7 @@ export const TradeScreen = ({
             ticker={activeTicker}
             contract={contract}
             heldContracts={heldContracts}
-            flowEvents={activeTickerBroadFlowEvents}
+            flowEvents={activeTickerChartFlowEvents}
             historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
             liveDataEnabled={tradeLiveStreamsEnabled}
           />

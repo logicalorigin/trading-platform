@@ -161,15 +161,15 @@ test("Flow page premium distribution widgets use Polygon summary endpoint", () =
   );
 
   assert.match(source, /useGetFlowPremiumDistribution/);
-  assert.match(source, /FLOW_PREMIUM_WIDGET_COUNT\s*=\s*6/);
+  assert.match(source, /FLOW_PREMIUM_WIDGET_COUNT\s*=\s*10/);
   assert.match(source, /FLOW_PREMIUM_WIDGET_REFRESH_MS\s*=\s*30_000/);
   assert.match(source, /FLOW_PREMIUM_TIMEFRAME_OPTIONS/);
   assert.match(source, /<PremiumDistributionStrip/);
   assert.match(source, /data-testid="flow-premium-distribution-widget"/);
   assert.match(source, /data-testid="flow-premium-distribution-timeframe"/);
   assert.match(source, /PremiumDistributionDonut/);
-  assert.match(source, /PremiumFlowBarPanel/);
-  assert.match(source, /Kilo USD/);
+  assert.match(source, /PremiumDistributionWidget/);
+  assert.match(source, /formatPremiumCompactUsd/);
   assert.match(source, /Neutral/);
   assert.match(source, /Inflow/);
   assert.match(source, /Outflow/);

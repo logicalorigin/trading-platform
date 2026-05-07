@@ -131,13 +131,8 @@ const getDisplayableFlowError = (providerSummary) => {
   return message;
 };
 const FLOW_ROWS_OPTIONS = [24, 40, 60, 100];
-const FLOW_PREMIUM_WIDGET_COUNT = 6;
+const FLOW_PREMIUM_WIDGET_COUNT = 10;
 const FLOW_PREMIUM_WIDGET_REFRESH_MS = 30_000;
-const FLOW_PREMIUM_WIDGET_BUCKETS = [
-  ["Large", "large"],
-  ["Medium", "medium"],
-  ["Small", "small"],
-];
 const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
   ["today", "Today"],
   ["week", "Week"],
@@ -659,15 +654,29 @@ const FlowPlaceholderCard = ({
 
 const premiumToKiloUsd = (value) => (isFiniteNumber(value) ? value / 1_000 : 0);
 
-const formatKiloUsd = (value) =>
-  Math.round(Math.max(0, isFiniteNumber(value) ? value : 0)).toLocaleString(
-    "en-US",
-  );
+const formatPremiumCompactUsd = (value) => {
+  if (!isFiniteNumber(value)) return MISSING_VALUE;
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    const valueInMillions = value / 1_000_000;
+    const digits = Math.abs(valueInMillions) < 10 ? 1 : 0;
+    return `${valueInMillions.toFixed(digits)}M`;
+  }
+  if (abs >= 1_000) {
+    const valueInThousands = value / 1_000;
+    const digits = Math.abs(valueInThousands) < 10 ? 1 : 0;
+    return `${valueInThousands.toFixed(digits)}K`;
+  }
+  return Math.round(value).toLocaleString("en-US");
+};
+
+const formatPremiumCompactFromKiloUsd = (value) =>
+  formatPremiumCompactUsd(Math.max(0, isFiniteNumber(value) ? value : 0) * 1_000);
 
 const formatSignedPremium = (value) => {
   if (!isFiniteNumber(value)) return MISSING_VALUE;
   const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
-  return `${prefix}${fmtM(Math.abs(value))}`;
+  return `${prefix}${formatPremiumCompactUsd(Math.abs(value))}`;
 };
 
 const formatCoveragePercent = (value) => {
@@ -729,25 +738,11 @@ const getPremiumOutflow = (value) =>
 
 const FLOW_PREMIUM_SEGMENT_CONFIG = [
   {
-    key: "outflow.large",
-    flow: "outflow",
+    key: "inflow.large",
+    flow: "inflow",
     bucket: "large",
-    label: "Outflow Large",
-    color: "#d64f61",
-  },
-  {
-    key: "outflow.medium",
-    flow: "outflow",
-    bucket: "medium",
-    label: "Outflow Medium",
-    color: "#fb8b55",
-  },
-  {
-    key: "outflow.small",
-    flow: "outflow",
-    bucket: "small",
-    label: "Outflow Small",
-    color: "#f5ba42",
+    label: "Inflow Large",
+    color: "#4fb58d",
   },
   {
     key: "inflow.small",
@@ -764,19 +759,27 @@ const FLOW_PREMIUM_SEGMENT_CONFIG = [
     color: "#58bd75",
   },
   {
-    key: "inflow.large",
-    flow: "inflow",
+    key: "outflow.large",
+    flow: "outflow",
     bucket: "large",
-    label: "Inflow Large",
-    color: "#4fb58d",
+    label: "Outflow Large",
+    color: "#d64f61",
+  },
+  {
+    key: "outflow.small",
+    flow: "outflow",
+    bucket: "small",
+    label: "Outflow Small",
+    color: "#f5ba42",
+  },
+  {
+    key: "outflow.medium",
+    flow: "outflow",
+    bucket: "medium",
+    label: "Outflow Medium",
+    color: "#fb8b55",
   },
 ];
-
-const FLOW_PREMIUM_BUCKET_LABELS = {
-  large: "L",
-  medium: "M",
-  small: "S",
-};
 
 const buildPremiumDistributionRows = (widget) => {
   const rows = FLOW_PREMIUM_SEGMENT_CONFIG.map((segment) => {
@@ -818,37 +821,67 @@ const premiumPolarToCartesian = (cx, cy, radius, angleInDegrees) => {
   };
 };
 
-const describePremiumArc = (cx, cy, radius, startAngle, endAngle) => {
-  const start = premiumPolarToCartesian(cx, cy, radius, endAngle);
-  const end = premiumPolarToCartesian(cx, cy, radius, startAngle);
+const describePremiumSector = (
+  cx,
+  cy,
+  innerRadius,
+  outerRadius,
+  startAngle,
+  endAngle,
+) => {
+  const outerStart = premiumPolarToCartesian(cx, cy, outerRadius, startAngle);
+  const outerEnd = premiumPolarToCartesian(cx, cy, outerRadius, endAngle);
+  const innerEnd = premiumPolarToCartesian(cx, cy, innerRadius, endAngle);
+  const innerStart = premiumPolarToCartesian(cx, cy, innerRadius, startAngle);
   const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
   return [
     "M",
-    start.x,
-    start.y,
+    outerStart.x,
+    outerStart.y,
     "A",
-    radius,
-    radius,
+    outerRadius,
+    outerRadius,
+    0,
+    largeArcFlag,
+    1,
+    outerEnd.x,
+    outerEnd.y,
+    "L",
+    innerEnd.x,
+    innerEnd.y,
+    "A",
+    innerRadius,
+    innerRadius,
     0,
     largeArcFlag,
     0,
-    end.x,
-    end.y,
+    innerStart.x,
+    innerStart.y,
+    "Z",
   ].join(" ");
 };
 
-const PremiumDistributionDonut = ({ rows, neutralKiloUsd }) => {
+const PremiumDistributionDonut = ({
+  rows,
+  neutralKiloUsd,
+  symbol,
+  netPremium,
+  netColor,
+}) => {
   const cx = 90;
-  const cy = 37;
-  const radius = 22;
-  const outerRadius = 31;
-  const strokeWidth = 12;
+  const cy = 40;
+  const innerRadius = 18;
+  const minOuterRadius = 27;
+  const maxOuterRadius = 38;
+  const maxKiloUsd = Math.max(
+    1,
+    ...rows.map((row) => Math.max(0, row.valueKiloUsd)),
+  );
   const activeRows = rows.filter((row) => row.valueKiloUsd > 0);
   const activeTotal = activeRows.reduce(
     (sum, row) => sum + row.valueKiloUsd,
     0,
   );
-  let angle = 0;
 
   if (!activeRows.length) {
     const hasNeutral = neutralKiloUsd > 0;
@@ -857,10 +890,10 @@ const PremiumDistributionDonut = ({ rows, neutralKiloUsd }) => {
         role="img"
         aria-label={
           hasNeutral
-            ? `Neutral premium ${formatKiloUsd(neutralKiloUsd)} Kilo USD`
-            : "No classified premium available"
+            ? `${symbol} neutral premium ${formatPremiumCompactFromKiloUsd(neutralKiloUsd)}`
+            : `${symbol} no classified premium available`
         }
-        viewBox="0 0 180 76"
+        viewBox="0 0 180 80"
         style={{
           display: "block",
           width: "100%",
@@ -871,38 +904,38 @@ const PremiumDistributionDonut = ({ rows, neutralKiloUsd }) => {
         <circle
           cx={cx}
           cy={cy}
-          r={radius}
+          r={(innerRadius + maxOuterRadius) / 2}
           fill="none"
           stroke={hasNeutral ? T.textMuted : `${T.borderLight}88`}
-          strokeWidth={strokeWidth}
+          strokeWidth={maxOuterRadius - innerRadius}
           opacity={hasNeutral ? 0.7 : 0.42}
         />
         <text
           x={cx}
-          y={cy - (hasNeutral ? 5 : 0)}
+          y={cy - 2}
           textAnchor="middle"
           dominantBaseline="middle"
           fill={T.text}
-          fontSize={hasNeutral ? 8 : 9}
+          fontSize={11}
           fontWeight={400}
           fontFamily={T.display}
         >
-          {hasNeutral ? "Neutral" : "Orders"}
+          {symbol}
         </text>
-        {hasNeutral ? (
-          <text
-            x={cx}
-            y={cy + 9}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fill={T.textDim}
-            fontSize={7}
-            fontWeight={400}
-            fontFamily={T.mono}
-          >
-            {formatKiloUsd(neutralKiloUsd)}
-          </text>
-        ) : null}
+        <text
+          x={cx}
+          y={cy + 11}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill={hasNeutral ? T.textDim : netColor}
+          fontSize={7}
+          fontWeight={400}
+          fontFamily={T.mono}
+        >
+          {hasNeutral
+            ? formatPremiumCompactFromKiloUsd(neutralKiloUsd)
+            : formatSignedPremium(netPremium)}
+        </text>
       </svg>
     );
   }
@@ -910,8 +943,8 @@ const PremiumDistributionDonut = ({ rows, neutralKiloUsd }) => {
   return (
     <svg
       role="img"
-      aria-label="Order flow distribution donut chart"
-      viewBox="0 0 180 76"
+      aria-label={`Order flow distribution donut chart for ${symbol}`}
+      viewBox="0 0 180 80"
       style={{
         display: "block",
         width: "100%",
@@ -922,254 +955,110 @@ const PremiumDistributionDonut = ({ rows, neutralKiloUsd }) => {
       <circle
         cx={cx}
         cy={cy}
-        r={radius}
+        r={(innerRadius + minOuterRadius) / 2}
         fill="none"
         stroke={`${T.borderLight}66`}
-        strokeWidth={strokeWidth}
+        strokeWidth={minOuterRadius - innerRadius}
       />
-      {activeRows.flatMap((row) => {
-        const sweep = activeTotal ? (row.valueKiloUsd / activeTotal) * 360 : 0;
-        const start = angle;
-        const end = angle + sweep;
-        const mid = start + sweep / 2;
-        angle = end;
-        const labelPoint = premiumPolarToCartesian(cx, cy, outerRadius + 12, mid);
-        const rightSide = labelPoint.x >= cx;
-        const textX = rightSide ? labelPoint.x + 3 : labelPoint.x - 3;
-        const anchor = rightSide ? "start" : "end";
-        const valueLabel = formatKiloUsd(row.valueKiloUsd);
-        const showLabel = row.percent >= 8;
-        const segmentLabel = `${row.label}: ${valueLabel} Kilo USD`;
-        const segmentNode =
-          sweep >= 359.99 ? (
-            <circle
-              key={`${row.key}_arc`}
-              cx={cx}
-              cy={cy}
-              r={radius}
-              fill="none"
-              stroke={row.color}
-              strokeWidth={strokeWidth}
-            >
-              <title>{segmentLabel}</title>
-            </circle>
-          ) : (
+      {(() => {
+        let angle = 0;
+        return rows.flatMap((row) => {
+          if (row.valueKiloUsd <= 0 || !activeTotal) {
+            return [];
+          }
+          const rawSweep = (row.valueKiloUsd / activeTotal) * 360;
+          const segmentGap = Math.min(2.5, rawSweep * 0.24);
+          const start = angle + segmentGap / 2;
+          const end = angle + rawSweep - segmentGap / 2;
+          const mid = start + (end - start) / 2;
+          angle += rawSweep;
+          if (end <= start) {
+            return [];
+          }
+          const valueRatio = Math.max(
+            0,
+            Math.min(1, row.valueKiloUsd / maxKiloUsd),
+          );
+          const easedRatio = Math.sqrt(valueRatio);
+          const outerRadius =
+            minOuterRadius + easedRatio * (maxOuterRadius - minOuterRadius);
+          const labelRadius = innerRadius + (outerRadius - innerRadius) * 0.58;
+          const labelPoint = premiumPolarToCartesian(cx, cy, labelRadius, mid);
+          const valueLabel = formatPremiumCompactFromKiloUsd(row.valueKiloUsd);
+          const showLabel = rawSweep >= 34 && outerRadius - innerRadius >= 16;
+          const segmentLabel = `${row.label}: ${valueLabel}`;
+
+          return [
             <path
               key={`${row.key}_arc`}
-              d={describePremiumArc(cx, cy, radius, start, end)}
-              fill="none"
-              stroke={row.color}
-              strokeWidth={strokeWidth}
-              strokeLinecap="butt"
+              d={describePremiumSector(
+                cx,
+                cy,
+                innerRadius,
+                outerRadius,
+                start,
+                end,
+              )}
+              fill={row.color}
+              stroke={T.bg0}
+              strokeWidth={0.75}
+              opacity={0.94}
             >
               <title>{segmentLabel}</title>
-            </path>
-          );
-
-        return [
-          segmentNode,
-          showLabel ? (
-            <g key={`${row.key}_label`} aria-hidden="true">
-              <text
-                x={textX}
-                y={labelPoint.y}
-                textAnchor={anchor}
-                dominantBaseline="middle"
-                fill={row.color}
-                fontSize={8}
-                fontWeight={400}
-                fontFamily={T.mono}
-              >
-                {valueLabel}
-              </text>
-            </g>
-          ) : null,
-        ];
-      })}
+            </path>,
+            showLabel ? (
+              <g key={`${row.key}_label`} aria-hidden="true">
+                <text
+                  x={labelPoint.x}
+                  y={labelPoint.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={T.bg0}
+                  fontSize={5.4}
+                  fontWeight={400}
+                  fontFamily={T.mono}
+                  paintOrder="stroke"
+                  stroke={`${row.color}66`}
+                  strokeWidth={1.1}
+                >
+                  {valueLabel}
+                </text>
+              </g>
+            ) : null,
+          ];
+        });
+      })()}
       <text
         x={cx}
-        y={cy}
+        y={cy - 2}
         textAnchor="middle"
         dominantBaseline="middle"
         fill={T.text}
-        fontSize={9}
+        fontSize={11}
         fontWeight={400}
         fontFamily={T.display}
       >
-        Orders
+        {symbol}
+      </text>
+      <text
+        x={cx}
+        y={cy + 11}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={netColor}
+        fontSize={7}
+        fontWeight={400}
+        fontFamily={T.mono}
+      >
+        {formatSignedPremium(netPremium)}
       </text>
     </svg>
-  );
-};
-
-const PremiumFlowBarPanel = ({ flow, rows, maxKiloUsd, mutedSignal = false }) => {
-  const isInflow = flow === "inflow";
-  const flowRows = FLOW_PREMIUM_WIDGET_BUCKETS
-    .map(([label, bucket]) => ({
-      label,
-      row: rows.find((row) => row.flow === flow && row.bucket === bucket),
-    }))
-    .map(({ label, row }) => (row ? { ...row, bucketLabel: label } : null))
-    .filter(Boolean);
-  const totalKiloUsd = flowRows.reduce(
-    (sum, row) => sum + Math.max(0, row.valueKiloUsd),
-    0,
-  );
-  const flowColor = isInflow ? "#58bd75" : "#d64f61";
-  const displayFlowColor = mutedSignal ? T.textMuted : flowColor;
-  const safeMaxKiloUsd = Math.max(1, maxKiloUsd || 1);
-
-  return (
-    <section
-      aria-label={`${isInflow ? "Inflow" : "Outflow"} order bars`}
-      style={{
-        minWidth: 0,
-        padding: isInflow ? "0 4px 0 0" : "0 0 0 4px",
-        borderLeft: isInflow ? "none" : `1px solid ${T.borderLight}aa`,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: sp(2),
-          minHeight: dim(13),
-          minWidth: 0,
-        }}
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            width: dim(6),
-            height: dim(6),
-            borderRadius: "50%",
-            background: displayFlowColor,
-            boxShadow: `0 0 0 2px ${displayFlowColor}22`,
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{
-            color: T.text,
-            fontFamily: T.display,
-            fontSize: fs(8),
-            fontWeight: 400,
-            minWidth: 0,
-          }}
-        >
-          {isInflow ? "In" : "Out"}
-        </span>
-        <span
-          style={{
-            marginLeft: "auto",
-            color: displayFlowColor,
-            fontFamily: T.mono,
-            fontSize: fs(8),
-            fontWeight: 400,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {formatKiloUsd(totalKiloUsd)}
-        </span>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: sp(3),
-          padding: sp("2px 0 0"),
-          minHeight: dim(58),
-          minWidth: 0,
-        }}
-      >
-        {flowRows.map((row) => {
-          const barHeight = Math.max(
-            row.valueKiloUsd > 0 ? 4 : 1,
-            Math.round((row.valueKiloUsd / safeMaxKiloUsd) * 34),
-          );
-          const valueLabel = formatKiloUsd(row.valueKiloUsd);
-          const rowColor = mutedSignal ? T.textMuted : row.color;
-          return (
-            <div
-              key={row.key}
-              data-testid="flow-premium-bucket-row"
-              title={`${row.label}: ${valueLabel} Kilo USD${
-                mutedSignal ? " (low classification confidence)" : ""
-              }`}
-              style={{
-                display: "grid",
-                gridTemplateRows: `${dim(12)}px ${dim(36)}px ${dim(10)}px`,
-                alignItems: "end",
-                justifyItems: "center",
-                gap: sp(1),
-                minWidth: 0,
-                minHeight: dim(58),
-              }}
-            >
-              <span
-                style={{
-                  color: row.valueKiloUsd > 0 ? rowColor : T.textMuted,
-                  fontFamily: T.mono,
-                  fontSize: fs(7),
-                  fontWeight: 400,
-                  fontVariantNumeric: "tabular-nums",
-                  whiteSpace: "nowrap",
-                  lineHeight: 1,
-                }}
-              >
-                {valueLabel}
-              </span>
-              <span
-                aria-hidden="true"
-                style={{
-                  position: "relative",
-                  display: "flex",
-                  alignItems: "flex-end",
-                  justifyContent: "center",
-                  width: "100%",
-                  height: "100%",
-                  borderBottom: `1px solid ${T.borderLight}88`,
-                }}
-              >
-                <span
-                  style={{
-                    width: dim(11),
-                    height: dim(barHeight),
-                    minHeight: row.valueKiloUsd > 0 ? dim(3) : dim(1),
-                    borderRadius: `${dim(3)}px ${dim(3)}px 0 0`,
-                    opacity: mutedSignal && row.valueKiloUsd > 0 ? 0.55 : 1,
-                    background:
-                      row.valueKiloUsd > 0
-                        ? `linear-gradient(180deg, ${rowColor}, ${rowColor}cc)`
-                        : `${T.textMuted}55`,
-                  }}
-                />
-              </span>
-              <span
-                style={{
-                  color: T.textDim,
-                  fontFamily: T.display,
-                  fontSize: fs(7),
-                  fontWeight: 400,
-                  whiteSpace: "nowrap",
-                  lineHeight: 1,
-                }}
-              >
-                {FLOW_PREMIUM_BUCKET_LABELS[row.bucket]}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </section>
   );
 };
 
 const PremiumDistributionWidget = ({
   widget,
   loading = false,
-  index = 0,
   onSelectTicker,
 }) => {
   if (loading || !widget) {
@@ -1178,20 +1067,18 @@ const PremiumDistributionWidget = ({
         data-testid="flow-premium-distribution-widget"
         className="ra-panel-enter"
         style={{
-          padding: "8px",
+          padding: "6px",
           display: "flex",
           flexDirection: "column",
-          gap: sp(4),
+          gap: sp(2),
           minWidth: 0,
-          minHeight: dim(176),
+          minHeight: dim(96),
           borderRadius: dim(8),
           background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
         }}
       >
-        <FlowLoadingBlock width="42%" height={dim(9)} />
-        <FlowLoadingBlock width="86%" height={dim(58)} />
-        <FlowLoadingBlock width="100%" height={dim(1)} />
-        <FlowLoadingBlock width="100%" height={dim(50)} />
+        <FlowLoadingBlock width="86%" height={dim(74)} />
+        <FlowLoadingBlock width="56%" height={dim(8)} />
       </Card>
     );
   }
@@ -1203,9 +1090,12 @@ const PremiumDistributionWidget = ({
         ? T.red
         : T.textDim;
   const rows = buildPremiumDistributionRows(widget);
-  const maxKiloUsd = Math.max(1, ...rows.map((row) => row.valueKiloUsd));
   const neutralKiloUsd = premiumToKiloUsd(getPremiumNeutralPremium(widget));
   const lowClassificationConfidence = hasLowPremiumClassificationConfidence(widget);
+  const widgetHydrationWarning =
+    lowClassificationConfidence && widget.hydrationWarning
+      ? widget.hydrationWarning
+      : null;
 
   return (
     <Card
@@ -1216,9 +1106,9 @@ const PremiumDistributionWidget = ({
         padding: "6px",
         display: "flex",
         flexDirection: "column",
-        gap: sp(3),
+        gap: sp(1),
         minWidth: 0,
-        minHeight: dim(176),
+        minHeight: dim(widgetHydrationWarning ? 96 : 84),
         borderRadius: dim(8),
         background: `linear-gradient(180deg, ${T.bg2}, ${T.bg1})`,
         boxShadow: `0 8px 20px ${T.bg0}32`,
@@ -1229,100 +1119,43 @@ const PremiumDistributionWidget = ({
         aria-label={`Filter Flow tape to ${widget.symbol} premium distribution`}
         onClick={() => onSelectTicker?.(widget.symbol)}
         style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: sp(4),
+          display: "grid",
+          placeItems: "center",
           padding: 0,
           border: "none",
           background: "transparent",
           color: "inherit",
           cursor: "pointer",
           minWidth: 0,
+          minHeight: dim(76),
           textAlign: "left",
-        }}
-      >
-        <span style={{ display: "flex", alignItems: "center", gap: sp(3), minWidth: 0 }}>
-          <span
-            style={{
-              color: T.textMuted,
-              fontFamily: T.mono,
-              fontSize: fs(7),
-              fontWeight: 400,
-            }}
-          >
-            #{widget.rank || index + 1}
-          </span>
-          <MarketIdentityInline
-            ticker={widget.symbol}
-            size={12}
-            showChips={false}
-          />
-        </span>
-        <span style={{ display: "flex", alignItems: "flex-end", flexDirection: "column" }}>
-          <span
-            style={{
-              color: netColor,
-              fontFamily: T.mono,
-              fontSize: fs(8),
-              fontWeight: 400,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {formatSignedPremium(widget.netPremium)}
-          </span>
-          <span
-            style={{
-              color: T.textMuted,
-              fontFamily: T.display,
-              fontSize: fs(6),
-              fontWeight: 400,
-              whiteSpace: "nowrap",
-            }}
-          >
-            Kilo USD
-          </span>
-        </span>
-      </button>
-
-      <div
-        style={{
-          position: "relative",
-          display: "grid",
-          placeItems: "center",
-          minHeight: dim(58),
-          minWidth: 0,
         }}
       >
         <PremiumDistributionDonut
           rows={rows}
           neutralKiloUsd={neutralKiloUsd}
+          symbol={widget.symbol}
+          netPremium={widget.netPremium}
+          netColor={netColor}
         />
-      </div>
-
-      <div style={{ height: 1, background: `${T.borderLight}88` }} />
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-          gap: 0,
-          minWidth: 0,
-        }}
-      >
-        <PremiumFlowBarPanel
-          flow="inflow"
-          rows={rows}
-          maxKiloUsd={maxKiloUsd}
-          mutedSignal={lowClassificationConfidence}
-        />
-        <PremiumFlowBarPanel
-          flow="outflow"
-          rows={rows}
-          maxKiloUsd={maxKiloUsd}
-          mutedSignal={lowClassificationConfidence}
-        />
-      </div>
+      </button>
+      {widgetHydrationWarning ? (
+        <div
+          title={widgetHydrationWarning}
+          style={{
+            color: T.amber,
+            fontFamily: T.mono,
+            fontSize: fs(6),
+            fontWeight: 400,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          {formatCoveragePercent(widget.classificationCoverage)} classified
+        </div>
+      ) : null}
     </Card>
   );
 };
@@ -1355,6 +1188,25 @@ const PremiumDistributionStrip = ({
   const sourceTone = sourceConfidenceMeta.muted
     ? sourceConfidenceMeta.color
     : sourceMeta.color;
+  const sourceHydrationWarning = query.data?.source?.hydrationWarning || null;
+  const sourceHydrationStatus = query.data?.source?.hydrationStatus;
+  const sourceTargetCoverage =
+    query.data?.source?.hydrationDiagnostics?.classificationTargetPremiumCoverage;
+  const sourceSelectedCoverage =
+    query.data?.source?.hydrationDiagnostics?.selectedPremiumCoverage;
+  const sourceDeepScanActive =
+    sourceHydrationStatus === "refreshing" &&
+    isFiniteNumber(sourceTargetCoverage) &&
+    sourceTargetCoverage > 0 &&
+    (!isFiniteNumber(sourceSelectedCoverage) ||
+      sourceSelectedCoverage < sourceTargetCoverage);
+  const sourceStatusParts = [
+    sourceMeta.label,
+    `${formatCoveragePercent(sourceCoverage)} classified`,
+  ];
+  if (sourceDeepScanActive) {
+    sourceStatusParts.push("deep scan running");
+  }
 
   if (empty) {
     return (
@@ -1402,8 +1254,7 @@ const PremiumDistributionStrip = ({
             whiteSpace: "nowrap",
           }}
         >
-          {sourceMeta.label} · {sourceConfidenceMeta.label} ·{" "}
-          {formatCoveragePercent(sourceCoverage)} classified
+          {sourceStatusParts.join(" · ")}
         </span>
         <div
           data-testid="flow-premium-distribution-timeframe"
@@ -1443,11 +1294,28 @@ const PremiumDistributionStrip = ({
           })}
         </div>
       </div>
+      {sourceHydrationWarning ? (
+        <div
+          title={sourceHydrationWarning}
+          style={{
+            color: sourceConfidenceMeta.muted ? T.amber : T.textMuted,
+            fontFamily: T.mono,
+            fontSize: fs(7),
+            fontWeight: 400,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          {sourceHydrationWarning}
+        </div>
+      ) : null}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 184px), 1fr))",
-          gap: 6,
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 128px), 1fr))",
+          gap: 5,
           minWidth: 0,
         }}
       >
@@ -1456,7 +1324,6 @@ const PremiumDistributionStrip = ({
             key={widgets[index]?.symbol || `premium_${index}`}
             widget={widgets[index]}
             loading={loading && !widgets[index]}
-            index={index}
             onSelectTicker={onSelectTicker}
           />
         ))}
@@ -1817,6 +1684,7 @@ const FlowOverviewPanel = ({
     {
       limit: FLOW_PREMIUM_WIDGET_COUNT,
       timeframe: premiumDistributionTimeframe,
+      coverageMode: "universe",
     },
     {
       query: {
