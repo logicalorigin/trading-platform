@@ -3,19 +3,19 @@
 ## Session Metadata
 
 - Session ID: `019dff8b-c488-7ec1-bab2-7eeca931697f`
-- Saved At (MT): `2026-05-06 17:34:29 MDT`
-- Saved At (UTC): `2026-05-06T23:34:29.980Z`
+- Saved At (MT): `2026-05-06 18:11:34 MDT`
+- Saved At (UTC): `2026-05-07T00:11:34.771Z`
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Rollout Path: `/home/runner/.codex/sessions/2026/05/06/rollout-2026-05-06T17-07-23-019dff8b-c488-7ec1-bab2-7eeca931697f.jsonl`
 - Branch: `main`
-- HEAD: `45715c13e35f42abe6e822a7b2840e64f205fa05`
-- Latest Commit: `Improve account snapshot handling and data accuracy`
-- Latest Commit Session ID: `d56ae97d-ce5b-4897-beba-c1c01ae8f27e`
+- HEAD: `05f1d2a579693c3684f088916fbd14cbe0cb9995`
+- Latest Commit: `Switch dev startup to per-artifact workflows (Task #37)`
+- Latest Commit Session ID: `unknown`
 - Title: we dropped a couple of in-flight sessions. please find them. it will be found via staged work and code. this was just a few minutes ago, and it is not the session dealing with the replit workflow
 - Model: `gpt-5.5`
 - Reasoning Effort: `xhigh`
-- Tokens Used: `11866234`
+- Tokens Used: `32329368`
 
 ## Current User Request
 
@@ -52,7 +52,8 @@ we dropped a couple of in-flight sessions. please find them. it will be found vi
 - `2026-05-06T23:14:41.963Z` we need to get a better understanding of our polygon api so that we can better map the data we're getting from it. think, research, ask, plan
 - `2026-05-06T23:16:57.906Z` this is involved, correct? Trade tick-test · <1% classified
 - `2026-05-06T23:17:21.531Z` okay good. update plan if needed
-- `2026-05-06T23:17:38.187Z` Implement the plan.
+- `2026-05-06T23:45:00.327Z` im still seeing some hydration issues in the widgets. please keep working on this until we have our massive/polygon api data fulled mapped out across all our tickers. think this through, research, and review your plan until you are certain we will have a perfect implementation
+- `2026-05-06T23:49:13.415Z` Implement the plan.
 
 ## Session Activity Summary
 
@@ -62,51 +63,119 @@ we dropped a couple of in-flight sessions. please find them. it will be found vi
 - `2026-05-06T23:07:59.684Z` Tool failed: /bin/bash -lc sed -n '1,220p' /home/runner/workspace/.agents/skills/session-handoff/SKILL.md (exit 1)
 - `2026-05-06T23:08:03.774Z` Tool: exec_command sed -n '1,220p' /home/runner/workspace/.agents/skills/session-handoff/SKILL.md
 - `2026-05-06T23:08:21.939Z` Agent: I hit a sandbox wrapper error on the first file read, so I’ll rerun the repo-inspection commands with approval where needed instead of trying to work around it. The first pass is…
-- … 204 lower-signal transcript events omitted …
-- `2026-05-06T23:33:57.841Z` Tool: exec_command git log --oneline -5 --decorate
-- `2026-05-06T23:33:57.859Z` Tool: exec_command git ls-files artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs lib/api-zod/src/generated/types/flowPremiumDistributionClassificationConfidence.ts artifacts/api-server…
-- `2026-05-06T23:33:57.912Z` Tool: exec_command node -e 'const p=require("./tmp/polygon-premium-distribution-sample.json"); const s=p.symbols[0]; console.log(`${s.symbol} ${s.aggregate.classificationConfidence} coverage=${s.agg…
-- `2026-05-06T23:34:03.355Z` Tool: exec_command git show --stat --oneline --name-only HEAD | sed -n '1,160p'
-- `2026-05-06T23:34:14.898Z` Tool: exec_command git show HEAD^:artifacts/api-server/src/providers/polygon/market-data.ts | rg -n "classificationConfidence|PremiumDistributionClassificationConfidence|conditionCodes|Polygon/Massi…
-- `2026-05-06T23:34:14.916Z` Tool: exec_command git show HEAD^:artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs >/dev/null && echo existed || echo missing
-- `2026-05-06T23:34:14.957Z` Tool: exec_command git show HEAD^:artifacts/api-server/src/services/flow-premium-distribution.test.ts | rg -n "classificationConfidence|very low" || true
-- `2026-05-06T23:34:15.007Z` Tool: exec_command git show HEAD^:lib/api-spec/openapi.yaml | rg -n "classificationConfidence|FlowPremiumDistributionClassificationConfidence" || true
-- `2026-05-06T23:34:21.392Z` Agent: The repo is clean but the branch is ahead of `origin/main` by two commits, so these implementation files are already in HEAD rather than an unstaged patch. I’m refreshing the hand…
-- `2026-05-06T23:34:29.748Z` Tool: exec_command node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --session 019dff8b-c488-7ec1-bab2-7eeca931697f --watch --interval-ms 60000 --max-cycles 1
+- … 369 lower-signal transcript events omitted …
+- `2026-05-07T00:10:19.516Z` Tool: write_stdin session 86143
+- `2026-05-07T00:10:26.893Z` Tool: write_stdin session 86143
+- `2026-05-07T00:10:29.936Z` Agent: After the warning correction, the focused API tests are now 16/16 passing and API server typecheck is still clean. I’m rerunning the small live route probe just for the warning/di…
+- `2026-05-07T00:10:35.880Z` Tool: exec_command pnpm --filter @workspace/api-server exec env FLOW_PREMIUM_DISTRIBUTION_UNIVERSE_MAX_SYMBOLS=2 FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES=1 FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT=…
+- `2026-05-07T00:10:39.333Z` Tool: write_stdin session 51032
+- `2026-05-07T00:10:46.488Z` Tool: write_stdin session 51032
+- `2026-05-07T00:11:21.198Z` Tool: exec_command git diff --check
+- `2026-05-07T00:11:25.888Z` Tool: update_plan {"plan":[{"step":"Inspect current staged/worktree changes and targeted files for syntax gaps","status":"completed"},{"step":"Finish fixture/schema/provider ref…
+- `2026-05-07T00:11:32.739Z` Agent: Validation is complete, including live bounded Massive data. I’m updating the session handoff now so the next pickup has the entitlement findings, files touched, and the exact ver…
+- `2026-05-07T00:11:34.521Z` Tool: exec_command node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --session 019dff8b-c488-7ec1-bab2-7eeca931697f --watch --interval-ms 60000 --max-cycles 1
 
 ## High-Signal Changed Files
 
+- `SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md`
+- `SESSION_HANDOFF_MASTER.md`
 - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs`
-- `artifacts/api-server/src/services/account-equity-history-model.ts`
-- `artifacts/api-server/src/services/account-equity-history.test.ts`
-- `artifacts/api-server/src/services/account.ts`
+- `artifacts/api-server/src/providers/polygon/market-data.test.ts`
+- `artifacts/api-server/src/providers/polygon/market-data.ts`
 - `artifacts/api-server/src/services/flow-premium-distribution.test.ts`
+- `artifacts/api-server/src/services/platform.ts`
 - `artifacts/rayalgo/e2e/flow-layout.spec.ts`
+- `artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx`
+- `artifacts/rayalgo/src/features/charting/chartEvents.test.ts`
+- `artifacts/rayalgo/src/features/charting/chartEvents.ts`
+- `artifacts/rayalgo/src/features/charting/flowChartEvents.test.ts`
+- `artifacts/rayalgo/src/features/charting/flowChartEvents.ts`
+- `artifacts/rayalgo/src/features/trade/TradeEquityPanel.jsx`
+- `artifacts/rayalgo/src/screens/FlowScreen.jsx`
+- `artifacts/rayalgo/src/screens/TradeScreen.jsx`
+- `lib/api-client-react/src/generated/api.schemas.ts`
+- `lib/api-spec/openapi.yaml`
+- `lib/api-zod/src/generated/api.ts`
+- `lib/api-zod/src/generated/types/flowPremiumDistributionSource.ts`
+- `lib/api-zod/src/generated/types/flowPremiumDistributionWidget.ts`
+- `lib/api-zod/src/generated/types/getFlowPremiumDistributionParams.ts`
+- `lib/api-zod/src/generated/types/index.ts`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 2]
+## main...origin/main [ahead 4]
+ M SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md
+ M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs
+ M artifacts/api-server/src/providers/polygon/market-data.test.ts
+ M artifacts/api-server/src/providers/polygon/market-data.ts
+ M artifacts/api-server/src/services/flow-premium-distribution.test.ts
+ M artifacts/api-server/src/services/platform.ts
+ M artifacts/rayalgo/e2e/flow-layout.spec.ts
+ M artifacts/rayalgo/src/features/charting/ResearchChartSurface.tsx
+ M artifacts/rayalgo/src/features/charting/chartEvents.test.ts
+ M artifacts/rayalgo/src/features/charting/chartEvents.ts
+ M artifacts/rayalgo/src/features/charting/flowChartEvents.test.ts
+ M artifacts/rayalgo/src/features/charting/flowChartEvents.ts
+ M artifacts/rayalgo/src/features/trade/TradeEquityPanel.jsx
+ M artifacts/rayalgo/src/screens/FlowScreen.jsx
+ M artifacts/rayalgo/src/screens/TradeScreen.jsx
+ M lib/api-client-react/src/generated/api.schemas.ts
+ M lib/api-spec/openapi.yaml
+ M lib/api-zod/src/generated/api.ts
+ M lib/api-zod/src/generated/types/flowPremiumDistributionSource.ts
+ M lib/api-zod/src/generated/types/flowPremiumDistributionWidget.ts
+ M lib/api-zod/src/generated/types/getFlowPremiumDistributionParams.ts
+ M lib/api-zod/src/generated/types/index.ts
+?? lib/api-zod/src/generated/types/flowPremiumDistributionHydrationDiagnostics.ts
 ```
 
 ## Diff Summary
 
 ```text
-No tracked changes relative to HEAD.
+ ...6-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md |  48 ++-
+ SESSION_HANDOFF_MASTER.md                          |   2 +-
+ .../scripts/sampleFlowPremiumDistribution.mjs      | 190 ++++++++-
+ .../src/providers/polygon/market-data.test.ts      |  20 +
+ .../src/providers/polygon/market-data.ts           | 444 ++++++++++++++++++++-
+ .../src/services/flow-premium-distribution.test.ts |  94 ++++-
+ artifacts/api-server/src/services/platform.ts      | 282 ++++++++++++-
+ artifacts/rayalgo/e2e/flow-layout.spec.ts          |  29 ++
+ .../src/features/charting/ResearchChartSurface.tsx | 101 ++++-
+ .../src/features/charting/chartEvents.test.ts      |  64 +++
+ .../rayalgo/src/features/charting/chartEvents.ts   | 125 +++++-
+ .../src/features/charting/flowChartEvents.test.ts  |  42 ++
+ .../src/features/charting/flowChartEvents.ts       |  18 +
+ .../src/features/trade/TradeEquityPanel.jsx        |  43 +-
+ artifacts/rayalgo/src/screens/FlowScreen.jsx       |  41 ++
+ artifacts/rayalgo/src/screens/TradeScreen.jsx      |  53 ++-
+ lib/api-client-react/src/generated/api.schemas.ts  |  47 +++
+ lib/api-spec/openapi.yaml                          | 104 +++++
+ lib/api-zod/src/generated/api.ts                   |  30 +-
+ .../types/flowPremiumDistributionSource.ts         |   8 +
+ .../types/flowPremiumDistributionWidget.ts         |   4 +
+ .../types/getFlowPremiumDistributionParams.ts      |   4 +
+ lib/api-zod/src/generated/types/index.ts           |   1 +
+ 23 files changed, 1698 insertions(+), 96 deletions(-)
 ```
 
 ## Validations Detected In Transcript
 
 - `2026-05-06T23:30:27.683Z` /bin/bash -lc node --check artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs (exit 0)
+- `2026-05-07T00:05:50.366Z` /bin/bash -lc pnpm --dir lib/api-zod exec tsc -p tsconfig.json --noEmit (exit 0)
 
 ## What Changed This Session
 
-- Implemented the Polygon premium distribution mapping plan:
-  - `artifacts/api-server/src/providers/polygon/market-data.ts` now exposes `classificationConfidence` (`high`, `medium`, `low`, `very_low`, `none`), keeps the legacy `confidence` field intact, records option trade condition/exchange codes for audits, and documents the Polygon/Massive snapshot/trade mapping assumptions.
-  - `artifacts/api-server/src/services/platform.ts` aggregates the new source-level confidence and returns `none` for unconfigured/empty states.
-  - `artifacts/rayalgo/src/screens/FlowScreen.jsx` shows a compact source confidence label and mutes classified inflow/outflow bars when coverage is effectively absent (`none`/`very_low`).
-  - `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/api.schemas.ts`, and `lib/api-zod/src/generated/*` include the new confidence field so the route parser preserves it.
-  - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` samples live Polygon/Massive snapshots and trades, then writes a sanitized JSON audit without API keys.
+- Implemented the universe-wide Massive/Polygon premium distribution hydration plan:
+  - `artifacts/api-server/src/services/platform.ts` defaults `/api/flow/premium-distribution` to `coverageMode: "universe"` and hydrates the active Flow universe, bounded by env caps (`FLOW_PREMIUM_DISTRIBUTION_UNIVERSE_MAX_SYMBOLS`, max pages, trade-contract limit, trade limit, candidate timeout). `coverageMode: "ranked"` preserves the old grouped-volume candidate behavior.
+  - `artifacts/api-server/src/providers/polygon/market-data.ts` now records hydration diagnostics for option snapshots, quote entitlement probes, option trade calls, condition/exchange codes, condition eligibility, and classified contract coverage. It keeps low/zero-confidence totals visible and returns explicit warnings instead of dropping widgets.
+  - Quote probe results are cached on available/forbidden entitlement outcomes for 5 minutes, so universe hydration does not repeat one quote-entitlement 403 per symbol.
+  - The provider now caps premium-distribution snapshot hydration at 20 pages separately from the options-flow event snapshot cap.
+  - Warning wording now distinguishes quote-only missing data from both quote and trade entitlement missing data.
+  - `artifacts/rayalgo/src/screens/FlowScreen.jsx` explicitly requests universe coverage and surfaces source/widget hydration warnings without hiding neutral-total widgets.
+  - `lib/api-spec/openapi.yaml`, `lib/api-client-react/src/generated/api.schemas.ts`, and `lib/api-zod/src/generated/*` include `coverageMode`, `hydrationStatus`, `hydrationWarning`, `hydratedSymbolCount`, and `hydrationDiagnostics`.
+  - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` now mirrors production mapping for quote probes, option trade condition metadata, trade call diagnostics, condition/exchange codes, and larger live sampling caps.
 - Added/updated focused coverage in:
   - `artifacts/api-server/src/providers/polygon/market-data.test.ts`
   - `artifacts/api-server/src/services/flow-premium-distribution.test.ts`
@@ -114,17 +183,21 @@ No tracked changes relative to HEAD.
 
 ## Current Status
 
-- Branch `main` is clean and ahead of `origin/main` by two commits. The latest commit includes the sampler plus focused test updates; the core mapping/schema/UI changes were already present in the preceding in-flight work.
+- Branch `main` is ahead of `origin/main` by 4 commits with a dirty worktree. Files under `artifacts/rayalgo/src/features/charting/*`, `artifacts/rayalgo/src/features/trade/*`, and `artifacts/rayalgo/src/screens/TradeScreen.jsx` were pre-existing/unrelated changes and were not touched for this premium-distribution task.
 - Validation completed:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/polygon/market-data.test.ts src/services/flow-premium-distribution.test.ts` passed: 14/14.
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/polygon/market-data.test.ts src/services/flow-premium-distribution.test.ts` passed: 16/16.
   - `pnpm --filter @workspace/api-server run typecheck` passed.
-  - `node --check artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` passed.
-  - `pnpm --filter @workspace/api-server exec node --import tsx ./scripts/sampleFlowPremiumDistribution.mjs --write --symbols SPY --max-pages 1 --contracts 2 --trade-limit 25` passed and wrote `tmp/polygon-premium-distribution-sample.json`.
-  - `pnpm --filter @workspace/rayalgo exec node ./scripts/runPlaywrightInReplit.mjs e2e/flow-layout.spec.ts -g "Flow premium distribution"` passed: 1/1.
-- Live sample result: `SPY` via `api.massive.com`, 250 snapshots, 0 last quotes, 50 sampled trade prints, tick-test side basis, coverage `0.000026089939846189105`, `classificationConfidence: "very_low"`. This confirms the `<1% classified` UI/source behavior is needed.
+  - `pnpm --filter @workspace/rayalgo run typecheck` passed.
+  - `pnpm --filter @workspace/api-client-react run typecheck` passed.
+  - `pnpm --dir lib/api-zod exec tsc -p tsconfig.json --noEmit` passed.
+  - `pnpm --filter @workspace/api-server exec node --import tsx scripts/sampleFlowPremiumDistribution.mjs --help` passed.
+  - `pnpm --filter @workspace/rayalgo run test:e2e:replit -- e2e/flow-layout.spec.ts -g "Flow premium distribution renders six compact Webull-style widgets"` ran the full `flow-layout` file due wrapper arg forwarding and passed: 13/13.
+  - `git diff --check` passed.
+- Bounded live route probe used env caps (`UNIVERSE_MAX_SYMBOLS=2`, `MAX_PAGES=1`, `TRADE_CONTRACT_LIMIT=2`, `TRADE_LIMIT=20`) and returned `status: "ok"`, `coverageMode: "universe"`, `hydrationStatus: "complete"`, `quoteAccess: "forbidden"`, `tradeAccess: "forbidden"`, `snapshotCount: 500`, `usablePremiumSnapshotCount: 439`, and warning: `Option quotes and option trades unavailable for current Polygon/Massive entitlement; totals are hydrated but side bars are unavailable.`
+- Live sampler over `SPY,QQQ,NVDA` confirmed `api.massive.com` returns 250 option snapshots per symbol with day price/volume and `last_trade`, but no `last_quote`; `/v3/quotes/{optionsTicker}` and `/v3/trades/{optionsTicker}` currently return 403 for the sampled option contracts. Condition metadata endpoint loaded successfully.
 - Handoff refresh still reports a separate live Codex terminal with no handoffable persisted session (`pid=902`, `/dev/pts/3`); it is unrelated to this completed implementation pass.
 
 ## Next Recommended Steps
 
-1. Review `tmp/polygon-premium-distribution-sample.json` for the full sanitized live audit before deciding whether condition-code filtering should affect tick-test classification.
-2. If more confidence is needed, run the sampler over `SPY,QQQ,NVDA,AAPL,TSLA,IWM` with `--max-pages 1` or `--max-pages 2` and compare quote presence/coverage by symbol.
+1. Review the premium-distribution diff separately from the unrelated charting/trade files before committing.
+2. If the Massive plan is upgraded or entitlement changes, rerun the bounded live route probe and sampler; quote/trade diagnostics should flip from `forbidden` to `available`, enabling quote-match or tick-test side splits without frontend changes.
