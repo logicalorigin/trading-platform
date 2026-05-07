@@ -76,6 +76,37 @@ function makeDistribution(input: {
     totalPremium: 0,
     count: 0,
   };
+  const hydrationDiagnostics = {
+    snapshotCount: 1,
+    usablePremiumSnapshotCount: 1,
+    usablePremiumTotal: premiumTotal,
+    selectedPremiumTotal: premiumTotal,
+    classificationTargetPremiumCoverage: 0,
+    selectedPremiumCoverage: premiumTotal > 0 ? 1 : 0,
+    pageCount: 1,
+    snapshotTradingDate: "2026-05-06",
+    tradeLookbackStartDate: input.timeframe === "week" ? "2026-04-29" : "2026-05-06",
+    quoteProbeDate: input.timeframe === "week" ? "2026-04-29" : "2026-05-06",
+    quoteProbeStatus:
+      input.quoteAccess === "forbidden"
+        ? "forbidden"
+        : input.quoteAccess === "available"
+          ? "available"
+          : "not_attempted",
+    quoteProbeMessage: null,
+    tradeContractCandidateCount: classifiedPremium > 0 ? 1 : 0,
+    tradeContractHydratedCount: classifiedPremium > 0 ? 1 : 0,
+    tradeCallAttemptCount: classifiedPremium > 0 ? 1 : 0,
+    tradeCallSuccessCount: classifiedPremium > 0 ? 1 : 0,
+    tradeCallErrorCount: 0,
+    tradeCallForbiddenCount: 0,
+    eligibleTradeCount: classifiedPremium > 0 ? 1 : 0,
+    ineligibleTradeCount: 0,
+    unknownConditionTradeCount: 0,
+    conditionCodes: classifiedPremium > 0 ? ["209"] : [],
+    exchangeCodes: classifiedPremium > 0 ? ["300"] : [],
+    classifiedContractCoverage: classifiedPremium > 0 ? 1 : 0,
+  };
 
   return {
     symbol: input.symbol,
@@ -89,6 +120,11 @@ function makeDistribution(input: {
     classifiedPremium,
     classificationCoverage: premiumTotal > 0 ? classifiedPremium / premiumTotal : 0,
     classificationConfidence: input.classificationConfidence ?? "none",
+    hydrationWarning:
+      input.classificationConfidence === "very_low"
+        ? "<1% trade-classified; totals are hydrated but side split is uncertain."
+        : null,
+    hydrationDiagnostics,
     netPremium: classifiedPremium,
     inflowPremium: classifiedPremium,
     outflowPremium: 0,
@@ -122,10 +158,14 @@ test.afterEach(() => {
   restorePolygonEnv();
 });
 
-test("flow premium distribution uses aggressive default Polygon snapshot budget", async () => {
+test("flow premium distribution returns ranked widgets before full hydration completes", async () => {
   configurePolygonEnv();
   const symbols = Array.from({ length: 30 }, (_, index) => `AAA${index}`);
-  const premiumCalls: Array<{ symbol: string; maxPages: number | undefined }> = [];
+  const premiumCalls: Array<{
+    symbol: string;
+    maxPages: number | undefined;
+    enrichTrades: boolean | undefined;
+  }> = [];
 
   __setPolygonMarketDataClientFactoryForTests(
     () =>
@@ -137,10 +177,12 @@ test("flow premium distribution uses aggressive default Polygon snapshot budget"
           stockDayVolume?: number | null;
           timeframe?: "today" | "week";
           maxPages?: number;
+          enrichTrades?: boolean;
         }) => {
           premiumCalls.push({
             symbol: input.underlying,
             maxPages: input.maxPages,
+            enrichTrades: input.enrichTrades,
           });
           return makeDistribution({
             symbol: input.underlying,
@@ -151,25 +193,77 @@ test("flow premium distribution uses aggressive default Polygon snapshot budget"
       }) as any,
   );
 
-  const response = await getFlowPremiumDistribution();
+  const response = await getFlowPremiumDistribution({ coverageMode: "ranked" });
 
   assert.equal(response.status, "ok");
+  assert.equal(response.source.coverageMode, "ranked");
+  assert.equal(response.source.hydrationStatus, "refreshing");
   assert.equal(response.source.candidateCount, 24);
+  assert.equal(response.source.hydratedSymbolCount, 10);
   assert.equal(response.source.providerHost, "api.polygon.io");
   assert.equal(response.source.sideBasis, "none");
   assert.equal(response.source.tradeAccess, "unavailable");
   assert.equal(response.source.classificationConfidence, "none");
-  assert.equal(response.widgets.length, 6);
-  assert.equal(premiumCalls.length, 24);
+  assert.equal(response.widgets.length, 10);
+  assert.equal(premiumCalls.length, 10);
   assert.deepEqual(
     premiumCalls.map((call) => call.symbol),
-    symbols.slice(0, 24),
+    symbols.slice(0, 10),
   );
-  assert.ok(premiumCalls.every((call) => call.maxPages === 4));
+  assert.ok(premiumCalls.every((call) => call.maxPages === 2));
+  assert.ok(premiumCalls.every((call) => call.enrichTrades === true));
   assert.deepEqual(
     response.widgets.map((widget) => widget.symbol),
-    symbols.slice(0, 6),
+    symbols.slice(0, 10),
   );
+});
+
+test("flow premium distribution paints the active flow universe from a small first chunk", async () => {
+  configurePolygonEnv();
+  const premiumCalls: Array<{
+    symbol: string;
+    maxPages: number | undefined;
+    enrichTrades: boolean | undefined;
+  }> = [];
+
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        getGroupedDailyStockAggregates: async () => [],
+        getOptionPremiumDistribution: async (input: {
+          underlying: string;
+          stockDayVolume?: number | null;
+          timeframe?: "today" | "week";
+          maxPages?: number;
+          enrichTrades?: boolean;
+        }) => {
+          premiumCalls.push({
+            symbol: input.underlying,
+            maxPages: input.maxPages,
+            enrichTrades: input.enrichTrades,
+          });
+          return makeDistribution({
+            symbol: input.underlying,
+            volume: input.stockDayVolume,
+            timeframe: input.timeframe,
+            premiumTotal: input.underlying === "SPY" ? 900_000 : 100_000,
+          });
+        },
+      }) as any,
+  );
+
+  const response = await getFlowPremiumDistribution({ limit: 3 });
+
+  assert.equal(response.status, "ok");
+  assert.equal(response.source.coverageMode, "universe");
+  assert.equal(response.source.hydrationStatus, "refreshing");
+  assert.ok(response.source.candidateCount > premiumCalls.length);
+  assert.equal(response.source.hydratedSymbolCount, 10);
+  assert.equal(premiumCalls.length, 10);
+  assert.equal(premiumCalls[0]?.symbol, "SPY");
+  assert.ok(premiumCalls.every((call) => call.maxPages === 2));
+  assert.ok(premiumCalls.every((call) => call.enrichTrades === true));
+  assert.equal(response.widgets[0]?.symbol, "SPY");
 });
 
 test("flow premium distribution source reports very low classification confidence", async () => {
@@ -203,12 +297,14 @@ test("flow premium distribution source reports very low classification confidenc
   const response = await getFlowPremiumDistribution({
     candidateLimit: 7,
     limit: 6,
+    coverageMode: "ranked",
     timeframe: "week",
   });
 
   assert.equal(response.source.sideBasis, "quote_match");
   assert.equal(response.source.classificationCoverage, 0.001);
   assert.equal(response.source.classificationConfidence, "very_low");
+  assert.match(response.source.hydrationWarning ?? "", /trade-classified/);
 });
 
 test("flow premium distribution coalesces in-flight cache-key requests", async () => {
@@ -241,8 +337,14 @@ test("flow premium distribution coalesces in-flight cache-key requests", async (
       }) as any,
   );
 
-  const first = getFlowPremiumDistribution({ candidateLimit: 8 });
-  const second = getFlowPremiumDistribution({ candidateLimit: 8 });
+  const first = getFlowPremiumDistribution({
+    candidateLimit: 8,
+    coverageMode: "ranked",
+  });
+  const second = getFlowPremiumDistribution({
+    candidateLimit: 8,
+    coverageMode: "ranked",
+  });
   resolveGrouped(symbols.map((symbol, index) => makeAggregate(symbol, index)));
 
   const [firstResponse, secondResponse] = await Promise.all([first, second]);
@@ -282,7 +384,10 @@ test("flow premium distribution degrades instead of failing when candidates erro
       }) as any,
   );
 
-  const response = await getFlowPremiumDistribution({ candidateLimit: 6 });
+  const response = await getFlowPremiumDistribution({
+    candidateLimit: 6,
+    coverageMode: "ranked",
+  });
 
   assert.equal(response.status, "degraded");
   assert.equal(response.source.errorCount, 1);
@@ -328,6 +433,7 @@ test("flow premium distribution ranks widgets by scored premium", async () => {
 
   const response = await getFlowPremiumDistribution({
     candidateLimit: 6,
+    coverageMode: "ranked",
     limit: 3,
   });
 

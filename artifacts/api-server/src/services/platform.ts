@@ -54,6 +54,7 @@ import {
   type OptionPremiumDistribution,
   type PremiumDistributionClassificationConfidence,
   type PremiumDistributionDataAccess,
+  type PremiumDistributionHydrationDiagnostics,
   type PremiumDistributionSideBasis,
   type PremiumDistributionTimeframe,
   type PolygonAggregateBarsPage,
@@ -110,6 +111,7 @@ import {
 } from "./bridge-option-quote-stream";
 import { recordServerDiagnosticEvent } from "./diagnostics";
 import {
+  getBridgeGovernorConfigSnapshot,
   getBridgeGovernorSnapshot,
   isBridgeWorkBackedOff,
   recordBridgeWorkFailure,
@@ -126,11 +128,18 @@ import {
   persistMarketDataBars,
 } from "./market-data-store";
 import {
+  listHistoricalFlowEvents,
+  normalizeHistoricalFlowSampleBucketSeconds,
+  __resetHistoricalFlowEventsForTests,
+  __setHistoricalFlowStoreDisabledForTests,
+} from "./historical-flow-events";
+import {
   admitMarketDataLeases,
   getMarketDataAdmissionBudget,
   getMarketDataAdmissionDiagnostics,
   recordMarketDataFallback,
   releaseMarketDataLeases,
+  setMarketDataAdmissionRuntimeDefaults,
 } from "./market-data-admission";
 import {
   normalizeUniverseMarket,
@@ -157,6 +166,7 @@ export {
   resolveIbkrRuntimeStreamState as __resolveIbkrRuntimeStreamStateForTests,
   resolveIbkrRuntimeStrictReason as __resolveIbkrRuntimeStrictReasonForTests,
 } from "./platform-runtime-status";
+export { __setHistoricalFlowStoreDisabledForTests };
 
 const BUILT_IN_WATCHLISTS = [
   {
@@ -889,13 +899,70 @@ function getMarketDataConnectionCapabilities(): string[] {
 const FLOW_EVENTS_CACHE_TTL_MS = 60_000;
 const FLOW_EVENTS_CACHE_STALE_TTL_MS = 5 * 60_000;
 const FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS = 45_000;
-const FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS = 3 * 60_000;
-const FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT = 6;
+const FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS = 10 * 60_000;
+const FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT = 10;
 const FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_LIMIT = 24;
 const FLOW_PREMIUM_DISTRIBUTION_MAX_CANDIDATES = 60;
 const FLOW_PREMIUM_DISTRIBUTION_CONCURRENCY = 4;
-const FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS = 8_000;
-const FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES = 4;
+const FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS",
+  60_000,
+);
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CANDIDATES =
+  readPositiveIntegerEnv(
+    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CANDIDATES",
+    10,
+  );
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TIMEOUT_MS =
+  readPositiveIntegerEnv(
+    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TIMEOUT_MS",
+    5_000,
+  );
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_MAX_PAGES =
+  readPositiveIntegerEnv(
+    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_MAX_PAGES",
+    2,
+  );
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TRADE_CONTRACT_LIMIT =
+  readPositiveIntegerEnv(
+    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TRADE_CONTRACT_LIMIT",
+    8,
+  );
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CLASSIFICATION_TARGET =
+  readUnitIntervalEnv(
+    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CLASSIFICATION_TARGET",
+    0.25,
+  );
+const FLOW_PREMIUM_DISTRIBUTION_DEEP_CANDIDATE_TIMEOUT_MS =
+  readPositiveIntegerEnv(
+    "FLOW_PREMIUM_DISTRIBUTION_DEEP_CANDIDATE_TIMEOUT_MS",
+    Math.max(FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS, 300_000),
+  );
+const FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES",
+  20,
+);
+const FLOW_PREMIUM_DISTRIBUTION_UNIVERSE_MAX_SYMBOLS = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_UNIVERSE_MAX_SYMBOLS",
+  500,
+);
+const FLOW_PREMIUM_DISTRIBUTION_BASE_TRADE_CONTRACT_LIMIT =
+  readPositiveIntegerEnv(
+    "FLOW_PREMIUM_DISTRIBUTION_BASE_TRADE_CONTRACT_LIMIT",
+    60,
+  );
+const FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT",
+  800,
+);
+const FLOW_PREMIUM_DISTRIBUTION_CLASSIFICATION_TARGET = readUnitIntervalEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_CLASSIFICATION_TARGET",
+  0.9,
+);
+const FLOW_PREMIUM_DISTRIBUTION_TRADE_LIMIT = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_TRADE_LIMIT",
+  50_000,
+);
 const FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE = readPositiveIntegerEnv(
   "FLOW_EVENTS_ON_DEMAND_MAX_ACTIVE",
   1,
@@ -912,6 +979,12 @@ export type FlowPremiumDistributionStatus =
   | "empty"
   | "degraded"
   | "unconfigured";
+export type FlowPremiumDistributionCoverageMode = "universe" | "ranked";
+export type FlowPremiumDistributionHydrationStatus =
+  | "complete"
+  | "partial"
+  | "refreshing"
+  | "failed";
 
 export type FlowPremiumDistributionResponse = {
   status: FlowPremiumDistributionStatus;
@@ -928,6 +1001,11 @@ export type FlowPremiumDistributionResponse = {
     classifiedPremium: number;
     classificationCoverage: number;
     classificationConfidence: PremiumDistributionClassificationConfidence;
+    coverageMode: FlowPremiumDistributionCoverageMode;
+    hydrationStatus: FlowPremiumDistributionHydrationStatus;
+    hydrationWarning: string | null;
+    hydratedSymbolCount: number;
+    hydrationDiagnostics: PremiumDistributionHydrationDiagnostics;
     candidateDate: string | null;
     candidateCount: number;
     rankedCount: number;
@@ -949,6 +1027,10 @@ const flowPremiumDistributionCache = new Map<
 const flowPremiumDistributionInFlight = new Map<
   string,
   Promise<FlowPremiumDistributionResponse>
+>();
+const flowPremiumDistributionDeepRefreshInFlight = new Map<
+  string,
+  Promise<void>
 >();
 
 function getPolygonProviderHost(): string | null {
@@ -984,6 +1066,154 @@ function combinePremiumDistributionSideBasis(
   return "none";
 }
 
+function emptyFlowPremiumHydrationDiagnostics(): PremiumDistributionHydrationDiagnostics {
+  return {
+    snapshotCount: 0,
+    usablePremiumSnapshotCount: 0,
+    usablePremiumTotal: 0,
+    selectedPremiumTotal: 0,
+    classificationTargetPremiumCoverage: 0,
+    selectedPremiumCoverage: 0,
+    pageCount: 0,
+    snapshotTradingDate: null,
+    tradeLookbackStartDate: null,
+    quoteProbeDate: null,
+    quoteProbeStatus: "not_attempted",
+    quoteProbeMessage: null,
+    tradeContractCandidateCount: 0,
+    tradeContractHydratedCount: 0,
+    tradeCallAttemptCount: 0,
+    tradeCallSuccessCount: 0,
+    tradeCallErrorCount: 0,
+    tradeCallForbiddenCount: 0,
+    eligibleTradeCount: 0,
+    ineligibleTradeCount: 0,
+    unknownConditionTradeCount: 0,
+    conditionCodes: [],
+    exchangeCodes: [],
+    classifiedContractCoverage: 0,
+  };
+}
+
+function combinePremiumHydrationDiagnostics(
+  widgets: Array<OptionPremiumDistribution & { rank: number }>,
+): PremiumDistributionHydrationDiagnostics {
+  const combined = emptyFlowPremiumHydrationDiagnostics();
+  const conditionCodes = new Set<string>();
+  const exchangeCodes = new Set<string>();
+  let latestSnapshotTradingDate: string | null = null;
+  let earliestTradeLookbackStartDate: string | null = null;
+  let earliestQuoteProbeDate: string | null = null;
+  let quoteProbeStatus: PremiumDistributionHydrationDiagnostics["quoteProbeStatus"] =
+    "not_attempted";
+  let quoteProbeMessage: string | null = null;
+
+  widgets.forEach((widget) => {
+    const diagnostics = widget.hydrationDiagnostics;
+    combined.snapshotCount += diagnostics.snapshotCount;
+    combined.usablePremiumSnapshotCount += diagnostics.usablePremiumSnapshotCount;
+    combined.usablePremiumTotal += diagnostics.usablePremiumTotal;
+    combined.selectedPremiumTotal += diagnostics.selectedPremiumTotal;
+    combined.classificationTargetPremiumCoverage = Math.max(
+      combined.classificationTargetPremiumCoverage,
+      diagnostics.classificationTargetPremiumCoverage,
+    );
+    combined.pageCount += diagnostics.pageCount;
+    combined.tradeContractCandidateCount += diagnostics.tradeContractCandidateCount;
+    combined.tradeContractHydratedCount += diagnostics.tradeContractHydratedCount;
+    combined.tradeCallAttemptCount += diagnostics.tradeCallAttemptCount;
+    combined.tradeCallSuccessCount += diagnostics.tradeCallSuccessCount;
+    combined.tradeCallErrorCount += diagnostics.tradeCallErrorCount;
+    combined.tradeCallForbiddenCount += diagnostics.tradeCallForbiddenCount;
+    combined.eligibleTradeCount += diagnostics.eligibleTradeCount;
+    combined.ineligibleTradeCount += diagnostics.ineligibleTradeCount;
+    combined.unknownConditionTradeCount += diagnostics.unknownConditionTradeCount;
+    diagnostics.conditionCodes.forEach((code) => conditionCodes.add(code));
+    diagnostics.exchangeCodes.forEach((code) => exchangeCodes.add(code));
+    if (
+      diagnostics.snapshotTradingDate &&
+      (!latestSnapshotTradingDate ||
+        diagnostics.snapshotTradingDate > latestSnapshotTradingDate)
+    ) {
+      latestSnapshotTradingDate = diagnostics.snapshotTradingDate;
+    }
+    if (
+      diagnostics.tradeLookbackStartDate &&
+      (!earliestTradeLookbackStartDate ||
+        diagnostics.tradeLookbackStartDate < earliestTradeLookbackStartDate)
+    ) {
+      earliestTradeLookbackStartDate = diagnostics.tradeLookbackStartDate;
+    }
+    if (
+      diagnostics.quoteProbeDate &&
+      (!earliestQuoteProbeDate ||
+        diagnostics.quoteProbeDate < earliestQuoteProbeDate)
+    ) {
+      earliestQuoteProbeDate = diagnostics.quoteProbeDate;
+    }
+    if (diagnostics.quoteProbeStatus === "forbidden") {
+      quoteProbeStatus = "forbidden";
+      quoteProbeMessage = quoteProbeMessage ?? diagnostics.quoteProbeMessage;
+    } else if (
+      quoteProbeStatus !== "forbidden" &&
+      diagnostics.quoteProbeStatus === "available"
+    ) {
+      quoteProbeStatus = "available";
+    } else if (
+      quoteProbeStatus === "not_attempted" &&
+      diagnostics.quoteProbeStatus !== "not_attempted"
+    ) {
+      quoteProbeStatus = diagnostics.quoteProbeStatus;
+      quoteProbeMessage = quoteProbeMessage ?? diagnostics.quoteProbeMessage;
+    }
+  });
+
+  combined.snapshotTradingDate = latestSnapshotTradingDate;
+  combined.tradeLookbackStartDate = earliestTradeLookbackStartDate;
+  combined.quoteProbeDate = earliestQuoteProbeDate;
+  combined.quoteProbeStatus = quoteProbeStatus;
+  combined.quoteProbeMessage = quoteProbeMessage;
+  combined.conditionCodes = [...conditionCodes].sort();
+  combined.exchangeCodes = [...exchangeCodes].sort();
+  combined.classifiedContractCoverage =
+    combined.usablePremiumSnapshotCount > 0
+      ? combined.tradeContractHydratedCount / combined.usablePremiumSnapshotCount
+      : 0;
+  combined.selectedPremiumCoverage =
+    combined.usablePremiumTotal > 0
+      ? Math.min(1, combined.selectedPremiumTotal / combined.usablePremiumTotal)
+      : 0;
+  return combined;
+}
+
+function buildFlowPremiumHydrationWarning(input: {
+  quoteAccess: PremiumDistributionDataAccess;
+  tradeAccess: PremiumDistributionDataAccess;
+  classificationConfidence: PremiumDistributionClassificationConfidence;
+  classificationCoverage: number;
+}): string | null {
+  if (input.quoteAccess === "forbidden" && input.tradeAccess === "forbidden") {
+    return "Option quote-match and option trades are unavailable from the current Polygon/Massive endpoints; totals are hydrated but side bars are unavailable.";
+  }
+  if (input.quoteAccess === "forbidden") {
+    return "Option quote-match data is unavailable from the current Polygon/Massive endpoint; side bars use option trade tick-test.";
+  }
+  if (input.tradeAccess === "forbidden") {
+    return "Option trades are unavailable from the current Polygon/Massive endpoint; side bars are unavailable.";
+  }
+  if (
+    input.classificationConfidence === "none" ||
+    input.classificationConfidence === "very_low"
+  ) {
+    const classified =
+      input.classificationCoverage > 0 && input.classificationCoverage < 0.01
+        ? "<1%"
+        : `${Math.round(input.classificationCoverage * 100)}%`;
+    return `${classified} trade-classified; totals are hydrated but side split is uncertain.`;
+  }
+  return null;
+}
+
 function buildFlowPremiumDistributionSourceDiagnostics(
   widgets: Array<OptionPremiumDistribution & { rank: number }>,
 ): Pick<
@@ -995,6 +1225,9 @@ function buildFlowPremiumDistributionSourceDiagnostics(
   | "classifiedPremium"
   | "classificationCoverage"
   | "classificationConfidence"
+  | "hydrationWarning"
+  | "hydratedSymbolCount"
+  | "hydrationDiagnostics"
 > {
   const classifiedPremium = widgets.reduce(
     (sum, widget) => sum + widget.classifiedPremium,
@@ -1009,6 +1242,13 @@ function buildFlowPremiumDistributionSourceDiagnostics(
   const sideBasis = combinePremiumDistributionSideBasis(widgets);
   const quoteAccess = combinePremiumDistributionAccess(widgets, "quoteAccess");
   const tradeAccess = combinePremiumDistributionAccess(widgets, "tradeAccess");
+  const classificationConfidence = resolvePremiumDistributionClassificationConfidence({
+    classificationCoverage,
+    sideBasis,
+    quoteAccess,
+    tradeAccess,
+  });
+  const hydrationDiagnostics = combinePremiumHydrationDiagnostics(widgets);
 
   return {
     providerHost: getPolygonProviderHost(),
@@ -1017,12 +1257,15 @@ function buildFlowPremiumDistributionSourceDiagnostics(
     tradeAccess,
     classifiedPremium,
     classificationCoverage,
-    classificationConfidence: resolvePremiumDistributionClassificationConfidence({
-      classificationCoverage,
-      sideBasis,
+    classificationConfidence,
+    hydrationWarning: buildFlowPremiumHydrationWarning({
       quoteAccess,
       tradeAccess,
+      classificationConfidence,
+      classificationCoverage,
     }),
+    hydratedSymbolCount: widgets.length,
+    hydrationDiagnostics,
   };
 }
 
@@ -1032,7 +1275,7 @@ function isPremiumDistributionCandidate(symbol: string): boolean {
 
 function normalizeFlowPremiumDistributionLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT;
-  return Math.max(1, Math.min(Math.floor(value as number), 6));
+  return Math.max(1, Math.min(Math.floor(value as number), 10));
 }
 
 function normalizeFlowPremiumDistributionCandidateLimit(
@@ -1051,12 +1294,22 @@ function normalizeFlowPremiumDistributionTimeframe(
   return String(value ?? "").trim().toLowerCase() === "week" ? "week" : "today";
 }
 
+function normalizeFlowPremiumDistributionCoverageMode(
+  value: unknown,
+): FlowPremiumDistributionCoverageMode {
+  return String(value ?? "").trim().toLowerCase() === "ranked"
+    ? "ranked"
+    : "universe";
+}
+
 function flowPremiumDistributionCacheKey(input: {
   limit: number;
   candidateLimit: number;
   timeframe: PremiumDistributionTimeframe;
+  coverageMode: FlowPremiumDistributionCoverageMode;
+  symbols: readonly string[];
 }): string {
-  return `${input.timeframe}:${input.limit}:${input.candidateLimit}`;
+  return `${input.coverageMode}:${input.timeframe}:${input.limit}:${input.candidateLimit}:${input.symbols.join(",")}`;
 }
 
 async function fetchLatestGroupedStockAggregates(input: {
@@ -1136,12 +1389,14 @@ async function fetchLatestGroupedStockAggregates(input: {
 function withFlowPremiumDistributionCacheState(
   value: FlowPremiumDistributionResponse,
   cache: FlowPremiumDistributionResponse["source"]["cache"],
+  hydrationStatus = value.source.hydrationStatus,
 ): FlowPremiumDistributionResponse {
   return {
     ...value,
     source: {
       ...value.source,
       cache,
+      hydrationStatus,
     },
   };
 }
@@ -5477,6 +5732,7 @@ const chartHistoryCursors = new Map<string, ChartHistoryCursorRecord>();
 const barsHydrationCounters = {
   cacheHit: 0,
   cacheMiss: 0,
+  cacheInvalidated: 0,
   inFlightJoin: 0,
   staleServed: 0,
   providerFetch: 0,
@@ -5530,6 +5786,7 @@ const barsInFlight = new Map<
   string,
   { input: GetBarsInput; promise: Promise<GetBarsResult>; startedAt: number }
 >();
+let barsCacheInvalidationVersion = 0;
 
 function pruneBarsCache(now: number): void {
   for (const [key, entry] of barsCache) {
@@ -5586,6 +5843,60 @@ function buildBarsScopeKey(input: GetBarsInput): string {
     allowHistoricalSynthesis: input.allowHistoricalSynthesis ?? null,
     allowStudyFallback: input.allowStudyFallback ?? null,
     brokerRecentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+  });
+}
+
+function shouldInvalidateBarsEntryForDurableWrite(
+  entryInput: GetBarsInput,
+  writeInput: GetBarsInput,
+): boolean {
+  if (normalizeSymbol(entryInput.symbol) !== normalizeSymbol(writeInput.symbol)) {
+    return false;
+  }
+  if (entryInput.timeframe !== writeInput.timeframe) {
+    return false;
+  }
+  if (entryInput.assetClass === "option" || entryInput.providerContractId?.trim()) {
+    return false;
+  }
+  if (entryInput.source && entryInput.source !== "trades") {
+    return false;
+  }
+  return true;
+}
+
+function invalidateBarsCacheForDurableWrite(writeInput: GetBarsInput): void {
+  let removed = 0;
+  for (const [key, entry] of barsCache) {
+    if (shouldInvalidateBarsEntryForDurableWrite(entry.input, writeInput)) {
+      barsCache.delete(key);
+      removed += 1;
+    }
+  }
+  for (const [key, entry] of barsInFlight) {
+    if (shouldInvalidateBarsEntryForDurableWrite(entry.input, writeInput)) {
+      barsInFlight.delete(key);
+      removed += 1;
+    }
+  }
+  if (removed > 0) {
+    barsCacheInvalidationVersion += 1;
+    barsHydrationCounters.cacheInvalidated += removed;
+  }
+}
+
+function scheduleBarsCacheInvalidationAfterDurableWrite(
+  writeInput: GetBarsInput,
+  persisted: Promise<boolean>,
+): void {
+  void persisted.then((changed) => {
+    if (!changed) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      invalidateBarsCacheForDurableWrite(writeInput);
+    }, 0);
+    timer.unref?.();
   });
 }
 
@@ -6016,18 +6327,21 @@ function refreshBarsCache(
   }
 
   let promise: Promise<GetBarsResult> | null = null;
+  const startedInvalidationVersion = barsCacheInvalidationVersion;
   promise = (async () => {
     try {
       const value = await getBarsImpl(input, options);
       const settledAt = Date.now();
-      barsCache.set(key, {
-        input,
-        value,
-        cachedAt: settledAt,
-        expiresAt: settledAt + BARS_CACHE_TTL_MS,
-        staleExpiresAt: settledAt + BARS_CACHE_STALE_TTL_MS,
-      });
-      pruneBarsCache(settledAt);
+      if (startedInvalidationVersion === barsCacheInvalidationVersion) {
+        barsCache.set(key, {
+          input,
+          value,
+          cachedAt: settledAt,
+          expiresAt: settledAt + BARS_CACHE_TTL_MS,
+          staleExpiresAt: settledAt + BARS_CACHE_STALE_TTL_MS,
+        });
+        pruneBarsCache(settledAt);
+      }
       return value;
     } finally {
       const current = barsInFlight.get(key);
@@ -6677,24 +6991,28 @@ async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
       polygonBarsPage = null;
       polygonBars = [];
     }
-    if (!options.signal?.aborted) {
-      void persistMarketDataBars({
-        request: {
-          symbol: input.symbol,
-          timeframe: input.timeframe,
-          limit: input.limit,
-          from: input.from,
-          to: input.to,
-          assetClass: input.assetClass,
-          market: input.market,
-          providerContractId: input.providerContractId,
-          outsideRth,
-          source: input.source,
-          recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
-        },
-        sourceName: historicalStoreSource,
-        bars: polygonBars,
-      });
+    if (!options.signal?.aborted && polygonBars.length) {
+      const persistRequest = {
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        limit: input.limit,
+        from: input.from,
+        to: input.to,
+        assetClass: input.assetClass,
+        market: input.market,
+        providerContractId: input.providerContractId,
+        outsideRth,
+        source: input.source,
+        recentWindowMinutes: input.brokerRecentWindowMinutes ?? null,
+      };
+      scheduleBarsCacheInvalidationAfterDurableWrite(
+        input,
+        persistMarketDataBars({
+          request: persistRequest,
+          sourceName: historicalStoreSource,
+          bars: polygonBars,
+        }),
+      );
     }
     const mergeablePolygonBars = restrictHistoricalSynthesisToBrokerBackfill(
       input,
@@ -6883,6 +7201,18 @@ function readPositiveNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readUnitIntervalEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw || !raw.trim()) {
+    return Math.max(0, Math.min(1, fallback));
+  }
+
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed)
+    ? Math.max(0, Math.min(1, parsed))
+    : Math.max(0, Math.min(1, fallback));
+}
+
 function readBooleanEnv(name: string, fallback: boolean): boolean {
   const raw = process.env[name];
   if (!raw || !raw.trim()) {
@@ -7037,7 +7367,7 @@ const OPTIONS_FLOW_RADAR_ENABLED = readBooleanEnv(
 );
 const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_BATCH_SIZE",
-  40,
+  50,
 );
 const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_CANDIDATES",
@@ -7045,11 +7375,11 @@ const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
   "OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES",
-  1,
+  0,
 );
 const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
-  40,
+  50,
 );
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
@@ -7057,7 +7387,7 @@ const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_CONCURRENCY",
-  1,
+  2,
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",
@@ -7065,7 +7395,7 @@ const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LINE_BUDGET",
-  40,
+  50,
 );
 const OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE = readOptionChainStrikeCoverageEnv(
   "OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE",
@@ -7175,6 +7505,14 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
   return Math.max(1, Math.min(configuredConcurrency, poolSafeConcurrency));
 }
 
+function syncMarketDataAdmissionRuntimeDefaults(
+  config: OptionsFlowRuntimeConfig,
+): void {
+  setMarketDataAdmissionRuntimeDefaults({
+    flowScannerLineBudget: config.scannerLineBudget,
+  });
+}
+
 export function getOptionsFlowRuntimeConfigSnapshot(): OptionsFlowRuntimeConfigSnapshot {
   const current = getOptionsFlowRuntimeConfig();
   return {
@@ -7209,6 +7547,7 @@ export function setOptionsFlowRuntimeOverrides(
       : optionsFlowRuntimeOverrides.universeMarkets,
   };
   const next = getOptionsFlowRuntimeConfig();
+  syncMarketDataAdmissionRuntimeDefaults(next);
   optionsFlowScanner.setMaxConcurrency(
     resolveOptionsFlowScannerEffectiveConcurrency(next),
   );
@@ -7238,6 +7577,7 @@ export function resetOptionsFlowRuntimeOverrides(
     });
   }
   const next = getOptionsFlowRuntimeConfig();
+  syncMarketDataAdmissionRuntimeDefaults(next);
   optionsFlowScanner.setMaxConcurrency(
     resolveOptionsFlowScannerEffectiveConcurrency(next),
   );
@@ -7256,6 +7596,7 @@ export function resetOptionsFlowRuntimeOverrides(
   }
 }
 const initialOptionsFlowConfig = getOptionsFlowRuntimeConfig();
+syncMarketDataAdmissionRuntimeDefaults(initialOptionsFlowConfig);
 let flowUniverseNasdaqFallbackCache: {
   includeEtfs: boolean;
   expiresAt: number;
@@ -7394,13 +7735,8 @@ const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
   normalizeSymbol,
   shouldSkip: getOptionsFlowScannerBridgeSkipReason,
   fetchBatch: async (symbols) => {
-    const quotes = await runBridgeWork(
-      "quotes",
-      () => getIbkrClient().getOptionActivitySnapshots([...symbols]),
-      { bypassBackoff: true, recordFailure: false },
-    );
     return {
-      quotes,
+      quotes: await fetchOptionsFlowRadarQuotes(symbols),
       source: {
         provider: "ibkr",
         status: "live",
@@ -7425,6 +7761,62 @@ const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
     logger.warn({ err: error, ...context }, "Options flow radar scanner error");
   },
 });
+
+async function fetchOptionsFlowRadarQuotes(
+  symbols: readonly string[],
+): Promise<QuoteSnapshot[]> {
+  const normalizedSymbols = Array.from(
+    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+  if (!normalizedSymbols.length) {
+    return [];
+  }
+
+  try {
+    return await runBridgeWork(
+      "quotes",
+      () => getIbkrClient().getOptionActivitySnapshots([...normalizedSymbols]),
+      { bypassBackoff: true, recordFailure: false },
+    );
+  } catch (error) {
+    logger.warn(
+      { err: error, symbolCount: normalizedSymbols.length },
+      "Options flow radar batch quote hydration failed; retrying per symbol",
+    );
+  }
+
+  const quoteConcurrency = Math.max(
+    1,
+    getBridgeGovernorConfigSnapshot().quotes.concurrency,
+  );
+  const results = await mapWithConcurrency(
+    normalizedSymbols,
+    quoteConcurrency,
+    async (symbol) => {
+      try {
+        return await runBridgeWork(
+          "quotes",
+          () => getIbkrClient().getOptionActivitySnapshots([symbol]),
+          { bypassBackoff: true, recordFailure: false },
+        );
+      } catch (error) {
+        logger.debug(
+          { err: error, symbol },
+          "Options flow radar symbol quote hydration failed",
+        );
+        return [];
+      }
+    },
+  );
+
+  return results.flat();
+}
+
+export async function __fetchOptionsFlowRadarQuotesForTests(
+  symbols: readonly string[],
+): Promise<QuoteSnapshot[]> {
+  return fetchOptionsFlowRadarQuotes(symbols);
+}
 
 let optionsFlowScannerStarted = false;
 
@@ -7641,6 +8033,7 @@ export function getOptionsFlowUniverse() {
 export async function getFlowPremiumDistribution(input: {
   limit?: number;
   candidateLimit?: number;
+  coverageMode?: FlowPremiumDistributionCoverageMode;
   timeframe?: PremiumDistributionTimeframe;
 } = {}): Promise<FlowPremiumDistributionResponse> {
   const requestedAt = Date.now();
@@ -7649,22 +8042,58 @@ export async function getFlowPremiumDistribution(input: {
     input.candidateLimit,
   );
   const timeframe = normalizeFlowPremiumDistributionTimeframe(input.timeframe);
+  const coverageMode = normalizeFlowPremiumDistributionCoverageMode(
+    input.coverageMode,
+  );
+  const universeSymbols =
+    coverageMode === "universe"
+      ? getOptionsFlowUniverse()
+          .symbols.filter(isPremiumDistributionCandidate)
+          .slice(0, FLOW_PREMIUM_DISTRIBUTION_UNIVERSE_MAX_SYMBOLS)
+      : [];
   const cacheKey = flowPremiumDistributionCacheKey({
     limit,
     candidateLimit,
     timeframe,
+    coverageMode,
+    symbols: universeSymbols,
   });
   const cached = flowPremiumDistributionCache.get(cacheKey);
   if (cached && cached.expiresAt > requestedAt) {
     return withFlowPremiumDistributionCacheState(cached.value, "fresh");
   }
+  if (cached && cached.staleExpiresAt > requestedAt && coverageMode === "universe") {
+    return withFlowPremiumDistributionCacheState(
+      cached.value,
+      "stale",
+      cached.value.source.hydrationStatus === "refreshing"
+        ? "refreshing"
+        : undefined,
+    );
+  }
 
   const inFlight = flowPremiumDistributionInFlight.get(cacheKey);
   if (inFlight) {
     if (cached && cached.staleExpiresAt > requestedAt) {
-      return withFlowPremiumDistributionCacheState(cached.value, "stale");
+      return withFlowPremiumDistributionCacheState(
+        cached.value,
+        "stale",
+        "refreshing",
+      );
     }
     return inFlight;
+  }
+
+  if (
+    flowPremiumDistributionDeepRefreshInFlight.has(cacheKey) &&
+    cached &&
+    cached.staleExpiresAt > requestedAt
+  ) {
+    return withFlowPremiumDistributionCacheState(
+      cached.value,
+      "stale",
+      "refreshing",
+    );
   }
 
   const config = getPolygonRuntimeConfig();
@@ -7684,6 +8113,11 @@ export async function getFlowPremiumDistribution(input: {
         classifiedPremium: 0,
         classificationCoverage: 0,
         classificationConfidence: "none",
+        coverageMode,
+        hydrationStatus: "failed",
+        hydrationWarning: "Polygon/Massive market data is not configured.",
+        hydratedSymbolCount: 0,
+        hydrationDiagnostics: emptyFlowPremiumHydrationDiagnostics(),
         candidateDate: null,
         candidateCount: 0,
         rankedCount: 0,
@@ -7703,7 +8137,7 @@ export async function getFlowPremiumDistribution(input: {
       now,
       timeframe,
     });
-    if (!grouped.aggregates.length) {
+    if (!grouped.aggregates.length && coverageMode === "ranked") {
       const empty: FlowPremiumDistributionResponse = {
         status: grouped.errorMessage ? "degraded" : "empty",
         asOf: now,
@@ -7719,6 +8153,11 @@ export async function getFlowPremiumDistribution(input: {
           classifiedPremium: 0,
           classificationCoverage: 0,
           classificationConfidence: "none",
+          coverageMode,
+          hydrationStatus: grouped.errorMessage ? "failed" : "complete",
+          hydrationWarning: grouped.errorMessage,
+          hydratedSymbolCount: 0,
+          hydrationDiagnostics: emptyFlowPremiumHydrationDiagnostics(),
           candidateDate: grouped.candidateDate,
           candidateCount: 0,
           rankedCount: 0,
@@ -7736,97 +8175,354 @@ export async function getFlowPremiumDistribution(input: {
       return empty;
     }
 
-    const candidates = grouped.aggregates
-      .filter((aggregate) => isPremiumDistributionCandidate(aggregate.symbol))
-      .sort((left, right) => right.volume - left.volume)
-      .slice(0, candidateLimit)
-      .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
-    let errorCount = 0;
-    let errorMessage: string | null = grouped.errorMessage;
-    const distributions = await mapWithConcurrency(
-      candidates,
-      FLOW_PREMIUM_DISTRIBUTION_CONCURRENCY,
-      async (candidate) => {
-        try {
-          return await runWithAbortTimeout(
-            FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS,
-            (signal) =>
-              client.getOptionPremiumDistribution({
-                underlying: candidate.symbol,
-                stockDayVolume: candidate.volume,
-                timeframe,
-                maxPages: FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES,
-                enrichTrades: candidate.rank <= Math.min(candidateLimit, limit * 2),
-                signal,
-              }),
-          );
-        } catch (error) {
-          errorCount += 1;
-          errorMessage =
-            errorMessage ??
-            (error instanceof Error && error.message
-              ? error.message
-              : "Polygon options premium snapshot failed.");
-          return null;
-        }
-      },
+    const groupedBySymbol = new Map(
+      grouped.aggregates.map((aggregate) => [aggregate.symbol, aggregate]),
     );
-    const widgets = distributions
-      .filter(
-        (distribution): distribution is OptionPremiumDistribution =>
-          distribution !== null &&
-          distribution.contractCount > 0 &&
-          distribution.premiumTotal > 0,
-      )
-      .sort((left, right) => {
-        const premiumDelta = right.premiumTotal - left.premiumTotal;
-        if (premiumDelta !== 0) return premiumDelta;
-
-        const classifiedDelta = right.classifiedPremium - left.classifiedPremium;
-        if (classifiedDelta !== 0) return classifiedDelta;
-
-        const volumeDelta =
-          (right.stockDayVolume ?? 0) - (left.stockDayVolume ?? 0);
-        if (volumeDelta !== 0) return volumeDelta;
-
-        return left.symbol.localeCompare(right.symbol);
-      })
-      .slice(0, limit)
-      .map((distribution, index) => ({
-        ...distribution,
-        rank: index + 1,
-      }));
-    const response: FlowPremiumDistributionResponse = {
-      status:
-        widgets.length > 0
-          ? errorCount > 0
-            ? "degraded"
-            : "ok"
-          : errorCount > 0
-            ? "degraded"
-            : "empty",
-      asOf: now,
-      timeframe,
-      source: {
-        provider: "polygon",
-        label: "Polygon premium snapshots",
+    const candidates =
+      coverageMode === "universe"
+        ? universeSymbols.map((symbol, index) => ({
+            symbol,
+            volume: groupedBySymbol.get(symbol)?.volume ?? 0,
+            rank: index + 1,
+          }))
+        : grouped.aggregates
+            .filter((aggregate) => isPremiumDistributionCandidate(aggregate.symbol))
+            .sort((left, right) => right.volume - left.volume)
+            .slice(0, candidateLimit)
+            .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+    if (!candidates.length) {
+      const empty: FlowPremiumDistributionResponse = {
+        status: "empty",
+        asOf: now,
         timeframe,
-        ...buildFlowPremiumDistributionSourceDiagnostics(widgets),
-        candidateDate: grouped.candidateDate,
-        candidateCount: candidates.length,
-        rankedCount: widgets.length,
-        errorCount,
-        errorMessage,
-        cache: "miss",
-      },
-      widgets,
+        source: {
+          provider: "polygon",
+          label: "Polygon premium snapshots",
+          timeframe,
+          providerHost: getPolygonProviderHost(),
+          sideBasis: "none",
+          quoteAccess: "unknown",
+          tradeAccess: "unknown",
+          classifiedPremium: 0,
+          classificationCoverage: 0,
+          classificationConfidence: "none",
+          coverageMode,
+          hydrationStatus: "complete",
+          hydrationWarning: "No premium-distribution candidates are available.",
+          hydratedSymbolCount: 0,
+          hydrationDiagnostics: emptyFlowPremiumHydrationDiagnostics(),
+          candidateDate: grouped.candidateDate,
+          candidateCount: 0,
+          rankedCount: 0,
+          errorCount: grouped.errorMessage ? 1 : 0,
+          errorMessage: grouped.errorMessage,
+          cache: "miss",
+        },
+        widgets: [],
+      };
+      flowPremiumDistributionCache.set(cacheKey, {
+        value: empty,
+        expiresAt: Date.now() + FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS,
+        staleExpiresAt: Date.now() + FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS,
+      });
+      return empty;
+    }
+    const classificationTarget =
+      coverageMode === "universe"
+        ? FLOW_PREMIUM_DISTRIBUTION_CLASSIFICATION_TARGET
+        : 0;
+    const baselineTradeContractLimit = Math.min(
+      FLOW_PREMIUM_DISTRIBUTION_BASE_TRADE_CONTRACT_LIMIT,
+      FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT,
+    );
+    type PremiumDistributionCandidate = (typeof candidates)[number];
+    type HydrationRun = {
+      rankedDistributions: Array<OptionPremiumDistribution & { rank: number }>;
+      errorCount: number;
+      errorMessage: string | null;
     };
-    const settledAt = Date.now();
-    flowPremiumDistributionCache.set(cacheKey, {
-      value: response,
-      expiresAt: settledAt + FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS,
-      staleExpiresAt: settledAt + FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS,
+
+    const rankDistributions = (
+      distributions: OptionPremiumDistribution[],
+    ): Array<OptionPremiumDistribution & { rank: number }> =>
+      distributions
+        .filter(
+          (distribution): distribution is OptionPremiumDistribution =>
+            distribution !== null &&
+            distribution.contractCount > 0 &&
+            distribution.premiumTotal > 0,
+        )
+        .sort((left, right) => {
+          const premiumDelta = right.premiumTotal - left.premiumTotal;
+          if (premiumDelta !== 0) return premiumDelta;
+
+          const classifiedDelta = right.classifiedPremium - left.classifiedPremium;
+          if (classifiedDelta !== 0) return classifiedDelta;
+
+          const volumeDelta =
+            (right.stockDayVolume ?? 0) - (left.stockDayVolume ?? 0);
+          if (volumeDelta !== 0) return volumeDelta;
+
+          return left.symbol.localeCompare(right.symbol);
+        })
+        .map((distribution, index) => ({
+          ...distribution,
+          rank: index + 1,
+        }));
+
+    const hydrateCandidates = async (input: {
+      candidateList?: PremiumDistributionCandidate[];
+      tradeContractLimit: number;
+      tradePremiumCoverageTarget: number;
+      candidateTimeoutMs: number;
+      enrichTrades?: boolean;
+      maxPages?: number;
+    }): Promise<HydrationRun> => {
+      let errorCount = 0;
+      let errorMessage: string | null = grouped.errorMessage;
+      const distributions = await mapWithConcurrency(
+        input.candidateList ?? candidates,
+        FLOW_PREMIUM_DISTRIBUTION_CONCURRENCY,
+        async (candidate) => {
+          try {
+            return await runWithAbortTimeout(
+              input.candidateTimeoutMs,
+              (signal) =>
+                client.getOptionPremiumDistribution({
+                  underlying: candidate.symbol,
+                  stockDayVolume: candidate.volume,
+                  timeframe,
+                  maxPages:
+                    input.maxPages ?? FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES,
+                  enrichTrades: input.enrichTrades ?? true,
+                  tradeContractLimit: input.tradeContractLimit,
+                  tradePremiumCoverageTarget: input.tradePremiumCoverageTarget,
+                  tradeLimit: FLOW_PREMIUM_DISTRIBUTION_TRADE_LIMIT,
+                  signal,
+                }),
+            );
+          } catch (error) {
+            errorCount += 1;
+            errorMessage =
+              errorMessage ??
+              (error instanceof Error && error.message
+                ? error.message
+                : "Polygon options premium snapshot failed.");
+            return null;
+          }
+        },
+      );
+      const rankedDistributions = rankDistributions(
+        distributions.filter(
+          (distribution): distribution is OptionPremiumDistribution =>
+            distribution !== null,
+        ),
+      );
+
+      return { rankedDistributions, errorCount, errorMessage };
+    };
+
+    const buildResponse = (
+      input: HydrationRun,
+      hydrationStatus: FlowPremiumDistributionHydrationStatus,
+      asOf: Date,
+    ): FlowPremiumDistributionResponse => {
+      const widgets = input.rankedDistributions.slice(0, limit);
+      const sourceDiagnostics = buildFlowPremiumDistributionSourceDiagnostics(
+        input.rankedDistributions,
+      );
+
+      return {
+        status:
+          input.rankedDistributions.length > 0
+            ? input.errorCount > 0
+              ? "degraded"
+              : "ok"
+            : input.errorCount > 0
+              ? "degraded"
+              : "empty",
+        asOf,
+        timeframe,
+        source: {
+          provider: "polygon",
+          label: "Polygon premium snapshots",
+          timeframe,
+          ...sourceDiagnostics,
+          coverageMode,
+          hydrationStatus,
+          candidateDate: grouped.candidateDate,
+          candidateCount: candidates.length,
+          rankedCount: input.rankedDistributions.length,
+          errorCount: input.errorCount,
+          errorMessage: input.errorMessage,
+          cache: "miss",
+        },
+        widgets,
+      };
+    };
+
+    const resolveHydrationStatus = (
+      input: HydrationRun,
+      sourceDiagnostics: ReturnType<typeof buildFlowPremiumDistributionSourceDiagnostics>,
+      refreshing: boolean,
+    ): FlowPremiumDistributionHydrationStatus => {
+      if (input.errorCount > 0) {
+        return input.rankedDistributions.length > 0 ? "partial" : "failed";
+      }
+      if (refreshing) {
+        return "refreshing";
+      }
+      const selectedCoverage =
+        sourceDiagnostics.hydrationDiagnostics.selectedPremiumCoverage;
+      if (
+        classificationTarget > 0 &&
+        selectedCoverage + 0.005 < classificationTarget
+      ) {
+        return "partial";
+      }
+      return "complete";
+    };
+
+    const cacheResponse = (response: FlowPremiumDistributionResponse): void => {
+      const settledAt = Date.now();
+      flowPremiumDistributionCache.set(cacheKey, {
+        value: response,
+        expiresAt: settledAt + FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS,
+        staleExpiresAt: settledAt + FLOW_PREMIUM_DISTRIBUTION_STALE_TTL_MS,
+      });
+    };
+
+    const firstPaintCandidateCount = Math.min(
+      candidates.length,
+      Math.max(
+        limit,
+        Math.min(
+          candidateLimit,
+          FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CANDIDATES,
+        ),
+      ),
+    );
+    const firstPaintCandidates = candidates.slice(0, firstPaintCandidateCount);
+    const firstPaintMaxPages = Math.max(
+      1,
+      Math.min(
+        FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_MAX_PAGES,
+        FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES,
+      ),
+    );
+    const baseline = await hydrateCandidates({
+      candidateList: firstPaintCandidates,
+      tradeContractLimit: Math.min(
+        FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TRADE_CONTRACT_LIMIT,
+        FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT,
+      ),
+      tradePremiumCoverageTarget:
+        FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CLASSIFICATION_TARGET,
+      candidateTimeoutMs: FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TIMEOUT_MS,
+      enrichTrades: true,
+      maxPages: firstPaintMaxPages,
     });
+    const baselineSourceDiagnostics =
+      buildFlowPremiumDistributionSourceDiagnostics(baseline.rankedDistributions);
+    const shouldDeepRefresh =
+      !flowPremiumDistributionDeepRefreshInFlight.has(cacheKey) &&
+      candidates.length > 0 &&
+      (firstPaintCandidates.length < candidates.length ||
+        firstPaintMaxPages < FLOW_PREMIUM_DISTRIBUTION_MAX_PAGES ||
+        classificationTarget > 0 ||
+        FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT >
+          baselineTradeContractLimit);
+    const response = buildResponse(
+      baseline,
+      resolveHydrationStatus(
+        baseline,
+        baselineSourceDiagnostics,
+        shouldDeepRefresh,
+      ),
+      now,
+    );
+    cacheResponse(response);
+
+    if (shouldDeepRefresh) {
+      const deepRefresh = new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          void (async () => {
+            const deepCandidates = candidates;
+            const combinedBySymbol = new Map<string, OptionPremiumDistribution>();
+            baseline.rankedDistributions.forEach((distribution) => {
+              combinedBySymbol.set(distribution.symbol, distribution);
+            });
+            let combinedErrorCount = baseline.errorCount;
+            let combinedErrorMessage = baseline.errorMessage;
+            const firstChunkSize = Math.max(limit, 10);
+            const deepChunkSizes = [firstChunkSize, 40];
+            let offset = 0;
+
+            while (offset < deepCandidates.length) {
+              const configuredChunkSize =
+                deepChunkSizes.shift() ??
+                Math.max(40, Math.min(80, candidateLimit));
+              const chunk = deepCandidates.slice(
+                offset,
+                offset + configuredChunkSize,
+              );
+              offset += chunk.length;
+              if (!chunk.length) break;
+
+              const deepChunk = await hydrateCandidates({
+                candidateList: chunk,
+                tradeContractLimit: FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT,
+                tradePremiumCoverageTarget: classificationTarget,
+                candidateTimeoutMs:
+                  FLOW_PREMIUM_DISTRIBUTION_DEEP_CANDIDATE_TIMEOUT_MS,
+              });
+              deepChunk.rankedDistributions.forEach((distribution) => {
+                combinedBySymbol.set(distribution.symbol, distribution);
+              });
+              combinedErrorCount += deepChunk.errorCount;
+              combinedErrorMessage =
+                combinedErrorMessage ?? deepChunk.errorMessage ?? null;
+              const combined: HydrationRun = {
+                rankedDistributions: rankDistributions([
+                  ...combinedBySymbol.values(),
+                ]),
+                errorCount: combinedErrorCount,
+                errorMessage: combinedErrorMessage,
+              };
+              const combinedSourceDiagnostics =
+                buildFlowPremiumDistributionSourceDiagnostics(
+                  combined.rankedDistributions,
+                );
+              const refreshing =
+                offset < deepCandidates.length &&
+                combinedSourceDiagnostics.hydrationDiagnostics
+                  .selectedPremiumCoverage +
+                  0.005 <
+                  classificationTarget;
+              const deepResponse = buildResponse(
+                combined,
+                resolveHydrationStatus(
+                  combined,
+                  combinedSourceDiagnostics,
+                  refreshing,
+                ),
+                new Date(),
+              );
+              cacheResponse(deepResponse);
+            }
+          })().then(resolve, resolve);
+        }, 25);
+        timer.unref?.();
+      });
+      const trackedRefresh = deepRefresh;
+      flowPremiumDistributionDeepRefreshInFlight.set(cacheKey, trackedRefresh);
+      trackedRefresh.finally(() => {
+        if (flowPremiumDistributionDeepRefreshInFlight.get(cacheKey) === trackedRefresh) {
+          flowPremiumDistributionDeepRefreshInFlight.delete(cacheKey);
+        }
+      });
+    }
+
     return response;
   })();
 
@@ -7843,12 +8539,35 @@ export function getOptionsFlowScannerDiagnostics() {
   const config = getOptionsFlowRuntimeConfig();
   const deepScanner = optionsFlowScanner.getDiagnostics();
   const radar = optionsFlowRadarScanner.getCoverage();
+  const admissionBudget = getMarketDataAdmissionBudget();
+  const effectiveConcurrency = resolveOptionsFlowScannerEffectiveConcurrency(config);
+  const effectiveDeepLineBudget = Math.min(
+    config.radarDeepLineBudget,
+    config.scannerLineBudget,
+  );
   return {
     enabled: config.scannerEnabled,
     started: optionsFlowScannerStarted,
     radarEnabled: config.radarEnabled,
     scannerAlwaysOn: config.scannerAlwaysOn,
     lineBudget: config.scannerLineBudget,
+    lineUtilization: {
+      poolCap: admissionBudget.flowScannerLineCap,
+      configuredConcurrency: config.scannerConcurrency,
+      effectiveConcurrency,
+      scannerLineBudget: config.scannerLineBudget,
+      radarDeepLineBudget: config.radarDeepLineBudget,
+      effectiveDeepLineBudget,
+      maxDeepScanLines: Math.min(
+        admissionBudget.flowScannerLineCap,
+        effectiveConcurrency * effectiveDeepLineBudget,
+      ),
+      unusedPoolLines: Math.max(
+        0,
+        admissionBudget.flowScannerLineCap -
+          effectiveConcurrency * effectiveDeepLineBudget,
+      ),
+    },
     deepScanner,
     radar,
     lastSkippedReason: deepScanner.lastSkippedReason || null,
@@ -7924,12 +8643,14 @@ export function __resetOptionChainCachesForTests(input?: {
   optionUpstreamBackoffUntilByKey.clear();
   barsCache.clear();
   barsInFlight.clear();
+  barsCacheInvalidationVersion = 0;
   chartHistoryCursors.clear();
   Object.keys(barsHydrationCounters).forEach((key) => {
     barsHydrationCounters[key as keyof typeof barsHydrationCounters] = 0;
   });
   flowEventsCache.clear();
   flowEventsInFlight.clear();
+  __resetHistoricalFlowEventsForTests();
   if (input?.resetFlowScanner !== false) {
     optionsFlowRadarScanner.reset();
     optionsFlowScanner.reset();
@@ -7937,6 +8658,11 @@ export function __resetOptionChainCachesForTests(input?: {
     flowUniverseManager.reset();
   }
 }
+
+export const __platformBarsCacheTestInternals = {
+  invalidateBarsCacheForDurableWrite,
+  getBarsHydrationCounters: () => ({ ...barsHydrationCounters }),
+};
 
 function pruneOptionChainCache(now: number): void {
   for (const [key, entry] of optionChainCache) {
@@ -10335,6 +11061,166 @@ function selectFlowScannerLiveCandidateContracts(
     .slice(0, Math.max(1, lineBudget));
 }
 
+type FlowEventsTimeWindow = {
+  from?: Date;
+  to?: Date;
+};
+
+type NewYorkFlowClockParts = {
+  year: number;
+  month: number;
+  day: number;
+  weekday: string;
+  minutes: number;
+};
+
+const FLOW_REGULAR_SESSION_OPEN_MINUTES = 9 * 60 + 30;
+const FLOW_REGULAR_SESSION_CLOSE_MINUTES = 16 * 60;
+const NEW_YORK_FLOW_CLOCK_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function parseFlowEventsBoundary(value: unknown): Date | null {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function normalizeFlowEventsTimeWindow(input: {
+  from?: unknown;
+  to?: unknown;
+}): FlowEventsTimeWindow | null {
+  const from = parseFlowEventsBoundary(input.from);
+  const to = parseFlowEventsBoundary(input.to);
+  if (!from && !to) {
+    return null;
+  }
+  return {
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+  };
+}
+
+function flowEventsTimeWindowCacheKey(window: FlowEventsTimeWindow | null): string {
+  return window
+    ? `from=${window.from?.toISOString() ?? ""}:to=${
+        window.to?.toISOString() ?? ""
+      }`
+    : "current";
+}
+
+function readNewYorkFlowClockParts(date: Date): NewYorkFlowClockParts | null {
+  const parts = NEW_YORK_FLOW_CLOCK_FORMATTER.formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const year = Number(read("year"));
+  const month = Number(read("month"));
+  const day = Number(read("day"));
+  const hour = Number(read("hour"));
+  const minute = Number(read("minute"));
+  const weekday = read("weekday");
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return null;
+  }
+  return {
+    year,
+    month,
+    day,
+    weekday,
+    minutes: hour * 60 + minute,
+  };
+}
+
+function isWeekendFlowClockDay(parts: NewYorkFlowClockParts): boolean {
+  return parts.weekday === "Sat" || parts.weekday === "Sun";
+}
+
+function newYorkWallTimeToUtcDate(
+  parts: Pick<NewYorkFlowClockParts, "year" | "month" | "day">,
+  minutes: number,
+): Date {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  const guess = new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day, hour, minute, 0, 0),
+  );
+  const guessParts = readNewYorkFlowClockParts(guess);
+  if (!guessParts) {
+    return guess;
+  }
+  const expectedWallTime = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    hour,
+    minute,
+    0,
+    0,
+  );
+  const actualWallTime = Date.UTC(
+    guessParts.year,
+    guessParts.month - 1,
+    guessParts.day,
+    Math.floor(guessParts.minutes / 60),
+    guessParts.minutes % 60,
+    0,
+    0,
+  );
+  return new Date(guess.getTime() - (actualWallTime - expectedWallTime));
+}
+
+function previousWeekdayFlowClockParts(
+  parts: NewYorkFlowClockParts,
+): NewYorkFlowClockParts {
+  const cursor = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12));
+  for (let index = 0; index < 7; index += 1) {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    const candidate = readNewYorkFlowClockParts(cursor);
+    if (candidate && !isWeekendFlowClockDay(candidate)) {
+      return candidate;
+    }
+  }
+  return parts;
+}
+
+function coerceIbkrSnapshotFlowOccurredAt(candidate: Date): Date {
+  const parts = readNewYorkFlowClockParts(candidate);
+  if (!parts) {
+    return candidate;
+  }
+  if (isWeekendFlowClockDay(parts)) {
+    return newYorkWallTimeToUtcDate(
+      previousWeekdayFlowClockParts(parts),
+      FLOW_REGULAR_SESSION_CLOSE_MINUTES,
+    );
+  }
+  if (parts.minutes < FLOW_REGULAR_SESSION_OPEN_MINUTES) {
+    return newYorkWallTimeToUtcDate(
+      previousWeekdayFlowClockParts(parts),
+      FLOW_REGULAR_SESSION_CLOSE_MINUTES,
+    );
+  }
+  if (parts.minutes >= FLOW_REGULAR_SESSION_CLOSE_MINUTES) {
+    return newYorkWallTimeToUtcDate(parts, FLOW_REGULAR_SESSION_CLOSE_MINUTES);
+  }
+  return candidate;
+}
+
 export async function listFlowEvents(input: {
   underlying?: string;
   limit?: number;
@@ -10343,25 +11229,31 @@ export async function listFlowEvents(input: {
   maxDte?: number;
   unusualThreshold?: number;
   lineBudget?: number;
+  historicalBucketSeconds?: number;
+  from?: Date | string;
+  to?: Date | string;
   blocking?: boolean;
   queueRefresh?: boolean;
   allowPolygonFallback?: boolean;
 }): Promise<FlowEventsResult> {
   const underlying = normalizeSymbol(input.underlying ?? "");
-  const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 1_000));
   const blocking = input.blocking ?? true;
   const unusualThreshold =
     Number.isFinite(input.unusualThreshold) && (input.unusualThreshold ?? 0) > 0
       ? Math.min(100, Math.max(0.1, input.unusualThreshold as number))
       : undefined;
   const filters = normalizeFlowEventsFilters(input);
+  const timeWindow = normalizeFlowEventsTimeWindow(input);
+  const historicalBucketSeconds = normalizeHistoricalFlowSampleBucketSeconds(
+    input.historicalBucketSeconds,
+  );
   const runtimeConfig = getOptionsFlowRuntimeConfig();
   const shouldQueueRefresh = input.queueRefresh !== false;
+  const nonblockingScannerRead = !blocking && input.allowPolygonFallback !== true;
   const nonblockingScannerRefresh =
-    !blocking &&
-    shouldQueueRefresh &&
-    input.allowPolygonFallback !== true;
-  const defaultScannerLineBudget = nonblockingScannerRefresh
+    nonblockingScannerRead && shouldQueueRefresh;
+  const defaultScannerLineBudget = nonblockingScannerRead
     ? Math.max(
         1,
         Math.min(runtimeConfig.radarDeepLineBudget, runtimeConfig.scannerLineBudget),
@@ -10378,7 +11270,7 @@ export async function listFlowEvents(input: {
         )
       : null;
   const scannerLineBudget = explicitLineBudget ?? defaultScannerLineBudget;
-  const scannerLimitFloor = nonblockingScannerRefresh
+  const scannerLimitFloor = nonblockingScannerRead
     ? scannerLineBudget
     : runtimeConfig.scannerLimit;
 
@@ -10393,13 +11285,106 @@ export async function listFlowEvents(input: {
     };
   }
 
+  if (timeWindow) {
+    if (!getPolygonRuntimeConfig()) {
+      return {
+        events: [],
+        source: flowSource({
+          provider: "none",
+          status: "empty",
+          attemptedProviders: ["polygon"],
+          unusualThreshold: unusualThreshold ?? 1,
+          ibkrStatus: "empty",
+          ibkrReason: "options_flow_historical_requires_polygon",
+        }),
+      };
+    }
+
+    const cacheKey = `${underlying}:${limit}:${
+      unusualThreshold ?? "default"
+    }:${flowEventsFilterCacheKey(filters)}:${flowEventsTimeWindowCacheKey(
+      timeWindow,
+    )}:${historicalBucketSeconds ?? "default"}:historical-window`;
+    const requestedAt = Date.now();
+    let cached = flowEventsCache.get(cacheKey);
+    if (cached && !isCacheableFlowEventsResult(cached.value)) {
+      flowEventsCache.delete(cacheKey);
+      cached = undefined;
+    }
+    if (cached && cached.expiresAt > requestedAt) {
+      return cached.value;
+    }
+    const inFlight = flowEventsInFlight.get(cacheKey);
+    if (cached && cached.staleExpiresAt > requestedAt) {
+      if (!inFlight) {
+        refreshHistoricalFlowEventsCache(cacheKey, {
+          underlying,
+          limit,
+          filters,
+          unusualThreshold,
+          from: timeWindow.from,
+          to: timeWindow.to,
+          historicalBucketSeconds,
+        }).catch(() => {});
+      }
+      return cached.value;
+    }
+    if (cached) {
+      flowEventsCache.delete(cacheKey);
+    }
+    if (inFlight) {
+      if (!blocking) {
+        return listHistoricalFlowEvents({
+          underlying,
+          providerName: getMarketDataConnectionName(),
+          client: getPolygonClient(),
+          limit,
+          filters,
+          unusualThreshold,
+          from: timeWindow.from,
+          to: timeWindow.to,
+          blocking: false,
+          historicalBucketSeconds,
+        });
+      }
+      return inFlight;
+    }
+
+    if (!blocking) {
+      return listHistoricalFlowEvents({
+        underlying,
+        providerName: getMarketDataConnectionName(),
+        client: getPolygonClient(),
+        limit,
+        filters,
+        unusualThreshold,
+        from: timeWindow.from,
+        to: timeWindow.to,
+        blocking: false,
+        historicalBucketSeconds,
+      });
+    }
+
+    const refresh = refreshHistoricalFlowEventsCache(cacheKey, {
+      underlying,
+      limit,
+      filters,
+      unusualThreshold,
+      from: timeWindow.from,
+      to: timeWindow.to,
+      blocking,
+      historicalBucketSeconds,
+    });
+    return refresh;
+  }
+
   const scannerRequest = {
     limit: Math.max(limit, scannerLimitFloor),
     unusualThreshold,
     lineBudget: scannerLineBudget,
     allowPolygonFallback: input.allowPolygonFallback ?? false,
   };
-  const scannerSnapshotLimit = nonblockingScannerRefresh
+  const scannerSnapshotLimit = nonblockingScannerRead
     ? Math.max(
         1,
         Math.min(
@@ -10413,7 +11398,7 @@ export async function listFlowEvents(input: {
         limit: scannerSnapshotLimit,
         unusualThreshold,
         lineBudget: scannerRequest.lineBudget,
-        allowPartial: nonblockingScannerRefresh,
+        allowPartial: nonblockingScannerRead,
       })
     : null;
   const scannerSnapshot = isFlowScannerSnapshotAllowedForFallbackPolicy(
@@ -10618,6 +11603,69 @@ function refreshFlowEventsCache(
         },
         nextValue,
       );
+    }
+    return nextValue;
+  });
+  flowEventsInFlight.set(cacheKey, request);
+
+  request.then(
+    () => {
+      flowEventsOnDemandActive = Math.max(0, flowEventsOnDemandActive - 1);
+      flowEventsInFlight.delete(cacheKey);
+    },
+    () => {
+      flowEventsOnDemandActive = Math.max(0, flowEventsOnDemandActive - 1);
+      flowEventsInFlight.delete(cacheKey);
+    },
+  );
+  return request;
+}
+
+function refreshHistoricalFlowEventsCache(
+  cacheKey: string,
+  input: {
+    underlying: string;
+    limit: number;
+    filters: FlowEventsFilters;
+    unusualThreshold?: number;
+    from?: Date;
+    to?: Date;
+    blocking?: boolean;
+    historicalBucketSeconds?: number;
+  },
+): Promise<FlowEventsResult> {
+  const existing = flowEventsInFlight.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const cached = flowEventsCache.get(cacheKey);
+  flowEventsOnDemandActive += 1;
+  const request = listHistoricalFlowEvents({
+    underlying: input.underlying,
+    providerName: getMarketDataConnectionName(),
+    client: getPolygonClient(),
+    limit: input.limit,
+    filters: input.filters,
+    unusualThreshold: input.unusualThreshold,
+    from: input.from,
+    to: input.to,
+    blocking: input.blocking,
+    historicalBucketSeconds: input.historicalBucketSeconds,
+  }).then((value) => {
+    const settledAt = Date.now();
+    const nextValue = shouldPreserveCachedFlowEvents(cached, value, settledAt)
+      ? cached!.value
+      : value;
+    const cacheable = isCacheableFlowEventsResult(nextValue);
+    if (cacheable) {
+      flowEventsCache.set(cacheKey, {
+        value: nextValue,
+        expiresAt: settledAt + FLOW_EVENTS_CACHE_TTL_MS,
+        staleExpiresAt: settledAt + FLOW_EVENTS_CACHE_STALE_TTL_MS,
+      });
+    } else {
+      flowEventsCache.delete(cacheKey);
     }
     return nextValue;
   });
@@ -10967,7 +12015,9 @@ async function listFlowEventsUncached(input: {
       // ordering is stable even when `last` is stale or zero. The display
       // `price` still prefers the last field when available.
       const occurredAt =
-        c.dataUpdatedAt ?? c.quoteUpdatedAt ?? c.updatedAt ?? new Date();
+        coerceIbkrSnapshotFlowOccurredAt(
+          c.dataUpdatedAt ?? c.quoteUpdatedAt ?? c.updatedAt ?? new Date(),
+        );
       return {
         id: `${c.contract.ticker}-${occurredAt.getTime()}`,
         underlying: normalizeSymbol(c.contract.underlying),

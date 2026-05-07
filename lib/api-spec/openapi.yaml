@@ -1442,7 +1442,7 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 6
+            maximum: 10
         - name: candidateLimit
           in: query
           required: false
@@ -1454,10 +1454,17 @@ paths:
         - name: timeframe
           in: query
           required: false
-          description: Candidate-volume timeframe for ranking the six widgets.
+          description: Candidate-volume timeframe for ranking the widgets.
           schema:
             type: string
             enum: [today, week]
+        - name: coverageMode
+          in: query
+          required: false
+          description: Candidate universe used for premium-distribution hydration.
+          schema:
+            type: string
+            enum: [universe, ranked]
       responses:
         "200":
           description: Top options premium distribution widgets
@@ -1527,6 +1534,28 @@ paths:
             type: integer
             minimum: 1
             maximum: 150
+        - name: historicalBucketSeconds
+          in: query
+          required: false
+          description: Historical chart sampling bucket size, in seconds. Supplying a time window uses this to avoid returning multiple historical prints for the same chart candle.
+          schema:
+            type: integer
+            minimum: 60
+            maximum: 3600
+        - name: from
+          in: query
+          required: false
+          description: Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+          schema:
+            type: string
+            format: date-time
         - name: blocking
           in: query
           required: false
@@ -4705,6 +4734,109 @@ components:
       type: string
       enum: [high, medium, low, very_low, none]
 
+    FlowPremiumDistributionHydrationDiagnostics:
+      type: object
+      properties:
+        snapshotCount:
+          type: integer
+          minimum: 0
+        usablePremiumSnapshotCount:
+          type: integer
+          minimum: 0
+        usablePremiumTotal:
+          type: number
+          minimum: 0
+        selectedPremiumTotal:
+          type: number
+          minimum: 0
+        classificationTargetPremiumCoverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        selectedPremiumCoverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        pageCount:
+          type: integer
+          minimum: 0
+        snapshotTradingDate:
+          type: [string, "null"]
+          description: Latest trading date observed in the option snapshot payload.
+        tradeLookbackStartDate:
+          type: [string, "null"]
+          description: Date used as the start of option trade-print hydration.
+        quoteProbeDate:
+          type: [string, "null"]
+          description: Date used as the start of option quote entitlement probing.
+        quoteProbeStatus:
+          type: string
+          enum: [not_attempted, available, forbidden, unavailable, failed]
+        quoteProbeMessage:
+          type: [string, "null"]
+        tradeContractCandidateCount:
+          type: integer
+          minimum: 0
+        tradeContractHydratedCount:
+          type: integer
+          minimum: 0
+        tradeCallAttemptCount:
+          type: integer
+          minimum: 0
+        tradeCallSuccessCount:
+          type: integer
+          minimum: 0
+        tradeCallErrorCount:
+          type: integer
+          minimum: 0
+        tradeCallForbiddenCount:
+          type: integer
+          minimum: 0
+        eligibleTradeCount:
+          type: integer
+          minimum: 0
+        ineligibleTradeCount:
+          type: integer
+          minimum: 0
+        unknownConditionTradeCount:
+          type: integer
+          minimum: 0
+        conditionCodes:
+          type: array
+          items:
+            type: string
+        exchangeCodes:
+          type: array
+          items:
+            type: string
+        classifiedContractCoverage:
+          type: number
+      required:
+        - snapshotCount
+        - usablePremiumSnapshotCount
+        - usablePremiumTotal
+        - selectedPremiumTotal
+        - classificationTargetPremiumCoverage
+        - selectedPremiumCoverage
+        - pageCount
+        - snapshotTradingDate
+        - tradeLookbackStartDate
+        - quoteProbeDate
+        - quoteProbeStatus
+        - quoteProbeMessage
+        - tradeContractCandidateCount
+        - tradeContractHydratedCount
+        - tradeCallAttemptCount
+        - tradeCallSuccessCount
+        - tradeCallErrorCount
+        - tradeCallForbiddenCount
+        - eligibleTradeCount
+        - ineligibleTradeCount
+        - unknownConditionTradeCount
+        - conditionCodes
+        - exchangeCodes
+        - classifiedContractCoverage
+
     FlowPremiumDistributionWidget:
       type: object
       properties:
@@ -4736,6 +4868,10 @@ components:
           type: number
         classificationConfidence:
           $ref: "#/components/schemas/FlowPremiumDistributionClassificationConfidence"
+        hydrationWarning:
+          type: [string, "null"]
+        hydrationDiagnostics:
+          $ref: "#/components/schemas/FlowPremiumDistributionHydrationDiagnostics"
         netPremium:
           type: number
         inflowPremium:
@@ -4802,6 +4938,8 @@ components:
         - classifiedPremium
         - classificationCoverage
         - classificationConfidence
+        - hydrationWarning
+        - hydrationDiagnostics
         - netPremium
         - inflowPremium
         - outflowPremium
@@ -4852,6 +4990,19 @@ components:
           type: number
         classificationConfidence:
           $ref: "#/components/schemas/FlowPremiumDistributionClassificationConfidence"
+        coverageMode:
+          type: string
+          enum: [universe, ranked]
+        hydrationStatus:
+          type: string
+          enum: [complete, partial, refreshing, failed]
+        hydrationWarning:
+          type: [string, "null"]
+        hydratedSymbolCount:
+          type: integer
+          minimum: 0
+        hydrationDiagnostics:
+          $ref: "#/components/schemas/FlowPremiumDistributionHydrationDiagnostics"
         candidateDate:
           type: [string, "null"]
         candidateCount:
@@ -4879,6 +5030,11 @@ components:
         - classifiedPremium
         - classificationCoverage
         - classificationConfidence
+        - coverageMode
+        - hydrationStatus
+        - hydrationWarning
+        - hydratedSymbolCount
+        - hydrationDiagnostics
         - candidateDate
         - candidateCount
         - rankedCount

@@ -26,6 +26,11 @@ export const flowEventsTable = pgTable(
     optionContractId: uuid("option_contract_id").references(
       () => optionContractsTable.id,
     ),
+    provider: varchar("provider", { length: 32 }).notNull().default("polygon"),
+    providerEventKey: varchar("provider_event_key", { length: 192 }),
+    sourceBasis: varchar("source_basis", { length: 64 })
+      .notNull()
+      .default("confirmed_trade"),
     underlyingSymbol: varchar("underlying_symbol", { length: 64 }).notNull(),
     optionTicker: varchar("option_ticker", { length: 64 }).notNull(),
     strike: numeric("strike", { precision: 18, scale: 6 }).notNull(),
@@ -43,9 +48,52 @@ export const flowEventsTable = pgTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex("flow_events_provider_event_key_idx").on(
+      table.provider,
+      table.providerEventKey,
+    ),
+    index("flow_events_provider_idx").on(table.provider),
     index("flow_events_underlying_symbol_idx").on(table.underlyingSymbol),
+    index("flow_events_provider_symbol_occurred_idx").on(
+      table.provider,
+      table.underlyingSymbol,
+      table.occurredAt,
+    ),
     index("flow_events_option_ticker_idx").on(table.optionTicker),
     index("flow_events_occurred_at_idx").on(table.occurredAt),
+  ],
+);
+
+export const flowEventHydrationSessionsTable = pgTable(
+  "flow_event_hydration_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    underlyingSymbol: varchar("underlying_symbol", { length: 64 }).notNull(),
+    provider: varchar("provider", { length: 32 }).notNull().default("polygon"),
+    marketDate: text("market_date").notNull(),
+    windowFrom: timestamp("window_from", { withTimezone: true }).notNull(),
+    windowTo: timestamp("window_to", { withTimezone: true }).notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("pending"),
+    contractCount: integer("contract_count").notNull().default(0),
+    contractsScanned: integer("contracts_scanned").notNull().default(0),
+    eventCount: integer("event_count").notNull().default(0),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("flow_event_hydration_sessions_key_idx").on(
+      table.underlyingSymbol,
+      table.provider,
+      table.marketDate,
+    ),
+    index("flow_event_hydration_sessions_symbol_idx").on(table.underlyingSymbol),
+    index("flow_event_hydration_sessions_window_idx").on(
+      table.windowFrom,
+      table.windowTo,
+    ),
+    index("flow_event_hydration_sessions_status_idx").on(table.status),
   ],
 );
 
@@ -143,6 +191,8 @@ export const insertFlowUniverseRankingSchema = createInsertSchema(
 );
 
 export type FlowEvent = typeof flowEventsTable.$inferSelect;
+export type FlowEventHydrationSession =
+  typeof flowEventHydrationSessionsTable.$inferSelect;
 export type SavedScan = typeof savedScansTable.$inferSelect;
 export type AlertRule = typeof alertRulesTable.$inferSelect;
 export type AlertEvent = typeof alertEventsTable.$inferSelect;

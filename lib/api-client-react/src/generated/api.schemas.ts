@@ -1474,6 +1474,59 @@ export const FlowPremiumDistributionClassificationConfidence = {
   none: 'none',
 } as const;
 
+export interface FlowPremiumDistributionHydrationDiagnostics {
+  /** @minimum 0 */
+  snapshotCount: number;
+  /** @minimum 0 */
+  usablePremiumSnapshotCount: number;
+  /** @minimum 0 */
+  usablePremiumTotal: number;
+  /** @minimum 0 */
+  selectedPremiumTotal: number;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  classificationTargetPremiumCoverage: number;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  selectedPremiumCoverage: number;
+  /** @minimum 0 */
+  pageCount: number;
+  /** @nullable */
+  snapshotTradingDate: string | null;
+  /** @nullable */
+  tradeLookbackStartDate: string | null;
+  /** @nullable */
+  quoteProbeDate: string | null;
+  quoteProbeStatus: 'not_attempted' | 'available' | 'forbidden' | 'unavailable' | 'failed';
+  /** @nullable */
+  quoteProbeMessage: string | null;
+  /** @minimum 0 */
+  tradeContractCandidateCount: number;
+  /** @minimum 0 */
+  tradeContractHydratedCount: number;
+  /** @minimum 0 */
+  tradeCallAttemptCount: number;
+  /** @minimum 0 */
+  tradeCallSuccessCount: number;
+  /** @minimum 0 */
+  tradeCallErrorCount: number;
+  /** @minimum 0 */
+  tradeCallForbiddenCount: number;
+  /** @minimum 0 */
+  eligibleTradeCount: number;
+  /** @minimum 0 */
+  ineligibleTradeCount: number;
+  /** @minimum 0 */
+  unknownConditionTradeCount: number;
+  conditionCodes: string[];
+  exchangeCodes: string[];
+  classifiedContractCoverage: number;
+}
+
 export interface FlowPremiumDistributionWidget {
   /** @minimum 1 */
   rank: number;
@@ -1494,6 +1547,9 @@ export interface FlowPremiumDistributionWidget {
   classifiedPremium: number;
   classificationCoverage: number;
   classificationConfidence: FlowPremiumDistributionClassificationConfidence;
+  /** @nullable */
+  hydrationWarning: string | null;
+  hydrationDiagnostics: FlowPremiumDistributionHydrationDiagnostics;
   netPremium: number;
   inflowPremium: number;
   outflowPremium: number;
@@ -1551,6 +1607,13 @@ export interface FlowPremiumDistributionSource {
   classifiedPremium: number;
   classificationCoverage: number;
   classificationConfidence: FlowPremiumDistributionClassificationConfidence;
+  coverageMode: 'universe' | 'ranked';
+  hydrationStatus: 'complete' | 'partial' | 'refreshing' | 'failed';
+  /** @nullable */
+  hydrationWarning: string | null;
+  /** @minimum 0 */
+  hydratedSymbolCount: number;
+  hydrationDiagnostics: FlowPremiumDistributionHydrationDiagnostics;
   /** @nullable */
   candidateDate: string | null;
   /** @minimum 0 */
@@ -4265,7 +4328,7 @@ export type GetFlowPremiumDistributionParams = {
 /**
  * Number of premium distribution widgets to return.
  * @minimum 1
- * @maximum 6
+ * @maximum 10
  */
 limit?: number;
 /**
@@ -4275,9 +4338,13 @@ limit?: number;
  */
 candidateLimit?: number;
 /**
- * Candidate-volume timeframe for ranking the six widgets.
+ * Candidate-volume timeframe for ranking the widgets.
  */
 timeframe?: 'today' | 'week';
+/**
+ * Candidate universe used for premium-distribution hydration.
+ */
+coverageMode?: 'universe' | 'ranked';
 };
 
 export type ListFlowEventsParams = {
@@ -4315,6 +4382,20 @@ maxDte?: number;
  * @maximum 150
  */
 lineBudget?: number;
+/**
+ * Historical chart sampling bucket size, in seconds. Supplying a time window uses this to avoid returning multiple historical prints for the same chart candle.
+ * @minimum 60
+ * @maximum 3600
+ */
+historicalBucketSeconds?: number;
+/**
+ * Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+ */
+from?: string;
+/**
+ * Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+ */
+to?: string;
 /**
  * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
  */

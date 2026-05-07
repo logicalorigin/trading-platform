@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { FlowPremiumDistributionClassificationConfidence } from './flowPremiumDistributionClassificationConfidence';
+import type { FlowPremiumDistributionHydrationDiagnostics } from './flowPremiumDistributionHydrationDiagnostics';
 import type { FlowPremiumDistributionSourceCache } from './flowPremiumDistributionSourceCache';
 import type { FlowPremiumDistributionSourceProvider } from './flowPremiumDistributionSourceProvider';
 
@@ -21,6 +22,13 @@ export interface FlowPremiumDistributionSource {
   classifiedPremium: number;
   classificationCoverage: number;
   classificationConfidence: FlowPremiumDistributionClassificationConfidence;
+  coverageMode: 'universe' | 'ranked';
+  hydrationStatus: 'complete' | 'partial' | 'refreshing' | 'failed';
+  /** @nullable */
+  hydrationWarning: string | null;
+  /** @minimum 0 */
+  hydratedSymbolCount: number;
+  hydrationDiagnostics: FlowPremiumDistributionHydrationDiagnostics;
   /** @nullable */
   candidateDate: string | null;
   /** @minimum 0 */

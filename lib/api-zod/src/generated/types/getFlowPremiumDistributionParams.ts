@@ -10,7 +10,7 @@ export type GetFlowPremiumDistributionParams = {
 /**
  * Number of premium distribution widgets to return.
  * @minimum 1
- * @maximum 6
+ * @maximum 10
  */
 limit?: number;
 /**
@@ -20,7 +20,11 @@ limit?: number;
  */
 candidateLimit?: number;
 /**
- * Candidate-volume timeframe for ranking the six widgets.
+ * Candidate-volume timeframe for ranking the widgets.
  */
 timeframe?: 'today' | 'week';
+/**
+ * Candidate universe used for premium-distribution hydration.
+ */
+coverageMode?: 'universe' | 'ranked';
 };

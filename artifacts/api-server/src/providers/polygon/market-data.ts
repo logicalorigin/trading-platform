@@ -187,6 +187,12 @@ export type FlowEvent = {
   sourceBasis?: "confirmed_trade" | "snapshot_activity" | "fallback_estimate";
 };
 
+export type HistoricalOptionFlowEventsResult = {
+  events: FlowEvent[];
+  contractCount: number;
+  contractsScanned: number;
+};
+
 export type StockGroupedDailyAggregate = {
   symbol: string;
   volume: number;
@@ -213,6 +219,12 @@ export type PremiumDistributionDataAccess =
   | "unavailable"
   | "forbidden"
   | "unknown";
+export type PremiumDistributionQuoteProbeStatus =
+  | "not_attempted"
+  | "available"
+  | "forbidden"
+  | "unavailable"
+  | "failed";
 export type PremiumDistributionBucketName = "small" | "medium" | "large";
 export type PremiumDistributionTimeframe = "today" | "week";
 export type PremiumDistributionMarketCapTier =
@@ -237,6 +249,33 @@ export type PremiumDistributionBucket = {
   count: number;
 };
 
+export type PremiumDistributionHydrationDiagnostics = {
+  snapshotCount: number;
+  usablePremiumSnapshotCount: number;
+  usablePremiumTotal: number;
+  selectedPremiumTotal: number;
+  classificationTargetPremiumCoverage: number;
+  selectedPremiumCoverage: number;
+  pageCount: number;
+  snapshotTradingDate: string | null;
+  tradeLookbackStartDate: string | null;
+  quoteProbeDate: string | null;
+  quoteProbeStatus: PremiumDistributionQuoteProbeStatus;
+  quoteProbeMessage: string | null;
+  tradeContractCandidateCount: number;
+  tradeContractHydratedCount: number;
+  tradeCallAttemptCount: number;
+  tradeCallSuccessCount: number;
+  tradeCallErrorCount: number;
+  tradeCallForbiddenCount: number;
+  eligibleTradeCount: number;
+  ineligibleTradeCount: number;
+  unknownConditionTradeCount: number;
+  conditionCodes: string[];
+  exchangeCodes: string[];
+  classifiedContractCoverage: number;
+};
+
 export type OptionPremiumDistribution = {
   symbol: string;
   asOf: Date;
@@ -249,6 +288,8 @@ export type OptionPremiumDistribution = {
   classifiedPremium: number;
   classificationCoverage: number;
   classificationConfidence: PremiumDistributionClassificationConfidence;
+  hydrationWarning: string | null;
+  hydrationDiagnostics: PremiumDistributionHydrationDiagnostics;
   netPremium: number;
   inflowPremium: number;
   outflowPremium: number;
@@ -287,7 +328,12 @@ export type PremiumDistributionTradeClassification = {
   buyPremium: number;
   sellPremium: number;
   tradeCount: number;
+  eligibleTradeCount?: number;
+  ineligibleTradeCount?: number;
+  unknownConditionTradeCount?: number;
   tickTestMatchedCount: number;
+  conditionCodes?: string[];
+  exchangeCodes?: string[];
   buckets?: PremiumDistributionTradeBuckets;
 };
 
@@ -401,9 +447,15 @@ const OPTION_AGGREGATE_INTRADAY_LOOKBACK_MS = 10 * 24 * 60 * 60 * 1_000;
 const OPTION_FLOW_EXPIRATION_LOOKAHEAD_DAYS = 60;
 const OPTION_FLOW_SNAPSHOT_PAGE_LIMIT = 250;
 const OPTION_FLOW_SNAPSHOT_MAX_PAGES = 12;
-const OPTION_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT = 8;
-const OPTION_PREMIUM_DISTRIBUTION_TRADE_LIMIT = 250;
+const OPTION_FLOW_TRADE_CONTRACT_LIMIT = 80;
+const OPTION_FLOW_TRADE_LIMIT = 2_500;
+const OPTION_FLOW_TRADE_CONCURRENCY = 4;
+const OPTION_FLOW_TRADE_PAGE_MAX = 20;
+const OPTION_PREMIUM_DISTRIBUTION_SNAPSHOT_MAX_PAGES = 20;
+const OPTION_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT = 60;
+const OPTION_PREMIUM_DISTRIBUTION_TRADE_LIMIT = 50_000;
 const OPTION_PREMIUM_DISTRIBUTION_TRADE_CONCURRENCY = 4;
+const OPTION_QUOTE_ACCESS_PROBE_CACHE_TTL_MS = 5 * 60_000;
 
 function isIntradayTimeframe(timeframe: BarTimeframe): boolean {
   return timeframe !== "1d";
@@ -468,6 +520,16 @@ function resolveAggregateChunkWindowMs(timeframe: BarTimeframe): number {
 
 function addUtcDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1_000);
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+}
+
+function toUnixNanosecondsString(date: Date): string {
+  return (BigInt(date.getTime()) * 1_000_000n).toString();
 }
 
 function midpoint(bid: number, ask: number, fallback: number): number {
@@ -944,6 +1006,43 @@ function emptyPremiumTradeBuckets(): PremiumDistributionTradeBuckets {
   };
 }
 
+function emptyPremiumHydrationDiagnostics(): PremiumDistributionHydrationDiagnostics {
+  return {
+    snapshotCount: 0,
+    usablePremiumSnapshotCount: 0,
+    usablePremiumTotal: 0,
+    selectedPremiumTotal: 0,
+    classificationTargetPremiumCoverage: 0,
+    selectedPremiumCoverage: 0,
+    pageCount: 0,
+    snapshotTradingDate: null,
+    tradeLookbackStartDate: null,
+    quoteProbeDate: null,
+    quoteProbeStatus: "not_attempted",
+    quoteProbeMessage: null,
+    tradeContractCandidateCount: 0,
+    tradeContractHydratedCount: 0,
+    tradeCallAttemptCount: 0,
+    tradeCallSuccessCount: 0,
+    tradeCallErrorCount: 0,
+    tradeCallForbiddenCount: 0,
+    eligibleTradeCount: 0,
+    ineligibleTradeCount: 0,
+    unknownConditionTradeCount: 0,
+    conditionCodes: [],
+    exchangeCodes: [],
+    classifiedContractCoverage: 0,
+  };
+}
+
+function uniqueSorted(values: Iterable<string>): string[] {
+  return [...new Set(values)].filter(Boolean).sort();
+}
+
+function clampUnitInterval(value: number | undefined): number {
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value as number)) : 0;
+}
+
 function addPremiumToTradeBucket(input: {
   buckets: PremiumDistributionTradeBuckets;
   thresholds: PremiumDistributionBucketThresholds;
@@ -1041,6 +1140,73 @@ function readOptionSnapshotSharesPerContract(snapshot: unknown): number {
     asNumber(details?.["multiplier"]) ??
     100;
   return sharesPerContract > 0 ? sharesPerContract : 100;
+}
+
+function readOptionSnapshotUnderlyingPrice(snapshot: unknown): number | null {
+  const record = asRecord(snapshot);
+  const underlyingAsset = asRecord(record?.["underlying_asset"]);
+  const price =
+    firstDefined(
+      asNumber(record?.["underlying_price"]),
+      asNumber(record?.["underlyingPrice"]),
+      asNumber(underlyingAsset?.["price"]),
+      asNumber(underlyingAsset?.["last_price"]),
+    ) ?? null;
+  return price !== null && price > 0 ? price : null;
+}
+
+function syntheticSnapshotFromHistoricalContract(
+  contract: HistoricalOptionContract,
+  underlyingPrice: number | null,
+): unknown {
+  return {
+    details: {
+      ticker: contract.ticker,
+      underlying_ticker: contract.underlying,
+      expiration_date: contract.expirationDate,
+      strike_price: contract.strike,
+      contract_type: contract.right,
+      shares_per_contract: contract.sharesPerContract,
+      multiplier: contract.multiplier,
+    },
+    open_interest: 0,
+    underlying_price: underlyingPrice,
+  };
+}
+
+function latestDate(values: Iterable<Date | null>): Date | null {
+  let latest: Date | null = null;
+  for (const value of values) {
+    if (!value || Number.isNaN(value.getTime())) continue;
+    if (!latest || value.getTime() > latest.getTime()) {
+      latest = value;
+    }
+  }
+  return latest;
+}
+
+function deriveOptionSnapshotTradingDate(
+  snapshots: unknown[],
+  fallback: Date,
+): Date {
+  const dayDates: Array<Date | null> = [];
+  const tradeDates: Array<Date | null> = [];
+
+  snapshots.forEach((snapshot) => {
+    const record = asRecord(snapshot);
+    const day = asRecord(record?.["day"]);
+    const lastTrade = asRecord(record?.["last_trade"]);
+    dayDates.push(toDate(getNumberPath(day, ["last_updated"])));
+    tradeDates.push(
+      firstDefined(
+        toDate(getNumberPath(lastTrade, ["sip_timestamp"])),
+        toDate(getNumberPath(lastTrade, ["participant_timestamp"])),
+        toDate(getNumberPath(lastTrade, ["t"])),
+      ),
+    );
+  });
+
+  return latestDate(dayDates) ?? latestDate(tradeDates) ?? fallback;
 }
 
 function clampClassifiedPremium(
@@ -1275,6 +1441,34 @@ export function resolvePremiumDistributionClassificationConfidence(input: {
   return "high";
 }
 
+function buildPremiumDistributionHydrationWarning(input: {
+  classificationConfidence: PremiumDistributionClassificationConfidence;
+  classificationCoverage: number;
+  quoteAccess: PremiumDistributionDataAccess;
+  tradeAccess: PremiumDistributionDataAccess;
+}): string | null {
+  if (input.quoteAccess === "forbidden" && input.tradeAccess === "forbidden") {
+    return "Option quote-match and option trades are unavailable from the current Polygon/Massive endpoints; totals are hydrated but side split is unavailable.";
+  }
+  if (input.quoteAccess === "forbidden") {
+    return "Option quote-match data is unavailable from the current Polygon/Massive endpoint; side split uses option trade tick-test.";
+  }
+  if (input.tradeAccess === "forbidden") {
+    return "Option trades are unavailable from the current Polygon/Massive endpoint; side split is unavailable.";
+  }
+  if (
+    input.classificationConfidence === "none" ||
+    input.classificationConfidence === "very_low"
+  ) {
+    const percent =
+      input.classificationCoverage > 0 && input.classificationCoverage < 0.01
+        ? "<1%"
+        : `${Math.round(input.classificationCoverage * 100)}%`;
+    return `${percent} trade-classified; totals are hydrated but side split is uncertain.`;
+  }
+  return null;
+}
+
 type OptionPremiumTradePrint = {
   price: number;
   size: number;
@@ -1283,6 +1477,13 @@ type OptionPremiumTradePrint = {
   conditionCodes: string[];
   exchange: string | null;
 };
+
+type OptionTradeConditionMetadata = {
+  updatesVolume: boolean | null;
+  name: string | null;
+};
+
+type OptionTradeConditionMap = ReadonlyMap<string, OptionTradeConditionMetadata>;
 
 function mapOptionPremiumTradePrint(result: unknown): OptionPremiumTradePrint | null {
   const record = asRecord(result);
@@ -1332,10 +1533,34 @@ function mapOptionPremiumTradePrint(result: unknown): OptionPremiumTradePrint | 
   };
 }
 
+function optionTradePrintEligibility(
+  trade: OptionPremiumTradePrint,
+  conditionMetadata?: OptionTradeConditionMap,
+): { eligible: boolean; unknownCondition: boolean } {
+  if (!conditionMetadata || !trade.conditionCodes.length) {
+    return { eligible: true, unknownCondition: false };
+  }
+
+  let unknownCondition = false;
+  for (const code of trade.conditionCodes) {
+    const condition = conditionMetadata.get(code);
+    if (!condition) {
+      unknownCondition = true;
+      continue;
+    }
+    if (condition.updatesVolume === false) {
+      return { eligible: false, unknownCondition };
+    }
+  }
+
+  return { eligible: true, unknownCondition };
+}
+
 function classifyOptionPremiumTradePrints(input: {
   trades: unknown[];
   sharesPerContract: number;
   bucketThresholds: PremiumDistributionBucketThresholds;
+  conditionMetadata?: OptionTradeConditionMap;
 }): PremiumDistributionTradeClassification {
   const trades = compact(input.trades.map(mapOptionPremiumTradePrint)).sort(
     (left, right) => {
@@ -1351,9 +1576,29 @@ function classifyOptionPremiumTradePrints(input: {
   let buyPremium = 0;
   let sellPremium = 0;
   let tickTestMatchedCount = 0;
+  let eligibleTradeCount = 0;
+  let ineligibleTradeCount = 0;
+  let unknownConditionTradeCount = 0;
+  const conditionCodes = new Set<string>();
+  const exchangeCodes = new Set<string>();
   const buckets = emptyPremiumTradeBuckets();
 
   trades.forEach((trade) => {
+    trade.conditionCodes.forEach((code) => conditionCodes.add(code));
+    if (trade.exchange) exchangeCodes.add(trade.exchange);
+    const eligibility = optionTradePrintEligibility(
+      trade,
+      input.conditionMetadata,
+    );
+    if (!eligibility.eligible) {
+      ineligibleTradeCount += 1;
+      return;
+    }
+    eligibleTradeCount += 1;
+    if (eligibility.unknownCondition) {
+      unknownConditionTradeCount += 1;
+    }
+
     let side: PremiumDistributionSide = "neutral";
     if (previousPrice !== null) {
       if (trade.price > previousPrice) {
@@ -1395,7 +1640,12 @@ function classifyOptionPremiumTradePrints(input: {
     buyPremium,
     sellPremium,
     tradeCount: trades.length,
+    eligibleTradeCount,
+    ineligibleTradeCount,
+    unknownConditionTradeCount,
     tickTestMatchedCount,
+    conditionCodes: uniqueSorted(conditionCodes),
+    exchangeCodes: uniqueSorted(exchangeCodes),
     buckets,
   };
 }
@@ -1439,7 +1689,9 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
   marketCap?: number | null;
   asOf?: Date;
   delayed?: boolean;
+  quoteAccess?: PremiumDistributionDataAccess;
   tradeAccess?: PremiumDistributionDataAccess;
+  hydrationDiagnostics?: Partial<PremiumDistributionHydrationDiagnostics>;
   pageCount?: number;
 }): OptionPremiumDistribution {
   const marketCap =
@@ -1459,6 +1711,12 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
   let quoteMatchedCount = 0;
   let tickTestMatchedCount = 0;
   let quoteSampleCount = 0;
+  let eligibleTradeCount = 0;
+  let ineligibleTradeCount = 0;
+  let unknownConditionTradeCount = 0;
+  let tradeContractHydratedCount = 0;
+  const conditionCodes = new Set<string>();
+  const exchangeCodes = new Set<string>();
 
   input.snapshots.forEach((snapshot) => {
     const ticker = readOptionSnapshotTicker(snapshot);
@@ -1478,6 +1736,25 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
     quoteMatchedCount += premium.quoteMatchedCount;
     tickTestMatchedCount += premium.tickTestMatchedCount;
     if (premium.hasQuote) quoteSampleCount += 1;
+    const tradeClassification = ticker
+      ? input.tradeClassifications?.get(ticker)
+      : undefined;
+    if (tradeClassification) {
+      if (tradeClassification.tradeCount > 0) {
+        tradeContractHydratedCount += 1;
+      }
+      eligibleTradeCount +=
+        tradeClassification.eligibleTradeCount ?? tradeClassification.tradeCount;
+      ineligibleTradeCount += tradeClassification.ineligibleTradeCount ?? 0;
+      unknownConditionTradeCount +=
+        tradeClassification.unknownConditionTradeCount ?? 0;
+      tradeClassification.conditionCodes?.forEach((code) =>
+        conditionCodes.add(code),
+      );
+      tradeClassification.exchangeCodes?.forEach((code) =>
+        exchangeCodes.add(code),
+      );
+    }
 
     premiumTotal += premium.totalPremium;
     if (premium.right === "call") callPremium += premium.totalPremium;
@@ -1516,7 +1793,8 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
   const classificationCoverage =
     premiumTotal > 0 ? classifiedPremium / premiumTotal : 0;
   const quoteAccess: PremiumDistributionDataAccess =
-    quoteSampleCount > 0 ? "available" : "unavailable";
+    input.quoteAccess ??
+    (quoteSampleCount > 0 ? "available" : "unavailable");
   const tradeAccess: PremiumDistributionDataAccess =
     input.tradeAccess ?? (tradeCount > 0 ? "available" : "unavailable");
   const classificationConfidence =
@@ -1526,6 +1804,57 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
       quoteAccess,
       tradeAccess,
     });
+  const hydrationDiagnostics: PremiumDistributionHydrationDiagnostics = {
+    ...emptyPremiumHydrationDiagnostics(),
+    ...input.hydrationDiagnostics,
+    snapshotCount: input.snapshots.length,
+    usablePremiumSnapshotCount: contractCount,
+    usablePremiumTotal:
+      input.hydrationDiagnostics?.usablePremiumTotal ?? premiumTotal,
+    selectedPremiumTotal:
+      input.hydrationDiagnostics?.selectedPremiumTotal ?? 0,
+    classificationTargetPremiumCoverage:
+      input.hydrationDiagnostics?.classificationTargetPremiumCoverage ?? 0,
+    selectedPremiumCoverage:
+      input.hydrationDiagnostics?.selectedPremiumCoverage ??
+      (premiumTotal > 0
+        ? Math.min(
+            1,
+            Math.max(0, input.hydrationDiagnostics?.selectedPremiumTotal ?? 0) /
+              premiumTotal,
+          )
+        : 0),
+    pageCount: Math.max(0, Math.floor(input.pageCount ?? 0)),
+    tradeContractHydratedCount:
+      input.hydrationDiagnostics?.tradeContractHydratedCount ??
+      tradeContractHydratedCount,
+    eligibleTradeCount:
+      input.hydrationDiagnostics?.eligibleTradeCount ?? eligibleTradeCount,
+    ineligibleTradeCount:
+      input.hydrationDiagnostics?.ineligibleTradeCount ?? ineligibleTradeCount,
+    unknownConditionTradeCount:
+      input.hydrationDiagnostics?.unknownConditionTradeCount ??
+      unknownConditionTradeCount,
+    conditionCodes: uniqueSorted([
+      ...(input.hydrationDiagnostics?.conditionCodes ?? []),
+      ...conditionCodes,
+    ]),
+    exchangeCodes: uniqueSorted([
+      ...(input.hydrationDiagnostics?.exchangeCodes ?? []),
+      ...exchangeCodes,
+    ]),
+    classifiedContractCoverage:
+      contractCount > 0
+        ? Math.min(contractCount, quoteMatchedCount + tradeContractHydratedCount) /
+          contractCount
+        : 0,
+  };
+  const hydrationWarning = buildPremiumDistributionHydrationWarning({
+    classificationConfidence,
+    classificationCoverage,
+    quoteAccess,
+    tradeAccess,
+  });
 
   return {
     symbol: normalizeSymbol(input.underlying),
@@ -1539,6 +1868,8 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
     classifiedPremium,
     classificationCoverage,
     classificationConfidence,
+    hydrationWarning,
+    hydrationDiagnostics,
     netPremium: buyPremium - sellPremium,
     inflowPremium: buyPremium,
     outflowPremium: sellPremium,
@@ -1892,6 +2223,19 @@ export class PolygonMarketDataClient {
     string,
     { expiresAt: number; marketCap: number | null }
   >();
+  private optionTradeConditionMetadataCache:
+    | { expiresAt: number; value: Map<string, OptionTradeConditionMetadata> }
+    | null = null;
+  private optionQuoteAccessProbeCache:
+    | {
+        expiresAt: number;
+        status: Extract<
+          PremiumDistributionQuoteProbeStatus,
+          "available" | "forbidden"
+        >;
+        message: string | null;
+      }
+    | null = null;
 
   constructor(private readonly config: PolygonRuntimeConfig) {}
 
@@ -2472,30 +2816,176 @@ export class PolygonMarketDataClient {
   private async fetchOptionTradePrints(input: {
     optionTicker: string;
     since: Date;
+    until?: Date;
+    limit?: number;
+    exactWindow?: boolean;
+    maxPages?: number;
     signal?: AbortSignal;
   }): Promise<unknown[]> {
-    const payload = await this.fetchJson<unknown>(
-      this.buildUrl(`/v3/trades/${encodeURIComponent(input.optionTicker)}`, {
-        "timestamp.gte": toIsoDateString(input.since),
-        order: "asc",
-        sort: "timestamp",
-        limit: OPTION_PREMIUM_DISTRIBUTION_TRADE_LIMIT,
-      }),
-      { signal: input.signal },
+    const params: Record<string, string | number | undefined> = {
+      "timestamp.gte": input.exactWindow
+        ? toUnixNanosecondsString(input.since)
+        : toIsoDateString(input.since),
+      order: "asc",
+      sort: "timestamp",
+      limit: Math.max(
+        1,
+        Math.min(input.limit ?? OPTION_PREMIUM_DISTRIBUTION_TRADE_LIMIT, 50_000),
+      ),
+    };
+    if (input.until) {
+      params["timestamp.lte"] = input.exactWindow
+        ? toUnixNanosecondsString(input.until)
+        : toIsoDateString(input.until);
+    }
+    const results: unknown[] = [];
+    let nextUrl: string | null = this.buildUrl(
+      `/v3/trades/${encodeURIComponent(input.optionTicker)}`,
+      params,
+    ).toString();
+    const maxPages = Math.max(
+      1,
+      Math.min(input.maxPages ?? OPTION_FLOW_TRADE_PAGE_MAX, 100),
     );
-    const record = asRecord(payload);
-    return asArray(record?.["results"]);
+    let pageCount = 0;
+
+    while (nextUrl && pageCount < maxPages) {
+      const payload = await this.fetchJson<unknown>(nextUrl, {
+        signal: input.signal,
+      });
+      const record = asRecord(payload);
+      results.push(...asArray(record?.["results"]));
+      const rawNextUrl = asString(record?.["next_url"]);
+      nextUrl = rawNextUrl ? this.buildUrl(rawNextUrl).toString() : null;
+      pageCount += 1;
+    }
+
+    return results;
+  }
+
+  private async probeOptionQuoteAccess(input: {
+    optionTicker: string | null;
+    since: Date;
+    signal?: AbortSignal;
+  }): Promise<{
+    status: PremiumDistributionQuoteProbeStatus;
+    message: string | null;
+  }> {
+    if (!input.optionTicker) {
+      return { status: "not_attempted", message: null };
+    }
+
+    const cached = this.optionQuoteAccessProbeCache;
+    if (cached && cached.expiresAt > Date.now()) {
+      return { status: cached.status, message: cached.message };
+    }
+
+    try {
+      const payload = await this.fetchJson<unknown>(
+        this.buildUrl(`/v3/quotes/${encodeURIComponent(input.optionTicker)}`, {
+          "timestamp.gte": toIsoDateString(input.since),
+          order: "desc",
+          sort: "timestamp",
+          limit: 1,
+        }),
+        { signal: input.signal },
+      );
+      const record = asRecord(payload);
+      const status = asArray(record?.["results"]).length
+        ? "available"
+        : "unavailable";
+      if (status === "available") {
+        this.optionQuoteAccessProbeCache = {
+          expiresAt: Date.now() + OPTION_QUOTE_ACCESS_PROBE_CACHE_TTL_MS,
+          status,
+          message: null,
+        };
+      }
+      return {
+        status,
+        message: null,
+      };
+    } catch (error) {
+      if (isHttpStatus(error, 403)) {
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "Option quotes are not available for this Polygon/Massive plan.";
+        this.optionQuoteAccessProbeCache = {
+          expiresAt: Date.now() + OPTION_QUOTE_ACCESS_PROBE_CACHE_TTL_MS,
+          status: "forbidden",
+          message,
+        };
+        return {
+          status: "forbidden",
+          message,
+        };
+      }
+      return {
+        status: "failed",
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Option quote probe failed.",
+      };
+    }
+  }
+
+  private async fetchOptionTradeConditionMetadata(
+    signal?: AbortSignal,
+  ): Promise<Map<string, OptionTradeConditionMetadata> | undefined> {
+    const cached = this.optionTradeConditionMetadataCache;
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    try {
+      const payload = await this.fetchJson<unknown>(
+        this.buildUrl("/v3/reference/conditions", {
+          asset_class: "options",
+          data_type: "trade",
+          limit: 1_000,
+        }),
+        { signal },
+      );
+      const conditionMetadata = new Map<string, OptionTradeConditionMetadata>();
+      asArray(asRecord(payload)?.["results"]).forEach((result) => {
+        const record = asRecord(result);
+        if (!record) return;
+        const id = asString(record["id"]);
+        if (!id) return;
+        const updateRules =
+          asRecord(record["update_rules"]) ?? asRecord(record["updateRules"]);
+        const consolidated = asRecord(updateRules?.["consolidated"]);
+        const updatesVolume = consolidated?.["updates_volume"];
+        conditionMetadata.set(id, {
+          updatesVolume:
+            typeof updatesVolume === "boolean" ? updatesVolume : null,
+          name: asString(record["name"]),
+        });
+      });
+      this.optionTradeConditionMetadataCache = {
+        expiresAt: Date.now() + 24 * 60 * 60_000,
+        value: conditionMetadata,
+      };
+      return conditionMetadata;
+    } catch {
+      return undefined;
+    }
   }
 
   private async fetchOptionPremiumTradeClassifications(input: {
     snapshots: unknown[];
-    timeframe: PremiumDistributionTimeframe;
     bucketThresholds: PremiumDistributionBucketThresholds;
-    now: Date;
+    tradeLookbackStart: Date;
+    contractLimit?: number;
+    premiumCoverageTarget?: number;
+    tradeLimit?: number;
     signal?: AbortSignal;
   }): Promise<{
     tradeClassifications: Map<string, PremiumDistributionTradeClassification>;
     tradeAccess: PremiumDistributionDataAccess;
+    hydrationDiagnostics: Partial<PremiumDistributionHydrationDiagnostics>;
   }> {
     const candidatesByTicker = new Map<
       string,
@@ -2523,21 +3013,65 @@ export class PolygonMarketDataClient {
       }
     });
 
-    const candidates = [...candidatesByTicker.values()]
-      .sort((left, right) => right.totalPremium - left.totalPremium)
-      .slice(0, OPTION_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT);
+    const allCandidates = [...candidatesByTicker.values()].sort(
+      (left, right) => right.totalPremium - left.totalPremium,
+    );
+    const usablePremiumTotal = allCandidates.reduce(
+      (sum, candidate) => sum + candidate.totalPremium,
+      0,
+    );
+    const contractLimit = Math.max(
+      1,
+      Math.min(
+        input.contractLimit ?? OPTION_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT,
+        allCandidates.length,
+      ),
+    );
+    const premiumCoverageTarget = clampUnitInterval(input.premiumCoverageTarget);
+    let selectedPremiumTotal = 0;
+    const candidates: Array<{
+      ticker: string;
+      sharesPerContract: number;
+      totalPremium: number;
+    }> = [];
+
+    for (const candidate of allCandidates) {
+      if (candidates.length >= contractLimit) break;
+      candidates.push(candidate);
+      selectedPremiumTotal += candidate.totalPremium;
+      if (
+        premiumCoverageTarget > 0 &&
+        usablePremiumTotal > 0 &&
+        selectedPremiumTotal / usablePremiumTotal >= premiumCoverageTarget
+      ) {
+        break;
+      }
+    }
+
+    const selectedPremiumCoverage =
+      usablePremiumTotal > 0 ? selectedPremiumTotal / usablePremiumTotal : 0;
 
     if (!candidates.length) {
       return {
         tradeClassifications: new Map(),
         tradeAccess: "unavailable",
+        hydrationDiagnostics: {
+          tradeContractCandidateCount: 0,
+          tradeContractHydratedCount: 0,
+          usablePremiumTotal,
+          selectedPremiumTotal: 0,
+          classificationTargetPremiumCoverage: premiumCoverageTarget,
+          selectedPremiumCoverage: 0,
+        },
       };
     }
 
-    const since =
-      input.timeframe === "week" ? addUtcDays(input.now, -7) : input.now;
+    const conditionMetadata = await this.fetchOptionTradeConditionMetadata(
+      input.signal,
+    );
     let forbiddenCount = 0;
     let errorCount = 0;
+    let successCount = 0;
     const summaries = await mapWithLocalConcurrency(
       candidates,
       OPTION_PREMIUM_DISTRIBUTION_TRADE_CONCURRENCY,
@@ -2545,15 +3079,18 @@ export class PolygonMarketDataClient {
         try {
           const trades = await this.fetchOptionTradePrints({
             optionTicker: candidate.ticker,
-            since,
+            since: input.tradeLookbackStart,
+            limit: input.tradeLimit,
             signal: input.signal,
           });
+          successCount += 1;
           return {
             ticker: candidate.ticker,
             summary: classifyOptionPremiumTradePrints({
               trades,
               sharesPerContract: candidate.sharesPerContract,
               bucketThresholds: input.bucketThresholds,
+              conditionMetadata,
             }),
           };
         } catch (error) {
@@ -2576,6 +3113,18 @@ export class PolygonMarketDataClient {
         tradeClassifications.set(entry.ticker, entry.summary);
       }
     });
+    const conditionCodes = new Set<string>();
+    const exchangeCodes = new Set<string>();
+    let eligibleTradeCount = 0;
+    let ineligibleTradeCount = 0;
+    let unknownConditionTradeCount = 0;
+    tradeClassifications.forEach((summary) => {
+      eligibleTradeCount += summary.eligibleTradeCount ?? summary.tradeCount;
+      ineligibleTradeCount += summary.ineligibleTradeCount ?? 0;
+      unknownConditionTradeCount += summary.unknownConditionTradeCount ?? 0;
+      summary.conditionCodes?.forEach((code) => conditionCodes.add(code));
+      summary.exchangeCodes?.forEach((code) => exchangeCodes.add(code));
+    });
 
     return {
       tradeClassifications,
@@ -2585,6 +3134,23 @@ export class PolygonMarketDataClient {
           : forbiddenCount > 0 && forbiddenCount >= candidates.length - errorCount
             ? "forbidden"
             : "unavailable",
+      hydrationDiagnostics: {
+        tradeContractCandidateCount: candidates.length,
+        tradeContractHydratedCount: tradeClassifications.size,
+        usablePremiumTotal,
+        selectedPremiumTotal,
+        classificationTargetPremiumCoverage: premiumCoverageTarget,
+        selectedPremiumCoverage,
+        tradeCallAttemptCount: candidates.length,
+        tradeCallSuccessCount: successCount,
+        tradeCallErrorCount: errorCount,
+        tradeCallForbiddenCount: forbiddenCount,
+        eligibleTradeCount,
+        ineligibleTradeCount,
+        unknownConditionTradeCount,
+        conditionCodes: uniqueSorted(conditionCodes),
+        exchangeCodes: uniqueSorted(exchangeCodes),
+      },
     };
   }
 
@@ -2625,6 +3191,7 @@ export class PolygonMarketDataClient {
     expirationDateLte?: Date;
     contractType?: OptionRight;
     limit?: number;
+    maxPages?: number;
   }): Promise<HistoricalOptionContract[]> {
     const underlying = normalizeSymbol(input.underlying);
     const fetchContracts = async (
@@ -2649,9 +3216,10 @@ export class PolygonMarketDataClient {
         },
       ).toString();
       const contracts: HistoricalOptionContract[] = [];
+      const maxPages = Math.max(1, Math.min(input.maxPages ?? 100, 500));
       let pageCount = 0;
 
-      while (nextUrl && pageCount < 10) {
+      while (nextUrl && pageCount < maxPages) {
         const page = await this.fetchChainPage(nextUrl);
         contracts.push(
           ...compact(
@@ -2675,10 +3243,154 @@ export class PolygonMarketDataClient {
     return [...byTicker.values()];
   }
 
+  async getHistoricalOptionFlowEvents(input: {
+    underlying: string;
+    from: Date;
+    to: Date;
+    unusualThreshold?: number;
+    maxDte?: number | null;
+    tradeConcurrency?: number;
+    contractPageLimit?: number;
+    tradePageLimit?: number;
+    signal?: AbortSignal;
+    onEvents?: (events: FlowEvent[]) => void | Promise<void>;
+  }): Promise<HistoricalOptionFlowEventsResult> {
+    const underlying = normalizeSymbol(input.underlying);
+    const from = input.from;
+    const to = input.to;
+    if (
+      !underlying ||
+      Number.isNaN(from.getTime()) ||
+      Number.isNaN(to.getTime()) ||
+      from.getTime() > to.getTime()
+    ) {
+      return { events: [], contractCount: 0, contractsScanned: 0 };
+    }
+
+    const expirationDateLte =
+      typeof input.maxDte === "number" &&
+      Number.isFinite(input.maxDte) &&
+      input.maxDte >= 0
+        ? addUtcDays(startOfUtcDay(from), Math.floor(input.maxDte))
+        : undefined;
+    const contracts = await this.getHistoricalOptionContracts({
+      underlying,
+      asOf: from,
+      expirationDateGte: startOfUtcDay(from),
+      expirationDateLte,
+      limit: 1_000,
+      maxPages: input.contractPageLimit,
+    });
+    if (!contracts.length) {
+      return { events: [], contractCount: 0, contractsScanned: 0 };
+    }
+
+    const conditionMetadata = await this.fetchOptionTradeConditionMetadata();
+    const eventsById = new Map<string, FlowEvent>();
+    const concurrency = Math.max(
+      1,
+      Math.min(input.tradeConcurrency ?? OPTION_FLOW_TRADE_CONCURRENCY, 16),
+    );
+    const summaries = await mapWithLocalConcurrency(
+      contracts,
+      concurrency,
+      async (contract) => {
+        try {
+          const rawTrades = await this.fetchOptionTradePrints({
+            optionTicker: contract.ticker,
+            since: from,
+            until: to,
+            limit: 50_000,
+            maxPages: input.tradePageLimit,
+            exactWindow: true,
+            signal: input.signal,
+          });
+          const events = compact(rawTrades.map((trade) => mapOptionPremiumTradePrint(trade)))
+            .flatMap((trade) => {
+              const timestamp = trade.occurredAt.getTime();
+              if (timestamp < from.getTime() || timestamp > to.getTime()) {
+                return [];
+              }
+              if (!optionTradePrintEligibility(trade, conditionMetadata).eligible) {
+                return [];
+              }
+
+              const snapshotRecord = asRecord(
+                syntheticSnapshotFromHistoricalContract(contract, null),
+              );
+              if (!snapshotRecord) {
+                return [];
+              }
+              const event = mapFlowEvent(
+                underlying,
+                {
+                  ...snapshotRecord,
+                  last_trade: {
+                    price: trade.price,
+                    size: trade.size,
+                    sip_timestamp: trade.occurredAt.getTime(),
+                    conditions: trade.conditionCodes,
+                    exchange: trade.exchange,
+                  },
+                },
+                input.unusualThreshold,
+              );
+              if (!event) {
+                return [];
+              }
+
+              const id = `${event.optionTicker}-${trade.occurredAt.getTime()}-${
+                trade.sequenceNumber ?? "trade"
+              }-${trade.price}-${trade.size}`;
+              return [
+                {
+                  ...event,
+                  id,
+                  exchange: trade.exchange ?? event.exchange,
+                  tradeConditions: trade.conditionCodes,
+                  confidence: "confirmed_trade" as const,
+                  sourceBasis: "confirmed_trade" as const,
+                },
+              ];
+            });
+          if (events.length > 0) {
+            await input.onEvents?.(events);
+          }
+          return {
+            contract,
+            events,
+          };
+        } catch {
+          return null;
+        }
+      },
+    );
+
+    summaries.forEach((summary) => {
+      summary?.events.forEach((event) => {
+        eventsById.set(event.id, event);
+      });
+    });
+
+    return {
+      events: [...eventsById.values()].sort((left, right) => {
+        const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
+        if (timeDelta !== 0) {
+          return timeDelta;
+        }
+        return right.premium - left.premium;
+      }),
+      contractCount: contracts.length,
+      contractsScanned: summaries.filter(Boolean).length,
+    };
+  }
+
   async getDerivedFlowEvents(input: {
     underlying: string;
     limit?: number;
     unusualThreshold?: number;
+    from?: Date;
+    to?: Date;
   }): Promise<FlowEvent[]> {
     const underlying = normalizeSymbol(input.underlying);
     const limit = Math.max(1, Math.min(input.limit ?? 50, 250));
@@ -2695,8 +3407,8 @@ export class PolygonMarketDataClient {
         limit: OPTION_FLOW_SNAPSHOT_PAGE_LIMIT,
       },
     ).toString();
-	    const results: unknown[] = [];
-	    let pageCount = 0;
+    const results: unknown[] = [];
+    let pageCount = 0;
 
     while (nextUrl && pageCount < OPTION_FLOW_SNAPSHOT_MAX_PAGES) {
       const page = await this.fetchChainPage(nextUrl);
@@ -2717,6 +3429,17 @@ export class PolygonMarketDataClient {
       const payload = await this.fetchJson<unknown>(fallbackUrl);
       const record = asRecord(payload);
       results.push(...asArray(record?.["results"]));
+    }
+
+    if (input.from || input.to) {
+      return this.getHistoricalDerivedFlowEvents({
+        underlying,
+        snapshots: results,
+        from: input.from,
+        to: input.to ?? now,
+        limit,
+        unusualThreshold: input.unusualThreshold,
+      });
     }
 
     return compact(
@@ -2766,6 +3489,194 @@ export class PolygonMarketDataClient {
       .map(({ event }) => event);
   }
 
+  private async getHistoricalDerivedFlowEvents(input: {
+    underlying: string;
+    snapshots: unknown[];
+    from?: Date;
+    to: Date;
+    limit: number;
+    unusualThreshold?: number;
+  }): Promise<FlowEvent[]> {
+    const to = input.to;
+    const from = input.from ?? addUtcDays(to, -2);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return [];
+    }
+    if (from.getTime() > to.getTime()) {
+      return [];
+    }
+
+    const candidates = input.snapshots
+      .map((snapshot) => {
+        const ticker = readOptionSnapshotTicker(snapshot);
+        if (!ticker) {
+          return null;
+        }
+        const premium =
+          getOptionSnapshotPremium(snapshot)?.totalPremium ??
+          mapFlowEvent(input.underlying, snapshot, input.unusualThreshold)?.premium ??
+          0;
+        return { ticker, snapshot, premium };
+      })
+      .filter(
+        (candidate): candidate is { ticker: string; snapshot: unknown; premium: number } =>
+          candidate !== null,
+      )
+      .sort((left, right) => right.premium - left.premium);
+
+    const anchorPrice =
+      input.snapshots
+        .map((snapshot) => readOptionSnapshotUnderlyingPrice(snapshot))
+        .find((price): price is number => price !== null) ?? null;
+    const snapshotSeedLimit = Math.max(
+      1,
+      Math.floor(OPTION_FLOW_TRADE_CONTRACT_LIMIT / 2),
+    );
+    const candidatesByTicker = new Map<
+      string,
+      { ticker: string; snapshot: unknown; premium: number }
+    >();
+    const addCandidate = (candidate: {
+      ticker: string;
+      snapshot: unknown;
+      premium: number;
+    }) => {
+      if (!candidatesByTicker.has(candidate.ticker)) {
+        candidatesByTicker.set(candidate.ticker, candidate);
+      }
+    };
+    candidates.slice(0, snapshotSeedLimit).forEach(addCandidate);
+
+    try {
+      const historicalContracts = await this.getHistoricalOptionContracts({
+        underlying: input.underlying,
+        asOf: from,
+        expirationDateGte: startOfUtcDay(from),
+        expirationDateLte: addUtcDays(
+          startOfUtcDay(to),
+          OPTION_FLOW_EXPIRATION_LOOKAHEAD_DAYS,
+        ),
+        limit: 1_000,
+      });
+      historicalContracts
+        .map((contract) => ({
+          ticker: contract.ticker,
+          snapshot: syntheticSnapshotFromHistoricalContract(contract, anchorPrice),
+          premium: 0,
+          expirationTime: contract.expirationDate.getTime(),
+          distance:
+            anchorPrice !== null
+              ? Math.abs(contract.strike - anchorPrice) / anchorPrice
+              : Number.POSITIVE_INFINITY,
+          strike: contract.strike,
+          right: contract.right,
+        }))
+        .sort(
+          (left, right) =>
+            left.expirationTime - right.expirationTime ||
+            left.distance - right.distance ||
+            left.strike - right.strike ||
+            left.right.localeCompare(right.right),
+        )
+        .slice(0, OPTION_FLOW_TRADE_CONTRACT_LIMIT - candidatesByTicker.size)
+        .forEach(addCandidate);
+    } catch {
+      // Current snapshots still provide historical trade hydration for active contracts.
+    }
+
+    candidates.forEach((candidate) => {
+      if (candidatesByTicker.size < OPTION_FLOW_TRADE_CONTRACT_LIMIT) {
+        addCandidate(candidate);
+      }
+    });
+
+    const candidatesForTrades = [...candidatesByTicker.values()];
+
+    if (!candidatesForTrades.length) {
+      return [];
+    }
+
+    const conditionMetadata = await this.fetchOptionTradeConditionMetadata();
+    const eventsById = new Map<string, FlowEvent>();
+    const summaries = await mapWithLocalConcurrency(
+      candidatesForTrades,
+      OPTION_FLOW_TRADE_CONCURRENCY,
+      async (candidate) => {
+        try {
+          const rawTrades = await this.fetchOptionTradePrints({
+            optionTicker: candidate.ticker,
+            since: from,
+            until: to,
+            limit: OPTION_FLOW_TRADE_LIMIT,
+            exactWindow: true,
+          });
+          return {
+            candidate,
+            trades: compact(rawTrades.map((trade) => mapOptionPremiumTradePrint(trade))),
+          };
+        } catch {
+          return null;
+        }
+      },
+    );
+
+    summaries.forEach((summary) => {
+      summary?.trades.forEach((trade) => {
+        const timestamp = trade.occurredAt.getTime();
+        if (timestamp < from.getTime() || timestamp > to.getTime()) {
+          return;
+        }
+        if (!optionTradePrintEligibility(trade, conditionMetadata).eligible) {
+          return;
+        }
+
+        const snapshotRecord = asRecord(summary.candidate.snapshot);
+        if (!snapshotRecord) {
+          return;
+        }
+        const event = mapFlowEvent(
+          input.underlying,
+          {
+            ...snapshotRecord,
+            last_trade: {
+              price: trade.price,
+              size: trade.size,
+              sip_timestamp: trade.occurredAt.getTime(),
+              conditions: trade.conditionCodes,
+              exchange: trade.exchange,
+            },
+          },
+          input.unusualThreshold,
+        );
+        if (!event) {
+          return;
+        }
+
+        const id = `${event.optionTicker}-${trade.occurredAt.getTime()}-${
+          trade.sequenceNumber ?? "trade"
+        }`;
+        eventsById.set(id, {
+          ...event,
+          id,
+          exchange: trade.exchange ?? event.exchange,
+          tradeConditions: trade.conditionCodes,
+          confidence: "confirmed_trade",
+          sourceBasis: "confirmed_trade",
+        });
+      });
+    });
+
+    return [...eventsById.values()]
+      .sort((left, right) => {
+        const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
+        if (timeDelta !== 0) {
+          return timeDelta;
+        }
+        return right.premium - left.premium;
+      })
+      .slice(0, input.limit);
+  }
+
   async getOptionPremiumDistribution(input: {
     underlying: string;
     stockDayVolume?: number | null;
@@ -2773,10 +3684,19 @@ export class PolygonMarketDataClient {
     marketCap?: number | null;
     maxPages?: number;
     enrichTrades?: boolean;
+    tradeContractLimit?: number;
+    tradePremiumCoverageTarget?: number;
+    tradeLimit?: number;
     signal?: AbortSignal;
   }): Promise<OptionPremiumDistribution> {
     const underlying = normalizeSymbol(input.underlying);
-    const maxPages = Math.max(1, Math.min(input.maxPages ?? 1, 4));
+    const maxPages = Math.max(
+      1,
+      Math.min(
+        input.maxPages ?? 1,
+        OPTION_PREMIUM_DISTRIBUTION_SNAPSHOT_MAX_PAGES,
+      ),
+    );
     const now = new Date();
     let nextUrl: string | null = this.buildUrl(
       `/v3/snapshot/options/${encodeURIComponent(underlying)}`,
@@ -2811,6 +3731,27 @@ export class PolygonMarketDataClient {
     const bucketThresholds = resolvePremiumBucketThresholds(
       resolveMarketCapTier(marketCap),
     );
+    const snapshotTradingDate = deriveOptionSnapshotTradingDate(results, now);
+    const tradeLookbackStart =
+      input.timeframe === "week"
+        ? addUtcDays(snapshotTradingDate, -7)
+        : snapshotTradingDate;
+    const firstTradeCandidate = results
+      .map((snapshot) => ({
+        ticker: readOptionSnapshotTicker(snapshot),
+        totalPremium: getOptionSnapshotPremium(
+          snapshot,
+          undefined,
+          bucketThresholds,
+        )?.totalPremium ?? 0,
+      }))
+      .filter((candidate) => candidate.ticker && candidate.totalPremium > 0)
+      .sort((left, right) => right.totalPremium - left.totalPremium)[0];
+    const quoteProbe = await this.probeOptionQuoteAccess({
+      optionTicker: firstTradeCandidate?.ticker ?? null,
+      since: tradeLookbackStart,
+      signal: input.signal,
+    });
 
     const tradeClassificationResult =
       input.enrichTrades === false
@@ -2820,15 +3761,23 @@ export class PolygonMarketDataClient {
               PremiumDistributionTradeClassification
             >(),
             tradeAccess: "unknown" as PremiumDistributionDataAccess,
+            hydrationDiagnostics: {
+              tradeContractCandidateCount: 0,
+              tradeContractHydratedCount: 0,
+              classificationTargetPremiumCoverage: clampUnitInterval(
+                input.tradePremiumCoverageTarget,
+              ),
+            } as Partial<PremiumDistributionHydrationDiagnostics>,
           }
         : await this.fetchOptionPremiumTradeClassifications({
             snapshots: results,
-            timeframe: input.timeframe ?? "today",
             bucketThresholds,
-            now,
+            tradeLookbackStart,
+            contractLimit: input.tradeContractLimit,
+            premiumCoverageTarget: input.tradePremiumCoverageTarget,
+            tradeLimit: input.tradeLimit,
             signal: input.signal,
           });
-
     return aggregateOptionPremiumDistributionSnapshots({
       underlying,
       snapshots: results,
@@ -2838,7 +3787,21 @@ export class PolygonMarketDataClient {
       marketCap,
       asOf: now,
       delayed: this.config.baseUrl.includes("massive.com"),
+      quoteAccess:
+        quoteProbe.status === "available"
+          ? "available"
+          : quoteProbe.status === "forbidden"
+            ? "forbidden"
+            : undefined,
       tradeAccess: tradeClassificationResult.tradeAccess,
+      hydrationDiagnostics: {
+        snapshotTradingDate: toIsoDateString(snapshotTradingDate),
+        tradeLookbackStartDate: toIsoDateString(tradeLookbackStart),
+        quoteProbeDate: toIsoDateString(tradeLookbackStart),
+        quoteProbeStatus: quoteProbe.status,
+        quoteProbeMessage: quoteProbe.message,
+        ...tradeClassificationResult.hydrationDiagnostics,
+      },
       pageCount,
     });
   }

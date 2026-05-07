@@ -35,13 +35,13 @@ function parseArgs(argv) {
       options.timeframe = next === "week" ? "week" : "today";
       index += 1;
     } else if (arg === "--max-pages" && next) {
-      options.maxPages = clampInteger(next, 1, 4, options.maxPages);
+      options.maxPages = clampInteger(next, 1, 20, options.maxPages);
       index += 1;
     } else if (arg === "--trade-limit" && next) {
-      options.tradeLimit = clampInteger(next, 1, 500, options.tradeLimit);
+      options.tradeLimit = clampInteger(next, 1, 50_000, options.tradeLimit);
       index += 1;
     } else if (arg === "--contracts" && next) {
-      options.contractLimit = clampInteger(next, 1, 20, options.contractLimit);
+      options.contractLimit = clampInteger(next, 1, 60, options.contractLimit);
       index += 1;
     } else if (arg === "--write") {
       options.write = true;
@@ -113,6 +113,12 @@ function toDate(value) {
   return null;
 }
 
+function latestDate(values) {
+  return values
+    .filter((value) => value && !Number.isNaN(value.getTime()))
+    .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+}
+
 function buildUrl(config, pathOrUrl, params = {}) {
   const url = pathOrUrl.startsWith("http")
     ? new URL(pathOrUrl)
@@ -163,6 +169,25 @@ function getNumberPath(record, path) {
     current = asRecord(value);
   }
   return null;
+}
+
+function deriveSnapshotTradingDate(snapshots, fallback) {
+  const dayDates = [];
+  const tradeDates = [];
+  snapshots.forEach((snapshot) => {
+    const record = asRecord(snapshot);
+    const day = asRecord(record?.day);
+    const trade = asRecord(record?.last_trade);
+    dayDates.push(toDate(getNumberPath(day, ["last_updated"])));
+    tradeDates.push(
+      firstDefined(
+        toDate(getNumberPath(trade, ["sip_timestamp"])),
+        toDate(getNumberPath(trade, ["participant_timestamp"])),
+        toDate(getNumberPath(trade, ["t"])),
+      ),
+    );
+  });
+  return latestDate(dayDates) ?? latestDate(tradeDates) ?? fallback;
 }
 
 function snapshotTotalPremium(snapshot) {
@@ -274,7 +299,55 @@ function mapTradePrint(trade) {
   };
 }
 
-function classifyTradePrints(trades, sharesPerContract) {
+async function fetchOptionTradeConditionMetadata(config) {
+  const payload = await fetchJson(
+    buildUrl(config, "/v3/reference/conditions", {
+      asset_class: "options",
+      data_type: "trade",
+      limit: 1_000,
+    }),
+  );
+  const metadata = new Map();
+  asArray(asRecord(payload)?.results).forEach((result) => {
+    const record = asRecord(result);
+    if (!record) return;
+    const id = asString(record.id);
+    if (!id) return;
+    const updateRules =
+      asRecord(record.update_rules) ?? asRecord(record.updateRules);
+    const consolidated = asRecord(updateRules?.consolidated);
+    metadata.set(id, {
+      updatesVolume:
+        typeof consolidated?.updates_volume === "boolean"
+          ? consolidated.updates_volume
+          : null,
+      name: asString(record.name),
+    });
+  });
+  return metadata;
+}
+
+function tradePrintEligibility(trade, conditionMetadata) {
+  if (!conditionMetadata || !trade.conditionCodes.length) {
+    return { eligible: true, unknownCondition: false };
+  }
+
+  let unknownCondition = false;
+  for (const code of trade.conditionCodes) {
+    const condition = conditionMetadata.get(code);
+    if (!condition) {
+      unknownCondition = true;
+      continue;
+    }
+    if (condition.updatesVolume === false) {
+      return { eligible: false, unknownCondition };
+    }
+  }
+
+  return { eligible: true, unknownCondition };
+}
+
+function classifyTradePrints(trades, sharesPerContract, conditionMetadata) {
   const mapped = trades
     .map(mapTradePrint)
     .filter(Boolean)
@@ -288,8 +361,25 @@ function classifyTradePrints(trades, sharesPerContract) {
   let buyPremium = 0;
   let sellPremium = 0;
   let tickTestMatchedCount = 0;
+  let eligibleTradeCount = 0;
+  let ineligibleTradeCount = 0;
+  let unknownConditionTradeCount = 0;
+  const conditionCodes = new Set();
+  const exchangeCodes = new Set();
 
   mapped.forEach((trade) => {
+    trade.conditionCodes.forEach((code) => conditionCodes.add(code));
+    if (trade.exchange) exchangeCodes.add(trade.exchange);
+    const eligibility = tradePrintEligibility(trade, conditionMetadata);
+    if (!eligibility.eligible) {
+      ineligibleTradeCount += 1;
+      return;
+    }
+    eligibleTradeCount += 1;
+    if (eligibility.unknownCondition) {
+      unknownConditionTradeCount += 1;
+    }
+
     let side = "neutral";
     if (previousPrice !== null) {
       if (trade.price > previousPrice) side = "buy";
@@ -310,8 +400,53 @@ function classifyTradePrints(trades, sharesPerContract) {
     buyPremium,
     sellPremium,
     tradeCount: mapped.length,
+    eligibleTradeCount,
+    ineligibleTradeCount,
+    unknownConditionTradeCount,
     tickTestMatchedCount,
+    conditionCodes: [...conditionCodes].sort(),
+    exchangeCodes: [...exchangeCodes].sort(),
   };
+}
+
+async function probeOptionQuoteAccess(config, candidate, since) {
+  if (!candidate?.ticker) {
+    return { status: "not_attempted", message: null };
+  }
+
+  try {
+    const payload = await fetchJson(
+      buildUrl(config, `/v3/quotes/${encodeURIComponent(candidate.ticker)}`, {
+        "timestamp.gte": toIsoDate(since),
+        order: "desc",
+        sort: "timestamp",
+        limit: 1,
+      }),
+    );
+    return {
+      status: asArray(asRecord(payload)?.results).length
+        ? "available"
+        : "unavailable",
+      message: null,
+    };
+  } catch (error) {
+    if (error?.statusCode === 403) {
+      return {
+        status: "forbidden",
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Option quotes are not available for this Polygon/Massive plan.",
+      };
+    }
+    return {
+      status: "failed",
+      message:
+        error instanceof Error && error.message
+          ? error.message
+          : "Option quote probe failed.",
+    };
+  }
 }
 
 async function fetchSnapshotPages(config, symbol, options) {
@@ -338,14 +473,27 @@ async function fetchSnapshotPages(config, symbol, options) {
   return { snapshots, pageCount };
 }
 
-async function fetchTradeSamples(config, candidates, options) {
-  const since = options.timeframe === "week" ? addUtcDays(new Date(), -7) : new Date();
+async function fetchTradeSamples(config, candidates, options, since) {
   const classifications = new Map();
   const conditionCodes = new Set();
   const exchangeCodes = new Set();
   let tradeCount = 0;
+  let eligibleTradeCount = 0;
+  let ineligibleTradeCount = 0;
+  let unknownConditionTradeCount = 0;
+  let tickTestMatchedCount = 0;
+  let successCount = 0;
   let forbiddenCount = 0;
   let errorCount = 0;
+  let conditionMetadataLoaded = false;
+  let conditionMetadata = null;
+
+  try {
+    conditionMetadata = await fetchOptionTradeConditionMetadata(config);
+    conditionMetadataLoaded = true;
+  } catch {
+    conditionMetadata = null;
+  }
 
   for (const candidate of candidates) {
     try {
@@ -358,13 +506,19 @@ async function fetchTradeSamples(config, candidates, options) {
         }),
       );
       const trades = asArray(asRecord(payload)?.results);
-      const mappedTrades = trades.map(mapTradePrint).filter(Boolean);
-      mappedTrades.forEach((trade) => {
-        tradeCount += 1;
-        trade.conditionCodes.forEach((code) => conditionCodes.add(code));
-        if (trade.exchange) exchangeCodes.add(trade.exchange);
-      });
-      const summary = classifyTradePrints(trades, candidate.sharesPerContract);
+      successCount += 1;
+      const summary = classifyTradePrints(
+        trades,
+        candidate.sharesPerContract,
+        conditionMetadata,
+      );
+      tradeCount += summary.tradeCount;
+      eligibleTradeCount += summary.eligibleTradeCount;
+      ineligibleTradeCount += summary.ineligibleTradeCount;
+      unknownConditionTradeCount += summary.unknownConditionTradeCount;
+      tickTestMatchedCount += summary.tickTestMatchedCount;
+      summary.conditionCodes.forEach((code) => conditionCodes.add(code));
+      summary.exchangeCodes.forEach((code) => exchangeCodes.add(code));
       if (summary.tradeCount > 0) {
         classifications.set(candidate.ticker, summary);
       }
@@ -385,9 +539,15 @@ async function fetchTradeSamples(config, candidates, options) {
     summary: {
       candidateCount: candidates.length,
       sampledTradeCount: tradeCount,
+      eligibleTradeCount,
+      ineligibleTradeCount,
+      unknownConditionTradeCount,
+      tickTestMatchedCount,
       classifiedContractCount: classifications.size,
+      conditionMetadataLoaded,
       conditionCodes: [...conditionCodes].sort().slice(0, 40),
       exchangeCodes: [...exchangeCodes].sort().slice(0, 40),
+      successCount,
       forbiddenCount,
       errorCount,
     },
@@ -396,6 +556,11 @@ async function fetchTradeSamples(config, candidates, options) {
 
 async function sampleSymbol(config, symbol, options) {
   const { snapshots, pageCount } = await fetchSnapshotPages(config, symbol, options);
+  const snapshotTradingDate = deriveSnapshotTradingDate(snapshots, new Date());
+  const tradeLookbackStart =
+    options.timeframe === "week"
+      ? addUtcDays(snapshotTradingDate, -7)
+      : snapshotTradingDate;
   const candidates = snapshots
     .map((snapshot) => ({
       ticker: readSnapshotTicker(snapshot),
@@ -405,7 +570,17 @@ async function sampleSymbol(config, symbol, options) {
     .filter((candidate) => candidate.ticker && candidate.totalPremium > 0)
     .sort((left, right) => right.totalPremium - left.totalPremium)
     .slice(0, options.contractLimit);
-  const trades = await fetchTradeSamples(config, candidates, options);
+  const quoteProbe = await probeOptionQuoteAccess(
+    config,
+    candidates[0],
+    tradeLookbackStart,
+  );
+  const trades = await fetchTradeSamples(
+    config,
+    candidates,
+    options,
+    tradeLookbackStart,
+  );
   const aggregate = aggregateOptionPremiumDistributionSnapshots({
     underlying: symbol,
     snapshots,
@@ -413,7 +588,31 @@ async function sampleSymbol(config, symbol, options) {
     timeframe: options.timeframe,
     asOf: new Date(),
     delayed: config.baseUrl.includes("massive.com"),
+    quoteAccess:
+      quoteProbe.status === "available"
+        ? "available"
+        : quoteProbe.status === "forbidden"
+          ? "forbidden"
+          : undefined,
     tradeAccess: trades.tradeAccess,
+    hydrationDiagnostics: {
+      snapshotTradingDate: toIsoDate(snapshotTradingDate),
+      tradeLookbackStartDate: toIsoDate(tradeLookbackStart),
+      quoteProbeDate: toIsoDate(tradeLookbackStart),
+      quoteProbeStatus: quoteProbe.status,
+      quoteProbeMessage: quoteProbe.message,
+      tradeContractCandidateCount: trades.summary.candidateCount,
+      tradeContractHydratedCount: trades.summary.classifiedContractCount,
+      tradeCallAttemptCount: trades.summary.candidateCount,
+      tradeCallSuccessCount: trades.summary.successCount,
+      tradeCallErrorCount: trades.summary.errorCount,
+      tradeCallForbiddenCount: trades.summary.forbiddenCount,
+      eligibleTradeCount: trades.summary.eligibleTradeCount,
+      ineligibleTradeCount: trades.summary.ineligibleTradeCount,
+      unknownConditionTradeCount: trades.summary.unknownConditionTradeCount,
+      conditionCodes: trades.summary.conditionCodes,
+      exchangeCodes: trades.summary.exchangeCodes,
+    },
     pageCount,
   });
 
@@ -421,13 +620,18 @@ async function sampleSymbol(config, symbol, options) {
     symbol,
     pageCount,
     snapshotCount: snapshots.length,
+    snapshotTradingDate: toIsoDate(snapshotTradingDate),
+    tradeLookbackStartDate: toIsoDate(tradeLookbackStart),
     fieldPresence: summarizeFieldPresence(snapshots),
+    quoteProbe,
     tradeSample: trades.summary,
     aggregate: {
       premiumTotal: aggregate.premiumTotal,
       classifiedPremium: aggregate.classifiedPremium,
       classificationCoverage: aggregate.classificationCoverage,
       classificationConfidence: aggregate.classificationConfidence,
+      hydrationWarning: aggregate.hydrationWarning,
+      hydrationDiagnostics: aggregate.hydrationDiagnostics,
       sideBasis: aggregate.sideBasis,
       quoteAccess: aggregate.quoteAccess,
       tradeAccess: aggregate.tradeAccess,
@@ -450,9 +654,9 @@ async function main() {
         "Options:",
         "  --symbols SPY,QQQ,NVDA   Symbols to sample",
         "  --timeframe today|week    Trade lookback for tick-test fallback",
-        "  --max-pages 1..4          Option snapshot pages per symbol",
-        "  --contracts 1..20         Top option contracts for trade sampling",
-        "  --trade-limit 1..500      Trades per sampled contract",
+        "  --max-pages 1..20         Option snapshot pages per symbol",
+        "  --contracts 1..60         Top option contracts for trade sampling",
+        "  --trade-limit 1..50000    Trades per sampled contract",
         "  --write                   Write sanitized JSON to tmp/",
         "  --output PATH             Write sanitized JSON to PATH",
       ].join("\n"),

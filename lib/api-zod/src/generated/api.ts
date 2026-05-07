@@ -2237,7 +2237,7 @@ export const StreamStockAggregatesQueryParams = zod.object({
 /**
  * @summary Get Polygon-backed top options premium distribution widgets
  */
-export const getFlowPremiumDistributionQueryLimitMax = 6;
+export const getFlowPremiumDistributionQueryLimitMax = 10;
 
 export const getFlowPremiumDistributionQueryCandidateLimitMin = 6;
 export const getFlowPremiumDistributionQueryCandidateLimitMax = 60;
@@ -2247,7 +2247,8 @@ export const getFlowPremiumDistributionQueryCandidateLimitMax = 60;
 export const GetFlowPremiumDistributionQueryParams = zod.object({
   "limit": zod.coerce.number().min(1).max(getFlowPremiumDistributionQueryLimitMax).optional().describe('Number of premium distribution widgets to return.'),
   "candidateLimit": zod.coerce.number().min(getFlowPremiumDistributionQueryCandidateLimitMin).max(getFlowPremiumDistributionQueryCandidateLimitMax).optional().describe('Number of high-volume stock candidates to score through Polygon options snapshots.'),
-  "timeframe": zod.enum(['today', 'week']).optional().describe('Candidate-volume timeframe for ranking the six widgets.')
+  "timeframe": zod.enum(['today', 'week']).optional().describe('Candidate-volume timeframe for ranking the widgets.'),
+  "coverageMode": zod.enum(['universe', 'ranked']).optional().describe('Candidate universe used for premium-distribution hydration.')
 })
 
 export const getFlowPremiumDistributionResponseSourceCandidateCountMin = 0;
@@ -2272,6 +2273,33 @@ export const getFlowPremiumDistributionResponseWidgetsItemQuoteMatchedCountMin =
 export const getFlowPremiumDistributionResponseWidgetsItemPageCountMin = 0;
 
 
+const FlowPremiumDistributionHydrationDiagnosticsSchema = zod.object({
+  "snapshotCount": zod.number().min(0),
+  "usablePremiumSnapshotCount": zod.number().min(0),
+  "usablePremiumTotal": zod.number().min(0),
+  "selectedPremiumTotal": zod.number().min(0),
+  "classificationTargetPremiumCoverage": zod.number().min(0).max(1),
+  "selectedPremiumCoverage": zod.number().min(0).max(1),
+  "pageCount": zod.number().min(0),
+  "snapshotTradingDate": zod.string().nullable(),
+  "tradeLookbackStartDate": zod.string().nullable(),
+  "quoteProbeDate": zod.string().nullable(),
+  "quoteProbeStatus": zod.enum(['not_attempted', 'available', 'forbidden', 'unavailable', 'failed']),
+  "quoteProbeMessage": zod.string().nullable(),
+  "tradeContractCandidateCount": zod.number().min(0),
+  "tradeContractHydratedCount": zod.number().min(0),
+  "tradeCallAttemptCount": zod.number().min(0),
+  "tradeCallSuccessCount": zod.number().min(0),
+  "tradeCallErrorCount": zod.number().min(0),
+  "tradeCallForbiddenCount": zod.number().min(0),
+  "eligibleTradeCount": zod.number().min(0),
+  "ineligibleTradeCount": zod.number().min(0),
+  "unknownConditionTradeCount": zod.number().min(0),
+  "conditionCodes": zod.array(zod.string()),
+  "exchangeCodes": zod.array(zod.string()),
+  "classifiedContractCoverage": zod.number()
+});
+
 
 export const GetFlowPremiumDistributionResponse = zod.object({
   "status": zod.enum(['ok', 'empty', 'degraded', 'unconfigured']),
@@ -2288,6 +2316,11 @@ export const GetFlowPremiumDistributionResponse = zod.object({
   "classifiedPremium": zod.number(),
   "classificationCoverage": zod.number(),
   "classificationConfidence": zod.enum(['high', 'medium', 'low', 'very_low', 'none']),
+  "coverageMode": zod.enum(['universe', 'ranked']),
+  "hydrationStatus": zod.enum(['complete', 'partial', 'refreshing', 'failed']),
+  "hydrationWarning": zod.string().nullable(),
+  "hydratedSymbolCount": zod.number().min(0),
+  "hydrationDiagnostics": FlowPremiumDistributionHydrationDiagnosticsSchema,
   "candidateDate": zod.string().nullable(),
   "candidateCount": zod.number().min(getFlowPremiumDistributionResponseSourceCandidateCountMin),
   "rankedCount": zod.number().min(getFlowPremiumDistributionResponseSourceRankedCountMin),
@@ -2312,6 +2345,8 @@ export const GetFlowPremiumDistributionResponse = zod.object({
   "classifiedPremium": zod.number(),
   "classificationCoverage": zod.number(),
   "classificationConfidence": zod.enum(['high', 'medium', 'low', 'very_low', 'none']),
+  "hydrationWarning": zod.string().nullable(),
+  "hydrationDiagnostics": FlowPremiumDistributionHydrationDiagnosticsSchema,
   "netPremium": zod.number(),
   "inflowPremium": zod.number(),
   "outflowPremium": zod.number(),
@@ -2381,6 +2416,9 @@ export const listFlowEventsQueryMaxDteMax = 730;
 
 export const listFlowEventsQueryLineBudgetMax = 150;
 
+export const listFlowEventsQueryHistoricalBucketSecondsMin = 60;
+export const listFlowEventsQueryHistoricalBucketSecondsMax = 3600;
+
 
 
 export const ListFlowEventsQueryParams = zod.object({
@@ -2391,6 +2429,9 @@ export const ListFlowEventsQueryParams = zod.object({
   "minPremium": zod.coerce.number().min(listFlowEventsQueryMinPremiumMin).max(listFlowEventsQueryMinPremiumMax).optional().describe('Minimum option premium, in dollars, required for each returned flow row.'),
   "maxDte": zod.coerce.number().min(listFlowEventsQueryMaxDteMin).max(listFlowEventsQueryMaxDteMax).optional().describe('Maximum days to expiration to include in the flow scan.'),
   "lineBudget": zod.coerce.number().min(1).max(listFlowEventsQueryLineBudgetMax).optional().describe('Maximum IBKR option quote lines this request may use.'),
+  "historicalBucketSeconds": zod.coerce.number().min(listFlowEventsQueryHistoricalBucketSecondsMin).max(listFlowEventsQueryHistoricalBucketSecondsMax).optional().describe('Historical chart sampling bucket size, in seconds. Supplying a time window uses this to avoid returning multiple historical prints for the same chart candle.'),
+  "from": zod.coerce.date().optional().describe('Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.'),
+  "to": zod.coerce.date().optional().describe('Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.'),
   "blocking": zod.coerce.boolean().optional().describe('Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.'),
   "queueRefresh": zod.coerce.boolean().optional().describe('Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.')
 })

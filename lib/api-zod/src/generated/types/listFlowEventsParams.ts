@@ -43,6 +43,20 @@ maxDte?: number;
  */
 lineBudget?: number;
 /**
+ * Historical chart sampling bucket size, in seconds. Supplying a time window uses this to avoid returning multiple historical prints for the same chart candle.
+ * @minimum 60
+ * @maximum 3600
+ */
+historicalBucketSeconds?: number;
+/**
+ * Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+ */
+from?: string;
+/**
+ * Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+ */
+to?: string;
+/**
  * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
  */
 blocking?: boolean;

@@ -18,6 +18,7 @@ process.env["OPTION_METADATA_DISABLED"] = "1";
 const platformModule = await import("./platform");
 
 const {
+  __platformBarsCacheTestInternals,
   __resetOptionChainCachesForTests,
   __setPolygonMarketDataClientFactoryForTests,
   __setIbkrBridgeClientFactoryForTests,
@@ -771,6 +772,48 @@ test("getBarsWithDebug marks stale cached bar history as warming", async () => {
         originalBackgroundEnabled;
     }
   }
+});
+
+test("getBarsWithDebug refreshes after durable bar writes invalidate cache", async () => {
+  let historyCalls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async () => {
+          historyCalls += 1;
+          return [brokerBar(null, 500 + historyCalls)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const input = {
+    symbol: "CACHEWRITE",
+    timeframe: "1m" as const,
+    limit: 1,
+    assetClass: "equity" as const,
+    allowHistoricalSynthesis: false,
+  };
+
+  const first = await getBarsWithDebug(input);
+  const second = await getBarsWithDebug(input);
+  assert.equal(first.debug.cacheStatus, "miss");
+  assert.equal(second.debug.cacheStatus, "hit");
+  assert.equal(second.bars[0]?.close, 501);
+  assert.equal(historyCalls, 1);
+
+  __platformBarsCacheTestInternals.invalidateBarsCacheForDurableWrite(input);
+
+  const third = await getBarsWithDebug(input);
+  const counters =
+    __platformBarsCacheTestInternals.getBarsHydrationCounters();
+  assert.equal(third.debug.cacheStatus, "miss");
+  assert.equal(third.bars[0]?.close, 502);
+  assert.equal(historyCalls, 2);
+  assert.equal(counters.cacheInvalidated >= 1, true);
 });
 
 test("batchOptionChains dedupes dates and caps upstream concurrency", async () => {

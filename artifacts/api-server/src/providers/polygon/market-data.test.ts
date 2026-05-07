@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { aggregateOptionPremiumDistributionSnapshots } from "./market-data";
+import {
+  PolygonMarketDataClient,
+  aggregateOptionPremiumDistributionSnapshots,
+} from "./market-data";
 
 test("aggregates option premium distribution buckets and sides", () => {
   const distribution = aggregateOptionPremiumDistributionSnapshots({
@@ -186,6 +189,26 @@ test("marks quote-matched premium below one percent as very low confidence", () 
   assert.equal(distribution.classificationConfidence, "very_low");
 });
 
+test("reports side split unavailable when option quote and trade access are forbidden", () => {
+  const distribution = aggregateOptionPremiumDistributionSnapshots({
+    underlying: "SPY",
+    quoteAccess: "forbidden",
+    tradeAccess: "forbidden",
+    snapshots: [
+      {
+        details: { contract_type: "call", shares_per_contract: 100 },
+        day: { c: 2, v: 100 },
+      },
+    ],
+  });
+
+  assert.equal(distribution.premiumTotal, 20_000);
+  assert.equal(distribution.quoteAccess, "forbidden");
+  assert.equal(distribution.tradeAccess, "forbidden");
+  assert.equal(distribution.classificationConfidence, "none");
+  assert.match(distribution.hydrationWarning ?? "", /quotes and option trades/);
+});
+
 test("allocates tick-test trades into premium-size buckets", () => {
   const distribution = aggregateOptionPremiumDistributionSnapshots({
     underlying: "SPY",
@@ -291,4 +314,262 @@ test("ignores snapshots without usable price or volume", () => {
   assert.equal(distribution.premiumTotal, 0);
   assert.equal(distribution.classificationConfidence, "none");
   assert.equal(distribution.confidence, "partial");
+});
+
+test("anchors premium trade hydration to the option snapshot trading date", async () => {
+  const originalFetch = globalThis.fetch;
+  const tradeDates: string[] = [];
+  const quoteDates: string[] = [];
+  const snapshotTimestamp = Date.parse("2026-05-06T20:00:00Z");
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v3/snapshot/options/SPY") {
+      return Response.json({
+        results: [
+          {
+            details: {
+              ticker: "O:SPY260506C00730000",
+              contract_type: "call",
+              shares_per_contract: 100,
+            },
+            day: {
+              vwap: 1.5,
+              volume: 1_000,
+              last_updated: snapshotTimestamp,
+            },
+            last_trade: {
+              price: 1.5,
+              size: 1,
+              sip_timestamp: snapshotTimestamp,
+            },
+          },
+        ],
+      });
+    }
+
+    if (url.pathname.includes("/v3/quotes/")) {
+      quoteDates.push(url.searchParams.get("timestamp.gte") ?? "");
+      return Response.json(
+        { message: "not entitled to option quotes" },
+        { status: 403 },
+      );
+    }
+
+    if (url.pathname === "/v3/reference/conditions") {
+      return Response.json({
+        results: [
+          {
+            id: 209,
+            name: "Regular",
+            update_rules: { consolidated: { updates_volume: true } },
+          },
+        ],
+      });
+    }
+
+    if (url.pathname.includes("/v3/trades/")) {
+      tradeDates.push(url.searchParams.get("timestamp.gte") ?? "");
+      return Response.json({
+        results: [
+          {
+            price: 1,
+            size: 10,
+            sip_timestamp: snapshotTimestamp - 1_000,
+            sequence_number: 1,
+            conditions: [209],
+            exchange: 304,
+          },
+          {
+            price: 2,
+            size: 10,
+            sip_timestamp: snapshotTimestamp,
+            sequence_number: 2,
+            conditions: [209],
+            exchange: 304,
+          },
+        ],
+      });
+    }
+
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://polygon.test",
+    });
+    const distribution = await client.getOptionPremiumDistribution({
+      underlying: "SPY",
+      marketCap: null,
+      maxPages: 1,
+      tradeContractLimit: 1,
+      tradeLimit: 10,
+    });
+
+    assert.deepEqual(tradeDates, ["2026-05-06"]);
+    assert.deepEqual(quoteDates, ["2026-05-06"]);
+    assert.equal(distribution.tradeAccess, "available");
+    assert.equal(distribution.quoteAccess, "forbidden");
+    assert.equal(distribution.sideBasis, "tick_test");
+    assert.equal(distribution.tickTestMatchedCount, 1);
+    assert.equal(distribution.hydrationDiagnostics.snapshotTradingDate, "2026-05-06");
+    assert.equal(distribution.hydrationDiagnostics.tradeLookbackStartDate, "2026-05-06");
+    assert.equal(distribution.hydrationDiagnostics.quoteProbeDate, "2026-05-06");
+    assert.equal(distribution.hydrationDiagnostics.tradeCallSuccessCount, 1);
+    assert.equal(distribution.hydrationDiagnostics.tradeCallForbiddenCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("selects premium trade hydration contracts by cumulative premium target", async () => {
+  const originalFetch = globalThis.fetch;
+  const tradeTickers: string[] = [];
+  const snapshotTimestamp = Date.parse("2026-05-06T20:00:00Z");
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v3/snapshot/options/SPY") {
+      return Response.json({
+        results: [
+          {
+            details: {
+              ticker: "O:SPY260506C00600000",
+              contract_type: "call",
+              shares_per_contract: 100,
+            },
+            day: { vwap: 6, volume: 100, last_updated: snapshotTimestamp },
+          },
+          {
+            details: {
+              ticker: "O:SPY260506C00610000",
+              contract_type: "call",
+              shares_per_contract: 100,
+            },
+            day: { vwap: 2.5, volume: 100, last_updated: snapshotTimestamp },
+          },
+          {
+            details: {
+              ticker: "O:SPY260506C00620000",
+              contract_type: "call",
+              shares_per_contract: 100,
+            },
+            day: { vwap: 1, volume: 100, last_updated: snapshotTimestamp },
+          },
+          {
+            details: {
+              ticker: "O:SPY260506C00630000",
+              contract_type: "call",
+              shares_per_contract: 100,
+            },
+            day: { vwap: 0.5, volume: 100, last_updated: snapshotTimestamp },
+          },
+        ],
+      });
+    }
+
+    if (url.pathname.includes("/v3/quotes/")) {
+      return Response.json({ message: "not entitled" }, { status: 403 });
+    }
+    if (url.pathname === "/v3/reference/conditions") {
+      return Response.json({ results: [] });
+    }
+    if (url.pathname.includes("/v3/trades/")) {
+      tradeTickers.push(decodeURIComponent(url.pathname.split("/").pop() ?? ""));
+      return Response.json({ results: [] });
+    }
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://polygon.test",
+    });
+    const distribution = await client.getOptionPremiumDistribution({
+      underlying: "SPY",
+      marketCap: null,
+      maxPages: 1,
+      tradeContractLimit: 4,
+      tradePremiumCoverageTarget: 0.85,
+    });
+
+    assert.deepEqual(tradeTickers, [
+      "O:SPY260506C00600000",
+      "O:SPY260506C00610000",
+    ]);
+    assert.equal(distribution.premiumTotal, 100_000);
+    assert.equal(distribution.hydrationDiagnostics.usablePremiumTotal, 100_000);
+    assert.equal(distribution.hydrationDiagnostics.selectedPremiumTotal, 85_000);
+    assert.equal(
+      distribution.hydrationDiagnostics.classificationTargetPremiumCoverage,
+      0.85,
+    );
+    assert.equal(distribution.hydrationDiagnostics.selectedPremiumCoverage, 0.85);
+    assert.equal(distribution.hydrationDiagnostics.tradeContractCandidateCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uses a week lookback from the option snapshot trading date", async () => {
+  const originalFetch = globalThis.fetch;
+  const tradeDates: string[] = [];
+  const snapshotTimestamp = Date.parse("2026-05-06T20:00:00Z");
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v3/snapshot/options/SPY") {
+      return Response.json({
+        results: [
+          {
+            details: {
+              ticker: "O:SPY260506C00730000",
+              contract_type: "call",
+              shares_per_contract: 100,
+            },
+            day: {
+              vwap: 1.5,
+              volume: 1_000,
+              last_updated: snapshotTimestamp,
+            },
+            last_trade: { price: 1.5, size: 1 },
+          },
+        ],
+      });
+    }
+    if (url.pathname.includes("/v3/quotes/")) {
+      return Response.json({ message: "not entitled" }, { status: 403 });
+    }
+    if (url.pathname === "/v3/reference/conditions") {
+      return Response.json({ results: [] });
+    }
+    if (url.pathname.includes("/v3/trades/")) {
+      tradeDates.push(url.searchParams.get("timestamp.gte") ?? "");
+      return Response.json({ results: [] });
+    }
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://polygon.test",
+    });
+    const distribution = await client.getOptionPremiumDistribution({
+      underlying: "SPY",
+      timeframe: "week",
+      marketCap: null,
+      maxPages: 1,
+      tradeContractLimit: 1,
+    });
+
+    assert.deepEqual(tradeDates, ["2026-04-29"]);
+    assert.equal(distribution.hydrationDiagnostics.snapshotTradingDate, "2026-05-06");
+    assert.equal(distribution.hydrationDiagnostics.tradeLookbackStartDate, "2026-04-29");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

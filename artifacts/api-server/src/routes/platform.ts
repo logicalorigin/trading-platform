@@ -105,7 +105,7 @@ import {
   getCurrentStockMinuteAggregates,
   getStockAggregateStreamDiagnostics,
   isStockAggregateStreamingAvailable,
-  subscribeStockMinuteAggregates,
+  subscribeMutableStockMinuteAggregates,
 } from "../services/stock-aggregate-stream";
 import {
   cancelAccountOrder,
@@ -139,6 +139,13 @@ import {
 } from "../services/ibkr-bridge-runtime";
 
 const router: IRouter = Router();
+const stockAggregateStreamSessions = new Map<
+  string,
+  {
+    token: symbol;
+    setSymbols(symbols: string[]): Promise<void>;
+  }
+>();
 const LOGO_PROXY_ALLOWED_HOSTS = new Set([
   "s3-symbol-logo.tradingview.com",
   "api.polygon.io",
@@ -167,6 +174,21 @@ const isHistoryBarTimeframe = (
   value: string,
 ): value is RouteHistoryBarTimeframe =>
   HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe);
+
+function normalizeStreamSymbols(rawSymbols: unknown): string[] {
+  const values = Array.isArray(rawSymbols)
+    ? rawSymbols
+    : typeof rawSymbols === "string"
+      ? rawSymbols.split(",")
+      : [];
+  return Array.from(
+    new Set(
+      values
+        .map((symbol) => String(symbol).trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+}
 const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const IBKR_BRIDGE_HELPER_SCRIPT_PATHS = [
   resolve(ROUTE_DIR, "../../../../scripts/windows/rayalgo-ibkr-helper.ps1"),
@@ -2174,10 +2196,10 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
     : typeof req.query.symbols === "string"
       ? req.query.symbols
       : "";
-  const symbols = rawSymbols
-    .split(",")
-    .map((symbol) => symbol.trim().toUpperCase())
-    .filter(Boolean);
+  let symbols = normalizeStreamSymbols(rawSymbols);
+  const sessionId =
+    typeof req.query.sessionId === "string" ? req.query.sessionId.trim() : "";
+  const sessionToken = Symbol(sessionId || "stock-aggregate-stream");
 
   if (!symbols.length) {
     res.status(400).type("application/problem+json").json({
@@ -2201,27 +2223,34 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
   }
 
   await startSse(req, res, async ({ writeEvent }) => {
-    const snapshotAggregates = getCurrentStockMinuteAggregates(symbols);
-    for (const aggregate of snapshotAggregates) {
-      await writeEvent("aggregate", {
-        ...aggregate,
-        latency: {
-          ...(aggregate.latency ?? {}),
-          apiServerEmittedAt: new Date(),
-        },
-      });
-    }
+    const writeSnapshotAggregates = async (nextSymbols: string[]) => {
+      const snapshotAggregates = getCurrentStockMinuteAggregates(nextSymbols);
+      for (const aggregate of snapshotAggregates) {
+        await writeEvent("aggregate", {
+          ...aggregate,
+          latency: {
+            ...(aggregate.latency ?? {}),
+            apiServerEmittedAt: new Date(),
+          },
+        });
+      }
+    };
 
-    const streamDiagnostics = getStockAggregateStreamDiagnostics();
-    const streamSource =
-      streamDiagnostics.provider === "none"
-        ? "ibkr-websocket-derived"
-        : streamDiagnostics.provider;
-    await writeEvent("ready", {
-      symbols,
-      delayed: streamSource === "polygon-delayed-websocket",
-      source: streamSource,
-    });
+    await writeSnapshotAggregates(symbols);
+    const writeReady = async (nextSymbols: string[]) => {
+      const streamDiagnostics = getStockAggregateStreamDiagnostics();
+      const streamSource =
+        streamDiagnostics.provider === "none"
+          ? "ibkr-websocket-derived"
+          : streamDiagnostics.provider;
+      await writeEvent("ready", {
+        symbols: nextSymbols,
+        delayed: streamSource === "polygon-delayed-websocket",
+        source: streamSource,
+      });
+    };
+
+    await writeReady(symbols);
     const statusTimer = setInterval(() => {
       void writeEvent("stream-status", {
         state: "open",
@@ -2230,7 +2259,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
     }, 5_000);
     statusTimer.unref?.();
 
-    const unsubscribeAggregates = subscribeStockMinuteAggregates(symbols, (message) => {
+    const aggregateSubscription = subscribeMutableStockMinuteAggregates(symbols, (message) => {
       writeEvent("aggregate", {
         ...message,
         latency: {
@@ -2239,10 +2268,68 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
         },
       });
     });
+
+    if (sessionId) {
+      stockAggregateStreamSessions.set(sessionId, {
+        token: sessionToken,
+        async setSymbols(nextSymbols: string[]) {
+          symbols = normalizeStreamSymbols(nextSymbols);
+          if (!symbols.length) {
+            return;
+          }
+          aggregateSubscription.setSymbols(symbols);
+          await writeSnapshotAggregates(symbols);
+          await writeReady(symbols);
+        },
+      });
+    }
+
     return () => {
       clearInterval(statusTimer);
-      unsubscribeAggregates();
+      if (
+        sessionId &&
+        stockAggregateStreamSessions.get(sessionId)?.token === sessionToken
+      ) {
+        stockAggregateStreamSessions.delete(sessionId);
+      }
+      aggregateSubscription.unsubscribe();
     };
+  });
+});
+
+router.post("/streams/stocks/aggregates/sessions/:sessionId/symbols", async (req, res) => {
+  const sessionId = req.params.sessionId?.trim() || "";
+  const session = sessionId ? stockAggregateStreamSessions.get(sessionId) : null;
+  if (!session) {
+    res.status(404).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/not-found",
+      title: "Stock aggregate stream session not found",
+      status: 404,
+      detail: "Open a stock aggregate stream before updating its symbols.",
+      code: "stock_aggregate_stream_session_not_found",
+    });
+    return;
+  }
+
+  const symbols = normalizeStreamSymbols(
+    (req.body as { symbols?: unknown } | undefined)?.symbols,
+  );
+  if (!symbols.length) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://rayalgo.local/problems/invalid-request",
+      title: "Missing symbols",
+      status: 400,
+      detail: "Provide one or more stock symbols in the symbols body field.",
+    });
+    return;
+  }
+
+  await session.setSymbols(symbols);
+  res.json({
+    sessionId,
+    symbols,
+    diagnostics: getStockAggregateStreamDiagnostics(),
+    updatedAt: new Date().toISOString(),
   });
 });
 

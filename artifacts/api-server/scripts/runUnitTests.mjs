@@ -18,6 +18,7 @@ const unitTestFiles = [
   "src/services/backtesting-strategies.test.ts",
   "src/services/diagnostics.test.ts",
   "src/services/flow-events-model.test.ts",
+  "src/services/historical-flow-events.test.ts",
   "src/services/flow-premium-distribution.test.ts",
   "src/services/bridge-governor.test.ts",
   "src/services/bridge-option-quote-stream.test.ts",

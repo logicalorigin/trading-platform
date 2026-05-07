@@ -7,6 +7,7 @@
  */
 import type { FlowPremiumDistributionBuckets } from './flowPremiumDistributionBuckets';
 import type { FlowPremiumDistributionClassificationConfidence } from './flowPremiumDistributionClassificationConfidence';
+import type { FlowPremiumDistributionHydrationDiagnostics } from './flowPremiumDistributionHydrationDiagnostics';
 import type { FlowPremiumDistributionWidgetConfidence } from './flowPremiumDistributionWidgetConfidence';
 import type { FlowPremiumDistributionWidgetSource } from './flowPremiumDistributionWidgetSource';
 
@@ -30,6 +31,9 @@ export interface FlowPremiumDistributionWidget {
   classifiedPremium: number;
   classificationCoverage: number;
   classificationConfidence: FlowPremiumDistributionClassificationConfidence;
+  /** @nullable */
+  hydrationWarning: string | null;
+  hydrationDiagnostics: FlowPremiumDistributionHydrationDiagnostics;
   netPremium: number;
   inflowPremium: number;
   outflowPremium: number;

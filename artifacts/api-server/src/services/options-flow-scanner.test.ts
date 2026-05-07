@@ -35,8 +35,10 @@ const platformModule = await import("./platform");
 
 const {
   __resetOptionChainCachesForTests,
+  __fetchOptionsFlowRadarQuotesForTests,
   __runOptionsFlowScannerOnceForTests,
   __setIbkrBridgeClientFactoryForTests,
+  __setHistoricalFlowStoreDisabledForTests,
   __setPolygonMarketDataClientFactoryForTests,
   getOptionsFlowRuntimeConfig,
   resolveOptionsFlowScannerEffectiveConcurrency,
@@ -201,21 +203,22 @@ test.after(() => {
   });
 });
 
-test("options flow runtime defaults scan one symbol at a time through the reserved line pool", () => {
+test("options flow runtime defaults use two half-pool deep scans", () => {
   const config = getOptionsFlowRuntimeConfig();
 
-  assert.equal(config.scannerLineBudget, 40);
-  assert.equal(config.radarBatchSize, 40);
-  assert.equal(config.radarDeepLineBudget, 40);
-  assert.equal(config.scannerConcurrency, 1);
-  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 1);
+  assert.equal(config.scannerLineBudget, 50);
+  assert.equal(config.radarBatchSize, 50);
+  assert.equal(config.radarDeepLineBudget, 50);
+  assert.equal(config.radarFallbackDeepCandidateCount, 0);
+  assert.equal(config.scannerConcurrency, 2);
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 2);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
       ...config,
       scannerConcurrency: 8,
       scannerLineBudget: 40,
     }),
-    1,
+    2,
   );
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
@@ -223,7 +226,46 @@ test("options flow runtime defaults scan one symbol at a time through the reserv
       scannerConcurrency: 8,
       scannerLineBudget: 20,
     }),
-    2,
+    5,
+  );
+});
+
+test("options flow radar falls back to per-symbol activity reads after a batch failure", async () => {
+  const calls: string[][] = [];
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionActivitySnapshots: async (symbols: string[]) => {
+          calls.push([...symbols]);
+          if (symbols.length > 1) {
+            throw new Error("batch activity failed");
+          }
+          const symbol = symbols[0] ?? "";
+          if (symbol === "BAD") {
+            throw new Error("bad symbol");
+          }
+          return [optionQuote(symbol, { symbol })];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const quotes = await __fetchOptionsFlowRadarQuotesForTests([
+    "spy",
+    "bad",
+    "qqq",
+  ]);
+
+  assert.deepEqual(calls[0], ["SPY", "BAD", "QQQ"]);
+  assert.deepEqual(
+    calls
+      .slice(1)
+      .map((call) => call[0])
+      .sort(),
+    ["BAD", "QQQ", "SPY"],
+  );
+  assert.deepEqual(
+    quotes.map((quote) => quote.symbol).sort(),
+    ["QQQ", "SPY"],
   );
 });
 
@@ -826,6 +868,28 @@ test("listFlowEvents can read nonblocking scanner snapshots without enqueueing d
     await wait(0);
   }
   assert.equal(chainCalls, 0);
+
+  const warmed = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 1,
+      lineBudget: getOptionsFlowRuntimeConfig().radarDeepLineBudget,
+    }),
+  );
+  assert.equal(warmed.events.length, 1);
+  assert.equal(chainCalls, 1);
+
+  const snapshot = ListFlowEventsResponse.parse(
+    await listFlowEvents({
+      underlying: "SPY",
+      limit: 5,
+      blocking: false,
+      queueRefresh: false,
+    }),
+  );
+  assert.equal(snapshot.events.length, 1);
+  assert.equal(snapshot.source.provider, "ibkr");
+  assert.equal(chainCalls, 1);
 });
 
 test("listFlowEvents queues filtered nonblocking scans through the scanner", async () => {
@@ -940,16 +1004,19 @@ test("listFlowEvents does not cache transient quote timeout empties", async () =
 test("listFlowEvents caps nonblocking scanner refreshes to the radar deep quote budget", async () => {
   const base = optionContract("SPY");
   const requestedProviderContractIds: string[] = [];
-  const contracts = Array.from({ length: 40 }, (_unused, index) => ({
-    ...base,
-    contract: {
-      ...base.contract,
-      ticker: `SPY-2026-05-15-${400 + index}-C`,
-      providerContractId: `SPY-2026-05-15-${400 + index}-C`,
-      strike: 400 + index,
-    },
-    underlyingPrice: 420,
-  }));
+  const contracts = Array.from(
+    { length: getOptionsFlowRuntimeConfig().radarDeepLineBudget },
+    (_unused, index) => ({
+      ...base,
+      contract: {
+        ...base.contract,
+        ticker: `SPY-2026-05-15-${400 + index}-C`,
+        providerContractId: `SPY-2026-05-15-${400 + index}-C`,
+        strike: 400 + index,
+      },
+      underlyingPrice: 420,
+    }),
+  );
 
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {
@@ -1115,6 +1182,76 @@ test("listFlowEvents keeps realtime flow on IBKR by default when Polygon is conf
   assert.deepEqual(parsed.events, []);
 });
 
+test("listFlowEvents routes explicit time windows to Polygon historical flow", async () => {
+  process.env["POLYGON_API_KEY"] = "test";
+  __setHistoricalFlowStoreDisabledForTests(true);
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => {
+          throw new Error("historical flow should not use IBKR snapshots");
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      throw new Error("historical flow should not use IBKR option quote streams");
+    },
+    streamOptionQuoteSnapshots() {
+      throw new Error("historical flow should not subscribe to option quotes");
+    },
+  });
+
+  let requestedFrom: Date | undefined;
+  let requestedTo: Date | undefined;
+  __setPolygonMarketDataClientFactoryForTests(
+    (() =>
+      ({
+        getHistoricalOptionFlowEvents: async (input: {
+          from?: Date;
+          to?: Date;
+          limit?: number;
+        }) => {
+          requestedFrom = input.from;
+          requestedTo = input.to;
+          return {
+            events: [polygonFlowEvent("SPY-HISTORY", 75_000)],
+            contractCount: 1,
+            contractsScanned: 1,
+          };
+        },
+      })) as unknown as Parameters<
+        typeof __setPolygonMarketDataClientFactoryForTests
+      >[0],
+  );
+
+  const from = new Date("2026-04-23T13:30:00.000Z");
+  const to = new Date("2026-04-24T20:00:00.000Z");
+  const result = await listFlowEvents({
+    underlying: "SPY",
+    limit: 2,
+    from,
+    to,
+  });
+  const parsed = ListFlowEventsResponse.parse(result);
+
+  assert.equal(requestedFrom?.toISOString(), from.toISOString());
+  assert.equal(requestedTo?.toISOString(), to.toISOString());
+  assert.equal(parsed.source.provider, "polygon");
+  assert.equal(parsed.source.ibkrReason, "options_flow_historical_persisted");
+  assert.deepEqual(
+    parsed.events.map((event) => event.id),
+    ["SPY-HISTORY"],
+  );
+});
+
 test("listFlowEvents widens explicit Polygon fallback candidates before applying narrow filters", async () => {
   process.env["POLYGON_API_KEY"] = "test";
   __setIbkrBridgeClientFactoryForTests(
@@ -1229,6 +1366,51 @@ test("listFlowEvents timestamps IBKR snapshot rows from quote data time", async 
     "2026-04-24T14:35:00.000Z",
   );
   assert.match(parsed.events[0]?.id ?? "", /1777041300000$/);
+});
+
+test("listFlowEvents pins after-hours IBKR snapshot rows to regular-session close", async () => {
+  const contract = optionContract("SPY");
+  const providerContractId = contract.contract.providerContractId ?? "";
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      return [
+        optionQuote(providerContractId, {
+          updatedAt: new Date("2026-04-24T23:15:00.000Z"),
+          dataUpdatedAt: new Date("2026-04-24T23:15:00.000Z"),
+        }),
+      ];
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [contract],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const parsed = ListFlowEventsResponse.parse(
+    await listFlowEvents({ underlying: "SPY", limit: 5 }),
+  );
+
+  assert.equal(parsed.events.length, 1);
+  assert.equal(
+    parsed.events[0]?.occurredAt.toISOString(),
+    "2026-04-24T20:00:00.000Z",
+  );
+  assert.match(parsed.events[0]?.id ?? "", /1777060800000$/);
 });
 
 test("listFlowEvents does not reuse explicit Polygon fallback cache for IBKR-only requests", async () => {

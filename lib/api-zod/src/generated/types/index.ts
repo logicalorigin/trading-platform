@@ -201,6 +201,7 @@ export * from './flowEventsSourceStatus';
 export * from './flowPremiumDistributionBucket';
 export * from './flowPremiumDistributionBuckets';
 export * from './flowPremiumDistributionClassificationConfidence';
+export * from './flowPremiumDistributionHydrationDiagnostics';
 export * from './flowPremiumDistributionResponse';
 export * from './flowPremiumDistributionResponseStatus';
 export * from './flowPremiumDistributionSource';
