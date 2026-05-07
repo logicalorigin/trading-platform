@@ -14,6 +14,7 @@ const unitTestFiles = [
   "src/features/charting/chartApiBars.test.js",
   "src/features/charting/chartEvents.test.ts",
   "src/features/charting/flowChartEvents.test.ts",
+  "src/app/runtime-config.test.ts",
   "src/app/runtimeDiagnostics.test.ts",
   "src/features/flow/flowScannerStatusModel.test.js",
   "src/features/preferences/userPreferenceModel.test.ts",
