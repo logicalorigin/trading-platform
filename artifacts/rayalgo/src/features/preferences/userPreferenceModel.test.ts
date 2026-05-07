@@ -10,6 +10,7 @@ import {
   resolvePreferenceTimeZone,
   writeCachedUserPreferences,
 } from "./userPreferenceModel";
+import { resolveEffectiveThemeFromState } from "../../lib/uiTokens.jsx";
 
 test("date formatting tolerates partial preference snapshots", () => {
   const preferences = {
@@ -46,6 +47,48 @@ test("chart future expansion defaults to no future axis and clamps stale values"
       .futureExpansionBars,
     0,
   );
+});
+
+test("startup theme prefers cached appearance preferences over legacy top-level theme", () => {
+  assert.equal(
+    resolveEffectiveThemeFromState({
+      theme: "dark",
+      userPreferences: {
+        appearance: {
+          theme: "light",
+        },
+      },
+    }),
+    "light",
+  );
+
+  assert.equal(
+    resolveEffectiveThemeFromState({
+      theme: "light",
+      userPreferences: {
+        appearance: {
+          theme: "dark",
+        },
+      },
+    }),
+    "dark",
+  );
+});
+
+test("startup theme falls back to system when no cached preference exists", () => {
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    matchMedia: (query: string) => ({
+      matches: query === "(prefers-color-scheme: light)",
+    }),
+  };
+
+  try {
+    assert.equal(DEFAULT_USER_PREFERENCES.appearance.theme, "system");
+    assert.equal(resolveEffectiveThemeFromState({}), "light");
+  } finally {
+    (globalThis as { window?: unknown }).window = previousWindow;
+  }
 });
 
 test("preference cache does not overwrite active workspace routing state", () => {

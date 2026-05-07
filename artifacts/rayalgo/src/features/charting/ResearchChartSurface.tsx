@@ -33,15 +33,20 @@ import type {
   IndicatorZone,
   StudySpec,
 } from "./types";
-import type { ChartEvent } from "./chartEvents";
+import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
 import {
   buildFlowChartBuckets,
   buildFlowTooltipModel,
+  summarizeFlowChartBucketPlacement,
   type FlowChartBucket,
   type FlowTooltipModel,
 } from "./flowChartEvents";
 import { registerChart, unregisterChart } from "./chartLifecycle";
-import { resolveUsEquityMarketSession } from "./marketSession";
+import {
+  buildUsEquityExtendedSessionWindows,
+  countUsEquityMarketSessionBars,
+  resolveUsEquityMarketSession,
+} from "./marketSession";
 import {
   HISTOGRAM_VALUE_DISPLAY_CAP,
   sanitizeHistogramPoint,
@@ -58,6 +63,7 @@ import { AppTooltip } from "@/components/ui/tooltip";
 import {
   recordChartHydrationCounter,
   recordChartHydrationMetric,
+  type ChartHydrationCounterKey,
 } from "./chartHydrationStats";
 
 
@@ -71,6 +77,8 @@ type ResearchChartTheme = {
   green: string;
   red: string;
   amber: string;
+  blue?: string;
+  cyan?: string;
   accent?: string;
   mono: string;
 };
@@ -503,6 +511,11 @@ type FlowVolumeOverlay = {
   height: number;
   title: string;
   tone: "bullish" | "bearish" | "neutral";
+  segments: Array<{
+    tone: "bullish" | "bearish" | "neutral";
+    ratio: number;
+    premium: number;
+  }>;
   flowBucket: FlowChartBucket;
   tooltip: FlowTooltipModel;
 };
@@ -1035,6 +1048,7 @@ type ResearchChartSurfaceProps = {
     axisLabelVisible?: boolean;
   }>;
   chartEvents?: ChartEvent[];
+  chartFlowDiagnostics?: FlowChartEventConversion | null;
   emptyState?: {
     title?: string | null;
     detail?: string | null;
@@ -1178,6 +1192,11 @@ type SeriesTailUpdatePlan = {
   mode: SeriesTailUpdateMode;
   startIndex: number;
 };
+
+type SeriesSyncModeReporter = (
+  mode: "patch" | "append" | "reset",
+  delta: number,
+) => void;
 
 const buildSeriesTailUpdatePlan = (
   previous: Array<Record<string, unknown>>,
@@ -1762,6 +1781,8 @@ const syncSeriesData = (
   series: any,
   previous: Array<Record<string, unknown>>,
   next: Array<Record<string, unknown>>,
+  instrumentationScope?: string | null,
+  reportMode?: SeriesSyncModeReporter,
 ): Array<Record<string, unknown>> => {
   const updatePlan = buildSeriesTailUpdatePlan(previous, next);
 
@@ -1792,6 +1813,15 @@ const syncSeriesData = (
 
         series.update(nextPoint);
       }
+      recordChartHydrationCounter(
+        updatePlan.mode === "patch" ? "seriesTailPatch" : "seriesTailAppend",
+        instrumentationScope,
+        Math.max(1, next.length - updatePlan.startIndex),
+      );
+      reportMode?.(
+        updatePlan.mode,
+        Math.max(1, next.length - updatePlan.startIndex),
+      );
       return next;
     } catch (_error) {
       // Timeframe changes and provider backfills can replace the visible time
@@ -1801,6 +1831,8 @@ const syncSeriesData = (
     }
   }
 
+  recordChartHydrationCounter("seriesFullReset", instrumentationScope);
+  reportMode?.("reset", next.length);
   series.setData(next);
   return next;
 };
@@ -2037,6 +2069,7 @@ const buildChartOptions = (
     invertScale = false,
     enableInteractions = true,
     showAttributionLogo = false,
+    showGrid = true,
     secondsVisible = false,
     rightOffset,
     preferences,
@@ -2050,6 +2083,7 @@ const buildChartOptions = (
     invertScale?: boolean;
     enableInteractions?: boolean;
     showAttributionLogo?: boolean;
+    showGrid?: boolean;
     secondsVisible?: boolean;
     rightOffset?: number;
     preferences: UserPreferences;
@@ -2068,8 +2102,8 @@ const buildChartOptions = (
       formatChartAxisTimestamp(value, preferences, ""),
   },
   grid: {
-    vertLines: { color: withAlpha(theme.border, "30"), visible: true },
-    horzLines: { color: withAlpha(theme.border, "50"), visible: true },
+    vertLines: { color: withAlpha(theme.border, "30"), visible: showGrid },
+    horzLines: { color: withAlpha(theme.border, "50"), visible: showGrid },
   },
   crosshair: {
     mode: CrosshairMode.MagnetOHLC,
@@ -2451,6 +2485,104 @@ const overlayShapesEqual = (
     }
   }
 
+  return true;
+};
+
+const flowTooltipModelsEqual = (
+  left: FlowTooltipModel | undefined,
+  right: FlowTooltipModel | undefined,
+): boolean =>
+  left === right ||
+  Boolean(
+    left &&
+      right &&
+      left.title === right.title &&
+      left.summary === right.summary &&
+      left.premium === right.premium &&
+      left.contracts === right.contracts &&
+      left.callPutMix === right.callPutMix &&
+      left.flowMix === right.flowMix &&
+      left.topContract === right.topContract &&
+      left.sentiment === right.sentiment &&
+      left.intensity === right.intensity &&
+      left.eventCount === right.eventCount &&
+      stringArraysEqual(left.tags, right.tags),
+  );
+
+const chartEventOverlaysEqual = (
+  left: ChartEventOverlay[],
+  right: ChartEventOverlay[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.id !== next.id ||
+      current.label !== next.label ||
+      current.title !== next.title ||
+      current.eventType !== next.eventType ||
+      current.source !== next.source ||
+      current.severity !== next.severity ||
+      current.symbol !== next.symbol ||
+      current.tone !== next.tone ||
+      current.placement !== next.placement ||
+      current.count !== next.count ||
+      current.flowBucket !== next.flowBucket ||
+      !numbersClose(current.left, next.left) ||
+      !numbersClose(current.top, next.top) ||
+      !flowTooltipModelsEqual(current.tooltip, next.tooltip)
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const flowVolumeOverlaysEqual = (
+  left: FlowVolumeOverlay[],
+  right: FlowVolumeOverlay[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    const segmentsEqual =
+      current.segments.length === next.segments.length &&
+      current.segments.every((segment, segmentIndex) => {
+        const nextSegment = next.segments[segmentIndex];
+        return (
+          nextSegment &&
+          segment.tone === nextSegment.tone &&
+          numbersClose(segment.ratio, nextSegment.ratio) &&
+          numbersClose(segment.premium, nextSegment.premium)
+        );
+      });
+    if (
+      current.id !== next.id ||
+      current.title !== next.title ||
+      current.tone !== next.tone ||
+      !segmentsEqual ||
+      current.flowBucket !== next.flowBucket ||
+      !numbersClose(current.left, next.left) ||
+      !numbersClose(current.top, next.top) ||
+      !numbersClose(current.width, next.width) ||
+      !numbersClose(current.height, next.height) ||
+      !flowTooltipModelsEqual(current.tooltip, next.tooltip)
+    ) {
+      return false;
+    }
+  }
   return true;
 };
 
@@ -2899,10 +3031,14 @@ const buildWindowOverlays = (
   theme: ResearchChartTheme,
   viewportWidth: number,
   viewportHeight: number,
+  extraWindows: IndicatorWindow[] = [],
 ): OverlayShape[] => {
   const barSpacing = resolveBarSpacing(chart, model);
+  const indicatorWindows = extraWindows.length
+    ? [...extraWindows, ...model.indicatorWindows]
+    : model.indicatorWindows;
 
-  return model.indicatorWindows.reduce<OverlayShape[]>(
+  return indicatorWindows.reduce<OverlayShape[]>(
     (result, indicatorWindow: IndicatorWindow) => {
       const startTime =
         indicatorWindow.startBarIndex != null
@@ -2937,8 +3073,22 @@ const buildWindowOverlays = (
         indicatorWindow.tone ||
         (indicatorWindow.direction === "short" ? "bearish" : "bullish");
       const meta = indicatorWindow.meta ?? {};
+      const marketSessionKey = meta.marketSessionKey as string | undefined;
+      const marketSessionFill =
+        marketSessionKey === "pre"
+          ? withAlpha(theme.blue || theme.cyan || theme.accent || theme.textMuted, "16")
+          : marketSessionKey === "after"
+            ? withAlpha(theme.amber, "18")
+            : null;
+      const marketSessionBorder =
+        marketSessionKey === "pre"
+          ? withAlpha(theme.blue || theme.cyan || theme.accent || theme.textMuted, "32")
+          : marketSessionKey === "after"
+            ? withAlpha(theme.amber, "38")
+            : null;
       const fill =
         (meta.fillColor as string | undefined) ||
+        marketSessionFill ||
         (tone === "bearish"
           ? withAlpha(theme.red, "12")
           : tone === "neutral"
@@ -2946,6 +3096,7 @@ const buildWindowOverlays = (
             : withAlpha(theme.green, "12"));
       const border =
         (meta.borderColor as string | undefined) ||
+        marketSessionBorder ||
         (tone === "bearish"
           ? withAlpha(theme.red, "45")
           : tone === "neutral"
@@ -2956,18 +3107,21 @@ const buildWindowOverlays = (
 
       result.push({
         id: indicatorWindow.id,
-        dataTestId: buildRayReplicaOverlayTestId(
-          indicatorWindow.strategy,
-          "window",
-          indicatorWindow.tone || indicatorWindow.direction,
-        ),
+        dataTestId:
+          (meta.dataTestId as string | undefined) ||
+          buildRayReplicaOverlayTestId(
+            indicatorWindow.strategy,
+            "window",
+            indicatorWindow.tone || indicatorWindow.direction,
+          ),
         left: xSpan.start,
         top: 0,
         width: xSpan.size,
         height: Math.max(0, viewportHeight),
         fill,
-        border: isBackground ? "transparent" : border,
-        borderVisible: !isBackground,
+        border:
+          isBackground && !marketSessionBorder ? "transparent" : border,
+        borderVisible: isBackground ? Boolean(marketSessionBorder) : true,
         label: isBackground
           ? undefined
           : (indicatorWindow.meta?.label as string | undefined),
@@ -3564,6 +3718,23 @@ const buildFlowVolumeOverlays = (
     }
 
     const tooltip = buildFlowTooltipModel(bucket);
+    const segments = [
+      {
+        tone: "bullish" as const,
+        ratio: bucket.bullishShare,
+        premium: bucket.bullishPremium,
+      },
+      {
+        tone: "bearish" as const,
+        ratio: bucket.bearishShare,
+        premium: bucket.bearishPremium,
+      },
+      {
+        tone: "neutral" as const,
+        ratio: bucket.neutralShare,
+        premium: bucket.neutralPremium,
+      },
+    ].filter((segment) => segment.ratio > 0.005);
     result.push({
       id: `flow-volume:${bucket.id}`,
       left,
@@ -3572,6 +3743,9 @@ const buildFlowVolumeOverlays = (
       height,
       title: `${tooltip.title}: ${tooltip.summary}`,
       tone: bucket.bias,
+      segments: segments.length
+        ? segments
+        : [{ tone: "neutral", ratio: 1, premium: bucket.totalPremium }],
       flowBucket: bucket,
       tooltip,
     });
@@ -3982,6 +4156,7 @@ const syncStudySeries = (
   chart: any,
   registry: Record<string, StudyRegistryEntry>,
   specs: StudySpec[],
+  instrumentationScope?: string | null,
 ): Record<string, StudyRegistryEntry> => {
   const nextRegistry = { ...registry };
   const renderSpecs = expandStudySpecsForRender(specs);
@@ -4030,7 +4205,12 @@ const syncStudySeries = (
     }
 
     existing.series.applyOptions(spec.options);
-    existing.data = syncSeriesData(existing.series, existing.data || [], seriesData);
+    existing.data = syncSeriesData(
+      existing.series,
+      existing.data || [],
+      seriesData,
+      instrumentationScope,
+    );
   });
 
   Object.keys(nextRegistry).forEach((key) => {
@@ -4105,6 +4285,7 @@ export const ResearchChartSurface = ({
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
   chartEvents = EMPTY_CHART_EVENTS,
+  chartFlowDiagnostics = null,
   emptyState = null,
   drawMode = null,
   onAddDrawing,
@@ -4134,6 +4315,18 @@ export const ResearchChartSurface = ({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<any>(null);
+  const surfaceDiagnosticsRef = useRef({
+    chartInstanceCreates: 0,
+    chartInstanceDisposes: 0,
+    seriesTailPatches: 0,
+    seriesTailAppends: 0,
+    seriesFullResets: 0,
+    viewportDefaultRangeApplies: 0,
+    viewportUserRangePreserves: 0,
+    viewportRealtimeFollowApplies: 0,
+    viewportPrependRangeAdjusts: 0,
+    viewportSkippedResets: 0,
+  });
   const candleSeriesRef = useRef<any>(null);
   const barSeriesRef = useRef<any>(null);
   const lineSeriesRef = useRef<any>(null);
@@ -4215,7 +4408,68 @@ export const ResearchChartSurface = ({
   }
   const initialChartPreferences = initialChartPreferencesRef.current;
   const deferredModel = useDeferredValue(model);
+  const extendedSessionWindows = useMemo(
+    () =>
+      userPreferences.chart.extendedHours
+        ? buildUsEquityExtendedSessionWindows(deferredModel.chartBars)
+        : [],
+    [deferredModel.chartBars, userPreferences.chart.extendedHours],
+  );
+  const marketSessionBarCounts = useMemo(
+    () => countUsEquityMarketSessionBars(model.chartBars),
+    [model.chartBars],
+  );
   const hydrationScopeKey = uiStateKey || rangeIdentityKey || null;
+  const writeSurfaceDiagnosticsAttributes = () => {
+    const root = rootRef.current;
+    if (!root) {
+      return;
+    }
+    const diagnostics = surfaceDiagnosticsRef.current;
+    root.dataset.chartInstanceCreateCount = String(
+      diagnostics.chartInstanceCreates,
+    );
+    root.dataset.chartInstanceDisposeCount = String(
+      diagnostics.chartInstanceDisposes,
+    );
+    root.dataset.chartSeriesTailPatchCount = String(
+      diagnostics.seriesTailPatches,
+    );
+    root.dataset.chartSeriesTailAppendCount = String(
+      diagnostics.seriesTailAppends,
+    );
+    root.dataset.chartSeriesFullResetCount = String(
+      diagnostics.seriesFullResets,
+    );
+    root.dataset.chartViewportDefaultRangeApplyCount = String(
+      diagnostics.viewportDefaultRangeApplies,
+    );
+    root.dataset.chartViewportUserRangePreserveCount = String(
+      diagnostics.viewportUserRangePreserves,
+    );
+    root.dataset.chartViewportRealtimeFollowCount = String(
+      diagnostics.viewportRealtimeFollowApplies,
+    );
+    root.dataset.chartViewportPrependRangeAdjustCount = String(
+      diagnostics.viewportPrependRangeAdjusts,
+    );
+    root.dataset.chartViewportSkippedResetCount = String(
+      diagnostics.viewportSkippedResets,
+    );
+  };
+  const recordViewportDiagnostic = (
+    key:
+      | "viewportDefaultRangeApplies"
+      | "viewportUserRangePreserves"
+      | "viewportRealtimeFollowApplies"
+      | "viewportPrependRangeAdjusts"
+      | "viewportSkippedResets",
+    counter: ChartHydrationCounterKey,
+  ) => {
+    surfaceDiagnosticsRef.current[key] += 1;
+    recordChartHydrationCounter(counter, hydrationScopeKey);
+    writeSurfaceDiagnosticsAttributes();
+  };
   const hasChartBars = model.chartBars.length > 0;
   const [hoverBar, setHoverBar] = useState<HoverBar | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
@@ -4297,6 +4551,10 @@ export const ResearchChartSurface = ({
     () => buildFlowChartBuckets(visibleChartEvents, deferredModel),
     [visibleChartEvents, deferredModel],
   );
+  const flowChartBucketDiagnostics = useMemo(
+    () => summarizeFlowChartBucketPlacement(visibleChartEvents, deferredModel),
+    [visibleChartEvents, deferredModel],
+  );
   const showTradePositionOverlays = userPreferences.trading.showPositionLines;
   const [boxDrawingOverlays, setBoxDrawingOverlays] = useState<OverlayShape[]>(
     [],
@@ -4322,6 +4580,11 @@ export const ResearchChartSurface = ({
   const [dashboardSessionNowMs, setDashboardSessionNowMs] = useState(() =>
     Date.now(),
   );
+  const dashboardMarketSession = resolveUsEquityMarketSession(
+    dashboardSessionNowMs,
+  );
+  const closedMarketVisualsEnabled = dashboardMarketSession.key === "closed";
+  const effectiveShowGrid = showGrid && closedMarketVisualsEnabled;
   const [tradeThresholdOverlays, setTradeThresholdOverlays] = useState<
     TradeThresholdOverlay[]
   >([]);
@@ -4377,6 +4640,16 @@ export const ResearchChartSurface = ({
     next: OverlayShape[],
   ) => {
     setter((current) => (overlayShapesEqual(current, next) ? current : next));
+  };
+  const syncChartEventOverlaysState = (next: ChartEventOverlay[]) => {
+    setChartEventOverlays((current) =>
+      chartEventOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncFlowVolumeOverlaysState = (next: FlowVolumeOverlay[]) => {
+    setFlowVolumeOverlays((current) =>
+      flowVolumeOverlaysEqual(current, next) ? current : next,
+    );
   };
   const syncTradeMarkerTargetsState = (next: TradeMarkerTarget[]) => {
     setTradeMarkerTargets((current) =>
@@ -4437,16 +4710,12 @@ export const ResearchChartSurface = ({
   }, []);
 
   useEffect(() => {
-    if (!indicatorDashboardOverlay) {
-      return undefined;
-    }
-
     setDashboardSessionNowMs(Date.now());
     const interval = setInterval(() => {
       setDashboardSessionNowMs(Date.now());
     }, 30_000);
     return () => clearInterval(interval);
-  }, [Boolean(indicatorDashboardOverlay)]);
+  }, []);
 
   useEffect(() => {
     interactionRef.current = {
@@ -4823,14 +5092,14 @@ export const ResearchChartSurface = ({
         lockedUserRange
       ) {
         const lockedSignature = buildVisibleRangeSignature(lockedUserRange);
-        if (typeof window !== "undefined") {
-          markProgrammaticViewportIntent(lockedSignature);
-          window.requestAnimationFrame(() => {
-            chartRef.current
-              ?.timeScale?.()
-              .setVisibleLogicalRange?.(lockedUserRange);
-          });
-        }
+        visibleLogicalRangeRef.current = lockedUserRange;
+        lastPublishedVisibleRangeSignatureRef.current = lockedSignature;
+        markProgrammaticViewportIntent(lockedSignature);
+        chartRef.current?.timeScale?.().setVisibleLogicalRange?.(lockedUserRange);
+        recordViewportDiagnostic(
+          "viewportUserRangePreserves",
+          "visibleRangeUserPreserved",
+        );
         return lockedUserRange;
       }
       const recentLocalUserViewport =
@@ -5078,6 +5347,10 @@ export const ResearchChartSurface = ({
         markProgrammaticIntent: !restoreState.matchingSnapshot?.userTouched,
       });
     } else if (model.defaultVisibleLogicalRange) {
+      recordViewportDiagnostic(
+        "viewportDefaultRangeApplies",
+        "visibleRangeDefaultApplied",
+      );
       setProgrammaticVisibleLogicalRange(model.defaultVisibleLogicalRange, {
         markInitialized: true,
       });
@@ -5125,6 +5398,10 @@ export const ResearchChartSurface = ({
         };
         visibleLogicalRangeRef.current = adjustedVisibleRange;
         pendingStoredRangeSyncRef.current = true;
+        recordViewportDiagnostic(
+          "viewportPrependRangeAdjusts",
+          "visibleRangePrependAdjusted",
+        );
         visibleRangeChangeRef.current?.(adjustedVisibleRange);
         publishViewportSnapshot(
           buildViewportSnapshot({
@@ -5244,6 +5521,7 @@ export const ResearchChartSurface = ({
           invertScale,
           enableInteractions,
           showAttributionLogo,
+          showGrid: effectiveShowGrid,
           secondsVisible: userPreferences.time.showSeconds,
           rightOffset: chartTimeScaleRightOffset,
           preferences: userPreferences,
@@ -5335,6 +5613,9 @@ export const ResearchChartSurface = ({
         createSeriesMarkers(baselineSeries, []),
       ];
       chartRef.current = chart;
+      surfaceDiagnosticsRef.current.chartInstanceCreates += 1;
+      recordChartHydrationCounter("chartInstanceCreate", hydrationScopeKey);
+      writeSurfaceDiagnosticsAttributes();
       candleSeriesRef.current = candleSeries;
       barSeriesRef.current = barSeries;
       lineSeriesRef.current = lineSeries;
@@ -5495,6 +5776,11 @@ export const ResearchChartSurface = ({
         try { chart.unsubscribeClick(handleClick); } catch (_e) {}
       }
       unregisterChart(chart);
+      if (chart) {
+        surfaceDiagnosticsRef.current.chartInstanceDisposes += 1;
+        recordChartHydrationCounter("chartInstanceDispose", hydrationScopeKey);
+        writeSurfaceDiagnosticsAttributes();
+      }
       chart = null;
 
       chartRef.current = null;
@@ -5648,75 +5934,145 @@ export const ResearchChartSurface = ({
       realtimeFollow: realtimeFollowRef.current,
       followLatestBars: shouldFollowLatestBars,
     });
-    const wantedProgrammaticRangeSync = Boolean(
-      autoHydrationVisibleRange ||
-        shouldFollowLatestBars ||
-        (initializedRangeRef.current &&
-          visibleRangeBeforeDataSync &&
-          Number.isFinite(visibleRangeBeforeDataSync.from) &&
-          Number.isFinite(visibleRangeBeforeDataSync.to)) ||
-        (!userViewportTouched &&
-          initializedRangeRef.current &&
-          model.defaultVisibleLogicalRange &&
-          nextBarCount > 0),
-    );
+    let seriesFullResetDuringSync = false;
+    const reportSeriesSyncMode: SeriesSyncModeReporter = (mode, delta) => {
+      if (mode === "patch") {
+        surfaceDiagnosticsRef.current.seriesTailPatches += delta;
+      } else if (mode === "append") {
+        surfaceDiagnosticsRef.current.seriesTailAppends += delta;
+      } else {
+        seriesFullResetDuringSync = true;
+        surfaceDiagnosticsRef.current.seriesFullResets += 1;
+      }
+      writeSurfaceDiagnosticsAttributes();
+    };
 
     baseSeriesDataRef.current.candles = syncSeriesData(
       candleSeries,
       baseSeriesDataRef.current.candles,
       candleSeriesData,
+      hydrationScopeKey,
+      reportSeriesSyncMode,
     );
     baseSeriesDataRef.current.bars = syncSeriesData(
       barSeries,
       baseSeriesDataRef.current.bars,
       barSeriesData,
+      hydrationScopeKey,
+      reportSeriesSyncMode,
     );
     baseSeriesDataRef.current.line = syncSeriesData(
       lineSeries,
       baseSeriesDataRef.current.line,
       closeSeriesData,
+      hydrationScopeKey,
+      reportSeriesSyncMode,
     );
     baseSeriesDataRef.current.area = syncSeriesData(
       areaSeries,
       baseSeriesDataRef.current.area,
       closeSeriesData,
+      hydrationScopeKey,
+      reportSeriesSyncMode,
     );
     baseSeriesDataRef.current.baseline = syncSeriesData(
       baselineSeries,
       baseSeriesDataRef.current.baseline,
       closeSeriesData,
+      hydrationScopeKey,
+      reportSeriesSyncMode,
     );
     baseSeriesDataRef.current.volume = syncSeriesData(
       volumeSeries,
       baseSeriesDataRef.current.volume,
       volumeSeriesData,
+      hydrationScopeKey,
+      reportSeriesSyncMode,
+    );
+    if (
+      userViewportTouched &&
+      !seriesFullResetDuringSync &&
+      initializedRangeRef.current &&
+      visibleRangeBeforeDataSync &&
+      !interactionActive
+    ) {
+      const visibleRangeAfterDataSync = resolveViewportVisibleLogicalRange(
+        chartRef.current.timeScale().getVisibleLogicalRange?.(),
+      );
+      if (
+        !visibleLogicalRangesClose(
+          visibleRangeAfterDataSync,
+          visibleRangeBeforeDataSync,
+          0.01,
+        )
+      ) {
+        recordViewportDiagnostic(
+          "viewportUserRangePreserves",
+          "visibleRangeUserPreserved",
+        );
+        setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync, {
+          markProgrammaticIntent: true,
+        });
+      }
+    }
+    const shouldRestoreRangeAfterFullReset = Boolean(
+      seriesFullResetDuringSync &&
+        initializedRangeRef.current &&
+        visibleRangeBeforeDataSync &&
+        Number.isFinite(visibleRangeBeforeDataSync.from) &&
+        Number.isFinite(visibleRangeBeforeDataSync.to),
+    );
+    const wantedProgrammaticRangeSync = Boolean(
+      autoHydrationVisibleRange ||
+        shouldFollowLatestBars ||
+        shouldRestoreRangeAfterFullReset ||
+        (!userViewportTouched &&
+          initializedRangeRef.current &&
+          !visibleRangeBeforeDataSync &&
+          model.defaultVisibleLogicalRange &&
+          nextBarCount > 0),
     );
     if (autoHydrationVisibleRange && canApplyProgrammaticRangeSync) {
+      recordViewportDiagnostic(
+        "viewportDefaultRangeApplies",
+        "visibleRangeDefaultApplied",
+      );
       setProgrammaticVisibleLogicalRange(autoHydrationVisibleRange, {
         markInitialized: true,
       });
     } else if (shouldFollowLatestBars && canApplyProgrammaticRangeSync) {
+      recordViewportDiagnostic(
+        "viewportRealtimeFollowApplies",
+        "visibleRangeRealtimeFollow",
+      );
       markProgrammaticViewportIntent();
       chartRef.current.timeScale().scrollToRealTime?.();
-    } else if (
-      canApplyProgrammaticRangeSync &&
-      initializedRangeRef.current &&
-      visibleRangeBeforeDataSync &&
-      Number.isFinite(visibleRangeBeforeDataSync.from) &&
-      Number.isFinite(visibleRangeBeforeDataSync.to)
-    ) {
+    } else if (canApplyProgrammaticRangeSync && shouldRestoreRangeAfterFullReset) {
+      recordViewportDiagnostic(
+        "viewportUserRangePreserves",
+        "visibleRangeUserPreserved",
+      );
       setProgrammaticVisibleLogicalRange(visibleRangeBeforeDataSync, {
-        markProgrammaticIntent: !userViewportTouched,
+        markProgrammaticIntent: false,
       });
     } else if (
       canApplyProgrammaticRangeSync &&
       !userViewportTouched &&
       initializedRangeRef.current &&
+      !visibleRangeBeforeDataSync &&
       model.defaultVisibleLogicalRange &&
       nextBarCount > 0
     ) {
+      recordViewportDiagnostic(
+        "viewportDefaultRangeApplies",
+        "visibleRangeDefaultApplied",
+      );
       setProgrammaticVisibleLogicalRange(model.defaultVisibleLogicalRange);
     } else if (wantedProgrammaticRangeSync && !canApplyProgrammaticRangeSync) {
+      recordViewportDiagnostic(
+        "viewportSkippedResets",
+        "visibleRangeResetSkipped",
+      );
       recordChartHydrationCounter(
         "visibleRangeSyncDeferred",
         hydrationScopeKey,
@@ -5791,8 +6147,14 @@ export const ResearchChartSurface = ({
           formatChartAxisTimestamp(value, userPreferences, ""),
       },
       grid: {
-        vertLines: { color: withAlpha(theme.border, "30"), visible: showGrid },
-        horzLines: { color: withAlpha(theme.border, "50"), visible: showGrid },
+        vertLines: {
+          color: withAlpha(theme.border, "30"),
+          visible: effectiveShowGrid,
+        },
+        horzLines: {
+          color: withAlpha(theme.border, "50"),
+          visible: effectiveShowGrid,
+        },
       },
       crosshair: {
         mode: hideCrosshair
@@ -5882,7 +6244,7 @@ export const ResearchChartSurface = ({
     enableInteractions,
     hideCrosshair,
     showVolume,
-    showGrid,
+    effectiveShowGrid,
     showPriceLine,
     showRightPriceScale,
     showTimeScaleState,
@@ -5951,6 +6313,10 @@ export const ResearchChartSurface = ({
             defaultVisibleRange: model.defaultVisibleLogicalRange,
           })
         : model.defaultVisibleLogicalRange;
+      recordViewportDiagnostic(
+        "viewportDefaultRangeApplies",
+        "visibleRangeDefaultApplied",
+      );
       setProgrammaticVisibleLogicalRange(nextDefaultRange);
     } else if (action === "fit") {
       markProgrammaticViewportIntent();
@@ -6000,13 +6366,19 @@ export const ResearchChartSurface = ({
       chartRef.current,
       studyRegistryRef.current,
       deferredModel.studySpecs,
+      hydrationScopeKey,
     );
     applyChartPaneStretchFactors(chartRef.current, {
       compact,
       lowerPaneCount: deferredModel.studyLowerPaneCount,
     });
     setOverlayRevision((value) => value + 1);
-  }, [compact, deferredModel.studyLowerPaneCount, deferredModel.studySpecs]);
+  }, [
+    compact,
+    deferredModel.studyLowerPaneCount,
+    deferredModel.studySpecs,
+    hydrationScopeKey,
+  ]);
 
   useLayoutEffect(() => {
     if (!markerApisRef.current.length) {
@@ -6103,7 +6475,11 @@ export const ResearchChartSurface = ({
     };
 
     const sessionOpen = deferredModel.chartBars[0]?.o;
-    if (typeof sessionOpen === "number" && Number.isFinite(sessionOpen)) {
+    if (
+      closedMarketVisualsEnabled &&
+      typeof sessionOpen === "number" &&
+      Number.isFinite(sessionOpen)
+    ) {
       const sessionLine = {
         price: sessionOpen,
         color: withAlpha(theme.textMuted, "b0"),
@@ -6148,7 +6524,14 @@ export const ResearchChartSurface = ({
         };
         addPriceLine(referenceLine);
       });
-  }, [drawings, deferredModel.chartBars, referenceLines, theme.amber, theme.textMuted]);
+  }, [
+    closedMarketVisualsEnabled,
+    drawings,
+    deferredModel.chartBars,
+    referenceLines,
+    theme.amber,
+    theme.textMuted,
+  ]);
 
   useLayoutEffect(() => {
     if (
@@ -6163,8 +6546,8 @@ export const ResearchChartSurface = ({
       syncTradeMarkerTargetsState([]);
       syncIndicatorBadgeOverlaysState([]);
       syncIndicatorDotOverlaysState([]);
-      setChartEventOverlays([]);
-      setFlowVolumeOverlays([]);
+      syncChartEventOverlaysState([]);
+      syncFlowVolumeOverlaysState([]);
       setFlowTooltip(null);
       syncIndicatorDashboardOverlayState(null);
       syncTradeThresholdOverlaysState([]);
@@ -6191,6 +6574,7 @@ export const ResearchChartSurface = ({
         theme,
         viewportWidth,
         viewportHeight,
+        extendedSessionWindows,
       ),
     );
     syncOverlayState(
@@ -6248,7 +6632,7 @@ export const ResearchChartSurface = ({
     const nonFlowChartEvents = visibleChartEvents.filter(
       (event) => event.eventType !== "unusual_flow",
     );
-    setChartEventOverlays([
+    syncChartEventOverlaysState([
       ...buildChartEventOverlays(
         chartRef.current,
         activePriceSeriesRef.current,
@@ -6266,7 +6650,7 @@ export const ResearchChartSurface = ({
         viewportHeight,
       ),
     ]);
-    setFlowVolumeOverlays(
+    syncFlowVolumeOverlaysState(
       showVolume
         ? buildFlowVolumeOverlays(
             chartRef.current,
@@ -6313,6 +6697,7 @@ export const ResearchChartSurface = ({
     deferredModel.tradeOverlays,
     deferredModel.indicatorWindows,
     deferredModel.indicatorZones,
+    extendedSessionWindows,
     hydrationScopeKey,
     overlayRevision,
     plotSize.height,
@@ -6322,7 +6707,10 @@ export const ResearchChartSurface = ({
     showVolume,
     showTradePositionOverlays,
     visibleChartEvents,
+    theme.accent,
     theme.amber,
+    theme.blue,
+    theme.cyan,
     theme.green,
     theme.red,
     theme.text,
@@ -6506,6 +6894,10 @@ export const ResearchChartSurface = ({
       model.chartBars.length > 0 &&
       !isViewportInteractionActive()
     ) {
+      recordViewportDiagnostic(
+        "viewportDefaultRangeApplies",
+        "visibleRangeDefaultApplied",
+      );
       setProgrammaticVisibleLogicalRange(
         resolveAutoHydrationVisibleRange({
           barCount: model.chartBars.length,
@@ -7251,9 +7643,6 @@ export const ResearchChartSurface = ({
     chartRef.current,
     plotSize.height,
   );
-  const dashboardMarketSession = resolveUsEquityMarketSession(
-    dashboardSessionNowMs,
-  );
   const dashboardOverlayForDisplay = indicatorDashboardOverlay &&
     userPreferences.chart.rayAlgoDashboard !== "hidden"
     ? {
@@ -7472,6 +7861,22 @@ export const ResearchChartSurface = ({
     model.chartBars.length > 0
       ? model.chartBars[model.chartBars.length - 1]
       : null;
+  const flowChartEventCount = visibleChartEvents.filter(
+    (event) => event.eventType === "unusual_flow",
+  ).length;
+  const rawFlowInputCount =
+    chartFlowDiagnostics?.rawInputCount ?? flowChartEventCount;
+  const convertedFlowEventCount =
+    chartFlowDiagnostics?.convertedEventCount ?? flowChartEventCount;
+  const conversionInvalidTimeDropCount =
+    chartFlowDiagnostics?.droppedInvalidTimeCount ?? 0;
+  const conversionSymbolDropCount = chartFlowDiagnostics?.droppedSymbolCount ?? 0;
+  const renderedFlowMarkerCount = chartEventOverlays.filter(
+    (overlay) => overlay.eventType === "unusual_flow",
+  ).length;
+  const extendedSessionBarCount =
+    marketSessionBarCounts.pre + marketSessionBarCounts.after;
+  const surfaceDiagnostics = surfaceDiagnosticsRef.current;
 
   return (
     <div
@@ -7493,6 +7898,54 @@ export const ResearchChartSurface = ({
       data-chart-latest-freshness={latestRenderedBar?.freshness || ""}
       data-chart-latest-market-data-mode={latestRenderedBar?.marketDataMode || ""}
       data-chart-latest-delayed={latestRenderedBar?.delayed ? "true" : "false"}
+      data-chart-events-count={visibleChartEvents.length}
+      data-chart-flow-raw-input-count={rawFlowInputCount}
+      data-chart-flow-converted-count={convertedFlowEventCount}
+      data-chart-flow-events-count={flowChartEventCount}
+      data-chart-flow-bucket-count={flowChartBuckets.length}
+      data-chart-flow-bucketed-event-count={
+        flowChartBucketDiagnostics.bucketedEventCount
+      }
+      data-chart-flow-marker-count={renderedFlowMarkerCount}
+      data-chart-flow-volume-count={flowVolumeOverlays.length}
+      data-chart-flow-invalid-time-drop-count={
+        conversionInvalidTimeDropCount +
+        flowChartBucketDiagnostics.droppedInvalidTimeCount
+      }
+      data-chart-flow-symbol-drop-count={conversionSymbolDropCount}
+      data-chart-flow-outside-bar-drop-count={
+        flowChartBucketDiagnostics.droppedOutsideBarCount
+      }
+      data-chart-extended-session-enabled={
+        userPreferences.chart.extendedHours ? "true" : "false"
+      }
+      data-chart-extended-session-window-count={extendedSessionWindows.length}
+      data-chart-extended-session-bar-count={extendedSessionBarCount}
+      data-chart-pre-bar-count={marketSessionBarCounts.pre}
+      data-chart-rth-bar-count={marketSessionBarCounts.rth}
+      data-chart-after-bar-count={marketSessionBarCounts.after}
+      data-chart-realtime-follow={realtimeFollowRef.current ? "true" : "false"}
+      data-chart-auto-hydration={autoHydrationViewportRef.current ? "true" : "false"}
+      data-chart-instance-create-count={surfaceDiagnostics.chartInstanceCreates}
+      data-chart-instance-dispose-count={surfaceDiagnostics.chartInstanceDisposes}
+      data-chart-series-tail-patch-count={surfaceDiagnostics.seriesTailPatches}
+      data-chart-series-tail-append-count={surfaceDiagnostics.seriesTailAppends}
+      data-chart-series-full-reset-count={surfaceDiagnostics.seriesFullResets}
+      data-chart-viewport-default-range-apply-count={
+        surfaceDiagnostics.viewportDefaultRangeApplies
+      }
+      data-chart-viewport-user-range-preserve-count={
+        surfaceDiagnostics.viewportUserRangePreserves
+      }
+      data-chart-viewport-realtime-follow-count={
+        surfaceDiagnostics.viewportRealtimeFollowApplies
+      }
+      data-chart-viewport-prepend-range-adjust-count={
+        surfaceDiagnostics.viewportPrependRangeAdjusts
+      }
+      data-chart-viewport-skipped-reset-count={
+        surfaceDiagnostics.viewportSkippedResets
+      }
       onPointerDownCapture={handleRootPointerDownCapture}
       onPointerMoveCapture={handleRootPointerMoveCapture}
       onPointerUpCapture={handleRootPointerUpCapture}
@@ -7665,7 +8118,7 @@ export const ResearchChartSurface = ({
               cursor: drawMode ? "crosshair" : "default",
             }}
           />
-          {dashboardMarketSession.key === "closed" ? (
+          {closedMarketVisualsEnabled ? (
             <div
               data-testid={dataTestId ? `${dataTestId}-market-closed-overlay` : undefined}
               aria-hidden="true"
@@ -7955,7 +8408,36 @@ export const ResearchChartSurface = ({
                     ? theme.green
                     : overlay.tone === "bearish"
                       ? theme.red
-                      : theme.textMuted;
+                      : theme.amber;
+                let segmentBottom = 0;
+                const segmentNodes = overlay.segments.map((segment) => {
+                  const segmentColor =
+                    segment.tone === "bullish"
+                      ? theme.green
+                      : segment.tone === "bearish"
+                        ? theme.red
+                        : theme.amber;
+                  const heightPercent = Math.max(
+                    0,
+                    Math.min(100 - segmentBottom, segment.ratio * 100),
+                  );
+                  const node = (
+                    <div
+                      key={`${overlay.id}:${segment.tone}`}
+                      data-chart-flow-volume-segment={segment.tone}
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        bottom: `${segmentBottom}%`,
+                        height: `${heightPercent}%`,
+                        background: withAlpha(segmentColor, "d8"),
+                      }}
+                    />
+                  );
+                  segmentBottom += heightPercent;
+                  return node;
+                });
                 return (
                   <div
                     key={overlay.id}
@@ -7991,14 +8473,17 @@ export const ResearchChartSurface = ({
                       minWidth: 3,
                       minHeight: 4,
                       borderRadius: 2,
-                      background: withAlpha(theme.amber, "d8"),
+                      background: withAlpha(toneColor, "1f"),
                       border: `1px solid ${withAlpha(toneColor, "a8")}`,
                       boxSizing: "border-box",
                       boxShadow: `0 0 0 1px ${withAlpha(theme.bg4, "aa")}`,
+                      overflow: "hidden",
                       pointerEvents: "auto",
                       cursor: "help",
                     }}
-                  />
+                  >
+                    {segmentNodes}
+                  </div>
                 );
               })}
               {chartEventOverlays.map((overlay) => {
@@ -8149,6 +8634,10 @@ export const ResearchChartSurface = ({
                     <div>
                       <span style={{ color: theme.textMuted }}>Sent </span>
                       {flowTooltip.model.sentiment}
+                    </div>
+                    <div>
+                      <span style={{ color: theme.textMuted }}>Flow </span>
+                      {flowTooltip.model.flowMix}
                     </div>
                     <div>
                       <span style={{ color: theme.textMuted }}>Contracts </span>

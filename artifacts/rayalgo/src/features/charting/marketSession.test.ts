@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildUsEquityExtendedSessionWindows,
+  countUsEquityMarketSessionBars,
   isNyseFullHoliday,
   resolveUsEquityMarketSession,
 } from "./marketSession";
@@ -50,4 +52,51 @@ test("resolveUsEquityMarketSession handles observed fixed-date holidays", () => 
     resolveUsEquityMarketSession("2026-07-03T15:00:00Z").label,
     "CLSD",
   );
+});
+
+test("buildUsEquityExtendedSessionWindows groups premarket and after-hours bars", () => {
+  const bars = [
+    "2026-04-30T12:00:00Z",
+    "2026-04-30T12:15:00Z",
+    "2026-04-30T13:15:00Z",
+    "2026-04-30T14:00:00Z",
+    "2026-04-30T20:15:00Z",
+    "2026-04-30T20:30:00Z",
+  ].map((ts) => ({
+    ts,
+    time: Date.parse(ts) / 1000,
+  }));
+
+  const windows = buildUsEquityExtendedSessionWindows(bars);
+
+  assert.deepEqual(
+    windows.map((window) => ({
+      label: window.meta?.label,
+      startBarIndex: window.startBarIndex,
+      endBarIndex: window.endBarIndex,
+    })),
+    [
+      { label: "Premarket", startBarIndex: 0, endBarIndex: 2 },
+      { label: "After-hours", startBarIndex: 4, endBarIndex: 5 },
+    ],
+  );
+});
+
+test("countUsEquityMarketSessionBars counts extended and regular bars", () => {
+  const bars = [
+    "2026-04-30T12:00:00Z",
+    "2026-04-30T14:00:00Z",
+    "2026-04-30T20:15:00Z",
+    "2026-05-01T01:00:00Z",
+  ].map((ts) => ({
+    ts,
+    time: Date.parse(ts) / 1000,
+  }));
+
+  assert.deepEqual(countUsEquityMarketSessionBars(bars), {
+    pre: 1,
+    rth: 1,
+    after: 1,
+    closed: 1,
+  });
 });

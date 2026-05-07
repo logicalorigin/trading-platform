@@ -76,7 +76,7 @@ type JsonRecord = Record<string, unknown>;
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   appearance: {
-    theme: "dark",
+    theme: "system",
     density: "compact",
     scale: "m",
     reducedMotion: "system",

@@ -13,9 +13,21 @@ export type ChartHydrationMetricKey =
 
 export type ChartHydrationCounterKey =
   | "payloadShapeError"
+  | "chartInstanceCreate"
+  | "chartInstanceDispose"
+  | "livePatchReceived"
+  | "livePatchApplied"
   | "livePatchCoalesced"
   | "livePatchDuplicate"
+  | "seriesTailPatch"
+  | "seriesTailAppend"
+  | "seriesFullReset"
   | "visibleRangeSyncDeferred"
+  | "visibleRangeDefaultApplied"
+  | "visibleRangeUserPreserved"
+  | "visibleRangeRealtimeFollow"
+  | "visibleRangePrependAdjusted"
+  | "visibleRangeResetSkipped"
   | "liveFallbackFetch"
   | "olderPageFetch"
   | "olderPageDuplicate"
@@ -84,9 +96,21 @@ const hydrationSamples: Record<ChartHydrationMetricKey, number[]> = {
 const scopeHydrationMetrics = new Map<string, ScopeHydrationMetrics>();
 const hydrationCounters: Record<ChartHydrationCounterKey, number> = {
   payloadShapeError: 0,
+  chartInstanceCreate: 0,
+  chartInstanceDispose: 0,
+  livePatchReceived: 0,
+  livePatchApplied: 0,
   livePatchCoalesced: 0,
   livePatchDuplicate: 0,
+  seriesTailPatch: 0,
+  seriesTailAppend: 0,
+  seriesFullReset: 0,
   visibleRangeSyncDeferred: 0,
+  visibleRangeDefaultApplied: 0,
+  visibleRangeUserPreserved: 0,
+  visibleRangeRealtimeFollow: 0,
+  visibleRangePrependAdjusted: 0,
+  visibleRangeResetSkipped: 0,
   liveFallbackFetch: 0,
   olderPageFetch: 0,
   olderPageDuplicate: 0,

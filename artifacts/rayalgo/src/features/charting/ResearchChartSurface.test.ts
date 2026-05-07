@@ -87,6 +87,32 @@ test("ResearchChartSurface keeps flow chart events visible when execution marker
   );
 });
 
+test("ResearchChartSurface gates gray session visuals to closed market hours", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(
+    source,
+    /const closedMarketVisualsEnabled = dashboardMarketSession\.key === "closed";/,
+  );
+  assert.match(source, /const effectiveShowGrid = showGrid && closedMarketVisualsEnabled;/);
+  assert.match(source, /showGrid:\s*effectiveShowGrid/);
+  assert.match(source, /visible:\s*effectiveShowGrid/);
+  assert.match(
+    source,
+    /closedMarketVisualsEnabled &&\s*typeof sessionOpen === "number"/,
+  );
+  assert.match(source, /\{closedMarketVisualsEnabled \? \(/);
+});
+
+test("ResearchChartSurface renders extended-hours session windows from chart bars", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /buildUsEquityExtendedSessionWindows/);
+  assert.match(source, /userPreferences\.chart\.extendedHours/);
+  assert.match(source, /data-chart-extended-session-window-count=\{extendedSessionWindows\.length\}/);
+  assert.match(source, /marketSessionKey === "after"/);
+});
+
 test("ResearchChartSurface publishes controlled viewport after prepending older bars", () => {
   const source = readResearchChartSurfaceSource();
   const prependAdjustment = source.match(
@@ -1279,6 +1305,40 @@ test("ResearchChartSurface defers programmatic range sync during active user ges
     }),
     false,
   );
+});
+
+test("ResearchChartSurface restores viewport ranges after full resets and user-touched live syncs", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /let seriesFullResetDuringSync = false;/);
+  assert.match(source, /const shouldRestoreRangeAfterFullReset = Boolean/);
+  assert.match(source, /userViewportTouched &&\s*!seriesFullResetDuringSync/);
+  assert.match(source, /canApplyProgrammaticRangeSync && shouldRestoreRangeAfterFullReset/);
+  assert.doesNotMatch(
+    source,
+    /canApplyProgrammaticRangeSync &&\s*initializedRangeRef\.current &&\s*visibleRangeBeforeDataSync &&/,
+  );
+});
+
+test("ResearchChartSurface exposes live render diagnostics for viewport and flow", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /data-chart-flow-events-count=\{flowChartEventCount\}/);
+  assert.match(source, /data-chart-flow-raw-input-count=\{rawFlowInputCount\}/);
+  assert.match(source, /data-chart-flow-converted-count=\{convertedFlowEventCount\}/);
+  assert.match(source, /data-chart-flow-bucket-count=\{flowChartBuckets\.length\}/);
+  assert.match(source, /data-chart-flow-bucketed-event-count=/);
+  assert.match(source, /data-chart-flow-marker-count=\{renderedFlowMarkerCount\}/);
+  assert.match(source, /data-chart-flow-invalid-time-drop-count=/);
+  assert.match(source, /data-chart-flow-symbol-drop-count=\{conversionSymbolDropCount\}/);
+  assert.match(source, /data-chart-flow-outside-bar-drop-count=/);
+  assert.match(source, /summarizeFlowChartBucketPlacement/);
+  assert.match(source, /data-chart-extended-session-enabled=/);
+  assert.match(source, /data-chart-instance-create-count=\{surfaceDiagnostics\.chartInstanceCreates\}/);
+  assert.match(source, /data-chart-series-full-reset-count=\{surfaceDiagnostics\.seriesFullResets\}/);
+  assert.match(source, /data-chart-viewport-user-range-preserve-count=/);
+  assert.match(source, /visibleRangeUserPreserved/);
+  assert.match(source, /visibleRangeRealtimeFollow/);
 });
 
 test("ResearchChartSurface sanitizes stored scale preferences", () => {

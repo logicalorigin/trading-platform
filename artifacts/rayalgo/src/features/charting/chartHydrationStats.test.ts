@@ -37,14 +37,29 @@ test("chart hydration stats records global and scoped counters", () => {
   const scope = "SPY:1m:test";
   const before =
     getChartHydrationStatsSnapshot().counters.payloadShapeError ?? 0;
+  const receivedBefore =
+    getChartHydrationStatsSnapshot().counters.livePatchReceived ?? 0;
 
   recordChartHydrationCounter("payloadShapeError", scope);
+  recordChartHydrationCounter("chartInstanceCreate", scope);
+  recordChartHydrationCounter("chartInstanceDispose", scope);
+  recordChartHydrationCounter("livePatchReceived", scope, 2);
+  recordChartHydrationCounter("seriesTailPatch", scope);
+  recordChartHydrationCounter("visibleRangeUserPreserved", scope);
+  recordChartHydrationCounter("visibleRangeRealtimeFollow", scope);
 
   const snapshot = getChartHydrationStatsSnapshot();
   const scoped = snapshot.scopes.find((entry) => entry.scope === scope);
 
   assert.equal(snapshot.counters.payloadShapeError >= before + 1, true);
+  assert.equal(snapshot.counters.livePatchReceived >= receivedBefore + 2, true);
   assert.equal(scoped?.payloadShapeError, 1);
+  assert.equal(scoped?.chartInstanceCreate, 1);
+  assert.equal(scoped?.chartInstanceDispose, 1);
+  assert.equal(scoped?.livePatchReceived, 2);
+  assert.equal(scoped?.seriesTailPatch, 1);
+  assert.equal(scoped?.visibleRangeUserPreserved, 1);
+  assert.equal(scoped?.visibleRangeRealtimeFollow, 1);
 });
 
 test("chart hydration stats derives scope counts and sanitizes cursor URLs", () => {

@@ -3552,9 +3552,16 @@ export function createRayReplicaPineRuntimeAdapter(
         );
       }
 
-      const windows = showRegimeWindows
+      const regimeWindows = showRegimeWindows
         ? buildRegimeWindows(chartBars, regimeDirection, bullColor, bearColor)
         : [];
+      const sessionWindows = buildSessionDisplayWindows(chartBars, {
+        london: showLondonSession,
+        new_york: showNewYorkSession,
+        tokyo: showTokyoSession,
+        sydney: showSydneySession,
+      });
+      const windows = [...sessionWindows, ...regimeWindows];
       const keyLevels = showKeyLevels
         ? buildSessionKeyLevelSeries(chartBars, dailyBars)
         : null;

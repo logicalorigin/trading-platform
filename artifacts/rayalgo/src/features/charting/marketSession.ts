@@ -1,3 +1,5 @@
+import type { ChartBar, IndicatorWindow } from "./types";
+
 export type UsEquityMarketSessionKey = "pre" | "rth" | "after" | "closed";
 
 export type UsEquityMarketSession = {
@@ -217,4 +219,88 @@ export const resolveUsEquityMarketSession = (
   }
 
   return MARKET_SESSIONS.closed;
+};
+
+export const US_EQUITY_EXTENDED_SESSION_WINDOW_STRATEGY =
+  "us-equity-extended-session";
+
+export type UsEquityMarketSessionBarCounts = {
+  pre: number;
+  rth: number;
+  after: number;
+  closed: number;
+};
+
+export const countUsEquityMarketSessionBars = (
+  chartBars: Pick<ChartBar, "time" | "ts">[],
+): UsEquityMarketSessionBarCounts =>
+  chartBars.reduce<UsEquityMarketSessionBarCounts>(
+    (counts, bar) => {
+      const session = resolveUsEquityMarketSession(bar.ts || bar.time * 1000);
+      counts[session.key] += 1;
+      return counts;
+    },
+    { pre: 0, rth: 0, after: 0, closed: 0 },
+  );
+
+export const buildUsEquityExtendedSessionWindows = (
+  chartBars: Pick<ChartBar, "time" | "ts">[],
+): IndicatorWindow[] => {
+  const windows: IndicatorWindow[] = [];
+  if (!chartBars.length) {
+    return windows;
+  }
+
+  let activeSession: "pre" | "after" | null = null;
+  let segmentStart: number | null = null;
+
+  const pushSegment = (endIndex: number) => {
+    if (activeSession == null || segmentStart == null) {
+      return;
+    }
+    const startBar = chartBars[segmentStart];
+    const endBar = chartBars[endIndex];
+    if (!startBar || !endBar) {
+      return;
+    }
+
+    windows.push({
+      id: `${US_EQUITY_EXTENDED_SESSION_WINDOW_STRATEGY}-${activeSession}-${segmentStart}`,
+      strategy: US_EQUITY_EXTENDED_SESSION_WINDOW_STRATEGY,
+      direction: "long",
+      tone: "neutral",
+      startTs: startBar.ts,
+      endTs: endBar.ts,
+      startBarIndex: segmentStart,
+      endBarIndex: endIndex,
+      meta: {
+        style: "background",
+        label: activeSession === "pre" ? "Premarket" : "After-hours",
+        marketSessionKey: activeSession,
+        dataTestId: `chart-extended-session-${activeSession}`,
+      },
+    });
+  };
+
+  chartBars.forEach((bar, index) => {
+    const session = resolveUsEquityMarketSession(bar.ts || bar.time * 1000);
+    const nextSession =
+      session.key === "pre" || session.key === "after" ? session.key : null;
+
+    if (nextSession === activeSession) {
+      return;
+    }
+
+    if (activeSession != null && segmentStart != null) {
+      pushSegment(index - 1);
+    }
+    activeSession = nextSession;
+    segmentStart = nextSession != null ? index : null;
+  });
+
+  if (activeSession != null && segmentStart != null) {
+    pushSegment(chartBars.length - 1);
+  }
+
+  return windows;
 };

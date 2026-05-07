@@ -58,6 +58,20 @@ const EVENT_SOURCE_RECONFIGURE_DEBOUNCE_MS = 150;
 const STREAM_GAP_THRESHOLD_MS = 2_500;
 const EVENT_SOURCE_STALL_MS = 10_000;
 
+const createAggregateStreamSessionId = (): string => {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  return `stock-aggregates-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+};
+
+const AGGREGATE_STREAM_SESSION_ID = createAggregateStreamSessionId();
+
 const normalizeSymbols = (symbols: string[]): string[] => (
   Array.from(
     new Set(
@@ -68,16 +82,36 @@ const normalizeSymbols = (symbols: string[]): string[] => (
   ).sort()
 );
 
-const buildStreamUrl = (symbols: string[]): string | null => {
+const buildStreamUrl = (symbols: string[], sessionId = AGGREGATE_STREAM_SESSION_ID): string | null => {
   if (!symbols.length) {
     return null;
   }
 
   const params = new URLSearchParams({
     symbols: symbols.join(","),
+    sessionId,
   });
 
   return `/api/streams/stocks/aggregates?${params.toString()}`;
+};
+
+const updateStreamSessionSymbols = async (
+  symbols: string[],
+  sessionId = AGGREGATE_STREAM_SESSION_ID,
+): Promise<void> => {
+  const response = await fetch(
+    `/api/streams/stocks/aggregates/sessions/${encodeURIComponent(sessionId)}/symbols`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ symbols }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Stock aggregate stream session update failed with HTTP ${response.status}.`);
+  }
 };
 
 const parseAggregateMessage = (payload: string): BrokerStockAggregateMessage | null => {
@@ -117,6 +151,7 @@ let storeVersion = 0;
 let latencyStoreVersion = 0;
 let eventSource: EventSource | null = null;
 let eventSourceSignature = "";
+let eventSourceSessionUpdateVersion = 0;
 let reconnectTimer: number | null = null;
 let refreshTimer: number | null = null;
 let stallTimer: number | null = null;
@@ -432,6 +467,7 @@ export const getBrokerStockAggregateDebugStats = () => ({
 
 const closeEventSource = () => {
   clearStallTimer();
+  eventSourceSessionUpdateVersion += 1;
   eventSourceOpenedAtMs = null;
   eventSourceLastSignalAtMs = null;
   if (!eventSource) {
@@ -621,6 +657,27 @@ const refreshEventSource = () => {
   }
 
   if (eventSource && signature === eventSourceSignature) {
+    return;
+  }
+
+  if (eventSource && eventSourceSignature) {
+    const updateVersion = eventSourceSessionUpdateVersion + 1;
+    eventSourceSessionUpdateVersion = updateVersion;
+    eventSourceSignature = signature;
+    updateAggregateStreamStats({
+      refreshCount: aggregateStreamStats.refreshCount + 1,
+    });
+    void updateStreamSessionSymbols(unionSymbols).catch(() => {
+      if (eventSourceSessionUpdateVersion !== updateVersion) {
+        return;
+      }
+      reconnectBlockedUntil = Date.now() + EVENT_SOURCE_RETRY_DELAY_MS;
+      updateAggregateStreamStats({
+        reconnectCount: aggregateStreamStats.reconnectCount + 1,
+      });
+      closeEventSource();
+      refreshEventSource();
+    });
     return;
   }
 

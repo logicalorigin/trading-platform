@@ -121,13 +121,52 @@ const readStoredUiState = () => {
   }
 };
 
+export const resolveSystemTheme = () => {
+  try {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: light)").matches
+    ) {
+      return "light";
+    }
+  } catch {}
+
+  return "dark";
+};
+
+export const resolveEffectiveThemePreference = (preferenceTheme, fallbackTheme) => {
+  if (
+    typeof preferenceTheme === "string" &&
+    Object.prototype.hasOwnProperty.call(THEMES, preferenceTheme) &&
+    preferenceTheme !== "system"
+  ) {
+    return preferenceTheme;
+  }
+
+  if (preferenceTheme === "system") {
+    return resolveSystemTheme();
+  }
+
+  if (
+    typeof fallbackTheme === "string" &&
+    Object.prototype.hasOwnProperty.call(THEMES, fallbackTheme)
+  ) {
+    return fallbackTheme;
+  }
+
+  return resolveSystemTheme();
+};
+
+export const resolveEffectiveThemeFromState = (state = {}) =>
+  resolveEffectiveThemePreference(
+    state?.userPreferences?.appearance?.theme,
+    state?.theme,
+  );
+
 const persistedUiState = readStoredUiState();
 
-let CURRENT_THEME =
-  typeof persistedUiState.theme === "string" &&
-  Object.prototype.hasOwnProperty.call(THEMES, persistedUiState.theme)
-    ? persistedUiState.theme
-    : "dark";
+let CURRENT_THEME = resolveEffectiveThemeFromState(persistedUiState);
 
 let CURRENT_SCALE =
   typeof persistedUiState.scale === "string" &&

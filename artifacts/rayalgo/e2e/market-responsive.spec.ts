@@ -84,8 +84,8 @@ async function expectPlotInsideChartFrame(
   );
 }
 
-function makeBars(symbol: string, version = 0, count = 120) {
-  const now = Date.now() + version * 15 * 60_000;
+function makeBars(symbol: string, version = 0, count = 120, anchorMs = Date.now()) {
+  const now = anchorMs + version * 15 * 60_000;
   const base = basePrices[symbol] ?? 100;
   return Array.from({ length: count }, (_, index) => {
     const wave = Math.sin(index / 4) * 1.8;
@@ -153,12 +153,45 @@ function makeFlowEvents(symbol: string) {
   ];
 }
 
+function makeSignalStates() {
+  const now = new Date().toISOString();
+  return [
+    {
+      symbol: "SPY",
+      timeframe: "15m",
+      currentSignalDirection: "buy",
+      currentSignalAt: now,
+      currentSignalPrice: basePrices.SPY,
+      latestBarAt: now,
+      barsSinceSignal: 1,
+      fresh: true,
+      status: "ok",
+      lastEvaluatedAt: now,
+    },
+    {
+      symbol: "QQQ",
+      timeframe: "15m",
+      currentSignalDirection: "sell",
+      currentSignalAt: now,
+      currentSignalPrice: basePrices.QQQ,
+      latestBarAt: now,
+      barsSinceSignal: 2,
+      fresh: true,
+      status: "ok",
+      lastEvaluatedAt: now,
+    },
+  ];
+}
+
 async function mockMarketApi(
   page: Page,
   options: {
     ibkrStreaming?: boolean;
     advanceBarsOnRequest?: boolean;
     initialBarCount?: number;
+    barAnchorMs?: number;
+    signalStates?: unknown[];
+    preferences?: unknown;
   } = {},
 ) {
   const observed = {
@@ -238,6 +271,7 @@ async function mockMarketApi(
           symbol,
           options.advanceBarsOnRequest ? currentCount : 0,
           options.initialBarCount ?? 120,
+          options.barAnchorMs,
         ),
       };
     } else if (url.pathname === "/api/flow/events") {
@@ -258,7 +292,7 @@ async function mockMarketApi(
       body = {
         id: "mock-signal-monitor-profile",
         environment: "paper",
-        enabled: false,
+        enabled: Boolean(options.signalStates?.length),
         watchlistId: null,
         timeframe: "15m",
         rayReplicaSettings: {},
@@ -272,9 +306,17 @@ async function mockMarketApi(
         updatedAt: new Date().toISOString(),
       };
     } else if (url.pathname === "/api/signal-monitor/state") {
-      body = { states: [] };
+      body = { states: options.signalStates || [] };
     } else if (url.pathname === "/api/signal-monitor/events") {
       body = { events: [] };
+    } else if (url.pathname === "/api/settings/preferences") {
+      body = {
+        profileKey: "mock",
+        version: 1,
+        preferences: options.preferences || undefined,
+        source: "local",
+        updatedAt: new Date(0).toISOString(),
+      };
     } else if (url.pathname === "/api/charting/pine-scripts") {
       body = { scripts: [] };
     } else if (url.pathname.includes("/streams/")) {
@@ -299,34 +341,42 @@ async function mockMarketApi(
   return observed;
 }
 
-async function openMarket(page: Page, layout: string) {
+async function openMarket(
+  page: Page,
+  layout: string,
+  statePatch: Record<string, unknown> = {},
+) {
   await page.goto("about:blank");
   await page.addInitScript(
-    ({ layout, symbols }) => {
+    ({ layout, symbols, statePatch }) => {
       window.localStorage.clear();
       window.sessionStorage.clear();
+      const baseState = {
+        screen: "market",
+        sym: "SPY",
+        theme: "dark",
+        sidebarCollapsed: true,
+        marketGridLayout: layout,
+        marketGridSlots: symbols.map((ticker: string, index: number) => ({
+          ticker,
+          tf: "15m",
+          market: "stocks",
+          provider: index % 2 === 0 ? "ibkr" : "polygon",
+          tradeProvider: "ibkr",
+          dataProviderPreference: "polygon",
+          providerContractId: String(320_000_000 + index),
+          studies: ["ema21", "vwap", "rayReplica"],
+        })),
+      };
       window.localStorage.setItem(
         "rayalgo:state:v1",
         JSON.stringify({
-          screen: "market",
-          sym: "SPY",
-          theme: "dark",
-          sidebarCollapsed: true,
-          marketGridLayout: layout,
-          marketGridSlots: symbols.map((ticker: string, index: number) => ({
-            ticker,
-            tf: "15m",
-            market: "stocks",
-            provider: index % 2 === 0 ? "ibkr" : "polygon",
-            tradeProvider: "ibkr",
-            dataProviderPreference: "polygon",
-            providerContractId: String(320_000_000 + index),
-            studies: ["ema21", "vwap", "rayReplica"],
-          })),
+          ...baseState,
+          ...statePatch,
         }),
       );
     },
-    { layout, symbols: marketSymbols },
+    { layout, symbols: marketSymbols, statePatch },
   );
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
@@ -420,6 +470,125 @@ async function expectNoElementOverflow(page: Page, selector: string) {
     expect(entry.overflowY, `${entry.text} should not overflow vertically`).toBe(false);
   });
 }
+
+test("Market startup resolves nested light theme before React mounts", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockMarketApi(page, {
+    preferences: {
+      appearance: {
+        theme: "light",
+      },
+    },
+  });
+  let delayedPlatformChunk = false;
+  await page.route("**/src/features/platform/PlatformApp.jsx*", async (route) => {
+    if (!delayedPlatformChunk) {
+      delayedPlatformChunk = true;
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+    await route.continue();
+  });
+  await page.goto("about:blank");
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "rayalgo:state:v1",
+      JSON.stringify({
+        screen: "market",
+        sym: "SPY",
+        theme: "dark",
+        sidebarCollapsed: true,
+        marketGridLayout: "2x2",
+        userPreferences: {
+          appearance: {
+            theme: "light",
+          },
+        },
+      }),
+    );
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  expect(
+    await page.evaluate(() => document.documentElement.dataset.rayalgoTheme),
+  ).toBe("light");
+  await expect
+    .poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor))
+    .toBe("rgb(245, 245, 244)");
+  const fallback = page.getByTestId("app-loading-fallback");
+  await expect(fallback).toBeVisible();
+  await expect(fallback).toHaveAttribute("data-theme", "light");
+  expect(await fallback.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
+    "rgb(245, 245, 244)",
+  );
+  await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset.rayalgoTheme))
+    .toBe("light");
+});
+
+test("Market chart frames render signal colors and extended-session shading", async ({
+  page,
+}) => {
+  const runtimeIssues: string[] = [];
+  page.on("pageerror", (error) => runtimeIssues.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (
+      (message.type() === "error" || message.type() === "warning") &&
+      !isIgnorableConsoleMessage(message)
+    ) {
+      runtimeIssues.push(message.text());
+    }
+  });
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockMarketApi(page, {
+    barAnchorMs: Date.parse("2026-04-30T21:00:00Z"),
+    signalStates: makeSignalStates(),
+    preferences: {
+      appearance: {
+        theme: "dark",
+      },
+    },
+  });
+  await openMarket(page, "2x2");
+
+  const buyFrame = page.getByTestId("market-mini-chart-0");
+  const sellFrame = page.getByTestId("market-mini-chart-1");
+  await expect(buyFrame).toHaveAttribute("data-signal-frame-active", "true");
+  await expect(buyFrame).toHaveAttribute("data-signal-direction", "buy");
+  await expect(buyFrame).toHaveAttribute("data-signal-frame-color", "#3b82f6");
+  await expect(sellFrame).toHaveAttribute("data-signal-frame-active", "true");
+  await expect(sellFrame).toHaveAttribute("data-signal-direction", "sell");
+  await expect(sellFrame).toHaveAttribute("data-signal-frame-color", "#ef4444");
+
+  const buyBorderColor = await buyFrame.evaluate(
+    (element) => getComputedStyle(element).borderColor,
+  );
+  const sellBorderColor = await sellFrame.evaluate(
+    (element) => getComputedStyle(element).borderColor,
+  );
+  expect(buyBorderColor).toBe("rgb(59, 130, 246)");
+  expect(sellBorderColor).toBe("rgb(239, 68, 68)");
+
+  const firstSurface = page.getByTestId("market-mini-chart-0-surface");
+  await expect(firstSurface).toHaveAttribute("data-chart-extended-session-enabled", "true");
+  await expect
+    .poll(async () =>
+      Number(await firstSurface.getAttribute("data-chart-extended-session-window-count")),
+    )
+    .toBeGreaterThan(0);
+  await expect
+    .poll(async () =>
+      Number(await firstSurface.getAttribute("data-chart-extended-session-bar-count")),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.getByTestId("chart-extended-session-after").first()).toBeVisible();
+  expect(runtimeIssues, "Market signal/session visual test should not emit runtime issues").toEqual([]);
+});
 
 test("Market chart grid lets chart surfaces own touched viewports and clears them on reset", async ({
   page,
@@ -744,6 +913,18 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
     await activeSurface.getAttribute("data-chart-rendered-bar-count"),
   );
   expect(renderedCountBefore).toBeGreaterThan(0);
+  const instanceCreatesBefore = Number(
+    await activeSurface.getAttribute("data-chart-instance-create-count"),
+  );
+  const instanceDisposesBefore = Number(
+    await activeSurface.getAttribute("data-chart-instance-dispose-count"),
+  );
+  const tailAppendsBefore = Number(
+    await activeSurface.getAttribute("data-chart-series-tail-append-count"),
+  );
+  const fullResetsBefore = Number(
+    await activeSurface.getAttribute("data-chart-series-full-reset-count"),
+  );
 
   await page.mouse.move(
     dragStartPoint.x,
@@ -781,21 +962,25 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
     }).__RAYALGO_TEST_EMIT_EVENT_SOURCE__;
     const baseTimestamp = Date.now() + 15 * 60_000;
     for (let index = 0; index < 4; index += 1) {
-      emit?.("symbol=SPY", "bar", {
+      const startMs = baseTimestamp + index * 15 * 60_000;
+      emit?.("stocks/aggregates", "aggregate", {
+        eventType: "stock-aggregate",
         symbol: "SPY",
-        timeframe: "15m",
-        bar: {
-          timestamp: new Date(baseTimestamp + index * 15 * 60_000).toISOString(),
-          open: 126 + index,
-          high: 128 + index,
-          low: 125 + index,
-          close: 127 + index,
-          volume: 250_000 + index * 10_000,
-          source: "ibkr-history",
-          freshness: "live",
-          marketDataMode: "live",
-          dataUpdatedAt: new Date().toISOString(),
-        },
+        open: 126 + index,
+        high: 128 + index,
+        low: 125 + index,
+        close: 127 + index,
+        volume: 250_000 + index * 10_000,
+        accumulatedVolume: 1_250_000 + index * 25_000,
+        vwap: 126.5 + index,
+        sessionVwap: 126.25 + index,
+        officialOpen: null,
+        averageTradeSize: 100,
+        startMs,
+        endMs: startMs + 60_000,
+        delayed: false,
+        source: "ibkr-websocket-derived",
+        latency: null,
       });
     }
   });
@@ -807,12 +992,46 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
       { timeout: 10_000 },
     )
     .toBeGreaterThanOrEqual(renderedCountBefore + 4);
+  await expect
+    .poll(async () =>
+      Number(await activeSurface.getAttribute("data-chart-series-tail-append-count")),
+    )
+    .toBeGreaterThan(tailAppendsBefore);
+  expect(
+    Number(await activeSurface.getAttribute("data-chart-instance-create-count")),
+    "live aggregates should update the existing chart instance",
+  ).toBe(instanceCreatesBefore);
+  expect(
+    Number(await activeSurface.getAttribute("data-chart-instance-dispose-count")),
+    "live aggregates should not dispose the chart instance",
+  ).toBe(instanceDisposesBefore);
+  expect(
+    Number(await activeSurface.getAttribute("data-chart-series-full-reset-count")),
+    "live aggregates should append/patch series tails without full resets",
+  ).toBe(fullResetsBefore);
+  expect(
+    await activeSurface.getAttribute("data-chart-auto-hydration"),
+    "live aggregates must not re-enable auto hydration for a user-panned chart",
+  ).toBe("false");
   const eventSourceUrls = await page.evaluate(() => {
     const getUrls = (window as unknown as {
       __RAYALGO_TEST_EVENT_SOURCE_URLS__?: () => string[];
     }).__RAYALGO_TEST_EVENT_SOURCE_URLS__;
     return getUrls?.() || [];
   });
+  expect(
+    eventSourceUrls.filter((href) => {
+      const url = new URL(href, "http://rayalgo.local");
+      return (
+        url.pathname === "/api/streams/stocks/aggregates" &&
+        (url.searchParams.get("symbols") || "")
+          .split(",")
+          .map((symbol) => symbol.trim().toUpperCase())
+          .includes("SPY")
+      );
+    }),
+    "Active Market stock chart stream must use the shared IBKR aggregate path",
+  ).not.toEqual([]);
   expect(
     eventSourceUrls.filter((href) => {
       const url = new URL(href, "http://rayalgo.local");
@@ -829,7 +1048,7 @@ test("Market chart grid keeps active plot pans through live bar refreshes", asyn
   expectLogicalRangesClose(
     await activeSurface.getAttribute("data-chart-visible-logical-range"),
     pannedRange,
-    2.5,
+    0.2,
   );
   expect(runtimeIssues, "Market active chart pan test should not emit runtime issues").toEqual([]);
 });

@@ -13,6 +13,10 @@ export type FlowChartBucket = {
   putPremium: number;
   bullishPremium: number;
   bearishPremium: number;
+  neutralPremium: number;
+  bullishShare: number;
+  bearishShare: number;
+  neutralShare: number;
   bias: ChartEventBias;
   severity: ChartEventSeverity;
   topEvent: ChartEvent;
@@ -28,6 +32,7 @@ export type FlowTooltipModel = {
   premium: string;
   contracts: string;
   callPutMix: string;
+  flowMix: string;
   topContract: string;
   tags: string[];
   sentiment: string;
@@ -38,6 +43,14 @@ export type FlowTooltipModel = {
 type ChartBarModel = {
   chartBars: ChartBar[];
   chartBarRanges?: ChartBarRange[];
+};
+
+export type FlowChartBucketDiagnostics = {
+  inputEventCount: number;
+  flowEventCount: number;
+  bucketedEventCount: number;
+  droppedInvalidTimeCount: number;
+  droppedOutsideBarCount: number;
 };
 
 const severityRank: Record<ChartEventSeverity, number> = {
@@ -142,6 +155,10 @@ const resolveBucketIndex = (
   bars: ChartBar[],
   ranges: ChartBarRange[] = [],
 ): number => {
+  if (!bars.length) {
+    return -1;
+  }
+
   const rangeIndex = ranges.findIndex(
     (range) => eventMs >= range.startMs && eventMs < range.endMs,
   );
@@ -153,6 +170,20 @@ const resolveBucketIndex = (
   const exactIndex = bars.findIndex((bar) => bar.time === eventSeconds);
   if (exactIndex >= 0) {
     return exactIndex;
+  }
+
+  const firstLoadedMs = ranges[0]?.startMs ?? bars[0].time * 1000;
+  const lastRange = ranges.length
+    ? ranges[Math.min(ranges.length, bars.length) - 1]
+    : undefined;
+  const lastBarMs = bars[bars.length - 1].time * 1000;
+  const inferredStepMs =
+    bars.length > 1
+      ? Math.max(1, (bars[bars.length - 1].time - bars[bars.length - 2].time) * 1000)
+      : 60_000;
+  const lastLoadedEndMs = lastRange?.endMs ?? lastBarMs + inferredStepMs;
+  if (eventMs < firstLoadedMs || eventMs >= lastLoadedEndMs) {
+    return -1;
   }
 
   let bestIndex = -1;
@@ -182,6 +213,65 @@ const resolveBias = ({
   if (bullishCount > bearishCount) return "bullish";
   if (bearishCount > bullishCount) return "bearish";
   return "neutral";
+};
+
+const resolveSentimentShares = ({
+  bullishPremium,
+  bearishPremium,
+  neutralPremium,
+}: {
+  bullishPremium: number;
+  bearishPremium: number;
+  neutralPremium: number;
+}): {
+  bullishShare: number;
+  bearishShare: number;
+  neutralShare: number;
+} => {
+  const total = bullishPremium + bearishPremium + neutralPremium;
+  if (total <= 0) {
+    return { bullishShare: 0, bearishShare: 0, neutralShare: 1 };
+  }
+  return {
+    bullishShare: bullishPremium / total,
+    bearishShare: bearishPremium / total,
+    neutralShare: neutralPremium / total,
+  };
+};
+
+export const summarizeFlowChartBucketPlacement = (
+  events: ChartEvent[],
+  model: ChartBarModel,
+): FlowChartBucketDiagnostics => {
+  const diagnostics: FlowChartBucketDiagnostics = {
+    inputEventCount: Array.isArray(events) ? events.length : 0,
+    flowEventCount: 0,
+    bucketedEventCount: 0,
+    droppedInvalidTimeCount: 0,
+    droppedOutsideBarCount: 0,
+  };
+
+  if (!Array.isArray(events) || !events.length || !model.chartBars.length) {
+    return diagnostics;
+  }
+
+  events.forEach((event) => {
+    if (event.eventType !== "unusual_flow") return;
+    diagnostics.flowEventCount += 1;
+    const parsed = Date.parse(event.time);
+    if (!Number.isFinite(parsed)) {
+      diagnostics.droppedInvalidTimeCount += 1;
+      return;
+    }
+    const barIndex = resolveBucketIndex(parsed, model.chartBars, model.chartBarRanges);
+    if (barIndex < 0) {
+      diagnostics.droppedOutsideBarCount += 1;
+      return;
+    }
+    diagnostics.bucketedEventCount += 1;
+  });
+
+  return diagnostics;
 };
 
 export const buildFlowChartBuckets = (
@@ -216,8 +306,13 @@ export const buildFlowChartBuckets = (
           acc.totalContracts += contracts;
           if (right === "C") acc.callPremium += premium;
           if (right === "P") acc.putPremium += premium;
-          if (event.bias === "bullish") acc.bullishPremium += premium || 1;
-          if (event.bias === "bearish") acc.bearishPremium += premium || 1;
+          if (event.bias === "bullish") {
+            acc.bullishPremium += premium || 1;
+          } else if (event.bias === "bearish") {
+            acc.bearishPremium += premium || 1;
+          } else {
+            acc.neutralPremium += premium || 1;
+          }
           return acc;
         },
         {
@@ -227,6 +322,7 @@ export const buildFlowChartBuckets = (
           putPremium: 0,
           bullishPremium: 0,
           bearishPremium: 0,
+          neutralPremium: 0,
         },
       );
       const topEvent =
@@ -236,6 +332,7 @@ export const buildFlowChartBuckets = (
         bucketEvents[0];
       const tags = Array.from(new Set(bucketEvents.flatMap(readTags))).slice(0, 4);
       const bias = resolveBias({ ...totals, events: bucketEvents });
+      const shares = resolveSentimentShares(totals);
       const topPremium = readPremium(topEvent);
 
       return {
@@ -245,6 +342,7 @@ export const buildFlowChartBuckets = (
         events: bucketEvents,
         count: bucketEvents.length,
         ...totals,
+        ...shares,
         bias,
         severity: maxSeverity(bucketEvents),
         topEvent,
@@ -269,6 +367,9 @@ export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel
     callPutTotal > 0 ? Math.round((bucket.callPremium / callPutTotal) * 100) : 0;
   const putPercent =
     callPutTotal > 0 ? Math.round((bucket.putPremium / callPutTotal) * 100) : 0;
+  const bullishPercent = Math.round(bucket.bullishShare * 100);
+  const bearishPercent = Math.round(bucket.bearishShare * 100);
+  const neutralPercent = Math.round(bucket.neutralShare * 100);
   const sentiment =
     bucket.bias === "bullish"
       ? "Bullish"
@@ -291,6 +392,7 @@ export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel
     premium: compactCurrency(bucket.totalPremium),
     contracts: bucket.totalContracts > 0 ? compactNumber(bucket.totalContracts) : "n/a",
     callPutMix: callPutTotal > 0 ? `${callPercent}% C / ${putPercent}% P` : "n/a",
+    flowMix: `${bullishPercent}% bull / ${bearishPercent}% bear / ${neutralPercent}% mix`,
     topContract: bucket.topContractLabel || bucket.topEvent.label,
     tags: bucket.tags,
     sentiment,

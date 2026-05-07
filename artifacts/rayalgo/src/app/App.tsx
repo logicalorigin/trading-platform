@@ -74,15 +74,75 @@ const APP_SHELL_TABS = [
   "Diagnostics",
 ];
 
+const APP_LOADING_FALLBACK_PALETTES = {
+  dark: {
+    shellBg: "#080b12",
+    headerBg: "#101722",
+    panelBg: "#0b111b",
+    sidebarBg: "#0e1520",
+    cardBg: "#0d1420",
+    activeBg: "#182233",
+    skeletonActiveBg: "#172235",
+    skeletonBg: "#111a28",
+    border: "#243042",
+    borderSoft: "#223047",
+    controlBorder: "#263449",
+    controlBg: "#0b111b",
+    text: "#cbd5e1",
+    textStrong: "#e2e8f0",
+    textMuted: "#94a3b8",
+    footerText: "#64748b",
+    warning: "#f59e0b",
+    slideGlow: "rgba(56, 189, 248, 0.18)",
+    panelGlow: "rgba(59, 130, 246, 0.12)",
+  },
+  light: {
+    shellBg: "#f5f5f4",
+    headerBg: "#ffffff",
+    panelBg: "#ffffff",
+    sidebarBg: "#f8fafc",
+    cardBg: "#f8fafc",
+    activeBg: "#dbeafe",
+    skeletonActiveBg: "#e2e8f0",
+    skeletonBg: "#f1f5f9",
+    border: "#e2e8f0",
+    borderSoft: "#cbd5e1",
+    controlBorder: "#cbd5e1",
+    controlBg: "#f8fafc",
+    text: "#334155",
+    textStrong: "#0f172a",
+    textMuted: "#64748b",
+    footerText: "#64748b",
+    warning: "#d97706",
+    slideGlow: "rgba(37, 99, 235, 0.14)",
+    panelGlow: "rgba(37, 99, 235, 0.12)",
+  },
+} as const;
+
+const resolveAppLoadingFallbackTheme = (): keyof typeof APP_LOADING_FALLBACK_PALETTES => {
+  if (typeof document !== "undefined") {
+    return document.documentElement.dataset.rayalgoTheme === "light"
+      ? "light"
+      : "dark";
+  }
+
+  return "dark";
+};
+
 function AppLoadingFallback() {
+  const themeKey = resolveAppLoadingFallbackTheme();
+  const palette = APP_LOADING_FALLBACK_PALETTES[themeKey];
+
   return (
     <div
+      data-testid="app-loading-fallback"
+      data-theme={themeKey}
       style={{
         minHeight: "100vh",
         display: "grid",
         gridTemplateRows: "auto 1fr auto",
-        background: "#080b12",
-        color: "#cbd5e1",
+        background: palette.shellBg,
+        color: palette.text,
         fontFamily: FONT_CSS_VAR.sans,
         overflow: "hidden",
       }}
@@ -108,8 +168,8 @@ function AppLoadingFallback() {
           minWidth: 0,
           minHeight: 41,
           padding: "4px 8px",
-          background: "#101722",
-          borderBottom: "1px solid #243042",
+          background: palette.headerBg,
+          borderBottom: `1px solid ${palette.border}`,
         }}
       >
         <div style={{ display: "flex", gap: 3, minWidth: 0, overflow: "hidden" }}>
@@ -122,9 +182,9 @@ function AppLoadingFallback() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                border: "1px solid #263449",
-                background: index === 0 ? "#182233" : "transparent",
-                color: index === 0 ? "#e2e8f0" : "#94a3b8",
+                border: `1px solid ${palette.controlBorder}`,
+                background: index === 0 ? palette.activeBg : "transparent",
+                color: index === 0 ? palette.textStrong : palette.textMuted,
                 fontSize: TYPE_CSS_VAR.body,
                 fontWeight: 400,
                 whiteSpace: "nowrap",
@@ -139,8 +199,8 @@ function AppLoadingFallback() {
             position: "relative",
             height: 24,
             overflow: "hidden",
-            background: "#0b111b",
-            border: "1px solid #1f2a3a",
+            background: palette.controlBg,
+            border: `1px solid ${palette.border}`,
           }}
         >
           <span
@@ -148,8 +208,7 @@ function AppLoadingFallback() {
               position: "absolute",
               inset: 0,
               width: "50%",
-              background:
-                "linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.18), transparent)",
+              background: `linear-gradient(90deg, transparent, ${palette.slideGlow}, transparent)`,
               animation: "rayalgoAppSlide 1.4s ease-in-out infinite",
             }}
           />
@@ -159,7 +218,7 @@ function AppLoadingFallback() {
             display: "flex",
             gap: 5,
             alignItems: "center",
-            color: "#94a3b8",
+            color: palette.textMuted,
             fontSize: TYPE_CSS_VAR.body,
             fontWeight: 400,
             whiteSpace: "nowrap",
@@ -169,7 +228,7 @@ function AppLoadingFallback() {
             style={{
               width: 7,
               height: 7,
-              background: "#f59e0b",
+              background: palette.warning,
               display: "inline-block",
               animation: "rayalgoAppPulse 1.1s ease-in-out infinite",
             }}
@@ -181,8 +240,8 @@ function AppLoadingFallback() {
       <div style={{ display: "grid", gridTemplateColumns: "248px 1fr", minHeight: 0 }}>
         <div
           style={{
-            borderRight: "1px solid #243042",
-            background: "#0e1520",
+            borderRight: `1px solid ${palette.border}`,
+            background: palette.sidebarBg,
             padding: 10,
             display: "grid",
             gap: 8,
@@ -194,8 +253,8 @@ function AppLoadingFallback() {
               key={index}
               style={{
                 height: 30,
-                background: index === 0 ? "#172235" : "#111a28",
-                border: "1px solid #1f2a3a",
+                background: index === 0 ? palette.skeletonActiveBg : palette.skeletonBg,
+                border: `1px solid ${palette.border}`,
                 animation: `rayalgoAppPulse ${1.8 + index * 0.03}s ease-in-out infinite`,
               }}
             />
@@ -215,16 +274,15 @@ function AppLoadingFallback() {
             style={{
               position: "relative",
               overflow: "hidden",
-              border: "1px solid #223047",
-              background: "#0b111b",
+              border: `1px solid ${palette.borderSoft}`,
+              background: palette.panelBg,
             }}
           >
             <span
               style={{
                 position: "absolute",
                 inset: 0,
-                background:
-                  "linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.12), transparent)",
+                background: `linear-gradient(90deg, transparent, ${palette.panelGlow}, transparent)`,
                 animation: "rayalgoAppSlide 1.8s ease-in-out infinite",
               }}
             />
@@ -241,8 +299,8 @@ function AppLoadingFallback() {
               <div
                 key={index}
                 style={{
-                  border: "1px solid #223047",
-                  background: "#0d1420",
+                  border: `1px solid ${palette.borderSoft}`,
+                  background: palette.cardBg,
                   animation: `rayalgoAppPulse ${1.5 + index * 0.12}s ease-in-out infinite`,
                 }}
               />
@@ -254,9 +312,9 @@ function AppLoadingFallback() {
       <div
         style={{
           height: 24,
-          borderTop: "1px solid #243042",
-          background: "#101722",
-          color: "#64748b",
+          borderTop: `1px solid ${palette.border}`,
+          background: palette.headerBg,
+          color: palette.footerText,
           display: "flex",
           alignItems: "center",
           gap: 12,

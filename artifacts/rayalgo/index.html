@@ -7,6 +7,40 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
       (() => {
+        const storageKey = "rayalgo:state:v1";
+        const resolveSystemTheme = () => {
+          try {
+            return window.matchMedia?.("(prefers-color-scheme: light)")?.matches
+              ? "light"
+              : "dark";
+          } catch {
+            return "dark";
+          }
+        };
+        const resolveTheme = () => {
+          try {
+            const state = JSON.parse(window.localStorage?.getItem(storageKey) || "{}");
+            const preferenceTheme = state?.userPreferences?.appearance?.theme;
+            if (preferenceTheme === "light" || preferenceTheme === "dark") {
+              return preferenceTheme;
+            }
+            if (preferenceTheme === "system") {
+              return resolveSystemTheme();
+            }
+            if (state?.theme === "light" || state?.theme === "dark") {
+              return state.theme;
+            }
+            return resolveSystemTheme();
+          } catch {
+            return resolveSystemTheme();
+          }
+        };
+
+        document.documentElement.dataset.rayalgoTheme = resolveTheme();
+      })();
+    </script>
+    <script>
+      (() => {
         const benignMessages = new Set([
           "ResizeObserver loop completed with undelivered notifications.",
           "ResizeObserver loop limit exceeded",

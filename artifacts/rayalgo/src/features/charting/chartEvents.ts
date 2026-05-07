@@ -37,6 +37,15 @@ export type ChartEventCluster = {
   events: ChartEvent[];
 };
 
+export type FlowChartEventConversion = {
+  events: ChartEvent[];
+  rawInputCount: number;
+  flowRecordCount: number;
+  convertedEventCount: number;
+  droppedInvalidTimeCount: number;
+  droppedSymbolCount: number;
+};
+
 const finiteNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
@@ -96,6 +105,22 @@ const normalizeSymbol = (value: unknown): string =>
 const normalizeProviderContractId = (value: unknown): string =>
   String(value || "").trim();
 
+const normalizeOptionTicker = (value: unknown): string =>
+  String(value || "").trim().toUpperCase();
+
+const normalizeKeyPart = (value: unknown): string =>
+  String(value ?? "").trim().toLowerCase();
+
+const normalizeNumericKeyPart = (value: unknown): string => {
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value.replace(/[$,%\s,]/g, ""))
+        : Number.NaN;
+  return Number.isFinite(numeric) ? String(Number(numeric.toFixed(4))) : "";
+};
+
 const normalizeExpirationIso = (value: unknown): string => {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -115,8 +140,132 @@ const normalizeRight = (value: unknown): "call" | "put" | "" => {
   return "";
 };
 
+const NEW_YORK_EVENT_WINDOW_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const RTH_OPEN_MINUTES = 9 * 60 + 30;
+const INTRADAY_FLOW_SESSION_COUNT = 3;
+
+type NewYorkEventWindowParts = {
+  year: number;
+  month: number;
+  day: number;
+  weekday: string;
+  minutes: number;
+};
+
+const readNewYorkEventWindowParts = (
+  date: Date,
+): NewYorkEventWindowParts | null => {
+  const parts = NEW_YORK_EVENT_WINDOW_FORMATTER.formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const year = Number(read("year"));
+  const month = Number(read("month"));
+  const day = Number(read("day"));
+  const hour = Number(read("hour"));
+  const minute = Number(read("minute"));
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return null;
+  }
+  return {
+    year,
+    month,
+    day,
+    weekday: read("weekday"),
+    minutes: hour * 60 + minute,
+  };
+};
+
+const isWeekendEventWindowDay = (
+  parts: Pick<NewYorkEventWindowParts, "weekday">,
+): boolean => parts.weekday === "Sat" || parts.weekday === "Sun";
+
+const newYorkEventWallTimeToUtcDate = (
+  parts: Pick<NewYorkEventWindowParts, "year" | "month" | "day">,
+  minutes: number,
+): Date => {
+  const expectedWallTime = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    Math.floor(minutes / 60),
+    minutes % 60,
+    0,
+    0,
+  );
+  const guess = new Date(expectedWallTime);
+  const guessParts = readNewYorkEventWindowParts(guess);
+  if (!guessParts) {
+    return guess;
+  }
+  const actualWallTime = Date.UTC(
+    guessParts.year,
+    guessParts.month - 1,
+    guessParts.day,
+    Math.floor(guessParts.minutes / 60),
+    guessParts.minutes % 60,
+    0,
+    0,
+  );
+  return new Date(guess.getTime() - (actualWallTime - expectedWallTime));
+};
+
+const intradayFlowLookbackStart = (now: Date): Date => {
+  const currentParts = readNewYorkEventWindowParts(now);
+  const cursor = currentParts
+    ? new Date(
+        Date.UTC(
+          currentParts.year,
+          currentParts.month - 1,
+          currentParts.day,
+          12,
+          0,
+          0,
+          0,
+        ),
+      )
+    : new Date(now);
+  cursor.setUTCHours(12, 0, 0, 0);
+  let oldest: NewYorkEventWindowParts | null = null;
+  let sessions = 0;
+  let guard = 0;
+
+  while (sessions < INTRADAY_FLOW_SESSION_COUNT && guard < 14) {
+    const parts = readNewYorkEventWindowParts(cursor);
+    if (parts && !isWeekendEventWindowDay(parts)) {
+      oldest = parts;
+      sessions += 1;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    guard += 1;
+  }
+
+  return oldest
+    ? newYorkEventWallTimeToUtcDate(oldest, RTH_OPEN_MINUTES)
+    : new Date(now.getTime() - 3 * 24 * 60 * 60 * 1_000);
+};
+
 const readFlowEventSymbol = (event: Record<string, unknown>): string =>
   normalizeSymbol(event.ticker || event.underlying || event.symbol);
+
+export const isSnapshotFlowEvent = (event: Record<string, unknown>): boolean => {
+  const sourceBasis = String(event.sourceBasis || event.confidence || "");
+  return event.basis === "snapshot" || sourceBasis === "snapshot_activity";
+};
 
 const readFlowEventChartTime = (event: Record<string, unknown>): string => {
   const candidates = [
@@ -153,7 +302,7 @@ const readFlowEventChartTime = (event: Record<string, unknown>): string => {
   return "";
 };
 
-const getMergedFlowEventKey = (event: Record<string, unknown>): string =>
+const getTradeFlowEventKey = (event: Record<string, unknown>): string =>
   String(
     event.id ||
       [
@@ -173,13 +322,44 @@ const getMergedFlowEventKey = (event: Record<string, unknown>): string =>
       ].join("|"),
   );
 
+export const getStableFlowEventKey = (event: Record<string, unknown>): string => {
+  if (!isFlowEventRecord(event)) return "";
+  if (!isSnapshotFlowEvent(event)) return getTradeFlowEventKey(event);
+
+  const symbol = readFlowEventSymbol(event);
+  const provider = normalizeKeyPart(event.provider || "flow");
+  const observedDate = readFlowEventChartTime(event).slice(0, 10);
+  const providerContractId = normalizeProviderContractId(event.providerContractId);
+  const optionTicker = normalizeOptionTicker(event.optionTicker);
+  const expiration = normalizeExpirationIso(event.expirationDate || event.exp);
+  const right = normalizeRight(event.cp || event.right);
+  const strike = normalizeNumericKeyPart(event.strike);
+
+  let contractKey = "";
+  if (providerContractId) {
+    contractKey = `conid:${providerContractId}`;
+  } else if (optionTicker) {
+    contractKey = `ticker:${optionTicker}`;
+  } else if (expiration && right && strike) {
+    contractKey = `contract:${expiration}:${right}:${strike}`;
+  } else if (event.id) {
+    contractKey = `id:${normalizeKeyPart(event.id)}`;
+  }
+
+  return contractKey
+    ? ["snapshot", provider, symbol, observedDate || "unknown-day", contractKey].join(
+        "|",
+      )
+    : getTradeFlowEventKey(event);
+};
+
 export const mergeFlowEventFeeds = (
   ...feeds: Array<Array<Record<string, unknown>> | null | undefined>
 ): Array<Record<string, unknown>> => {
   const mergedByKey = new Map<string, Record<string, unknown>>();
   feeds.flat().forEach((event) => {
     if (!isFlowEventRecord(event)) return;
-    const key = getMergedFlowEventKey(event);
+    const key = getStableFlowEventKey(event);
     if (!mergedByKey.has(key)) mergedByKey.set(key, event);
   });
   return Array.from(mergedByKey.values());
@@ -263,64 +443,98 @@ export const filterFlowEventsForOptionContract = (
   });
 };
 
+export const flowEventsToChartEventConversion = (
+  events: Array<Record<string, unknown>> = [],
+  symbol?: string,
+): FlowChartEventConversion => {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const input = Array.isArray(events) ? events : [];
+  const chartEvents: ChartEvent[] = [];
+  let flowRecordCount = 0;
+  let droppedInvalidTimeCount = 0;
+  let droppedSymbolCount = 0;
+
+  input.forEach((event) => {
+    if (!isFlowEventRecord(event)) {
+      return;
+    }
+    flowRecordCount += 1;
+
+    const eventSymbol = String(
+      event.ticker || event.underlying || event.symbol || normalizedSymbol,
+    )
+      .trim()
+      .toUpperCase();
+    const occurredAt = readFlowEventChartTime(event);
+    if (!occurredAt) {
+      droppedInvalidTimeCount += 1;
+      return;
+    }
+    if (normalizedSymbol && eventSymbol !== normalizedSymbol) {
+      droppedSymbolCount += 1;
+      return;
+    }
+
+    const right = String(event.cp || event.right || "").toUpperCase();
+    const strike = finiteNumber(event.strike);
+    const premium = finiteNumber(event.premium) ?? 0;
+    const unusualScore = finiteNumber(event.unusualScore) ?? 0;
+    const contractLabel =
+      String(event.contract || event.optionTicker || "").trim() ||
+      [eventSymbol, strike ?? "", right].filter(Boolean).join(" ");
+    const sourceBasis = String(event.sourceBasis || event.confidence || "");
+    const snapshotDerived =
+      event.basis === "snapshot" || sourceBasis === "snapshot_activity";
+    const flowKind = snapshotDerived
+      ? "snapshot activity"
+      : event.isUnusual
+        ? "unusual flow"
+        : "options flow";
+    const fallbackId = `${eventSymbol}:${occurredAt}:${contractLabel}`;
+    const chartEventId = snapshotDerived
+      ? getStableFlowEventKey(event) || fallbackId
+      : String(event.id || fallbackId);
+
+    chartEvents.push({
+      id: chartEventId,
+      symbol: eventSymbol,
+      eventType: "unusual_flow",
+      time: occurredAt,
+      placement: "bar",
+      severity: resolveFlowSeverity({ premium, unusualScore }),
+      label: `${right || "OPT"} ${compactPremium(premium)}`,
+      summary: `${contractLabel} ${flowKind} ${compactPremium(premium)}`,
+      source: String(event.provider || "flow"),
+      confidence: Math.max(0, Math.min(1, unusualScore / 5)),
+      bias: normalizeBias(event.flowBias || event.sentiment),
+      actions: ["open_flow", "open_trade", "copy_contract", "add_alert"],
+      metadata: {
+        ...event,
+        premium,
+        unusualScore,
+        isUnusual: Boolean(event.isUnusual),
+        sourceBasis: sourceBasis || undefined,
+        timeBasis: snapshotDerived ? "snapshot_observed" : "trade_reported",
+        contractLabel,
+      },
+    } satisfies ChartEvent);
+  });
+
+  return {
+    events: chartEvents,
+    rawInputCount: input.length,
+    flowRecordCount,
+    convertedEventCount: chartEvents.length,
+    droppedInvalidTimeCount,
+    droppedSymbolCount,
+  };
+};
+
 export const flowEventsToChartEvents = (
   events: Array<Record<string, unknown>> = [],
   symbol?: string,
 ): ChartEvent[] => {
-  const normalizedSymbol = normalizeSymbol(symbol);
-  return (Array.isArray(events) ? events : [])
-    .filter(isFlowEventRecord)
-    .map((event) => {
-      const eventSymbol = String(
-        event.ticker || event.underlying || event.symbol || normalizedSymbol,
-      )
-        .trim()
-        .toUpperCase();
-      const right = String(event.cp || event.right || "").toUpperCase();
-      const strike = finiteNumber(event.strike);
-      const premium = finiteNumber(event.premium) ?? 0;
-      const unusualScore = finiteNumber(event.unusualScore) ?? 0;
-      const occurredAt = readFlowEventChartTime(event);
-      const contractLabel =
-        String(event.contract || event.optionTicker || "").trim() ||
-        [eventSymbol, strike ?? "", right].filter(Boolean).join(" ");
-      const sourceBasis = String(event.sourceBasis || event.confidence || "");
-      const snapshotDerived =
-        event.basis === "snapshot" || sourceBasis === "snapshot_activity";
-      const flowKind = snapshotDerived
-        ? "snapshot activity"
-        : event.isUnusual
-          ? "unusual flow"
-          : "options flow";
-
-      return {
-        id: String(event.id || `${eventSymbol}:${occurredAt}:${contractLabel}`),
-        symbol: eventSymbol,
-        eventType: "unusual_flow",
-        time: occurredAt,
-        placement: "bar",
-        severity: resolveFlowSeverity({ premium, unusualScore }),
-        label: `${right || "OPT"} ${compactPremium(premium)}`,
-        summary: `${contractLabel} ${flowKind} ${compactPremium(premium)}`,
-        source: String(event.provider || "flow"),
-        confidence: Math.max(0, Math.min(1, unusualScore / 5)),
-        bias: normalizeBias(event.flowBias || event.sentiment),
-        actions: ["open_flow", "open_trade", "copy_contract", "add_alert"],
-        metadata: {
-          ...event,
-          premium,
-          unusualScore,
-          isUnusual: Boolean(event.isUnusual),
-          sourceBasis: sourceBasis || undefined,
-          timeBasis: snapshotDerived ? "snapshot_observed" : "trade_reported",
-          contractLabel,
-        },
-      } satisfies ChartEvent;
-    })
-    .filter(
-      (event) =>
-        event.time && (!normalizedSymbol || event.symbol === normalizedSymbol),
-    );
+  return flowEventsToChartEventConversion(events, symbol).events;
 };
 
 export const earningsCalendarToChartEvents = (
@@ -362,9 +576,12 @@ export const getChartEventLookbackWindow = (
 ): { from: Date; to: Date } => {
   const normalized = String(timeframe || "").toLowerCase();
   const to = new Date(now);
-  const from = new Date(now);
   const intraday = !normalized.endsWith("d") && !normalized.endsWith("w");
-  from.setUTCDate(from.getUTCDate() - (intraday ? 2 : 90));
+  if (intraday) {
+    return { from: intradayFlowLookbackStart(now), to };
+  }
+  const from = new Date(now);
+  from.setUTCDate(from.getUTCDate() - 90);
   return { from, to };
 };
 

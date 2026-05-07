@@ -7,7 +7,7 @@ import {
   type VisibleLogicalRange,
 } from "./ResearchChartSurface";
 import type { ChartModel } from "./types";
-import type { ChartEvent } from "./chartEvents";
+import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -19,6 +19,8 @@ type ResearchChartTheme = {
   green: string;
   red: string;
   amber: string;
+  blue?: string;
+  cyan?: string;
   accent?: string;
   mono: string;
 };
@@ -40,6 +42,13 @@ type ReferenceLine = {
   lineWidth?: number;
   axisLabelVisible?: boolean;
 };
+
+type FrameSignalState = {
+  active?: boolean;
+  direction?: "buy" | "sell" | "none" | string;
+  color?: string;
+  label?: string;
+} | null;
 
 const EMPTY_DRAWINGS: ResearchDrawing[] = [];
 const EMPTY_REFERENCE_LINES: ReferenceLine[] = [];
@@ -72,6 +81,7 @@ type ResearchChartFrameProps = {
   drawings?: ResearchDrawing[];
   referenceLines?: ReferenceLine[];
   chartEvents?: ChartEvent[];
+  chartFlowDiagnostics?: FlowChartEventConversion | null;
   emptyState?: {
     title?: string | null;
     detail?: string | null;
@@ -85,6 +95,7 @@ type ResearchChartFrameProps = {
   viewportUserTouched?: boolean;
   onViewportSnapshotChange?: (snapshot: ChartViewportSnapshot) => void;
   persistScalePrefs?: boolean;
+  frameSignalState?: FrameSignalState;
 };
 
 export const ResearchChartFrame = ({
@@ -114,6 +125,7 @@ export const ResearchChartFrame = ({
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
   chartEvents = EMPTY_CHART_EVENTS,
+  chartFlowDiagnostics = null,
   emptyState = null,
   drawMode = null,
   onAddDrawing,
@@ -123,58 +135,82 @@ export const ResearchChartFrame = ({
   viewportUserTouched = false,
   onViewportSnapshotChange,
   persistScalePrefs,
-}: ResearchChartFrameProps) => (
-  <div
-    data-testid={dataTestId}
-    style={{
-      background: theme.bg2,
-      border: `1px solid ${theme.border}`,
-      borderRadius: 0,
-      display: "flex",
-      flexDirection: "column",
-      overflow: "hidden",
-      height: "100%",
-      minHeight: 0,
-      ...style,
-    }}
-  >
-    {header ? <div style={{ flexShrink: 0 }}>{header}</div> : null}
-    {subHeader ? <div style={{ flexShrink: 0 }}>{subHeader}</div> : null}
-    <div style={{ flex: 1, minHeight: 0 }}>
-      <ResearchChartSurface
-        dataTestId={dataTestId ? `${dataTestId}-surface` : undefined}
-        theme={theme}
-        themeKey={themeKey}
-        uiStateKey={surfaceUiStateKey}
-        rangeIdentityKey={rangeIdentityKey}
-        viewportLayoutKey={viewportLayoutKey}
-        model={model}
-        compact={compact}
-        showToolbar={showSurfaceToolbar}
-        showLegend={showLegend}
-        legend={legend}
-        hideTimeScale={hideTimeScale}
-        hideCrosshair={hideCrosshair}
-        topOverlay={surfaceTopOverlay}
-        leftOverlay={surfaceLeftOverlay}
-        bottomOverlay={surfaceBottomOverlay}
-        topOverlayHeight={surfaceTopOverlayHeight}
-        leftOverlayWidth={surfaceLeftOverlayWidth}
-        bottomOverlayHeight={surfaceBottomOverlayHeight}
-        drawings={drawings}
-        referenceLines={referenceLines}
-        chartEvents={chartEvents}
-        emptyState={emptyState}
-        drawMode={drawMode}
-        onAddDrawing={onAddDrawing}
-        onTradeMarkerSelection={onTradeMarkerSelection}
-        onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
-        viewportSnapshot={viewportSnapshot}
-        externalViewportUserTouched={viewportUserTouched}
-        onViewportSnapshotChange={onViewportSnapshotChange}
-        persistScalePrefs={persistScalePrefs}
-      />
+  frameSignalState = null,
+}: ResearchChartFrameProps) => {
+  const signalActive = Boolean(
+    frameSignalState?.active &&
+      (frameSignalState.direction === "buy" ||
+        frameSignalState.direction === "sell") &&
+      frameSignalState.color,
+  );
+  const frameBorderColor = signalActive
+    ? frameSignalState?.color
+    : style?.borderColor || theme.border;
+
+  return (
+    <div
+      data-testid={dataTestId}
+      data-signal-direction={signalActive ? frameSignalState?.direction : "none"}
+      data-signal-frame-active={signalActive ? "true" : "false"}
+      data-signal-frame-color={signalActive ? frameSignalState?.color : undefined}
+      aria-label={signalActive ? frameSignalState?.label : undefined}
+      style={{
+        background: theme.bg2,
+        borderRadius: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        height: "100%",
+        minHeight: 0,
+        boxShadow: signalActive
+          ? `0 0 0 1px ${frameSignalState?.color}66, 0 0 18px ${frameSignalState?.color}22`
+          : style?.boxShadow,
+        ...style,
+        border: signalActive
+          ? `1px solid ${frameBorderColor}`
+          : style?.border || `1px solid ${theme.border}`,
+        borderColor: frameBorderColor,
+      }}
+    >
+      {header ? <div style={{ flexShrink: 0 }}>{header}</div> : null}
+      {subHeader ? <div style={{ flexShrink: 0 }}>{subHeader}</div> : null}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <ResearchChartSurface
+          dataTestId={dataTestId ? `${dataTestId}-surface` : undefined}
+          theme={theme}
+          themeKey={themeKey}
+          uiStateKey={surfaceUiStateKey}
+          rangeIdentityKey={rangeIdentityKey}
+          viewportLayoutKey={viewportLayoutKey}
+          model={model}
+          compact={compact}
+          showToolbar={showSurfaceToolbar}
+          showLegend={showLegend}
+          legend={legend}
+          hideTimeScale={hideTimeScale}
+          hideCrosshair={hideCrosshair}
+          topOverlay={surfaceTopOverlay}
+          leftOverlay={surfaceLeftOverlay}
+          bottomOverlay={surfaceBottomOverlay}
+          topOverlayHeight={surfaceTopOverlayHeight}
+          leftOverlayWidth={surfaceLeftOverlayWidth}
+          bottomOverlayHeight={surfaceBottomOverlayHeight}
+          drawings={drawings}
+          referenceLines={referenceLines}
+          chartEvents={chartEvents}
+          chartFlowDiagnostics={chartFlowDiagnostics}
+          emptyState={emptyState}
+          drawMode={drawMode}
+          onAddDrawing={onAddDrawing}
+          onTradeMarkerSelection={onTradeMarkerSelection}
+          onVisibleLogicalRangeChange={onVisibleLogicalRangeChange}
+          viewportSnapshot={viewportSnapshot}
+          externalViewportUserTouched={viewportUserTouched}
+          onViewportSnapshotChange={onViewportSnapshotChange}
+          persistScalePrefs={persistScalePrefs}
+        />
+      </div>
+      {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}
     </div>
-    {footer ? <div style={{ flexShrink: 0 }}>{footer}</div> : null}
-  </div>
-);
+  );
+};

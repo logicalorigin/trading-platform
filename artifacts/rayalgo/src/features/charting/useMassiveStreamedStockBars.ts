@@ -36,6 +36,7 @@ type UseBrokerStreamedBarsInput = {
   timeframe: string;
   bars?: MarketBar[] | null;
   enabled?: boolean;
+  instrumentationScope?: string | null;
 };
 
 type UseOptionQuotePatchedBarsInput = {
@@ -1566,18 +1567,47 @@ export const useBrokerStreamedBars = ({
   timeframe,
   bars,
   enabled = true,
+  instrumentationScope,
 }: UseBrokerStreamedBarsInput): MarketBar[] => {
+  const streamEnabled = Boolean(
+    enabled && symbol && MINUTE_AGGREGATE_PATCH_TIMEFRAMES.has(timeframe),
+  );
   useBrokerStockAggregateStream({
     symbols: symbol ? [symbol] : [],
-    enabled: Boolean(enabled && symbol && MINUTE_AGGREGATE_PATCH_TIMEFRAMES.has(timeframe)),
+    enabled: streamEnabled,
   });
 
   const symbolAggregateVersion = useStockMinuteAggregateSymbolVersion(symbol);
+  const previousAggregateVersionRef = useRef(symbolAggregateVersion);
 
-  return useMemo(
+  const mergedBars = useMemo(
     () => mergeBarsWithMinuteAggregates(symbol, timeframe, bars || []),
     [bars, symbolAggregateVersion, symbol, timeframe],
   );
+
+  useEffect(() => {
+    if (!streamEnabled) {
+      previousAggregateVersionRef.current = symbolAggregateVersion;
+      return;
+    }
+    if (previousAggregateVersionRef.current === symbolAggregateVersion) {
+      return;
+    }
+    previousAggregateVersionRef.current = symbolAggregateVersion;
+    recordChartHydrationCounter("livePatchReceived", instrumentationScope);
+    markChartLivePatchPending(instrumentationScope);
+    if (!areBarsEquivalent(bars || [], mergedBars)) {
+      recordChartHydrationCounter("livePatchApplied", instrumentationScope);
+    }
+  }, [
+    bars,
+    instrumentationScope,
+    mergedBars,
+    streamEnabled,
+    symbolAggregateVersion,
+  ]);
+
+  return mergedBars;
 };
 
 export const useOptionQuotePatchedBars = ({
@@ -1823,7 +1853,15 @@ export const useHistoricalBarStreamState = ({
           ),
           streamedBarLimit,
         );
-        return areBarsEquivalent(current, next) ? current : next;
+        if (areBarsEquivalent(current, next)) {
+          return current;
+        }
+        recordChartHydrationCounter(
+          "livePatchApplied",
+          instrumentationScope,
+          patchedBars.length,
+        );
+        return next;
       });
     };
 
@@ -1834,6 +1872,7 @@ export const useHistoricalBarStreamState = ({
     });
 
     const enqueueStreamBar = (bar: HistoricalBarStreamSnapshot) => {
+      recordChartHydrationCounter("livePatchReceived", instrumentationScope);
       const nextSignature = buildHistoricalBarStreamSignature(bar);
       if (nextSignature === lastStreamSignatureRef.current) {
         recordChartHydrationCounter("livePatchDuplicate", instrumentationScope);

@@ -599,6 +599,18 @@ test("RayReplica runtime settings preserve Pine bounds and empty session default
   assert.deepEqual(core.sessions, []);
 });
 
+test("RayReplica display session toggles return background windows", () => {
+  const output = computeRayReplica(buildFlipBars(), {
+    ...TEST_SETTINGS,
+    showLondonSession: true,
+    showRegimeWindows: false,
+  });
+
+  assert.equal(output.windows?.length, 1);
+  assert.equal(output.windows?.[0]?.meta?.style, "background");
+  assert.equal(output.windows?.[0]?.meta?.label, "london");
+});
+
 test("RayReplica CHOCH ATR, body, and volume gates suppress reversals only when enabled", () => {
   const bars = buildFlipBars();
   const baseline = evaluateRayReplicaSignals({

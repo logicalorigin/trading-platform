@@ -1550,6 +1550,8 @@ function ChartDisplayPreferencesPanel({ userPreferences }) {
         <CheckboxField label="Time axis" checked={chart.showTimeScale} onChange={(value) => patchChart({ showTimeScale: value })} />
         <CheckboxField label="Grid" checked={chart.showGrid} onChange={(value) => patchChart({ showGrid: value })} />
         <CheckboxField label="Keep zoom" checked={chart.keepTimeZoom} onChange={(value) => patchChart({ keepTimeZoom: value })} />
+        <CheckboxField label="Extended hours" checked={chart.extendedHours} onChange={(value) => patchChart({ extendedHours: value })} />
+        <CheckboxField label="Session breaks" checked={chart.sessionBreaks} onChange={(value) => patchChart({ sessionBreaks: value })} />
       </div>
     </Panel>
   );

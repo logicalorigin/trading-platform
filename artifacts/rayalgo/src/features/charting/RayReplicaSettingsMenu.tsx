@@ -92,6 +92,10 @@ type BooleanSettingKey =
   | "showTodayOpen"
   | "showPriorWeekHigh"
   | "showPriorWeekLow"
+  | "showLondonSession"
+  | "showNewYorkSession"
+  | "showTokyoSession"
+  | "showSydneySession"
   | "colorCandles";
 
 const triggerStyle = (
@@ -1001,8 +1005,11 @@ export function RayReplicaSettingsMenu({
             </Section>
 
             <Section theme={theme} title="9. Sessions">
-              <div style={noteBoxStyle(theme)}>
-                TradingView exposes a separate set of display-only session toggles here. This chart surface does not yet render session overlays, so the current UTC session still comes from the info panel and the signal-filter session gates live in section 14 below.
+              <div style={inlineControlsStyle}>
+                <InlineCheckbox theme={theme} label="London" checked={settings.showLondonSession} onChange={() => toggle("showLondonSession")} />
+                <InlineCheckbox theme={theme} label="New York" checked={settings.showNewYorkSession} onChange={() => toggle("showNewYorkSession")} />
+                <InlineCheckbox theme={theme} label="Tokyo" checked={settings.showTokyoSession} onChange={() => toggle("showTokyoSession")} />
+                <InlineCheckbox theme={theme} label="Sydney" checked={settings.showSydneySession} onChange={() => toggle("showSydneySession")} />
               </div>
             </Section>
 

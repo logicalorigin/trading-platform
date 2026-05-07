@@ -5,8 +5,10 @@ import {
   earningsCalendarToChartEvents,
   filterFlowEventsForOptionContract,
   filterFlowEventsForSymbol,
+  flowEventsToChartEventConversion,
   flowEventsToChartEvents,
   getChartEventLookbackWindow,
+  getStableFlowEventKey,
   mergeFlowEventFeeds,
 } from "./chartEvents";
 
@@ -34,6 +36,44 @@ test("flowEventsToChartEvents normalizes unusual flow into bar events", () => {
   assert.equal(events[0].severity, "high");
   assert.equal(events[0].bias, "bullish");
   assert.equal(events[0].actions.includes("add_alert"), true);
+});
+
+test("flowEventsToChartEventConversion reports symbol and time drops", () => {
+  const conversion = flowEventsToChartEventConversion(
+    [
+      {
+        id: "visible",
+        ticker: "SPY",
+        cp: "C",
+        premium: 125_000,
+        occurredAt: "2026-05-01T15:12:00.000Z",
+      },
+      {
+        id: "wrong-symbol",
+        ticker: "QQQ",
+        cp: "P",
+        premium: 90_000,
+        occurredAt: "2026-05-01T15:13:00.000Z",
+      },
+      {
+        id: "missing-time",
+        ticker: "SPY",
+        cp: "C",
+        premium: 50_000,
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(conversion.rawInputCount, 3);
+  assert.equal(conversion.flowRecordCount, 3);
+  assert.equal(conversion.convertedEventCount, 1);
+  assert.equal(conversion.droppedSymbolCount, 1);
+  assert.equal(conversion.droppedInvalidTimeCount, 1);
+  assert.deepEqual(
+    conversion.events.map((event) => event.id),
+    ["visible"],
+  );
 });
 
 test("flowEventsToChartEvents accepts symbol-only unusual flow payloads", () => {
@@ -219,6 +259,36 @@ test("mergeFlowEventFeeds keeps distinct trade rows without ids", () => {
   assert.equal(rows.length, 2);
 });
 
+test("snapshot flow feeds dedupe by stable contract identity", () => {
+  const broad = {
+    id: "SPY260515C00500000-1770000000000",
+    ticker: "SPY",
+    provider: "ibkr",
+    basis: "snapshot",
+    sourceBasis: "snapshot_activity",
+    providerContractId: "12345",
+    optionTicker: "SPY260515C00500000",
+    cp: "C",
+    strike: 500,
+    expirationDate: "2026-05-15",
+    occurredAt: "2026-05-01T20:59:00.000Z",
+    premium: 300_000,
+  };
+  const local = {
+    ...broad,
+    id: "SPY260515C00500000-1770000060000",
+    occurredAt: "2026-05-01T21:00:00.000Z",
+    premium: 325_000,
+  };
+
+  const merged = mergeFlowEventFeeds([broad], [local]);
+  const chartEvents = flowEventsToChartEvents(merged, "SPY");
+
+  assert.equal(merged.length, 1);
+  assert.equal(getStableFlowEventKey(broad), getStableFlowEventKey(local));
+  assert.equal(chartEvents[0].id, getStableFlowEventKey(broad));
+});
+
 test("flowEventsToChartEvents preserves snapshot time basis without treating it as a print", () => {
   const events = flowEventsToChartEvents(
     [
@@ -262,8 +332,16 @@ test("getChartEventLookbackWindow uses timeframe-aware extended history", () => 
   const intraday = getChartEventLookbackWindow("5m", now);
   const daily = getChartEventLookbackWindow("1d", now);
 
-  assert.equal(intraday.from.toISOString(), "2026-04-26T00:00:00.000Z");
+  assert.equal(intraday.from.toISOString(), "2026-04-23T13:30:00.000Z");
   assert.equal(daily.from.toISOString(), "2026-01-28T00:00:00.000Z");
+});
+
+test("getChartEventLookbackWindow includes full prior sessions after market close", () => {
+  const now = new Date("2026-05-08T01:00:00.000Z");
+  const intraday = getChartEventLookbackWindow("5m", now);
+
+  assert.equal(intraday.from.toISOString(), "2026-05-05T13:30:00.000Z");
+  assert.equal(intraday.to.toISOString(), now.toISOString());
 });
 
 test("clusterChartEvents labels clustered flow by count and net bias", () => {
