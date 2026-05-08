@@ -105,24 +105,3 @@ LOCAL_DATABASE_URL = "postgres:///dev?host=/home/runner/workspace/.local/postgre
 channel = "stable-25_05"
 
 [workflows]
-runButton = "Project"
-
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Local Postgres"
-
-[[workflows.workflow]]
-name = "Local Postgres"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "bash scripts/start-local-postgres.sh"
-
-[workflows.workflow.metadata]
-outputType = "console"
