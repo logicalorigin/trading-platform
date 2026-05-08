@@ -21,6 +21,13 @@ import {
 export const buildChartBarScopeKey = (...parts) =>
   parts.filter((part) => part != null && part !== "").join("::");
 
+export const CHART_HYDRATION_ACTION = Object.freeze({
+  NONE: "none",
+  EXPAND_LIMIT: "expandLimit",
+  BACKFILL_UNDERFILLED: "backfillUnderfilled",
+  PREPEND_OLDER: "prependOlder",
+});
+
 const nowMs = () =>
   typeof performance !== "undefined" && Number.isFinite(performance.now())
     ? performance.now()
@@ -41,6 +48,189 @@ const resolveBarTimestampMs = (value) => {
   }
 
   return null;
+};
+
+const resolveFiniteCount = (value, fallback = 0) =>
+  Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : fallback;
+
+const resolveMinimumPrependPageSize = (timeframe, role) => {
+  if (role === "option") {
+    return getInitialChartBarLimit(timeframe, "option");
+  }
+  if (role === "mini") {
+    return getInitialChartBarLimit(timeframe, "mini");
+  }
+  return getInitialChartBarLimit(timeframe, "primary");
+};
+
+export const resolveVisibleRangeHydrationAction = ({
+  enabled = true,
+  range,
+  loadedBarCount = 0,
+  requestedLimit = 0,
+  targetLimit = 0,
+  maxLimit = 0,
+  timeframe,
+  role = "primary",
+  oldestLoadedAtMs = null,
+  canPrependOlderHistory = false,
+  isPrependingOlder = false,
+  isHydratingRequestedWindow = false,
+  hasExhaustedOlderHistory = false,
+} = {}) => {
+  if (!enabled || !range) {
+    return { action: CHART_HYDRATION_ACTION.NONE, reason: "disabled" };
+  }
+
+  const visibleBars = Math.max(1, Math.ceil(range.to - range.from));
+  const leftEdgeBufferBars = Math.max(
+    24,
+    Math.min(144, Math.ceil(visibleBars * 0.2)),
+  );
+  if (range.from > leftEdgeBufferBars) {
+    return {
+      action: CHART_HYDRATION_ACTION.NONE,
+      reason: "not-near-left-edge",
+      visibleBars,
+      leftEdgeBufferBars,
+    };
+  }
+
+  if (isPrependingOlder) {
+    return {
+      action: CHART_HYDRATION_ACTION.NONE,
+      reason: "prepend-in-flight",
+      visibleBars,
+      leftEdgeBufferBars,
+    };
+  }
+
+  if (isHydratingRequestedWindow) {
+    return {
+      action: CHART_HYDRATION_ACTION.NONE,
+      reason: "requested-window-loading",
+      visibleBars,
+      leftEdgeBufferBars,
+    };
+  }
+
+  const resolvedRequestedLimit = resolveFiniteCount(requestedLimit);
+  const resolvedLoadedBarCount = resolveFiniteCount(loadedBarCount);
+  const resolvedTargetLimit = resolveFiniteCount(targetLimit);
+  const resolvedMaxLimit = Math.max(
+    resolvedTargetLimit,
+    resolveFiniteCount(maxLimit, resolvedTargetLimit),
+  );
+
+  if (
+    resolvedRequestedLimit >= resolvedTargetLimit &&
+    resolvedLoadedBarCount < resolvedMaxLimit &&
+    canPrependOlderHistory &&
+    !hasExhaustedOlderHistory &&
+    Number.isFinite(oldestLoadedAtMs)
+  ) {
+    const remainingBars = Math.max(0, resolvedMaxLimit - resolvedLoadedBarCount);
+    const minimumPageSize = resolveMinimumPrependPageSize(timeframe, role);
+    const prependPageSize = Math.max(
+      minimumPageSize,
+      Math.ceil(visibleBars * 2),
+      role === "option" ? 240 : 360,
+    );
+
+    if (remainingBars > 0) {
+      return {
+        action: CHART_HYDRATION_ACTION.PREPEND_OLDER,
+        reason: "near-left-edge",
+        visibleBars,
+        leftEdgeBufferBars,
+        pageSize: Math.min(remainingBars, prependPageSize),
+      };
+    }
+  }
+
+  if (resolvedRequestedLimit >= resolvedTargetLimit && hasExhaustedOlderHistory) {
+    return {
+      action: CHART_HYDRATION_ACTION.NONE,
+      reason: "older-history-exhausted",
+      visibleBars,
+      leftEdgeBufferBars,
+    };
+  }
+
+  if (resolvedRequestedLimit >= resolvedMaxLimit) {
+    return {
+      action: CHART_HYDRATION_ACTION.NONE,
+      reason: hasExhaustedOlderHistory ? "older-history-exhausted" : "max-limit",
+      visibleBars,
+      leftEdgeBufferBars,
+    };
+  }
+
+  const effectiveLoadedBars = Math.max(
+    resolvedRequestedLimit,
+    resolvedLoadedBarCount,
+    Math.ceil(range.to + 1),
+  );
+  const nextRequestedLimit = Math.max(
+    resolvedTargetLimit,
+    Math.ceil(effectiveLoadedBars * 2),
+    effectiveLoadedBars + Math.max(visibleBars * 2, 480),
+  );
+
+  return {
+    action: CHART_HYDRATION_ACTION.EXPAND_LIMIT,
+    reason: "near-left-edge",
+    visibleBars,
+    leftEdgeBufferBars,
+    nextRequestedLimit: Math.min(resolvedMaxLimit, nextRequestedLimit),
+  };
+};
+
+export const resolveUnderfilledChartBackfillAction = ({
+  enabled = true,
+  scopeKey = "",
+  loadedBarCount = 0,
+  requestedLimit = 0,
+  minPageSize = 0,
+  isPrependingOlder = false,
+  hasExhaustedOlderHistory = false,
+  hasPrependOlderBars = false,
+  attempts = 0,
+  maxAttempts = 2,
+} = {}) => {
+  const normalizedScopeKey =
+    typeof scopeKey === "string" ? scopeKey.trim() : "";
+  const desiredLoadedCount = Math.max(2, resolveFiniteCount(requestedLimit));
+  const currentLoadedCount = resolveFiniteCount(loadedBarCount);
+
+  if (
+    !enabled ||
+    !normalizedScopeKey ||
+    !hasPrependOlderBars ||
+    currentLoadedCount <= 0 ||
+    currentLoadedCount >= desiredLoadedCount ||
+    isPrependingOlder ||
+    hasExhaustedOlderHistory ||
+    attempts >= maxAttempts
+  ) {
+    return {
+      action: CHART_HYDRATION_ACTION.NONE,
+      desiredLoadedCount,
+      currentLoadedCount,
+    };
+  }
+
+  const missingBars = Math.max(0, desiredLoadedCount - currentLoadedCount);
+  return {
+    action: CHART_HYDRATION_ACTION.BACKFILL_UNDERFILLED,
+    desiredLoadedCount,
+    currentLoadedCount,
+    pageSize: Math.max(
+      resolveFiniteCount(minPageSize),
+      missingBars,
+      Math.ceil(desiredLoadedCount * 0.5),
+    ),
+  };
 };
 
 // Trade charts start with a small first-paint slice, warm the deeper target
@@ -132,65 +322,30 @@ export const useProgressiveChartBarLimit = ({
 
   const expandForVisibleRange = useCallback(
     (range, loadedBarCount, options = {}) => {
-      if (!enabled || !range) {
-        return;
-      }
-
-      const visibleBars = Math.max(1, Math.ceil(range.to - range.from));
-      const leftEdgeBufferBars = Math.max(
-        24,
-        Math.min(144, Math.ceil(visibleBars * 0.2)),
-      );
-      if (range.from > leftEdgeBufferBars) {
-        return;
-      }
-
-      const resolvedLoadedBarCount = Number.isFinite(loadedBarCount)
-        ? Math.ceil(loadedBarCount)
-        : 0;
-      const canPrependOlderHistory =
-        requestedLimit >= targetLimit &&
-        resolvedLoadedBarCount < maxLimit &&
-        typeof options.prependOlderBars === "function" &&
-        Number.isFinite(options.oldestLoadedAtMs);
-
-      if (canPrependOlderHistory) {
-        const remainingBars = Math.max(0, maxLimit - resolvedLoadedBarCount);
-        const minimumPageSize =
-          role === "option"
-            ? getInitialChartBarLimit(timeframe, "option")
-            : role === "mini"
-              ? getInitialChartBarLimit(timeframe, "mini")
-              : getInitialChartBarLimit(timeframe, "primary");
-        const prependPageSize = Math.max(
-          minimumPageSize,
-          Math.ceil(visibleBars * 2),
-          role === "option" ? 240 : 360,
-        );
-        if (remainingBars > 0) {
-          options.prependOlderBars({
-            pageSize: Math.min(remainingBars, prependPageSize),
-          });
-        }
-        return;
-      }
-
-      if (requestedLimit >= maxLimit) {
-        return;
-      }
-
-      const effectiveLoadedBars = Math.max(
+      const hydrationAction = resolveVisibleRangeHydrationAction({
+        enabled,
+        range,
+        loadedBarCount,
         requestedLimit,
-        resolvedLoadedBarCount,
-        Math.ceil(range.to + 1),
-      );
-      const nextRequestedLimit = Math.max(
         targetLimit,
-        Math.ceil(effectiveLoadedBars * 2),
-        effectiveLoadedBars + Math.max(visibleBars * 2, 480),
-      );
+        maxLimit,
+        timeframe,
+        role,
+        oldestLoadedAtMs: options.oldestLoadedAtMs,
+        canPrependOlderHistory: typeof options.prependOlderBars === "function",
+        isHydratingRequestedWindow: Boolean(options.isHydratingRequestedWindow),
+        isPrependingOlder: Boolean(options.isPrependingOlder),
+        hasExhaustedOlderHistory: Boolean(options.hasExhaustedOlderHistory),
+      });
 
-      hydrateLimit(nextRequestedLimit);
+      if (hydrationAction.action === CHART_HYDRATION_ACTION.PREPEND_OLDER) {
+        options.prependOlderBars?.({ pageSize: hydrationAction.pageSize });
+      } else if (
+        hydrationAction.action === CHART_HYDRATION_ACTION.EXPAND_LIMIT
+      ) {
+        hydrateLimit(hydrationAction.nextRequestedLimit);
+      }
+      return hydrationAction;
     },
     [
       enabled,
@@ -220,6 +375,7 @@ export const useDebouncedVisibleRangeExpansion = (
   {
     delayMs = VISIBLE_RANGE_HYDRATION_DEBOUNCE_MS,
     resetKey = "",
+    recheckKey = "",
   } = {},
 ) => {
   const expandVisibleRangeRef = useRef(expandVisibleRange);
@@ -230,7 +386,7 @@ export const useDebouncedVisibleRangeExpansion = (
     expandVisibleRangeRef.current = expandVisibleRange;
   }, [expandVisibleRange]);
 
-  const clearScheduledExpansion = useCallback(() => {
+  const clearScheduledTimer = useCallback(() => {
     if (timerRef.current == null) {
       return;
     }
@@ -241,13 +397,25 @@ export const useDebouncedVisibleRangeExpansion = (
       clearTimeout(timerRef.current);
     }
     timerRef.current = null;
-    latestRangeRef.current = null;
   }, []);
 
+  const resetScheduledExpansion = useCallback(() => {
+    clearScheduledTimer();
+    latestRangeRef.current = null;
+  }, [clearScheduledTimer]);
+
   useEffect(() => {
-    clearScheduledExpansion();
-    return clearScheduledExpansion;
-  }, [clearScheduledExpansion, resetKey]);
+    resetScheduledExpansion();
+    return resetScheduledExpansion;
+  }, [resetScheduledExpansion, resetKey]);
+
+  useEffect(() => {
+    if (!recheckKey || latestRangeRef.current == null || timerRef.current != null) {
+      return;
+    }
+
+    expandVisibleRangeRef.current?.(latestRangeRef.current);
+  }, [recheckKey]);
 
   return useCallback(
     (range) => {
@@ -257,17 +425,13 @@ export const useDebouncedVisibleRangeExpansion = (
         ? Math.max(0, delayMs)
         : VISIBLE_RANGE_HYDRATION_DEBOUNCE_MS;
       if (resolvedDelay === 0) {
-        clearScheduledExpansion();
+        clearScheduledTimer();
         expandVisibleRangeRef.current?.(range);
         return;
       }
 
       if (timerRef.current != null) {
-        if (typeof window !== "undefined") {
-          window.clearTimeout(timerRef.current);
-        } else {
-          clearTimeout(timerRef.current);
-        }
+        clearScheduledTimer();
       }
 
       const setTimer =
@@ -275,11 +439,10 @@ export const useDebouncedVisibleRangeExpansion = (
       timerRef.current = setTimer(() => {
         const nextRange = latestRangeRef.current;
         timerRef.current = null;
-        latestRangeRef.current = null;
         expandVisibleRangeRef.current?.(nextRange);
       }, resolvedDelay);
     },
-    [clearScheduledExpansion, delayMs],
+    [clearScheduledTimer, delayMs],
   );
 };
 
@@ -313,16 +476,20 @@ export const useUnderfilledChartBackfill = ({
       attemptsRef.current = { key: attemptKey, count: 0 };
     }
 
-    if (
-      !enabled ||
-      !normalizedScopeKey ||
-      typeof prependOlderBars !== "function" ||
-      currentLoadedCount <= 0 ||
-      currentLoadedCount >= desiredLoadedCount ||
-      isPrependingOlder ||
-      hasExhaustedOlderHistory ||
-      attemptsRef.current.count >= maxAttempts
-    ) {
+    const hydrationAction = resolveUnderfilledChartBackfillAction({
+      enabled,
+      scopeKey: normalizedScopeKey,
+      loadedBarCount: currentLoadedCount,
+      requestedLimit: desiredLoadedCount,
+      minPageSize,
+      isPrependingOlder,
+      hasExhaustedOlderHistory,
+      hasPrependOlderBars: typeof prependOlderBars === "function",
+      attempts: attemptsRef.current.count,
+      maxAttempts,
+    });
+
+    if (hydrationAction.action !== CHART_HYDRATION_ACTION.BACKFILL_UNDERFILLED) {
       return;
     }
 
@@ -330,12 +497,7 @@ export const useUnderfilledChartBackfill = ({
       key: attemptKey,
       count: attemptsRef.current.count + 1,
     };
-    const missingBars = Math.max(0, desiredLoadedCount - currentLoadedCount);
-    const pageSize = Math.max(
-      Math.ceil(Number.isFinite(minPageSize) ? minPageSize : 0),
-      missingBars,
-      Math.ceil(desiredLoadedCount * 0.5),
-    );
+    const pageSize = hydrationAction.pageSize;
 
     Promise.resolve(prependOlderBars({ pageSize })).catch(() => {});
   }, [

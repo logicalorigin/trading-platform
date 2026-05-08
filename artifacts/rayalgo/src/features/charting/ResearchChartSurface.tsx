@@ -27,6 +27,7 @@ import {
   LineStyle,
   PriceScaleMode,
 } from "lightweight-charts";
+import { Copy } from "lucide-react";
 import type {
   ChartModel,
   IndicatorWindow,
@@ -225,6 +226,24 @@ export const resolveVisibleRangeChangeSource = ({
   }
 
   return "programmatic";
+};
+
+export const resolvePrependedVisibleLogicalRange = ({
+  visibleRange,
+  prependCount,
+}: {
+  visibleRange: VisibleLogicalRange | null | undefined;
+  prependCount: number;
+}): VisibleLogicalRange | null => {
+  const range = normalizeVisibleLogicalRange(visibleRange);
+  if (!range || !Number.isFinite(prependCount) || prependCount <= 0) {
+    return null;
+  }
+
+  return {
+    from: range.from + prependCount,
+    to: range.to + prependCount,
+  };
 };
 
 type ChartScalePreferences = {
@@ -528,6 +547,94 @@ type FlowTooltipState = {
   top: number;
   model: FlowTooltipModel;
 };
+
+const resolveFlowToneColor = (
+  tone: ChartEventOverlay["tone"],
+  theme: ResearchChartTheme,
+): string =>
+  tone === "bullish" ? theme.green : tone === "bearish" ? theme.red : theme.amber;
+
+const resolveChartEventToneColor = (
+  overlay: ChartEventOverlay,
+  theme: ResearchChartTheme,
+): string => {
+  if (overlay.eventType === "unusual_flow") {
+    return resolveFlowToneColor(overlay.tone, theme);
+  }
+
+  if (overlay.tone === "bullish") return theme.green;
+  if (overlay.tone === "bearish") return theme.red;
+  if (overlay.placement === "timescale") return theme.amber;
+  return theme.accent || theme.text;
+};
+
+const FLOW_TOOLTIP_WIDTH = 248;
+const FLOW_TOOLTIP_ESTIMATED_HEIGHT = 232;
+const FLOW_TOOLTIP_HIDE_DELAY_MS = 120;
+
+type FlowTooltipStatCell = {
+  label: string;
+  value: string;
+  required?: boolean;
+};
+
+const flowTooltipHasValue = (value: string | number | null | undefined): boolean => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return Boolean(normalized && normalized !== "n/a" && normalized !== "nan");
+};
+
+const buildFlowTooltipStatCells = (
+  model: FlowTooltipModel,
+): FlowTooltipStatCell[] =>
+  [
+    { label: "Prem", value: model.premium, required: true },
+    { label: "Events", value: String(model.eventCount), required: true },
+    { label: "Contracts", value: model.contracts, required: true },
+    { label: "OI", value: model.openInterest },
+    { label: "C/P", value: model.callPutMix, required: true },
+    { label: "Bias", value: model.sentiment, required: true },
+    { label: "Side", value: model.side },
+    { label: "DTE", value: model.dte },
+    { label: "IV", value: model.iv },
+    { label: "Delta", value: model.delta },
+    { label: "Score", value: model.unusualScore },
+    { label: "Fill", value: model.price },
+    { label: "Bid/Ask", value: model.bidAsk },
+    { label: "Mny", value: model.moneyness },
+    { label: "Dist", value: model.distance },
+  ].filter((cell) => cell.required || flowTooltipHasValue(cell.value));
+
+const FLOW_TOOLTIP_SCALAR_KEYS: Array<Exclude<keyof FlowTooltipModel, "tags">> = [
+  "title",
+  "summary",
+  "tone",
+  "premium",
+  "contracts",
+  "callPutMix",
+  "flowMix",
+  "callPercent",
+  "putPercent",
+  "bullishPercent",
+  "bearishPercent",
+  "neutralPercent",
+  "topContract",
+  "copyLabel",
+  "sourceLabel",
+  "timeBasis",
+  "side",
+  "price",
+  "bidAsk",
+  "openInterest",
+  "dte",
+  "iv",
+  "delta",
+  "unusualScore",
+  "moneyness",
+  "distance",
+  "sentiment",
+  "intensity",
+  "eventCount",
+];
 
 export type ChartLegendStudyItem = {
   id: string;
@@ -2555,16 +2662,7 @@ const flowTooltipModelsEqual = (
   Boolean(
     left &&
       right &&
-      left.title === right.title &&
-      left.summary === right.summary &&
-      left.premium === right.premium &&
-      left.contracts === right.contracts &&
-      left.callPutMix === right.callPutMix &&
-      left.flowMix === right.flowMix &&
-      left.topContract === right.topContract &&
-      left.sentiment === right.sentiment &&
-      left.intensity === right.intensity &&
-      left.eventCount === right.eventCount &&
+      FLOW_TOOLTIP_SCALAR_KEYS.every((key) => left[key] === right[key]) &&
       stringArraysEqual(left.tags, right.tags),
   );
 
@@ -4653,6 +4751,9 @@ export const ResearchChartSurface = ({
     FlowVolumeOverlay[]
   >([]);
   const [flowTooltip, setFlowTooltip] = useState<FlowTooltipState | null>(null);
+  const flowTooltipHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [indicatorDashboardOverlay, setIndicatorDashboardOverlay] =
     useState<IndicatorDashboardOverlay | null>(null);
   const [dashboardSessionNowMs, setDashboardSessionNowMs] = useState(() =>
@@ -4661,8 +4762,16 @@ export const ResearchChartSurface = ({
   const dashboardMarketSession = resolveUsEquityMarketSession(
     dashboardSessionNowMs,
   );
-  const closedMarketVisualsEnabled = dashboardMarketSession.key === "closed";
-  const effectiveShowGrid = showGrid && closedMarketVisualsEnabled;
+  const effectiveShowGrid = showGrid;
+  useEffect(
+    () => () => {
+      if (flowTooltipHideTimerRef.current !== null) {
+        clearTimeout(flowTooltipHideTimerRef.current);
+        flowTooltipHideTimerRef.current = null;
+      }
+    },
+    [],
+  );
   const [tradeThresholdOverlays, setTradeThresholdOverlays] = useState<
     TradeThresholdOverlay[]
   >([]);
@@ -5470,10 +5579,14 @@ export const ResearchChartSurface = ({
       );
 
       if (prependCount > 0) {
-        const adjustedVisibleRange = {
-          from: visibleLogicalRangeRef.current.from + prependCount,
-          to: visibleLogicalRangeRef.current.to + prependCount,
-        };
+        const adjustedVisibleRange = resolvePrependedVisibleLogicalRange({
+          visibleRange: visibleLogicalRangeRef.current,
+          prependCount,
+        });
+        if (!adjustedVisibleRange) {
+          previousFirstChartBarTimeRef.current = nextFirstChartBarTime;
+          return;
+        }
         visibleLogicalRangeRef.current = adjustedVisibleRange;
         pendingStoredRangeSyncRef.current = true;
         recordViewportDiagnostic(
@@ -6571,23 +6684,6 @@ export const ResearchChartSurface = ({
       );
     };
 
-    const sessionOpen = deferredModel.chartBars[0]?.o;
-    if (
-      closedMarketVisualsEnabled &&
-      typeof sessionOpen === "number" &&
-      Number.isFinite(sessionOpen)
-    ) {
-      const sessionLine = {
-        price: sessionOpen,
-        color: withAlpha(theme.textMuted, "b0"),
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: false,
-        title: "",
-      };
-      addPriceLine(sessionLine);
-    }
-
     drawings
       .filter(
         (drawing) =>
@@ -6622,12 +6718,9 @@ export const ResearchChartSurface = ({
         addPriceLine(referenceLine);
       });
   }, [
-    closedMarketVisualsEnabled,
     drawings,
-    deferredModel.chartBars,
     referenceLines,
     theme.amber,
-    theme.textMuted,
   ]);
 
   useLayoutEffect(() => {
@@ -7155,6 +7248,12 @@ export const ResearchChartSurface = ({
       to: currentRange.to + barsDelta,
     });
   };
+  const clearFlowTooltipHideTimer = useCallback(() => {
+    if (flowTooltipHideTimerRef.current !== null) {
+      clearTimeout(flowTooltipHideTimerRef.current);
+      flowTooltipHideTimerRef.current = null;
+    }
+  }, []);
   const showFlowTooltip = useCallback(
     ({
       id,
@@ -7167,18 +7266,40 @@ export const ResearchChartSurface = ({
       top: number;
       model: FlowTooltipModel;
     }) => {
+      clearFlowTooltipHideTimer();
       setFlowTooltip({
         id,
-        left: clampCoordinate(left + 12, 8, Math.max(8, plotSize.width - 292)),
-        top: clampCoordinate(top - 12, 8, Math.max(8, plotSize.height - 174)),
+        left: clampCoordinate(
+          left + 10,
+          8,
+          Math.max(8, plotSize.width - FLOW_TOOLTIP_WIDTH - 12),
+        ),
+        top: clampCoordinate(
+          top - 10,
+          8,
+          Math.max(8, plotSize.height - FLOW_TOOLTIP_ESTIMATED_HEIGHT),
+        ),
         model: tooltipModel,
       });
     },
-    [plotSize.height, plotSize.width],
+    [clearFlowTooltipHideTimer, plotSize.height, plotSize.width],
   );
-  const hideFlowTooltip = useCallback((id: string) => {
-    setFlowTooltip((current) => (current?.id === id ? null : current));
-  }, []);
+  const scheduleHideFlowTooltip = useCallback(
+    (id: string) => {
+      clearFlowTooltipHideTimer();
+      flowTooltipHideTimerRef.current = setTimeout(() => {
+        flowTooltipHideTimerRef.current = null;
+        setFlowTooltip((current) => (current?.id === id ? null : current));
+      }, FLOW_TOOLTIP_HIDE_DELAY_MS);
+    },
+    [clearFlowTooltipHideTimer],
+  );
+  const scheduleCurrentFlowTooltipHide = useCallback(() => {
+    const currentId = flowTooltip?.id;
+    if (currentId) {
+      scheduleHideFlowTooltip(currentId);
+    }
+  }, [flowTooltip?.id, scheduleHideFlowTooltip]);
   const copyFlowContract = useCallback((contract: string) => {
     if (!contract || typeof navigator === "undefined" || !navigator.clipboard) {
       return;
@@ -8074,6 +8195,7 @@ export const ResearchChartSurface = ({
       onPointerMoveCapture={handleRootPointerMoveCapture}
       onPointerUpCapture={handleRootPointerUpCapture}
       onPointerCancelCapture={handleRootPointerCancelCapture}
+      onPointerLeave={scheduleCurrentFlowTooltipHide}
       onMouseDownCapture={beginMousePlotPan}
       onMouseMoveCapture={moveMousePlotPan}
       onMouseUpCapture={endMousePlotPan}
@@ -8242,26 +8364,6 @@ export const ResearchChartSurface = ({
               cursor: drawMode ? "crosshair" : "default",
             }}
           />
-          {closedMarketVisualsEnabled ? (
-            <div
-              data-testid={dataTestId ? `${dataTestId}-market-closed-overlay` : undefined}
-              aria-hidden="true"
-              style={{
-                position: "absolute",
-                top: chartInsetTop,
-                left: chartInsetLeft,
-                width: drawablePlotWidth || "100%",
-                height: drawablePlotHeight || "100%",
-                pointerEvents: "none",
-                overflow: "hidden",
-                zIndex: 2,
-                background:
-                  `linear-gradient(135deg, ${withAlpha(theme.textMuted, "10")} 0%, ${withAlpha(theme.bg2, "00")} 42%, ${withAlpha(theme.textMuted, "0d")} 100%), ` +
-                  `repeating-linear-gradient(135deg, ${withAlpha(theme.textMuted, "10")} 0 1px, transparent 1px 13px)`,
-                boxShadow: `inset 0 0 0 1px ${withAlpha(theme.textMuted, "16")}`,
-              }}
-            />
-          ) : null}
           {windowOverlays.length ||
           zoneOverlays.length ||
           verticalDrawingOverlays.length ||
@@ -8529,20 +8631,10 @@ export const ResearchChartSurface = ({
                 />
               ))}
               {flowVolumeOverlays.map((overlay) => {
-                const toneColor =
-                  overlay.tone === "bullish"
-                    ? theme.green
-                    : overlay.tone === "bearish"
-                      ? theme.red
-                      : theme.amber;
+                const toneColor = resolveFlowToneColor(overlay.tone, theme);
                 let segmentBottom = 0;
                 const segmentNodes = overlay.segments.map((segment) => {
-                  const segmentColor =
-                    segment.tone === "bullish"
-                      ? theme.green
-                      : segment.tone === "bearish"
-                        ? theme.red
-                        : theme.amber;
+                  const segmentColor = resolveFlowToneColor(segment.tone, theme);
                   const heightPercent = Math.max(
                     0,
                     Math.min(100 - segmentBottom, segment.ratio * 100),
@@ -8579,7 +8671,7 @@ export const ResearchChartSurface = ({
                         model: overlay.tooltip,
                       })
                     }
-                    onPointerLeave={() => hideFlowTooltip(overlay.id)}
+                    onPointerLeave={() => scheduleHideFlowTooltip(overlay.id)}
                     onFocus={() =>
                       showFlowTooltip({
                         id: overlay.id,
@@ -8588,7 +8680,7 @@ export const ResearchChartSurface = ({
                         model: overlay.tooltip,
                       })
                     }
-                    onBlur={() => hideFlowTooltip(overlay.id)}
+                    onBlur={() => scheduleHideFlowTooltip(overlay.id)}
                     tabIndex={0}
                     style={{
                       position: "absolute",
@@ -8613,14 +8705,7 @@ export const ResearchChartSurface = ({
                 );
               })}
               {chartEventOverlays.map((overlay) => {
-                const color =
-                  overlay.tone === "bullish"
-                    ? theme.green
-                    : overlay.tone === "bearish"
-                      ? theme.red
-                      : overlay.placement === "timescale"
-                        ? theme.amber
-                        : theme.accent || theme.text;
+                const color = resolveChartEventToneColor(overlay, theme);
                 return (
                   <AppTooltip key={`chart-event-${overlay.id}`} content={overlay.title}><div
                     key={`chart-event-${overlay.id}`}
@@ -8632,6 +8717,10 @@ export const ResearchChartSurface = ({
                     data-chart-event-source={overlay.source || undefined}
                     data-chart-event-severity={overlay.severity || undefined}
                     data-chart-event-symbol={overlay.symbol || undefined}
+                    data-chart-event-tone={overlay.tone}
+                    data-chart-flow-marker-tone={
+                      overlay.eventType === "unusual_flow" ? overlay.tone : undefined
+                    }
                     onPointerEnter={
                       overlay.tooltip
                         ? () =>
@@ -8645,7 +8734,7 @@ export const ResearchChartSurface = ({
                     }
                     onPointerLeave={
                       overlay.tooltip
-                        ? () => hideFlowTooltip(overlay.id)
+                        ? () => scheduleHideFlowTooltip(overlay.id)
                         : undefined
                     }
                     onFocus={
@@ -8661,7 +8750,7 @@ export const ResearchChartSurface = ({
                     }
                     onBlur={
                       overlay.tooltip
-                        ? () => hideFlowTooltip(overlay.id)
+                        ? () => scheduleHideFlowTooltip(overlay.id)
                         : undefined
                     }
                     tabIndex={overlay.tooltip ? 0 : undefined}
@@ -8693,156 +8782,305 @@ export const ResearchChartSurface = ({
                   </div></AppTooltip>
                 );
               })}
-              {flowTooltip ? (
-                <div
-                  data-testid={dataTestId ? `${dataTestId}-flow-tooltip` : undefined}
-                  onPointerEnter={() => setFlowTooltip(flowTooltip)}
-                  style={{
-                    position: "absolute",
-                    left: flowTooltip.left,
-                    top: flowTooltip.top,
-                    width: 280,
-                    maxWidth: "calc(100% - 16px)",
-                    borderRadius: 6,
-                    padding: "10px 11px",
-                    boxSizing: "border-box",
-                    background: "var(--ra-tooltip-bg)",
-                    border: "1px solid var(--ra-tooltip-border)",
-                    boxShadow: "var(--ra-tooltip-shadow)",
-                    color: "var(--ra-tooltip-text)",
-                    fontFamily: "var(--ra-font-sans)",
-                    pointerEvents: "auto",
-                    zIndex: 8,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      alignItems: "baseline",
-                      marginBottom: 7,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: TYPE_CSS_VAR.bodyStrong,
-                        fontWeight: 400,
-                        lineHeight: 1.2,
-                      }}
-                    >
-                      {flowTooltip.model.title}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: TYPE_CSS_VAR.body,
-                        fontFamily: theme.mono,
+              {flowTooltip
+                ? (() => {
+                    const model = flowTooltip.model;
+                    const toneColor = resolveFlowToneColor(model.tone, theme);
+                    const statCells = buildFlowTooltipStatCells(model);
+                    const mixSegments = [
+                      {
+                        key: "bull",
+                        label: `Bull ${model.bullishPercent}%`,
+                        percent: model.bullishPercent,
+                        color: theme.green,
+                      },
+                      {
+                        key: "bear",
+                        label: `Bear ${model.bearishPercent}%`,
+                        percent: model.bearishPercent,
+                        color: theme.red,
+                      },
+                      {
+                        key: "mix",
+                        label: `Mix ${model.neutralPercent}%`,
+                        percent: model.neutralPercent,
                         color: theme.amber,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {flowTooltip.model.premium}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                      gap: "6px 10px",
-                      fontSize: TYPE_CSS_VAR.body,
-                      lineHeight: 1.25,
-                    }}
-                  >
-                    <div>
-                      <span style={{ color: theme.textMuted }}>Mix </span>
-                      {flowTooltip.model.callPutMix}
-                    </div>
-                    <div>
-                      <span style={{ color: theme.textMuted }}>Sent </span>
-                      {flowTooltip.model.sentiment}
-                    </div>
-                    <div>
-                      <span style={{ color: theme.textMuted }}>Flow </span>
-                      {flowTooltip.model.flowMix}
-                    </div>
-                    <div>
-                      <span style={{ color: theme.textMuted }}>Contracts </span>
-                      {flowTooltip.model.contracts}
-                    </div>
-                    <div>
-                      <span style={{ color: theme.textMuted }}>Events </span>
-                      {flowTooltip.model.eventCount}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      fontSize: TYPE_CSS_VAR.body,
-                      lineHeight: 1.35,
-                      color: theme.text,
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    <span style={{ color: theme.textMuted }}>Top </span>
-                    {flowTooltip.model.topContract}
-                  </div>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: TYPE_CSS_VAR.label,
-                        fontFamily: theme.mono,
-                        color: theme.amber,
-                      }}
-                    >
-                      {flowTooltip.model.intensity}
-                    </span>
-                    {flowTooltip.model.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        style={{
-                          fontSize: TYPE_CSS_VAR.label,
-                          fontFamily: theme.mono,
-                          color: theme.text,
-                          padding: "2px 5px",
-                          borderRadius: 999,
-                          border: `1px solid ${withAlpha(theme.border, "90")}`,
-                          background: withAlpha(theme.bg4, "90"),
-                          textTransform: "uppercase",
+                      },
+                    ];
+                    const copyLabel = flowTooltipHasValue(model.copyLabel)
+                      ? model.copyLabel
+                      : model.topContract;
+                    const sourceText = [model.sourceLabel, model.timeBasis]
+                      .filter(Boolean)
+                      .join(" · ");
+
+                    return (
+                      <div
+                        data-testid={
+                          dataTestId ? `${dataTestId}-flow-tooltip` : undefined
+                        }
+                        data-chart-flow-tooltip-compact="true"
+                        onPointerEnter={clearFlowTooltipHideTimer}
+                        onPointerLeave={() => scheduleHideFlowTooltip(flowTooltip.id)}
+                        onFocus={clearFlowTooltipHideTimer}
+                        onBlur={(event) => {
+                          const nextTarget = event.relatedTarget;
+                          if (
+                            nextTarget instanceof Node &&
+                            event.currentTarget.contains(nextTarget)
+                          ) {
+                            return;
+                          }
+                          scheduleHideFlowTooltip(flowTooltip.id);
                         }}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                    {flowTooltip.model.topContract ? (
-                      <button
-                        type="button"
-                        onClick={() => copyFlowContract(flowTooltip.model.topContract)}
                         style={{
-                          marginLeft: "auto",
-                          border: `1px solid ${withAlpha(theme.border, "a0")}`,
-                          background: withAlpha(theme.bg4, "cc"),
-                          color: theme.text,
+                          position: "absolute",
+                          left: flowTooltip.left,
+                          top: flowTooltip.top,
+                          width: FLOW_TOOLTIP_WIDTH,
+                          maxWidth: "calc(100% - 16px)",
                           borderRadius: 6,
-                          padding: "3px 7px",
-                          fontSize: TYPE_CSS_VAR.body,
-                          fontFamily: theme.mono,
-                          cursor: "pointer",
+                          padding: 8,
+                          boxSizing: "border-box",
+                          background: "var(--ra-tooltip-bg)",
+                          border: "1px solid var(--ra-tooltip-border)",
+                          boxShadow: "var(--ra-tooltip-shadow)",
+                          color: "var(--ra-tooltip-text)",
+                          fontFamily: "var(--ra-font-sans)",
+                          pointerEvents: "auto",
+                          overflowY: "auto",
+                          maxHeight: "calc(100% - 16px)",
+                          zIndex: 8,
                         }}
                       >
-                        Copy
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            alignItems: "baseline",
+                            marginBottom: 5,
+                            minWidth: 0,
+                          }}
+                        >
+                          <div
+                            style={{
+                              minWidth: 0,
+                              fontSize: TYPE_CSS_VAR.bodyStrong,
+                              fontWeight: 400,
+                              lineHeight: 1.1,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {model.title}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: TYPE_CSS_VAR.bodyStrong,
+                              fontFamily: theme.mono,
+                              color: toneColor,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {model.premium}
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            marginBottom: 6,
+                            minWidth: 0,
+                          }}
+                        >
+                          <div
+                            data-chart-flow-tooltip-contract="true"
+                            title={model.topContract}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              color: theme.text,
+                              fontFamily: theme.mono,
+                              fontSize: TYPE_CSS_VAR.body,
+                              lineHeight: 1.2,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {model.topContract}
+                          </div>
+                          {flowTooltipHasValue(copyLabel) ? (
+                            <button
+                              type="button"
+                              aria-label={`Copy ${copyLabel}`}
+                              onClick={() => copyFlowContract(copyLabel)}
+                              style={{
+                                width: 18,
+                                height: 18,
+                                minWidth: 18,
+                                border: `1px solid ${withAlpha(theme.border, "a0")}`,
+                                background: withAlpha(theme.bg4, "cc"),
+                                color: theme.text,
+                                borderRadius: 5,
+                                padding: 0,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                              }}
+                            >
+                              <Copy size={11} strokeWidth={1.8} />
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div
+                          data-chart-flow-tooltip-mix-strip="true"
+                          title={model.flowMix}
+                          style={{
+                            height: 7,
+                            display: "flex",
+                            overflow: "hidden",
+                            borderRadius: 999,
+                            border: `1px solid ${withAlpha(theme.border, "80")}`,
+                            background: withAlpha(theme.bg4, "80"),
+                            marginBottom: 3,
+                          }}
+                        >
+                          {mixSegments.map((segment) => (
+                            <div
+                              key={segment.key}
+                              title={segment.label}
+                              style={{
+                                width: `${segment.percent}%`,
+                                minWidth: segment.percent > 0 ? 3 : 0,
+                                background: withAlpha(segment.color, "d8"),
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 6,
+                            marginBottom: 6,
+                            color: theme.textMuted,
+                            fontFamily: theme.mono,
+                            fontSize: TYPE_CSS_VAR.label,
+                            lineHeight: 1.1,
+                          }}
+                        >
+                          <span>B {model.bullishPercent}%</span>
+                          <span>R {model.bearishPercent}%</span>
+                          <span>M {model.neutralPercent}%</span>
+                        </div>
+
+                        <div
+                          data-chart-flow-tooltip-stat-grid="true"
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                            gap: "3px 5px",
+                            fontSize: TYPE_CSS_VAR.body,
+                            lineHeight: 1.15,
+                          }}
+                        >
+                          {statCells.map((cell) => (
+                            <div
+                              key={`${cell.label}:${cell.value}`}
+                              style={{
+                                minWidth: 0,
+                                display: "flex",
+                                alignItems: "baseline",
+                                justifyContent: "space-between",
+                                gap: 4,
+                                padding: "2px 4px",
+                                borderRadius: 4,
+                                background: withAlpha(theme.bg4, "55"),
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color: theme.textMuted,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {cell.label}
+                              </span>
+                              <span
+                                style={{
+                                  minWidth: 0,
+                                  color:
+                                    cell.label === "Bias" ? toneColor : theme.text,
+                                  fontFamily: theme.mono,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  textAlign: "right",
+                                }}
+                              >
+                                {cell.value}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 6,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            flexWrap: "wrap",
+                            color: theme.textMuted,
+                            fontSize: TYPE_CSS_VAR.label,
+                            lineHeight: 1.15,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontFamily: theme.mono,
+                              color: theme.textMuted,
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            {sourceText}
+                          </span>
+                          <span
+                            style={{
+                              fontFamily: theme.mono,
+                              color: toneColor,
+                            }}
+                          >
+                            {model.intensity}
+                          </span>
+                          {model.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              style={{
+                                fontFamily: theme.mono,
+                                color: theme.text,
+                                padding: "1px 4px",
+                                borderRadius: 999,
+                                border: `1px solid ${withAlpha(theme.border, "80")}`,
+                                background: withAlpha(theme.bg4, "80"),
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()
+                : null}
               {indicatorBadgeOverlays.map((overlay) => {
                 const isSignal = overlay.variant === "signal";
                 const isTriangle = overlay.variant === "triangle";

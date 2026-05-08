@@ -26,6 +26,10 @@ import {
 import { isTransientEmptyFlowSource } from "../platform/flowSourceState";
 import { publishTradeFlowSnapshotsByTicker } from "../platform/tradeFlowStore";
 import { FLOW_SCANNER_SCOPE } from "../platform/marketFlowScannerConfig";
+import {
+  filterFlowEventsForChartDisplay,
+  useFlowTapeFilterState,
+} from "../platform/flowFilterStore";
 import { WATCHLIST } from "./marketReferenceData";
 import {
   buildEqualTrackWeights,
@@ -515,6 +519,7 @@ export const MultiChartGrid = ({
     providerSummary: chartFlowProviderSummary,
     flowEvents: localChartFlowEvents,
   } = chartFlowSnapshot;
+  const flowTapeFilters = useFlowTapeFilterState({ subscribe: isVisible });
   const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
     BROAD_MARKET_FLOW_STORE_KEY,
     { subscribe: isVisible },
@@ -563,6 +568,10 @@ export const MultiChartGrid = ({
       flowEvents: chartFlowEvents,
     }),
     [chartFlowEvents, chartFlowSnapshot, effectiveChartFlowStatus],
+  );
+  const chartDisplayFlowEvents = useMemo(
+    () => filterFlowEventsForChartDisplay(chartFlowEvents, flowTapeFilters),
+    [chartFlowEvents, flowTapeFilters],
   );
   const chartFlowSnapshotSignature = useMemo(() => {
     const coverage = chartFlowProviderSummary?.coverage || {};
@@ -615,15 +624,15 @@ export const MultiChartGrid = ({
     [onChartFlowSnapshotChange],
   );
   const premiumFlowBySymbol = useMemo(
-    () => buildPremiumFlowBySymbol(chartFlowEvents, streamedSymbols),
-    [chartFlowEvents, streamedSymbols],
+    () => buildPremiumFlowBySymbol(chartDisplayFlowEvents, streamedSymbols),
+    [chartDisplayFlowEvents, streamedSymbols],
   );
   const flowEventsBySymbol = useMemo(() => {
     const grouped = {};
     streamedSymbols.forEach((symbol) => {
       grouped[symbol] = [];
     });
-    (chartFlowEvents || []).forEach((event) => {
+    (chartDisplayFlowEvents || []).forEach((event) => {
       const symbol = normalizeTickerSymbol(
         event?.ticker || event?.underlying || event?.symbol,
       );
@@ -633,7 +642,7 @@ export const MultiChartGrid = ({
       grouped[symbol].push(event);
     });
     return grouped;
-  }, [chartFlowEvents, streamedSymbols]);
+  }, [chartDisplayFlowEvents, streamedSymbols]);
   useEffect(() => {
     if (!isVisible || !streamedSymbols.length) {
       return;

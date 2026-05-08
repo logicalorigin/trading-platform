@@ -21,7 +21,7 @@ const buildPendingFlowSource = (reason = "options_flow_refreshing") => ({
   ibkrStatus: "empty",
   ibkrReason: reason,
 });
-const BROAD_FLOW_STARTUP_DELAY_MS = 45_000;
+const BROAD_FLOW_STARTUP_DELAY_MS = 2_500;
 
 const resolveTradeFlowPublishSource = (snapshot, symbol) =>
   snapshot?.providerSummary?.sourcesBySymbol?.[symbol] ||

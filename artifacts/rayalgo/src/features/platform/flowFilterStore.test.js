@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildFlowTapePresetPatch,
+  filterFlowEventsForChartDisplay,
   filterFlowTapeEvents,
   flowTapeFiltersAreActive,
   getFlowTapeFilterState,
@@ -225,4 +226,140 @@ test("shared Flow tape filters narrow only the tape event set", () => {
   });
 
   assert.deepEqual(filtered.map((event) => event.id), ["visible-call"]);
+});
+
+test("chart flow display filters ignore ticker include and exclude queries", () => {
+  const events = [
+    {
+      id: "spy-call",
+      ticker: "SPY",
+      cp: "C",
+      premium: 125_000,
+      type: "SWEEP",
+    },
+    {
+      id: "spy-put",
+      ticker: "SPY",
+      cp: "P",
+      premium: 250_000,
+      type: "BLOCK",
+      isUnusual: true,
+    },
+    {
+      id: "qqq-call",
+      ticker: "QQQ",
+      cp: "C",
+      premium: 500_000,
+      type: "SWEEP",
+    },
+  ];
+
+  assert.deepEqual(
+    filterFlowEventsForChartDisplay(events, {
+      filter: "calls",
+      minPrem: 50_000,
+      includeQuery: "NVDA",
+      excludeQuery: "SPY",
+    }).map((event) => event.id),
+    ["spy-call", "qqq-call"],
+  );
+  assert.deepEqual(
+    filterFlowEventsForChartDisplay(events, {
+      filter: "puts",
+      minPrem: 100_000,
+      includeQuery: "NVDA",
+      excludeQuery: "SPY",
+    }).map((event) => event.id),
+    ["spy-put"],
+  );
+});
+
+test("chart flow display filters preserve repeat and preset semantics", () => {
+  const events = [
+    {
+      id: "first",
+      ticker: "AAPL",
+      cp: "C",
+      strike: 210,
+      expirationDate: "2026-05-15",
+      premium: 25_000,
+    },
+    {
+      id: "repeat",
+      ticker: "AAPL",
+      cp: "C",
+      strike: 210,
+      expirationDate: "2026-05-15",
+      premium: 35_000,
+    },
+    {
+      id: "single",
+      ticker: "MSFT",
+      cp: "P",
+      strike: 410,
+      expirationDate: "2026-05-15",
+      premium: 100_000,
+    },
+  ];
+
+  assert.deepEqual(
+    filterFlowEventsForChartDisplay(events, {
+      activeFlowPresetId: "repeats",
+      includeQuery: "MSFT",
+    }).map((event) => event.id),
+    ["first", "repeat"],
+  );
+});
+
+test("chart flow display presets normalize ask and bid side aliases", () => {
+  const events = [
+    {
+      id: "ask-call",
+      ticker: "SPY",
+      cp: "C",
+      side: "ASK",
+      premium: 125_000,
+    },
+    {
+      id: "at-ask-call",
+      ticker: "SPY",
+      cp: "C",
+      side: "at_ask",
+      premium: 130_000,
+    },
+    {
+      id: "bid-put",
+      ticker: "SPY",
+      cp: "P",
+      side: "BID",
+      premium: 250_000,
+    },
+    {
+      id: "hit-bid-put",
+      ticker: "SPY",
+      cp: "P",
+      side: "hit_bid",
+      premium: 260_000,
+    },
+    {
+      id: "mid-call",
+      ticker: "SPY",
+      cp: "C",
+      side: "MID",
+      premium: 300_000,
+    },
+  ];
+
+  assert.deepEqual(
+    filterFlowEventsForChartDisplay(events, {
+      activeFlowPresetId: "ask-calls",
+    }).map((event) => event.id),
+    ["ask-call", "at-ask-call"],
+  );
+  assert.deepEqual(
+    filterFlowEventsForChartDisplay(events, {
+      activeFlowPresetId: "bid-puts",
+    }).map((event) => event.id),
+    ["bid-put", "hit-bid-put"],
+  );
 });

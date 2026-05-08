@@ -75,6 +75,10 @@ import { useSignalMonitorStateForSymbol } from "../platform/signalMonitorStore";
 import { resolveSignalFrameState } from "../platform/signalFrameState";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
 import {
+  filterFlowEventsForChartDisplay,
+  useFlowTapeFilterState,
+} from "../platform/flowFilterStore";
+import {
   DEFAULT_TRADE_EQUITY_STUDIES,
   TRADE_EQUITY_INDICATOR_PRESET_VERSION,
   TRADE_TIMEFRAMES,
@@ -103,16 +107,35 @@ export const TradeEquityPanel = ({
   referenceLines = [],
   showSignalFrameBorder = true,
   prewarmFavoriteTimeframesEnabled = true,
+  flowEventsSourceMode = "merge-store",
 }) => {
   const queryClient = useQueryClient();
-  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker);
+  const shouldMergeTradeFlowStore = flowEventsSourceMode !== "provided";
+  const tradeFlowSnapshot = useTradeFlowSnapshot(ticker, {
+    subscribe: shouldMergeTradeFlowStore,
+  });
+  const flowTapeFilters = useFlowTapeFilterState({
+    subscribe: shouldMergeTradeFlowStore,
+  });
   const effectiveFlowEvents = useMemo(
-    () =>
-      mergeFlowEventFeeds(
+    () => {
+      const providedFlowEvents = Array.isArray(flowEvents) ? flowEvents : [];
+      if (!shouldMergeTradeFlowStore) {
+        return providedFlowEvents;
+      }
+      return mergeFlowEventFeeds(
         tradeFlowSnapshot.events || [],
-        Array.isArray(flowEvents) ? flowEvents : [],
-      ),
-    [flowEvents, tradeFlowSnapshot.events],
+        providedFlowEvents,
+      );
+    },
+    [flowEvents, shouldMergeTradeFlowStore, tradeFlowSnapshot.events],
+  );
+  const chartDisplayFlowEvents = useMemo(
+    () =>
+      shouldMergeTradeFlowStore
+        ? filterFlowEventsForChartDisplay(effectiveFlowEvents, flowTapeFilters)
+        : effectiveFlowEvents,
+    [effectiveFlowEvents, flowTapeFilters, shouldMergeTradeFlowStore],
   );
   const tickerFallback = useMemo(
     () => ensureTradeTickerInfo(ticker, ticker),
@@ -575,8 +598,8 @@ export const TradeEquityPanel = ({
       ? "stale"
       : "live";
   const chartEventConversion = useMemo(
-    () => flowEventsToChartEventConversion(effectiveFlowEvents || [], ticker),
-    [effectiveFlowEvents, ticker],
+    () => flowEventsToChartEventConversion(chartDisplayFlowEvents || [], ticker),
+    [chartDisplayFlowEvents, ticker],
   );
   const chartEvents = chartEventConversion.events;
   const chartModel = useMeasuredChartModel({
@@ -668,12 +691,22 @@ export const TradeEquityPanel = ({
   const expandVisibleLogicalRange = useCallback(
     (range) => {
       progressiveBars.expandForVisibleRange(range, bars.length, {
+        hasExhaustedOlderHistory: prependableBars.hasExhaustedOlderHistory,
+        isHydratingRequestedWindow:
+          barsQuery.fetchStatus === "fetching" &&
+          baseRequestedLimit > prependableBars.loadedBarCount,
+        isPrependingOlder: prependableBars.isPrependingOlder,
         oldestLoadedAtMs: prependableBars.oldestLoadedAtMs,
         prependOlderBars: prependableBars.prependOlderBars,
       });
     },
     [
+      barsQuery.fetchStatus,
       bars.length,
+      baseRequestedLimit,
+      prependableBars.hasExhaustedOlderHistory,
+      prependableBars.isPrependingOlder,
+      prependableBars.loadedBarCount,
       prependableBars.oldestLoadedAtMs,
       prependableBars.prependOlderBars,
       progressiveBars.expandForVisibleRange,
@@ -681,7 +714,16 @@ export const TradeEquityPanel = ({
   );
   const scheduleVisibleRangeExpansion = useDebouncedVisibleRangeExpansion(
     expandVisibleLogicalRange,
-    { resetKey: chartHydrationScopeKey },
+    {
+      resetKey: chartHydrationScopeKey,
+      recheckKey: [
+        chartHydrationScopeKey,
+        bars.length,
+        barsQuery.fetchStatus === "fetching" ? "fetching" : "settled",
+        prependableBars.isPrependingOlder ? "prepending" : "ready",
+        prependableBars.hasExhaustedOlderHistory ? "exhausted" : "open",
+      ].join(":"),
+    },
   );
   const handleVisibleLogicalRangeChange = useCallback(
     (range) => {

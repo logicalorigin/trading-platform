@@ -254,6 +254,7 @@ export const MiniChartCell = ({
         <TradeEquityPanel
           ticker={ticker}
           flowEvents={flowEvents}
+          flowEventsSourceMode="provided"
           historicalDataEnabled
           stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           dataTestId={dataTestId}

@@ -81,6 +81,7 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.match(source, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(source, /workspaceChart=\{\{ timeframe \}\}/);
   assert.match(source, /prewarmFavoriteTimeframesEnabled=\{false\}/);
+  assert.match(source, /flowEventsSourceMode="provided"/);
   assert.match(source, /onWorkspaceChartChange=\{handleWorkspaceChartChange\}/);
   assert.doesNotMatch(source, /resolveSignalFrameState/);
   assert.doesNotMatch(source, /useSignalMonitorStateForSymbol/);
@@ -158,16 +159,26 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.match(gridSource, /mergeFlowEventFeeds/);
   assert.match(gridSource, /filterFlowEventsForSymbol/);
   assert.match(gridSource, /effectiveChartFlowSnapshot/);
+  assert.match(gridSource, /filterFlowEventsForChartDisplay/);
+  assert.match(gridSource, /const chartDisplayFlowEvents = useMemo/);
   assert.match(gridSource, /const flowEventsBySymbol = useMemo/);
   assert.match(gridSource, /publishTradeFlowSnapshotsByTicker/);
   assert.match(gridSource, /flowEvents=\{flowEventsBySymbol/);
   assert.match(cellSource, /flowEvents=\{flowEvents\}/);
-  assert.match(tradeSpotSource, /const tradeFlowSnapshot = useTradeFlowSnapshot\(ticker\)/);
+  assert.match(cellSource, /flowEventsSourceMode="provided"/);
+  assert.match(tradeSpotSource, /flowEventsSourceMode = "merge-store"/);
+  assert.match(tradeSpotSource, /const shouldMergeTradeFlowStore = flowEventsSourceMode !== "provided";/);
+  assert.match(
+    tradeSpotSource,
+    /const tradeFlowSnapshot = useTradeFlowSnapshot\(ticker,\s*\{\s*subscribe:\s*shouldMergeTradeFlowStore,\s*\}\)/,
+  );
   assert.match(tradeSpotSource, /mergeFlowEventFeeds\(/);
   assert.match(tradeSpotSource, /prewarmFavoriteTimeframesEnabled = true/);
   assert.match(tradeSpotSource, /!prewarmFavoriteTimeframesEnabled/);
   assert.match(tradeSpotSource, /COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000/);
   assert.match(tradeSpotSource, /if \(!compact\) \{/);
+  assert.match(tradeSpotSource, /if \(!shouldMergeTradeFlowStore\) \{/);
+  assert.match(tradeSpotSource, /\?\s*filterFlowEventsForChartDisplay\(effectiveFlowEvents,\s*flowTapeFilters\)\s*:\s*effectiveFlowEvents/);
   assert.match(tradeSpotSource, /tradeFlowSnapshot\.events \|\| \[\]/);
   assert.doesNotMatch(tradeSpotSource, /retainedFlowState/);
   assert.doesNotMatch(gridSource, /quote=\{/);
@@ -176,27 +187,39 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.doesNotMatch(gridSource, /flowEventsToChartEvents/);
 });
 
-test("Flow chart markers ignore shared Flow tape filters", () => {
-  const chartEventsSource = readLocalSource("../charting/chartEvents.ts");
+test("Flow chart markers apply shared Flow filters for chart display", () => {
+  const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const tradeSpotSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const tradeScreenSource = readLocalSource("../../screens/TradeScreen.jsx");
 
-  assert.doesNotMatch(chartEventsSource, /shouldRenderFlowOnSpotChart/);
-  assert.doesNotMatch(tradeSpotSource, /useFlowTapeFilterState\(\)/);
-  assert.doesNotMatch(tradeSpotSource, /filterFlowTapeEvents/);
+  assert.match(gridSource, /useFlowTapeFilterState\(\{ subscribe:\s*isVisible \}\)/);
+  assert.match(
+    gridSource,
+    /filterFlowEventsForChartDisplay\(chartFlowEvents,\s*flowTapeFilters\)/,
+  );
+  assert.match(gridSource, /buildPremiumFlowBySymbol\(chartDisplayFlowEvents/);
+  assert.match(gridSource, /\(chartDisplayFlowEvents \|\| \[\]\)\.forEach/);
   assert.match(
     tradeSpotSource,
-    /flowEventsToChartEventConversion\(effectiveFlowEvents \|\| \[\],\s*ticker\)/,
+    /useFlowTapeFilterState\(\{\s*subscribe:\s*shouldMergeTradeFlowStore,\s*\}\)/,
   );
-  assert.doesNotMatch(tradeScreenSource, /useFlowTapeFilterState\(\)/);
-  assert.doesNotMatch(tradeScreenSource, /filterFlowTapeEvents/);
+  assert.match(
+    tradeSpotSource,
+    /filterFlowEventsForChartDisplay\(effectiveFlowEvents,\s*flowTapeFilters\)/,
+  );
+  assert.match(
+    tradeSpotSource,
+    /flowEventsToChartEventConversion\(chartDisplayFlowEvents \|\| \[\],\s*ticker\)/,
+  );
+  assert.match(tradeScreenSource, /useFlowTapeFilterState\(\)/);
+  assert.match(tradeScreenSource, /filterFlowEventsForChartDisplay/);
   assert.match(tradeScreenSource, /const activeTickerChartFlowEvents = useMemo/);
   assert.match(tradeScreenSource, /mergeFlowEventFeeds\(\s*activeTickerTradeFlowSnapshot\.events \|\| \[\],\s*activeTickerBroadFlowEvents,\s*\)/);
   assert.match(tradeScreenSource, /flowEvents=\{activeTickerChartFlowEvents\}/);
   assert.match(tradeScreenSource, /const parentFlowEventsProvided = flowEvents !== undefined/);
   assert.match(
     tradeScreenSource,
-    /filterFlowEventsForOptionContract\(mergedFlowEvents,\s*\{/,
+    /filterFlowEventsForOptionContract\(\s*filterFlowEventsForChartDisplay\(mergedFlowEvents,\s*flowTapeFilters\)/,
   );
   assert.match(
     tradeScreenSource,

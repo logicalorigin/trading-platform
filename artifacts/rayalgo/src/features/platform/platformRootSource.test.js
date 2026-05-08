@@ -213,6 +213,8 @@ test("shared flow hydrates visible flow while broad scanner stays broad and nonb
 
   assert.ok(sharedRuntime, "SharedMarketFlowRuntime must stay in the runtime layer");
   assert.ok(broadRuntime, "BroadFlowScannerRuntime must stay in the runtime layer");
+  assert.match(source, /const BROAD_FLOW_STARTUP_DELAY_MS = 2_500;/);
+  assert.doesNotMatch(source, /const BROAD_FLOW_STARTUP_DELAY_MS = 45_000;/);
   assert.doesNotMatch(broadRuntime, /activeSymbols/);
   assert.match(broadRuntime, /FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
   assert.match(broadRuntime, /if \(!runtimeActive\)[\s\S]*clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/);

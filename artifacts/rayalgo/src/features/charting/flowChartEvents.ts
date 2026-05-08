@@ -29,11 +29,30 @@ export type FlowChartBucket = {
 export type FlowTooltipModel = {
   title: string;
   summary: string;
+  tone: ChartEventBias;
   premium: string;
   contracts: string;
   callPutMix: string;
   flowMix: string;
+  callPercent: number;
+  putPercent: number;
+  bullishPercent: number;
+  bearishPercent: number;
+  neutralPercent: number;
   topContract: string;
+  copyLabel: string;
+  sourceLabel: string;
+  timeBasis: string;
+  side: string;
+  price: string;
+  bidAsk: string;
+  openInterest: string;
+  dte: string;
+  iv: string;
+  delta: string;
+  unusualScore: string;
+  moneyness: string;
+  distance: string;
   tags: string[];
   sentiment: string;
   intensity: string;
@@ -85,6 +104,119 @@ const compactNumber = (value: number): string => {
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${Math.round(value / 1_000)}K`;
   return `${Math.round(value)}`;
+};
+
+const compactPrice = (value: number): string => {
+  if (Math.abs(value) >= 100) return value.toFixed(1);
+  if (Math.abs(value) >= 10) return value.toFixed(2);
+  return value.toFixed(2);
+};
+
+const formatOptionalPrice = (value: unknown): string => {
+  const numeric = finiteNumber(value);
+  return numeric === null ? "n/a" : compactPrice(numeric);
+};
+
+const formatOptionalPercent = (value: unknown): string => {
+  const numeric = finiteNumber(value);
+  if (numeric === null) return "n/a";
+  const percent = Math.abs(numeric) <= 1 ? numeric * 100 : numeric;
+  return `${percent.toFixed(Math.abs(percent) >= 10 ? 0 : 1)}%`;
+};
+
+const formatOptionalDelta = (value: unknown): string => {
+  const numeric = finiteNumber(value);
+  return numeric === null ? "n/a" : numeric.toFixed(2);
+};
+
+const formatOptionalRatio = (value: unknown, suffix = "x"): string => {
+  const numeric = finiteNumber(value);
+  if (numeric === null || numeric <= 0) return "n/a";
+  return `${numeric.toFixed(numeric >= 10 ? 0 : 1)}${suffix}`;
+};
+
+const normalizeSideDisplay = (value: unknown): string => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "n/a";
+  if (
+    normalized === "buy" ||
+    normalized === "bought" ||
+    normalized === "ask" ||
+    normalized === "at_ask" ||
+    normalized === "above_ask" ||
+    normalized === "lift" ||
+    normalized === "lifted"
+  ) {
+    return "BUY";
+  }
+  if (
+    normalized === "sell" ||
+    normalized === "sold" ||
+    normalized === "bid" ||
+    normalized === "at_bid" ||
+    normalized === "below_bid" ||
+    normalized === "hit" ||
+    normalized === "hit_bid"
+  ) {
+    return "SELL";
+  }
+  if (normalized === "mid" || normalized === "middle" || normalized === "between") {
+    return "MID";
+  }
+  return normalized.toUpperCase();
+};
+
+const formatSourceLabel = (event: ChartEvent): string => {
+  const provider = String(event.metadata?.provider || event.source || "flow")
+    .trim()
+    .toUpperCase();
+  const basis = String(event.metadata?.basis || "").trim().toUpperCase();
+  return [provider, basis].filter(Boolean).join(" ") || "FLOW";
+};
+
+const formatTimeBasis = (event: ChartEvent): string => {
+  const basis = String(event.metadata?.timeBasis || event.metadata?.sourceBasis || "")
+    .trim()
+    .toLowerCase();
+  if (basis.includes("snapshot") || basis.includes("observed")) return "observed";
+  if (basis.includes("confirmed") || basis.includes("reported") || basis.includes("trade")) {
+    return "reported";
+  }
+  return isSnapshotActivityEvent(event) ? "observed" : "reported";
+};
+
+const formatBidAsk = (event: ChartEvent): string => {
+  const bid = finiteNumber(event.metadata?.bid);
+  const ask = finiteNumber(event.metadata?.ask);
+  if (bid === null || ask === null) return "n/a";
+  return `${compactPrice(bid)}/${compactPrice(ask)}`;
+};
+
+const formatDte = (event: ChartEvent): string => {
+  const explicitDte = finiteNumber(event.metadata?.dte);
+  if (explicitDte !== null) return `${Math.max(0, Math.round(explicitDte))}d`;
+
+  const expiration = String(event.metadata?.expirationDate || "").trim();
+  const eventMs = Date.parse(event.time);
+  const expirationMs = Date.parse(expiration);
+  if (!expiration || !Number.isFinite(eventMs) || !Number.isFinite(expirationMs)) {
+    return "n/a";
+  }
+  const dayMs = 24 * 60 * 60 * 1000;
+  const eventDay = Math.floor(eventMs / dayMs);
+  const expirationDay = Math.floor(expirationMs / dayMs);
+  return `${Math.max(0, expirationDay - eventDay)}d`;
+};
+
+const formatMoneyness = (value: unknown): string => {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized && normalized !== "UNKNOWN" ? normalized : "n/a";
+};
+
+const formatDistance = (value: unknown): string => {
+  const numeric = finiteNumber(value);
+  if (numeric === null) return "n/a";
+  return `${numeric > 0 ? "+" : ""}${numeric.toFixed(Math.abs(numeric) >= 10 ? 0 : 1)}%`;
 };
 
 const normalizeRight = (value: unknown): "C" | "P" | "" => {
@@ -385,15 +517,39 @@ export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel
       : snapshotOnly
         ? "Active contract flow"
         : "Flow event";
+  const topEvent = bucket.topEvent;
+  const topMetadata = topEvent.metadata || {};
+  const topContract = bucket.topContractLabel || topEvent.label;
+  const openInterest =
+    finiteNumber(topMetadata.openInterest) ?? finiteNumber(topMetadata.oi);
 
   return {
     title,
     summary: `${compactCurrency(bucket.totalPremium)} premium · ${sentiment}`,
+    tone: bucket.bias,
     premium: compactCurrency(bucket.totalPremium),
     contracts: bucket.totalContracts > 0 ? compactNumber(bucket.totalContracts) : "n/a",
     callPutMix: callPutTotal > 0 ? `${callPercent}% C / ${putPercent}% P` : "n/a",
     flowMix: `${bullishPercent}% bull / ${bearishPercent}% bear / ${neutralPercent}% mix`,
-    topContract: bucket.topContractLabel || bucket.topEvent.label,
+    callPercent,
+    putPercent,
+    bullishPercent,
+    bearishPercent,
+    neutralPercent,
+    topContract,
+    copyLabel: topContract,
+    sourceLabel: formatSourceLabel(topEvent),
+    timeBasis: formatTimeBasis(topEvent),
+    side: normalizeSideDisplay(topMetadata.side),
+    price: formatOptionalPrice(topMetadata.premiumPrice ?? topMetadata.price ?? topMetadata.mark ?? topMetadata.last),
+    bidAsk: formatBidAsk(topEvent),
+    openInterest: openInterest === null ? "n/a" : compactNumber(openInterest),
+    dte: formatDte(topEvent),
+    iv: formatOptionalPercent(topMetadata.iv ?? topMetadata.impliedVolatility),
+    delta: formatOptionalDelta(topMetadata.delta),
+    unusualScore: formatOptionalRatio(topMetadata.unusualScore, "x"),
+    moneyness: formatMoneyness(topMetadata.moneyness),
+    distance: formatDistance(topMetadata.distancePercent),
     tags: bucket.tags,
     sentiment,
     intensity: `${Math.round(bucket.volumeSegmentRatio * 100)}% flow intensity`,

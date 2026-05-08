@@ -375,8 +375,8 @@ async function mockTradeApi(
   });
 }
 
-async function openTrade(page: Page) {
-  await page.addInitScript(() => {
+async function openTrade(page: Page, workspaceState: Record<string, unknown> = {}) {
+  await page.addInitScript((state) => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem(
@@ -390,9 +390,10 @@ async function openTrade(page: Page) {
         tradeContracts: {
           SPY: { strike: 500, cp: "C", exp: "" },
         },
+        ...state,
       }),
     );
-  });
+  }, workspaceState);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("trade-top-zone")).toBeVisible({
     timeout: 30_000,
@@ -910,14 +911,94 @@ test("Trade charts render flow on spot and option charts", async ({
       },
     ],
   });
-  await openTrade(page);
+  await openTrade(page, {
+    flowActivePresetId: "ask-calls",
+    flowFilter: "all",
+    flowIncludeQuery: "QQQ",
+    flowExcludeQuery: "SPY",
+  });
 
   await expect(
     page.getByTestId("trade-equity-chart-surface-chart-event").first(),
   ).toBeVisible({ timeout: 15_000 });
   await expect(
+    page.getByTestId("trade-equity-chart-surface-chart-event").first(),
+  ).toHaveAttribute("data-chart-flow-marker-tone", "bullish");
+  await page.getByTestId("trade-equity-chart-surface-chart-event").first().hover();
+  const spotTooltip = page.getByTestId("trade-equity-chart-surface-flow-tooltip");
+  await expect(spotTooltip).toBeVisible();
+  await expect(spotTooltip).toHaveAttribute("data-chart-flow-tooltip-compact", "true");
+  await expect(spotTooltip).toContainText("IBKR");
+  await expect(
     page.getByTestId("trade-contract-option-chart-flow-badge"),
   ).toBeVisible({ timeout: 15_000 });
+});
+
+test("Trade charts apply shared flow type filters to spot and option chart flow", async ({
+  page,
+}) => {
+  const occurredAt = new Date(mockBarNow).toISOString();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockTradeApi(page, {
+    flowEvents: [
+      {
+        id: "flow-spy-call-filtered",
+        underlying: "SPY",
+        optionTicker: "SPY-2026-05-01-500-C",
+        expirationDate: "2026-05-01",
+        occurredAt,
+        right: "call",
+        side: "ask",
+        price: 4.2,
+        bid: 4.1,
+        ask: 4.3,
+        mark: 4.2,
+        size: 500,
+        multiplier: 100,
+        sharesPerContract: 100,
+        premium: 210_000,
+        strike: 500,
+        underlyingPrice: basePrice,
+        provider: "ibkr",
+        basis: "trade",
+        sentiment: "bullish",
+        isUnusual: true,
+        unusualScore: 3,
+      },
+      {
+        id: "flow-spy-put-visible",
+        underlying: "SPY",
+        optionTicker: "SPY-2026-05-01-500-P",
+        expirationDate: "2026-05-01",
+        occurredAt,
+        right: "put",
+        side: "ask",
+        price: 4.4,
+        bid: 4.3,
+        ask: 4.5,
+        mark: 4.4,
+        size: 400,
+        multiplier: 100,
+        sharesPerContract: 100,
+        premium: 176_000,
+        strike: 500,
+        underlyingPrice: basePrice,
+        provider: "ibkr",
+        basis: "trade",
+        sentiment: "bearish",
+        isUnusual: true,
+        unusualScore: 2.5,
+      },
+    ],
+  });
+  await openTrade(page, { flowFilter: "puts" });
+
+  const spotMarker = page.getByTestId("trade-equity-chart-surface-chart-event").first();
+  await expect(spotMarker).toBeVisible({ timeout: 15_000 });
+  await expect(spotMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
+  await expect(
+    page.getByTestId("trade-contract-option-chart-flow-badge"),
+  ).toHaveCount(0);
 });
 
 test("Platform header is a compact single band with market KPIs and account data", async ({

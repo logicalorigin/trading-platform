@@ -20,6 +20,7 @@ import {
   resolveChartPlotPanRange,
   resolveChartPlotPanStart,
   resolvePreferenceRightOffset,
+  resolvePrependedVisibleLogicalRange,
   resolveDashboardStripAnchorStyle,
   resolveDashboardStripTier,
   resolveEffectiveChartViewportSnapshot,
@@ -101,21 +102,58 @@ test("ResearchChartSurface mounts the overlay layer for flow event overlays", ()
   assert.match(overlayLayerGate, /chartEventOverlays\.length/);
 });
 
-test("ResearchChartSurface gates gray session visuals to closed market hours", () => {
+test("ResearchChartSurface applies semantic colors to flow markers", () => {
+  const source = readResearchChartSurfaceSource();
+  const chartEventColorResolver = source.match(
+    /const resolveChartEventToneColor = \([\s\S]*?\n};/,
+  )?.[0];
+
+  assert.match(source, /const resolveFlowToneColor = \(/);
+  assert.match(source, /theme\.green : tone === "bearish" \? theme\.red : theme\.amber/);
+  assert.ok(chartEventColorResolver, "chart event color resolver must be present");
+  assert.match(chartEventColorResolver, /overlay\.eventType === "unusual_flow"/);
+  assert.match(
+    chartEventColorResolver,
+    /return resolveFlowToneColor\(overlay\.tone, theme\);/,
+  );
+  assert.match(chartEventColorResolver, /return theme\.accent \|\| theme\.text;/);
+  assert.match(source, /const toneColor = resolveFlowToneColor\(overlay\.tone, theme\);/);
+  assert.match(source, /const segmentColor = resolveFlowToneColor\(segment\.tone, theme\);/);
+  assert.match(source, /const color = resolveChartEventToneColor\(overlay, theme\);/);
+  assert.match(source, /data-chart-flow-marker-tone=\{/);
+});
+
+test("ResearchChartSurface renders compact enriched flow tooltips", () => {
   const source = readResearchChartSurfaceSource();
 
-  assert.match(
-    source,
-    /const closedMarketVisualsEnabled = dashboardMarketSession\.key === "closed";/,
-  );
-  assert.match(source, /const effectiveShowGrid = showGrid && closedMarketVisualsEnabled;/);
+  assert.match(source, /const FLOW_TOOLTIP_WIDTH = 248;/);
+  assert.match(source, /const FLOW_TOOLTIP_ESTIMATED_HEIGHT = 232;/);
+  assert.match(source, /const FLOW_TOOLTIP_HIDE_DELAY_MS = 120;/);
+  assert.match(source, /const buildFlowTooltipStatCells = \(/);
+  assert.match(source, /const FLOW_TOOLTIP_SCALAR_KEYS:/);
+  assert.match(source, /const scheduleHideFlowTooltip = useCallback\(/);
+  assert.match(source, /onPointerLeave=\{scheduleCurrentFlowTooltipHide\}/);
+  assert.match(source, /data-chart-flow-tooltip-compact="true"/);
+  assert.match(source, /onPointerEnter=\{clearFlowTooltipHideTimer\}/);
+  assert.match(source, /onPointerLeave=\{\(\) => scheduleHideFlowTooltip\(flowTooltip\.id\)\}/);
+  assert.match(source, /data-chart-flow-tooltip-contract="true"/);
+  assert.match(source, /data-chart-flow-tooltip-mix-strip="true"/);
+  assert.match(source, /data-chart-flow-tooltip-stat-grid="true"/);
+  assert.match(source, /maxHeight:\s*"calc\(100% - 16px\)"/);
+  assert.match(source, /<Copy size=\{11\} strokeWidth=\{1\.8\} \/>/);
+  assert.doesNotMatch(source, /width:\s*280/);
+  assert.doesNotMatch(source, /plotSize\.width - 292/);
+});
+
+test("ResearchChartSurface removes stale diagonal closed-market visuals", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /const effectiveShowGrid = showGrid;/);
   assert.match(source, /showGrid:\s*effectiveShowGrid/);
   assert.match(source, /visible:\s*effectiveShowGrid/);
-  assert.match(
-    source,
-    /closedMarketVisualsEnabled &&\s*typeof sessionOpen === "number"/,
-  );
-  assert.match(source, /\{closedMarketVisualsEnabled \? \(/);
+  assert.doesNotMatch(source, /closedMarketVisualsEnabled/);
+  assert.doesNotMatch(source, /market-closed-overlay/);
+  assert.doesNotMatch(source, /repeating-linear-gradient/);
 });
 
 test("ResearchChartSurface renders extended-hours session windows from chart bars", () => {
@@ -130,13 +168,37 @@ test("ResearchChartSurface renders extended-hours session windows from chart bar
 test("ResearchChartSurface publishes controlled viewport after prepending older bars", () => {
   const source = readResearchChartSurfaceSource();
   const prependAdjustment = source.match(
-    /const prependCount = model\.chartBars\.findIndex\([\s\S]*?previousFirstChartBarTimeRef\.current = nextFirstChartBarTime;/,
+    /const prependCount = model\.chartBars\.findIndex\([\s\S]*?setOverlayRevision\(\(value\) => value \+ 1\);/,
   )?.[0];
 
   assert.ok(prependAdjustment, "prepend adjustment effect must be present");
   assert.match(prependAdjustment, /adjustedVisibleRange/);
   assert.match(prependAdjustment, /visibleRangeChangeRef\.current\?\./);
   assert.match(prependAdjustment, /publishViewportSnapshot/);
+});
+
+test("ResearchChartSurface preserves viewport while filling left whitespace after prepends", () => {
+  assert.deepEqual(
+    resolvePrependedVisibleLogicalRange({
+      visibleRange: { from: 10, to: 110 },
+      prependCount: 50,
+    }),
+    { from: 60, to: 160 },
+  );
+  assert.deepEqual(
+    resolvePrependedVisibleLogicalRange({
+      visibleRange: { from: -10, to: 90 },
+      prependCount: 50,
+    }),
+    { from: 40, to: 140 },
+  );
+  assert.deepEqual(
+    resolvePrependedVisibleLogicalRange({
+      visibleRange: { from: -80, to: 20 },
+      prependCount: 50,
+    }),
+    { from: -30, to: 70 },
+  );
 });
 
 test("ResearchChartSurface clamps overlay rectangles inside the plot viewport", () => {

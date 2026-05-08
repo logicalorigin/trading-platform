@@ -117,6 +117,38 @@ const getFlowTapeEventType = (event) =>
     .trim()
     .toUpperCase();
 
+const getFlowTapeEventSide = (event) => {
+  const side = String(event?.side || "")
+    .trim()
+    .toLowerCase();
+  if (
+    side === "buy" ||
+    side === "bought" ||
+    side === "ask" ||
+    side === "at_ask" ||
+    side === "above_ask" ||
+    side === "lift" ||
+    side === "lifted"
+  ) {
+    return "BUY";
+  }
+  if (
+    side === "sell" ||
+    side === "sold" ||
+    side === "bid" ||
+    side === "at_bid" ||
+    side === "below_bid" ||
+    side === "hit" ||
+    side === "hit_bid"
+  ) {
+    return "SELL";
+  }
+  if (side === "mid" || side === "middle" || side === "between") {
+    return "MID";
+  }
+  return side.toUpperCase();
+};
+
 const getFlowTapeEventPremium = (event) => {
   const premium = Number(event?.premium ?? 0);
   return Number.isFinite(premium) ? premium : 0;
@@ -176,7 +208,7 @@ export const flowTapePresetMatches = (
 ) => {
   if (!presetId) return true;
   const right = getFlowTapeEventRight(event);
-  const side = String(event?.side || "").toUpperCase();
+  const side = getFlowTapeEventSide(event);
   const type = getFlowTapeEventType(event);
   const premium = getFlowTapeEventPremium(event);
   if (presetId === "ask-calls") {
@@ -253,6 +285,21 @@ export const filterFlowTapeEvents = (
     }),
   );
 };
+
+export const filterFlowEventsForChartDisplay = (
+  events = [],
+  filters = DEFAULT_FLOW_TAPE_FILTER_STATE,
+  options = {},
+) =>
+  filterFlowTapeEvents(
+    events,
+    {
+      ...normalizeFlowTapeFilterState(filters),
+      includeQuery: "",
+      excludeQuery: "",
+    },
+    options,
+  );
 
 export const flowTapeFiltersAreActive = (filters = DEFAULT_FLOW_TAPE_FILTER_STATE) => {
   const resolved = normalizeFlowTapeFilterState(filters);

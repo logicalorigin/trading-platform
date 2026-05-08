@@ -15,14 +15,16 @@ import {
   getChartBarLimit,
   getChartTimeframeOptions,
   getInitialChartBarLimit,
-  getMaxChartBarLimit,
 } from "../charting/timeframes";
 import {
   recordChartBarScopeState,
 } from "../charting/chartHydrationStats";
 import {
   buildChartBarScopeKey,
+  useDebouncedVisibleRangeExpansion,
   useMeasuredChartModel,
+  useProgressiveChartBarLimit,
+  useUnderfilledChartBackfill,
 } from "../charting/chartHydrationRuntime";
 import { useChartTimeframeFavorites } from "../charting/useChartTimeframeFavorites";
 import { useOptionChartBars } from "../charting/useOptionChartBars.js";
@@ -171,6 +173,33 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
     favoriteTimeframes: optionFavoriteTimeframes,
     toggleFavoriteTimeframe: toggleOptionFavoriteTimeframe,
   } = useChartTimeframeFavorites("option");
+  const optionProgressiveScopeKey = useMemo(
+    () =>
+      buildChartBarScopeKey(
+        "flow-inspection-option-bars",
+        chartSymbol,
+        optionExpirationIso,
+        optionRight,
+        Number.isFinite(optionStrike) ? optionStrike : null,
+        optionTicker,
+        providerContractId,
+      ),
+    [
+      chartSymbol,
+      optionExpirationIso,
+      optionRight,
+      optionStrike,
+      optionTicker,
+      providerContractId,
+    ],
+  );
+  const optionProgressiveBars = useProgressiveChartBarLimit({
+    scopeKey: optionProgressiveScopeKey,
+    timeframe: optionChartTimeframe,
+    role: "option",
+    enabled: true,
+    warmTargetLimit: useCallback(() => Promise.resolve(), []),
+  });
   const {
     chartProviderContractId: effectiveProviderContractId,
     displayBars: optionDisplayBars,
@@ -199,6 +228,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
     optionTicker,
     providerContractId,
     timeframe: optionChartTimeframe,
+    barsLimit: optionProgressiveBars.requestedLimit,
     enabled: true,
     liveEnabled: true,
     hydrationLabel: `${chartSymbol || "flow"} option inspection ${optionChartTimeframe}`,
@@ -215,50 +245,74 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
       ),
     [optionChartTimeframe, optionContractIdentityKey],
   );
-  const handleOptionVisibleLogicalRangeChange = useCallback(
+  useEffect(() => {
+    if (optionBarsQuery.data?.bars?.length) {
+      optionProgressiveBars.hydrateFullWindow();
+    }
+  }, [
+    optionBarsQuery.data?.bars?.length,
+    optionProgressiveBars.hydrateFullWindow,
+  ]);
+  useUnderfilledChartBackfill({
+    scopeKey: optionChartScopeKey,
+    enabled: Boolean(canRequestOptionChart && optionBarsQuery.data?.bars?.length),
+    loadedBarCount: optionLoadedBaseBarCount,
+    requestedLimit: optionProgressiveBars.requestedLimit,
+    minPageSize: getInitialChartBarLimit(optionChartTimeframe, "option"),
+    isPrependingOlder: isPrependingOlderOptionHistory,
+    hasExhaustedOlderHistory: hasExhaustedOlderOptionHistory,
+    prependOlderBars: prependOlderOptionBars,
+  });
+  const expandOptionVisibleLogicalRange = useCallback(
     (range) => {
-      if (
-        !range ||
-        !canRequestOptionChart ||
-        hasExhaustedOlderOptionHistory ||
-        isPrependingOlderOptionHistory
-      ) {
+      if (!canRequestOptionChart) {
         return;
       }
 
-      const visibleBars = Math.max(1, Math.ceil(range.to - range.from));
-      const leftEdgeBufferBars = Math.max(
-        24,
-        Math.min(144, Math.ceil(visibleBars * 0.2)),
-      );
-      if (range.from > leftEdgeBufferBars) {
-        return;
-      }
-
-      prependOlderOptionBars({
-        pageSize: Math.max(
-          getInitialChartBarLimit(optionChartTimeframe, "option"),
-          Math.ceil(visibleBars * 2),
-          240,
-        ),
+      optionProgressiveBars.expandForVisibleRange(range, optionDisplayBars.length, {
+        hasExhaustedOlderHistory: hasExhaustedOlderOptionHistory,
+        isHydratingRequestedWindow:
+          optionBarsQuery.fetchStatus === "fetching" &&
+          optionProgressiveBars.requestedLimit > optionLoadedBaseBarCount,
+        isPrependingOlder: isPrependingOlderOptionHistory,
+        oldestLoadedAtMs: optionOldestLoadedAtMs,
+        prependOlderBars: prependOlderOptionBars,
       });
     },
     [
       canRequestOptionChart,
       hasExhaustedOlderOptionHistory,
       isPrependingOlderOptionHistory,
-      optionChartTimeframe,
+      optionBarsQuery.fetchStatus,
+      optionDisplayBars.length,
+      optionLoadedBaseBarCount,
+      optionOldestLoadedAtMs,
+      optionProgressiveBars.expandForVisibleRange,
+      optionProgressiveBars.requestedLimit,
       prependOlderOptionBars,
     ],
+  );
+  const scheduleOptionVisibleRangeExpansion = useDebouncedVisibleRangeExpansion(
+    expandOptionVisibleLogicalRange,
+    {
+      resetKey: optionChartScopeKey,
+      recheckKey: [
+        optionChartScopeKey,
+        optionDisplayBars.length,
+        optionBarsQuery.fetchStatus === "fetching" ? "fetching" : "settled",
+        isPrependingOlderOptionHistory ? "prepending" : "ready",
+        hasExhaustedOlderOptionHistory ? "exhausted" : "open",
+      ].join(":"),
+    },
   );
   useEffect(() => {
     recordChartBarScopeState(optionChartScopeKey, {
       timeframe: optionChartTimeframe,
       role: "option",
-      requestedLimit: getChartBarLimit(optionChartTimeframe, "option"),
+      requestedLimit: optionProgressiveBars.requestedLimit,
       initialLimit: getInitialChartBarLimit(optionChartTimeframe, "option"),
-      targetLimit: getChartBarLimit(optionChartTimeframe, "option"),
-      maxLimit: getMaxChartBarLimit(optionChartTimeframe, "option"),
+      targetLimit: optionProgressiveBars.targetLimit,
+      maxLimit: optionProgressiveBars.maxLimit,
       hydratedBaseCount: optionLoadedBaseBarCount,
       renderedBarCount: optionDisplayBars.length,
       livePatchedBarCount: 0,
@@ -288,6 +342,9 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
     optionOlderHistoryPageCount,
     optionOlderHistoryProvider,
     optionOldestLoadedAtMs,
+    optionProgressiveBars.maxLimit,
+    optionProgressiveBars.requestedLimit,
+    optionProgressiveBars.targetLimit,
   ]);
   const optionChartModel = useMeasuredChartModel({
     scopeKey: optionChartScopeKey,
@@ -895,7 +952,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 surfaceUiStateKey={`flow-inspection-option-${effectiveProviderContractId || optionChartScopeKey}`}
                 rangeIdentityKey={optionChartScopeKey}
                 model={optionChartModel}
-                onVisibleLogicalRangeChange={handleOptionVisibleLogicalRangeChange}
+                onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
                 showSurfaceToolbar={false}
                 showLegend
                 legend={{

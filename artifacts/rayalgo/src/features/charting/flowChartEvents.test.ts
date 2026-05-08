@@ -261,10 +261,23 @@ test("buildFlowTooltipModel returns compact TradingView-style event details", ()
     [
       flowEvent({
         metadata: {
+          provider: "ibkr",
+          basis: "trade",
           cp: "C",
           premium: 1_250_000,
           contracts: 500,
           contractLabel: "AAPL 200C",
+          side: "ask",
+          price: 2.5,
+          bid: 2.45,
+          ask: 2.55,
+          openInterest: 1_200,
+          dte: 14,
+          impliedVolatility: 0.42,
+          delta: 0.57,
+          unusualScore: 3.2,
+          moneyness: "OTM",
+          distancePercent: 1.4,
           isSweep: true,
         },
       }),
@@ -278,7 +291,23 @@ test("buildFlowTooltipModel returns compact TradingView-style event details", ()
   assert.equal(tooltip.contracts, "500");
   assert.equal(tooltip.callPutMix, "100% C / 0% P");
   assert.equal(tooltip.flowMix, "100% bull / 0% bear / 0% mix");
+  assert.equal(tooltip.tone, "bullish");
+  assert.equal(tooltip.callPercent, 100);
+  assert.equal(tooltip.bullishPercent, 100);
   assert.equal(tooltip.topContract, "AAPL 200C");
+  assert.equal(tooltip.copyLabel, "AAPL 200C");
+  assert.equal(tooltip.sourceLabel, "IBKR TRADE");
+  assert.equal(tooltip.timeBasis, "reported");
+  assert.equal(tooltip.side, "BUY");
+  assert.equal(tooltip.price, "2.50");
+  assert.equal(tooltip.bidAsk, "2.45/2.55");
+  assert.equal(tooltip.openInterest, "1K");
+  assert.equal(tooltip.dte, "14d");
+  assert.equal(tooltip.iv, "42%");
+  assert.equal(tooltip.delta, "0.57");
+  assert.equal(tooltip.unusualScore, "3.2x");
+  assert.equal(tooltip.moneyness, "OTM");
+  assert.equal(tooltip.distance, "+1.4%");
   assert.deepEqual(tooltip.tags, ["sweep"]);
 });
 
@@ -302,4 +331,8 @@ test("buildFlowTooltipModel labels snapshot buckets as contract activity", () =>
   const tooltip = buildFlowTooltipModel(bucket);
 
   assert.equal(tooltip.title, "Active contract flow");
+  assert.equal(tooltip.sourceLabel, "TEST SNAPSHOT");
+  assert.equal(tooltip.timeBasis, "observed");
+  assert.equal(tooltip.side, "n/a");
+  assert.equal(tooltip.bidAsk, "n/a");
 });

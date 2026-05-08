@@ -10,6 +10,8 @@ const unitTestFiles = [
   "src/features/charting/useMassiveStreamedStockBars.test.ts",
   "src/features/charting/useOptionChartBars.test.js",
   "src/features/charting/chartHydrationStats.test.ts",
+  "src/features/charting/chartHydrationRuntime.test.js",
+  "src/features/charting/chartHydrationWiring.test.js",
   "src/features/charting/marketSession.test.ts",
   "src/features/charting/chartApiBars.test.js",
   "src/features/charting/chartEvents.test.ts",
