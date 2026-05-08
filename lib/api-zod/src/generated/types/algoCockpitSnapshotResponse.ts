@@ -23,6 +23,7 @@ export interface AlgoCockpitSnapshotResponse {
   kpis: JsonObject;
   risk: JsonObject;
   candidates: JsonObject[];
+  signals: JsonObject[];
   activePositions: JsonObject[];
   events: ExecutionEvent[];
   sourceBacktest: AlgoCockpitSourceBacktest;

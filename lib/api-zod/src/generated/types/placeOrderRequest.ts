@@ -9,17 +9,12 @@ import type { AssetClass } from './assetClass';
 import type { EnvironmentMode } from './environmentMode';
 import type { JsonObject } from './jsonObject';
 import type { OptionContract } from './optionContract';
+import type { OptionOrderPositionEffect } from './optionOrderPositionEffect';
+import type { OptionOrderStrategyIntent } from './optionOrderStrategyIntent';
 import type { OrderSide } from './orderSide';
 import type { OrderType } from './orderType';
 import type { PlaceOrderRequestSource } from './placeOrderRequestSource';
 import type { TimeInForce } from './timeInForce';
-
-export type PlaceOrderRequestPositionEffect = 'open' | 'close';
-export type PlaceOrderRequestStrategyIntent =
-  | 'long_option'
-  | 'sell_to_close'
-  | 'covered_call'
-  | 'uncovered_short_call';
 
 export interface PlaceOrderRequest {
   accountId: string;
@@ -33,8 +28,8 @@ export interface PlaceOrderRequest {
   stopPrice?: number | null;
   timeInForce: TimeInForce;
   optionContract: OptionContract | null;
-  positionEffect?: PlaceOrderRequestPositionEffect;
-  strategyIntent?: PlaceOrderRequestStrategyIntent;
+  positionEffect?: OptionOrderPositionEffect;
+  strategyIntent?: OptionOrderStrategyIntent;
   source?: PlaceOrderRequestSource;
   sourceEventId?: string | null;
   clientOrderId?: string | null;

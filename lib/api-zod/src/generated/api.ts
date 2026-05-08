@@ -401,8 +401,6 @@ export const ListBrokerConnectionsResponse = zod.object({
   "updatedAt": zod.coerce.date()
 }))
 })
-
-
 /**
  * @summary List broker accounts
  */
@@ -1374,6 +1372,8 @@ export const PreviewShadowOrderBody = zod.object({
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
 }),zod.null()]),
+  "positionEffect": zod.enum(['open', 'close']).optional(),
+  "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -1424,6 +1424,8 @@ export const PlaceShadowOrderBody = zod.object({
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
 }),zod.null()]),
+  "positionEffect": zod.enum(['open', 'close']).optional(),
+  "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -1455,6 +1457,8 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
 }),zod.null()]),
+  "positionEffect": zod.enum(['open', 'close']).optional(),
+  "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -1463,7 +1467,34 @@ export const SubmitOrdersBody = zod.union([zod.object({
   "accountId": zod.string().nullish(),
   "mode": zod.union([zod.enum(['paper', 'live']),zod.null()]).optional(),
   "confirm": zod.boolean().optional(),
-  "parentOrderRequest": PlaceOrderBody.nullish(),
+  "parentOrderRequest": zod.union([zod.object({
+  "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
+  "symbol": zod.string(),
+  "assetClass": zod.enum(['equity', 'option']),
+  "side": zod.enum(['buy', 'sell']),
+  "type": zod.enum(['market', 'limit', 'stop', 'stop_limit']),
+  "quantity": zod.number(),
+  "limitPrice": zod.number().nullish(),
+  "stopPrice": zod.number().nullish(),
+  "timeInForce": zod.enum(['day', 'gtc', 'ioc', 'fok']),
+  "optionContract": zod.union([zod.object({
+  "ticker": zod.string(),
+  "underlying": zod.string(),
+  "expirationDate": zod.coerce.date(),
+  "strike": zod.number(),
+  "right": zod.enum(['call', 'put']),
+  "multiplier": zod.number(),
+  "sharesPerContract": zod.number(),
+  "providerContractId": zod.string().nullish()
+}),zod.null()]),
+  "positionEffect": zod.enum(['open', 'close']).optional(),
+  "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
+  "source": zod.enum(['manual', 'automation']).optional(),
+  "sourceEventId": zod.string().nullish(),
+  "clientOrderId": zod.string().nullish(),
+  "payload": zod.record(zod.string(), zod.unknown()).optional()
+}),zod.null()]).optional(),
   "ibkrOrders": zod.array(zod.record(zod.string(), zod.unknown()))
 })])
 
@@ -2251,12 +2282,82 @@ export const GetFlowPremiumDistributionQueryParams = zod.object({
   "coverageMode": zod.enum(['universe', 'ranked']).optional().describe('Candidate universe used for premium-distribution hydration.')
 })
 
+export const getFlowPremiumDistributionResponseSourceHydratedSymbolCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSnapshotCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsUsablePremiumSnapshotCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsUsablePremiumTotalMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSelectedPremiumTotalMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsClassificationTargetPremiumCoverageMin = 0;
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsClassificationTargetPremiumCoverageMax = 1;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSelectedPremiumCoverageMin = 0;
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSelectedPremiumCoverageMax = 1;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsPageCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeContractCandidateCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeContractHydratedCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallAttemptCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallSuccessCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallErrorCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallForbiddenCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsEligibleTradeCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsIneligibleTradeCountMin = 0;
+
+export const getFlowPremiumDistributionResponseSourceHydrationDiagnosticsUnknownConditionTradeCountMin = 0;
+
 export const getFlowPremiumDistributionResponseSourceCandidateCountMin = 0;
 
 export const getFlowPremiumDistributionResponseSourceRankedCountMin = 0;
 
 export const getFlowPremiumDistributionResponseSourceErrorCountMin = 0;
 
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSnapshotCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsUsablePremiumSnapshotCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsUsablePremiumTotalMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSelectedPremiumTotalMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsClassificationTargetPremiumCoverageMin = 0;
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsClassificationTargetPremiumCoverageMax = 1;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSelectedPremiumCoverageMin = 0;
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSelectedPremiumCoverageMax = 1;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsPageCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeContractCandidateCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeContractHydratedCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallAttemptCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallSuccessCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallErrorCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallForbiddenCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsEligibleTradeCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsIneligibleTradeCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsUnknownConditionTradeCountMin = 0;
 
 export const getFlowPremiumDistributionResponseWidgetsItemBucketsSmallCountMin = 0;
 
@@ -2268,37 +2369,14 @@ export const getFlowPremiumDistributionResponseWidgetsItemContractCountMin = 0;
 
 export const getFlowPremiumDistributionResponseWidgetsItemTradeCountMin = 0;
 
+export const getFlowPremiumDistributionResponseWidgetsItemClassifiedTradeCountMin = 0;
+
 export const getFlowPremiumDistributionResponseWidgetsItemQuoteMatchedCountMin = 0;
+
+export const getFlowPremiumDistributionResponseWidgetsItemTickTestMatchedCountMin = 0;
 
 export const getFlowPremiumDistributionResponseWidgetsItemPageCountMin = 0;
 
-
-const FlowPremiumDistributionHydrationDiagnosticsSchema = zod.object({
-  "snapshotCount": zod.number().min(0),
-  "usablePremiumSnapshotCount": zod.number().min(0),
-  "usablePremiumTotal": zod.number().min(0),
-  "selectedPremiumTotal": zod.number().min(0),
-  "classificationTargetPremiumCoverage": zod.number().min(0).max(1),
-  "selectedPremiumCoverage": zod.number().min(0).max(1),
-  "pageCount": zod.number().min(0),
-  "snapshotTradingDate": zod.string().nullable(),
-  "tradeLookbackStartDate": zod.string().nullable(),
-  "quoteProbeDate": zod.string().nullable(),
-  "quoteProbeStatus": zod.enum(['not_attempted', 'available', 'forbidden', 'unavailable', 'failed']),
-  "quoteProbeMessage": zod.string().nullable(),
-  "tradeContractCandidateCount": zod.number().min(0),
-  "tradeContractHydratedCount": zod.number().min(0),
-  "tradeCallAttemptCount": zod.number().min(0),
-  "tradeCallSuccessCount": zod.number().min(0),
-  "tradeCallErrorCount": zod.number().min(0),
-  "tradeCallForbiddenCount": zod.number().min(0),
-  "eligibleTradeCount": zod.number().min(0),
-  "ineligibleTradeCount": zod.number().min(0),
-  "unknownConditionTradeCount": zod.number().min(0),
-  "conditionCodes": zod.array(zod.string()),
-  "exchangeCodes": zod.array(zod.string()),
-  "classifiedContractCoverage": zod.number()
-});
 
 
 export const GetFlowPremiumDistributionResponse = zod.object({
@@ -2319,8 +2397,33 @@ export const GetFlowPremiumDistributionResponse = zod.object({
   "coverageMode": zod.enum(['universe', 'ranked']),
   "hydrationStatus": zod.enum(['complete', 'partial', 'refreshing', 'failed']),
   "hydrationWarning": zod.string().nullable(),
-  "hydratedSymbolCount": zod.number().min(0),
-  "hydrationDiagnostics": FlowPremiumDistributionHydrationDiagnosticsSchema,
+  "hydratedSymbolCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydratedSymbolCountMin),
+  "hydrationDiagnostics": zod.object({
+  "snapshotCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSnapshotCountMin),
+  "usablePremiumSnapshotCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsUsablePremiumSnapshotCountMin),
+  "usablePremiumTotal": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsUsablePremiumTotalMin),
+  "selectedPremiumTotal": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSelectedPremiumTotalMin),
+  "classificationTargetPremiumCoverage": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsClassificationTargetPremiumCoverageMin).max(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsClassificationTargetPremiumCoverageMax),
+  "selectedPremiumCoverage": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSelectedPremiumCoverageMin).max(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsSelectedPremiumCoverageMax),
+  "pageCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsPageCountMin),
+  "snapshotTradingDate": zod.string().nullable().describe('Latest trading date observed in the option snapshot payload.'),
+  "tradeLookbackStartDate": zod.string().nullable().describe('Date used as the start of option trade-print hydration.'),
+  "quoteProbeDate": zod.string().nullable().describe('Date used as the start of option quote entitlement probing.'),
+  "quoteProbeStatus": zod.enum(['not_attempted', 'available', 'forbidden', 'unavailable', 'failed']),
+  "quoteProbeMessage": zod.string().nullable(),
+  "tradeContractCandidateCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeContractCandidateCountMin),
+  "tradeContractHydratedCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeContractHydratedCountMin),
+  "tradeCallAttemptCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallAttemptCountMin),
+  "tradeCallSuccessCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallSuccessCountMin),
+  "tradeCallErrorCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallErrorCountMin),
+  "tradeCallForbiddenCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsTradeCallForbiddenCountMin),
+  "eligibleTradeCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsEligibleTradeCountMin),
+  "ineligibleTradeCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsIneligibleTradeCountMin),
+  "unknownConditionTradeCount": zod.number().min(getFlowPremiumDistributionResponseSourceHydrationDiagnosticsUnknownConditionTradeCountMin),
+  "conditionCodes": zod.array(zod.string()),
+  "exchangeCodes": zod.array(zod.string()),
+  "classifiedContractCoverage": zod.number()
+}),
   "candidateDate": zod.string().nullable(),
   "candidateCount": zod.number().min(getFlowPremiumDistributionResponseSourceCandidateCountMin),
   "rankedCount": zod.number().min(getFlowPremiumDistributionResponseSourceRankedCountMin),
@@ -2346,7 +2449,32 @@ export const GetFlowPremiumDistributionResponse = zod.object({
   "classificationCoverage": zod.number(),
   "classificationConfidence": zod.enum(['high', 'medium', 'low', 'very_low', 'none']),
   "hydrationWarning": zod.string().nullable(),
-  "hydrationDiagnostics": FlowPremiumDistributionHydrationDiagnosticsSchema,
+  "hydrationDiagnostics": zod.object({
+  "snapshotCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSnapshotCountMin),
+  "usablePremiumSnapshotCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsUsablePremiumSnapshotCountMin),
+  "usablePremiumTotal": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsUsablePremiumTotalMin),
+  "selectedPremiumTotal": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSelectedPremiumTotalMin),
+  "classificationTargetPremiumCoverage": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsClassificationTargetPremiumCoverageMin).max(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsClassificationTargetPremiumCoverageMax),
+  "selectedPremiumCoverage": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSelectedPremiumCoverageMin).max(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsSelectedPremiumCoverageMax),
+  "pageCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsPageCountMin),
+  "snapshotTradingDate": zod.string().nullable().describe('Latest trading date observed in the option snapshot payload.'),
+  "tradeLookbackStartDate": zod.string().nullable().describe('Date used as the start of option trade-print hydration.'),
+  "quoteProbeDate": zod.string().nullable().describe('Date used as the start of option quote entitlement probing.'),
+  "quoteProbeStatus": zod.enum(['not_attempted', 'available', 'forbidden', 'unavailable', 'failed']),
+  "quoteProbeMessage": zod.string().nullable(),
+  "tradeContractCandidateCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeContractCandidateCountMin),
+  "tradeContractHydratedCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeContractHydratedCountMin),
+  "tradeCallAttemptCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallAttemptCountMin),
+  "tradeCallSuccessCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallSuccessCountMin),
+  "tradeCallErrorCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallErrorCountMin),
+  "tradeCallForbiddenCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsTradeCallForbiddenCountMin),
+  "eligibleTradeCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsEligibleTradeCountMin),
+  "ineligibleTradeCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsIneligibleTradeCountMin),
+  "unknownConditionTradeCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemHydrationDiagnosticsUnknownConditionTradeCountMin),
+  "conditionCodes": zod.array(zod.string()),
+  "exchangeCodes": zod.array(zod.string()),
+  "classifiedContractCoverage": zod.number()
+}),
   "netPremium": zod.number(),
   "inflowPremium": zod.number(),
   "outflowPremium": zod.number(),
@@ -2386,9 +2514,9 @@ export const GetFlowPremiumDistributionResponse = zod.object({
 }),
   "contractCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemContractCountMin),
   "tradeCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemTradeCountMin),
-  "classifiedTradeCount": zod.number().min(0),
+  "classifiedTradeCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemClassifiedTradeCountMin),
   "quoteMatchedCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemQuoteMatchedCountMin),
-  "tickTestMatchedCount": zod.number().min(0),
+  "tickTestMatchedCount": zod.number().min(getFlowPremiumDistributionResponseWidgetsItemTickTestMatchedCountMin),
   "sideBasis": zod.enum(['quote_match', 'tick_test', 'mixed', 'none']),
   "quoteAccess": zod.enum(['available', 'unavailable', 'forbidden', 'unknown']),
   "tradeAccess": zod.enum(['available', 'unavailable', 'forbidden', 'unknown']),
@@ -2430,8 +2558,8 @@ export const ListFlowEventsQueryParams = zod.object({
   "maxDte": zod.coerce.number().min(listFlowEventsQueryMaxDteMin).max(listFlowEventsQueryMaxDteMax).optional().describe('Maximum days to expiration to include in the flow scan.'),
   "lineBudget": zod.coerce.number().min(1).max(listFlowEventsQueryLineBudgetMax).optional().describe('Maximum IBKR option quote lines this request may use.'),
   "historicalBucketSeconds": zod.coerce.number().min(listFlowEventsQueryHistoricalBucketSecondsMin).max(listFlowEventsQueryHistoricalBucketSecondsMax).optional().describe('Historical chart sampling bucket size, in seconds. Supplying a time window uses this to avoid returning multiple historical prints for the same chart candle.'),
-  "from": zod.coerce.date().optional().describe('Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.'),
-  "to": zod.coerce.date().optional().describe('Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.'),
+  "from": zod.date().optional().describe('Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.'),
+  "to": zod.date().optional().describe('Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.'),
   "blocking": zod.coerce.boolean().optional().describe('Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.'),
   "queueRefresh": zod.coerce.boolean().optional().describe('Queue an options-flow scanner refresh when a nonblocking request misses the current scanner snapshot. Broad scanner UI reads set this false so they only consume already published scanner snapshots.')
 })
@@ -3248,6 +3376,7 @@ export const GetSignalOptionsAutomationStateResponse = zod.object({
 }),
   "mode": zod.enum(['shadow']),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
+  "signals": zod.array(zod.record(zod.string(), zod.unknown())),
   "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
   "risk": zod.record(zod.string(), zod.unknown()),
   "events": zod.array(zod.object({
@@ -3307,7 +3436,7 @@ export const GetAlgoDeploymentCockpitResponse = zod.object({
   "profileDisabledReason": zod.string().nullable()
 }),
   "pipelineStages": zod.array(zod.object({
-  "id": zod.enum(['scan_universe', 'signal_detected', 'contract_selected', 'liquidity_risk_gate', 'order_shadow', 'position_managed', 'exit_close']),
+  "id": zod.enum(['scan_universe', 'signal_detected', 'action_mapped', 'contract_selected', 'liquidity_risk_gate', 'order_shadow', 'position_managed', 'exit_close']),
   "label": zod.string(),
   "status": zod.enum(['healthy', 'running', 'waiting', 'attention', 'blocked', 'stale']),
   "count": zod.number(),
@@ -3327,6 +3456,7 @@ export const GetAlgoDeploymentCockpitResponse = zod.object({
   "kpis": zod.record(zod.string(), zod.unknown()),
   "risk": zod.record(zod.string(), zod.unknown()),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
+  "signals": zod.array(zod.record(zod.string(), zod.unknown())),
   "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
   "events": zod.array(zod.object({
   "id": zod.string(),
@@ -3389,6 +3519,7 @@ export const RunSignalOptionsShadowScanResponse = zod.object({
 }),
   "mode": zod.enum(['shadow']),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
+  "signals": zod.array(zod.record(zod.string(), zod.unknown())),
   "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
   "risk": zod.record(zod.string(), zod.unknown()),
   "events": zod.array(zod.object({
@@ -3471,6 +3602,7 @@ export const UpdateSignalOptionsExecutionProfileResponse = zod.object({
 }),
   "mode": zod.enum(['shadow']),
   "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
+  "signals": zod.array(zod.record(zod.string(), zod.unknown())),
   "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
   "risk": zod.record(zod.string(), zod.unknown()),
   "events": zod.array(zod.object({

@@ -6,27 +6,29 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { FlowPremiumDistributionBuckets } from './flowPremiumDistributionBuckets';
+import type { FlowPremiumDistributionBucketThresholds } from './flowPremiumDistributionBucketThresholds';
 import type { FlowPremiumDistributionClassificationConfidence } from './flowPremiumDistributionClassificationConfidence';
 import type { FlowPremiumDistributionHydrationDiagnostics } from './flowPremiumDistributionHydrationDiagnostics';
 import type { FlowPremiumDistributionWidgetConfidence } from './flowPremiumDistributionWidgetConfidence';
+import type { FlowPremiumDistributionWidgetMarketCapTier } from './flowPremiumDistributionWidgetMarketCapTier';
+import type { FlowPremiumDistributionWidgetQuoteAccess } from './flowPremiumDistributionWidgetQuoteAccess';
+import type { FlowPremiumDistributionWidgetSideBasis } from './flowPremiumDistributionWidgetSideBasis';
 import type { FlowPremiumDistributionWidgetSource } from './flowPremiumDistributionWidgetSource';
+import type { FlowPremiumDistributionWidgetTimeframe } from './flowPremiumDistributionWidgetTimeframe';
+import type { FlowPremiumDistributionWidgetTradeAccess } from './flowPremiumDistributionWidgetTradeAccess';
 
 export interface FlowPremiumDistributionWidget {
   /** @minimum 1 */
   rank: number;
   symbol: string;
   asOf: Date;
-  timeframe: 'today' | 'week';
+  timeframe: FlowPremiumDistributionWidgetTimeframe;
   /** @nullable */
   stockDayVolume: number | null;
   /** @nullable */
   marketCap: number | null;
-  marketCapTier: 'mega' | 'large' | 'mid' | 'small_or_unknown';
-  bucketThresholds: {
-    smallMin: number;
-    mediumMin: number;
-    largeMin: number;
-  };
+  marketCapTier: FlowPremiumDistributionWidgetMarketCapTier;
+  bucketThresholds: FlowPremiumDistributionBucketThresholds;
   premiumTotal: number;
   classifiedPremium: number;
   classificationCoverage: number;
@@ -53,9 +55,9 @@ export interface FlowPremiumDistributionWidget {
   quoteMatchedCount: number;
   /** @minimum 0 */
   tickTestMatchedCount: number;
-  sideBasis: 'quote_match' | 'tick_test' | 'mixed' | 'none';
-  quoteAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
-  tradeAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  sideBasis: FlowPremiumDistributionWidgetSideBasis;
+  quoteAccess: FlowPremiumDistributionWidgetQuoteAccess;
+  tradeAccess: FlowPremiumDistributionWidgetTradeAccess;
   source: FlowPremiumDistributionWidgetSource;
   confidence: FlowPremiumDistributionWidgetConfidence;
   delayed: boolean;

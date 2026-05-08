@@ -1448,20 +1448,11 @@ export interface FlowPremiumDistributionBuckets {
   large: FlowPremiumDistributionBucket;
 }
 
-export type FlowPremiumDistributionWidgetSource = typeof FlowPremiumDistributionWidgetSource[keyof typeof FlowPremiumDistributionWidgetSource];
-
-
-export const FlowPremiumDistributionWidgetSource = {
-  'polygon-options-snapshot': 'polygon-options-snapshot',
-} as const;
-
-export type FlowPremiumDistributionWidgetConfidence = typeof FlowPremiumDistributionWidgetConfidence[keyof typeof FlowPremiumDistributionWidgetConfidence];
-
-
-export const FlowPremiumDistributionWidgetConfidence = {
-  snapshot: 'snapshot',
-  partial: 'partial',
-} as const;
+export interface FlowPremiumDistributionBucketThresholds {
+  smallMin: number;
+  mediumMin: number;
+  largeMin: number;
+}
 
 export type FlowPremiumDistributionClassificationConfidence = typeof FlowPremiumDistributionClassificationConfidence[keyof typeof FlowPremiumDistributionClassificationConfidence];
 
@@ -1472,6 +1463,17 @@ export const FlowPremiumDistributionClassificationConfidence = {
   low: 'low',
   very_low: 'very_low',
   none: 'none',
+} as const;
+
+export type FlowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus = typeof FlowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus[keyof typeof FlowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus];
+
+
+export const FlowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus = {
+  not_attempted: 'not_attempted',
+  available: 'available',
+  forbidden: 'forbidden',
+  unavailable: 'unavailable',
+  failed: 'failed',
 } as const;
 
 export interface FlowPremiumDistributionHydrationDiagnostics {
@@ -1495,13 +1497,22 @@ export interface FlowPremiumDistributionHydrationDiagnostics {
   selectedPremiumCoverage: number;
   /** @minimum 0 */
   pageCount: number;
-  /** @nullable */
+  /**
+   * Latest trading date observed in the option snapshot payload.
+   * @nullable
+   */
   snapshotTradingDate: string | null;
-  /** @nullable */
+  /**
+   * Date used as the start of option trade-print hydration.
+   * @nullable
+   */
   tradeLookbackStartDate: string | null;
-  /** @nullable */
+  /**
+   * Date used as the start of option quote entitlement probing.
+   * @nullable
+   */
   quoteProbeDate: string | null;
-  quoteProbeStatus: 'not_attempted' | 'available' | 'forbidden' | 'unavailable' | 'failed';
+  quoteProbeStatus: FlowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus;
   /** @nullable */
   quoteProbeMessage: string | null;
   /** @minimum 0 */
@@ -1527,22 +1538,81 @@ export interface FlowPremiumDistributionHydrationDiagnostics {
   classifiedContractCoverage: number;
 }
 
+export type FlowPremiumDistributionWidgetTimeframe = typeof FlowPremiumDistributionWidgetTimeframe[keyof typeof FlowPremiumDistributionWidgetTimeframe];
+
+
+export const FlowPremiumDistributionWidgetTimeframe = {
+  today: 'today',
+  week: 'week',
+} as const;
+
+export type FlowPremiumDistributionWidgetMarketCapTier = typeof FlowPremiumDistributionWidgetMarketCapTier[keyof typeof FlowPremiumDistributionWidgetMarketCapTier];
+
+
+export const FlowPremiumDistributionWidgetMarketCapTier = {
+  mega: 'mega',
+  large: 'large',
+  mid: 'mid',
+  small_or_unknown: 'small_or_unknown',
+} as const;
+
+export type FlowPremiumDistributionWidgetSideBasis = typeof FlowPremiumDistributionWidgetSideBasis[keyof typeof FlowPremiumDistributionWidgetSideBasis];
+
+
+export const FlowPremiumDistributionWidgetSideBasis = {
+  quote_match: 'quote_match',
+  tick_test: 'tick_test',
+  mixed: 'mixed',
+  none: 'none',
+} as const;
+
+export type FlowPremiumDistributionWidgetQuoteAccess = typeof FlowPremiumDistributionWidgetQuoteAccess[keyof typeof FlowPremiumDistributionWidgetQuoteAccess];
+
+
+export const FlowPremiumDistributionWidgetQuoteAccess = {
+  available: 'available',
+  unavailable: 'unavailable',
+  forbidden: 'forbidden',
+  unknown: 'unknown',
+} as const;
+
+export type FlowPremiumDistributionWidgetTradeAccess = typeof FlowPremiumDistributionWidgetTradeAccess[keyof typeof FlowPremiumDistributionWidgetTradeAccess];
+
+
+export const FlowPremiumDistributionWidgetTradeAccess = {
+  available: 'available',
+  unavailable: 'unavailable',
+  forbidden: 'forbidden',
+  unknown: 'unknown',
+} as const;
+
+export type FlowPremiumDistributionWidgetSource = typeof FlowPremiumDistributionWidgetSource[keyof typeof FlowPremiumDistributionWidgetSource];
+
+
+export const FlowPremiumDistributionWidgetSource = {
+  'polygon-options-snapshot': 'polygon-options-snapshot',
+} as const;
+
+export type FlowPremiumDistributionWidgetConfidence = typeof FlowPremiumDistributionWidgetConfidence[keyof typeof FlowPremiumDistributionWidgetConfidence];
+
+
+export const FlowPremiumDistributionWidgetConfidence = {
+  snapshot: 'snapshot',
+  partial: 'partial',
+} as const;
+
 export interface FlowPremiumDistributionWidget {
   /** @minimum 1 */
   rank: number;
   symbol: string;
   asOf: string;
-  timeframe: 'today' | 'week';
+  timeframe: FlowPremiumDistributionWidgetTimeframe;
   /** @nullable */
   stockDayVolume: number | null;
   /** @nullable */
   marketCap: number | null;
-  marketCapTier: 'mega' | 'large' | 'mid' | 'small_or_unknown';
-  bucketThresholds: {
-    smallMin: number;
-    mediumMin: number;
-    largeMin: number;
-  };
+  marketCapTier: FlowPremiumDistributionWidgetMarketCapTier;
+  bucketThresholds: FlowPremiumDistributionBucketThresholds;
   premiumTotal: number;
   classifiedPremium: number;
   classificationCoverage: number;
@@ -1569,9 +1639,9 @@ export interface FlowPremiumDistributionWidget {
   quoteMatchedCount: number;
   /** @minimum 0 */
   tickTestMatchedCount: number;
-  sideBasis: 'quote_match' | 'tick_test' | 'mixed' | 'none';
-  quoteAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
-  tradeAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  sideBasis: FlowPremiumDistributionWidgetSideBasis;
+  quoteAccess: FlowPremiumDistributionWidgetQuoteAccess;
+  tradeAccess: FlowPremiumDistributionWidgetTradeAccess;
   source: FlowPremiumDistributionWidgetSource;
   confidence: FlowPremiumDistributionWidgetConfidence;
   delayed: boolean;
@@ -1586,6 +1656,62 @@ export const FlowPremiumDistributionSourceProvider = {
   polygon: 'polygon',
 } as const;
 
+export type FlowPremiumDistributionSourceTimeframe = typeof FlowPremiumDistributionSourceTimeframe[keyof typeof FlowPremiumDistributionSourceTimeframe];
+
+
+export const FlowPremiumDistributionSourceTimeframe = {
+  today: 'today',
+  week: 'week',
+} as const;
+
+export type FlowPremiumDistributionSourceSideBasis = typeof FlowPremiumDistributionSourceSideBasis[keyof typeof FlowPremiumDistributionSourceSideBasis];
+
+
+export const FlowPremiumDistributionSourceSideBasis = {
+  quote_match: 'quote_match',
+  tick_test: 'tick_test',
+  mixed: 'mixed',
+  none: 'none',
+} as const;
+
+export type FlowPremiumDistributionSourceQuoteAccess = typeof FlowPremiumDistributionSourceQuoteAccess[keyof typeof FlowPremiumDistributionSourceQuoteAccess];
+
+
+export const FlowPremiumDistributionSourceQuoteAccess = {
+  available: 'available',
+  unavailable: 'unavailable',
+  forbidden: 'forbidden',
+  unknown: 'unknown',
+} as const;
+
+export type FlowPremiumDistributionSourceTradeAccess = typeof FlowPremiumDistributionSourceTradeAccess[keyof typeof FlowPremiumDistributionSourceTradeAccess];
+
+
+export const FlowPremiumDistributionSourceTradeAccess = {
+  available: 'available',
+  unavailable: 'unavailable',
+  forbidden: 'forbidden',
+  unknown: 'unknown',
+} as const;
+
+export type FlowPremiumDistributionSourceCoverageMode = typeof FlowPremiumDistributionSourceCoverageMode[keyof typeof FlowPremiumDistributionSourceCoverageMode];
+
+
+export const FlowPremiumDistributionSourceCoverageMode = {
+  universe: 'universe',
+  ranked: 'ranked',
+} as const;
+
+export type FlowPremiumDistributionSourceHydrationStatus = typeof FlowPremiumDistributionSourceHydrationStatus[keyof typeof FlowPremiumDistributionSourceHydrationStatus];
+
+
+export const FlowPremiumDistributionSourceHydrationStatus = {
+  complete: 'complete',
+  partial: 'partial',
+  refreshing: 'refreshing',
+  failed: 'failed',
+} as const;
+
 export type FlowPremiumDistributionSourceCache = typeof FlowPremiumDistributionSourceCache[keyof typeof FlowPremiumDistributionSourceCache];
 
 
@@ -1598,17 +1724,17 @@ export const FlowPremiumDistributionSourceCache = {
 export interface FlowPremiumDistributionSource {
   provider: FlowPremiumDistributionSourceProvider;
   label: string;
-  timeframe: 'today' | 'week';
+  timeframe: FlowPremiumDistributionSourceTimeframe;
   /** @nullable */
   providerHost: string | null;
-  sideBasis: 'quote_match' | 'tick_test' | 'mixed' | 'none';
-  quoteAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
-  tradeAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  sideBasis: FlowPremiumDistributionSourceSideBasis;
+  quoteAccess: FlowPremiumDistributionSourceQuoteAccess;
+  tradeAccess: FlowPremiumDistributionSourceTradeAccess;
   classifiedPremium: number;
   classificationCoverage: number;
   classificationConfidence: FlowPremiumDistributionClassificationConfidence;
-  coverageMode: 'universe' | 'ranked';
-  hydrationStatus: 'complete' | 'partial' | 'refreshing' | 'failed';
+  coverageMode: FlowPremiumDistributionSourceCoverageMode;
+  hydrationStatus: FlowPremiumDistributionSourceHydrationStatus;
   /** @nullable */
   hydrationWarning: string | null;
   /** @minimum 0 */
@@ -1637,10 +1763,18 @@ export const FlowPremiumDistributionResponseStatus = {
   unconfigured: 'unconfigured',
 } as const;
 
+export type FlowPremiumDistributionResponseTimeframe = typeof FlowPremiumDistributionResponseTimeframe[keyof typeof FlowPremiumDistributionResponseTimeframe];
+
+
+export const FlowPremiumDistributionResponseTimeframe = {
+  today: 'today',
+  week: 'week',
+} as const;
+
 export interface FlowPremiumDistributionResponse {
   status: FlowPremiumDistributionResponseStatus;
   asOf: string;
-  timeframe: 'today' | 'week';
+  timeframe: FlowPremiumDistributionResponseTimeframe;
   source: FlowPremiumDistributionSource;
   widgets: FlowPremiumDistributionWidget[];
 }
@@ -2741,8 +2875,8 @@ export interface SignalOptionsAutomationState {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
   mode: SignalOptionsAutomationStateMode;
-  signals: JsonObject[];
   candidates: JsonObject[];
+  signals: JsonObject[];
   activePositions: JsonObject[];
   risk: JsonObject;
   events: ExecutionEvent[];
@@ -2852,8 +2986,8 @@ export interface AlgoCockpitSnapshotResponse {
   attentionItems: AlgoCockpitAttentionItem[];
   kpis: JsonObject;
   risk: JsonObject;
-  signals: JsonObject[];
   candidates: JsonObject[];
+  signals: JsonObject[];
   activePositions: JsonObject[];
   events: ExecutionEvent[];
   sourceBacktest: AlgoCockpitSourceBacktest;
@@ -4343,12 +4477,28 @@ candidateLimit?: number;
 /**
  * Candidate-volume timeframe for ranking the widgets.
  */
-timeframe?: 'today' | 'week';
+timeframe?: GetFlowPremiumDistributionTimeframe;
 /**
  * Candidate universe used for premium-distribution hydration.
  */
-coverageMode?: 'universe' | 'ranked';
+coverageMode?: GetFlowPremiumDistributionCoverageMode;
 };
+
+export type GetFlowPremiumDistributionTimeframe = typeof GetFlowPremiumDistributionTimeframe[keyof typeof GetFlowPremiumDistributionTimeframe];
+
+
+export const GetFlowPremiumDistributionTimeframe = {
+  today: 'today',
+  week: 'week',
+} as const;
+
+export type GetFlowPremiumDistributionCoverageMode = typeof GetFlowPremiumDistributionCoverageMode[keyof typeof GetFlowPremiumDistributionCoverageMode];
+
+
+export const GetFlowPremiumDistributionCoverageMode = {
+  universe: 'universe',
+  ranked: 'ranked',
+} as const;
 
 export type ListFlowEventsParams = {
 underlying?: string;

@@ -16,6 +16,7 @@ export interface SignalOptionsAutomationState {
   profile: SignalOptionsExecutionProfile;
   mode: SignalOptionsAutomationStateMode;
   candidates: JsonObject[];
+  signals: JsonObject[];
   activePositions: JsonObject[];
   risk: JsonObject;
   events: ExecutionEvent[];

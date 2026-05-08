@@ -5,6 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { GetFlowPremiumDistributionCoverageMode } from './getFlowPremiumDistributionCoverageMode';
+import type { GetFlowPremiumDistributionTimeframe } from './getFlowPremiumDistributionTimeframe';
 
 export type GetFlowPremiumDistributionParams = {
 /**
@@ -22,9 +24,9 @@ candidateLimit?: number;
 /**
  * Candidate-volume timeframe for ranking the widgets.
  */
-timeframe?: 'today' | 'week';
+timeframe?: GetFlowPremiumDistributionTimeframe;
 /**
  * Candidate universe used for premium-distribution hydration.
  */
-coverageMode?: 'universe' | 'ranked';
+coverageMode?: GetFlowPremiumDistributionCoverageMode;
 };

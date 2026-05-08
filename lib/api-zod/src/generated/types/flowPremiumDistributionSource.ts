@@ -8,22 +8,28 @@
 import type { FlowPremiumDistributionClassificationConfidence } from './flowPremiumDistributionClassificationConfidence';
 import type { FlowPremiumDistributionHydrationDiagnostics } from './flowPremiumDistributionHydrationDiagnostics';
 import type { FlowPremiumDistributionSourceCache } from './flowPremiumDistributionSourceCache';
+import type { FlowPremiumDistributionSourceCoverageMode } from './flowPremiumDistributionSourceCoverageMode';
+import type { FlowPremiumDistributionSourceHydrationStatus } from './flowPremiumDistributionSourceHydrationStatus';
 import type { FlowPremiumDistributionSourceProvider } from './flowPremiumDistributionSourceProvider';
+import type { FlowPremiumDistributionSourceQuoteAccess } from './flowPremiumDistributionSourceQuoteAccess';
+import type { FlowPremiumDistributionSourceSideBasis } from './flowPremiumDistributionSourceSideBasis';
+import type { FlowPremiumDistributionSourceTimeframe } from './flowPremiumDistributionSourceTimeframe';
+import type { FlowPremiumDistributionSourceTradeAccess } from './flowPremiumDistributionSourceTradeAccess';
 
 export interface FlowPremiumDistributionSource {
   provider: FlowPremiumDistributionSourceProvider;
   label: string;
-  timeframe: 'today' | 'week';
+  timeframe: FlowPremiumDistributionSourceTimeframe;
   /** @nullable */
   providerHost: string | null;
-  sideBasis: 'quote_match' | 'tick_test' | 'mixed' | 'none';
-  quoteAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
-  tradeAccess: 'available' | 'unavailable' | 'forbidden' | 'unknown';
+  sideBasis: FlowPremiumDistributionSourceSideBasis;
+  quoteAccess: FlowPremiumDistributionSourceQuoteAccess;
+  tradeAccess: FlowPremiumDistributionSourceTradeAccess;
   classifiedPremium: number;
   classificationCoverage: number;
   classificationConfidence: FlowPremiumDistributionClassificationConfidence;
-  coverageMode: 'universe' | 'ranked';
-  hydrationStatus: 'complete' | 'partial' | 'refreshing' | 'failed';
+  coverageMode: FlowPremiumDistributionSourceCoverageMode;
+  hydrationStatus: FlowPremiumDistributionSourceHydrationStatus;
   /** @nullable */
   hydrationWarning: string | null;
   /** @minimum 0 */

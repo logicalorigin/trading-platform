@@ -12,6 +12,7 @@ export type AlgoCockpitPipelineStageId = typeof AlgoCockpitPipelineStageId[keyof
 export const AlgoCockpitPipelineStageId = {
   scan_universe: 'scan_universe',
   signal_detected: 'signal_detected',
+  action_mapped: 'action_mapped',
   contract_selected: 'contract_selected',
   liquidity_risk_gate: 'liquidity_risk_gate',
   order_shadow: 'order_shadow',

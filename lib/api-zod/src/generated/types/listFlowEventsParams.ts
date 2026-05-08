@@ -51,11 +51,11 @@ historicalBucketSeconds?: number;
 /**
  * Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
  */
-from?: string;
+from?: Date;
 /**
  * Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
  */
-to?: string;
+to?: Date;
 /**
  * Wait for an on-demand IBKR flow refresh instead of returning a transient empty refreshing response.
  */

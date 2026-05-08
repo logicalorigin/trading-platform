@@ -6,13 +6,14 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { FlowPremiumDistributionResponseStatus } from './flowPremiumDistributionResponseStatus';
+import type { FlowPremiumDistributionResponseTimeframe } from './flowPremiumDistributionResponseTimeframe';
 import type { FlowPremiumDistributionSource } from './flowPremiumDistributionSource';
 import type { FlowPremiumDistributionWidget } from './flowPremiumDistributionWidget';
 
 export interface FlowPremiumDistributionResponse {
   status: FlowPremiumDistributionResponseStatus;
   asOf: Date;
-  timeframe: 'today' | 'week';
+  timeframe: FlowPremiumDistributionResponseTimeframe;
   source: FlowPremiumDistributionSource;
   widgets: FlowPremiumDistributionWidget[];
 }

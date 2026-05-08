@@ -5,6 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { FlowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus } from './flowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus';
 
 export interface FlowPremiumDistributionHydrationDiagnostics {
   /** @minimum 0 */
@@ -27,13 +28,22 @@ export interface FlowPremiumDistributionHydrationDiagnostics {
   selectedPremiumCoverage: number;
   /** @minimum 0 */
   pageCount: number;
-  /** @nullable */
+  /**
+   * Latest trading date observed in the option snapshot payload.
+   * @nullable
+   */
   snapshotTradingDate: string | null;
-  /** @nullable */
+  /**
+   * Date used as the start of option trade-print hydration.
+   * @nullable
+   */
   tradeLookbackStartDate: string | null;
-  /** @nullable */
+  /**
+   * Date used as the start of option quote entitlement probing.
+   * @nullable
+   */
   quoteProbeDate: string | null;
-  quoteProbeStatus: 'not_attempted' | 'available' | 'forbidden' | 'unavailable' | 'failed';
+  quoteProbeStatus: FlowPremiumDistributionHydrationDiagnosticsQuoteProbeStatus;
   /** @nullable */
   quoteProbeMessage: string | null;
   /** @minimum 0 */
