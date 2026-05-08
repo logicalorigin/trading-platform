@@ -21,7 +21,10 @@ const optionalIntegerOption = (
   return value === undefined ? {} : { [optionName]: value };
 };
 
-if (!process.env.DATABASE_URL) {
+const resolvedDatabaseUrl =
+  process.env.LOCAL_DATABASE_URL ?? process.env.DATABASE_URL;
+
+if (!resolvedDatabaseUrl) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?",
   );
@@ -29,7 +32,7 @@ if (!process.env.DATABASE_URL) {
 
 const defaultPoolMax = (): number => {
   try {
-    return new URL(process.env.DATABASE_URL ?? "").hostname === "helium" ? 3 : 10;
+    return new URL(resolvedDatabaseUrl).hostname === "helium" ? 3 : 10;
   } catch {
     return 10;
   }
@@ -37,7 +40,7 @@ const defaultPoolMax = (): number => {
 
 const isHeliumDatabase = (): boolean => {
   try {
-    return new URL(process.env.DATABASE_URL ?? "").hostname === "helium";
+    return new URL(resolvedDatabaseUrl).hostname === "helium";
   } catch {
     return false;
   }
@@ -47,7 +50,7 @@ const heliumDatabase = isHeliumDatabase();
 const defaultConnectionTimeoutMillis = heliumDatabase ? 1_000 : undefined;
 
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: resolvedDatabaseUrl,
   max: readPositiveInteger("DB_POOL_MAX", defaultPoolMax()),
   ...(heliumDatabase ? { ssl: false } : {}),
   ...(readOptionalPositiveInteger("DB_CONNECTION_TIMEOUT_MS") !== undefined ||

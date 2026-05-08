@@ -98,5 +98,31 @@ IBKR_TRANSPORT = "tws"
 PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
 
+[userenv.development]
+LOCAL_DATABASE_URL = "postgres:///dev?host=/home/runner/workspace/.local/postgres/run&user=runner"
+
 [nix]
 channel = "stable-25_05"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Local Postgres"
+
+[[workflows.workflow]]
+name = "Local Postgres"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/start-local-postgres.sh"
+
+[workflows.workflow.metadata]
+outputType = "console"

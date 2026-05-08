@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PGROOT="${PGROOT:-/home/runner/workspace/.local/postgres}"
+mkdir -p "$PGROOT/run" "$PGROOT/log"
+if [ ! -s "$PGROOT/data/PG_VERSION" ]; then
+  initdb -D "$PGROOT/data" -U runner --auth=trust -E UTF8 --locale=C >/dev/null
+  cat > "$PGROOT/data/postgresql.auto.conf" <<EOF
+listen_addresses = ''
+unix_socket_directories = '$PGROOT/run'
+log_destination = 'stderr'
+logging_collector = off
+max_connections = 50
+shared_buffers = 64MB
+EOF
+fi
+if pg_ctl -D "$PGROOT/data" status >/dev/null 2>&1; then
+  echo "[local-postgres] already running"
+else
+  pg_ctl -D "$PGROOT/data" -l "$PGROOT/log/pg.log" -w start
+fi
+psql -h "$PGROOT/run" -U runner -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='dev'" | grep -q 1 \
+  || psql -h "$PGROOT/run" -U runner -d postgres -c "CREATE DATABASE dev" >/dev/null
+echo "[local-postgres] ready: postgres:///dev?host=$PGROOT/run"
+exec tail -F "$PGROOT/log/pg.log"
