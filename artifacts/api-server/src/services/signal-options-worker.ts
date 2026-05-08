@@ -1,6 +1,10 @@
 import { pool, type AlgoDeployment } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
+import {
   listEnabledSignalOptionsDeployments,
   runSignalOptionsShadowScan,
 } from "./signal-options-automation";
@@ -169,6 +173,7 @@ export function createSignalOptionsWorker(
   options: SignalOptionsWorkerOptions = {},
 ) {
   const dependencies = defaultDependencies(options);
+  const transientDbBackoff = createTransientPostgresBackoff();
   const wakeupMs = positiveInteger(
     options.wakeupMs,
     WORKER_WAKEUP_MS,
@@ -189,6 +194,11 @@ export function createSignalOptionsWorker(
     let releaseLock: ReleaseLock | null = null;
 
     try {
+      const backoffCheckMs = dependencies.now().getTime();
+      if (transientDbBackoff.isActive(backoffCheckMs)) {
+        return;
+      }
+
       releaseLock = await dependencies.acquireTickLock();
       if (!releaseLock) {
         return;
@@ -239,7 +249,18 @@ export function createSignalOptionsWorker(
         runtime.lastCheckedAtMs = nowMs;
         await runDeployment({ deployment, runtime, dependencies });
       }
+      transientDbBackoff.clear();
     } catch (error) {
+      if (isTransientPostgresError(error)) {
+        transientDbBackoff.markFailure({
+          error,
+          logger: dependencies.logger,
+          message:
+            "Signal-options database unavailable; pausing worker ticks",
+          nowMs: dependencies.now().getTime(),
+        });
+        return;
+      }
       dependencies.logger.warn(
         { err: error },
         "Signal-options shadow worker tick failed",

@@ -49,6 +49,27 @@ function applyIsolationHeaders(_req: express.Request, res: express.Response, nex
   next();
 }
 
+function isLongLivedStreamRequest(req: express.Request): boolean {
+  return Boolean(
+    req.url?.startsWith("/api/streams/") ||
+      req.url?.startsWith("/api/diagnostics/stream"),
+  );
+}
+
+function isExpectedStreamClose(
+  req: express.Request,
+  res: express.Response,
+  err: Error | undefined,
+): boolean {
+  if (!isLongLivedStreamRequest(req) || res.statusCode >= 500) {
+    return false;
+  }
+  if (!err) {
+    return true;
+  }
+  return /abort|close|premature/i.test(err.message);
+}
+
 app.use((req, _res, next) => {
   (req as { _startTime?: number })._startTime = Date.now();
   next();
@@ -70,6 +91,7 @@ app.use(
   pinoHttp({
     logger,
     customLogLevel(req, res, err) {
+      if (isExpectedStreamClose(req, res, err)) return "silent";
       if (err || res.statusCode >= 500) return "error";
       if (res.statusCode >= 400) return "warn";
       const start = (req as { _startTime?: number })._startTime;

@@ -68,6 +68,7 @@ import {
   DataUnavailableState,
   Pill,
 } from "../components/platform/primitives.jsx";
+import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
 import { _initialState, persistState } from "../lib/workspaceState";
 import {
   fmtCompactNumber,
@@ -107,6 +108,20 @@ import {
   setFlowTapeFilterState,
   useFlowTapeFilterState,
 } from "../features/platform/flowFilterStore";
+import {
+  CENTER_ALIGNED_FLOW_COLUMNS,
+  DEFAULT_FLOW_COLUMN_ORDER,
+  DEFAULT_FLOW_VISIBLE_COLUMNS,
+  FLOW_COLUMN_BY_ID,
+  FLOW_FIXED_COLUMNS,
+  FLOW_SORTABLE_COLUMNS,
+  FLOW_TAPE_OPTIONAL_COLUMNS,
+  RIGHT_ALIGNED_FLOW_COLUMNS,
+  expandFlowColumnIds,
+  normalizeFlowColumnOrder,
+  normalizeFlowVisibleColumns,
+} from "../features/flow/flowTapeColumns.js";
+import { FLOW_ROWS_OPTIONS } from "../features/flow/flowRowsConfig.js";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import {
   classifyFlowSentiment,
@@ -130,182 +145,16 @@ const getDisplayableFlowError = (providerSummary) => {
   }
   return message;
 };
-const FLOW_ROWS_OPTIONS = [24, 40, 60, 100];
 const FLOW_PREMIUM_WIDGET_COUNT = 10;
 const FLOW_PREMIUM_WIDGET_REFRESH_MS = 30_000;
 const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
   ["today", "Today"],
   ["week", "Week"],
 ];
-const FLOW_TAPE_OPTIONAL_COLUMNS = Object.freeze([
-  { id: "side", label: "SIDE", toggleLabel: "Side", width: "56px" },
-  { id: "execution", label: "EXEC", toggleLabel: "Exec", width: "56px" },
-  { id: "type", label: "TYPE", toggleLabel: "Type", width: "70px" },
-  { id: "fill", label: "FILL", toggleLabel: "Fill", width: "78px" },
-  { id: "bidAsk", label: "BID/ASK", toggleLabel: "Bid/Ask", width: "118px" },
-  { id: "bid", label: "BID", toggleLabel: "Bid", width: "58px", defaultVisible: false },
-  { id: "ask", label: "ASK", toggleLabel: "Ask", width: "58px", defaultVisible: false },
-  { id: "spread", label: "SPREAD", toggleLabel: "Spread", width: "78px", defaultVisible: false },
-  { id: "premium", label: "PREMIUM", toggleLabel: "Prem", width: "76px" },
-  { id: "size", label: "SIZE", toggleLabel: "Size", width: "50px" },
-  { id: "oi", label: "OI", toggleLabel: "OI", width: "50px" },
-  { id: "ratio", label: "V/OI", toggleLabel: "V/OI", width: "50px" },
-  { id: "dte", label: "DTE", toggleLabel: "DTE", width: "42px" },
-  { id: "iv", label: "IV", toggleLabel: "IV", width: "52px" },
-  { id: "spot", label: "SPOT", toggleLabel: "Spot", width: "62px" },
-  { id: "moneyness", label: "MNY", toggleLabel: "Mny", width: "54px", defaultVisible: false },
-  { id: "distance", label: "DIST", toggleLabel: "Dist", width: "54px", defaultVisible: false },
-  { id: "delta", label: "DELTA", toggleLabel: "Delta", width: "56px", defaultVisible: false },
-  { id: "gamma", label: "GAMMA", toggleLabel: "Gamma", width: "56px", defaultVisible: false },
-  { id: "theta", label: "THETA", toggleLabel: "Theta", width: "56px", defaultVisible: false },
-  { id: "vega", label: "VEGA", toggleLabel: "Vega", width: "54px", defaultVisible: false },
-  { id: "sourceBasis", label: "SOURCE", toggleLabel: "Source", width: "82px", defaultVisible: false },
-  { id: "confidence", label: "CONF", toggleLabel: "Conf", width: "78px", defaultVisible: false },
-  { id: "score", label: "SCORE", toggleLabel: "Score", width: "48px" },
-]);
-const DEFAULT_FLOW_VISIBLE_COLUMNS = FLOW_TAPE_OPTIONAL_COLUMNS.filter(
-  (column) => column.defaultVisible !== false,
-).map((column) => column.id);
 const HAS_PERSISTED_FLOW_FILTERS_OPEN = Object.prototype.hasOwnProperty.call(
   _initialState,
   "flowFiltersOpen",
 );
-const FLOW_COLUMN_BY_ID = new Map(
-  FLOW_TAPE_OPTIONAL_COLUMNS.map((column) => [column.id, column]),
-);
-const DEFAULT_FLOW_COLUMN_ORDER = FLOW_TAPE_OPTIONAL_COLUMNS.map(
-  (column) => column.id,
-);
-const FLOW_FIXED_COLUMNS = Object.freeze([
-  { id: "time", label: "AGE", width: "58px" },
-  { id: "ticker", label: "TICK", width: "62px" },
-  { id: "right", label: "C/P", width: "34px" },
-  { id: "expiration", label: "EXP", width: "62px" },
-  { id: "strike", label: "STRIKE", width: "64px" },
-  { id: "otmPercent", label: "% OTM", width: "58px" },
-  { id: "mark", label: "MARK", width: "62px" },
-  { id: "actions", label: "ACTIONS", width: "76px" },
-]);
-
-const RIGHT_ALIGNED_FLOW_COLUMNS = new Set([
-  "actions",
-  "ask",
-  "bid",
-  "bidAsk",
-  "delta",
-  "distance",
-  "dte",
-  "fill",
-  "gamma",
-  "iv",
-  "mark",
-  "moneyness",
-  "oi",
-  "otmPercent",
-  "premium",
-  "ratio",
-  "size",
-  "spot",
-  "spread",
-  "strike",
-  "theta",
-  "vega",
-]);
-const CENTER_ALIGNED_FLOW_COLUMNS = new Set([
-  "actions",
-  "execution",
-  "right",
-  "score",
-  "side",
-  "sourceBasis",
-  "type",
-]);
-const FLOW_SORTABLE_COLUMNS = new Set([
-  "confidence",
-  "delta",
-  "distance",
-  "dte",
-  "expiration",
-  "gamma",
-  "iv",
-  "mark",
-  "moneyness",
-  "oi",
-  "otmPercent",
-  "premium",
-  "ratio",
-  "right",
-  "score",
-  "size",
-  "spot",
-  "strike",
-  "ticker",
-  "time",
-  "theta",
-  "vega",
-]);
-
-const FLOW_COLUMN_ALIASES = Object.freeze({
-  price: ["fill"],
-});
-
-const expandFlowColumnIds = (value, { replaceRawBidAsk = false } = {}) => {
-  if (!Array.isArray(value)) return [];
-  const expanded = [];
-  let insertedBidAsk = false;
-  value.forEach((columnId) => {
-    if (
-      replaceRawBidAsk &&
-      ["bid", "ask", "spread"].includes(columnId)
-    ) {
-      if (!insertedBidAsk) {
-        expanded.push("bidAsk");
-        insertedBidAsk = true;
-      }
-      return;
-    }
-    if (FLOW_COLUMN_BY_ID.has(columnId)) {
-      expanded.push(columnId);
-      return;
-    }
-    expanded.push(...(FLOW_COLUMN_ALIASES[columnId] || []));
-  });
-  return expanded;
-};
-
-const normalizeFlowColumnOrder = (value) => {
-  const seen = new Set();
-  const ordered = expandFlowColumnIds(value, {
-    replaceRawBidAsk: !Array.isArray(value) || !value.includes("bidAsk"),
-  }).filter((columnId) => {
-    if (!FLOW_COLUMN_BY_ID.has(columnId) || seen.has(columnId)) return false;
-    seen.add(columnId);
-    return true;
-  });
-  return [
-    ...ordered,
-    ...DEFAULT_FLOW_COLUMN_ORDER.filter((columnId) => !seen.has(columnId)),
-  ];
-};
-
-const normalizeFlowVisibleColumns = (value) => {
-  const columns = Array.isArray(value)
-    ? expandFlowColumnIds(value, {
-        replaceRawBidAsk: !value.includes("bidAsk"),
-      }).filter((columnId) => FLOW_COLUMN_BY_ID.has(columnId))
-    : DEFAULT_FLOW_VISIBLE_COLUMNS;
-  const visible = columns.length
-    ? Array.from(new Set(columns))
-    : DEFAULT_FLOW_VISIBLE_COLUMNS;
-  if (visible.includes("bidAsk")) return visible;
-  const fillIndex = visible.indexOf("fill");
-  if (fillIndex < 0) return ["bidAsk", ...visible];
-  return [
-    ...visible.slice(0, fillIndex + 1),
-    "bidAsk",
-    ...visible.slice(fillIndex + 1),
-  ];
-};
 
 const getFlowContractLabel = (event) => {
   if (!event) return "";
@@ -2998,6 +2847,111 @@ const FlowOverviewPanel = ({
     };
   };
 
+  const flowTapeTableColumns = useMemo(
+    () =>
+      tapeColumns.map((column) => ({
+        id: column.id,
+        header: () => {
+          const activeSort = normalizeFlowSortBy(column.id) === sortBy;
+          const sortable = FLOW_SORTABLE_COLUMNS.has(column.id);
+          return (
+            <button
+              type="button"
+              data-testid={`flow-tape-header-${column.id}`}
+              disabled={!sortable}
+              aria-sort={
+                activeSort
+                  ? sortDir === "asc"
+                    ? "ascending"
+                    : "descending"
+                  : "none"
+              }
+              onClick={() => applyFlowSort(column.id)}
+              style={getTapeHeaderCellStyle(column)}
+            >
+              <span>{column.label}</span>
+              {activeSort ? (
+                <span aria-hidden="true">
+                  {sortDir === "asc" ? "▲" : "▼"}
+                </span>
+              ) : null}
+            </button>
+          );
+        },
+        cell: ({ row }) => renderTapeCell(column.id, row.original),
+        meta: {
+          align: getTapeCellAlignment(column.id),
+          width: column.width,
+        },
+      })),
+    [sortBy, sortDir, tapeColumns],
+  );
+
+  const getFlowTapeRowProps = useCallback(
+    (event, index) => {
+      const selected = selectedEvt?.id === event.id;
+      const pinned = pinnedEventId === event.id;
+      const executionMeta = getFlowExecutionMeta(event);
+      const rowAccent = selected
+        ? T.accent
+        : pinned || event.golden
+          ? T.amber
+          : executionMeta.color;
+      return {
+        className: joinMotionClasses(
+          "ra-interactive",
+          (selected || pinned) && "ra-focus-rail",
+        ),
+        onClick: () =>
+          setSelectedEvt((previous) =>
+            previous?.id === event.id ? null : event,
+          ),
+        onDoubleClick: () => onJumpToTrade?.(event),
+        onMouseEnter: (entry) => {
+          if (!selected) {
+            entry.currentTarget.style.background = pinned
+              ? `${T.amber}18`
+              : event.golden
+                ? `${T.amber}18`
+                : T.bg2;
+          }
+        },
+        onMouseLeave: (entry) => {
+          entry.currentTarget.style.background = selected
+            ? `${T.accent}12`
+            : pinned
+              ? `${T.amber}10`
+              : event.golden
+                ? `${T.amber}0f`
+                : "transparent";
+        },
+        style: {
+          ...motionVars({ accent: rowAccent }),
+          padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
+          fontSize: denseRows ? fs(9) : fs(10),
+          fontFamily: T.mono,
+          columnGap: sp(2),
+          alignItems: "center",
+          borderBottom: `1px solid ${T.border}15`,
+          background: selected
+            ? `${T.accent}12`
+            : pinned
+              ? `${T.amber}10`
+              : event.golden
+                ? `${T.amber}0f`
+                : "transparent",
+          borderLeft: selected
+            ? `2px solid ${T.accent}`
+            : pinned || event.golden
+              ? `2px solid ${T.amber}`
+              : "2px solid transparent",
+          cursor: "pointer",
+        },
+      };
+    },
+    [denseRows, onJumpToTrade, pinnedEventId, selectedEvt?.id],
+  );
+
   const filterPanel = (
     <Card
       data-testid="flow-filter-panel"
@@ -3915,7 +3869,7 @@ const FlowOverviewPanel = ({
                   >
                     {isFlowLoadingShell
                       ? "warming flow feed"
-                      : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} visible rows${filtered.length > rowsPerPage ? ` · capped at ${rowsPerPage}` : ""}`}
+                      : `${activeTicker || "Market-wide"} · ${visibleFlowRows.length} ${isMobileFlowLayout ? "visible" : "virtual"} rows${filtered.length > rowsPerPage ? ` · capped at ${rowsPerPage}` : ""}`}
                   </span>
                 </div>
                 <div
@@ -4127,11 +4081,71 @@ const FlowOverviewPanel = ({
                     )
                   ) : (
                     <>
-                      <div
-                        data-testid="flow-tape-header"
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: tapeGridTemplate,
+                      <DenseVirtualTable
+                        columns={flowTapeTableColumns}
+                        data={isFlowLoadingShell ? [] : visibleFlowRows}
+                        emptyState={
+                          isFlowLoadingShell ? (
+                            <div style={{ flex: 1, overflowY: "auto" }}>
+                              {Array.from({ length: rowsPerPage }).map((_, rowIndex) => (
+                                <div
+                                  key={`tape_placeholder_${rowIndex}`}
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns: tapeGridTemplate,
+                                    padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
+                                    columnGap: sp(2),
+                                    alignItems: "center",
+                                    borderBottom: `1px solid ${T.border}15`,
+                                  }}
+                                >
+                                  {tapeColumns.map((column, columnIndex) => (
+                                    <FlowLoadingBlock
+                                      key={`${column.id}_${rowIndex}`}
+                                      width={
+                                        column.id === "strike"
+                                          ? columnIndex % 2 === 0
+                                            ? "92%"
+                                            : "78%"
+                                          : "70%"
+                                      }
+                                      height={denseRows ? dim(11) : dim(14)}
+                                      style={{
+                                        justifySelf:
+                                          getTapeCellAlignment(column.id) === "right"
+                                            ? "end"
+                                            : getTapeCellAlignment(column.id) === "center"
+                                              ? "center"
+                                              : "start",
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ padding: sp(12) }}>
+                              <DataUnavailableState
+                                title={
+                                  flowEvents.length
+                                    ? "No prints match this scanner"
+                                    : "No live options activity"
+                                }
+                                detail={
+                                  flowEvents.length
+                                    ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
+                                    : emptyFlowDetail
+                                }
+                              />
+                            </div>
+                          )
+                        }
+                        getCellProps={(columnId) => ({
+                          style: getTapeCellStyle(columnId),
+                        })}
+                        getRowId={(event) => event.id}
+                        getRowProps={getFlowTapeRowProps}
+                        headerStyle={{
                           padding: sp("6px 10px"),
                           fontSize: fs(8),
                           fontWeight: 400,
@@ -4139,196 +4153,28 @@ const FlowOverviewPanel = ({
                           letterSpacing: "0.08em",
                           borderBottom: `1px solid ${T.border}`,
                           columnGap: sp(2),
-                          flexShrink: 0,
                           fontFamily: T.mono,
                         }}
-                      >
-                        {tapeColumns.map((column) => {
-                          const sortable = FLOW_SORTABLE_COLUMNS.has(column.id);
-                          const activeSort = normalizeFlowSortBy(column.id) === sortBy;
-                          return (
-                            <button
-                              key={column.id}
-                              type="button"
-                              data-testid={`flow-tape-header-${column.id}`}
-                              disabled={!sortable}
-                              aria-sort={
-                                activeSort
-                                  ? sortDir === "asc"
-                                    ? "ascending"
-                                    : "descending"
-                                  : "none"
-                              }
-                              onClick={() => applyFlowSort(column.id)}
-                              style={getTapeHeaderCellStyle(column)}
-                            >
-                              <span>{column.label}</span>
-                              {activeSort ? (
-                                <span aria-hidden="true">
-                                  {sortDir === "asc" ? "▲" : "▼"}
-                                </span>
-                              ) : null}
-                            </button>
-                          );
-                        })}
-                      </div>
+                        minWidth={tapeTableMinWidth}
+                        overscan={18}
+                        rowHeight={denseRows ? 34 : 42}
+                        rowTestId="flow-tape-row"
+                      />
 
-                      {isFlowLoadingShell ? (
-                        <div style={{ flex: 1, overflowY: "auto" }}>
-                          {Array.from({ length: rowsPerPage }).map((_, rowIndex) => (
-                            <div
-                              key={`tape_placeholder_${rowIndex}`}
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: tapeGridTemplate,
-                                padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
-                                columnGap: sp(2),
-                                alignItems: "center",
-                                borderBottom: `1px solid ${T.border}15`,
-                              }}
-                            >
-                              {tapeColumns.map((column, columnIndex) => (
-                                <FlowLoadingBlock
-                                  key={`${column.id}_${rowIndex}`}
-                                  width={
-                                    column.id === "strike"
-                                      ? columnIndex % 2 === 0
-                                        ? "92%"
-                                        : "78%"
-                                      : "70%"
-                                  }
-                                  height={denseRows ? dim(11) : dim(14)}
-                                  style={{
-                                    justifySelf:
-                                      getTapeCellAlignment(column.id) === "right"
-                                        ? "end"
-                                        : getTapeCellAlignment(column.id) === "center"
-                                          ? "center"
-                                          : "start",
-                                  }}
-                                />
-                              ))}
-                            </div>
-                          ))}
+                      {!isFlowLoadingShell && filtered.length > rowsPerPage ? (
+                        <div
+                          style={{
+                            padding: sp("6px 10px"),
+                            borderTop: `1px solid ${T.border}`,
+                            fontSize: fs(8),
+                            color: T.textDim,
+                            fontFamily: T.mono,
+                          }}
+                        >
+                          Showing the first {rowsPerPage} matching prints. Increase row count
+                          to inspect more without re-rendering the full tape.
                         </div>
-                      ) : filtered.length ? (
-                        <>
-                          <div style={{ flex: 1, overflowY: "auto" }}>
-                            {visibleFlowRows.map((event, index) => {
-                              const selected = selectedEvt?.id === event.id;
-                              const pinned = pinnedEventId === event.id;
-                              const executionMeta = getFlowExecutionMeta(event);
-                              return (
-                                <div
-                                  key={event.id}
-                                  data-testid="flow-tape-row"
-                                  className={joinMotionClasses(
-                                    "ra-row-enter",
-                                    "ra-interactive",
-                                    (selected || pinned) && "ra-focus-rail",
-                                  )}
-                                  onClick={() =>
-                                    setSelectedEvt((previous) =>
-                                      previous?.id === event.id ? null : event,
-                                    )
-                                  }
-                                  onDoubleClick={() => onJumpToTrade?.(event)}
-                                  style={{
-                                    ...motionRowStyle(index, 7, 120),
-                                    ...motionVars({
-                                      accent: selected
-                                        ? T.accent
-                                        : pinned || event.golden
-                                          ? T.amber
-                                          : executionMeta.color,
-                                    }),
-                                    display: "grid",
-                                    gridTemplateColumns: tapeGridTemplate,
-                                    padding: denseRows ? sp("4px 10px") : sp("7px 10px"),
-                                    fontSize: denseRows ? fs(9) : fs(10),
-                                    fontFamily: T.mono,
-                                    columnGap: sp(2),
-                                    alignItems: "center",
-                                    borderBottom: `1px solid ${T.border}15`,
-                                    background: selected
-                                      ? `${T.accent}12`
-                                      : pinned
-                                        ? `${T.amber}10`
-                                        : event.golden
-                                          ? `${T.amber}0f`
-                                          : "transparent",
-                                    borderLeft: selected
-                                      ? `2px solid ${T.accent}`
-                                      : pinned
-                                        ? `2px solid ${T.amber}`
-                                        : event.golden
-                                          ? `2px solid ${T.amber}`
-                                          : "2px solid transparent",
-                                    cursor: "pointer",
-                                  }}
-                                  onMouseEnter={(entry) => {
-                                    if (!selected) {
-                                      entry.currentTarget.style.background = pinned
-                                        ? `${T.amber}18`
-                                        : event.golden
-                                          ? `${T.amber}18`
-                                          : T.bg2;
-                                    }
-                                  }}
-                                  onMouseLeave={(entry) => {
-                                    entry.currentTarget.style.background = selected
-                                      ? `${T.accent}12`
-                                      : pinned
-                                        ? `${T.amber}10`
-                                        : event.golden
-                                          ? `${T.amber}0f`
-                                          : "transparent";
-                                  }}
-                                >
-                                  {tapeColumns.map((column) => (
-                                    <div
-                                      key={`${event.id}_${column.id}`}
-                                      style={getTapeCellStyle(column.id)}
-                                    >
-                                      {renderTapeCell(column.id, event)}
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {filtered.length > rowsPerPage ? (
-                            <div
-                              style={{
-                                padding: sp("6px 10px"),
-                                borderTop: `1px solid ${T.border}`,
-                                fontSize: fs(8),
-                                color: T.textDim,
-                                fontFamily: T.mono,
-                              }}
-                            >
-                              Showing the first {rowsPerPage} matching prints. Narrow the scanner
-                              or increase row count to inspect more.
-                            </div>
-                          ) : null}
-                        </>
-                      ) : (
-                        <div style={{ padding: sp(12) }}>
-                          <DataUnavailableState
-                            title={
-                              flowEvents.length
-                                ? "No prints match this scanner"
-                                : "No live options activity"
-                            }
-                            detail={
-                              flowEvents.length
-                                ? "Adjust include/exclude tickers, minimum premium, or flow-type filters to widen the tape."
-                                : emptyFlowDetail
-                            }
-                          />
-                        </div>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </div>

@@ -18,6 +18,7 @@ const quoteData: Record<
 
 type MarketGridTestOptions = {
   showVolume?: boolean;
+  includeConfirmedHistory?: boolean;
   workspaceState?: Record<string, unknown>;
 };
 
@@ -148,6 +149,23 @@ async function mockMarketApi(
       const historicalWindow =
         url.searchParams.has("from") || url.searchParams.has("to");
       await new Promise((resolve) => setTimeout(resolve, 450));
+      const confirmedHistoryEvents: Record<string, unknown[]> = {
+        SPY: [
+          flowEvent("SPY", {
+            id: "SPY-confirmed-history",
+            provider: "polygon",
+            basis: "trade",
+            sourceBasis: "confirmed_trade",
+            premium: 125_000,
+            size: 25,
+            strike: 510,
+            right: "call",
+            optionTicker: "SPYC510",
+            isUnusual: true,
+            unusualScore: 1.4,
+          }),
+        ],
+      };
       const eventsBySymbol: Record<string, unknown[]> = {
         SPY: [
           flowEvent("SPY", {
@@ -198,11 +216,15 @@ async function mockMarketApi(
       };
       body = {
         events:
-          scope === "all" &&
-          ((limit >= 80 && lineBudget === 40) ||
-            (historicalWindow && limit >= 1_000))
-            ? eventsBySymbol[symbol] || []
-            : [],
+          scope === "all" && historicalWindow && options.includeConfirmedHistory
+            ? confirmedHistoryEvents[symbol] || []
+            : scope === "all" && !historicalWindow && options.includeConfirmedHistory
+              ? eventsBySymbol[symbol] || []
+            : scope === "all" &&
+                ((limit >= 80 && lineBudget === 40) ||
+                  (historicalWindow && limit >= 1_000))
+              ? eventsBySymbol[symbol] || []
+              : [],
         source: {
           provider: "ibkr",
           status: "live",
@@ -347,6 +369,39 @@ test("Market chart flow honors shared type filters while ignoring ticker queries
   await expect(qqqMarker).toBeVisible({ timeout: 30_000 });
   await expect(qqqMarker).toHaveAttribute("data-chart-event-symbol", "QQQ");
   await expect(qqqMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
+});
+
+test("Market chart keeps confirmed prints and IBKR snapshot activity as separate mixed markers", async ({
+  page,
+}) => {
+  const flowUrls: string[] = [];
+  await mockMarketApi(page, flowUrls, {
+    showVolume: false,
+    includeConfirmedHistory: true,
+  });
+  await openMarketGrid(page, { showVolume: false });
+
+  const surface = page.getByTestId("market-mini-chart-0-surface");
+  await expect
+    .poll(
+      async () =>
+        Number(await surface.getAttribute("data-chart-flow-confirmed-event-count")),
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0);
+  await expect
+    .poll(
+      async () =>
+        Number(await surface.getAttribute("data-chart-flow-snapshot-event-count")),
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0);
+  await expect(
+    surface.locator('[data-chart-flow-marker-basis="confirmed_trade"]'),
+  ).toBeVisible();
+  await expect(
+    surface.locator('[data-chart-flow-marker-basis="snapshot_activity"]'),
+  ).toBeVisible();
 });
 
 test("Market chart grid premium-flow strips and flow-volume overlays render with regular volume hidden", async ({

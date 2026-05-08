@@ -1,4 +1,4 @@
-modules = ["nodejs-24", "python-3.11"]
+modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 audio = true
 
 [deployment]
@@ -22,11 +22,9 @@ requiredFiles = [".replit", "replit.nix"]
 
 [[ports]]
 localPort = 3002
-externalPort = 6800
 
 [[ports]]
 localPort = 3007
-externalPort = 3002
 
 [[ports]]
 localPort = 3008
@@ -53,6 +51,10 @@ localPort = 8082
 externalPort = 4200
 
 [[ports]]
+localPort = 8091
+externalPort = 6800
+
+[[ports]]
 localPort = 18081
 externalPort = 8008
 
@@ -68,6 +70,10 @@ externalPort = 8099
 [[ports]]
 localPort = 18084
 externalPort = 9000
+
+[[ports]]
+localPort = 18088
+externalPort = 3002
 
 [[ports]]
 localPort = 18747
@@ -93,3 +99,4 @@ PYTHONPATH = "/home/runner/.codex/skills/.python-deps"
 TZ = "America/Denver"
 
 [nix]
+channel = "stable-25_05"

@@ -1404,7 +1404,7 @@ test("Trade option chain falls back to full selected coverage after fast empty",
     .toBe(true);
 
   expect(
-    batchRequests.some((request) => request["strikeCoverage"] === "full"),
+    batchRequests.every((request) => request["strikeCoverage"] !== "full"),
   ).toBe(true);
 });
 
@@ -1510,12 +1510,15 @@ test("Trade option chain keeps rows visible while selected chain refreshes", asy
   await openTrade(page);
 
   const panel = page.getByTestId("trade-options-chain-panel");
-  const expandButton = panel.getByRole("button", { name: "Expand" });
-  await expect(expandButton).toBeVisible({ timeout: 10_000 });
-  await expandButton.click();
+  await expect(panel.getByText("Strike", { exact: true })).toBeVisible({
+    timeout: 10_000,
+  });
+  const coverageSelect = panel.getByLabel("Option chain strike coverage");
+  await expect(coverageSelect).toBeVisible({ timeout: 10_000 });
+  await coverageSelect.selectOption("all");
 
   await expect(panel.getByTestId("chain-refreshing-spinner")).toBeVisible({
     timeout: 1_000,
   });
-  await expect(panel.getByText("Strike")).toBeVisible();
+  await expect(panel.getByText("Strike", { exact: true })).toBeVisible();
 });

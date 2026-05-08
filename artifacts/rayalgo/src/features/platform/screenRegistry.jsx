@@ -8,6 +8,9 @@ const MarketScreen = lazyWithRetry(() => import("../../screens/MarketScreen.jsx"
 const FlowScreen = lazyWithRetry(() => import("../../screens/FlowScreen.jsx"), {
   label: "FlowScreen",
 });
+const GexScreen = lazyWithRetry(() => import("../../screens/GexScreen.jsx"), {
+  label: "GexScreen",
+});
 const TradeScreen = lazyWithRetry(() => import("../../screens/TradeScreen.jsx"), {
   label: "TradeScreen",
 });
@@ -34,6 +37,7 @@ const SettingsScreen = lazyWithRetry(() => import("../../screens/SettingsScreen.
 export const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },
   { id: "flow", label: "Flow", icon: "◈" },
+  { id: "gex", label: "GEX", icon: "✳" },
   { id: "trade", label: "Trade", icon: "◧" },
   { id: "account", label: "Account", icon: "▣" },
   { id: "research", label: "Research", icon: "◎" },
@@ -50,6 +54,7 @@ export const buildMountedScreenState = (activeScreen) =>
 
 export const MemoMarketScreen = memo(MarketScreen);
 export const MemoFlowScreen = memo(FlowScreen);
+export const MemoGexScreen = memo(GexScreen);
 export const MemoTradeScreen = memo(TradeScreen);
 export const MemoAccountScreen = memo(AccountScreen);
 export const MemoResearchScreen = memo(ResearchScreen);

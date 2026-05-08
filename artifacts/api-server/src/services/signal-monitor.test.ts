@@ -7,6 +7,8 @@ process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 const signalMonitorModule = await import("./signal-monitor");
 const {
   aggregateCompletedMinuteBars,
+  buildSignalMonitorDbUnavailableProfile,
+  createSignalMonitorDbUnavailableError,
   evaluateSignalMonitorMatrixStateFromCompletedBars,
 } = signalMonitorModule;
 
@@ -102,4 +104,28 @@ test("signal matrix state returns neutral unavailable rows without persisting", 
   assert.equal(state.status, "unavailable");
   assert.equal(state.active, true);
   assert.match(state.id, /profile-1:AAPL:2m/);
+});
+
+test("signal monitor DB fallback profile is visibly degraded", () => {
+  const profile = buildSignalMonitorDbUnavailableProfile(
+    "live",
+    new Date("2026-05-07T15:45:00.000Z"),
+  );
+
+  assert.equal(profile.id, "db-unavailable-live");
+  assert.equal(profile.environment, "live");
+  assert.equal(profile.enabled, false);
+  assert.match(profile.lastError || "", /Postgres is unavailable/);
+  assert.equal(profile.lastEvaluatedAt, null);
+});
+
+test("signal monitor DB unavailable error is a visible retryable 503", () => {
+  const cause = new Error("Connection terminated due to connection timeout");
+  const error = createSignalMonitorDbUnavailableError(cause);
+
+  assert.equal(error.statusCode, 503);
+  assert.equal(error.code, "signal_monitor_db_unavailable");
+  assert.equal(error.expose, true);
+  assert.match(error.detail || "", /Retry after Postgres connectivity recovers/);
+  assert.equal((error as Error & { cause?: unknown }).cause, cause);
 });

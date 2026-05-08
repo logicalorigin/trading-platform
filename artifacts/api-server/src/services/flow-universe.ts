@@ -3,6 +3,7 @@ import {
   flowUniverseRankingsTable,
   universeCatalogListingsTable,
 } from "@workspace/db/schema";
+import { isTransientPostgresError } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 
 export type FlowUniverseMode = "watchlist" | "market" | "hybrid";
@@ -338,6 +339,36 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       : null;
   }
 
+  async function loadFallbackFillSymbols(): Promise<{
+    symbols: string[];
+    error: string | null;
+  }> {
+    if (!runtimeOptions.fetchFallbackSymbols) {
+      return {
+        symbols: uniqueSymbols(runtimeOptions.fallbackSymbols),
+        error: null,
+      };
+    }
+
+    try {
+      return {
+        symbols: uniqueSymbols([
+          ...(await runtimeOptions.fetchFallbackSymbols()),
+          ...runtimeOptions.fallbackSymbols,
+        ]),
+        error: null,
+      };
+    } catch (error) {
+      return {
+        symbols: uniqueSymbols(runtimeOptions.fallbackSymbols),
+        error:
+          error instanceof Error
+            ? error.message
+            : "Flow universe fallback symbol fetch failed.",
+      };
+    }
+  }
+
   async function loadCatalogCandidates(): Promise<RankingCandidate[]> {
     const rows = await runtimeOptions.db
       .select({
@@ -560,7 +591,13 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           },
         });
     } catch (error) {
-      if (isMissingFlowUniverseRankingsTableError(error)) {
+      if (
+        isMissingFlowUniverseRankingsTableError(error) ||
+        isTransientPostgresError(error)
+      ) {
+        degradedReason = isTransientPostgresError(error)
+          ? "Flow universe liquidity ranking persistence unavailable."
+          : degradedReason;
         return false;
       }
       throw error;
@@ -569,9 +606,12 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     return true;
   }
 
-  async function persistSelection(symbols: readonly string[], selectedAt: Date) {
+  async function persistSelection(
+    symbols: readonly string[],
+    selectedAt: Date,
+  ): Promise<string | null> {
     const uniqueSelection = uniqueSymbols(symbols);
-    if (!uniqueSelection.length) return;
+    if (!uniqueSelection.length) return null;
     try {
       await runtimeOptions.db
         .update(flowUniverseRankingsTable)
@@ -603,11 +643,17 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           },
         });
     } catch (error) {
-      if (isMissingFlowUniverseRankingsTableError(error)) {
-        return;
+      if (
+        isMissingFlowUniverseRankingsTableError(error) ||
+        isTransientPostgresError(error)
+      ) {
+        return isTransientPostgresError(error)
+          ? "Flow universe selection persistence unavailable."
+          : null;
       }
       throw error;
     }
+    return null;
   }
 
   async function refresh(input: { pinnedSymbols?: readonly string[] } = {}) {
@@ -649,17 +695,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         eligibleCandidateSymbols.size < runtimeOptions.targetSize &&
         runtimeOptions.fetchFallbackSymbols
       ) {
-        try {
-          fallbackFillSymbols = uniqueSymbols([
-            ...(await runtimeOptions.fetchFallbackSymbols()),
-            ...runtimeOptions.fallbackSymbols,
-          ]);
-        } catch (error) {
-          fallbackFillError =
-            error instanceof Error
-              ? error.message
-              : "Flow universe fallback symbol fetch failed.";
-        }
+        const fallback = await loadFallbackFillSymbols();
+        fallbackFillSymbols = fallback.symbols;
+        fallbackFillError = fallback.error;
       }
       const selected = rankFlowUniverseCandidates({
         candidates,
@@ -675,7 +713,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         throw new Error("No eligible IBKR-optionable symbols found for flow universe.");
       }
 
-      await persistSelection(selected, refreshedAt);
+      const persistenceDegradedReason = await persistSelection(selected, refreshedAt);
       selectedSymbols = selected;
       lastGoodSymbols = selected;
       lastRefreshAt = refreshedAt;
@@ -692,14 +730,43 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         shortfallReason(selected.length) ??
         (fallbackFillError
           ? `Fallback universe fill skipped: ${fallbackFillError}`
-          : null);
+          : persistenceDegradedReason);
       return selectedSymbols;
     } catch (error) {
-      degradedReason =
+      const refreshedAt = now();
+      const fallback = await loadFallbackFillSymbols();
+      const selected = rankFlowUniverseCandidates({
+        candidates: [],
+        pinnedSymbols:
+          runtimeOptions.mode === "hybrid"
+            ? input.pinnedSymbols ?? runtimeOptions.fallbackSymbols
+            : [],
+        fallbackSymbols: fallback.symbols,
+        targetSize: runtimeOptions.targetSize,
+        minPrice: runtimeOptions.minPrice,
+        minDollarVolume: runtimeOptions.minDollarVolume,
+        now: refreshedAt,
+      });
+
+      selectedSymbols = selected.length
+        ? selected
+        : lastGoodSymbols.length
+          ? lastGoodSymbols
+          : uniqueSymbols(runtimeOptions.fallbackSymbols);
+      lastGoodSymbols = selectedSymbols;
+      lastRefreshAt = refreshedAt;
+      lastGoodAt = refreshedAt;
+      rankedAt = refreshedAt;
+      cooldownCount = 0;
+
+      const refreshError =
         error instanceof Error ? error.message : "Flow universe refresh failed.";
-      selectedSymbols = lastGoodSymbols.length
-        ? lastGoodSymbols
-        : uniqueSymbols(runtimeOptions.fallbackSymbols);
+      degradedReason =
+        fallback.error
+          ? `Flow universe refresh failed; provider fallback also failed: ${fallback.error}`
+          : isTransientPostgresError(error)
+            ? "Flow universe database unavailable; using provider fallback universe."
+            : `Flow universe refresh failed; using provider fallback universe: ${refreshError}`;
       degradedReason =
         shortfallReason(selectedSymbols.length) ?? degradedReason;
       return selectedSymbols;

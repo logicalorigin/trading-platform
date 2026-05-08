@@ -5,6 +5,11 @@ import path from "node:path";
 import { desc, eq } from "drizzle-orm";
 import { db, pineScriptsTable, type PineScript } from "@workspace/db";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
+import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
 
 type CreatePineScriptInput = {
   scriptKey?: string | null;
@@ -45,6 +50,7 @@ type BundledPineSeed = CreatePineScriptInput & {
 type StorageMode = "db" | "fallback";
 
 const RAY_REPLICA_PINE_SCRIPT_KEY = "rayalgo-replica-smc-pro-v3";
+const pineScriptsDbBackoff = createTransientPostgresBackoff();
 
 function resolveApiServerDataRoot(): string {
   const candidates = [
@@ -82,6 +88,23 @@ function isMissingRelationError(error: unknown): boolean {
 
   const cause = error.cause;
   return isRecord(cause) && cause.code === "42P01";
+}
+
+function shouldUseFallbackStorage(error: unknown): boolean {
+  return isMissingRelationError(error) || isTransientPostgresError(error);
+}
+
+function markPineScriptsDbUnavailable(error: unknown): void {
+  pineScriptsDbBackoff.markFailure({
+    error,
+    logger,
+    message: "Pine script database unavailable; serving file fallback",
+    nowMs: Date.now(),
+  });
+}
+
+function isPineScriptsDbBackoffActive(): boolean {
+  return pineScriptsDbBackoff.isActive(Date.now());
 }
 
 function normalizeNullableText(
@@ -224,6 +247,13 @@ async function readScriptsFromStorage(): Promise<{
   scripts: PineScript[];
   mode: StorageMode;
 }> {
+  if (isPineScriptsDbBackoffActive()) {
+    return {
+      scripts: await readFallbackScripts(),
+      mode: "fallback",
+    };
+  }
+
   try {
     const scripts = await db
       .select()
@@ -237,7 +267,10 @@ async function readScriptsFromStorage(): Promise<{
       mode: "db",
     };
   } catch (error) {
-    if (isMissingRelationError(error)) {
+    if (shouldUseFallbackStorage(error)) {
+      if (isTransientPostgresError(error)) {
+        markPineScriptsDbUnavailable(error);
+      }
       return {
         scripts: await readFallbackScripts(),
         mode: "fallback",
@@ -327,6 +360,33 @@ async function ensureBundledPineScriptsStored(): Promise<PineScript[]> {
         })),
       );
     } catch (error) {
+      if (shouldUseFallbackStorage(error)) {
+        if (isTransientPostgresError(error)) {
+          markPineScriptsDbUnavailable(error);
+        }
+        const now = new Date();
+        const nextScripts = sortScriptsDescending([
+          ...scripts,
+          ...missingSeeds.map<PineScript>((seed) => ({
+            id: randomUUID(),
+            scriptKey: seed.scriptKey,
+            name: ensurePineScriptName(seed.name),
+            description: normalizeNullableText(seed.description),
+            sourceCode: ensurePineSourceCode(seed.sourceCode),
+            status: seed.status ?? "draft",
+            defaultPaneType: seed.defaultPaneType ?? "price",
+            chartAccessEnabled: seed.chartAccessEnabled ?? false,
+            notes: normalizeNullableText(seed.notes),
+            lastError: normalizeNullableText(seed.lastError),
+            tags: normalizeTags(seed.tags),
+            metadata: normalizeMetadata(seed.metadata),
+            createdAt: now,
+            updatedAt: now,
+          })),
+        ]);
+        await writeFallbackScripts(nextScripts);
+        return nextScripts;
+      }
       if (!(isRecord(error) && error.code === "23505")) {
         throw error;
       }
@@ -435,8 +495,11 @@ export async function createPineScript(input: CreatePineScriptInput) {
       .returning();
     return pineScriptToResponse(created);
   } catch (error) {
-    if (!isMissingRelationError(error)) {
+    if (!shouldUseFallbackStorage(error)) {
       throw error;
+    }
+    if (isTransientPostgresError(error)) {
+      markPineScriptsDbUnavailable(error);
     }
   }
 
@@ -506,8 +569,11 @@ export async function updatePineScript(
 
     return pineScriptToResponse(updated);
   } catch (error) {
-    if (!isMissingRelationError(error)) {
+    if (!shouldUseFallbackStorage(error)) {
       throw error;
+    }
+    if (isTransientPostgresError(error)) {
+      markPineScriptsDbUnavailable(error);
     }
   }
 

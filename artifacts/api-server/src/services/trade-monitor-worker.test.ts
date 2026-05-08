@@ -159,6 +159,39 @@ test("trade monitor worker skips a tick when the advisory lock is unavailable", 
   assert.equal(listCalls, 0);
 });
 
+test("trade monitor worker backs off transient database lock failures", async () => {
+  let now = new Date("2026-04-24T14:33:00.000Z");
+  let lockCalls = 0;
+  const warnings: string[] = [];
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [profile()],
+    acquireTickLock: async () => {
+      lockCalls += 1;
+      throw new Error("timeout exceeded when trying to connect");
+    },
+    now: () => now,
+    logger: {
+      debug: () => {},
+      info: () => {},
+      warn: (...args: unknown[]) => {
+        warnings.push(String(args[1]));
+      },
+    },
+  });
+
+  await worker.runOnce();
+  now = new Date("2026-04-24T14:33:30.000Z");
+  await worker.runOnce();
+  now = new Date("2026-04-24T14:34:01.000Z");
+  await worker.runOnce();
+
+  assert.equal(lockCalls, 2);
+  assert.deepEqual(warnings, [
+    "Signal monitor database unavailable; pausing worker ticks",
+    "Signal monitor database unavailable; pausing worker ticks",
+  ]);
+});
+
 test("trade monitor worker prevents concurrent evaluation of the same profile", async () => {
   let evaluateCalls = 0;
   let releaseEvaluation = () => {};

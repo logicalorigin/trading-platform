@@ -6,6 +6,10 @@ import {
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
+import {
   evaluateSignalMonitorSymbolFromCompletedBars,
   listEnabledSignalMonitorProfiles,
   loadSignalMonitorCompletedBars,
@@ -285,6 +289,7 @@ export function createTradeMonitorWorker(
   options: TradeMonitorWorkerOptions = {},
 ) {
   const dependencies = defaultDependencies(options);
+  const transientDbBackoff = createTransientPostgresBackoff();
   const wakeupMs = positiveInteger(
     options.wakeupMs,
     WORKER_WAKEUP_MS,
@@ -305,6 +310,11 @@ export function createTradeMonitorWorker(
     let releaseLock: ReleaseLock | null = null;
 
     try {
+      const backoffCheckMs = dependencies.now().getTime();
+      if (transientDbBackoff.isActive(backoffCheckMs)) {
+        return;
+      }
+
       releaseLock = await dependencies.acquireTickLock();
       if (!releaseLock) {
         return;
@@ -349,7 +359,17 @@ export function createTradeMonitorWorker(
         runtime.lastCheckedAtMs = nowMs;
         await runProfile({ profile, runtime, dependencies });
       }
+      transientDbBackoff.clear();
     } catch (error) {
+      if (isTransientPostgresError(error)) {
+        transientDbBackoff.markFailure({
+          error,
+          logger: dependencies.logger,
+          message: "Signal monitor database unavailable; pausing worker ticks",
+          nowMs: dependencies.now().getTime(),
+        });
+        return;
+      }
       dependencies.logger.warn(
         { err: error },
         "Signal monitor worker tick failed",

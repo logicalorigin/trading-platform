@@ -81,6 +81,46 @@ test("selectSignalOptionsContractFromChain maps buy to call above and sell to pu
   assert.equal(put?.contract?.strike, 99);
 });
 
+test("signal-options candidates preserve RayReplica signal to shadow action mapping", () => {
+  const signalAt = "2026-04-28T15:30:00.000Z";
+  const state = {
+    profileId: "11111111-1111-1111-1111-111111111111",
+    symbol: "spy",
+    timeframe: "15m",
+    currentSignalDirection: "sell",
+    currentSignalAt: signalAt,
+    currentSignalPrice: 508.25,
+    latestBarAt: "2026-04-28T15:45:00.000Z",
+    barsSinceSignal: 1,
+    fresh: true,
+    status: "ok",
+  } as never;
+  const candidate =
+    __signalOptionsAutomationInternalsForTests.buildCandidateFromSignal({
+      deployment: {
+        id: "deployment-123456789",
+        name: "Shadow Options",
+      } as never,
+      state,
+      signalAt,
+      signalKey: "profile:SPY:15m:sell:2026-04-28T15:30:00.000Z",
+      signalMetadata: {
+        eventId: "event-1",
+        source: "rayreplica",
+        filterState: { mtf: "aligned" },
+      },
+    });
+
+  assert.equal(candidate.optionRight, "put");
+  assert.equal(candidate.action?.optionAction, "buy_put");
+  assert.equal(candidate.action?.executionMode, "shadow");
+  assert.equal(candidate.action?.destinationAccountId, "shadow");
+  assert.equal(candidate.action?.brokerSubmission, false);
+  assert.equal(candidate.signal?.source, "rayreplica");
+  assert.equal(candidate.signal?.barsSinceSignal, 1);
+  assert.deepEqual(candidate.signal?.filterState, { mtf: "aligned" });
+});
+
 test("buildSignalOptionsShadowOrderPlan enforces liquidity and premium budget", () => {
   const liquid = quote(101, "call");
   const orderPlan = buildSignalOptionsShadowOrderPlan(liquid, profile);
@@ -250,7 +290,7 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
       events: [],
     });
 
-  assert.equal(stages.length, 7);
+  assert.equal(stages.length, 8);
   assert.equal(
     stages.find((stage) => stage.id === "liquidity_risk_gate")?.status,
     "blocked",

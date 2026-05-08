@@ -116,8 +116,6 @@ const SIGNAL_OPTIONS_ACTION_LABELS = {
   shadow_filled: "Shadow Filled",
   partial_shadow: "Partial Shadow",
   manual_override: "Manual Override",
-  live_previewed: "Live Previewed",
-  live_submitted: "Live Submitted",
   closed: "Closed",
   mismatch: "Mismatch",
 };
@@ -285,11 +283,10 @@ const formatContractLabel = (contract) => {
 };
 
 const signalOptionsActionColor = (status) => {
-  if (status === "shadow_filled" || status === "live_submitted") return T.green;
+  if (status === "shadow_filled") return T.green;
   if (status === "manual_override" || status === "partial_shadow") return T.amber;
   if (status === "blocked" || status === "mismatch") return T.red;
   if (status === "closed") return T.textDim;
-  if (status === "live_previewed") return T.purple;
   return T.cyan;
 };
 
@@ -322,6 +319,40 @@ const shadowLinkSummary = (shadowLink) => {
     link.attributionStatus ? String(link.attributionStatus).replace(/_/g, " ") : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" / ") : "Shadow ledger link pending";
+};
+
+const signalActionLabel = (signal, action) => {
+  const signalRecord = asRecord(signal);
+  const actionRecord = asRecord(action);
+  const direction = signalRecord.direction || actionRecord.signalDirection;
+  const optionAction = actionRecord.optionAction;
+  if (optionAction) return formatEnumLabel(optionAction).toUpperCase();
+  if (direction === "sell") return "BUY PUT";
+  if (direction === "buy") return "BUY CALL";
+  return MISSING_VALUE;
+};
+
+const signalFreshnessLabel = (signal) => {
+  const signalRecord = asRecord(signal);
+  if (signalRecord.fresh === true) return "FRESH";
+  if (signalRecord.fresh === false) return "STALE";
+  return MISSING_VALUE;
+};
+
+const signalBarsSinceLabel = (signal) => {
+  const barsSinceSignal = asRecord(signal).barsSinceSignal;
+  return Number.isFinite(Number(barsSinceSignal))
+    ? `${Number(barsSinceSignal)} bars`
+    : MISSING_VALUE;
+};
+
+const signalFilterStateLabel = (signal) => {
+  const filterState = asRecord(asRecord(signal).filterState);
+  const entries = Object.entries(filterState)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 3)
+    .map(([key, value]) => `${formatEnumLabel(key)} ${String(value)}`);
+  return entries.length ? entries.join(" / ") : MISSING_VALUE;
 };
 
 const isGatewayReadyForAlgo = (session) => {
@@ -471,6 +502,8 @@ export const AlgoScreen = ({
     signalOptionsState?.profile || SIGNAL_OPTIONS_DEFAULT_PROFILE;
   const signalOptionsCandidates =
     cockpit?.candidates || signalOptionsState?.candidates || [];
+  const signalOptionsSignals =
+    cockpit?.signals || signalOptionsState?.signals || [];
   const signalOptionsPositions =
     cockpit?.activePositions || signalOptionsState?.activePositions || [];
   const signalOptionsEvents =
@@ -497,6 +530,9 @@ export const AlgoScreen = ({
       const hasContract = Object.keys(asRecord(candidate.selectedContract)).length > 0;
       const timeline = Array.isArray(candidate.timeline) ? candidate.timeline : [];
       if (selectedPipelineStageId === "signal_detected") return true;
+      if (selectedPipelineStageId === "action_mapped") {
+        return Object.keys(asRecord(candidate.action)).length > 0;
+      }
       if (selectedPipelineStageId === "contract_selected") return hasContract;
       if (selectedPipelineStageId === "liquidity_risk_gate") {
         return (
@@ -772,8 +808,8 @@ export const AlgoScreen = ({
     if (!brokerConfigured) {
       toast.push({
         kind: "warn",
-        title: "IBKR not configured",
-        body: "Configure the IB Gateway bridge before starting automation.",
+        title: "IBKR data not configured",
+        body: "Configure the IB Gateway bridge before starting Shadow automation.",
       });
       return;
     }
@@ -797,8 +833,8 @@ export const AlgoScreen = ({
     if (!brokerConfigured) {
       toast.push({
         kind: "warn",
-        title: "IBKR not configured",
-        body: "Broker connectivity must be configured before deploying an algorithm.",
+        title: "IBKR data not configured",
+        body: "Market-data connectivity must be configured before creating a Shadow deployment.",
       });
       return;
     }
@@ -806,8 +842,8 @@ export const AlgoScreen = ({
     if (!gatewayReady) {
       toast.push({
         kind: "warn",
-        title: "Gateway bridge required",
-        body: "Start the IB Gateway bridge before creating an executable deployment.",
+        title: "Data bridge required",
+        body: "Start the IB Gateway bridge before creating a Shadow signal deployment.",
       });
       handleStartGatewayBridge();
       return;
@@ -816,8 +852,8 @@ export const AlgoScreen = ({
     if (!activeAccountId) {
       toast.push({
         kind: "warn",
-        title: "No broker account selected",
-        body: "The bridge is authenticated, but no IBKR account is active yet.",
+        title: "No data account selected",
+        body: "The bridge is authenticated, but no IBKR data account is active yet.",
       });
       return;
     }
@@ -846,8 +882,8 @@ export const AlgoScreen = ({
     if (!deployment.enabled && !gatewayReady) {
       toast.push({
         kind: "warn",
-        title: "Gateway bridge required",
-        body: "Start the IB Gateway bridge before enabling an algo deployment.",
+        title: "Data bridge required",
+        body: "Start the IB Gateway bridge before enabling a Shadow signal deployment.",
       });
       handleStartGatewayBridge();
       return;
@@ -873,8 +909,8 @@ export const AlgoScreen = ({
     if (!gatewayReady) {
       toast.push({
         kind: "warn",
-        title: "Gateway bridge required",
-        body: "Start the IB Gateway bridge before running a signal-options scan.",
+        title: "Data bridge required",
+        body: "Start the IB Gateway bridge before running a Shadow signal-options scan.",
       });
       handleStartGatewayBridge();
       return;
@@ -982,7 +1018,7 @@ export const AlgoScreen = ({
                 letterSpacing: "0.05em",
               }}
             >
-              ALGO DEPLOYMENTS BLOCKED
+              SHADOW SCANS WAITING FOR DATA
             </span>
             <span
               style={{
@@ -1034,7 +1070,7 @@ export const AlgoScreen = ({
                 opacity: gatewayBridgeLaunching ? 0.72 : 1,
               }}
             >
-              {gatewayBridgeLaunching ? "PREPARING..." : "START BRIDGE"}
+              {gatewayBridgeLaunching ? "PREPARING..." : "START DATA"}
             </button>
           </div>
           {bridgeLauncherError && (
@@ -1072,7 +1108,7 @@ export const AlgoScreen = ({
             marginBottom: 10,
           }}
         >
-          Execution Control Plane
+          Shadow Options Control Plane
         </div>
         <div
           style={{
@@ -1104,7 +1140,7 @@ export const AlgoScreen = ({
                     : T.textDim,
             },
             {
-              label: "Bridge",
+              label: "Data Bridge",
               value: cockpitReadiness?.ready
                 ? "READY"
                 : bridgeTone.label.toUpperCase(),
@@ -1246,7 +1282,7 @@ export const AlgoScreen = ({
                   fontFamily: T.mono,
                 }}
               >
-                Promoted strategy -&gt; IBKR execution account
+                Promoted strategy -&gt; Shadow account automation
               </div>
             </div>
             <Badge
@@ -1276,7 +1312,7 @@ export const AlgoScreen = ({
             >
               No promoted draft strategies are available yet. Promote a
               completed backtest run first, then return here to create an
-              execution deployment.
+              Shadow signal deployment.
             </div>
           ) : (
             <>
@@ -1390,13 +1426,13 @@ export const AlgoScreen = ({
                 }}
               >
                 <div>
-                  <span style={{ color: T.textMuted }}>ACCOUNT</span>{" "}
+                  <span style={{ color: T.textMuted }}>DATA ACCOUNT</span>{" "}
                   <span style={{ color: activeAccountId ? T.text : T.amber }}>
                     {activeAccountId || "waiting"}
                   </span>
                 </div>
                 <div>
-                  <span style={{ color: T.textMuted }}>MODE</span>{" "}
+                  <span style={{ color: T.textMuted }}>SIGNAL MODE</span>{" "}
                   <span
                     style={{ color: environment === "live" ? T.red : T.green }}
                   >
@@ -1442,7 +1478,7 @@ export const AlgoScreen = ({
               >
                 {createDeploymentMutation.isPending
                   ? "CREATING..."
-                  : `CREATE ${environment.toUpperCase()} DEPLOYMENT`}
+                  : "CREATE SHADOW DEPLOYMENT"}
               </button>
             </>
           )}
@@ -1485,7 +1521,7 @@ export const AlgoScreen = ({
                   fontFamily: T.mono,
                 }}
               >
-                {environment.toUpperCase()} execution profiles
+                {environment.toUpperCase()} signal profiles · Shadow execution
               </div>
             </div>
             <span
@@ -1671,7 +1707,7 @@ export const AlgoScreen = ({
                         : !gatewayReady
                           ? gatewayBridgeLaunching
                             ? "PREPARING..."
-                            : "START BRIDGE"
+                            : "START DATA"
                           : "ENABLE"}
                     </button>
                   </div>
@@ -1732,8 +1768,8 @@ export const AlgoScreen = ({
             <div
               style={{ fontSize: fs(9), color: T.textDim, fontFamily: T.mono }}
             >
-              Spot RayReplica signals -&gt; option contract candidates, virtual
-              fills, runner exits · no broker order submission in v1
+              RayReplica indicator signals -&gt; Shadow buy-call/buy-put actions,
+              virtual fills, runner exits · no broker order submission in v1
             </div>
           </div>
           <div style={{ display: "flex", gap: sp(6), flexWrap: "wrap" }}>
@@ -1889,10 +1925,287 @@ export const AlgoScreen = ({
                 : !gatewayReady
                   ? gatewayBridgeLaunching
                     ? "PREPARING..."
-                    : "START BRIDGE"
+                    : "START DATA"
                   : "RUN SCAN"}
             </button>
           </div>
+        </div>
+
+        <div
+          data-testid="algo-signal-action-panel"
+          style={{
+            border: `1px solid ${T.border}`,
+            borderRadius: dim(5),
+            background: T.bg0,
+            padding: sp("10px 12px"),
+            minWidth: 0,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              gap: sp(8),
+              marginBottom: sp(8),
+              flexWrap: "wrap",
+            }}
+          >
+            <div
+              style={{
+                color: T.text,
+                fontFamily: T.display,
+                fontSize: fs(11),
+                fontWeight: 400,
+              }}
+            >
+              Signal -&gt; Action
+            </div>
+            <Badge color={T.cyan}>SHADOW ONLY</Badge>
+          </div>
+          {!signalOptionsSignals.length && !signalOptionsCandidates.length ? (
+            <div
+              style={{
+                border: `1px dashed ${T.border}`,
+                borderRadius: dim(5),
+                padding: sp("14px 10px"),
+                color: T.textDim,
+                fontFamily: T.sans,
+                fontSize: fs(10),
+                lineHeight: 1.45,
+              }}
+            >
+              No RayReplica signal states are available for this deployment yet.
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: algoIsNarrow
+                  ? "minmax(0, 1fr)"
+                  : "minmax(0, 1.25fr) minmax(300px, 0.9fr)",
+                gap: sp(8),
+              }}
+            >
+              <div style={{ display: "grid", gap: sp(6), minWidth: 0 }}>
+                {(signalOptionsSignals.length
+                  ? signalOptionsSignals
+                  : signalOptionsCandidates.map((candidate) => ({
+                      ...asRecord(candidate.signal),
+                      symbol: candidate.symbol,
+                      timeframe: candidate.timeframe,
+                      direction: candidate.direction,
+                      signalAt: candidate.signalAt,
+                      signalPrice: candidate.signalPrice,
+                    }))
+                )
+                  .slice(0, 8)
+                  .map((signal, index) => {
+                    const signalRecord = asRecord(signal);
+                    const linkedCandidate = signalOptionsCandidates.find(
+                      (candidate) =>
+                        asRecord(candidate.signal).signalKey &&
+                        asRecord(candidate.signal).signalKey === signalRecord.signalKey,
+                    );
+                    const action = linkedCandidate?.action;
+                    const tone =
+                      signalRecord.fresh === false
+                        ? T.amber
+                        : linkedCandidate
+                          ? signalOptionsActionColor(
+                              linkedCandidate.actionStatus ||
+                                linkedCandidate.status,
+                            )
+                          : T.textDim;
+                    return (
+                      <div
+                        key={
+                          signalRecord.signalKey ||
+                          `${signalRecord.symbol}:${signalRecord.timeframe}:${index}`
+                        }
+                        className="ra-row-enter"
+                        style={{
+                          ...motionRowStyle(index, 10, 70),
+                          border: `1px solid ${tone}35`,
+                          borderRadius: dim(5),
+                          background: `${tone}10`,
+                          padding: sp("8px 9px"),
+                          minWidth: 0,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: algoIsPhone
+                              ? "minmax(0, 1fr)"
+                              : "minmax(100px, 0.7fr) minmax(120px, 0.8fr) minmax(130px, 0.8fr) minmax(130px, 1fr)",
+                            gap: sp(8),
+                            alignItems: "center",
+                          }}
+                        >
+                          {[
+                            [
+                              "Signal",
+                              `${signalRecord.symbol || MISSING_VALUE} ${
+                                signalRecord.direction || MISSING_VALUE
+                              }`,
+                            ],
+                            [
+                              "Freshness",
+                              `${signalFreshnessLabel(signalRecord)} · ${signalBarsSinceLabel(signalRecord)}`,
+                            ],
+                            [
+                              "Action",
+                              signalActionLabel(signalRecord, action),
+                            ],
+                            [
+                              "Outcome",
+                              linkedCandidate
+                                ? signalOptionsActionLabel(
+                                    linkedCandidate.actionStatus ||
+                                      linkedCandidate.status,
+                                  )
+                                : "Awaiting candidate",
+                            ],
+                          ].map(([label, value]) => (
+                            <div key={label} style={{ minWidth: 0 }}>
+                              <div
+                                style={{
+                                  color: T.textMuted,
+                                  fontFamily: T.mono,
+                                  fontSize: fs(7),
+                                  letterSpacing: "0.08em",
+                                }}
+                              >
+                                {label.toUpperCase()}
+                              </div>
+                              <div
+                                style={{
+                                  color: label === "Action" ? tone : T.text,
+                                  fontFamily: T.mono,
+                                  fontSize: fs(9),
+                                  fontWeight: 400,
+                                  marginTop: sp(3),
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              <div
+                style={{
+                  border: `1px solid ${T.border}`,
+                  borderRadius: dim(5),
+                  background: T.bg2,
+                  padding: sp("8px 9px"),
+                  minWidth: 0,
+                }}
+              >
+                <div
+                  style={{
+                    color: T.textMuted,
+                    fontFamily: T.mono,
+                    fontSize: fs(7),
+                    letterSpacing: "0.08em",
+                    marginBottom: sp(7),
+                  }}
+                >
+                  SELECTED ACTION
+                </div>
+                {selectedCandidate ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: sp(6),
+                    }}
+                  >
+                    {[
+                      ["Indicator", asRecord(selectedCandidate.signal).source || "rayreplica"],
+                      [
+                        "Signal",
+                        `${selectedCandidate.direction} ${formatRelativeTimeShort(
+                          selectedCandidate.signalAt,
+                        )}`,
+                      ],
+                      [
+                        "Mapped to",
+                        signalActionLabel(
+                          selectedCandidate.signal,
+                          selectedCandidate.action,
+                        ),
+                      ],
+                      ["Destination", "Shadow account"],
+                      ["Broker route", "None"],
+                      [
+                        "Candidate",
+                        signalOptionsActionLabel(
+                          selectedCandidate.actionStatus ||
+                            selectedCandidate.status,
+                        ),
+                      ],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label}
+                        style={{
+                          border: `1px solid ${T.border}`,
+                          borderRadius: dim(4),
+                          background: T.bg0,
+                          padding: sp("7px 8px"),
+                          minWidth: 0,
+                        }}
+                      >
+                        <div
+                          style={{
+                            color: T.textMuted,
+                            fontFamily: T.mono,
+                            fontSize: fs(7),
+                            letterSpacing: "0.08em",
+                          }}
+                        >
+                          {String(label).toUpperCase()}
+                        </div>
+                        <div
+                          style={{
+                            color: T.text,
+                            fontFamily: T.mono,
+                            fontSize: fs(9),
+                            fontWeight: 400,
+                            marginTop: sp(3),
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      color: T.textDim,
+                      fontFamily: T.sans,
+                      fontSize: fs(10),
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Select a candidate to inspect its Shadow action mapping.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div
@@ -2039,7 +2352,7 @@ export const AlgoScreen = ({
                     fontSize: fs(8),
                   }}
                 >
-                  scan -&gt; signal -&gt; contract -&gt; gate -&gt; shadow -&gt; manage -&gt; exit
+                  scan -&gt; signal -&gt; action -&gt; contract -&gt; gate -&gt; shadow -&gt; manage -&gt; exit
                 </div>
               </div>
               <button
@@ -2066,7 +2379,7 @@ export const AlgoScreen = ({
                 display: "grid",
                 gridTemplateColumns: algoIsPhone
                   ? "minmax(0, 1fr)"
-                  : "repeat(7, minmax(96px, 1fr))",
+                  : "repeat(8, minmax(88px, 1fr))",
                 gap: sp(6),
               }}
             >
@@ -2600,6 +2913,7 @@ export const AlgoScreen = ({
                         }}
                       >
                         {candidate.timeframe} · {candidate.direction} ·{" "}
+                        {signalActionLabel(candidate.signal, candidate.action)} ·{" "}
                         {formatRelativeTimeShort(candidate.signalAt)}
                       </div>
                     </button>
@@ -2627,7 +2941,7 @@ export const AlgoScreen = ({
                   }}
                 >
                   Select a candidate to inspect its contract, fill simulation,
-                  liquidity gate, and Trade handoff.
+                  liquidity gate, Shadow ledger link, and signal mapping.
                 </div>
               ) : (
                 <div
@@ -2667,7 +2981,8 @@ export const AlgoScreen = ({
                       >
                         {selectedCandidate.timeframe} · signal{" "}
                         {formatRelativeTimeShort(selectedCandidate.signalAt)} ·
-                            spot {formatPlainPrice(selectedCandidate.signalPrice, 2)}
+                            spot {formatPlainPrice(selectedCandidate.signalPrice, 2)} ·{" "}
+                            {signalFreshnessLabel(selectedCandidate.signal)}
                         </div>
                         <div
                           style={{
@@ -2726,7 +3041,7 @@ export const AlgoScreen = ({
                             : 1,
                       }}
                     >
-                      OPEN IN TRADE
+                      INSPECT CONTRACT
                     </button>
                   </div>
 
@@ -2742,6 +3057,33 @@ export const AlgoScreen = ({
                     }}
                   >
                     {[
+                      {
+                        label: "Signal Source",
+                        value:
+                          asRecord(selectedCandidate.signal).source ||
+                          "rayreplica",
+                      },
+                      {
+                        label: "Signal Age",
+                        value: signalBarsSinceLabel(selectedCandidate.signal),
+                      },
+                      {
+                        label: "Filter State",
+                        value: signalFilterStateLabel(selectedCandidate.signal),
+                      },
+                      {
+                        label: "Action",
+                        value: signalActionLabel(
+                          selectedCandidate.signal,
+                          selectedCandidate.action,
+                        ),
+                      },
+                      {
+                        label: "Destination",
+                        value:
+                          asRecord(selectedCandidate.action)
+                            .destinationAccountId || "shadow",
+                      },
                       {
                         label: "Contract",
                         value: formatContractLabel(

@@ -702,7 +702,9 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalBusy = Boolean(
     signalScanPending || signalEvaluationPending || signalSnapshot?.pending,
   );
-  const signalHasError = Boolean(!signalBusy && signalScanErrored);
+  const signalHasError = Boolean(
+    !signalBusy && (signalScanErrored || signalSnapshot?.degraded),
+  );
   const signalEmptyLabel = signalHasError
     ? "SIGNALS ERROR"
     : signalBusy
@@ -834,7 +836,11 @@ export const HeaderBroadcastScrollerStack = memo(({
         testId="header-signal-scan-settings-toggle"
         tone={signalScanTone}
       >
-        {signalScanEnabled ? "Signal Scan On" : "Signal Scan Off"}
+        {signalHasError
+          ? "Signal Scan Degraded"
+          : signalScanEnabled
+            ? "Signal Scan On"
+            : "Signal Scan Off"}
       </HeaderLaneToggleButton>
       <div style={{ height: dim(7) }} />
       <HeaderLaneInfoRow label="Visible" value={signalItems.length} />

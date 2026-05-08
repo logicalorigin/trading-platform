@@ -65,7 +65,13 @@ const deriveFlowScore = (event, dte) => {
 
 export const mapFlowEventToUi = (event, preferences) => {
   const dte = daysToExpiration(event.expirationDate);
-  const cp = event.right === "call" ? "C" : "P";
+  const normalizedRight = String(event.right || event.cp || "").toLowerCase();
+  const cp =
+    normalizedRight === "call" || normalizedRight === "c"
+      ? "C"
+      : normalizedRight === "put" || normalizedRight === "p"
+        ? "P"
+        : "";
   const side = (event.side || "mid").toUpperCase();
   const sourceBasis =
     event.sourceBasis ||

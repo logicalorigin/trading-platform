@@ -79,6 +79,7 @@ import {
   submitRawOrders,
   updateWatchlist,
 } from "../services/platform";
+import { getGexDashboardData } from "../services/gex";
 import {
   fetchAccountSnapshotPayload,
   fetchExecutionSnapshotPayload,
@@ -1442,6 +1443,15 @@ router.get("/executions", async (req, res) => {
 router.get("/quotes/snapshot", async (req, res) => {
   const query = GetQuoteSnapshotsQueryParams.parse(req.query);
   const data = GetQuoteSnapshotsResponse.parse(await getQuoteSnapshots(query));
+
+  res.json(data);
+});
+
+router.get("/gex/:underlying", async (req, res) => {
+  const data = await getGexDashboardData({
+    underlying: req.params.underlying,
+    signal: createRequestAbortSignal(req, res),
+  });
 
   res.json(data);
 });

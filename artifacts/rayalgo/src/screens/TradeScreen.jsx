@@ -24,10 +24,10 @@ import {
   useIbkrQuoteSnapshotStream,
 } from "../features/platform/live-streams";
 import {
-  getChartBarLimit,
   getChartTimeframeDefinition,
   getChartTimeframeOptions,
   getInitialChartBarLimit,
+  normalizeChartTimeframe,
 } from "../features/charting/timeframes";
 import { RayReplicaSettingsMenu } from "../features/charting/RayReplicaSettingsMenu";
 import { ResearchChartFrame } from "../features/charting/ResearchChartFrame";
@@ -37,9 +37,9 @@ import {
   ResearchChartWidgetSidebar,
 } from "../features/charting/ResearchChartWidgetChrome";
 import {
+  filterFlowEventsForChartLookbackWindow,
   filterFlowEventsForOptionContract,
   filterFlowEventsForSymbol,
-  flowEventsToChartEventConversion,
   getChartEventLookbackWindow,
   mergeFlowEventFeeds,
 } from "../features/charting/chartEvents";
@@ -53,13 +53,14 @@ import {
 } from "../features/charting/rayReplicaPineAdapter";
 import {
   buildChartBarScopeKey,
+  resolveChartHydrationPolicy,
+  resolveChartHydrationRequestPolicy,
   useDebouncedVisibleRangeExpansion,
   useMeasuredChartModel,
   useProgressiveChartBarLimit,
   useUnderfilledChartBackfill,
 } from "../features/charting/chartHydrationRuntime";
 import {
-  clearTradeOptionChainSnapshot,
   getTradeOptionChainSnapshot,
   publishTradeOptionChainSnapshot,
   resolveTradeOptionChainSnapshot,
@@ -121,6 +122,9 @@ import {
   patchOptionChainRowWithQuoteGetter,
 } from "../features/trade/optionChainRows";
 import {
+  buildOptionChainRowsIdentitySignature,
+} from "../features/trade/optionChainVirtualRows";
+import {
   OPTION_CHAIN_AUTO_BATCH_ENABLED,
   OPTION_CHAIN_BATCH_ACTIVE_CHUNKS,
   DEFAULT_OPTION_CHAIN_COVERAGE,
@@ -130,7 +134,9 @@ import {
   OPTION_CHAIN_METADATA_HYDRATION,
   getExpirationChainKey,
   normalizeTradeOptionChainCoverage,
+  resolveEffectiveOptionChainCoverage,
   resolveTradeOptionChainHydrationPlan,
+  shouldFallbackOptionChainToFullCoverage,
 } from "../features/trade/optionChainLoadingPlan";
 import {
   buildTradeOptionQuoteSubscriptionPlan,
@@ -140,6 +146,16 @@ import {
   publishTradeFlowSnapshot,
   useTradeFlowSnapshot,
 } from "../features/platform/tradeFlowStore";
+import {
+  buildFlowEventsCacheKey,
+  buildOptionChainSnapshotCacheKey,
+  readCachedFlowEvents,
+  readCachedOptionChainSnapshot,
+  writeCachedFlowEvents,
+  writeCachedOptionChainSnapshot,
+} from "../features/platform/runtimeCache";
+import { useFlowChartEventConversion } from "../features/workers/analyticsClient";
+import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   useMarketFlowSnapshotForStoreKey,
@@ -383,8 +399,7 @@ const nowMs = () =>
     ? performance.now()
     : Date.now();
 
-const buildTradeChainRowsSignature = (rows = []) =>
-  rows.map((row) => row?.k).filter((value) => value != null).join("|");
+const buildTradeChainRowsSignature = buildOptionChainRowsIdentitySignature;
 
 const formatOptionExpirationIsoDate = (value, actualDate) => {
   if (typeof value === "string") {
@@ -684,6 +699,8 @@ const TradeContractDetailPanel = ({
   const [optionChartTimeframe, setOptionChartTimeframe] = useState(
     TRADE_OPTION_CHART_TIMEFRAME,
   );
+  const [optionChartIntervalRevision, setOptionChartIntervalRevision] =
+    useState(0);
   const [drawMode, setDrawMode] = useState(null);
   const [selectedIndicators, setSelectedIndicators] = useState(() =>
     resolvePersistedIndicatorPreset({
@@ -726,6 +743,23 @@ const TradeContractDetailPanel = ({
     enabled: Boolean(historicalDataEnabled && optionIdentityReady),
     warmTargetLimit: useCallback(() => Promise.resolve(), []),
   });
+  const optionChartHydrationPolicy = useMemo(
+    () =>
+      resolveChartHydrationPolicy({
+        timeframe: optionChartTimeframe,
+        role: "option",
+      }),
+    [optionChartTimeframe],
+  );
+  const optionChartRequestPolicy = useMemo(
+    () =>
+      resolveChartHydrationRequestPolicy({
+        timeframe: optionChartTimeframe,
+        role: "option",
+        requestedLimit: optionProgressiveBars.requestedLimit,
+      }),
+    [optionChartTimeframe, optionProgressiveBars.requestedLimit],
+  );
   const {
     baseBars,
     baseTimeframe: optionChartBaseTimeframe,
@@ -787,9 +821,9 @@ const TradeContractDetailPanel = ({
         optionIdentityReady &&
         optionBarsQuery.data?.bars?.length,
     ),
-    loadedBarCount,
+    loadedBarCount: displayBars.length,
     requestedLimit: optionProgressiveBars.requestedLimit,
-    minPageSize: getInitialChartBarLimit(optionChartTimeframe, "option"),
+    minPageSize: optionChartHydrationPolicy.initialLimit,
     isPrependingOlder,
     hasExhaustedOlderHistory,
     prependOlderBars,
@@ -854,7 +888,7 @@ const TradeContractDetailPanel = ({
     buildInput: {
       bars: displayBars,
       timeframe: optionChartTimeframe,
-      defaultVisibleBarCount: getChartBarLimit(optionChartTimeframe, "option"),
+      defaultVisibleBarCount: optionProgressiveBars.targetLimit,
       selectedIndicators,
       indicatorSettings,
       indicatorRegistry,
@@ -869,6 +903,7 @@ const TradeContractDetailPanel = ({
       indicatorRegistry,
       indicatorSettings,
       optionChartTimeframe,
+      optionProgressiveBars.targetLimit,
       selectedIndicators,
     ],
   });
@@ -905,9 +940,17 @@ const TradeContractDetailPanel = ({
       ticker,
     ],
   );
-  const chartEventConversion = useMemo(
-    () => flowEventsToChartEventConversion(selectedContractFlowEvents, ticker),
-    [selectedContractFlowEvents, ticker],
+  const selectedContractChartWindowFlowEvents = useMemo(
+    () =>
+      filterFlowEventsForChartLookbackWindow(
+        selectedContractFlowEvents,
+        optionChartTimeframe,
+      ),
+    [optionChartTimeframe, selectedContractFlowEvents],
+  );
+  const chartEventConversion = useFlowChartEventConversion(
+    selectedContractChartWindowFlowEvents,
+    ticker,
   );
   const chartEvents = chartEventConversion.events;
   const chartFlowBadge = useMemo(() => {
@@ -1049,7 +1092,8 @@ const TradeContractDetailPanel = ({
       timeframe: optionChartTimeframe,
       role: "option",
       requestedLimit: optionProgressiveBars.requestedLimit,
-      initialLimit: getInitialChartBarLimit(optionChartTimeframe, "option"),
+      initialLimit: optionChartHydrationPolicy.initialLimit,
+      baseRequestedLimit: optionChartRequestPolicy.baseLimit,
       targetLimit: optionProgressiveBars.targetLimit,
       maxLimit: optionProgressiveBars.maxLimit,
       hydratedBaseCount: baseBars.length,
@@ -1083,6 +1127,8 @@ const TradeContractDetailPanel = ({
     isPrependingOlder,
     oldestLoadedAtMs,
     optionChartBaseTimeframe,
+    optionChartHydrationPolicy.initialLimit,
+    optionChartRequestPolicy.baseLimit,
     optionChartTimeframe,
     optionContractScopeKey,
     optionProgressiveBars.maxLimit,
@@ -1107,7 +1153,7 @@ const TradeContractDetailPanel = ({
         hasExhaustedOlderHistory,
         isHydratingRequestedWindow:
           optionBarsQuery.fetchStatus === "fetching" &&
-          optionProgressiveBars.requestedLimit > loadedBarCount,
+          optionChartRequestPolicy.baseLimit > loadedBarCount,
         isPrependingOlder,
         oldestLoadedAtMs,
         prependOlderBars,
@@ -1120,7 +1166,7 @@ const TradeContractDetailPanel = ({
       loadedBarCount,
       oldestLoadedAtMs,
       optionBarsQuery.fetchStatus,
-      optionProgressiveBars.requestedLimit,
+      optionChartRequestPolicy.baseLimit,
       prependOlderBars,
       optionProgressiveBars.expandForVisibleRange,
     ],
@@ -1137,6 +1183,21 @@ const TradeContractDetailPanel = ({
         hasExhaustedOlderHistory ? "exhausted" : "open",
       ].join(":"),
     });
+  const handleOptionChartTimeframeChange = useCallback((timeframe) => {
+    const nextTimeframe = normalizeChartTimeframe(timeframe);
+    if (!nextTimeframe || nextTimeframe === optionChartTimeframe) {
+      return;
+    }
+    setOptionChartTimeframe(nextTimeframe);
+    setOptionChartIntervalRevision((revision) => revision + 1);
+  }, [optionChartTimeframe]);
+  const optionChartViewportLayoutKey = optionChartIntervalRevision
+    ? buildChartBarScopeKey(
+        "trade-contract-option-viewport",
+        optionChartTimeframe,
+        optionChartIntervalRevision,
+      )
+    : null;
 
   useEffect(() => {
     if (!ticker || !optionIdentityReady) {
@@ -1177,12 +1238,22 @@ const TradeContractDetailPanel = ({
         }}
       >
         <div style={{ position: "relative", minHeight: 0, height: "100%" }}>
-          <ResearchChartFrame
+          <PlatformErrorBoundary
+            label={`${ticker || "Option"} contract chart`}
+            resetKeys={[
+              ticker,
+              chartProviderContractId || optionContractScopeKey,
+              optionChartTimeframe,
+            ]}
+            minHeight="100%"
+          >
+            <ResearchChartFrame
             dataTestId="trade-contract-option-chart"
             theme={T}
             themeKey={`${getCurrentTheme()}-trade-contract`}
             surfaceUiStateKey={`trade-contract-${chartProviderContractId || optionContractScopeKey}`}
             rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
+            viewportLayoutKey={optionChartViewportLayoutKey}
             model={chartModel}
             chartEvents={chartEvents}
             chartFlowDiagnostics={chartEventConversion}
@@ -1229,7 +1300,7 @@ const TradeContractDetailPanel = ({
                 showInlineLegend={false}
                 timeframeOptions={TRADE_OPTION_CHART_TIMEFRAME_OPTIONS}
                 favoriteTimeframes={optionFavoriteTimeframes}
-                onChangeTimeframe={setOptionChartTimeframe}
+                onChangeTimeframe={handleOptionChartTimeframeChange}
                 onToggleFavoriteTimeframe={toggleOptionFavoriteTimeframe}
                 onPrewarmTimeframe={prewarmFavoriteTimeframe}
                 studies={availableStudies}
@@ -1290,7 +1361,8 @@ const TradeContractDetailPanel = ({
               TRADE_OPTION_CHART_FRAME_LAYOUT.surfaceBottomOverlayHeight
             }
             onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
-          />
+            />
+          </PlatformErrorBoundary>
           {displayBars.length && chartFlowBadge ? (
             <AppTooltip content={chartFlowBadge.tooltip}><div
               data-testid="trade-contract-option-chart-flow-badge"
@@ -1572,8 +1644,16 @@ const TradeQuoteRuntime = ({
 
 const TRADE_FLOW_LIVE_LIMIT = 80;
 const TRADE_FLOW_HISTORY_LIMIT = 1000;
+const TRADE_FLOW_REFRESH_MS = 5_000;
+const TRADE_FLOW_HISTORY_REFRESH_MS = 15_000;
 const TRADE_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const TRADE_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3600;
+const TRADE_FLOW_PENDING_SOURCE = {
+  provider: "polygon",
+  status: "empty",
+  ibkrStatus: "empty",
+  ibkrReason: "options_flow_historical_refreshing",
+};
 
 const getTradeFlowHistoryBucketSeconds = (timeframe) => {
   const definition = getChartTimeframeDefinition(timeframe);
@@ -1600,11 +1680,20 @@ const TradeFlowRuntime = ({ ticker, enabled, timeframe = "5m" }) => {
       to: window.to.toISOString(),
     };
   }, [ticker, timeframe]);
+  const flowRuntimeCacheKey = useMemo(
+    () =>
+      buildFlowEventsCacheKey({
+        ticker,
+        provider: "trade-flow",
+        filterSignature: `${timeframe}:${historicalBucketSeconds}`,
+      }),
+    [historicalBucketSeconds, timeframe, ticker],
+  );
 
   useRuntimeWorkloadFlag("trade:flow", flowEnabled, {
     kind: "poll",
     label: "Trade flow",
-    detail: "15s",
+    detail: "5s",
     priority: 5,
   });
 
@@ -1616,10 +1705,10 @@ const TradeFlowRuntime = ({ ticker, enabled, timeframe = "5m" }) => {
         limit: TRADE_FLOW_LIVE_LIMIT,
         blocking: false,
         queueRefresh: true,
-      }),
+    }),
     enabled: flowEnabled,
-    staleTime: 15_000,
-    refetchInterval: flowEnabled ? 15_000 : false,
+    staleTime: TRADE_FLOW_REFRESH_MS,
+    refetchInterval: flowEnabled ? TRADE_FLOW_REFRESH_MS : false,
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
@@ -1639,13 +1728,39 @@ const TradeFlowRuntime = ({ ticker, enabled, timeframe = "5m" }) => {
         to: historicalFlowWindow.to,
         historicalBucketSeconds,
         blocking: false,
-      }),
+    }),
     enabled: flowEnabled,
-    staleTime: 15_000,
-    refetchInterval: flowEnabled ? 15_000 : false,
+    staleTime: TRADE_FLOW_HISTORY_REFRESH_MS,
+    refetchInterval: flowEnabled ? TRADE_FLOW_HISTORY_REFRESH_MS : false,
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
+
+  useEffect(() => {
+    if (!flowEnabled || !ticker) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    readCachedFlowEvents(flowRuntimeCacheKey).then((snapshot) => {
+      if (cancelled || !snapshot?.events?.length) {
+        return;
+      }
+      publishTradeFlowSnapshot(ticker, {
+        events: snapshot.events,
+        status: snapshot.status === "live" ? "stale" : snapshot.status || "stale",
+        source: snapshot.source || {
+          provider: "indexeddb",
+          status: "stale",
+          cacheStatus: "runtime-cache",
+        },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [flowEnabled, flowRuntimeCacheKey, ticker]);
 
   useEffect(() => {
     if (!ticker) {
@@ -1691,12 +1806,25 @@ const TradeFlowRuntime = ({ ticker, enabled, timeframe = "5m" }) => {
           ? "offline"
           : "empty";
 
-    publishTradeFlowSnapshot(ticker, {
+    const snapshot = {
       events,
       status,
-      source: tickerFlowQuery.data?.source || historicalFlowQuery.data?.source || null,
-    });
+      source:
+        tickerFlowQuery.data?.source ||
+        historicalFlowQuery.data?.source ||
+        (status === "loading" ? TRADE_FLOW_PENDING_SOURCE : null),
+    };
+
+    publishTradeFlowSnapshot(ticker, snapshot);
+    if (events.length) {
+      void writeCachedFlowEvents(flowRuntimeCacheKey, snapshot, {
+        ticker,
+        provider: "trade-flow",
+        filterSignature: `${timeframe}:${historicalBucketSeconds}`,
+      });
+    }
   }, [
+    flowRuntimeCacheKey,
     ticker,
     historicalFlowQuery.data,
     historicalFlowQuery.isError,
@@ -1707,6 +1835,7 @@ const TradeFlowRuntime = ({ ticker, enabled, timeframe = "5m" }) => {
     tickerFlowQuery.data,
     tickerFlowQuery.isError,
     tickerFlowQuery.isPending,
+    timeframe,
   ]);
 
   return null;
@@ -1747,8 +1876,63 @@ const TradeOptionChainRuntime = ({
       expirationOptions[0]
     );
   }, [expirationOptions, expirationValue]);
+  const selectedActiveChainKey = getExpirationChainKey(activeExpiration);
+  const selectedActiveCoverageKey =
+    ticker && selectedActiveChainKey
+      ? `${ticker}:${selectedActiveChainKey}:${normalizedChainCoverage}`
+      : selectedActiveChainKey
+        ? `${selectedActiveChainKey}:${normalizedChainCoverage}`
+        : selectedActiveChainKey;
+  const [fullCoverageFallbackKeys, setFullCoverageFallbackKeys] = useState(
+    () => new Set(),
+  );
+  useEffect(() => {
+    setFullCoverageFallbackKeys(new Set());
+  }, [normalizedChainCoverage, ticker]);
+  const effectiveChainCoverage = resolveEffectiveOptionChainCoverage({
+    activeChainKey: selectedActiveCoverageKey,
+    coverage: normalizedChainCoverage,
+    fullCoverageFallbackKeys,
+  });
+  const optionChainRuntimeCacheKey = useMemo(
+    () =>
+      buildOptionChainSnapshotCacheKey({
+        underlying: ticker,
+        expiration: "all",
+        coverage: effectiveChainCoverage,
+        marketDataMode: OPTION_CHAIN_METADATA_HYDRATION,
+      }),
+    [effectiveChainCoverage, ticker],
+  );
+  useEffect(() => {
+    if (!enabled || !ticker) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    readCachedOptionChainSnapshot(optionChainRuntimeCacheKey).then((snapshot) => {
+      if (cancelled || !snapshot) {
+        return;
+      }
+      const currentSnapshot = getTradeOptionChainSnapshot(ticker);
+      if (
+        currentSnapshot?.loadedExpirationCount > 0 &&
+        Number(currentSnapshot.updatedAt || 0) >= Number(snapshot.updatedAt || 0)
+      ) {
+        return;
+      }
+      publishTradeOptionChainSnapshot(ticker, {
+        ...snapshot,
+        status: snapshot.status === "live" ? "stale" : snapshot.status || "stale",
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, optionChainRuntimeCacheKey, ticker]);
   const orderedExpirationOptions = useMemo(() => {
-    const activeKey = getExpirationChainKey(activeExpiration);
+    const activeKey = selectedActiveChainKey;
     if (!activeKey) {
       return expirationOptions;
     }
@@ -1759,7 +1943,7 @@ const TradeOptionChainRuntime = ({
         (option) => getExpirationChainKey(option) !== activeKey,
       ),
     ];
-  }, [activeExpiration, expirationOptions]);
+  }, [activeExpiration, expirationOptions, selectedActiveChainKey]);
   const {
     activeChainKey,
     activeRequest,
@@ -1773,9 +1957,9 @@ const TradeOptionChainRuntime = ({
         activeExpiration,
         background,
         autoBatchEnabled: OPTION_CHAIN_AUTO_BATCH_ENABLED,
-        coverage: normalizedChainCoverage,
+        coverage: effectiveChainCoverage,
       }),
-    [activeExpiration, background, normalizedChainCoverage, orderedExpirationOptions],
+    [activeExpiration, background, effectiveChainCoverage, orderedExpirationOptions],
   );
   const batchExpirationChunkSignature = useMemo(
     () =>
@@ -1849,6 +2033,38 @@ const TradeOptionChainRuntime = ({
     ),
     ...OPTION_CHAIN_QUERY_DEFAULTS,
   });
+  const activeCoverageFallbackKey =
+    ticker && activeChainKey
+      ? `${ticker}:${activeChainKey}:${normalizedChainCoverage}`
+      : activeChainKey
+        ? `${activeChainKey}:${normalizedChainCoverage}`
+        : activeChainKey;
+  useEffect(() => {
+    if (
+      !activeCoverageFallbackKey ||
+      !shouldFallbackOptionChainToFullCoverage({
+        activeRequest,
+        queryData: activeOptionChainQuery.data,
+        queryIsSuccess: activeOptionChainQuery.isSuccess,
+      })
+    ) {
+      return;
+    }
+
+    setFullCoverageFallbackKeys((current) => {
+      if (current.has(activeCoverageFallbackKey)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(activeCoverageFallbackKey);
+      return next;
+    });
+  }, [
+    activeCoverageFallbackKey,
+    activeOptionChainQuery.data,
+    activeOptionChainQuery.isSuccess,
+    activeRequest,
+  ]);
   useEffect(() => {
     if (
       !enabled ||
@@ -2242,8 +2458,16 @@ const TradeOptionChainRuntime = ({
               : hasAnyChainError
                 ? "offline"
                 : "empty";
+    const currentPublishedSnapshot = getTradeOptionChainSnapshot(ticker);
+    if (
+      status === "loading" &&
+      loadedExpirationCount === 0 &&
+      currentPublishedSnapshot?.loadedExpirationCount > 0
+    ) {
+      return;
+    }
 
-    publishTradeOptionChainSnapshot(ticker, {
+    const nextSnapshot = {
       expirationOptions,
       rowsByExpiration,
       loadingExpirations,
@@ -2258,7 +2482,21 @@ const TradeOptionChainRuntime = ({
       totalExpirationCount,
       updatedAt: Date.now(),
       status,
-    });
+    };
+
+    publishTradeOptionChainSnapshot(ticker, nextSnapshot);
+    if (loadedExpirationCount > 0) {
+      void writeCachedOptionChainSnapshot(
+        optionChainRuntimeCacheKey,
+        nextSnapshot,
+        {
+          underlying: ticker,
+          expiration: "all",
+          coverage: effectiveChainCoverage,
+          marketDataMode: OPTION_CHAIN_METADATA_HYDRATION,
+        },
+      );
+    }
   }, [
     activeChainKey,
     activeExpiration,
@@ -2276,11 +2514,13 @@ const TradeOptionChainRuntime = ({
     batchQueryIndexByChainKey,
     batchResultsByChainKey,
     enabledBatchChunkCount,
+    effectiveChainCoverage,
     background,
     expirationOptions,
     expirationsQuery.isError,
     expirationsQuery.isPending,
     ticker,
+    optionChainRuntimeCacheKey,
     trackedChainKeySet,
   ]);
 
@@ -2910,7 +3150,6 @@ export const TradeScreen = ({
       setTradeOptionChainCoverage((current) =>
         current === nextCoverage ? current : nextCoverage,
       );
-      clearTradeOptionChainSnapshot(activeTicker);
       queryClient.invalidateQueries({
         queryKey: ["trade-option-chain", activeTicker],
         exact: false,

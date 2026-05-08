@@ -4,8 +4,8 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
 } from "react";
+import { useDenseVirtualRows } from "../../components/platform/DenseVirtualTable.jsx";
 import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
@@ -25,6 +25,12 @@ import {
   useStoredOptionQuoteSnapshotVersion,
 } from "../platform/live-streams";
 import { patchOptionChainRowWithQuoteGetter } from "./optionChainRows";
+import {
+  buildOptionChainRowsIdentitySignature,
+  buildOptionChainVirtualEntries,
+  mergeVisibleOptionChainRows,
+  resolveOptionChainScrollIndex,
+} from "./optionChainVirtualRows";
 import { MarketIdentityInline } from "../platform/marketIdentity";
 import {
   MISSING_VALUE,
@@ -301,9 +307,58 @@ const ChainRefreshSpinner = () => (
   </>
 );
 
-const ChainSide = forwardRef(function ChainSide({
+const ChainSideHeader = forwardRef(function ChainSideHeader({
   side,
-  chain,
+  columns,
+  onHorizontalScroll,
+}, scrollRef) {
+  const gridTemplateColumns = buildColumnGrid(columns);
+  const sideMinWidth = getSideMinWidth(columns);
+
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={onHorizontalScroll}
+      style={{ minWidth: 0, overflowX: "auto", overflowY: "hidden" }}
+    >
+      <div
+        style={{
+          minWidth: dim(sideMinWidth),
+          display: "grid",
+          gridTemplateColumns,
+          height: dim(HEADER_HEIGHT),
+          alignItems: "center",
+          background: T.bg2,
+          borderBottom: `1px solid ${T.border}`,
+          boxShadow: `0 1px 0 ${T.border}`,
+        }}
+      >
+        {columns.map((column) => (
+          <AppTooltip key={column.key} content={column.label}><span
+            key={column.key}
+            style={{
+              padding: sp("0 6px"),
+              color: T.textMuted,
+              fontSize: fs(8),
+              fontWeight: 400,
+              fontFamily: T.sans,
+              textAlign: side === "C" ? "right" : "left",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {column.label}
+          </span></AppTooltip>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+const ChainSideRows = forwardRef(function ChainSideRows({
+  side,
+  entries,
   columns,
   selected,
   heldContracts,
@@ -326,43 +381,10 @@ const ChainSide = forwardRef(function ChainSide({
       style={{ minWidth: 0, overflowX: "auto", overflowY: "visible" }}
     >
       <div style={{ minWidth: dim(sideMinWidth) }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns,
-            minHeight: dim(HEADER_HEIGHT),
-            alignItems: "center",
-            position: "sticky",
-            top: 0,
-            zIndex: 2,
-            background: T.bg2,
-            borderBottom: `1px solid ${T.border}`,
-            boxShadow: `0 1px 0 ${T.border}`,
-          }}
-        >
-          {columns.map((column) => (
-            <AppTooltip key={column.key} content={column.label}><span
-              key={column.key}
-              style={{
-                padding: sp("0 6px"),
-                color: T.textMuted,
-                fontSize: fs(8),
-                fontWeight: 400,
-                fontFamily: T.sans,
-                textAlign: side === "C" ? "right" : "left",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {column.label}
-            </span></AppTooltip>
-          ))}
-        </div>
         {topPadding > 0 ? (
           <div aria-hidden="true" style={{ height: dim(topPadding) }} />
         ) : null}
-        {chain.map((row, rowIndex) => {
+        {entries.map(({ row }, rowIndex) => {
           const held = heldContracts.some(
             (holding) => holding.strike === row.k && holding.cp === side,
           );
@@ -399,7 +421,7 @@ const ChainSide = forwardRef(function ChainSide({
                 }),
                 display: "grid",
                 gridTemplateColumns,
-                minHeight: dim(ROW_HEIGHT),
+                height: dim(ROW_HEIGHT),
                 alignItems: "center",
                 cursor: "pointer",
                 background: rowBackground,
@@ -441,8 +463,30 @@ const ChainSide = forwardRef(function ChainSide({
   );
 });
 
-const StrikeColumn = ({
-  chain,
+const StrikeHeader = () => (
+  <div
+    style={{
+      width: dim(STRIKE_WIDTH),
+      height: dim(HEADER_HEIGHT),
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      borderLeft: `1px solid ${T.border}`,
+      borderRight: `1px solid ${T.border}`,
+      borderBottom: `1px solid ${T.border}`,
+      background: T.bg2,
+      color: T.textMuted,
+      fontSize: fs(8),
+      fontFamily: T.sans,
+      fontWeight: 400,
+    }}
+  >
+    Strike
+  </div>
+);
+
+const StrikeRows = ({
+  entries,
   atmStrike,
   topPadding = 0,
   bottomPadding = 0,
@@ -456,29 +500,10 @@ const StrikeColumn = ({
       flexShrink: 0,
     }}
   >
-    <div
-      style={{
-        minHeight: dim(HEADER_HEIGHT),
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        position: "sticky",
-        top: 0,
-        zIndex: 3,
-        background: T.bg2,
-        borderBottom: `1px solid ${T.border}`,
-        color: T.textMuted,
-        fontSize: fs(8),
-        fontFamily: T.sans,
-        fontWeight: 400,
-      }}
-    >
-      Strike
-    </div>
     {topPadding > 0 ? (
       <div aria-hidden="true" style={{ height: dim(topPadding) }} />
     ) : null}
-    {chain.map((row) => {
+    {entries.map(({ row }) => {
       const isAtmRow = isFiniteNumber(atmStrike)
         ? row.k === atmStrike
         : row.isAtm;
@@ -486,7 +511,7 @@ const StrikeColumn = ({
         <div
           key={`strike:${row.k}`}
           style={{
-            minHeight: dim(ROW_HEIGHT),
+            height: dim(ROW_HEIGHT),
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -554,12 +579,11 @@ export const TradeChainPanel = ({
     ? expirations
     : snapshotExpirationOptions;
   const chain = chainRows.length ? chainRows : snapshotChainRows;
-  const scrollRef = useRef(null);
+  const callHeaderScrollRef = useRef(null);
   const callSideScrollRef = useRef(null);
+  const putHeaderScrollRef = useRef(null);
   const putSideScrollRef = useRef(null);
   const syncingSideScrollRef = useRef(false);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
   const resolvedChainStatus =
     chainRows.length || chainStatus !== "empty" ? chainStatus : snapshotChainStatus;
   const atmStrike = useMemo(() => {
@@ -606,29 +630,36 @@ export const TradeChainPanel = ({
     () => buildHeatmapModel(chain),
     [chain],
   );
-  const syncSideHorizontalScroll = useCallback((sourceSide) => {
+  const syncHorizontalScroll = useCallback((sourceKey) => {
     if (syncingSideScrollRef.current) {
       return;
     }
 
-    const source =
-      sourceSide === "C" ? callSideScrollRef.current : putSideScrollRef.current;
-    const target =
-      sourceSide === "C" ? putSideScrollRef.current : callSideScrollRef.current;
-    if (!source || !target) {
+    const scrollRefs = {
+      callBody: callSideScrollRef,
+      callHeader: callHeaderScrollRef,
+      putBody: putSideScrollRef,
+      putHeader: putHeaderScrollRef,
+    };
+    const source = scrollRefs[sourceKey]?.current;
+    if (!source) {
       return;
     }
 
     const sourceMax = Math.max(0, source.scrollWidth - source.clientWidth);
-    const targetMax = Math.max(0, target.scrollWidth - target.clientWidth);
-    const nextScrollLeft =
-      sourceMax > 0 ? (source.scrollLeft / sourceMax) * targetMax : 0;
-    if (Math.abs(target.scrollLeft - nextScrollLeft) < 1) {
-      return;
-    }
-
+    const scrollRatio = sourceMax > 0 ? source.scrollLeft / sourceMax : 0;
     syncingSideScrollRef.current = true;
-    target.scrollLeft = nextScrollLeft;
+    Object.entries(scrollRefs).forEach(([key, ref]) => {
+      const target = ref.current;
+      if (!target || key === sourceKey) {
+        return;
+      }
+      const targetMax = Math.max(0, target.scrollWidth - target.clientWidth);
+      const nextScrollLeft = scrollRatio * targetMax;
+      if (Math.abs(target.scrollLeft - nextScrollLeft) >= 1) {
+        target.scrollLeft = nextScrollLeft;
+      }
+    });
     const clearSyncFlag = () => {
       syncingSideScrollRef.current = false;
     };
@@ -638,107 +669,71 @@ export const TradeChainPanel = ({
       clearSyncFlag();
     }
   }, []);
+  const handleCallHeaderHorizontalScroll = useCallback(
+    () => syncHorizontalScroll("callHeader"),
+    [syncHorizontalScroll],
+  );
   const handleCallHorizontalScroll = useCallback(
-    () => syncSideHorizontalScroll("C"),
-    [syncSideHorizontalScroll],
+    () => syncHorizontalScroll("callBody"),
+    [syncHorizontalScroll],
+  );
+  const handlePutHeaderHorizontalScroll = useCallback(
+    () => syncHorizontalScroll("putHeader"),
+    [syncHorizontalScroll],
   );
   const handlePutHorizontalScroll = useCallback(
-    () => syncSideHorizontalScroll("P"),
-    [syncSideHorizontalScroll],
+    () => syncHorizontalScroll("putBody"),
+    [syncHorizontalScroll],
   );
   const selectedCenterStrike = contract.strike ?? atmStrike;
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (!element || !chain.length) {
-      return;
-    }
-
-    const updateViewportHeight = () => {
-      setViewportHeight(element.clientHeight || 0);
-    };
-    updateViewportHeight();
-
-    if (typeof ResizeObserver === "function") {
-      const observer = new ResizeObserver(updateViewportHeight);
-      observer.observe(element);
-      return () => observer.disconnect();
-    }
-
-    if (typeof window !== "undefined") {
-      window.addEventListener("resize", updateViewportHeight);
-      return () => window.removeEventListener("resize", updateViewportHeight);
-    }
-    return undefined;
-  }, [chain.length]);
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (!element || !chain.length) {
-      return;
-    }
-
-    const selectedIndex = chain.findIndex((row) => row.k === selectedCenterStrike);
-    const atmIndex = chain.findIndex((row) =>
-      isFiniteNumber(atmStrike) ? row.k === atmStrike : row.isAtm,
-    );
-    const targetIndex = selectedIndex >= 0 ? selectedIndex : atmIndex;
-    if (targetIndex < 0) {
-      return;
-    }
-
-    const rowTop = HEADER_HEIGHT + targetIndex * ROW_HEIGHT;
-    const rowBottom = rowTop + ROW_HEIGHT;
-    const visibleTop = element.scrollTop;
-    const visibleBottom = visibleTop + element.clientHeight;
-    if (rowTop >= visibleTop && rowBottom <= visibleBottom) {
-      return;
-    }
-
-    element.scrollTop = Math.max(
-      0,
-      rowTop - Math.max(ROW_HEIGHT * 6, (element.clientHeight - ROW_HEIGHT) / 2),
-    );
-    setScrollTop(element.scrollTop);
-  }, [atmStrike, chain.length, expInfo?.value, selectedCenterStrike]);
-  const rowScrollTop = Math.max(0, scrollTop - HEADER_HEIGHT);
-  const visibleStartIndex = Math.max(
-    0,
-    Math.floor(rowScrollTop / ROW_HEIGHT) - VIRTUAL_OVERSCAN_ROWS,
+  const selectedScrollIndex = resolveOptionChainScrollIndex(
+    chain,
+    selectedCenterStrike,
+    atmStrike,
   );
-  const visibleRowCount = Math.max(
-    1,
-    Math.ceil(Math.max(0, viewportHeight - HEADER_HEIGHT) / ROW_HEIGHT) +
-      VIRTUAL_OVERSCAN_ROWS * 2,
-  );
-  const visibleEndIndex = Math.min(
-    chain.length,
-    visibleStartIndex + visibleRowCount,
-  );
-  const visibleChain = chain.slice(visibleStartIndex, visibleEndIndex);
+  const {
+    scrollRef,
+    totalSize: virtualRowsHeight,
+    virtualItems,
+  } = useDenseVirtualRows({
+    count: chain.length,
+    overscan: VIRTUAL_OVERSCAN_ROWS,
+    rowHeight: ROW_HEIGHT,
+    scrollAlign: "center",
+    scrollKey: `${ticker || ""}:${expInfo?.value || ""}:${selectedCenterStrike ?? ""}:${atmStrike ?? ""}:${chain.length}`,
+    scrollToIndex: selectedScrollIndex,
+  });
+  const virtualEntries = buildOptionChainVirtualEntries(chain, virtualItems);
+  const visibleChain = virtualEntries.map(({ row }) => row);
   const selectedChainRowBase =
     chain.find((row) => row.k === contract?.strike) ||
     chain.find((row) => row.isAtm) ||
     null;
+  const visibleRowsForQuotes = mergeVisibleOptionChainRows(
+    visibleChain,
+    selectedChainRowBase,
+  );
   const visibleQuoteProviderContractIds = useMemo(
     () =>
-      visibleChain
+      visibleRowsForQuotes
         .flatMap((row) => [
           row.cContract?.providerContractId,
           row.pContract?.providerContractId,
-          selectedChainRowBase?.cContract?.providerContractId,
-          selectedChainRowBase?.pContract?.providerContractId,
         ])
         .filter(Boolean),
-    [selectedChainRowBase, visibleChain],
+    [visibleRowsForQuotes],
   );
   const visibleQuoteVersion = useStoredOptionQuoteSnapshotVersion(
     visibleQuoteProviderContractIds,
   );
   const liveVisibleChain = useMemo(
     () =>
-      visibleChain.map((row) =>
-        patchOptionChainRowWithQuoteGetter(row, getStoredOptionQuoteSnapshot),
-      ),
-    [visibleChain, visibleQuoteVersion],
+      virtualEntries.map(({ index, row, virtualItem }) => ({
+        index,
+        row: patchOptionChainRowWithQuoteGetter(row, getStoredOptionQuoteSnapshot),
+        virtualItem,
+      })),
+    [virtualEntries, visibleQuoteVersion],
   );
   const selectedChainRow = useMemo(
     () =>
@@ -750,11 +745,18 @@ export const TradeChainPanel = ({
         : null,
     [selectedChainRowBase, visibleQuoteVersion],
   );
+  const visibleRowsForQuotesSignature =
+    buildOptionChainRowsIdentitySignature(visibleRowsForQuotes);
   useEffect(() => {
-    onVisibleRowsChange?.(visibleChain);
-  }, [onVisibleRowsChange, visibleChain]);
-  const topPadding = visibleStartIndex * ROW_HEIGHT;
-  const bottomPadding = Math.max(0, (chain.length - visibleEndIndex) * ROW_HEIGHT);
+    onVisibleRowsChange?.(visibleRowsForQuotes);
+  }, [onVisibleRowsChange, visibleRowsForQuotesSignature]);
+  const firstVirtualRow = virtualItems[0];
+  const lastVirtualRow = virtualItems[virtualItems.length - 1];
+  const topPadding = firstVirtualRow?.start ?? 0;
+  const bottomPadding = Math.max(
+    0,
+    virtualRowsHeight - (lastVirtualRow?.end ?? 0),
+  );
   const atmRow =
     chain.find((row) => row.k === atmStrike) ||
     chain.find((row) => row.isAtm);
@@ -1011,55 +1013,84 @@ export const TradeChainPanel = ({
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         {chain.length ? (
           <div
-            ref={scrollRef}
-            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
             style={{
               height: "100%",
-              overflowY: "auto",
-              overflowX: "hidden",
-              position: "relative",
-              display: "grid",
-              gridTemplateColumns: `minmax(0, 1fr) ${dim(STRIKE_WIDTH)}px minmax(0, 1fr)`,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
               fontFamily: T.mono,
               fontSize: fs(9),
             }}
           >
-            <ChainSide
-              ref={callSideScrollRef}
-              side="C"
-              chain={liveVisibleChain}
-              columns={CALL_COLUMNS}
-              selected={{ strike: contract.strike, cp: contract.cp }}
-              heldContracts={heldForExpiration}
-              heatmapEnabled={heatmapEnabled}
-              heatmapModel={heatmapModel}
-              atmStrike={atmStrike}
-              onSelect={onSelectContract}
-              onHorizontalScroll={handleCallHorizontalScroll}
-              topPadding={topPadding}
-              bottomPadding={bottomPadding}
-            />
-            <StrikeColumn
-              chain={liveVisibleChain}
-              atmStrike={atmStrike}
-              topPadding={topPadding}
-              bottomPadding={bottomPadding}
-            />
-            <ChainSide
-              ref={putSideScrollRef}
-              side="P"
-              chain={liveVisibleChain}
-              columns={PUT_COLUMNS}
-              selected={{ strike: contract.strike, cp: contract.cp }}
-              heldContracts={heldForExpiration}
-              heatmapEnabled={heatmapEnabled}
-              heatmapModel={heatmapModel}
-              atmStrike={atmStrike}
-              onSelect={onSelectContract}
-              onHorizontalScroll={handlePutHorizontalScroll}
-              topPadding={topPadding}
-              bottomPadding={bottomPadding}
-            />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `minmax(0, 1fr) ${dim(STRIKE_WIDTH)}px minmax(0, 1fr)`,
+                flexShrink: 0,
+              }}
+            >
+              <ChainSideHeader
+                ref={callHeaderScrollRef}
+                side="C"
+                columns={CALL_COLUMNS}
+                onHorizontalScroll={handleCallHeaderHorizontalScroll}
+              />
+              <StrikeHeader />
+              <ChainSideHeader
+                ref={putHeaderScrollRef}
+                side="P"
+                columns={PUT_COLUMNS}
+                onHorizontalScroll={handlePutHeaderHorizontalScroll}
+              />
+            </div>
+            <div
+              ref={scrollRef}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                overflowX: "hidden",
+                display: "grid",
+                gridTemplateColumns: `minmax(0, 1fr) ${dim(STRIKE_WIDTH)}px minmax(0, 1fr)`,
+              }}
+            >
+              <ChainSideRows
+                ref={callSideScrollRef}
+                side="C"
+                entries={liveVisibleChain}
+                columns={CALL_COLUMNS}
+                selected={{ strike: contract.strike, cp: contract.cp }}
+                heldContracts={heldForExpiration}
+                heatmapEnabled={heatmapEnabled}
+                heatmapModel={heatmapModel}
+                atmStrike={atmStrike}
+                onSelect={onSelectContract}
+                onHorizontalScroll={handleCallHorizontalScroll}
+                topPadding={topPadding}
+                bottomPadding={bottomPadding}
+              />
+              <StrikeRows
+                entries={liveVisibleChain}
+                atmStrike={atmStrike}
+                topPadding={topPadding}
+                bottomPadding={bottomPadding}
+              />
+              <ChainSideRows
+                ref={putSideScrollRef}
+                side="P"
+                entries={liveVisibleChain}
+                columns={PUT_COLUMNS}
+                selected={{ strike: contract.strike, cp: contract.cp }}
+                heldContracts={heldForExpiration}
+                heatmapEnabled={heatmapEnabled}
+                heatmapModel={heatmapModel}
+                atmStrike={atmStrike}
+                onSelect={onSelectContract}
+                onHorizontalScroll={handlePutHorizontalScroll}
+                topPadding={topPadding}
+                bottomPadding={bottomPadding}
+              />
+            </div>
           </div>
         ) : (
           <ChainStatePanel {...emptyChainState} />

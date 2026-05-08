@@ -38,6 +38,12 @@ test("historical flow nonblocking direct fallback is explicitly bounded", () => 
   assert.match(source, /controller\.abort\(\)/);
 });
 
+test("historical flow upserts refresh classified payload fields", () => {
+  assert.match(source, /side:\s*sql`excluded\.side`/);
+  assert.match(source, /sentiment:\s*sql`excluded\.sentiment`/);
+  assert.match(source, /rawProviderPayload:\s*sql`excluded\.raw_provider_payload`/);
+});
+
 test("historical flow sampling budgets markers across regular sessions", () => {
   const plan = resolveHistoricalFlowSamplePlan({
     from: new Date("2026-05-05T13:30:00.000Z"),

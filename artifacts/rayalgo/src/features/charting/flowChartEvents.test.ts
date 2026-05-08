@@ -127,6 +127,149 @@ test("buildFlowChartBuckets aggregates premium, bias, top contract, and intensit
   assert.equal(buckets[0].volumeSegmentRatio >= 0.08, true);
 });
 
+test("buildFlowChartBuckets dedupes live and historical copies before totaling", () => {
+  const buckets = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "live-print",
+        metadata: {
+          provider: "polygon",
+          basis: "trade",
+          sourceBasis: "confirmed_trade",
+          optionTicker: "AAPL260515C00200000",
+          cp: "C",
+          strike: 200,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 20,
+          premium: 42_000,
+          contractLabel: "AAPL 200C",
+        },
+      }),
+      flowEvent({
+        id: "history-print",
+        metadata: {
+          provider: "polygon",
+          basis: "trade",
+          sourceBasis: "confirmed_trade",
+          optionTicker: "AAPL260515C00200000",
+          cp: "C",
+          strike: 200,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 20,
+          premium: 42_000,
+          contractLabel: "AAPL 200C",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(buckets.length, 1);
+  assert.equal(buckets[0].count, 1);
+  assert.equal(buckets[0].totalPremium, 42_000);
+  assert.equal(buckets[0].totalContracts, 20);
+  assert.equal(buildFlowTooltipModel(buckets[0]).title, "Flow event");
+});
+
+test("buildFlowChartBuckets keeps confirmed prints and snapshot activity separate on the same candle", () => {
+  const buckets = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "same-candle-confirmed",
+        metadata: {
+          provider: "polygon",
+          basis: "trade",
+          sourceBasis: "confirmed_trade",
+          optionTicker: "SPY260515C00500000",
+          cp: "C",
+          strike: 500,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 20,
+          premium: 42_000,
+          contractLabel: "SPY 500C",
+        },
+      }),
+      flowEvent({
+        id: "same-candle-snapshot",
+        metadata: {
+          provider: "ibkr",
+          basis: "snapshot",
+          sourceBasis: "snapshot_activity",
+          optionTicker: "SPY260515C00500000",
+          cp: "C",
+          strike: 500,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 5000,
+          premium: 1_050_000,
+          contractLabel: "SPY 500C",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(buckets.length, 2);
+  assert.deepEqual(
+    buckets.map((bucket) => bucket.sourceBasis),
+    ["confirmed_trade", "snapshot_activity"],
+  );
+  assert.deepEqual(
+    buckets.map((bucket) => bucket.totalPremium),
+    [42_000, 1_050_000],
+  );
+  assert.equal(buildFlowTooltipModel(buckets[0]).title, "Flow event");
+  assert.equal(buildFlowTooltipModel(buckets[1]).title, "Active contract flow");
+});
+
+test("buildFlowChartBuckets keeps same-time prints distinct when size differs", () => {
+  const buckets = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "small-print",
+        metadata: {
+          optionTicker: "AAPL260515C00200000",
+          cp: "C",
+          strike: 200,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 20,
+          premium: 42_000,
+          contractLabel: "AAPL 200C",
+        },
+      }),
+      flowEvent({
+        id: "large-print",
+        metadata: {
+          optionTicker: "AAPL260515C00200000",
+          cp: "C",
+          strike: 200,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 35,
+          premium: 73_500,
+          contractLabel: "AAPL 200C",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(buckets.length, 1);
+  assert.equal(buckets[0].count, 2);
+  assert.equal(buckets[0].totalPremium, 115_500);
+  assert.equal(buckets[0].totalContracts, 55);
+});
+
 test("buildFlowChartBuckets separates bullish, bearish, and mixed flow shares", () => {
   const buckets = buildFlowChartBuckets(
     [
@@ -156,6 +299,140 @@ test("buildFlowChartBuckets separates bullish, bearish, and mixed flow shares", 
   assert.equal(buckets[0].bullishShare, 0.2);
   assert.equal(buckets[0].bearishShare, 0.3);
   assert.equal(buckets[0].neutralShare, 0.5);
+});
+
+test("buildFlowChartBuckets does not invent bias premium for zero-premium events", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "zero-bull",
+        bias: "bullish",
+        metadata: { cp: "C", premium: 0 },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(bucket.totalPremium, 0);
+  assert.equal(bucket.bullishPremium, 0);
+  assert.equal(bucket.bullishShare, 0);
+  assert.equal(bucket.neutralShare, 1);
+  assert.equal(bucket.bias, "bullish");
+});
+
+test("buildFlowTooltipModel rounds mix percentages to exactly 100", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "bull-third",
+        bias: "bullish",
+        metadata: { cp: "C", premium: 1 },
+      }),
+      flowEvent({
+        id: "bear-third",
+        bias: "bearish",
+        metadata: { cp: "P", premium: 1 },
+      }),
+      flowEvent({
+        id: "neutral-third",
+        bias: "neutral",
+        metadata: { cp: "C", premium: 1 },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  const tooltip = buildFlowTooltipModel(bucket);
+
+  assert.equal(
+    tooltip.bullishPercent + tooltip.bearishPercent + tooltip.neutralPercent,
+    100,
+  );
+  assert.equal(tooltip.callPercent + tooltip.putPercent, 100);
+});
+
+test("buildFlowChartBuckets colors unclassified all-call flow with fallback bias", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "call-fallback",
+        bias: "bullish",
+        metadata: { cp: "C", premium: 250_000, biasBasis: "call_put_fallback" },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+  const tooltip = buildFlowTooltipModel(bucket);
+
+  assert.equal(bucket.bias, "bullish");
+  assert.equal(bucket.biasBasis, "Calls 100%");
+  assert.equal(bucket.bullishPremium, 0);
+  assert.equal(bucket.neutralPremium, 250_000);
+  assert.equal(tooltip.tone, "bullish");
+  assert.equal(tooltip.biasBasis, "Calls 100%");
+  assert.equal(tooltip.sideConfidence, "Unclassified");
+});
+
+test("buildFlowChartBuckets colors unclassified all-put flow with fallback bias", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "put-fallback",
+        bias: "bearish",
+        metadata: { cp: "P", premium: 250_000, biasBasis: "call_put_fallback" },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(bucket.bias, "bearish");
+  assert.equal(bucket.biasBasis, "Puts 100%");
+});
+
+test("buildFlowChartBuckets keeps weak unclassified call put mix neutral", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "call-fallback",
+        bias: "bullish",
+        metadata: { cp: "C", premium: 60_000, biasBasis: "call_put_fallback" },
+      }),
+      flowEvent({
+        id: "put-fallback",
+        bias: "bearish",
+        metadata: { cp: "P", premium: 40_000, biasBasis: "call_put_fallback" },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(bucket.bias, "neutral");
+  assert.equal(bucket.biasBasis, "Mixed C/P");
+});
+
+test("buildFlowChartBuckets lets classified side beat call type fallback", () => {
+  const [bucket] = buildFlowChartBuckets(
+    [
+      flowEvent({
+        id: "sell-call",
+        bias: "bearish",
+        metadata: {
+          cp: "C",
+          premium: 100_000,
+          side: "sell",
+          sideBasis: "quote_match",
+          sideConfidence: "high",
+          biasBasis: "side",
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+  const tooltip = buildFlowTooltipModel(bucket);
+
+  assert.equal(bucket.bias, "bearish");
+  assert.equal(bucket.biasBasis, "Side premium");
+  assert.equal(tooltip.sideConfidence, "Quote high");
 });
 
 test("buildFlowChartBuckets preserves multiple visible flow buckets across bars", () => {
@@ -233,6 +510,77 @@ test("summarizeFlowChartBucketPlacement reports bucket drops", () => {
   assert.equal(diagnostics.bucketedEventCount, 1);
   assert.equal(diagnostics.droppedInvalidTimeCount, 1);
   assert.equal(diagnostics.droppedOutsideBarCount, 1);
+});
+
+test("summarizeFlowChartBucketPlacement reports duplicate flow drops", () => {
+  const diagnostics = summarizeFlowChartBucketPlacement(
+    [
+      flowEvent({
+        id: "live-print",
+        metadata: {
+          optionTicker: "AAPL260515C00200000",
+          cp: "C",
+          strike: 200,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 20,
+          premium: 42_000,
+        },
+      }),
+      flowEvent({
+        id: "history-print",
+        metadata: {
+          optionTicker: "AAPL260515C00200000",
+          cp: "C",
+          strike: 200,
+          expirationDate: "2026-05-15",
+          side: "buy",
+          price: 2.1,
+          size: 20,
+          premium: 42_000,
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(diagnostics.flowEventCount, 2);
+  assert.equal(diagnostics.uniqueFlowEventCount, 1);
+  assert.equal(diagnostics.droppedDuplicateFlowEventCount, 1);
+  assert.equal(diagnostics.bucketedEventCount, 1);
+});
+
+test("summarizeFlowChartBucketPlacement reports confirmed and snapshot basis counts separately", () => {
+  const diagnostics = summarizeFlowChartBucketPlacement(
+    [
+      flowEvent({
+        id: "confirmed",
+        metadata: {
+          basis: "trade",
+          sourceBasis: "confirmed_trade",
+          cp: "C",
+          premium: 42_000,
+        },
+      }),
+      flowEvent({
+        id: "snapshot",
+        metadata: {
+          basis: "snapshot",
+          sourceBasis: "snapshot_activity",
+          cp: "C",
+          premium: 1_050_000,
+        },
+      }),
+    ],
+    { chartBars: bars, chartBarRanges: ranges },
+  );
+
+  assert.equal(diagnostics.uniqueFlowEventCount, 2);
+  assert.equal(diagnostics.confirmedTradeFlowEventCount, 1);
+  assert.equal(diagnostics.snapshotActivityFlowEventCount, 1);
+  assert.equal(diagnostics.bucketedConfirmedTradeEventCount, 1);
+  assert.equal(diagnostics.bucketedSnapshotActivityEventCount, 1);
 });
 
 test("buildFlowChartBuckets does not pile after-hours snapshot flow onto the final bar", () => {

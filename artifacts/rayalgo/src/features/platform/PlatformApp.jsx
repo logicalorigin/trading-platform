@@ -99,6 +99,9 @@ import {
   publishSignalMonitorSnapshot,
 } from "./signalMonitorStore";
 import {
+  isSignalMonitorDegradedProfile,
+} from "./signalMonitorStatusModel";
+import {
   buildWatchlistIdentityPayload,
   buildWatchlistRows,
 } from "./watchlistModel";
@@ -1201,6 +1204,8 @@ export default function PlatformApp() {
     },
   );
   const signalMonitorProfile = signalMonitorProfileQuery.data || null;
+  const signalMonitorProfileDegraded =
+    isSignalMonitorDegradedProfile(signalMonitorProfile);
   const ibkrWorkPressure = useMemo(
     () => resolveIbkrWorkPressure(session?.ibkrBridge),
     [session?.ibkrBridge],
@@ -1216,7 +1221,9 @@ export default function PlatformApp() {
         memoryPressure: memoryPressureSignal,
         brokerConfigured,
         brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
-        automationEnabled: Boolean(signalMonitorProfile?.enabled),
+        automationEnabled: Boolean(
+          signalMonitorProfile?.enabled && !signalMonitorProfileDegraded,
+        ),
         tradingEnabled: Boolean(gatewayTradingReady),
       }),
     [
@@ -1229,6 +1236,7 @@ export default function PlatformApp() {
       screenWarmupPhase,
       sessionMetadataSettled,
       session?.ibkrBridge?.authenticated,
+      signalMonitorProfileDegraded,
       signalMonitorProfile?.enabled,
     ],
   );
@@ -1270,9 +1278,13 @@ export default function PlatformApp() {
       },
     },
   );
+  const signalMonitorDegraded = Boolean(
+    signalMonitorProfileDegraded ||
+      isSignalMonitorDegradedProfile(signalMonitorStateQuery.data?.profile),
+  );
   useRuntimeWorkloadFlag(
     "signal-monitor:display",
-    Boolean(pageVisible && signalMonitorProfile?.enabled),
+    Boolean(pageVisible && signalMonitorProfile?.enabled && !signalMonitorDegraded),
     {
       kind: "poll",
       label: "Signal display",
@@ -1445,7 +1457,7 @@ export default function PlatformApp() {
     [signalMonitorSymbols, watchlistSymbols],
   );
   const broadFlowWatchlistSymbols = useMemo(
-    () => [...new Set(allWatchlistSymbolList)],
+    () => [...new Set(allWatchlistSymbolList.filter(Boolean))],
     [allWatchlistSymbolList],
   );
   const runtimeQuoteSymbols = useMemo(
@@ -1470,10 +1482,12 @@ export default function PlatformApp() {
       states: signalMonitorStates,
       events: signalMonitorEvents,
       pending: evaluateSignalMonitorMutation.isPending,
+      degraded: signalMonitorDegraded,
     });
   }, [
     evaluateSignalMonitorMutation.isPending,
     signalMonitorEvents,
+    signalMonitorDegraded,
     signalMonitorProfile,
     signalMonitorStates,
   ]);
@@ -1937,15 +1951,18 @@ export default function PlatformApp() {
             runtimeWatchlistSymbols={runtimeWatchlistSymbols}
             sessionMetadataSettled={sessionMetadataSettled}
             onFlowAction={handleJumpToTradeFromFlow}
-            signalScanEnabled={Boolean(signalMonitorProfile?.enabled)}
+            signalScanEnabled={Boolean(
+              signalMonitorProfile?.enabled && !signalMonitorDegraded,
+            )}
             signalScanPending={updateSignalMonitorProfileMutation.isPending}
             signalEvaluationPending={evaluateSignalMonitorMutation.isPending}
             signalScanErrored={Boolean(
-              signalMonitorProfile?.enabled &&
-                (signalMonitorStateQuery.isError ||
-                  signalMonitorEventsQuery.isError ||
-                  evaluateSignalMonitorMutation.isError ||
-                  updateSignalMonitorProfileMutation.isError),
+              signalMonitorDegraded ||
+                (signalMonitorProfile?.enabled &&
+                  (signalMonitorStateQuery.isError ||
+                    signalMonitorEventsQuery.isError ||
+                    evaluateSignalMonitorMutation.isError ||
+                    updateSignalMonitorProfileMutation.isError)),
             )}
             onToggleSignalScan={handleToggleSignalMonitor}
         />

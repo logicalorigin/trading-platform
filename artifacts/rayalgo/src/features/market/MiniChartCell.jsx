@@ -9,7 +9,7 @@ import { DEFAULT_WATCHLIST_BY_SYMBOL, WATCHLIST } from "./marketReferenceData";
 import { MiniChartPremiumFlowIndicator } from "./MiniChartPremiumFlowIndicator.jsx";
 import { T } from "../../lib/uiTokens";
 
-const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("primary");
+const MARKET_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
 
 const MARKET_CHART_INTERACTIVE_TARGET_SELECTOR = [
   "a[href]",
@@ -255,6 +255,7 @@ export const MiniChartCell = ({
           ticker={ticker}
           flowEvents={flowEvents}
           flowEventsSourceMode="provided"
+          chartHydrationRole="mini"
           historicalDataEnabled
           stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
           dataTestId={dataTestId}

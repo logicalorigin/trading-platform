@@ -523,7 +523,7 @@ export function getBridgeSchedulerDiagnostics(): BridgeSchedulerDiagnostics {
           ? "backoff"
           : unresolvedTimeout || queueStalled
             ? "stalled"
-            : current.queued > 0 || current.rejected > 0
+            : current.queued > 0
               ? "degraded"
               : "normal";
 

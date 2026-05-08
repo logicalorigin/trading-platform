@@ -8,13 +8,14 @@ import {
   backtestRunsTable,
   db,
   executionEventsTable,
+  signalMonitorEventsTable,
   shadowFillsTable,
   shadowOrdersTable,
   shadowPositionsTable,
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
@@ -61,8 +62,6 @@ type SignalOptionsActionStatus =
   | "shadow_filled"
   | "partial_shadow"
   | "manual_override"
-  | "live_previewed"
-  | "live_submitted"
   | "closed"
   | "mismatch";
 
@@ -83,6 +82,35 @@ type SignalOptionsShadowLink = {
   sourceType: "automation" | "manual" | "mixed" | null;
   strategyLabel: string | null;
   attributionStatus: "attributed" | "mixed" | "unknown";
+};
+
+type SignalOptionsSignalSnapshot = {
+  profileId: string;
+  signalKey?: string | null;
+  source: string;
+  eventId?: string | null;
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  direction: SignalDirection | null;
+  signalAt: string | null;
+  signalPrice: number | null;
+  latestBarAt: string | null;
+  barsSinceSignal: number | null;
+  fresh: boolean;
+  status?: string | null;
+  filterState?: Record<string, unknown> | null;
+};
+
+type SignalOptionsActionMapping = {
+  indicator: "rayreplica";
+  signalDirection: SignalDirection;
+  optionRight: OptionRight;
+  optionAction: "buy_call" | "buy_put";
+  orderSide: "buy";
+  orderIntent: "open_long_option";
+  executionMode: "shadow";
+  destinationAccountId: "shadow";
+  brokerSubmission: false;
 };
 
 export type SignalOptionsOptionQuote = {
@@ -134,6 +162,8 @@ type SignalOptionsCandidate = {
   actionStatus?: SignalOptionsActionStatus;
   syncStatus?: SignalOptionsSyncStatus;
   shadowLink?: SignalOptionsShadowLink | null;
+  signal?: Record<string, unknown> | null;
+  action?: Record<string, unknown> | null;
   timeline?: Array<Record<string, unknown>>;
 };
 
@@ -163,7 +193,10 @@ type SignalMonitorState = {
   currentSignalDirection: SignalDirection | null;
   currentSignalAt: Date | string | null;
   currentSignalPrice: number | null;
+  latestBarAt?: Date | string | null;
+  barsSinceSignal?: number | null;
   fresh: boolean;
+  status?: string | null;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -175,6 +208,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function optionalFiniteNumber(value: unknown): number | null {
+  return value == null || value === "" ? null : finiteNumber(value);
 }
 
 function toIsoString(value: unknown): string | null {
@@ -417,6 +454,149 @@ function buildSignalKey(state: SignalMonitorState, signalAt: string) {
     state.currentSignalDirection,
     signalAt,
   ].join(":");
+}
+
+function buildSignalOptionsSignalSnapshot(input: {
+  state: SignalMonitorState;
+  signalAt?: string | null;
+  signalKey?: string | null;
+  source?: string | null;
+  eventId?: string | null;
+  filterState?: unknown;
+}): SignalOptionsSignalSnapshot {
+  const signalAt =
+    input.signalAt ?? toIsoString(input.state.currentSignalAt) ?? null;
+  const filterState = asRecord(input.filterState);
+  return {
+    profileId: input.state.profileId,
+    signalKey: input.signalKey ?? null,
+    source:
+      compactString(input.source) ??
+      (isUuidLike(input.state.profileId) ? "rayreplica" : "rayreplica-runtime"),
+    eventId: compactString(input.eventId),
+    symbol: normalizeSymbol(input.state.symbol).toUpperCase(),
+    timeframe: input.state.timeframe,
+    direction: input.state.currentSignalDirection ?? null,
+    signalAt,
+    signalPrice: optionalFiniteNumber(input.state.currentSignalPrice),
+    latestBarAt: toIsoString(input.state.latestBarAt),
+    barsSinceSignal: optionalFiniteNumber(input.state.barsSinceSignal),
+    fresh: input.state.fresh === true,
+    status: compactString(input.state.status),
+    filterState: Object.keys(filterState).length ? filterState : null,
+  };
+}
+
+function buildSignalOptionsActionMapping(
+  direction: SignalDirection,
+): SignalOptionsActionMapping {
+  const optionRight = optionRightForSignal(direction);
+  return {
+    indicator: "rayreplica",
+    signalDirection: direction,
+    optionRight,
+    optionAction: optionRight === "put" ? "buy_put" : "buy_call",
+    orderSide: "buy",
+    orderIntent: "open_long_option",
+    executionMode: "shadow",
+    destinationAccountId: "shadow",
+    brokerSubmission: false,
+  };
+}
+
+async function readSignalMonitorEventMetadata(input: {
+  state: SignalMonitorState;
+  signalAt: string;
+}) {
+  if (!isUuidLike(input.state.profileId)) {
+    return null;
+  }
+  const signalAt = dateOrNull(input.signalAt);
+  const direction = input.state.currentSignalDirection;
+  if (!signalAt || !direction) {
+    return null;
+  }
+
+  const [event] = await db
+    .select()
+    .from(signalMonitorEventsTable)
+    .where(
+      and(
+        eq(signalMonitorEventsTable.profileId, input.state.profileId),
+        eq(
+          signalMonitorEventsTable.symbol,
+          normalizeSymbol(input.state.symbol).toUpperCase(),
+        ),
+        eq(signalMonitorEventsTable.timeframe, input.state.timeframe),
+        eq(signalMonitorEventsTable.direction, direction),
+        eq(signalMonitorEventsTable.signalAt, signalAt),
+      ),
+    )
+    .orderBy(desc(signalMonitorEventsTable.emittedAt))
+    .limit(1);
+
+  if (!event) {
+    return null;
+  }
+
+  return {
+    eventId: event.id,
+    source: event.source,
+    filterState: asRecord(asRecord(event.payload).filterState),
+  };
+}
+
+async function listSignalOptionsSignalSnapshots(deployment: AlgoDeployment) {
+  const universe = new Set(
+    deployment.symbolUniverse
+      .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+      .filter(Boolean),
+  );
+  const signalState = await getSignalMonitorState({
+    environment: deployment.mode,
+  }).catch((error) => {
+    logger.warn?.(
+      { err: error, deploymentId: deployment.id },
+      "Failed to read signal monitor state for signal-options cockpit",
+    );
+    return null;
+  });
+  const states = Array.isArray(signalState?.states)
+    ? (signalState.states as SignalMonitorState[])
+    : [];
+  const filteredStates = states.filter((state) => {
+    const symbol = normalizeSymbol(state.symbol).toUpperCase();
+    return symbol && (universe.size === 0 || universe.has(symbol));
+  });
+
+  const snapshots = await Promise.all(
+    filteredStates.map(async (state) => {
+      const signalAt = toIsoString(state.currentSignalAt);
+      const signalKey =
+        signalAt && state.currentSignalDirection
+          ? buildSignalKey(state, signalAt)
+          : null;
+      const metadata = signalAt
+        ? await readSignalMonitorEventMetadata({ state, signalAt }).catch(
+            () => null,
+          )
+        : null;
+      return buildSignalOptionsSignalSnapshot({
+        state,
+        signalAt,
+        signalKey,
+        source: metadata?.source ?? null,
+        eventId: metadata?.eventId ?? null,
+        filterState: metadata?.filterState ?? null,
+      });
+    }),
+  );
+
+  return snapshots.sort((left, right) => {
+    const leftTime = dateOrNull(left.signalAt)?.getTime() ?? 0;
+    const rightTime = dateOrNull(right.signalAt)?.getTime() ?? 0;
+    return rightTime - leftTime;
+  });
 }
 
 function daysBetweenUtc(from: Date, to: Date) {
@@ -706,9 +886,24 @@ function buildCandidateFromSignal(input: {
   deployment: AlgoDeployment;
   state: SignalMonitorState;
   signalAt: string;
+  signalKey?: string | null;
+  signalMetadata?: {
+    eventId?: string | null;
+    source?: string | null;
+    filterState?: unknown;
+  } | null;
 }) {
   const direction = input.state.currentSignalDirection ?? "buy";
   const symbol = normalizeSymbol(input.state.symbol).toUpperCase();
+  const signal = buildSignalOptionsSignalSnapshot({
+    state: input.state,
+    signalAt: input.signalAt,
+    signalKey: input.signalKey ?? null,
+    source: input.signalMetadata?.source ?? null,
+    eventId: input.signalMetadata?.eventId ?? null,
+    filterState: input.signalMetadata?.filterState ?? null,
+  });
+  const action = buildSignalOptionsActionMapping(direction);
   return {
     id: buildCandidateId({
       deploymentId: input.deployment.id,
@@ -723,8 +918,10 @@ function buildCandidateFromSignal(input: {
     optionRight: optionRightForSignal(direction),
     timeframe: input.state.timeframe,
     signalAt: input.signalAt,
-    signalPrice: finiteNumber(input.state.currentSignalPrice),
+    signalPrice: optionalFiniteNumber(input.state.currentSignalPrice),
     status: "candidate" as const,
+    signal,
+    action,
   };
 }
 
@@ -736,6 +933,12 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
       : payload.automationCandidate,
   );
   const position = asRecord(payload.position);
+  const signal = Object.keys(asRecord(candidate.signal)).length
+    ? asRecord(candidate.signal)
+    : asRecord(payload.signal);
+  const action = Object.keys(asRecord(candidate.action)).length
+    ? asRecord(candidate.action)
+    : asRecord(payload.action);
   const candidateId =
     compactString(candidate.id) ??
     compactString(payload.candidateId) ??
@@ -792,6 +995,8 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
         : typeof payload.skipReason === "string"
           ? payload.skipReason
           : null,
+    signal: Object.keys(signal).length ? signal : null,
+    action: Object.keys(action).length ? action : null,
   };
 }
 
@@ -1265,6 +1470,9 @@ function buildCockpitPipeline(input: {
   const selectedContracts = input.candidates.filter(
     (candidate) => Object.keys(asRecord(candidate.selectedContract)).length > 0,
   );
+  const actionMapped = input.candidates.filter(
+    (candidate) => Object.keys(asRecord(candidate.action)).length > 0,
+  );
   const blockedCandidates = input.candidates.filter(
     (candidate) =>
       candidate.actionStatus === "blocked" || candidate.status === "skipped",
@@ -1317,6 +1525,16 @@ function buildCockpitPipeline(input: {
       detail: input.candidates.length
         ? `${input.candidates.length} recent signal candidates`
         : "awaiting fresh RayReplica signal",
+    },
+    {
+      id: "action_mapped",
+      label: "Action Mapped",
+      status: stageStatus({ count: actionMapped.length }),
+      count: actionMapped.length,
+      latestAt: latestIso(actionMapped.map((candidate) => candidate.signalAt)),
+      detail: actionMapped.length
+        ? `${actionMapped.length} signals mapped to shadow option actions`
+        : "waiting for buy-call or buy-put mapping",
     },
     {
       id: "contract_selected",
@@ -1423,10 +1641,10 @@ function buildCockpitAttention(input: {
       severity: "critical",
       stage: "scan_universe",
       symbol: null,
-      summary: "Gateway or market data is blocking scans.",
+      summary: "Market data readiness is blocking scans.",
       detail: input.readiness.message,
       occurredAt: new Date().toISOString(),
-      action: "Start or repair the IBKR bridge before running scans.",
+      action: "Start or repair the IBKR bridge/data mode before running Shadow scans.",
     });
   }
 
@@ -1597,6 +1815,7 @@ async function buildStatePayload(input: {
   profile: SignalOptionsExecutionProfile;
   events: ExecutionEvent[];
 }) {
+  const signals = await listSignalOptionsSignalSnapshots(input.deployment);
   const signalEvents = signalOptionsEvents(input.events);
   const shadowIndex = await buildSignalOptionsShadowIndex(signalEvents);
   const activePositions = deriveActivePositions(signalEvents);
@@ -1631,6 +1850,14 @@ async function buildStatePayload(input: {
           ? candidate.liquidity
           : existing?.liquidity ?? null,
       reason: candidate.reason ?? existing?.reason ?? null,
+      signal:
+        Object.keys(asRecord(candidate.signal)).length
+          ? candidate.signal
+          : existing?.signal ?? null,
+      action:
+        Object.keys(asRecord(candidate.action)).length
+          ? candidate.action
+          : existing?.action ?? null,
     });
     candidateEvents.set(candidate.id, [
       ...(candidateEvents.get(candidate.id) ?? []),
@@ -1684,6 +1911,7 @@ async function buildStatePayload(input: {
     deployment: deploymentToResponse(input.deployment),
     profile: input.profile,
     mode: "shadow",
+    signals,
     candidates,
     activePositions,
     risk: {
@@ -1800,6 +2028,7 @@ export async function getAlgoDeploymentCockpit(input: {
       openPositions: state.activePositions.length,
     },
     risk: state.risk,
+    signals: state.signals,
     candidates: state.candidates,
     activePositions: state.activePositions,
     events: state.events,
@@ -1945,6 +2174,8 @@ async function emitSkippedCandidate(input: {
     summary: `${input.candidate.symbol} shadow candidate skipped: ${input.reason}`,
     payload: {
       signalKey: input.signalKey,
+      signal: input.candidate.signal ?? null,
+      action: input.candidate.action ?? null,
       candidate: {
         ...input.candidate,
         status: "skipped",
@@ -2081,6 +2312,8 @@ async function processEntryCandidate(input: {
     summary: `${input.candidate.symbol} shadow ${input.candidate.optionRight.toUpperCase()} ${selectedContract.strike ?? "strike"} ${selectedContract.expirationDate ?? "expiry"} x${quantity}`,
     payload: {
       signalKey: input.signalKey,
+      signal: input.candidate.signal ?? null,
+      action: input.candidate.action ?? null,
       candidate: {
         ...input.candidate,
         status: "open",
@@ -2121,6 +2354,8 @@ async function closePositionForOppositeSignal(input: {
     payload: {
       signalKey: input.signalKey,
       reason: "opposite_signal",
+      signal: input.candidate.signal ?? null,
+      action: input.candidate.action ?? null,
       candidate: input.candidate,
       exitPrice,
       pnl: Number(
@@ -2337,10 +2572,16 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     }
 
     seenSignals.add(signalKey);
+    const signalMetadata = await readSignalMonitorEventMetadata({
+      state,
+      signalAt,
+    }).catch(() => null);
     const candidate = buildCandidateFromSignal({
       deployment,
       state,
       signalAt,
+      signalKey,
+      signalMetadata,
     });
     const currentPosition = activePositionsBySymbol.get(symbol);
 
@@ -2484,8 +2725,12 @@ export async function updateSignalOptionsExecutionProfile(input: {
 }
 
 export const __signalOptionsAutomationInternalsForTests = {
+  buildCandidateFromSignal,
   buildCockpitAttention,
   buildCockpitPipeline,
+  buildSignalOptionsActionMapping,
+  buildSignalOptionsSignalSnapshot,
+  candidateFromEvent,
   computeSignalOptionsDailyPnl,
   computeSignalOptionsDailyRealizedPnl,
   computeSignalOptionsOpenUnrealizedPnl,

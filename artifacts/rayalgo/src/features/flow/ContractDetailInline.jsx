@@ -14,13 +14,15 @@ import {
 import {
   getChartBarLimit,
   getChartTimeframeOptions,
-  getInitialChartBarLimit,
+  normalizeChartTimeframe,
 } from "../charting/timeframes";
 import {
   recordChartBarScopeState,
 } from "../charting/chartHydrationStats";
 import {
   buildChartBarScopeKey,
+  resolveChartHydrationPolicy,
+  resolveChartHydrationRequestPolicy,
   useDebouncedVisibleRangeExpansion,
   useMeasuredChartModel,
   useProgressiveChartBarLimit,
@@ -169,6 +171,8 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
     },
   );
   const [optionChartTimeframe, setOptionChartTimeframe] = useState("1m");
+  const [optionChartIntervalRevision, setOptionChartIntervalRevision] =
+    useState(0);
   const {
     favoriteTimeframes: optionFavoriteTimeframes,
     toggleFavoriteTimeframe: toggleOptionFavoriteTimeframe,
@@ -200,6 +204,23 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
     enabled: true,
     warmTargetLimit: useCallback(() => Promise.resolve(), []),
   });
+  const optionChartHydrationPolicy = useMemo(
+    () =>
+      resolveChartHydrationPolicy({
+        timeframe: optionChartTimeframe,
+        role: "option",
+      }),
+    [optionChartTimeframe],
+  );
+  const optionChartRequestPolicy = useMemo(
+    () =>
+      resolveChartHydrationRequestPolicy({
+        timeframe: optionChartTimeframe,
+        role: "option",
+        requestedLimit: optionProgressiveBars.requestedLimit,
+      }),
+    [optionChartTimeframe, optionProgressiveBars.requestedLimit],
+  );
   const {
     chartProviderContractId: effectiveProviderContractId,
     displayBars: optionDisplayBars,
@@ -256,9 +277,9 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   useUnderfilledChartBackfill({
     scopeKey: optionChartScopeKey,
     enabled: Boolean(canRequestOptionChart && optionBarsQuery.data?.bars?.length),
-    loadedBarCount: optionLoadedBaseBarCount,
+    loadedBarCount: optionDisplayBars.length,
     requestedLimit: optionProgressiveBars.requestedLimit,
-    minPageSize: getInitialChartBarLimit(optionChartTimeframe, "option"),
+    minPageSize: optionChartHydrationPolicy.initialLimit,
     isPrependingOlder: isPrependingOlderOptionHistory,
     hasExhaustedOlderHistory: hasExhaustedOlderOptionHistory,
     prependOlderBars: prependOlderOptionBars,
@@ -273,7 +294,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
         hasExhaustedOlderHistory: hasExhaustedOlderOptionHistory,
         isHydratingRequestedWindow:
           optionBarsQuery.fetchStatus === "fetching" &&
-          optionProgressiveBars.requestedLimit > optionLoadedBaseBarCount,
+          optionChartRequestPolicy.baseLimit > optionLoadedBaseBarCount,
         isPrependingOlder: isPrependingOlderOptionHistory,
         oldestLoadedAtMs: optionOldestLoadedAtMs,
         prependOlderBars: prependOlderOptionBars,
@@ -285,10 +306,10 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
       isPrependingOlderOptionHistory,
       optionBarsQuery.fetchStatus,
       optionDisplayBars.length,
+      optionChartRequestPolicy.baseLimit,
       optionLoadedBaseBarCount,
       optionOldestLoadedAtMs,
       optionProgressiveBars.expandForVisibleRange,
-      optionProgressiveBars.requestedLimit,
       prependOlderOptionBars,
     ],
   );
@@ -305,12 +326,28 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
       ].join(":"),
     },
   );
+  const handleOptionChartTimeframeChange = useCallback((timeframe) => {
+    const nextTimeframe = normalizeChartTimeframe(timeframe);
+    if (!nextTimeframe || nextTimeframe === optionChartTimeframe) {
+      return;
+    }
+    setOptionChartTimeframe(nextTimeframe);
+    setOptionChartIntervalRevision((revision) => revision + 1);
+  }, [optionChartTimeframe]);
+  const optionChartViewportLayoutKey = optionChartIntervalRevision
+    ? buildChartBarScopeKey(
+        "flow-inspection-option-viewport",
+        optionChartTimeframe,
+        optionChartIntervalRevision,
+      )
+    : null;
   useEffect(() => {
     recordChartBarScopeState(optionChartScopeKey, {
       timeframe: optionChartTimeframe,
       role: "option",
       requestedLimit: optionProgressiveBars.requestedLimit,
-      initialLimit: getInitialChartBarLimit(optionChartTimeframe, "option"),
+      initialLimit: optionChartHydrationPolicy.initialLimit,
+      baseRequestedLimit: optionChartRequestPolicy.baseLimit,
       targetLimit: optionProgressiveBars.targetLimit,
       maxLimit: optionProgressiveBars.maxLimit,
       hydratedBaseCount: optionLoadedBaseBarCount,
@@ -332,6 +369,8 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
   }, [
     hasExhaustedOlderOptionHistory,
     isPrependingOlderOptionHistory,
+    optionChartHydrationPolicy.initialLimit,
+    optionChartRequestPolicy.baseLimit,
     optionChartScopeKey,
     optionChartTimeframe,
     optionDisplayBars.length,
@@ -352,9 +391,13 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
     buildInput: {
       bars: optionDisplayBars,
       timeframe: optionChartTimeframe,
-      defaultVisibleBarCount: getChartBarLimit(optionChartTimeframe, "option"),
+      defaultVisibleBarCount: optionProgressiveBars.targetLimit,
     },
-    deps: [optionDisplayBars, optionChartTimeframe],
+    deps: [
+      optionDisplayBars,
+      optionChartTimeframe,
+      optionProgressiveBars.targetLimit,
+    ],
   });
   const optionLatestBar = optionDisplayBars[optionDisplayBars.length - 1] || null;
   const optionPreviousBar =
@@ -951,6 +994,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                 themeKey={`${getCurrentTheme()}-flow-inspection-option`}
                 surfaceUiStateKey={`flow-inspection-option-${effectiveProviderContractId || optionChartScopeKey}`}
                 rangeIdentityKey={optionChartScopeKey}
+                viewportLayoutKey={optionChartViewportLayoutKey}
                 model={optionChartModel}
                 onVisibleLogicalRangeChange={scheduleOptionVisibleRangeExpansion}
                 showSurfaceToolbar={false}
@@ -991,7 +1035,7 @@ export const ContractDetailInline = ({ evt, onBack, onJumpToTrade }) => {
                     showInlineLegend={false}
                     timeframeOptions={OPTION_CHART_TIMEFRAMES}
                     favoriteTimeframes={optionFavoriteTimeframes}
-                    onChangeTimeframe={setOptionChartTimeframe}
+                    onChangeTimeframe={handleOptionChartTimeframeChange}
                     onToggleFavoriteTimeframe={toggleOptionFavoriteTimeframe}
                     onPrewarmTimeframe={prewarmOptionTimeframe}
                     dense

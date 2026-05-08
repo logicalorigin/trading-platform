@@ -21,7 +21,15 @@ import {
   type DiagnosticSnapshot,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
+import {
+  isTransientPostgresError,
+  summarizeTransientPostgresError,
+} from "../lib/transient-db-error";
 import { getSignalOptionsWorkerSnapshot } from "./signal-options-worker-state";
+import {
+  markStorageHealthDegraded,
+  refreshStorageHealthSnapshot,
+} from "./storage-health";
 
 const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
 const SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT =
@@ -562,6 +570,13 @@ function warnDbFailure(error: unknown, operation: string): void {
     return;
   }
   lastDbWarningAt = now;
+  if (isTransientPostgresError(error)) {
+    logger.warn(
+      { dbError: summarizeTransientPostgresError(error), operation },
+      "Diagnostics database unavailable; returning fallback diagnostics",
+    );
+    return;
+  }
   logger.warn({ err: error, operation }, "Diagnostics DB operation failed");
 }
 
@@ -1930,23 +1945,61 @@ async function buildMonitoredStorageTableStats() {
 }
 
 async function buildStorageMetrics(): Promise<JsonRecord> {
-  const startedAt = Date.now();
+  const health = await refreshStorageHealthSnapshot();
+  if (!health.reachable) {
+    return { ...health };
+  }
+
+  if (process.env["DIAGNOSTICS_SKIP_STORAGE_TABLE_STATS"] === "1") {
+    return {
+      ...health,
+      snapshotRetentionDays: 7,
+      monitoredTables: [],
+    };
+  }
+
   try {
-    await pool.query("select 1");
     const monitoredTables = await buildMonitoredStorageTableStats();
     return {
-      reachable: true,
-      pingMs: Date.now() - startedAt,
+      ...health,
       snapshotRetentionDays: 7,
       monitoredTables,
     };
   } catch (error) {
+    warnDbFailure(error, "load monitored storage table stats");
+    const degraded = markStorageHealthDegraded(
+      "storage_table_stats_unavailable",
+      error,
+    );
     return {
-      reachable: false,
-      pingMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
+      ...degraded,
+      snapshotRetentionDays: 7,
+      monitoredTables: [],
+      tableStatsError: summarizeTransientPostgresError(error),
     };
   }
+}
+
+function classifyStorageSnapshot(metrics: JsonRecord): DiagnosticSeverity {
+  const status = textValue(metrics["status"]);
+  if (status === "ok") {
+    return "info";
+  }
+  if (status === "degraded") {
+    return "warning";
+  }
+  return "critical";
+}
+
+function storageSnapshotSummary(metrics: JsonRecord): string {
+  const status = textValue(metrics["status"]);
+  if (status === "ok") {
+    return "Replit internal dev DB storage is reachable";
+  }
+  if (status === "degraded") {
+    return "Replit internal dev DB is reachable, but diagnostics storage is degraded";
+  }
+  return "Replit internal dev DB storage is not reachable";
 }
 
 function buildSnapshot(
@@ -2600,7 +2653,7 @@ export async function collectDiagnosticSnapshot(
   const automation = await buildAutomationMetrics();
   const automationSeverity = classifyAutomationSnapshot(automation.metrics);
   const storageMetrics = await buildStorageMetrics();
-  const storageSeverity = storageMetrics["reachable"] ? "info" : "critical";
+  const storageSeverity = classifyStorageSnapshot(storageMetrics);
   const resourceMetrics = buildResourcePressureMetrics(runtime);
   const resourceSeverity = classifyResourcePressureSnapshot(resourceMetrics);
   const isolationMetrics = buildIsolationMetrics();
@@ -2702,9 +2755,7 @@ export async function collectDiagnosticSnapshot(
     buildSnapshot(
       "storage",
       storageSeverity,
-      storageSeverity === "info"
-        ? "Diagnostics storage is reachable"
-        : "Diagnostics storage is not reachable",
+      storageSnapshotSummary(storageMetrics),
       storageMetrics,
       storageMetrics,
     ),
@@ -2755,6 +2806,31 @@ export async function collectDiagnosticSnapshot(
       severity: "warning",
       message: "Open-orders snapshot timed out; using cached order stream.",
       raw: asJsonRecord(probes["orders"]),
+    });
+  }
+
+  if (storageSeverity !== "info") {
+    const status = textValue(storageMetrics["status"]) ?? "unavailable";
+    const reason = textValue(storageMetrics["reason"]);
+    activeEvents.push({
+      subsystem: "storage",
+      category: "connectivity",
+      code:
+        status === "degraded"
+          ? "postgres_storage_degraded"
+          : "postgres_unavailable",
+      severity: storageSeverity,
+      message:
+        status === "degraded"
+          ? "Replit internal dev DB is reachable, but diagnostics storage is degraded."
+          : "Replit internal dev DB is unreachable; DB-backed services are degraded.",
+      dimensions: {
+        status,
+        reason,
+        host: storageMetrics["host"] ?? null,
+        database: storageMetrics["database"] ?? null,
+      },
+      raw: storageMetrics,
     });
   }
 

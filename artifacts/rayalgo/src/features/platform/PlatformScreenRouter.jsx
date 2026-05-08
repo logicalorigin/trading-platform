@@ -4,6 +4,7 @@ import {
   MemoBacktestScreen,
   MemoDiagnosticsScreen,
   MemoFlowScreen,
+  MemoGexScreen,
   MemoMarketScreen,
   MemoResearchScreen,
   MemoSettingsScreen,
@@ -83,6 +84,14 @@ export const PlatformScreenRouter = ({
           symbols={runtimeWatchlistSymbols}
           isVisible={flowScreenActive}
           onJumpToTrade={onJumpToTradeFromFlow}
+        />
+      );
+    case "gex":
+      return (
+        <MemoGexScreen
+          sym={sym}
+          isVisible={screen === "gex"}
+          onSelectSymbol={onSelectSymbol}
         />
       );
     case "trade":

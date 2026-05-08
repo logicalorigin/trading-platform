@@ -125,8 +125,24 @@ export const inferFlowBias = ({ right, cp, side } = {}) => {
   const normalizedSide = String(side || "").toLowerCase();
   const isCall = normalizedRight === "c" || normalizedRight === "call";
   const isPut = normalizedRight === "p" || normalizedRight === "put";
-  const isBuy = normalizedSide === "buy" || normalizedSide === "ask";
-  const isSell = normalizedSide === "sell" || normalizedSide === "bid";
+  const isBuy = [
+    "buy",
+    "bought",
+    "ask",
+    "at_ask",
+    "above_ask",
+    "lift",
+    "lifted",
+  ].includes(normalizedSide);
+  const isSell = [
+    "sell",
+    "sold",
+    "bid",
+    "at_bid",
+    "below_bid",
+    "hit",
+    "hit_bid",
+  ].includes(normalizedSide);
 
   if (!isCall && !isPut) {
     return FLOW_BIAS.neutral;

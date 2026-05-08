@@ -39,6 +39,34 @@ export const normalizeTradeOptionChainCoverage = (value) => {
     : DEFAULT_OPTION_CHAIN_COVERAGE;
 };
 
+export const resolveEffectiveOptionChainCoverage = ({
+  activeChainKey = null,
+  coverage = DEFAULT_OPTION_CHAIN_COVERAGE,
+  fullCoverageFallbackKeys = null,
+} = {}) => {
+  const normalizedCoverage = normalizeTradeOptionChainCoverage(coverage);
+  if (!activeChainKey) {
+    return normalizedCoverage;
+  }
+
+  const fallbackEnabled =
+    fullCoverageFallbackKeys instanceof Set
+      ? fullCoverageFallbackKeys.has(activeChainKey)
+      : Array.isArray(fullCoverageFallbackKeys) &&
+        fullCoverageFallbackKeys.includes(activeChainKey);
+  return fallbackEnabled ? OPTION_CHAIN_COVERAGE_ALL : normalizedCoverage;
+};
+
+export const shouldFallbackOptionChainToFullCoverage = ({
+  activeRequest = {},
+  queryData = null,
+  queryIsSuccess = false,
+} = {}) =>
+  activeRequest.coverage === "window" &&
+  queryIsSuccess &&
+  Array.isArray(queryData?.contracts) &&
+  queryData.contracts.length === 0;
+
 export const resolveActiveOptionChainRequestParams = (coverage) => {
   const normalizedCoverage = normalizeTradeOptionChainCoverage(coverage);
   if (normalizedCoverage === OPTION_CHAIN_COVERAGE_ALL) {

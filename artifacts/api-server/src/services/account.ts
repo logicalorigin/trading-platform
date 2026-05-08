@@ -26,6 +26,10 @@ import {
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
+import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
@@ -168,6 +172,10 @@ type OptionChainCacheEntry = {
 };
 
 const snapshotWriteTimestamps = new Map<string, number>();
+const accountSnapshotPersistenceBackoff = createTransientPostgresBackoff();
+const accountSnapshotReadBackoff = createTransientPostgresBackoff();
+const accountPositionLotsReadBackoff = createTransientPostgresBackoff();
+const optionalAccountSchemaReadBackoff = createTransientPostgresBackoff();
 const optionGreekChainCache = new Map<string, OptionChainCacheEntry>();
 const OPTIONAL_ACCOUNT_SCHEMA_TABLES = [
   "flex_report_runs",
@@ -403,7 +411,16 @@ async function withOptionalAccountSchemaFallback<T>(input: {
   fallback: () => T;
   run: () => Promise<T>;
 }): Promise<T> {
+  const now = Date.now();
+  if (optionalAccountSchemaReadBackoff.isActive(now)) {
+    return input.fallback();
+  }
+
   const readiness = await getOptionalAccountSchemaReadiness();
+  if (readiness.schemaError) {
+    return input.fallback();
+  }
+
   const knownMissingTables = input.tables.filter((tableName) =>
     readiness.missingTables.includes(tableName),
   );
@@ -412,16 +429,88 @@ async function withOptionalAccountSchemaFallback<T>(input: {
   }
 
   try {
-    return await input.run();
+    const result = await input.run();
+    optionalAccountSchemaReadBackoff.clear();
+    return result;
   } catch (error) {
-    if (!isMissingRelationError(error)) {
+    if (isMissingRelationError(error)) {
+      const missingTable = extractMissingRelationName(error);
+      if (!missingTable || !input.tables.includes(missingTable)) {
+        throw error;
+      }
+      markAccountSchemaTablesMissing([missingTable], error);
+      return input.fallback();
+    }
+    if (isTransientPostgresError(error)) {
+      optionalAccountSchemaReadBackoff.markFailure({
+        error,
+        logger,
+        message:
+          "Account optional history database unavailable; using live-only account fallbacks",
+        nowMs: Date.now(),
+      });
+      return input.fallback();
+    }
+    throw error;
+  }
+}
+
+async function withAccountSnapshotReadFallback<T>(input: {
+  fallback: () => T;
+  message: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const now = Date.now();
+  if (accountSnapshotReadBackoff.isActive(now)) {
+    return input.fallback();
+  }
+
+  try {
+    const result = await input.run();
+    accountSnapshotReadBackoff.clear();
+    return result;
+  } catch (error) {
+    if (!isTransientPostgresError(error)) {
       throw error;
     }
-    const missingTable = extractMissingRelationName(error);
-    if (!missingTable || !input.tables.includes(missingTable)) {
+    accountSnapshotReadBackoff.markFailure({
+      error,
+      logger,
+      message: input.message,
+      nowMs: Date.now(),
+    });
+    return input.fallback();
+  }
+}
+
+async function withAccountPositionLotsReadFallback<T>(input: {
+  backoff?: ReturnType<typeof createTransientPostgresBackoff>;
+  fallback: () => T;
+  logger?: { warn: (payload: unknown, message: string) => void };
+  nowMs?: () => number;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const backoff = input.backoff ?? accountPositionLotsReadBackoff;
+  const now = input.nowMs?.() ?? Date.now();
+  if (backoff.isActive(now)) {
+    return input.fallback();
+  }
+
+  try {
+    const result = await input.run();
+    backoff.clear();
+    return result;
+  } catch (error) {
+    if (!isTransientPostgresError(error)) {
       throw error;
     }
-    markAccountSchemaTablesMissing([missingTable], error);
+    backoff.markFailure({
+      error,
+      logger: input.logger ?? logger,
+      message:
+        "Account position lots database unavailable; returning live positions without lots",
+      nowMs: now,
+    });
     return input.fallback();
   }
 }
@@ -1736,31 +1825,21 @@ export function startAccountFlexRefreshScheduler(): void {
   scheduleNext();
 }
 
-export async function recordAccountSnapshots(
+type AccountSnapshotPersistenceLogger = {
+  warn: (payload: unknown, message: string) => void;
+};
+
+type AccountSnapshotPersistenceOptions = {
+  nowMs?: () => number;
+  logger?: AccountSnapshotPersistenceLogger;
+  persistSnapshots?: (accounts: BrokerAccountSnapshot[]) => Promise<void>;
+  backoff?: ReturnType<typeof createTransientPostgresBackoff>;
+};
+
+async function persistAccountSnapshotsToDb(
   accounts: BrokerAccountSnapshot[],
 ): Promise<void> {
-  const now = Date.now();
-  const dueAccounts = accounts.filter((account) => {
-    const last = snapshotWriteTimestamps.get(account.id) ?? 0;
-    return now - last >= SNAPSHOT_WRITE_INTERVAL_MS;
-  });
-
-  if (!dueAccounts.length) {
-    return;
-  }
-
-  const persistableDueAccounts = dueAccounts.filter(
-    (account) => !isPlaceholderZeroAccountSnapshot(account),
-  );
-  dueAccounts
-    .filter((account) => isPlaceholderZeroAccountSnapshot(account))
-    .forEach((account) => snapshotWriteTimestamps.set(account.id, now));
-
-  if (!persistableDueAccounts.length) {
-    return;
-  }
-
-  const mode = persistableDueAccounts[0]?.mode ?? getRuntimeMode();
+  const mode = accounts[0]?.mode ?? getRuntimeMode();
   const [connection] = await db
     .insert(brokerConnectionsTable)
     .values({
@@ -1785,7 +1864,7 @@ export async function recordAccountSnapshots(
     })
     .returning({ id: brokerConnectionsTable.id });
 
-  for (const account of persistableDueAccounts) {
+  for (const account of accounts) {
     const [brokerAccount] = await db
       .insert(brokerAccountsTable)
       .values({
@@ -1820,6 +1899,59 @@ export async function recordAccountSnapshots(
           : String(account.maintenanceMargin),
       asOf: account.updatedAt ?? new Date(),
     });
+  }
+}
+
+export async function recordAccountSnapshots(
+  accounts: BrokerAccountSnapshot[],
+  options: AccountSnapshotPersistenceOptions = {},
+): Promise<void> {
+  const now = options.nowMs?.() ?? Date.now();
+  const backoff = options.backoff ?? accountSnapshotPersistenceBackoff;
+  if (backoff.isActive(now)) {
+    return;
+  }
+
+  const dueAccounts = accounts.filter((account) => {
+    const last = snapshotWriteTimestamps.get(account.id) ?? 0;
+    return now - last >= SNAPSHOT_WRITE_INTERVAL_MS;
+  });
+
+  if (!dueAccounts.length) {
+    return;
+  }
+
+  const persistableDueAccounts = dueAccounts.filter(
+    (account) => !isPlaceholderZeroAccountSnapshot(account),
+  );
+  dueAccounts
+    .filter((account) => isPlaceholderZeroAccountSnapshot(account))
+    .forEach((account) => snapshotWriteTimestamps.set(account.id, now));
+
+  if (!persistableDueAccounts.length) {
+    return;
+  }
+
+  try {
+    await (options.persistSnapshots ?? persistAccountSnapshotsToDb)(
+      persistableDueAccounts,
+    );
+    backoff.clear();
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      backoff.markFailure({
+        error,
+        logger: options.logger ?? logger,
+        message:
+          "Account snapshot persistence database unavailable; pausing snapshot writes",
+        nowMs: now,
+      });
+      return;
+    }
+    throw error;
+  }
+
+  for (const account of persistableDueAccounts) {
     snapshotWriteTimestamps.set(account.id, now);
   }
 }
@@ -2157,22 +2289,28 @@ export async function getAccountEquityHistory(input: {
     snapshotConditions.push(gte(balanceSnapshotsTable.asOf, start));
   }
 
-  const rawSnapshotRows = await db
-    .select({
-      providerAccountId: brokerAccountsTable.providerAccountId,
-      asOf: balanceSnapshotsTable.asOf,
-      currency: balanceSnapshotsTable.currency,
-      netLiquidation: balanceSnapshotsTable.netLiquidation,
-      cash: balanceSnapshotsTable.cash,
-      buyingPower: balanceSnapshotsTable.buyingPower,
-    })
-    .from(balanceSnapshotsTable)
-    .innerJoin(
-      brokerAccountsTable,
-      eq(balanceSnapshotsTable.accountId, brokerAccountsTable.id),
-    )
-    .where(and(...snapshotConditions))
-    .orderBy(balanceSnapshotsTable.asOf);
+  const rawSnapshotRows = await withAccountSnapshotReadFallback({
+    fallback: () => [],
+    message:
+      "Account equity snapshot database unavailable; using live account point only",
+    run: async () =>
+      db
+        .select({
+          providerAccountId: brokerAccountsTable.providerAccountId,
+          asOf: balanceSnapshotsTable.asOf,
+          currency: balanceSnapshotsTable.currency,
+          netLiquidation: balanceSnapshotsTable.netLiquidation,
+          cash: balanceSnapshotsTable.cash,
+          buyingPower: balanceSnapshotsTable.buyingPower,
+        })
+        .from(balanceSnapshotsTable)
+        .innerJoin(
+          brokerAccountsTable,
+          eq(balanceSnapshotsTable.accountId, brokerAccountsTable.id),
+        )
+        .where(and(...snapshotConditions))
+        .orderBy(balanceSnapshotsTable.asOf),
+  });
   const snapshotRows = compactEquitySnapshotRows(
     filterPlaceholderZeroEquitySnapshotRows(rawSnapshotRows),
     range,
@@ -2996,41 +3134,46 @@ async function getPositionLots(accountIds: string[]) {
     return [];
   }
 
-  const rows = await db
-    .select({
-      providerAccountId: brokerAccountsTable.providerAccountId,
-      symbol: instrumentsTable.symbol,
-      quantity: positionLotsTable.quantity,
-      averageCost: positionLotsTable.averageCost,
-      marketPrice: positionLotsTable.marketPrice,
-      marketValue: positionLotsTable.marketValue,
-      unrealizedPnl: positionLotsTable.unrealizedPnl,
-      asOf: positionLotsTable.asOf,
-    })
-    .from(positionLotsTable)
-    .innerJoin(
-      brokerAccountsTable,
-      eq(positionLotsTable.accountId, brokerAccountsTable.id),
-    )
-    .innerJoin(
-      instrumentsTable,
-      eq(positionLotsTable.instrumentId, instrumentsTable.id),
-    )
-    .where(inArray(brokerAccountsTable.providerAccountId, accountIds))
-    .orderBy(desc(positionLotsTable.asOf))
-    .limit(500);
+  return withAccountPositionLotsReadFallback({
+    fallback: () => [],
+    run: async () => {
+      const rows = await db
+        .select({
+          providerAccountId: brokerAccountsTable.providerAccountId,
+          symbol: instrumentsTable.symbol,
+          quantity: positionLotsTable.quantity,
+          averageCost: positionLotsTable.averageCost,
+          marketPrice: positionLotsTable.marketPrice,
+          marketValue: positionLotsTable.marketValue,
+          unrealizedPnl: positionLotsTable.unrealizedPnl,
+          asOf: positionLotsTable.asOf,
+        })
+        .from(positionLotsTable)
+        .innerJoin(
+          brokerAccountsTable,
+          eq(positionLotsTable.accountId, brokerAccountsTable.id),
+        )
+        .innerJoin(
+          instrumentsTable,
+          eq(positionLotsTable.instrumentId, instrumentsTable.id),
+        )
+        .where(inArray(brokerAccountsTable.providerAccountId, accountIds))
+        .orderBy(desc(positionLotsTable.asOf))
+        .limit(500);
 
-  return rows.map((row) => ({
-    accountId: row.providerAccountId,
-    symbol: row.symbol,
-    quantity: toNumber(row.quantity) ?? 0,
-    averageCost: toNumber(row.averageCost) ?? 0,
-    marketPrice: toNumber(row.marketPrice),
-    marketValue: toNumber(row.marketValue),
-    unrealizedPnl: toNumber(row.unrealizedPnl),
-    asOf: row.asOf,
-    source: "LOCAL_LEDGER",
-  }));
+      return rows.map((row) => ({
+        accountId: row.providerAccountId,
+        symbol: row.symbol,
+        quantity: toNumber(row.quantity) ?? 0,
+        averageCost: toNumber(row.averageCost) ?? 0,
+        marketPrice: toNumber(row.marketPrice),
+        marketValue: toNumber(row.marketValue),
+        unrealizedPnl: toNumber(row.unrealizedPnl),
+        asOf: row.asOf,
+        source: "LOCAL_LEDGER",
+      }));
+    },
+  });
 }
 
 type NormalizedAccountTrade = {
@@ -3786,18 +3929,30 @@ export async function getFlexHealth() {
       return row ?? null;
     },
   });
-  const latestSnapshot = await db
-    .select({ asOf: balanceSnapshotsTable.asOf })
-    .from(balanceSnapshotsTable)
-    .orderBy(desc(balanceSnapshotsTable.asOf))
-    .limit(1);
-  const [snapshotCoverage] = await db
-    .select({
-      firstAsOf: sql<Date | null>`min(${balanceSnapshotsTable.asOf})`,
-      lastAsOf: sql<Date | null>`max(${balanceSnapshotsTable.asOf})`,
-      rowCount: sql<number>`count(*)::int`,
-    })
-    .from(balanceSnapshotsTable);
+  const latestSnapshot = await withAccountSnapshotReadFallback({
+    fallback: () => [],
+    message:
+      "Account snapshot database unavailable while checking Flex health; using empty snapshot coverage",
+    run: async () =>
+      db
+        .select({ asOf: balanceSnapshotsTable.asOf })
+        .from(balanceSnapshotsTable)
+        .orderBy(desc(balanceSnapshotsTable.asOf))
+        .limit(1),
+  });
+  const [snapshotCoverage] = await withAccountSnapshotReadFallback({
+    fallback: () => [{ firstAsOf: null, lastAsOf: null, rowCount: 0 }],
+    message:
+      "Account snapshot database unavailable while checking Flex health; using empty snapshot coverage",
+    run: async () =>
+      db
+        .select({
+          firstAsOf: sql<Date | null>`min(${balanceSnapshotsTable.asOf})`,
+          lastAsOf: sql<Date | null>`max(${balanceSnapshotsTable.asOf})`,
+          rowCount: sql<number>`count(*)::int`,
+        })
+        .from(balanceSnapshotsTable),
+  });
   const [flexCoverage] = await withOptionalAccountSchemaFallback({
     tables: ["flex_nav_history"],
     fallback: () => [{ firstDate: null, lastDate: null, rowCount: 0 }],
@@ -3861,6 +4016,7 @@ export const __accountPositionInternalsForTests = {
   buildPositionMarketHydration,
   filterOpenBrokerPositions,
   isOpenBrokerPosition,
+  withAccountPositionLotsReadFallback,
 };
 
 export const __accountMarginInternalsForTests = {

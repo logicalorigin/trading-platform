@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lt } from "drizzle-orm";
+import { and, asc, eq, gte, lt, sql } from "drizzle-orm";
 import {
   db,
   flowEventHydrationSessionsTable,
@@ -670,7 +670,15 @@ async function persistHistoricalFlowEvents(input: {
             flowEventsTable.providerEventKey,
           ],
           set: {
-            sourceBasis: "confirmed_trade",
+            sourceBasis: sql`excluded.source_basis`,
+            price: sql`excluded.price`,
+            size: sql`excluded.size`,
+            premium: sql`excluded.premium`,
+            exchange: sql`excluded.exchange`,
+            side: sql`excluded.side`,
+            sentiment: sql`excluded.sentiment`,
+            tradeConditions: sql`excluded.trade_conditions`,
+            rawProviderPayload: sql`excluded.raw_provider_payload`,
             updatedAt: now,
           },
         });

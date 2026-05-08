@@ -82,6 +82,40 @@ test("signal-options worker skips a tick when advisory lock is unavailable", asy
   assert.equal(listCalls, 0);
 });
 
+test("signal-options worker backs off transient database lock failures", async () => {
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  let lockCalls = 0;
+  const warnings: string[] = [];
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {},
+    acquireTickLock: async () => {
+      lockCalls += 1;
+      throw new Error("timeout exceeded when trying to connect");
+    },
+    now: () => now,
+    logger: {
+      debug() {},
+      info() {},
+      warn(...args: unknown[]) {
+        warnings.push(String(args[1]));
+      },
+    },
+  });
+
+  await worker.runOnce();
+  now = new Date("2026-04-28T14:00:30.000Z");
+  await worker.runOnce();
+  now = new Date("2026-04-28T14:01:01.000Z");
+  await worker.runOnce();
+
+  assert.equal(lockCalls, 2);
+  assert.deepEqual(warnings, [
+    "Signal-options database unavailable; pausing worker ticks",
+    "Signal-options database unavailable; pausing worker ticks",
+  ]);
+});
+
 test("signal-options worker interval-gates scans and rescans after config changes", async () => {
   let scanCalls = 0;
   let currentDeployment = deployment();

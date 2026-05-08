@@ -23,6 +23,10 @@ import {
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { getPolygonRuntimeConfig, type RuntimeMode } from "../lib/runtime";
+import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
 import { asRecord as readRecord, normalizeSymbol } from "../lib/values";
 import type { BrokerBarSnapshot, PlaceOrderInput } from "../providers/ibkr/client";
 import { fetchOptionQuoteSnapshotPayload } from "./bridge-streams";
@@ -86,6 +90,12 @@ const WATCHLIST_BACKTEST_SCALE_DOWN_FRACTION = 0.5;
 const WATCHLIST_BACKTEST_FIXED_REGIME_BARS = 12;
 const SHADOW_ORDER_HISTORY_LIMIT = 5_000;
 const SHADOW_STATE_REFRESH_TTL_MS = 2_000;
+const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
+  "Shadow account database is unavailable; using runtime-only shadow account fallback.";
+
+const shadowAccountDbBackoff = createTransientPostgresBackoff({
+  warningCooldownMs: 60_000,
+});
 
 type OrderTab = "working" | "history";
 type ShadowAssetClass = "equity" | "option";
@@ -127,6 +137,32 @@ type ShadowTotals = {
   netLiquidation: number;
   updatedAt: Date;
 };
+
+function buildFallbackShadowTotals(now = new Date()): ShadowTotals {
+  return {
+    cash: SHADOW_STARTING_BALANCE,
+    startingBalance: SHADOW_STARTING_BALANCE,
+    realizedPnl: 0,
+    unrealizedPnl: 0,
+    fees: 0,
+    marketValue: 0,
+    netLiquidation: SHADOW_STARTING_BALANCE,
+    updatedAt: now,
+  };
+}
+
+function isShadowAccountDbBackoffActive(nowMs = Date.now()): boolean {
+  return shadowAccountDbBackoff.isActive(nowMs);
+}
+
+function markShadowAccountDbUnavailable(error: unknown): void {
+  shadowAccountDbBackoff.markFailure({
+    error,
+    logger,
+    message: "Shadow account database unavailable; using runtime fallback",
+    nowMs: Date.now(),
+  });
+}
 
 type WatchlistBacktestStartingBook = {
   totals: ShadowTotals;
@@ -1480,36 +1516,46 @@ export async function refreshShadowPositionMarks() {
 }
 
 async function ensureFreshShadowState(refreshMarks = false) {
-  await ensureShadowAccount();
-  if (!refreshMarks) {
+  try {
+    if (isShadowAccountDbBackoffActive()) {
+      return buildFallbackShadowTotals();
+    }
+
+    await ensureShadowAccount();
+    if (!refreshMarks) {
+      if (shadowFreshStateInFlight) {
+        return shadowFreshStateInFlight;
+      }
+      return computeShadowTotals();
+    }
+
+    const now = Date.now();
+    if (shadowFreshStateCache && shadowFreshStateCache.expiresAt > now) {
+      return shadowFreshStateCache.totals;
+    }
     if (shadowFreshStateInFlight) {
       return shadowFreshStateInFlight;
     }
-    return computeShadowTotals();
-  }
 
-  const now = Date.now();
-  if (shadowFreshStateCache && shadowFreshStateCache.expiresAt > now) {
-    return shadowFreshStateCache.totals;
-  }
-  if (shadowFreshStateInFlight) {
-    return shadowFreshStateInFlight;
-  }
+    shadowFreshStateInFlight = (async () => {
+      await refreshShadowPositionMarks().catch((error) => {
+        logger.debug?.({ err: error }, "Shadow mark refresh failed");
+      });
+      const totals = await computeShadowTotals();
+      shadowFreshStateCache = {
+        totals,
+        expiresAt: Date.now() + SHADOW_STATE_REFRESH_TTL_MS,
+      };
+      return totals;
+    })();
 
-  shadowFreshStateInFlight = (async () => {
-    await refreshShadowPositionMarks().catch((error) => {
-      logger.debug?.({ err: error }, "Shadow mark refresh failed");
-    });
-    const totals = await computeShadowTotals();
-    shadowFreshStateCache = {
-      totals,
-      expiresAt: Date.now() + SHADOW_STATE_REFRESH_TTL_MS,
-    };
-    return totals;
-  })();
-
-  try {
     return await shadowFreshStateInFlight;
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildFallbackShadowTotals();
+    }
+    throw error;
   } finally {
     shadowFreshStateInFlight = null;
   }
@@ -1617,20 +1663,20 @@ function metric(
   };
 }
 
-export async function getShadowAccountSummary() {
-  const totals = await ensureFreshShadowState(true);
-  const positions = await readOpenShadowPositions();
-  const dayChanges = await readShadowPositionDayChanges(positions);
-  const dayPnl = Array.from(dayChanges.values()).reduce(
-    (sum, value) => sum + (value.dayChange ?? 0),
-    0,
-  );
+function buildShadowAccountSummaryResponse(input: {
+  totals: ShadowTotals;
+  dayPnl: number;
+  degraded?: boolean;
+}) {
+  const { totals, dayPnl } = input;
   const totalPnl = totals.netLiquidation - totals.startingBalance;
   return {
     accountId: SHADOW_ACCOUNT_ID,
     isCombined: false,
     mode: "paper",
     currency: SHADOW_CURRENCY,
+    degraded: Boolean(input.degraded),
+    reason: input.degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
     accounts: [
       {
         id: SHADOW_ACCOUNT_ID,
@@ -1690,6 +1736,32 @@ export async function getShadowAccountSummary() {
       grossPositionValue: metric(totals.marketValue, SHADOW_CURRENCY, "GrossPositionValue", totals.updatedAt),
     },
   };
+}
+
+export async function getShadowAccountSummary() {
+  try {
+    const totals = await ensureFreshShadowState(true);
+    const degraded = isShadowAccountDbBackoffActive();
+    const positions = degraded ? [] : await readOpenShadowPositions();
+    const dayChanges = degraded
+      ? new Map<string, ShadowPositionDayChange>()
+      : await readShadowPositionDayChanges(positions);
+    const dayPnl = Array.from(dayChanges.values()).reduce(
+      (sum, value) => sum + (value.dayChange ?? 0),
+      0,
+    );
+    return buildShadowAccountSummaryResponse({ totals, dayPnl, degraded });
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildShadowAccountSummaryResponse({
+        totals: buildFallbackShadowTotals(),
+        dayPnl: 0,
+        degraded: true,
+      });
+    }
+    throw error;
+  }
 }
 
 function isWatchlistBacktestRunSnapshotSource(source: string | null | undefined) {
@@ -1832,11 +1904,67 @@ function selectShadowEquityHistoryRows<
   };
 }
 
+function buildFallbackShadowAccountEquityHistory(input: {
+  range: AccountRange;
+  benchmark?: string | null;
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  return {
+    accountId: SHADOW_ACCOUNT_ID,
+    range: input.range,
+    currency: SHADOW_CURRENCY,
+    flexConfigured: true,
+    lastFlexRefreshAt: null,
+    benchmark: input.benchmark || null,
+    asOf: now,
+    latestSnapshotAt: null,
+    isStale: true,
+    staleReason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+    degraded: true,
+    reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+    terminalPointSource: "runtime_fallback",
+    liveTerminalIncluded: true,
+    sourceScope: "runtime_fallback",
+    selectedSnapshotSource: null,
+    points: [
+      {
+        timestamp: now,
+        netLiquidation: SHADOW_STARTING_BALANCE,
+        currency: SHADOW_CURRENCY,
+        source: "SHADOW_RUNTIME_FALLBACK",
+        deposits: SHADOW_STARTING_BALANCE,
+        withdrawals: 0,
+        dividends: 0,
+        fees: 0,
+        returnPercent: 0,
+        benchmarkPercent: null,
+      },
+    ],
+    events: [
+      {
+        timestamp: now,
+        type: "deposit",
+        amount: SHADOW_STARTING_BALANCE,
+        currency: SHADOW_CURRENCY,
+        source: "SHADOW_RUNTIME_FALLBACK",
+      },
+    ],
+  };
+}
+
 export async function getShadowAccountEquityHistory(input: {
   range?: AccountRange;
   benchmark?: string | null;
 }) {
   const range = normalizeAccountRange(input.range);
+  if (isShadowAccountDbBackoffActive()) {
+    return buildFallbackShadowAccountEquityHistory({
+      range,
+      benchmark: input.benchmark,
+    });
+  }
+  try {
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
   const start = accountRangeStart(range);
   const conditions: SQL<unknown>[] = [eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID)];
@@ -1968,11 +2096,24 @@ export async function getShadowAccountEquityHistory(input: {
             ...tradeEvents,
           ],
   };
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildFallbackShadowAccountEquityHistory({
+        range,
+        benchmark: input.benchmark,
+      });
+    }
+    throw error;
+  }
 }
 
-export async function getShadowAccountAllocation() {
-  const totals = await ensureFreshShadowState(true);
-  const positions = await readOpenShadowPositions();
+function buildShadowAccountAllocationResponse(input: {
+  totals: ShadowTotals;
+  positions: ShadowPositionRow[];
+  degraded?: boolean;
+}) {
+  const { totals, positions } = input;
   const assetBuckets = new Map<string, number>();
   const sectorBuckets = new Map<string, number>();
   positions.forEach((position) => {
@@ -1995,6 +2136,8 @@ export async function getShadowAccountAllocation() {
   return {
     accountId: SHADOW_ACCOUNT_ID,
     currency: SHADOW_CURRENCY,
+    degraded: Boolean(input.degraded),
+    reason: input.degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
     assetClass: bucketRows(assetBuckets),
     sector: bucketRows(sectorBuckets),
     exposure: {
@@ -2006,10 +2149,67 @@ export async function getShadowAccountAllocation() {
   };
 }
 
+export async function getShadowAccountAllocation() {
+  try {
+    const totals = await ensureFreshShadowState(true);
+    const degraded = isShadowAccountDbBackoffActive();
+    const positions = degraded ? [] : await readOpenShadowPositions();
+    return buildShadowAccountAllocationResponse({ totals, positions, degraded });
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildShadowAccountAllocationResponse({
+        totals: buildFallbackShadowTotals(),
+        positions: [],
+        degraded: true,
+      });
+    }
+    throw error;
+  }
+}
+
+type ShadowAccountPositionFallbackRow = {
+  id: string;
+  symbol: string;
+  assetClass: string;
+  marketValue: number;
+  weightPercent: number | null;
+  unrealizedPnl: number;
+  dayChange: number | null;
+  sector: string;
+  description?: unknown;
+};
+
+function buildEmptyShadowAccountPositionsResponse(input: {
+  totals: ShadowTotals;
+  degraded?: boolean;
+}) {
+  const { totals } = input;
+  return {
+    accountId: SHADOW_ACCOUNT_ID,
+    currency: SHADOW_CURRENCY,
+    degraded: Boolean(input.degraded),
+    reason: input.degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
+    positions: [] as ShadowAccountPositionFallbackRow[],
+    totals: {
+      weightPercent: 0,
+      unrealizedPnl: 0,
+      grossLong: totals.marketValue,
+      grossShort: 0,
+      netExposure: totals.marketValue,
+    },
+    updatedAt: totals.updatedAt,
+  };
+}
+
 export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
 }) {
+  try {
   const totals = await ensureFreshShadowState(true);
+  if (isShadowAccountDbBackoffActive()) {
+    return buildEmptyShadowAccountPositionsResponse({ totals, degraded: true });
+  }
   const positions = await readOpenShadowPositions();
   const orders = await db
     .select()
@@ -2077,6 +2277,8 @@ export async function getShadowAccountPositions(input: {
   return {
     accountId: SHADOW_ACCOUNT_ID,
     currency: SHADOW_CURRENCY,
+    degraded: false,
+    reason: null,
     positions: rows,
     totals: {
       weightPercent: rows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
@@ -2087,6 +2289,16 @@ export async function getShadowAccountPositions(input: {
     },
     updatedAt: totals.updatedAt,
   };
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildEmptyShadowAccountPositionsResponse({
+        totals: buildFallbackShadowTotals(),
+        degraded: true,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function getShadowAccountPositionsAtDate(input: {
@@ -2318,6 +2530,24 @@ export async function getShadowAccountClosedTrades(input: {
   assetClass?: string | null;
   pnlSign?: string | null;
 }) {
+  if (isShadowAccountDbBackoffActive()) {
+    return {
+      accountId: SHADOW_ACCOUNT_ID,
+      currency: SHADOW_CURRENCY,
+      degraded: true,
+      reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+      trades: [],
+      summary: {
+        count: 0,
+        winners: 0,
+        losers: 0,
+        realizedPnl: 0,
+        commissions: 0,
+      },
+      updatedAt: new Date(),
+    };
+  }
+  try {
   await ensureShadowAccount();
   const conditions: SQL<unknown>[] = [
     eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
@@ -2357,6 +2587,8 @@ export async function getShadowAccountClosedTrades(input: {
   return {
     accountId: SHADOW_ACCOUNT_ID,
     currency: SHADOW_CURRENCY,
+    degraded: false,
+    reason: null,
     trades,
     summary: {
       count: trades.length,
@@ -2367,6 +2599,27 @@ export async function getShadowAccountClosedTrades(input: {
     },
     updatedAt: new Date(),
   };
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return {
+        accountId: SHADOW_ACCOUNT_ID,
+        currency: SHADOW_CURRENCY,
+        degraded: true,
+        reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+        trades: [],
+        summary: {
+          count: 0,
+          winners: 0,
+          losers: 0,
+          realizedPnl: 0,
+          commissions: 0,
+        },
+        updatedAt: new Date(),
+      };
+    }
+    throw error;
+  }
 }
 
 function fillRowToClosedTrade(fill: ShadowFillRow, order?: ShadowOrderRow) {
@@ -3010,8 +3263,22 @@ async function getShadowTradeEquityEvents(input: {
 export async function getShadowAccountOrders(input: {
   tab?: OrderTab;
 }) {
-  await ensureShadowAccount();
   const tab = normalizeOrderTab(input.tab);
+  if (isShadowAccountDbBackoffActive()) {
+    return {
+      accountId: SHADOW_ACCOUNT_ID,
+      tab,
+      currency: SHADOW_CURRENCY,
+      degraded: true,
+      reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+      stale: false,
+      debug: null,
+      orders: [],
+      updatedAt: new Date(),
+    };
+  }
+  try {
+  await ensureShadowAccount();
   const terminalStatuses = ["filled", "canceled", "rejected", "expired"];
   const orders = await db
     .select()
@@ -3035,6 +3302,23 @@ export async function getShadowAccountOrders(input: {
     orders: filtered.map(orderRowToResponse),
     updatedAt: new Date(),
   };
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return {
+        accountId: SHADOW_ACCOUNT_ID,
+        tab,
+        currency: SHADOW_CURRENCY,
+        degraded: true,
+        reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+        stale: false,
+        debug: null,
+        orders: [],
+        updatedAt: new Date(),
+      };
+    }
+    throw error;
+  }
 }
 
 export async function getShadowAccountRisk(input: {
@@ -3047,6 +3331,11 @@ export async function getShadowAccountRisk(input: {
     input.positionsResponse ?? (await getShadowAccountPositions({}));
   const closedTrades =
     input.closedTrades ?? (await getShadowAccountClosedTrades({}));
+  const degraded = Boolean(
+    isShadowAccountDbBackoffActive() ||
+      positionsResponse.degraded ||
+      closedTrades.degraded,
+  );
   const positionRows = positionsResponse.positions.map((position) => ({
     symbol: position.symbol,
     marketValue: position.marketValue,
@@ -3066,6 +3355,8 @@ export async function getShadowAccountRisk(input: {
   return {
     accountId: SHADOW_ACCOUNT_ID,
     currency: SHADOW_CURRENCY,
+    degraded,
+    reason: degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
     concentration: {
       topPositions: positionRows.slice(0, 5),
       sectors: [
@@ -3178,6 +3469,37 @@ function buildShadowExpiryConcentration(
 }
 
 export async function getShadowAccountCashActivity() {
+  const buildFallback = () => ({
+    accountId: SHADOW_ACCOUNT_ID,
+    currency: SHADOW_CURRENCY,
+    degraded: true,
+    reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+    settledCash: SHADOW_STARTING_BALANCE,
+    unsettledCash: 0,
+    totalCash: SHADOW_STARTING_BALANCE,
+    dividendsMonth: 0,
+    dividendsYtd: 0,
+    interestPaidEarnedYtd: 0,
+    feesYtd: 0,
+    activities: [
+      {
+        id: "shadow-runtime-fallback-starting-balance",
+        accountId: SHADOW_ACCOUNT_ID,
+        date: new Date(),
+        type: "Deposit",
+        description: "Shadow account starting balance",
+        amount: SHADOW_STARTING_BALANCE,
+        currency: SHADOW_CURRENCY,
+        source: "SHADOW_RUNTIME_FALLBACK",
+      },
+    ],
+    dividends: [],
+    updatedAt: new Date(),
+  });
+  if (isShadowAccountDbBackoffActive()) {
+    return buildFallback();
+  }
+  try {
   const account = await ensureShadowAccount();
   const fills = await db
     .select()
@@ -3235,6 +3557,13 @@ export async function getShadowAccountCashActivity() {
     dividends: [],
     updatedAt: new Date(),
   };
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return buildFallback();
+    }
+    throw error;
+  }
 }
 
 function timeZoneParts(date: Date, timeZone = WATCHLIST_BACKTEST_TIME_ZONE) {

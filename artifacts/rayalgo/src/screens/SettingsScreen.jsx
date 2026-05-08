@@ -26,6 +26,7 @@ import {
   FLOW_SCANNER_SCOPE,
   normalizeFlowScannerConfig,
 } from "../features/platform/marketFlowScannerConfig";
+import { FLOW_ROWS_OPTIONS } from "../features/flow/flowRowsConfig.js";
 import {
   HEADER_BROADCAST_SPEED_PRESETS,
   resolveHeaderBroadcastSpeedPreset,
@@ -99,7 +100,6 @@ const SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
 const FLOW_FILTERS = ["all", "calls", "puts", "unusual", "golden", "sweep", "block", "cluster"];
 const FLOW_SORT_OPTIONS = ["time", "premium", "score", "ratio", "ticker"];
 const FLOW_DENSITY_OPTIONS = ["compact", "comfortable"];
-const FLOW_ROWS_OPTIONS = [24, 40, 60, 100];
 const MARKET_GRID_LAYOUTS = ["1x1", "2x2", "2x3", "3x3"];
 const ACCOUNT_RANGE_OPTIONS = ACCOUNT_RANGES;
 const ACCOUNT_ASSET_FILTER_OPTIONS = [

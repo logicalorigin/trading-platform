@@ -26,11 +26,6 @@ const HEAVY_GET_PRIORITY: Record<string, number> = {
   "/api/options/chart-bars": 12,
   "/api/options/chains": 10,
 };
-const STARTUP_GET_TIMEOUT_MS: Record<string, number> = {
-  "/api/bars": 12_000,
-  "/api/watchlists": 2_500,
-  "/api/diagnostics/runtime": 2_000,
-};
 
 // ---------------------------------------------------------------------------
 // Module-level configuration
@@ -273,16 +268,9 @@ function resolveDefaultRequestTimeoutMs(
   input: RequestInfo | URL,
   method: string,
 ): number | null {
-  if (method !== "GET") {
-    return null;
-  }
-
-  const normalizedUrl = normalizeUrlForDedupe(input);
-  if (!normalizedUrl) {
-    return null;
-  }
-
-  return STARTUP_GET_TIMEOUT_MS[normalizedUrl.pathname] ?? null;
+  void input;
+  void method;
+  return null;
 }
 
 function isApiPath(input: RequestInfo | URL): boolean {

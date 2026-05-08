@@ -1,20 +1,19 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getOptionChartBars as getOptionChartBarsRequest } from "@workspace/api-client-react";
 import {
   buildHydrationRequestOptions,
   HYDRATION_PRIORITY,
+  useHydrationGate,
   useHydrationIntent,
 } from "../platform/hydrationCoordinator";
 import {
-  expandLocalRollupLimit,
-  resolveLocalRollupBaseTimeframe,
   rollupMarketBars,
 } from "./timeframeRollups";
 import {
-  getChartBarLimit,
-  getInitialChartBarLimit,
-} from "./timeframes";
+  resolveChartHydrationPolicy,
+  resolveChartHydrationRequestPolicy,
+} from "./chartHydrationRuntime";
 import {
   useHistoricalBarStreamState,
   useOptionQuotePatchedBars,
@@ -25,6 +24,12 @@ import {
   normalizeChartBarsPagePayload,
   normalizeLatestChartBarsPayload,
 } from "./chartBarsPayloads";
+import {
+  buildChartBarsCacheKey,
+  hydrateQueryFromRuntimeCache,
+  readCachedChartBars,
+  writeCachedChartBars,
+} from "../platform/runtimeCache";
 
 export const OPTION_CHART_BARS_QUERY_DEFAULTS = {
   staleTime: 30_000,
@@ -160,24 +165,17 @@ export function useOptionChartBars({
       Number.isFinite(strike) &&
       strike > 0,
   );
-  const baseTimeframe = useMemo(
+  const hydrationRequestPolicy = useMemo(
     () =>
-      resolveLocalRollupBaseTimeframe(
+      resolveChartHydrationRequestPolicy({
         timeframe,
-        getChartBarLimit(timeframe, "option"),
-        "option",
-      ),
-    [timeframe],
+        role: "option",
+        requestedLimit: barsLimit,
+      }),
+    [barsLimit, timeframe],
   );
-  const baseLimit = useMemo(
-    () =>
-      expandLocalRollupLimit(
-        barsLimit ?? getChartBarLimit(timeframe, "option"),
-        timeframe,
-        baseTimeframe,
-      ),
-    [barsLimit, baseTimeframe, timeframe],
-  );
+  const baseTimeframe = hydrationRequestPolicy.baseTimeframe;
+  const baseLimit = hydrationRequestPolicy.baseLimit;
   const queryKey = useMemo(
     () => [
       "option-chart-bars",
@@ -197,6 +195,35 @@ export function useOptionChartBars({
       expirationDate,
       normalizedProviderContractId,
       optionTicker,
+      right,
+      scope,
+      strike,
+      underlying,
+    ],
+  );
+  const runtimeCacheKey = useMemo(
+    () =>
+      buildChartBarsCacheKey({
+        symbol: underlying || optionTicker || normalizedProviderContractId,
+        timeframe: baseTimeframe,
+        session: outsideRth ? "extended" : "regular",
+        source: "option-chart",
+        identity: [
+          scope || "option-chart",
+          expirationDate || "__missing__",
+          right || "__missing__",
+          Number.isFinite(strike) ? strike : "__missing__",
+          normalizedProviderContractId || optionTicker || "__missing__",
+          baseLimit,
+        ].join("-"),
+      }),
+    [
+      baseLimit,
+      baseTimeframe,
+      expirationDate,
+      normalizedProviderContractId,
+      optionTicker,
+      outsideRth,
       right,
       scope,
       strike,
@@ -243,13 +270,31 @@ export function useOptionChartBars({
       underlying,
     ],
   );
+  useEffect(() => {
+    if (!queryEnabled) {
+      return;
+    }
+    void hydrateQueryFromRuntimeCache({
+      queryClient,
+      queryKey,
+      read: () => readCachedChartBars(runtimeCacheKey),
+    });
+  }, [queryClient, queryEnabled, queryKey, runtimeCacheKey]);
   const query = useQuery({
     queryKey,
-    queryFn: () =>
-      getOptionChartBarsRequest(
+    queryFn: async () => {
+      const payload = await getOptionChartBarsRequest(
         buildRequest(),
         buildHydrationRequestOptions(requestPriority),
-      ),
+      );
+      void writeCachedChartBars(runtimeCacheKey, payload, {
+        ticker: underlying || optionTicker || normalizedProviderContractId,
+        interval: baseTimeframe,
+        session: outsideRth ? "extended" : "regular",
+        source: "option-chart",
+      });
+      return payload;
+    },
     ...queryDefaults,
     enabled: queryEnabled,
   });
@@ -284,6 +329,11 @@ export function useOptionChartBars({
       ...(hydrationMeta || {}),
     },
   });
+  const prewarmGate = useHydrationGate({
+    enabled: queryEnabled,
+    priority: prewarmPriority,
+    family: "chart-bars",
+  });
 
   const basePage = useMemo(
     () =>
@@ -310,8 +360,9 @@ export function useOptionChartBars({
       scope || "option-chart",
       identityKey,
       baseTimeframe,
+      timeframe,
     ].join("::"),
-    [baseTimeframe, identityKey, scope],
+    [baseTimeframe, identityKey, scope, timeframe],
   );
   const prependableBars = usePrependableHistoricalBars({
     scopeKey: baseBarsScopeKey,
@@ -437,6 +488,7 @@ export function useOptionChartBars({
     (nextTimeframe) => {
       if (
         !queryEnabled ||
+        !prewarmGate.enabled ||
         nextTimeframe === timeframe ||
         (Array.isArray(allowedTimeframes) &&
           !allowedTimeframes.some((option) =>
@@ -448,20 +500,19 @@ export function useOptionChartBars({
         return;
       }
 
-      const favoriteBaseTimeframe = resolveLocalRollupBaseTimeframe(
-        nextTimeframe,
-        getChartBarLimit(nextTimeframe, "option"),
-        "option",
-      );
+      const favoriteHydrationPolicy = resolveChartHydrationPolicy({
+        timeframe: nextTimeframe,
+        role: "option",
+      });
       const preferredLimit =
         typeof getPrewarmLimit === "function"
           ? getPrewarmLimit(nextTimeframe)
-          : getInitialChartBarLimit(nextTimeframe, "option");
-      const favoriteLimit = expandLocalRollupLimit(
-        preferredLimit,
-        nextTimeframe,
-        favoriteBaseTimeframe,
-      );
+          : favoriteHydrationPolicy.initialLimit;
+      const favoriteRequestPolicy = resolveChartHydrationRequestPolicy({
+        timeframe: nextTimeframe,
+        role: "option",
+        requestedLimit: preferredLimit,
+      });
       const favoriteKey = [
         "option-chart-bars",
         scope || "option-chart",
@@ -473,8 +524,8 @@ export function useOptionChartBars({
         chartProviderContractId ||
           normalizedProviderContractId ||
           "__missing__",
-        favoriteBaseTimeframe,
-        favoriteLimit,
+        favoriteRequestPolicy.baseTimeframe,
+        favoriteRequestPolicy.baseLimit,
       ];
 
       queryClient.prefetchQuery({
@@ -482,8 +533,8 @@ export function useOptionChartBars({
         queryFn: () =>
           getOptionChartBarsRequest(
             buildRequest({
-              timeframe: favoriteBaseTimeframe,
-              limit: favoriteLimit,
+              timeframe: favoriteRequestPolicy.baseTimeframe,
+              limit: favoriteRequestPolicy.baseLimit,
               providerContractId:
                 chartProviderContractId || normalizedProviderContractId,
             }),
@@ -501,6 +552,7 @@ export function useOptionChartBars({
       normalizedProviderContractId,
       optionTicker,
       prewarmPriority,
+      prewarmGate.enabled,
       queryEnabled,
       queryClient,
       queryDefaults,

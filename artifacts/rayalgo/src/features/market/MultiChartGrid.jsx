@@ -9,6 +9,7 @@ import {
 import { clearStoredChartViewportSnapshot } from "../charting/ResearchChartSurface";
 import { buildChartBarScopeKey } from "../charting/chartHydrationRuntime";
 import {
+  filterFlowEventsForChartLookbackWindow,
   filterFlowEventsForSymbol,
   getChartEventLookbackWindow,
   mergeFlowEventFeeds,
@@ -83,12 +84,13 @@ const MINI_CHART_TIMEFRAMES = getChartTimeframeValues("mini");
 const MAX_MULTI_CHART_SLOTS = Math.max(
   ...Object.values(MULTI_CHART_LAYOUTS).map((layout) => layout.count),
 );
-const MARKET_CHART_FLOW_LIMIT = 80;
+const MARKET_CHART_FLOW_LIMIT = 160;
 const MARKET_CHART_FLOW_HISTORY_LIMIT = 1_000;
-const MARKET_CHART_FLOW_LINE_BUDGET = 40;
-const MARKET_CHART_FLOW_CONCURRENCY = 1;
-const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY.active - 1;
-const MARKET_CHART_FLOW_STARTUP_DELAY_MS = 1_000;
+const MARKET_CHART_FLOW_LINE_BUDGET = 80;
+const MARKET_CHART_FLOW_MAX_CONCURRENCY = 4;
+const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY.active;
+const MARKET_CHART_FLOW_REFRESH_MS = 5_000;
+const MARKET_CHART_FLOW_HISTORY_REFRESH_MS = 15_000;
 const MARKET_CHART_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const MARKET_CHART_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3_600;
 
@@ -363,19 +365,12 @@ export const MultiChartGrid = ({
     [visibleSlotEntries],
   );
   const streamedSymbolsKey = streamedSymbols.join(",");
-  const [chartFlowStartupReady, setChartFlowStartupReady] = useState(false);
-  useEffect(() => {
-    if (!isVisible || !streamedSymbols.length) {
-      setChartFlowStartupReady(false);
-      return undefined;
-    }
-
-    setChartFlowStartupReady(false);
-    const timer = setTimeout(() => {
-      setChartFlowStartupReady(true);
-    }, MARKET_CHART_FLOW_STARTUP_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [isVisible, streamedSymbolsKey, streamedSymbols.length]);
+  const chartFlowEnabled = Boolean(isVisible && streamedSymbols.length);
+  const marketChartFlowConcurrency = Math.max(
+    1,
+    Math.min(MARKET_CHART_FLOW_MAX_CONCURRENCY, streamedSymbols.length || 1),
+  );
+  const marketChartFlowBatchSize = Math.max(1, streamedSymbols.length || 1);
   const historicalChartFlowRequests = useMemo(() => {
     const requestsByKey = new Map();
     visibleSlotEntries.forEach((entry) => {
@@ -431,11 +426,13 @@ export const MultiChartGrid = ({
           },
           buildBarsRequestOptions(MARKET_CHART_FLOW_REQUEST_PRIORITY),
         ),
-      enabled: Boolean(isVisible && chartFlowStartupReady && request.symbol),
-      staleTime: 15_000,
-      refetchInterval: isVisible && chartFlowStartupReady
+      enabled: Boolean(chartFlowEnabled && request.symbol),
+      staleTime: MARKET_CHART_FLOW_HISTORY_REFRESH_MS,
+      refetchInterval: chartFlowEnabled
         ? (query) =>
-            isTransientEmptyFlowSource(query.state.data?.source) ? 5_000 : 15_000
+            isTransientEmptyFlowSource(query.state.data?.source)
+              ? MARKET_CHART_FLOW_REFRESH_MS
+              : MARKET_CHART_FLOW_HISTORY_REFRESH_MS
         : false,
       placeholderData: (previousData) => previousData,
       retry: false,
@@ -503,13 +500,13 @@ export const MultiChartGrid = ({
     return sources;
   }, [historicalChartFlowQueries, historicalChartFlowRequests]);
   const chartFlowSnapshot = useLiveMarketFlow(streamedSymbols, {
-    enabled: Boolean(isVisible && chartFlowStartupReady && streamedSymbols.length),
+    enabled: chartFlowEnabled,
     limit: MARKET_CHART_FLOW_LIMIT,
     maxSymbols: MAX_MULTI_CHART_SLOTS,
-    batchSize: MAX_MULTI_CHART_SLOTS,
-    concurrency: MARKET_CHART_FLOW_CONCURRENCY,
+    batchSize: marketChartFlowBatchSize,
+    concurrency: marketChartFlowConcurrency,
     lineBudget: MARKET_CHART_FLOW_LINE_BUDGET,
-    intervalMs: 10_000,
+    intervalMs: MARKET_CHART_FLOW_REFRESH_MS,
     scope: FLOW_SCANNER_SCOPE.all,
     unusualThreshold,
     workloadLabel: "Chart flow",
@@ -627,7 +624,7 @@ export const MultiChartGrid = ({
     () => buildPremiumFlowBySymbol(chartDisplayFlowEvents, streamedSymbols),
     [chartDisplayFlowEvents, streamedSymbols],
   );
-  const flowEventsBySymbol = useMemo(() => {
+  const flowEventsBySlotIndex = useMemo(() => {
     const grouped = {};
     streamedSymbols.forEach((symbol) => {
       grouped[symbol] = [];
@@ -641,8 +638,20 @@ export const MultiChartGrid = ({
       }
       grouped[symbol].push(event);
     });
-    return grouped;
-  }, [chartDisplayFlowEvents, streamedSymbols]);
+
+    const bySlot = {};
+    visibleSlotEntries.forEach(({ slot, index }) => {
+      const symbol = normalizeTickerSymbol(slot?.ticker);
+      const hydratedTimeframe = normalizeChartTimeframe(slot?.tf);
+      const timeframe = MINI_CHART_TIMEFRAMES.includes(hydratedTimeframe)
+        ? hydratedTimeframe
+        : "15m";
+      bySlot[index] = symbol
+        ? filterFlowEventsForChartLookbackWindow(grouped[symbol] || [], timeframe)
+        : [];
+    });
+    return bySlot;
+  }, [chartDisplayFlowEvents, streamedSymbols, visibleSlotEntries]);
   useEffect(() => {
     if (!isVisible || !streamedSymbols.length) {
       return;
@@ -844,7 +853,7 @@ export const MultiChartGrid = ({
       const ticker = normalizeTickerSymbol(slot?.ticker) || "SPY";
       const timeframe = normalizeChartTimeframe(slot?.tf) || "5m";
       clearStoredChartViewportSnapshot(
-        buildChartBarScopeKey("trade-equity-chart", ticker, timeframe),
+        buildChartBarScopeKey("trade-equity-chart", "mini", ticker, timeframe),
       );
     });
     setChartViewportResetRevision((revision) => revision + 1);
@@ -1285,7 +1294,7 @@ export const MultiChartGrid = ({
                 slot={slot}
                 chartViewportLayoutKey={chartViewportLayoutKey}
                 premiumFlowSummary={premiumFlowBySymbol[normalizeTickerSymbol(slot.ticker)]}
-                flowEvents={flowEventsBySymbol[normalizeTickerSymbol(slot.ticker)] || []}
+                flowEvents={flowEventsBySlotIndex[index] || []}
                 premiumFlowStatus={effectiveChartFlowStatus}
                 premiumFlowProviderSummary={chartFlowProviderSummary}
                 isActive={slot.ticker === activeSym}

@@ -56,6 +56,9 @@ test("classifyOptionMoneyness uses a dynamic ATM band", () => {
 test("inferFlowBias keeps ambiguous side neutral", () => {
   assert.equal(inferFlowBias({ cp: "C", side: "buy" }), "bullish");
   assert.equal(inferFlowBias({ cp: "P", side: "sell" }), "bullish");
+  assert.equal(inferFlowBias({ cp: "C", side: "at_ask" }), "bullish");
+  assert.equal(inferFlowBias({ cp: "P", side: "hit_bid" }), "bullish");
+  assert.equal(inferFlowBias({ cp: "P", side: "lifted" }), "bearish");
   assert.equal(inferFlowBias({ cp: "C", side: "mid" }), "neutral");
 });
 

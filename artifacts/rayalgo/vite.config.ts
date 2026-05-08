@@ -214,6 +214,10 @@ export default defineConfig({
             if (
               packageName === "@hookform/resolvers" ||
               packageName === "@tanstack/react-query" ||
+              packageName === "@tanstack/react-table" ||
+              packageName === "@tanstack/react-virtual" ||
+              packageName === "@tanstack/table-core" ||
+              packageName === "@tanstack/virtual-core" ||
               packageName === "date-fns" ||
               packageName === "react-hook-form" ||
               packageName === "zod"

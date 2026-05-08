@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   clusterChartEvents,
   earningsCalendarToChartEvents,
+  filterFlowEventsForChartLookbackWindow,
   filterFlowEventsForOptionContract,
   filterFlowEventsForSymbol,
   flowEventsToChartEventConversion,
@@ -206,6 +207,67 @@ test("flowEventsToChartEvents maps side and right into flow bias", () => {
   );
 });
 
+test("flowEventsToChartEvents trusts classified side over neutral sentiment", () => {
+  const events = flowEventsToChartEvents(
+    [
+      {
+        id: "tick-test-call-buy",
+        ticker: "SPY",
+        cp: "C",
+        premium: "125,000",
+        unusualScore: "2.5",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        sideBasis: "tick_test",
+        sideConfidence: "medium",
+        sentiment: "neutral",
+      },
+      {
+        id: "unclassified-call-buy",
+        ticker: "SPY",
+        cp: "C",
+        premium: "125000",
+        occurredAt: "2026-05-01T15:13:00.000Z",
+        side: "buy",
+        sideBasis: "none",
+        sentiment: "neutral",
+      },
+      {
+        id: "unclassified-put",
+        ticker: "SPY",
+        cp: "P",
+        premium: "125000",
+        occurredAt: "2026-05-01T15:14:00.000Z",
+        side: "mid",
+        sideBasis: "none",
+        sentiment: "neutral",
+      },
+      {
+        id: "classified-sell-call",
+        ticker: "SPY",
+        cp: "C",
+        premium: "125000",
+        occurredAt: "2026-05-01T15:15:00.000Z",
+        side: "sell",
+        sideBasis: "quote_match",
+        sideConfidence: "high",
+        sentiment: "neutral",
+      },
+    ],
+    "SPY",
+  );
+
+  assert.equal(events[0].bias, "bullish");
+  assert.equal(events[0].severity, "high");
+  assert.equal(events[0].label, "C $125K");
+  assert.equal(events[1].bias, "bullish");
+  assert.equal(events[1].metadata.biasBasis, "call_put_fallback");
+  assert.equal(events[2].bias, "bearish");
+  assert.equal(events[2].metadata.biasBasis, "call_put_fallback");
+  assert.equal(events[3].bias, "bearish");
+  assert.equal(events[3].metadata.biasBasis, "side");
+});
+
 test("flowEventsToChartEvents reads raw Polygon/Massive trade timestamps", () => {
   const events = flowEventsToChartEvents(
     [
@@ -318,6 +380,97 @@ test("mergeFlowEventFeeds keeps distinct trade rows without ids", () => {
   assert.equal(rows.length, 2);
 });
 
+test("mergeFlowEventFeeds dedupes the same confirmed trade with different ids", () => {
+  const rows = mergeFlowEventFeeds(
+    [
+      {
+        id: "live-print",
+        ticker: "SPY",
+        provider: "polygon",
+        basis: "trade",
+        sourceBasis: "confirmed_trade",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 20,
+        premium: 42_000,
+      },
+    ],
+    [
+      {
+        id: "history-print",
+        ticker: "SPY",
+        provider: "polygon",
+        basis: "trade",
+        sourceBasis: "confirmed_trade",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 20,
+        premium: 42_000,
+      },
+    ],
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, "live-print");
+});
+
+test("mergeFlowEventFeeds keeps confirmed trades and snapshot activity separate when ids collide", () => {
+  const rows = mergeFlowEventFeeds(
+    [
+      {
+        id: "provider-reused-id",
+        ticker: "SPY",
+        provider: "polygon",
+        basis: "trade",
+        sourceBasis: "confirmed_trade",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 20,
+        premium: 42_000,
+      },
+    ],
+    [
+      {
+        id: "provider-reused-id",
+        ticker: "SPY",
+        provider: "ibkr",
+        basis: "snapshot",
+        sourceBasis: "snapshot_activity",
+        optionTicker: "SPY260515C00500000",
+        cp: "C",
+        strike: 500,
+        expirationDate: "2026-05-15",
+        occurredAt: "2026-05-01T15:12:00.000Z",
+        side: "buy",
+        price: 2.1,
+        size: 5000,
+        premium: 1_050_000,
+      },
+    ],
+  );
+
+  assert.equal(rows.length, 2);
+  assert.deepEqual(
+    rows.map((row) => row.sourceBasis),
+    ["confirmed_trade", "snapshot_activity"],
+  );
+});
+
 test("snapshot flow feeds dedupe by stable contract identity", () => {
   const broad = {
     id: "SPY260515C00500000-1770000000000",
@@ -403,6 +556,33 @@ test("getChartEventLookbackWindow includes full prior sessions after market clos
   assert.equal(intraday.to.toISOString(), now.toISOString());
 });
 
+test("filterFlowEventsForChartLookbackWindow keeps window events and newest overflow only", () => {
+  const events = [
+    {
+      id: "old",
+      ticker: "AAPL",
+      occurredAt: "2026-04-30T14:30:00.000Z",
+    },
+    {
+      id: "window",
+      ticker: "AAPL",
+      occurredAt: "2026-05-06T14:30:00.000Z",
+    },
+    {
+      id: "newest",
+      ticker: "AAPL",
+      occurredAt: "2026-05-07T14:30:00.000Z",
+    },
+  ];
+
+  const filtered = filterFlowEventsForChartLookbackWindow(events, "5m", {
+    now: new Date("2026-05-07T16:00:00.000Z"),
+    keepNewest: 1,
+  });
+
+  assert.deepEqual(filtered.map((event) => event.id), ["window", "newest"]);
+});
+
 test("clusterChartEvents labels clustered flow by count and net bias", () => {
   const events = flowEventsToChartEvents([
     {
@@ -432,4 +612,69 @@ test("clusterChartEvents labels clustered flow by count and net bias", () => {
   assert.equal(clusters.length, 1);
   assert.equal(clusters[0].count, 2);
   assert.equal(clusters[0].label, "2 bullish");
+});
+
+test("clusterChartEvents resolves net bias by premium before counts", () => {
+  const events = flowEventsToChartEvents([
+    {
+      id: "small-bull",
+      ticker: "AAPL",
+      cp: "C",
+      premium: 25_000,
+      occurredAt: "2026-04-28T14:30:00.000Z",
+      flowBias: "bullish",
+    },
+    {
+      id: "large-bear",
+      ticker: "AAPL",
+      cp: "P",
+      premium: 500_000,
+      occurredAt: "2026-04-28T14:31:00.000Z",
+      flowBias: "bearish",
+    },
+    {
+      id: "small-bull-2",
+      ticker: "AAPL",
+      cp: "C",
+      premium: 25_000,
+      occurredAt: "2026-04-28T14:32:00.000Z",
+      flowBias: "bullish",
+    },
+  ]);
+
+  const clusters = clusterChartEvents(events, { bucketMs: 5 * 60 * 1000 });
+
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].bias, "bearish");
+  assert.equal(clusters[0].label, "3 bearish");
+});
+
+test("clusterChartEvents uses call put fallback only after side bias is unavailable", () => {
+  const events = flowEventsToChartEvents([
+    {
+      id: "fallback-call",
+      ticker: "AAPL",
+      cp: "C",
+      premium: 60_000,
+      occurredAt: "2026-04-28T14:30:00.000Z",
+      side: "mid",
+      sideBasis: "none",
+      sentiment: "neutral",
+    },
+    {
+      id: "fallback-put",
+      ticker: "AAPL",
+      cp: "P",
+      premium: 40_000,
+      occurredAt: "2026-04-28T14:31:00.000Z",
+      side: "mid",
+      sideBasis: "none",
+      sentiment: "neutral",
+    },
+  ]);
+
+  const clusters = clusterChartEvents(events, { bucketMs: 5 * 60 * 1000 });
+
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].bias, "neutral");
 });

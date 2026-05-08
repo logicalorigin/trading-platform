@@ -13,18 +13,13 @@ import {
   ResearchChartWidgetSidebar,
 } from "../charting/ResearchChartWidgetChrome";
 import {
-  expandLocalRollupLimit,
-  resolveLocalRollupBaseTimeframe,
   rollupMarketBars,
 } from "../charting/timeframeRollups";
 import {
-  flowEventsToChartEventConversion,
+  filterFlowEventsForChartLookbackWindow,
   mergeFlowEventFeeds,
 } from "../charting/chartEvents";
 import {
-  getChartBarLimit,
-  getChartBrokerRecentWindowMinutes,
-  getInitialChartBarLimit,
   normalizeChartTimeframe,
 } from "../charting/timeframes";
 import { recordChartBarScopeState } from "../charting/chartHydrationStats";
@@ -52,6 +47,9 @@ import {
 import {
   buildChartBarScopeKey,
   measureChartBarsRequest,
+  normalizeChartHydrationRole,
+  resolveChartHydrationPolicy,
+  resolveChartHydrationRequestPolicy,
   useDebouncedVisibleRangeExpansion,
   useMeasuredChartModel,
   useProgressiveChartBarLimit,
@@ -71,6 +69,12 @@ import {
   ensureTradeTickerInfo,
   useRuntimeTickerSnapshot,
 } from "../platform/runtimeTickerStore";
+import {
+  buildChartBarsCacheKey,
+  hydrateQueryFromRuntimeCache,
+  readCachedChartBars,
+  writeCachedChartBars,
+} from "../platform/runtimeCache";
 import { useSignalMonitorStateForSymbol } from "../platform/signalMonitorStore";
 import { resolveSignalFrameState } from "../platform/signalFrameState";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
@@ -78,6 +82,7 @@ import {
   filterFlowEventsForChartDisplay,
   useFlowTapeFilterState,
 } from "../platform/flowFilterStore";
+import { useFlowChartEventConversion } from "../workers/analyticsClient";
 import {
   DEFAULT_TRADE_EQUITY_STUDIES,
   TRADE_EQUITY_INDICATOR_PRESET_VERSION,
@@ -86,8 +91,10 @@ import {
 } from "./tradeChartState";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import { T, getCurrentTheme } from "../../lib/uiTokens";
+import { PlatformErrorBoundary } from "../../components/platform/PlatformErrorBoundary";
 
 const COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000;
+const MINI_FULL_WINDOW_HYDRATION_DELAY_MS = 2_500;
 
 export const TradeEquityPanel = ({
   ticker,
@@ -108,8 +115,11 @@ export const TradeEquityPanel = ({
   showSignalFrameBorder = true,
   prewarmFavoriteTimeframesEnabled = true,
   flowEventsSourceMode = "merge-store",
+  chartHydrationRole = "primary",
 }) => {
   const queryClient = useQueryClient();
+  const effectiveChartHydrationRole =
+    normalizeChartHydrationRole(chartHydrationRole);
   const shouldMergeTradeFlowStore = flowEventsSourceMode !== "provided";
   const tradeFlowSnapshot = useTradeFlowSnapshot(ticker, {
     subscribe: shouldMergeTradeFlowStore,
@@ -154,10 +164,11 @@ export const TradeEquityPanel = ({
   const { studies: availableStudies, indicatorRegistry } =
     useIndicatorLibrary();
   const [tf, setTf] = useState(workspaceChart?.timeframe || "5m");
+  const [intervalChangeRevision, setIntervalChangeRevision] = useState(0);
   const {
-    favoriteTimeframes: primaryFavoriteTimeframes,
-    toggleFavoriteTimeframe: togglePrimaryFavoriteTimeframe,
-  } = useChartTimeframeFavorites("primary");
+    favoriteTimeframes: chartFavoriteTimeframes,
+    toggleFavoriteTimeframe: toggleChartFavoriteTimeframe,
+  } = useChartTimeframeFavorites(effectiveChartHydrationRole);
   const [drawMode, setDrawMode] = useState(null);
   const [selectedIndicators, setSelectedIndicators] = useState(() =>
     resolvePersistedIndicatorPreset({
@@ -171,9 +182,19 @@ export const TradeEquityPanel = ({
     resolvePersistedRayReplicaSettings(_initialState.tradeEquityRayReplicaSettings),
   );
   useEffect(() => {
-    if (workspaceChart?.timeframe && workspaceChart.timeframe !== tf) {
-      setTf(workspaceChart.timeframe);
+    const nextWorkspaceTimeframe = normalizeChartTimeframe(
+      workspaceChart?.timeframe,
+    );
+    if (!nextWorkspaceTimeframe) {
+      return;
     }
+    setTf((currentTimeframe) => {
+      if (nextWorkspaceTimeframe === currentTimeframe) {
+        return currentTimeframe;
+      }
+      setIntervalChangeRevision((revision) => revision + 1);
+      return nextWorkspaceTimeframe;
+    });
   }, [ticker, workspaceChart?.timeframe]);
   const spotChartFrameLayout = resolveSpotChartFrameLayout(compact);
   const indicatorSettings = useMemo(
@@ -183,50 +204,58 @@ export const TradeEquityPanel = ({
   const prewarmedFavoriteTimeframesRef = useRef(null);
   const { drawings, addDrawing, clearDrawings, undo, redo, canUndo, canRedo } =
     useDrawingHistory();
-  const rollupBaseTimeframe = useMemo(
+  const chartHydrationBasePolicy = useMemo(
     () =>
-      resolveLocalRollupBaseTimeframe(
-        tf,
-        getChartBarLimit(tf, "primary"),
-        "primary",
-      ),
-    [tf],
+      resolveChartHydrationPolicy({
+        timeframe: tf,
+        role: effectiveChartHydrationRole,
+      }),
+    [effectiveChartHydrationRole, tf],
   );
+  const rollupBaseTimeframe = chartHydrationBasePolicy.baseTimeframe;
+  const chartHydrationWarmPriority =
+    effectiveChartHydrationRole === "mini"
+      ? BARS_REQUEST_PRIORITY.favoritePrewarm
+      : BARS_REQUEST_PRIORITY.visible;
   const baseBarsScopeKey = buildChartBarScopeKey(
     "trade-equity-base-bars",
+    effectiveChartHydrationRole,
     ticker,
     rollupBaseTimeframe,
+    tf,
   );
   const chartHydrationScopeKey = buildChartBarScopeKey(
     "trade-equity-chart",
+    effectiveChartHydrationRole,
     ticker,
     tf,
   );
   const progressiveBars = useProgressiveChartBarLimit({
-    scopeKey: buildChartBarScopeKey("trade-equity-bars", ticker),
+    scopeKey: buildChartBarScopeKey(
+      "trade-equity-bars",
+      effectiveChartHydrationRole,
+      ticker,
+    ),
     timeframe: tf,
-    role: "primary",
+    role: effectiveChartHydrationRole,
+    hydrationPriority: chartHydrationWarmPriority,
     enabled: Boolean(historicalDataEnabled && ticker),
     warmTargetLimit: useCallback(
       (limit) => {
-        const expandedLimit = expandLocalRollupLimit(
-          limit,
-          tf,
-          rollupBaseTimeframe,
-        );
-        const brokerRecentWindowMinutes =
-          getChartBrokerRecentWindowMinutes(
-            rollupBaseTimeframe,
-            expandedLimit,
-          );
+        const requestPolicy = resolveChartHydrationRequestPolicy({
+          timeframe: tf,
+          role: effectiveChartHydrationRole,
+          requestedLimit: limit,
+        });
 
         return queryClient.prefetchQuery({
           queryKey: [
             "trade-equity-bars",
+            effectiveChartHydrationRole,
             ticker,
-            rollupBaseTimeframe,
-            expandedLimit,
-            brokerRecentWindowMinutes,
+            requestPolicy.baseTimeframe,
+            requestPolicy.baseLimit,
+            requestPolicy.brokerRecentWindowMinutes,
           ],
           queryFn: () =>
             measureChartBarsRequest({
@@ -235,49 +264,100 @@ export const TradeEquityPanel = ({
               request: () =>
                 getBarsRequest({
                   symbol: ticker,
-                  timeframe: rollupBaseTimeframe,
-                  limit: expandedLimit,
+                  timeframe: requestPolicy.baseTimeframe,
+                  limit: requestPolicy.baseLimit,
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
                   allowHistoricalSynthesis: true,
-                  brokerRecentWindowMinutes,
+                  brokerRecentWindowMinutes:
+                    requestPolicy.brokerRecentWindowMinutes,
                 },
-                buildBarsRequestOptions(BARS_REQUEST_PRIORITY.visible),
+                buildBarsRequestOptions(chartHydrationWarmPriority),
               ),
             }),
           ...BARS_QUERY_DEFAULTS,
         });
       },
-      [chartHydrationScopeKey, queryClient, rollupBaseTimeframe, tf, ticker],
+      [
+        chartHydrationScopeKey,
+        chartHydrationWarmPriority,
+        effectiveChartHydrationRole,
+        queryClient,
+        tf,
+        ticker,
+      ],
     ),
   });
-  const baseRequestedLimit = useMemo(
+  const chartHydrationRequestPolicy = useMemo(
     () =>
-      expandLocalRollupLimit(
-        progressiveBars.requestedLimit,
-        tf,
-        rollupBaseTimeframe,
-      ),
-    [progressiveBars.requestedLimit, rollupBaseTimeframe, tf],
+      resolveChartHydrationRequestPolicy({
+        timeframe: tf,
+        role: effectiveChartHydrationRole,
+        requestedLimit: progressiveBars.requestedLimit,
+      }),
+    [effectiveChartHydrationRole, progressiveBars.requestedLimit, tf],
   );
-  const baseBrokerRecentWindowMinutes = useMemo(
-    () =>
-      getChartBrokerRecentWindowMinutes(
-        rollupBaseTimeframe,
-        baseRequestedLimit,
-      ),
-    [baseRequestedLimit, rollupBaseTimeframe],
-  );
-  const barsQuery = useQuery({
-    queryKey: [
+  const baseRequestedLimit = chartHydrationRequestPolicy.baseLimit;
+  const baseBrokerRecentWindowMinutes =
+    chartHydrationRequestPolicy.brokerRecentWindowMinutes;
+  const barsQueryKey = useMemo(
+    () => [
       "trade-equity-bars",
+      effectiveChartHydrationRole,
       ticker,
       rollupBaseTimeframe,
       baseRequestedLimit,
       baseBrokerRecentWindowMinutes,
     ],
-    queryFn: () =>
-      measureChartBarsRequest({
+    [
+      baseBrokerRecentWindowMinutes,
+      baseRequestedLimit,
+      effectiveChartHydrationRole,
+      rollupBaseTimeframe,
+      ticker,
+    ],
+  );
+  const barsRuntimeCacheKey = useMemo(
+    () =>
+      buildChartBarsCacheKey({
+        symbol: ticker,
+        timeframe: rollupBaseTimeframe,
+        session: DISPLAY_CHART_OUTSIDE_RTH ? "extended" : "regular",
+        source: "trade-equity",
+        identity: [
+          effectiveChartHydrationRole,
+          baseRequestedLimit,
+          baseBrokerRecentWindowMinutes ?? "recent",
+        ].join("-"),
+      }),
+    [
+      baseBrokerRecentWindowMinutes,
+      baseRequestedLimit,
+      effectiveChartHydrationRole,
+      rollupBaseTimeframe,
+      ticker,
+    ],
+  );
+  useEffect(() => {
+    if (!historicalDataEnabled || !ticker) {
+      return;
+    }
+    void hydrateQueryFromRuntimeCache({
+      queryClient,
+      queryKey: barsQueryKey,
+      read: () => readCachedChartBars(barsRuntimeCacheKey),
+    });
+  }, [
+    barsQueryKey,
+    barsRuntimeCacheKey,
+    historicalDataEnabled,
+    queryClient,
+    ticker,
+  ]);
+  const barsQuery = useQuery({
+    queryKey: barsQueryKey,
+    queryFn: async () => {
+      const payload = await measureChartBarsRequest({
         scopeKey: chartHydrationScopeKey,
         metric: "barsRequestMs",
         request: () =>
@@ -292,7 +372,15 @@ export const TradeEquityPanel = ({
           },
           buildBarsRequestOptions(BARS_REQUEST_PRIORITY.active),
         ),
-      }),
+      });
+      void writeCachedChartBars(barsRuntimeCacheKey, payload, {
+        ticker,
+        interval: rollupBaseTimeframe,
+        session: DISPLAY_CHART_OUTSIDE_RTH ? "extended" : "regular",
+        source: "trade-equity",
+      });
+      return payload;
+    },
     enabled: Boolean(historicalDataEnabled && ticker),
     ...BARS_QUERY_DEFAULTS,
     staleTime: 30_000,
@@ -321,16 +409,26 @@ export const TradeEquityPanel = ({
       return undefined;
     }
 
-    if (!compact) {
+    if (!compact || intervalChangeRevision > 0) {
       progressiveBars.hydrateFullWindow();
       return undefined;
     }
 
+    const hydrationDelayMs =
+      effectiveChartHydrationRole === "mini"
+        ? MINI_FULL_WINDOW_HYDRATION_DELAY_MS
+        : COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS;
     const timer = setTimeout(() => {
       progressiveBars.hydrateFullWindow();
-    }, COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS);
+    }, hydrationDelayMs);
     return () => clearTimeout(timer);
-  }, [baseBarsPage.bars.length, compact, progressiveBars.hydrateFullWindow]);
+  }, [
+    baseBarsPage.bars.length,
+    compact,
+    effectiveChartHydrationRole,
+    intervalChangeRevision,
+    progressiveBars.hydrateFullWindow,
+  ]);
   const prewarmFavoriteTimeframe = useCallback(
     (nextTimeframe) => {
       const favoriteTimeframe = normalizeChartTimeframe(nextTimeframe);
@@ -338,34 +436,30 @@ export const TradeEquityPanel = ({
         return;
       }
 
-      const favoriteBaseTimeframe = resolveLocalRollupBaseTimeframe(
-        favoriteTimeframe,
-        getChartBarLimit(favoriteTimeframe, "primary"),
-        "primary",
-      );
-      const favoriteLimit = expandLocalRollupLimit(
-        getInitialChartBarLimit(favoriteTimeframe, "primary"),
-        favoriteTimeframe,
-        favoriteBaseTimeframe,
-      );
-      const favoriteBrokerRecentWindowMinutes =
-        getChartBrokerRecentWindowMinutes(
-          favoriteBaseTimeframe,
-          favoriteLimit,
-        );
+      const favoriteHydrationPolicy = resolveChartHydrationPolicy({
+        timeframe: favoriteTimeframe,
+        role: effectiveChartHydrationRole,
+      });
+      const favoriteRequestPolicy = resolveChartHydrationRequestPolicy({
+        timeframe: favoriteTimeframe,
+        role: effectiveChartHydrationRole,
+        requestedLimit: favoriteHydrationPolicy.initialLimit,
+      });
 
       queryClient.prefetchQuery({
         queryKey: [
           "trade-equity-bars",
+          effectiveChartHydrationRole,
           ticker,
-          favoriteBaseTimeframe,
-          favoriteLimit,
-          favoriteBrokerRecentWindowMinutes,
+          favoriteRequestPolicy.baseTimeframe,
+          favoriteRequestPolicy.baseLimit,
+          favoriteRequestPolicy.brokerRecentWindowMinutes,
         ],
         queryFn: () =>
           measureChartBarsRequest({
             scopeKey: buildChartBarScopeKey(
               "trade-equity-chart",
+              effectiveChartHydrationRole,
               ticker,
               favoriteTimeframe,
             ),
@@ -374,13 +468,13 @@ export const TradeEquityPanel = ({
               getBarsRequest(
                 {
                   symbol: ticker,
-                  timeframe: favoriteBaseTimeframe,
-                  limit: favoriteLimit,
+                  timeframe: favoriteRequestPolicy.baseTimeframe,
+                  limit: favoriteRequestPolicy.baseLimit,
                   outsideRth: DISPLAY_CHART_OUTSIDE_RTH,
                   source: "trades",
                   allowHistoricalSynthesis: true,
                   brokerRecentWindowMinutes:
-                    favoriteBrokerRecentWindowMinutes,
+                    favoriteRequestPolicy.brokerRecentWindowMinutes,
                 },
                 buildBarsRequestOptions(BARS_REQUEST_PRIORITY.favoritePrewarm),
               ),
@@ -388,35 +482,35 @@ export const TradeEquityPanel = ({
         ...BARS_QUERY_DEFAULTS,
       });
     },
-    [queryClient, tf, ticker],
+    [effectiveChartHydrationRole, queryClient, tf, ticker],
   );
   useEffect(() => {
     if (
       !prewarmFavoriteTimeframesEnabled ||
       !historicalDataEnabled ||
       !barsQuery.data?.bars?.length ||
-      !primaryFavoriteTimeframes.length
+      !chartFavoriteTimeframes.length
     ) {
       return;
     }
 
     const prewarmKey = [
       chartHydrationScopeKey,
-      primaryFavoriteTimeframes.join(","),
+      chartFavoriteTimeframes.join(","),
     ].join("::");
     if (prewarmedFavoriteTimeframesRef.current === prewarmKey) {
       return;
     }
 
     prewarmedFavoriteTimeframesRef.current = prewarmKey;
-    primaryFavoriteTimeframes.forEach(prewarmFavoriteTimeframe);
+    chartFavoriteTimeframes.forEach(prewarmFavoriteTimeframe);
   }, [
     barsQuery.data?.bars?.length,
     chartHydrationScopeKey,
+    chartFavoriteTimeframes,
     historicalDataEnabled,
     prewarmFavoriteTimeframesEnabled,
     prewarmFavoriteTimeframe,
-    primaryFavoriteTimeframes,
   ]);
   const prependableBars = usePrependableHistoricalBars({
     scopeKey: baseBarsScopeKey,
@@ -432,7 +526,11 @@ export const TradeEquityPanel = ({
         const brokerRecentWindowMinutes = 0;
         const payload = await queryClient.fetchQuery({
           queryKey: buildBarsPageQueryKey({
-            queryBase: ["trade-equity-bars-prepend", ticker],
+            queryBase: [
+              "trade-equity-bars-prepend",
+              effectiveChartHydrationRole,
+              ticker,
+            ],
             timeframe: rollupBaseTimeframe,
             limit,
             from: fromIso,
@@ -470,17 +568,33 @@ export const TradeEquityPanel = ({
           scopeKey: chartHydrationScopeKey,
         });
       },
-      [chartHydrationScopeKey, queryClient, rollupBaseTimeframe, ticker],
+      [
+        chartHydrationScopeKey,
+        effectiveChartHydrationRole,
+        queryClient,
+        rollupBaseTimeframe,
+        ticker,
+      ],
     ),
   });
+  const hydratedBaseBars = useMemo(
+    () =>
+      rollupMarketBars(
+        buildTradeBarsFromApi(prependableBars.bars),
+        rollupBaseTimeframe,
+        tf,
+      ),
+    [prependableBars.bars, rollupBaseTimeframe, tf],
+  );
   useUnderfilledChartBackfill({
     scopeKey: baseBarsScopeKey,
     enabled: Boolean(
       historicalDataEnabled && ticker && barsQuery.data?.bars?.length,
     ),
-    loadedBarCount: prependableBars.loadedBarCount,
-    requestedLimit: baseRequestedLimit,
-    minPageSize: getInitialChartBarLimit(tf, "primary"),
+    loadedBarCount: hydratedBaseBars.length,
+    requestedLimit: progressiveBars.requestedLimit,
+    minPageSize: chartHydrationBasePolicy.initialLimit,
+    hydrationPriority: chartHydrationWarmPriority,
     isPrependingOlder: prependableBars.isPrependingOlder,
     hasExhaustedOlderHistory: prependableBars.hasExhaustedOlderHistory,
     prependOlderBars: prependableBars.prependOlderBars,
@@ -495,15 +609,6 @@ export const TradeEquityPanel = ({
   const liveBars = useMemo(
     () => buildTradeBarsFromApi(streamedSourceBars),
     [streamedSourceBars],
-  );
-  const hydratedBaseBars = useMemo(
-    () =>
-      rollupMarketBars(
-        buildTradeBarsFromApi(prependableBars.bars),
-        rollupBaseTimeframe,
-        tf,
-      ),
-    [prependableBars.bars, rollupBaseTimeframe, tf],
   );
   const streamedChartBars = useMemo(
     () => rollupMarketBars(liveBars, rollupBaseTimeframe, tf),
@@ -528,9 +633,10 @@ export const TradeEquityPanel = ({
   useEffect(() => {
     recordChartBarScopeState(chartHydrationScopeKey, {
       timeframe: tf,
-      role: "primary",
+      role: effectiveChartHydrationRole,
       requestedLimit: progressiveBars.requestedLimit,
-      initialLimit: getInitialChartBarLimit(tf, "primary"),
+      initialLimit: chartHydrationBasePolicy.initialLimit,
+      baseRequestedLimit,
       targetLimit: progressiveBars.targetLimit,
       maxLimit: progressiveBars.maxLimit,
       hydratedBaseCount: hydratedBaseBars.length,
@@ -560,7 +666,10 @@ export const TradeEquityPanel = ({
     });
   }, [
     bars.length,
+    baseRequestedLimit,
+    chartHydrationBasePolicy.initialLimit,
     chartHydrationScopeKey,
+    effectiveChartHydrationRole,
     hydratedBaseBars.length,
     prependableBars.hasExhaustedOlderHistory,
     prependableBars.emptyOlderHistoryWindowCount,
@@ -597,9 +706,17 @@ export const TradeEquityPanel = ({
       : baseBarsCacheStale
       ? "stale"
       : "live";
-  const chartEventConversion = useMemo(
-    () => flowEventsToChartEventConversion(chartDisplayFlowEvents || [], ticker),
-    [chartDisplayFlowEvents, ticker],
+  const chartWindowFlowEvents = useMemo(
+    () =>
+      filterFlowEventsForChartLookbackWindow(
+        chartDisplayFlowEvents || [],
+        tf,
+      ),
+    [chartDisplayFlowEvents, tf],
+  );
+  const chartEventConversion = useFlowChartEventConversion(
+    chartWindowFlowEvents,
+    ticker,
   );
   const chartEvents = chartEventConversion.events;
   const chartModel = useMeasuredChartModel({
@@ -673,9 +790,14 @@ export const TradeEquityPanel = ({
     );
   };
   const handleChangeTimeframe = useCallback((timeframe) => {
-    setTf(timeframe);
-    onWorkspaceChartChange?.({ timeframe });
-  }, [onWorkspaceChartChange]);
+    const nextTimeframe = normalizeChartTimeframe(timeframe);
+    if (!nextTimeframe || nextTimeframe === tf) {
+      return;
+    }
+    setTf(nextTimeframe);
+    setIntervalChangeRevision((revision) => revision + 1);
+    onWorkspaceChartChange?.({ timeframe: nextTimeframe });
+  }, [onWorkspaceChartChange, tf]);
 
   useEffect(() => {
     persistState({
@@ -731,15 +853,28 @@ export const TradeEquityPanel = ({
     },
     [scheduleVisibleRangeExpansion],
   );
+  const chartViewportLayoutKey = intervalChangeRevision
+    ? buildChartBarScopeKey(
+        viewportLayoutKey || "trade-equity-viewport",
+        "interval",
+        tf,
+        intervalChangeRevision,
+      )
+    : viewportLayoutKey;
 
   return (
-    <ResearchChartFrame
+    <PlatformErrorBoundary
+      label={`${ticker || "Spot"} chart`}
+      resetKeys={[ticker, tf, chartHydrationScopeKey]}
+      minHeight="100%"
+    >
+      <ResearchChartFrame
       dataTestId={dataTestId}
       theme={T}
       themeKey={getCurrentTheme()}
       surfaceUiStateKey={surfaceUiStateKey}
       rangeIdentityKey={chartHydrationScopeKey}
-      viewportLayoutKey={viewportLayoutKey}
+      viewportLayoutKey={chartViewportLayoutKey}
       model={chartModel}
       compact={compact}
       frameSignalState={showSignalFrameBorder ? signalFrameState : null}
@@ -801,8 +936,8 @@ export const TradeEquityPanel = ({
             label: timeframe.tag,
           }))}
           onChangeTimeframe={handleChangeTimeframe}
-          favoriteTimeframes={primaryFavoriteTimeframes}
-          onToggleFavoriteTimeframe={togglePrimaryFavoriteTimeframe}
+          favoriteTimeframes={chartFavoriteTimeframes}
+          onToggleFavoriteTimeframe={toggleChartFavoriteTimeframe}
           onPrewarmTimeframe={prewarmFavoriteTimeframe}
           onOpenSearch={hasAnchoredTickerSearch ? undefined : onOpenSearch}
           searchOpen={searchOpen}
@@ -870,6 +1005,7 @@ export const TradeEquityPanel = ({
         />
       )}
       surfaceBottomOverlayHeight={spotChartFrameLayout.surfaceBottomOverlayHeight}
-    />
+      />
+    </PlatformErrorBoundary>
   );
 };

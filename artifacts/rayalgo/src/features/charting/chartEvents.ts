@@ -37,6 +37,18 @@ export type ChartEventCluster = {
   events: ChartEvent[];
 };
 
+type FlowEventBiasBasis =
+  | "flow_bias"
+  | "side"
+  | "call_put_fallback"
+  | "sentiment"
+  | "neutral";
+
+type FlowEventBiasDecision = {
+  bias: ChartEventBias;
+  basis: FlowEventBiasBasis;
+};
+
 export type FlowChartEventConversion = {
   events: ChartEvent[];
   rawInputCount: number;
@@ -46,8 +58,14 @@ export type FlowChartEventConversion = {
   droppedSymbolCount: number;
 };
 
-const finiteNumber = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
+const finiteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[$,%\s,]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
 
 const severityRank: Record<ChartEventSeverity, number> = {
   low: 0,
@@ -147,6 +165,96 @@ const normalizeBias = ({
   if (normalizedSide === "sell" && normalizedRight === "put") return "bullish";
   if (normalizedSide === "buy" && normalizedRight === "put") return "bearish";
   if (normalizedSide === "sell" && normalizedRight === "call") return "bearish";
+  return "neutral";
+};
+
+const canTrustFlowEventSide = (sideBasis: unknown): boolean => {
+  const normalized = String(sideBasis || "").trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "quote_match" ||
+    normalized === "tick_test"
+  );
+};
+
+const resolveRightBiasFallback = (right: unknown): ChartEventBias => {
+  const normalizedRight = normalizeRight(right);
+  if (normalizedRight === "call") return "bullish";
+  if (normalizedRight === "put") return "bearish";
+  return "neutral";
+};
+
+const resolveFlowEventBiasDecision = (
+  event: Record<string, unknown>,
+): FlowEventBiasDecision => {
+  const explicitFlowBias = normalizeBiasValue(event.flowBias);
+  if (explicitFlowBias && explicitFlowBias !== "neutral") {
+    return { bias: explicitFlowBias, basis: "flow_bias" };
+  }
+
+  const sideBias = normalizeBias({
+    value: null,
+    right: event.cp || event.right,
+    side: event.side,
+  });
+  if (canTrustFlowEventSide(event.sideBasis) && sideBias !== "neutral") {
+    return { bias: sideBias, basis: "side" };
+  }
+
+  const rightBias = resolveRightBiasFallback(event.cp || event.right);
+  if (rightBias !== "neutral") {
+    return { bias: rightBias, basis: "call_put_fallback" };
+  }
+
+  const sentiment = normalizeBiasValue(event.sentiment);
+  if (sentiment && sentiment !== "neutral") {
+    return { bias: sentiment, basis: "sentiment" };
+  }
+
+  return { bias: explicitFlowBias || sentiment || "neutral", basis: "neutral" };
+};
+
+const readChartEventPremium = (event: ChartEvent): number =>
+  Math.max(0, finiteNumber(event.metadata?.premium) ?? 0);
+
+const isCallPutFallbackChartEvent = (event: ChartEvent): boolean =>
+  String(event.metadata?.biasBasis || "").trim().toLowerCase() ===
+  "call_put_fallback";
+
+const resolveChartEventCollectionBias = (events: ChartEvent[]): ChartEventBias => {
+  let bullishPremium = 0;
+  let bearishPremium = 0;
+  let callPremium = 0;
+  let putPremium = 0;
+  let bullishCount = 0;
+  let bearishCount = 0;
+
+  events.forEach((event) => {
+    const premium = readChartEventPremium(event);
+    const right = normalizeRight(event.metadata?.cp || event.metadata?.right);
+    if (right === "call") callPremium += premium;
+    if (right === "put") putPremium += premium;
+    if (isCallPutFallbackChartEvent(event)) {
+      return;
+    }
+    if (event.bias === "bullish") {
+      bullishPremium += premium;
+      bullishCount += 1;
+    } else if (event.bias === "bearish") {
+      bearishPremium += premium;
+      bearishCount += 1;
+    }
+  });
+
+  if (bullishPremium > bearishPremium) return "bullish";
+  if (bearishPremium > bullishPremium) return "bearish";
+  if (bullishCount > bearishCount) return "bullish";
+  if (bearishCount > bullishCount) return "bearish";
+  const callPutTotal = callPremium + putPremium;
+  if (callPutTotal > 0) {
+    if (callPremium / callPutTotal >= 0.7) return "bullish";
+    if (putPremium / callPutTotal >= 0.7) return "bearish";
+  }
   return "neutral";
 };
 
@@ -372,6 +480,53 @@ const readFlowEventChartTime = (event: Record<string, unknown>): string => {
   return "";
 };
 
+export const resolveFlowEventChartTimeMs = (
+  event: Record<string, unknown>,
+): number | null => {
+  const parsed = Date.parse(readFlowEventChartTime(event));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const filterFlowEventsForChartLookbackWindow = (
+  events: Array<Record<string, unknown>> = [],
+  timeframe: string,
+  {
+    now = new Date(),
+    keepNewest = 80,
+  }: { now?: Date; keepNewest?: number } = {},
+): Array<Record<string, unknown>> => {
+  const input = Array.isArray(events) ? events : [];
+  if (!input.length) {
+    return [];
+  }
+
+  const window = getChartEventLookbackWindow(timeframe, now);
+  const fromMs = window.from.getTime();
+  const toMs = window.to.getTime();
+  const timedEvents = input
+    .map((event) => ({
+      event,
+      timeMs: resolveFlowEventChartTimeMs(event),
+    }))
+    .filter(
+      (entry): entry is { event: Record<string, unknown>; timeMs: number } =>
+        Number.isFinite(entry.timeMs),
+    );
+  const newestEvents = new Set(
+    [...timedEvents]
+      .sort((left, right) => right.timeMs - left.timeMs)
+      .slice(0, Math.max(0, Math.floor(keepNewest)))
+      .map((entry) => entry.event),
+  );
+
+  return timedEvents
+    .filter(
+      ({ event, timeMs }) =>
+        (timeMs >= fromMs && timeMs <= toMs) || newestEvents.has(event),
+    )
+    .map((entry) => entry.event);
+};
+
 const getTradeFlowEventKey = (event: Record<string, unknown>): string =>
   String(
     event.id ||
@@ -391,6 +546,79 @@ const getTradeFlowEventKey = (event: Record<string, unknown>): string =>
         event.premium ?? "",
       ].join("|"),
   );
+
+const getTradeFlowPrintKey = (event: Record<string, unknown>): string => {
+  if (isSnapshotFlowEvent(event)) return "";
+  const symbol = readFlowEventSymbol(event);
+  const occurredAt = readFlowEventChartTime(event);
+  const optionTicker = normalizeOptionTicker(event.optionTicker);
+  const expiration = normalizeExpirationIso(event.expirationDate || event.exp);
+  const right = normalizeRight(event.cp || event.right);
+  const strike = normalizeNumericKeyPart(event.strike);
+  const contract =
+    optionTicker ||
+    [expiration, right, strike].filter(Boolean).join(":") ||
+    normalizeProviderContractId(event.providerContractId) ||
+    normalizeKeyPart(event.contract);
+  if (!symbol || !occurredAt || !contract) return "";
+  return [
+    "print",
+    symbol,
+    contract,
+    occurredAt,
+    normalizeKeyPart(event.side),
+    normalizeNumericKeyPart(event.price),
+    normalizeNumericKeyPart(event.size ?? event.contracts ?? event.vol),
+    normalizeNumericKeyPart(event.premium),
+  ].join("|");
+};
+
+const sourceBasisRank = (event: Record<string, unknown>): number => {
+  const basis = String(event.sourceBasis || event.confidence || "")
+    .trim()
+    .toLowerCase();
+  if (basis === "confirmed_trade") return 3;
+  if (basis === "snapshot_activity") return 2;
+  if (basis === "fallback_estimate") return 1;
+  return 0;
+};
+
+const getFlowEventBasisKey = (event: Record<string, unknown>): string => {
+  if (isSnapshotFlowEvent(event)) return "snapshot_activity";
+  const sourceBasis = String(event.sourceBasis || event.confidence || "")
+    .trim()
+    .toLowerCase();
+  const basis = String(event.basis || "").trim().toLowerCase();
+  if (sourceBasis === "confirmed_trade" || basis === "trade") {
+    return "confirmed_trade";
+  }
+  if (sourceBasis === "fallback_estimate") return "fallback_estimate";
+  return "other";
+};
+
+const getFlowEventMergeKeys = (event: Record<string, unknown>): string[] => {
+  const stableKey = getStableFlowEventKey(event);
+  const basis = getFlowEventBasisKey(event);
+  const keys = [
+    stableKey ? `${basis}|${stableKey}` : "",
+    getTradeFlowPrintKey(event),
+  ].filter(Boolean);
+  return Array.from(new Set(keys));
+};
+
+const selectPreferredFlowEvent = (
+  current: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (isSnapshotFlowEvent(current) && isSnapshotFlowEvent(incoming)) {
+    const currentTime = resolveFlowEventChartTimeMs(current) ?? 0;
+    const incomingTime = resolveFlowEventChartTimeMs(incoming) ?? 0;
+    return incomingTime >= currentTime ? incoming : current;
+  }
+  const currentRank = sourceBasisRank(current);
+  const incomingRank = sourceBasisRank(incoming);
+  return incomingRank > currentRank ? incoming : current;
+};
 
 export const getStableFlowEventKey = (event: Record<string, unknown>): string => {
   if (!isFlowEventRecord(event)) return "";
@@ -426,13 +654,29 @@ export const getStableFlowEventKey = (event: Record<string, unknown>): string =>
 export const mergeFlowEventFeeds = (
   ...feeds: Array<Array<Record<string, unknown>> | null | undefined>
 ): Array<Record<string, unknown>> => {
-  const mergedByKey = new Map<string, Record<string, unknown>>();
+  const mergedEvents: Array<Record<string, unknown>> = [];
+  const keyToIndex = new Map<string, number>();
   feeds.flat().forEach((event) => {
     if (!isFlowEventRecord(event)) return;
-    const key = getStableFlowEventKey(event);
-    if (!mergedByKey.has(key)) mergedByKey.set(key, event);
+    const keys = getFlowEventMergeKeys(event);
+    if (!keys.length) return;
+    const existingIndex = keys
+      .map((key) => keyToIndex.get(key))
+      .find((index): index is number => typeof index === "number");
+    if (existingIndex == null) {
+      const nextIndex = mergedEvents.length;
+      mergedEvents.push(event);
+      keys.forEach((key) => keyToIndex.set(key, nextIndex));
+      return;
+    }
+    const selected = selectPreferredFlowEvent(mergedEvents[existingIndex], event);
+    mergedEvents[existingIndex] = selected;
+    getFlowEventMergeKeys(selected).forEach((key) =>
+      keyToIndex.set(key, existingIndex),
+    );
+    keys.forEach((key) => keyToIndex.set(key, existingIndex));
   });
-  return Array.from(mergedByKey.values());
+  return mergedEvents;
 };
 
 export const filterFlowEventsForSymbol = (
@@ -564,6 +808,7 @@ export const flowEventsToChartEventConversion = (
     const chartEventId = snapshotDerived
       ? getStableFlowEventKey(event) || fallbackId
       : String(event.id || fallbackId);
+    const biasDecision = resolveFlowEventBiasDecision(event);
 
     chartEvents.push({
       id: chartEventId,
@@ -576,14 +821,11 @@ export const flowEventsToChartEventConversion = (
       summary: `${contractLabel} ${flowKind} ${compactPremium(premium)}`,
       source: String(event.provider || "flow"),
       confidence: Math.max(0, Math.min(1, unusualScore / 5)),
-      bias: normalizeBias({
-        value: event.flowBias || event.sentiment,
-        right: event.cp || event.right,
-        side: event.side,
-      }),
+      bias: biasDecision.bias,
       actions: ["open_flow", "open_trade", "copy_contract", "add_alert"],
       metadata: {
         ...event,
+        biasBasis: biasDecision.basis,
         premium,
         unusualScore,
         isUnusual: Boolean(event.isUnusual),
@@ -682,10 +924,7 @@ export const clusterChartEvents = (
 
   return Array.from(buckets.values())
     .map((bucket) => {
-      const bullish = bucket.filter((event) => event.bias === "bullish").length;
-      const bearish = bucket.filter((event) => event.bias === "bearish").length;
-      const bias =
-        bullish > bearish ? "bullish" : bearish > bullish ? "bearish" : "neutral";
+      const bias = resolveChartEventCollectionBias(bucket);
       const first = bucket[0];
       return {
         id: `cluster:${first.symbol}:${first.eventType}:${first.time}:${bucket.length}`,

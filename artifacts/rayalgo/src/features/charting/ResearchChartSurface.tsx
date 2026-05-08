@@ -68,7 +68,7 @@ import {
 } from "./chartHydrationStats";
 
 export const RESEARCH_CHART_SURFACE_MODULE_VERSION =
-  "ResearchChartSurface@20260507-runtime-fingerprint-v1";
+  "ResearchChartSurface@20260508-flow-normalized-v1";
 
 type ResearchChartTheme = {
   bg2: string;
@@ -520,6 +520,7 @@ type ChartEventOverlay = {
   tone: "bullish" | "bearish" | "neutral";
   placement: "bar" | "timescale";
   count?: number;
+  flowSourceBasis?: string;
   flowBucket?: FlowChartBucket;
   tooltip?: FlowTooltipModel;
 };
@@ -532,6 +533,7 @@ type FlowVolumeOverlay = {
   height: number;
   title: string;
   tone: "bullish" | "bearish" | "neutral";
+  flowSourceBasis: string;
   segments: Array<{
     tone: "bullish" | "bearish" | "neutral";
     ratio: number;
@@ -593,7 +595,9 @@ const buildFlowTooltipStatCells = (
     { label: "OI", value: model.openInterest },
     { label: "C/P", value: model.callPutMix, required: true },
     { label: "Bias", value: model.sentiment, required: true },
+    { label: "Basis", value: model.biasBasis },
     { label: "Side", value: model.side },
+    { label: "Conf", value: model.sideConfidence },
     { label: "DTE", value: model.dte },
     { label: "IV", value: model.iv },
     { label: "Delta", value: model.delta },
@@ -622,6 +626,8 @@ const FLOW_TOOLTIP_SCALAR_KEYS: Array<Exclude<keyof FlowTooltipModel, "tags">> =
   "sourceLabel",
   "timeBasis",
   "side",
+  "biasBasis",
+  "sideConfidence",
   "price",
   "bidAsk",
   "openInterest",
@@ -3760,6 +3766,29 @@ const buildChartEventOverlays = (
   }, []);
 };
 
+const buildFlowBucketSlotOffsetMap = (
+  buckets: FlowChartBucket[],
+): Map<string, number> => {
+  const byBarIndex = new Map<number, FlowChartBucket[]>();
+  buckets.forEach((bucket) => {
+    const current = byBarIndex.get(bucket.barIndex) || [];
+    current.push(bucket);
+    byBarIndex.set(bucket.barIndex, current);
+  });
+
+  const offsets = new Map<string, number>();
+  byBarIndex.forEach((barBuckets) => {
+    const sorted = [...barBuckets].sort((left, right) =>
+      left.sourceBasis.localeCompare(right.sourceBasis),
+    );
+    const center = (sorted.length - 1) / 2;
+    sorted.forEach((bucket, index) => {
+      offsets.set(bucket.id, index - center);
+    });
+  });
+  return offsets;
+};
+
 const buildFlowChartEventOverlays = (
   chart: any,
   series: any,
@@ -3772,9 +3801,12 @@ const buildFlowChartEventOverlays = (
     return [];
   }
 
+  const slotOffsetByBucketId = buildFlowBucketSlotOffsetMap(buckets);
   return buckets.reduce<ChartEventOverlay[]>((result, bucket) => {
-    const x = chart.timeScale().timeToCoordinate(bucket.time);
+    const rawX = chart.timeScale().timeToCoordinate(bucket.time);
     const size = 24;
+    const x =
+      Number(rawX) + (slotOffsetByBucketId.get(bucket.id) ?? 0) * 18;
     if (!isOverlayAnchorVisibleOnAxis(Number(x), size / 2, viewportWidth)) {
       return result;
     }
@@ -3806,12 +3838,18 @@ const buildFlowChartEventOverlays = (
       .trim()
       .toUpperCase()
       .slice(0, 1);
+    const label =
+      bucket.sourceBasis === "snapshot_activity"
+        ? "S"
+        : bucket.count > 1
+          ? String(Math.min(bucket.count, 9))
+          : right || "F";
 
     result.push({
       id: bucket.id,
       left,
       top,
-      label: bucket.count > 1 ? String(Math.min(bucket.count, 9)) : right || "F",
+      label,
       title: `${tooltip.title}: ${tooltip.summary}`,
       eventType: bucket.topEvent.eventType,
       source: bucket.topEvent.source,
@@ -3820,6 +3858,7 @@ const buildFlowChartEventOverlays = (
       tone: bucket.bias,
       placement: "bar",
       count: bucket.count,
+      flowSourceBasis: bucket.sourceBasis,
       flowBucket: bucket,
       tooltip,
     });
@@ -3864,14 +3903,18 @@ const buildFlowVolumeOverlays = (
   const volumeTop = viewportHeight * VOLUME_SCALE_TOP_MARGIN;
   const volumeHeight = Math.max(18, viewportHeight - volumeTop);
   const volumeBottom = viewportHeight - 1;
+  const slotOffsetByBucketId = buildFlowBucketSlotOffsetMap(buckets);
 
   return buckets.reduce<FlowVolumeOverlay[]>((result, bucket) => {
-    const x = chart.timeScale().timeToCoordinate(bucket.time);
-    if (!Number.isFinite(x)) {
+    const rawX = chart.timeScale().timeToCoordinate(bucket.time);
+    if (!Number.isFinite(rawX)) {
       return result;
     }
 
     const width = estimateBarOverlayWidth(chart, model.chartBars, bucket.barIndex);
+    const x =
+      Number(rawX) +
+      (slotOffsetByBucketId.get(bucket.id) ?? 0) * Math.max(width + 2, 7);
     const height = clampCoordinate(
       volumeHeight * bucket.volumeSegmentRatio,
       4,
@@ -3910,6 +3953,7 @@ const buildFlowVolumeOverlays = (
       height,
       title: `${tooltip.title}: ${tooltip.summary}`,
       tone: bucket.bias,
+      flowSourceBasis: bucket.sourceBasis,
       segments: segments.length
         ? segments
         : [{ tone: "neutral", ratio: 1, premium: bucket.totalPremium }],
@@ -6058,9 +6102,9 @@ export const ResearchChartSurface = ({
       high: bar.h,
       low: bar.l,
       close: bar.c,
-      color: bar.color,
+      color: bar.color ?? (bar.c === bar.o ? theme.textMuted : undefined),
       borderColor: bar.borderColor,
-      wickColor: bar.wickColor,
+      wickColor: bar.wickColor ?? (bar.c === bar.o ? theme.textMuted : undefined),
     }));
     const barSeriesData = model.chartBars.map((bar) => ({
       time: bar.time,
@@ -6079,9 +6123,11 @@ export const ResearchChartSurface = ({
             time: bar.time,
             value: bar.v,
             color:
-              bar.c >= bar.o
+              bar.c > bar.o
                 ? withAlpha(theme.green, "55")
-                : withAlpha(theme.red, "55"),
+                : bar.c < bar.o
+                  ? withAlpha(theme.red, "55")
+                  : withAlpha(theme.textMuted, "55"),
           }),
         )
       : [];
@@ -8096,6 +8142,15 @@ export const ResearchChartSurface = ({
   const conversionInvalidTimeDropCount =
     chartFlowDiagnostics?.droppedInvalidTimeCount ?? 0;
   const conversionSymbolDropCount = chartFlowDiagnostics?.droppedSymbolCount ?? 0;
+  const uniqueFlowEventCount =
+    flowChartBucketDiagnostics.uniqueFlowEventCount ?? flowChartEventCount;
+  const confirmedTradeFlowEventCount =
+    flowChartBucketDiagnostics.confirmedTradeFlowEventCount ?? 0;
+  const snapshotActivityFlowEventCount =
+    flowChartBucketDiagnostics.snapshotActivityFlowEventCount ?? 0;
+  const otherFlowEventCount = flowChartBucketDiagnostics.otherFlowEventCount ?? 0;
+  const duplicateFlowEventDropCount =
+    flowChartBucketDiagnostics.droppedDuplicateFlowEventCount ?? 0;
   const renderedFlowMarkerCount = chartEventOverlays.filter(
     (overlay) => overlay.eventType === "unusual_flow",
   ).length;
@@ -8106,7 +8161,7 @@ export const ResearchChartSurface = ({
         : "empty"
       : flowChartBucketDiagnostics.bucketedEventCount <= 0
         ? "outside-loaded-bars"
-        : flowChartBucketDiagnostics.bucketedEventCount < flowChartEventCount
+        : flowChartBucketDiagnostics.bucketedEventCount < uniqueFlowEventCount
           ? "partial"
           : "hydrated";
   const extendedSessionBarCount =
@@ -8141,10 +8196,24 @@ export const ResearchChartSurface = ({
       data-chart-flow-raw-input-count={rawFlowInputCount}
       data-chart-flow-converted-count={convertedFlowEventCount}
       data-chart-flow-events-count={flowChartEventCount}
+      data-chart-flow-unique-event-count={uniqueFlowEventCount}
+      data-chart-flow-confirmed-event-count={confirmedTradeFlowEventCount}
+      data-chart-flow-snapshot-event-count={snapshotActivityFlowEventCount}
+      data-chart-flow-other-event-count={otherFlowEventCount}
+      data-chart-flow-duplicate-drop-count={duplicateFlowEventDropCount}
       data-chart-flow-hydration-state={chartFlowHydrationState}
       data-chart-flow-bucket-count={flowChartBuckets.length}
       data-chart-flow-bucketed-event-count={
         flowChartBucketDiagnostics.bucketedEventCount
+      }
+      data-chart-flow-bucketed-confirmed-event-count={
+        flowChartBucketDiagnostics.bucketedConfirmedTradeEventCount
+      }
+      data-chart-flow-bucketed-snapshot-event-count={
+        flowChartBucketDiagnostics.bucketedSnapshotActivityEventCount
+      }
+      data-chart-flow-bucketed-other-event-count={
+        flowChartBucketDiagnostics.bucketedOtherEventCount
       }
       data-chart-flow-marker-count={renderedFlowMarkerCount}
       data-chart-flow-volume-count={flowVolumeOverlays.length}
@@ -8643,6 +8712,7 @@ export const ResearchChartSurface = ({
                     <div
                       key={`${overlay.id}:${segment.tone}`}
                       data-chart-flow-volume-segment={segment.tone}
+                      data-chart-flow-volume-basis={overlay.flowSourceBasis}
                       style={{
                         position: "absolute",
                         left: 0,
@@ -8720,6 +8790,11 @@ export const ResearchChartSurface = ({
                     data-chart-event-tone={overlay.tone}
                     data-chart-flow-marker-tone={
                       overlay.eventType === "unusual_flow" ? overlay.tone : undefined
+                    }
+                    data-chart-flow-marker-basis={
+                      overlay.eventType === "unusual_flow"
+                        ? overlay.flowSourceBasis
+                        : undefined
                     }
                     onPointerEnter={
                       overlay.tooltip

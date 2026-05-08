@@ -334,6 +334,11 @@ test("algo signal-options automation uses generated API ownership path", () => {
   assert.match(source, /useRunSignalOptionsShadowScan/);
   assert.match(source, /useUpdateSignalOptionsExecutionProfile/);
   assert.match(source, /getGetSignalOptionsAutomationStateQueryKey/);
+  assert.match(source, /Signal -&gt; Action/);
+  assert.match(source, /SHADOW ONLY/);
+  assert.match(source, /CREATE SHADOW DEPLOYMENT/);
+  assert.doesNotMatch(source, /live_submitted/);
+  assert.doesNotMatch(source, /live_previewed/);
   assert.doesNotMatch(source, /queryKey:\s*\[\s*"signal-options-state"/);
   assert.doesNotMatch(source, /\/api\/algo\/deployments\/.*signal-options/);
 });

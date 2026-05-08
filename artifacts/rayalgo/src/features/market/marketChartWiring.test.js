@@ -17,16 +17,18 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
 
   assert.ok(scannerCall, "Market chart grid must wire a live flow scanner");
   assert.match(source, /import \{ FLOW_SCANNER_SCOPE \}/);
-  assert.match(source, /const MARKET_CHART_FLOW_LIMIT = 80;/);
+  assert.match(source, /const MARKET_CHART_FLOW_LIMIT = 160;/);
   assert.match(source, /const MARKET_CHART_FLOW_HISTORY_LIMIT = 1_000;/);
-  assert.match(source, /const MARKET_CHART_FLOW_LINE_BUDGET = 40;/);
-  assert.match(source, /const MARKET_CHART_FLOW_CONCURRENCY = 1;/);
+  assert.match(source, /const MARKET_CHART_FLOW_LINE_BUDGET = 80;/);
+  assert.match(source, /const MARKET_CHART_FLOW_MAX_CONCURRENCY = 4;/);
   assert.match(
     source,
-    /const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY\.active - 1;/,
+    /const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY\.active;/,
   );
-  assert.match(source, /const MARKET_CHART_FLOW_STARTUP_DELAY_MS = 1_000;/);
-  assert.match(source, /chartFlowStartupReady/);
+  assert.match(source, /const MARKET_CHART_FLOW_REFRESH_MS = 5_000;/);
+  assert.match(source, /const MARKET_CHART_FLOW_HISTORY_REFRESH_MS = 15_000;/);
+  assert.doesNotMatch(source, /MARKET_CHART_FLOW_STARTUP_DELAY_MS/);
+  assert.doesNotMatch(source, /chartFlowStartupReady/);
   assert.doesNotMatch(
     source,
     /const MARKET_CHART_FLOW_REQUEST_PRIORITY = BARS_REQUEST_PRIORITY\.active \+ 2;/,
@@ -43,13 +45,15 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
   assert.match(source, /mapFlowEventToUi/);
   assert.match(
     source,
-    /isTransientEmptyFlowSource\(query\.state\.data\?\.source\) \? 5_000 : 15_000/,
+    /isTransientEmptyFlowSource\(query\.state\.data\?\.source\)[\s\S]*\? MARKET_CHART_FLOW_REFRESH_MS[\s\S]*: MARKET_CHART_FLOW_HISTORY_REFRESH_MS/,
   );
   assert.match(scannerCall, /limit:\s*MARKET_CHART_FLOW_LIMIT/);
-  assert.match(scannerCall, /enabled:\s*Boolean\(isVisible && chartFlowStartupReady && streamedSymbols\.length\)/);
+  assert.match(scannerCall, /enabled:\s*chartFlowEnabled/);
   assert.match(scannerCall, /scope:\s*FLOW_SCANNER_SCOPE\.all/);
-  assert.match(scannerCall, /concurrency:\s*MARKET_CHART_FLOW_CONCURRENCY/);
+  assert.match(scannerCall, /batchSize:\s*marketChartFlowBatchSize/);
+  assert.match(scannerCall, /concurrency:\s*marketChartFlowConcurrency/);
   assert.match(scannerCall, /lineBudget:\s*MARKET_CHART_FLOW_LINE_BUDGET/);
+  assert.match(scannerCall, /intervalMs:\s*MARKET_CHART_FLOW_REFRESH_MS/);
   assert.match(scannerCall, /unusualThreshold/);
   assert.match(scannerCall, /workloadLabel:\s*"Chart flow"/);
   assert.doesNotMatch(scannerCall, /limit:\s*16/);
@@ -76,12 +80,14 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   const source = readLocalSource("./MiniChartCell.jsx");
 
   assert.match(source, /import \{ TradeEquityPanel \}/);
+  assert.match(source, /getChartTimeframeValues\("mini"\)/);
   assert.match(source, /<TradeEquityPanel/);
   assert.match(source, /surfaceUiStateKey=\{`market-spot-chart:\$\{slotId\}:\$\{timeframe\}`\}/);
   assert.match(source, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(source, /workspaceChart=\{\{ timeframe \}\}/);
   assert.match(source, /prewarmFavoriteTimeframesEnabled=\{false\}/);
   assert.match(source, /flowEventsSourceMode="provided"/);
+  assert.match(source, /chartHydrationRole="mini"/);
   assert.match(source, /onWorkspaceChartChange=\{handleWorkspaceChartChange\}/);
   assert.doesNotMatch(source, /resolveSignalFrameState/);
   assert.doesNotMatch(source, /useSignalMonitorStateForSymbol/);
@@ -102,7 +108,8 @@ test("Trade spot chart forwards market viewport layout context to the chart surf
   const frameSource = readLocalSource("../charting/ResearchChartFrame.tsx");
 
   assert.match(panelSource, /viewportLayoutKey = null/);
-  assert.match(panelSource, /viewportLayoutKey=\{viewportLayoutKey\}/);
+  assert.match(panelSource, /const chartViewportLayoutKey = intervalChangeRevision/);
+  assert.match(panelSource, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.doesNotMatch(panelSource, /key=\{chartHydrationScopeKey\}/);
   assert.match(frameSource, /viewportLayoutKey\?: string \| null/);
   assert.match(frameSource, /viewportLayoutKey=\{viewportLayoutKey\}/);
@@ -158,12 +165,15 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.match(gridSource, /useMarketFlowSnapshotForStoreKey/);
   assert.match(gridSource, /mergeFlowEventFeeds/);
   assert.match(gridSource, /filterFlowEventsForSymbol/);
+  assert.match(gridSource, /filterFlowEventsForChartLookbackWindow/);
   assert.match(gridSource, /effectiveChartFlowSnapshot/);
   assert.match(gridSource, /filterFlowEventsForChartDisplay/);
   assert.match(gridSource, /const chartDisplayFlowEvents = useMemo/);
-  assert.match(gridSource, /const flowEventsBySymbol = useMemo/);
+  assert.match(gridSource, /const flowEventsBySlotIndex = useMemo/);
+  assert.match(gridSource, /visibleSlotEntries\.forEach\(\(\{ slot, index \}\)/);
   assert.match(gridSource, /publishTradeFlowSnapshotsByTicker/);
-  assert.match(gridSource, /flowEvents=\{flowEventsBySymbol/);
+  assert.match(gridSource, /flowEvents=\{flowEventsBySlotIndex\[index\]/);
+  assert.doesNotMatch(gridSource, /chartFlowTimeframeBySymbol/);
   assert.match(cellSource, /flowEvents=\{flowEvents\}/);
   assert.match(cellSource, /flowEventsSourceMode="provided"/);
   assert.match(tradeSpotSource, /flowEventsSourceMode = "merge-store"/);
@@ -176,7 +186,8 @@ test("Market chart flow events publish to the shared Trade spot chart path", () 
   assert.match(tradeSpotSource, /prewarmFavoriteTimeframesEnabled = true/);
   assert.match(tradeSpotSource, /!prewarmFavoriteTimeframesEnabled/);
   assert.match(tradeSpotSource, /COMPACT_FULL_WINDOW_HYDRATION_DELAY_MS = 30_000/);
-  assert.match(tradeSpotSource, /if \(!compact\) \{/);
+  assert.match(tradeSpotSource, /MINI_FULL_WINDOW_HYDRATION_DELAY_MS = 2_500/);
+  assert.match(tradeSpotSource, /if \(!compact \|\| intervalChangeRevision > 0\) \{/);
   assert.match(tradeSpotSource, /if \(!shouldMergeTradeFlowStore\) \{/);
   assert.match(tradeSpotSource, /\?\s*filterFlowEventsForChartDisplay\(effectiveFlowEvents,\s*flowTapeFilters\)\s*:\s*effectiveFlowEvents/);
   assert.match(tradeSpotSource, /tradeFlowSnapshot\.events \|\| \[\]/);
@@ -209,8 +220,9 @@ test("Flow chart markers apply shared Flow filters for chart display", () => {
   );
   assert.match(
     tradeSpotSource,
-    /flowEventsToChartEventConversion\(chartDisplayFlowEvents \|\| \[\],\s*ticker\)/,
+    /filterFlowEventsForChartLookbackWindow\(\s*chartDisplayFlowEvents \|\| \[\],\s*tf,\s*\)/,
   );
+  assert.match(tradeSpotSource, /useFlowChartEventConversion\(\s*chartWindowFlowEvents,\s*ticker,\s*\)/);
   assert.match(tradeScreenSource, /useFlowTapeFilterState\(\)/);
   assert.match(tradeScreenSource, /filterFlowEventsForChartDisplay/);
   assert.match(tradeScreenSource, /const activeTickerChartFlowEvents = useMemo/);
@@ -223,7 +235,15 @@ test("Flow chart markers apply shared Flow filters for chart display", () => {
   );
   assert.match(
     tradeScreenSource,
-    /flowEventsToChartEventConversion\(selectedContractFlowEvents,\s*ticker\)/,
+    /filterFlowEventsForChartLookbackWindow\(\s*selectedContractFlowEvents,\s*optionChartTimeframe,\s*\)/,
+  );
+  assert.match(
+    tradeScreenSource,
+    /const selectedContractChartWindowFlowEvents = useMemo/,
+  );
+  assert.match(
+    tradeScreenSource,
+    /useFlowChartEventConversion\(\s*selectedContractChartWindowFlowEvents,\s*ticker,\s*\)/,
   );
   assert.doesNotMatch(tradeScreenSource, /retainedFlowState/);
 });
@@ -238,7 +258,7 @@ test("Market chart frames leave viewport ownership inside the Trade spot chart",
   assert.match(cellSource, /chartViewportLayoutKey/);
   assert.match(cellSource, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(gridSource, /clearStoredChartViewportSnapshot/);
-  assert.match(gridSource, /buildChartBarScopeKey\("trade-equity-chart"/);
+  assert.match(gridSource, /buildChartBarScopeKey\("trade-equity-chart",\s*"mini"/);
   assert.doesNotMatch(gridSource, /buildMarketGridViewportRevisionIdentity/);
   assert.doesNotMatch(cellSource, /rangeIdentityKey/);
   assert.doesNotMatch(cellSource, /persistScalePrefs/);

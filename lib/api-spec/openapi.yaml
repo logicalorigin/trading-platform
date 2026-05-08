@@ -7092,6 +7092,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/JsonObject"
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
         activePositions:
           type: array
           items:
@@ -7106,6 +7110,7 @@ components:
         - deployment
         - profile
         - mode
+        - signals
         - candidates
         - activePositions
         - risk
@@ -7170,6 +7175,7 @@ components:
             [
               scan_universe,
               signal_detected,
+              action_mapped,
               contract_selected,
               liquidity_risk_gate,
               order_shadow,
@@ -7284,6 +7290,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/JsonObject"
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/JsonObject"
         activePositions:
           type: array
           items:
@@ -7305,6 +7315,7 @@ components:
         - attentionItems
         - kpis
         - risk
+        - signals
         - candidates
         - activePositions
         - events

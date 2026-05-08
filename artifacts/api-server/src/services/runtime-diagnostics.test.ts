@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import type { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 
-process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
+process.env["DATABASE_URL"] = "postgres://test:test@127.0.0.1:5432/test";
+process.env["DB_CONNECTION_TIMEOUT_MS"] = "50";
+process.env["DB_QUERY_TIMEOUT_MS"] = "50";
+process.env["DB_STATEMENT_TIMEOUT_MS"] = "50";
 const previousRuntimeOverrideFile =
   process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"];
 process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = join(
@@ -16,6 +19,7 @@ const runtimeModule = await import("../lib/runtime");
 const platformModule = await import("./platform");
 const bridgeQuoteStreamModule = await import("./bridge-quote-stream");
 const bridgeGovernorModule = await import("./bridge-governor");
+const storageHealthModule = await import("./storage-health");
 const { clearIbkrBridgeRuntimeOverride, setIbkrBridgeRuntimeOverride } =
   runtimeModule;
 const {
@@ -31,12 +35,18 @@ const {
   subscribeBridgeQuoteSnapshots,
 } = bridgeQuoteStreamModule;
 const { __resetBridgeGovernorForTests } = bridgeGovernorModule;
+const {
+  __resetStorageHealthForTests,
+  __setStorageHealthProbeForTests,
+  refreshStorageHealthSnapshot,
+} = storageHealthModule;
 
 test.afterEach(() => {
   __setIbkrBridgeClientFactoryForTests(null);
   __setBridgeQuoteClientForTests(null);
   __resetBridgeQuoteStreamForTests();
   __resetBridgeGovernorForTests();
+  __resetStorageHealthForTests();
   clearIbkrBridgeRuntimeOverride();
   delete process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_TIMEOUT_MS"];
   delete process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_STALE_CACHE_MS"];
@@ -167,6 +177,8 @@ test("runtime stream state is market-aware", () => {
 
 test("runtime diagnostics are read-only and only inspect bridge health", async () => {
   const calls: string[] = [];
+  __setStorageHealthProbeForTests(async () => {});
+  await refreshStorageHealthSnapshot();
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -232,6 +244,8 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
     typeof diagnostics.ibkr.streams.marketDataAdmission.budget.accountMonitorLineCap,
     "number",
   );
+  assert.equal(diagnostics.storage.source, "replit-internal-dev-db");
+  assert.equal(diagnostics.storage.status, "ok");
   assert.equal(typeof diagnostics.providers.polygon.configured, "boolean");
   assert.ok(
     ["ok", "degraded", "unconfigured", "unknown"].includes(

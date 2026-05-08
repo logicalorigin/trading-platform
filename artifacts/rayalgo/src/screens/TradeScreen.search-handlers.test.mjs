@@ -65,6 +65,11 @@ test("TradeScreen keeps option chain snapshots warm while hidden", () => {
 });
 
 test("TradeScreen queues active ticker flow refreshes through the scanner", () => {
+  assert.match(source, /const TRADE_FLOW_REFRESH_MS = 5_000/);
+  assert.match(source, /const TRADE_FLOW_HISTORY_REFRESH_MS = 15_000/);
+  assert.match(source, /detail:\s*"5s"/);
+  assert.match(source, /refetchInterval:\s*flowEnabled \? TRADE_FLOW_REFRESH_MS : false/);
+  assert.match(source, /refetchInterval:\s*flowEnabled \? TRADE_FLOW_HISTORY_REFRESH_MS : false/);
   assert.match(
     source,
     /listFlowEventsRequest\(\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_LIVE_LIMIT,\s*blocking:\s*false,\s*queueRefresh:\s*true,/,

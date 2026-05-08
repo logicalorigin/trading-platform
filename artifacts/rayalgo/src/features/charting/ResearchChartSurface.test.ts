@@ -121,6 +121,27 @@ test("ResearchChartSurface applies semantic colors to flow markers", () => {
   assert.match(source, /const segmentColor = resolveFlowToneColor\(segment\.tone, theme\);/);
   assert.match(source, /const color = resolveChartEventToneColor\(overlay, theme\);/);
   assert.match(source, /data-chart-flow-marker-tone=\{/);
+  assert.match(source, /data-chart-flow-marker-basis=\{/);
+  assert.match(source, /data-chart-flow-volume-basis=\{overlay\.flowSourceBasis\}/);
+});
+
+test("ResearchChartSurface exposes basis-aware flow diagnostics", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /data-chart-flow-confirmed-event-count=\{/);
+  assert.match(source, /data-chart-flow-snapshot-event-count=\{/);
+  assert.match(source, /data-chart-flow-bucketed-confirmed-event-count=\{/);
+  assert.match(source, /data-chart-flow-bucketed-snapshot-event-count=\{/);
+});
+
+test("ResearchChartSurface colors flat candles and volume neutral", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /bar\.color \?\? \(bar\.c === bar\.o \? theme\.textMuted : undefined\)/);
+  assert.match(source, /bar\.wickColor \?\? \(bar\.c === bar\.o \? theme\.textMuted : undefined\)/);
+  assert.match(source, /bar\.c > bar\.o/);
+  assert.match(source, /bar\.c < bar\.o/);
+  assert.match(source, /withAlpha\(theme\.textMuted, "55"\)/);
 });
 
 test("ResearchChartSurface renders compact enriched flow tooltips", () => {
@@ -1416,7 +1437,7 @@ test("ResearchChartSurface exposes live render diagnostics for viewport and flow
 
   assert.equal(
     RESEARCH_CHART_SURFACE_MODULE_VERSION,
-    "ResearchChartSurface@20260507-runtime-fingerprint-v1",
+    "ResearchChartSurface@20260508-flow-normalized-v1",
   );
   assert.match(source, /data-chart-surface-module-version=\{RESEARCH_CHART_SURFACE_MODULE_VERSION\}/);
   assert.match(source, /data-chart-surface-module-source="ResearchChartSurface\.tsx"/);
@@ -1424,6 +1445,8 @@ test("ResearchChartSurface exposes live render diagnostics for viewport and flow
   assert.match(source, /data-chart-flow-raw-input-count=\{rawFlowInputCount\}/);
   assert.match(source, /data-chart-flow-converted-count=\{convertedFlowEventCount\}/);
   assert.match(source, /data-chart-flow-bucket-count=\{flowChartBuckets\.length\}/);
+  assert.match(source, /data-chart-flow-unique-event-count=\{uniqueFlowEventCount\}/);
+  assert.match(source, /data-chart-flow-duplicate-drop-count=\{duplicateFlowEventDropCount\}/);
   assert.match(source, /data-chart-flow-hydration-state=\{chartFlowHydrationState\}/);
   assert.match(source, /data-chart-flow-bucketed-event-count=/);
   assert.match(source, /data-chart-flow-marker-count=\{renderedFlowMarkerCount\}/);

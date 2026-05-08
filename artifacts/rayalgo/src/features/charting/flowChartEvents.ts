@@ -5,6 +5,7 @@ export type FlowChartBucket = {
   id: string;
   time: number;
   barIndex: number;
+  sourceBasis: FlowChartSourceBasis;
   events: ChartEvent[];
   count: number;
   totalPremium: number;
@@ -18,6 +19,7 @@ export type FlowChartBucket = {
   bearishShare: number;
   neutralShare: number;
   bias: ChartEventBias;
+  biasBasis: string;
   severity: ChartEventSeverity;
   topEvent: ChartEvent;
   topContractLabel: string;
@@ -55,6 +57,8 @@ export type FlowTooltipModel = {
   distance: string;
   tags: string[];
   sentiment: string;
+  biasBasis: string;
+  sideConfidence: string;
   intensity: string;
   eventCount: number;
 };
@@ -67,9 +71,28 @@ type ChartBarModel = {
 export type FlowChartBucketDiagnostics = {
   inputEventCount: number;
   flowEventCount: number;
+  confirmedTradeFlowEventCount: number;
+  snapshotActivityFlowEventCount: number;
+  otherFlowEventCount: number;
+  uniqueFlowEventCount: number;
+  droppedDuplicateFlowEventCount: number;
   bucketedEventCount: number;
+  bucketedConfirmedTradeEventCount: number;
+  bucketedSnapshotActivityEventCount: number;
+  bucketedOtherEventCount: number;
   droppedInvalidTimeCount: number;
   droppedOutsideBarCount: number;
+};
+
+export type FlowChartSourceBasis =
+  | "confirmed_trade"
+  | "snapshot_activity"
+  | "other";
+
+const flowChartSourceBasisOrder: Record<FlowChartSourceBasis, number> = {
+  confirmed_trade: 0,
+  snapshot_activity: 1,
+  other: 2,
 };
 
 const severityRank: Record<ChartEventSeverity, number> = {
@@ -110,6 +133,26 @@ const compactPrice = (value: number): string => {
   if (Math.abs(value) >= 100) return value.toFixed(1);
   if (Math.abs(value) >= 10) return value.toFixed(2);
   return value.toFixed(2);
+};
+
+const roundPercentParts = (values: number[]): number[] => {
+  const total = values.reduce((sum, value) => sum + Math.max(0, value), 0);
+  if (total <= 0) return values.map(() => 0);
+
+  const raw = values.map((value) => (Math.max(0, value) / total) * 100);
+  const floors = raw.map(Math.floor);
+  let remaining = 100 - floors.reduce((sum, value) => sum + value, 0);
+  const order = raw
+    .map((value, index) => ({ index, remainder: value - floors[index] }))
+    .sort((left, right) => right.remainder - left.remainder);
+
+  for (const entry of order) {
+    if (remaining <= 0) break;
+    floors[entry.index] += 1;
+    remaining -= 1;
+  }
+
+  return floors;
 };
 
 const formatOptionalPrice = (value: unknown): string => {
@@ -219,11 +262,46 @@ const formatDistance = (value: unknown): string => {
   return `${numeric > 0 ? "+" : ""}${numeric.toFixed(Math.abs(numeric) >= 10 ? 0 : 1)}%`;
 };
 
+const formatSideConfidence = (event: ChartEvent, biasBasis: string): string => {
+  if (biasBasis.startsWith("Calls") || biasBasis.startsWith("Puts")) {
+    return "Unclassified";
+  }
+  const sideBasis = String(event.metadata?.sideBasis || "")
+    .trim()
+    .toLowerCase();
+  const confidence = String(event.metadata?.sideConfidence || "")
+    .trim()
+    .toLowerCase();
+  if (sideBasis === "quote_match") return confidence ? `Quote ${confidence}` : "Quote";
+  if (sideBasis === "tick_test") return confidence ? `Tick ${confidence}` : "Tick";
+  return "n/a";
+};
+
 const normalizeRight = (value: unknown): "C" | "P" | "" => {
   const normalized = String(value || "").trim().toUpperCase();
   if (normalized === "CALL" || normalized === "C") return "C";
   if (normalized === "PUT" || normalized === "P") return "P";
   return "";
+};
+
+const normalizeKeyPart = (value: unknown): string =>
+  String(value ?? "").trim().toLowerCase();
+
+const normalizeNumericKeyPart = (value: unknown): string => {
+  const numeric = finiteNumber(value);
+  return numeric === null ? "" : String(Number(numeric.toFixed(4)));
+};
+
+const normalizeExpirationKey = (value: unknown): string => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
+    if (/^\d{8}$/.test(trimmed)) {
+      return `${trimmed.slice(0, 4)}-${trimmed.slice(4, 6)}-${trimmed.slice(6, 8)}`;
+    }
+  }
+  const date = value instanceof Date ? value : value ? new Date(String(value)) : null;
+  return date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "";
 };
 
 const normalizeTag = (value: unknown): string | null => {
@@ -250,6 +328,10 @@ const readContracts = (event: ChartEvent): number =>
 const readRight = (event: ChartEvent): "C" | "P" | "" =>
   normalizeRight(event.metadata?.cp ?? event.metadata?.right ?? event.metadata?.optionType);
 
+const isCallPutFallbackEvent = (event: ChartEvent): boolean =>
+  String(event.metadata?.biasBasis || "").trim().toLowerCase() ===
+  "call_put_fallback";
+
 const readContractLabel = (event: ChartEvent): string =>
   String(
     event.metadata?.contractLabel ||
@@ -263,6 +345,137 @@ const isSnapshotActivityEvent = (event: ChartEvent): boolean =>
   event.metadata?.basis === "snapshot" ||
   event.metadata?.sourceBasis === "snapshot_activity" ||
   event.metadata?.confidence === "snapshot_activity";
+
+export const resolveFlowChartSourceBasis = (
+  event: ChartEvent,
+): FlowChartSourceBasis => {
+  if (isSnapshotActivityEvent(event)) {
+    return "snapshot_activity";
+  }
+  const sourceBasis = String(
+    event.metadata?.sourceBasis || event.metadata?.confidence || "",
+  )
+    .trim()
+    .toLowerCase();
+  const basis = String(event.metadata?.basis || "").trim().toLowerCase();
+  if (sourceBasis === "confirmed_trade" || basis === "trade") {
+    return "confirmed_trade";
+  }
+  return "other";
+};
+
+const getChartFlowSnapshotKey = (event: ChartEvent): string => {
+  if (!isSnapshotActivityEvent(event)) return "";
+  const metadata = event.metadata || {};
+  const observedDate = event.time.slice(0, 10);
+  const optionTicker = String(metadata.optionTicker || "").trim().toUpperCase();
+  const providerContractId = String(metadata.providerContractId || "").trim();
+  const expiration = normalizeExpirationKey(metadata.expirationDate || metadata.exp);
+  const right = normalizeRight(metadata.cp ?? metadata.right ?? metadata.optionType);
+  const strike = normalizeNumericKeyPart(metadata.strike);
+  const contract =
+    providerContractId ||
+    optionTicker ||
+    [expiration, right, strike].filter(Boolean).join(":") ||
+    normalizeKeyPart(
+      metadata.contractLabel || metadata.contract || event.label || event.id,
+    );
+  if (!event.symbol || !observedDate || !contract) return "";
+  return [
+    "snapshot",
+    normalizeKeyPart(metadata.provider || event.source || "flow"),
+    event.symbol,
+    observedDate,
+    contract,
+  ].join("|");
+};
+
+const getChartFlowPrintKey = (event: ChartEvent): string => {
+  if (isSnapshotActivityEvent(event)) return "";
+  const metadata = event.metadata || {};
+  const optionTicker = String(metadata.optionTicker || "").trim().toUpperCase();
+  const expiration = normalizeExpirationKey(metadata.expirationDate || metadata.exp);
+  const right = normalizeRight(metadata.cp ?? metadata.right ?? metadata.optionType);
+  const strike = normalizeNumericKeyPart(metadata.strike);
+  const contract =
+    optionTicker ||
+    [expiration, right, strike].filter(Boolean).join(":") ||
+    normalizeKeyPart(
+      metadata.contractLabel || metadata.contract || event.label || event.id,
+    );
+  if (!event.symbol || !event.time || !contract) return "";
+  return [
+    "print",
+    event.symbol,
+    contract,
+    event.time,
+    normalizeKeyPart(metadata.side),
+    normalizeNumericKeyPart(metadata.price),
+    normalizeNumericKeyPart(
+      metadata.size ?? metadata.contracts ?? metadata.vol,
+    ),
+    normalizeNumericKeyPart(metadata.premium),
+  ].join("|");
+};
+
+const getChartFlowDedupeKeys = (event: ChartEvent): string[] => {
+  const idKey = normalizeKeyPart(event.id);
+  const basis = resolveFlowChartSourceBasis(event);
+  const keys = [
+    idKey ? `${basis}|id:${idKey}` : "",
+    getChartFlowSnapshotKey(event),
+    getChartFlowPrintKey(event),
+  ].filter(Boolean);
+  return Array.from(new Set(keys));
+};
+
+const selectPreferredChartFlowEvent = (
+  current: ChartEvent,
+  incoming: ChartEvent,
+): ChartEvent => {
+  if (isSnapshotActivityEvent(current) && isSnapshotActivityEvent(incoming)) {
+    const currentTime = Date.parse(current.time);
+    const incomingTime = Date.parse(incoming.time);
+    if (Number.isFinite(incomingTime) && Number.isFinite(currentTime)) {
+      return incomingTime >= currentTime ? incoming : current;
+    }
+  }
+  return current;
+};
+
+const normalizeFlowChartEvents = (
+  events: ChartEvent[],
+): { events: ChartEvent[]; droppedDuplicateCount: number } => {
+  const normalized: ChartEvent[] = [];
+  const keyToIndex = new Map<string, number>();
+  events.forEach((event) => {
+    if (event.eventType !== "unusual_flow") return;
+    const keys = getChartFlowDedupeKeys(event);
+    if (!keys.length) return;
+    const existingIndex = keys
+      .map((key) => keyToIndex.get(key))
+      .find((index): index is number => typeof index === "number");
+    if (existingIndex == null) {
+      const nextIndex = normalized.length;
+      normalized.push(event);
+      keys.forEach((key) => keyToIndex.set(key, nextIndex));
+      return;
+    }
+    const selected = selectPreferredChartFlowEvent(normalized[existingIndex], event);
+    normalized[existingIndex] = selected;
+    getChartFlowDedupeKeys(selected).forEach((key) =>
+      keyToIndex.set(key, existingIndex),
+    );
+    keys.forEach((key) => keyToIndex.set(key, existingIndex));
+  });
+
+  return {
+    events: normalized,
+    droppedDuplicateCount:
+      events.filter((event) => event.eventType === "unusual_flow").length -
+      normalized.length,
+  };
+};
 
 const readTags = (event: ChartEvent): string[] => {
   const tags = new Set<string>();
@@ -329,22 +542,57 @@ const resolveBucketIndex = (
   return bestIndex;
 };
 
+const FLOW_RIGHT_BIAS_FALLBACK_DOMINANCE = 0.7;
+
+const resolveCallPutFallbackBias = ({
+  callPremium,
+  putPremium,
+}: {
+  callPremium: number;
+  putPremium: number;
+}): { bias: ChartEventBias; basis: string } => {
+  const total = callPremium + putPremium;
+  if (total <= 0) return { bias: "neutral", basis: "Neutral" };
+  const callShare = callPremium / total;
+  const putShare = putPremium / total;
+  if (callShare >= FLOW_RIGHT_BIAS_FALLBACK_DOMINANCE) {
+    return { bias: "bullish", basis: `Calls ${Math.round(callShare * 100)}%` };
+  }
+  if (putShare >= FLOW_RIGHT_BIAS_FALLBACK_DOMINANCE) {
+    return { bias: "bearish", basis: `Puts ${Math.round(putShare * 100)}%` };
+  }
+  return { bias: "neutral", basis: "Mixed C/P" };
+};
+
 const resolveBias = ({
   bullishPremium,
   bearishPremium,
+  callPremium,
+  putPremium,
   events,
 }: {
   bullishPremium: number;
   bearishPremium: number;
+  callPremium: number;
+  putPremium: number;
   events: ChartEvent[];
-}): ChartEventBias => {
-  if (bullishPremium > bearishPremium) return "bullish";
-  if (bearishPremium > bullishPremium) return "bearish";
-  const bullishCount = events.filter((event) => event.bias === "bullish").length;
-  const bearishCount = events.filter((event) => event.bias === "bearish").length;
-  if (bullishCount > bearishCount) return "bullish";
-  if (bearishCount > bullishCount) return "bearish";
-  return "neutral";
+}): { bias: ChartEventBias; basis: string } => {
+  if (bullishPremium > bearishPremium) {
+    return { bias: "bullish", basis: "Side premium" };
+  }
+  if (bearishPremium > bullishPremium) {
+    return { bias: "bearish", basis: "Side premium" };
+  }
+  const directionalEvents = events.filter((event) => !isCallPutFallbackEvent(event));
+  const bullishCount = directionalEvents.filter(
+    (event) => event.bias === "bullish",
+  ).length;
+  const bearishCount = directionalEvents.filter(
+    (event) => event.bias === "bearish",
+  ).length;
+  if (bullishCount > bearishCount) return { bias: "bullish", basis: "Side count" };
+  if (bearishCount > bullishCount) return { bias: "bearish", basis: "Side count" };
+  return resolveCallPutFallbackBias({ callPremium, putPremium });
 };
 
 const resolveSentimentShares = ({
@@ -378,7 +626,15 @@ export const summarizeFlowChartBucketPlacement = (
   const diagnostics: FlowChartBucketDiagnostics = {
     inputEventCount: Array.isArray(events) ? events.length : 0,
     flowEventCount: 0,
+    confirmedTradeFlowEventCount: 0,
+    snapshotActivityFlowEventCount: 0,
+    otherFlowEventCount: 0,
+    uniqueFlowEventCount: 0,
+    droppedDuplicateFlowEventCount: 0,
     bucketedEventCount: 0,
+    bucketedConfirmedTradeEventCount: 0,
+    bucketedSnapshotActivityEventCount: 0,
+    bucketedOtherEventCount: 0,
     droppedInvalidTimeCount: 0,
     droppedOutsideBarCount: 0,
   };
@@ -387,9 +643,22 @@ export const summarizeFlowChartBucketPlacement = (
     return diagnostics;
   }
 
-  events.forEach((event) => {
-    if (event.eventType !== "unusual_flow") return;
-    diagnostics.flowEventCount += 1;
+  const flowEvents = events.filter((event) => event.eventType === "unusual_flow");
+  const normalized = normalizeFlowChartEvents(flowEvents);
+  diagnostics.flowEventCount = flowEvents.length;
+  diagnostics.uniqueFlowEventCount = normalized.events.length;
+  diagnostics.droppedDuplicateFlowEventCount = normalized.droppedDuplicateCount;
+
+  normalized.events.forEach((event) => {
+    const sourceBasis = resolveFlowChartSourceBasis(event);
+    if (sourceBasis === "confirmed_trade") {
+      diagnostics.confirmedTradeFlowEventCount += 1;
+    } else if (sourceBasis === "snapshot_activity") {
+      diagnostics.snapshotActivityFlowEventCount += 1;
+    } else {
+      diagnostics.otherFlowEventCount += 1;
+    }
+
     const parsed = Date.parse(event.time);
     if (!Number.isFinite(parsed)) {
       diagnostics.droppedInvalidTimeCount += 1;
@@ -401,6 +670,13 @@ export const summarizeFlowChartBucketPlacement = (
       return;
     }
     diagnostics.bucketedEventCount += 1;
+    if (sourceBasis === "confirmed_trade") {
+      diagnostics.bucketedConfirmedTradeEventCount += 1;
+    } else if (sourceBasis === "snapshot_activity") {
+      diagnostics.bucketedSnapshotActivityEventCount += 1;
+    } else {
+      diagnostics.bucketedOtherEventCount += 1;
+    }
   });
 
   return diagnostics;
@@ -414,21 +690,28 @@ export const buildFlowChartBuckets = (
     return [];
   }
 
-  const grouped = new Map<number, ChartEvent[]>();
-  events.forEach((event) => {
-    if (event.eventType !== "unusual_flow") return;
+  const grouped = new Map<string, { barIndex: number; sourceBasis: FlowChartSourceBasis; events: ChartEvent[] }>();
+  const normalized = normalizeFlowChartEvents(events).events;
+  normalized.forEach((event) => {
     const parsed = Date.parse(event.time);
     if (!Number.isFinite(parsed)) return;
     const barIndex = resolveBucketIndex(parsed, model.chartBars, model.chartBarRanges);
     if (barIndex < 0) return;
-    const bucket = grouped.get(barIndex) || [];
-    bucket.push(event);
-    grouped.set(barIndex, bucket);
+    const sourceBasis = resolveFlowChartSourceBasis(event);
+    const key = `${barIndex}:${sourceBasis}`;
+    const bucket = grouped.get(key) || { barIndex, sourceBasis, events: [] };
+    bucket.events.push(event);
+    grouped.set(key, bucket);
   });
 
-  const rawBuckets = Array.from(grouped.entries())
-    .sort(([left], [right]) => left - right)
-    .map(([barIndex, bucketEvents]) => {
+  const rawBuckets = Array.from(grouped.values())
+    .sort(
+      (left, right) =>
+        left.barIndex - right.barIndex ||
+        flowChartSourceBasisOrder[left.sourceBasis] -
+          flowChartSourceBasisOrder[right.sourceBasis],
+    )
+    .map(({ barIndex, sourceBasis, events: bucketEvents }) => {
       const totals = bucketEvents.reduce(
         (acc, event) => {
           const premium = readPremium(event);
@@ -438,12 +721,16 @@ export const buildFlowChartBuckets = (
           acc.totalContracts += contracts;
           if (right === "C") acc.callPremium += premium;
           if (right === "P") acc.putPremium += premium;
+          if (isCallPutFallbackEvent(event)) {
+            acc.neutralPremium += premium;
+            return acc;
+          }
           if (event.bias === "bullish") {
-            acc.bullishPremium += premium || 1;
+            acc.bullishPremium += premium;
           } else if (event.bias === "bearish") {
-            acc.bearishPremium += premium || 1;
+            acc.bearishPremium += premium;
           } else {
-            acc.neutralPremium += premium || 1;
+            acc.neutralPremium += premium;
           }
           return acc;
         },
@@ -463,19 +750,21 @@ export const buildFlowChartBuckets = (
           .sort((left, right) => readPremium(right) - readPremium(left))[0] ||
         bucketEvents[0];
       const tags = Array.from(new Set(bucketEvents.flatMap(readTags))).slice(0, 4);
-      const bias = resolveBias({ ...totals, events: bucketEvents });
+      const biasDecision = resolveBias({ ...totals, events: bucketEvents });
       const shares = resolveSentimentShares(totals);
       const topPremium = readPremium(topEvent);
 
       return {
-        id: `flow:${model.chartBars[barIndex].time}:${bucketEvents.length}`,
+        id: `flow:${sourceBasis}:${model.chartBars[barIndex].time}:${bucketEvents.length}`,
         time: model.chartBars[barIndex].time,
         barIndex,
+        sourceBasis,
         events: bucketEvents,
         count: bucketEvents.length,
         ...totals,
         ...shares,
-        bias,
+        bias: biasDecision.bias,
+        biasBasis: biasDecision.basis,
         severity: maxSeverity(bucketEvents),
         topEvent,
         topContractLabel: readContractLabel(topEvent),
@@ -495,13 +784,15 @@ export const buildFlowChartBuckets = (
 
 export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel => {
   const callPutTotal = bucket.callPremium + bucket.putPremium;
-  const callPercent =
-    callPutTotal > 0 ? Math.round((bucket.callPremium / callPutTotal) * 100) : 0;
-  const putPercent =
-    callPutTotal > 0 ? Math.round((bucket.putPremium / callPutTotal) * 100) : 0;
-  const bullishPercent = Math.round(bucket.bullishShare * 100);
-  const bearishPercent = Math.round(bucket.bearishShare * 100);
-  const neutralPercent = Math.round(bucket.neutralShare * 100);
+  const [callPercent, putPercent] =
+    callPutTotal > 0
+      ? roundPercentParts([bucket.callPremium, bucket.putPremium])
+      : [0, 0];
+  const [bullishPercent, bearishPercent, neutralPercent] = roundPercentParts([
+    bucket.bullishShare,
+    bucket.bearishShare,
+    bucket.neutralShare,
+  ]);
   const sentiment =
     bucket.bias === "bullish"
       ? "Bullish"
@@ -552,6 +843,8 @@ export const buildFlowTooltipModel = (bucket: FlowChartBucket): FlowTooltipModel
     distance: formatDistance(topMetadata.distancePercent),
     tags: bucket.tags,
     sentiment,
+    biasBasis: bucket.biasBasis,
+    sideConfidence: formatSideConfidence(topEvent, bucket.biasBasis),
     intensity: `${Math.round(bucket.volumeSegmentRatio * 100)}% flow intensity`,
     eventCount: bucket.count,
   };

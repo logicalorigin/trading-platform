@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
+process.env["DATABASE_URL"] = "postgres://test:test@127.0.0.1:5432/test";
+process.env["DB_CONNECTION_TIMEOUT_MS"] = "50";
+process.env["DB_QUERY_TIMEOUT_MS"] = "50";
+process.env["DB_STATEMENT_TIMEOUT_MS"] = "50";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
+process.env["DIAGNOSTICS_SKIP_STORAGE_TABLE_STATS"] = "1";
 
 const diagnosticsModule = await import("./diagnostics");
+const storageHealthModule = await import("./storage-health");
 const {
   collectDiagnosticSnapshot,
   getDiagnosticThresholds,
@@ -15,6 +20,18 @@ const {
   recordBrowserDiagnosticEvent,
   recordClientDiagnosticsMetrics,
 } = diagnosticsModule;
+const {
+  __resetStorageHealthForTests,
+  __setStorageHealthProbeForTests,
+} = storageHealthModule;
+
+test.beforeEach(() => {
+  __setStorageHealthProbeForTests(async () => {});
+});
+
+test.afterEach(() => {
+  __resetStorageHealthForTests();
+});
 
 test("diagnostics do not page on low-sample startup latency", async () => {
   recordApiRequest({
@@ -109,6 +126,7 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
   const marketData = collected.snapshots.find((snapshot) => snapshot.subsystem === "market-data");
   const browser = collected.snapshots.find((snapshot) => snapshot.subsystem === "browser");
   const orders = collected.snapshots.find((snapshot) => snapshot.subsystem === "orders");
+  const storage = collected.snapshots.find((snapshot) => snapshot.subsystem === "storage");
 
   assert.equal((api?.metrics.requestCount5m as number) >= 2, true);
   assert.equal(api?.metrics.errorCount5m, 1);
@@ -116,6 +134,50 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
   assert.equal(marketData?.status, "ok");
   assert.equal(browser?.metrics.warningCount5m, 0);
   assert.equal(orders?.metrics.orderCount, 3);
+  assert.equal(storage?.status, "ok");
+  assert.equal(storage?.metrics.status, "ok");
+});
+
+test("diagnostics classify Replit dev DB outages as storage events only", async () => {
+  __setStorageHealthProbeForTests(async () => {
+    throw new Error("Connection terminated due to connection timeout");
+  });
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        healthFresh: true,
+        streamState: "quiet",
+        strictReady: true,
+        strictReason: null,
+        lastTickleAt: new Date().toISOString(),
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+
+  const ibkr = collected.snapshots.find((snapshot) => snapshot.subsystem === "ibkr");
+  const storage = collected.snapshots.find((snapshot) => snapshot.subsystem === "storage");
+  const storageEvent = collected.events.find(
+    (event) => event.code === "postgres_unavailable",
+  );
+
+  assert.equal(ibkr?.status, "ok");
+  assert.equal(storage?.status, "down");
+  assert.equal(storage?.metrics.status, "unavailable");
+  assert.equal(storageEvent?.subsystem, "storage");
+  assert.equal(storageEvent?.severity, "critical");
 });
 
 test("diagnostics expose defaults, browser events, and memory-backed history", async () => {

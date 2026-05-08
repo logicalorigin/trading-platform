@@ -17,6 +17,8 @@ import type { PolygonRuntimeConfig } from "../../lib/runtime";
 type BarTimeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "1d";
 type OptionRight = "call" | "put";
 type FlowSentiment = "bullish" | "bearish" | "neutral";
+type FlowEventSideBasis = "quote_match" | "tick_test" | "none";
+type FlowEventSideConfidence = "high" | "medium" | "low" | "none";
 const POLYGON_TICKER_LOGO_CACHE_TTL_MS = 10 * 60 * 1_000;
 const POLYGON_TICKER_DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 export type UniverseMarket =
@@ -168,6 +170,8 @@ export type FlowEvent = {
   impliedVolatility: number | null;
   exchange: string;
   side: string;
+  sideBasis?: FlowEventSideBasis;
+  sideConfidence?: FlowEventSideConfidence;
   sentiment: FlowSentiment;
   tradeConditions: string[];
   occurredAt: Date;
@@ -894,19 +898,19 @@ function mapHistoricalOptionContract(
   };
 }
 
-function inferTradeSide(lastTradePrice: number, bid: number, ask: number): string {
-  if (bid > 0 && lastTradePrice <= bid) {
-    return "sell";
-  }
+type FlowEventSideClassification = {
+  side: PremiumDistributionSide;
+  sideBasis: FlowEventSideBasis;
+  sideConfidence: FlowEventSideConfidence;
+};
 
-  if (ask > 0 && lastTradePrice >= ask) {
-    return "buy";
-  }
+const neutralFlowEventSideClassification = (): FlowEventSideClassification => ({
+  side: "neutral",
+  sideBasis: "none",
+  sideConfidence: "none",
+});
 
-  return "mid";
-}
-
-function inferPremiumDistributionSide(
+function inferTradeSideFromQuote(
   lastTradePrice: number,
   bid: number,
   ask: number,
@@ -928,6 +932,25 @@ function inferPremiumDistributionSide(
   if (atAsk) return "buy";
   if (atBid) return "sell";
   return "neutral";
+}
+
+function classifyFlowEventSideFromQuote(
+  lastTradePrice: number,
+  bid: number,
+  ask: number,
+): FlowEventSideClassification {
+  const side = inferTradeSideFromQuote(lastTradePrice, bid, ask);
+  return side === "neutral"
+    ? neutralFlowEventSideClassification()
+    : { side, sideBasis: "quote_match", sideConfidence: "high" };
+}
+
+function inferPremiumDistributionSide(
+  lastTradePrice: number,
+  bid: number,
+  ask: number,
+): PremiumDistributionSide {
+  return inferTradeSideFromQuote(lastTradePrice, bid, ask);
 }
 
 function resolveMarketCapTier(
@@ -1556,6 +1579,49 @@ function optionTradePrintEligibility(
   return { eligible: true, unknownCondition };
 }
 
+const compareOptionTradePrints = (
+  left: OptionPremiumTradePrint,
+  right: OptionPremiumTradePrint,
+): number => {
+  const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
+  if (timeDelta !== 0) return timeDelta;
+  return (left.sequenceNumber ?? 0) - (right.sequenceNumber ?? 0);
+};
+
+const createTickTestSideClassifier = (): ((
+  trade: Pick<OptionPremiumTradePrint, "price">,
+) => FlowEventSideClassification) => {
+  let previousPrice: number | null = null;
+  let previousSide: PremiumDistributionSide = "neutral";
+
+  return (trade) => {
+    let side: PremiumDistributionSide = "neutral";
+    let sideConfidence: FlowEventSideConfidence = "none";
+
+    if (previousPrice !== null) {
+      if (trade.price > previousPrice) {
+        side = "buy";
+        sideConfidence = "medium";
+      } else if (trade.price < previousPrice) {
+        side = "sell";
+        sideConfidence = "medium";
+      } else if (previousSide !== "neutral") {
+        side = previousSide;
+        sideConfidence = "low";
+      }
+    }
+
+    if (side !== "neutral") {
+      previousSide = side;
+    }
+    previousPrice = trade.price;
+
+    return side === "neutral"
+      ? neutralFlowEventSideClassification()
+      : { side, sideBasis: "tick_test", sideConfidence };
+  };
+};
+
 function classifyOptionPremiumTradePrints(input: {
   trades: unknown[];
   sharesPerContract: number;
@@ -1563,16 +1629,11 @@ function classifyOptionPremiumTradePrints(input: {
   conditionMetadata?: OptionTradeConditionMap;
 }): PremiumDistributionTradeClassification {
   const trades = compact(input.trades.map(mapOptionPremiumTradePrint)).sort(
-    (left, right) => {
-      const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
-      if (timeDelta !== 0) return timeDelta;
-      return (left.sequenceNumber ?? 0) - (right.sequenceNumber ?? 0);
-    },
+    compareOptionTradePrints,
   );
   const sharesPerContract =
     input.sharesPerContract > 0 ? input.sharesPerContract : 100;
-  let previousPrice: number | null = null;
-  let previousSide: PremiumDistributionSide = "neutral";
+  const classifyTickTestSide = createTickTestSideClassifier();
   let buyPremium = 0;
   let sellPremium = 0;
   let tickTestMatchedCount = 0;
@@ -1599,16 +1660,7 @@ function classifyOptionPremiumTradePrints(input: {
       unknownConditionTradeCount += 1;
     }
 
-    let side: PremiumDistributionSide = "neutral";
-    if (previousPrice !== null) {
-      if (trade.price > previousPrice) {
-        side = "buy";
-      } else if (trade.price < previousPrice) {
-        side = "sell";
-      } else {
-        side = previousSide;
-      }
-    }
+    const { side } = classifyTickTestSide(trade);
 
     if (side !== "neutral") {
       const premium = trade.price * trade.size * sharesPerContract;
@@ -1631,9 +1683,7 @@ function classifyOptionPremiumTradePrints(input: {
         });
       }
       tickTestMatchedCount += 1;
-      previousSide = side;
     }
-    previousPrice = trade.price;
   });
 
   return {
@@ -1896,15 +1946,16 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
 }
 
 function inferSentiment(right: OptionRight, side: string): FlowSentiment {
-  if (side === "mid") {
+  const normalizedSide = side.toLowerCase();
+  if (normalizedSide !== "buy" && normalizedSide !== "sell") {
     return "neutral";
   }
 
   if (right === "call") {
-    return side === "buy" ? "bullish" : "bearish";
+    return normalizedSide === "buy" ? "bullish" : "bearish";
   }
 
-  return side === "buy" ? "bearish" : "bullish";
+  return normalizedSide === "buy" ? "bearish" : "bullish";
 }
 
 // Volume relative to open interest indicates "unusual" options activity:
@@ -1942,6 +1993,7 @@ function mapFlowEvent(
   underlying: string,
   result: unknown,
   unusualThreshold?: number,
+  sideClassification?: FlowEventSideClassification,
 ): FlowEvent | null {
   const record = asRecord(result);
 
@@ -2031,7 +2083,12 @@ function mapFlowEvent(
       toDate(getNumberPath(lastTrade, ["participant_timestamp"])),
       toDate(getNumberPath(lastTrade, ["t"])),
     ) ?? new Date();
-  const side = inferTradeSide(price, bid, ask);
+  const resolvedSideClassification =
+    sideClassification ?? classifyFlowEventSideFromQuote(price, bid, ask);
+  const side =
+    resolvedSideClassification.side === "neutral"
+      ? "mid"
+      : resolvedSideClassification.side;
   const openInterest = asNumber(record["open_interest"]) ?? 0;
   const { unusualScore, isUnusual } = computeUnusualMetrics(
     size,
@@ -2062,6 +2119,8 @@ function mapFlowEvent(
         asString(lastTrade["exchange_code"]),
       ) ?? "unknown",
     side,
+    sideBasis: resolvedSideClassification.sideBasis,
+    sideConfidence: resolvedSideClassification.sideConfidence,
     sentiment: inferSentiment(right, side),
     tradeConditions: compact(
       asArray(lastTrade["conditions"]).map((condition) => asString(condition)),
@@ -3158,6 +3217,8 @@ export class PolygonMarketDataClient {
     underlying: string;
     expirationDate?: Date;
     contractType?: OptionRight;
+    maxPages?: number;
+    signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
     const underlying = normalizeSymbol(input.underlying);
     let nextUrl: string | null = this.buildUrl(`/v3/snapshot/options/${encodeURIComponent(underlying)}`, {
@@ -3171,9 +3232,10 @@ export class PolygonMarketDataClient {
     }).toString();
     const contracts: OptionChainContract[] = [];
     let pageCount = 0;
+    const maxPages = Math.max(1, Math.min(input.maxPages ?? 10, 100));
 
-    while (nextUrl && pageCount < 10) {
-      const page = await this.fetchChainPage(nextUrl);
+    while (nextUrl && pageCount < maxPages) {
+      const page = await this.fetchChainPage(nextUrl, input.signal);
       contracts.push(
         ...compact(page.results.map((result) => mapChainContract(underlying, result))),
       );
@@ -3316,54 +3378,59 @@ export class PolygonMarketDataClient {
             exactWindow: true,
             signal: input.signal,
           });
-          const events = compact(rawTrades.map((trade) => mapOptionPremiumTradePrint(trade)))
-            .flatMap((trade) => {
-              const timestamp = trade.occurredAt.getTime();
-              if (timestamp < from.getTime() || timestamp > to.getTime()) {
-                return [];
-              }
-              if (!optionTradePrintEligibility(trade, conditionMetadata).eligible) {
-                return [];
-              }
+          const trades = compact(
+            rawTrades.map((trade) => mapOptionPremiumTradePrint(trade)),
+          ).sort(compareOptionTradePrints);
+          const classifyTickTestSide = createTickTestSideClassifier();
+          const events = trades.flatMap((trade) => {
+            const timestamp = trade.occurredAt.getTime();
+            if (timestamp < from.getTime() || timestamp > to.getTime()) {
+              return [];
+            }
+            if (!optionTradePrintEligibility(trade, conditionMetadata).eligible) {
+              return [];
+            }
+            const sideClassification = classifyTickTestSide(trade);
 
-              const snapshotRecord = asRecord(
-                syntheticSnapshotFromHistoricalContract(contract, null),
-              );
-              if (!snapshotRecord) {
-                return [];
-              }
-              const event = mapFlowEvent(
-                underlying,
-                {
-                  ...snapshotRecord,
-                  last_trade: {
-                    price: trade.price,
-                    size: trade.size,
-                    sip_timestamp: trade.occurredAt.getTime(),
-                    conditions: trade.conditionCodes,
-                    exchange: trade.exchange,
-                  },
+            const snapshotRecord = asRecord(
+              syntheticSnapshotFromHistoricalContract(contract, null),
+            );
+            if (!snapshotRecord) {
+              return [];
+            }
+            const event = mapFlowEvent(
+              underlying,
+              {
+                ...snapshotRecord,
+                last_trade: {
+                  price: trade.price,
+                  size: trade.size,
+                  sip_timestamp: trade.occurredAt.getTime(),
+                  conditions: trade.conditionCodes,
+                  exchange: trade.exchange,
                 },
-                input.unusualThreshold,
-              );
-              if (!event) {
-                return [];
-              }
+              },
+              input.unusualThreshold,
+              sideClassification,
+            );
+            if (!event) {
+              return [];
+            }
 
-              const id = `${event.optionTicker}-${trade.occurredAt.getTime()}-${
-                trade.sequenceNumber ?? "trade"
-              }-${trade.price}-${trade.size}`;
-              return [
-                {
-                  ...event,
-                  id,
-                  exchange: trade.exchange ?? event.exchange,
-                  tradeConditions: trade.conditionCodes,
-                  confidence: "confirmed_trade" as const,
-                  sourceBasis: "confirmed_trade" as const,
-                },
-              ];
-            });
+            const id = `${event.optionTicker}-${trade.occurredAt.getTime()}-${
+              trade.sequenceNumber ?? "trade"
+            }-${trade.price}-${trade.size}`;
+            return [
+              {
+                ...event,
+                id,
+                exchange: trade.exchange ?? event.exchange,
+                tradeConditions: trade.conditionCodes,
+                confidence: "confirmed_trade" as const,
+                sourceBasis: "confirmed_trade" as const,
+              },
+            ];
+          });
           if (events.length > 0) {
             await input.onEvents?.(events);
           }
@@ -3663,7 +3730,9 @@ export class PolygonMarketDataClient {
           });
           return {
             candidate,
-            trades: compact(rawTrades.map((trade) => mapOptionPremiumTradePrint(trade))),
+            trades: compact(
+              rawTrades.map((trade) => mapOptionPremiumTradePrint(trade)),
+            ).sort(compareOptionTradePrints),
           };
         } catch {
           return null;
@@ -3672,6 +3741,7 @@ export class PolygonMarketDataClient {
     );
 
     summaries.forEach((summary) => {
+      const classifyTickTestSide = createTickTestSideClassifier();
       summary?.trades.forEach((trade) => {
         const timestamp = trade.occurredAt.getTime();
         if (timestamp < from.getTime() || timestamp > to.getTime()) {
@@ -3680,11 +3750,34 @@ export class PolygonMarketDataClient {
         if (!optionTradePrintEligibility(trade, conditionMetadata).eligible) {
           return;
         }
+        const tickTestClassification = classifyTickTestSide(trade);
 
         const snapshotRecord = asRecord(summary.candidate.snapshot);
         if (!snapshotRecord) {
           return;
         }
+        const lastQuote = asRecord(snapshotRecord["last_quote"]);
+        const quoteBid =
+          firstDefined(
+            getNumberPath(lastQuote, ["bid_price"]),
+            getNumberPath(lastQuote, ["bp"]),
+            getNumberPath(lastQuote, ["p"]),
+          ) ?? 0;
+        const quoteAsk =
+          firstDefined(
+            getNumberPath(lastQuote, ["ask_price"]),
+            getNumberPath(lastQuote, ["ap"]),
+            getNumberPath(lastQuote, ["P"]),
+          ) ?? 0;
+        const quoteClassification = classifyFlowEventSideFromQuote(
+          trade.price,
+          quoteBid,
+          quoteAsk,
+        );
+        const sideClassification =
+          quoteClassification.sideBasis === "quote_match"
+            ? quoteClassification
+            : tickTestClassification;
         const event = mapFlowEvent(
           input.underlying,
           {
@@ -3698,6 +3791,7 @@ export class PolygonMarketDataClient {
             },
           },
           input.unusualThreshold,
+          sideClassification,
         );
         if (!event) {
           return;

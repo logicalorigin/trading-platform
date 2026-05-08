@@ -29,6 +29,11 @@ import {
   getRuntimeMode,
 } from "../lib/runtime";
 import { logger } from "../lib/logger";
+import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
+import { getCachedStorageHealthSnapshot } from "./storage-health";
 import { normalizeSymbol } from "../lib/values";
 import {
   type BrokerBarSnapshot,
@@ -630,6 +635,7 @@ async function getWatchlistById(
 let lastIbkrWatchlistPrewarmSignature: string | null = null;
 let pendingIbkrWatchlistPrewarmSignature: string | null = null;
 let ibkrWatchlistPrewarmSequence = 0;
+const watchlistDbBackoff = createTransientPostgresBackoff();
 const IBKR_WATCHLIST_PREWARM_OWNER = "watchlist-prewarm";
 const IBKR_WATCHLIST_PREWARM_MAX_SYMBOLS = 30;
 
@@ -1852,6 +1858,7 @@ export async function getRuntimeDiagnostics() {
     providers: {
       polygon: getPolygonApiDiagnostics(getPolygonRuntimeConfig()),
     },
+    storage: getCachedStorageHealthSnapshot(),
     ibkr: {
       transport: "tws" as const,
       configured: configured.ibkr,
@@ -2105,9 +2112,25 @@ export async function listAccounts(input: { mode?: "paper" | "live" }) {
 }
 
 export async function listWatchlists() {
+  const nowMs = Date.now();
+  if (watchlistDbBackoff.isActive(nowMs)) {
+    return buildBuiltInWatchlistSnapshot();
+  }
+
   try {
-    return await listWatchlistsFromDb();
+    const result = await listWatchlistsFromDb();
+    watchlistDbBackoff.clear();
+    return result;
   } catch (error) {
+    if (isTransientPostgresError(error)) {
+      watchlistDbBackoff.markFailure({
+        error,
+        logger,
+        message: "watchlist database unavailable; serving built-in watchlists",
+        nowMs,
+      });
+      return buildBuiltInWatchlistSnapshot();
+    }
     logger.warn(
       { err: error },
       "watchlist database unavailable; serving built-in watchlists",

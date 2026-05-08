@@ -1,10 +1,12 @@
 import { useMemo, useSyncExternalStore } from "react";
+import { isSignalMonitorDegradedProfile } from "./signalMonitorStatusModel";
 
 const EMPTY_SIGNAL_MONITOR_SNAPSHOT = Object.freeze({
   profile: null,
   states: Object.freeze([]),
   events: Object.freeze([]),
   pending: false,
+  degraded: false,
 });
 
 const globalListeners = new Set();
@@ -38,8 +40,20 @@ const notifySymbol = (symbol) => {
 };
 
 export const publishSignalMonitorSnapshot = (nextSnapshot) => {
+  const degraded = Boolean(
+    nextSnapshot?.degraded ||
+      isSignalMonitorDegradedProfile(nextSnapshot?.profile),
+  );
+  const nextStates =
+    degraded && !(nextSnapshot?.states || []).length
+      ? signalMonitorSnapshot.states
+      : nextSnapshot?.states || EMPTY_SIGNAL_MONITOR_SNAPSHOT.states;
+  const nextEvents =
+    degraded && !(nextSnapshot?.events || []).length
+      ? signalMonitorSnapshot.events
+      : nextSnapshot?.events || EMPTY_SIGNAL_MONITOR_SNAPSHOT.events;
   const normalizedStates = {};
-  (nextSnapshot?.states || []).forEach((state) => {
+  nextStates.forEach((state) => {
     const symbol = normalizeSymbol(state?.symbol);
     if (symbol) {
       normalizedStates[symbol] = state;
@@ -63,9 +77,10 @@ export const publishSignalMonitorSnapshot = (nextSnapshot) => {
   signalMonitorSnapshot = nextSnapshot
     ? {
         profile: nextSnapshot.profile || null,
-        states: nextSnapshot.states || EMPTY_SIGNAL_MONITOR_SNAPSHOT.states,
-        events: nextSnapshot.events || EMPTY_SIGNAL_MONITOR_SNAPSHOT.events,
+        states: nextStates,
+        events: nextEvents,
         pending: Boolean(nextSnapshot.pending),
+        degraded,
       }
     : EMPTY_SIGNAL_MONITOR_SNAPSHOT;
   signalStatesBySymbol = normalizedStates;

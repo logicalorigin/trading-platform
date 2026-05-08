@@ -3,6 +3,7 @@ import "./runtime-config";
 import { AppProviders } from "./AppProviders";
 import { lazyWithRetry } from "../lib/dynamicImport";
 import { FONT_CSS_VAR, TYPE_CSS_VAR } from "../lib/typography";
+import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 
 const PlatformApp = lazyWithRetry(async () => {
   // @ts-expect-error JSX module has no declaration file in this TS config
@@ -377,17 +378,19 @@ function App() {
   }, []);
 
   return (
-    <AppProviders>
-      <Suspense fallback={<AppLoadingFallback />}>
-        {labMode === "chart-parity" ? (
-          <ChartParityLab />
-        ) : labMode === "ticker-search" ? (
-          <TickerSearchLab />
-        ) : (
-          <PlatformApp />
-        )}
-      </Suspense>
-    </AppProviders>
+    <PlatformErrorBoundary label="Rayalgo app shell" resetKeys={[labMode]}>
+      <AppProviders>
+        <Suspense fallback={<AppLoadingFallback />}>
+          {labMode === "chart-parity" ? (
+            <ChartParityLab />
+          ) : labMode === "ticker-search" ? (
+            <TickerSearchLab />
+          ) : (
+            <PlatformApp />
+          )}
+        </Suspense>
+      </AppProviders>
+    </PlatformErrorBoundary>
   );
 }
 

@@ -14,9 +14,16 @@ import {
 import { buildResearchChartModelIncremental } from "./model";
 import {
   getChartBarLimit,
+  getChartBrokerRecentWindowMinutes,
   getInitialChartBarLimit,
   getMaxChartBarLimit,
+  normalizeChartTimeframe,
 } from "./timeframes";
+import {
+  expandLocalRollupLimit,
+  resolveLocalRollupBaseTimeframe,
+} from "./timeframeRollups";
+import { useHydrationGate } from "../platform/hydrationCoordinator";
 
 export const buildChartBarScopeKey = (...parts) =>
   parts.filter((part) => part != null && part !== "").join("::");
@@ -53,14 +60,93 @@ const resolveBarTimestampMs = (value) => {
 const resolveFiniteCount = (value, fallback = 0) =>
   Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : fallback;
 
+export const CHART_HYDRATION_ROLES = Object.freeze([
+  "mini",
+  "primary",
+  "option",
+]);
+
+export const normalizeChartHydrationRole = (role) =>
+  CHART_HYDRATION_ROLES.includes(role) ? role : "primary";
+
+export const resolveChartHydrationPolicy = ({
+  timeframe = "15m",
+  role = "primary",
+} = {}) => {
+  const normalizedRole = normalizeChartHydrationRole(role);
+  const normalizedTimeframe = normalizeChartTimeframe(timeframe) || "15m";
+  const targetLimit = getChartBarLimit(normalizedTimeframe, normalizedRole);
+  const initialLimit = getInitialChartBarLimit(
+    normalizedTimeframe,
+    normalizedRole,
+  );
+  const maxLimit = getMaxChartBarLimit(normalizedTimeframe, normalizedRole);
+  const baseTimeframe = resolveLocalRollupBaseTimeframe(
+    normalizedTimeframe,
+    targetLimit,
+    normalizedRole,
+  );
+  const baseInitialLimit = expandLocalRollupLimit(
+    initialLimit,
+    normalizedTimeframe,
+    baseTimeframe,
+  );
+  const baseTargetLimit = expandLocalRollupLimit(
+    targetLimit,
+    normalizedTimeframe,
+    baseTimeframe,
+  );
+  const baseMaxLimit = expandLocalRollupLimit(
+    maxLimit,
+    normalizedTimeframe,
+    baseTimeframe,
+  );
+
+  return {
+    timeframe: normalizedTimeframe,
+    role: normalizedRole,
+    initialLimit,
+    targetLimit,
+    maxLimit,
+    baseTimeframe,
+    baseInitialLimit,
+    baseTargetLimit,
+    baseMaxLimit,
+  };
+};
+
+export const resolveChartHydrationRequestPolicy = ({
+  timeframe = "15m",
+  role = "primary",
+  requestedLimit = null,
+} = {}) => {
+  const policy = resolveChartHydrationPolicy({ timeframe, role });
+  const resolvedRequestedLimit = Math.min(
+    policy.maxLimit,
+    Math.max(
+      policy.initialLimit,
+      resolveFiniteCount(requestedLimit, policy.targetLimit),
+    ),
+  );
+  const baseLimit = expandLocalRollupLimit(
+    resolvedRequestedLimit,
+    policy.timeframe,
+    policy.baseTimeframe,
+  );
+
+  return {
+    ...policy,
+    requestedLimit: resolvedRequestedLimit,
+    baseLimit,
+    brokerRecentWindowMinutes: getChartBrokerRecentWindowMinutes(
+      policy.baseTimeframe,
+      baseLimit,
+    ),
+  };
+};
+
 const resolveMinimumPrependPageSize = (timeframe, role) => {
-  if (role === "option") {
-    return getInitialChartBarLimit(timeframe, "option");
-  }
-  if (role === "mini") {
-    return getInitialChartBarLimit(timeframe, "mini");
-  }
-  return getInitialChartBarLimit(timeframe, "primary");
+  return getInitialChartBarLimit(timeframe, normalizeChartHydrationRole(role));
 };
 
 export const resolveVisibleRangeHydrationAction = ({
@@ -240,12 +326,24 @@ export const useProgressiveChartBarLimit = ({
   timeframe,
   role = "primary",
   enabled = true,
+  hydrationPriority = "visible",
   warmTargetLimit,
 }) => {
-  const targetLimit = getChartBarLimit(timeframe, role);
-  const initialLimit = getInitialChartBarLimit(timeframe, role);
-  const maxLimit = getMaxChartBarLimit(timeframe, role);
-  const progressiveKey = `${scopeKey}::${role}::${timeframe}`;
+  const policy = useMemo(
+    () => resolveChartHydrationPolicy({ timeframe, role }),
+    [role, timeframe],
+  );
+  const targetLimit = policy.targetLimit;
+  const initialLimit = policy.initialLimit;
+  const maxLimit = policy.maxLimit;
+  const normalizedRole = policy.role;
+  const normalizedTimeframe = policy.timeframe;
+  const hydrationGate = useHydrationGate({
+    enabled,
+    priority: hydrationPriority,
+    family: "chart-bars",
+  });
+  const progressiveKey = `${scopeKey}::${normalizedRole}::${normalizedTimeframe}`;
   const activeScopeKeyRef = useRef(progressiveKey);
   const warmingKeyRef = useRef(null);
   const [requestedLimit, setRequestedLimit] = useState(initialLimit);
@@ -263,7 +361,11 @@ export const useProgressiveChartBarLimit = ({
         Math.max(initialLimit, Math.ceil(nextRequestedLimit)),
       );
 
-      if (!enabled || normalizedNextLimit <= requestedLimit) {
+      if (
+        !enabled ||
+        !hydrationGate.enabled ||
+        normalizedNextLimit <= requestedLimit
+      ) {
         return;
       }
 
@@ -298,6 +400,7 @@ export const useProgressiveChartBarLimit = ({
     },
     [
       enabled,
+      hydrationGate.enabled,
       initialLimit,
       maxLimit,
       progressiveKey,
@@ -329,8 +432,8 @@ export const useProgressiveChartBarLimit = ({
         requestedLimit,
         targetLimit,
         maxLimit,
-        timeframe,
-        role,
+        timeframe: normalizedTimeframe,
+        role: normalizedRole,
         oldestLoadedAtMs: options.oldestLoadedAtMs,
         canPrependOlderHistory: typeof options.prependOlderBars === "function",
         isHydratingRequestedWindow: Boolean(options.isHydratingRequestedWindow),
@@ -351,10 +454,10 @@ export const useProgressiveChartBarLimit = ({
       enabled,
       hydrateLimit,
       maxLimit,
+      normalizedRole,
+      normalizedTimeframe,
       requestedLimit,
-      role,
       targetLimit,
-      timeframe,
     ],
   );
 
@@ -362,7 +465,11 @@ export const useProgressiveChartBarLimit = ({
     requestedLimit,
     targetLimit,
     maxLimit,
-    isHydratingFullWindow: enabled && requestedLimit < targetLimit,
+    role: normalizedRole,
+    timeframe: normalizedTimeframe,
+    initialLimit,
+    isHydratingFullWindow:
+      enabled && hydrationGate.enabled && requestedLimit < targetLimit,
     hydrateFullWindow,
     expandForVisibleRange,
   };
@@ -449,6 +556,7 @@ export const useDebouncedVisibleRangeExpansion = (
 export const useUnderfilledChartBackfill = ({
   scopeKey,
   enabled = true,
+  hydrationPriority = "visible",
   loadedBarCount = 0,
   requestedLimit = 0,
   minPageSize = 0,
@@ -458,6 +566,11 @@ export const useUnderfilledChartBackfill = ({
   maxAttempts = 2,
 }) => {
   const attemptsRef = useRef({ key: "", count: 0 });
+  const hydrationGate = useHydrationGate({
+    enabled,
+    priority: hydrationPriority,
+    family: "chart-bars",
+  });
 
   useEffect(() => {
     const normalizedScopeKey =
@@ -477,7 +590,7 @@ export const useUnderfilledChartBackfill = ({
     }
 
     const hydrationAction = resolveUnderfilledChartBackfillAction({
-      enabled,
+      enabled: hydrationGate.enabled,
       scopeKey: normalizedScopeKey,
       loadedBarCount: currentLoadedCount,
       requestedLimit: desiredLoadedCount,
@@ -503,6 +616,7 @@ export const useUnderfilledChartBackfill = ({
   }, [
     enabled,
     hasExhaustedOlderHistory,
+    hydrationGate.enabled,
     isPrependingOlder,
     loadedBarCount,
     maxAttempts,

@@ -266,6 +266,30 @@ test("bridge scheduler pressure recovers after a later successful lane run", asy
   assert.equal(diagnostics.pressure, "normal");
 });
 
+test("bridge scheduler pressure ignores historical queue rejections after recovery", async () => {
+  __resetBridgeSchedulerForTests();
+
+  const blocked = runBridgeLane(
+    "control",
+    () => new Promise(() => {}),
+    { timeoutMs: 5 },
+  );
+  const queued = runBridgeLane("control", async () => "queued", {
+    timeoutMs: 50,
+  });
+
+  await assert.rejects(
+    runBridgeLane("control", async () => "rejected", { timeoutMs: 50 }),
+    /Lane queue is full/,
+  );
+  await assert.rejects(blocked, /Lane timed out/);
+  assert.equal(await queued, "queued");
+
+  const diagnostics = getBridgeSchedulerDiagnostics().control;
+  assert.equal(diagnostics.rejected, 1);
+  assert.equal(diagnostics.pressure, "normal");
+});
+
 test("raw TWS order batches assign contiguous ids and parent links", async () => {
   const provider = new TwsIbkrBridgeProvider({
     host: "127.0.0.1",

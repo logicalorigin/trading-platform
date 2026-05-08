@@ -2,9 +2,42 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CHART_HYDRATION_ACTION,
+  normalizeChartHydrationRole,
+  resolveChartHydrationPolicy,
+  resolveChartHydrationRequestPolicy,
   resolveUnderfilledChartBackfillAction,
   resolveVisibleRangeHydrationAction,
 } from "./chartHydrationRuntime.js";
+
+test("chart hydration policy preserves role-specific candle windows", () => {
+  const miniPolicy = resolveChartHydrationPolicy({
+    timeframe: "5m",
+    role: "mini",
+  });
+  const primaryPolicy = resolveChartHydrationPolicy({
+    timeframe: "5m",
+    role: "primary",
+  });
+
+  assert.equal(normalizeChartHydrationRole("unknown"), "primary");
+  assert.equal(miniPolicy.role, "mini");
+  assert.equal(miniPolicy.initialLimit, 900);
+  assert.equal(miniPolicy.targetLimit, 900);
+  assert.equal(miniPolicy.maxLimit, 1800);
+  assert.equal(primaryPolicy.targetLimit, 1800);
+});
+
+test("chart hydration request policy expands rolled intervals by base timeframe", () => {
+  const requestPolicy = resolveChartHydrationRequestPolicy({
+    timeframe: "30m",
+    role: "primary",
+    requestedLimit: 1500,
+  });
+
+  assert.equal(requestPolicy.baseTimeframe, "15m");
+  assert.equal(requestPolicy.baseLimit, 3000);
+  assert.equal(requestPolicy.brokerRecentWindowMinutes, 720);
+});
 
 test("visible range hydration ignores ranges away from the left edge", () => {
   const action = resolveVisibleRangeHydrationAction({

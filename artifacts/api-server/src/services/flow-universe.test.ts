@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createFlowUniverseManager,
   getFlowScannerIntervalMs,
   isOptionableUniverseContractMeta,
   isRegularTradingHours,
@@ -327,4 +328,160 @@ test("flow universe optionability gate recognizes IBKR derivative metadata", () 
     false,
   );
   assert.equal(isOptionableUniverseContractMeta(null), false);
+});
+
+function transientDbError() {
+  return Object.assign(new Error("Connection terminated due to connection timeout"), {
+    code: "ECONNRESET",
+  });
+}
+
+function chainReturning<T>(value: T) {
+  return {
+    from() {
+      return {
+        leftJoin() {
+          return {
+            where() {
+              return {
+                orderBy() {
+                  return {
+                    limit: async () => value,
+                  };
+                },
+              };
+            },
+          };
+        },
+        where() {
+          return {
+            orderBy() {
+              return {
+                limit: async () => value,
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+function createFlowUniverseTestDb(input: {
+  rows?: unknown[];
+  selectError?: unknown;
+  persistError?: unknown;
+}) {
+  return {
+    select() {
+      if (input.selectError) {
+        return chainReturning(Promise.reject(input.selectError));
+      }
+      return chainReturning(input.rows ?? []);
+    },
+    update() {
+      return {
+        set() {
+          return {
+            where: async () => {
+              if (input.persistError) {
+                throw input.persistError;
+              }
+            },
+          };
+        },
+      };
+    },
+    insert() {
+      return {
+        values() {
+          return {
+            onConflictDoUpdate: async () => {
+              if (input.persistError) {
+                throw input.persistError;
+              }
+            },
+          };
+        },
+      };
+    },
+  } as never;
+}
+
+test("flow universe uses provider fallback when Helium-backed catalog reads fail", async () => {
+  const manager = createFlowUniverseManager({
+    db: createFlowUniverseTestDb({ selectError: transientDbError() }),
+    mode: "market",
+    targetSize: 4,
+    refreshMs: 60_000,
+    markets: ["stocks"],
+    minPrice: 5,
+    minDollarVolume: 25_000_000,
+    fallbackSymbols: ["SPY"],
+    fetchFallbackSymbols: async () => ["AAPL", "NVDA", "MSFT", "TSLA"],
+    now: () => new Date("2026-05-08T15:30:00.000Z"),
+  });
+
+  const selected = await manager.refresh();
+  const coverage = manager.getCoverage();
+
+  assert.deepEqual(selected, ["AAPL", "NVDA", "MSFT", "TSLA"]);
+  assert.equal(coverage.selectedShortfall, 0);
+  assert.equal(coverage.fallbackUsed, true);
+  assert.match(coverage.degradedReason || "", /database unavailable/i);
+});
+
+test("flow universe keeps selected symbols when DB selection persistence fails", async () => {
+  const manager = createFlowUniverseManager({
+    db: createFlowUniverseTestDb({
+      persistError: transientDbError(),
+      rows: [
+        {
+          symbol: "AAPL",
+          market: "stocks",
+          price: "200",
+          volume: "1000000",
+          dollarVolume: "200000000",
+          liquidityRank: 1,
+          flowScore: "10",
+          previousSessionFlowScore: "0",
+          rankedAt: null,
+          selected: false,
+          selectedAt: null,
+          lastScannedAt: null,
+          cooldownUntil: null,
+        },
+        {
+          symbol: "NVDA",
+          market: "stocks",
+          price: "900",
+          volume: "1000000",
+          dollarVolume: "900000000",
+          liquidityRank: 2,
+          flowScore: "8",
+          previousSessionFlowScore: "0",
+          rankedAt: null,
+          selected: false,
+          selectedAt: null,
+          lastScannedAt: null,
+          cooldownUntil: null,
+        },
+      ],
+    }),
+    mode: "market",
+    targetSize: 2,
+    refreshMs: 60_000,
+    markets: ["stocks"],
+    minPrice: 5,
+    minDollarVolume: 25_000_000,
+    fallbackSymbols: ["SPY"],
+    now: () => new Date("2026-05-08T15:30:00.000Z"),
+  });
+
+  const selected = await manager.refresh();
+  const coverage = manager.getCoverage();
+
+  assert.deepEqual(selected, ["AAPL", "NVDA"]);
+  assert.equal(coverage.selectedShortfall, 0);
+  assert.match(coverage.degradedReason || "", /persistence unavailable/i);
 });

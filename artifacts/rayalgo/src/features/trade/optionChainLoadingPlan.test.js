@@ -8,9 +8,11 @@ import {
   OPTION_CHAIN_METADATA_HYDRATION,
   getExpirationChainKey,
   normalizeTradeOptionChainCoverage,
+  resolveEffectiveOptionChainCoverage,
   resolveActiveOptionChainRequestParams,
   resolveBackgroundOptionChainRequestParams,
   resolveTradeOptionChainHydrationPlan,
+  shouldFallbackOptionChainToFullCoverage,
 } from "./optionChainLoadingPlan.js";
 
 const expiration = (isoDate) => ({
@@ -31,6 +33,52 @@ test("option chain coverage normalizes to supported dropdown values", () => {
   assert.equal(normalizeTradeOptionChainCoverage(15), 15);
   assert.equal(normalizeTradeOptionChainCoverage("all"), OPTION_CHAIN_COVERAGE_ALL);
   assert.equal(normalizeTradeOptionChainCoverage(12), 5);
+});
+
+test("option chain coverage promotes selected empty windows to full fallback", () => {
+  assert.equal(
+    resolveEffectiveOptionChainCoverage({
+      activeChainKey: "2026-05-01",
+      coverage: 5,
+      fullCoverageFallbackKeys: new Set(["2026-05-01"]),
+    }),
+    OPTION_CHAIN_COVERAGE_ALL,
+  );
+  assert.equal(
+    resolveEffectiveOptionChainCoverage({
+      activeChainKey: "2026-05-08",
+      coverage: 10,
+      fullCoverageFallbackKeys: new Set(["2026-05-01"]),
+    }),
+    10,
+  );
+});
+
+test("option chain full fallback only triggers after an empty window success", () => {
+  assert.equal(
+    shouldFallbackOptionChainToFullCoverage({
+      activeRequest: { coverage: "window" },
+      queryData: { contracts: [] },
+      queryIsSuccess: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldFallbackOptionChainToFullCoverage({
+      activeRequest: { coverage: "full" },
+      queryData: { contracts: [] },
+      queryIsSuccess: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFallbackOptionChainToFullCoverage({
+      activeRequest: { coverage: "window" },
+      queryData: { contracts: [{ contract: {} }] },
+      queryIsSuccess: true,
+    }),
+    false,
+  );
 });
 
 test("option chain coverage maps selected expiration to window or full requests", () => {

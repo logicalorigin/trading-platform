@@ -169,6 +169,185 @@ test("uses tick-test trade classifications when option snapshots omit quotes", (
   assert.equal(distribution.confidence, "partial");
 });
 
+test("classifies historical flow events with tick-test side confidence", async () => {
+  const originalFetch = globalThis.fetch;
+  const baseTime = Date.parse("2026-05-06T14:30:00Z");
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v3/reference/options/contracts") {
+      const expired = url.searchParams.get("expired") === "true";
+      return Response.json({
+        results: expired
+          ? []
+          : [
+              {
+                ticker: "O:SPY260506C00640000",
+                underlying_ticker: "SPY",
+                expiration_date: "2026-05-06",
+                strike_price: 640,
+                contract_type: "call",
+                shares_per_contract: 100,
+              },
+            ],
+      });
+    }
+
+    if (url.pathname === "/v3/reference/conditions") {
+      return Response.json({ results: [] });
+    }
+
+    if (url.pathname.includes("/v3/trades/")) {
+      return Response.json({
+        results: [
+          {
+            price: 2,
+            size: 10,
+            sip_timestamp: baseTime + 60_000,
+            sequence_number: 2,
+            exchange: 304,
+          },
+          {
+            price: 1,
+            size: 10,
+            sip_timestamp: baseTime,
+            sequence_number: 1,
+            exchange: 304,
+          },
+          {
+            price: 2,
+            size: 5,
+            sip_timestamp: baseTime + 120_000,
+            sequence_number: 3,
+            exchange: 304,
+          },
+        ],
+      });
+    }
+
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://polygon.test",
+    });
+    const result = await client.getHistoricalOptionFlowEvents({
+      underlying: "SPY",
+      from: new Date(baseTime - 1_000),
+      to: new Date(baseTime + 180_000),
+      contractLimit: 1,
+      contractPageLimit: 1,
+      tradePageLimit: 1,
+      tradeLimit: 10,
+    });
+
+    assert.deepEqual(
+      result.events.map((event) => event.side),
+      ["mid", "buy", "buy"],
+    );
+    assert.deepEqual(
+      result.events.map((event) => event.sideBasis),
+      ["none", "tick_test", "tick_test"],
+    );
+    assert.deepEqual(
+      result.events.map((event) => event.sideConfidence),
+      ["none", "medium", "low"],
+    );
+    assert.deepEqual(
+      result.events.map((event) => event.sentiment),
+      ["neutral", "bullish", "bullish"],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uses quote-match classification before tick-test fallback for derived historical flow", async () => {
+  const originalFetch = globalThis.fetch;
+  const baseTime = Date.parse("2026-05-06T14:30:00Z");
+  const optionTicker = "O:SPY260506C00640000";
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v3/snapshot/options/SPY") {
+      return Response.json({
+        results: [
+          {
+            details: {
+              ticker: optionTicker,
+              underlying_ticker: "SPY",
+              expiration_date: "2026-05-06",
+              strike_price: 640,
+              contract_type: "call",
+              shares_per_contract: 100,
+            },
+            greeks: { delta: 0.5, gamma: 0.01 },
+            last_quote: { bid_price: 1, ask_price: 1.1 },
+            last_trade: {
+              price: 1.05,
+              size: 10,
+              sip_timestamp: baseTime,
+            },
+            open_interest: 100,
+          },
+        ],
+      });
+    }
+
+    if (url.pathname === "/v3/reference/options/contracts") {
+      return Response.json({ results: [] });
+    }
+
+    if (url.pathname === "/v3/reference/conditions") {
+      return Response.json({ results: [] });
+    }
+
+    if (url.pathname.includes("/v3/trades/")) {
+      return Response.json({
+        results: [
+          {
+            price: 1.1,
+            size: 10,
+            sip_timestamp: baseTime + 60_000,
+            sequence_number: 1,
+            exchange: 304,
+          },
+        ],
+      });
+    }
+
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://polygon.test",
+    });
+    const events = await client.getDerivedFlowEvents({
+      underlying: "SPY",
+      from: new Date(baseTime - 1_000),
+      to: new Date(baseTime + 120_000),
+      limit: 10,
+      snapshotPageLimit: 1,
+      contractLimit: 1,
+      contractPageLimit: 1,
+      tradePageLimit: 1,
+      tradeLimit: 10,
+    });
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].side, "buy");
+    assert.equal(events[0].sideBasis, "quote_match");
+    assert.equal(events[0].sideConfidence, "high");
+    assert.equal(events[0].sentiment, "bullish");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("marks quote-matched premium below one percent as very low confidence", () => {
   const distribution = aggregateOptionPremiumDistributionSnapshots({
     underlying: "SPY",
@@ -206,7 +385,7 @@ test("reports side split unavailable when option quote and trade access are forb
   assert.equal(distribution.quoteAccess, "forbidden");
   assert.equal(distribution.tradeAccess, "forbidden");
   assert.equal(distribution.classificationConfidence, "none");
-  assert.match(distribution.hydrationWarning ?? "", /quotes and option trades/);
+  assert.match(distribution.hydrationWarning ?? "", /quote-match and option trades/);
 });
 
 test("allocates tick-test trades into premium-size buckets", () => {

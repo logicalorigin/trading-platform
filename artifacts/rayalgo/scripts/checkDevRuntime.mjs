@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   readdirSync,
@@ -19,6 +19,7 @@ const jsonOnly = process.argv.includes("--json");
 const canonicalFrontendPort = String(
   process.env.RAYALGO_FRONTEND_PORT || process.env.PORT || "18747",
 );
+const canonicalApiPort = String(process.env.RAYALGO_API_PORT || "8080");
 const canonicalBasePath = process.env.BASE_PATH || "/";
 const commandEnv = { ...process.env };
 delete commandEnv.LD_LIBRARY_PATH;
@@ -38,6 +39,40 @@ const readTextCommand = (command, args) => {
   } catch {
     return "";
   }
+};
+
+const runTextCommand = (command, args, options = {}) => {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || repoRoot,
+    env: options.env || commandEnv,
+    encoding: "utf8",
+    timeout: options.timeout || 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    error: result.error?.message || null,
+  };
+};
+
+const probeHttpJson = (url) => {
+  const result = runTextCommand("curl", ["-fsS", url], { timeout: 3_000 });
+  let json = null;
+  try {
+    json = result.stdout ? JSON.parse(result.stdout) : null;
+  } catch {}
+  return {
+    url,
+    ok: result.status === 0,
+    status: result.status,
+    signal: result.signal,
+    body: result.stdout.trim(),
+    json,
+    error: result.error || result.stderr.trim() || null,
+  };
 };
 
 const readProcLink = (pid, name) => {
@@ -238,6 +273,119 @@ const readChartSurfaceFingerprint = () => {
   }
 };
 
+const sanitizeDatabaseOutput = (text = "") =>
+  text.replace(
+    /(postgres(?:ql)?:\/\/)[^@\s]+@/gi,
+    (_match, prefix) => `${prefix}***@`,
+  );
+
+const describeDatabaseUrl = () => {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) {
+    return {
+      configured: false,
+      protocol: null,
+      host: null,
+      port: null,
+      database: null,
+      user: null,
+      sslMode: null,
+    };
+  }
+
+  try {
+    const url = new URL(raw);
+    return {
+      configured: true,
+      protocol: url.protocol.replace(/:$/, ""),
+      host: url.hostname || null,
+      port: url.port || "5432",
+      database: url.pathname.replace(/^\//, "") || null,
+      user: url.username ? `${url.username.slice(0, 2)}***` : null,
+      sslMode:
+        url.searchParams.get("sslmode") ||
+        url.searchParams.get("ssl") ||
+        "unspecified",
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      protocol: null,
+      host: null,
+      port: null,
+      database: null,
+      user: null,
+      sslMode: null,
+      parseError: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const readDatabaseReachability = () => {
+  const database = describeDatabaseUrl();
+  if (!process.env.DATABASE_URL || database.parseError) {
+    return {
+      ...database,
+      reachable: false,
+      probe: null,
+    };
+  }
+
+  const probe = runTextCommand("pg_isready", [
+    "-d",
+    process.env.DATABASE_URL,
+    "-t",
+    "3",
+  ]);
+  return {
+    ...database,
+    reachable: probe.status === 0,
+    probe: {
+      command: "pg_isready -d DATABASE_URL -t 3",
+      status: probe.status,
+      signal: probe.signal,
+      output: sanitizeDatabaseOutput(`${probe.stdout}${probe.stderr}`).trim(),
+      error: probe.error,
+    },
+  };
+};
+
+const readReplitPlaywrightStatus = () => {
+  const prepareScript = path.join(
+    packageRoot,
+    "scripts/preparePlaywrightChromium.mjs",
+  );
+  const command = "pnpm --filter @workspace/rayalgo run test:e2e:replit";
+  if (!existsSync(prepareScript)) {
+    return {
+      command,
+      prepared: false,
+      executable: null,
+      error: "preparePlaywrightChromium.mjs was not found",
+      directLaunchRisk: true,
+    };
+  }
+
+  const result = runTextCommand(process.execPath, [prepareScript], {
+    cwd: packageRoot,
+    env: commandEnv,
+    timeout: 20_000,
+  });
+  const output = `${result.stdout}${result.stderr}`.trim();
+  return {
+    command,
+    prepared: result.status === 0,
+    executable: result.status === 0 ? result.stdout.trim() || null : null,
+    error: result.status === 0 ? null : output || result.error,
+    directLaunchRisk: Boolean(
+      process.env.LD_LIBRARY_PATH ||
+        process.env.REPLIT_LD_LIBRARY_PATH ||
+        process.env.NIX_LD ||
+        process.env.NIX_LD_LIBRARY_PATH,
+    ),
+  };
+};
+
 const isDistOlderThanRuntimeSources = (distStatus) => {
   if (!distStatus.exists) {
     return false;
@@ -349,6 +497,39 @@ const listeningProjectPorts = projectPorts
     listeners: listeningPorts.filter((listener) => listener.port === port.localPort),
   }))
   .filter((port) => port.listeners.length > 0);
+const apiListeners = listeningPorts.filter(
+  (listener) => String(listener.port) === canonicalApiPort,
+);
+const apiListenerProcesses = apiListeners
+  .flatMap((listener) => listener.processes)
+  .map((processInfo) => {
+    const cwd = readProcLink(processInfo.pid, "cwd");
+    return {
+      ...processInfo,
+      cwd,
+      cwdRelative: cwd ? path.relative(repoRoot, cwd) || "." : null,
+    };
+  });
+const apiServerProcesses = apiListenerProcesses.filter(
+  (processInfo) =>
+    processInfo.cwdRelative === "artifacts/api-server" ||
+    processInfo.cmd.includes("artifacts/api-server/dist/index.mjs") ||
+    processInfo.cmd.includes("artifacts/api-server/node_modules") ||
+    (processInfo.cmd.includes("./dist/index.mjs") &&
+      processInfo.cwdRelative === "artifacts/api-server"),
+);
+const apiHealth =
+  apiServerProcesses.length > 0
+    ? probeHttpJson(`http://127.0.0.1:${canonicalApiPort}/api/healthz`)
+    : {
+        url: `http://127.0.0.1:${canonicalApiPort}/api/healthz`,
+        ok: false,
+        status: null,
+        signal: null,
+        body: "",
+        json: null,
+        error: "api server is not listening",
+      };
 const nonCanonicalFrontendListeners = listeningProjectPorts.filter(
   (port) =>
     String(port.localPort) !== canonicalFrontendPort &&
@@ -362,6 +543,26 @@ const nonCanonicalFrontendListeners = listeningProjectPorts.filter(
 
 for (const port of nonCanonicalFrontendListeners) {
   const message = `non-canonical frontend listener on local port ${port.localPort} (external ${port.externalPort ?? "n/a"})`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+if (rayalgoViteServers.length > 0 && apiServerProcesses.length !== 1) {
+  const message = `expected exactly one Rayalgo API server on ${canonicalApiPort}, found ${apiServerProcesses.length}`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+}
+
+if (apiServerProcesses.length > 0 && !apiHealth.ok) {
+  const message = `Rayalgo API health probe failed at ${apiHealth.url}${apiHealth.error ? `: ${apiHealth.error}` : ""}`;
+  warnings.push(message);
+  if (strict) failures.push(message);
+} else if (
+  apiHealth.ok &&
+  apiHealth.json &&
+  apiHealth.json.status !== "ok"
+) {
+  const message = `Rayalgo API health probe returned unexpected status ${JSON.stringify(apiHealth.json)}`;
   warnings.push(message);
   if (strict) failures.push(message);
 }
@@ -386,10 +587,31 @@ if (!chartSurfaceFingerprint.version) {
   if (strict) failures.push(message);
 }
 
+const databaseReachability = readDatabaseReachability();
+if (!databaseReachability.configured) {
+  warnings.push(
+    "DATABASE_URL is not set; DB-backed persistence, signal monitor, and diagnostics are unavailable",
+  );
+} else if (databaseReachability.parseError) {
+  warnings.push(`DATABASE_URL could not be parsed: ${databaseReachability.parseError}`);
+} else if (!databaseReachability.reachable) {
+  warnings.push(
+    `Postgres is unreachable at ${databaseReachability.host}:${databaseReachability.port}/${databaseReachability.database}; DB-backed persistence and signal workers should degrade while IBKR transport can remain connected`,
+  );
+}
+
+const browserVerification = readReplitPlaywrightStatus();
+if (!browserVerification.prepared) {
+  warnings.push(
+    `Replit Playwright Chromium could not be prepared; use ${browserVerification.command} after installing Chromium and checking Nix browser libraries`,
+  );
+}
+
 const snapshot = {
   checkedAt: new Date().toISOString(),
   packageRoot: path.relative(repoRoot, packageRoot),
   canonicalFrontendPort,
+  canonicalApiPort,
   canonicalBasePath,
   canonicalLocalUrl: `http://127.0.0.1:${canonicalFrontendPort}${canonicalBasePath}`,
   gitSha:
@@ -402,11 +624,15 @@ const snapshot = {
   rayalgoViteServers,
   projectPorts,
   listeningProjectPorts,
+  apiServerProcesses,
+  apiHealth,
   nonCanonicalFrontendListeners,
   distIndex,
   distStaleAgainstSources,
   viteCache: describePathStatus(path.join(packageRoot, "node_modules/.vite")),
   chartSurfaceFingerprint,
+  databaseReachability,
+  browserVerification,
   warnings,
   failures,
 };
@@ -418,12 +644,37 @@ if (jsonOnly) {
   console.log(`repo: ${snapshot.gitBranch}@${snapshot.gitSha}${snapshot.gitDirty ? " dirty" : ""}`);
   console.log(`canonical local url: ${snapshot.canonicalLocalUrl}`);
   console.log(
+    `api server: ${apiServerProcesses.length ? "listening" : "missing"} ${apiHealth.url}`,
+  );
+  if (apiHealth.error && !apiHealth.ok) {
+    console.log(`api probe: ${apiHealth.error}`);
+  }
+  console.log(
     `chart surface: ${chartSurfaceFingerprint.version || "missing"} (${chartSurfaceFingerprint.sourcePath})`,
+  );
+  if (databaseReachability.configured) {
+    console.log(
+      `postgres: ${databaseReachability.reachable ? "reachable" : "unreachable"} ${databaseReachability.host || "unknown"}:${databaseReachability.port || "unknown"}/${databaseReachability.database || "unknown"} ssl=${databaseReachability.sslMode || "unknown"}`,
+    );
+    if (databaseReachability.probe?.output) {
+      console.log(`postgres probe: ${databaseReachability.probe.output}`);
+    }
+  } else {
+    console.log("postgres: DATABASE_URL not set");
+  }
+  console.log(
+    `browser verification: ${browserVerification.prepared ? "patched chromium ready" : "patched chromium unavailable"}; command=${browserVerification.command}`,
   );
   console.log(`rayalgo vite servers: ${rayalgoViteServers.length}`);
   for (const server of rayalgoViteServers) {
     console.log(
       `- pid ${server.pid} ${server.kind} cwd=${server.cwdRelative} PORT=${server.port || ""} BASE_PATH=${server.basePath || ""} proxy=${server.proxyApiTarget}`,
+    );
+  }
+  console.log(`rayalgo api servers: ${apiServerProcesses.length}`);
+  for (const server of apiServerProcesses) {
+    console.log(
+      `- pid ${server.pid} cwd=${server.cwdRelative} ${server.cmd}`,
     );
   }
   if (viteServers.length !== rayalgoViteServers.length) {

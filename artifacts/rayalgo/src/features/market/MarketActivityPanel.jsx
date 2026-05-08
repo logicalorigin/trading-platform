@@ -37,6 +37,7 @@ import {
   buildMarketActivityLanes,
   normalizeSignalMonitorTimeframe,
 } from "../platform/marketActivityLaneModel";
+import { isSignalMonitorDegradedProfile } from "../platform/signalMonitorStatusModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -749,6 +750,7 @@ export const MarketActivityPanel = ({
   signalStates = [],
   signalMonitorProfile = null,
   signalMonitorPending = false,
+  signalMonitorDegraded = false,
   watchlists = [],
   newsItems = [],
   calendarItems = [],
@@ -768,6 +770,9 @@ export const MarketActivityPanel = ({
 }) => {
   const monitorTimeframe = normalizeSignalMonitorTimeframe(
     signalMonitorProfile?.timeframe,
+  );
+  const monitorDegraded = Boolean(
+    signalMonitorDegraded || isSignalMonitorDegradedProfile(signalMonitorProfile),
   );
   const lanes = useMemo(
     () =>
@@ -800,6 +805,8 @@ export const MarketActivityPanel = ({
   ).length;
   const monitorMeta = signalMonitorPending
     ? "SCANNING"
+    : monitorDegraded
+      ? "DEGRADED"
     : signalMonitorProfile?.enabled
       ? `${freshSignalCount} FRESH`
       : "PAUSED";
@@ -939,9 +946,19 @@ export const MarketActivityPanel = ({
             <MarketLaneToolbar>
               <MarketIconToolButton
                 Icon={Power}
-                active={Boolean(signalMonitorProfile?.enabled)}
-                tone={signalMonitorProfile?.enabled ? T.green : T.textDim}
-                label="Toggle signal monitor"
+                active={Boolean(signalMonitorProfile?.enabled && !monitorDegraded)}
+                tone={
+                  monitorDegraded
+                    ? T.red
+                    : signalMonitorProfile?.enabled
+                      ? T.green
+                      : T.textDim
+                }
+                label={
+                  monitorDegraded
+                    ? "Signal monitor degraded"
+                    : "Toggle signal monitor"
+                }
                 onClick={onToggleMonitor}
               />
               <SignalTimeframeTypeahead

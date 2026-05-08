@@ -9,6 +9,13 @@ test("Trade spot chart wires pan and zoom history hydration through the shared p
 
   assert.match(source, /useProgressiveChartBarLimit\(\{/);
   assert.match(source, /useUnderfilledChartBackfill\(\{/);
+  assert.match(source, /chartHydrationRole = "primary"/);
+  assert.match(source, /normalizeChartHydrationRole\(chartHydrationRole\)/);
+  assert.match(source, /resolveChartHydrationRequestPolicy\(\{/);
+  assert.match(source, /role:\s*effectiveChartHydrationRole/);
+  assert.match(source, /intervalChangeRevision/);
+  assert.match(source, /setIntervalChangeRevision\(\(revision\) => revision \+ 1\)/);
+  assert.match(source, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(source, /progressiveBars\.expandForVisibleRange\(range,\s*bars\.length,\s*\{/);
   assert.match(source, /isHydratingRequestedWindow:/);
   assert.match(source, /isPrependingOlder:\s*prependableBars\.isPrependingOlder/);
@@ -23,6 +30,9 @@ test("Trade option chart wires pan and zoom history hydration through the shared
 
   assert.match(source, /const optionProgressiveBars = useProgressiveChartBarLimit\(\{/);
   assert.match(source, /useUnderfilledChartBackfill\(\{/);
+  assert.match(source, /optionChartIntervalRevision/);
+  assert.match(source, /handleOptionChartTimeframeChange/);
+  assert.match(source, /viewportLayoutKey=\{optionChartViewportLayoutKey\}/);
   assert.match(source, /optionProgressiveBars\.expandForVisibleRange\(range,\s*displayBars\.length,\s*\{/);
   assert.match(source, /isHydratingRequestedWindow:/);
   assert.match(source, /isPrependingOlder/);
@@ -37,6 +47,9 @@ test("Flow option inspection chart wires pan and zoom history hydration through 
 
   assert.match(source, /const optionProgressiveBars = useProgressiveChartBarLimit\(\{/);
   assert.match(source, /useUnderfilledChartBackfill\(\{/);
+  assert.match(source, /optionChartIntervalRevision/);
+  assert.match(source, /handleOptionChartTimeframeChange/);
+  assert.match(source, /viewportLayoutKey=\{optionChartViewportLayoutKey\}/);
   assert.match(source, /optionProgressiveBars\.expandForVisibleRange\(range,\s*optionDisplayBars\.length,\s*\{/);
   assert.match(source, /isHydratingRequestedWindow:/);
   assert.match(source, /isPrependingOlder/);
