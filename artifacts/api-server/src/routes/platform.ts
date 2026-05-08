@@ -65,6 +65,7 @@ import {
   listAccounts,
   listBrokerConnections,
   listExecutions,
+  listAggregateFlowEvents,
   listFlowEvents,
   listOrders,
   listPositions,
@@ -1687,6 +1688,13 @@ router.get("/flow/events", async (req, res) => {
   res.json(data);
 });
 
+router.get("/flow/events/aggregate", async (req, res) => {
+  const query = ListFlowEventsQueryParams.parse(req.query);
+  const data = ListFlowEventsResponse.parse(await listAggregateFlowEvents(query));
+
+  res.json(data);
+});
+
 router.get("/flow/premium-distribution", async (req, res) => {
   const query = GetFlowPremiumDistributionQueryParams.parse(req.query);
   const data = GetFlowPremiumDistributionResponse.parse(
@@ -2044,9 +2052,22 @@ router.get("/streams/orders", async (req, res) => {
       source: "ibkr-bridge",
     });
 
-    return subscribeOrderSnapshots({ accountId, mode, status }, (payload) => {
-      writeEvent("orders", payload);
-    });
+    return subscribeOrderSnapshots(
+      { accountId, mode, status },
+      (payload) => {
+        writeEvent("orders", payload);
+      },
+      {
+        onPollSuccess: ({ changed }) =>
+          writeEvent("freshness", {
+            stream: "orders",
+            accountId: accountId ?? null,
+            mode,
+            changed,
+            at: new Date().toISOString(),
+          }),
+      },
+    );
   });
 });
 
@@ -2179,9 +2200,22 @@ router.get("/streams/accounts", async (req, res) => {
       source: "ibkr-bridge",
     });
 
-    return subscribeAccountSnapshots({ accountId, mode }, (payload) => {
-      writeEvent("accounts", payload);
-    });
+    return subscribeAccountSnapshots(
+      { accountId, mode },
+      (payload) => {
+        writeEvent("accounts", payload);
+      },
+      {
+        onPollSuccess: ({ changed }) =>
+          writeEvent("freshness", {
+            stream: "accounts",
+            accountId: accountId ?? null,
+            mode,
+            changed,
+            at: new Date().toISOString(),
+          }),
+      },
+    );
   });
 });
 

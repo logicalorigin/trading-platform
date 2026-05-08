@@ -71,6 +71,18 @@ test("shadow account stream is owned by the visible shadow account screen", () =
   );
 });
 
+test("broker account and order streams refresh freshness on readiness and poll success", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+
+  assert.match(source, /source\.addEventListener\("ready", handleReady as EventListener\)/);
+  assert.match(
+    source,
+    /source\.addEventListener\("freshness", handleFreshness as EventListener\)/,
+  );
+  assert.match(source, /markBrokerStreamEvent\("account"\)/);
+  assert.match(source, /markBrokerStreamEvent\("order"\)/);
+});
+
 test("groupOptionChainContractsByExpiration keeps stream contracts scoped to their expirations", () => {
   const grouped = groupOptionChainContractsByExpiration([
     optionQuote("SPY-20260427-C700", "2026-04-27T00:00:00.000Z"),

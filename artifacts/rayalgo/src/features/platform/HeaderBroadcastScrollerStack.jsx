@@ -33,6 +33,10 @@ import {
 } from "./marketFlowStore";
 import { providerSummaryHasVisibleFlowDegradation } from "./flowSourceState.js";
 import {
+  isSignalMonitorRuntimeFallbackProfile,
+  summarizeSignalMonitorStates,
+} from "./signalMonitorStatusModel";
+import {
   FLOW_SCANNER_CONFIG_LIMITS,
   FLOW_SCANNER_MODE,
   FLOW_SCANNER_SCOPE,
@@ -675,6 +679,10 @@ export const HeaderBroadcastScrollerStack = memo(({
     () => buildHeaderSignalTapeItems(signalSnapshot),
     [signalSnapshot],
   );
+  const signalStateSummary = useMemo(
+    () => summarizeSignalMonitorStates(signalSnapshot?.states),
+    [signalSnapshot?.states],
+  );
   const rawUnusualEvents = useMemo(
     () =>
       broadScanSnapshotActive
@@ -702,11 +710,45 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalBusy = Boolean(
     signalScanPending || signalEvaluationPending || signalSnapshot?.pending,
   );
+  const signalRuntimeFallback = Boolean(
+    isSignalMonitorRuntimeFallbackProfile(signalSnapshot?.profile),
+  );
   const signalHasError = Boolean(
-    !signalBusy && (signalScanErrored || signalSnapshot?.degraded),
+    !signalBusy &&
+      (signalScanErrored || (signalSnapshot?.degraded && !signalRuntimeFallback)),
+  );
+  const signalDegraded = Boolean(
+    !signalBusy && !signalHasError && signalSnapshot?.degraded,
+  );
+  const signalLastEvaluatedAt =
+    signalSnapshot?.profile?.lastEvaluatedAt ||
+    signalSnapshot?.states?.find?.((state) => state?.lastEvaluatedAt)
+      ?.lastEvaluatedAt ||
+    null;
+  const signalNoTrackedSymbols = Boolean(
+    !signalBusy &&
+      !signalHasError &&
+      !signalDegraded &&
+      signalScanEnabled &&
+      signalLastEvaluatedAt &&
+      signalStateSummary.total === 0,
+  );
+  const signalNoFreshSignals = Boolean(
+    !signalBusy &&
+      !signalHasError &&
+      !signalDegraded &&
+      signalScanEnabled &&
+      signalStateSummary.total > 0 &&
+      signalStateSummary.fresh === 0,
   );
   const signalEmptyLabel = signalHasError
     ? "SIGNALS ERROR"
+    : signalDegraded
+      ? "SIGNALS DEGRADED"
+    : signalNoTrackedSymbols
+      ? "NO SIGNAL DATA"
+    : signalNoFreshSignals
+      ? "NO FRESH SIGNALS"
     : signalBusy
       ? "SYNCING"
       : signalScanEnabled
@@ -787,6 +829,10 @@ export const HeaderBroadcastScrollerStack = memo(({
         : "Start Flow scan";
   const signalScanTone = signalHasError
     ? T.red
+    : signalDegraded
+      ? T.amber
+    : signalNoTrackedSymbols || signalNoFreshSignals
+      ? T.amber
     : signalBusy
       ? T.accent
       : signalScanEnabled
@@ -794,6 +840,12 @@ export const HeaderBroadcastScrollerStack = memo(({
         : T.textMuted;
   const signalToggleTitle = signalHasError
     ? "Signal scan degraded"
+    : signalDegraded
+      ? "Signal scan running in runtime fallback"
+    : signalNoTrackedSymbols
+      ? "Signal scan has no tracked symbols"
+    : signalNoFreshSignals
+      ? "Signal scan has no fresh signals"
     : signalBusy
       ? "Signal scan updating"
       : signalScanEnabled
@@ -801,6 +853,14 @@ export const HeaderBroadcastScrollerStack = memo(({
         : "Start signal scan";
   const signalStatusLabel = signalHasError
     ? "SCAN ERROR"
+    : signalDegraded
+      ? signalRuntimeFallback
+        ? "RUNTIME"
+        : "DEGRADED"
+    : signalNoTrackedSymbols
+      ? "NO DATA"
+    : signalNoFreshSignals
+      ? "NO FRESH"
     : signalScanPending
       ? "UPDATING"
       : signalEvaluationPending || signalSnapshot?.pending
@@ -808,11 +868,6 @@ export const HeaderBroadcastScrollerStack = memo(({
         : signalScanEnabled
           ? "SCAN ON"
           : "SCAN OFF";
-  const signalLastEvaluatedAt =
-    signalSnapshot?.profile?.lastEvaluatedAt ||
-    signalSnapshot?.states?.find?.((state) => state?.lastEvaluatedAt)
-      ?.lastEvaluatedAt ||
-    null;
   const signalSettings = (
     <HeaderLaneSettingsPopover testId="header-signal-settings-popover">
       <HeaderLaneSettingsTitle
@@ -838,6 +893,14 @@ export const HeaderBroadcastScrollerStack = memo(({
       >
         {signalHasError
           ? "Signal Scan Degraded"
+          : signalDegraded
+            ? signalRuntimeFallback
+              ? "Runtime Signal Scan"
+              : "Signal Scan Degraded"
+          : signalNoTrackedSymbols
+            ? "Signal Scan No Data"
+          : signalNoFreshSignals
+            ? "Signal Scan No Fresh"
           : signalScanEnabled
             ? "Signal Scan On"
             : "Signal Scan Off"}
@@ -845,10 +908,44 @@ export const HeaderBroadcastScrollerStack = memo(({
       <div style={{ height: dim(7) }} />
       <HeaderLaneInfoRow label="Visible" value={signalItems.length} />
       <HeaderLaneInfoRow
+        label="Tracked"
+        value={signalStateSummary.total}
+        tone={signalNoTrackedSymbols ? T.amber : T.textSec}
+      />
+      <HeaderLaneInfoRow
+        label="Fresh"
+        value={
+          signalStateSummary.total
+            ? `${signalStateSummary.fresh}/${signalStateSummary.total}`
+            : MISSING_VALUE
+        }
+        tone={signalNoFreshSignals ? T.amber : T.textSec}
+      />
+      <HeaderLaneInfoRow
+        label="Timeframe"
+        value={signalSnapshot?.profile?.timeframe || MISSING_VALUE}
+      />
+      <HeaderLaneInfoRow
+        label="Fresh Bars"
+        value={signalSnapshot?.profile?.freshWindowBars ?? MISSING_VALUE}
+      />
+      <HeaderLaneInfoRow
+        label="Max"
+        value={signalSnapshot?.profile?.maxSymbols ?? MISSING_VALUE}
+      />
+      <HeaderLaneInfoRow
         label="State"
         value={
           signalHasError
             ? "Error"
+            : signalDegraded
+              ? signalRuntimeFallback
+                ? "Runtime-only"
+                : "Degraded"
+            : signalNoTrackedSymbols
+              ? "No data"
+            : signalNoFreshSignals
+              ? "No fresh"
             : signalBusy
               ? "Evaluating"
               : signalScanEnabled

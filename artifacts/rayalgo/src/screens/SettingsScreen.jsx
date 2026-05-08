@@ -97,6 +97,12 @@ const SETTINGS_TABS = [
 ];
 
 const SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+const SIGNAL_MONITOR_LIMITS = Object.freeze({
+  pollIntervalSeconds: { min: 15, max: 3600 },
+  maxSymbols: { min: 1, max: 250 },
+  evaluationConcurrency: { min: 1, max: 10 },
+  freshWindowBars: { min: 1, max: 20 },
+});
 const FLOW_FILTERS = ["all", "calls", "puts", "unusual", "golden", "sweep", "block", "cluster"];
 const FLOW_SORT_OPTIONS = ["time", "premium", "score", "ratio", "ticker"];
 const FLOW_DENSITY_OPTIONS = ["compact", "comfortable"];
@@ -2175,10 +2181,10 @@ function SignalMonitorSettingsPanel({ watchlists }) {
             </label>
             <SelectField label="Timeframe" value={draft.timeframe} onChange={(value) => monitor.patchDraft({ timeframe: value })} options={SIGNAL_TIMEFRAMES} />
             <SelectField label="Watchlist" value={draft.watchlistId || ""} onChange={(value) => monitor.patchDraft({ watchlistId: value || null })} options={watchlistOptions} />
-            <NumberField label="Poll Seconds" value={draft.pollIntervalSeconds} min={15} max={3600} onChange={(value) => monitor.patchDraft({ pollIntervalSeconds: value })} />
-            <NumberField label="Max Symbols" value={draft.maxSymbols} min={1} max={500} onChange={(value) => monitor.patchDraft({ maxSymbols: value })} />
-            <NumberField label="Concurrency" value={draft.evaluationConcurrency} min={1} max={16} onChange={(value) => monitor.patchDraft({ evaluationConcurrency: value })} />
-            <NumberField label="Fresh Bars" value={draft.freshWindowBars} min={1} max={100} onChange={(value) => monitor.patchDraft({ freshWindowBars: value })} />
+            <NumberField label="Poll Seconds" value={draft.pollIntervalSeconds} {...SIGNAL_MONITOR_LIMITS.pollIntervalSeconds} onChange={(value) => monitor.patchDraft({ pollIntervalSeconds: value })} />
+            <NumberField label="Max Symbols" value={draft.maxSymbols} {...SIGNAL_MONITOR_LIMITS.maxSymbols} onChange={(value) => monitor.patchDraft({ maxSymbols: value })} />
+            <NumberField label="Concurrency" value={draft.evaluationConcurrency} {...SIGNAL_MONITOR_LIMITS.evaluationConcurrency} onChange={(value) => monitor.patchDraft({ evaluationConcurrency: value })} />
+            <NumberField label="Fresh Bars" value={draft.freshWindowBars} {...SIGNAL_MONITOR_LIMITS.freshWindowBars} onChange={(value) => monitor.patchDraft({ freshWindowBars: value })} />
           </div>
         )}
       </Panel>

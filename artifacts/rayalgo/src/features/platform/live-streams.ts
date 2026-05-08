@@ -1675,10 +1675,33 @@ export const useIbkrAccountSnapshotStream = ({
       markBrokerStreamEvent("account");
       applyIbkrAccountPayloadToCache(queryClient, payload, { accountId, mode });
     };
+    const handleFreshness = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<{
+        stream?: string;
+        degraded?: boolean;
+        stale?: boolean;
+      }>(event.data);
+      if (
+        !payload ||
+        (payload.stream && payload.stream !== "accounts") ||
+        payload.degraded ||
+        payload.stale
+      ) {
+        return;
+      }
+      markBrokerStreamEvent("account");
+    };
+    const handleReady = () => {
+      markBrokerStreamEvent("account");
+    };
 
     source.addEventListener("accounts", handleAccounts as EventListener);
+    source.addEventListener("freshness", handleFreshness as EventListener);
+    source.addEventListener("ready", handleReady as EventListener);
     return () => {
       source.removeEventListener("accounts", handleAccounts as EventListener);
+      source.removeEventListener("freshness", handleFreshness as EventListener);
+      source.removeEventListener("ready", handleReady as EventListener);
       source.close();
     };
   }, [accountId, enabled, mode, queryClient, streamUrl]);
@@ -1786,10 +1809,33 @@ export const useIbkrOrderSnapshotStream = ({
         );
       }
     };
+    const handleFreshness = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<{
+        stream?: string;
+        degraded?: boolean;
+        stale?: boolean;
+      }>(event.data);
+      if (
+        !payload ||
+        (payload.stream && payload.stream !== "orders") ||
+        payload.degraded ||
+        payload.stale
+      ) {
+        return;
+      }
+      markBrokerStreamEvent("order");
+    };
+    const handleReady = () => {
+      markBrokerStreamEvent("order");
+    };
 
     source.addEventListener("orders", handleOrders as EventListener);
+    source.addEventListener("freshness", handleFreshness as EventListener);
+    source.addEventListener("ready", handleReady as EventListener);
     return () => {
       source.removeEventListener("orders", handleOrders as EventListener);
+      source.removeEventListener("freshness", handleFreshness as EventListener);
+      source.removeEventListener("ready", handleReady as EventListener);
       source.close();
     };
   }, [accountId, enabled, mode, queryClient, streamUrl]);

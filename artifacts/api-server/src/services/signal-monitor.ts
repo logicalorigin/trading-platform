@@ -23,7 +23,7 @@ import {
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
-import { getBars, listWatchlists } from "./platform";
+import { getBars, listWatchlists, listWatchlistsRuntimeFallback } from "./platform";
 
 export type SignalMonitorTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe | "2m";
@@ -57,6 +57,7 @@ const SIGNAL_MONITOR_DB_UNAVAILABLE_MESSAGE =
 const SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE =
   "Postgres is unavailable; using runtime-only signal monitor evaluation.";
 const SIGNAL_MONITOR_DB_UNAVAILABLE_CODE = "signal_monitor_db_unavailable";
+const SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_TTL_MS = 10_000;
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<RuntimeMode, DbSignalMonitorProfile>();
 const TIMEFRAME_MS: Record<SignalMonitorMatrixTimeframe, number> = {
@@ -231,6 +232,57 @@ function eventToResponse(event: DbSignalMonitorEvent) {
 type SignalMonitorEventResponse = ReturnType<typeof eventToResponse>;
 
 const runtimeSignalMonitorEvents = new Map<RuntimeMode, SignalMonitorEventResponse[]>();
+const runtimeSignalMonitorEvaluationCache = new Map<
+  string,
+  { expiresAt: number; value: unknown }
+>();
+const runtimeSignalMonitorEvaluationInFlight = new Map<string, Promise<unknown>>();
+
+async function withRuntimeSignalMonitorEvaluationCache<T>(
+  key: string,
+  factory: () => Promise<T>,
+): Promise<T> {
+  const nowMs = Date.now();
+  const cached = runtimeSignalMonitorEvaluationCache.get(key);
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.value as T;
+  }
+
+  const inFlight = runtimeSignalMonitorEvaluationInFlight.get(key);
+  if (inFlight) {
+    return inFlight as Promise<T>;
+  }
+
+  const request = factory().then((value) => {
+    runtimeSignalMonitorEvaluationCache.set(key, {
+      value,
+      expiresAt: Date.now() + SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_TTL_MS,
+    });
+    return value;
+  });
+  runtimeSignalMonitorEvaluationInFlight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (runtimeSignalMonitorEvaluationInFlight.get(key) === request) {
+      runtimeSignalMonitorEvaluationInFlight.delete(key);
+    }
+  }
+}
+
+function clearRuntimeSignalMonitorEvaluationCache(environment: RuntimeMode): void {
+  const prefix = `runtime-signal:${environment}:`;
+  for (const key of runtimeSignalMonitorEvaluationCache.keys()) {
+    if (key.startsWith(prefix)) {
+      runtimeSignalMonitorEvaluationCache.delete(key);
+    }
+  }
+  for (const key of runtimeSignalMonitorEvaluationInFlight.keys()) {
+    if (key.startsWith(prefix)) {
+      runtimeSignalMonitorEvaluationInFlight.delete(key);
+    }
+  }
+}
 
 function warnSignalMonitorDbUnavailable(error: unknown): void {
   signalMonitorReadDbBackoff.markFailure({
@@ -323,7 +375,12 @@ async function updateRuntimeSignalMonitorProfile(input: {
   }
   if (Object.hasOwn(input, "watchlistId")) {
     if (input.watchlistId) {
-      await assertWatchlistExists(input.watchlistId);
+      const { watchlists } = listWatchlistsRuntimeFallback();
+      if (!watchlists.some((watchlist) => watchlist.id === input.watchlistId)) {
+        throw new HttpError(404, "Watchlist not found.", {
+          code: "watchlist_not_found",
+        });
+      }
     }
     updated.watchlistId = input.watchlistId ?? null;
   }
@@ -357,6 +414,7 @@ async function updateRuntimeSignalMonitorProfile(input: {
   }
 
   runtimeSignalMonitorProfiles.set(input.environment, updated);
+  clearRuntimeSignalMonitorEvaluationCache(input.environment);
   return updated;
 }
 
@@ -1301,20 +1359,13 @@ function recordRuntimeSignalEvents(input: {
   evaluatedAt: Date;
   mode: EvaluationMode;
 }) {
-  if (input.mode !== "incremental") {
-    return;
-  }
-
   const current = runtimeSignalMonitorEvents.get(input.profile.environment) ?? [];
   const events = [...current];
   const existingIds = new Set(events.map((event) => event.id));
 
   for (const state of input.states) {
-    if (
-      state.fresh !== true ||
-      !state.currentSignalDirection ||
-      !state.currentSignalAt
-    ) {
+    const signalAt = dateOrNull(state.currentSignalAt);
+    if (!state.currentSignalDirection || !signalAt) {
       continue;
     }
 
@@ -1324,7 +1375,7 @@ function recordRuntimeSignalEvents(input: {
       state.symbol,
       state.timeframe,
       state.currentSignalDirection,
-      state.currentSignalAt.getTime(),
+      signalAt.getTime(),
     ].join(":");
     if (existingIds.has(id)) {
       continue;
@@ -1337,7 +1388,7 @@ function recordRuntimeSignalEvents(input: {
       symbol: state.symbol,
       timeframe: state.timeframe as SignalMonitorTimeframe,
       direction: state.currentSignalDirection,
-      signalAt: state.currentSignalAt,
+      signalAt,
       signalPrice: state.currentSignalPrice,
       close: null,
       emittedAt: input.evaluatedAt,
@@ -1345,6 +1396,9 @@ function recordRuntimeSignalEvents(input: {
       payload: {
         latestBarAt: state.latestBarAt?.toISOString() ?? null,
         barsSinceSignal: state.barsSinceSignal,
+        fresh: state.fresh,
+        mode: input.mode,
+        status: state.status,
         storage: "runtime-only",
       },
     });
@@ -1369,7 +1423,7 @@ function filterRuntimeSignalMonitorEvents(input: {
 async function resolveRuntimeSignalMonitorProfileUniverse(
   profile: DbSignalMonitorProfile,
 ) {
-  const { watchlists } = await listWatchlists();
+  const { watchlists } = listWatchlistsRuntimeFallback();
   const watchlist =
     profile.watchlistId
       ? watchlists.find((candidate) => candidate.id === profile.watchlistId) ?? null
@@ -1395,39 +1449,63 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
 }) {
   let profile = getRuntimeSignalMonitorProfile(input.environment);
   if (Object.hasOwn(input, "watchlistId")) {
+    if (input.watchlistId) {
+      const { watchlists } = listWatchlistsRuntimeFallback();
+      if (!watchlists.some((watchlist) => watchlist.id === input.watchlistId)) {
+        throw new HttpError(404, "Watchlist not found.", {
+          code: "watchlist_not_found",
+        });
+      }
+    }
     profile = await updateRuntimeSignalMonitorProfile({
       environment: input.environment,
       watchlistId: input.watchlistId ?? null,
     });
   }
 
-  const evaluatedAt = new Date();
   const mode = input.mode ?? "incremental";
-  const timeframe = resolveSignalMonitorTimeframe(profile.timeframe);
-  const universe = await resolveRuntimeSignalMonitorProfileUniverse(profile);
-  const states = await evaluateRuntimeSymbolsInBatches({
-    profile,
-    symbols: universe.symbols,
-    timeframe,
-    evaluatedAt,
+  const cacheKey = [
+    "runtime-signal",
+    input.environment,
+    "profile",
+    mode,
+    profile.id,
+    profile.watchlistId ?? "default",
+    profile.timeframe,
+    profile.maxSymbols,
+    profile.evaluationConcurrency,
+    profile.freshWindowBars,
+    JSON.stringify(asRecord(profile.rayReplicaSettings)),
+  ].join(":");
+
+  return withRuntimeSignalMonitorEvaluationCache(cacheKey, async () => {
+    const evaluatedAt = new Date();
+    const timeframe = resolveSignalMonitorTimeframe(profile.timeframe);
+    const universe = await resolveRuntimeSignalMonitorProfileUniverse(profile);
+    const states = await evaluateRuntimeSymbolsInBatches({
+      profile,
+      symbols: universe.symbols,
+      timeframe,
+      evaluatedAt,
+    });
+    recordRuntimeSignalEvents({ profile, states, evaluatedAt, mode });
+
+    const updatedProfile: DbSignalMonitorProfile = {
+      ...profile,
+      lastEvaluatedAt: evaluatedAt,
+      lastError: SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE,
+      updatedAt: evaluatedAt,
+    };
+    runtimeSignalMonitorProfiles.set(input.environment, updatedProfile);
+
+    return {
+      profile: profileToResponse(updatedProfile),
+      states,
+      evaluatedAt,
+      truncated: universe.truncated,
+      skippedSymbols: universe.skippedSymbols,
+    };
   });
-  recordRuntimeSignalEvents({ profile, states, evaluatedAt, mode });
-
-  const updatedProfile: DbSignalMonitorProfile = {
-    ...profile,
-    lastEvaluatedAt: evaluatedAt,
-    lastError: SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE,
-    updatedAt: evaluatedAt,
-  };
-  runtimeSignalMonitorProfiles.set(input.environment, updatedProfile);
-
-  return {
-    profile: profileToResponse(updatedProfile),
-    states,
-    evaluatedAt,
-    truncated: universe.truncated,
-    skippedSymbols: universe.skippedSymbols,
-  };
 }
 
 async function evaluateSignalMonitorMatrixRuntime(input: {
@@ -1437,7 +1515,7 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
   timeframes?: string[];
 }) {
   const profile = getRuntimeSignalMonitorProfile(input.environment);
-  const { watchlists } = await listWatchlists();
+  const { watchlists } = listWatchlistsRuntimeFallback();
   if (
     input.watchlistId &&
     !watchlists.some((watchlist) => watchlist.id === input.watchlistId)
@@ -1455,36 +1533,51 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     maxSymbols,
   });
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
-  const evaluatedAt = new Date();
-  const concurrency = positiveInteger(profile.evaluationConcurrency, 3, 1, 10);
-  const tasks = symbols.flatMap((symbol) =>
-    timeframes.map((timeframe) => ({ symbol, timeframe })),
-  );
-  const states = [];
+  const cacheKey = [
+    "runtime-signal",
+    input.environment,
+    "matrix",
+    profile.id,
+    input.watchlistId ?? "default",
+    [...symbols].sort().join(","),
+    timeframes.join(","),
+    profile.evaluationConcurrency,
+    profile.freshWindowBars,
+    JSON.stringify(asRecord(profile.rayReplicaSettings)),
+  ].join(":");
 
-  for (let index = 0; index < tasks.length; index += concurrency) {
-    const batch = tasks.slice(index, index + concurrency);
-    const batchStates = await Promise.all(
-      batch.map((task) =>
-        evaluateSignalMonitorMatrixItem({
-          profile,
-          symbol: task.symbol,
-          timeframe: task.timeframe,
-          evaluatedAt,
-        }),
-      ),
+  return withRuntimeSignalMonitorEvaluationCache(cacheKey, async () => {
+    const evaluatedAt = new Date();
+    const concurrency = positiveInteger(profile.evaluationConcurrency, 3, 1, 10);
+    const tasks = symbols.flatMap((symbol) =>
+      timeframes.map((timeframe) => ({ symbol, timeframe })),
     );
-    states.push(...batchStates);
-  }
+    const states = [];
 
-  return {
-    profile: profileToResponse(profile),
-    states,
-    evaluatedAt,
-    timeframes,
-    truncated,
-    skippedSymbols,
-  };
+    for (let index = 0; index < tasks.length; index += concurrency) {
+      const batch = tasks.slice(index, index + concurrency);
+      const batchStates = await Promise.all(
+        batch.map((task) =>
+          evaluateSignalMonitorMatrixItem({
+            profile,
+            symbol: task.symbol,
+            timeframe: task.timeframe,
+            evaluatedAt,
+          }),
+        ),
+      );
+      states.push(...batchStates);
+    }
+
+    return {
+      profile: profileToResponse(profile),
+      states,
+      evaluatedAt,
+      timeframes,
+      truncated,
+      skippedSymbols,
+    };
+  });
 }
 
 export async function evaluateSignalMonitorMatrix(input: {

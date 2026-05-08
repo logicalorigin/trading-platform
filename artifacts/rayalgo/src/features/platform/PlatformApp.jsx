@@ -100,6 +100,7 @@ import {
 } from "./signalMonitorStore";
 import {
   isSignalMonitorDegradedProfile,
+  isSignalMonitorRuntimeFallbackProfile,
 } from "./signalMonitorStatusModel";
 import {
   buildWatchlistIdentityPayload,
@@ -1282,9 +1283,13 @@ export default function PlatformApp() {
     signalMonitorProfileDegraded ||
       isSignalMonitorDegradedProfile(signalMonitorStateQuery.data?.profile),
   );
+  const signalMonitorRuntimeFallback = Boolean(
+    isSignalMonitorRuntimeFallbackProfile(signalMonitorProfile) ||
+      isSignalMonitorRuntimeFallbackProfile(signalMonitorStateQuery.data?.profile),
+  );
   useRuntimeWorkloadFlag(
     "signal-monitor:display",
-    Boolean(pageVisible && signalMonitorProfile?.enabled && !signalMonitorDegraded),
+    Boolean(pageVisible && signalMonitorProfile?.enabled),
     {
       kind: "poll",
       label: "Signal display",
@@ -1957,7 +1962,7 @@ export default function PlatformApp() {
             signalScanPending={updateSignalMonitorProfileMutation.isPending}
             signalEvaluationPending={evaluateSignalMonitorMutation.isPending}
             signalScanErrored={Boolean(
-              signalMonitorDegraded ||
+              (!signalMonitorRuntimeFallback && signalMonitorDegraded) ||
                 (signalMonitorProfile?.enabled &&
                   (signalMonitorStateQuery.isError ||
                     signalMonitorEventsQuery.isError ||

@@ -321,6 +321,9 @@ test("settings signal monitor uses generated API ownership path", () => {
   assert.match(source, /useListSignalMonitorEvents/);
   assert.match(source, /useUpdateSignalMonitorProfile/);
   assert.match(source, /useEvaluateSignalMonitor/);
+  assert.match(source, /maxSymbols:\s*\{\s*min:\s*1,\s*max:\s*250\s*\}/);
+  assert.match(source, /freshWindowBars:\s*\{\s*min:\s*1,\s*max:\s*20\s*\}/);
+  assert.match(source, /evaluationConcurrency:\s*\{\s*min:\s*1,\s*max:\s*10\s*\}/);
   assert.doesNotMatch(source, /fetch\("\/api\/signal-monitor/);
 });
 

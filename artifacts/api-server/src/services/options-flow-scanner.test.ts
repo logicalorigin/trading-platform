@@ -301,6 +301,60 @@ test("options flow scanner skips fan-out when transport is unavailable", async (
   assert.deepEqual(scanner.getDiagnostics().lastBatch, ["SPY", "QQQ"]);
 });
 
+test("options flow scanner lists cached snapshots across symbols", async () => {
+  let currentMs = Date.parse("2026-05-08T14:30:00.000Z");
+  const scanner = createOptionsFlowScanner({
+    now: () => currentMs,
+    snapshotTtlMs: 60_000,
+    snapshotStaleTtlMs: 300_000,
+    getTransport: async () => ({
+      transport: "tws",
+      connected: true,
+      configured: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+    }),
+    fetchSymbol: async ({ symbol }) => ({ events: [{ symbol }] }),
+  });
+
+  scanner.storeSnapshot(
+    "spy",
+    { limit: 3, unusualThreshold: 1, lineBudget: 3 },
+    { events: [{ symbol: "SPY" }] },
+  );
+  scanner.storeSnapshot(
+    "qqq",
+    { limit: 3, unusualThreshold: 1, lineBudget: 3 },
+    { events: [{ symbol: "QQQ" }] },
+  );
+  scanner.storeSnapshot(
+    "iwm",
+    { limit: 3, unusualThreshold: 2, lineBudget: 3 },
+    { events: [{ symbol: "IWM" }] },
+  );
+
+  assert.deepEqual(
+    scanner
+      .listSnapshots({ limit: 3, unusualThreshold: 1, lineBudget: 3 })
+      .map((snapshot) => snapshot.symbol)
+      .sort(),
+    ["QQQ", "SPY"],
+  );
+
+  currentMs += 90_000;
+  assert.deepEqual(
+    scanner
+      .listSnapshots({
+        limit: 5,
+        unusualThreshold: 1,
+        lineBudget: 5,
+        allowPartial: true,
+      })
+      .map((snapshot) => snapshot.freshness),
+    ["stale", "stale"],
+  );
+});
+
 test("options flow scanner waits for an authenticated live Gateway", async () => {
   let fetchCalls = 0;
   const scanner = createOptionsFlowScanner({

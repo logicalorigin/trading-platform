@@ -34,8 +34,10 @@ import {
   isVisibleFlowDegradationSource,
   shouldPreserveFlowEvents,
 } from "./flowSourceState";
+import { platformJsonRequest } from "./platformJsonRequest";
 
 const FLOW_SCANNER_UNIVERSE_QUERY_KEY = ["/api/flow/universe"];
+const FLOW_SCANNER_AGGREGATE_QUERY_KEY = ["/api/flow/events/aggregate"];
 
 const normalizeFlowUniverseSymbols = (symbols = []) => [
   ...new Set(
@@ -51,6 +53,34 @@ const fetchFlowScannerUniverse = async () => {
     symbols: normalizeFlowUniverseSymbols(payload?.symbols),
     coverage: payload?.coverage || null,
   };
+};
+
+const appendOptionalFlowParam = (params, name, value) => {
+  if (value !== undefined && value !== null && value !== "") {
+    params.set(name, String(value));
+  }
+};
+
+const fetchAggregateFlowEvents = async ({
+  limit,
+  scope,
+  unusualThreshold,
+  lineBudget,
+  minPremium,
+  maxDte,
+}) => {
+  const params = new URLSearchParams();
+  appendOptionalFlowParam(params, "limit", limit);
+  appendOptionalFlowParam(params, "scope", scope);
+  appendOptionalFlowParam(params, "unusualThreshold", unusualThreshold);
+  appendOptionalFlowParam(params, "lineBudget", lineBudget);
+  appendOptionalFlowParam(params, "minPremium", minPremium);
+  appendOptionalFlowParam(params, "maxDte", maxDte);
+  const query = params.toString();
+  return platformJsonRequest(
+    `/api/flow/events/aggregate${query ? `?${query}` : ""}`,
+    { timeoutMs: 4_000 },
+  );
 };
 
 let liveMarketFlowInstanceCounter = 0;
@@ -211,6 +241,62 @@ export const useLiveMarketFlow = (
     lastBatch: [],
     lastError: null,
   });
+  const aggregateFlowQuery = useQuery({
+    queryKey: [
+      ...FLOW_SCANNER_AGGREGATE_QUERY_KEY,
+      effectiveLimit,
+      effectiveScannerConfig.scope,
+      normalizedThreshold,
+      effectiveLineBudget ?? null,
+      effectiveMinPremium ?? null,
+      effectiveMaxDte ?? null,
+      shouldPrioritizeRuntimeSignals,
+    ],
+    queryFn: () =>
+      fetchAggregateFlowEvents({
+        limit: Math.max(effectiveLimit * 4, effectiveLimit),
+        scope: effectiveScannerConfig.scope,
+        unusualThreshold: normalizedThreshold,
+        lineBudget: effectiveLineBudget,
+        minPremium: effectiveMinPremium,
+        maxDte: effectiveMaxDte,
+      }),
+    enabled: shouldLoadMarketUniverse,
+    staleTime: 2_500,
+    refetchInterval: shouldLoadMarketUniverse
+      ? Math.max(2_500, Math.min(effectiveIntervalMs, 10_000))
+      : false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const [aggregateFlowSnapshot, setAggregateFlowSnapshot] = useState(null);
+
+  useEffect(() => {
+    if (!shouldLoadMarketUniverse) {
+      setAggregateFlowSnapshot(null);
+      return;
+    }
+    if (!aggregateFlowQuery.data) {
+      return;
+    }
+
+    const next = {
+      events: aggregateFlowQuery.data.events || [],
+      source: aggregateFlowQuery.data.source || null,
+      scannedAt: Date.now(),
+      error: null,
+    };
+    setAggregateFlowSnapshot((prev) =>
+      shouldPreserveFlowEvents(prev, next)
+        ? {
+            ...prev,
+            source: next.source,
+            scannedAt: next.scannedAt,
+            error: null,
+          }
+        : next,
+    );
+  }, [aggregateFlowQuery.data, shouldLoadMarketUniverse]);
 
   // Reset rotation + cache when the symbol set changes; drop entries for
   // symbols that are no longer in the watchlist.
@@ -384,17 +470,32 @@ export const useLiveMarketFlow = (
     normalizedThreshold,
   ]);
 
-  const responses = useMemo(
-    () =>
-      Object.entries(scanState.bySymbol).map(([symbol, value]) => ({
+  const responses = useMemo(() => {
+    const symbolResponses = Object.entries(scanState.bySymbol).map(
+      ([symbol, value]) => ({
         symbol,
         events: value.events || [],
         source: value.source || null,
         scannedAt: value.scannedAt || null,
         error: value.error || null,
-      })),
-    [scanState.bySymbol],
-  );
+      }),
+    );
+
+    if (!aggregateFlowSnapshot) {
+      return symbolResponses;
+    }
+
+    return [
+      {
+        symbol: "__aggregate",
+        events: aggregateFlowSnapshot.events || [],
+        source: aggregateFlowSnapshot.source || null,
+        scannedAt: aggregateFlowSnapshot.scannedAt || null,
+        error: aggregateFlowSnapshot.error || null,
+      },
+      ...symbolResponses,
+    ];
+  }, [aggregateFlowSnapshot, scanState.bySymbol]);
   const failures = useMemo(
     () =>
       responses
@@ -407,10 +508,28 @@ export const useLiveMarketFlow = (
         .filter((failure) => flowFailureLooksVisible(failure)),
     [responses],
   );
-  const aggregatedEvents = useMemo(
-    () => responses.flatMap((response) => response.events || []),
-    [responses],
-  );
+  const aggregatedEvents = useMemo(() => {
+    const seen = new Set();
+    return responses.flatMap((response) => response.events || []).filter((event) => {
+      const key =
+        event?.id ||
+        [
+          event?.underlying,
+          event?.optionSymbol || event?.symbol,
+          event?.expirationDate,
+          event?.strike,
+          event?.right,
+          event?.side,
+          event?.occurredAt || event?.updatedAt || event?.timestamp,
+          event?.premium,
+        ].join("|");
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }, [responses]);
 
   const flowEvents = useMemo(() => {
     if (!aggregatedEvents.length) return [];
@@ -439,7 +558,9 @@ export const useLiveMarketFlow = (
   const hasLiveFlow = flowEvents.length > 0;
   const flowStatus = hasLiveFlow
     ? "live"
-    : scanState.isPending || (scanState.isFetching && scanState.cycle === 0)
+    : aggregateFlowQuery.isLoading ||
+        scanState.isPending ||
+        (scanState.isFetching && scanState.cycle === 0)
       ? "loading"
       : failures.length > 0
         ? "offline"

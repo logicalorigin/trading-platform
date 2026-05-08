@@ -246,10 +246,12 @@ function createPollingStream<T>({
   intervalMs,
   fetchSnapshot,
   onSnapshot,
+  onPollSuccess,
 }: {
   intervalMs: number;
   fetchSnapshot: () => Promise<T>;
   onSnapshot: (snapshot: T) => void;
+  onPollSuccess?: (input: { snapshot: T; changed: boolean }) => void | Promise<void>;
 }): Unsubscribe {
   let active = true;
   let inFlight = false;
@@ -269,11 +271,13 @@ function createPollingStream<T>({
       }
 
       const signature = stableStringify(snapshot);
+      const changed = signature !== lastSignature;
 
-      if (signature !== lastSignature) {
+      if (changed) {
         lastSignature = signature;
         onSnapshot(snapshot);
       }
+      await onPollSuccess?.({ snapshot, changed });
     } catch (error) {
       logger.warn({ err: error }, "Bridge stream polling failed");
     } finally {
@@ -658,11 +662,19 @@ export function subscribeOrderSnapshots(
     status?: "pending_submit" | "submitted" | "accepted" | "partially_filled" | "filled" | "canceled" | "rejected" | "expired";
   },
   onSnapshot: (payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> }) => void,
+  options: {
+    onPollSuccess?: (input: {
+      payload: { orders: Awaited<ReturnType<IbkrBridgeClient["listOrders"]>> };
+      changed: boolean;
+    }) => void | Promise<void>;
+  } = {},
 ): Unsubscribe {
   return createPollingStream({
     intervalMs: orderStreamIntervalMs(),
     fetchSnapshot: async () => fetchOrderSnapshotPayload(input),
     onSnapshot,
+    onPollSuccess: ({ snapshot, changed }) =>
+      options.onPollSuccess?.({ payload: snapshot, changed }),
   });
 }
 
@@ -675,11 +687,22 @@ export function subscribeAccountSnapshots(
     accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
     positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
   }) => void,
+  options: {
+    onPollSuccess?: (input: {
+      payload: {
+        accounts: Awaited<ReturnType<IbkrBridgeClient["listAccounts"]>>;
+        positions: Awaited<ReturnType<IbkrBridgeClient["listPositions"]>>;
+      };
+      changed: boolean;
+    }) => void | Promise<void>;
+  } = {},
 ): Unsubscribe {
   return createPollingStream({
     intervalMs: accountStreamIntervalMs(),
     fetchSnapshot: async () => fetchAccountSnapshotPayload(input),
     onSnapshot,
+    onPollSuccess: ({ snapshot, changed }) =>
+      options.onPollSuccess?.({ payload: snapshot, changed }),
   });
 }
 

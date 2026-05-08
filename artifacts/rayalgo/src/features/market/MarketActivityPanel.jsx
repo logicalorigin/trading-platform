@@ -37,7 +37,10 @@ import {
   buildMarketActivityLanes,
   normalizeSignalMonitorTimeframe,
 } from "../platform/marketActivityLaneModel";
-import { isSignalMonitorDegradedProfile } from "../platform/signalMonitorStatusModel";
+import {
+  isSignalMonitorDegradedProfile,
+  isSignalMonitorRuntimeFallbackProfile,
+} from "../platform/signalMonitorStatusModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -774,6 +777,9 @@ export const MarketActivityPanel = ({
   const monitorDegraded = Boolean(
     signalMonitorDegraded || isSignalMonitorDegradedProfile(signalMonitorProfile),
   );
+  const monitorRuntimeFallback = isSignalMonitorRuntimeFallbackProfile(
+    signalMonitorProfile,
+  );
   const lanes = useMemo(
     () =>
       buildMarketActivityLanes({
@@ -805,6 +811,8 @@ export const MarketActivityPanel = ({
   ).length;
   const monitorMeta = signalMonitorPending
     ? "SCANNING"
+    : monitorRuntimeFallback
+      ? "RUNTIME"
     : monitorDegraded
       ? "DEGRADED"
     : signalMonitorProfile?.enabled
@@ -948,14 +956,18 @@ export const MarketActivityPanel = ({
                 Icon={Power}
                 active={Boolean(signalMonitorProfile?.enabled && !monitorDegraded)}
                 tone={
-                  monitorDegraded
+                  monitorRuntimeFallback
+                    ? T.amber
+                    : monitorDegraded
                     ? T.red
                     : signalMonitorProfile?.enabled
                       ? T.green
                       : T.textDim
                 }
                 label={
-                  monitorDegraded
+                  monitorRuntimeFallback
+                    ? "Signal monitor runtime fallback"
+                    : monitorDegraded
                     ? "Signal monitor degraded"
                     : "Toggle signal monitor"
                 }

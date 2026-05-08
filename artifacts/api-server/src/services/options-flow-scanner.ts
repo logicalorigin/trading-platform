@@ -170,6 +170,44 @@ function isTransientEmptySource(
   return status === "empty" && provider !== "ibkr" && ibkrStatus !== "loaded";
 }
 
+function snapshotSatisfiesRequest<TEvent>(
+  snapshot: StoredSnapshot<TEvent>,
+  request: OptionsFlowScannerRequest,
+): boolean {
+  if (
+    !request.allowPartial &&
+    snapshot.requestedLimit < request.limit &&
+    snapshot.events.length >= snapshot.requestedLimit
+  ) {
+    return false;
+  }
+
+  const requestedLineBudget = normalizeLineBudget(request.lineBudget);
+  return !(
+    !request.allowPartial &&
+    requestedLineBudget !== null &&
+    snapshot.requestedLineBudget !== null &&
+    snapshot.requestedLineBudget < requestedLineBudget
+  );
+}
+
+function snapshotToResponse<TEvent>(
+  snapshot: StoredSnapshot<TEvent>,
+  request: OptionsFlowScannerRequest,
+  currentMs: number,
+): OptionsFlowScannerSnapshot<TEvent> {
+  return {
+    symbol: snapshot.symbol,
+    events: snapshot.events.slice(0, request.limit),
+    source: snapshot.source,
+    scannedAt: new Date(snapshot.scannedAtMs),
+    transport: snapshot.transport,
+    status: snapshot.status,
+    error: snapshot.error,
+    freshness: snapshot.expiresAtMs > currentMs ? "fresh" : "stale",
+  };
+}
+
 function uniqueSymbols(
   symbols: readonly string[],
   normalizeSymbol: (symbol: string) => string,
@@ -502,44 +540,53 @@ export function createOptionsFlowScanner<TEvent>(
     request: OptionsFlowScannerRequest,
   ): OptionsFlowScannerSnapshot<TEvent> | null {
     const symbol = normalizeSymbol(symbolInput);
-    const snapshot = snapshots.get(keyFor(symbol, request.unusualThreshold));
+    const key = keyFor(symbol, request.unusualThreshold);
+    const snapshot = snapshots.get(key);
     if (!snapshot) {
       return null;
     }
 
     const current = now();
     if (snapshot.staleExpiresAtMs <= current) {
-      snapshots.delete(keyFor(symbol, request.unusualThreshold));
+      snapshots.delete(key);
       return null;
     }
 
-    if (
-      !request.allowPartial &&
-      snapshot.requestedLimit < request.limit &&
-      snapshot.events.length >= snapshot.requestedLimit
-    ) {
-      return null;
-    }
-    const requestedLineBudget = normalizeLineBudget(request.lineBudget);
-    if (
-      !request.allowPartial &&
-      requestedLineBudget !== null &&
-      snapshot.requestedLineBudget !== null &&
-      snapshot.requestedLineBudget < requestedLineBudget
-    ) {
+    if (!snapshotSatisfiesRequest(snapshot, request)) {
       return null;
     }
 
-    return {
-      symbol: snapshot.symbol,
-      events: snapshot.events.slice(0, request.limit),
-      source: snapshot.source,
-      scannedAt: new Date(snapshot.scannedAtMs),
-      transport: snapshot.transport,
-      status: snapshot.status,
-      error: snapshot.error,
-      freshness: snapshot.expiresAtMs > current ? "fresh" : "stale",
-    };
+    return snapshotToResponse(snapshot, request, current);
+  }
+
+  function listSnapshots(
+    request: OptionsFlowScannerRequest,
+  ): OptionsFlowScannerSnapshot<TEvent>[] {
+    const current = now();
+    const results: OptionsFlowScannerSnapshot<TEvent>[] = [];
+
+    for (const [key, snapshot] of snapshots.entries()) {
+      if (snapshot.staleExpiresAtMs <= current) {
+        snapshots.delete(key);
+        continue;
+      }
+      if (key !== keyFor(snapshot.symbol, request.unusualThreshold)) {
+        continue;
+      }
+      if (!snapshotSatisfiesRequest(snapshot, request)) {
+        continue;
+      }
+      results.push(snapshotToResponse(snapshot, request, current));
+    }
+
+    return results.sort((left, right) => {
+      const freshness =
+        Number(right.freshness === "fresh") - Number(left.freshness === "fresh");
+      if (freshness !== 0) {
+        return freshness;
+      }
+      return right.scannedAt.getTime() - left.scannedAt.getTime();
+    });
   }
 
   function startRotation(input: {
@@ -666,6 +713,7 @@ export function createOptionsFlowScanner<TEvent>(
     getDiagnostics,
     getMaxConcurrency,
     getSnapshot,
+    listSnapshots,
     requestScan,
     runOnce,
     reset,

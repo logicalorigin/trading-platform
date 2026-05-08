@@ -616,6 +616,10 @@ function buildBuiltInWatchlistSnapshot(): { watchlists: WatchlistRecord[] } {
   };
 }
 
+export function listWatchlistsRuntimeFallback() {
+  return buildBuiltInWatchlistSnapshot();
+}
+
 async function listWatchlistsFromDb() {
   return mapWatchlistRows(await selectWatchlistRows());
 }
@@ -8089,6 +8093,205 @@ export function getOptionsFlowUniverse() {
     coverage: getOptionsFlowUniverseCoverage(),
     symbols: orderedLaneResolution.admittedSymbols,
     sources,
+  };
+}
+
+function flowEventDateMs(value: unknown): number {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+  return 0;
+}
+
+function flowEventNumber(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function flowEventAggregateIdentity(event: unknown): string {
+  const record = event && typeof event === "object"
+    ? (event as Record<string, unknown>)
+    : {};
+  const id = String(record.id || "").trim();
+  if (id) {
+    return id;
+  }
+
+  return [
+    record.underlying,
+    record.optionSymbol ?? record.symbol,
+    record.expirationDate,
+    record.strike,
+    record.right,
+    record.side,
+    record.occurredAt ?? record.updatedAt ?? record.timestamp,
+    record.premium,
+  ]
+    .map((part) => String(part ?? ""))
+    .join("|");
+}
+
+function compareAggregateFlowEvents(left: unknown, right: unknown): number {
+  const leftRecord = left && typeof left === "object"
+    ? (left as Record<string, unknown>)
+    : {};
+  const rightRecord = right && typeof right === "object"
+    ? (right as Record<string, unknown>)
+    : {};
+
+  const leftUnusual = Boolean(leftRecord.isUnusual);
+  const rightUnusual = Boolean(rightRecord.isUnusual);
+  if (leftUnusual !== rightUnusual) {
+    return leftUnusual ? -1 : 1;
+  }
+
+  const unusualScore =
+    flowEventNumber(rightRecord.unusualScore) -
+    flowEventNumber(leftRecord.unusualScore);
+  if (unusualScore !== 0) {
+    return unusualScore;
+  }
+
+  const premium =
+    flowEventNumber(rightRecord.premium) - flowEventNumber(leftRecord.premium);
+  if (premium !== 0) {
+    return premium;
+  }
+
+  return (
+    flowEventDateMs(rightRecord.occurredAt ?? rightRecord.updatedAt) -
+    flowEventDateMs(leftRecord.occurredAt ?? leftRecord.updatedAt)
+  );
+}
+
+export async function listAggregateFlowEvents(input: {
+  limit?: number;
+  scope?: FlowEventsScope;
+  minPremium?: number;
+  maxDte?: number;
+  unusualThreshold?: number;
+  lineBudget?: number;
+} = {}): Promise<FlowEventsResult> {
+  const limit = Math.max(1, Math.min(input.limit ?? 100, 1_000));
+  const unusualThreshold =
+    Number.isFinite(input.unusualThreshold) && (input.unusualThreshold ?? 0) > 0
+      ? Math.min(100, Math.max(0.1, input.unusualThreshold as number))
+      : undefined;
+  const filters = normalizeFlowEventsFilters(input);
+  const runtimeConfig = getOptionsFlowRuntimeConfig();
+  const requestedLineBudget =
+    Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0
+      ? Math.max(
+          1,
+          Math.min(
+            Math.floor(input.lineBudget as number),
+            runtimeConfig.scannerLineBudget,
+          ),
+        )
+      : Math.max(
+          1,
+          Math.min(runtimeConfig.radarDeepLineBudget, runtimeConfig.scannerLineBudget),
+        );
+  const snapshotLimit = Math.max(
+    1,
+    Math.min(limit, runtimeConfig.scannerLimit, requestedLineBudget),
+  );
+  const scannerCoverage = getOptionsFlowUniverseCoverage();
+
+  if (!runtimeConfig.scannerEnabled) {
+    return {
+      events: [],
+      source: flowSource({
+        provider: "none",
+        status: "empty",
+        unusualThreshold: unusualThreshold ?? 1,
+        ibkrStatus: "empty",
+        ibkrReason: "options_flow_scanner_disabled",
+        scannerCoverage,
+      }),
+    };
+  }
+
+  const scannerRequest = {
+    limit: snapshotLimit,
+    unusualThreshold,
+    lineBudget: requestedLineBudget,
+    allowPartial: true,
+  };
+  const snapshots = optionsFlowScanner.listSnapshots(scannerRequest);
+  let queuedSeedRefresh = false;
+  if (snapshots.length === 0) {
+    const diagnostics = optionsFlowScanner.getDiagnostics();
+    const seedSymbols = (scannerCoverage.currentBatch ?? [])
+      .map((symbol) => normalizeSymbol(String(symbol || "")))
+      .filter(Boolean)
+      .slice(0, Math.max(1, runtimeConfig.scannerBatchSize));
+    if (
+      seedSymbols.length > 0 &&
+      diagnostics.queuedCount === 0 &&
+      !diagnostics.draining
+    ) {
+      queuedSeedRefresh = true;
+      optionsFlowScanner.requestScan(seedSymbols, scannerRequest).catch((error) => {
+        logger.warn(
+          { err: error, symbols: seedSymbols, phase: "aggregate-seed" },
+          "Failed to queue aggregate options flow scanner refresh",
+        );
+      });
+    }
+  }
+  const seenEvents = new Set<string>();
+  const events = snapshots
+    .flatMap((snapshot) => snapshot.events)
+    .filter((event) => {
+      const identity = flowEventAggregateIdentity(event);
+      if (!identity || seenEvents.has(identity)) {
+        return false;
+      }
+      seenEvents.add(identity);
+      return true;
+    })
+    .sort(compareAggregateFlowEvents);
+  const filteredEvents = filterFlowEventsForRequest(
+    events,
+    filters,
+    unusualThreshold,
+    limit,
+  );
+  const freshSnapshots = snapshots.filter(
+    (snapshot) => snapshot.freshness === "fresh",
+  ).length;
+  const staleSnapshots = snapshots.length - freshSnapshots;
+  const sourceStatus = filteredEvents.length
+    ? freshSnapshots > 0
+      ? "live"
+      : "fallback"
+    : "empty";
+
+  return {
+    events: filteredEvents,
+    source: flowSource({
+      provider: filteredEvents.length ? "ibkr" : "none",
+      status: sourceStatus,
+      fallbackUsed: staleSnapshots > 0 || Boolean(scannerCoverage.fallbackUsed),
+      attemptedProviders: ["ibkr"],
+      unusualThreshold: unusualThreshold ?? 1,
+      ibkrStatus: filteredEvents.length ? "loaded" : "empty",
+      ibkrReason:
+        filteredEvents.length > 0
+          ? scannerCoverage.degradedReason
+          : queuedSeedRefresh
+            ? "options_flow_scanner_queued"
+            : scannerCoverage.lastScanAt
+            ? "options_flow_scanner_no_cached_events"
+            : "options_flow_scanner_snapshot_pending",
+      scannerCoverage,
+    }),
   };
 }
 
