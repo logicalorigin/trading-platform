@@ -1,4 +1,4 @@
-import { pool } from "@workspace/db";
+import { describeDatabaseRuntimeConnection, pool } from "@workspace/db";
 import {
   isTransientPostgresError,
   summarizeTransientPostgresError,
@@ -6,9 +6,15 @@ import {
 } from "../lib/transient-db-error";
 
 export type StorageHealthStatus = "ok" | "degraded" | "unavailable";
+export type StorageHealthSource =
+  | "workspace-local-postgres"
+  | "replit-internal-dev-db"
+  | "external-postgres";
 
 export type StorageHealthSnapshot = {
-  source: "replit-internal-dev-db";
+  source: StorageHealthSource | null;
+  sourceEnv: "LOCAL_DATABASE_URL" | "DATABASE_URL" | null;
+  overrideActive: boolean;
   configured: boolean;
   status: StorageHealthStatus;
   reachable: boolean;
@@ -36,7 +42,6 @@ function nowIso(): string {
 
 function describeDatabaseUrl(): Omit<
   StorageHealthSnapshot,
-  | "source"
   | "status"
   | "reachable"
   | "checkedAt"
@@ -46,48 +51,7 @@ function describeDatabaseUrl(): Omit<
   | "transient"
   | "dbError"
 > & { parseError: string | null } {
-  const raw = process.env["DATABASE_URL"];
-  if (!raw) {
-    return {
-      configured: false,
-      protocol: null,
-      host: process.env["PGHOST"] || null,
-      port: process.env["PGPORT"] || null,
-      database: process.env["PGDATABASE"] || null,
-      user: process.env["PGUSER"] ? `${process.env["PGUSER"]!.slice(0, 2)}***` : null,
-      sslMode: process.env["PGSSLMODE"] || null,
-      parseError: null,
-    };
-  }
-
-  try {
-    const url = new URL(raw);
-    return {
-      configured: true,
-      protocol: url.protocol.replace(/:$/, "") || null,
-      host: url.hostname || null,
-      port: url.port || "5432",
-      database: url.pathname.replace(/^\//, "") || null,
-      user: url.username ? `${url.username.slice(0, 2)}***` : null,
-      sslMode:
-        url.searchParams.get("sslmode") ||
-        url.searchParams.get("ssl") ||
-        process.env["PGSSLMODE"] ||
-        "unspecified",
-      parseError: null,
-    };
-  } catch (error) {
-    return {
-      configured: true,
-      protocol: null,
-      host: null,
-      port: null,
-      database: null,
-      user: null,
-      sslMode: null,
-      parseError: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return describeDatabaseRuntimeConnection();
 }
 
 function buildSnapshot(
@@ -103,7 +67,9 @@ function buildSnapshot(
 ): StorageHealthSnapshot {
   const connection = describeDatabaseUrl();
   return {
-    source: "replit-internal-dev-db",
+    source: connection.source,
+    sourceEnv: connection.sourceEnv,
+    overrideActive: connection.overrideActive,
     configured: connection.configured,
     protocol: connection.protocol,
     host: connection.host,
@@ -145,7 +111,7 @@ export async function refreshStorageHealthSnapshot(): Promise<StorageHealthSnaps
       status: "unavailable",
       reachable: false,
       reason: "database_url_missing",
-      error: "DATABASE_URL is not set.",
+      error: "LOCAL_DATABASE_URL or DATABASE_URL is not set.",
       pingMs: null,
     });
     return cachedStorageHealth;

@@ -138,7 +138,7 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
   assert.equal(storage?.metrics.status, "ok");
 });
 
-test("diagnostics classify Replit dev DB outages as storage events only", async () => {
+test("diagnostics classify configured Postgres outages as storage events only", async () => {
   __setStorageHealthProbeForTests(async () => {
     throw new Error("Connection terminated due to connection timeout");
   });

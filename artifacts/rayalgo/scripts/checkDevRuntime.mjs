@@ -279,11 +279,51 @@ const sanitizeDatabaseOutput = (text = "") =>
     (_match, prefix) => `${prefix}***@`,
   );
 
-const describeDatabaseUrl = () => {
-  const raw = process.env.DATABASE_URL;
-  if (!raw) {
+const classifyDatabaseSource = (sourceEnv, url) => {
+  const host = url.hostname || url.searchParams.get("host") || "";
+  if (
+    sourceEnv === "LOCAL_DATABASE_URL" &&
+    (!url.hostname || host.includes(".local/postgres"))
+  ) {
+    return "workspace-local-postgres";
+  }
+  if (url.hostname === "helium") {
+    return "replit-internal-dev-db";
+  }
+  return "external-postgres";
+};
+
+const shouldUseLocalDatabaseUrl = () => {
+  const preference = (process.env.RAYALGO_DATABASE_SOURCE || "")
+    .trim()
+    .toLowerCase();
+  return (
+    preference === "local" ||
+    preference === "workspace-local-postgres" ||
+    preference === "local-postgres"
+  );
+};
+
+const resolveDatabaseUrl = () => {
+  const useLocalUrl = Boolean(
+    process.env.LOCAL_DATABASE_URL &&
+      (!process.env.DATABASE_URL || shouldUseLocalDatabaseUrl()),
+  );
+  const raw = useLocalUrl
+    ? process.env.LOCAL_DATABASE_URL
+    : process.env.DATABASE_URL || null;
+  const sourceEnv = useLocalUrl
+    ? "LOCAL_DATABASE_URL"
+    : process.env.DATABASE_URL
+      ? "DATABASE_URL"
+      : null;
+  if (!raw || !sourceEnv) {
     return {
       configured: false,
+      raw: null,
+      source: null,
+      sourceEnv: null,
+      overrideActive: false,
       protocol: null,
       host: null,
       port: null,
@@ -295,21 +335,34 @@ const describeDatabaseUrl = () => {
 
   try {
     const url = new URL(raw);
+    const user = url.username || url.searchParams.get("user") || null;
     return {
       configured: true,
+      raw,
+      source: classifyDatabaseSource(sourceEnv, url),
+      sourceEnv,
+      overrideActive: sourceEnv === "LOCAL_DATABASE_URL" && Boolean(process.env.DATABASE_URL),
       protocol: url.protocol.replace(/:$/, ""),
-      host: url.hostname || null,
-      port: url.port || "5432",
+      host: url.hostname || url.searchParams.get("host") || null,
+      port:
+        url.port ||
+        url.searchParams.get("port") ||
+        (url.hostname ? "5432" : null),
       database: url.pathname.replace(/^\//, "") || null,
-      user: url.username ? `${url.username.slice(0, 2)}***` : null,
+      user: user ? `${user.slice(0, 2)}***` : null,
       sslMode:
         url.searchParams.get("sslmode") ||
         url.searchParams.get("ssl") ||
-        "unspecified",
+        process.env.PGSSLMODE ||
+        null,
     };
   } catch (error) {
     return {
       configured: true,
+      raw,
+      source: null,
+      sourceEnv,
+      overrideActive: sourceEnv === "LOCAL_DATABASE_URL" && Boolean(process.env.DATABASE_URL),
       protocol: null,
       host: null,
       port: null,
@@ -322,8 +375,8 @@ const describeDatabaseUrl = () => {
 };
 
 const readDatabaseReachability = () => {
-  const database = describeDatabaseUrl();
-  if (!process.env.DATABASE_URL || database.parseError) {
+  const database = resolveDatabaseUrl();
+  if (!database.raw || database.parseError) {
     return {
       ...database,
       reachable: false,
@@ -333,7 +386,7 @@ const readDatabaseReachability = () => {
 
   const probe = runTextCommand("pg_isready", [
     "-d",
-    process.env.DATABASE_URL,
+    database.raw,
     "-t",
     "3",
   ]);
@@ -341,7 +394,7 @@ const readDatabaseReachability = () => {
     ...database,
     reachable: probe.status === 0,
     probe: {
-      command: "pg_isready -d DATABASE_URL -t 3",
+      command: `pg_isready -d ${database.sourceEnv || "DATABASE_URL"} -t 3`,
       status: probe.status,
       signal: probe.signal,
       output: sanitizeDatabaseOutput(`${probe.stdout}${probe.stderr}`).trim(),
@@ -590,13 +643,15 @@ if (!chartSurfaceFingerprint.version) {
 const databaseReachability = readDatabaseReachability();
 if (!databaseReachability.configured) {
   warnings.push(
-    "DATABASE_URL is not set; DB-backed persistence, signal monitor, and diagnostics are unavailable",
+    "LOCAL_DATABASE_URL or DATABASE_URL is not set; DB-backed persistence, signal monitor, and diagnostics are unavailable",
   );
 } else if (databaseReachability.parseError) {
-  warnings.push(`DATABASE_URL could not be parsed: ${databaseReachability.parseError}`);
+  warnings.push(
+    `${databaseReachability.sourceEnv || "database URL"} could not be parsed: ${databaseReachability.parseError}`,
+  );
 } else if (!databaseReachability.reachable) {
   warnings.push(
-    `Postgres is unreachable at ${databaseReachability.host}:${databaseReachability.port}/${databaseReachability.database}; DB-backed persistence and signal workers should degrade while IBKR transport can remain connected`,
+    `Postgres is unreachable at ${databaseReachability.host}:${databaseReachability.port || "socket"}/${databaseReachability.database}; DB-backed persistence and signal workers should degrade while IBKR transport can remain connected`,
   );
 }
 
@@ -654,13 +709,13 @@ if (jsonOnly) {
   );
   if (databaseReachability.configured) {
     console.log(
-      `postgres: ${databaseReachability.reachable ? "reachable" : "unreachable"} ${databaseReachability.host || "unknown"}:${databaseReachability.port || "unknown"}/${databaseReachability.database || "unknown"} ssl=${databaseReachability.sslMode || "unknown"}`,
+      `postgres: ${databaseReachability.reachable ? "reachable" : "unreachable"} source=${databaseReachability.source || "unknown"} env=${databaseReachability.sourceEnv || "unknown"} ${databaseReachability.host || "unknown"}:${databaseReachability.port || "socket"}/${databaseReachability.database || "unknown"} ssl=${databaseReachability.sslMode || "none"}`,
     );
     if (databaseReachability.probe?.output) {
       console.log(`postgres probe: ${databaseReachability.probe.output}`);
     }
   } else {
-    console.log("postgres: DATABASE_URL not set");
+    console.log("postgres: LOCAL_DATABASE_URL or DATABASE_URL not set");
   }
   console.log(
     `browser verification: ${browserVerification.prepared ? "patched chromium ready" : "patched chromium unavailable"}; command=${browserVerification.command}`,

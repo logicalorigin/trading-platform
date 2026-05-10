@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
+import { resolveDatabaseRuntimeConfig } from "./runtime";
 import * as schema from "./schema";
 
 const { Pool } = pg;
@@ -21,12 +22,12 @@ const optionalIntegerOption = (
   return value === undefined ? {} : { [optionName]: value };
 };
 
-const resolvedDatabaseUrl =
-  process.env.LOCAL_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseRuntimeConfig = resolveDatabaseRuntimeConfig();
+const resolvedDatabaseUrl = databaseRuntimeConfig.url;
 
 if (!resolvedDatabaseUrl) {
   throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
+    "LOCAL_DATABASE_URL or DATABASE_URL must be set. Did you forget to provision a database?",
   );
 }
 
@@ -67,4 +68,5 @@ export const pool = new Pool({
 });
 export const db = drizzle(pool, { schema });
 
+export * from "./runtime";
 export * from "./schema";

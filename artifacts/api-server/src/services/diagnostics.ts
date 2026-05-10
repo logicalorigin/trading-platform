@@ -1993,13 +1993,20 @@ function classifyStorageSnapshot(metrics: JsonRecord): DiagnosticSeverity {
 
 function storageSnapshotSummary(metrics: JsonRecord): string {
   const status = textValue(metrics["status"]);
+  const source = textValue(metrics["source"]);
+  const sourceLabel =
+    source === "workspace-local-postgres"
+      ? "Workspace local Postgres"
+      : source === "external-postgres"
+        ? "External Postgres"
+        : "Replit internal dev DB";
   if (status === "ok") {
-    return "Replit internal dev DB storage is reachable";
+    return `${sourceLabel} storage is reachable`;
   }
   if (status === "degraded") {
-    return "Replit internal dev DB is reachable, but diagnostics storage is degraded";
+    return `${sourceLabel} is reachable, but diagnostics storage is degraded`;
   }
-  return "Replit internal dev DB storage is not reachable";
+  return `${sourceLabel} storage is not reachable`;
 }
 
 function buildSnapshot(
@@ -2822,8 +2829,8 @@ export async function collectDiagnosticSnapshot(
       severity: storageSeverity,
       message:
         status === "degraded"
-          ? "Replit internal dev DB is reachable, but diagnostics storage is degraded."
-          : "Replit internal dev DB is unreachable; DB-backed services are degraded.",
+          ? "Configured Postgres storage is reachable, but diagnostics storage is degraded."
+          : "Configured Postgres storage is unreachable; DB-backed services are degraded.",
       dimensions: {
         status,
         reason,
