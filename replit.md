@@ -18,7 +18,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Key Commands
 
-- Replit Run button — starts the per-artifact workflows (`artifacts/api-server: API Server` on port `8080` and `artifacts/rayalgo: web` on port `18747`). `.replit` no longer pins a `run = [...]` line; the artifact stack auto-discovers each artifact's `[services.development] run` command from its `.replit-artifact/artifact.toml`
+- Replit Run button — runs `bash scripts/run-replit-dev.sh` from `.replit`, which starts the API on port `8080` and the RayAlgo web app on port `18747` as one repo-owned dev command.
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
@@ -42,16 +42,34 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 ## Replit Run
 
-The tracked `.replit` has no `run = [...]` line. With `[agent] stack =
-"PNPM_WORKSPACE"` the Run button starts the per-artifact workflows defined by
-each artifact's `.replit-artifact/artifact.toml` `[services.development] run`:
+The tracked `.replit` pins the Run button to:
+
+```toml
+run = ["bash", "scripts/run-replit-dev.sh"]
+```
+
+`scripts/run-replit-dev.sh` is the canonical development app startup path. It
+starts both long-lived services and shuts both down when either child exits or
+when Replit sends `SIGTERM`:
+
+- API — `LOG_LEVEL=warn PORT=8080 pnpm --filter @workspace/api-server run dev`.
+- RayAlgo web — `PORT=18747 BASE_PATH=/ VITE_PROXY_API_TARGET=http://127.0.0.1:8080 pnpm --filter @workspace/rayalgo run dev`.
+
+In the Replit Run dropdown, use the default **Run Replit App** entry. Do not use
+the generated **Configure Your App** workflow as the app runner; it is only a
+setup placeholder and can restart/refresh the workspace without owning the real
+API/web lifecycle. The per-artifact workflows may still exist in the Workflows
+pane because Replit discovers `.replit-artifact/artifact.toml`, but they are
+secondary service-level controls, not the normal operator run path.
+
+The artifact TOML files remain the deployment/service metadata source:
 
 - `artifacts/api-server: API Server` — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
 - `artifacts/rayalgo: web` — `pnpm --filter @workspace/rayalgo run dev` on port `18747`.
 
-Both artifact dev scripts already call `scripts/reap-dev-port.mjs` and `exec`
-their server, so SIGTERM/orphan cleanup works without a shared coordinator
-script. The previous `scripts/run-replit-dev.sh` was deleted with this switch.
+Both artifact dev scripts call `scripts/reap-dev-port.mjs` before binding their
+pinned port. The root runner deliberately delegates to those scripts instead of
+duplicating the port cleanup logic.
 
 Do not add a separate Replit `IBKR Bridge` workflow for TWS mode. The bridge
 runs beside IB Gateway/TWS on the Windows machine and is exposed through the
@@ -200,9 +218,9 @@ raw JSON pino without `pino-pretty` and the `[services.production.run.env]`
 block does not set `LOG_LEVEL`. Bridge verbosity is controlled by the Windows
 activation helper environment, not by a Replit workflow.
 
-## Dev servers: single instance per artifact workflow
+## Dev servers: single instance per app run
 
-Each artifact workflow should own exactly one listener on its pinned Replit
+The root Replit app run should own exactly one listener on each pinned Replit
 dev port: API on `8080` and rayalgo on `18747`. Older restarts could leave an
 orphan node process holding the port, causing the next API start to fail with
 `EADDRINUSE` or vite to bind a fallback port the preview proxy never used.
@@ -219,7 +237,8 @@ Three fixes prevent the recurrence:
    through the `pnpm` wrapper to the actual node process. Applied to both
    `artifacts/rayalgo/package.json` (`exec vite ...`) and
    `artifacts/api-server/package.json` (`exec node ... dist/index.mjs` in both
-   `dev` and `start`).
+   `dev` and `start`). The root `scripts/run-replit-dev.sh` also forwards
+   termination to both `pnpm` children so the app run stops as one unit.
 
 If a workflow restart still fails with `EADDRINUSE`, run the shared reaper for
 the conflicting pinned port and restart the affected workflow:

@@ -4,6 +4,13 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## Project Run Rules
+
+- Use Replit's default **Run Replit App** entry or `bash scripts/run-replit-dev.sh` for full app bring-up.
+- Do not use the generated **Configure Your App** workflow as the app runner.
+- Do not start the API/web artifact workflows individually unless intentionally restarting one service.
+- For validation, run targeted `pnpm` test/typecheck/build commands directly instead of pressing Run.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**

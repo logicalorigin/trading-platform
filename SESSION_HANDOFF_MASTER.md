@@ -6,6 +6,7 @@ Index of durable per-session handoff files. Keep this file short and discoverabl
 
 | Last Updated (MT) | Session ID | Handoff | Workstream | Branch | HEAD | Status |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-05-11 08:44:03 MDT | `019e1777-ea5d-7a03-aa38-a7da139985d7` | `SESSION_HANDOFF_2026-05-11_019e1777-ea5d-7a03-aa38-a7da139985d7.md` | we just dropped two sessions. need you to find them and then diagnose why the replit project we're in refreshed and dis… | main | `dbf1b92dfda3` | Saved; see handoff |
 | 2026-05-08 15:18:06 MDT | `019e0920-564f-78d0-8463-410e50e52b5d` | `SESSION_HANDOFF_2026-05-08_019e0920-564f-78d0-8463-410e50e52b5d.md` | Replit dev DB recovery pickup | main | `d98378f04a3c` | Local Postgres fallback verified; API health/schema/runtime diagnostics ok; API unit suite and typechecks passed |
 | 2026-05-08 13:05:27 MDT | `019dff8b-c488-7ec1-bab2-7eeca931697f` | `SESSION_HANDOFF_2026-05-06_019dff8b-c488-7ec1-bab2-7eeca931697f.md` | we dropped a couple of in-flight sessions. please find them. it will be found via staged work and code. this was just a… | main | `d98378f04a3c` | Saved; see handoff |
 | 2026-05-08 13:05:26 MDT | `019e0826-0850-7bf2-8100-0b3eada42e32` | `SESSION_HANDOFF_2026-05-08_019e0826-0850-7bf2-8100-0b3eada42e32.md` | i want to finish off getting out algo trading strategy hooked up to options trading. please this through, research, rev… | main | `d98378f04a3c` | Saved; see handoff |
