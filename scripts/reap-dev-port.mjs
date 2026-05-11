@@ -81,6 +81,32 @@ function pidsHoldingInodes(inodes) {
   return pids;
 }
 
+function readCgroup(pid) {
+  try {
+    return readFileSync(`/proc/${pid}/cgroup`, "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
+const myCgroup = readCgroup(process.pid);
+
+// Returns pids that share our cgroup (safe to reap) vs pids in a different
+// cgroup (almost certainly a separate supervised service — refuse to kill).
+function partitionByCgroup(pids) {
+  const sameCgroup = new Set();
+  const foreignCgroup = new Map(); // pid -> cgroup string
+  for (const pid of pids) {
+    const cg = readCgroup(pid);
+    if (myCgroup && cg && cg === myCgroup) {
+      sameCgroup.add(pid);
+    } else {
+      foreignCgroup.set(pid, cg ?? "<unknown>");
+    }
+  }
+  return { sameCgroup, foreignCgroup };
+}
+
 function describePid(pid) {
   try {
     const cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8")
@@ -119,11 +145,29 @@ if (pids.size === 0) {
   process.exit(0);
 }
 
+const { sameCgroup, foreignCgroup } = partitionByCgroup(pids);
+
+if (foreignCgroup.size > 0) {
+  const lines = [];
+  for (const [pid, cg] of foreignCgroup) {
+    lines.push(`  ${describePid(pid)} cgroup=${cg}`);
+  }
+  console.error(
+    `${logPrefix} Refusing to reap port ${port}: it is held by a process in a different cgroup, which means a separate supervised service (almost certainly the live workflow) owns it. Reaping it would kill that service and cascade-kill anything else in its cgroup (e.g. workspace-local Postgres).\n${logPrefix} Holder(s):\n${lines.join("\n")}\n${logPrefix} My cgroup: ${myCgroup ?? "<unknown>"}\n${logPrefix} If you really meant to restart the live workflow, use the workflow restart action instead of running 'pnpm dev' from a shell. Exiting non-zero so the dev server fails fast with EADDRINUSE.`,
+  );
+  process.exit(1);
+}
+
+if (sameCgroup.size === 0) {
+  // Defensive: should not happen, but exit cleanly if classification produced nothing.
+  process.exit(0);
+}
+
 console.warn(
-  `${logPrefix} Port ${port} held by orphan PIDs: ${[...pids].map(describePid).join(", ")}. Reaping...`,
+  `${logPrefix} Port ${port} held by orphan PIDs in our cgroup: ${[...sameCgroup].map(describePid).join(", ")}. Reaping...`,
 );
 
-killPids(pids, "SIGTERM");
+killPids(sameCgroup, "SIGTERM");
 
 const start = Date.now();
 const deadline = start + 2_000;
@@ -138,7 +182,8 @@ while (Date.now() < deadline) {
   execSync("sleep 0.1");
 }
 
-const stragglers = pidsHoldingInodes(inodesListeningOnPort());
+const stragglerPids = pidsHoldingInodes(inodesListeningOnPort());
+const stragglers = partitionByCgroup(stragglerPids).sameCgroup;
 if (stragglers.size > 0) {
   console.warn(
     `${logPrefix} Port ${port} still held after SIGTERM; sending SIGKILL to: ${[...stragglers].join(", ")}.`,

@@ -291,6 +291,55 @@ fixes were required so `/api/quotes/snapshot` returns real data instead of zeros
    Change/change% prefer IBKR-supplied fields 82/83 before computing from
    prevClose.
 
+## Workspace-local Postgres lives in its own workflow (cgroup decoupling)
+
+Workspace-local Postgres is started by a dedicated **`Local Postgres`**
+workflow that runs `bash scripts/run-local-postgres.sh` (foreground
+`postgres`). Each Replit workflow gets its own `shellexec-*.scope` cgroup,
+so Postgres is now in a different cgroup from the api-server. Restarting
+the api-server workflow no longer SIGKILLs the postmaster, which means
+the IDE shells, terminals, and the rayalgo preview iframe stop dropping
+their PG client connections every time the API restarts.
+
+- `scripts/run-local-postgres.sh` — foreground entry. Idempotent: initdb
+  if needed, evict a stale `postmaster.pid`, ensure the `dev` database
+  exists, then `exec postgres -D ...`.
+- `scripts/start-local-postgres.sh` — legacy daemonized starter. Still
+  works for one-off manual use; do not call it from any artifact's `dev`
+  script (it would re-attach Postgres to that artifact's cgroup).
+- `artifacts/api-server/package.json` `dev` no longer launches Postgres.
+  It calls `scripts/wait-for-local-postgres.sh` (10s soft wait on the
+  unix socket) and proceeds either way; if Postgres never comes up the
+  API surfaces a clear DB connection error instead.
+
+If `Local Postgres` is missing or stopped, recreate it with the
+workflows tool:
+
+```js
+await configureWorkflow({
+  name: "Local Postgres",
+  command: "bash scripts/run-local-postgres.sh",
+  outputType: "console",
+  autoStart: true,
+});
+```
+
+## `reap-dev-port.mjs` is cgroup-aware
+
+`scripts/reap-dev-port.mjs` now reads `/proc/<pid>/cgroup` for itself and
+each port-holder. If the holder is in a different cgroup, the reaper
+**refuses to kill** and exits non-zero with the holder's PID, cmdline,
+and cgroup path. This protects the live artifact-service workflow when
+an agent (or the user) runs `pnpm --filter @workspace/api-server run
+dev` or `... rayalgo run dev` from a shell — the shell is in its own
+`shellexec-*.scope`, so the reaper sees the workflow as foreign and
+aborts before SIGTERM/SIGKILL. Same-cgroup orphans (the original
+"previous service restart left a node behind" case) still get reaped
+normally.
+
+To intentionally restart the live API or web service, use the workflow
+restart action, not `pnpm dev` from a shell.
+
 ## Agent guardrail: files that trigger a full workspace reload
 
 Replit's workspace daemon watches a small set of platform-config files. Any save to one of them re-evaluates modules, ports, env, and the artifact stack — which kills open shells/terminals, re-mounts the IDE preview, and SIGKILLs the workspace-local Postgres process (visible in `.local/postgres/log/pg.log` as repeated "database system was not properly shut down; automatic recovery in progress" pairs minutes apart). PG WAL recovery on next start is fine and fast, but the shell/IDE disconnect destroys the user's working state.

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; export PORT=${PORT:-8080}; { case \"${RAYALGO_DATABASE_SOURCE:-}\" in local|workspace-local-postgres|local-postgres) [ -n \"$LOCAL_DATABASE_URL\" ] && bash ../../scripts/start-local-postgres.sh || true ;; *) [ -z \"$DATABASE_URL\" ] && [ -n \"$LOCAL_DATABASE_URL\" ] && bash ../../scripts/start-local-postgres.sh || true ;; esac; } && node ../../scripts/reap-dev-port.mjs && export NODE_ENV=development && pnpm run build && exec node --enable-source-maps ./dist/index.mjs",
+    "dev": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; export PORT=${PORT:-8080}; bash ../../scripts/wait-for-local-postgres.sh || true; node ../../scripts/reap-dev-port.mjs && export NODE_ENV=development && pnpm run build && exec node --enable-source-maps ./dist/index.mjs",
     "build": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; node ./build.mjs",
     "start": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; exec node --enable-source-maps ./dist/index.mjs",
     "test:unit": "unset REPLIT_LD_LIBRARY_PATH LD_LIBRARY_PATH; node --import tsx ./scripts/runUnitTests.mjs",
