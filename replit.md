@@ -291,6 +291,26 @@ fixes were required so `/api/quotes/snapshot` returns real data instead of zeros
    Change/change% prefer IBKR-supplied fields 82/83 before computing from
    prevClose.
 
+## Agent guardrail: files that trigger a full workspace reload
+
+Replit's workspace daemon watches a small set of platform-config files. Any save to one of them re-evaluates modules, ports, env, and the artifact stack — which kills open shells/terminals, re-mounts the IDE preview, and SIGKILLs the workspace-local Postgres process (visible in `.local/postgres/log/pg.log` as repeated "database system was not properly shut down; automatic recovery in progress" pairs minutes apart). PG WAL recovery on next start is fine and fast, but the shell/IDE disconnect destroys the user's working state.
+
+**Do not edit these from any agent (Codex, main agent, task agent) during routine work or test cycles unless the user explicitly asked for a config change:**
+
+- `.replit` — modules, ports, `[userenv.*]`, `[agent]`, `[deployment]`. Adding/removing an env var here (e.g. `RAYALGO_DATABASE_SOURCE`) reloads the workspace; use `setEnvVars` / `deleteEnvVars` instead — those persist without a reload. The `LOCAL_DATABASE_URL` and `RAYALGO_DATABASE_SOURCE` entries currently in `[userenv.development]` were placed there only because they need to survive container resets and `userenv` is the documented mechanism; do not "tidy" or move them.
+- `artifacts/*/.replit-artifact/artifact.toml` — the artifact controller reconciles on save, which in `PNPM_WORKSPACE` stack mode (`[agent] stack = "PNPM_WORKSPACE"` in `.replit`) cascades into a full app re-bring-up. Use the artifact skills to update artifact metadata; never hand-edit these.
+- `replit.nix` — same daemon, same reload.
+
+Evidence (audited 2026-05-11): of the last three commits touching `.replit`, two were a paired add+revert of a `run = [...]` line (`3ee9483` → `eeeb0f2`) that did not need to land at all, and one (`af93d82`) added a single env var that should have used `setEnvVars`. Each of those saves caused one full workspace reload.
+
+**Test pattern that does NOT cause a reload:**
+
+- Verifying API code: `pnpm --filter @workspace/api-server run typecheck` and `pnpm --filter @workspace/api-server run test:unit` — direct shell commands, no workflow restart.
+- Verifying a route end-to-end: `curl -sS http://127.0.0.1:8080/api/healthz` against the already-running api-server, then `restart_workflow "artifacts/api-server: API Server"` only if the change is in compiled output. The artifact-service restart by itself does not edit any watched file.
+- For rayalgo: `pnpm --filter @workspace/rayalgo run typecheck` plus the live Vite HMR; do not restart the rayalgo workflow to "see" a change unless you edited `vite.config.ts` or `package.json`.
+
+If a test genuinely requires a config change, batch all the config edits into a single save and warn the user beforehand that one workspace reload is about to happen.
+
 ## Bloomberg live dock — Chrome unresponsiveness fix (2026-04-24)
 
 `features/platform/BloombergLiveDock.jsx` shipped on commit `c0548d6`
