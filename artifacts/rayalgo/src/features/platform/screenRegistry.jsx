@@ -49,6 +49,19 @@ export const SCREENS = [
 
 export const OPERATIONAL_SCREEN_PRELOAD_ORDER = ["market", "account", "trade"];
 
+export const SCREEN_RENDER_POLICIES = {
+  market: { retainInactive: true },
+  trade: { retainInactive: true },
+  flow: { retainInactive: false },
+  gex: { retainInactive: false },
+  account: { retainInactive: false },
+  research: { retainInactive: false },
+  algo: { retainInactive: false },
+  backtest: { retainInactive: false },
+  diagnostics: { retainInactive: false },
+  settings: { retainInactive: false },
+};
+
 export const buildMountedScreenState = (activeScreen) =>
   Object.fromEntries(SCREENS.map(({ id }) => [id, id === activeScreen]));
 

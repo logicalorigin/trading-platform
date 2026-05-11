@@ -238,6 +238,38 @@ test("buildDailyPnlSeries uses same-day opening NAV when the first available day
   assert.equal(series[0].pnlSource, "total");
 });
 
+test("buildDailyPnlSeries does not subtract the same-day opening funding baseline", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 11),
+    endDate: new Date(2026, 4, 11),
+    equityPoints: [
+      equityPoint("2026-05-11T14:00:00.000Z", 30_000, { deposits: 30_000 }),
+      equityPoint("2026-05-11T20:00:00.000Z", 34_182.66),
+    ],
+  });
+
+  assert.equal(Number(series[0].total.toFixed(2)), 4182.66);
+  assert.equal(Number(series[0].unrealized.toFixed(2)), 4182.66);
+  assert.equal(Number(series[0].pnl.toFixed(2)), 4182.66);
+  assert.equal(series[0].pnlSource, "total");
+});
+
+test("buildDailyPnlSeries still excludes same-day transfers after the opening baseline", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 11),
+    endDate: new Date(2026, 4, 11),
+    equityPoints: [
+      equityPoint("2026-05-11T14:00:00.000Z", 30_000),
+      equityPoint("2026-05-11T16:00:00.000Z", 32_000, { deposits: 2_000 }),
+      equityPoint("2026-05-11T20:00:00.000Z", 32_125),
+    ],
+  });
+
+  assert.equal(series[0].total, 125);
+  assert.equal(series[0].unrealized, 125);
+  assert.equal(series[0].pnl, 125);
+});
+
 test("buildDailyPnlSeries does not let one unanchored NAV point mask realized P&L", () => {
   const series = buildDailyPnlSeries({
     startDate: new Date(2026, 4, 8),

@@ -747,7 +747,7 @@ const MenuInfoRow = ({ label, value, tone = T.textSec }) => (
   </div>
 );
 
-export default function BloombergLiveDock() {
+export default function BloombergLiveDock({ initialOpen = false } = {}) {
   const panelRef = useRef(null);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
@@ -773,7 +773,7 @@ export default function BloombergLiveDock() {
   });
   const diagnosticsRef = useRef(createBloombergDiagnosticsSnapshot());
 
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(Boolean(initialOpen));
   const [collapsed, setCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [playerStatus, setPlayerStatus] = useState("loading");

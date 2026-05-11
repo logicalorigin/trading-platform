@@ -131,6 +131,10 @@ import {
 import { preloadDynamicImport } from "../../lib/dynamicImport";
 import { getMemoryPressureSnapshot } from "./memoryPressureStore";
 import {
+  SCREEN_READY_EVENT,
+  hasRayalgoFirstScreenReady,
+} from "./performanceMetrics";
+import {
   clampNumber,
   formatExpirationLabel,
   formatIsoDate,
@@ -236,6 +240,7 @@ export default function PlatformApp() {
         : _initialState.screen || "market",
     ),
   );
+  const [firstScreenReady, setFirstScreenReady] = useState(false);
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -270,6 +275,24 @@ export default function PlatformApp() {
     sym: _initialState.sym || "SPY",
     n: 0,
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const handleScreenReady = () => {
+      setFirstScreenReady(true);
+    };
+    window.addEventListener(SCREEN_READY_EVENT, handleScreenReady);
+    if (hasRayalgoFirstScreenReady()) {
+      setFirstScreenReady(true);
+    }
+
+    return () => {
+      window.removeEventListener(SCREEN_READY_EVENT, handleScreenReady);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -430,9 +453,11 @@ export default function PlatformApp() {
   const memoryAllowsBackgroundWarmup = Boolean(
     memoryPressureObserved && memoryPressureSignal?.level === "normal",
   );
-  const memoryAllowsIdlePrefetch = memoryAllowsBackgroundWarmup;
+  const memoryAllowsIdlePrefetch = Boolean(
+    firstScreenReady && memoryAllowsBackgroundWarmup,
+  );
   const tradeBackgroundWarmupReady = Boolean(
-    sessionMetadataSettled && memoryAllowsBackgroundWarmup,
+    firstScreenReady && sessionMetadataSettled && memoryAllowsBackgroundWarmup,
   );
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();

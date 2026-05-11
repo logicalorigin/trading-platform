@@ -76,7 +76,8 @@ export const buildPlatformWorkSchedule = ({
       memoryAllowsBackground &&
       isBackgroundWorkAllowed(ibkrWorkPressure),
   );
-  const broadFlowAllowed = true;
+  const firstScreenReady = screenWarmupPhase !== "initial";
+  const broadFlowAllowed = Boolean(visible && sessionReady);
   const market = screen === "market";
   const flow = screen === "flow";
   const trade = screen === "trade";
@@ -123,7 +124,7 @@ export const buildPlatformWorkSchedule = ({
       sharedFlowRuntime: false,
       broadFlowRuntime: broadFlowAllowed,
       lowPriorityHistory: Boolean(
-        sessionReady && backgroundIbkr && screenWarmupPhase !== "initial",
+        sessionReady && backgroundIbkr && firstScreenReady,
       ),
     },
     resume: {
@@ -132,8 +133,8 @@ export const buildPlatformWorkSchedule = ({
       delayedOptionsRefresh: backgroundIbkr,
     },
     hiddenScreenPreload: {
-      codeOnly: Boolean(sessionReady && memoryAllowsForeground),
-      mountScreens: backgroundIbkr,
+      codeOnly: Boolean(sessionReady && firstScreenReady && memoryAllowsForeground),
+      mountScreens: Boolean(backgroundIbkr && firstScreenReady),
     },
   };
 };

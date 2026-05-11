@@ -1029,6 +1029,47 @@ function buildCandidateFromSignal(input: {
   };
 }
 
+function candidateFromSignalSnapshot(input: {
+  deployment: AlgoDeployment;
+  signal: SignalOptionsSignalSnapshot;
+}): SignalOptionsCandidate | null {
+  const { signal } = input;
+  if (!signal.fresh || !signal.signalAt || !signal.direction) {
+    return null;
+  }
+
+  const symbol = normalizeSymbol(signal.symbol).toUpperCase();
+  if (!symbol) {
+    return null;
+  }
+
+  const action = buildSignalOptionsActionMapping(signal.direction);
+  return {
+    id: buildCandidateId({
+      deploymentId: input.deployment.id,
+      symbol,
+      direction: signal.direction,
+      signalAt: signal.signalAt,
+    }),
+    deploymentId: input.deployment.id,
+    deploymentName: input.deployment.name,
+    symbol,
+    direction: signal.direction,
+    optionRight: optionRightForSignal(signal.direction),
+    timeframe: signal.timeframe,
+    signalAt: signal.signalAt,
+    signalPrice: optionalFiniteNumber(signal.signalPrice),
+    status: "candidate",
+    selectedContract: null,
+    quote: null,
+    orderPlan: null,
+    liquidity: null,
+    reason: null,
+    signal,
+    action,
+  };
+}
+
 function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | null {
   const payload = asRecord(event.payload);
   const candidate = asRecord(
@@ -1101,6 +1142,41 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
           : null,
     signal: Object.keys(signal).length ? signal : null,
     action: Object.keys(action).length ? action : null,
+  };
+}
+
+function mergeSignalOptionsCandidate(
+  existing: SignalOptionsCandidate | undefined,
+  candidate: SignalOptionsCandidate,
+): SignalOptionsCandidate {
+  return {
+    ...(existing ?? {}),
+    ...candidate,
+    selectedContract:
+      Object.keys(asRecord(candidate.selectedContract)).length
+        ? candidate.selectedContract
+        : existing?.selectedContract ?? null,
+    quote:
+      Object.keys(asRecord(candidate.quote)).length
+        ? candidate.quote
+        : existing?.quote ?? null,
+    orderPlan:
+      Object.keys(asRecord(candidate.orderPlan)).length
+        ? candidate.orderPlan
+        : existing?.orderPlan ?? null,
+    liquidity:
+      Object.keys(asRecord(candidate.liquidity)).length
+        ? candidate.liquidity
+        : existing?.liquidity ?? null,
+    reason: candidate.reason ?? existing?.reason ?? null,
+    signal:
+      Object.keys(asRecord(candidate.signal)).length
+        ? candidate.signal
+        : existing?.signal ?? null,
+    action:
+      Object.keys(asRecord(candidate.action)).length
+        ? candidate.action
+        : existing?.action ?? null,
   };
 }
 
@@ -1524,6 +1600,10 @@ function candidateLatestTimelineAt(candidate: SignalOptionsCandidate) {
   return toIsoString(asRecord(latest).occurredAt);
 }
 
+function candidateLatestActivityAt(candidate: SignalOptionsCandidate) {
+  return candidateLatestTimelineAt(candidate) ?? candidate.signalAt;
+}
+
 function stageStatus(input: {
   blocked?: boolean;
   attention?: boolean;
@@ -1935,6 +2015,16 @@ async function buildStatePayload(input: {
   const candidateEvents = new Map<string, ExecutionEvent[]>();
   const candidatesById = new Map<string, SignalOptionsCandidate>();
 
+  for (const signal of signals) {
+    const candidate = candidateFromSignalSnapshot({
+      deployment: input.deployment,
+      signal,
+    });
+    if (candidate) {
+      candidatesById.set(candidate.id, candidate);
+    }
+  }
+
   for (const event of [...signalEvents].sort(
     (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
   )) {
@@ -1943,35 +2033,10 @@ async function buildStatePayload(input: {
       continue;
     }
     const existing = candidatesById.get(candidate.id);
-    candidatesById.set(candidate.id, {
-      ...existing,
-      ...candidate,
-      selectedContract:
-        Object.keys(asRecord(candidate.selectedContract)).length
-          ? candidate.selectedContract
-          : existing?.selectedContract ?? null,
-      quote:
-        Object.keys(asRecord(candidate.quote)).length
-          ? candidate.quote
-          : existing?.quote ?? null,
-      orderPlan:
-        Object.keys(asRecord(candidate.orderPlan)).length
-          ? candidate.orderPlan
-          : existing?.orderPlan ?? null,
-      liquidity:
-        Object.keys(asRecord(candidate.liquidity)).length
-          ? candidate.liquidity
-          : existing?.liquidity ?? null,
-      reason: candidate.reason ?? existing?.reason ?? null,
-      signal:
-        Object.keys(asRecord(candidate.signal)).length
-          ? candidate.signal
-          : existing?.signal ?? null,
-      action:
-        Object.keys(asRecord(candidate.action)).length
-          ? candidate.action
-          : existing?.action ?? null,
-    });
+    candidatesById.set(
+      candidate.id,
+      mergeSignalOptionsCandidate(existing, candidate),
+    );
     candidateEvents.set(candidate.id, [
       ...(candidateEvents.get(candidate.id) ?? []),
       event,
@@ -2006,8 +2071,8 @@ async function buildStatePayload(input: {
       };
     })
     .sort((left, right) => {
-      const leftTime = dateOrNull(left.timeline?.at(-1)?.occurredAt)?.getTime() ?? 0;
-      const rightTime = dateOrNull(right.timeline?.at(-1)?.occurredAt)?.getTime() ?? 0;
+      const leftTime = dateOrNull(candidateLatestActivityAt(left))?.getTime() ?? 0;
+      const rightTime = dateOrNull(candidateLatestActivityAt(right))?.getTime() ?? 0;
       return rightTime - leftTime;
     })
     .slice(0, 75);
@@ -4461,11 +4526,13 @@ export async function updateSignalOptionsExecutionProfile(input: {
 
 export const __signalOptionsAutomationInternalsForTests = {
   buildCandidateFromSignal,
+  candidateFromSignalSnapshot,
   buildCockpitAttention,
   buildCockpitPipeline,
   buildSignalOptionsActionMapping,
   buildSignalOptionsSignalSnapshot,
   candidateFromEvent,
+  mergeSignalOptionsCandidate,
   computeSignalOptionsDailyPnl,
   computeSignalOptionsDailyRealizedPnl,
   computeSignalOptionsOpenUnrealizedPnl,

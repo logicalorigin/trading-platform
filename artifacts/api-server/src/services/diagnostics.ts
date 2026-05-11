@@ -188,6 +188,10 @@ type ClientDiagnosticsMetric = {
   chartHydration: JsonRecord;
   storage: JsonRecord;
   caches: JsonRecord;
+  navigation: JsonRecord;
+  screens: JsonRecord;
+  longTasks: JsonRecord;
+  apiTimings: JsonRecord;
   raw: JsonRecord;
 };
 
@@ -919,6 +923,11 @@ function classifyMarketDataSnapshot(metrics: JsonRecord): DiagnosticSeverity {
 
 function buildBrowserMetrics(): JsonRecord {
   const cutoff = Date.now() - REQUEST_WINDOW_MS;
+  const latest = latestClientMetric();
+  const navigation = asJsonRecord(latest?.navigation);
+  const screens = asJsonRecord(latest?.screens);
+  const longTasks = asJsonRecord(latest?.longTasks);
+  const apiTimings = asJsonRecord(latest?.apiTimings);
   const recentBrowserEvents = Array.from(memoryEvents.values()).filter(
     (event) =>
       event.subsystem === "browser" &&
@@ -939,6 +948,25 @@ function buildBrowserMetrics(): JsonRecord {
     warningCount5m: warningCount,
     criticalCount5m: criticalCount,
     activeDiagnosticsClients: subscribers.size,
+    latestClientAt: latest?.observedAt ?? null,
+    firstScreenId: textValue(navigation["firstScreenId"]),
+    firstScreenReadyMs: numeric(navigation["firstScreenReadyMs"]),
+    screenReadyCount: numeric(screens["count"]) ?? 0,
+    screenReadyP95Ms: numeric(screens["p95Ms"]),
+    screenReadyMaxMs: numeric(screens["maxMs"]),
+    slowScreenCount: numeric(screens["slowCount"]) ?? 0,
+    slowScreens: Array.isArray(screens["topScreens"])
+      ? screens["topScreens"]
+      : [],
+    longTaskCount: numeric(longTasks["count"]) ?? 0,
+    longTaskP95Ms: numeric(longTasks["p95Ms"]),
+    longTaskMaxMs: numeric(longTasks["maxMs"]),
+    clientApiTimingCount: numeric(apiTimings["count"]) ?? 0,
+    clientApiTimingP95Ms: numeric(apiTimings["p95Ms"]),
+    clientSlowApiCount: numeric(apiTimings["slowCount"]) ?? 0,
+    clientSlowApiRoutes: Array.isArray(apiTimings["topRoutes"])
+      ? apiTimings["topRoutes"]
+      : [],
     lastEventAt: lastEvent?.lastSeenAt ?? null,
     lastCategory: lastEvent?.category ?? null,
     recentEvents: recentBrowserEvents.slice(0, 10).map((event) => ({
@@ -957,7 +985,11 @@ function classifyBrowserSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if ((numeric(metrics["criticalCount5m"]) ?? 0) > 0) {
     return "critical";
   }
-  if ((numeric(metrics["warningCount5m"]) ?? 0) > 0) {
+  if (
+    (numeric(metrics["warningCount5m"]) ?? 0) > 0 ||
+    (numeric(metrics["screenReadyP95Ms"]) ?? 0) >= 4_000 ||
+    (numeric(metrics["clientApiTimingP95Ms"]) ?? 0) >= 3_000
+  ) {
     return "warning";
   }
   return "info";
@@ -2565,6 +2597,10 @@ export async function recordClientDiagnosticsMetrics(input: {
   chartHydration?: JsonRecord;
   storage?: JsonRecord;
   caches?: JsonRecord;
+  navigation?: JsonRecord;
+  screens?: JsonRecord;
+  longTasks?: JsonRecord;
+  apiTimings?: JsonRecord;
   raw?: JsonRecord;
 }): Promise<{ accepted: true; id: string }> {
   const id = randomUUID();
@@ -2579,6 +2615,10 @@ export async function recordClientDiagnosticsMetrics(input: {
     chartHydration: asJsonRecord(input.chartHydration),
     storage: asJsonRecord(input.storage),
     caches: asJsonRecord(input.caches),
+    navigation: asJsonRecord(input.navigation),
+    screens: asJsonRecord(input.screens),
+    longTasks: asJsonRecord(input.longTasks),
+    apiTimings: asJsonRecord(input.apiTimings),
     raw: asJsonRecord(input.raw),
   };
   clientMetrics.push(sample);

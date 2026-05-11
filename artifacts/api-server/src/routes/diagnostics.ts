@@ -212,6 +212,10 @@ router.post("/diagnostics/client-metrics", async (req, res) => {
     chartHydration: asRecord(body.chartHydration),
     storage: asRecord(body.storage),
     caches: asRecord(body.caches),
+    navigation: asRecord(body.navigation),
+    screens: asRecord(body.screens),
+    longTasks: asRecord(body.longTasks),
+    apiTimings: asRecord(body.apiTimings),
     raw: asRecord(body.raw),
   });
   res.status(202).json(result);

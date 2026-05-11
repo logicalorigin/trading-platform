@@ -116,6 +116,7 @@ const buildEquityDailyMap = (equityPoints = []) => {
       eodNav: null,
       eodTs: -Infinity,
       transfers: 0,
+      transferRows: [],
     };
     if (timestamp.getTime() <= current.firstTs) {
       current.firstNav = nav;
@@ -126,7 +127,14 @@ const buildEquityDailyMap = (equityPoints = []) => {
       current.eodTs = timestamp.getTime();
     }
     current.transfers += transferDelta;
+    current.transferRows.push({ timestampMs: timestamp.getTime(), transferDelta });
     byDay.set(key, current);
+  });
+  byDay.forEach((entry) => {
+    entry.transfersAfterFirstTs = entry.transferRows.reduce(
+      (sum, row) => sum + (row.timestampMs > entry.firstTs ? row.transferDelta : 0),
+      0,
+    );
   });
   return byDay;
 };
@@ -181,10 +189,17 @@ export const buildDailyPnlSeries = ({
       Number.isFinite(equityRow.firstTs) &&
       Number.isFinite(equityRow.eodTs) &&
       equityRow.firstTs < equityRow.eodTs;
-    const baselineNav =
-      priorNav ?? (intradayBaselineAvailable ? equityRow.firstNav : null);
+    const hasPriorBaseline = priorNav != null;
+    const baselineNav = hasPriorBaseline
+      ? priorNav
+      : intradayBaselineAvailable
+        ? equityRow.firstNav
+        : null;
     if (equityRow?.eodNav != null && baselineNav != null) {
-      total = equityRow.eodNav - baselineNav - (equityRow.transfers || 0);
+      const transferAdjustment = hasPriorBaseline
+        ? equityRow.transfers || 0
+        : equityRow.transfersAfterFirstTs || 0;
+      total = equityRow.eodNav - baselineNav - transferAdjustment;
     }
     if (equityRow?.eodNav != null) {
       priorNav = equityRow.eodNav;

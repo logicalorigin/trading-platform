@@ -17,7 +17,21 @@ max_connections = 50
 shared_buffers = 64MB
 EOF
 fi
-if ! pg_ctl -D "$PGROOT/data" status >/dev/null 2>&1; then
+
+can_connect() {
+  psql -h "$PGROOT/run" -U runner -d postgres -tAc "SELECT 1" >/dev/null 2>&1
+}
+
+if ! can_connect; then
+  if [ -s "$PGROOT/data/postmaster.pid" ]; then
+    pid="$(sed -n '1p' "$PGROOT/data/postmaster.pid")"
+    command_name="$(ps -p "$pid" -o comm= 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ "$command_name" != "postgres" ]; then
+      rm -f "$PGROOT/data/postmaster.pid" \
+        "$PGROOT/run/.s.PGSQL.5432" \
+        "$PGROOT/run/.s.PGSQL.5432.lock"
+    fi
+  fi
   pg_ctl -D "$PGROOT/data" -l "$PGROOT/log/pg.log" -w start >/dev/null
 fi
 psql -h "$PGROOT/run" -U runner -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='dev'" 2>/dev/null | grep -q 1 \

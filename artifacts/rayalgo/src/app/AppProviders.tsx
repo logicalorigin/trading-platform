@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, type PropsWithChildren } from "react";
 import { TooltipProvider } from "../components/ui/tooltip";
+import { useRayalgoPerformanceMetricsReporter } from "../features/platform/performanceMetrics";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -56,6 +57,8 @@ const auditLocalStorageOnce = () => {
 };
 
 export function AppProviders({ children }: PropsWithChildren) {
+  useRayalgoPerformanceMetricsReporter();
+
   useEffect(() => {
     auditLocalStorageOnce();
   }, []);

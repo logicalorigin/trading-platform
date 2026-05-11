@@ -344,7 +344,11 @@ test("Broad scanner owns Flow and Market flow without the shared all-flow runtim
 
   assert.ok(flowRuntimeProp, "PlatformApp must pass flowRuntimeEnabled");
   assert.match(flowRuntimeProp, /workSchedule\.streams\.sharedFlowRuntime/);
-  assert.match(schedulerSource, /const broadFlowAllowed = true/);
+  assert.match(schedulerSource, /const firstScreenReady = screenWarmupPhase !== "initial"/);
+  assert.match(
+    schedulerSource,
+    /const broadFlowAllowed = Boolean\([\s\S]*visible[\s\S]*sessionReady[\s\S]*backgroundIbkr[\s\S]*firstScreenReady[\s\S]*\)/,
+  );
   assert.match(schedulerSource, /sharedFlowRuntime:\s*false/);
   assert.match(schedulerSource, /broadFlowRuntime:\s*broadFlowAllowed/);
   assert.match(apiIndexSource, /startOptionsFlowScanner\(\)/);

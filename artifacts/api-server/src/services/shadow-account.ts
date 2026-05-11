@@ -682,7 +682,6 @@ async function ensureShadowAccount(): Promise<ShadowAccountRow> {
         displayName: SHADOW_ACCOUNT_DISPLAY_NAME,
         currency: SHADOW_CURRENCY,
         status: "active",
-        updatedAt: new Date(),
       },
     })
     .returning();
@@ -829,7 +828,7 @@ async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktest
   };
 }
 
-async function writeShadowBalanceSnapshot(source = "ledger") {
+async function writeShadowBalanceSnapshot(source = "ledger", asOf = new Date()) {
   invalidateShadowFreshStateCache();
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
   const positions = await readOpenShadowPositions();
@@ -856,7 +855,7 @@ async function writeShadowBalanceSnapshot(source = "ledger") {
       unrealizedPnl: money(unrealizedPnl),
       fees: money(fees),
       source,
-      asOf: new Date(),
+      asOf,
     })
     .returning();
   return snapshot;
@@ -1276,7 +1275,10 @@ export async function placeShadowOrder(input: ShadowOrderInput) {
       .where(eq(shadowAccountsTable.id, SHADOW_ACCOUNT_ID));
   });
 
-  await writeShadowBalanceSnapshot(normalized.source === "automation" ? "automation" : "ledger");
+  await writeShadowBalanceSnapshot(
+    normalized.source === "automation" ? "automation" : "ledger",
+    now,
+  );
 
   const [order] = await db
     .select()
@@ -1463,6 +1465,7 @@ export async function refreshShadowPositionMarks() {
   await ensureShadowAccount();
   const positions = await readOpenShadowPositions();
   let updatedCount = 0;
+  let latestMarkAt: Date | null = null;
 
   for (const position of positions) {
     const contract = asOptionContract(position.optionContract);
@@ -1502,6 +1505,9 @@ export async function refreshShadowPositionMarks() {
       asOf: mark.asOf,
     });
     updatedCount += 1;
+    if (!latestMarkAt || mark.asOf.getTime() > latestMarkAt.getTime()) {
+      latestMarkAt = mark.asOf;
+    }
   }
 
   if (updatedCount) {
@@ -1509,6 +1515,7 @@ export async function refreshShadowPositionMarks() {
       positions.some((position) => isWatchlistBacktestPositionKey(position.positionKey))
         ? WATCHLIST_BACKTEST_MARK_SOURCE
         : "mark",
+      latestMarkAt ?? new Date(),
     );
   }
 
@@ -1980,10 +1987,15 @@ export async function getShadowAccountEquityHistory(input: {
   const totals = selection.includeLiveTerminal
     ? await ensureFreshShadowState(true)
     : null;
+  const liveTerminalOpenPositions =
+    totals && selection.includeLiveTerminal ? await readOpenShadowPositions() : [];
+  const historyRows = selection.includeInitialPoint
+    ? selection.rows.filter((row) => row.source !== "initial")
+    : selection.rows;
   const bucketSize = accountSnapshotBucketSizeMs(range);
   const compacted = bucketSize
     ? Array.from(
-        selection.rows
+        historyRows
           .reduce((map, row) => {
             const bucket = Math.floor(row.asOf.getTime() / bucketSize);
             map.set(bucket, row);
@@ -1991,9 +2003,21 @@ export async function getShadowAccountEquityHistory(input: {
           }, new Map<number, (typeof rows)[number]>())
           .values(),
       )
-    : selection.rows;
+    : historyRows;
+  const latestCompactedAt = compacted[compacted.length - 1]?.asOf ?? null;
+  const includeLiveTerminal =
+    totals &&
+    (!latestCompactedAt || liveTerminalOpenPositions.length > 0) &&
+    (!latestCompactedAt ||
+      totals.updatedAt.getTime() > latestCompactedAt.getTime()) &&
+    (!start || totals.updatedAt.getTime() >= start.getTime());
+  const firstHistoryAt = historyRows[0]?.asOf ?? null;
+  const initialPointTimestamp =
+    firstHistoryAt && account.createdAt.getTime() > firstHistoryAt.getTime()
+      ? firstHistoryAt
+      : account.createdAt;
   const initialPoint = {
-    timestamp: account.createdAt,
+    timestamp: initialPointTimestamp,
     netLiquidation: toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE,
     currency: SHADOW_CURRENCY,
     source: "SHADOW_LEDGER",
@@ -2019,7 +2043,7 @@ export async function getShadowAccountEquityHistory(input: {
       dividends: 0,
       fees: toNumber(row.fees) ?? 0,
     })),
-    ...(totals && (!start || totals.updatedAt.getTime() >= start.getTime())
+    ...(includeLiveTerminal
       ? [
           {
             timestamp: totals.updatedAt,
@@ -2067,14 +2091,14 @@ export async function getShadowAccountEquityHistory(input: {
     lastFlexRefreshAt: null,
     benchmark: input.benchmark || null,
     asOf: lastPoint?.timestamp ?? null,
-    latestSnapshotAt: compacted[compacted.length - 1]?.asOf ?? null,
+    latestSnapshotAt: latestCompactedAt,
     isStale: false,
     staleReason: null,
     terminalPointSource:
       selection.scope === "watchlist_backtest"
         ? "shadow_watchlist_backtest"
         : "shadow_ledger",
-    liveTerminalIncluded: Boolean(totals),
+    liveTerminalIncluded: Boolean(includeLiveTerminal),
     sourceScope: selection.scope,
     selectedSnapshotSource: selection.selectedSource,
     points: seedPoints.map((point, index) => ({
@@ -7009,6 +7033,6 @@ async function recordShadowAutomationMark(event: ExecutionEvent) {
     source: "automation",
     asOf: event.occurredAt,
   });
-  await writeShadowBalanceSnapshot("automation_mark");
+  await writeShadowBalanceSnapshot("automation_mark", event.occurredAt);
   return row.id;
 }

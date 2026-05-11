@@ -258,6 +258,12 @@ export const MarketScreen = ({
       : 1;
   });
   const [marketChartRetryRevision, setMarketChartRetryRevision] = useState(0);
+  const [secondaryPanelsReady, setSecondaryPanelsReady] = useState(false);
+  useEffect(() => {
+    if (!isVisible || secondaryPanelsReady) return undefined;
+    const timerId = window.setTimeout(() => setSecondaryPanelsReady(true), 600);
+    return () => window.clearTimeout(timerId);
+  }, [isVisible, secondaryPanelsReady]);
   useEffect(() => {
     persistState({ marketActivityPanelWidth: activityPanelWidth });
   }, [activityPanelWidth]);
@@ -399,9 +405,9 @@ export const MarketScreen = ({
     { limit: 6 },
     {
       query: {
-        enabled: isVisible,
+        enabled: Boolean(isVisible && secondaryPanelsReady),
         staleTime: 60_000,
-        refetchInterval: isVisible ? 60_000 : false,
+        refetchInterval: isVisible && secondaryPanelsReady ? 60_000 : false,
         retry: false,
       },
     },
@@ -410,22 +416,23 @@ export const MarketScreen = ({
     query: {
       enabled: Boolean(
         isVisible &&
+          secondaryPanelsReady &&
           researchConfigured &&
           calendarWindow.from &&
           calendarWindow.to,
       ),
       staleTime: 300_000,
-      refetchInterval: isVisible ? 300_000 : false,
+      refetchInterval: isVisible && secondaryPanelsReady ? 300_000 : false,
       retry: false,
     },
   });
-  useRuntimeWorkloadFlag("market:news", isVisible, {
+  useRuntimeWorkloadFlag("market:news", Boolean(isVisible && secondaryPanelsReady), {
     kind: "poll",
     label: "Market news",
     detail: "60s",
     priority: 6,
   });
-  useRuntimeWorkloadFlag("market:earnings", isVisible && researchConfigured, {
+  useRuntimeWorkloadFlag("market:earnings", Boolean(isVisible && secondaryPanelsReady && researchConfigured), {
     kind: "poll",
     label: "Market earnings",
     detail: "300s",
@@ -773,7 +780,20 @@ export const MarketScreen = ({
             >
               <CardTitle>Market Heat</CardTitle>
             </div>
-            <TradingViewStockHeatmapWidget />
+            {secondaryPanelsReady ? (
+              <TradingViewStockHeatmapWidget />
+            ) : (
+              <div
+                aria-hidden="true"
+                style={{
+                  height: dim(236),
+                  minHeight: dim(220),
+                  background: T.bg0,
+                  borderTop: `1px solid ${T.border}55`,
+                  borderBottom: `1px solid ${T.border}55`,
+                }}
+              />
+            )}
             <div
               style={{
                 display: "flex",

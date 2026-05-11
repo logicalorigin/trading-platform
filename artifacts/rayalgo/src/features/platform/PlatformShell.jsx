@@ -1,17 +1,102 @@
-import { Suspense, useEffect, useRef, useState } from "react";
-import { List, Menu } from "lucide-react";
-import BloombergLiveDock from "./BloombergLiveDock";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { List, Menu, Tv } from "lucide-react";
 import { MISSING_VALUE, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { MobileNavDrawer } from "./MobileNavDrawer.jsx";
 import { MobileWatchlistDrawer } from "./MobileWatchlistDrawer.jsx";
-import { SCREENS, ScreenLoadingFallback } from "./screenRegistry.jsx";
+import {
+  SCREENS,
+  SCREEN_RENDER_POLICIES,
+  ScreenLoadingFallback,
+} from "./screenRegistry.jsx";
 import { useViewport } from "../../lib/responsive";
 import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { lazyWithRetry } from "../../lib/dynamicImport";
+import {
+  markScreenReady,
+  markScreenSwitchStart,
+} from "./performanceMetrics";
 
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
+const BloombergLiveDock = lazyWithRetry(
+  () => import("./BloombergLiveDock"),
+  { label: "BloombergLiveDock" },
+);
+
+const ScreenReadyProbe = ({ screenId, active }) => {
+  useEffect(() => {
+    if (!active) return undefined;
+    if (
+      typeof window === "undefined" ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      markScreenReady(screenId);
+      return undefined;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      markScreenReady(screenId);
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [active, screenId]);
+
+  return null;
+};
+
+const BloombergLiveDockLauncher = () => {
+  const [mounted, setMounted] = useState(false);
+
+  if (mounted) {
+    return (
+      <Suspense fallback={null}>
+        <BloombergLiveDock initialOpen />
+      </Suspense>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        right: sp(14),
+        bottom: sp(34),
+        zIndex: 10020,
+      }}
+    >
+      <AppTooltip content="Open Bloomberg Live">
+        <button
+          type="button"
+          onClick={() => setMounted(true)}
+          aria-label="Open Bloomberg Live"
+          style={{
+            width: dim(36),
+            height: dim(36),
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: "none",
+            borderRadius: "999px",
+            background: "rgba(8, 11, 18, 0.82)",
+            boxShadow: "0 18px 44px rgba(0, 0, 0, 0.34)",
+            color: "#f8fafc",
+            cursor: "pointer",
+            backdropFilter: "blur(18px)",
+          }}
+        >
+          <Tv size={dim(16)} />
+        </button>
+      </AppTooltip>
+    </div>
+  );
+};
 
 export const PlatformShell = ({
   activeScreen,
@@ -73,8 +158,27 @@ export const PlatformShell = ({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false);
   const mobileAutoCollapseRef = useRef(false);
+  const previousActiveScreenRef = useRef(activeScreen);
   const activeScreenMeta =
     SCREENS.find((screen) => screen.id === activeScreen) || SCREENS[0];
+  const handleSetScreen = useCallback(
+    (screenId) => {
+      if (!screenId || screenId === activeScreen) {
+        return;
+      }
+      markScreenSwitchStart(screenId, "navigation");
+      setScreen(screenId);
+    },
+    [activeScreen, setScreen],
+  );
+
+  useLayoutEffect(() => {
+    if (previousActiveScreenRef.current === activeScreen) {
+      return;
+    }
+    previousActiveScreenRef.current = activeScreen;
+    markScreenSwitchStart(activeScreen, "programmatic");
+  }, [activeScreen]);
 
   useEffect(() => {
     if (!isPhone) {
@@ -257,7 +361,7 @@ export const PlatformShell = ({
                 "ra-interactive",
                 activeScreen === screen.id && "ra-focus-rail",
               )}
-              onClick={() => setScreen(screen.id)}
+              onClick={() => handleSetScreen(screen.id)}
               style={{
                 ...motionVars({
                   accent: hasAlerts ? alertColor : T.accent,
@@ -377,7 +481,7 @@ export const PlatformShell = ({
       open={isPhone && mobileNavOpen}
       onClose={() => setMobileNavOpen(false)}
       activeScreen={activeScreen}
-      setScreen={setScreen}
+      setScreen={handleSetScreen}
       HeaderAccountStripComponent={HeaderAccountStripComponent}
       HeaderStatusClusterComponent={HeaderStatusClusterComponent}
       accounts={accounts}
@@ -519,8 +623,12 @@ export const PlatformShell = ({
       >
         {SCREENS.map(({ id }) => {
           const active = activeScreen === id;
+          const renderPolicy = SCREEN_RENDER_POLICIES[id] || {};
+          const retainInactive =
+            renderPolicy.retainInactive === true &&
+            !TRANSIENT_SCREEN_IDS.has(id);
           const shouldRender =
-            mountedScreens[id] && (active || !TRANSIENT_SCREEN_IDS.has(id));
+            mountedScreens[id] && (active || retainInactive);
           return shouldRender ? (
             <div
               key={id}
@@ -539,6 +647,7 @@ export const PlatformShell = ({
                 fallback={<ScreenLoadingFallback label={`Loading ${id}`} />}
               >
                 {renderScreenById(id)}
+                <ScreenReadyProbe screenId={id} active={active} />
               </Suspense>
             </div>
           ) : null;
@@ -577,7 +686,7 @@ export const PlatformShell = ({
       <span style={{ marginLeft: "auto", color: T.textMuted }}>v0.1.0</span>
       <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
     </div>
-    <BloombergLiveDock />
+    <BloombergLiveDockLauncher />
   </div>
   );
 };

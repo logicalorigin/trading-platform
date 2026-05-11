@@ -4,6 +4,7 @@ import { defaultSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 import {
   SIGNAL_OPTIONS_ENTRY_EVENT,
   SIGNAL_OPTIONS_EXIT_EVENT,
+  SIGNAL_OPTIONS_SKIPPED_EVENT,
   __signalOptionsAutomationInternalsForTests,
   buildSignalOptionsShadowOrderPlan,
   resolveSignalOptionsLiquidity,
@@ -249,6 +250,143 @@ test("signal-options candidates preserve RayReplica signal to shadow action mapp
   assert.deepEqual(candidate.signal?.filterState, { mtf: "aligned" });
 });
 
+test("fresh signal snapshots create potential shadow action candidates", () => {
+  const signalAt = "2026-04-28T15:30:00.000Z";
+  const deployment = {
+    id: "deployment-123456789",
+    name: "Shadow Options",
+  } as never;
+  const baseSignal = {
+    profileId: "11111111-1111-1111-1111-111111111111",
+    signalKey: "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
+    source: "rayreplica",
+    eventId: null,
+    symbol: "spy",
+    timeframe: "15m",
+    direction: "buy",
+    signalAt,
+    signalPrice: 508.25,
+    latestBarAt: "2026-04-28T15:45:00.000Z",
+    barsSinceSignal: 1,
+    fresh: true,
+    status: "ok",
+    filterState: { mtf: "aligned" },
+  } as never;
+
+  const buyCandidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
+      deployment,
+      signal: baseSignal,
+    });
+  const sellCandidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
+      deployment,
+      signal: {
+        ...baseSignal,
+        signalKey: "profile:QQQ:15m:sell:2026-04-28T15:30:00.000Z",
+        symbol: "qqq",
+        direction: "sell",
+      } as never,
+    });
+  const staleCandidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
+      deployment,
+      signal: {
+        ...baseSignal,
+        fresh: false,
+      } as never,
+    });
+
+  assert.ok(buyCandidate);
+  assert.equal(buyCandidate.symbol, "SPY");
+  assert.equal(buyCandidate.status, "candidate");
+  assert.equal(buyCandidate.optionRight, "call");
+  assert.equal(buyCandidate.action?.optionAction, "buy_call");
+  assert.equal(buyCandidate.action?.executionMode, "shadow");
+  assert.equal(buyCandidate.selectedContract, null);
+  assert.equal(buyCandidate.reason, null);
+  assert.ok(sellCandidate);
+  assert.equal(sellCandidate.optionRight, "put");
+  assert.equal(sellCandidate.action?.optionAction, "buy_put");
+  assert.equal(staleCandidate, null);
+});
+
+test("scan events override matching live signal previews without losing mappings", () => {
+  const signalAt = "2026-04-28T15:30:00.000Z";
+  const deployment = {
+    id: "deployment-123456789",
+    name: "Shadow Options",
+  } as never;
+  const preview =
+    __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
+      deployment,
+      signal: {
+        profileId: "11111111-1111-1111-1111-111111111111",
+        signalKey: "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
+        source: "rayreplica",
+        eventId: null,
+        symbol: "SPY",
+        timeframe: "15m",
+        direction: "buy",
+        signalAt,
+        signalPrice: 508.25,
+        latestBarAt: "2026-04-28T15:45:00.000Z",
+        barsSinceSignal: 1,
+        fresh: true,
+        status: "ok",
+        filterState: null,
+      } as never,
+    });
+  assert.ok(preview);
+
+  const eventCandidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent({
+      id: "event-1",
+      deploymentId: "deployment-123456789",
+      symbol: "SPY",
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      occurredAt: new Date("2026-04-28T15:31:00.000Z"),
+      payload: {
+        candidate: {
+          id: preview.id,
+          deploymentId: "deployment-123456789",
+          deploymentName: "Shadow Options",
+          symbol: "SPY",
+          direction: "buy",
+          optionRight: "call",
+          timeframe: "15m",
+          signalAt,
+          signalPrice: 508.25,
+        },
+        selectedContract: {
+          ticker: "SPY260429C510",
+          strike: 510,
+          right: "call",
+        },
+        reason: "spread_too_wide",
+      },
+    } as never);
+  assert.ok(eventCandidate);
+
+  const merged =
+    __signalOptionsAutomationInternalsForTests.mergeSignalOptionsCandidate(
+      preview,
+      eventCandidate,
+    );
+
+  assert.equal(eventCandidate.id, preview.id);
+  assert.equal(merged.id, preview.id);
+  assert.equal(merged.status, "skipped");
+  assert.equal(merged.reason, "spread_too_wide");
+  assert.deepEqual(merged.selectedContract, {
+    ticker: "SPY260429C510",
+    strike: 510,
+    right: "call",
+  });
+  assert.equal(merged.action?.optionAction, "buy_call");
+  assert.equal(merged.signal?.signalKey, preview.signal?.signalKey);
+});
+
 test("signal-options deployments normalize execution to the shadow account", () => {
   assert.equal(
     normalizeAlgoDeploymentProviderAccountId({
@@ -469,6 +607,17 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
         },
       ],
     },
+    {
+      id: "candidate-3",
+      symbol: "SPY",
+      status: "candidate",
+      actionStatus: "candidate",
+      syncStatus: "synced",
+      signalAt: now.toISOString(),
+      action: { optionAction: "buy_call", executionMode: "shadow" },
+      selectedContract: null,
+      timeline: [],
+    },
   ] as never;
   const activePositions = [
     {
@@ -512,6 +661,10 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
   assert.equal(
     stages.find((stage) => stage.id === "liquidity_risk_gate")?.status,
     "blocked",
+  );
+  assert.equal(
+    stages.find((stage) => stage.id === "action_mapped")?.count,
+    1,
   );
   assert.ok(
     attention.some((item) => item.id === "daily-loss-halt"),

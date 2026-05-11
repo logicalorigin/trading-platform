@@ -111,7 +111,7 @@ const SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS = [
 ];
 
 const SIGNAL_OPTIONS_ACTION_LABELS = {
-  candidate: "Candidate",
+  candidate: "Awaiting Scan",
   blocked: "Blocked",
   shadow_filled: "Shadow Filled",
   partial_shadow: "Partial Shadow",
@@ -1961,7 +1961,7 @@ export const AlgoScreen = ({
                 fontWeight: 400,
               }}
             >
-              Signal -&gt; Action
+              Universe Signals -&gt; Potential Actions
             </div>
             <Badge color={T.cyan}>SHADOW ONLY</Badge>
           </div>
@@ -2067,7 +2067,7 @@ export const AlgoScreen = ({
                                     linkedCandidate.actionStatus ||
                                       linkedCandidate.status,
                                   )
-                                : "Awaiting candidate",
+                                : "Awaiting scan",
                             ],
                           ].map(([label, value]) => (
                             <div key={label} style={{ minWidth: 0 }}>
@@ -2149,7 +2149,7 @@ export const AlgoScreen = ({
                       ["Destination", "Shadow account"],
                       ["Broker route", "None"],
                       [
-                        "Candidate",
+                        "Action status",
                         signalOptionsActionLabel(
                           selectedCandidate.actionStatus ||
                             selectedCandidate.status,
@@ -2852,7 +2852,7 @@ export const AlgoScreen = ({
                   }}
                 >
                   {selectedPipelineStageId === "all"
-                    ? "No signal-options candidates yet. Run a scan to evaluate fresh RayReplica signals and resolve shadow option contracts."
+                    ? "No potential actions yet. Fresh RayReplica universe signals will appear here before scans resolve shadow option contracts."
                     : "No candidates match the selected pipeline stage."}
                 </div>
               ) : (
@@ -2898,7 +2898,8 @@ export const AlgoScreen = ({
                             fontWeight: 400,
                           }}
                         >
-                          {candidate.symbol} {candidate.optionRight?.toUpperCase()}
+                          {candidate.symbol}{" "}
+                          {signalActionLabel(candidate.signal, candidate.action)}
                         </span>
                         <Badge color={tone}>
                           {signalOptionsActionLabel(
@@ -2915,7 +2916,7 @@ export const AlgoScreen = ({
                         }}
                       >
                         {candidate.timeframe} · {candidate.direction} ·{" "}
-                        {signalActionLabel(candidate.signal, candidate.action)} ·{" "}
+                        {candidate.optionRight?.toUpperCase() || "OPTION"} ·{" "}
                         {formatRelativeTimeShort(candidate.signalAt)}
                       </div>
                     </button>

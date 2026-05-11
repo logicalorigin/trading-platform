@@ -1609,6 +1609,23 @@ const MemoTradePositionsPanel = memo(function MemoTradePositionsPanel(props) {
   return <TradePositionsPanel {...props} />;
 });
 
+const TradeDeferredPanel = ({ title = "Loading", minHeight = 180 }) => (
+  <TradePanelShell
+    testId={`trade-deferred-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+    title={title}
+    fill
+  >
+    <div
+      aria-hidden="true"
+      style={{
+        minHeight: dim(minHeight),
+        flex: 1,
+        background: T.bg0,
+      }}
+    />
+  </TradePanelShell>
+);
+
 const TRADE_PHONE_PANELS = [
   { id: "chart", label: "Chart" },
   { id: "chain", label: "Chain" },
@@ -2779,6 +2796,15 @@ export const TradeScreen = ({
   const [activeTradePhonePanel, setActiveTradePhonePanel] = useState("chart");
   const [phoneTicketSheetOpen, setPhoneTicketSheetOpen] = useState(false);
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
+  const [secondaryTradePanelsReady, setSecondaryTradePanelsReady] =
+    useState(false);
+  useEffect(() => {
+    if (!isVisible || secondaryTradePanelsReady) return undefined;
+    const timerId = window.setTimeout(() => {
+      setSecondaryTradePanelsReady(true);
+    }, 500);
+    return () => window.clearTimeout(timerId);
+  }, [isVisible, secondaryTradePanelsReady]);
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
@@ -2796,8 +2822,14 @@ export const TradeScreen = ({
       };
     })();
   const tradeLiveStreamsEnabled = Boolean(isVisible && !tradeTickerSearchAnchor);
+  const tradeSecondaryWorkEnabled = Boolean(
+    tradeLiveStreamsEnabled && secondaryTradePanelsReady,
+  );
   const tradeBrokerStreamingEnabled = Boolean(
     tradeLiveStreamsEnabled && stockAggregateStreamingEnabled,
+  );
+  const tradeSecondaryBrokerStreamingEnabled = Boolean(
+    tradeSecondaryWorkEnabled && stockAggregateStreamingEnabled,
   );
   const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
     BROAD_MARKET_FLOW_STORE_KEY,
@@ -3351,8 +3383,8 @@ export const TradeScreen = ({
       contract={contract}
       heldContracts={heldContracts}
       flowEvents={activeTickerChartFlowEvents}
-      historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
-      liveDataEnabled={tradeLiveStreamsEnabled}
+      historicalDataEnabled={tradeSecondaryWorkEnabled}
+      liveDataEnabled={tradeSecondaryWorkEnabled}
     />
   );
   const orderTicketPanel = (
@@ -3415,7 +3447,7 @@ export const TradeScreen = ({
       brokerConfigured={brokerConfigured}
       brokerAuthenticated={brokerAuthenticated}
       isVisible={isVisible}
-      streamingPaused={!tradeBrokerStreamingEnabled}
+      streamingPaused={!tradeSecondaryBrokerStreamingEnabled}
     />
   );
   const positionsPanel = (
@@ -3427,7 +3459,7 @@ export const TradeScreen = ({
       gatewayTradingReady={gatewayTradingReady}
       gatewayTradingMessage={gatewayTradingMessage}
       isVisible={isVisible}
-      streamingPaused={!tradeBrokerStreamingEnabled}
+      streamingPaused={!tradeSecondaryBrokerStreamingEnabled}
       onLoadPosition={handleLoadPosition}
     />
   );
@@ -3467,11 +3499,11 @@ export const TradeScreen = ({
         ticker={activeTicker}
         expirationValue={contract.exp}
         chainCoverage={tradeOptionChainCoverage}
-        enabled={isVisible && !tradeTickerSearchAnchor}
+        enabled={tradeSecondaryWorkEnabled}
       />
       <TradeFlowRuntime
         ticker={activeTicker}
-        enabled={tradeLiveStreamsEnabled}
+        enabled={tradeSecondaryWorkEnabled}
         timeframe={activeWorkspace.equityChart?.timeframe || "5m"}
       />
       <TradeContractSelectionRuntime
@@ -3483,7 +3515,7 @@ export const TradeScreen = ({
         ticker={activeTicker}
         contract={contract}
         heldContracts={heldContracts}
-        enabled={tradeBrokerStreamingEnabled}
+        enabled={tradeSecondaryBrokerStreamingEnabled}
         visibleRows={visibleOptionChainRows}
       />
       {/* Main workspace */}
@@ -3652,7 +3684,11 @@ export const TradeScreen = ({
                     L2
                   </button>
                 </div>
-                {contractDetailPanel}
+                {secondaryTradePanelsReady ? (
+                  contractDetailPanel
+                ) : (
+                  <TradeDeferredPanel title="Contract" minHeight={260} />
+                )}
               </div>
             ) : null}
 
@@ -3662,9 +3698,15 @@ export const TradeScreen = ({
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
               >
-                {chainPanel}
-                {spotFlowPanel}
-                {optionsFlowPanel}
+                {secondaryTradePanelsReady ? (
+                  <>
+                    {chainPanel}
+                    {spotFlowPanel}
+                    {optionsFlowPanel}
+                  </>
+                ) : (
+                  <TradeDeferredPanel title="Chain" minHeight={280} />
+                )}
               </div>
             ) : null}
 
@@ -3674,7 +3716,11 @@ export const TradeScreen = ({
                 className="ra-panel-enter"
                 style={tradeMobileSectionStyle}
               >
-                {orderTicketPanel}
+                {secondaryTradePanelsReady ? (
+                  orderTicketPanel
+                ) : (
+                  <TradeDeferredPanel title="Ticket" minHeight={240} />
+                )}
               </div>
             ) : null}
 
@@ -3700,8 +3746,14 @@ export const TradeScreen = ({
                     L2
                   </button>
                 </div>
-                {positionsPanel}
-                {strategyGreeksPanel}
+                {secondaryTradePanelsReady ? (
+                  <>
+                    {positionsPanel}
+                    {strategyGreeksPanel}
+                  </>
+                ) : (
+                  <TradeDeferredPanel title="Positions" minHeight={260} />
+                )}
               </div>
             ) : null}
 
@@ -3713,7 +3765,11 @@ export const TradeScreen = ({
               testId="trade-mobile-ticket-sheet"
             >
               <div data-trade-layout="phone" style={{ padding: sp(6) }}>
-                {orderTicketPanel}
+                {secondaryTradePanelsReady ? (
+                  orderTicketPanel
+                ) : (
+                  <TradeDeferredPanel title="Ticket" minHeight={240} />
+                )}
               </div>
             </BottomSheet>
             <Drawer
@@ -3725,7 +3781,11 @@ export const TradeScreen = ({
               testId="trade-mobile-l2-drawer"
             >
               <div style={{ minHeight: dim(540), padding: sp(6) }}>
-                {l2Panel}
+                {secondaryTradePanelsReady ? (
+                  l2Panel
+                ) : (
+                  <TradeDeferredPanel title="L2" minHeight={360} />
+                )}
               </div>
             </Drawer>
           </>
@@ -3745,57 +3805,17 @@ export const TradeScreen = ({
             alignItems: "stretch",
           }}
         >
-          <MemoTradeEquityPanel
-            ticker={activeTicker}
-            flowEvents={activeTickerChartFlowEvents}
-            historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
-            stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
-            onOpenSearch={openEquitySearch}
-            searchOpen={tradeTickerSearchAnchor === "equity"}
-            onSearchOpenChange={handleEquitySearchOpenChange}
-            searchContent={renderTradeTickerSearch(
-              tradeTickerSearchAnchor === "equity",
-            )}
-            workspaceChart={activeWorkspace.equityChart}
-            onWorkspaceChartChange={(patch) =>
-              upsertTradeWorkspace(activeTicker, {
-                equityChart: {
-                  ...activeWorkspace.equityChart,
-                  ...patch,
-                },
-              })
-            }
-            referenceLines={workspaceReferenceLines}
-          />
-          <MemoTradeContractDetailPanel
-            ticker={activeTicker}
-            contract={contract}
-            heldContracts={heldContracts}
-            flowEvents={activeTickerChartFlowEvents}
-            historicalDataEnabled={isVisible && !tradeTickerSearchAnchor}
-            liveDataEnabled={tradeLiveStreamsEnabled}
-          />
-          <MemoTradeOrderTicket
-            slot={slot}
-            accountId={accountId}
-            environment={environment}
-            brokerConfigured={brokerConfigured}
-            brokerAuthenticated={brokerAuthenticated}
-            gatewayTradingReady={gatewayTradingReady}
-            gatewayTradingMessage={gatewayTradingMessage}
-            brokerPositions={tradePositionsQuery.data?.positions || []}
-            brokerOrders={tradeOrdersQuery.data?.orders || []}
-            brokerPositionContextReady={Boolean(
-              brokerAuthenticated && accountId && tradePositionsQuery.data,
-            )}
-            brokerOrderContextReady={Boolean(
-              brokerAuthenticated &&
-                accountId &&
-                tradeOrdersQuery.data &&
-                !tradeOrdersQuery.data.degraded,
-            )}
-            automationContext={automationContextVisible ? automationContext : null}
-          />
+          {equityPanel}
+          {secondaryTradePanelsReady ? (
+            contractDetailPanel
+          ) : (
+            <TradeDeferredPanel title="Contract" minHeight={340} />
+          )}
+          {secondaryTradePanelsReady ? (
+            orderTicketPanel
+          ) : (
+            <TradeDeferredPanel title="Ticket" minHeight={340} />
+          )}
         </div>
         {/* Middle zone: options chain + spot flow + options flow */}
         <div
@@ -3811,28 +3831,19 @@ export const TradeScreen = ({
             alignItems: "stretch",
           }}
         >
-          <MemoTradeChainPanel
-            ticker={activeTicker}
-            contract={contract}
-            heldContracts={heldContracts}
-            onSelectContract={handleSelectContract}
-            onChangeExp={handleChangeExpiration}
-            onRetryExpiration={handleRetryExpiration}
-            heatmapEnabled={tradeChainHeatmapEnabled}
-            onToggleHeatmap={() =>
-              setTradeChainHeatmapEnabled((current) => {
-                const next = !current;
-                upsertTradeWorkspace(activeTicker, { chainHeatmapEnabled: next });
-                return next;
-              })
-            }
-            chainCoverageValue={tradeOptionChainCoverage}
-            chainCoverageOptions={OPTION_CHAIN_COVERAGE_VALUES}
-            onChangeChainCoverage={handleChangeOptionChainCoverage}
-            onVisibleRowsChange={handleVisibleOptionChainRowsChange}
-          />
-          <MemoTradeSpotFlowPanel ticker={activeTicker} />
-          <MemoTradeOptionsFlowPanel ticker={activeTicker} />
+          {secondaryTradePanelsReady ? (
+            <>
+              {chainPanel}
+              {spotFlowPanel}
+              {optionsFlowPanel}
+            </>
+          ) : (
+            <>
+              <TradeDeferredPanel title="Chain" minHeight={220} />
+              <TradeDeferredPanel title="Spot Flow" minHeight={220} />
+              <TradeDeferredPanel title="Options Flow" minHeight={220} />
+            </>
+          )}
         </div>
         {/* Bottom zone: Strategy/Greeks + L2/Tape/Flow tabs + Positions */}
         <div
@@ -3848,29 +3859,19 @@ export const TradeScreen = ({
             alignItems: "stretch",
           }}
         >
-          <MemoTradeStrategyGreeksPanel
-            slot={slot}
-            onApplyStrategy={applyStrategy}
-          />
-          <MemoTradeL2Panel
-            slot={slot}
-            accountId={accountId}
-            brokerConfigured={brokerConfigured}
-            brokerAuthenticated={brokerAuthenticated}
-            isVisible={isVisible}
-            streamingPaused={!tradeBrokerStreamingEnabled}
-          />
-          <MemoTradePositionsPanel
-            accountId={accountId}
-            environment={environment}
-            brokerConfigured={brokerConfigured}
-            brokerAuthenticated={brokerAuthenticated}
-            gatewayTradingReady={gatewayTradingReady}
-            gatewayTradingMessage={gatewayTradingMessage}
-            isVisible={isVisible}
-            streamingPaused={!tradeBrokerStreamingEnabled}
-            onLoadPosition={handleLoadPosition}
-          />
+          {secondaryTradePanelsReady ? (
+            <>
+              {strategyGreeksPanel}
+              {l2Panel}
+              {positionsPanel}
+            </>
+          ) : (
+            <>
+              <TradeDeferredPanel title="Strategy" minHeight={200} />
+              <TradeDeferredPanel title="L2" minHeight={200} />
+              <TradeDeferredPanel title="Positions" minHeight={200} />
+            </>
+          )}
         </div>
           </>
         )}

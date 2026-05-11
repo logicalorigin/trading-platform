@@ -60,6 +60,15 @@ const getNodeModulePackageName = (id: string): string | null => {
   return packagePath[0] ?? null;
 };
 
+const DEFERRED_MODULE_PRELOAD_PATTERNS = [
+  /feature-backtesting/,
+  /feature-charting-lab/,
+  /feature-charting-surface/,
+  /rayreplica-core/,
+  /vendor-hls/,
+  /vendor-lightweight-charts/,
+];
+
 const isolationMode = process.env.RAYALGO_CROSS_ORIGIN_ISOLATION || "report-only";
 const coopPolicy = process.env.RAYALGO_COOP_POLICY || "same-origin";
 const coepPolicy = process.env.RAYALGO_COEP_POLICY || "require-corp";
@@ -132,6 +141,16 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
     chunkSizeWarningLimit: 350,
+    modulePreload: {
+      resolveDependencies(_filename, deps) {
+        return deps.filter(
+          (dep) =>
+            !DEFERRED_MODULE_PRELOAD_PATTERNS.some((pattern) =>
+              pattern.test(dep),
+            ),
+        );
+      },
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {

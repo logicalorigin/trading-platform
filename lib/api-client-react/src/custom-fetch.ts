@@ -12,6 +12,7 @@ export type AuthTokenGetter = () => Promise<string | null> | string | null;
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 const HEAVY_GET_PRIORITY_HEADER = "x-rayalgo-fetch-priority";
+const API_TIMING_EVENT = "rayalgo:api-request-timing";
 const TRANSIENT_API_GET_STATUS_CODES = new Set([502, 503, 504]);
 const DEFAULT_TRANSIENT_API_GET_RETRY_DELAYS_MS = [250, 750, 1_500, 2_500];
 const HEAVY_GET_PATHS = new Set([
@@ -113,6 +114,49 @@ function resolveUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (isUrl(input)) return input.toString();
   return input.url;
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+function dispatchApiTiming(input: {
+  method: string;
+  url: string;
+  startedAt: number;
+  ok: boolean;
+  status?: number | null;
+  errorName?: string | null;
+}): void {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+    return;
+  }
+
+  try {
+    const parsed = new URL(input.url, window.location.href);
+    if (!parsed.pathname.startsWith("/api/")) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent(API_TIMING_EVENT, {
+        detail: {
+          method: input.method,
+          path: parsed.pathname,
+          url: `${parsed.pathname}${parsed.search}`,
+          ok: input.ok,
+          status: input.status ?? null,
+          errorName: input.errorName ?? null,
+          durationMs: Math.max(0, Math.round(nowMs() - input.startedAt)),
+          observedAt: new Date().toISOString(),
+        },
+      }),
+    );
+  } catch {
+    // Browser performance diagnostics must never affect API behavior.
+  }
 }
 
 function normalizeUrlForDedupe(input: RequestInfo | URL): {
@@ -820,6 +864,7 @@ export async function customFetch<T = unknown>(
   } = options;
 
   const method = resolveMethod(input, init.method);
+  const requestStartedAt = nowMs();
 
   if (init.body != null && (method === "GET" || method === "HEAD")) {
     throw new TypeError(`customFetch: ${method} requests cannot have a body.`);
@@ -862,45 +907,81 @@ export async function customFetch<T = unknown>(
     headers,
   });
 
-  if (heavyKey) {
-    const callerSignal = init.signal;
-    const existing = _heavyInFlight.get(heavyKey);
-    if (existing) {
-      return waitForCaller(existing as Promise<T>, callerSignal);
+  try {
+    if (heavyKey) {
+      const callerSignal = init.signal;
+      const existing = _heavyInFlight.get(heavyKey);
+      if (existing) {
+        const result = await waitForCaller(existing as Promise<T>, callerSignal);
+        dispatchApiTiming({
+          method,
+          url: requestInfo.url,
+          startedAt: requestStartedAt,
+          ok: true,
+          status: null,
+        });
+        return result;
+      }
+
+      const detachCallerAbort = shouldDetachCallerAbort(input, method);
+      const { signal: _callerSignal, ...initWithoutSignal } = init;
+      const upstreamInit = detachCallerAbort ? initWithoutSignal : init;
+      const priority =
+        explicitHeavyPriority ?? getHeavyGetPriority(input, method);
+      const sharedRequest = runQueuedHeavyRequest(() =>
+        executeFetch<T>({
+          requestInput: input,
+          init: upstreamInit,
+          method,
+          headers,
+          responseType,
+          requestInfo,
+          timeoutMs,
+        }),
+        priority,
+        detachCallerAbort ? undefined : callerSignal,
+      ).finally(() => {
+        _heavyInFlight.delete(heavyKey);
+      });
+      _heavyInFlight.set(heavyKey, sharedRequest);
+      sharedRequest.catch(() => {});
+      const result = await waitForCaller(sharedRequest, callerSignal);
+      dispatchApiTiming({
+        method,
+        url: requestInfo.url,
+        startedAt: requestStartedAt,
+        ok: true,
+        status: null,
+      });
+      return result;
     }
 
-    const detachCallerAbort = shouldDetachCallerAbort(input, method);
-    const { signal: _callerSignal, ...initWithoutSignal } = init;
-    const upstreamInit = detachCallerAbort ? initWithoutSignal : init;
-    const priority =
-      explicitHeavyPriority ?? getHeavyGetPriority(input, method);
-    const sharedRequest = runQueuedHeavyRequest(() =>
-      executeFetch<T>({
-        requestInput: input,
-        init: upstreamInit,
-        method,
-        headers,
-        responseType,
-        requestInfo,
-        timeoutMs,
-      }),
-      priority,
-      detachCallerAbort ? undefined : callerSignal,
-    ).finally(() => {
-      _heavyInFlight.delete(heavyKey);
+    const result = await executeFetch<T>({
+      requestInput: input,
+      init,
+      method,
+      headers,
+      responseType,
+      requestInfo,
+      timeoutMs,
     });
-    _heavyInFlight.set(heavyKey, sharedRequest);
-    sharedRequest.catch(() => {});
-    return waitForCaller(sharedRequest, callerSignal);
+    dispatchApiTiming({
+      method,
+      url: requestInfo.url,
+      startedAt: requestStartedAt,
+      ok: true,
+      status: null,
+    });
+    return result;
+  } catch (error) {
+    dispatchApiTiming({
+      method,
+      url: requestInfo.url,
+      startedAt: requestStartedAt,
+      ok: false,
+      status: error instanceof ApiError ? error.status : null,
+      errorName: error instanceof Error ? error.name : "Error",
+    });
+    throw error;
   }
-
-  return executeFetch<T>({
-    requestInput: input,
-    init,
-    method,
-    headers,
-    responseType,
-    requestInfo,
-    timeoutMs,
-  });
 }

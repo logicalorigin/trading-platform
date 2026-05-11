@@ -207,17 +207,22 @@ function filterRegularSessionBars(timeframe: string, bars: BacktestBar[]): Backt
 
 function timeframeToDays(timeframe: string): number {
   switch (timeframe) {
+    case "1s":
+    case "5s":
+    case "15s":
+      return 7;
     case "1m":
-      return 60;
+      return 45;
     case "5m":
-    case "15m":
       return 180;
-    case "1h":
+    case "15m":
       return 365;
+    case "1h":
+      return 365 * 3;
     case "1d":
-      return 3650;
+      return 365 * 15;
     default:
-      return 60;
+      return 45;
   }
 }
 
@@ -426,6 +431,31 @@ async function findCoveringDataset(
   return dataset ?? null;
 }
 
+async function findExactDataset(
+  symbol: string,
+  timeframe: string,
+  source: string,
+  from: Date,
+  to: Date,
+): Promise<DatasetRow | null> {
+  const [dataset] = await db
+    .select()
+    .from(historicalBarDatasetsTable)
+    .where(
+      and(
+        eq(historicalBarDatasetsTable.symbol, symbol),
+        eq(historicalBarDatasetsTable.timeframe, timeframe),
+        eq(historicalBarDatasetsTable.source, source),
+        eq(historicalBarDatasetsTable.sessionMode, "regular"),
+        eq(historicalBarDatasetsTable.startsAt, from),
+        eq(historicalBarDatasetsTable.endsAt, to),
+      ),
+    )
+    .limit(1);
+
+  return dataset ?? null;
+}
+
 async function persistDataset(
   symbol: string,
   timeframe: string,
@@ -434,12 +464,13 @@ async function persistDataset(
   bars: BacktestBar[],
   isSeeded: boolean,
 ): Promise<DatasetRow> {
-  const [dataset] = await db
+  const source = summarizeDatasetSource(bars);
+  const [insertedDataset] = await db
     .insert(historicalBarDatasetsTable)
     .values({
       symbol,
       timeframe,
-      source: summarizeDatasetSource(bars),
+      source,
       sessionMode: "regular",
       startsAt: from,
       endsAt: to,
@@ -449,8 +480,28 @@ async function persistDataset(
       isSeeded,
       lastAccessedAt: new Date(),
     })
+    .onConflictDoNothing()
     .returning();
 
+  if (!insertedDataset) {
+    const existingDataset = await findExactDataset(
+      symbol,
+      timeframe,
+      source,
+      from,
+      to,
+    );
+    if (existingDataset) {
+      await db
+        .update(historicalBarDatasetsTable)
+        .set({ lastAccessedAt: new Date(), updatedAt: new Date() })
+        .where(eq(historicalBarDatasetsTable.id, existingDataset.id));
+      return existingDataset;
+    }
+    throw new Error(`Historical dataset insert conflicted but no row was found for ${symbol}`);
+  }
+
+  const dataset = insertedDataset;
   await insertBars(dataset.id, bars);
   await evictNonPinnedDatasets();
   return dataset;
@@ -661,15 +712,24 @@ async function pinDatasetsToRun(
     return;
   }
 
+  const uniqueBindings = [
+    ...new Map(
+      bindings.map((binding) => [
+        `${binding.dataset.id}:${binding.role}`,
+        binding,
+      ]),
+    ).values(),
+  ];
+
   await db.insert(backtestRunDatasetsTable).values(
-    bindings.map(({ dataset, role }) => ({
+    uniqueBindings.map(({ dataset, role }) => ({
       runId,
       datasetId: dataset.id,
       role,
     })),
-  );
+  ).onConflictDoNothing();
 
-  const uniqueDatasetIds = [...new Set(bindings.map(({ dataset }) => dataset.id))];
+  const uniqueDatasetIds = [...new Set(uniqueBindings.map(({ dataset }) => dataset.id))];
 
   await db
     .update(historicalBarDatasetsTable)

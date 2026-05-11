@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { SHADOW_ACCOUNT_STREAM_INTERVAL_MS } from "./shadow-account-streams";
 import {
@@ -94,6 +95,41 @@ test("selectLatestShadowPositionMarksByPositionId keeps one newest mark per posi
   assert.equal(selected.size, 2);
   assert.equal(selected.get("pos-a")?.marketValue, "125");
   assert.equal(selected.get("pos-b")?.marketValue, "200");
+});
+
+test("shadow balance snapshots are timestamped from fills and marks", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /async function writeShadowBalanceSnapshot\(source = "ledger", asOf = new Date\(\)\)/,
+  );
+  assert.match(
+    source,
+    /await writeShadowBalanceSnapshot\(\s*normalized\.source === "automation" \? "automation" : "ledger",\s*now,\s*\)/,
+  );
+  assert.match(
+    source,
+    /await writeShadowBalanceSnapshot\("automation_mark", event\.occurredAt\)/,
+  );
+});
+
+test("shadow equity history does not create synthetic today points from ensure calls", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  const ensureShadowAccountBody = source.match(
+    /async function ensureShadowAccount\(\): Promise<ShadowAccountRow> \{[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(ensureShadowAccountBody);
+  assert.doesNotMatch(ensureShadowAccountBody, /updatedAt: new Date\(\)/);
+  assert.match(source, /const includeLiveTerminal =\s*\n\s*totals &&/);
+  assert.match(source, /liveTerminalOpenPositions\.length > 0/);
+  assert.match(
+    source,
+    /totals\.updatedAt\.getTime\(\) > latestCompactedAt\.getTime\(\)/,
+  );
+  assert.match(source, /selection\.rows\.filter\(\(row\) => row\.source !== "initial"\)/);
+  assert.match(source, /const initialPointTimestamp =/);
 });
 
 const shadowTotals = {

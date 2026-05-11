@@ -85,6 +85,7 @@ import {
   formatComparisonBadgeValue,
   mergeStudyPreviewSeries,
 } from "./charting";
+import { deriveSweepDimensions } from "./sweepDimensions";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import {
@@ -922,77 +923,6 @@ function metricFromDraft(
 function draftStrategyId(draft: BacktestDraftStrategy): string {
   const config = isRecord(draft.config) ? draft.config : null;
   return stringFromUnknown(config?.strategyId) ?? "unknown";
-}
-
-function deriveSweepDimensions(
-  strategy: BacktestStrategyCatalogItem | null,
-  parameters: Record<string, unknown>,
-): Array<{ key: string; values: Array<string | number | boolean> }> {
-  if (!strategy) {
-    return [];
-  }
-
-  const dimensions: Array<{
-    key: string;
-    values: Array<string | number | boolean>;
-  }> = [];
-
-  strategy.parameterDefinitions.forEach((definition) => {
-    if (dimensions.length >= 2) {
-      return;
-    }
-
-    const currentValue = scalarFromUnknown(
-      parameters[definition.key],
-      scalarFromUnknown(definition.defaultValue, ""),
-    );
-
-    if (
-      (definition.type === "integer" || definition.type === "number") &&
-      typeof currentValue === "number"
-    ) {
-      const step =
-        definition.step ??
-        (definition.type === "integer" ? 1 : Math.max(0.5, currentValue * 0.1));
-      const min = definition.min ?? Math.max(0, currentValue - step);
-      const max = definition.max ?? currentValue + step;
-      const values = [
-        Math.max(min, currentValue - step),
-        currentValue,
-        Math.min(max, currentValue + step),
-      ]
-        .map((value) =>
-          definition.type === "integer"
-            ? Math.round(value)
-            : Number(value.toFixed(2)),
-        )
-        .filter(
-          (value, index, collection) => collection.indexOf(value) === index,
-        );
-
-      if (values.length > 1) {
-        dimensions.push({ key: definition.key, values });
-      }
-      return;
-    }
-
-    if (definition.type === "boolean" && typeof currentValue === "boolean") {
-      dimensions.push({
-        key: definition.key,
-        values: [currentValue, !currentValue],
-      });
-      return;
-    }
-
-    if (definition.options.length > 1) {
-      dimensions.push({
-        key: definition.key,
-        values: definition.options.slice(0, 3),
-      });
-    }
-  });
-
-  return dimensions;
 }
 
 function inputStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {

@@ -397,6 +397,16 @@ export const AccountScreen = ({
   const [accountSection, setAccountSection] = useState(() =>
     readAccountWorkspaceDefault("accountSection", "real"),
   );
+  const [secondaryAccountPanelsReady, setSecondaryAccountPanelsReady] =
+    useState(false);
+
+  useEffect(() => {
+    if (!isVisible || secondaryAccountPanelsReady) return undefined;
+    const timerId = window.setTimeout(() => {
+      setSecondaryAccountPanelsReady(true);
+    }, 600);
+    return () => window.clearTimeout(timerId);
+  }, [isVisible, secondaryAccountPanelsReady]);
 
   useEffect(() => {
     writeAccountWorkspaceDefault("accountRange", range);
@@ -480,9 +490,14 @@ export const AccountScreen = ({
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
   const equityHistoryQueriesEnabled = Boolean(accountQueriesEnabled);
-  const benchmarkQueriesEnabled = equityHistoryQueriesEnabled;
+  const secondaryAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled && secondaryAccountPanelsReady,
+  );
+  const benchmarkQueriesEnabled = Boolean(
+    equityHistoryQueriesEnabled && secondaryAccountPanelsReady,
+  );
   const performanceCalendarQueriesEnabled = resolvePerformanceCalendarQueriesEnabled(
-    accountQueriesEnabled,
+    secondaryAccountQueriesEnabled,
   );
   useShadowAccountSnapshotStream({
     enabled: Boolean(isVisible && shadowMode),
@@ -600,7 +615,7 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: accountQueriesEnabled,
+      enabled: secondaryAccountQueriesEnabled,
     },
   });
   const positionsQuery = useGetAccountPositions(
@@ -629,7 +644,9 @@ export const AccountScreen = ({
       query: {
         staleTime: 30_000,
         retry: false,
-        enabled: Boolean(accountQueriesEnabled && activeEquityInspectionDate),
+        enabled: Boolean(
+          secondaryAccountQueriesEnabled && activeEquityInspectionDate,
+        ),
       },
     },
   );
@@ -691,7 +708,7 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: tradesRefreshInterval,
-      enabled: accountQueriesEnabled,
+      enabled: secondaryAccountQueriesEnabled,
     },
   });
   const ordersQuery = useGetAccountOrders(
@@ -712,14 +729,14 @@ export const AccountScreen = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: accountQueriesEnabled,
+      enabled: secondaryAccountQueriesEnabled,
     },
   });
   const cashQuery = useGetAccountCashActivity(accountRequestId, modeParams, {
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: accountQueriesEnabled,
+      enabled: secondaryAccountQueriesEnabled,
     },
   });
   const tradingPatternsQuery = useGetAccountTradingPatterns(
@@ -732,7 +749,9 @@ export const AccountScreen = ({
       query: {
         ...equityHistoryQuerySettings,
         refetchInterval: chartRefreshInterval,
-        enabled: Boolean(isVisible && shadowMode && accountRequestId),
+        enabled: Boolean(
+          secondaryAccountQueriesEnabled && shadowMode && accountRequestId,
+        ),
         placeholderData: (previousData) =>
           previousData?.context?.range === range ? previousData : undefined,
       },
@@ -800,7 +819,12 @@ export const AccountScreen = ({
   });
 
   useEffect(() => {
-    if (!isVisible || !accountRequestId || shadowMode) {
+    if (
+      !isVisible ||
+      !secondaryAccountPanelsReady ||
+      !accountRequestId ||
+      shadowMode
+    ) {
       return;
     }
 
@@ -839,6 +863,7 @@ export const AccountScreen = ({
     modeParams,
     queryClient,
     range,
+    secondaryAccountPanelsReady,
     shadowMode,
   ]);
 
