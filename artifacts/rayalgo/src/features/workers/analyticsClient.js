@@ -48,12 +48,32 @@ export const disposeAnalyticsWorkerForTests = () => {
   analyticsWorkerUnavailable = false;
 };
 
-const buildFlowEventSignature = (events = [], symbol = "") =>
+const readFlowEventSignatureTime = (event = {}) =>
+  event.occurredAt ||
+  event.sip_timestamp ||
+  event.participant_timestamp ||
+  event.trf_timestamp ||
+  event.exchange_timestamp ||
+  event.timestamp ||
+  event.dateTime ||
+  event.t ||
+  event.updatedAt ||
+  event.createdAt ||
+  event.time ||
+  "";
+
+export const buildFlowEventSignature = (events = [], symbol = "") =>
   [
     symbol || "",
     events.length,
-    events[0]?.id || events[0]?.occurredAt || "",
-    events[events.length - 1]?.id || events[events.length - 1]?.occurredAt || "",
+    ...events.map((event) =>
+      [
+        event?.id || "",
+        event?.ticker || event?.underlying || event?.symbol || "",
+        event?.optionTicker || event?.providerContractId || event?.contract || "",
+        readFlowEventSignatureTime(event),
+      ].join(":"),
+    ),
   ].join("|");
 
 export const buildPendingFlowChartEventConversion = (events = []) => {

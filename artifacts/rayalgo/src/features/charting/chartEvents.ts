@@ -429,8 +429,51 @@ export const isSnapshotFlowEvent = (event: Record<string, unknown>): boolean => 
   return event.basis === "snapshot" || sourceBasis === "snapshot_activity";
 };
 
+const readDateCandidateIso = (candidate: unknown): string => {
+  if (candidate instanceof Date && Number.isFinite(candidate.getTime())) {
+    return candidate.toISOString();
+  }
+  if (typeof candidate === "number") {
+    if (Number.isFinite(candidate) && candidate > 0) {
+      const abs = Math.abs(candidate);
+      const timestamp =
+        abs >= 1e17
+          ? candidate / 1e6
+          : abs >= 1e14
+            ? candidate / 1e3
+            : abs >= 1e11
+              ? candidate
+              : candidate * 1000;
+      const date = new Date(timestamp);
+      if (Number.isFinite(date.getTime())) {
+        return date.toISOString();
+      }
+    }
+    return "";
+  }
+  if (typeof candidate !== "string") {
+    return "";
+  }
+  const raw = String(candidate).trim();
+  if (!raw) {
+    return "";
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
+};
+
+const readFirstDateCandidateIso = (candidates: unknown[]): string => {
+  for (const candidate of candidates) {
+    const iso = readDateCandidateIso(candidate);
+    if (iso) {
+      return iso;
+    }
+  }
+  return "";
+};
+
 const readFlowEventChartTime = (event: Record<string, unknown>): string => {
-  const candidates = [
+  const tradeTime = readFirstDateCandidateIso([
     event.occurredAt,
     event.sip_timestamp,
     event.participant_timestamp,
@@ -438,46 +481,17 @@ const readFlowEventChartTime = (event: Record<string, unknown>): string => {
     event.exchange_timestamp,
     event.timestamp,
     event.dateTime,
-    event.createdAt,
-    event.updatedAt,
-    event.time,
     event.t,
-  ];
-  for (const candidate of candidates) {
-    if (candidate instanceof Date && Number.isFinite(candidate.getTime())) {
-      return candidate.toISOString();
-    }
-    if (typeof candidate === "number") {
-      if (Number.isFinite(candidate) && candidate > 0) {
-        const abs = Math.abs(candidate);
-        const timestamp =
-          abs >= 1e17
-            ? candidate / 1e6
-            : abs >= 1e14
-              ? candidate / 1e3
-              : abs >= 1e11
-                ? candidate
-                : candidate * 1000;
-        const date = new Date(timestamp);
-        if (Number.isFinite(date.getTime())) {
-          return date.toISOString();
-        }
-      }
-      continue;
-    }
-    if (typeof candidate !== "string") {
-      continue;
-    }
-    const raw = String(candidate).trim();
-    if (!raw) {
-      continue;
-    }
-    const parsed = Date.parse(raw);
-    if (Number.isFinite(parsed)) {
-      return new Date(parsed).toISOString();
-    }
+  ]);
+  if (tradeTime || !isSnapshotFlowEvent(event)) {
+    return tradeTime;
   }
-  return "";
+
+  return readFirstDateCandidateIso([
+    event.updatedAt,
+    event.createdAt,
+    event.time,
+  ]);
 };
 
 export const resolveFlowEventChartTimeMs = (
